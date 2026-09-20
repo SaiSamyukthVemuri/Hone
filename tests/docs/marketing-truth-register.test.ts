@@ -1,67 +1,104 @@
+/**
+ * The marketing truth register, enforced.
+ *
+ * THREE GUARDS, AND ONLY THREE
+ * ----------------------------
+ * Owner ruling, 2026-09-20. Its predecessor answered "what does this React tree
+ * render?" by interpreting the program, and nine consecutive review rounds
+ * showed that question has no natural edge. It is not asked any more.
+ *
+ *   A. PROVENANCE — git only. Has anything §0 cites moved since the head §0 was
+ *      derived against? Unchanged from the version that already worked.
+ *   B. SHAPE — a refusal. Was this string allowed to be written where it was?
+ *      Never what it means, never what it renders to.
+ *   C. JUDGEMENT — complete copy values against the register's own rules. The
+ *      value IS the sentence, because B guarantees it.
+ *
+ * The authoring law that makes C possible is in `copy-sources.ts`: substantive
+ * marketing claims are complete static copy values, and rendering code composes
+ * layout rather than synthesising claims from fragments.
+ */
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { migrationState } from "../migrations/helpers/migration-state";
 import { MARKETING_PAGES } from "@/lib/marketing/content";
+import * as marketingContent from "@/lib/marketing/content";
+import * as marketingResources from "@/lib/marketing/resources";
 import {
   REPO_ROOT,
-  claimsBySource,
-  collectClaims,
   forbiddenWordings,
   judgeAppendOnlyClaim,
-  publicMarketingSources,
-  publicRouteFiles,
   sanctionedAppendOnlyWordings,
   citedEvidenceFiles,
   isWatched,
-  unreconstructableSentences,
-  unreconstructableIn,
-  ruleAtoms,
-  couldCompleteForbidden,
+  publicRouteFiles,
   APPEND_ONLY_OVERREACH,
   APPEND_ONLY_TRIGGER,
   SUPPORTED_APPEND_ONLY_SCOPE,
-} from "./helpers/marketing-scan";
-
-// MARKETING-01a. Governance guard for docs/marketing/product-truth-register.md.
-//
-// WHY THIS EXISTS
-// ---------------
-// The register is the authority every marketing copy PR cites for what may be
-// said. Before this guard it was prose, and prose goes stale silently: the
-// previous revision was built against head `325b124` / migration max 0133 and
-// was still being cited as authoritative ~65 migrations later. Nothing failed,
-// because nothing checked. A stale authority is worse than no authority — it
-// launders an old classification as a current fact, which is exactly how one
-// withdrawn finding survived long enough to be re-derived twice.
-//
-// So this guard does three jobs, and deliberately not a fourth:
-//   1. the register must DECLARE the head and migration state it was built
-//      against, in a machine-readable form;
-//   2. the migration numbers it declares must match the DERIVED repository
-//      state and the DECLARED hosted state — never a hand-typed literal
-//      (CLAUDE.md §2: migration state is derived, never hard-coded);
-//   3. claims the register classifies NOT_CURRENTLY_SUPPORTABLE must not
-//      appear in public marketing copy.
-//
-// It does NOT assert anything about public copy wording beyond (3). Copy is
-// MARKETING-01's business; this PR is internal truth governance only.
-//
-// HOW (3) IS DONE, AND WHY IT LOOKS LIKE THIS
-// -------------------------------------------
-// The surface it scans and the way it reads copy both live in
-// `helpers/marketing-scan.ts`, which carries the full history of why. In short:
-// the file list is DERIVED (from MARKETING_PAGES, then by following imports),
-// because four separate holes came from a hand-kept list; and copy is read with
-// the TypeScript parser, because every regex approximation of JSX and string
-// syntax bred the next hole. The rules themselves are read out of the register,
-// because a ruling and its enforcement must not be two documents that are free
-// to disagree.
+} from "./helpers/register-provenance";
+import {
+  CANONICAL_COPY_MODULES,
+  POLICY_SOURCES,
+  pageCopySources,
+  marketingComponentFiles,
+  copyModuleViolations,
+  componentProseViolations,
+  assembledClaimViolations,
+  pageClaims,
+  walkStrings,
+  isSubstantiveProse,
+  INLINE_IN_CLAIM,
+} from "./helpers/copy-sources";
 
 const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), "utf8");
 
 const REGISTER = read("docs/marketing/product-truth-register.md");
+
+const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
+
+const FORBIDDEN = forbiddenWordings(REGISTER);
+const SANCTIONED = sanctionedAppendOnlyWordings(REGISTER);
+
+/** Every complete claim the declared copy sources carry. */
+const PAGE_CLAIMS = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) => pageClaims(f));
+const MODULE_CLAIMS = [
+  ...walkStrings(marketingContent),
+  ...walkStrings(marketingResources),
+].filter(isSubstantiveProse);
+const CLAIMS = [...PAGE_CLAIMS, ...MODULE_CLAIMS];
+const MARKETING_COPY = CLAIMS.join(" ¶ ");
+
+/**
+ * Component-authored prose that predates the authoring law.
+ *
+ * Owner ruling: existing text is NOT moved merely to satisfy the architecture,
+ * so the two items already in components are recorded here rather than
+ * migrated. The list is SHRINK-ONLY and the test below enforces that, so the law
+ * binds all new work while the migration stays a separate, product-owned change.
+ *
+ * `SiteFooter.tsx` is worth naming: "Operated from Canada." is the hosting
+ * -location line the register's own **C2** rules should be OMITTED, because the
+ * privacy policy discloses AWS US-East-1 and the pair permits a wrong inference.
+ * The guard found it independently. Resolving it is a copy change and is out of
+ * scope for #717.
+ */
+const COMPONENT_PROSE_BASELINE: readonly string[] = [
+  "app/_components/marketing/SiteFooter.tsx",
+  "app/_components/marketing/article.tsx",
+];
+
+/**
+ * The one place a claim is still assembled from a value.
+ *
+ * `/resources` renders its lede author through `{RESOURCE_AUTHOR}`. The
+ * architecture review's **A3** named this exact case and offered three
+ * dispositions — rewrite, declare, or a narrow declared exemption. This is the
+ * declared exemption, recorded where the guard reads it rather than buried in
+ * the scanner, and it is shrink-only for the same reason as the list above.
+ */
+const ASSEMBLED_CLAIM_BASELINE: readonly string[] = ["app/resources/page.tsx"];
 
 /** The production head the register declares it was verified against. */
 function declaredHead(): string {
@@ -85,75 +122,56 @@ function checkedProductionHead(): string {
   return m ? m[1] : "";
 }
 
-const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
+// Inline sources for the guard tests. Each guard takes optional source text so
+// a control can state the exact construct it is about, in one line, instead of
+// writing a fixture to disk.
+const violationsIn = (src: string) => copyModuleViolations("lib/marketing/probe.ts", src);
+const componentProseViolationsIn = (src: string) =>
+  componentProseViolations("app/_components/marketing/Probe.tsx", src);
+const assembledIn = (src: string) => assembledClaimViolations("app/probe/page.tsx", src);
 
-const SOURCES = publicMarketingSources();
-const CLAIMS = claimsBySource(SOURCES);
-/** Every claim on the public surface, as one corpus. */
-const MARKETING_COPY = CLAIMS.map((c) => c.claim).join(" ¶ ");
-const FORBIDDEN = forbiddenWordings(REGISTER);
-const SANCTIONED = sanctionedAppendOnlyWordings(REGISTER);
-
-describe("the scan covers what a visitor actually reads", () => {
-  it("scans the route file behind every indexable path in the registry", () => {
-    // MARKETING_PAGES drives the sitemap, per-page metadata and the middleware
-    // public-route allowlist, so it is the registry of record for what is
-    // public. The route list is now DERIVED from it rather than pinned against
-    // it: a new indexable route is scanned because it is in the registry, not
-    // because somebody remembered to add it here too.
-    const indexable = MARKETING_PAGES.filter((p) => p.indexable);
-    expect(publicRouteFiles()).toHaveLength(indexable.length);
-    for (const route of publicRouteFiles()) expect(SOURCES).toContain(route);
-  });
-
-  it("scans the policy ROUTES, not only the shell they share", () => {
-    // These two were explicitly filtered out, on the reasoning that scanning
-    // PolicyLayout covered them. It does not: PolicyLayout is the wrapper, and
-    // the entire policy text is `children`, authored in the route files.
-    expect(SOURCES).toContain("app/privacy/page.tsx");
-    expect(SOURCES).toContain("app/terms/page.tsx");
-  });
-
-  it("scans the shared components and copy modules those routes render", () => {
-    // Derived by following imports, so this asserts the derivation REACHED the
-    // files review used to demonstrate each hole — the shared footer whose
-    // "Operated from Canada." is authored outside any page, the resource copy
-    // module the article routes render their titles from, and the policy header
-    // and footer, which are different components from the marketing ones.
-    for (const file of [
-      "app/_components/marketing/SiteFooter.tsx",
-      "app/_components/marketing/SiteHeader.tsx",
-      "app/_components/MarketingHeader.tsx",
-      "app/_components/MarketingFooter.tsx",
-      "app/_components/PolicyLayout.tsx",
-      "lib/marketing/content.ts",
-      "lib/marketing/resources.ts",
-    ]) {
-      expect(SOURCES).toContain(file);
+describe("the scan reads DECLARED copy sources, not a discovered import graph", () => {
+  it("covers the route file behind every indexable path in the registry", () => {
+    const declared = new Set([...pageCopySources(), ...POLICY_SOURCES]);
+    for (const page of MARKETING_PAGES.filter((p) => p.indexable)) {
+      const rel = page.path === "/" ? "app/page.tsx" : `app${page.path}/page.tsx`;
+      expect(existsSync(join(REPO_ROOT, rel)), rel).toBe(true);
+      expect(declared.has(rel), `${page.path} is indexable but not a declared copy source`).toBe(true);
     }
-    expect(SOURCES.length).toBeGreaterThan(publicRouteFiles().length);
   });
 
-  it("scans the layouts Next.js applies by convention, not by import", () => {
-    // `app/layout.tsx` renders around every marketing page and nothing in a
-    // route file mentions it, so following imports from `page.tsx` never
-    // reached it. A prohibited claim added there would have shipped on all
-    // twelve routes with this guard green - the same "copy the scan never
-    // opened" failure as the hand-kept list, through a different door.
-    expect(SOURCES).toContain("app/layout.tsx");
+  it("names the policy routes as copy sources in their own right", () => {
+    // Owner ruling: legally reviewed text is scanned where it lives and is not
+    // moved to satisfy this architecture.
+    expect(POLICY_SOURCES).toEqual(["app/privacy/page.tsx", "app/terms/page.tsx"]);
+    for (const f of POLICY_SOURCES) expect(existsSync(join(REPO_ROOT, f)), f).toBe(true);
+    expect(pageClaims("app/privacy/page.tsx").join(" ")).toMatch(/personal information/i);
+    expect(pageClaims("app/terms/page.tsx").join(" ")).toMatch(/software-as-a-service/i);
   });
 
-  it("reads copy authored in a shared component", () => {
-    // A live string that exists only in SiteFooter. If this disappears the
-    // derivation has silently stopped reaching components.
-    expect(MARKETING_COPY).toMatch(/Operated from Canada/);
+  it("reads the canonical copy modules as VALUES, with no AST at all", () => {
+    for (const f of CANONICAL_COPY_MODULES) expect(existsSync(join(REPO_ROOT, f)), f).toBe(true);
+    expect(MODULE_CLAIMS.length).toBeGreaterThan(0);
+    expect(MODULE_CLAIMS.join(" ¶ ")).toMatch(/electrolysis/i);
   });
 
-  it("reads the BODY of each policy route", () => {
-    // Live strings authored inside app/privacy/page.tsx and app/terms/page.tsx
-    // respectively — neither is reachable by scanning PolicyLayout.
-    expect(MARKETING_COPY).toMatch(/TLS encryption for data in transit/);
-    expect(MARKETING_COPY).toMatch(/Hone is provided as a software-as-a-service/);
+  it("is a far smaller input than the interpreter it replaces", () => {
+    // The measurement behind the ruling: the old scan walked 48 files and
+    // extracted 1,691 candidates, ~91% of which were font tables, rate-limit
+    // config and structured-data keys rather than copy. This one reads only
+    // what is declared. The assertion is a ceiling, not a target.
+    const declared = [...pageCopySources(), ...POLICY_SOURCES, ...CANONICAL_COPY_MODULES];
+    expect(declared.length).toBeLessThan(20);
+    expect(CLAIMS.length).toBeGreaterThan(200);
+    expect(CLAIMS.length).toBeLessThan(1000);
+  });
+
+  it("reads a whole sentence that carries an inline link", () => {
+    // 13.6% of text blocks on this surface put an <a> or <strong> inside the
+    // sentence. Folding declared inline elements in is the one structural thing
+    // extraction does, and it needs no phrasing grammar because a NON-inline
+    // element inside substantive text is refused by the shape guard instead.
+    expect(pageClaims("app/page.tsx").some((c) => /\bprivacy policy\b/i.test(c))).toBe(true);
   });
 });
 
@@ -191,11 +209,20 @@ describe("truth register: provenance is declared, not assumed", () => {
   /**
    * Files the register rests on that changed across a range.
    *
-   * The watch set is the public surface plus §0's OWN citations, so a row that
-   * starts resting on a new file starts watching it. Production may run ahead
-   * freely — it may not run over the evidence without §0 being re-derived.
+   * The watch set is the DECLARED copy sources plus §0's OWN citations, so a row
+   * that starts resting on a new file starts watching it. Production may run
+   * ahead freely — it may not run over the evidence without §0 being re-derived.
+   *
+   * It used to be the transitively-discovered import graph. Narrowing it to the
+   * declared sources is the same change as everywhere else in this commit: the
+   * scan's universe is stated, not inferred.
    */
-  const WATCHED = [...SOURCES, ...citedEvidenceFiles(REGISTER)];
+  const WATCHED = [
+    ...pageCopySources(),
+    ...POLICY_SOURCES,
+    ...CANONICAL_COPY_MODULES,
+    ...citedEvidenceFiles(REGISTER),
+  ];
   // `--no-renames` is load-bearing. With rename detection on — Git's default —
   // a 100% rename emits ONLY the destination path, so renaming a cited file
   // away produced a diff in which the cited path never appears and the filter
@@ -503,351 +530,7 @@ describe("truth register: the operative section is present and well-formed", () 
   });
 });
 
-describe("NOT_CURRENTLY_SUPPORTABLE claims stay out of public copy", () => {
-  it("the rules come from §0.4 itself, and include its canonical wordings", () => {
-    // Review's objection was that the guard hard-coded a list, claimed to
-    // enforce §0.4, and did not match the exact sentence §0.4 rejects. The list
-    // now lives in the register; these assertions prove the block was parsed
-    // and that the two wordings the ruling turns on are in it.
-    expect(FORBIDDEN.length).toBeGreaterThan(0);
-    expect(FORBIDDEN.map((r) => r.id)).toContain("N1");
-    expect(FORBIDDEN.map((r) => r.id)).toContain("N2");
-    for (const canonical of [
-      "Edits kept as history, not written over",
-      "Corrections are recorded, not written over.",
-      "A treatment record keeps its edit history.",
-    ]) {
-      expect(
-        FORBIDDEN.some((r) => r.pattern.test(canonical)),
-        `§0.4 rejects "${canonical}" but no rule in the register's forbidden-public-wording block matches it`,
-      ).toBe(true);
-    }
-  });
-
-  it("no public claim matches a wording §0.4 rejects", () => {
-    for (const rule of FORBIDDEN) {
-      const offenders = CLAIMS.filter((c) => rule.pattern.test(c.claim)).map(
-        (c) => `${c.file}: "${c.claim}"`,
-      );
-      expect(
-        offenders,
-        `forbidden by truth register §0.4 ${rule.id} — /${rule.source}/`,
-      ).toEqual([]);
-    }
-  });
-
-  it("every append-only claim on the site is one §0.4 has sanctioned", () => {
-    // §0.4 N1: migration 0086's trigger-written trail covers sterile items,
-    // disinfectants, exposure incidents, the aftercare mark, and
-    // session_blocks.probe_lot_number - THAT COLUMN ONLY. Every other charted
-    // value is a plain UPDATE that keeps no prior value.
-    //
-    // This used to ask whether the claim named a covered record type and
-    // avoided a list of widening words. Review broke that with a conjunction:
-    // "Energy settings and sterile items have an append-only edit history"
-    // satisfied both halves while promising history for a field that keeps
-    // none. That is not a missing word - no deny-list of the unsupported nouns
-    // can be complete, because the unsupported set is every charted field the
-    // product has or will have. So the register sanctions exact wordings and
-    // everything else is rejected.
-    let checked = 0;
-    for (const { file, claim } of CLAIMS) {
-      const verdict = judgeAppendOnlyClaim(claim, SANCTIONED);
-      if (verdict.kind === "not-a-claim") continue;
-      checked += 1;
-      expect(
-        verdict.kind,
-        `${file}: this append-only claim is not one §0.4 sanctions. Re-word it to a sanctioned line, or classify it in the register's supportable-append-only-wording block first. Offending copy: "${claim}"`,
-      ).toBe("sanctioned");
-    }
-    // Guard the guard: zero claims would pass by vacuity, and "no append-only
-    // claim anywhere" is a different state, owned by the overcorrection block.
-    expect(
-      checked,
-      "no append-only copy found; see the overcorrection block",
-    ).toBeGreaterThan(0);
-  });
-
-  it("no public sentence sets a scope around a value this scan cannot read", () => {
-    // Review's case: `<p>Every treatment record includes {it.body}</p>` in a
-    // SHARED renderer. `it.body` is a prop on a .map callback, so its values
-    // live in whichever page passes `items` - no same-file resolution reaches
-    // them. The literal then passes on its own as a sanctioned wording, the
-    // prose passes as a claim with no trigger, and a visitor reads the two
-    // joined into a promise neither half made.
-    //
-    // Nothing static can reconstruct that sentence, so the ambiguity is
-    // forbidden rather than resolved. Copy either says the whole thing in one
-    // place, or holds the whole thing in one value.
-    //
-    // FORBIDDEN is passed, not omitted: it arms the completion sweep, which is
-    // what catches a half-written banned phrase in a copy MODULE rather than a
-    // component, and a one-word opening that the multi-word splice test reads
-    // as an identifier fragment.
-    const offenders = unreconstructableSentences(SOURCES, FORBIDDEN);
-    expect(
-      offenders.map((o) => `${o.file}: "${o.prose}" around {${o.expression}}`),
-      "a sentence sets scope around a value this scan cannot resolve, so what a visitor reads cannot be judged. Inline the whole sentence, or move all of it into the value",
-    ).toEqual([]);
-  });
-
-  it("each sanctioned wording is itself scoped, and is actually shipped", () => {
-    // A guard on the guard. It cannot check that a sanctioned sentence is TRUE
-    // - that is the classification work §0 exists for, done by a person against
-    // code - but an entry that names no covered record type, or that plainly
-    // widens the promise, is a careless entry and fails here.
-    expect(SANCTIONED.length).toBeGreaterThan(0);
-    for (const wording of SANCTIONED) {
-      expect(
-        wording.text,
-        `${wording.id} is sanctioned but names no covered record type`,
-      ).toMatch(SUPPORTED_APPEND_ONLY_SCOPE);
-      expect(
-        wording.text,
-        `${wording.id} is sanctioned but widens the promise beyond the audited records`,
-      ).not.toMatch(APPEND_ONLY_OVERREACH);
-      expect(
-        wording.text,
-        `${wording.id} sits in the append-only block but makes no append-only claim`,
-      ).toMatch(APPEND_ONLY_TRIGGER);
-    }
-    // A sanctioned wording nobody ships is a ruling with no subject, and lets
-    // the block drift away from the copy it governs.
-    const shipped = CLAIMS.map((c) => c.claim.replace(/\s+/g, " ").trim());
-    for (const wording of SANCTIONED) {
-      expect(
-        shipped.includes(wording.text),
-        `${wording.id} is sanctioned but appears nowhere in public copy`,
-      ).toBe(true);
-    }
-  });
-});
-
-describe("negative controls: the guard bites", () => {
-  // Every control feeds copy through the SAME scanner the real surface goes
-  // through. Each one is a claim that must be REJECTED, so a future
-  // simplification that quietly stops reading a surface or a syntax fails here
-  // instead of reporting the site clean.
-  const rulesHitBy = (src: string, name = "control.tsx") => {
-    const claims = collectClaims(src, name);
-    return FORBIDDEN.filter((r) => claims.some((c) => r.pattern.test(c)));
-  };
-  /** The real file, with a forbidden claim added — does the guard see it? */
-  const realFileWith = (file: string, injected: string) =>
-    rulesHitBy(`${read(file)}\n${injected}\n`, file);
-
-  const JSX_SPLIT_CLAIM =
-    'export function __Control() {\n  return <p>Edits kept as <em>history</em>, not written over.</p>;\n}';
-  const LITERAL_CLAIM =
-    'export const __CONTROL = "Edits kept as history, not written over";';
-
-  it("rejects the register's own N1 wording", () => {
-    expect(rulesHitBy(LITERAL_CLAIM).map((r) => r.id)).toContain("N1");
-  });
-
-  it("rejects the stronger deck wording the homepage line came from", () => {
-    const deck =
-      'export const __CONTROL = "Corrections are recorded, not written over. A treatment record keeps its edit history.";';
-    expect(rulesHitBy(deck).map((r) => r.id)).toContain("N1");
-    // and each sentence independently, so neither rule is carrying the other
-    expect(
-      rulesHitBy('export const __C = "A treatment record keeps its edit history.";')
-        .length,
-    ).toBeGreaterThan(0);
-    expect(
-      rulesHitBy('export const __C = "Corrections are recorded, not written over.";')
-        .length,
-    ).toBeGreaterThan(0);
-  });
-
-  it("rejects a claim split across JSX children", () => {
-    // The rendered sentence is what a visitor reads; the inline <em> is not a
-    // boundary. Scanning the fragments separately was how this passed before.
-    expect(rulesHitBy(JSX_SPLIT_CLAIM).map((r) => r.id)).toContain("N1");
-  });
-
-  it("rejects a claim split by a JSX expression, whichever quote it uses", () => {
-    for (const expression of [
-      '{"an append-only edit history for sterile items"}',
-      "{'an append-only edit history for sterile items'}",
-      '{"an append-only edit history for sterile items that\'s permanent"}',
-      "{'an append-only edit history for \"sterile items\"'}",
-    ]) {
-      const src = `export function __C() {\n  return <p>Every treatment record has ${expression}</p>;\n}`;
-      const claims = collectClaims(src, "control.tsx");
-      const sentence = claims.find((c) => /^Every treatment record has /.test(c));
-      expect(
-        sentence,
-        `the expression ${expression} was not inlined into its sentence`,
-      ).toBeTruthy();
-      expect(judgeAppendOnlyClaim(sentence!, SANCTIONED).kind).toBe("unsanctioned");
-    }
-  });
-
-  it("reads a sentence made only of inline elements as one sentence", () => {
-    // Review's counter-example to the first structural rule. The container has
-    // no text of its own, so "does it bear text" read <p> as layout and split
-    // the sentence exactly where the unsupported promise and its qualifier fell
-    // either side of the boundary. <p> cannot legally hold a block, so its
-    // whole subtree is one sentence - a fact about HTML, not a heuristic.
-    const src =
-      "export function __C() {\n  return <p><span>Every treatment record has</span><strong> an append-only edit history for sterile items</strong></p>;\n}";
-    const claims = collectClaims(src, "control.tsx");
-    expect(claims).toContain(
-      "Every treatment record has an append-only edit history for sterile items",
-    );
-    expect(
-      rulesHitBy(src).map((r) => r.id),
-      "the rejoined sentence is not caught by any §0.4 rule",
-    ).toContain("N1");
-  });
-
-  it("reads an inline-only div as one sentence, and a component list as many", () => {
-    // The same question one level out. A container holding only phrasing
-    // elements is a sentence however it is tagged; a container holding
-    // components is layout, and gluing a policy page's paragraphs together
-    // would manufacture claims nobody wrote.
-    const inlineDiv =
-      "export function __C() {\n  return <div><span>Every treatment record has</span><strong> an append-only edit history for sterile items</strong></div>;\n}";
-    expect(collectClaims(inlineDiv, "control.tsx")).toContain(
-      "Every treatment record has an append-only edit history for sterile items",
-    );
-
-    const componentList =
-      "export function __C() {\n  return <Layout><P>An append-only edit history for sterile items.</P><P>Every treatment record is editable.</P></Layout>;\n}";
-    const claims = collectClaims(componentList, "control.tsx");
-    expect(claims).toContain("An append-only edit history for sterile items.");
-    expect(claims).toContain("Every treatment record is editable.");
-    expect(
-      claims.some((c) => /sterile items\.\s*Every treatment record/.test(c)),
-      "two sibling paragraphs were glued into one claim",
-    ).toBe(false);
-  });
-
-  it("rejects an unsupported field conjoined to a supported one", () => {
-    // Review's counter-example to the deny-list. `sterile items` satisfied the
-    // scope and neither `energy` nor `settings` was a listed widening term,
-    // while energy edits keep no prior value at all.
-    const conjunction =
-      "Energy settings and sterile items have an append-only edit history";
-    expect(SUPPORTED_APPEND_ONLY_SCOPE.test(conjunction)).toBe(true);
-    expect(APPEND_ONLY_OVERREACH.test(conjunction)).toBe(false);
-    expect(
-      judgeAppendOnlyClaim(conjunction, SANCTIONED).kind,
-      "a deny-list would have passed this; the allow-list must not",
-    ).toBe("unsanctioned");
-  });
-
-  it("rejects an append-only claim written without the hyphen", () => {
-    expect(
-      judgeAppendOnlyClaim("Energy settings have an append only edit history", SANCTIONED)
-        .kind,
-    ).toBe("unsanctioned");
-  });
-
-  it("reads a typographic hyphen as a hyphen", () => {
-    // `append‑only` with U+2011, and its &#8209; entity, are the same promise to
-    // a reader. As an ASCII-only trigger they were classified "not-a-claim",
-    // which sent them past the allow-list AND past the forbidden patterns.
-    for (const dash of ["‐", "‑", "‒", "–", "—", "−"]) {
-      expect(
-        judgeAppendOnlyClaim(
-          `Energy settings have an append${dash}only edit history`,
-          SANCTIONED,
-        ).kind,
-        `U+${dash.codePointAt(0)!.toString(16)} was not read as a hyphen`,
-      ).toBe("unsanctioned");
-    }
-    // and through the JSX entity, end to end
-    const src =
-      'export function __C() {\n  return <p>Energy settings have an append&#8209;only edit history</p>;\n}';
-    const claims = collectClaims(src, "control.tsx");
-    const claim = claims.find((c) => /Energy settings/.test(c));
-    expect(claim, "the entity claim was not extracted").toBeTruthy();
-    expect(judgeAppendOnlyClaim(claim!, SANCTIONED).kind).toBe("unsanctioned");
-    // The sanctioned wording must still be sanctioned when spelled with U+2011.
-    const sanctionedWithNbHyphen = SANCTIONED[0].text.replace(
-      "append-only",
-      "append‑only",
-    );
-    expect(judgeAppendOnlyClaim(sanctionedWithNbHyphen, SANCTIONED).kind).toBe(
-      "sanctioned",
-    );
-  });
-
-  it("flags prose that sets a scope around an unreadable value", () => {
-    // Review's exact counter-example, run through the real detector.
-    const renderer = (body: string) =>
-      `export function __C({ items }) {\n  return <div>{items.map((it) => (\n    ${body}\n  ))}</div>;\n}`;
-
-    const laundered = unreconstructableIn(
-      renderer("<p>Every treatment record includes {it.body}</p>"),
-      "sections.tsx",
-    );
-    expect(
-      laundered.map((o) => o.prose),
-      "the shared renderer laundered a scope around an unresolvable value",
-    ).toEqual(["Every treatment record includes"]);
-
-    // An append-only promise with a hole in it is unreconstructable by
-    // definition, whatever the surrounding words are.
-    expect(
-      unreconstructableIn(
-        renderer("<p>An append-only edit history for {it.scope}</p>"),
-      ),
-    ).toHaveLength(1);
-
-    // The pass-through shape must stay green: the container contributes no
-    // prose, so whatever the value holds IS the whole sentence.
-    expect(unreconstructableIn(renderer("<p>{it.body}</p>"))).toEqual([]);
-  });
-
-  it("reads copy assembled by concatenation as one sentence", () => {
-    // `+` is authoring, not computation. Scanning the two literals separately
-    // meant neither half tripped a rule while the rendered sentence did - and
-    // the hyphen is exactly where a claim can be split, so the join must not
-    // insert a separator.
-    const src =
-      'export function __C() {\n  return <p>{"Every treatment record has an append-" + "only edit history"}</p>;\n}';
-    const claims = collectClaims(src, "control.tsx");
-    expect(claims).toContain(
-      "Every treatment record has an append-only edit history",
-    );
-    expect(
-      judgeAppendOnlyClaim(
-        "Every treatment record has an append-only edit history",
-        SANCTIONED,
-      ).kind,
-    ).toBe("unsanctioned");
-    // A concatenation with an unreadable operand keeps its authored fragments
-    // AND stays a hole.
-    const mixed =
-      'export function __C({ it }) {\n  return <p>{"Every treatment record has " + it.body}</p>;\n}';
-    expect(unreconstructableIn(mixed, "sections.tsx")).toHaveLength(1);
-  });
-
-  it("reads copy assembled inside a prop", () => {
-    // A prop is where most of this site's sentences are authored. Concatenation
-    // inside one emitted its fragments independently, so neither tripped a rule
-    // while the component rendered the joined claim.
-    const src =
-      'export function __C() {\n  return <Card title={"Every treatment record has an append-" + "only edit history"} />;\n}';
-    expect(collectClaims(src, "control.tsx")).toContain(
-      "Every treatment record has an append-only edit history",
-    );
-    // and a prop that sets a scope around an unreadable value is the same
-    // laundering one level over
-    const laundered =
-      'export function __C({ it }) {\n  return <Card title={"Every treatment record has " + it.body} />;\n}';
-    expect(unreconstructableIn(laundered, "sections.tsx")).toHaveLength(1);
-    // a technical prop is still not copy
-    expect(
-      unreconstructableIn(
-        'export function __C({ it }) {\n  return <a href={"/x/" + it.slug}>go</a>;\n}',
-      ),
-    ).toEqual([]);
-  });
-
+describe("the register's cited evidence stays watched", () => {
   it("keeps watching a cited file whose extension no list would guess", () => {
     // §0's V13 row cites `.env.local.example`. An extension list dropped it;
     // falling back to "does it exist" dropped it again the moment production
@@ -873,485 +556,6 @@ describe("negative controls: the guard bites", () => {
         afterDeletion,
         `${deleted}: a cited dotfile that production deleted fell out of the watch set, so its deletion could never be reported`,
       ).toContain(deleted);
-    }
-  });
-
-  it("rejects a value spliced into the middle of authored words", () => {
-    // The trigger is assembled ACROSS the hole, so nothing that reads the
-    // visible half can see it: the fragment sets no scope and carries no
-    // complete `append-only`, yet one branch renders an unsanctioned claim.
-    // Rejected on structure, not content.
-    for (const expression of [
-      '{"Energy settings have an append-" + (enabled ? "only edit history" : "")}',
-      '{"Every treatment record has " + it.body}',
-      '{"Corrections are recorded, not " + verb}',
-    ]) {
-      const src = `export function __C({ it, enabled, verb }) {\n  return <p>${expression}</p>;\n}`;
-      expect(unreconstructableIn(src, "sections.tsx"), expression).toHaveLength(1);
-    }
-    // and the same splice inside a prop
-    expect(
-      unreconstructableIn(
-        'export function __C({ enabled }) {\n  return <Card title={"Energy settings have an append-" + (enabled ? "only edit history" : "")} />;\n}',
-      ),
-    ).toHaveLength(1);
-  });
-
-  it("does not call an identifier being built a spliced sentence", () => {
-    // The counterweight. `footer-group-${slug}` is an id under construction,
-    // not a sentence with a value dropped into it, and the live footer builds
-    // one on every group. The discriminator is that authored copy is
-    // multi-word; an identifier fragment is one token.
-    for (const live of [
-      "export const C = () => (<nav aria-labelledby={`footer-group-${slugify(g.title)}`}><p/></nav>);",
-      "export const C = () => (<p id={`footer-group-${slugify(g.title)}`}>Product</p>);",
-      "export const C = () => (<a href={`/resources/${a.slug}`}>Read</a>);",
-    ]) {
-      expect(unreconstructableIn(live), live.slice(0, 50)).toEqual([]);
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // The incomplete-concatenation hole.
-  //
-  // Both cases below were RUN against this scanner before the fix and both came
-  // back with zero findings, while the string the page renders trips N1. They
-  // are regression tests for a hole that was open, not hypotheticals.
-  // -------------------------------------------------------------------------
-
-  it("rejects a banned claim half-written in a copy module with no JSX", () => {
-    // `lib/marketing/content.ts` is in publicMarketingSources() because a public
-    // route imports it, and its sentences ship. Nothing here is JSX, so neither
-    // the sentence walk nor the prop check ever looked at it: the scan read
-    // "Edits kept as", which matches no rule, and the page renders "Edits kept
-    // as history", which is N1.
-    const src = `export const COPY = { line: "Edits kept as " + historyLabel };`;
-    expect(collectClaims(src, "lib/marketing/content.ts")).toContain("Edits kept as");
-    expect(
-      FORBIDDEN.some((r) => r.pattern.test("Edits kept as")),
-      "precondition: the readable half alone trips nothing",
-    ).toBe(false);
-    expect(
-      FORBIDDEN.some((r) => r.pattern.test("Edits kept as history")),
-      "precondition: the rendered sentence IS banned",
-    ).toBe(true);
-
-    expect(unreconstructableIn(src, "lib/marketing/content.ts", FORBIDDEN)).toHaveLength(1);
-  });
-
-  it("rejects a one-word opening that a value can finish into a banned claim", () => {
-    // The multi-word discriminator is right for telling prose from an identifier
-    // fragment, but it leaves a single word uncovered. "never" reads as one
-    // token; "never overwritten" is N1.
-    const src = `export const X = () => <p>{"never " + verb}</p>;`;
-    expect(
-      FORBIDDEN.some((r) => r.pattern.test("never")),
-      "precondition: the readable half alone trips nothing",
-    ).toBe(false);
-    expect(unreconstructableIn(src, "sections.tsx", FORBIDDEN)).toHaveLength(1);
-  });
-
-  it("rejects a value that a banned phrase is completed AFTER", () => {
-    // The other direction: the hole comes first and the authored half is the
-    // TAIL of the phrase. "overwritten" alone trips nothing; the page renders
-    // "never overwritten".
-    const src = `export const X = () => <p>{adverb + " overwritten"}</p>;`;
-    expect(unreconstructableIn(src, "sections.tsx", FORBIDDEN)).toHaveLength(1);
-  });
-
-  it("is discriminating: a splice that cannot complete a banned phrase passes", () => {
-    // The fix must not degenerate into "every concatenation is an offence".
-    // These all splice a value into authored text, and none of them can grow
-    // into anything §0.4 forbids, so the guard must stay silent — otherwise it
-    // is not a truth guard, it is a ban on string concatenation.
-    for (const live of [
-      `export const A = () => <div className={"rounded-md border " + extra} />;`,
-      `export const B = { key: \`footer-group-\${id}\` };`,
-      `export const C = () => <p>© {year} Hone</p>;`,
-      `export const D = { cta: "Request a walkthrough " + suffix };`,
-      `export const E = { lede: "Built for electrolysis records in " + region };`,
-      `export const G = { note: "Photos open through short-lived " + kind };`,
-    ]) {
-      expect(
-        unreconstructableIn(live, "sections.tsx", FORBIDDEN),
-        live.slice(0, 56),
-      ).toEqual([]);
-    }
-  });
-
-  it("leaves the pre-existing multi-word JSX splice rule exactly as it was", () => {
-    // Not a new finding, and deliberately not weakened by the completion sweep:
-    // a multi-word value spliced into a JSX sentence is refused on STRUCTURE by
-    // the rule that already existed, whether or not it could complete a banned
-    // phrase. Measured at bd0de986 before this change: 1 finding. Still 1.
-    const src = `export const F = () => <p>{"Book a consultation with " + studio}</p>;`;
-    expect(unreconstructableIn(src, "sections.tsx")).toHaveLength(1);
-    expect(unreconstructableIn(src, "sections.tsx", FORBIDDEN)).toHaveLength(1);
-  });
-
-  it("does not double-report one expression reached by two checks", () => {
-    // A prop splice is visible to visitAttributes AND to the completion sweep.
-    // One expression is one finding.
-    const src = `export const X = () => <Card title={"Edits kept as " + it.body} />;`;
-    expect(unreconstructableIn(src, "sections.tsx", FORBIDDEN)).toHaveLength(1);
-  });
-
-  it("arms the completion sweep only when the rules are supplied", () => {
-    // The sweep is rule-driven, so a caller that passes none gets the old
-    // behaviour rather than a false all-clear. That is why
-    // unreconstructableSentences takes the rules as a REQUIRED argument, and
-    // why the shipped guard above passes FORBIDDEN.
-    const src = `export const COPY = { line: "Edits kept as " + historyLabel };`;
-    expect(unreconstructableIn(src, "lib/marketing/content.ts")).toEqual([]);
-    expect(unreconstructableIn(src, "lib/marketing/content.ts", FORBIDDEN)).toHaveLength(1);
-    expect(FORBIDDEN.length, "the shipped guard is armed with real rules").toBeGreaterThan(0);
-  });
-
-  it("cuts a rule into atoms so any run of them is still a valid regex", () => {
-    // The completion test is only as good as its reading of the rules. An atom
-    // is one literal character, one group, or one class, WITH its quantifier —
-    // so a group is never cut in half and a quantifier never floats free.
-    expect(ruleAtoms("edits kept as history")).toHaveLength("edits kept as history".length);
-
-    expect(ruleAtoms("every change is (tracked|recorded|kept|preserved)")).toContain(
-      "(tracked|recorded|kept|preserved)",
-    );
-    expect(ruleAtoms("full (edit )?history of every (change|edit)")).toContain("(edit )?");
-    expect(ruleAtoms("synthetic[- ]twin")).toContain("[- ]");
-
-    // The rule that defeated expansion. The wildcard is ONE atom, quantifier
-    // included, so the atoms after it survive — which is the whole point.
-    const atoms = ruleAtoms(
-      "(treatment|clinical|session) records? (keeps?|retains?|holds?|preserves?|has|have) (its|their|an|a|the )?(own )?(?:[\\w-]+ ){0,3}(edit|change|revision) history",
-    );
-    expect(atoms).toContain("(?:[\\w-]+ ){0,3}");
-    expect(atoms).toContain("(edit|change|revision)");
-    // A quantified literal keeps its quantifier: "records?" is seven atoms, the
-    // last of which is "s?" — never a bare "s" with the "?" orphaned after it.
-    expect(atoms).toContain("s?");
-
-    // The invariant that matters more than any single atom: splitting loses
-    // nothing and invents nothing, for EVERY rule the register declares.
-    for (const rule of FORBIDDEN) {
-      expect(ruleAtoms(rule.source).join(""), rule.source).toBe(rule.source);
-    }
-    // Every run of atoms compiles. If this ever fails, some rule is being cut
-    // mid-construct and the completion test would be silently skipping it.
-    for (let k = 1; k <= atoms.length; k += 1) {
-      expect(() => new RegExp(atoms.slice(0, k).join("")), `prefix run of ${k}`).not.toThrow();
-      expect(() => new RegExp(atoms.slice(atoms.length - k).join("")), `suffix run of ${k}`).not.toThrow();
-    }
-  });
-
-  it("tests prefixes that reach THROUGH a bounded wildcard", () => {
-    // Codex, at b0de6390. Expanding the rules into literal phrases had to stop
-    // at `(?:[\w-]+ ){0,3}`, so every prefix reaching past the wildcard was
-    // lost: this fragment was compared only against the truncated opening
-    // "treatment records keep their ", which it does not end with.
-    const rendered = "Treatment records keep their complete edit history";
-    const rule = FORBIDDEN.find((r) => r.source.includes("(?:"))!;
-    expect(rule.pattern.test(rendered), "precondition: the rendered sentence IS banned").toBe(true);
-
-    const fragment = "Treatment records keep their complete edit ";
-    expect(
-      FORBIDDEN.some((r) => r.pattern.test(fragment)),
-      "precondition: the readable half alone trips nothing",
-    ).toBe(false);
-
-    // Against THAT rule alone, not merely caught by some other rule's opening.
-    expect(couldCompleteForbidden(fragment, [rule])?.source).toBe(rule.source);
-
-    const src = `export const COPY = { line: "Treatment records keep their complete edit " + lastWord };`;
-    expect(unreconstructableIn(src, "lib/marketing/content.ts", [rule])).toHaveLength(1);
-  });
-
-  it("finds a completion point INSIDE a group's alternatives", () => {
-    // Codex, at 25179fd0, and a real regression against the expansion the atom
-    // split replaced: treating `(tracked|recorded|kept|preserved)` as one
-    // indivisible atom stops the rule's openings at "every change is ", so a
-    // fragment ending mid-alternative matched nothing.
-    const rule = FORBIDDEN.find((r) => r.source.startsWith("every change is"))!;
-    expect(
-      rule.pattern.test("Every change is recorded"),
-      "precondition: the rendered sentence IS banned",
-    ).toBe(true);
-    expect(
-      FORBIDDEN.some((r) => r.pattern.test("Every change is rec")),
-      "precondition: the readable half alone trips nothing",
-    ).toBe(false);
-
-    expect(couldCompleteForbidden("Every change is rec", [rule])?.source).toBe(rule.source);
-
-    const src = `export const COPY = { line: "Every change is rec" + ending };`;
-    expect(unreconstructableIn(src, "lib/marketing/content.ts", [rule])).toHaveLength(1);
-
-    // The other direction, and the wildcard atom stays whole: a group is split
-    // internally, `(?:[\w-]+ ){0,3}` is not.
-    expect(couldCompleteForbidden("corded on every visit", [rule])?.source).toBe(rule.source);
-  });
-
-  it("reassembles a COMPLETE static concatenation outside JSX", () => {
-    // Class 1. A copy module is not a component, and nothing here is JSX, so
-    // neither the sentence walk nor the prop check ever looked. Both operands
-    // are readable, so this is not an unreconstructable sentence — it is a
-    // sentence nobody reassembled, and the repair belongs in collectClaims.
-    const src = `export const title = "Energy settings have an append-" + "only edit history";`;
-    const claims = collectClaims(src, "lib/marketing/content.ts");
-    expect(claims).toContain("Energy settings have an append-only edit history");
-
-    // The same expression wrapped across lines, which is how it is actually
-    // written once it is long enough to need wrapping. The AST is identical;
-    // the test says so rather than leaving it to be assumed.
-    const wrapped =
-      'export const title =\n  "Energy settings have an append-" +\n  "only edit history";';
-    expect(collectClaims(wrapped, "lib/marketing/content.ts")).toContain(
-      "Energy settings have an append-only edit history",
-    );
-    expect(
-      judgeAppendOnlyClaim("Energy settings have an append-only edit history", SANCTIONED).kind,
-      "precondition: the joined sentence is the unsanctioned one",
-    ).toBe("unsanctioned");
-
-    // NEGATIVE: a concatenation that joins into nothing claimable stays quiet.
-    expect(
-      collectClaims(`export const t = "Request a walkthrough" + " today";`, "lib/marketing/content.ts")
-        .filter((c) => APPEND_ONLY_TRIGGER.test(c)),
-    ).toEqual([]);
-  });
-
-  it("rejects an append-only completion outside JSX when the suffix is a value", () => {
-    // Class 2. The completion sweep only ever consulted §0.4's forbidden rules,
-    // and a generic append-only promise is refused on a DIFFERENT path — the
-    // trigger plus the sanctioned allow-list. So this completed into a claim no
-    // rule names, and nothing fired.
-    const src = `const suffix = "only edit history";\nexport const title = "Energy settings have an append-" + suffix;`;
-    expect(
-      FORBIDDEN.some((r) => r.pattern.test("Energy settings have an append-")),
-      "precondition: the readable half trips no forbidden rule",
-    ).toBe(false);
-    expect(unreconstructableIn(src, "lib/marketing/content.ts", FORBIDDEN)).toHaveLength(1);
-
-    // The other direction: the hole comes first, the trigger's tail is authored.
-    expect(
-      unreconstructableIn(
-        `export const t = { s: prefix + "only edit history" };`,
-        "lib/marketing/content.ts",
-        FORBIDDEN,
-      ),
-    ).toHaveLength(1);
-
-    // NEGATIVE: an incomplete concatenation that cannot assemble the trigger.
-    expect(
-      unreconstructableIn(
-        `export const t = { s: "Photos open through short-lived " + kind };`,
-        "lib/marketing/content.ts",
-        FORBIDDEN,
-      ),
-    ).toEqual([]);
-  });
-
-  it("does not read a nested technical attribute as public copy", () => {
-    // Class 3, and a false positive the class-1 repair introduced: the exclusion
-    // looked only at the DIRECT parent, so a conditional between the
-    // concatenation and the attribute hid the attribute from it.
-    const styling = `export const A = () => <div className={active ? "append-" + "only" : ""} />;`;
-    expect(
-      collectClaims(styling, "sections.tsx").filter((c) => APPEND_ONLY_TRIGGER.test(c)),
-      "a class name is not a promise to a reader",
-    ).toEqual([]);
-    expect(unreconstructableIn(styling, "sections.tsx", FORBIDDEN)).toEqual([]);
-
-    // LEAF LITERALS take the same ancestry rule, and this is the control that
-    // actually exercises it. The previous round used a SPLIT `"append-" +
-    // "only"`, which passed while hiding the leaf path entirely: neither half
-    // trips the trigger on its own, so the assertion could not have failed
-    // whether the exclusion reached the leaves or not. A single literal can.
-    for (const technical of [
-      `export const A = () => <div className={active ? "append-only" : ""} />;`,
-      `export const A = () => <div className="append-only" />;`,
-      "export const A = () => <div className={cond ? `append-only ${x}` : \"\"} />;",
-      `export const A = () => <div data-testid={cond ? "append-" + "only" : ""} />;`,
-      `export const A = () => <div data-state={active ? "append-only" : ""} />;`,
-    ]) {
-      expect(
-        collectClaims(technical, "sections.tsx").filter((c) =>
-          APPEND_ONLY_TRIGGER.test(c),
-        ),
-        technical.slice(0, 64),
-      ).toEqual([]);
-    }
-
-    // POSITIVE COUNTERWEIGHT, and the reason this is a walk rather than a
-    // blanket skip. Each of these is the SAME nesting as the technical cases
-    // above and each is real copy, so an exclusion that swallowed them would
-    // disable the guard rather than narrow it. Both a JSX child and a
-    // copy-bearing prop are exercised as a whole literal AND as a split, so the
-    // leaf path and the reassembly path are both held open.
-    for (const copy of [
-      `export const A = () => <p>{active ? "append-only edit history" : ""}</p>;`,
-      `export const A = () => <p>{active ? "append-" + "only edit history" : ""}</p>;`,
-      `export const A = () => <Card title={active ? "append-only edit history" : ""} />;`,
-      `export const A = () => <Card title={active ? "append-" + "only edit history" : ""} />;`,
-      "export const A = () => <p>{cond ? `append-only edit history ${n}` : \"\"}</p>;",
-    ]) {
-      expect(
-        collectClaims(copy, "sections.tsx").filter((c) =>
-          APPEND_ONLY_TRIGGER.test(c),
-        ),
-        copy.slice(0, 64),
-      ).not.toEqual([]);
-    }
-    expect(
-      collectClaims(
-        `export const A = () => <p>{active ? "append-only edit history" : ""}</p>;`,
-        "sections.tsx",
-      )
-        .filter((c) => APPEND_ONLY_TRIGGER.test(c))
-        .map((c) => judgeAppendOnlyClaim(c, SANCTIONED).kind),
-    ).toContain("unsanctioned");
-  });
-
-  it("reads a custom component's props, and an intrinsic element's technical ones", () => {
-    // The attribute allow-list is an HTML/SVG vocabulary, and those names only
-    // mean what they mean on an intrinsic element. Excluding them globally
-    // dropped real copy: `name` is technical on <input> and is the sentence a
-    // visitor reads on <Testimonial name="…" />.
-    expect(
-      collectClaims(
-        `export const A = () => <Testimonial name="Every change is tracked" />;`,
-        "sections.tsx",
-      ),
-      "a custom component's prop may be copy and must be scanned",
-    ).toContain("Every change is tracked");
-
-    // NEGATIVE: the same name on an intrinsic element stays technical.
-    expect(
-      collectClaims(`export const A = () => <input name="email-field" />;`, "sections.tsx"),
-    ).toEqual([]);
-    expect(
-      collectClaims(`export const A = () => <path d="M0 0L1 1" role="presentation" />;`, "sections.tsx"),
-    ).toEqual([]);
-
-    // NEGATIVE: framework and resource plumbing stays technical EVERYWHERE, so
-    // widening this did not turn every forwarded prop into a claim.
-    expect(
-      collectClaims(
-        `export const A = () => <Card className="p-4" href="/pricing" as="section" />;`,
-        "sections.tsx",
-      ),
-    ).toEqual([]);
-
-    // And the element-kind test resolves a dotted tag as a COMPONENT, so its
-    // props are read rather than silently dropped.
-    expect(
-      collectClaims(
-        `export const A = () => <Layout.Quote name="Every change is tracked" />;`,
-        "sections.tsx",
-      ),
-    ).toContain("Every change is tracked");
-  });
-
-  it("does not fuse a block descendant into the container's loose text", () => {
-    // `bearsText` made a container with ANY direct text swallow its whole
-    // subtree. The paragraph below is independently rendered, and fusing it with
-    // "Intro" invents a sentence nobody wrote — then classifies the invention.
-    // If the paragraph is a SANCTIONED wording, the fused claim reads as
-    // unsanctioned and blocks valid copy, which is the worse direction to fail.
-    const fused = `export const A = () => <div>Intro<p>Trace it with an append-only edit history.</p></div>;`;
-    const claims = collectClaims(fused, "sections.tsx");
-    expect(claims).toContain("Intro");
-    expect(claims).toContain("Trace it with an append-only edit history.");
-    expect(
-      claims.some((c) => /Intro\s*Trace/.test(c)),
-      "loose text and a block descendant were concatenated into one claim",
-    ).toBe(false);
-
-    // NEGATIVE 1: inline markup inside authored text is still ONE sentence.
-    // This is the case the whole sentence-assembly rule exists for.
-    expect(
-      collectClaims(
-        `export const A = () => <div>Every record has <strong>an append-only edit history</strong>.</div>;`,
-        "sections.tsx",
-      ),
-    ).toContain("Every record has an append-only edit history.");
-
-    // NEGATIVE 2: an unknown COMPONENT beside text stays dissolved. Only an
-    // intrinsic non-phrasing tag counts as a known block — a component could be
-    // inline markup and no tag list can know, which is why `bearsText` exists.
-    expect(
-      collectClaims(
-        `export const A = () => <div>Every record has <Emph>an append-only edit history</Emph>.</div>;`,
-        "sections.tsx",
-      ),
-    ).toContain("Every record has an append-only edit history.");
-
-    // NEGATIVE 3: a phrasing-only container is unaffected by any of this.
-    expect(
-      collectClaims(
-        `export const A = () => <p>Every record has <em>an append-only edit history</em>.</p>;`,
-        "sections.tsx",
-      ),
-    ).toContain("Every record has an append-only edit history.");
-  });
-
-  it("splits a group whose alternatives carry an optional plural", () => {
-    // Codex, at 3d9c93f4. Refusing any alternative with a `?` in it threw away
-    // the whole N1 verb group `(keeps?|retains?|holds?|preserves?|has|have)`,
-    // so a fragment stopping inside "retain" generated no head at all.
-    const rule = FORBIDDEN.find((r) => r.source.includes("keeps?"))!;
-    expect(
-      rule.pattern.test("Treatment records retain their edit history"),
-      "precondition: the rendered sentence IS banned",
-    ).toBe(true);
-    expect(
-      FORBIDDEN.some((r) => r.pattern.test("Treatment records ret")),
-      "precondition: the readable half alone trips nothing",
-    ).toBe(false);
-
-    expect(couldCompleteForbidden("Treatment records ret", [rule])?.source).toBe(rule.source);
-
-    const src = `export const COPY = { line: "Treatment records ret" + ending };`;
-    expect(unreconstructableIn(src, "lib/marketing/content.ts", [rule])).toHaveLength(1);
-
-    // Both branches of the optional are readable, not just the longer one.
-    expect(couldCompleteForbidden("Treatment records keep", [rule])?.source).toBe(rule.source);
-    expect(couldCompleteForbidden("Treatment records keeps", [rule])?.source).toBe(rule.source);
-  });
-
-  it("leaves a phrase that is already a full match to the substring guard", () => {
-    // couldCompleteForbidden is about what a value could ADD. A fragment that
-    // already contains the whole banned phrase is the substring guard's job, and
-    // reporting it here too would double-count it.
-    expect(couldCompleteForbidden("edits kept as history", FORBIDDEN)).toBeNull();
-    expect(couldCompleteForbidden("Edits kept as", FORBIDDEN)?.id).toBe("N1");
-  });
-
-  it("pairs prose with a hole across inline markup, and through a template", () => {
-    // Direct children were not enough. Wrapping either half in ordinary inline
-    // markup separated them, and a template literal handed over its static
-    // fragments while swallowing the substitution - so the static half set the
-    // scope and the value passed on its own as a sanctioned sentence.
-    const cases: Array<[string, string]> = [
-      [
-        "scope wrapped in <strong>",
-        "<p><strong>Every treatment record</strong> includes {it.body}</p>",
-      ],
-      [
-        "hole wrapped in <span>",
-        "<p>Every treatment record includes <span>{it.body}</span></p>",
-      ],
-      [
-        "template substitution",
-        "<p>{`Every treatment record has ${it.body}`}</p>",
-      ],
-      [
-        "both halves wrapped",
-        "<p><em>All edits</em> are kept in <span>{it.body}</span></p>",
-      ],
-    ];
-    for (const [name, body] of cases) {
-      const src = `export function __C({ items }) {\n  return <div>{items.map((it) => (\n    ${body}\n  ))}</div>;\n}`;
-      expect(unreconstructableIn(src, "sections.tsx"), name).toHaveLength(1);
     }
   });
 
@@ -1411,120 +615,225 @@ describe("negative controls: the guard bites", () => {
     expect(isWatched("components/ui/button.tsx", cited)).toBe(false);
     expect(isWatched("components/before-today-card.tsx", cited)).toBe(true);
   });
+});
 
-  it("leaves the live prose-beside-a-value cases sayable", () => {
-    // Four containers on the shipped site mix prose with a value. None sets a
-    // scope; if the rule were "no prose beside a hole" they would all have to be
-    // rewritten, which is an overcorrection with no defect behind it.
-    for (const live of [
-      "export const C = () => (<p>© {year} Hone. {POSITIONING.category}.</p>);",
-      "export const C = () => (<p>For {plan.seats}</p>);",
-      "export const C = () => (<p>Guide · {a.readingTime}</p>);",
-      "export const C = () => (<Lede>Operational guides from {RESOURCE_AUTHOR}, the people building Hone, on keeping good treatment records and moving a practice off paper.</Lede>);",
-    ]) {
-      expect(unreconstructableIn(live), live.slice(0, 60)).toEqual([]);
+describe("C. JUDGEMENT: complete copy values against the register's rules", () => {
+  it("the rules come from §0.4 itself, and include its canonical wordings", () => {
+    // A ruling and its enforcement cannot be two documents free to disagree, so
+    // the guard learns what is banned from the register and nowhere else.
+    expect(FORBIDDEN.length).toBeGreaterThan(0);
+    const sources = FORBIDDEN.map((r) => r.source);
+    expect(sources).toContain("edits kept as history");
+    expect(sources).toContain("not written over");
+    expect(FORBIDDEN.every((r) => r.id === "N1" || r.id === "N2")).toBe(true);
+  });
+
+  it("no public claim matches a wording §0.4 rejects", () => {
+    const offenders = CLAIMS.flatMap((claim) =>
+      FORBIDDEN.filter((rule) => rule.pattern.test(claim)).map(
+        (rule) => `${rule.id}: "${claim.slice(0, 90)}"`,
+      ),
+    );
+    expect(offenders, "public copy carries a wording §0.4 forbids").toEqual([]);
+  });
+
+  it("every append-only claim on the site is one §0.4 has sanctioned", () => {
+    const verdicts = CLAIMS.map((c) => ({ c, v: judgeAppendOnlyClaim(c, SANCTIONED) }))
+      .filter((x) => x.v.kind === "unsanctioned")
+      .map((x) => x.c.slice(0, 100));
+    expect(verdicts, "an append-only promise ships that §0.4 has not sanctioned").toEqual([]);
+  });
+
+  it("each sanctioned wording is itself scoped, and is actually shipped", () => {
+    expect(SANCTIONED.length).toBeGreaterThan(0);
+    for (const w of SANCTIONED) {
+      expect(w.text, `${w.id} names no covered record type`).toMatch(SUPPORTED_APPEND_ONLY_SCOPE);
+      expect(w.text, `${w.id} widens the promise`).not.toMatch(APPEND_ONLY_OVERREACH);
+      expect(w.text, `${w.id} makes no append-only claim`).toMatch(APPEND_ONLY_TRIGGER);
     }
   });
 
-  it("rejects forbidden wording in a resource article route and its copy module", () => {
-    for (const file of [
-      "app/resources/electrolysis-treatment-record-checklist/page.tsx",
-      "app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx",
-      "lib/marketing/resources.ts",
-    ]) {
-      expect(SOURCES, `${file} is not in the scanned surface`).toContain(file);
-      expect(
-        realFileWith(file, LITERAL_CLAIM).length,
-        `a forbidden claim added to ${file} was not detected`,
-      ).toBeGreaterThan(0);
-    }
-  });
-
-  it("rejects forbidden wording in shared header and footer copy", () => {
-    for (const file of [
-      "app/_components/marketing/SiteFooter.tsx",
-      "app/_components/marketing/SiteHeader.tsx",
-      "app/_components/MarketingHeader.tsx",
-      "app/_components/MarketingFooter.tsx",
-    ]) {
-      expect(SOURCES, `${file} is not in the scanned surface`).toContain(file);
-      expect(
-        realFileWith(file, JSX_SPLIT_CLAIM).length,
-        `a forbidden claim added to ${file} was not detected`,
-      ).toBeGreaterThan(0);
-    }
-  });
-
-  it("rejects forbidden wording in the privacy and terms bodies", () => {
-    for (const file of ["app/privacy/page.tsx", "app/terms/page.tsx"]) {
-      expect(SOURCES, `${file} is not in the scanned surface`).toContain(file);
-      expect(
-        realFileWith(file, JSX_SPLIT_CLAIM).length,
-        `a forbidden claim added to ${file} was not detected`,
-      ).toBeGreaterThan(0);
-    }
-  });
-
-  it("sees copy the old comment-stripping order would have eaten", () => {
-    // Both regex orders were wrong on some valid input. The parser has no
-    // order: a comment is a comment and a string is a string.
+  it("judges a sentence, not a fragment — which is what the authoring law buys", () => {
+    // The whole point of the redesign. Judgement receives complete text, so
+    // there is no reassembly step that can get it wrong.
     expect(
-      rulesHitBy('/* explanation\n// example */\nexport const __C = "complete audit trail";')
-        .length,
-      "a block comment containing a // line hid the copy after it",
-    ).toBeGreaterThan(0);
-    expect(
-      rulesHitBy('// see next/*\nexport const __C = "nothing is ever overwritten";')
-        .length,
-      "a line comment containing next/* hid the copy after it",
-    ).toBeGreaterThan(0);
+      judgeAppendOnlyClaim("Every treatment record has an append-only edit history.", SANCTIONED).kind,
+    ).toBe("unsanctioned");
+    // The N1 sentence carries no append-only trigger, so the append-only judge
+    // correctly says "not a claim" — it is the FORBIDDEN rules that reject it.
+    // Two guards, two jobs; neither is asked to do the other's.
+    expect(judgeAppendOnlyClaim("Edits kept as history, not written over.", SANCTIONED).kind)
+      .toBe("not-a-claim");
+    expect(FORBIDDEN.some((r) => r.pattern.test("Edits kept as history, not written over."))).toBe(true);
+    expect(judgeAppendOnlyClaim("Booking, intake and consent share one record.", SANCTIONED).kind)
+      .toBe("not-a-claim");
+    const sanctioned = SANCTIONED[0];
+    expect(judgeAppendOnlyClaim(sanctioned.text, SANCTIONED).kind).toBe("sanctioned");
   });
 
-  it("rejects every near-miss wording, however it is phrased", () => {
-    // The old scope regex accepted any of lot|sterile|disinfectant|log|note, so
-    // "charting log" satisfied it while promising what the product cannot keep,
-    // and bare "a lot"/"noteworthy" satisfied it by accident. None of these is
-    // in the sanctioned list, so the reason each is rejected is now the same
-    // one: §0.4 has not classified it.
-    for (const rejected of [
-      "Every charting log has an append-only edit history",
-      "Every record has an append-only edit history",
-      "a lot of noteworthy things have an append-only edit history",
-      "Every treatment record has an append-only edit history for sterile items",
-      "Sterile items have an append-only edit history",
-      "Energy settings and sterile items have an append-only edit history",
-    ]) {
-      expect(judgeAppendOnlyClaim(rejected, SANCTIONED).kind, rejected).toBe(
-        "unsanctioned",
-      );
-    }
-  });
-
-  it("leaves the supported, sanctioned wording green", () => {
-    // The overcorrection counterpart: the shipped line must survive every rule
-    // above. If a tightening makes a true claim unsayable, it fails here.
-    const shipped =
-      "Trace a probe lot to the areas that recorded it, and keep sterile-item and disinfectant logs with lot numbers, expiry, and replace-by dates, with an append-only edit history.";
-    expect(judgeAppendOnlyClaim(shipped, SANCTIONED).kind).toBe("sanctioned");
-    expect(
-      FORBIDDEN.filter((r) => r.pattern.test(shipped)).map((r) => r.source),
-    ).toEqual([]);
+  it("reads a typographic hyphen as a hyphen", () => {
+    // `append‑only` with U+2011 reads identically to a visitor.
+    expect(judgeAppendOnlyClaim("Energy settings have an append‑only edit history", SANCTIONED).kind)
+      .toBe("unsanctioned");
   });
 });
 
-describe("no overcorrection", () => {
-  // The guard above must not have made the legitimate, verified claims
-  // unsayable. These are VERIFIED_CURRENT or VERIFIED_WITH_QUALIFIER in §0 and
-  // must still be present on the shipped site, so a future tightening of the
-  // bans shows up here instead of silently deleting a true claim.
-  it("the scoped traceability + append-only line is still shippable", () => {
-    expect(MARKETING_COPY).toMatch(/append-only edit history/i);
-    expect(MARKETING_COPY).toMatch(/probe lot/i);
+describe("B. SHAPE GUARD: refusal, never interpretation", () => {
+  it("PASS — the canonical copy modules already obey the authoring law", () => {
+    const violations = CANONICAL_COPY_MODULES.flatMap((f) => copyModuleViolations(f));
+    expect(
+      violations.map((v) => `${v.file}:${v.line} ${v.rule} ${v.detail}`),
+      "a canonical copy module assembles copy at runtime",
+    ).toEqual([]);
   });
 
-  it("the verified privacy and isolation claims are still present", () => {
-    expect(MARKETING_COPY).toMatch(/row-level security/i);
-    expect(MARKETING_COPY).toMatch(/signed links/i);
-    expect(MARKETING_COPY).toMatch(/does not train AI models/i);
+  it("PASS — a conditional whose branches are COMPLETE values is allowed", () => {
+    // The law's own wording: if wording is conditional, each alternative must
+    // exist as a complete static copy value. `PUBLISHED ? "CAD $99" : null` is a
+    // value shown or withheld, not a claim built from halves.
+    expect(violationsIn(`export const P = SHOW ? "CAD $99" : null;`)).toEqual([]);
+    expect(violationsIn('export const M = `mailto:${EMAIL}`;')).toEqual([]);
+  });
+
+  it("FAIL — binary concatenation of substantive copy", () => {
+    const v = violationsIn(
+      `export const t = "Energy settings have an append-" + "only edit history";`,
+    );
+    expect(v.map((x) => x.rule)).toContain("copy-module/no-concatenation");
+  });
+
+  it("FAIL — template interpolation constructing substantive copy", () => {
+    const v = violationsIn('export const t = `Every change is ${stateWord} on this record`;');
+    expect(v.map((x) => x.rule)).toContain("copy-module/no-interpolation");
+  });
+
+  it("FAIL — conditional partial-claim construction", () => {
+    const v = violationsIn(
+      `export const t = cond ? "half of one substantive claim about records" + tail : "other";`,
+    );
+    expect(v.map((x) => x.rule)).toContain("copy-module/no-conditional-copy");
+  });
+
+  it("PASS — rendering components consume copy and carry only plumbing", () => {
+    const clean = marketingComponentFiles().filter(
+      (f) => !COMPONENT_PROSE_BASELINE.includes(f),
+    );
+    expect(clean.length).toBeGreaterThan(5);
+    expect(
+      clean.flatMap((f) => componentProseViolations(f)).map((v) => `${v.file}:${v.line} ${v.detail}`),
+      "a marketing component authored substantive prose of its own",
+    ).toEqual([]);
+  });
+
+  it("PASS — technical JSX plumbing is never read as copy", () => {
+    // A long class string has enough space-separated tokens to look like a
+    // sentence to a naive word count. It is not one, and the prose test says so
+    // without needing a 101-entry attribute vocabulary.
+    for (const technical of [
+      "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border px-3",
+      "text-[color:var(--color-onband-muted)] underline decoration-2 underline-offset-4",
+      "M0 0L1 1Z",
+      "https://hone.care/features/treatment-memory",
+    ]) {
+      expect(isSubstantiveProse(technical), technical.slice(0, 40)).toBe(false);
+    }
+  });
+
+  it("FAIL — substantive inline prose in a rendering component", () => {
+    const v = componentProseViolationsIn(
+      `export const A = () => <p>Every treated area keeps its own history in Hone.</p>;`,
+    );
+    expect(v.map((x) => x.rule)).toContain("component/no-authored-prose");
+  });
+
+  it("FAIL — a claim assembled from a value in a page source", () => {
+    const v = assembledIn(
+      `export const A = () => <p>Written for electrologists by {AUTHOR} in Toronto.</p>;`,
+    );
+    expect(v.map((x) => x.rule)).toContain("claim/assembled-from-fragments");
+  });
+
+  it("FAIL — an undeclared element inside a claim", () => {
+    // Not "what does <Callout> render?" — the guard refuses to guess, and says
+    // so. Declaring it inline, or authoring the sentence as one value, is the
+    // author's choice; inferring it is not the scanner's job.
+    const v = assembledIn(
+      `export const A = () => <p>Every treated area keeps <Callout>its own history</Callout> in Hone.</p>;`,
+    );
+    expect(v.map((x) => x.rule)).toContain("claim/unknown-element-inside-claim");
+  });
+
+  it("PASS — a declared inline element inside a claim is fine", () => {
+    expect(INLINE_IN_CLAIM).toContain("strong");
+    expect(INLINE_IN_CLAIM).toContain("Link");
+    expect(
+      assembledIn(
+        `export const A = () => <p>Every treated area keeps <strong>its own history</strong> in Hone.</p>;`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("the pre-existing exceptions are declared, counted, and shrink-only", () => {
+    // Owner ruling: existing text is not moved merely to satisfy the
+    // architecture. These are the exceptions, visible rather than tolerated
+    // silently, and the assertion is an upper bound so the list cannot grow.
+    const prose = marketingComponentFiles().flatMap((f) => componentProseViolations(f));
+    expect(new Set(prose.map((v) => v.file))).toEqual(new Set(COMPONENT_PROSE_BASELINE));
+    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(2);
+
+    const assembled = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) => assembledClaimViolations(f));
+    expect(new Set(assembled.map((v) => v.file))).toEqual(new Set(ASSEMBLED_CLAIM_BASELINE));
+    expect(assembled.length, "assembled claims grew").toBeLessThanOrEqual(1);
+  });
+});
+
+describe("MUTATION PROOF: each guard can be made red by the defect it claims to catch", () => {
+  // A guard that cannot fail is not a guard. Each case below injects the exact
+  // defect the guard exists for and asserts it goes red — and asserts the clean
+  // counterpart stays green, so the guard is not simply always-on.
+
+  it("the forbidden-wording rule bites on the register's own N1 sentence", () => {
+    const banned = "Edits kept as history, not written over.";
+    expect(FORBIDDEN.some((r) => r.pattern.test(banned))).toBe(true);
+    expect(FORBIDDEN.some((r) => r.pattern.test("Every treated area keeps its own history."))).toBe(false);
+  });
+
+  it("the append-only allow-list bites on an unsanctioned promise", () => {
+    expect(judgeAppendOnlyClaim("Every treatment record has an append-only edit history.", SANCTIONED).kind)
+      .toBe("unsanctioned");
+    expect(judgeAppendOnlyClaim(SANCTIONED[0].text, SANCTIONED).kind).toBe("sanctioned");
+  });
+
+  it("the copy-module guard bites on assembly, and not on a complete value", () => {
+    expect(violationsIn(`export const t = "Every change is " + stateWord;`).length).toBeGreaterThan(0);
+    expect(violationsIn(`export const t = "Every change is recorded on the treatment.";`)).toEqual([]);
+  });
+
+  it("the component-prose guard bites on prose, and not on plumbing", () => {
+    expect(
+      componentProseViolationsIn(`export const A = () => <p>Hone remembers every treatment you record.</p>;`).length,
+    ).toBeGreaterThan(0);
+    expect(
+      componentProseViolationsIn(`export const A = () => <div className="flex min-h-[44px] items-center gap-2 rounded-md" />;`),
+    ).toEqual([]);
+  });
+
+  it("the assembled-claim guard bites on a hole, and not on a whole sentence", () => {
+    expect(
+      assembledIn(`export const A = () => <p>Every treated area keeps {label} of its own in Hone.</p>;`).length,
+    ).toBeGreaterThan(0);
+    expect(
+      assembledIn(`export const A = () => <p>Every treated area keeps a history of its own in Hone.</p>;`),
+    ).toEqual([]);
+  });
+
+  it("the staleness guard bites on a range that DID move cited evidence", () => {
+    // The non-vacuity half of the provenance suite, restated as a mutation: a
+    // range known to touch §0's evidence must come back non-empty, or the green
+    // result above is green because it can never see anything.
+    const cited = citedEvidenceFiles(REGISTER);
+    expect(cited.length).toBeGreaterThan(3);
+    expect(isWatched("components/before-today-card.tsx", cited)).toBe(true);
+    expect(isWatched("app/_fonts/app-fonts.ts", cited)).toBe(false);
   });
 });

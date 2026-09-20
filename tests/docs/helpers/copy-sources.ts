@@ -1,0 +1,490 @@
+/**
+ * Canonical marketing copy: DECLARED, REFUSED when it is not static, and judged
+ * as complete values.
+ *
+ * WHAT REPLACED WHAT
+ * ------------------
+ * Its predecessor walked the transitive import graph from every public route and
+ * treated each string literal as a candidate claim. Measured at `e86949e5`: 48
+ * files, 1,691 candidates, of which 146 (8.6%) came from the canonical copy
+ * module and the rest from font `unicode-range` tables, rate-limit
+ * configuration, delivery policy and structured-data keys. Roughly nine tenths
+ * of the input was not copy, and a growing TS/JSX interpreter existed to tell
+ * the tenth from the rest. Nine review rounds showed that has no natural edge.
+ *
+ * The owner ruling inverts it. Copy is DECLARED, not discovered, and the
+ * authoring law requires it to be complete and static — so the AST's job here is
+ * REFUSAL, never interpretation:
+ *
+ *   - it never asks what a program renders;
+ *   - it asks whether a string was allowed to be written where it was;
+ *   - anything it cannot prove is complete static text is a FAILURE, not an
+ *     inference.
+ *
+ * That is why this cannot grow the way the interpreter grew. An unhandled
+ * construct is a red build naming a file and a line, which a person fixes by
+ * authoring the copy properly — it is never a silent pass, and never a new case
+ * for this module to learn.
+ */
+import ts from "typescript";
+import {
+  REPO_ROOT,
+  readSource,
+  publicRouteFiles,
+  normalise,
+  decodeEntities,
+} from "./register-provenance";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+// ---------------------------------------------------------------------------
+// 1. The declarations. This list IS the scan's universe.
+// ---------------------------------------------------------------------------
+
+/**
+ * Plain data modules whose exported values are marketing copy.
+ *
+ * These are held to the strictest rule: every string they produce must be a
+ * complete literal. They are where new product-marketing copy belongs.
+ */
+export const CANONICAL_COPY_MODULES: readonly string[] = [
+  "lib/marketing/content.ts",
+  "lib/marketing/resources.ts",
+];
+
+/**
+ * Legally reviewed policy text, authored in its own routes.
+ *
+ * Owner ruling, 2026-09-20: `/privacy` and `/terms` are canonical copy sources
+ * in their own right and their text is NOT moved merely to satisfy this
+ * architecture. They are scanned as policy sources. Their existence does not
+ * authorise arbitrary inline marketing prose elsewhere, which is why they are
+ * named here one by one rather than matched by a pattern.
+ */
+export const POLICY_SOURCES: readonly string[] = [
+  "app/privacy/page.tsx",
+  "app/terms/page.tsx",
+];
+
+/** Marketing route files, from the MARKETING_PAGES registry. */
+export function pageCopySources(): string[] {
+  return publicRouteFiles().filter((f) => !POLICY_SOURCES.includes(f));
+}
+
+/**
+ * Rendering code. It composes layout and consumes approved copy values; it does
+ * not author substantive prose of its own.
+ */
+export function marketingComponentFiles(): string[] {
+  const dirs = ["app/_components/marketing", "app/_components/marketing/visuals"];
+  const out: string[] = [];
+  for (const dir of dirs) {
+    const abs = join(REPO_ROOT, dir);
+    if (!existsSync(abs)) continue;
+    for (const name of readdirSync(abs)) {
+      if (/\.tsx$/.test(name)) out.push(`${dir}/${name}`);
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * Elements that may appear INSIDE a claim without breaking it into fragments.
+ *
+ * Closed and measured, not guessed: across the whole marketing surface the only
+ * tags appearing inside substantive text are `strong` (63), `a` (8), `Link` (6),
+ * `code` (2), `span` (1) and `FormattedDateTime` (1). The rest of the list is
+ * the standard inline set, included so ordinary authoring does not trip a guard
+ * over a tag nobody happened to use yet.
+ *
+ * A component is inline only by DECLARATION. `Link` and `FormattedDateTime` are
+ * named here because a person decided they render inline — the scan does not
+ * infer it, which is the "custom-component semantic guessing" the ruling removes.
+ * Anything else inside substantive text is refused, and the fix is to author the
+ * sentence as one value.
+ */
+export const INLINE_IN_CLAIM: readonly string[] = [
+  "a", "abbr", "b", "br", "code", "em", "i", "span", "strong", "sub", "sup",
+  "time", "wbr",
+  "Link", "FormattedDateTime",
+];
+
+/**
+ * Attribute names that never carry a claim.
+ *
+ * Ten entries, from the ruling's own list — class names, hrefs, ids, resource
+ * paths, keys, metadata identifiers — plus `data-*` by prefix. It replaces a
+ * 101-entry HTML/SVG vocabulary and a 22-entry second one, and it stays this
+ * size because the substantive-prose test does the rest of the work: a class
+ * name is a token soup, not a sentence, and only `className` needs naming
+ * because a long one has enough space-separated tokens to look like words.
+ */
+const PLUMBING_ATTRIBUTES = new Set([
+  "classname", "class", "style", "id", "key", "href", "src", "d", "viewbox",
+  "srcset",
+]);
+
+const isPlumbingAttribute = (name: string): boolean =>
+  name.toLowerCase().startsWith("data-") ||
+  PLUMBING_ATTRIBUTES.has(name.toLowerCase());
+
+// ---------------------------------------------------------------------------
+// 2. "Substantive prose", defined from measurement
+// ---------------------------------------------------------------------------
+
+/**
+ * Is this text a claim a visitor reads, rather than a label or a token?
+ *
+ * Derived from the marketing surface as it stands, not from taste. The word
+ * distribution across 1,983 text nodes is heavily bimodal — 860 single words,
+ * 162 of two, then a long tail — and the boundary that separates labels
+ * ("Pricing", "Request a walkthrough") from claims sits between four and five
+ * words, with terminal punctuation pulling shorter sentences in.
+ *
+ * Deliberately crude. It does not need to know what the text MEANS; the register
+ * decides that. It only needs to know whether the text is the sort of thing the
+ * register governs.
+ */
+export function isSubstantiveProse(text: string): boolean {
+  const value = normalise(decodeEntities(text));
+  const tokens = value.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+
+  // A PLAIN WORD is letters, with an optional internal hyphen or apostrophe and
+  // optional trailing punctuation. `append-only` is a word; `min-h-[44px]`,
+  // `text-[color:var(--x)]` and `·` are not. Without this a long Tailwind class
+  // string reads as a nine-word sentence, which is how five class constants
+  // landed in the first run of this guard.
+  const plain = tokens.filter((t) => /^[A-Za-z][A-Za-z'’-]*[.,;:!?)”"']*$/.test(t));
+  if (plain.length < 3) return false;
+  if (plain.length / tokens.length < 0.6) return false;
+
+  const endsASentence = /[A-Za-z]{3,}[.!?]("|”|'|’)?(\s|$)/.test(value);
+
+  // ENGLISH, NOT TOKENS. `inline-flex items-center justify-center rounded-md
+  // border` is five hyphenated "words" by any shape test, and read as a
+  // five-word sentence in the first run of this guard. Prose has function words;
+  // a class list, an SVG path and a probe-lot label do not. Either a function
+  // word or a real sentence ending is required, and both are cheap to check.
+  const hasFunctionWord = plain.some((t) =>
+    FUNCTION_WORDS.has(t.replace(/[^A-Za-z'’-]/g, "").toLowerCase()),
+  );
+  if (!hasFunctionWord && !endsASentence) return false;
+
+  if (plain.length >= 5) return true;
+
+  // Terminal punctuation pulls a short sentence in, but only after a real word.
+  // "Maya R. · 30 min" is sample data in a preview, not a claim, and the full
+  // stop after an initial must not promote it.
+  return endsASentence;
+}
+
+/**
+ * The closed function-word list that separates English from token soup.
+ *
+ * Deliberately tiny and deliberately boring. It is not a language model; it is
+ * the observation that a marketing claim contains at least one of these and a
+ * Tailwind class string contains none of them.
+ */
+const FUNCTION_WORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "before", "but", "by", "can",
+  "do", "does", "each", "every", "for", "from", "has", "have", "in", "into",
+  "is", "it", "its", "no", "not", "of", "on", "or", "own", "so", "that", "the",
+  "their", "them", "then", "they", "this", "to", "up", "was", "we", "were",
+  "what", "when", "where", "which", "who", "why", "will", "with", "you", "your",
+]);
+
+export type CopyViolation = {
+  readonly file: string;
+  readonly line: number;
+  readonly rule: string;
+  readonly detail: string;
+};
+
+const parse = (file: string, source?: string): ts.SourceFile =>
+  ts.createSourceFile(
+    file,
+    source ?? readSource(file),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+
+const lineOf = (sf: ts.SourceFile, node: ts.Node): number =>
+  sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+
+const tagNameOf = (node: ts.JsxElement | ts.JsxSelfClosingElement): string =>
+  (ts.isJsxElement(node) ? node.openingElement : node).tagName.getText();
+
+/** The attribute this node sits in, however deeply nested, or null. */
+function enclosingAttributeName(node: ts.Node): string | null {
+  let cur: ts.Node | undefined = node.parent;
+  while (cur) {
+    if (ts.isJsxAttribute(cur)) {
+      return ts.isIdentifier(cur.name) ? cur.name.text : cur.name.getText();
+    }
+    if (
+      ts.isJsxElement(cur) ||
+      ts.isJsxSelfClosingElement(cur) ||
+      ts.isJsxFragment(cur) ||
+      ts.isSourceFile(cur)
+    ) {
+      return null;
+    }
+    cur = cur.parent;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 3. The shape guard — three refusals
+// ---------------------------------------------------------------------------
+
+/**
+ * A canonical copy module produces complete literals and nothing else.
+ *
+ * Fail closed, by the ruling: an interpolation, a concatenation or a conditional
+ * inside a copy module is refused WITHOUT any attempt to understand it. There is
+ * nothing to understand — copy that is assembled at runtime cannot be reviewed
+ * before it ships, which is the whole reason the register classifies sentences.
+ */
+export function copyModuleViolations(file: string, source?: string): CopyViolation[] {
+  const sf = parse(file, source);
+  const out: CopyViolation[] = [];
+  const visit = (n: ts.Node) => {
+    const flag = (rule: string, detail: string) =>
+      out.push({ file, line: lineOf(sf, n), rule, detail });
+    if (ts.isTemplateExpression(n) && assemblesProse(staticFragments(n))) {
+      flag("copy-module/no-interpolation", n.getText().slice(0, 70));
+    } else if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      assemblesProse(staticFragments(n))
+    ) {
+      flag("copy-module/no-concatenation", n.getText().slice(0, 70));
+    } else if (ts.isConditionalExpression(n)) {
+      // A conditional is allowed when EACH branch is already a complete value —
+      // that is the law's own wording, and `PUBLISHED ? "CAD $99" : null` is a
+      // value shown or withheld, not a claim built from halves. It is refused
+      // only when a branch is itself assembled.
+      for (const branch of [n.whenTrue, n.whenFalse]) {
+        if (!isCompleteValue(branch) && assemblesProse(staticFragments(branch))) {
+          flag("copy-module/no-conditional-copy", branch.getText().slice(0, 70));
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+
+/** Every static string fragment an expression contributes, in source order. */
+function staticFragments(node: ts.Node): string[] {
+  const out: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) out.push(n.text);
+    else if (ts.isTemplateExpression(n)) {
+      out.push(n.head.text, ...n.templateSpans.map((sp) => sp.literal.text));
+      for (const sp of n.templateSpans) visit(sp.expression);
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return out;
+}
+
+/**
+ * Are these fragments a substantive claim being ASSEMBLED?
+ *
+ * Three words in one fragment, or prose across the joined fragments. A
+ * `mailto:${CONTACT_EMAIL}` contributes one token and is a resource path, not a
+ * sentence — the law governs claims, not every string a module builds.
+ */
+function assemblesProse(fragments: string[]): boolean {
+  if (fragments.length === 0) return false;
+  if (fragments.some((f) => f.trim().split(/\s+/).filter((w) => /^[A-Za-z]/.test(w)).length >= 3)) {
+    return true;
+  }
+  return isSubstantiveProse(fragments.join(" "));
+}
+
+/** A complete value needs no assembly: a literal, or an absence. */
+function isCompleteValue(node: ts.Node): boolean {
+  return (
+    ts.isStringLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(node) && node.text === "undefined")
+  );
+}
+
+/** Does this expression have a string literal anywhere in it? */
+function producesText(node: ts.Node): boolean {
+  let found = false;
+  const visit = (n: ts.Node) => {
+    if (found) return;
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return found;
+}
+
+/**
+ * A marketing component composes layout. It does not author substantive prose.
+ *
+ * Measured before the rule was written: 19 substantive items across every
+ * marketing component, against 223 on the route pages and 300 in the two policy
+ * routes. The rule is affordable because the codebase already almost obeys it.
+ */
+export function componentProseViolations(file: string, source?: string): CopyViolation[] {
+  const sf = parse(file, source);
+  const out: CopyViolation[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxText(n) && isSubstantiveProse(n.text)) {
+      out.push({
+        file,
+        line: lineOf(sf, n),
+        rule: "component/no-authored-prose",
+        detail: normalise(decodeEntities(n.text)).slice(0, 70),
+      });
+    }
+    if (
+      (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
+      isSubstantiveProse(n.text)
+    ) {
+      const attr = enclosingAttributeName(n);
+      if (!attr || !isPlumbingAttribute(attr)) {
+        out.push({
+          file,
+          line: lineOf(sf, n),
+          rule: "component/no-authored-prose",
+          detail: normalise(n.text).slice(0, 70),
+        });
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * A claim in a page or policy source is complete static text.
+ *
+ * The authoring law, enforced structurally: a substantive claim may not be
+ * assembled from fragments, and may not be split across an element this scan has
+ * not been told renders inline. Both are refusals — nothing is reconstructed,
+ * and an unknown element is reported rather than guessed at.
+ */
+export function assembledClaimViolations(file: string, source?: string): CopyViolation[] {
+  const sf = parse(file, source);
+  const out: CopyViolation[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxElement(n)) {
+      const direct = n.children.filter(ts.isJsxText).map((c) => c.text).join("");
+      if (isSubstantiveProse(direct)) {
+        for (const child of n.children) {
+          if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
+            const tag = tagNameOf(child);
+            if (!INLINE_IN_CLAIM.includes(tag)) {
+              out.push({
+                file,
+                line: lineOf(sf, child),
+                rule: "claim/unknown-element-inside-claim",
+                detail: `<${tag}> inside substantive text; declare it inline or author the sentence as one value`,
+              });
+            }
+          } else if (ts.isJsxExpression(child) && child.expression) {
+            const e = child.expression;
+            const complete =
+              ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e);
+            if (!complete) {
+              out.push({
+                file,
+                line: lineOf(sf, child),
+                rule: "claim/assembled-from-fragments",
+                detail: child.getText().slice(0, 70),
+              });
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// 4. Extraction — complete values, because the guards guarantee completeness
+// ---------------------------------------------------------------------------
+
+/**
+ * Every complete string in an imported copy module's exported values.
+ *
+ * This is the whole of part C for a copy module: no AST, no reassembly, no
+ * sentence model. The value IS the sentence, because `copyModuleViolations`
+ * refuses anything that is not.
+ */
+export function walkStrings(value: unknown, seen = new Set<unknown>()): string[] {
+  if (typeof value === "string") return [value];
+  if (value === null || typeof value !== "object") return [];
+  if (seen.has(value)) return [];
+  seen.add(value);
+  return Object.values(value as Record<string, unknown>).flatMap((v) =>
+    walkStrings(v, seen),
+  );
+}
+
+/**
+ * The sentences a page or policy source renders.
+ *
+ * One claim per element bearing substantive direct text, with declared inline
+ * descendants folded in — which is what `<p>Read the <a>privacy policy</a> for
+ * the full detail.</p>` needs and is 13.6% of the surface. No phrasing grammar
+ * is involved: a non-inline element inside substantive text was already REFUSED
+ * by `assembledClaimViolations`, so nothing here has to decide what to do about
+ * one.
+ */
+export function pageClaims(file: string, source?: string): string[] {
+  const sf = parse(file, source);
+  const out: string[] = [];
+  const textOf = (node: ts.Node): string => {
+    let text = "";
+    const walk = (n: ts.Node) => {
+      if (ts.isJsxText(n)) text += decodeEntities(n.text);
+      else if (ts.isStringLiteral(n) && ts.isJsxExpression(n.parent)) text += n.text;
+      ts.forEachChild(n, walk);
+    };
+    walk(node);
+    return text;
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxElement(n)) {
+      const direct = n.children.filter(ts.isJsxText).map((c) => c.text).join("");
+      if (isSubstantiveProse(direct)) out.push(normalise(textOf(n)));
+    }
+    if (
+      (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
+      isSubstantiveProse(n.text)
+    ) {
+      const attr = enclosingAttributeName(n);
+      const insideClaimElement =
+        ts.isJsxExpression(n.parent) && ts.isJsxElement(n.parent.parent);
+      if ((!attr || !isPlumbingAttribute(attr)) && !insideClaimElement) {
+        out.push(normalise(n.text));
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out.filter(Boolean);
+}
