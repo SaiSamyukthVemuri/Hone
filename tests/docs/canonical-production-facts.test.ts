@@ -1211,6 +1211,17 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         // would have tripped the rule for using the LEGAL past-tense form.
         /(?<!\bwas\s)(?<!\bwere\s)\bENABLED\s+for\s+one\s+studio\b(?![^.\n]{0,60}\bat every measured instant\b)/i,
         /\bone studio (?:is|remains) on the durable allowlist\b/i,
+        // BARE NOUN PHRASES, with no verb at all to anchor tense on. Codex
+        // #740: status cells are written as pipe-separated fragments --
+        // "Deployed · ONE STUDIO ENABLED · exercised" -- so every shape above
+        // that keys on is/are/was walked straight past them. A sweep found the
+        // same fragment in a second document Codex had not named.
+        //
+        // The negative lookahead is what keeps the LEGAL form legal: the claim
+        // is admissible the moment it carries its dated boundary, which is the
+        // whole point of the rule rather than a loophole in it.
+        /\bONE STUDIO ENABLED\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
+        /\bONE STUDIO ON THE DURABLE ALLOWLIST\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
       ]) {
         expect(
           prose.match(shape)?.[0] ?? null,

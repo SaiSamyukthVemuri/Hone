@@ -573,8 +573,8 @@ ACTIVATED for `willow-electrolysis` · production exercised.** Owner device acce
 
 ### WAIT-02B Stage B1 — disclosure shipped, and since ACTED ON. SHIPPED · ACTIVATION TAKEN.
 
-**Implemented · merged (PR #637, `1013a97b`) · deployed · ONE STUDIO ENABLED · production
-exercised.** **No migration.** Merging it enabled nothing by itself; the activation was a
+**Implemented · merged (PR #637, `1013a97b`) · deployed · ONE STUDIO WAS ENABLED at every
+measured instant · production exercised (joining only).** **No migration.** Merging it enabled nothing by itself; the activation was a
 **separate, later operator act** against the runtime allowlist, bounded to on or before
 **2026-08-25** by the oldest durable Willow row.
 
