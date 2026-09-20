@@ -65,6 +65,7 @@ import {
   unprovenArrayViolations,
   dynamicTextAttributeViolations,
   isProvenStatic,
+  undeclaredCopyImportViolations,
   TEXT_BEARING_ATTRIBUTES,
   type CopyViolation,
 } from "./helpers/copy-inventory";
@@ -130,8 +131,22 @@ const currentExceptions = (): CopyViolation[] => [
 
 if (process.env.MARKETING_INVENTORY === "write") {
   const inventory = currentInventory();
-  const known = new Set(Object.values(INVENTORY.inventory).flat());
-  const added = Object.values(inventory).flat().filter((x) => !known.has(x));
+  const exceptions = currentExceptions().map((v) => `${v.rule} ${v.file} ${v.detail}`).sort();
+  // BOTH HALVES, and this is the half that was missing. The first draft checked
+  // additions in the prose inventory and then replaced `exceptions`
+  // unconditionally — so removing the one placeholder exception and introducing
+  // a different dynamic attribute would have written the new identity, and both
+  // the equality check and the `length <= 1` ceiling would then have passed. A
+  // set that calls itself shrink-only has to refuse growth everywhere it is
+  // written, not only where it is convenient.
+  const additions = (current: string[], recorded: string[]): string[] => {
+    const known = new Set(recorded);
+    return current.filter((x) => !known.has(x));
+  };
+  const added = [
+    ...additions(Object.values(inventory).flat(), Object.values(INVENTORY.inventory).flat()),
+    ...additions(exceptions, INVENTORY.exceptions),
+  ];
   if (added.length) {
     throw new Error(
       `regeneration refuses ADDITIONS; ${added.length} new item(s) would be admitted ` +
@@ -141,14 +156,7 @@ if (process.env.MARKETING_INVENTORY === "write") {
   }
   writeFileSync(
     join(REPO_ROOT, INVENTORY_PATH),
-    JSON.stringify(
-      {
-        inventory,
-        exceptions: currentExceptions().map((v) => `${v.rule} ${v.file} ${v.detail}`).sort(),
-      },
-      null,
-      2,
-    ) + "\n",
+    JSON.stringify({ inventory, exceptions }, null, 2) + "\n",
   );
 }
 
@@ -854,6 +862,21 @@ describe("R4. REFUSAL: shapes that put words on the page without leaving text", 
     ).toEqual([]);
   });
 
+  it("no copy is imported from a module outside the declared surface", () => {
+    // The escape is ordinary refactoring: a declared component imports `CLAIM`
+    // from a new `lib/…` helper and renders `{CLAIM}`. The component holds no
+    // text for the inventory, the helper is on no declared list so nothing
+    // judges it, and a bare identifier is not an assembly, an array or an
+    // attribute. ZERO today, so it is asserted as zero rather than baselined.
+    expect(
+      DECLARED.flatMap((f) => undeclaredCopyImportViolations(f, DECLARED)).map(
+        (v) => `${v.file}: ${v.detail}`,
+      ),
+      "copy is rendered from a module the register never sees; move it into " +
+        "lib/marketing/content.ts",
+    ).toEqual([]);
+  });
+
   it("the declared exceptions are recorded, by identity, and shrink-only", () => {
     // ONE today: `placeholder={placeholder}` in the demo form, a prop passed
     // through a field component. It is visitor-facing text that this file does
@@ -1058,6 +1081,116 @@ describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catc
     ]) {
       expect(expr(unreadable), unreadable).toBe(false);
     }
+  });
+
+  // --- P1: a sentence split by markup ---------------------------------------
+
+  it("REFUSED — a claim split across nested JSX is judged as the whole sentence", () => {
+    // `<p>Every change <strong>is tracked</strong></p>` emitted "Every change"
+    // and "is tracked": neither fragment matches a rule, neither reaches the
+    // prose threshold, and no shape check rejects ordinary nested markup. The
+    // sentence a visitor reads existed nowhere in the corpus.
+    const texts = judgeableText(
+      "app/probe/page.tsx",
+      probe("<p>Every change <strong>is tracked</strong></p>"),
+    );
+    expect(texts).toContain("Every change is tracked");
+    expect(texts.some((t) => FORBIDDEN.some((r) => r.pattern.test(t)))).toBe(true);
+  });
+
+  it("REFUSED — split by a link, by a fragment, and across three levels", () => {
+    const caught = (body: string) =>
+      judgeableText("app/probe/page.tsx", probe(body)).some((t) =>
+        FORBIDDEN.some((r) => r.pattern.test(t)),
+      );
+    expect(caught('<p>Every change <a href="/x">is tracked</a></p>')).toBe(true);
+    expect(caught("<p>Every <>change is</> tracked</p>")).toBe(true);
+    expect(caught("<div><span>Every <em>change <b>is</b></em></span> tracked</div>")).toBe(true);
+    // A literal in an expression container is text too.
+    expect(caught('<p>Every change {"is tracked"}</p>')).toBe(true);
+  });
+
+  it("ACCEPTED — joining adds candidates, it does not invent a violation", () => {
+    // Concatenation can only ADD strings, never hide one, and an extra candidate
+    // fails closed. Ordinary split markup that says nothing forbidden stays
+    // clean, which is what keeps the asymmetry usable.
+    const texts = judgeableText(
+      "app/probe/page.tsx",
+      probe("<p>Hone carries <strong>the details</strong> forward.</p>"),
+    );
+    expect(texts).toContain("Hone carries the details forward.");
+    expect(texts.some((t) => FORBIDDEN.some((r) => r.pattern.test(t)))).toBe(false);
+  });
+
+  // --- P1: copy imported from an undeclared module ---------------------------
+
+  it("REFUSED — a value rendered from a module on no declared list", () => {
+    const escape = (from: string) =>
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        `import { CLAIM } from "${from}";\nexport const A = () => <p>{CLAIM}</p>;\n`,
+      ).map((v) => v.rule);
+    expect(escape("@/lib/copy-helper")).toEqual(["copy/undeclared-copy-import"]);
+    expect(escape("@/lib/marketing/extra-claims")).toEqual(["copy/undeclared-copy-import"]);
+    // A property access on such an import is the same escape one step along.
+    expect(
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        'import { COPY } from "@/lib/copy-helper";\nexport const A = () => <p>{COPY.claim}</p>;\n',
+      ).map((v) => v.rule),
+    ).toEqual(["copy/undeclared-copy-import"]);
+  });
+
+  it("ACCEPTED — a canonical module, and another declared file", () => {
+    const from = (spec: string, expr: string) =>
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        `import { X } from "${spec}";\nexport const A = () => <p>{${expr}}</p>;\n`,
+      );
+    expect(from("@/lib/marketing/content", "X.corePromise")).toEqual([]);
+    // Declared but not canonical: its text is frozen and judged where it lives.
+    expect(from("@/app/_components/marketingNav", "X.label")).toEqual([]);
+    // A local binding is not an import and is not this rule's business.
+    expect(
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        "const X = 1;\nexport const A = () => <p>{X}</p>;\n",
+      ),
+    ).toEqual([]);
+  });
+
+  it("the import rule reads the specifier and never opens the file", () => {
+    // NOT DISCOVERY. A module that does not exist on disk still resolves to a
+    // path, and the only question asked is whether that path is already
+    // declared. Nothing is followed, so the walk this architecture dropped
+    // cannot come back this way.
+    expect(
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        'import { C } from "@/lib/does-not-exist-anywhere";\nexport const A = () => <p>{C}</p>;\n',
+      ).map((v) => v.rule),
+    ).toEqual(["copy/undeclared-copy-import"]);
+  });
+
+  // --- the regeneration path -------------------------------------------------
+
+  it("regeneration refuses additions in BOTH halves, not just the inventory", () => {
+    // The first draft checked the prose inventory and then replaced `exceptions`
+    // unconditionally, so swapping the one placeholder exception for a different
+    // dynamic attribute would have written the new identity and passed both the
+    // equality check and the `length <= 1` ceiling.
+    const source = readFileSync(join(REPO_ROOT, "tests/docs/marketing-truth-register.test.ts"), "utf8");
+    const block = source.slice(
+      source.indexOf('if (process.env.MARKETING_INVENTORY === "write")'),
+      source.indexOf("describe(\"R1."),
+    );
+    expect(block).toContain("INVENTORY.exceptions");
+    expect(block.match(/additions\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
   it("the prose heuristic still separates copy from class names", () => {

@@ -26,7 +26,7 @@
  * do not ask what a value renders, they refuse a shape that cannot be read.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import ts from "typescript";
 import {
   REPO_ROOT,
@@ -401,6 +401,89 @@ export function dynamicTextAttributeViolations(
 }
 
 /**
+ * P1 — a value rendered as text that was imported from an UNDECLARED module.
+ *
+ * The escape this closes is ordinary refactoring: a declared component imports
+ * `CLAIM` from a new `lib/…` helper and renders `{CLAIM}`. The component holds
+ * no text for the inventory, the helper is on no declared list so nothing judges
+ * it, and a bare identifier is not an assembly, an array or an attribute.
+ *
+ * NOT DISCOVERY. The import is never FOLLOWED and the module is never read. The
+ * only question asked is whether the specifier names a file already on the
+ * declared surface — a set membership test against a path written in the import
+ * statement. Copy may come from a canonical module, or from another declared
+ * file whose text is already frozen and judged; anywhere else is refused.
+ */
+export function undeclaredCopyImportViolations(
+  file: string,
+  declared: readonly string[],
+  source?: string,
+): CopyViolation[] {
+  const sf = parse(file, source);
+  const known = new Set(declared);
+
+  // Which local names came from where. Lexical: it reads the import statement,
+  // it does not open the file named there.
+  const origin = new Map<string, string>();
+  const collectImports = (n: ts.Node) => {
+    if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
+      const spec = n.moduleSpecifier.text;
+      const rel = spec.startsWith("@/")
+        ? spec.slice(2)
+        : spec.startsWith(".")
+          ? relative(REPO_ROOT, join(REPO_ROOT, dirname(file), spec))
+          : null;
+      if (rel === null || rel.startsWith("..")) return;
+      const resolved =
+        [".ts", ".tsx", "/index.ts", "/index.tsx"]
+          .map((ext) => rel + ext)
+          .find((candidate) => existsSync(join(REPO_ROOT, candidate))) ?? rel;
+      const clause = n.importClause;
+      if (clause?.name) origin.set(clause.name.text, resolved);
+      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const el of clause.namedBindings.elements) origin.set(el.name.text, resolved);
+      }
+      if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+        origin.set(clause.namedBindings.name.text, resolved);
+      }
+    }
+    ts.forEachChild(n, collectImports);
+  };
+  collectImports(sf);
+
+  const out: CopyViolation[] = [];
+  const visit = (n: ts.Node) => {
+    if (
+      ts.isJsxExpression(n) &&
+      n.expression &&
+      n.parent &&
+      (ts.isJsxElement(n.parent) || ts.isJsxFragment(n.parent))
+    ) {
+      const root = rootIdentifier(unwrap(n.expression) as ts.Expression);
+      const from = root === null ? undefined : origin.get(root);
+      if (from !== undefined && !known.has(from)) {
+        out.push({
+          file,
+          line: lineOf(sf, n),
+          rule: "copy/undeclared-copy-import",
+          detail: `${n.expression.getText().replace(/\s+/g, " ")} from ${from}`,
+        });
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** The leftmost identifier of `A.b.c`, or null. */
+function rootIdentifier(e: ts.Expression): string | null {
+  let cur = unwrap(e) as ts.Expression;
+  while (ts.isPropertyAccessExpression(cur)) cur = unwrap(cur.expression) as ts.Expression;
+  return ts.isIdentifier(cur) ? cur.text : null;
+}
+
+/**
  * R4 — copy assembled from authored words and something dynamic.
  *
  * The one rule about spelling that survives, and it is a refusal: a binding or
@@ -519,7 +602,41 @@ export function moduleLiterals(file: string, source?: string): string[] {
 export function judgeableText(file: string, source?: string): string[] {
   const sf = parse(file, source);
   const out: string[] = [];
+
+  // WHOLE SUBTREES, not one text node at a time. `<p>Every change <strong>is
+  // tracked</strong></p>` emits "Every change" and "is tracked", and neither
+  // fragment matches a rule or reaches the prose threshold — the sentence a
+  // visitor reads existed nowhere in the corpus.
+  //
+  // This is CONCATENATION, not a rendering model. It does not decide which tags
+  // are inline, what a hole evaluates to, or how React composes the tree: it
+  // joins the text a subtree contains, at every level. Joining too eagerly
+  // across a block boundary can only ADD a candidate string, never hide one, and
+  // an extra candidate fails closed — a build failure a human looks at, rather
+  // than a silent pass. That asymmetry is why concatenation is safe here and
+  // interpretation was not.
+  const subtreeText = (node: ts.Node): string => {
+    let text = "";
+    const gather = (x: ts.Node) => {
+      if (ts.isJsxText(x)) text += ` ${decodeEntities(x.text)}`;
+      if (
+        (ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) &&
+        x.parent &&
+        ts.isJsxExpression(x.parent)
+      ) {
+        text += ` ${x.text}`;
+      }
+      ts.forEachChild(x, gather);
+    };
+    gather(node);
+    return normalise(text);
+  };
+
   const visit = (n: ts.Node) => {
+    if (ts.isJsxElement(n) || ts.isJsxFragment(n)) {
+      const joined = subtreeText(n);
+      if (joined) out.push(joined);
+    }
     if (ts.isJsxText(n)) {
       const text = normalise(decodeEntities(n.text));
       if (text) out.push(text);
