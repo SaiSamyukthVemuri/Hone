@@ -284,7 +284,11 @@ function handRolledSites(file: string): string[] {
   const source = readFileSync(path.join(REPO_ROOT, file), "utf8");
   const hits: string[] = [];
   for (const literal of classNameLiterals(source, file)) {
-    const classes = literal.split(/\s+/).filter(Boolean);
+    // DEDUPED BEFORE COUNTING. Composition can repeat a utility —
+    // `cx("text-xs …", "text-xs")` renders one size, not two — and counting raw
+    // occurrences let a visually exact duplicate escape on a repetition. The
+    // rendered result is a SET, so the count is taken over distinct classes.
+    const classes = [...new Set(literal.split(/\s+/).filter(Boolean))];
     const set = new Set(classes);
     if (![...TYPOGRAPHY].every((c) => set.has(c))) continue;
     const muted = classes.filter((c) => MUTED.has(c));
