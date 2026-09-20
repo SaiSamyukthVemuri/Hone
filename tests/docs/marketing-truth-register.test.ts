@@ -1065,6 +1065,31 @@ describe("negative controls: the guard bites", () => {
     expect(unreconstructableIn(src, "lib/marketing/content.ts", [rule])).toHaveLength(1);
   });
 
+  it("finds a completion point INSIDE a group's alternatives", () => {
+    // Codex, at 25179fd0, and a real regression against the expansion the atom
+    // split replaced: treating `(tracked|recorded|kept|preserved)` as one
+    // indivisible atom stops the rule's openings at "every change is ", so a
+    // fragment ending mid-alternative matched nothing.
+    const rule = FORBIDDEN.find((r) => r.source.startsWith("every change is"))!;
+    expect(
+      rule.pattern.test("Every change is recorded"),
+      "precondition: the rendered sentence IS banned",
+    ).toBe(true);
+    expect(
+      FORBIDDEN.some((r) => r.pattern.test("Every change is rec")),
+      "precondition: the readable half alone trips nothing",
+    ).toBe(false);
+
+    expect(couldCompleteForbidden("Every change is rec", [rule])?.source).toBe(rule.source);
+
+    const src = `export const COPY = { line: "Every change is rec" + ending };`;
+    expect(unreconstructableIn(src, "lib/marketing/content.ts", [rule])).toHaveLength(1);
+
+    // The other direction, and the wildcard atom stays whole: a group is split
+    // internally, `(?:[\w-]+ ){0,3}` is not.
+    expect(couldCompleteForbidden("corded on every visit", [rule])?.source).toBe(rule.source);
+  });
+
   it("leaves a phrase that is already a full match to the substring guard", () => {
     // couldCompleteForbidden is about what a value could ADD. A fragment that
     // already contains the whole banned phrase is the substring guard's job, and

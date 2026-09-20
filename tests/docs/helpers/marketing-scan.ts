@@ -972,6 +972,64 @@ type CompletionPatterns = {
 };
 
 /**
+ * A group whose alternatives are plain words, as `(tracked|recorded|kept)` is.
+ *
+ * `(?:…)` is excluded by the `(?!\?)`, and any alternative carrying regex syntax
+ * disqualifies the whole atom — this only ever reads groups that are literal.
+ */
+const LITERAL_GROUP_ATOM = /^\((?!\?)([^()]*)\)\??$/;
+
+function literalAlternatives(atom: string): string[] | null {
+  const match = LITERAL_GROUP_ATOM.exec(atom);
+  if (!match) return null;
+  const alternatives = match[1].split("|").filter(Boolean);
+  if (alternatives.length === 0) return null;
+  if (alternatives.some((alt) => /[\\+*{}[\]().^$?|]/.test(alt))) return null;
+  return alternatives;
+}
+
+const escapeLiteral = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const alternationOf = (parts: string[]): string =>
+  `(?:${[...new Set(parts)]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeLiteral)
+    .join("|")})`;
+
+/**
+ * A completion can land INSIDE a group, not only between atoms.
+ *
+ * Codex at `25179fd0`, and a genuine regression against the expansion this
+ * replaced: treating `(tracked|recorded|kept|preserved)` as one indivisible atom
+ * means the openings of the rule stop at `"every change is "`, so
+ * `"Every change is rec" + ending` — which renders `"Every change is recorded"`
+ * — matched nothing.
+ *
+ * Only groups whose alternatives are literal words get this. That is exactly
+ * where a partial word is meaningful, and it keeps the wildcard atom whole,
+ * which is what the previous round existed to fix.
+ */
+const partialHeadOf = (atom: string): string | null => {
+  const alternatives = literalAlternatives(atom);
+  if (!alternatives) return null;
+  return alternationOf(
+    alternatives.flatMap((alt) =>
+      Array.from({ length: alt.length }, (_, i) => alt.slice(0, alt.length - i)),
+    ),
+  );
+};
+
+const partialTailOf = (atom: string): string | null => {
+  const alternatives = literalAlternatives(atom);
+  if (!alternatives) return null;
+  return alternationOf(
+    alternatives.flatMap((alt) =>
+      Array.from({ length: alt.length }, (_, i) => alt.slice(i)),
+    ),
+  );
+};
+
+/**
  * Compiled once per rule. Every rule produces two patterns per atom boundary,
  * and this runs for every concatenation in every scanned file.
  */
@@ -983,17 +1041,32 @@ function completionPatterns(source: string): CompletionPatterns {
   const atoms = ruleAtoms(source);
   const heads: RegExp[] = [];
   const tails: RegExp[] = [];
+  // A rule the splitter cannot cut cleanly must not take the whole guard down,
+  // so a run that does not compile is skipped rather than thrown.
+  const add = (into: RegExp[], pattern: string) => {
+    try {
+      into.push(new RegExp(pattern, "i"));
+    } catch {
+      /* skipped */
+    }
+  };
+
   // `k < atoms.length`: a run covering the WHOLE rule is a complete match, which
   // the rule's own pattern already catches. Only proper parts are completions.
   for (let k = atoms.length - 1; k >= 1; k -= 1) {
-    try {
-      heads.push(new RegExp(`(${atoms.slice(0, k).join("")})$`, "i"));
-      tails.push(new RegExp(`^(${atoms.slice(atoms.length - k).join("")})`, "i"));
-    } catch {
-      // An atom run that does not compile is skipped rather than thrown: a rule
-      // the splitter cannot cut cleanly must not take the whole guard down.
-    }
+    add(heads, `(${atoms.slice(0, k).join("")})$`);
+    add(tails, `^(${atoms.slice(atoms.length - k).join("")})`);
   }
+
+  // And the boundaries INSIDE a literal-alternative group, which the atom split
+  // would otherwise step straight over.
+  for (let k = atoms.length - 1; k >= 0; k -= 1) {
+    const head = partialHeadOf(atoms[k]);
+    if (head) add(heads, `(${atoms.slice(0, k).join("")}${head})$`);
+    const tail = partialTailOf(atoms[k]);
+    if (tail) add(tails, `^(${tail}${atoms.slice(k + 1).join("")})`);
+  }
+
   const patterns = { heads, tails };
   completionCache.set(source, patterns);
   return patterns;
