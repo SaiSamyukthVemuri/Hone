@@ -87,6 +87,46 @@ function review(
   return { key, label, explanation, status: "review", href };
 }
 
+/**
+ * THE NEXT SETUP TASK, or null when there is nothing left to point at.
+ *
+ * WHY THIS EXISTS. The checklist was a STATUS DISPLAY, not a flow: every item
+ * carries an `href` INTO its own task and nothing carries a pointer onward, so
+ * finishing one task returned the operator to the settings page they had just
+ * used and left them to re-derive what to do next. Pilot feedback named this
+ * directly ("finishing one task should lead directly to the next setup task").
+ *
+ * IT INVENTS NO ORDER. `buildGettingStarted` already emits sections and items
+ * in a deliberate sequence (basics -> booking -> charting -> records -> daily
+ * -> payments); this walks that existing order and returns the first item an
+ * operator can actually act on. A second ordering here would be a competing
+ * authority, which is the failure this repository keeps re-learning.
+ *
+ * TWO EXCLUSIONS, both deliberate:
+ *
+ *   `review` items are guidance to read once, not detectable work. They are
+ *   already excluded from `autoDone`/`autoTotal`, and pointing "next" at one
+ *   would stall the chain on something completion can never clear.
+ *
+ *   `href === null` items are not navigable. An item can be genuinely
+ *   incomplete and have nowhere to send you (the consent read failing, for
+ *   instance); offering a dead CTA is worse than offering none.
+ *
+ * A `todo` item with no href therefore does NOT block the chain — the walk
+ * continues past it. The checklist below still shows it as outstanding, so it
+ * is surfaced, just not as the next click.
+ */
+export function nextSetupStep(checklist: GettingStarted): ChecklistItem | null {
+  for (const section of checklist.sections) {
+    for (const item of section.items) {
+      if (item.status !== "todo") continue;
+      if (item.href === null) continue;
+      return item;
+    }
+  }
+  return null;
+}
+
 export function buildGettingStarted(
   s: GettingStartedSignals,
 ): GettingStarted {

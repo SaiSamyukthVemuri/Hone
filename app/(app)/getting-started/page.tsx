@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   buildGettingStarted,
+  nextSetupStep,
   getGettingStartedSignals,
   type ChecklistItem,
 } from "@/lib/onboarding/getting-started";
@@ -74,6 +75,7 @@ export default async function GettingStartedPage() {
     practitioner.display_name?.trim() || practitioner.email,
   );
   const checklist = buildGettingStarted(signals);
+  const nextStep = nextSetupStep(checklist);
 
   return (
     <div className="flex flex-col gap-6">
@@ -87,6 +89,42 @@ export default async function GettingStartedPage() {
           complete. Items marked Review are guidance to walk through once.
         </p>
       </div>
+
+      {/*
+        NEXT STEP. The checklist below is a status display; this is the one
+        place it becomes a flow. Rendered only when there is a navigable
+        outstanding item, so a fully set-up studio sees nothing rather than a
+        congratulatory placeholder — the same reason BookingSetupCard renders
+        null when readiness is satisfied.
+
+        It BLOCKS NOTHING and GATES NOTHING: it is a pointer at work the
+        checklist already lists, derived from the existing order.
+      */}
+      {nextStep ? (
+        <section
+          aria-labelledby="next-step-heading"
+          className="rounded-lg border border-neutral-300 bg-neutral-50 p-5 dark:border-neutral-700 dark:bg-neutral-900"
+        >
+          <h2
+            id="next-step-heading"
+            className="text-sm font-medium uppercase tracking-wider text-neutral-500"
+          >
+            Next step
+          </h2>
+          <p className="mt-2 text-base font-medium text-neutral-900 dark:text-neutral-100">
+            {nextStep.label}
+          </p>
+          <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+            {nextStep.explanation}
+          </p>
+          <Link
+            href={nextStep.href as string}
+            className="mt-3 inline-flex min-h-11 items-center rounded-md border border-neutral-300 px-4 text-sm font-medium text-neutral-900 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-800"
+          >
+            Continue setup
+          </Link>
+        </section>
+      ) : null}
 
       {checklist.sections.map((section) => (
         <section
