@@ -291,14 +291,20 @@ function handRolledSites(file: string): string[] {
     const classes = [...new Set(literal.split(/\s+/).filter(Boolean))];
     const set = new Set(classes);
     if (![...TYPOGRAPHY].every((c) => set.has(c))) continue;
+    // The muted spellings are ALIASES OF ONE COLOUR, not two colours.
+    // `text-fg-muted` and `text-neutral-500` both resolve to oklch(55.6% 0 0),
+    // so a composition carrying each still renders one muted foreground.
+    // Requiring exactly one MEMBER rejected that as ambiguous and let a
+    // visually exact duplicate through; what matters is that at least one is
+    // present and no OTHER colour is.
     const muted = classes.filter((c) => MUTED.has(c));
-    if (muted.length !== 1) continue;
+    if (muted.length === 0) continue;
     const sizes = classes.filter((c) => SIZES.has(c));
-    if (sizes.length !== 1) continue;
+    if (sizes.length !== 1) continue; // two different rungs IS ambiguous
     // Anything beyond the contract plus one size makes it a VARIANT — a caution
     // colour, a layout class, a scroll offset — and the primitive does not own
     // those. Only an exact duplicate is a finding.
-    if (classes.some((c) => !TYPOGRAPHY.has(c) && c !== muted[0] && c !== sizes[0])) continue;
+    if (classes.some((c) => !TYPOGRAPHY.has(c) && !MUTED.has(c) && c !== sizes[0])) continue;
     hits.push(literal);
   }
   return hits;
@@ -462,6 +468,28 @@ describe("UX-02: the uppercase section label has one owner", () => {
       `${contract} text-neutral-500`,
     );
     expect(blocks).toContain("text-sm text-red-600");
+  });
+
+  it("treats the two muted spellings as one colour", () => {
+    // They are aliases: --color-fg-muted is oklch(55.6% 0 0), the value
+    // text-neutral-500 resolves to. A composition carrying each renders one
+    // muted foreground, so requiring exactly one MEMBER let an exact duplicate
+    // through as "ambiguous".
+    const contract = "text-xs font-medium uppercase tracking-wider";
+    const both = classNameLiterals(
+      `export const X = <span className={cx("${contract} text-fg-muted", "text-neutral-500")} />;`,
+      "aliases.tsx",
+    );
+    const combined = both.find((l) => l.includes("text-fg-muted") && l.includes("text-neutral-500"));
+    expect(combined, "the fragments were never combined").toBeTruthy();
+    const classes = [...new Set(combined!.split(/\s+/).filter(Boolean))];
+    const set = new Set(classes);
+    const isDuplicate =
+      [...TYPOGRAPHY].every((c) => set.has(c)) &&
+      classes.filter((c) => MUTED.has(c)).length >= 1 &&
+      classes.filter((c) => SIZES.has(c)).length === 1 &&
+      !classes.some((c) => !TYPOGRAPHY.has(c) && !MUTED.has(c) && !SIZES.has(c));
+    expect(isDuplicate, "two aliases of one colour were read as two colours").toBe(true);
   });
 
   it("leaves real composition alone", () => {
