@@ -81,8 +81,10 @@ const MARKETING_COPY = CLAIMS.join(" ¶ ");
  * Component-authored prose that predates the authoring law.
  *
  * Owner ruling: existing text is NOT moved merely to satisfy the architecture,
- * so the two items already in components are recorded here rather than
- * migrated. The list is SHRINK-ONLY and the test below enforces that, so the law
+ * so the six items already in components are recorded here rather than
+ * migrated. The list GREW from two when the guard learned to assemble a sentence
+ * before classifying it and to derive its own file set — the code did not get
+ * worse, the guard got better, and the previous count was an undercount. The list is SHRINK-ONLY and the test below enforces that, so the law
  * binds all new work while the migration stays a separate, product-owned change.
  *
  * `SiteFooter.tsx` is worth naming: "Operated from Canada." is the hosting
@@ -92,6 +94,7 @@ const MARKETING_COPY = CLAIMS.join(" ¶ ");
  * scope for #717.
  */
 const COMPONENT_PROSE_BASELINE: readonly string[] = [
+  "app/_components/DemoForm.tsx",
   "app/_components/marketing/SiteFooter.tsx",
   "app/_components/marketing/article.tsx",
 ];
@@ -99,13 +102,18 @@ const COMPONENT_PROSE_BASELINE: readonly string[] = [
 /**
  * The one place a claim is still assembled from a value.
  *
- * `/resources` renders its lede author through `{RESOURCE_AUTHOR}`. The
- * architecture review's **A3** named this exact case and offered three
- * dispositions — rewrite, declare, or a narrow declared exemption. This is the
- * declared exemption, recorded where the guard reads it rather than buried in
- * the scanner, and it is shrink-only for the same reason as the list above.
+ * EMPTY, and that is a result rather than an oversight.
+ *
+ * `/resources` renders its lede author through `{RESOURCE_AUTHOR}` — the exact
+ * case the architecture review's **A3** named, and the same shape as
+ * `{POSITIONING.corePromise}` on the homepage. Neither is a claim assembled from
+ * fragments: both CONSUME a complete approved value from a declared copy module,
+ * which is precisely what the authoring law asks rendering code to do. The
+ * architecture dissolved A3 rather than needing an exemption for it.
+ *
+ * A hole that does NOT resolve to a declared copy module is still refused.
  */
-const ASSEMBLED_CLAIM_BASELINE: readonly string[] = ["app/resources/page.tsx"];
+const ASSEMBLED_CLAIM_BASELINE: readonly string[] = [];
 
 /** The production head the register declares it was verified against. */
 function declaredHead(): string {
@@ -836,17 +844,64 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     }
   });
 
+  it("derives its rendering sources instead of trusting a directory list", () => {
+    // A hand-kept list missed `app/_components/DemoForm.tsx`: `app/demo/page.tsx`
+    // renders it, it authors visitor-facing prose, and `pageClaims` cannot see
+    // through `<DemoForm />`. The import is RELATIVE, which is the ordinary way
+    // to reach a sibling and the reason an `@/`-only scan missed it.
+    expect(marketingComponentFiles()).toContain("app/_components/DemoForm.tsx");
+    expect(marketingComponentFiles()).toContain("app/_components/marketing/SiteFooter.tsx");
+  });
+
+  it("assembles component prose before classifying it, exactly as pages do", () => {
+    // The previous head applied build-text-first to `pageClaims` and left the
+    // component guard classifying each JsxText node alone, so the identical
+    // sentence produced three harmless fragments and no violation.
+    const src = `export const A = () => <p>Every <strong>change is tracked</strong>.</p>;`;
+    expect(componentProseViolationsIn(src).map((v) => v.rule)).toContain(
+      "component/no-authored-prose",
+    );
+    // NEGATIVE: layout with no authored sentence stays clean.
+    expect(
+      componentProseViolationsIn(
+        `export const A = ({ copy }) => <p className="mt-8 text-sm text-muted">{copy}</p>;`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("refuses a hole inside a claim, and allows an approved copy value", () => {
+    // `<p>Every <strong>change is {state}</strong>.</p>` reduced to "Every change
+    // is ." without the hole — not substantive — so the hole was never refused,
+    // and `state === "tracked"` renders the N1 sentence. The gate now counts a
+    // hole as the word it will render as.
+    expect(
+      assembledIn(`export const A = () => <p>Every <strong>change is {state}</strong>.</p>;`)
+        .map((v) => v.rule),
+    ).toContain("claim/assembled-from-fragments");
+
+    // NEGATIVE, and the one that matters most: consuming a complete approved
+    // value from a declared copy module is the pattern the law PRESCRIBES.
+    // Refusing it would forbid correct authoring, which the first cut of this
+    // check did.
+    expect(
+      assembledIn(
+        `import { POSITIONING } from "@/lib/marketing/content";\n` +
+          `export const A = () => <p>{POSITIONING.corePromise} and every area keeps its history.</p>;`,
+      ),
+    ).toEqual([]);
+  });
+
   it("the pre-existing exceptions are declared, counted, and shrink-only", () => {
     // Owner ruling: existing text is not moved merely to satisfy the
     // architecture. These are the exceptions, visible rather than tolerated
     // silently, and the assertion is an upper bound so the list cannot grow.
     const prose = marketingComponentFiles().flatMap((f) => componentProseViolations(f));
     expect(new Set(prose.map((v) => v.file))).toEqual(new Set(COMPONENT_PROSE_BASELINE));
-    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(2);
+    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(6);
 
     const assembled = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) => assembledClaimViolations(f));
     expect(new Set(assembled.map((v) => v.file))).toEqual(new Set(ASSEMBLED_CLAIM_BASELINE));
-    expect(assembled.length, "assembled claims grew").toBeLessThanOrEqual(1);
+    expect(assembled.length, "a claim is assembled from something that is not approved copy").toBe(0);
   });
 });
 

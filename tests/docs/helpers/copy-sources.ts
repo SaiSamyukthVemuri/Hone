@@ -35,7 +35,7 @@ import {
   decodeEntities,
 } from "./register-provenance";
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 // ---------------------------------------------------------------------------
 // 1. The declarations. This list IS the scan's universe.
@@ -82,16 +82,46 @@ export function pageCopySources(): string[] {
  * not author substantive prose of its own.
  */
 export function marketingComponentFiles(): string[] {
-  const dirs = ["app/_components/marketing", "app/_components/marketing/visuals"];
-  const out: string[] = [];
-  for (const dir of dirs) {
+  const out = new Set<string>();
+  for (const dir of ["app/_components/marketing", "app/_components/marketing/visuals"]) {
     const abs = join(REPO_ROOT, dir);
     if (!existsSync(abs)) continue;
     for (const name of readdirSync(abs)) {
-      if (/\.tsx$/.test(name)) out.push(`${dir}/${name}`);
+      if (/\.tsx$/.test(name)) out.add(`${dir}/${name}`);
     }
   }
-  return out.sort();
+  // DERIVED, not only listed. A hand-kept directory list missed
+  // `app/_components/DemoForm.tsx`, which `app/demo/page.tsx` renders and which
+  // authors visitor-facing prose: `pageClaims` cannot see through `<DemoForm />`
+  // and the prose guard never ran on it, so a claim added there shipped green.
+  //
+  // One level, and components only. Going transitive is what made the previous
+  // architecture unbounded; a component a declared page renders is a rendering
+  // source, and that is where the line sits.
+  for (const page of [...pageCopySources(), ...POLICY_SOURCES]) {
+    const sf = parse(page);
+    const visit = (n: ts.Node) => {
+      if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
+        const spec = n.moduleSpecifier.text;
+        // `@/app/_components/...` and `../_components/...` are the same file.
+        // The hand-kept list missed `DemoForm` because `app/demo/page.tsx`
+        // imports it relatively, which is the ordinary way to import a sibling.
+        const rel = spec.startsWith("@/")
+          ? spec.slice(2)
+          : spec.startsWith(".")
+            ? relative(REPO_ROOT, join(REPO_ROOT, dirname(page), spec))
+            : null;
+        if (rel && /^(app\/_components|components)\//.test(rel)) {
+          for (const ext of [".tsx", "/index.tsx"]) {
+            if (existsSync(join(REPO_ROOT, rel + ext))) out.add(rel + ext);
+          }
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return [...out].sort();
 }
 
 /**
@@ -351,22 +381,30 @@ function producesText(node: ts.Node): boolean {
  */
 export function componentProseViolations(file: string, source?: string): CopyViolation[] {
   const sf = parse(file, source);
+  const approved = approvedCopyNames(sf);
   const out: CopyViolation[] = [];
   const visit = (n: ts.Node) => {
-    if (ts.isJsxText(n) && isSubstantiveProse(n.text)) {
-      out.push({
-        file,
-        line: lineOf(sf, n),
-        rule: "component/no-authored-prose",
-        detail: normalise(decodeEntities(n.text)).slice(0, 70),
-      });
+    // Build the sentence first, exactly as `pageClaims` does. Classifying each
+    // JsxText node on its own let `<p>Every <strong>change is tracked</strong>.
+    // </p>` pass as three harmless fragments.
+    if (ts.isJsxElement(n)) {
+      const parts = claimParts(n, approved);
+      if (isSubstantiveProse(parts.textWithHoles)) {
+        out.push({
+          file,
+          line: lineOf(sf, n),
+          rule: "component/no-authored-prose",
+          detail: normalise(parts.text || parts.textWithHoles).slice(0, 70),
+        });
+      }
     }
     if (
       (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
       isSubstantiveProse(n.text)
     ) {
       const attr = enclosingAttributeName(n);
-      if (!attr || !isPlumbingAttribute(attr)) {
+      const insideJsxText = ts.isJsxExpression(n.parent) && ts.isJsxElement(n.parent.parent);
+      if ((!attr || !isPlumbingAttribute(attr)) && !insideJsxText) {
         out.push({
           file,
           line: lineOf(sf, n),
@@ -391,34 +429,30 @@ export function componentProseViolations(file: string, source?: string): CopyVio
  */
 export function assembledClaimViolations(file: string, source?: string): CopyViolation[] {
   const sf = parse(file, source);
+  const approved = approvedCopyNames(sf);
   const out: CopyViolation[] = [];
   const visit = (n: ts.Node) => {
     if (ts.isJsxElement(n)) {
-      if (isSubstantiveProse(claimText(n))) {
-        for (const child of n.children) {
-          if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
-            const tag = tagNameOf(child);
-            if (!INLINE_IN_CLAIM.includes(tag)) {
-              out.push({
-                file,
-                line: lineOf(sf, child),
-                rule: "claim/unknown-element-inside-claim",
-                detail: `<${tag}> inside substantive text; declare it inline or author the sentence as one value`,
-              });
-            }
-          } else if (ts.isJsxExpression(child) && child.expression) {
-            const e = child.expression;
-            const complete =
-              ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e);
-            if (!complete) {
-              out.push({
-                file,
-                line: lineOf(sf, child),
-                rule: "claim/assembled-from-fragments",
-                detail: child.getText().slice(0, 70),
-              });
-            }
-          }
+      const parts = claimParts(n, approved);
+      // The gate reads the sentence WITH its holes counted as words, because a
+      // hole renders as something and a claim missing one word is still a claim.
+      if (isSubstantiveProse(parts.textWithHoles)) {
+        for (const hole of parts.holes) {
+          out.push({
+            file,
+            line: lineOf(sf, hole),
+            rule: "claim/assembled-from-fragments",
+            detail: hole.getText().slice(0, 70),
+          });
+        }
+        for (const el of parts.undeclared) {
+          const tag = tagNameOf(el as ts.JsxElement | ts.JsxSelfClosingElement);
+          out.push({
+            file,
+            line: lineOf(sf, el),
+            rule: "claim/unknown-element-inside-claim",
+            detail: `<${tag}> inside substantive text; declare it inline or author the sentence as one value`,
+          });
         }
       }
     }
@@ -463,20 +497,112 @@ export function walkStrings(value: unknown, seen = new Set<unknown>()): string[]
  * not a complete literal contributes nothing either, because the shape guard has
  * already refused it. Neither case is inferred; both are already settled.
  */
-function claimText(node: ts.JsxElement): string {
+type ClaimParts = {
+  /** The sentence as authored, holes contributing nothing. */
+  readonly text: string;
+  /**
+   * The same sentence with each hole standing in as one ordinary word.
+   *
+   * A hole RENDERS as something, so for the purpose of deciding "is this a
+   * claim?" it has to count as a word. Without this,
+   * `<p>Every <strong>change is {state}</strong>.</p>` reduced to "Every change
+   * is ." — not substantive — so the hole was never refused, and with
+   * `state === "tracked"` the page rendered the N1 sentence with every guard
+   * green.
+   */
+  readonly textWithHoles: string;
+  /** Expressions inside the claim that are not complete literals. */
+  readonly holes: ts.Node[];
+  /** Element children inside the claim that nothing declared inline. */
+  readonly undeclared: ts.JsxElement[] | ts.Node[];
+};
+
+/**
+ * The sentence an element renders, folding DECLARED inline descendants in.
+ *
+ * One traversal, shared by all three guards and by extraction — because the
+ * previous head applied build-text-first to `pageClaims` and left the component
+ * guard classifying each `JsxText` node on its own, so the identical sentence in
+ * a component produced only the fragments "Every", "change is tracked" and "."
+ * and no violation at all.
+ */
+/**
+ * Names a file imports from a DECLARED canonical copy module.
+ *
+ * `{POSITIONING.corePromise}` is not a claim being assembled — it is a complete
+ * approved value being consumed, which is exactly what the authoring law asks
+ * rendering code to do. Refusing it would forbid the very pattern the law
+ * prescribes, and the first run of the hole check did precisely that.
+ *
+ * One level of import resolution, by name. Nothing is evaluated and nothing is
+ * followed further: the value's CONTENT is judged where it is authored, in the
+ * copy module, by `moduleClaims`.
+ */
+function approvedCopyNames(sf: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const visit = (n: ts.Node) => {
+    if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
+      const spec = n.moduleSpecifier.text.replace(/^@\//, "");
+      if (CANONICAL_COPY_MODULES.some((m) => m === `${spec}.ts` || m === spec)) {
+        const clause = n.importClause?.namedBindings;
+        if (clause && ts.isNamedImports(clause)) {
+          for (const el of clause.elements) names.add(el.name.text);
+        }
+        if (n.importClause?.name) names.add(n.importClause.name.text);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return names;
+}
+
+/** The leftmost identifier of `A.b.c`, or null. */
+function rootIdentifier(e: ts.Expression): string | null {
+  let cur: ts.Expression = e;
+  while (ts.isPropertyAccessExpression(cur)) cur = cur.expression;
+  return ts.isIdentifier(cur) ? cur.text : null;
+}
+
+function claimParts(node: ts.JsxElement, approved: Set<string> = new Set()): ClaimParts {
   let text = "";
+  let textWithHoles = "";
+  const holes: ts.Node[] = [];
+  const undeclared: ts.Node[] = [];
   for (const child of node.children) {
     if (ts.isJsxText(child)) {
       text += decodeEntities(child.text);
+      textWithHoles += decodeEntities(child.text);
     } else if (ts.isJsxExpression(child) && child.expression) {
       const e = child.expression;
-      if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) text += e.text;
-    } else if (ts.isJsxElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
-      text += claimText(child);
+      if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+        text += e.text;
+        textWithHoles += e.text;
+      } else {
+        const root = rootIdentifier(e);
+        // A placeholder WORD, with no padding of its own: the authored text
+        // around it already carries the spacing, and adding any detached the
+        // full stop from the last word so the sentence stopped reading as one.
+        textWithHoles += "something";
+        if (!(root && approved.has(root))) holes.push(child);
+      }
+    } else if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
+      if (ts.isJsxElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
+        const inner = claimParts(child, approved);
+        text += inner.text;
+        textWithHoles += inner.textWithHoles;
+        holes.push(...inner.holes);
+        undeclared.push(...inner.undeclared);
+      } else if (!INLINE_IN_CLAIM.includes(tagNameOf(child))) {
+        undeclared.push(child);
+      }
     }
   }
-  return text;
+  return { text, textWithHoles, holes, undeclared };
 }
+
+const claimText = (node: ts.JsxElement, approved?: Set<string>): string =>
+  claimParts(node, approved).text;
 
 /**
  * Substantive strings a declared copy module authors, read statically.
@@ -521,11 +647,18 @@ export function moduleClaims(file: string, source?: string): string[] {
  */
 export function pageClaims(file: string, source?: string): string[] {
   const sf = parse(file, source);
+  const approved = approvedCopyNames(sf);
   const out: string[] = [];
   const visit = (n: ts.Node) => {
     if (ts.isJsxElement(n)) {
-      const text = claimText(n);
-      if (isSubstantiveProse(text)) out.push(normalise(text));
+      const parts = claimParts(n, approved);
+      // A sentence with a hole is not a complete value, so it is not judged
+      // here — it was already REFUSED by `assembledClaimViolations`, which is
+      // the guard that owns it. Judging a half-written sentence is exactly the
+      // reconstruction this architecture removed.
+      if (parts.holes.length === 0 && isSubstantiveProse(parts.text)) {
+        out.push(normalise(parts.text));
+      }
     }
     if (
       (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
