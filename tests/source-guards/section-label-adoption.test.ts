@@ -40,6 +40,21 @@ import { describe, expect, it } from "vitest";
 //
 // The second rule is the one that matters later. An allowlist nobody is forced
 // to prune quietly becomes permission.
+//
+// WHAT THIS GUARD DOES NOT ATTEMPT, STATED SO THE SCOPE HAS AN END.
+//
+// It resolves statically-known strings in the file it is reading: literals,
+// module- and function-scoped string constants, and the concatenation of
+// multi-fragment cx() calls. It does NOT evaluate a class list imported from
+// another module, assembled from a computed key, or interpolated through a
+// template with a substitution. Those are reachable by someone determined to
+// evade it, and chasing them would turn a source guard into a constant folder.
+//
+// That boundary is a judgement, not an oversight: the failure this exists to
+// prevent is a duplicate reappearing by HABIT — copied from a neighbouring file
+// during ordinary work — and every form habit actually takes is covered. It is
+// recorded here so the next reader can tell the difference between a gap that
+// was considered and one that was missed.
 // ===========================================================================
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -138,13 +153,33 @@ function classNameLiterals(source: string, fileName: string): string[] {
   const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const out: string[] = [];
 
-  // Module-level string constants, so an extracted class name is followed to
-  // its value. `const LABEL = "…"; <span className={LABEL}>` is an exact
-  // duplicate that an identifier-blind walk never sees, and extracting class
-  // constants is already a pattern in this repository — `btnPrimary` and
-  // `btnSecondary` in the Google Calendar settings card are two of them.
-  const constants = new Map<string, string>();
-  const collectConstants = (node: ts.Node): void => {
+  /** The nearest enclosing scope of a node: a function-like, or the file. */
+  const scopeOf = (node: ts.Node): ts.Node => {
+    let cur: ts.Node | undefined = node.parent;
+    while (cur) {
+      if (
+        ts.isFunctionDeclaration(cur) ||
+        ts.isFunctionExpression(cur) ||
+        ts.isArrowFunction(cur) ||
+        ts.isMethodDeclaration(cur) ||
+        ts.isSourceFile(cur)
+      ) {
+        return cur;
+      }
+      cur = cur.parent;
+    }
+    return sf;
+  };
+
+  // Constants are keyed BY SCOPE, not by name alone.
+  //
+  // A single file-wide map keyed only by identifier text was wrong in both
+  // directions: two components each declaring a conventional `const LABEL`
+  // would collide, so the later declaration silently answered for the earlier
+  // one. That loses a real duplicate AND invents one in unrelated code, and a
+  // guard that fails innocent code is worse than a guard with a gap.
+  const constants = new Map<ts.Node, Map<string, string>>();
+  const declare = (node: ts.Node): void => {
     if (
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
@@ -152,19 +187,39 @@ function classNameLiterals(source: string, fileName: string): string[] {
       (ts.isStringLiteral(node.initializer) ||
         ts.isNoSubstitutionTemplateLiteral(node.initializer))
     ) {
-      constants.set(node.name.text, node.initializer.text);
+      const scope = scopeOf(node);
+      if (!constants.has(scope)) constants.set(scope, new Map());
+      constants.get(scope)!.set(node.name.text, node.initializer.text);
     }
-    ts.forEachChild(node, collectConstants);
+    ts.forEachChild(node, declare);
   };
-  ts.forEachChild(sf, collectConstants);
+  ts.forEachChild(sf, declare);
 
-  const collectStrings = (node: ts.Node): void => {
-    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      out.push(node.text);
-    } else if (ts.isIdentifier(node) && constants.has(node.text)) {
-      out.push(constants.get(node.text)!);
+  /** Resolve an identifier from its OWN scope outward, nearest wins. */
+  const resolve = (node: ts.Identifier): string | null => {
+    let scope: ts.Node | undefined = scopeOf(node);
+    while (scope) {
+      const hit = constants.get(scope)?.get(node.text);
+      if (hit !== undefined) return hit;
+      if (ts.isSourceFile(scope)) break;
+      scope = scopeOf(scope);
     }
-    ts.forEachChild(node, collectStrings);
+    return null;
+  };
+
+  /** Every statically-known string reachable from a node, in source order. */
+  const staticStrings = (node: ts.Node): string[] => {
+    const found: string[] = [];
+    const visit = (n: ts.Node): void => {
+      if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) found.push(n.text);
+      else if (ts.isIdentifier(n)) {
+        const v = resolve(n);
+        if (v !== null) found.push(v);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(node);
+    return found;
   };
 
   const visit = (node: ts.Node): void => {
@@ -174,9 +229,17 @@ function classNameLiterals(source: string, fileName: string): string[] {
       node.name.text === "className" &&
       node.initializer
     ) {
-      if (ts.isStringLiteral(node.initializer)) out.push(node.initializer.text);
-      else if (ts.isJsxExpression(node.initializer) && node.initializer.expression) {
-        collectStrings(node.initializer.expression);
+      if (ts.isStringLiteral(node.initializer)) {
+        out.push(node.initializer.text);
+      } else if (ts.isJsxExpression(node.initializer) && node.initializer.expression) {
+        const parts = staticStrings(node.initializer.expression);
+        // Each fragment on its own...
+        out.push(...parts);
+        // ...AND their combination, because `cx("a b c", "d")` renders the
+        // concatenation. Testing fragments independently let a contract split
+        // across two arguments pass, and multi-fragment cx() is a convention
+        // here rather than an evasion.
+        if (parts.length > 1) out.push(parts.join(" "));
       }
     }
     ts.forEachChild(node, visit);
@@ -285,6 +348,31 @@ describe("UX-02: the uppercase section label has one owner", () => {
       ["token spelling", `<span className="${contract} text-fg-muted" />`],
       ["reordered", `<span className="uppercase text-neutral-500 tracking-wider text-xs font-medium" />`],
     ];
+    // Split across two cx() fragments, which renders as the concatenation.
+    const viaFragments = classNameLiterals(
+      `export const X = <span className={cx("${contract}", "text-neutral-500")} />;`,
+      "fragments.tsx",
+    );
+    expect(
+      viaFragments.some((l) => {
+        const set = new Set(l.split(/\s+/).filter(Boolean));
+        return [...TYPOGRAPHY].every((c) => set.has(c)) && set.has("text-neutral-500");
+      }),
+      "a contract split across cx fragments escaped the guard",
+    ).toBe(true);
+
+    // Two scopes, same conventional name. The first must resolve to its OWN
+    // value: a file-wide map keyed by name alone answered with the second.
+    const scoped = classNameLiterals(
+      `export function A() { const LABEL = "${contract} text-neutral-500"; return <span className={LABEL} />; }\n` +
+        `export function B() { const LABEL = "text-sm text-red-600"; return <span className={LABEL} />; }`,
+      "scoped.tsx",
+    );
+    expect(scoped, "scoped constants did not resolve to their own declarations").toContain(
+      `${contract} text-neutral-500`,
+    );
+    expect(scoped).toContain("text-sm text-red-600");
+
     // An extracted constant is the same duplicate with a name on it.
     const viaConstant = classNameLiterals(
       `const LABEL = "${contract} text-neutral-500";\nexport const X = <span className={LABEL} />;`,
