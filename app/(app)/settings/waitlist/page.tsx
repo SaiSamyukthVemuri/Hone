@@ -47,6 +47,7 @@ import { localLongDate } from "@/lib/booking/tz";
 // their commands — this surface simply no longer offers claiming. See the
 // CLAIMING IS INTERNAL note below.
 import {
+  closeUnbookedWaitlistInvitationAction,
   expireWaitlistInvitationAction,
   releaseWaitlistEntryAction,
   removeWaitlistEntryAction,
@@ -227,6 +228,9 @@ const ACTION_FORMS: Partial<
 > = {
   release: releaseWaitlistEntryAction,
   requeue: requeueWaitlistEntryAction,
+  // WAIT-P1-EXIT. The only control a redeemed-but-unbooked row can offer; the
+  // admission model decides when, and it is the exact complement of release.
+  close: closeUnbookedWaitlistInvitationAction,
 };
 
 function DenialCard({ children }: { children: React.ReactNode }) {
@@ -607,12 +611,24 @@ export default async function WaitlistSettingsPage({
   // operator's way to end a live invitation early is Release. So the elapsed
   // fact is read rather than assumed, and only for the entries that could use
   // it.
-  const invitedIds = rows.filter((r) => r.status === "invited").map((r) => r.id);
+  // WAIT-P1-EXIT. `released` ROWS NEED THE INVITATION FACTS TOO, NOW.
+  //
+  // 0200 refuses to requeue an entry holding a redeemed invitation, so
+  // "Return to waitlist" on such a row could only ever fail. Deciding that from
+  // the status alone is impossible: a `released` entry that was merely set
+  // aside IS requeueable, and one whose used invitation was closed is not. The
+  // two are distinguished by exactly the fact this read already fetches.
+  //
+  // It rides the SAME two queries — one `.in()` list, no new round trip, no new
+  // policy — and the read is still owner-RLS-scoped.
+  const cycleIds = rows
+    .filter((r) => r.status === "invited" || r.status === "released")
+    .map((r) => r.id);
   /** Recorded provider outcome per invited entry. ABSENT means never recorded,
    *  which is NOT the same as the observed verdict `unknown`. */
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
   let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
-  if (invitedIds.length > 0) {
+  if (cycleIds.length > 0) {
     // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
     //
     // `new_client_waitlist_invitations` is append-only, so an entry that went
@@ -643,7 +659,7 @@ export default async function WaitlistSettingsPage({
           // no new policy and no service-role path.
         .select("entry_id,expires_at,delivery_disposition")
         .eq("studio_id", studio.id)
-        .in("entry_id", invitedIds)
+        .in("entry_id", cycleIds)
         .is("redeemed_at", null)
         .is("expired_at", null)
         .is("released_at", null)
@@ -677,7 +693,7 @@ export default async function WaitlistSettingsPage({
         .from("new_client_waitlist_invitations")
         .select("entry_id")
         .eq("studio_id", studio.id)
-        .in("entry_id", invitedIds)
+        .in("entry_id", cycleIds)
         .not("redeemed_at", "is", null),
     ]);
 
@@ -698,10 +714,12 @@ export default async function WaitlistSettingsPage({
       const redeemedIds = new Set(
         ((redeemed.data ?? []) as Array<{ entry_id: string }>).map((r) => r.entry_id),
       );
-      // Default every invited entry to "no live invitation": an entry with
-      // neither a live nor a redeemed row offers nothing, which is the safe
-      // direction.
-      for (const id of invitedIds) {
+      // Default every entry in the census to "no live invitation": an entry
+      // with neither a live nor a redeemed row offers nothing, which is the
+      // safe direction. A `released` row that was merely set aside lands here
+      // with `redeemed: false` and stays requeueable, which is what separates
+      // it from one whose used invitation was closed.
+      for (const id of cycleIds) {
         cycleByEntry.set(id, { elapsed: false, redeemed: redeemedIds.has(id) });
       }
       for (const inv of (live.data ?? []) as Array<{
@@ -1010,12 +1028,20 @@ export default async function WaitlistSettingsPage({
                                 }
                               </p>
                             )}
-                          {row.status === "invited" && (
+                          {/* WAIT-P1-EXIT ADDED `released` HERE, AND THE
+                              ADDITION IS A CORRECTION, NOT AN EXTRA.
+                              `STATUS_MEANING.released` promises "Return them to
+                              it to put them back in line" — true of a set-aside
+                              entry and FALSE of one whose used invitation was
+                              closed, because 0200 refuses that requeue. The row
+                              was therefore promising, in prose, exactly what
+                              the missing control could not deliver. */}
+                          {(row.status === "invited" || row.status === "released") && (
                             <p
                               data-testid="row-status-meaning"
                               className="text-sm text-neutral-500"
                             >
-                              {statusMeaning("invited", {
+                              {statusMeaning(row.status, {
                                 invitationElapsed: elapsed,
                                 invitationRedeemed: redeemed,
                                 invitationFactsUnknown: cycleByEntry === null,
@@ -1029,7 +1055,20 @@ export default async function WaitlistSettingsPage({
                               transition, not a practitioner's job — the model
                               still rules on it and the command is untouched,
                               but nothing here asks for it. */}
-                          {(["release", "expire", "requeue"] as AdmissionAction[]).map(
+                          {(
+                            [
+                              "release",
+                              // WAIT-P1-EXIT. Listed immediately after release
+                              // because the two are mutually exclusive by
+                              // construction: release is withheld once the
+                              // invitation has been used and close is offered
+                              // only then, so an `invited` row shows exactly
+                              // one of them and never both.
+                              "close",
+                              "expire",
+                              "requeue",
+                            ] as AdmissionAction[]
+                          ).map(
                             (action) => {
                               const verdict = actionAvailability(action, row.status, {
                                 invitationElapsed: elapsed,
