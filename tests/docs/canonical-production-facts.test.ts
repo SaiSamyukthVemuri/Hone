@@ -1071,6 +1071,14 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // as a gate rather than as a count.
       /activation\s+(?:—|-|--)?\s*is ungranted/i,
       /Stage B2[^.\n]{0,40}\b(?:has not been granted|remains blocked|is ungranted)\b/i,
+      // ROUTE OCCUPANCY. Codex #740, sixth direction on this class: "WAIT-01
+      // currently serves NO studio" and "applies only to ... — currently none".
+      // Which route a studio occupies is decided by configuration re-read on
+      // every request, so persisted rows cannot establish it either way. Same
+      // rule as the rest: date it and it is an observation.
+      /WAIT-01[^.\n]{0,60}\b(?:currently\s+)?serves\s+(?:NO|no|nobody|any)\b/i,
+      /\bcurrently serves\s+(?:NO|no|nobody)\s+studio\b/i,
+      /durable allowlist\s*[—-]\s*currently none\b/i,
     ];
 
     /** A date anywhere in the surrounding sentence makes it an observation. */

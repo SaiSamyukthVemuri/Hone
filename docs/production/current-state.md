@@ -489,8 +489,11 @@ measured instant · its EMAIL COMMIT POINT no longer served any studio.**
 > Willow — that part is unchanged and is why new-client booking is still refused. What changed is
 > what happens next: `app/book/[slug]/waitlist-actions.ts:562` routes a studio named on **both**
 > allowlists to the durable branch, and Willow has been on both since on or before 2026-08-25.
-> So for Willow the email is a **notification** and the row is the record. WAIT-01's commit point
-> now applies only to a waitlisted studio outside the durable allowlist — currently none.
+> So for Willow the email was a **notification** and the row the record, at every measured
+> instant. WAIT-01's commit point applies to a waitlisted studio outside the durable allowlist;
+> **no such studio existed at any measured instant, and that is a dated observation, not a
+> statement about route occupancy now.** Clearing the allowlist re-routes Willow through WAIT-01
+> on the very next request, because the configuration is re-read per call.
 
 New-client booking at Willow is **refused and routed to a waitlist**. This is admission control:
 a studio whose existing treatment clients cannot be served on a clinically useful cadence stops
