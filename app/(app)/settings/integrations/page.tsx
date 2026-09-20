@@ -1,7 +1,13 @@
 import { redirect } from "next/navigation";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { createClient } from "@/lib/supabase/server";
 import { GoogleCalendarCard } from "../profile/GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
+import { SmsSenderStatusCard } from "./SmsSenderStatusCard";
+import {
+  presentSenderStatus,
+  readOwnStudioSmsSender,
+} from "@/lib/sms/sender-status";
 
 // Settings → Integrations. Owner-only surface for connecting the studio to outside
 // services. Today: Google Calendar (connection + status only). This page REUSES
@@ -23,9 +29,22 @@ export default async function IntegrationsSettingsPage() {
   // The card renders ONLY when the studio connection flag is on; when it's off the
   // card is hidden and the server actions reject anyway.
   const googleEnabled = studio.google_calendar_connection_enabled === true;
-  const google = googleEnabled
-    ? await getOwnConnectionReadiness(studio.id, practitioner.id)
-    : { metadata: null, readiness: "disconnected" as const };
+
+  // Both reads depend only on identity, which is already resolved, so they go
+  // in one wave rather than two serial round trips.
+  //
+  // The SMS read goes through the CALLER'S OWN session client, deliberately:
+  // 0191's owner policy and column grant are what decide whether a row comes
+  // back and which columns it carries. Handing this a service-role client would
+  // move that decision out of the database and into this page.
+  const [google, smsSender] = await Promise.all([
+    googleEnabled
+      ? getOwnConnectionReadiness(studio.id, practitioner.id)
+      : Promise.resolve({ metadata: null, readiness: "disconnected" as const }),
+    createClient().then((supabase) =>
+      readOwnStudioSmsSender(supabase, studio.id),
+    ),
+  ]);
 
   return (
     <section className="flex flex-col gap-6">
@@ -62,6 +81,14 @@ export default async function IntegrationsSettingsPage() {
           </p>
         </div>
       )}
+
+      {/* SMS sender status — REPORT ONLY. Hone ships a complete per-studio
+          sender lifecycle (0191/0194, provision, adopt) that no product path
+          can currently reach, so a studio owner has never been able to see
+          whether their studio has a sender at all. This card is that view and
+          nothing more: it starts no provisioning, constructs no provider, and
+          offers no control. */}
+      <SmsSenderStatusCard view={presentSenderStatus(smsSender)} />
     </section>
   );
 }
