@@ -355,8 +355,14 @@ export function presentSenderStatus(read: SenderRead): SenderStatusView {
         status: row.status,
         tone: "retired",
         headline: "Number released",
+        // Says what happens NOW as well as what happened. This branch is
+        // reached when a studio released its number and has not started a
+        // replacement, so it is a current-state answer, not just a history
+        // note — and an owner reading only "this number was given up" would be
+        // left with the same "are my texts going out?" question the empty
+        // state exists to answer.
         detail:
-          "This number was given up. Released senders are kept as history and are never reused.",
+          "This number was given up and is never reused. Messages are sent using Hone's shared sender.",
         phoneNumber: row.phone_number,
         recovery: "none",
         errorCode: null,
@@ -409,11 +415,28 @@ export async function readOwnStudioSmsSender(
   client: SupabaseClient,
   studioId: string,
 ): Promise<SenderRead> {
+  // ONE QUERY, AND THE ORDERING IS THE WHOLE TRICK.
+  //
+  // 0191 keeps released senders as history — `one_live_per_studio` is unique
+  // only `where status <> 'released'`, so a studio has at most ONE live row but
+  // unboundedly many released ones. An earlier revision filtered released rows
+  // out entirely, which made "released, no replacement yet" render as "No
+  // sender configured" and left the presenter's `released` branch unreachable.
+  // Unreachable code that tests exercise directly is worse than either fixing
+  // it or deleting it, because the suite then proves a state production cannot
+  // show.
+  //
+  // `released_evidence_check` guarantees `released_at IS NOT NULL` exactly when
+  // the status is `released`, so "live" and "released_at IS NULL" are the same
+  // set. Ordering by `released_at` DESC with NULLS FIRST therefore puts the live
+  // row first when one exists, and otherwise the most recently released row —
+  // which is precisely the precedence wanted, without a second round trip.
   const { data, error } = await client
     .from("studio_sms_senders")
     .select(OWNER_READABLE_SENDER_COLUMNS.join(", "))
     .eq("studio_id", studioId)
-    .neq("status", "released")
+    .order("released_at", { ascending: false, nullsFirst: true })
+    .limit(1)
     .maybeSingle();
 
   if (error) return { ok: false };

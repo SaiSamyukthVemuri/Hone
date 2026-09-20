@@ -145,6 +145,10 @@ describe("every status presents, including the one production is actually in", (
     expect(view.tone).toBe("retired");
     expect(view.recovery).toBe("none");
     expect(view.detail).toMatch(/never reused/i);
+    // It is a CURRENT-state answer, not only a history note: an owner reading
+    // "this number was given up" alone is left with the same "are my texts
+    // going out?" question the empty state exists to answer.
+    expect(view.detail).toMatch(/shared sender/i);
   });
 
   it("never offers a route 0191's transition guard forbids", () => {
@@ -334,33 +338,90 @@ describe("a failed read is never reported as an absent sender (#749 review)", ()
   });
 
   it("the reader returns the two outcomes distinguishably", async () => {
-    const failing = {
-      from: () => ({
-        select: () => ({
-          eq: () => ({
-            neq: () => ({
-              maybeSingle: async () => ({ data: null, error: { message: "boom" } }),
-            }),
-          }),
-        }),
-      }),
-    } as never;
-    const answered = {
-      from: () => ({
-        select: () => ({
-          eq: () => ({
-            neq: () => ({
-              maybeSingle: async () => ({ data: null, error: null }),
-            }),
-          }),
-        }),
-      }),
-    } as never;
+    // Mirrors the real chain: .eq(...).order(...).limit(...).maybeSingle()
+    const chainYielding = (result: unknown) => {
+      const chain = {
+        order: () => chain,
+        limit: () => chain,
+        maybeSingle: async () => result,
+      };
+      return { from: () => ({ select: () => ({ eq: () => chain }) }) } as never;
+    };
+    const failing = chainYielding({ data: null, error: { message: "boom" } });
+    const answered = chainYielding({ data: null, error: null });
 
     expect(await readOwnStudioSmsSender(failing, "s")).toEqual({ ok: false });
     expect(await readOwnStudioSmsSender(answered, "s")).toEqual({
       ok: true,
       sender: null,
     });
+  });
+});
+
+describe("a released sender is reachable, not filtered away (#749 review)", () => {
+  // 0191 keeps released rows as history — `one_live_per_studio` is unique only
+  // `where status <> 'released'` — so a studio has at most one LIVE row and
+  // unboundedly many released ones. An earlier revision excluded released rows
+  // outright, which made "released, no replacement yet" render as "No sender
+  // configured" and left the presenter's `released` branch UNREACHABLE. The
+  // per-status loop above still passed, which is the part that makes this worth
+  // pinning: the suite was proving a state production could not show.
+
+  function clientReturning(rows: StudioSmsSenderState[]) {
+    const captured: { column?: string; opts?: unknown; limit?: number } = {};
+    const chain = {
+      order(column: string, opts: unknown) {
+        captured.column = column;
+        captured.opts = opts;
+        return chain;
+      },
+      limit(n: number) {
+        captured.limit = n;
+        return chain;
+      },
+      async maybeSingle() {
+        return { data: rows[0] ?? null, error: null };
+      },
+    };
+    return {
+      captured,
+      client: {
+        from: () => ({ select: () => ({ eq: () => chain }) }),
+      } as never,
+    };
+  }
+
+  it("orders so the live row wins and the newest released row is the fallback", async () => {
+    // `released_evidence_check` makes "live" and "released_at IS NULL" the same
+    // set, so NULLS FIRST + DESC is exactly that precedence in one round trip.
+    const { captured, client } = clientReturning([]);
+    await readOwnStudioSmsSender(client, "s");
+    expect(captured.column).toBe("released_at");
+    expect(captured.opts).toEqual({ ascending: false, nullsFirst: true });
+    expect(captured.limit).toBe(1);
+  });
+
+  it("does not filter released rows out of the query", () => {
+    // The mechanism, at the source: a `.neq("status", "released")` here is what
+    // made the branch unreachable.
+    const src = read("lib/sms/sender-status.ts");
+    expect(src).not.toMatch(/\.neq\(\s*"status"\s*,\s*"released"\s*\)/);
+  });
+
+  it("a released row reaches the presenter and renders its own state", async () => {
+    const released = row({
+      status: "released",
+      phone_number: "+15555550123",
+      released_at: "2026-09-20T00:00:00Z",
+    });
+    const { client } = clientReturning([released]);
+    const result = await readOwnStudioSmsSender(client, "s");
+    expect(result).toEqual({ ok: true, sender: released });
+
+    const view = presentSenderStatus(result);
+    expect(view.status).toBe("released");
+    expect(view.headline).toBe("Number released");
+    expect(view.headline).not.toBe("No sender configured");
+    expect(view.phoneNumber).toBe("+15555550123");
   });
 });
