@@ -66,6 +66,8 @@ import {
   dynamicTextAttributeViolations,
   isProvenStatic,
   undeclaredCopyImportViolations,
+  incompleteClaimViolations,
+  assertDeclaredExist,
   TEXT_BEARING_ATTRIBUTES,
   type CopyViolation,
 } from "./helpers/copy-inventory";
@@ -127,6 +129,7 @@ const currentInventory = (): Record<string, string[]> => {
 const currentExceptions = (): CopyViolation[] => [
   ...DECLARED.flatMap((f) => dynamicTextAttributeViolations(f)),
   ...DECLARED.flatMap((f) => unprovenArrayViolations(f)),
+  ...DECLARED.flatMap((f) => incompleteClaimViolations(f)),
 ];
 
 if (process.env.MARKETING_INVENTORY === "write") {
@@ -186,7 +189,7 @@ describe("R1. the surface is DECLARED, not discovered", () => {
     // four rounds on where that walk stopped: one level, then transitive, then
     // `.ts` as well as `.tsx`, then layouts Next applies without an import, then
     // re-exports. A directory does not have that question.
-    expect(DECLARED_COPY_DIRS).toEqual(["app/_components", "app/actions"]);
+    expect(DECLARED_COPY_DIRS).toEqual(["app/_components", "app/actions", "app/_fonts"]);
     expect(DECLARED_COPY_FILES).toEqual(["app/layout.tsx", "lib/rate-limit/public.ts"]);
     expect(CANONICAL_COPY_MODULES.length).toBe(3);
     expect(POLICY_SOURCES).toEqual(["app/privacy/page.tsx", "app/terms/page.tsx"]);
@@ -883,7 +886,12 @@ describe("R4. REFUSAL: shapes that put words on the page without leaving text", 
     // not contain, so it is declared rather than tolerated silently.
     const recorded = currentExceptions().map((v) => `${v.rule} ${v.file} ${v.detail}`).sort();
     expect(recorded).toEqual(INVENTORY.exceptions);
-    expect(recorded.length, "refusals grew").toBeLessThanOrEqual(1);
+    expect(recorded.length, "refusals grew").toBeLessThanOrEqual(8);
+    // Every rule that can produce one is represented in the recorded set, or a
+    // rule could be switched off without the count noticing.
+    expect(new Set(recorded.map((r) => r.split(" ")[0]))).toEqual(
+      new Set(["copy/dynamic-text-attribute", "copy/incomplete-claim"]),
+    );
   });
 });
 
@@ -1191,6 +1199,95 @@ describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catc
     );
     expect(block).toContain("INVENTORY.exceptions");
     expect(block.match(/additions\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  // --- P1: a sentence whose middle is a value --------------------------------
+
+  it("REFUSED — authored words wrapped around a hole", () => {
+    // `<p>Every {TRACKING_NOUN} is tracked</p>` renders the forbidden claim while
+    // the joined candidate reads "Every is tracked" and every fragment is
+    // harmless. Concatenation cannot close this: the missing word is not in the
+    // file, and the value may come from a canonical module the import rule
+    // allows. Reading it would mean resolving a binding, so it is refused.
+    const incomplete = (body: string) =>
+      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
+    expect(incomplete("<p>Every {NOUN} is tracked</p>")).toEqual(["copy/incomplete-claim"]);
+    expect(incomplete("<p>Every change is {STATE}.</p>")).toEqual(["copy/incomplete-claim"]);
+    expect(incomplete("<p>{PREFIX} change is tracked</p>")).toEqual(["copy/incomplete-claim"]);
+    // Each hole is named, so a two-gap sentence reports both.
+    expect(incomplete("<p>Every {A} is {B}</p>")).toEqual([
+      "copy/incomplete-claim",
+      "copy/incomplete-claim",
+    ]);
+  });
+
+  it("ACCEPTED — a hole ALONE, which is consumption rather than a gap", () => {
+    const incomplete = (body: string) =>
+      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
+    expect(incomplete("<p>{children}</p>")).toEqual([]);
+    expect(incomplete("<p>{POSITIONING.corePromise}</p>")).toEqual([]);
+    expect(incomplete("<div>{items.map((i) => <span key={i}>{i}</span>)}</div>")).toEqual([]);
+    // A complete literal in an expression container is not a hole at all.
+    expect(incomplete('<p>Every change {"is tracked"}</p>')).toEqual([]);
+  });
+
+  // --- P1: an undeclared import reaching a custom component prop -------------
+
+  it("REFUSED — an undeclared import passed as a component prop", () => {
+    // `<Hero headline={CLAIM} />` renders whatever `Hero` does with it, and no
+    // fixed list of DOM text attributes can know that `headline` is copy.
+    // Checking the SOURCE of the value rather than the NAME of the attribute
+    // needs no such knowledge.
+    const escape = (body: string) =>
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        `import { CLAIM } from "@/lib/copy-helper";\nexport const A = () => ${body};\n`,
+      ).map((v) => v.rule);
+    expect(escape("<Hero headline={CLAIM} />")).toEqual(["copy/undeclared-copy-import"]);
+    expect(escape("<p>{CLAIM}</p>")).toEqual(["copy/undeclared-copy-import"]);
+    // Nested inside a wrapper expression, where a root-only test reads the
+    // wrapper instead of the value.
+    expect(escape("<Hero headline={pick(CLAIM)} />")).toEqual(["copy/undeclared-copy-import"]);
+    expect(escape("<Hero headline={`${CLAIM} today`} />")).toEqual(["copy/undeclared-copy-import"]);
+  });
+
+  it("ACCEPTED — a prop whose value comes from a declared module", () => {
+    const from = (spec: string) =>
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        `import { X } from "${spec}";\nexport const A = () => <Hero headline={X.label} />;\n`,
+      );
+    expect(from("@/lib/marketing/content")).toEqual([]);
+    expect(from("@/app/_components/marketingNav")).toEqual([]);
+    expect(from("@/app/actions/demo")).toEqual([]);
+  });
+
+  // --- P2: a declaration that names a file which is gone ---------------------
+
+  it("a declared copy source that disappears fails loudly, not silently", () => {
+    // Filtering missing files out made the declaration self-healing in the worst
+    // way: move `lib/rate-limit/public.ts`, the stale entry vanishes, and its
+    // replacement sits outside the declared directories carrying visitor-facing
+    // text. The test that checks existence then iterates an already-filtered
+    // list and can never notice.
+    for (const declaredFile of DECLARED_COPY_FILES) {
+      expect(existsSync(join(REPO_ROOT, declaredFile))).toBe(true);
+      expect(FROZEN, `${declaredFile} is declared and must be in the surface`).toContain(declaredFile);
+    }
+    for (const dir of DECLARED_COPY_DIRS) {
+      expect(existsSync(join(REPO_ROOT, dir)), `${dir} is declared but absent`).toBe(true);
+    }
+
+    // And it is RED when a declaration really is stale. Proven with a path that
+    // is genuinely missing, because the alternative is deleting a real source
+    // file — so left inline this would have shipped unpinned, and a guard that
+    // cannot be shown red is not yet a guard.
+    expect(() => assertDeclaredExist(["lib/rate-limit/public.ts"])).not.toThrow();
+    expect(() => assertDeclaredExist(["lib/rate-limit/moved-away.ts"])).toThrow(
+      /no longer exist/,
+    );
   });
 
   it("the prose heuristic still separates copy from class names", () => {

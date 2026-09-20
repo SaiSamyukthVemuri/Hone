@@ -75,7 +75,14 @@ export const POLICY_SOURCES: readonly string[] = [
  * application lives under `app/(app)/`. `app/actions/` holds the public form
  * actions whose returned text a component displays.
  */
-export const DECLARED_COPY_DIRS: readonly string[] = ["app/_components", "app/actions"];
+export const DECLARED_COPY_DIRS: readonly string[] = [
+  "app/_components",
+  "app/actions",
+  // Referenced from marketing components, so a value imported from here reaches
+  // the page. It carries no prose today; declaring it costs nothing and keeps
+  // the import rule from having to make an exception.
+  "app/_fonts",
+];
 
 /**
  * Individual files outside those directories that still carry rendered copy.
@@ -107,6 +114,23 @@ const filesUnder = (dir: string): string[] => {
 };
 
 /**
+ * A declaration that names a file which is gone is a BROKEN declaration.
+ *
+ * Exported so it can be driven with a path that really is missing. Left inline,
+ * it could only be proven by deleting a real source file, so it would have
+ * shipped unpinned — and a guard that cannot be shown red is not yet a guard.
+ */
+export function assertDeclaredExist(files: readonly string[]): void {
+  const missing = files.filter((f) => !existsSync(join(REPO_ROOT, f)));
+  if (missing.length) {
+    throw new Error(
+      `declared copy source(s) no longer exist: ${missing.join(", ")} — ` +
+        "update the declaration in the same change that moves the file",
+    );
+  }
+}
+
+/**
  * Every declared file whose text is FROZEN.
  *
  * The canonical modules are excluded: authoring copy there is the law, not a
@@ -120,7 +144,15 @@ export function frozenSurface(): string[] {
   ]);
   for (const dir of DECLARED_COPY_DIRS) for (const f of filesUnder(dir)) out.add(f);
   for (const module of CANONICAL_COPY_MODULES) out.delete(module);
-  return [...out].filter((f) => existsSync(join(REPO_ROOT, f))).sort();
+  // NOT FILTERED BY EXISTENCE. Dropping a missing file here made the declaration
+  // self-healing in the worst way: move `lib/rate-limit/public.ts`, and the
+  // stale entry vanishes silently while its replacement sits outside the
+  // declared directories carrying visitor-facing text. The test that checks
+  // every declared file exists then iterates an already-filtered list and can
+  // never notice. A declaration that names a file that is gone is a broken
+  // declaration, and it fails here.
+  assertDeclaredExist([...out]);
+  return [...out].sort();
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +433,62 @@ export function dynamicTextAttributeViolations(
 }
 
 /**
+ * P1 — a sentence that mixes authored words with a hole.
+ *
+ * `<p>Every {TRACKING_NOUN} is tracked</p>` renders the forbidden claim while
+ * the joined candidate reads "Every is tracked" and each fragment is harmless.
+ * Concatenation cannot close this: the missing word is not in the file, and the
+ * value may come from a canonical module the import rule allows.
+ *
+ * REFUSED, not evaluated. Reading the hole means resolving a binding, which is
+ * the analysis this architecture exists without. A sentence whose middle is a
+ * value is not a complete copy value; author it as one. Existing occurrences are
+ * declared by identity — six, today.
+ *
+ * A hole ALONE is untouched: `<p>{children}</p>` and `<p>{POSITIONING.corePromise}</p>`
+ * carry no authored words, so they are consumption rather than a claim built
+ * around a gap.
+ */
+export function incompleteClaimViolations(file: string, source?: string): CopyViolation[] {
+  const sf = parse(file, source);
+  const out: CopyViolation[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxElement(n) || ts.isJsxFragment(n)) {
+      let words = 0;
+      const holes: ts.JsxExpression[] = [];
+      for (const child of n.children) {
+        if (ts.isJsxText(child)) {
+          words += child.text
+            .trim()
+            .split(/\s+/)
+            .filter((w) => /[A-Za-z]/.test(w)).length;
+        }
+        if (
+          ts.isJsxExpression(child) &&
+          child.expression &&
+          !isProvenStatic(child.expression)
+        ) {
+          holes.push(child);
+        }
+      }
+      if (words > 0 && holes.length > 0) {
+        for (const hole of holes) {
+          out.push({
+            file,
+            line: lineOf(sf, hole),
+            rule: "copy/incomplete-claim",
+            detail: hole.getText().replace(/\s+/g, " "),
+          });
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
  * P1 — a value rendered as text that was imported from an UNDECLARED module.
  *
  * The escape this closes is ordinary refactoring: a declared component imports
@@ -452,23 +540,47 @@ export function undeclaredCopyImportViolations(
   collectImports(sf);
 
   const out: CopyViolation[] = [];
+  const seen = new Set<string>();
+  const check = (expression: ts.Expression, at: ts.Node) => {
+    // EVERY identifier in the expression, not only its root. A prop is often
+    // `{`${PREFIX} …`}` or `{pick(CLAIM)}`, and a root-only test reads the
+    // wrapper rather than the value.
+    const collect = (x: ts.Node) => {
+      if (ts.isIdentifier(x)) {
+        const from = origin.get(x.text);
+        if (from !== undefined && !known.has(from)) {
+          const key = `${lineOf(sf, at)}:${x.text}:${from}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            out.push({
+              file,
+              line: lineOf(sf, at),
+              rule: "copy/undeclared-copy-import",
+              detail: `${x.text} from ${from}`,
+            });
+          }
+        }
+      }
+      ts.forEachChild(x, collect);
+    };
+    collect(expression);
+  };
   const visit = (n: ts.Node) => {
+    // CHILD position — `<p>{CLAIM}</p>`.
     if (
       ts.isJsxExpression(n) &&
       n.expression &&
       n.parent &&
       (ts.isJsxElement(n.parent) || ts.isJsxFragment(n.parent))
     ) {
-      const root = rootIdentifier(unwrap(n.expression) as ts.Expression);
-      const from = root === null ? undefined : origin.get(root);
-      if (from !== undefined && !known.has(from)) {
-        out.push({
-          file,
-          line: lineOf(sf, n),
-          rule: "copy/undeclared-copy-import",
-          detail: `${n.expression.getText().replace(/\s+/g, " ")} from ${from}`,
-        });
-      }
+      check(n.expression, n);
+    }
+    // ATTRIBUTE position — `<Hero headline={CLAIM} />`. A custom component prop
+    // renders whatever it is handed, and the fixed list of DOM text-bearing
+    // attributes cannot know that `headline` is copy. Checking the SOURCE of the
+    // value instead of the NAME of the attribute needs no such knowledge.
+    if (ts.isJsxAttribute(n) && n.initializer && ts.isJsxExpression(n.initializer)) {
+      if (n.initializer.expression) check(n.initializer.expression, n);
     }
     ts.forEachChild(n, visit);
   };

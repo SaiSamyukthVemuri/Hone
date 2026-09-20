@@ -548,6 +548,13 @@
     ]
   },
   "exceptions": [
-    "copy/dynamic-text-attribute app/_components/DemoForm.tsx placeholder={placeholder}"
+    "copy/dynamic-text-attribute app/_components/DemoForm.tsx placeholder={placeholder}",
+    "copy/incomplete-claim app/_components/PublicPolicyReminderCard.tsx {studioName}",
+    "copy/incomplete-claim app/_components/marketing/SiteFooter.tsx {POSITIONING.category}",
+    "copy/incomplete-claim app/_components/marketing/SiteFooter.tsx {year}",
+    "copy/incomplete-claim app/page.tsx {plan.seats}",
+    "copy/incomplete-claim app/pricing/page.tsx {plan.seats}",
+    "copy/incomplete-claim app/resources/page.tsx {RESOURCE_AUTHOR}",
+    "copy/incomplete-claim app/resources/page.tsx {a.readingTime}"
   ]
 }
