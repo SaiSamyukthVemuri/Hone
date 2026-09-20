@@ -135,9 +135,23 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     expect(params).not.toMatch(/p_studio_id:\s*(formData|sp|searchParams|params)\b/);
     expect(params).not.toMatch(/practitioner/i);
     // `studio` exists in scope only because the action resolved it server-side.
+    //
+    // SESSION-START-01 slice 2A widened the SHAPE, not the property. The
+    // resolution may now sit inside a perf-timing wrapper, which returns its
+    // callback's result untouched and cannot substitute a value. What is still
+    // required is exactly what was required before: a destructure containing
+    // `studio`, assigned from an awaited getCurrentPractitionerWithStudio()
+    // call. An arbitrary expression, a different function, or a value reaching
+    // `studio` from anywhere else all still fail this.
     expect(SOURCE).toMatch(
-      /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+getCurrentPractitionerWithStudio\(\)/,
+      /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+(?:timed\(\s*"[^"]+",\s*\(\)\s*=>\s*getCurrentPractitionerWithStudio\(\)\s*,?\s*\)|getCurrentPractitionerWithStudio\(\))\s*;/,
     );
+    // The wrapper, when present, must be the timing primitive and nothing else.
+    if (/timed\(\s*"session-start\.identity"/.test(SOURCE)) {
+      expect(SOURCE).toMatch(
+        /import \{[^}]*timed[^}]*\} from "@\/lib\/observability\/perf-timing"/,
+      );
+    }
     // …and the form still supplies nothing tenant-scoped.
     expect(SOURCE).not.toMatch(/formData\.get\(\s*["'`][^"'`]*studio/i);
 

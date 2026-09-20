@@ -134,7 +134,12 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // this slice while the file already ran seven. A cost pin whose NUMBER is
     // asserted and whose DESCRIPTION is not will drift exactly this way, so the
     // description is now stated in terms a reader can check against the file.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(38);
+    //
+    // Now 39: SESSION-START-01 slice 2A's measurement rig joined `sessions`
+    // because it drives that journey. RECORDED AS A DECISION per the note above,
+    // with the cost explicitly ZERO: the spec skips itself unless
+    // HONE_PERF_TIMING=1, so the lane gains a selection entry and no runtime.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(39);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

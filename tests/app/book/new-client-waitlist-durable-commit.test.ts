@@ -916,16 +916,38 @@ describe("Stage B records what closed, and what is still open", () => {
     expect(m0010).not.toMatch(/studios_slug_(?:format|shape|length)_check/);
   });
 
-  it("states the CONSEQUENCE: activation stays explicit, and has not been taken", () => {
-    expect(RISKS).toContain("PRODUCTION STILL ENABLES ZERO STUDIOS");
-    expect(RISKS).toContain("Activation remains an explicit operator step");
+  it("states the CONSEQUENCE: activation stays explicit, and HAS been taken", () => {
+    // POLARITY CORRECTED 2026-09-19 (WAIT-DOCS-RECON). This test used to require
+    // the two canonical documents to say production enabled ZERO studios and
+    // named NO studio. Both were true when written and were disproved by
+    // production on 2026-08-25, when the durable commit point began accepting
+    // public joins. A guard that mandates a stale fact keeps it stale, so the
+    // assertions are re-pointed at the corrected claims rather than relaxed.
+    // RE-POINTED 2026-09-20, same correction as the ENV_DOC assertion below.
+    // "PRODUCTION ENABLES ONE STUDIO" was a present-tense claim that persisted
+    // rows cannot support: rows outlive the flag, so they bound the activation
+    // in time and say nothing about the value now. The risk register must carry
+    // the DATED BOUND instead.
+    expect(RISKS).toContain("ONE STUDIO WAS ENABLED at every instant a durable row was written");
+    expect(RISKS).toContain("Activation is an explicit operator step");
+    expect(RISKS).toContain("it has been taken for one studio");
     // ...and the same law is stated where an operator would actually go to
     // turn the flag on, not only in the risk register.
-    expect(ENV_DOC).toContain("PRODUCTION CURRENTLY NAMES NO STUDIO");
+    // RE-POINTED 2026-09-20. This asserted "PRODUCTION NAMES ONE STUDIO", which
+    // was the same over-reach in the opposite direction from the "NAMES NO
+    // STUDIO" it replaced: a durable row proves the allowlists matched WHEN IT
+    // WAS WRITTEN, never that they match now. The env doc must carry the dated
+    // bound instead, and must say plainly that it is not a current reading.
+    expect(ENV_DOC).toContain("DATED EVIDENCE, NOT A CURRENT READING");
+    expect(ENV_DOC).toContain("2026-08-25T22:27Z");
     expect(ENV_DOC).toContain("release decision, never a configuration tweak");
     // The §13 notice process is named at the point of activation, because that
     // is the decision an operator is about to make.
     expect(ENV_DOC).toContain("confirm the §13 notice process");
+    // EXPLICITNESS IS THE PART THAT SURVIVES. Activation having been taken must
+    // never be recorded as having been automatic, inferred, or read from the
+    // variable: the value is Sensitive and is never read back.
+    expect(ENV_DOC).toContain("The value is Sensitive and was NOT read");
   });
 });
 

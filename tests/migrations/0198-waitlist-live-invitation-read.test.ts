@@ -23,18 +23,18 @@ const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, "
 describe("0198 position in the chain", () => {
   it("is no longer the repository maximum — 0200 is", () => {
     // HANDED OFF, per CLAUDE.md: only the CURRENT max may assert `isRepoMax`.
-    // It moved from here to 0199 when that was authored, and from 0199 to 0200
-    // (WAIT-P1-EXIT) when this branch authored it. Leaving the claim here would
-    // have made this file red the moment anything landed above it, which is
-    // exactly what happened and is why this block moved rather than being
-    // deleted.
+    // It moved from here to 0199 when that was authored (#740's reconciliation,
+    // preserved), and from 0199 to 0200 when WAIT-P1-EXIT authored it on this
+    // branch. Leaving the claim here would have made this file red the moment
+    // anything landed above it, which is exactly what happened twice and is why
+    // this block moved rather than being deleted.
     //
     // THE LIST IS DERIVED, NOT ENUMERATED BY HAND. `versionsAbove` reads the
     // migrations directory, so the assertion below is the one place a future
     // migration has to be acknowledged in this file — and it is a per-file
     // hand-off, not the eighteen-file sweep CLAUDE.md records.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0199", "0200"]);
+    expect(versionsAbove(VERSION)).toEqual(["0199", "0200"])
   });
 
   it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
