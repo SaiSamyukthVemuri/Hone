@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-20; `0200` APPLIED, `0201` AUTHORED and PENDING)
+## Current state (verified 2026-09-20, post-0200 apply; `0200` APPLIED, `0201` AUTHORED and PENDING)
 
 > **ONE COMMAND REDEFINITION. NO SCHEMA CHANGE AT ALL.** `0201` redefines
 > exactly one function — `close_unbooked_new_client_waitlist_invitation` — and
@@ -48,7 +48,18 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Next free migration** | Next free number is **0202**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0200` IS NO LONGER FREE** — it is allocated to WAIT-P1-EXIT and is applied to production. **`0201` IS NO LONGER FREE EITHER** — it is allocated exclusively to the WAIT-P1-EXIT successor under explicit owner allocation, authored on this branch and **NOT applied**. `0202` is **not claimed** by this lane and **not allocated**: availability is not allocation, and it must be re-censused immediately before anyone authors against it. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`). **Neither was contacted by this change**: nothing here was applied, and the project ref is recorded for the apply gate that has not yet been requested. |
 | **Reviewed release head** | ⚠️ **NONE YET.** This block records an AUTHORED migration, not an apply. No head has been authorized for apply, and the apply record for `0201` does not exist because the apply has not happened. |
-| **Evidence** | Fresh chain from zero on an isolated local stack (`project_id` distinct, ports 563xx): 201 migrations, max `0201`. Behavioural proof: `tests/db/waitlist-exit-authority-contraction.db.test.ts` (30 tests) and the `0200` suite carried forward (37 tests), both green, including independent-session race tests in BOTH commit orders and the service/date/weekday scope matrix. **MEASURED AND RECORDED**: the exit is NOT lock-free against ordinary booking — its entry `update` fires the audit trigger whose `INSERT` takes `FOR KEY SHARE` on `studios` through the event table's FK, and `create_public_appointment` holds that row `FOR UPDATE` — but its ANSWER cannot change, and it cannot deadlock against `0195`, whose `for no key update` does not conflict with `FOR KEY SHARE`. That wait is pre-existing: `0200` updates the same entry through the same trigger. |
+| **Evidence** | Fresh chain from zero on an isolated local stack (`project_id` distinct, ports 563xx): **200** migrations, max `0201` — 200 not 201 because `0158` is permanently skipped, which is what `npm run migration:state` reports as `total in repo`. Behavioural proof: `tests/db/waitlist-exit-authority-contraction.db.test.ts` (30 tests) and the `0200` suite carried forward (37 tests), both green, including independent-session race tests in BOTH commit orders and the service/date/weekday scope matrix. **MEASURED AND RECORDED**: the exit is NOT lock-free against ordinary booking — its entry `update` fires the audit trigger whose `INSERT` takes `FOR KEY SHARE` on `studios` through the event table's FK, and `create_public_appointment` holds that row `FOR UPDATE` — but its ANSWER cannot change, and it cannot deadlock against `0195`, whose `for no key update` does not conflict with `FOR KEY SHARE`. That wait is pre-existing: `0200` updates the same entry through the same trigger. |
+
+| Migration | Status | sha256 |
+|---|---|---|
+| `0200_waitlist_redeemed_unbooked_exit.sql` | **APPLIED** | `a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158` |
+| `0201_waitlist_exit_authority_contraction.sql` | **PENDING** | `1567610577e84cb717c77cf8451d57a97150f8fc169de33df2d48370be5ef82f` |
+
+**`0201` IS NOT APPLIED.** No `supabase db push` has been run for it, no
+dry-run was performed against production, and no apply has been authorized.
+`0200`'s row above restates the applied head so this block states the whole
+relationship in one place; its bytes are unchanged and its apply record below
+is untouched.
 
 ## Previous state (verified 2026-09-20, post-0200 apply; `0200` APPLIED)
 

@@ -126,6 +126,39 @@ async function legalSlot(f: Fixture, nth = 0): Promise<string> {
   throw new Error("no legal slot");
 }
 
+/**
+ * A legal slot whose STUDIO-LOCAL date is strictly AFTER `isoDate`.
+ *
+ * `legalSlot` starts searching two days out and the fixture is open every day,
+ * so it returns a slot INSIDE any window wider than a couple of days. Using it
+ * for the after-the-window row made that row construct an in-window booking and
+ * assert nothing — the row passed for the wrong reason. The studio-local date is
+ * the value 0195 compares, so it is the value selected on here.
+ */
+async function legalSlotAfterLocalDate(f: Fixture, isoDate: string): Promise<string> {
+  for (let day = 2; day < 60; day += 1) {
+    const when = new Date(Date.now() + day * 86_400_000).toISOString().slice(0, 10);
+    const cands = await q<{ c: string }>(
+      `select c from public.public_booking_slot_candidates($1,$2::date,30) c`,
+      [f.studioId, when],
+    );
+    if (cands.length === 0) continue;
+    const local = await studioLocalDate(f, cands[0].c);
+    if (local > isoDate) return cands[0].c;
+  }
+  throw new Error(`no legal slot with a studio-local date after ${isoDate}`);
+}
+
+/** The studio-local calendar date of an instant — what 0195's gate compares. */
+async function studioLocalDate(f: Fixture, at: string): Promise<string> {
+  const r = await q<{ d: string }>(
+    `select to_char(($1::timestamptz at time zone s.timezone)::date,'YYYY-MM-DD') as d
+       from public.studios s where s.id = $2`,
+    [at, f.studioId],
+  );
+  return r[0].d;
+}
+
 /** A legal slot whose STUDIO-LOCAL weekday is (or is not) in `want`. */
 async function legalSlotOnWeekday(f: Fixture, want: number[], inSet: boolean): Promise<string> {
   for (let day = 2; day < 40; day += 1) {
@@ -278,6 +311,15 @@ async function bookOrdinary(
   expect(r[0].result, "the ordinary booking fixture failed").toBe("created");
   return r[0].appointment_id as string;
 }
+
+/** The instant an appointment starts — the value 0195's date gate reads. */
+const apptStartOf = async (id: string): Promise<string> =>
+  (
+    await q<{ s: string }>(
+      `select starts_at::text as s from public.appointments where id = $1`,
+      [id],
+    )
+  )[0].s;
 
 const apptStatus = async (id: string): Promise<string> =>
   (await q<{ status: string }>(`select status from public.appointments where id = $1`, [id]))[0]
@@ -524,10 +566,16 @@ describe("C — FINDING 3: the scope matrix, every row of which now closes", () 
   // Each row constructs an appointment 0195 would have JUDGED, then asserts the
   // exit is indifferent to it. Under 0200 the rows marked below returned
   // `converted_instead` and moved the entry to a TERMINAL `converted`.
+  // The two scope bounds are named so the premise check below can compare the
+  // booking's studio-local date against the SAME value the invitation carries.
+  const AFTER_WINDOW_END = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+  const BEFORE_WINDOW_START = new Date(Date.now() + 25 * 86_400_000).toISOString().slice(0, 10);
+
   const rows: Array<{
     name: string;
     build: (f: Fixture, p: Prospect) => Promise<string>;
     scoped?: Parameters<typeof invitedProspect>[2];
+    outsideWindow?: "before" | "after";
   }> = [
     {
       name: "exact service, inside the window, allowed weekday",
@@ -540,13 +588,19 @@ describe("C — FINDING 3: the scope matrix, every row of which now closes", () 
     },
     {
       name: "AFTER scope_end_date — 0195 answers scope_date_out_of_range",
-      scoped: { to: new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10) },
+      scoped: { to: AFTER_WINDOW_END },
+      outsideWindow: "after",
       build: async (f, p) =>
-        bookOrdinary(f, await clientFor(f, p.email), await legalSlot(f, 0)),
+        bookOrdinary(
+          f,
+          await clientFor(f, p.email),
+          await legalSlotAfterLocalDate(f, AFTER_WINDOW_END),
+        ),
     },
     {
       name: "BEFORE scope_start_date — 0195 answers scope_date_out_of_range",
-      scoped: { from: new Date(Date.now() + 25 * 86_400_000).toISOString().slice(0, 10) },
+      scoped: { from: BEFORE_WINDOW_START },
+      outsideWindow: "before",
       build: async (f, p) => bookOrdinary(f, await clientFor(f, p.email), await legalSlot(f)),
     },
     {
@@ -573,6 +627,27 @@ describe("C — FINDING 3: the scope matrix, every row of which now closes", () 
       const f = await fixture(`sc${i}`);
       const p = await redeemedUnbooked(f, `s${i}`, row.scoped ?? {});
       const apptId = await row.build(f, p);
+
+      // PREMISE CHECK. A row named for a date outside the scope window must
+      // actually have built one. The after-the-window row previously did not —
+      // it booked INSIDE the window and still passed, because 0201 answers
+      // `closed` either way, so the assertion could not tell the difference.
+      // Constructing the scenario and asserting the outcome are separate
+      // obligations, and only this check discharges the first.
+      if (row.outsideWindow) {
+        const local = await studioLocalDate(f, await apptStartOf(apptId));
+        if (row.outsideWindow === "after") {
+          expect(
+            local > AFTER_WINDOW_END,
+            `this row must book AFTER ${AFTER_WINDOW_END}, but booked ${local}`,
+          ).toBe(true);
+        } else {
+          expect(
+            local < BEFORE_WINDOW_START,
+            `this row must book BEFORE ${BEFORE_WINDOW_START}, but booked ${local}`,
+          ).toBe(true);
+        }
+      }
 
       expect(await close(f, p.entryId)).toBe("closed");
       expect(await statusOf(p.entryId)).toBe("released");
