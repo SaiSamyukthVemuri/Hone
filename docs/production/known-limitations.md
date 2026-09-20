@@ -120,7 +120,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Impact** | New clients cannot book a consultation through a dedicated direct route. |
 | **Evidence** | Product decision recorded 2026-07-27. No code exists **for a direct booking route**. |
 | **Not the whole picture for new-client intake** | A **new-client waitlist** does exist and is **live at Willow**: new-client booking is refused and routed to a waitlist. ⚠️ **CORRECTED 2026-09-19.** This entry recorded the commit point as the studio notification email, and described the **durable** path as deployed but inert, switched on for no studio. Both were true at WAIT-01 activation (PR #601, 2026-08-19) and stopped being true on or before **2026-08-25**, when the durable commit point was activated for that studio. Willow's waitlist joins now commit to `new_client_waitlist_entries` (WAIT-02B Stage A, migration 0185) — **31 rows measured 2026-09-19**, 28 of them Willow's. The email is a notification, not the record — see **L25**. Read this limitation as "no direct route", **not** as "nothing exists for new clients". |
-| **Current mitigation** | Existing public booking, the WAIT-01 waitlist at Willow, and operator-side booking cover current pilot volume. |
+| **Current mitigation** | Existing public booking, the **durable** new-client waitlist at Willow *(corrected 2026-09-19; this said WAIT-01)*, and operator-side booking cover current pilot volume. |
 | **Owner** | Product (Sam) |
 | **Next gate** | None scheduled. This is **deferred by product decision**, not blocked on engineering. |
 | **Blocks** | **Neither.** Explicitly not a launch blocker and not the next engineering task. |
@@ -506,8 +506,10 @@ documentation, because no evidence supports them:
   and gathering prospect data** — **31 rows, 28 of them Willow's, measured 2026-09-19** (L25).
   The original lesson survives the inversion and is the reason this entry is rewritten rather
   than deleted: **state the dated measurement, never a present-tense adjective.** A dated 31 is
-  no more a standing fact than a dated 0 was. And enabled is still not **exercised** — zero
-  invitations have ever been issued on that studio — nor **accepted**.
+  no more a standing fact than a dated 0 was. And enabled is **exercised only as far as joining**:
+  the durable join path is live and taking real prospects, while every later stage is untouched —
+  zero invitations have ever been issued on that studio. **Do not round that down to
+  "unexercised"**, and do not round it up to accepted; it is neither.
 - That real-customer activity figures include the Synthetic Twin. They do not, and an
   all-tenant total is never presented as a customer figure — see
   [current-state.md](./current-state.md) §0.

@@ -918,6 +918,20 @@ describe("canonical production docs: synthetic rows are never customer activity"
 // drift can now travel.
 // ===========================================================================
 describe("canonical production docs: WAIT-02B's durable waitlist is recorded as ACTIVATED", () => {
+  /**
+   * The documents these rules read.
+   *
+   * The roadmap is here but NOT in NO_CURRENT_MAX_DOCS, and the distinction is
+   * deliberate: it is not a production-state document, so it must not be held to
+   * the migration-number rules — but it IS what operators and the migration
+   * allocator plan from, and it carried the disproved posture inside its own
+   * "CURRENT SNAPSHOT" for three weeks while every guard stayed green.
+   */
+  const SCANNED_DOCS = [
+    ...NO_CURRENT_MAX_DOCS,
+    ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
+  ] as const;
+
   it("current-state records the durable waitlist as activated, with a non-zero row count", () => {
     const cs = currentProse(CURRENT_STATE);
     expect(
@@ -1011,16 +1025,13 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       /Stage B2[^.\n]{0,40}\b(?:has not been granted|remains blocked|is ungranted)\b/i,
       /durable[^.\n]{0,60}\b0 rows\b/i,
     ];
+    // (SCANNED_DOCS is defined once for the whole block, below.)
     // THE ROADMAP IS IN SCOPE FOR THIS RULE, THOUGH NOT FOR THE MIGRATION-NUMBER
     // RULES ABOVE. It is not a production-state document, so it is correctly
     // absent from NO_CURRENT_MAX_DOCS — but it IS what operators and the
     // migration allocator plan from, and it carried the disproved posture in its
     // own "CURRENT SNAPSHOT" for three weeks while every guard stayed green.
-    const SCANNED = [
-      ...NO_CURRENT_MAX_DOCS,
-      ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
-    ] as const;
-    for (const [name, doc] of SCANNED) {
+    for (const [name, doc] of SCANNED_DOCS) {
       const prose = currentProse(doc);
       for (const shape of STALE) {
         expect(
@@ -1028,6 +1039,65 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
           `${name} still describes the durable waitlist with a posture production has ` +
             `disproved. Correct it, or move the sentence into an auditable ` +
             `canonical-facts:ignore block if it is being preserved as history.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("no canonical doc presents WAIT-01's email as Willow's commit point", () => {
+    // CLASS, NOT INSTANCE. Codex #740 found this in one table row; a sweep by
+    // CLAIM found it in four places across three documents. `waitlist-actions.ts`
+    // routes a studio on BOTH allowlists to the durable branch, so for Willow the
+    // email is a notification and the row is the record. Getting it backwards
+    // hands an operator the wrong commit point AND the wrong kill switch.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /WAIT-01[^.\n]{0,60}\b(?:enabled|live)\b[^.\n]{0,30}\bat Willow\b/i,
+        /\bWillow\b[^.\n]{0,50}\bWAIT-01\b[^.\n]{0,40}\bcommit point\b/i,
+        /WAIT-01[^.\n]{0,40}\bcommit point\b[^.\n]{0,40}\bWillow\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} still presents WAIT-01's email as Willow's commit point. Willow has been ` +
+            `on the durable commit point since on or before 2026-08-25.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("the durable waitlist is never rounded down to flatly unexercised", () => {
+    // Zero invitations proves the LATER STAGES are unexercised. The join path is
+    // live and taking real prospects, and a rollup that erases that is how an
+    // active collection surface gets planned as if it were dark.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      const shape =
+        /durable[^.\n]{0,50}(?:waitlist|path)[^.\n]{0,60}\b(?:is|remains)\s+(?:still\s+)?not\s+(?:production-)?exercised\b/i;
+      expect(
+        prose.match(shape)?.[0] ?? null,
+        `${name} calls the durable waitlist unexercised. Say "not exercised beyond joining" — ` +
+          `31 rows were measured on 2026-09-19.`,
+      ).toBeNull();
+    }
+  });
+
+  it("no canonical doc still instructs enabling durable WAIT for Willow as future work", () => {
+    // PRE-CUTOVER INSTRUCTIONS OUTLIVE THE CUTOVER. Two rows still told an
+    // operator to durable-enable Willow after reconciliation; the enable happened
+    // first, in August, before any of it. Following them would mean manipulating
+    // an activation that already exists.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /\bthen\s+explicitly\s+enable\s+durable\b/i,
+        /\b(?:before|prior to)\s+Willow\s+migration\b/i,
+        /\bsilently\s+durable-enabling\s+Willow\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} carries a pre-cutover Willow instruction. The durable enable happened on ` +
+            `or before 2026-08-25; what remains is retrospective reconciliation.`,
         ).toBeNull();
       }
     }
