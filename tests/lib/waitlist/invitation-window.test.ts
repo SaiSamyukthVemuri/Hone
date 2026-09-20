@@ -6,9 +6,8 @@ import {
   TTL_HOURS_MAX,
   TTL_HOURS_MIN,
   TTL_PRESETS,
-  activeTtlPreset,
-  emptyDraft,
-} from "@/lib/waitlist/b4-invitation-draft";
+} from "@/lib/waitlist/invitation-window";
+import { activeTtlPreset, emptyDraft } from "@/lib/waitlist/b4-invitation-draft";
 
 // ===========================================================================
 // THE INVITATION WINDOW IS 48 HOURS, AND IT IS STATED ONCE
@@ -20,21 +19,21 @@ import {
 //   2. There is exactly ONE place that says so.
 //
 // (2) is the one worth a file. Before this slice the window's value appeared in
-// four places: `TTL_HOURS_DEFAULT`, the SQL `default 72` on the shipped command,
-// a `?? 72` fallback in a dormant server path, and a literal `72` copied into a
+// four places: the constant, the SQL `default 72` on the shipped command, a
+// `?? 72` fallback in a dormant server path, and a literal `72` copied into a
 // projection assertion. Three of those four were invisible to any test, so a
 // change to the first would have moved the product's behaviour on one surface
 // and left the other three stating the old number, with nothing failing.
 //
-// The bound has the same shape and the same history: `1` and `168` were written
-// in `b4-invitation-draft.ts` AND repeated as literals in
-// `invite-to-book-adapter.ts`, under a comment in each saying the bound was the
-// shipped command's own.
+// The bound had the same shape and a wider spread: `1` and `168` were written in
+// the composer's model, repeated as literals in `invite-to-book-adapter.ts`, and
+// repeated AGAIN as `min`/`max` on the composer's own number input — three
+// statements, each under a comment claiming the bound was the shipped command's.
 //
-// So the censuses below are deliberately SOURCE-LEVEL. A behavioural test can
-// only reach the call site it exercises; these read every TypeScript file under
-// `app/` and `lib/` and fail on a second statement of the rule wherever it is
-// added, including in a path that nothing calls yet.
+// So the censuses below are deliberately SOURCE-LEVEL, and they read `components`
+// as well as `app` and `lib`. A behavioural test can only reach the call site it
+// exercises; one of the two TTL call sites has no caller to exercise, and the
+// number input's `max` is not reachable by any assertion about behaviour at all.
 
 const ROOT = path.resolve(__dirname, "../../..");
 
@@ -51,7 +50,17 @@ function sourceFiles(roots: readonly string[]): string[] {
     for (const entry of entries) {
       if (entry === "node_modules" || entry === ".next") continue;
       const full = path.join(dir, entry);
-      if (statSync(full).isDirectory()) {
+      // GUARDED, because this runs at module scope: a dangling symlink, or a
+      // file removed between the readdir and the stat by an editor or a watch
+      // run, would otherwise throw ENOENT during evaluation and fail all of
+      // these tests with an import error instead of an assertion anyone can read.
+      let isDir: boolean;
+      try {
+        isDir = statSync(full).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) {
         walk(full);
         continue;
       }
@@ -68,14 +77,13 @@ function sourceFiles(roots: readonly string[]): string[] {
  * THE CENSUSES WOULD BE VACUOUS WITHOUT THIS, in the direction that matters:
  * several modules DESCRIBE the shipped command's signature in prose, including
  * the words `p_ttl_hours` and the number 72. Counting those as call sites would
- * make the census fail on documentation and pass on code, which is exactly
- * backwards.
+ * make the census fail on documentation and pass on code, which is backwards.
  */
 function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 }
 
-const TS_SOURCES = sourceFiles(["app", "lib"]).map((file) => ({
+const TS_SOURCES = sourceFiles(["app", "lib", "components"]).map((file) => ({
   file: path.relative(ROOT, file),
   code: stripComments(readFileSync(file, "utf8")),
 }));
@@ -85,6 +93,11 @@ const MIGRATION_SQL = readdirSync(MIGRATION_DIR)
   .filter((f) => f.endsWith(".sql"))
   .map((f) => readFileSync(path.join(MIGRATION_DIR, f), "utf8"))
   .join("\n");
+
+/** `create or replace function public.NAME( … )` → its parameter text. */
+const SQL_FUNCTIONS = [
+  ...MIGRATION_SQL.matchAll(/create or replace function public\.(\w+)\s*\(([^)]*)\)/gi),
+].map((m) => ({ name: m[1], params: m[2] }));
 
 describe("the window a recipient actually gets", () => {
   it("is 48 hours", () => {
@@ -105,6 +118,17 @@ describe("the window a recipient actually gets", () => {
     expect(activeTtlPreset(TTL_HOURS_DEFAULT)).not.toBe("custom");
   });
 
+  it("EVERY preset is inside the bound, not just the default", () => {
+    // The same drift this file exists to close, one level down. Lower the max
+    // and the composer keeps rendering a radio for the window it no longer
+    // permits; a practitioner selects it and the adapter refuses the submission
+    // as `invalid_ttl`, which reads as the product being broken.
+    for (const preset of TTL_PRESETS) {
+      expect(preset.hours, preset.label).toBeGreaterThanOrEqual(TTL_HOURS_MIN);
+      expect(preset.hours, preset.label).toBeLessThanOrEqual(TTL_HOURS_MAX);
+    }
+  });
+
   it("is what a freshly opened draft carries", () => {
     expect(emptyDraft().expiresInHours).toBe(TTL_HOURS_DEFAULT);
   });
@@ -112,23 +136,27 @@ describe("the window a recipient actually gets", () => {
 
 describe("CENSUS — the database's own default can never decide the window", () => {
   // THE COMMAND SET IS DERIVED FROM THE SQL, NOT LISTED HERE. A hand-written
-  // list is a list that goes stale: a command that grows a `p_ttl_hours`
-  // parameter in a later migration would be missed by a census that enumerated
-  // today's names, and missed silently.
+  // list goes stale: a command that grows a `p_ttl_hours` parameter in a later
+  // migration would be missed by a census enumerating today's names, and missed
+  // silently.
   const commandsTakingTtl = new Set(
-    [
-      ...MIGRATION_SQL.matchAll(
-        /create or replace function public\.(\w+)\s*\(([^)]*)\)/gi,
-      ),
-    ]
-      .filter((m) => m[2].includes("p_ttl_hours"))
-      .map((m) => m[1]),
+    SQL_FUNCTIONS.filter((f) => f.params.includes("p_ttl_hours")).map((f) => f.name),
   );
 
-  /** The argument object literal of a `.rpc("name", { … })` call. */
-  function rpcArgs(code: string, at: number): string {
+  /**
+   * The argument object literal of a `.rpc("name", { … })` call.
+   *
+   * REFUSES TO GUESS. Only the inline form is understood, and anything else
+   * returns `null` rather than scanning forward to the next unrelated brace
+   * block in the file — which would produce a false pass whenever that block
+   * happened to contain `p_ttl_hours:`, and a false failure otherwise. A call
+   * rewritten to pass a named params object is reported as unverifiable, which
+   * is the honest answer and the one that prompts a human to look.
+   */
+  function rpcArgs(code: string, at: number): string | null {
+    const gap = code.slice(at, code.indexOf("{", at) === -1 ? at : code.indexOf("{", at));
+    if (!/^\s*,\s*$/.test(gap)) return null;
     const open = code.indexOf("{", at);
-    if (open === -1) return "";
     let depth = 0;
     for (let i = open; i < code.length; i += 1) {
       if (code[i] === "{") depth += 1;
@@ -137,7 +165,7 @@ describe("CENSUS — the database's own default can never decide the window", ()
         if (depth === 0) return code.slice(open, i + 1);
       }
     }
-    return "";
+    return null;
   }
 
   const callSites = TS_SOURCES.flatMap(({ file, code }) =>
@@ -159,6 +187,15 @@ describe("CENSUS — the database's own default can never decide the window", ()
     expect(callSites.length).toBeGreaterThan(0);
   });
 
+  it("can read every call site's arguments", () => {
+    for (const { file, command, args } of callSites) {
+      expect(
+        args,
+        `${file} -> ${command}: arguments are not an inline object literal, so this census cannot verify them`,
+      ).not.toBeNull();
+    }
+  });
+
   it("passes p_ttl_hours explicitly at EVERY call to a command that takes one", () => {
     // THIS IS THE ONE THAT CLOSES THE HOLE. Scanning for the string
     // `p_ttl_hours` can only find call sites that already mention it, so a call
@@ -166,7 +203,7 @@ describe("CENSUS — the database's own default can never decide the window", ()
     // decide — would drop out of the census rather than fail it. Starting from
     // the commands and demanding the argument is the direction that catches it.
     for (const { file, command, args } of callSites) {
-      expect(args, `${file} -> ${command}`).toMatch(/\bp_ttl_hours\s*:/);
+      expect(args ?? "", `${file} -> ${command}`).toMatch(/\bp_ttl_hours\s*:/);
     }
   });
 
@@ -175,54 +212,96 @@ describe("CENSUS — the database's own default can never decide the window", ()
     // second default, and the dormant path that carried one would have woken up
     // issuing the old window.
     //
+    // NEWLINES ARE PART OF THE GAP. Written `[^,\n}]*` the check passed a
+    // hand-wrapped `p_ttl_hours:\n  input.ttlHours ?? 72`, and this repo has no
+    // formatter to normalise that shape away.
+    //
     // NOTE WHAT THIS DOES NOT ASSERT: that the value equals TTL_HOURS_DEFAULT.
     // `issue_waitlist_preference_grant` also takes a `p_ttl_hours` and it is a
     // different clock — how long a profile-completion link stays usable, not how
     // long an invitation stays open. Its window has no business tracking this
     // one, so the rule is "no literal fallback", not "this number".
     for (const { file, command, args } of callSites) {
-      expect(args, `${file} -> ${command}`).not.toMatch(
-        /p_ttl_hours\s*:[^,\n}]*\?\?\s*\d/,
-      );
-      expect(args, `${file} -> ${command}`).not.toMatch(/p_ttl_hours\s*:\s*\d/);
+      const where = `${file} -> ${command}`;
+      expect(args ?? "", where).not.toMatch(/p_ttl_hours\s*:[^,}]*\?\?\s*\d/);
+      expect(args ?? "", where).not.toMatch(/p_ttl_hours\s*:\s*\d/);
     }
   });
 
-  it("ANTI-VACUITY — the database really does default to something else", () => {
-    // If the SQL default were already 48 the two censuses above would still
-    // pass while proving nothing, because there would be no wrong value left
-    // for a missing argument to fall back to.
-    const declared = [
-      ...MIGRATION_SQL.matchAll(/p_ttl_hours\s+integer\s+default\s+(\d+)/g),
-    ].map((m) => Number(m[1]));
+  it("ANTI-VACUITY — the invitation commands really do default to something else", () => {
+    // If the SQL default were already 48 the censuses above would still pass
+    // while proving nothing, because there would be no wrong value left for a
+    // missing argument to fall back to.
+    //
+    // SCOPED TO THE INVITATION COMMANDS. An earlier form collected every
+    // `p_ttl_hours … default N` in the tree, which swept in
+    // `issue_waitlist_preference_grant`'s 168 — a different clock — and would
+    // have failed spuriously if the invitation window were ever set to 168,
+    // which is legal, equal to TTL_HOURS_MAX and already offered as a preset.
+    const INVITATION_COMMANDS = [
+      "issue_new_client_waitlist_invitation",
+      "issue_scoped_new_client_waitlist_invitation",
+      "admit_new_client_waitlist_entry",
+    ];
+    const declared = SQL_FUNCTIONS.flatMap((f) => {
+      if (!INVITATION_COMMANDS.includes(f.name)) return [];
+      const m = f.params.match(/p_ttl_hours\s+integer\s+default\s+(\d+)/);
+      return m ? [{ name: f.name, value: Number(m[1]) }] : [];
+    });
 
     expect(declared.length).toBeGreaterThan(0);
-    expect(declared).toContain(72);
-    expect(declared).not.toContain(TTL_HOURS_DEFAULT);
+    for (const { name, value } of declared) {
+      expect(value, `${name} declares a SQL default`).not.toBe(TTL_HOURS_DEFAULT);
+    }
   });
 });
 
 describe("CENSUS — the bound is stated once", () => {
+  // The module that OWNS the bound is the one file allowed to write the numbers.
+  const OWNER = "lib/waitlist/invitation-window.ts";
   const ADAPTER = "lib/waitlist/invite-to-book-adapter.ts";
-  const adapter = TS_SOURCES.find((s) => s.file === ADAPTER);
+  const COMPOSER = "components/waitlist/invite-composer.tsx";
 
-  it("reads the adapter at all", () => {
-    expect(adapter, `${ADAPTER} not found`).toBeDefined();
+  it("reads the files it censuses", () => {
+    for (const f of [OWNER, ADAPTER, COMPOSER]) {
+      expect(
+        TS_SOURCES.some((s) => s.file === f),
+        `${f} not found — the census would pass vacuously`,
+      ).toBe(true);
+    }
   });
 
   it("checks the submitted window against the constants, not against literals", () => {
     // The adapter must keep checking — a bound the browser could skip is not a
-    // bound — but it must check against the same two constants the composer
-    // offers from, or the two can disagree and nothing fails.
-    expect(adapter!.code).toMatch(/expiresInHours\s*<\s*TTL_HOURS_MIN/);
-    expect(adapter!.code).toMatch(/expiresInHours\s*>\s*TTL_HOURS_MAX/);
-    expect(adapter!.code).not.toMatch(/expiresInHours\s*[<>]=?\s*\d/);
+    // bound — but it must check against the same constants the composer offers
+    // from, or the two can disagree and nothing fails.
+    const adapter = TS_SOURCES.find((s) => s.file === ADAPTER)!.code;
+    expect(adapter).toMatch(/expiresInHours\s*<\s*TTL_HOURS_MIN/);
+    expect(adapter).toMatch(/expiresInHours\s*>\s*TTL_HOURS_MAX/);
+    expect(adapter).not.toMatch(/expiresInHours\s*[<>]=?\s*\d/);
   });
 
-  it("NEGATIVE CONTROL — no other module under app/ or lib/ bounds the window itself", () => {
-    // `b4-invitation-draft.ts` is where the bound lives, so it is the one file
-    // allowed to compare against a literal — and it does not, it declares them.
-    const OWNER = "lib/waitlist/b4-invitation-draft.ts";
+  it("advertises the bound on the number input from the constants too", () => {
+    // The input's own `min`/`max` are a statement of the bound that no
+    // behavioural assertion can reach: they are enforced by the BROWSER, before
+    // any code this repo owns runs.
+    //
+    // SCOPED TO THE EXPIRY INPUT. The composer has a second number field —
+    // `composer-window-days`, `min={1} max={365}` — and that is the BOOKING
+    // WINDOW, a different rule with a different owner. A file-wide assertion
+    // against numeric bounds would have dragged it in and failed on code this
+    // slice has no business touching.
+    const composer = TS_SOURCES.find((s) => s.file === COMPOSER)!.code;
+    const anchor = composer.indexOf('data-testid="composer-expiry-hours"');
+    expect(anchor, "the expiry input's test id").toBeGreaterThan(-1);
+    const element = composer.slice(composer.lastIndexOf("<input", anchor), anchor);
+
+    expect(element).toMatch(/min=\{TTL_HOURS_MIN\}/);
+    expect(element).toMatch(/max=\{TTL_HOURS_MAX\}/);
+    expect(element).not.toMatch(/\b(min|max)=\{\s*\d+\s*\}/);
+  });
+
+  it("NEGATIVE CONTROL — no module outside the owner bounds the window itself", () => {
     for (const { file, code } of TS_SOURCES) {
       if (file === OWNER) continue;
       expect(code, file).not.toMatch(/expiresInHours\s*[<>]=?\s*\d/);

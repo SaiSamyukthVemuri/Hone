@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { localDateString, localDayOfWeek } from "@/lib/booking/tz";
-import { TTL_HOURS_DEFAULT } from "@/lib/waitlist/b4-invitation-draft";
+import { TTL_HOURS_DEFAULT } from "@/lib/waitlist/invitation-window";
 import {
   evaluateInvitationScope,
   type InvitationScope,
