@@ -295,17 +295,17 @@ export function copyModuleViolations(file: string, source?: string): CopyViolati
   const visit = (n: ts.Node) => {
     const flag = (rule: string, detail: string) =>
       out.push({ file, line: lineOf(sf, n), rule, detail });
-    if (ts.isTemplateExpression(n) && assemblesProse(staticFragments(n))) {
+    if (ts.isTemplateExpression(n) && assemblesText(n)) {
       flag("copy-module/no-interpolation", n.getText().slice(0, 70));
     } else if (
       ts.isBinaryExpression(n) &&
       n.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-      assemblesProse(staticFragments(n))
+      assemblesText(n)
     ) {
       flag("copy-module/no-concatenation", n.getText().slice(0, 70));
     } else if (
-      (ts.isCallExpression(n) || ts.isTaggedTemplateExpression(n)) &&
-      (assemblesProse(staticFragments(n)) || combinesTextWithValue(n))
+      ts.isCallExpression(n) &&
+      joinsTextArray(n)
     ) {
       // NOT a three-construct denylist. `["Every change is", "tracked"].join(" ")`
       // produced a forbidden sentence through none of template/`+`/conditional,
@@ -323,7 +323,7 @@ export function copyModuleViolations(file: string, source?: string): CopyViolati
       // value shown or withheld, not a claim built from halves. It is refused
       // only when a branch is itself assembled.
       for (const branch of [n.whenTrue, n.whenFalse]) {
-        if (!isCompleteValue(branch) && assemblesProse(staticFragments(branch))) {
+        if (!isCompleteValue(branch) && assemblesText(branch)) {
           flag("copy-module/no-conditional-copy", branch.getText().slice(0, 70));
         }
       }
@@ -352,57 +352,87 @@ function staticFragments(node: ts.Node): string[] {
 }
 
 /**
- * Are these fragments a substantive claim being ASSEMBLED?
+ * Is text being ASSEMBLED here, at any length?
  *
- * Three words in one fragment, or prose across the joined fragments. A
- * `mailto:${CONTACT_EMAIL}` contributes one token and is a resource path, not a
- * sentence — the law governs claims, not every string a module builds.
+ * Length-independent, deliberately and by repeated correction. Two earlier
+ * versions gated this on `isSubstantiveProse`, and each time a short assembly
+ * walked through: `["Every change is", "tracked"].join(" ")`, then
+ * `["Every change", suffix].join(" ")`, then `['Every change', 'is tracked']
+ * .join(' ')` — all rendering the exact N1 sentence out of fragments that are
+ * individually harmless.
+ *
+ * A length heuristic answers "may a person write this here", which is an
+ * AUTHORING question. Whether text is being assembled is a structural one, and
+ * structure is what this guard refuses on.
  */
-function assemblesProse(fragments: string[]): boolean {
-  if (fragments.length === 0) return false;
-  if (fragments.some((f) => f.trim().split(/\s+/).filter((w) => /^[A-Za-z]/.test(w)).length >= 3)) {
-    return true;
+const bearsWord = (text: string): boolean => /[A-Za-z]{2,}/.test(text);
+
+/**
+ * A resource path, which the ruling lists as plumbing rather than a claim.
+ *
+ * `mailto:${CONTACT_EMAIL}` and `${CANONICAL_HOST}/icon` are templates whose
+ * static parts carry words — "mailto", "icon" — so a purely length-independent
+ * word test flagged them the moment the length gate came off. They are URLs. No
+ * visitor reads them as a sentence and no rule could match one.
+ *
+ * Shape, not an allow-list: a scheme, a leading slash, an authority separator,
+ * or an unspaced token carrying path punctuation.
+ */
+function looksLikeResourcePath(text: string): boolean {
+  const value = text.trim();
+  if (!value) return false;
+  if (/^[a-z][a-z+.-]*:/i.test(value)) return true;
+  if (value.startsWith("/") || value.startsWith("#")) return true;
+  if (value.includes("://")) return true;
+  return !/\s/.test(value) && /[/:#?=]/.test(value);
+}
+
+const wordBearingLiterals = (nodes: readonly ts.Node[]): ts.Node[] =>
+  nodes.filter(
+    (e) =>
+      (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) &&
+      bearsWord((e as ts.StringLiteral).text),
+  );
+
+function assemblesText(node: ts.Node): boolean {
+  if (ts.isTemplateExpression(node)) {
+    const fragments = [node.head.text, ...node.templateSpans.map((sp) => sp.literal.text)];
+    if (looksLikeResourcePath(fragments.join(""))) return false;
+    return node.templateSpans.length > 0 && fragments.some(bearsWord);
   }
-  return isSubstantiveProse(fragments.join(" "));
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const fragments = staticFragments(node);
+    if (looksLikeResourcePath(fragments.join(""))) return false;
+    return fragments.some(bearsWord);
+  }
+  return false;
 }
 
 /**
- * Does this call combine authored text with something unreadable?
+ * An ARRAY being combined into one string — `[…].join(" ")` and friends.
  *
- * `const suffix = "is tracked"; ["Every change", suffix].join(" ")` renders the
- * N1 sentence out of a two-word literal and a value. Neither half is substantive
- * on its own, so a fragments-only test passed it — the same length heuristic
- * failing in a second place.
- *
- * The signature is an ARRAY or TEMPLATE inside the call that mixes string
- * literals with non-literals. That is text being assembled. It is deliberately
- * narrower than "any call with a literal and an identifier", which would flag
- * `label.replace(/[^0-9.]/g, "")` and the `"@type"` builders — measured, all of
- * which stay clean.
+ * Scoped to a call's receiver or arguments rather than to arrays generally,
+ * because an array of complete copy lines is a LIST, not an assembly, and
+ * `lib/marketing/content.ts` is full of them. `["a", "b"]` is data;
+ * `["a", "b"].join(" ")` is a sentence being built.
  */
-function combinesTextWithValue(node: ts.Node): boolean {
-  let found = false;
-  const visit = (n: ts.Node) => {
-    if (found) return;
-    if (ts.isArrayLiteralExpression(n)) {
-      const literals = n.elements.filter(
-        (e) => ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e),
-      );
-      const values = n.elements.filter(
-        (e) => !ts.isStringLiteral(e) && !ts.isNoSubstitutionTemplateLiteral(e),
-      );
-      const hasWord = literals.some((e) =>
-        /[A-Za-z]{2,}/.test((e as ts.StringLiteral).text),
-      );
-      if (literals.length > 0 && values.length > 0 && hasWord) found = true;
-    }
-    if (ts.isTemplateExpression(n) && n.templateSpans.length > 0) {
-      if (/[A-Za-z]{2,}/.test(n.head.text)) found = true;
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(node);
-  return found;
+function joinsTextArray(call: ts.CallExpression): boolean {
+  const candidates: ts.Node[] = [...call.arguments];
+  if (ts.isPropertyAccessExpression(call.expression)) {
+    candidates.push(call.expression.expression);
+  }
+  for (const c of candidates) {
+    if (!ts.isArrayLiteralExpression(c)) continue;
+    const literals = wordBearingLiterals(c.elements);
+    const values = c.elements.filter(
+      (e) => !ts.isStringLiteral(e) && !ts.isNoSubstitutionTemplateLiteral(e),
+    );
+    if (literals.length >= 2 || (literals.length >= 1 && values.length >= 1)) return true;
+  }
+  return false;
 }
 
 /** A complete value needs no assembly: a literal, or an absence. */
@@ -685,7 +715,15 @@ function claimParts(node: ts.JsxElement, approved: Set<string> = new Set()): Cla
         else holes.push(child);
       }
     } else if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
-      if (ts.isJsxElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
+      if (ts.isJsxSelfClosingElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
+        // `<p>Every<br />change is tracked</p>` is four words to a visitor. A
+        // self-closing inline element has nothing to recurse into, so it was
+        // contributing nothing at all and the text closed up to
+        // "Everychange is tracked" — which no rule matches.
+        text += " ";
+        textWithHoles += " ";
+        sequence.push({ words: 0 });
+      } else if (ts.isJsxElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
         const inner = claimParts(child, approved);
         text += inner.text;
         textWithHoles += inner.textWithHoles;
@@ -700,9 +738,14 @@ function claimParts(node: ts.JsxElement, approved: Set<string> = new Set()): Cla
   }
   const completing = sequence.flatMap((item, i) => {
     if (!("hole" in item)) return [];
+    // Authored words BEFORE the hole. `<p>Every change is {TRACKED}.</p>` is a
+    // sentence the value completes, and requiring words on both sides missed it
+    // because "." contributes none. Words only AFTER the hole are a different
+    // shape — `{corePromise} <Link>See the full picture</Link>` leads with a
+    // complete value and follows it with a separate call to action, which is
+    // consumption and must stay sayable.
     const before = sequence.slice(0, i).some((x) => "words" in x && x.words > 0);
-    const after = sequence.slice(i + 1).some((x) => "words" in x && x.words > 0);
-    return before && after ? [item.hole] : [];
+    return before ? [item.hole] : [];
   });
   return { text, textWithHoles, holes, approvedHoles, undeclared, completing, sequence };
 }
@@ -809,23 +852,39 @@ export function pageClaims(file: string, source?: string): string[] {
       // here — it was already REFUSED by `assembledClaimViolations`, which is
       // the guard that owns it. Judging a half-written sentence is exactly the
       // reconstruction this architecture removed.
-      if (parts.holes.length === 0 && isSubstantiveProse(parts.text)) {
-        out.push(normalise(parts.text));
+      // NO PROSE FILTER: this feeds JUDGEMENT. `<p>Every change is tracked</p>`
+      // is four unpunctuated words and the exact N1 wording, and a length gate
+      // here dropped it before any rule saw it — the same category error that
+      // had already been fixed in `moduleClaims` and not carried across.
+      if (parts.holes.length === 0) {
+        const value = normalise(parts.text);
+        if (value) out.push(value);
       }
     }
-    if (
-      (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
-      isSubstantiveProse(n.text)
-    ) {
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
       const attr = enclosingAttributeName(n);
       const insideClaimElement =
         ts.isJsxExpression(n.parent) && ts.isJsxElement(n.parent.parent);
       if ((!attr || !isPlumbingAttribute(attr)) && !insideClaimElement) {
-        out.push(normalise(n.text));
+        const value = normalise(n.text);
+        if (value) out.push(value);
       }
     }
     ts.forEachChild(n, visit);
   };
   visit(sf);
   return out.filter(Boolean);
+}
+
+/**
+ * The substantive prose a page authors — the AUTHORING view.
+ *
+ * Distinct from `pageClaims`, which is the JUDGEMENT view and is deliberately
+ * unfiltered. Conflating the two is what let a four-word forbidden sentence
+ * through twice: judgement must see everything readable, while the identity
+ * baseline should freeze only the sentences a person actually wrote, or it would
+ * record every nav label on the site.
+ */
+export function pageProse(file: string, source?: string): string[] {
+  return pageClaims(file, source).filter(isSubstantiveProse);
 }

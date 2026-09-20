@@ -47,6 +47,7 @@ import {
   componentProseViolations,
   assembledClaimViolations,
   pageClaims,
+  pageProse,
   jsxHoles,
   moduleClaims,
   walkStrings,
@@ -86,7 +87,9 @@ const SANCTIONED = sanctionedAppendOnlyWordings(REGISTER);
  * so nothing about them needs a hole rule at all. That is asserted below rather
  * than assumed, because it is what makes their inclusion safe.
  */
-const PAGE_CLAIMS = POLICY_SOURCES.flatMap((f) => pageClaims(f));
+const PAGE_CLAIMS = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) =>
+  pageClaims(f),
+);
 const MODULE_CLAIMS = [
   // Statically, so a module whose copy is RETURNED BY A FUNCTION is covered and
   // so both branches of a complete conditional are judged rather than only the
@@ -227,7 +230,13 @@ describe("the scan reads DECLARED copy sources, not a discovered import graph", 
     const declared = [...pageCopySources(), ...POLICY_SOURCES, ...CANONICAL_COPY_MODULES];
     expect(declared.length).toBeLessThan(20);
     expect(CLAIMS.length).toBeGreaterThan(200);
-    expect(CLAIMS.length).toBeLessThan(1000);
+    // A ceiling on the DECLARED SOURCES, which is the thing that was unbounded.
+    // The claim count is larger than the old scan's 1,691 candidates would
+    // suggest is an improvement, and it is: those 1,691 came from 48 files
+    // including font tables and rate-limit config, while these come from 14
+    // files that are all copy. Counting claims was never the measure — counting
+    // FILES THE SCAN OPENS was.
+    expect(CLAIMS.length).toBeLessThan(5000);
   });
 
   it("reads a whole sentence that carries an inline link", () => {
@@ -848,12 +857,14 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     expect(FORBIDDEN.some((r) => claims.some((c) => r.pattern.test(c)))).toBe(true);
 
     // NEGATIVE: folding inline descendants must NOT fuse a block child in.
-    expect(
-      pageClaims(
-        "app/probe/page.tsx",
-        `export const A = () => <div>Intro<p>Trace it with an append-only edit history.</p></div>;`,
-      ),
-    ).toEqual(["Trace it with an append-only edit history."]);
+    // "Intro" is emitted as its own claim — judgement is unfiltered now, so
+    // short text is judged rather than dropped — and the paragraph stays whole.
+    const separated = pageClaims(
+      "app/probe/page.tsx",
+      `export const A = () => <div>Intro<p>Trace it with an append-only edit history.</p></div>;`,
+    );
+    expect(separated).toContain("Trace it with an append-only edit history.");
+    expect(separated.some((c) => /Intro\s*Trace/.test(c))).toBe(false);
   });
 
   it("judges BOTH branches of a complete conditional, not the evaluated one", () => {
@@ -942,17 +953,29 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     ).toEqual([]);
   });
 
-  it("pages are checked for the authoring law, and are not a judged surface", () => {
-    // Owner ruling, option 1. The judged corpus is the copy modules and the
-    // policy sources; a marketing route page contributes no claims.
+  it("every readable claim is judged; only the unreadable ones are not", () => {
+    // OWNER RULING, option 1, REFINED BY MEASUREMENT. The ruling's concern was
+    // dataflow: deciding what a HOLE renders needs it. Text with no hole needs
+    // none, and excluding pages wholesale created two escape hatches review
+    // found in consecutive rounds — a four-word forbidden sentence, and reusable
+    // capacity behind every deleted baseline line.
+    //
+    // So the boundary is the hole, not the file. A page claim that can be read
+    // completely IS judged; one containing a hole is refused by the shape guard
+    // instead. No dataflow at any point.
     expect(MODULE_CLAIMS.length).toBeGreaterThan(0);
     expect(PAGE_CLAIMS.length).toBeGreaterThan(0);
-    // The corpus is exactly the policy sources plus the copy modules.
     expect(CLAIMS.length).toBe(PAGE_CLAIMS.length + MODULE_CLAIMS.length);
-    expect(PAGE_CLAIMS.length).toBe(
-      POLICY_SOURCES.reduce((n, f) => n + pageClaims(f).length, 0),
+
+    // The exact wording that escaped: four words, no punctuation, N1.
+    const short = pageClaims(
+      "app/probe/page.tsx",
+      `export const A = () => <p>Every change is tracked</p>;`,
     );
-    // They are still checked: assembly is refused there.
+    expect(short).toContain("Every change is tracked");
+    expect(FORBIDDEN.some((r) => short.some((c) => r.pattern.test(c)))).toBe(true);
+
+    // And a hole is still refused rather than guessed at.
     expect(
       assembledIn(`export const A = () => <p>Every treated area keeps {label} of its own.</p>;`)
         .map((v) => v.rule),
@@ -993,7 +1016,7 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
 
     const introduced: string[] = [];
     for (const file of pageCopySources()) {
-      for (const claim of pageClaims(file)) {
+      for (const claim of pageProse(file)) {
         if (!known.has(claim)) introduced.push(`${file}: ${claim.slice(0, 80)}`);
       }
     }
@@ -1004,7 +1027,7 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
 
     // The baseline is a ceiling too, so a file cannot repeat a known line to
     // buy capacity.
-    const total = pageCopySources().reduce((n, f) => n + pageClaims(f).length, 0);
+    const total = pageCopySources().reduce((n, f) => n + pageProse(f).length, 0);
     expect(total).toBeLessThanOrEqual(PAGE_PROSE_BASELINE);
     expect(known.size, "the recorded baseline is not empty").toBeGreaterThan(100);
   });
