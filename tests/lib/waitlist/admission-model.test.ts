@@ -686,11 +686,24 @@ describe("close — the label may only promise what the command delivers", () =>
     ).toBe(false);
   });
 
-  it("discloses the OTHER outcome before the operator commits to it", () => {
-    // 0200 records a missing conversion when an appointment from this cycle
-    // already exists, and answers `converted_instead`. A control whose outcome
-    // can be "their booking was recorded" must say so before it is pressed.
-    expect(actionHelp("close", "invited") ?? "").toMatch(/booking is recorded/i);
+  it("no longer advertises the repair 0201 retired", () => {
+    // IT USED TO ASSERT THE OPPOSITE, and that was right at the time: 0200
+    // recorded a missing conversion and answered `converted_instead`, so the
+    // control had to disclose that outcome before it was pressed.
+    //
+    // 0201 REMOVED THE REPAIR. Close no longer reads `public.appointments` and
+    // cannot answer `converted_instead`; a redeemed `invited` entry is closed
+    // and released even when an ordinary appointment exists. Continuing to
+    // promise "their booking is recorded instead" would advertise a capability
+    // the deployed command does not have, in the sentence an owner reads
+    // immediately before an irreversible close.
+    const help = actionHelp("close", "invited") ?? "";
+    expect(help, "the help still promises the retired repair").not.toMatch(
+      /booking is recorded instead/i,
+    );
+    // It still tells the owner what to do if they HAVE booked — that path is
+    // real, it is just no longer something Close performs for them.
+    expect(help).toMatch(/record that booking/i);
   });
 
   it("never promises a return to the waitlist, which takes a second control", () => {

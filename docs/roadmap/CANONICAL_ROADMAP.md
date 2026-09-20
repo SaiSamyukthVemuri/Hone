@@ -2194,7 +2194,7 @@ PR numbers are allocated by this entry.
 
 Production concurrency stays one. Nothing below row 1 takes a production slot until WAIT releases.
 
-Migration truth is now: hosted/applied 0192–**0200** (⚠️ updated 2026-09-20; `0200` is WAIT-P1-EXIT, #741), with parity between hosted and repository maxima and nothing pending; **the next free number is NOT stated here** — it was stated as `0200`, and `0200` was then allocated and applied; derive it with `npm run migration:state`. The 0194 schema is applied through the WAIT assembly while #674 runtime routing remains a separate, unperformed provider operation. New WAIT-04, MPX-02 and FIN migrations remain unnumbered. The decision index (§0.4) is a pointer, not a second ledger.
+Migration truth is now: hosted/applied 0192–**0201** (⚠️ updated 2026-09-20 and advanced again the same day: `0200` is WAIT-P1-EXIT, #741, and `0201` is its forward authority contraction, #747 — 0201 does not edit 0200, it redefines the command so the exit stops reading `public.appointments`), with parity between hosted and repository maxima and nothing pending; **the next free number is NOT stated here** — it was stated as `0200`, and `0200` was then allocated and applied; derive it with `npm run migration:state`. The 0194 schema is applied through the WAIT assembly while #674 runtime routing remains a separate, unperformed provider operation. New WAIT-04, MPX-02 and FIN migrations remain unnumbered. The decision index (§0.4) is a pointer, not a second ledger.
 
 Chloe's WAIT requirements are frozen (§14.5.7). No more product discovery on WAIT until the contract works end to end; reopen only for a real operational defect.
 

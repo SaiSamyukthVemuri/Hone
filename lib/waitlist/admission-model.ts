@@ -224,8 +224,21 @@ const ACTION_HELP: Partial<Record<string, string>> = {
   // already exists, 0200 records the missing conversion instead of closing. An
   // operator who presses this must know both things can happen before they
   // press it, not after.
+  // THE SECOND SENTENCE WAS RETIRED BY 0201, AND THIS IS WHY IT HAD TO GO.
+  //
+  // It used to end: "If an appointment from this invitation already exists,
+  // their booking is recorded instead." That described 0200's repair path,
+  // which `0201_waitlist_exit_authority_contraction.sql` REMOVED -- Close no
+  // longer reads `public.appointments` at all and can never answer
+  // `converted_instead`. A redeemed `invited` entry is now closed and released
+  // even when an ordinary appointment exists.
+  //
+  // Leaving it would promise an outcome the deployed command cannot produce, in
+  // the sentence an owner reads immediately before an IRREVERSIBLE close. That
+  // is the label-promise rule failing in the rarer direction: not a missing
+  // consequence, but an advertised capability that no longer exists.
   "close:invited":
-    "They opened this invitation and never booked. This ends it and moves them to Released, where you can remove them — they cannot be put back on the waitlist, though they can join again themselves. If an appointment from this invitation already exists, their booking is recorded instead.",
+    "They opened this invitation and never booked. This ends it and moves them to Released, where you can remove them — they cannot be put back on the waitlist, though they can join again themselves. If they have already booked, record that booking instead of closing this.",
 };
 
 /** Help text for a control, or null where the verb speaks for itself. */

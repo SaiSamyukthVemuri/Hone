@@ -379,15 +379,16 @@ export async function requeueWaitlistEntryAction(formData: FormData): Promise<vo
 
 // --- CLOSE A USED INVITATION THAT NEVER BECAME A BOOKING ---------------------
 // WAIT-P1-EXIT, migration 0200:
-//   `closed` | `converted_instead` | `not_found` | `not_invited`
-//   | `not_redeemed` | `already_booked` | `booking_unresolved` | `already_closed`
-//   + owner codes.
+//   `closed` | `not_found` | `not_invited` | `not_redeemed`
+//   | `already_booked` | `already_closed` + owner codes.
 //
-// THIS LIST WENT STALE ONCE AND IS THE CONTRACT, so it is worth keeping exact:
-// it still named `booking_exists`, which was REMOVED when the refusal became a
-// repair, and omitted both codes that replaced it. The authoritative census is
+// THIS LIST HAS NOW GONE STALE TWICE AND IS THE CONTRACT, so it is worth
+// keeping exact. First it named `booking_exists` after that refusal became a
+// repair. Then 0201 RETIRED the repair itself -- Close no longer reads
+// `public.appointments`, so `converted_instead` and `booking_unresolved` can
+// never be returned and are gone from here too. The authoritative census is
 // asserted against the migration in
-// tests/migrations/0200-waitlist-redeemed-unbooked-exit.test.ts.
+// tests/migrations/0201-waitlist-exit-authority-contraction.test.ts.
 //
 // THIS IS THE ONE EXIT FROM THE STATE THE OTHER FOUR REFUSE. Redemption stamps
 // the invitation and LEAVES the entry at `invited`, so a prospect who opens
@@ -402,50 +403,35 @@ export async function requeueWaitlistEntryAction(formData: FormData): Promise<vo
 //   already_booked -> nothing to do; the booking is recorded
 //   already_closed -> it is already done, and the row has already moved
 //
-// TWO OUTCOMES MOVE THE ENTRY, AND BOTH ARE SUCCESS.
+// ONE OUTCOME MOVES THE ENTRY, AFTER 0201.
 //
-// `booking_exists` USED TO BE A REFUSAL HERE, and review was right to reject
-// it: it told the owner to record the booking, and nothing in the product
-// invokes `record_new_client_waitlist_conversion` -- `recordInvitationConversion`
-// has no caller anywhere. The entry stayed `invited`, pressing Close again
-// returned the same refusal, and the dead end this slice removes came straight
-// back wearing a different word.
+// THE HISTORY, BECAUSE IT EXPLAINS THE SHAPE. `booking_exists` was once a
+// refusal here that told the owner to record the booking -- an operation
+// nothing in the product invokes. 0200 replaced it with a repair that recorded
+// the conversion itself and answered `converted_instead`.
 //
-// 0200 now records that conversion itself, in the same transaction, and answers
-// `converted_instead`. The refusal is gone because the repair exists.
+// 0201 RETIRED THAT REPAIR. Close stops reading `public.appointments`
+// altogether, because `appointments` carries no link to a waitlist cycle and
+// the question was unanswerable after the fact -- and since 0195 it never needs
+// asking. So `converted_instead` and `booking_unresolved` are not merely
+// unused: the deployed command cannot return them.
 type CloseUnbookedInvitationResult =
   | "closed"
-  | "converted_instead"
   | "not_found"
   | "not_invited"
   | "not_redeemed"
   | "already_booked"
-  | "booking_unresolved"
   | "already_closed"
   | OwnerResolutionResult;
 
 const CLOSE_REFUSALS: Readonly<
-  Record<
-    Exclude<
-      CloseUnbookedInvitationResult,
-      "closed" | "converted_instead" | "invalid_input"
-    >,
-    string
-  >
+  Record<Exclude<CloseUnbookedInvitationResult, "closed" | "invalid_input">, string>
 > = {
   not_found: "That waitlist entry no longer exists.",
   not_invited: "There is no used invitation on that entry to close.",
   not_redeemed:
     "That invitation has not been used yet. Cancel it instead to end it early.",
   already_booked: "They have already booked, so there is nothing to close.",
-  // NAMES NO OPERATION, BECAUSE THERE IS NONE TO NAME. This is unreachable
-  // while `clients_studio_normalized_email_uniq` exists: the command found an
-  // appointment from this cycle and could not record the conversion for it. It
-  // says what is true and asks for a retry rather than sending the owner after
-  // a control that does not exist -- the defect the old `booking_exists` copy
-  // had.
-  booking_unresolved:
-    "There is already an appointment for this person, and it could not be recorded automatically. Refresh and try again.",
   already_closed: "That invitation has already been closed.",
   ...AUTHORITY_REFUSALS,
 };
@@ -456,10 +442,9 @@ export async function closeUnbookedWaitlistInvitationAction(
   await runEntryLifecycleCommand({
     rpc: "close_unbooked_new_client_waitlist_invitation",
     entryId: requiredEntryId(formData),
-    // BOTH MOVE THE ENTRY OUT OF THE STUCK STATE. `converted_instead` is the
-    // stranded-appointment repair, not a refusal, and treating it as one would
-    // report an error after a committed conversion.
-    successCode: ["closed", "converted_instead"],
+    // ONE SUCCESS CODE AGAIN, after 0201 retired the repair path. The runner
+    // still accepts a list; this caller simply no longer needs one.
+    successCode: "closed",
     event: "waitlist_close_unbooked_failed",
     refusals: CLOSE_REFUSALS,
     genericError: "Could not close that invitation. Please try again.",

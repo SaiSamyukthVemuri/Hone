@@ -692,7 +692,18 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
     ).toBe(false);
   });
 
-  it("the action file declares exactly those, plus the propagated owner codes", () => {
+  it("the action file is NO LONGER cross-read here — 0201 owns that contract", () => {
+    // HANDED OFF, the same way `isRepoMax` is. This used to require the action
+    // union to declare 0200's vocabulary including `converted_instead` and
+    // `booking_unresolved`. 0201 RETIRED both: Close stops reading
+    // `public.appointments`, so the deployed command cannot return them, and
+    // the action file correctly no longer declares them.
+    //
+    // Keeping the old assertion here would force the application layer to keep
+    // declaring codes the database can never produce — a test pinning a
+    // superseded contract against live code. The cross-read moved to
+    // tests/migrations/0201-waitlist-exit-authority-contraction.test.ts, which
+    // asserts it against the command that is actually deployed.
     const action = readFileSync(
       path.join(ROOT, "app/(app)/settings/waitlist/actions.ts"),
       "utf8",
@@ -701,19 +712,12 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
       action.indexOf("type CloseUnbookedInvitationResult"),
       action.indexOf("const CLOSE_REFUSALS"),
     );
-    for (const code of [
-      "closed",
-      "converted_instead",
-      "not_found",
-      "not_invited",
-      "not_redeemed",
-      "already_booked",
-      "booking_unresolved",
-      "already_closed",
-    ]) {
-      expect(union, `the action does not declare ${code}`).toContain(`"${code}"`);
+    for (const retired of ["converted_instead", "booking_unresolved"]) {
+      expect(
+        union,
+        `the action still declares ${retired}, which 0201 made unreachable`,
+      ).not.toContain(`"${retired}"`);
     }
-    expect(union).toContain("OwnerResolutionResult");
   });
 
   it("PINS THE TWO INVARIANTS NO BEHAVIOUR CAN REACH", () => {
