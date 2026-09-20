@@ -180,6 +180,15 @@ export function marketingComponentFiles(): string[] {
 const LINK_TAGS = ["a", "Link"];
 
 /**
+ * Self-closing inline elements that SEPARATE rendered characters.
+ *
+ * `<br />` ends a line, so the words either side are distinct. `<wbr />` marks a
+ * permitted break point and renders nothing, so the characters either side are
+ * one word. Treating them alike split `track<wbr />ed` into "track ed".
+ */
+const BOUNDARY_TAGS = ["br"];
+
+/**
  * String methods this fold understands. Anything else on a static string
  * receiver is REFUSED rather than guessed at — see `staticConcatClaims`.
  */
@@ -734,7 +743,7 @@ export function componentProseViolations(file: string, source?: string): CopyVio
     // Build the sentence first, exactly as `pageClaims` does. Classifying each
     // JsxText node on its own let `<p>Every <strong>change is tracked</strong>.
     // </p>` pass as three harmless fragments.
-    if (isClaimContainer(n)) {
+    if (isClaimContainer(n) && !foldedIntoClaimParent(n)) {
       const parts = claimParts(n, approved);
       if (isSubstantiveProse(parts.textWithHoles)) {
         out.push({
@@ -791,7 +800,7 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
   const approved = approvedCopyNames(sf);
   const out: CopyViolation[] = [];
   const visit = (n: ts.Node) => {
-    if (isClaimContainer(n)) {
+    if (isClaimContainer(n) && !foldedIntoClaimParent(n)) {
       const parts = claimParts(n, approved);
       // CONSUMPTION vs COMPLETION, and the test is position rather than
       // presence. An approved value is exempt unless authored words sit on BOTH
@@ -977,6 +986,27 @@ type ClaimContainer = ts.JsxElement | ts.JsxFragment;
 const isClaimContainer = (n: ts.Node): n is ClaimContainer =>
   ts.isJsxElement(n) || ts.isJsxFragment(n);
 
+/**
+ * Has an enclosing claim ALREADY folded this container into itself?
+ *
+ * `claimParts` folds a fragment or an inline element that is a direct child, so
+ * the traversal then met the same text twice: once inside the assembled parent
+ * sentence and once as a container of its own. Wrapping part of the sanctioned
+ * A1 sentence in `<strong>` therefore emitted "with an append-only edit
+ * history." as an independent claim and judged it UNSANCTIONED — rejecting a
+ * markup-only change to copy that visitors still read exactly as sanctioned.
+ *
+ * DIRECT parent only, mirroring the fold: `claimParts` walks `node.children`, so
+ * an inline element behind a `{cond ? <em/> : null}` is NOT folded and must
+ * still be seen on its own.
+ */
+const foldedIntoClaimParent = (n: ClaimContainer): boolean => {
+  const foldable = ts.isJsxFragment(n) || INLINE_IN_CLAIM.includes(tagNameOf(n));
+  if (!foldable) return false;
+  const parent = parentPastWrappers(n);
+  return parent !== undefined && isClaimContainer(parent);
+};
+
 function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): ClaimParts {
   let text = "";
   let textWithHoles = "";
@@ -1040,9 +1070,15 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
         // self-closing inline element has nothing to recurse into, so it was
         // contributing nothing at all and the text closed up to
         // "Everychange is tracked" — which no rule matches.
-        text += " ";
-        textWithHoles += " ";
-        identityText += " ";
+        //
+        // But `<wbr />` is the opposite: it offers a line-break OPPORTUNITY and
+        // separates no rendered characters, so `track<wbr />ed` reads "tracked".
+        // Inserting a space there broke a word apart and N1 stopped matching —
+        // the same miss as before, in the other direction.
+        const separator = BOUNDARY_TAGS.includes(tagNameOf(child)) ? " " : "";
+        text += separator;
+        textWithHoles += separator;
+        identityText += separator;
         sequence.push({ words: 0, direct: true });
       } else if (ts.isJsxElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
         const inner = claimParts(child, approved);
@@ -1187,7 +1223,7 @@ export function pageClaims(file: string, source?: string): string[] {
   const approved = approvedCopyNames(sf);
   const out: string[] = [];
   const visit = (n: ts.Node) => {
-    if (isClaimContainer(n)) {
+    if (isClaimContainer(n) && !foldedIntoClaimParent(n)) {
       const parts = claimParts(n, approved);
       // A sentence with a hole is not a complete value, so it is not judged
       // here — it was already REFUSED by `assembledClaimViolations`, which is

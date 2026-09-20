@@ -26,6 +26,7 @@ import { migrationState } from "../migrations/helpers/migration-state";
 import { MARKETING_PAGES } from "@/lib/marketing/content";
 import * as marketingContent from "@/lib/marketing/content";
 import * as marketingResources from "@/lib/marketing/resources";
+import * as marketingJsonLd from "@/lib/marketing/jsonld";
 import {
   REPO_ROOT,
   forbiddenWordings,
@@ -101,6 +102,18 @@ const MODULE_CLAIMS = [
   // exact N1 wording behind a four-word threshold.
   ...walkStrings(marketingContent),
   ...walkStrings(marketingResources),
+  // INVOKED, not only read. `jsonld.ts` is declared and its literals are
+  // extracted statically, but its builders assemble what actually ships from
+  // values reached through calls and property accesses — `description:
+  // getDescription()` has no literal to find, and the namespace walk does not
+  // call a function, so a forbidden claim returned from one reached no rule.
+  // These run the module the way the pages run it, which needs no dataflow.
+  ...walkStrings(marketingJsonLd.organizationLd()),
+  ...walkStrings(marketingJsonLd.webSiteLd()),
+  ...walkStrings(marketingJsonLd.softwareApplicationLd()),
+  ...marketingResources.RESOURCE_ARTICLES.flatMap((article) =>
+    walkStrings(marketingJsonLd.articleLd(article)),
+  ),
 ];
 /**
  * Components render to the same public page, so they are judged the same way.
@@ -1483,6 +1496,64 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     expect(MARKETING_COPY).toContain(
       "Hone helps electrologists prepare for returning clients",
     );
+  });
+
+  it("every zero-argument JSON-LD builder is invoked into the corpus", () => {
+    // FROZEN, so adding a builder forces a decision rather than silently
+    // shipping an unjudged public description. A builder's output is what the
+    // page emits; reading its literals is not the same as running it.
+    const zeroArg = Object.entries(marketingJsonLd)
+      .filter(([, v]) => typeof v === "function" && (v as (...a: never[]) => unknown).length === 0)
+      .map(([name]) => name)
+      .sort();
+    expect(zeroArg).toEqual(["organizationLd", "softwareApplicationLd", "webSiteLd"]);
+
+    // The property, not a token that many sources share: EVERYTHING a builder
+    // emits is in the corpus. A first cut asserted `MARKETING_COPY` contains
+    // "Hone", which stayed green with the builder removed entirely.
+    const builders = marketingJsonLd as unknown as Record<string, () => unknown>;
+    const judged = new Set(CLAIMS);
+    for (const name of zeroArg) {
+      const emitted = walkStrings(builders[name]());
+      expect(emitted.length, `${name} emitted nothing`).toBeGreaterThan(0);
+      expect(emitted.filter((value) => !judged.has(value)), name).toEqual([]);
+    }
+    // And non-vacuous at the value only a builder can produce: `abs("/pricing")`
+    // is the opaque-producer shape, with no literal to read statically.
+    expect(judged.has("https://hone.care/pricing")).toBe(true);
+    expect(judged.has("https://hone.care/icon")).toBe(true);
+  });
+
+  it("<wbr /> keeps a word whole; <br /> still separates", () => {
+    // `<wbr />` is a permitted break POINT and renders nothing, so
+    // `track<wbr />ed` reads "tracked". Treating it like `<br />` split the word
+    // and N1 stopped matching — the same miss as running words together, from
+    // the other side.
+    expect(pageClaims("app/probe/page.tsx", "export const A = () => <p>Every change is track<wbr />ed</p>;"))
+      .toEqual(["Every change is tracked"]);
+    expect(pageClaims("app/probe/page.tsx", "export const A = () => <p>Every<br />change</p>;"))
+      .toEqual(["Every change"]);
+  });
+
+  it("inline markup inside a sanctioned sentence is not judged as its own claim", () => {
+    // The one OVER-refusal in this sequence. `claimParts` folds a direct inline
+    // child into the sentence, and the traversal then met the same text again as
+    // a container, so wrapping the tail of the sanctioned A1 sentence in
+    // `<strong>` emitted it alone and judged it unsanctioned — failing a
+    // markup-only change to copy a visitor still reads as sanctioned.
+    const sentence =
+      "Trace a probe lot to the areas that recorded it, and keep sterile-item and disinfectant logs with lot numbers, expiry, and replace-by dates, with an append-only edit history.";
+    const at = sentence.indexOf("with an append-only");
+    const marked = `export const A = () => <p>${sentence.slice(0, at)}<strong>${sentence.slice(at)}</strong></p>;`;
+    const claims = pageClaims("app/probe/page.tsx", marked);
+    expect(claims).toEqual([sentence]);
+    expect(claims.filter((c) => judgeAppendOnlyClaim(c, SANCTIONED).kind === "unsanctioned")).toEqual([]);
+
+    // Still seen on its own where the fold does NOT reach it: behind an
+    // expression, an inline element is a hole, not a folded child.
+    expect(
+      pageClaims("app/probe/page.tsx", "export const A = () => <p>{ok ? <em>Every change is tracked</em> : null}</p>;"),
+    ).toContain("Every change is tracked");
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {
