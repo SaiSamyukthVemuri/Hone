@@ -927,6 +927,15 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
    * allocator plan from, and it carried the disproved posture inside its own
    * "CURRENT SNAPSHOT" for three weeks while every guard stayed green.
    */
+  /** Read the durable-waitlist flag name from the module that owns it. */
+  function durableFlagName(): string {
+    const name = read("lib/booking/new-client-waitlist.ts").match(
+      /DURABLE_SLUGS_ENV\s*=\s*\n?\s*"([A-Z0-9_]+)"/,
+    )?.[1];
+    expect(name, "the durable-waitlist env var name must be derivable").toBeTruthy();
+    return name as string;
+  }
+
   const SCANNED_DOCS = [
     ...NO_CURRENT_MAX_DOCS,
     ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
@@ -1144,6 +1153,50 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
           `${name} presents 0199 as claimable. It was APPLIED to production on 2026-09-18 and ` +
             `is frozen; the next free number is 0200. An allocator acting on this collides ` +
             `with a live migration.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("no doc infers CURRENT allowlist configuration from persisted rows", () => {
+    // THE SYMMETRY THIS GUARD EXISTS TO HOLD. The original version of this block
+    // mandated "NOT ENABLED" and carried a dated ABSENCE forward as a standing
+    // posture for three weeks. Correcting it to mandate a present-tense ENABLED
+    // would be the same error wearing the other sign, and Codex #740 caught the
+    // documents doing exactly that.
+    //
+    // A durable row proves both allowlists matched AT THE INSTANT IT WAS
+    // WRITTEN. It proves nothing about now: rows outlive the flag, and
+    // lib/booking/new-client-waitlist.ts re-reads process.env on every call, so
+    // clearing the variable returns new submissions to WAIT-01 immediately while
+    // every existing row stays put.
+    //
+    // So the documents may state a DATED BOUND and must not state a current
+    // configuration. This rule bans the inference; the row-count rule above
+    // requires the date that makes the bound legible.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /\brows?\b[^.\n]{0,70}\b(?:prove|proves|proof|shows?|confirms?)\b[^.\n]{0,50}\b(?:currently|right now|today)\b[^.\n]{0,40}\b(?:named?|enabled|configured)\b/i,
+        // THE FLAG NAME IS DERIVED, NEVER WRITTEN HERE.
+        // tests/app/book/new-client-waitlist-durable-commit.test.ts keeps a
+        // deliberately CLOSED census of non-markdown files naming that variable
+        // — the mechanism that stops a config file or seed switching a studio on
+        // quietly. Writing the literal in this regex ADDED THIS FILE to that
+        // census and went red, which is the census working exactly as intended.
+        // Deriving it keeps the census closed and survives a rename.
+        //
+        // No \b before the identifier: it is preceded by "_" in the full name,
+        // "_" is a word character, and \b never matches there. A negative
+        // control caught that too.
+        new RegExp(`${durableFlagName()}\`?\\s+(?:currently\\s+)?names\\b`, "i"),
+        /\bproduction\s+(?:currently\s+)?names\s+one\s+studio\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} infers CURRENT allowlist configuration from persisted rows. Rows prove the ` +
+            `allowlists matched WHEN THEY WERE WRITTEN — state that dated bound, and confirm ` +
+            `present configuration in the product instead.`,
         ).toBeNull();
       }
     }

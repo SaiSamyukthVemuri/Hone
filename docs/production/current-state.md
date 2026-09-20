@@ -529,15 +529,23 @@ ACTIVATED for `willow-electrolysis` · production exercised.** Owner device acce
   therefore happened on or before 2026-08-25 — a **bound**, not a timestamp. The activating act
   itself was not recorded and **no production release record for it exists**; see
   [known-limitations.md](./known-limitations.md) **L25**.
-- **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` names `willow-electrolysis`, established
+- **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` NAMED `willow-electrolysis` at every instant a
+  durable row was written** — earliest 2026-08-25T22:27Z, latest 2026-09-15 — **established
   STRUCTURALLY rather than by reading the variable.** The value is Sensitive and was **not**
   read. Every one of the 31 rows carries `source = 'public_booking'`, which migration 0193's
   CHECK constraints make exclusive to the public path; its only writer is
   `join_new_client_waitlist`, whose only caller is reached solely when **both**
-  `isNewClientWaitlistEnabled` and `isNewClientWaitlistDurableEnabled` return true. A committed
-  public row is therefore proof that both allowlists name that studio.
-- **Willow's public booking page serves the durable commit point**, not the WAIT-01 notification
-  behaviour described above.
+  `isNewClientWaitlistEnabled` and `isNewClientWaitlistDurableEnabled` return true.
+- ⚠️ **THAT IS A BOUND, NOT A CURRENT READING, and the distinction is load-bearing.** A row is
+  durable and outlives the flag; `lib/booking/new-client-waitlist.ts` re-reads `process.env` on
+  every call, so clearing the variable returns new submissions to WAIT-01 **immediately** while
+  every row already written stays exactly where it is. **A persisted row can never prove present
+  configuration.** This document previously over-read the same evidence in the opposite
+  direction — carrying a dated *absence* forward as a standing posture — and asserting a dated
+  *presence* as the current value is the same error wearing the other sign.
+- **Willow's public booking page served the durable commit point** at every measured instant
+  above, rather than the WAIT-01 notification behaviour. To learn what it serves **now**, confirm
+  it in the product.
 - **The application code shipped FIRST and DARK** — the reverse of the migration-first ordering
   used for 0183/0184. That was deliberate: WAIT-01 was already live, so shipping the durable path
   on the existing flag would have moved a live studio's commit point with no operator GO in

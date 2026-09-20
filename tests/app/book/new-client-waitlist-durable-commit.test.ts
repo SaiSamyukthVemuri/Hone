@@ -928,7 +928,13 @@ describe("Stage B records what closed, and what is still open", () => {
     expect(RISKS).toContain("it has been taken for one studio");
     // ...and the same law is stated where an operator would actually go to
     // turn the flag on, not only in the risk register.
-    expect(ENV_DOC).toContain("PRODUCTION NAMES ONE STUDIO");
+    // RE-POINTED 2026-09-20. This asserted "PRODUCTION NAMES ONE STUDIO", which
+    // was the same over-reach in the opposite direction from the "NAMES NO
+    // STUDIO" it replaced: a durable row proves the allowlists matched WHEN IT
+    // WAS WRITTEN, never that they match now. The env doc must carry the dated
+    // bound instead, and must say plainly that it is not a current reading.
+    expect(ENV_DOC).toContain("DATED EVIDENCE, NOT A CURRENT READING");
+    expect(ENV_DOC).toContain("2026-08-25T22:27Z");
     expect(ENV_DOC).toContain("release decision, never a configuration tweak");
     // The §13 notice process is named at the point of activation, because that
     // is the decision an operator is about to make.
@@ -936,7 +942,7 @@ describe("Stage B records what closed, and what is still open", () => {
     // EXPLICITNESS IS THE PART THAT SURVIVES. Activation having been taken must
     // never be recorded as having been automatic, inferred, or read from the
     // variable: the value is Sensitive and is never read back.
-    expect(ENV_DOC).toContain("NOT by reading the value");
+    expect(ENV_DOC).toContain("The value is Sensitive and was NOT read");
   });
 });
 
