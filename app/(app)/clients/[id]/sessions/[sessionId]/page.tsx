@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import {
   getClientById,
   getCurrentPractitionerWithStudio,
@@ -93,71 +94,95 @@ export default async function SessionDetailPage({
 }) {
   const { id, sessionId } = await params;
   const query = (await searchParams) ?? {};
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await timed("session-chart.identity", () =>
+    getCurrentPractitionerWithStudio(),
+  );
 
-  const [clientData, session] = await Promise.all([
-    getClientById(studio.id, id),
-    getSessionForClient(studio.id, id, sessionId),
-  ]);
+  // Everything from here to the render is the page's own domain work. The
+  // region span is the number that matters to a practitioner; the per-read
+  // spans inside it are what say which parts can move.
+  const domainSpan = startPerfSpan("session-chart.domain");
+
+  const [clientData, session] = await timed("session-chart.core", () =>
+    Promise.all([
+      getClientById(studio.id, id),
+      getSessionForClient(studio.id, id, sessionId),
+    ]),
+  );
 
   if (!clientData || !session) notFound();
 
-  const lastEntry = await getRecentEntryForClient(
-    studio.id,
-    id,
-    session.modality,
-  );
+  // ------------------------------------------------------------------
+  // SESSION-START-01 slice 2A. ONE WAVE, not eight round trips.
+  //
+  // Every read below was measured (perf-timing, three runs) and proved to
+  // depend ONLY on `core`'s outputs — `studio`, `clientData`, `session` — or
+  // on pure derivations of them. None consumes another's result, which is the
+  // property that makes this safe; it was checked read by read, not assumed
+  // from the fact that they sat next to each other.
+  //
+  // Measured serially they summed to ~250ms with the slowest single read at
+  // 94ms (payment eligibility). In one wave the page waits for the slowest,
+  // not the sum.
+  //
+  // WHAT THIS DELIBERATELY DOES NOT CHANGE: what is read, who may read it,
+  // every failure shape below, and the order in which results are CONSUMED.
+  // Each read keeps its own `timed()` span, so the per-read costs stay visible
+  // and a future regression is still attributable to one read.
+  //
+  // `linkedAppointmentId` moved up from below purely so the settlement read can
+  // join the wave. It is `session.appointment_id ?? null` — a pure derivation,
+  // no I/O, no behaviour.
+  const linkedAppointmentId = session.appointment_id ?? null;
+
+  const [
+    lastEntry,
+    treatmentCounts,
+    audit,
+    clientTags,
+    clinicalNoteSections,
+    sessionPaymentEligibility,
+    pricedForPage,
+    settlementLoad,
+  ] = await Promise.all([
+    timed("session-chart.recent-entry", () =>
+      getRecentEntryForClient(studio.id, id, session.modality),
+    ),
+    session.modality === "laser"
+      ? timed("session-chart.treatment-counts", () =>
+          getLaserTreatmentCountsForClient(studio.id, id),
+        )
+      : Promise.resolve({} as Awaited<ReturnType<typeof getLaserTreatmentCountsForClient>>),
+    timed("session-chart.audit", () => getSessionAudit(session.id)),
+    timed("session-chart.tags", () => getClientTags(studio.id, id)),
+    timed("session-chart.clinical-notes", () =>
+      buildClinicalNoteSections(id, { historyLimit: 10 }),
+    ),
+    timed("session-chart.payment-eligibility", () =>
+      getSessionPaymentEligibility({ studioId: studio.id, sessionId: session.id }),
+    ),
+    timed("session-chart.payment-amount", () =>
+      getAuthoritativeSessionPaymentAmount({
+        studioId: studio.id,
+        sessionId: session.id,
+        studioTimezone: studio.timezone,
+      }),
+    ),
+    linkedAppointmentId
+      ? timed("session-chart.settlements", () =>
+          getAppointmentSettlements(studio.id, [linkedAppointmentId]),
+        )
+      : Promise.resolve(null),
+  ]);
+
+  // Pure derivations of the wave's results. Unchanged, and still in the order
+  // the page consumed them before.
   const sessionEntryIds = new Set([
     ...session.electrolysis_entries.map((e) => e.id),
     ...session.laser_entries.map((e) => e.id),
   ]);
   const lastEntryNotFromThisSession =
     lastEntry && !sessionEntryIds.has(lastEntry.id) ? lastEntry : null;
-
-  const treatmentCounts =
-    session.modality === "laser"
-      ? await getLaserTreatmentCountsForClient(studio.id, id)
-      : {};
-
-  const audit = await getSessionAudit(session.id);
-  const clientTags = await getClientTags(studio.id, id);
-
-  // Migration 0126: dated consultation + skin/hair analysis clinical notes,
-  // shown compact during charting (latest of each kind + inline add/revise;
-  // history bounded + collapsed).
-  const clinicalNoteSections = await buildClinicalNoteSections(id, {
-    historyLimit: 10,
-  });
-
-  // PR #172. Session payment eligibility resolves whether the
-  // practitioner can prepare a session_payment charge attempt
-  // (test mode only; no Stripe call). The card renders blocked /
-  // existing-attempt / ready states. Computed here so the page
-  // can decide whether to render the card at all (it always
-  // does in v1 -- the card is the surface where blocking
-  // reasons become visible).
-  const sessionPaymentEligibility = await getSessionPaymentEligibility({
-    studioId: studio.id,
-    sessionId: session.id,
-  });
-
-  // PR #200 (Chloe iPad retest): default the Session payment amount
-  // from the booked service. Two narrow reads (appointment + service
-  // join, then this client's custom pricing) feed the pure resolver;
-  // custom pricing for the same service name wins over the menu
-  // price, future-dated rows are ignored, and a service without a
-  // price leaves the form on its existing manual behavior. Display
-  // default ONLY: the field stays editable, the prepare action still
-  // validates the submitted amount, and the executor still charges
-  // the prepared row's stored amount.
-  // F-PAY-001: ONE authoritative pricing decision, from the shared trusted
-  // loader. The page no longer computes a "display default" of its own, and
-  // there is no historical-session-price fallback.
-  const pricedForPage = await getAuthoritativeSessionPaymentAmount({
-    studioId: studio.id,
-    sessionId: session.id,
-    studioTimezone: studio.timezone,
-  });
   const sessionPaymentAmount = pricedForPage.ok ? pricedForPage.result : null;
   // Populated from the SAME widened appointment read below; feeds the Finish
   // appointment workflow without a second read of the same row.
@@ -173,20 +198,18 @@ export default async function SessionDetailPage({
     startsAt: string | null;
     practitionerName: string | null;
   } | null = null;
-  // THE appointment identity for this page: sessions.appointment_id. Taken
-  // directly from the session row, NOT from the billing eligibility result,
+  // THE appointment identity for this page is sessions.appointment_id, taken
+  // directly from the session row and NOT from the billing eligibility result:
   // the Finish workflow must not depend on billing-domain types, and lineage is
-  // verified below against BOTH studio and client.
-  const linkedAppointmentId = session.appointment_id ?? null;
+  // verified below against BOTH studio and client. It is now derived ABOVE, so
+  // the settlement read can join the wave; the value and its meaning are
+  // unchanged.
 
   // PAY-SETTLE / 0187. The live attested disposition for this visit, if any.
   // One bounded, studio-scoped read. `undefined` on a failed read, which the
   // card treats exactly like "not settled" — the controls stay available and
   // the SQL command refuses a duplicate with already_settled. That is the safe
   // direction here: it can waste a keystroke, never create a second record.
-  const settlementLoad = linkedAppointmentId
-    ? await getAppointmentSettlements(studio.id, [linkedAppointmentId])
-    : null;
   const liveSettlement =
     settlementLoad?.ok && linkedAppointmentId
       ? (settlementLoad.byAppointmentId.get(linkedAppointmentId) ?? null)
@@ -209,6 +232,7 @@ export default async function SessionDetailPage({
     // workflow (status, end time, postcare send-state, practitioner, modality)
     // rather than issuing a second read of the same row. Still bounded,
     // studio-scoped and appointment-id-scoped, still read-only.
+    const apptSpan = startPerfSpan("session-chart.appointment");
     const { data: apptRow, error: apptErr } = await supabaseForDefault
       .from("appointments")
       .select(
@@ -221,6 +245,7 @@ export default async function SessionDetailPage({
       // workflow renders no completion or postcare controls for it.
       .eq("client_id", id)
       .maybeSingle();
+    apptSpan.end();
     if (apptErr) {
       // Never throw: a failed default-amount read must not block charting. But
       // it must be OBSERVABLE: swallowing it is what let this regress for a
@@ -343,12 +368,16 @@ export default async function SessionDetailPage({
   // Treatment plan attachment context: the active plans the practitioner
   // can attach to (excludes closed), plus the resolved attached plan + its
   // count if this session is already attached.
-  const [activePlansForClient, attachedPlan] = await Promise.all([
-    getActiveTreatmentPlansForClient(studio.id, id),
-    session.treatment_plan_id
-      ? getTreatmentPlanWithCount(studio.id, session.treatment_plan_id)
-      : Promise.resolve(null),
-  ]);
+  const [activePlansForClient, attachedPlan] = await timed(
+    "session-chart.plans",
+    () =>
+      Promise.all([
+        getActiveTreatmentPlansForClient(studio.id, id),
+        session.treatment_plan_id
+          ? getTreatmentPlanWithCount(studio.id, session.treatment_plan_id)
+          : Promise.resolve(null),
+      ]),
+  );
 
   // UI defaulting (NOT attachment): the new-treatment-area picker is seeded
   // from a plan's first structured area. Prefer the attached plan; if the
@@ -397,6 +426,7 @@ export default async function SessionDetailPage({
   // this visit while charting the previous one. Narrow select; only
   // rendered when a note exists, so historical clients see nothing.
   const supabaseForNote = await createClient();
+  const prevNoteSpan = startPerfSpan("session-chart.previous-note");
   const { data: previousWithNote } = await supabaseForNote
     .from("sessions")
     .select("id, started_at, next_session_note")
@@ -408,6 +438,7 @@ export default async function SessionDetailPage({
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  prevNoteSpan.end();
   const fromLastVisit =
     previousWithNote?.next_session_note?.trim() || null;
 
@@ -425,12 +456,14 @@ export default async function SessionDetailPage({
   // The candidate is the newest CHARTED session, not the newest session ROW,
   // tapping a modality on /sessions/new creates an empty session immediately,
   // and an abandoned one used to win every "previous session" lookup.
-  const lastTreatment = await loadLastChartedTreatment({
-    studioId: studio.id,
-    sessions: clientData.sessions,
-    before: session.started_at,
-    excludeSessionId: session.id,
-  });
+  const lastTreatment = await timed("session-chart.last-treatment", () =>
+    loadLastChartedTreatment({
+      studioId: studio.id,
+      sessions: clientData.sessions,
+      before: session.started_at,
+      excludeSessionId: session.id,
+    }),
+  );
   // Latest non-superseded entry per note kind, from the sections ALREADY
   // loaded above. No extra query, no note body in any log line.
   const noteHead = (kind: "consultation" | "skin_hair_analysis") => {
@@ -474,9 +507,14 @@ export default async function SessionDetailPage({
   // the SAME function the commit RPC derives its source from. We gate the panel
   // on it (not a separate "latest previous session" query), so page gating and
   // commit can never disagree about which session is the source.
-  const { data: copyDescriptor } = await supabaseForNote.rpc(
-    "whole_session_copy_source_descriptor",
-    { p_studio_id: studio.id, p_target_session_id: session.id },
+  const { data: copyDescriptor } = await timed(
+    "session-chart.copy-descriptor",
+    // async + await: a PostgREST builder is a thenable, not a Promise.
+    async () =>
+      await supabaseForNote.rpc("whole_session_copy_source_descriptor", {
+        p_studio_id: studio.id,
+        p_target_session_id: session.id,
+      }),
   );
   const canCopyFromPrevious = Boolean(
     (copyDescriptor as { eligible?: boolean } | null)?.eligible,
@@ -516,6 +554,10 @@ export default async function SessionDetailPage({
   // into 'finalized'/'void'. See docs/decisions/clinical-finalization-retired.md.
   const isFinalized =
     session.record_status === "finalized" || session.record_status === "void";
+
+  // Everything above is server work the practitioner waits on; the render
+  // below is what they finally see.
+  domainSpan.end();
 
   return (
     <div className="flex flex-col gap-8">

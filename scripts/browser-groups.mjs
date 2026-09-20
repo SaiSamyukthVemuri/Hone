@@ -51,6 +51,10 @@ export const BROWSER_GROUPS = {
       // this is its group. Filing it elsewhere to dodge the targeted-lane cost
       // pin would be misfiling to avoid a decision the pin exists to surface.
       "session-start-01-modality-ack.spec.ts",
+      // SESSION-START-01 slice 2A measurement rig. Skips itself unless
+      // HONE_PERF_TIMING=1, so it adds no runtime to the lane — but every spec
+      // on disk must map to a group, and this one drives a sessions journey.
+      "session-start-01-latency-measure.spec.ts",
       "multi-area-charting-release.spec.ts",
       "observation-chips-loading.spec.ts",
       "observation-chips-save-cycle.spec.ts",
@@ -151,6 +155,11 @@ export const BROWSER_GROUPS = {
     specs: [
       "ui01g-cluster-b-touch-floor.spec.ts",
       "client-booking-outside-hours.spec.ts",
+      // BOOK-NEXT-FAST-01: the public "Next available" press — acknowledgement,
+      // the day it lands on, that day's slots, and one-press-one-request. It is
+      // the /book/[slug] surface, so it belongs with the other public booking
+      // specs rather than with the shell interaction family.
+      "book-next-available-fast.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",
@@ -227,6 +236,15 @@ export const BROWSER_GROUPS = {
       // this mechanism is unattributable application code that already fails
       // safe to EXTENDED.
       "perceived-speed.spec.ts",
+      // RESP-CLIENT-INTAKE-01: the same primitive as the line above, adopted on
+      // the clinical navigation controls (Client Profile -> Log session /
+      // previous session / intake / photos, Intake -> client) and the two raw
+      // <a> controls converted to soft navigations. Grouped HERE and not in
+      // `sessions`, for the reason perceived-speed gives: the claim under test
+      // is the shared pending-navigation vocabulary, which any application diff
+      // can reach, so it belongs in the family that fails safe to EXTENDED.
+      // Its destinations happen to be clinical, but its subject is the shell.
+      "resp-client-intake-01-nav-ack.spec.ts",
       // UI-R01: the interaction foundations (press acknowledgement, the shared
       // spinner, geometry stability). Sits beside perceived-speed.spec.ts for
       // the same reason it gives above — this is the shell-wide interaction
