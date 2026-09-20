@@ -112,10 +112,15 @@ const JUDGED = [
  * had to be restored from git.
  */
 const INVENTORY_PATH = "tests/docs/fixtures/copy-inventory.json";
-const INVENTORY = JSON.parse(read(INVENTORY_PATH)) as {
-  inventory: Record<string, string[]>;
-  exceptions: string[];
-};
+type Fixture = { inventory: Record<string, string[]>; exceptions: string[] };
+
+// LET, not const, because the regeneration block below rewrites the file and
+// the rest of this run must see what it wrote. Parsed once and never refreshed,
+// the documented `MARKETING_INVENTORY=write` command could not complete: it
+// updated the JSON correctly and then failed its own equality assertions
+// against the object it had replaced, so a legitimate shrink needed a second
+// run to look green.
+let INVENTORY = JSON.parse(read(INVENTORY_PATH)) as Fixture;
 
 const currentInventory = (): Record<string, string[]> => {
   const out: Record<string, string[]> = {};
@@ -161,6 +166,7 @@ if (process.env.MARKETING_INVENTORY === "write") {
     join(REPO_ROOT, INVENTORY_PATH),
     JSON.stringify({ inventory, exceptions }, null, 2) + "\n",
   );
+  INVENTORY = JSON.parse(read(INVENTORY_PATH)) as Fixture;
 }
 
 /** The production head the register declares it was verified against. */
@@ -193,7 +199,7 @@ describe("R1. the surface is DECLARED, not discovered", () => {
     // `app/layout.tsx` is no longer listed here: it is an app-root CONVENTION
     // route and arrives with the rest of them, so naming it twice would let the
     // two disagree.
-    expect(DECLARED_COPY_FILES).toEqual(["lib/rate-limit/public.ts"]);
+    expect(DECLARED_COPY_FILES).toEqual(["lib/rate-limit/public.ts", "lib/marketing/metadata.ts"]);
     expect(CANONICAL_COPY_MODULES.length).toBe(3);
     expect(POLICY_SOURCES).toEqual(["app/privacy/page.tsx", "app/terms/page.tsx"]);
   });
@@ -1320,6 +1326,17 @@ describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catc
     expect(incomplete("<p>Every <em>change</em> is {STATE}</p>")).toEqual([
       "copy/incomplete-claim",
     ]);
+
+    // AT ANY DEPTH, and through a fragment, which is not even an element. One
+    // level of descent left `<p>Every <><strong>{NOUN}</strong></> is
+    // tracked</p>` green: the outer element had the words and no hole, and every
+    // wrapper between had a hole and no words.
+    expect(incomplete("<p>Every <><strong>{NOUN}</strong></> is tracked</p>")).toEqual([
+      "copy/incomplete-claim",
+    ]);
+    expect(incomplete("<p>Every <span><em><b>{NOUN}</b></em></span> is tracked</p>")).toEqual([
+      "copy/incomplete-claim",
+    ]);
   });
 
   it("ACCEPTED — a heading and an unrelated list simply sharing a container", () => {
@@ -1332,6 +1349,23 @@ describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catc
     expect(incomplete("<div><h2>Pricing</h2>{PLANS.map((p) => <Card key={p.id} />)}</div>")).toEqual([]);
 
     expect(incomplete("<section><p>A complete sentence here.</p><div>{widget}</div></section>")).toEqual([]);
+
+    // What keeps this allowed is the WORD side, not the hole side: the outer
+    // element has no authored text of its own, so there is no sentence for the
+    // list to be inside. The descent itself is unconditional; an earlier draft
+    // also stopped at wrappers carrying their own words, measured identical at
+    // twelve, and that branch is gone.
+    expect(
+      incomplete("<div><h2>Pricing plans for every studio</h2><ul>{PLANS.map((p) => <li key={p.id} />)}</ul></div>"),
+    ).toEqual([]);
+
+    // A hole inside a wrapper that has words of its own is caught either way —
+    // the stop only decided which element it was reported against. Reported
+    // ONCE, which is what the dedupe is for: without it this hole belongs to two
+    // sentences at once and is counted twice.
+    expect(incomplete("<p>Intro <span>Heading {hole}</span></p>")).toEqual([
+      "copy/incomplete-claim",
+    ]);
   });
 
   // --- P1: an imported component used as a TAG ------------------------------
@@ -1382,8 +1416,27 @@ describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catc
     ]) {
       expect(FROZEN, `${convention} is a public convention route`).toContain(convention);
     }
+    // And the metadata BUILDER, whose titles and descriptions every route sets
+    // through `export const metadata = marketingMetadata("/")`. An imported
+    // identifier consumed outside JSX is not something the import rule can see,
+    // so the module is declared instead of a rule being stretched to reach it.
+    expect(FROZEN).toContain("lib/marketing/metadata.ts");
     // Non-recursive: the authenticated application stays out.
     expect(FROZEN.filter((f) => f.startsWith("app/(app)/"))).toEqual([]);
+  });
+
+  it("the documented regeneration command can actually complete", () => {
+    // `INVENTORY` is parsed once at module load and the write block replaces the
+    // file, so a legitimate shrink used to update the JSON correctly and then
+    // fail its own equality assertions against the object it had replaced — only
+    // a SECOND run looked green. The baseline is re-read after writing.
+    const source = read("tests/docs/marketing-truth-register.test.ts");
+    const block = source.slice(
+      source.indexOf('if (process.env.MARKETING_INVENTORY === "write")'),
+      source.indexOf('describe("R1.'),
+    );
+    expect(block).toContain("INVENTORY = JSON.parse(read(INVENTORY_PATH))");
+    expect(source).toContain("let INVENTORY");
   });
 
   it("the prose heuristic still separates copy from class names", () => {

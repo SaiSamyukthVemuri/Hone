@@ -93,7 +93,14 @@ export const DECLARED_COPY_DIRS: readonly string[] = [
  * `lib/rate-limit/public.ts` is a rate limiter, but `RATE_LIMIT_MESSAGE` is
  * returned by the demo action and shown to visitors.
  */
-export const DECLARED_COPY_FILES: readonly string[] = ["lib/rate-limit/public.ts"];
+export const DECLARED_COPY_FILES: readonly string[] = [
+  "lib/rate-limit/public.ts",
+  // Every marketing route sets `export const metadata = marketingMetadata("/")`.
+  // The titles and descriptions that builder writes are what search results and
+  // browser tabs show, and an imported identifier consumed OUTSIDE JSX is not
+  // something the import rule can see — so the module is declared instead.
+  "lib/marketing/metadata.ts",
+];
 
 /**
  * Next's FILE-CONVENTION routes at the app root.
@@ -470,6 +477,12 @@ export function dynamicTextAttributeViolations(
 export function incompleteClaimViolations(file: string, source?: string): CopyViolation[] {
   const sf = parse(file, source);
   const out: CopyViolation[] = [];
+  // ONE REPORT PER HOLE. The rule fires at every level whose own words enclose
+  // it, so `<p>Intro <span>Heading {hole}</span></p>` reported the same
+  // expression twice — once for the paragraph, once for the span. Two entries
+  // for one defect inflate the declared ceiling and make the exception list read
+  // as though there were more places to fix than there are.
+  const reported = new Set<number>();
   const visit = (n: ts.Node) => {
     if (ts.isJsxElement(n) || ts.isJsxFragment(n)) {
       // THE TEXT FLOW, not just the direct children. `<p>Every
@@ -484,38 +497,57 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
       // belong to that rather than to this sentence. Measured, because the
       // whole-subtree reading flagged 158 places where a heading and an
       // unrelated list simply shared a container.
-      let words = 0;
-      const holes: ts.JsxExpression[] = [];
-      const countText = (t: string) => {
-        words += t.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length;
-      };
       const isHole = (c: ts.Node): c is ts.JsxExpression =>
         ts.isJsxExpression(c) && c.expression !== undefined && !isProvenStatic(c.expression);
-      for (const child of n.children) {
-        if (ts.isJsxText(child)) countText(child.text);
-        if (isHole(child)) holes.push(child);
-        if (ts.isJsxElement(child)) {
-          const inner = child.children;
-          const carriesOnlyFlow = inner.every((c) => ts.isJsxText(c) || ts.isJsxExpression(c));
-          if (carriesOnlyFlow) {
-            // HOLES from a leaf wrapper, but not its WORDS. The asymmetry is
-            // what separates a sentence from a layout container without naming
-            // a single tag:
-            //
-            //   <p>Every <strong>{NOUN}</strong> is tracked</p>   refused
-            //   <div><h2>Pricing</h2>{PLANS.map(…)}</div>         allowed
-            //
-            // The first has authored words on the element ITSELF, so the hole
-            // sits inside its sentence. The second has none — the words belong
-            // to the heading, and the list beside it is a different thing. A
-            // symmetric reading refused both, and the second is ordinary markup
-            // that new work would hit constantly.
-            for (const c of inner) if (isHole(c)) holes.push(c);
-          }
+      const directWords = (el: ts.JsxElement | ts.JsxFragment): number =>
+        el.children
+          .filter(ts.isJsxText)
+          .reduce(
+            (sum, t) => sum + t.text.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length,
+            0,
+          );
+
+      // HOLES from any depth of wrapper, WORDS only from the element itself.
+      // That asymmetry is what separates a sentence from a layout container
+      // without naming a single tag:
+      //
+      //   <p>Every <strong>{NOUN}</strong> is tracked</p>   refused
+      //   <div><h2>Pricing</h2>{PLANS.map(…)}</div>         allowed
+      //
+      // The first has authored words on the element ITSELF, so the hole sits
+      // inside its sentence. The second has none — the words belong to the
+      // heading, and the list beside it is a different thing.
+      //
+      // RECURSIVE AND UNCONDITIONAL, because one level was not enough: `<p>Every
+      // <><strong>{NOUN}</strong></> is tracked</p>` hides the hole two wrappers
+      // down, and a fragment is not even an element.
+      //
+      // An earlier draft stopped descending at any wrapper carrying words of its
+      // own, on the theory that this was what kept the rule from returning the
+      // 158-place census an unrestricted subtree reading produced. Measured with
+      // and without: TWELVE either way. The census came entirely from counting a
+      // wrapper's WORDS, never from reaching its holes.
+      //
+      // The stop changes ATTRIBUTION, not coverage: with it,
+      // `<p>Intro <span>Heading {hole}</span></p>` is reported against the span,
+      // which the outer traversal reaches on its own; without it, against the
+      // paragraph. Both find the hole. Dropped because an inert branch that
+      // looks like a safeguard is worse than no branch — and the dedupe below is
+      // the price of dropping it, since one hole can now sit inside two
+      // sentences at once.
+      const holes: ts.JsxExpression[] = [];
+      const gatherHoles = (el: ts.JsxElement | ts.JsxFragment) => {
+        for (const child of el.children) {
+          if (isHole(child)) holes.push(child);
+          if (ts.isJsxElement(child) || ts.isJsxFragment(child)) gatherHoles(child);
         }
-      }
+      };
+      gatherHoles(n);
+      const words = directWords(n);
       if (words > 0 && holes.length > 0) {
         for (const hole of holes) {
+          if (reported.has(hole.getStart(sf))) continue;
+          reported.add(hole.getStart(sf));
           out.push({
             file,
             line: lineOf(sf, hole),
