@@ -479,13 +479,30 @@ describe("PR CI — path-aware lane selection", () => {
     // Run 30767725631 cancelled both 2-shard jobs at the 10-minute hard
     // timeout with ZERO test failures (shard 2 reached 72/90). Four shards
     // halve the per-shard load to ~45 tests.
-    expect(CI).toMatch(/browser_shards=\$\{r\.extended \? "\[1,2,3,4\]" : "\[1\]"\}/);
+    expect(CI).toMatch(/browser_shards=\$\{r\.extended \? "\[1,2,3,4\]" : "\[1,2\]"\}/);
     expect(CI).toMatch(/--shard=\$\{\{ matrix\.shard \}\}\/4/);
     expect(CI).toMatch(/fromJson\(needs\.changes\.outputs\.browser_shards\)/);
   });
 
-  it("targeted coverage remains a SINGLE browser job", () => {
-    expect(CI).toMatch(/: "\[1\]"/);
+  it("targeted coverage is split across TWO shards", () => {
+    // WAS "remains a SINGLE browser job". This REPLACES that assertion rather
+    // than relaxing it, and the reason is the one recorded in the test above.
+    //
+    // THE SAME REMEDY, APPLIED TO THE OTHER LANE. Extended went 2 -> 4 shards
+    // because run 30767725631 cancelled both jobs at the hard timeout with zero
+    // test failures. The targeted lane then reached the identical state, having
+    // never been sharded at all: on a `booking` + `owner_admin` diff it ran 36
+    // specs / 213 tests in ONE job, measured at 680s (passed), then 745s and
+    // 761s (both cut at the cap, zero test failures, no traces) on an identical
+    // workload, with ~180s of setup inside the same 15 min budget.
+    //
+    // The alternative was raising 15, which buys EVERY PR more time to solve one
+    // lane's problem and hides the slowness the block above `timeout-minutes`
+    // says is still worth investigating.
+    expect(CI).toMatch(/: "\[1,2\]"/);
+    expect(CI).toMatch(/browser_specs \}\}\s+--shard=\$\{\{ matrix\.shard \}\}\/2/);
+    // That the split loses nothing is proved by test IDENTITY rather than by a
+    // regex over this file: tests/ci/browser-shard-coverage.test.ts.
   });
 
   it("the aggregator requires all four extended shards", () => {

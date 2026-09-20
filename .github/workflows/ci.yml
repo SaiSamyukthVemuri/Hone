@@ -157,7 +157,22 @@ jobs:
                 // Extended coverage is split across two SEPARATE JOBS, so each
                 // shard gets its own runner and its own Supabase stack. That
                 // preserves the isolation the single-worker config protects.
-                `browser_shards=${r.extended ? "[1,2,3,4]" : "[1]"}`,
+                //
+                // TARGETED IS SPLIT TOO, AND IT WAS THE LANE THAT NEEDED IT.
+                // It ran every selected spec in ONE shard while extended - the
+                // lane with FEWER specs per shard - already had four. On a diff
+                // touching `booking` + `owner_admin` that is 36 specs in one
+                // job: measured at 680s, 745s and 761s of tests on identical
+                // work, against a 15 min budget that ~180s of setup eats into.
+                // One of those four runs passed. The workload was never the
+                // variable; the runner was.
+                //
+                // TWO, NOT FOUR. Each shard pays the full setup cost again -
+                // Supabase stack plus the migration chain from scratch - so
+                // splitting further buys less test time than it spends. Two
+                // halves the test phase to ~6 min and leaves the 15 min cap
+                // untouched, which is the point: no other lane's budget moves.
+                `browser_shards=${r.extended ? "[1,2,3,4]" : "[1,2]"}`,
                 `browser_reason=${r.reason.replace(/\n/g," ").slice(0,300)}`,
               ].join("\n");
               fs.appendFileSync(process.env.GITHUB_OUTPUT, out + "\n");
@@ -479,8 +494,14 @@ jobs:
     # minutes is still too slow and still worth investigating; it now reports
     # its own result instead of being cut mid-run and misread as a test failure.
     #
-    #   targeted  : target <10 min,          hard timeout 15 min
-    #   extended  : target <10 min per shard, hard timeout 18 min
+    #   targeted  : target <10 min per shard, hard timeout 15 min  (2 shards)
+    #   extended  : target <10 min per shard, hard timeout 18 min  (4 shards)
+    #
+    # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
+    # one breaching its budget, and the repair was to give it the sharding
+    # extended already had rather than to buy every PR more time. Raising 15
+    # would have moved the cliff for lanes that are nowhere near it; splitting
+    # moves the work.
     timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 18 || 15 }}
     strategy:
       fail-fast: false
@@ -564,8 +585,14 @@ jobs:
             echo "extended coverage: native Playwright shard ${{ matrix.shard }} of 4"
             npx playwright test --shard=${{ matrix.shard }}/4
           else
+            # SHARDED OVER THE SELECTED SET, not over the whole suite. Playwright
+            # partitions exactly the specs it is handed, so the group selection
+            # above still decides WHAT runs and this only decides who runs which
+            # half. Disjoint and exhaustive by construction - proved, not
+            # assumed, by tests/ci/browser-shard-coverage.test.ts.
+            echo "targeted coverage: native Playwright shard ${{ matrix.shard }} of 2"
             echo "targeted specs: ${{ needs.changes.outputs.browser_specs }}"
-            npx playwright test ${{ needs.changes.outputs.browser_specs }}
+            npx playwright test ${{ needs.changes.outputs.browser_specs }} --shard=${{ matrix.shard }}/2
           fi
         env:
           # Enables the guarded fake-Resend transport for the welcome-email
