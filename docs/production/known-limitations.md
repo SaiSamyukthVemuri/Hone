@@ -502,8 +502,10 @@ documentation, because no evidence supports them:
 - ⚠️ **INVERTED 2026-09-19.** This bullet used to forbid claiming the durable new-client
   waitlist had been switched on, and described it as deployed-and-dormant with an empty table.
   **Production disproved that on 2026-08-25.** The bullet now forbids the opposite error: never
-  describe the durable new-client waitlist as dormant, dark or empty. It is **enabled for one studio
-  and gathering prospect data** — **31 rows, 28 of them Willow's, measured 2026-09-19** (L25).
+  describe the durable new-client waitlist as dormant, dark or empty. It **was enabled for one studio
+  and gathering prospect data at every measured instant** — **31 rows, 28 of them Willow's,
+  measured 2026-09-19** (L25). Rows outlive the flag, so that is a dated bound, not a reading of
+  the allowlist now.
   The original lesson survives the inversion and is the reason this entry is rewritten rather
   than deleted: **state the dated measurement, never a present-tense adjective.** A dated 31 is
   no more a standing fact than a dated 0 was. And enabled is **exercised only as far as joining**:

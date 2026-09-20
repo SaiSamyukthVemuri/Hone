@@ -923,7 +923,12 @@ describe("Stage B records what closed, and what is still open", () => {
     // production on 2026-08-25, when the durable commit point began accepting
     // public joins. A guard that mandates a stale fact keeps it stale, so the
     // assertions are re-pointed at the corrected claims rather than relaxed.
-    expect(RISKS).toContain("PRODUCTION ENABLES ONE STUDIO");
+    // RE-POINTED 2026-09-20, same correction as the ENV_DOC assertion below.
+    // "PRODUCTION ENABLES ONE STUDIO" was a present-tense claim that persisted
+    // rows cannot support: rows outlive the flag, so they bound the activation
+    // in time and say nothing about the value now. The risk register must carry
+    // the DATED BOUND instead.
+    expect(RISKS).toContain("ONE STUDIO WAS ENABLED at every instant a durable row was written");
     expect(RISKS).toContain("Activation is an explicit operator step");
     expect(RISKS).toContain("it has been taken for one studio");
     // ...and the same law is stated where an operator would actually go to

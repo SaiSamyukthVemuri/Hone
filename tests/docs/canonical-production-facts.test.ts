@@ -939,6 +939,12 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
   const SCANNED_DOCS = [
     ...NO_CURRENT_MAX_DOCS,
     ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
+    // ADDED after Codex #740 observed that the security and deployment docs
+    // carried the same disproved claims and were not scanned AT ALL. A guard
+    // that reads three documents while the claim lives in five is a guard
+    // against three documents.
+    ["docs/03_SECURITY_AND_PRIVACY.md", read("docs/03_SECURITY_AND_PRIVACY.md")],
+    ["docs/10_DEPLOYMENT_AND_ENV.md", read("docs/10_DEPLOYMENT_AND_ENV.md")],
   ] as const;
 
   it("current-state records the durable waitlist as activated, with a non-zero row count", () => {
@@ -1191,6 +1197,20 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         // control caught that too.
         new RegExp(`${durableFlagName()}\`?\\s+(?:currently\\s+)?names\\b`, "i"),
         /\bproduction\s+(?:currently\s+)?names\s+one\s+studio\b/i,
+        // PRESENT-TENSE ENABLEMENT IN ANY WORDING. Codex #740: the first draft
+        // rejected only "names one studio" and an explicit rows-to-currently
+        // phrase, while the register said "ENABLED for one studio" and the
+        // security doc "PRODUCTION ENABLES ONE STUDIO". All are the same
+        // inference. Past tense ("was enabled", "at every measured instant")
+        // stays legal -- that is the bound the documents are supposed to state.
+        /\bPRODUCTION\s+ENABLES\s+ONE\s+STUDIO\b/,
+        /\b(?:is|are)\s+ENABLED\s+for\s+one\s+studio\b/i,
+        // CASE-INSENSITIVE LOOKBEHIND. A negative control caught this: the
+        // lookbehinds were written lowercase with no `i` flag, so documents
+        // writing "WAS ENABLED" in caps -- which several of these tables do --
+        // would have tripped the rule for using the LEGAL past-tense form.
+        /(?<!\bwas\s)(?<!\bwere\s)\bENABLED\s+for\s+one\s+studio\b(?![^.\n]{0,60}\bat every measured instant\b)/i,
+        /\bone studio (?:is|remains) on the durable allowlist\b/i,
       ]) {
         expect(
           prose.match(shape)?.[0] ?? null,

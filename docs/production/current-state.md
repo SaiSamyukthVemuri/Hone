@@ -481,8 +481,8 @@ into one status sentence.
 
 ### WAIT-01 — the email-delivered waitlist. SUPERSEDED at Willow; the FALLBACK path.
 
-**Implemented · merged (PR #601) · deployed · admission gate still ENABLED for one studio ·
-its EMAIL COMMIT POINT no longer serves any studio.**
+**Implemented · merged (PR #601) · deployed · admission gate WAS enabled for one studio at every
+measured instant · its EMAIL COMMIT POINT no longer served any studio.**
 
 > ⚠️ **CORRECTED 2026-09-19.** This section was headed *LIVE at Willow* and read as though the
 > email were still Willow's commit point. The **admission gate** below is indeed still on for
@@ -628,7 +628,8 @@ open item — not the activation. Tracked as **L25** in
 [known-limitations.md](./known-limitations.md).
 
 > **The durable waitlist is ACTIVATED, and that is still not the same as ACCEPTED.** It is
-> *deployed*, *disclosed*, *enabled for one studio* and *collecting*. It has **not** been
+> *deployed*, *disclosed*, *was enabled for one studio at every measured instant* and
+> *collecting*. It has **not** been
 > exercised beyond joining on that studio — **zero invitations have ever been issued there** —
 > and owner device acceptance has not been given.
 
