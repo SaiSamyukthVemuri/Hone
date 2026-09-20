@@ -23,14 +23,26 @@ import { seedE2eStudio, sql } from "./helpers/seed";
 
 const T = 60_000;
 
-/** Every Server Action POST this page issues, by the header Next tags them with. */
-function countServerActions(page: Page) {
-  let count = 0;
+/**
+ * Every Server Action POST this page issues, IDENTIFIED — not merely counted.
+ *
+ * Next tags each Server Action request with a `Next-Action` header carrying that
+ * action's id, so two different actions are two different ids. Recording the ids
+ * rather than a bare total is what makes a duplicate-dispatch assertion possible:
+ * one press of this control legitimately produces TWO posts — the next-available
+ * lookup, then the slot fetch for the day it lands on — so any assertion phrased
+ * as a total has to allow two, and therefore cannot tell "one lookup plus one
+ * fetch" from "the lookup fired twice", which is the only thing it was added to
+ * detect.
+ */
+function recordServerActions(page: Page) {
+  const ids: string[] = [];
   page.on("request", (req) => {
     if (req.method() !== "POST") return;
-    if (req.headers()["next-action"]) count += 1;
+    const id = req.headers()["next-action"];
+    if (id) ids.push(id);
   });
-  return () => count;
+  return () => [...ids];
 }
 
 /** Hold every Server Action POST until released. */
@@ -96,6 +108,13 @@ test.describe("BOOK-NEXT-FAST-01: the public Next available press", () => {
     page,
   }) => {
     const { seed, today, expected } = await seedBlockedStudio(10);
+
+    // Attached BEFORE the page loads. Installing it just before the press —
+    // which is where it started — meant the day's own slot fetch had already
+    // happened and gone unrecorded, so "ids seen before the press" came back
+    // empty and the lookup could not be told apart from the fetch.
+    const serverActions = recordServerActions(page);
+
     await openBookingForm(page, seed.slug);
 
     const dateInput = page.locator('input[type="date"]').first();
@@ -105,8 +124,15 @@ test.describe("BOOK-NEXT-FAST-01: the public Next available press", () => {
     // "Next available" control.
     const button = page.getByRole("button", { name: /^next available$/i });
     await expect(button).toBeVisible({ timeout: T });
+    // The slot fetch for the CURRENTLY shown day has already run — it is why
+    // this surface is showing the empty-day control at all — so its action id is
+    // already on record. Anything new after the press is the lookup.
+    const idsBeforePress = new Set(serverActions());
+    expect(
+      idsBeforePress.size,
+      "expected the day's slot fetch to have already run, so its id is known",
+    ).toBeGreaterThan(0);
 
-    const actionCount = countServerActions(page);
     const gate = await holdServerAction(page);
 
     await button.click();
@@ -139,10 +165,18 @@ test.describe("BOOK-NEXT-FAST-01: the public Next available press", () => {
 
     await page.unrouteAll({ behavior: "ignoreErrors" });
 
-    // ONE PRESS, ONE LOOKUP. The count includes the slot fetch the landing day
-    // triggers, so this asserts the next-available action did not fire twice
-    // rather than asserting a bare total.
-    expect(actionCount(), "one press must not dispatch twice").toBeLessThanOrEqual(3);
+    // ONE PRESS, ONE LOOKUP — asserted on the LOOKUP specifically.
+    //
+    // The landing day's slot fetch reuses the id already seen before the press,
+    // so filtering to ids that are new isolates the next-available action. A
+    // double dispatch puts that id in the list twice and fails here; a bound on
+    // the TOTAL could not, because one press legitimately produces two posts.
+    const newIds = serverActions().filter((id) => !idsBeforePress.has(id));
+    expect(
+      new Set(newIds).size,
+      `expected exactly one new action (the lookup), saw ${new Set(newIds).size}`,
+    ).toBe(1);
+    expect(newIds, "the next-available lookup must be dispatched exactly once").toHaveLength(1);
   });
 
   test("at 390px the same press acknowledges and lands", async ({ page }) => {
