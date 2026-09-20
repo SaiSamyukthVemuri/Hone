@@ -769,6 +769,16 @@ export type Client = {
   pronouns: string | null;
   date_of_birth: string | null;
   phone: string | null;
+  // Migration 0199: the canonical SMS destination, DERIVED from `phone` by
+  // PostgreSQL on every write (`generated always as
+  // (public.sms_normalized_phone(phone)) stored`). NULL means this client
+  // cannot be sent an SMS at all -- it is the same rule
+  // `normalizePhoneForSms` applies, owned by the database so selection and
+  // sending cannot disagree. READ-ONLY: the database rejects any attempt to
+  // write it, so never include it in an insert or update payload. Carries no
+  // consent meaning; sms_consent_at and sms_opted_out_at stay separate and are
+  // still checked independently at send time.
+  sms_phone: string | null;
   email: string | null;
   address: string | null;
   fitzpatrick_type: FitzpatrickType | null;
