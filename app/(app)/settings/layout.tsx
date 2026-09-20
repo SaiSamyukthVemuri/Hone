@@ -4,6 +4,7 @@ import {
   isNewClientWaitlistDurableEnabled,
 } from "@/lib/booking/new-client-waitlist";
 import { SettingsNav, type SettingsNavItem } from "./SettingsNav";
+import { ResumeSetupLink } from "@/components/onboarding/ResumeSetupLink";
 
 // Settings layout. The tab list is computed server-side based on
 // role; the nav itself is a small client component so it can read
@@ -75,9 +76,19 @@ export default async function SettingsLayout({
 
   return (
     <div className="flex flex-col gap-8">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-        <SettingsNav items={items} />
+      <div className="flex flex-col gap-3">
+        {/*
+          Rendered ABOVE the heading and only when the setup flag is present:
+          an operator who arrived mid-setup keeps a way back after the save,
+          because settings actions revalidate in place and never redirect.
+          Without the flag this renders null and ordinary settings navigation
+          is completely untouched.
+        */}
+        <ResumeSetupLink />
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
+          <SettingsNav items={items} />
+        </div>
       </div>
       {children}
     </div>

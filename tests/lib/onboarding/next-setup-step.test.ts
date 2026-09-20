@@ -93,3 +93,36 @@ describe("nextSetupStep", () => {
     expect(JSON.stringify(c)).toBe(before);
   });
 });
+
+// ---------------------------------------------------------------------------
+// RESUME-SETUP CONTRACT.
+//
+// Review caught that pointing at the next task closed only HALF the loop: every
+// settings action revalidates in place and none redirects, so an operator who
+// completed the task simply stayed there. The flag below is what carries setup
+// context onto the task surface. These pin the contract shared between the
+// producer (the getting-started CTA) and the consumer (the settings layout) —
+// a mismatch between them would silently drop the way back.
+// ---------------------------------------------------------------------------
+describe("resume-setup contract", () => {
+  it("the param name is a shared constant, not duplicated string literals", async () => {
+    const { RESUME_SETUP_PARAM } = await import(
+      "@/components/onboarding/ResumeSetupLink"
+    );
+    expect(RESUME_SETUP_PARAM).toBe("setup");
+  });
+
+  it("the getting-started CTA appends the flag to the next step's own href", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/(app)/getting-started/page.tsx", "utf8");
+    // The href must be built from nextStep.href, never hard-coded, so the CTA
+    // cannot drift away from the checklist item it claims to point at.
+    expect(src).toMatch(/nextStep\.href as string\}\?\$\{RESUME_SETUP_PARAM\}=1/);
+  });
+
+  it("the settings layout hosts the way back", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/(app)/settings/layout.tsx", "utf8");
+    expect(src).toContain("<ResumeSetupLink />");
+  });
+});

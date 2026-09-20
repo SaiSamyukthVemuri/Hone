@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { RESUME_SETUP_PARAM } from "@/components/onboarding/ResumeSetupLink";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   buildGettingStarted,
@@ -118,7 +119,10 @@ export default async function GettingStartedPage() {
             {nextStep.explanation}
           </p>
           <Link
-            href={nextStep.href as string}
+            // Carries the setup context so the task surface can offer a way
+            // back once the work is done — settings saves revalidate in place
+            // and never redirect, so without this the chain ends at one hop.
+            href={`${nextStep.href as string}?${RESUME_SETUP_PARAM}=1`}
             className="mt-3 inline-flex min-h-11 items-center rounded-md border border-neutral-300 px-4 text-sm font-medium text-neutral-900 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-800"
           >
             Continue setup
