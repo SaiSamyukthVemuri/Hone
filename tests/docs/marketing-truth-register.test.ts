@@ -92,10 +92,11 @@ const MODULE_CLAIMS = [
   // so both branches of a complete conditional are judged rather than only the
   // one that happened to evaluate.
   ...CANONICAL_COPY_MODULES.flatMap((f) => moduleClaims(f)),
-  // And by value, which proves the two agree for a plain data module.
-  ...[...walkStrings(marketingContent), ...walkStrings(marketingResources)].filter(
-    isSubstantiveProse,
-  ),
+  // And by value, which proves the two agree for a plain data module. No prose
+  // filter: judgement is not an authoring question, and filtering it hid the
+  // exact N1 wording behind a four-word threshold.
+  ...walkStrings(marketingContent),
+  ...walkStrings(marketingResources),
 ];
 const CLAIMS = [...PAGE_CLAIMS, ...MODULE_CLAIMS];
 const MARKETING_COPY = CLAIMS.join(" ¶ ");
@@ -147,6 +148,21 @@ const ASSEMBLED_CLAIM_BASELINE: readonly string[] = ["app/resources/page.tsx"];
  * both shrinks this number and enters the judged corpus.
  */
 const PAGE_PROSE_BASELINE = 213;
+
+/**
+ * The declared exceptions, BY IDENTITY.
+ *
+ * Both halves are frozen the same way and for the same reason: a count leaves
+ * reusable capacity behind every deletion. Replacing one existing component
+ * sentence with `Every change is tracked on this treatment record.` left the file
+ * set and the total unchanged, and component prose is not judged — so the
+ * replacement shipped. The page half had already been fixed; this is its sibling,
+ * fixed the same way rather than one round later.
+ */
+const BASELINE = JSON.parse(read("tests/docs/fixtures/copy-baseline.json")) as {
+  pageProse: Record<string, string[]>;
+  componentProse: Record<string, string[]>;
+};
 
 /** The production head the register declares it was verified against. */
 function declaredHead(): string {
@@ -867,7 +883,10 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
       for (const m of src.matchAll(/from "@\/(lib\/marketing\/[a-z-]+)"/g)) {
         const rel = `${m[1]}.ts`;
         if (!existsSync(join(REPO_ROOT, rel))) continue;
-        if (moduleClaims(rel).length > 0) {
+        // The PROSE test here, not the raw literal count: "does this module
+        // author copy?" is an authoring question, and every module has strings.
+        // Judgement is what must not be filtered; declaration is what must.
+        if (moduleClaims(rel).some(isSubstantiveProse)) {
           expect(
             CANONICAL_COPY_MODULES,
             `${rel} authors substantive copy and ${page} imports it, but it is not declared`,
@@ -970,10 +989,7 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     // the recorded baseline; removing one is fine, introducing one is not. New
     // product-marketing copy belongs in a canonical copy module, where it IS
     // judged — which is the only way to add a page-level sentence at all.
-    const baseline = JSON.parse(
-      read("tests/docs/fixtures/page-prose-baseline.json"),
-    ) as Record<string, string[]>;
-    const known = new Set(Object.values(baseline).flat());
+    const known = new Set(Object.values(BASELINE.pageProse).flat());
 
     const introduced: string[] = [];
     for (const file of pageCopySources()) {
@@ -1016,6 +1032,14 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     const prose = marketingComponentFiles().flatMap((f) => componentProseViolations(f));
     expect(new Set(prose.map((v) => v.file))).toEqual(new Set(COMPONENT_PROSE_BASELINE));
     expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(6);
+
+    // BY IDENTITY, like the page half. A count alone let one exception be
+    // swapped for another, and component prose is not judged.
+    const knownComponent = new Set(Object.values(BASELINE.componentProse).flat());
+    expect(
+      prose.map((v) => v.detail).filter((d) => !knownComponent.has(d)),
+      "a component exception was replaced; the new sentence is NOT judged against the register",
+    ).toEqual([]);
 
     const assembled = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) => assembledClaimViolations(f));
     expect(new Set(assembled.map((v) => v.file))).toEqual(new Set(ASSEMBLED_CLAIM_BASELINE));

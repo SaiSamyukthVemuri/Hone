@@ -305,7 +305,7 @@ export function copyModuleViolations(file: string, source?: string): CopyViolati
       flag("copy-module/no-concatenation", n.getText().slice(0, 70));
     } else if (
       (ts.isCallExpression(n) || ts.isTaggedTemplateExpression(n)) &&
-      assemblesProse(staticFragments(n))
+      (assemblesProse(staticFragments(n)) || combinesTextWithValue(n))
     ) {
       // NOT a three-construct denylist. `["Every change is", "tracked"].join(" ")`
       // produced a forbidden sentence through none of template/`+`/conditional,
@@ -364,6 +364,45 @@ function assemblesProse(fragments: string[]): boolean {
     return true;
   }
   return isSubstantiveProse(fragments.join(" "));
+}
+
+/**
+ * Does this call combine authored text with something unreadable?
+ *
+ * `const suffix = "is tracked"; ["Every change", suffix].join(" ")` renders the
+ * N1 sentence out of a two-word literal and a value. Neither half is substantive
+ * on its own, so a fragments-only test passed it — the same length heuristic
+ * failing in a second place.
+ *
+ * The signature is an ARRAY or TEMPLATE inside the call that mixes string
+ * literals with non-literals. That is text being assembled. It is deliberately
+ * narrower than "any call with a literal and an identifier", which would flag
+ * `label.replace(/[^0-9.]/g, "")` and the `"@type"` builders — measured, all of
+ * which stay clean.
+ */
+function combinesTextWithValue(node: ts.Node): boolean {
+  let found = false;
+  const visit = (n: ts.Node) => {
+    if (found) return;
+    if (ts.isArrayLiteralExpression(n)) {
+      const literals = n.elements.filter(
+        (e) => ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e),
+      );
+      const values = n.elements.filter(
+        (e) => !ts.isStringLiteral(e) && !ts.isNoSubstitutionTemplateLiteral(e),
+      );
+      const hasWord = literals.some((e) =>
+        /[A-Za-z]{2,}/.test((e as ts.StringLiteral).text),
+      );
+      if (literals.length > 0 && values.length > 0 && hasWord) found = true;
+    }
+    if (ts.isTemplateExpression(n) && n.templateSpans.length > 0) {
+      if (/[A-Za-z]{2,}/.test(n.head.text)) found = true;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return found;
 }
 
 /** A complete value needs no assembly: a literal, or an absence. */
@@ -691,10 +730,19 @@ export function moduleClaims(file: string, source?: string): string[] {
   const visit = (n: ts.Node) => {
     if (
       (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
-      !(n.parent && (ts.isImportDeclaration(n.parent) || ts.isExportDeclaration(n.parent))) &&
-      isSubstantiveProse(n.text)
+      !(n.parent && (ts.isImportDeclaration(n.parent) || ts.isExportDeclaration(n.parent)))
     ) {
-      out.push(normalise(n.text));
+      // NO PROSE FILTER HERE, deliberately. `isSubstantiveProse` decides whether
+      // text is the SORT OF THING an author may write in a component or a page —
+      // an authoring question. Using it to decide what gets JUDGED meant
+      // `export const title = "Every change is tracked"` — four words, no full
+      // stop, and the exact N1 wording — never reached the rules at all.
+      //
+      // A complete canonical literal is judged whatever its length. Short
+      // technical strings cost nothing: the rules are specific phrases and do
+      // not match `"@type"`.
+      const value = normalise(n.text);
+      if (value) out.push(value);
     }
     ts.forEachChild(n, visit);
   };
