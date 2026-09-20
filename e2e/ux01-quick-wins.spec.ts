@@ -1,5 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedE2eStudio, seedE2eClient } from "./helpers/seed";
+import {
+  seedE2eStudio,
+  seedE2eClient,
+  seedE2eEndedAppointmentSession,
+  setStudioPostcareText,
+} from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
 // UX-01 Quick Wins — the four visual/keyboard repairs, in a real browser.
@@ -11,11 +16,15 @@ import { loginAsOwner } from "./helpers/flows";
 //
 // WHAT IS DELIBERATELY NOT HERE. QW5 is a radius swap with no behavioural
 // surface beyond the painted corner, so it is pinned at source plus a computed
-// `border-radius` read below. And the PostcareSendButton dialog is proved
-// through the SAME hook as the settings dialog — reaching it needs a completed
-// appointment with postcare available, which is a large fixture for a keyboard
-// assertion whose mechanism is shared and already exercised here. Both call
-// sites are pinned at source in tests/components/ux01-quick-wins.test.ts.
+// `border-radius` read below.
+//
+// BOTH postcare dialogs ARE driven here. An earlier revision proved only the
+// settings preview and argued the calendar one shared its mechanism, which was
+// true but insufficient: the two differ in the single most consequential way —
+// the calendar dialog's confirm hands an email to a PROVIDER, so its Escape is
+// idle-gated and the preview's is not. A shared-mechanism argument cannot prove
+// an asymmetry, so the in-flight case is now driven against a real held Server
+// Action rather than inferred.
 
 const T = 60_000;
 const WIDTHS = [
@@ -374,6 +383,156 @@ test.describe("UX-01 QW4 · a keyboard user can leave the dialog", () => {
 
     for (let i = 0; i < 8; i += 1) await page.keyboard.press("Shift+Tab");
     expect(await inside(), "reverse tabbing walked out").toBe(true);
+  });
+});
+
+test.describe("UX-01 QW4 · Escape does not abandon an in-flight send", () => {
+  test.setTimeout(T * 3);
+
+  test("Escape closes while idle, and is suppressed mid-send", async ({ page }) => {
+    // THE ASYMMETRY, driven rather than asserted at source.
+    //
+    // Confirm on this dialog hands an email to a provider, and the panel is
+    // the only place that outcome is reported. Dismissing it in flight would
+    // abandon a result the practitioner still needs, so `busy: pending`
+    // suppresses Escape here — while the settings PREVIEW, which sends
+    // nothing, stays dismissible at all times. A source pin can show the flag
+    // is passed; only this can show it reaches the key handler.
+    //
+    // THE FIXTURE IS A COMPLETED APPOINTMENT, not a confirmed one. Postcare is
+    // completed-only (B8 / 0177) — the surface deliberately does not offer a
+    // send the command would refuse — so seeding a confirmed appointment
+    // renders no trigger at all, which is how the first version of this test
+    // failed.
+    const seed = await seedE2eStudio();
+    await setStudioPostcareText(seed.studioId, "Keep the area clean and dry.");
+    const { appointmentId } = await seedE2eEndedAppointmentSession(seed, {
+      status: "completed",
+    });
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/calendar/${appointmentId}`);
+
+    const opener = page.getByRole("button", { name: "Send postcare", exact: true });
+    await expect(opener).toBeVisible({ timeout: T });
+    await opener.click();
+
+    const dialog = page.getByRole("dialog", { name: "Send postcare preview" });
+    await expect(dialog).toBeVisible({ timeout: T });
+
+    // IDLE: Escape closes, and focus comes back to the trigger.
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0, { timeout: 10_000 });
+    await expect(opener).toBeFocused();
+
+    // IN FLIGHT: hold the Server Action, then press Escape.
+    //
+    // The request is HELD, never forwarded — the assertion is about the
+    // browser's pending state, and holding it means no postcare claim is
+    // written and no provider is called at all.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held = 0;
+    await page.route("**/*", async (route) => {
+      const req = route.request();
+      if (req.method() === "POST" && req.headers()["next-action"]) {
+        held += 1;
+        await gate;
+        await route.abort();
+        return;
+      }
+      await route.continue();
+    });
+
+    await opener.click();
+    await expect(dialog).toBeVisible({ timeout: T });
+    await dialog.getByTestId("postcare-confirm").click();
+
+    // ANTI-VACUITY, and the load-bearing precondition. If the transition were
+    // NOT pending, `busy` would be false and Escape closing the dialog would
+    // be CORRECT behaviour — the assertion below would then pass or fail for
+    // a reason that has nothing to do with the gate. "Sending..." renders only
+    // while `pending` is true, so it is the in-flight state made visible.
+    await expect(dialog.getByTestId("postcare-confirm")).toHaveText("Sending...", {
+      timeout: 10_000,
+    });
+    expect(held, "the send action was never held").toBeGreaterThan(0);
+
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(500);
+
+    await expect(
+      dialog,
+      "Escape abandoned an in-flight provider send",
+    ).toBeVisible();
+
+    release();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+});
+
+test.describe("UX-01 QW3 · the row shares one baseline", () => {
+  test("Book appointment matches the day-nav it sits beside", async ({ page }) => {
+    // The defect was not only "below the floor" — it was a 44px control and a
+    // 36px control sharing a row, with the page's flagship action as the
+    // shorter one. Height parity is the part a floor assertion alone misses.
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/dashboard");
+
+    const book = page.getByRole("link", { name: "Book appointment" });
+    const daySegment = page.getByTestId("dashboard-today");
+    await expect(book).toBeVisible({ timeout: T });
+    await expect(daySegment).toBeVisible({ timeout: T });
+
+    const b = await book.boundingBox();
+    const d = await daySegment.boundingBox();
+    expect(b).not.toBeNull();
+    expect(d).not.toBeNull();
+    expect(
+      Math.abs(Math.round(b!.height) - Math.round(d!.height)),
+      `book ${b!.height}px vs day-nav ${d!.height}px`,
+    ).toBeLessThanOrEqual(2);
+  });
+});
+
+test.describe("UX-01 · #739 acknowledgement is intact", () => {
+  test("the client-profile Log session control still acknowledges", async ({
+    page,
+  }) => {
+    // #739 adopted the shipped primitive on eleven clinical navigation
+    // controls. UX-01 touched the shell and the dashboard, not those — but
+    // "did not touch" is a claim about a diff, and this is the behaviour.
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    await loginAsOwner(page, seed);
+
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    let held = 0;
+    await page.route(
+      (u) => u.pathname === `/clients/${clientId}/sessions/new`,
+      async (route) => {
+        const h = route.request().headers();
+        if (h["rsc"] === "1" || h["next-router-prefetch"] === "1") {
+          held += 1;
+          await gate;
+        }
+        await route.continue();
+      },
+    );
+    await page.goto(`/clients/${clientId}`);
+
+    const log = page.getByRole("link", { name: "+ Log session" });
+    await expect(log).toBeVisible({ timeout: T });
+    await log.click();
+    await expect(log.locator("[data-link-pending]")).toBeVisible({
+      timeout: 10_000,
+    });
+    expect(held, "the gate never held a request").toBeGreaterThan(0);
+    open();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 });
 
