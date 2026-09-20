@@ -1081,6 +1081,63 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     expect(separated.some((c) => /Intro\s*Trace/.test(c))).toBe(false);
   });
 
+  it("EVERY guard is wrapper-invariant — the property, not the instances", () => {
+    // Four consecutive rounds found a wrapped variant of the previous fix, and
+    // the `unwrap` sweep that was meant to end it still missed two call sites.
+    // Enumerating call sites by hand does not converge, so the INVARIANT is
+    // asserted instead: wrapping an expression must not change any guard's
+    // answer. A site that forgets to normalise fails here, without anyone
+    // having to remember it exists.
+    const wrap = (src: string, how: (e: string) => string) =>
+      src.replace(/"([^"]*)"/g, (_m, inner) => how(`"${inner}"`));
+
+    const wrappers: Array<(e: string) => string> = [
+      (e) => `(${e})`,
+      (e) => `(${e} as string)`,
+      (e) => `((${e}))`,
+    ];
+
+    const cases = [
+      `export const d = "Every change".concat(" is tracked");`,
+      `export const d = ["Every change", "is tracked"].join(" ");`,
+      `export const P = ["Built for electrolysis records", "History by treated area"];`,
+      `export const t = "Every change is tracked";`,
+    ];
+
+    for (const src of cases) {
+      const base = copyModuleViolations("lib/marketing/probe.ts", src).map((v) => v.rule);
+      for (const w of wrappers) {
+        expect(
+          copyModuleViolations("lib/marketing/probe.ts", wrap(src, w)).map((v) => v.rule),
+          `${src.slice(0, 50)} changed answer when wrapped`,
+        ).toEqual(base);
+      }
+    }
+
+    // The same property for the JSX guards, where the wrapper sits in a hole.
+    const jsx = (e: string) => `export default () => <div><p>{${e}}</p></div>;`;
+    for (const w of wrappers) {
+      expect(
+        jsxHoles("app/privacy/page.tsx", jsx(w('"plain text"'))),
+        "a wrapped complete literal read as a hole",
+      ).toEqual(jsxHoles("app/privacy/page.tsx", jsx('"plain text"')));
+    }
+  });
+
+  it("the component identity baseline compares whole sentences", () => {
+    // `detail` was truncated to 70 characters and the baseline compared those,
+    // so two different sentences sharing a prefix compared equal — one declared
+    // exception could be swapped for another differing only after the cut.
+    const long =
+      "There is no automatic booking, a real person will review your request and reply within one working day about scheduling.";
+    const v = componentProseViolations(
+      "app/_components/marketing/Probe.tsx",
+      `export const A = () => <p>${long}</p>;`,
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0].detail.length).toBe(long.length);
+  });
+
   it("the policy sources carry no holes, asserted directly", () => {
     // The one thing that could hide a claim in a judged JSX surface is a hole.
     //

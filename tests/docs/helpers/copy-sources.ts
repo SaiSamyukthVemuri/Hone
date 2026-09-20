@@ -464,9 +464,10 @@ function joinsTextArray(call: ts.CallExpression): boolean {
     const c = unwrap(raw);
     if (!ts.isArrayLiteralExpression(c)) continue;
     const literals = c.elements.filter(isTextLiteral);
-    const values = c.elements.filter(
-      (e) => !ts.isStringLiteral(e) && !ts.isNoSubstitutionTemplateLiteral(e),
-    );
+    const values = c.elements.filter((raw) => {
+      const e = unwrap(raw);
+      return !ts.isStringLiteral(e) && !ts.isNoSubstitutionTemplateLiteral(e);
+    });
     if (literals.length >= 2 || (literals.length >= 1 && values.length >= 1)) return true;
   }
 
@@ -546,7 +547,12 @@ export function componentProseViolations(file: string, source?: string): CopyVio
           file,
           line: lineOf(sf, n),
           rule: "component/no-authored-prose",
-          detail: normalise(parts.text || parts.textWithHoles).slice(0, 70),
+          // NOT truncated. The identity baseline compares these strings, and two
+          // different sentences sharing a 70-character prefix compared equal —
+          // so one declared exception could be swapped for another that differs
+          // only after the cut. Callers truncate for display; the value carries
+          // the whole sentence.
+          detail: normalise(parts.text || parts.textWithHoles),
         });
       }
     }
@@ -561,7 +567,7 @@ export function componentProseViolations(file: string, source?: string): CopyVio
           file,
           line: lineOf(sf, n),
           rule: "component/no-authored-prose",
-          detail: normalise(n.text).slice(0, 70),
+          detail: normalise(n.text),
         });
       }
     }
@@ -905,8 +911,8 @@ export function jsxHoles(file: string, source?: string): CopyViolation[] {
       n.expression &&
       n.parent &&
       (ts.isJsxElement(n.parent) || ts.isJsxFragment(n.parent)) &&
-      !ts.isStringLiteral(n.expression) &&
-      !ts.isNoSubstitutionTemplateLiteral(n.expression)
+      !ts.isStringLiteral(unwrap(n.expression)) &&
+      !ts.isNoSubstitutionTemplateLiteral(unwrap(n.expression))
     ) {
       out.push({
         file,
