@@ -256,6 +256,14 @@ export const BROWSER_GROUPS = {
       // as the line above — it measures the shared interaction vocabulary, not
       // one workflow, so any application diff can reach it.
       "ui-r02-danger-press.spec.ts",
+      // UX-01 Quick Wins: the day-nav current state, the shell's
+      // current-section state, the two flagship controls reaching the touch
+      // floor, and the postcare dialogs' keyboard contract. Grouped HERE for
+      // the reason perceived-speed gives above — it measures the shell-wide
+      // interaction vocabulary rather than one workflow, and its surfaces span
+      // dashboard, records, calendar and settings, so any application diff can
+      // reach it. Filing it under one of those page groups would under-run it.
+      "ux01-quick-wins.spec.ts",
       // UI-02: status text equivalents, proved by computed accessible name.
       // Same group and reasoning again — an accessibility contract on shared
       // status marks, reachable from any application diff.

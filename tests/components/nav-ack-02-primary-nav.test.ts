@@ -33,6 +33,7 @@ const ROOT = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
 const LAYOUT = "app/(app)/layout.tsx";
+const NAVLINK = "app/(app)/PrimaryNavLink.tsx";
 const raw = read(LAYOUT);
 
 // The shell DISCUSSES `PendingLink`, `relative` and the rejected label form by
@@ -53,16 +54,17 @@ const codeOnly = (source: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, "");
 
 const code = codeOnly(raw);
+const navCode = codeOnly(read(NAVLINK));
 
 /** The seven anchors, and the form each one must take. */
 const ANCHORS = [
-  { testId: "nav-wordmark", href: "/dashboard", form: "label" },
-  { testId: "nav-dashboard", href: "/dashboard", form: "label" },
-  { testId: "nav-clients", href: "/clients", form: "label" },
-  { testId: "nav-calendar", href: "/calendar", form: "label" },
-  { testId: "nav-records", href: "/records", form: "label" },
-  { testId: "nav-business", href: "/dashboard/capacity", form: "label" },
-  { testId: "nav-notifications", href: "/notifications", form: "container" },
+  { testId: "nav-wordmark", href: "/dashboard", form: "label", attr: "data-testid" },
+  { testId: "nav-dashboard", href: "/dashboard", form: "label", attr: "testId" },
+  { testId: "nav-clients", href: "/clients", form: "label", attr: "testId" },
+  { testId: "nav-calendar", href: "/calendar", form: "label", attr: "testId" },
+  { testId: "nav-records", href: "/records", form: "label", attr: "testId" },
+  { testId: "nav-business", href: "/dashboard/capacity", form: "label", attr: "testId" },
+  { testId: "nav-notifications", href: "/notifications", form: "container", attr: "data-testid" },
 ] as const;
 
 describe("NAV-ACK-02 · the comment stripper itself", () => {
@@ -88,15 +90,40 @@ describe("NAV-ACK-02 · the primary navigation acknowledges", () => {
   });
 
   it("renders exactly seven acknowledging anchors — six labels, one container", () => {
+    // UX-01 QW2 moved the five SECTION links into `PrimaryNavLink`, a client
+    // leaf that renders `PendingLink` itself (it needs `usePathname`, which a
+    // server layout cannot call). The count below therefore treats a
+    // `<PrimaryNavLink>` as what it is — one label-form acknowledging anchor —
+    // rather than reading a smaller number and calling it a pass. The wordmark
+    // is still a direct `PendingLink` here; the bell is still the container.
+    //
+    // The delegation is proved, not assumed: `PrimaryNavLink` must itself
+    // render the shipped primitive, asserted below.
     const labels = code.match(/<PendingLink[\s>]/g) ?? [];
+    const sections = code.match(/<PrimaryNavLink[\s>]/g) ?? [];
     const containers = code.match(/<PendingContainerLink[\s>]/g) ?? [];
-    expect(labels).toHaveLength(6);
+    expect(labels.length + sections.length).toBe(6);
     expect(containers).toHaveLength(1);
+  });
+
+  it("the section leaf really delegates to the shipped primitive", () => {
+    // Without this, the count above could be satisfied by a component that
+    // renders a bare <a> and acknowledges nothing.
+    expect(navCode).toContain('from "@/components/pending-link"');
+    expect(navCode.match(/<PendingLink[\s>]/g) ?? []).toHaveLength(1);
+    expect(navCode).not.toMatch(/from\s*"next\/link"/);
+    expect(navCode).not.toMatch(/<Link[\s>]/);
+    expect(navCode).toContain("pendingLabel={pendingLabel}");
   });
 
   for (const anchor of ANCHORS) {
     it(`${anchor.testId} is present, addressable and points at ${anchor.href}`, () => {
-      expect(code).toContain(`data-testid="${anchor.testId}"`);
+      // The five section links pass their id through `PrimaryNavLink`'s
+      // `testId` prop, which that component spreads onto the rendered anchor as
+      // `data-testid`; the wordmark and bell still set the DOM attribute
+      // directly. Both spellings are the same fact, so the table names which
+      // one each anchor uses rather than accepting either.
+      expect(code).toContain(`${anchor.attr}="${anchor.testId}"`);
       expect(code).toContain(`href="${anchor.href}"`);
     });
   }
@@ -159,11 +186,36 @@ describe("NAV-ACK-02 · adopting the contract changed nothing else", () => {
     expect(raw).not.toMatch(/^"use client";/m);
   });
 
-  it("introduces no active-state semantics", () => {
-    // The primary nav has never marked a current tab. Adding `aria-current`
-    // here would be a product change riding inside an acknowledgement slice —
-    // and would change what a screen reader reports on every page.
-    expect(code).not.toContain("aria-current");
+  // SUPERSEDED, deliberately and by owner decision — not quietly.
+  //
+  // This assertion used to read `expect(code).not.toContain("aria-current")`,
+  // and its reason was sound: adding a current-section state inside an
+  // ACKNOWLEDGEMENT slice would have been a product change riding in on
+  // unrelated work. NAV-ACK-02 correctly refused it.
+  //
+  // UX-01 QW2 is that product change, made deliberately and authorized on its
+  // own terms. The old assertion is replaced rather than deleted, because
+  // leaving it would have passed for the wrong reason: QW2 puts `aria-current`
+  // in `PrimaryNavLink.tsx`, so a scan of `layout.tsx` alone would have gone on
+  // reporting "no active-state semantics" while the product had them.
+  //
+  // What replaces it keeps the part that still matters — the state is bounded,
+  // exactly one section can claim it, and it arrived without a provider.
+  it("marks the current section, and marks exactly one", () => {
+    expect(navCode).toContain('aria-current={current ? "page" : undefined}');
+    // One source of truth for "am I current", so two anchors cannot both claim
+    // it and none can drift to a different rule.
+    expect(navCode.match(/aria-current/g) ?? []).toHaveLength(1);
+    expect(navCode).toContain("isCurrentSection");
+  });
+
+  it("the current-section rule distinguishes Dashboard from Business", () => {
+    // `/dashboard` and `/dashboard/capacity` are two DIFFERENT nav entries, so
+    // a bare prefix match lights both on the capacity page. Dashboard is
+    // therefore `exact` and every other section owns its subtree.
+    expect(code).toMatch(/href="\/dashboard"\s+match="exact"/);
+    expect(code).toMatch(/href="\/dashboard\/capacity"\s+match="section"/);
+    expect(code).toMatch(/href="\/clients"\s+match="section"/);
   });
 
   it("keeps the accessible names the two icon/wordmark controls already had", () => {
