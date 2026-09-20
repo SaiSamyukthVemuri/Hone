@@ -456,15 +456,37 @@ describe("0200's close record cannot drift from its own rules", () => {
   });
 });
 
-describe("0200 — KNOWN WINDOW, recorded because the file is now FROZEN", () => {
-  // RAISED BY REVIEW AT 05476154, AFTER 0200 WAS APPLIED TO PRODUCTION.
+describe("0200 — KNOWN LIMITATION, recorded because the file is now FROZEN", () => {
+  // ONE ROOT CAUSE, THREE MANIFESTATIONS, ALL RAISED AFTER 0200 WAS APPLIED.
   //
-  // THE WINDOW. The repair path's appointment aggregate takes NO lock on
-  // `appointments`, so between it observing `status <> 'cancelled'` and
-  // `record_new_client_waitlist_conversion` running, a concurrent
-  // `public_cancel_appointment_with_token` or `practitioner_cancel_appointment`
-  // can commit. Close then answers `converted_instead` for an entry whose only
-  // qualifying appointment is cancelled.
+  // THE ROOT CAUSE: the repair path's appointment aggregate is an UNLOCKED READ,
+  // and nothing serialises it with the writers of `public.appointments`. Unlike
+  // the atomic invitation-booking path, ordinary booking and cancellation do not
+  // take the waitlist-entry mutex, so they neither block on this read nor are
+  // blocked by it. Everything below follows from that one fact, and a successor
+  // migration should fix THAT rather than any one symptom.
+  //
+  //   1. CANCELLATION AFTER THE READ (raised 05476154). The aggregate observes
+  //      `status <> 'cancelled'`; a cancellation commits; Close answers
+  //      `converted_instead` for an entry whose only qualifying appointment is
+  //      now cancelled.
+  //
+  //   2. CREATION AFTER THE READ (raised 1da21490) — the mirror. The aggregate
+  //      observes zero rows; a qualifying appointment commits; Close answers
+  //      `closed` and releases an entry whose prospect really did book. This is
+  //      the worse of the two directions: `record_new_client_waitlist_conversion`
+  //      requires `invited`, and the entry is now `released`, so the conversion
+  //      can no longer be recorded at all.
+  //
+  //   3. SCOPE IS NOT CONSULTED (raised 286397d8). See the separate test below.
+  //
+  // ON MANIFESTATION 1 SPECIFICALLY, measured rather than assumed: no
+  // cancellation path touches the waitlist entry (checked across 0176 and 0173),
+  // so the ORDINARY flow already produces that end state — book through 0195,
+  // cancel later, and the entry stays `converted` with a cancelled appointment
+  // and `remove_` answering `not_removable`. The defect there is the
+  // non-determinism, not an otherwise-unreachable state. Manifestation 2 has no
+  // such mitigation and is the one to weight when scoping the successor.
   //
   // WHAT IT IS AND IS NOT — measured, not assumed:
   //
@@ -491,7 +513,7 @@ describe("0200 — KNOWN WINDOW, recorded because the file is now FROZEN", () =>
   // THIS BLOCK ASSERTS THE FROZEN FACTS ONLY. It deliberately does not pin the
   // racy outcome as correct — a future forward migration should change the
   // behaviour, and a test asserting today's behaviour would obstruct it.
-  it("the aggregate that reads appointments takes no lock — the window is real", () => {
+  it("the aggregate that reads appointments takes no lock — the root cause is real", () => {
     const from = FN_BODY.indexOf("from public.appointments a");
     expect(from, "the repair no longer reads appointments").toBeGreaterThan(0);
     const stmt = FN_BODY.slice(FN_BODY.indexOf("select count(distinct"), FN_BODY.indexOf(";", from));
