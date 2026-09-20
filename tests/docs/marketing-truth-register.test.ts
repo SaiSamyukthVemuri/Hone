@@ -1041,6 +1041,46 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     }
   });
 
+  it("a wrapper cannot hide an assembly", () => {
+    // Parentheses, `as`, `satisfies` and `!` do not change what an expression
+    // IS, but matching on syntax shapes without normalising them let
+    // `("Every change").concat(…)` walk past a check that had just been taught
+    // to refuse `"Every change".concat(…)`. One `unwrap`, applied wherever an
+    // expression is classified, ends that family rather than its members.
+    for (const wrapped of [
+      `export const d = "Every change".concat(" is tracked");`,
+      `export const d = ("Every change").concat(" is tracked");`,
+      `export const d = ("Every change" as string).concat(" is tracked");`,
+      `export const d = (['Every change','is tracked']).join(' ');`,
+      'export const d = (`Every change is ${x}`);',
+    ]) {
+      expect(
+        copyModuleViolations("lib/marketing/probe.ts", wrapped).length,
+        wrapped.slice(0, 56),
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("a nested fragment is transparent, not a boundary", () => {
+    // `<p>Every <>change is tracked</></p>` is one sentence to a visitor.
+    // Treating the fragment as its own container split it into "Every" and
+    // "change is tracked", neither of which matches anything.
+    const claims = pageClaims(
+      "app/probe/page.tsx",
+      `export const A = () => <p>Every <>change is tracked</></p>;`,
+    );
+    expect(claims).toContain("Every change is tracked");
+    expect(FORBIDDEN.some((r) => claims.some((c) => r.pattern.test(c)))).toBe(true);
+
+    // NEGATIVE: transparency must not become fusion. A block child still starts
+    // its own claim, inside a fragment as anywhere else.
+    const separated = pageClaims(
+      "app/probe/page.tsx",
+      `export const A = () => <div>Intro<p>Trace it with an append-only edit history.</p></div>;`,
+    );
+    expect(separated.some((c) => /Intro\s*Trace/.test(c))).toBe(false);
+  });
+
   it("the policy sources carry no holes, asserted directly", () => {
     // The one thing that could hide a claim in a judged JSX surface is a hole.
     //

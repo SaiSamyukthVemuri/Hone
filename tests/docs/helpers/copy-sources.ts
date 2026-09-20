@@ -365,6 +365,31 @@ function staticFragments(node: ts.Node): string[] {
  * AUTHORING question. Whether text is being assembled is a structural one, and
  * structure is what this guard refuses on.
  */
+/**
+ * Strip the wrappers that do not change what an expression IS.
+ *
+ * Parentheses, `as`, `satisfies` and `!` are noise to every classification in
+ * this file, and matching on syntax shapes without normalising them first meant
+ * `("Every change").concat(" is tracked")` and its `as string` sibling walked
+ * past a check that `"Every change".concat(…)` had just been taught to refuse.
+ *
+ * One `unwrap`, applied wherever an expression is classified, ends that family:
+ * a wrapper cannot hide an assembly if nothing ever sees the wrapper.
+ */
+function unwrap(node: ts.Node): ts.Node {
+  let n = node;
+  while (
+    ts.isParenthesizedExpression(n) ||
+    ts.isAsExpression(n) ||
+    ts.isSatisfiesExpression(n) ||
+    ts.isNonNullExpression(n) ||
+    ts.isTypeAssertionExpression(n)
+  ) {
+    n = n.expression;
+  }
+  return n;
+}
+
 const bearsWord = (text: string): boolean => /[A-Za-z]{2,}/.test(text);
 
 /**
@@ -420,17 +445,23 @@ function assemblesText(node: ts.Node): boolean {
  * `["a", "b"].join(" ")` is a sentence being built.
  */
 function joinsTextArray(call: ts.CallExpression): boolean {
-  const isTextLiteral = (e: ts.Node): boolean =>
-    (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) &&
-    bearsWord((e as ts.StringLiteral).text) &&
-    !looksLikeResourcePath((e as ts.StringLiteral).text);
+  const isTextLiteral = (raw: ts.Node): boolean => {
+    const e = unwrap(raw);
+    return (
+      (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) &&
+      bearsWord((e as ts.StringLiteral).text) &&
+      !looksLikeResourcePath((e as ts.StringLiteral).text)
+    );
+  };
 
   // An array being combined — `[…].join(" ")`.
+  const callee = unwrap(call.expression);
   const arrays: ts.Node[] = [...call.arguments];
-  if (ts.isPropertyAccessExpression(call.expression)) {
-    arrays.push(call.expression.expression);
+  if (ts.isPropertyAccessExpression(callee)) {
+    arrays.push(callee.expression);
   }
-  for (const c of arrays) {
+  for (const raw of arrays) {
+    const c = unwrap(raw);
     if (!ts.isArrayLiteralExpression(c)) continue;
     const literals = c.elements.filter(isTextLiteral);
     const values = c.elements.filter(
@@ -448,25 +479,28 @@ function joinsTextArray(call: ts.CallExpression): boolean {
   // — passing a whole value to a function — reads as assembly, which it is not.
   const parts: ts.Node[] = [...call.arguments];
   if (
-    ts.isPropertyAccessExpression(call.expression) &&
-    (isTextLiteral(call.expression.expression) ||
-      ts.isArrayLiteralExpression(call.expression.expression))
+    ts.isPropertyAccessExpression(callee) &&
+    (isTextLiteral(callee.expression) ||
+      ts.isArrayLiteralExpression(unwrap(callee.expression)))
   ) {
-    parts.push(call.expression.expression);
+    parts.push(callee.expression);
   }
   const literals = parts.filter(isTextLiteral);
-  const values = parts.filter(
-    (e) =>
+  const values = parts.filter((raw) => {
+    const e = unwrap(raw);
+    return (
       !ts.isStringLiteral(e) &&
       !ts.isNoSubstitutionTemplateLiteral(e) &&
       !ts.isArrowFunction(e) &&
-      !ts.isFunctionExpression(e),
-  );
+      !ts.isFunctionExpression(e)
+    );
+  });
   return literals.length >= 2 || (literals.length >= 1 && values.length >= 1);
 }
 
 /** A complete value needs no assembly: a literal, or an absence. */
-function isCompleteValue(node: ts.Node): boolean {
+function isCompleteValue(raw: ts.Node): boolean {
+  const node = unwrap(raw);
   return (
     ts.isStringLiteral(node) ||
     ts.isNoSubstitutionTemplateLiteral(node) ||
@@ -708,8 +742,8 @@ function approvedCopyNames(sf: ts.SourceFile): Set<string> {
 
 /** The leftmost identifier of `A.b.c`, or null. */
 function rootIdentifier(e: ts.Expression): string | null {
-  let cur: ts.Expression = e;
-  while (ts.isPropertyAccessExpression(cur)) cur = cur.expression;
+  let cur = unwrap(e) as ts.Expression;
+  while (ts.isPropertyAccessExpression(cur)) cur = unwrap(cur.expression) as ts.Expression;
   return ts.isIdentifier(cur) ? cur.text : null;
 }
 
@@ -743,7 +777,7 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
       textWithHoles += t;
       sequence.push({ words: t.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length });
     } else if (ts.isJsxExpression(child) && child.expression) {
-      const e = child.expression;
+      const e = unwrap(child.expression) as ts.Expression;
       if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
         text += e.text;
         textWithHoles += e.text;
@@ -758,6 +792,18 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
         if (root && approved.has(root)) approvedHoles.push(child);
         else holes.push(child);
       }
+    } else if (ts.isJsxFragment(child)) {
+      // A nested fragment is not a boundary. `<p>Every <>change is tracked</></p>`
+      // is one sentence to a visitor, and treating the fragment as a separate
+      // container split it into "Every" and "change is tracked" — neither of
+      // which matches anything. A fragment renders nothing of its own.
+      const inner = claimParts(child, approved);
+      text += inner.text;
+      textWithHoles += inner.textWithHoles;
+      sequence.push(...inner.sequence);
+      holes.push(...inner.holes);
+      approvedHoles.push(...inner.approvedHoles);
+      undeclared.push(...inner.undeclared);
     } else if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
       if (ts.isJsxSelfClosingElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
         // `<p>Every<br />change is tracked</p>` is four words to a visitor. A
