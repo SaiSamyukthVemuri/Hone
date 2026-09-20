@@ -1386,6 +1386,42 @@ describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catc
     expect(escape("<Hero.Title />")).toEqual(["copy/undeclared-copy-import"]);
   });
 
+  it("REFUSED — in EVERY JSX position, including both spreads", () => {
+    // Enumerating positions cost three rounds — child, then attribute, then tag
+    // — and `JsxSpreadAttribute` is a distinct node that reached none of them,
+    // so `<LocalHero {...HERO_COPY} />` walked straight past. `JsxSpreadChild`
+    // is another. Naming the next one would only postpone the round after that,
+    // so the question is no longer WHERE the import appears but whether it
+    // appears in JSX at all.
+    const escape = (body: string) =>
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        `import { X } from "@/lib/copy-helper";\nexport const A = () => ${body};\n`,
+      ).map((v) => v.rule);
+    for (const position of [
+      "<LocalHero {...X} />",
+      "<div>{...X}</div>",
+      "<p>{X}</p>",
+      "<Hero headline={X} />",
+      "<X />",
+      "<p>{X(1)}</p>",
+      "<p>{cond ? X : null}</p>",
+      '<img alt={X} src="/a.png" />',
+    ]) {
+      expect(escape(position), position).toEqual(["copy/undeclared-copy-import"]);
+    }
+    // Still silent where it should be: a declared module and a package.
+    const ok = (spec: string) =>
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        `import { X } from "${spec}";\nexport const A = () => <X />;\n`,
+      );
+    expect(ok("@/lib/marketing/content")).toEqual([]);
+    expect(ok("next/link")).toEqual([]);
+  });
+
   it("ACCEPTED — a declared component, and a third-party tag", () => {
     const tag = (spec: string) =>
       undeclaredCopyImportViolations(

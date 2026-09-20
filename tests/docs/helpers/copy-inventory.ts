@@ -616,66 +616,41 @@ export function undeclaredCopyImportViolations(
 
   const out: CopyViolation[] = [];
   const seen = new Set<string>();
-  const check = (expression: ts.Expression, at: ts.Node) => {
-    // EVERY identifier in the expression, not only its root. A prop is often
-    // `{`${PREFIX} …`}` or `{pick(CLAIM)}`, and a root-only test reads the
-    // wrapper rather than the value.
-    const collect = (x: ts.Node) => {
-      if (ts.isIdentifier(x)) {
-        const from = origin.get(x.text);
-        if (from !== undefined && !known.has(from)) {
-          const key = `${lineOf(sf, at)}:${x.text}:${from}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            out.push({
-              file,
-              line: lineOf(sf, at),
-              rule: "copy/undeclared-copy-import",
-              detail: `${x.text} from ${from}`,
-            });
+  // EVERY IDENTIFIER INSIDE JSX, rather than a list of positions.
+  //
+  // Enumerating positions cost three rounds: child, then attribute, then tag,
+  // and `JsxSpreadAttribute` is a distinct node that reached none of them, so
+  // `<LocalHero {...HERO_COPY} />` walked straight past. `JsxSpreadChild` is
+  // another. Naming the next one would only postpone the round after that.
+  //
+  // So the question stops being WHERE the import appears and becomes whether it
+  // appears in JSX at all. Anything reached from a JSX root renders; an import
+  // from an undeclared module has no business being rendered whatever syntax
+  // carries it. The tag name is included, which is how `<Hero />` is caught.
+  const isJsxRoot = (n: ts.Node): boolean =>
+    ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n) || ts.isJsxFragment(n);
+  const visit = (n: ts.Node) => {
+    if (isJsxRoot(n) && !(n.parent && isJsxRoot(n.parent))) {
+      // Once per outermost JSX node; `seen` keeps a nested one from repeating.
+      const scan = (x: ts.Node) => {
+        if (ts.isIdentifier(x)) {
+          const from = origin.get(x.text);
+          if (from !== undefined && !known.has(from)) {
+            const key = `${x.text}:${from}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              out.push({
+                file,
+                line: lineOf(sf, x),
+                rule: "copy/undeclared-copy-import",
+                detail: `${x.text} from ${from}`,
+              });
+            }
           }
         }
-      }
-      ts.forEachChild(x, collect);
-    };
-    collect(expression);
-  };
-  const visit = (n: ts.Node) => {
-    // CHILD position — `<p>{CLAIM}</p>`.
-    if (
-      ts.isJsxExpression(n) &&
-      n.expression &&
-      n.parent &&
-      (ts.isJsxElement(n.parent) || ts.isJsxFragment(n.parent))
-    ) {
-      check(n.expression, n);
-    }
-    // ATTRIBUTE position — `<Hero headline={CLAIM} />`. A custom component prop
-    // renders whatever it is handed, and the fixed list of DOM text-bearing
-    // attributes cannot know that `headline` is copy. Checking the SOURCE of the
-    // value instead of the NAME of the attribute needs no such knowledge.
-    if (ts.isJsxAttribute(n) && n.initializer && ts.isJsxExpression(n.initializer)) {
-      if (n.initializer.expression) check(n.initializer.expression, n);
-    }
-    // TAG position — `<Hero />`. The visitor-facing import need not be a value
-    // at all: an imported component renders whatever text it holds, and its
-    // module is outside the declared surface, so the route carries no text and
-    // nothing judges the component. Same escape, one syntactic position over.
-    if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
-      const root = n.tagName.getText().split(".")[0];
-      const from = origin.get(root);
-      if (from !== undefined && !known.has(from)) {
-        const key = `${lineOf(sf, n)}:${root}:${from}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          out.push({
-            file,
-            line: lineOf(sf, n),
-            rule: "copy/undeclared-copy-import",
-            detail: `<${root}> from ${from}`,
-          });
-        }
-      }
+        ts.forEachChild(x, scan);
+      };
+      scan(n);
     }
     ts.forEachChild(n, visit);
   };
