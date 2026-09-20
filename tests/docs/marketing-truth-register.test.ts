@@ -1098,6 +1098,15 @@ describe("negative controls: the guard bites", () => {
     const src = `export const title = "Energy settings have an append-" + "only edit history";`;
     const claims = collectClaims(src, "lib/marketing/content.ts");
     expect(claims).toContain("Energy settings have an append-only edit history");
+
+    // The same expression wrapped across lines, which is how it is actually
+    // written once it is long enough to need wrapping. The AST is identical;
+    // the test says so rather than leaving it to be assumed.
+    const wrapped =
+      'export const title =\n  "Energy settings have an append-" +\n  "only edit history";';
+    expect(collectClaims(wrapped, "lib/marketing/content.ts")).toContain(
+      "Energy settings have an append-only edit history",
+    );
     expect(
       judgeAppendOnlyClaim("Energy settings have an append-only edit history", SANCTIONED).kind,
       "precondition: the joined sentence is the unsanctioned one",
@@ -1152,30 +1161,54 @@ describe("negative controls: the guard bites", () => {
     ).toEqual([]);
     expect(unreconstructableIn(styling, "sections.tsx", FORBIDDEN)).toEqual([]);
 
-    // `data-*` is a machine hook by definition, matched by prefix.
-    expect(
-      collectClaims(
-        `export const A = () => <div data-testid={cond ? "append-" + "only" : ""} />;`,
-        "sections.tsx",
-      ).filter((c) => APPEND_ONLY_TRIGGER.test(c)),
-    ).toEqual([]);
+    // LEAF LITERALS take the same ancestry rule, and this is the control that
+    // actually exercises it. The previous round used a SPLIT `"append-" +
+    // "only"`, which passed while hiding the leaf path entirely: neither half
+    // trips the trigger on its own, so the assertion could not have failed
+    // whether the exclusion reached the leaves or not. A single literal can.
+    for (const technical of [
+      `export const A = () => <div className={active ? "append-only" : ""} />;`,
+      `export const A = () => <div className="append-only" />;`,
+      "export const A = () => <div className={cond ? `append-only ${x}` : \"\"} />;",
+      `export const A = () => <div data-testid={cond ? "append-" + "only" : ""} />;`,
+      `export const A = () => <div data-state={active ? "append-only" : ""} />;`,
+    ]) {
+      expect(
+        collectClaims(technical, "sections.tsx").filter((c) =>
+          APPEND_ONLY_TRIGGER.test(c),
+        ),
+        technical.slice(0, 64),
+      ).toEqual([]);
+    }
 
     // POSITIVE COUNTERWEIGHT, and the reason this is a walk rather than a
-    // blanket skip: the SAME shape as a JSX CHILD is copy, and is still read.
-    // An exclusion that swallowed this would disable the guard, not narrow it.
-    const copy = `export const A = () => <p>{active ? "append-" + "only edit history" : ""}</p>;`;
+    // blanket skip. Each of these is the SAME nesting as the technical cases
+    // above and each is real copy, so an exclusion that swallowed them would
+    // disable the guard rather than narrow it. Both a JSX child and a
+    // copy-bearing prop are exercised as a whole literal AND as a split, so the
+    // leaf path and the reassembly path are both held open.
+    for (const copy of [
+      `export const A = () => <p>{active ? "append-only edit history" : ""}</p>;`,
+      `export const A = () => <p>{active ? "append-" + "only edit history" : ""}</p>;`,
+      `export const A = () => <Card title={active ? "append-only edit history" : ""} />;`,
+      `export const A = () => <Card title={active ? "append-" + "only edit history" : ""} />;`,
+      "export const A = () => <p>{cond ? `append-only edit history ${n}` : \"\"}</p>;",
+    ]) {
+      expect(
+        collectClaims(copy, "sections.tsx").filter((c) =>
+          APPEND_ONLY_TRIGGER.test(c),
+        ),
+        copy.slice(0, 64),
+      ).not.toEqual([]);
+    }
     expect(
-      collectClaims(copy, "sections.tsx")
+      collectClaims(
+        `export const A = () => <p>{active ? "append-only edit history" : ""}</p>;`,
+        "sections.tsx",
+      )
         .filter((c) => APPEND_ONLY_TRIGGER.test(c))
         .map((c) => judgeAppendOnlyClaim(c, SANCTIONED).kind),
     ).toContain("unsanctioned");
-
-    // And a copy-bearing PROP is still read, so the walk excludes by attribute
-    // NAME rather than by "is inside an attribute".
-    const prop = `export const A = () => <Card title={active ? "append-" + "only edit history" : ""} />;`;
-    expect(
-      collectClaims(prop, "sections.tsx").filter((c) => APPEND_ONLY_TRIGGER.test(c)),
-    ).not.toEqual([]);
   });
 
   it("splits a group whose alternatives carry an optional plural", () => {

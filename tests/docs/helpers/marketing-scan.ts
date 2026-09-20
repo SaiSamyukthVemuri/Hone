@@ -574,10 +574,17 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
     flush();
   };
 
-  const isNonCopyAttributeValue = (node: ts.Node): boolean => {
-    const parent = node.parent;
-    return Boolean(parent && ts.isJsxAttribute(parent) && isNonCopyAttribute(parent));
-  };
+  // The SAME ancestry rule the reassembled concatenations use, applied to the
+  // leaves. A direct-parent test caught `className="append-only"` and missed
+  // `className={active ? "append-only" : ""}`, where the literal's parent is the
+  // conditional — so a class name was emitted as public copy and failed the
+  // unsanctioned-claim assertion on a string no visitor sees.
+  //
+  // The split `"append-" + "only"` in the previous round's test hid this,
+  // because neither leaf trips the trigger on its own. A single literal is the
+  // control that actually exercises this path, and that is what the test uses now.
+  const isNonCopyAttributeValue = (node: ts.Node): boolean =>
+    insideNonCopyAttribute(node);
 
   const isModuleSpecifier = (node: ts.Node): boolean => {
     const parent = node.parent;
@@ -633,7 +640,10 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
       if (!isModuleSpecifier(node) && !isNonCopyAttributeValue(node)) {
         push(node.text);
       }
-    } else if (ts.isTemplateExpression(node)) {
+    } else if (ts.isTemplateExpression(node) && !isNonCopyAttributeValue(node)) {
+      // Templates need the same exclusion. `` className={cond ? `append-only
+      // ${x}` : ""} `` had none at all, so its static fragments were emitted as
+      // copy however deeply the template sat inside the attribute.
       push(
         [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(
           " ",
