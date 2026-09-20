@@ -2,6 +2,7 @@ import {
   PendingContainerLink,
   PendingLink,
 } from "@/components/pending-link";
+import { PrimaryNavLink } from "./PrimaryNavLink";
 import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
 import { GlobalSearch } from "./GlobalSearch";
@@ -120,30 +121,30 @@ export default async function AppLayout({
             >
               {/* PR #208: the landing page is the practice Dashboard
                   (it contains the Today section). */}
-              <PendingLink
+              <PrimaryNavLink
                 href="/dashboard"
-                data-testid="nav-dashboard"
+                match="exact"
+                testId="nav-dashboard"
                 pendingLabel="Opening Dashboard…"
-                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Dashboard
-              </PendingLink>
-              <PendingLink
+              </PrimaryNavLink>
+              <PrimaryNavLink
                 href="/clients"
-                data-testid="nav-clients"
+                match="section"
+                testId="nav-clients"
                 pendingLabel="Opening Clients…"
-                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Clients
-              </PendingLink>
-              <PendingLink
+              </PrimaryNavLink>
+              <PrimaryNavLink
                 href="/calendar"
-                data-testid="nav-calendar"
+                match="section"
+                testId="nav-calendar"
                 pendingLabel="Opening Calendar…"
-                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Calendar
-              </PendingLink>
+              </PrimaryNavLink>
               {/* PR #229: Notifications moved out of the main tab
                   row to the header bell (right side, both
                   breakpoints), so the primary nav competes less and
@@ -153,14 +154,14 @@ export default async function AppLayout({
                   under Settings (Chloe's ask). PR #209: nav label
                   shortened to "Records" so the header fits without
                   wrapping; the page heading stays "Record Keeping". */}
-              <PendingLink
+              <PrimaryNavLink
                 href="/records"
-                data-testid="nav-records"
+                match="section"
+                testId="nav-records"
                 pendingLabel="Opening Records…"
-                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Records
-              </PendingLink>
+              </PrimaryNavLink>
               {/* OWNER-CAP follow-up: a PERMANENT owner entry point.
                   Labelled "Business", not "Capacity": capacity is the
                   first owner operating surface, not the whole domain,
@@ -179,14 +180,14 @@ export default async function AppLayout({
                   advertising a surface they cannot use, rather than
                   offering a disabled item or a permission placeholder. */}
               {practitioner.role === "owner" && (
-                <PendingLink
+                <PrimaryNavLink
                   href="/dashboard/capacity"
-                  data-testid="nav-business"
+                  match="section"
+                  testId="nav-business"
                   pendingLabel="Opening Business…"
-                  className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
                 >
                   Business
-                </PendingLink>
+                </PrimaryNavLink>
               )}
               {/* PR #231: Settings and Admin moved into the account
                   dropdown; the primary nav is the working surfaces. */}

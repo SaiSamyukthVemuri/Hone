@@ -1,0 +1,408 @@
+import { test, expect, type Page } from "@playwright/test";
+import { seedE2eStudio, seedE2eClient } from "./helpers/seed";
+import { loginAsOwner } from "./helpers/flows";
+
+// UX-01 Quick Wins — the four visual/keyboard repairs, in a real browser.
+//
+// Each quick win is measured rather than described: a contrast ratio computed
+// from painted colours, a box height read from the rendered control, a focus
+// location read from `document.activeElement`. A class-string assertion would
+// pass on a token that never reaches the element.
+//
+// WHAT IS DELIBERATELY NOT HERE. QW5 is a radius swap with no behavioural
+// surface beyond the painted corner, so it is pinned at source plus a computed
+// `border-radius` read below. And the PostcareSendButton dialog is proved
+// through the SAME hook as the settings dialog — reaching it needs a completed
+// appointment with postcare available, which is a large fixture for a keyboard
+// assertion whose mechanism is shared and already exercised here. Both call
+// sites are pinned at source in tests/components/ux01-quick-wins.test.ts.
+
+const T = 60_000;
+const WIDTHS = [
+  { name: "390", width: 390, height: 844 },
+  { name: "768", width: 768, height: 1024 },
+  { name: "1440", width: 1440, height: 900 },
+] as const;
+
+/**
+ * The painted contrast ratio of an element against the surface behind it.
+ *
+ * COLOURS ARE NORMALISED THROUGH A CANVAS, not parsed with a regex. This app's
+ * tokens are authored in `oklch()` and Chromium returns them that way from
+ * `getComputedStyle`, so pulling "the first three numbers" out of
+ * `oklch(0.205 0 0)` yields the RGB triple `[0.205, 0, 0]` — near-black for
+ * every colour in the palette. The first version of this helper did exactly
+ * that and reported a ratio of 1.00:1 for text and background that actually
+ * measure ~16:1, i.e. it would have failed a correct fix and passed a broken
+ * one. Painting the colour and reading the pixel back gives sRGB bytes for any
+ * CSS colour syntax.
+ */
+async function contrastAt(page: Page, selector: string): Promise<number | null> {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d")!;
+    const toRgba = (css: string): [number, number, number, number] => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = css;
+      ctx.fillRect(0, 0, 1, 1);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      return [d[0]!, d[1]!, d[2]!, d[3]! / 255];
+    };
+    const lum = (rgb: number[]) => {
+      const [r, g, b] = rgb.slice(0, 3).map((v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+    };
+    const fg = toRgba(getComputedStyle(el).color);
+    // The nearest ancestor that actually paints — what the ink sits on.
+    let node: Element | null = el;
+    let bg: number[] = [255, 255, 255, 1];
+    while (node) {
+      const c = toRgba(getComputedStyle(node).backgroundColor);
+      if (c[3] > 0) {
+        bg = c;
+        break;
+      }
+      node = node.parentElement;
+    }
+    const a = lum(fg);
+    const b = lum(bg);
+    const [hi, lo] = a > b ? [a, b] : [b, a];
+    return (hi + 0.05) / (lo + 0.05);
+  }, selector);
+}
+
+async function horizontalOverflow(page: Page): Promise<number> {
+  return page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+}
+
+test.describe("UX-01 QW1 · the dashboard day-nav marks where you are", () => {
+  test.setTimeout(T * 2);
+
+  test("the current day left the muted vocabulary: live ink, its own ground", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+
+    const today = page.getByTestId("dashboard-today");
+    await expect(today).toBeVisible({ timeout: T });
+    // Semantics were already correct and must survive the repaint.
+    await expect(today).toHaveAttribute("aria-current", "page");
+
+    const currentRatio = await contrastAt(page, '[data-testid="dashboard-today"]');
+    expect(currentRatio).not.toBeNull();
+
+    // THE DEFECT, inverted back. The day you are on used to render in the
+    // disabled vocabulary at ≈2.5:1 while its live siblings rendered normally.
+    expect(
+      currentRatio!,
+      `current-day contrast ${currentRatio!.toFixed(2)}:1`,
+    ).toBeGreaterThanOrEqual(4.5);
+
+    // MARKED BY GROUND, NOT BY DIMMING — which is the actual contract, and not
+    // the same claim as "has the highest ratio in the row".
+    //
+    // An earlier version of this test asserted `current >= next` and failed at
+    // 16.44 vs 17.93. That was the assertion being wrong, not the fix: a filled
+    // chip scores slightly BELOW black-on-white by construction, while reading
+    // as more prominent. Contrast ratio is not prominence, and requiring the
+    // marked item to win a ratio comparison would forbid every filled state in
+    // the product.
+    //
+    // What the repair actually promises is that the current segment left the
+    // MUTED vocabulary: it now carries the same ink as a live sibling, and is
+    // distinguished by a ground the sibling does not have.
+    const ink = await page.evaluate(() => {
+      const read = (sel: string) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const s = getComputedStyle(el);
+        return { color: s.color, bg: s.backgroundColor };
+      };
+      return {
+        current: read('[data-testid="dashboard-today"]'),
+        sibling: read('[data-testid="dashboard-next-day"]'),
+      };
+    });
+    expect(ink.current).not.toBeNull();
+    if (ink.sibling) {
+      expect(
+        ink.current!.color,
+        "the current day must carry the same ink as a live sibling, not a muted one",
+      ).toBe(ink.sibling.color);
+      const painted = (c: string) => !/rgba\(0, 0, 0, 0\)|transparent/.test(c);
+      expect(painted(ink.current!.bg), "current segment paints a ground").toBe(true);
+      expect(painted(ink.sibling.bg), "a live sibling does not").toBe(false);
+    }
+  });
+
+  test("stepping a day does not move the arrows", async ({ page }) => {
+    // The file promises this, and it is why the current state is marked by
+    // ground rather than by weight: `font-medium` changes the advance width and
+    // would shift both arrows every time the practitioner stepped a day.
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+
+    const prev = page.getByTestId("dashboard-prev-day");
+    await expect(prev).toBeVisible({ timeout: T });
+    const onToday = await prev.boundingBox();
+
+    await page.getByTestId("dashboard-next-day").click();
+    await expect(page.getByTestId("dashboard-today")).toBeVisible({ timeout: T });
+    const offToday = await prev.boundingBox();
+
+    expect(onToday).not.toBeNull();
+    expect(offToday).not.toBeNull();
+    expect(Math.round(offToday!.x)).toBe(Math.round(onToday!.x));
+    expect(Math.round(offToday!.width)).toBe(Math.round(onToday!.width));
+  });
+});
+
+test.describe("UX-01 QW2 · the shell answers 'where am I'", () => {
+  test.setTimeout(T * 3);
+
+  test("exactly one primary-nav section is current, and it is the right one", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    await loginAsOwner(page, seed);
+
+    const nav = page.getByRole("navigation", { name: "Primary navigation" });
+
+    const cases: Array<{ url: string; testId: string }> = [
+      { url: "/dashboard", testId: "nav-dashboard" },
+      { url: "/clients", testId: "nav-clients" },
+      { url: "/calendar", testId: "nav-calendar" },
+      { url: "/records", testId: "nav-records" },
+      // A SUBTREE page must keep its section lit — this is what `match="section"`
+      // buys, and the reason a bare equality check would be wrong.
+      { url: `/clients/${clientId}`, testId: "nav-clients" },
+    ];
+
+    for (const c of cases) {
+      await page.goto(c.url);
+      await expect(nav).toBeVisible({ timeout: T });
+      const current = nav.locator('[aria-current="page"]');
+      await expect(current, `${c.url}: exactly one current`).toHaveCount(1);
+      await expect(
+        nav.getByTestId(c.testId),
+        `${c.url} lights ${c.testId}`,
+      ).toHaveAttribute("aria-current", "page");
+    }
+  });
+
+  test("the capacity page lights Business, NOT Dashboard", async ({ page }) => {
+    // `/dashboard/capacity` is a different nav entry from `/dashboard`. A bare
+    // prefix match lights both; Dashboard is therefore `match="exact"`.
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard/capacity");
+
+    const nav = page.getByRole("navigation", { name: "Primary navigation" });
+    await expect(nav).toBeVisible({ timeout: T });
+    await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
+    await expect(nav.getByTestId("nav-business")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(nav.getByTestId("nav-dashboard")).not.toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  test("NO REGRESSION: the primary nav still acknowledges the press", async ({
+    page,
+  }) => {
+    // #736's contract. QW2 moved these anchors into a client leaf; the
+    // acknowledgement must survive that move, not merely still compile.
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    let held = 0;
+    // INSTALLED BEFORE THE PAGE LOADS, deliberately. Next prefetches a <Link>
+    // as it enters the viewport, and for a segment change that speculative
+    // fetch can satisfy the whole navigation — so a gate installed after the
+    // page settled intercepted nothing, the tap made no request, and `held`
+    // came back 0. Holding the prefetch keeps the router cache empty while
+    // leaving every request successful.
+    await page.route(
+      (u) => u.pathname === "/clients",
+      async (route) => {
+        const h = route.request().headers();
+        if (h["rsc"] === "1" || h["next-router-prefetch"] === "1") {
+          held += 1;
+          await gate;
+        }
+        await route.continue();
+      },
+    );
+    await page.goto("/dashboard");
+
+    const clients = page.getByTestId("nav-clients");
+    await expect(clients).toBeVisible({ timeout: T });
+    await clients.click();
+    await expect(clients.locator("[data-link-pending]")).toBeVisible({
+      timeout: 10_000,
+    });
+    expect(held, "the gate never held a request").toBeGreaterThan(0);
+    open();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+});
+
+test.describe("UX-01 QW3 · the flagship actions reach the touch floor", () => {
+  for (const vp of WIDTHS) {
+    test(`dashboard 'Book appointment' is >= 44px at ${vp.name}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      const seed = await seedE2eStudio();
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+
+      const book = page.getByRole("link", { name: "Book appointment" });
+      await expect(book).toBeVisible({ timeout: T });
+      const box = await book.boundingBox();
+      expect(box).not.toBeNull();
+      expect(
+        Math.round(box!.height),
+        `Book appointment is ${box!.height}px at ${vp.name}`,
+      ).toBeGreaterThanOrEqual(44);
+
+      expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    });
+
+    test(`records 'Print / Export' is >= 44px at ${vp.name}`, async ({ page }) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      const seed = await seedE2eStudio();
+      await loginAsOwner(page, seed);
+      await page.goto("/records");
+
+      const print = page.getByRole("link", { name: "Print / Export" });
+      await expect(print).toBeVisible({ timeout: T });
+      const box = await print.boundingBox();
+      expect(box).not.toBeNull();
+      expect(
+        Math.round(box!.height),
+        `Print / Export is ${box!.height}px at ${vp.name}`,
+      ).toBeGreaterThanOrEqual(44);
+
+      expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    });
+  }
+});
+
+test.describe("UX-01 QW4 · a keyboard user can leave the dialog", () => {
+  test.setTimeout(T * 2);
+
+  test("focus enters on open, Escape closes, focus returns to the opener", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.goto("/settings/intake");
+
+    const opener = page.getByRole("button", { name: /preview email/i }).first();
+    await expect(opener).toBeVisible({ timeout: T });
+    await opener.focus();
+    await opener.press("Enter");
+
+    const dialog = page.getByRole("dialog", { name: /postcare email preview/i });
+    await expect(dialog).toBeVisible({ timeout: T });
+
+    // FOCUS IS INSIDE. Before this repair it stayed on the opener behind an
+    // `aria-modal` that had already hidden the rest of the page.
+    const inside = await page.evaluate(() => {
+      const panel = document.querySelector('[role="dialog"]');
+      return !!panel && panel.contains(document.activeElement);
+    });
+    expect(inside, "focus must be inside the dialog").toBe(true);
+
+    // ESCAPE CLOSES IT — the whole defect.
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0, { timeout: 10_000 });
+
+    // AND FOCUS COMES BACK, so a keyboard user is not dropped at <body>.
+    await expect(opener).toBeFocused();
+  });
+
+  test("Tab does not escape the open dialog", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.goto("/settings/intake");
+
+    await page.getByRole("button", { name: /preview email/i }).first().click();
+    const dialog = page.getByRole("dialog", { name: /postcare email preview/i });
+    await expect(dialog).toBeVisible({ timeout: T });
+
+    for (let i = 0; i < 8; i += 1) await page.keyboard.press("Tab");
+    const stillInside = await page.evaluate(() => {
+      const panel = document.querySelector('[role="dialog"]');
+      return !!panel && panel.contains(document.activeElement);
+    });
+    expect(stillInside, "Tab walked out from behind the modal").toBe(true);
+  });
+});
+
+test.describe("UX-01 QW5 · the off-system radius is gone", () => {
+  test("the calendar view toggle paints a system radius", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.goto("/calendar");
+
+    const week = page.getByTestId("calendar-view-week");
+    await expect(week).toBeVisible({ timeout: T });
+    const radius = await week.evaluate(
+      (el) => getComputedStyle(el).borderTopLeftRadius,
+    );
+    // 5px was the off-system dialect; `rounded-md` is 6px.
+    expect(radius).not.toBe("5px");
+    expect(radius).toBe("6px");
+  });
+});
+
+test.describe("UX-01 · reduced motion", () => {
+  test("no quick win introduces motion that reduced-motion must suppress", async ({
+    page,
+  }) => {
+    // None of the four repairs animates: they change fill, ink, box height and
+    // a radius. The press acknowledgement `buttonClasses` brings is the app's
+    // EXISTING interaction contract, which already honours reduced motion.
+    // This asserts the repaired surfaces still render and stay measurable with
+    // the preference on, rather than claiming a motion contract they do not own.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    await page.goto("/dashboard");
+    const today = page.getByTestId("dashboard-today");
+    await expect(today).toBeVisible({ timeout: T });
+    await expect(today).toHaveAttribute("aria-current", "page");
+    const ratio = await contrastAt(page, '[data-testid="dashboard-today"]');
+    expect(ratio!).toBeGreaterThanOrEqual(4.5);
+
+    const book = page.getByRole("link", { name: "Book appointment" });
+    const box = await book.boundingBox();
+    expect(Math.round(box!.height)).toBeGreaterThanOrEqual(44);
+
+    expect(
+      await page.evaluate(
+        () => matchMedia("(prefers-reduced-motion: reduce)").matches,
+      ),
+    ).toBe(true);
+  });
+});
