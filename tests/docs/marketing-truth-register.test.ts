@@ -17,6 +17,8 @@ import {
   isWatched,
   unreconstructableSentences,
   unreconstructableIn,
+  literalVariants,
+  couldCompleteForbidden,
   APPEND_ONLY_OVERREACH,
   APPEND_ONLY_TRIGGER,
   SUPPORTED_APPEND_ONLY_SCOPE,
@@ -577,7 +579,12 @@ describe("NOT_CURRENTLY_SUPPORTABLE claims stay out of public copy", () => {
     // Nothing static can reconstruct that sentence, so the ambiguity is
     // forbidden rather than resolved. Copy either says the whole thing in one
     // place, or holds the whole thing in one value.
-    const offenders = unreconstructableSentences(SOURCES);
+    //
+    // FORBIDDEN is passed, not omitted: it arms the completion sweep, which is
+    // what catches a half-written banned phrase in a copy MODULE rather than a
+    // component, and a one-word opening that the multi-word splice test reads
+    // as an identifier fragment.
+    const offenders = unreconstructableSentences(SOURCES, FORBIDDEN);
     expect(
       offenders.map((o) => `${o.file}: "${o.prose}" around {${o.expression}}`),
       "a sentence sets scope around a value this scan cannot resolve, so what a visitor reads cannot be judged. Inline the whole sentence, or move all of it into the value",
@@ -902,6 +909,142 @@ describe("negative controls: the guard bites", () => {
     ]) {
       expect(unreconstructableIn(live), live.slice(0, 50)).toEqual([]);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // The incomplete-concatenation hole.
+  //
+  // Both cases below were RUN against this scanner before the fix and both came
+  // back with zero findings, while the string the page renders trips N1. They
+  // are regression tests for a hole that was open, not hypotheticals.
+  // -------------------------------------------------------------------------
+
+  it("rejects a banned claim half-written in a copy module with no JSX", () => {
+    // `lib/marketing/content.ts` is in publicMarketingSources() because a public
+    // route imports it, and its sentences ship. Nothing here is JSX, so neither
+    // the sentence walk nor the prop check ever looked at it: the scan read
+    // "Edits kept as", which matches no rule, and the page renders "Edits kept
+    // as history", which is N1.
+    const src = `export const COPY = { line: "Edits kept as " + historyLabel };`;
+    expect(collectClaims(src, "lib/marketing/content.ts")).toContain("Edits kept as");
+    expect(
+      FORBIDDEN.some((r) => r.pattern.test("Edits kept as")),
+      "precondition: the readable half alone trips nothing",
+    ).toBe(false);
+    expect(
+      FORBIDDEN.some((r) => r.pattern.test("Edits kept as history")),
+      "precondition: the rendered sentence IS banned",
+    ).toBe(true);
+
+    expect(unreconstructableIn(src, "lib/marketing/content.ts", FORBIDDEN)).toHaveLength(1);
+  });
+
+  it("rejects a one-word opening that a value can finish into a banned claim", () => {
+    // The multi-word discriminator is right for telling prose from an identifier
+    // fragment, but it leaves a single word uncovered. "never" reads as one
+    // token; "never overwritten" is N1.
+    const src = `export const X = () => <p>{"never " + verb}</p>;`;
+    expect(
+      FORBIDDEN.some((r) => r.pattern.test("never")),
+      "precondition: the readable half alone trips nothing",
+    ).toBe(false);
+    expect(unreconstructableIn(src, "sections.tsx", FORBIDDEN)).toHaveLength(1);
+  });
+
+  it("rejects a value that a banned phrase is completed AFTER", () => {
+    // The other direction: the hole comes first and the authored half is the
+    // TAIL of the phrase. "overwritten" alone trips nothing; the page renders
+    // "never overwritten".
+    const src = `export const X = () => <p>{adverb + " overwritten"}</p>;`;
+    expect(unreconstructableIn(src, "sections.tsx", FORBIDDEN)).toHaveLength(1);
+  });
+
+  it("is discriminating: a splice that cannot complete a banned phrase passes", () => {
+    // The fix must not degenerate into "every concatenation is an offence".
+    // These all splice a value into authored text, and none of them can grow
+    // into anything §0.4 forbids, so the guard must stay silent — otherwise it
+    // is not a truth guard, it is a ban on string concatenation.
+    for (const live of [
+      `export const A = () => <div className={"rounded-md border " + extra} />;`,
+      `export const B = { key: \`footer-group-\${id}\` };`,
+      `export const C = () => <p>© {year} Hone</p>;`,
+      `export const D = { cta: "Request a walkthrough " + suffix };`,
+      `export const E = { lede: "Built for electrolysis records in " + region };`,
+      `export const G = { note: "Photos open through short-lived " + kind };`,
+    ]) {
+      expect(
+        unreconstructableIn(live, "sections.tsx", FORBIDDEN),
+        live.slice(0, 56),
+      ).toEqual([]);
+    }
+  });
+
+  it("leaves the pre-existing multi-word JSX splice rule exactly as it was", () => {
+    // Not a new finding, and deliberately not weakened by the completion sweep:
+    // a multi-word value spliced into a JSX sentence is refused on STRUCTURE by
+    // the rule that already existed, whether or not it could complete a banned
+    // phrase. Measured at bd0de986 before this change: 1 finding. Still 1.
+    const src = `export const F = () => <p>{"Book a consultation with " + studio}</p>;`;
+    expect(unreconstructableIn(src, "sections.tsx")).toHaveLength(1);
+    expect(unreconstructableIn(src, "sections.tsx", FORBIDDEN)).toHaveLength(1);
+  });
+
+  it("does not double-report one expression reached by two checks", () => {
+    // A prop splice is visible to visitAttributes AND to the completion sweep.
+    // One expression is one finding.
+    const src = `export const X = () => <Card title={"Edits kept as " + it.body} />;`;
+    expect(unreconstructableIn(src, "sections.tsx", FORBIDDEN)).toHaveLength(1);
+  });
+
+  it("arms the completion sweep only when the rules are supplied", () => {
+    // The sweep is rule-driven, so a caller that passes none gets the old
+    // behaviour rather than a false all-clear. That is why
+    // unreconstructableSentences takes the rules as a REQUIRED argument, and
+    // why the shipped guard above passes FORBIDDEN.
+    const src = `export const COPY = { line: "Edits kept as " + historyLabel };`;
+    expect(unreconstructableIn(src, "lib/marketing/content.ts")).toEqual([]);
+    expect(unreconstructableIn(src, "lib/marketing/content.ts", FORBIDDEN)).toHaveLength(1);
+    expect(FORBIDDEN.length, "the shipped guard is armed with real rules").toBeGreaterThan(0);
+  });
+
+  it("expands the register's rule language, and stops safely where it cannot", () => {
+    // The completion test is only as good as its reading of the rules. These are
+    // the four shapes §0.4 actually uses.
+    const literal = literalVariants("edits kept as history");
+    expect(literal.whole).toBe(true);
+    expect(literal.variants).toEqual(["edits kept as history"]);
+
+    const alternation = literalVariants("every change is (tracked|recorded|kept|preserved)");
+    expect(alternation.whole).toBe(true);
+    expect(alternation.variants).toContain("every change is tracked");
+    expect(alternation.variants).toContain("every change is preserved");
+
+    const optional = literalVariants("full (edit )?history of every (change|edit)");
+    expect(optional.whole).toBe(true);
+    expect(optional.variants).toContain("full edit history of every change");
+    expect(optional.variants).toContain("full history of every edit");
+
+    expect(literalVariants("synthetic[- ]twin").variants.sort()).toEqual([
+      "synthetic twin",
+      "synthetic-twin",
+    ]);
+
+    // The one rule that cannot be fully expanded: `(?:[\w-]+ ){0,3}` is a
+    // wildcard, so expansion stops there and reports itself incomplete. What it
+    // produced is still a real PREFIX, which is all the prefix test consumes.
+    const partial = literalVariants(
+      "(treatment|clinical|session) records? (keeps?|retains?|holds?|preserves?|has|have) (its|their|an|a|the )?(own )?(?:[\\w-]+ ){0,3}(edit|change|revision) history",
+    );
+    expect(partial.whole).toBe(false);
+    expect(partial.variants.some((v) => v.startsWith("treatment record"))).toBe(true);
+  });
+
+  it("leaves a phrase that is already a full match to the substring guard", () => {
+    // couldCompleteForbidden is about what a value could ADD. A fragment that
+    // already contains the whole banned phrase is the substring guard's job, and
+    // reporting it here too would double-count it.
+    expect(couldCompleteForbidden("edits kept as history", FORBIDDEN)).toBeNull();
+    expect(couldCompleteForbidden("Edits kept as", FORBIDDEN)?.id).toBe("N1");
   });
 
   it("pairs prose with a hole across inline markup, and through a template", () => {

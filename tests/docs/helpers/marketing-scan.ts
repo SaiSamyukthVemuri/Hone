@@ -867,6 +867,191 @@ export type UnreconstructableSentence = {
 };
 
 /**
+ * The literal phrases a forbidden rule can begin with.
+ *
+ * The rules in §0.4 are regexes, but they are regexes over AUTHORED ENGLISH:
+ * literal words, small alternations, optional groups. Expanding that subset
+ * gives the concrete phrases a visitor could read, which is what a half-written
+ * sentence has to be judged against.
+ *
+ * Expansion runs left to right and STOPS at the first construct it cannot
+ * expand faithfully (`\w`, `+`, `*`, `{n,m}`, `(?:…)`, a nested group). Stopping
+ * early is safe for the caller below, because every string produced so far is
+ * still a genuine PREFIX of something the rule matches, and a prefix is what the
+ * prefix test needs. `whole` records whether expansion reached the end of the
+ * rule, because only then are the variants complete phrases whose SUFFIXES also
+ * mean something.
+ */
+export function literalVariants(source: string): {
+  variants: string[];
+  whole: boolean;
+} {
+  const CAP = 256;
+  const UNEXPANDABLE = /[\\+*{.^$]/;
+  let variants: string[] = [""];
+  let index = 0;
+  let whole = true;
+
+  const extend = (pieces: string[]): boolean => {
+    const next: string[] = [];
+    for (const variant of variants) {
+      for (const piece of pieces) next.push(variant + piece);
+    }
+    if (next.length > CAP) return false;
+    variants = next;
+    return true;
+  };
+
+  while (index < source.length) {
+    const ch = source[index];
+    if (UNEXPANDABLE.test(ch) || source.startsWith("(?:", index)) {
+      whole = false;
+      break;
+    }
+    if (ch === "(") {
+      let depth = 0;
+      let close = -1;
+      for (let j = index; j < source.length; j += 1) {
+        if (source[j] === "(") depth += 1;
+        else if (source[j] === ")") {
+          depth -= 1;
+          if (depth === 0) {
+            close = j;
+            break;
+          }
+        }
+      }
+      const body = close < 0 ? "" : source.slice(index + 1, close);
+      if (close < 0 || UNEXPANDABLE.test(body) || body.includes("(")) {
+        whole = false;
+        break;
+      }
+      const optional = source[close + 1] === "?";
+      if (!extend(optional ? [...body.split("|"), ""] : body.split("|"))) {
+        whole = false;
+        break;
+      }
+      index = close + 1 + (optional ? 1 : 0);
+      continue;
+    }
+    if (ch === "[") {
+      const close = source.indexOf("]", index);
+      const members = close < 0 ? "" : source.slice(index + 1, close);
+      if (close < 0 || /[\\^]/.test(members)) {
+        whole = false;
+        break;
+      }
+      if (!extend(members.split(""))) {
+        whole = false;
+        break;
+      }
+      index = close + 1;
+      continue;
+    }
+    // An ordinary character, optionally made optional by a trailing `?`.
+    const optional = source[index + 1] === "?";
+    if (!extend(optional ? [ch, ""] : [ch])) {
+      whole = false;
+      break;
+    }
+    index += optional ? 2 : 1;
+  }
+
+  const folded = new Set<string>();
+  for (const variant of variants) {
+    const value = foldForMatching(variant);
+    if (value) folded.add(value);
+  }
+  return { variants: [...folded], whole };
+}
+
+/**
+ * The shortest overlap that counts as "this half is starting a banned claim".
+ *
+ * Below this it is coincidence: almost any sentence ends in two letters that
+ * also open some rule. At four characters, aligned to a word boundary on both
+ * sides, the fragment is committing to the wording rather than brushing past it.
+ */
+const MIN_COMPLETION_OVERLAP = 4;
+
+/**
+ * Folded for comparison the way the rules themselves are matched.
+ *
+ * `foldForMatching` settles dashes and spaces but deliberately keeps case,
+ * because the claim text it produces is also what gets reported. The rules are
+ * compiled case-insensitively, so a comparison against them must lower too —
+ * without this, "Edits kept as " never matched "edits kept as history" and the
+ * whole completion test silently passed everything.
+ */
+const foldForCompletion = (text: string) => foldForMatching(text).toLowerCase();
+
+/** Does `overlap` sit at the start of a word within `text`? */
+const overlapStartsAWord = (text: string, overlap: string): boolean => {
+  const before = text.slice(0, text.length - overlap.length);
+  return before === "" || /[^A-Za-z0-9]$/.test(before);
+};
+
+/** Does `overlap`, taken from the front of `text`, end on a word boundary? */
+const overlapEndsAWord = (text: string, overlap: string): boolean => {
+  const after = text.slice(overlap.length);
+  return after === "" || /^[^A-Za-z0-9]/.test(after);
+};
+
+/**
+ * Could a value spliced onto this half-written text finish a forbidden claim?
+ *
+ * This is the question the substring guard cannot ask, and the hole this closes.
+ * `collectClaims` reads `{"Edits kept as " + label}` as the sentence "Edits kept
+ * as", which matches no rule — while the page renders "Edits kept as history",
+ * which matches N1. The readable half is a PROPER PREFIX of a banned wording and
+ * the hole is exactly where the rest of it goes.
+ *
+ * Both directions are checked. Text before a hole is dangerous when it ENDS with
+ * a proper prefix of a banned phrase; text after a hole is dangerous when it
+ * BEGINS with a proper suffix of one. Text that already contains a whole banned
+ * phrase is not this function's business — `collectClaims` and the rule's own
+ * regex catch that, and repeating it here would only double-report it.
+ */
+export function couldCompleteForbidden(
+  text: string,
+  rules: readonly ForbiddenWording[],
+): ForbiddenWording | null {
+  const folded = foldForCompletion(text);
+  if (!folded) return null;
+  for (const rule of rules) {
+    if (rule.pattern.test(folded)) continue; // a full match; already catchable
+    const { variants, whole } = literalVariants(rule.source);
+    for (const variant of variants) {
+      const lowered = variant.toLowerCase();
+      const limit = Math.min(folded.length, lowered.length - 1);
+      for (let k = limit; k >= MIN_COMPLETION_OVERLAP; k -= 1) {
+        // Text BEFORE a hole: it ends with the opening of a banned phrase, and
+        // the value supplies the rest.
+        const head = lowered.slice(0, k);
+        if (folded.endsWith(head) && overlapStartsAWord(folded, head)) return rule;
+
+        // Text AFTER a hole: it opens with the END of a banned phrase. Only
+        // meaningful once the rule expanded in full, and only when the overlap
+        // is a whole word on BOTH sides — otherwise the four-letter tail "edit"
+        // of "full history of every edit" matches the front of any sentence
+        // starting "edits…", which is every N1 phrase there is.
+        if (!whole) continue;
+        const tail = lowered.slice(lowered.length - k);
+        const boundary = lowered[lowered.length - k - 1] ?? " ";
+        if (
+          folded.startsWith(tail) &&
+          /[^A-Za-z0-9]/.test(boundary) &&
+          overlapEndsAWord(folded, tail)
+        ) {
+          return rule;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * JSX containers that mix authored prose with a value this scan cannot resolve.
  *
  * Review's case: `<p>Every treatment record includes {it.body}</p>`. The
@@ -885,6 +1070,7 @@ export type UnreconstructableSentence = {
 export function unreconstructableIn(
   src: string,
   file = "input.tsx",
+  rules: readonly ForbiddenWording[] = [],
 ): UnreconstructableSentence[] {
   const sf = ts.createSourceFile(
     file,
@@ -894,6 +1080,9 @@ export function unreconstructableIn(
     ts.ScriptKind.TSX,
   );
   const out: UnreconstructableSentence[] = [];
+  // An expression can be reached twice — once as a JSX child or prop, once by
+  // the whole-file sweep below. Report it once.
+  const reported = new Set<ts.Node>();
 
   /**
    * Everything under this sentence, flattened the way a visitor receives it,
@@ -932,10 +1121,16 @@ export function unreconstructableIn(
     return { prose: normalise(prose), holes, spliced };
   };
 
+  const emitFinding = (prose: string, hole: ts.Node) => {
+    if (reported.has(hole)) return;
+    reported.add(hole);
+    out.push({ file, prose, expression: hole.getText().slice(0, 80) });
+  };
+
   const report = (prose: string, hole: ts.Node) => {
     const folded = foldForMatching(prose);
     if (SCOPE_SETTING_PROSE.test(folded) || APPEND_ONLY_TRIGGER.test(folded)) {
-      out.push({ file, prose, expression: hole.getText().slice(0, 80) });
+      emitFinding(prose, hole);
     }
   };
 
@@ -976,11 +1171,7 @@ export function unreconstructableIn(
     ) {
       const authored = readExpression(n.initializer.expression);
       if (splicesIntoWords(authored)) {
-        out.push({
-          file,
-          prose: normalise(authored!.text),
-          expression: n.initializer.expression.getText().slice(0, 80),
-        });
+        emitFinding(normalise(authored!.text), n.initializer.expression);
       } else if (!authored || !authored.complete) {
         report(normalise(authored?.text ?? ""), n.initializer.expression);
       }
@@ -994,7 +1185,7 @@ export function unreconstructableIn(
       // A splice cannot be judged at all, so it is reported on structure. A
       // plain hole is reported only when the prose around it sets a scope.
       if (spliced.length > 0) {
-        out.push({ file, prose, expression: spliced[0].getText().slice(0, 80) });
+        emitFinding(prose, spliced[0]);
       } else if (holes.length > 0) {
         report(prose, holes[0]);
       }
@@ -1010,11 +1201,69 @@ export function unreconstructableIn(
     ts.forEachChild(n, visit);
   };
   visit(sf);
+
+  /**
+   * The same laundering, ANYWHERE — including outside JSX entirely.
+   *
+   * Two holes the JSX-shaped checks above cannot see, both proven against this
+   * scanner before this sweep existed:
+   *
+   *   A. `lib/marketing/content.ts` is a COPY MODULE, not a component. It is in
+   *      `publicMarketingSources()` because a public route imports it, and its
+   *      sentences ship. `{ line: "Edits kept as " + label }` has no JSX around
+   *      it, so neither `visitAttributes` nor the sentence walk ever looked at
+   *      it, and the page rendered "Edits kept as history" — N1 — scan green.
+   *
+   *   B. `splicesIntoWords` requires the readable half to be MULTI-WORD, which
+   *      is right for telling authored prose from an identifier fragment but
+   *      leaves a one-word opening uncovered. `{"never " + verb}` renders
+   *      "never overwritten" — N1 — and read "never", which trips nothing.
+   *
+   * Both are the same shape: authored text that is a PROPER PREFIX of a banned
+   * wording, with the hole sitting exactly where the rest of it goes. So the
+   * discriminator is the rule set itself rather than another shape heuristic —
+   * `couldCompleteForbidden` asks whether a value could finish a banned phrase,
+   * which is precisely the property the register cares about, and is why
+   * `className={"rounded-md border " + extra}` and `` `footer-group-${id}` ``
+   * stay silent: nothing completes them into a claim.
+   *
+   * With no rules passed this sweep does nothing, so a caller that forgets them
+   * gets the old behaviour rather than a false all-clear — which is why
+   * `unreconstructableSentences` requires them.
+   */
+  if (rules.length > 0) {
+    const sweepForCompletions = (n: ts.Node) => {
+      const isConcat =
+        ts.isBinaryExpression(n) &&
+        n.operatorToken.kind === ts.SyntaxKind.PlusToken;
+      if (isConcat || ts.isTemplateExpression(n)) {
+        const authored = readExpression(n as ts.Expression);
+        if (authored && !authored.complete) {
+          const parent = n.parent;
+          const inNonCopyAttribute =
+            parent &&
+            ts.isJsxExpression(parent) &&
+            parent.parent &&
+            ts.isJsxAttribute(parent.parent) &&
+            isNonCopyAttribute(parent.parent);
+          if (!inNonCopyAttribute && couldCompleteForbidden(authored.text, rules)) {
+            emitFinding(normalise(authored.text), n);
+          }
+        }
+      }
+      ts.forEachChild(n, sweepForCompletions);
+    };
+    sweepForCompletions(sf);
+  }
+
   return out;
 }
 
 export function unreconstructableSentences(
   sources: string[],
+  rules: readonly ForbiddenWording[],
 ): UnreconstructableSentence[] {
-  return sources.flatMap((file) => unreconstructableIn(readSource(file), file));
+  return sources.flatMap((file) =>
+    unreconstructableIn(readSource(file), file, rules),
+  );
 }
