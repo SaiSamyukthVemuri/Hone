@@ -900,21 +900,32 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
       // law forbids a page to do. An iteration method is excluded because its
       // result is a list of elements, not a sentence.
       const authoredWords = parts.sequence.some((x) => "words" in x && x.words > 0);
-      const opaqueCall = (node: ts.Node): boolean => {
+      const isOpaque = (node: ts.Node): boolean => {
         const expression = (node as ts.JsxExpression).expression;
         if (!expression) return false;
         const e = unwrap(expression) as ts.Expression;
+        // A BARE IDENTIFIER is opaque too. Catching only an immediate call left
+        // `const claim = getMarketingClaim()` rendered as `<p>{claim}</p>`
+        // passing: the predicate said no, `pageClaims` omitted the hole-bearing
+        // container, and the baseline recorded nothing. An approved copy value
+        // never reaches here — it is an approved hole, not a hole — and a loop
+        // variable is approved just above.
+        if (ts.isIdentifier(e)) return true;
         if (!ts.isCallExpression(e)) return false;
+        // An iteration yields elements, not a sentence — but only when its
+        // RECEIVER can be seen. `getItems().map(...)` hides the same claim one
+        // level further out.
         return !(
           ts.isPropertyAccessExpression(e.expression) &&
-          ITERATION_METHODS.has(e.expression.name.text)
+          ITERATION_METHODS.has(e.expression.name.text) &&
+          !ts.isCallExpression(unwrap(e.expression.expression))
         );
       };
       if (
         !authoredWords &&
         parts.holes.length === 1 &&
         parts.undeclared.length === 0 &&
-        opaqueCall(parts.holes[0])
+        isOpaque(parts.holes[0])
       ) {
         out.push({
           file,
@@ -1068,6 +1079,44 @@ function approvedCopyNames(sf: ts.SourceFile): Set<string> {
   };
   visit(sf);
 
+  // A LOOP VARIABLE IS CONSUMPTION, NOT AN OPAQUE CLAIM.
+  // This was written one head earlier, measured to change nothing, and removed
+  // as a loosening path the fix did not need. Extending the standalone rule to
+  // bare identifiers needs it: the five such holes on the real pages —
+  // `{line}`, `{a}`, `{item}`, `{it}`, `{p}` — are every one a callback
+  // parameter, and without this they would all be refused.
+  //
+  // ANY receiver, not only an approved import, because the arrays behind those
+  // five are declared in the page itself or written inline, and their copy is
+  // already frozen in the page-prose baseline. Repeated to a fixpoint so a
+  // nested iteration is covered too.
+  // Termination is STRUCTURAL: the loop repeats only while the set actually
+  // grew, and the set is bounded by the identifiers in one file. A `changed`
+  // flag set by the body reads the same but is not the same — proving this
+  // guard, I removed the `add` and left the flag, and the suite hung instead of
+  // failing. A mutation test should go red, never spin.
+  for (let size = -1; size !== names.size; ) {
+    size = names.size;
+    const collect = (n: ts.Node) => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        ITERATION_METHODS.has(n.expression.name.text)
+      ) {
+        const callback = n.arguments[0];
+        if (
+          callback &&
+          (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
+          callback.parameters[0] &&
+          ts.isIdentifier(callback.parameters[0].name)
+        ) {
+          names.add(callback.parameters[0].name.text);
+        }
+      }
+      ts.forEachChild(n, collect);
+    };
+    collect(sf);
+  }
   return names;
 }
 

@@ -1424,6 +1424,13 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     expect(isWatched("supabase/migrations/0200_plan_caps.sql", cited)).toBe(true);
     // Non-vacuous: it is that directory that is watched, not everything.
     expect(isWatched("supabase/seed.sql", cited)).toBe(false);
+
+    // Same class, different row. V12 bounds the signed-link TTL but named the
+    // constant rather than a path, and an IDENTIFIER is not evidence a staleness
+    // comparison can watch — production could raise the TTL past the claimed
+    // bound with the row still reading as current.
+    expect(isWatched("lib/images/treatment-images.ts", cited)).toBe(true);
+    expect(isWatched("tests/lib/images/treatment-images.test.ts", cited)).toBe(true);
   });
 
   it("a static string put through an unreadable operation is REFUSED, not read", () => {
@@ -1618,13 +1625,27 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
       assembledClaimViolations("app/probe/page.tsx", `export const A = () => ${body};`)
         .map((v) => v.rule);
     expect(probe("<p>{getMarketingClaim()}</p>")).toEqual(["claim/standalone-opaque-hole"]);
+    // A BARE IDENTIFIER hides the same claim one binding away: `const claim =
+    // getMarketingClaim()` rendered as `<p>{claim}</p>` is not a call at the
+    // hole, so catching only calls left it passing.
+    expect(probe("<p>{claim}</p>")).toEqual(["claim/standalone-opaque-hole"]);
+    // And one level further out again, where the ITERATION exemption would
+    // otherwise cover an unreadable receiver.
+    expect(probe("<ul>{getItems().map((x) => <li key={x}>{x}</li>)}</ul>")).toEqual([
+      "claim/standalone-opaque-hole",
+    ]);
 
     // NARROW, and measured: refusing every standalone hole flagged 23 real ones.
     // A map produces elements rather than a sentence.
     expect(probe("<ul>{ITEMS.map((i) => <li key={i}>{i}</li>)}</ul>")).toEqual([]);
     // A loop variable over copy the page declares is consumption, and its text
-    // is already frozen in the page-prose baseline.
+    // is already frozen in the page-prose baseline. This is what the
+    // callback-parameter approval exists for: all five bare-identifier holes on
+    // the real pages are loop variables, and without it every one is refused.
     expect(probe("<p>{plan.bestFor}</p>")).toEqual([]);
+    expect(
+      probe("<ul>{ITEMS.map((line) => <li key={line}><span>{line}</span></li>)}</ul>"),
+    ).toEqual([]);
     // And the sanctioned shape is untouched.
     expect(
       assembledClaimViolations(
