@@ -50,6 +50,12 @@ import { join } from "node:path";
 export const CANONICAL_COPY_MODULES: readonly string[] = [
   "lib/marketing/content.ts",
   "lib/marketing/resources.ts",
+  // Authors the SoftwareApplication description and other structured-data prose
+  // that `app/page.tsx` renders through `softwareApplicationLd()`. The route
+  // holds only a call expression, so nothing in the page reaches these strings:
+  // a declared universe is exactly as complete as its declaration, and this one
+  // was short by a module.
+  "lib/marketing/jsonld.ts",
 ];
 
 /**
@@ -388,8 +394,7 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
   const out: CopyViolation[] = [];
   const visit = (n: ts.Node) => {
     if (ts.isJsxElement(n)) {
-      const direct = n.children.filter(ts.isJsxText).map((c) => c.text).join("");
-      if (isSubstantiveProse(direct)) {
+      if (isSubstantiveProse(claimText(n))) {
         for (const child of n.children) {
           if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
             const tag = tagNameOf(child);
@@ -444,6 +449,66 @@ export function walkStrings(value: unknown, seen = new Set<unknown>()): string[]
   );
 }
 
+
+/**
+ * The sentence an element renders, folding DECLARED inline descendants in.
+ *
+ * Built BEFORE the substantive test, not after. Gating on an element's direct
+ * text first meant `<p>Every <strong>change is tracked</strong>.</p>` produced
+ * nothing at all: "Every ." is not substantive and "change is tracked" is below
+ * the threshold on its own, while the rendered sentence matches N1 exactly.
+ *
+ * A non-inline child contributes NOTHING here — it emits its own claim, which is
+ * what keeps `<div>Intro<p>…</p></div>` from fusing — and an expression that is
+ * not a complete literal contributes nothing either, because the shape guard has
+ * already refused it. Neither case is inferred; both are already settled.
+ */
+function claimText(node: ts.JsxElement): string {
+  let text = "";
+  for (const child of node.children) {
+    if (ts.isJsxText(child)) {
+      text += decodeEntities(child.text);
+    } else if (ts.isJsxExpression(child) && child.expression) {
+      const e = child.expression;
+      if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) text += e.text;
+    } else if (ts.isJsxElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
+      text += claimText(child);
+    }
+  }
+  return text;
+}
+
+/**
+ * Substantive strings a declared copy module authors, read statically.
+ *
+ * Complements the value walk rather than replacing it, and closes two gaps the
+ * value walk cannot:
+ *
+ *   - a module whose copy is returned by a FUNCTION (`softwareApplicationLd()`)
+ *     exports no value to walk;
+ *   - `FLAG ? "banned" : "safe"` evaluates to ONE branch, so the other ships
+ *     unjudged. Both branches are literals in the source, so both are judged.
+ *
+ * Static reading is sound here precisely because `copyModuleViolations` has
+ * already refused anything that is not a complete literal.
+ */
+export function moduleClaims(file: string, source?: string): string[] {
+  const sf = parse(file, source);
+  const out: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (
+      (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
+      !(n.parent && (ts.isImportDeclaration(n.parent) || ts.isExportDeclaration(n.parent))) &&
+      isSubstantiveProse(n.text)
+    ) {
+      out.push(normalise(n.text));
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
 /**
  * The sentences a page or policy source renders.
  *
@@ -457,20 +522,10 @@ export function walkStrings(value: unknown, seen = new Set<unknown>()): string[]
 export function pageClaims(file: string, source?: string): string[] {
   const sf = parse(file, source);
   const out: string[] = [];
-  const textOf = (node: ts.Node): string => {
-    let text = "";
-    const walk = (n: ts.Node) => {
-      if (ts.isJsxText(n)) text += decodeEntities(n.text);
-      else if (ts.isStringLiteral(n) && ts.isJsxExpression(n.parent)) text += n.text;
-      ts.forEachChild(n, walk);
-    };
-    walk(node);
-    return text;
-  };
   const visit = (n: ts.Node) => {
     if (ts.isJsxElement(n)) {
-      const direct = n.children.filter(ts.isJsxText).map((c) => c.text).join("");
-      if (isSubstantiveProse(direct)) out.push(normalise(textOf(n)));
+      const text = claimText(n);
+      if (isSubstantiveProse(text)) out.push(normalise(text));
     }
     if (
       (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&

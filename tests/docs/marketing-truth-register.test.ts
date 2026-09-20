@@ -47,6 +47,7 @@ import {
   componentProseViolations,
   assembledClaimViolations,
   pageClaims,
+  moduleClaims,
   walkStrings,
   isSubstantiveProse,
   INLINE_IN_CLAIM,
@@ -64,9 +65,15 @@ const SANCTIONED = sanctionedAppendOnlyWordings(REGISTER);
 /** Every complete claim the declared copy sources carry. */
 const PAGE_CLAIMS = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) => pageClaims(f));
 const MODULE_CLAIMS = [
-  ...walkStrings(marketingContent),
-  ...walkStrings(marketingResources),
-].filter(isSubstantiveProse);
+  // Statically, so a module whose copy is RETURNED BY A FUNCTION is covered and
+  // so both branches of a complete conditional are judged rather than only the
+  // one that happened to evaluate.
+  ...CANONICAL_COPY_MODULES.flatMap((f) => moduleClaims(f)),
+  // And by value, which proves the two agree for a plain data module.
+  ...[...walkStrings(marketingContent), ...walkStrings(marketingResources)].filter(
+    isSubstantiveProse,
+  ),
+];
 const CLAIMS = [...PAGE_CLAIMS, ...MODULE_CLAIMS];
 const MARKETING_COPY = CLAIMS.join(" ¶ ");
 
@@ -771,6 +778,62 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
         `export const A = () => <p>Every treated area keeps <strong>its own history</strong> in Hone.</p>;`,
       ),
     ).toEqual([]);
+  });
+
+  it("classifies the WHOLE sentence, including declared inline descendants", () => {
+    // The gate used to be the element's DIRECT text, so a sentence whose bulk
+    // sits inside <strong> produced nothing: "Every ." is not substantive and
+    // "change is tracked" is below the threshold alone, while the rendered
+    // sentence matches N1 exactly. Text is now built first, tested second.
+    const src = `export const A = () => <p>Every <strong>change is tracked</strong>.</p>;`;
+    const claims = pageClaims("app/probe/page.tsx", src);
+    expect(claims).toContain("Every change is tracked.");
+    expect(FORBIDDEN.some((r) => claims.some((c) => r.pattern.test(c)))).toBe(true);
+
+    // NEGATIVE: folding inline descendants must NOT fuse a block child in.
+    expect(
+      pageClaims(
+        "app/probe/page.tsx",
+        `export const A = () => <div>Intro<p>Trace it with an append-only edit history.</p></div>;`,
+      ),
+    ).toEqual(["Trace it with an append-only edit history."]);
+  });
+
+  it("judges BOTH branches of a complete conditional, not the evaluated one", () => {
+    // `FLAG ? "banned" : "safe"` evaluates to one branch, so a value walk judges
+    // only whichever the test run happened to select. Both are literals in the
+    // source, so both are read.
+    const claims = moduleClaims(
+      "lib/marketing/probe.ts",
+      `export const t = FLAG ? "Every change is tracked on this record" : "Safe copy";`,
+    );
+    expect(claims).toContain("Every change is tracked on this record");
+  });
+
+  it("declares every module that already authors public copy", () => {
+    // A declared universe is exactly as complete as its declaration, and this
+    // one was short by a module: `app/page.tsx` renders structured-data prose
+    // through `softwareApplicationLd()`, so the route holds only a call
+    // expression and nothing in the page reaches those strings.
+    expect(CANONICAL_COPY_MODULES).toContain("lib/marketing/jsonld.ts");
+    expect(moduleClaims("lib/marketing/jsonld.ts").length).toBeGreaterThan(0);
+
+    // The guard against the same gap reopening: any first-party module a
+    // declared page imports, which itself authors substantive prose, must be
+    // declared too.
+    for (const page of [...pageCopySources(), ...POLICY_SOURCES]) {
+      const src = read(page);
+      for (const m of src.matchAll(/from "@\/(lib\/marketing\/[a-z-]+)"/g)) {
+        const rel = `${m[1]}.ts`;
+        if (!existsSync(join(REPO_ROOT, rel))) continue;
+        if (moduleClaims(rel).length > 0) {
+          expect(
+            CANONICAL_COPY_MODULES,
+            `${rel} authors substantive copy and ${page} imports it, but it is not declared`,
+          ).toContain(rel);
+        }
+      }
+    }
   });
 
   it("the pre-existing exceptions are declared, counted, and shrink-only", () => {
