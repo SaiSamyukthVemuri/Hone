@@ -49,14 +49,16 @@ const FN_BODY = (() => {
 })();
 
 describe("0200 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Taken over from 0198 (and 0199 before it, whose own file lives on the
-    // WAIT S3 branch), per CLAUDE.md: only the CURRENT max asserts this.
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
-
-  it("has nothing above it, and owns its number alone", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0201 is", () => {
+    // HANDED OFF, per CLAUDE.md: only the CURRENT max may assert `isRepoMax`,
+    // and 0201 now holds it. This block moved rather than being deleted, which
+    // is the hand-off this file's own previous revision asked for.
+    //
+    // NOTE THE ASYMMETRY, WHICH IS CORRECT: 0201 takes the REPO max, and 0200
+    // KEEPS the HOSTED-head claim below, because 0201 is authored and NOT
+    // applied. Those are two different claims and only the first has moved.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0201"]);
     expect(countVersion(VERSION)).toBe(1);
   });
 
@@ -80,19 +82,21 @@ describe("0200 position in the chain", () => {
     expect(state.pending_migrations).not.toContain(VERSION);
   });
 
-  it("leaves NOTHING pending — repo and hosted are at PARITY at 0200", () => {
-    // The reconciliation's own assertion, and the reason this file changed after
-    // the apply. Before it, this branch was the ordinary MIGRATION-FIRST PENDING
-    // shape: repo one above hosted, `0200` named as the pending suffix. After
-    // it, the pending set is empty and the two numbers are the same one.
+  it("is the applied head, with 0201 authored above it and PENDING", () => {
+    // SUPERSEDED BY 0201's AUTHORING. This asserted PARITY -- nothing pending,
+    // repo == hosted, next free 0201. Authoring 0201 on this branch returns the
+    // chain to the ordinary MIGRATION-FIRST PENDING shape: repo one above
+    // hosted, `0201` named as the pending suffix, and `0201` no longer free
+    // because this lane has allocated it.
     //
-    // 0201 is merely the next FREE number. It is not allocated, and nothing here
-    // claims it.
+    // 0200 IS STILL THE APPLIED HEAD and still owns that claim above; what it
+    // has given up is only the repository maximum.
     const state = migrationState();
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.next_free_migration).toBe("0201");
+    expect(state.pending_migrations).toEqual(["0201"]);
+    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.repo_migration_max).toBe("0201");
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.next_free_migration).toBe("0202");
   });
 
   it("0199 is still carried, still frozen, and was NOT re-applied", () => {

@@ -39,15 +39,17 @@ const UNROUTABLE =
   "reminder_sms_unroutable_studios(text, timestamptz, timestamptz, integer, integer)";
 
 describe("0199 position in the chain", () => {
-  it("is no longer the repository maximum — 0200 is", () => {
+  it("is no longer the repository maximum — 0201 is", () => {
     // HANDED OFF EXACTLY AS THIS FILE ASKED. Its own block below said "whoever
     // applies 0200 moves this block", and the trigger is in fact AUTHORING
     // 0200, not applying it: `isRepoMax` is derived from the migrations
     // directory, so it flipped the moment WAIT-P1-EXIT's file landed on this
-    // branch. Per CLAUDE.md only the CURRENT max may assert it, and
-    // tests/migrations/0200-waitlist-redeemed-unbooked-exit.test.ts carries it.
+    // branch, and again when 0201 was authored above it. Per CLAUDE.md only the
+    // CURRENT max may assert it, and
+    // tests/migrations/0201-waitlist-exit-authority-contraction.test.ts
+    // carries it.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0200"]);
+    expect(versionsAbove(VERSION)).toEqual(["0200", "0201"]);
   });
 
   it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
@@ -117,8 +119,10 @@ describe("0199 position in the chain", () => {
 
   it("does not claim the next free number for anything", () => {
     // 0200 IS NO LONGER FREE — WAIT-P1-EXIT authored it and it is now APPLIED —
-    // so the next free number moved on. This file still claims none of it.
-    expect(migrationState().next_free_migration).toBe("0201");
+    // and 0201 is no longer free either: its successor claims it on this
+    // branch, AUTHORED AND PENDING. So the next free number moved on twice.
+    // This file still claims none of it.
+    expect(migrationState().next_free_migration).toBe("0202");
   });
 });
 
