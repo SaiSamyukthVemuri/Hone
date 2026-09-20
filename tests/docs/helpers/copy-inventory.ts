@@ -352,6 +352,13 @@ export function adjacentText(file: string, source?: string): string[] {
     // loses the non-JSX cases. Their union is strictly more coverage than
     // either, and both are measured clean across the closure.
     textFragments(file, source).join(" "),
+    // AND WITH NOTHING BETWEEN THEM. React puts no separator between children,
+    // so `<p><span>synthetic</span>-<span>twin</span></p>` renders
+    // `synthetic-twin` while a space-joined reading says `synthetic - twin` and
+    // matches no pattern. Which separator is right depends on the markup, so
+    // both are read rather than guessed at — a third candidate can only add, and
+    // it is measured clean like the other two.
+    renderedFragments(file, source).join(""),
   ];
 }
 
@@ -567,7 +574,22 @@ function runsTogether(el: ts.JsxElement | ts.JsxFragment): boolean {
       : ts.isJsxElement(c)
         ? c.openingElement.tagName.getText()
         : null;
-    return tag !== null && /^[A-Z]/.test(tag);
+    if (tag === null) return false;
+    // A COMPONENT, by its capital initial — JSX's own rule.
+    if (/^[A-Z]/.test(tag)) return true;
+    // Or an ORDINARY WRAPPER carrying a value:
+    // `<p><span>{head}</span><span>{tail}</span></p>` renders the sentence those
+    // two hold, and a span is not a component. Opacity propagates through it, so
+    // the value inside is what runs together with the neighbour.
+    //
+    // An earlier draft also required the wrapper to have no authored words of
+    // its own, described as leaving a sentence-bearing wrapper alone. Measured:
+    // it made no difference to the real surface and REDUCED reporting — for
+    // `<p><span>Every {a}</span><span>{b}</span></p>` it named only `{a}`, when
+    // both values sit in the sentence a visitor reads. It was reducing coverage,
+    // not over-refusal, so it is gone.
+    if (!ts.isJsxElement(c)) return false;
+    return c.children.some((x) => opaque(x));
   };
   // Words JSX keeps on this line. A whitespace run containing a newline is
   // dropped, so formatted children are separate lines rather than a sentence.

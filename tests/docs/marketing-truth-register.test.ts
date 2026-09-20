@@ -890,9 +890,13 @@ describe("R3. ADJACENCY: a claim assembled from harmless pieces", () => {
   it("the joined text is real, and longer than any single fragment", () => {
     const longest = ADJACENT.reduce((a, b) => (a.text.length > b.text.length ? a : b));
     expect(longest.text.length).toBeGreaterThan(1000);
-    // TWO readings per file: rendered adjacency, and every fragment. They fail
-    // in opposite directions, so the union is strictly more coverage.
-    expect(ADJACENT.length).toBe(CLOSURE.length * 2);
+    // THREE readings per file: rendered text space-joined, every fragment
+    // space-joined, and rendered text with NOTHING between. They fail in
+    // different directions — interleaving breaks a match, restricting to
+    // rendered text loses the non-JSX cases, and a space where React renders
+    // none breaks a hyphenated one — so the union is strictly more coverage
+    // than any of them.
+    expect(ADJACENT.length).toBe(CLOSURE.length * 3);
   });
 });
 
@@ -1018,6 +1022,42 @@ describe("NEGATIVE CONTROLS: each rule is red on the defect it claims to catch",
     // tracked</strong></p>` joined as "Every change font-bold is tracked".
     expect(joined(probe('<p>Every change <strong className="font-bold">is tracked</strong></p>'))).toBe(true);
     expect(joined(probe('<p>Every change <strong className="a" id="b" style={{}}>is tracked</strong></p>'))).toBe(true);
+  });
+
+  it("REFUSED — a claim React renders with nothing between the parts", () => {
+    // React puts no separator between children, so
+    // `<p><span>synthetic</span>-<span>twin</span></p>` renders `synthetic-twin`
+    // while a space-joined reading says `synthetic - twin` and matches no
+    // pattern. Which separator is right depends on the markup, so both are read.
+    expect(joined(probe("<p><span>synthetic</span>-<span>twin</span></p>"))).toBe(true);
+    // And the space-joined reading still does its own job.
+    expect(joined(probe("<p>Every change <strong>is tracked</strong></p>"))).toBe(true);
+  });
+
+  it("REFUSED — values adjacent inside ordinary lowercase wrappers", () => {
+    // `<p><span>{head}</span><span>{tail}</span></p>` renders the sentence those
+    // two hold, and a span is not a component — so opacity propagates through a
+    // wrapper that carries nothing but a value.
+    expect(incomplete("<p><span>{head}</span><span>{tail}</span></p>")).toEqual([
+      "copy/incomplete-claim",
+      "copy/incomplete-claim",
+    ]);
+  });
+
+  it("ACCEPTED — a wrapper with words of its own, and wrappers on separate lines", () => {
+    // A wrapper carrying authored words is a sentence in its own right, and its
+    // text is already judged where it sits. Only a wrapper that merely passes a
+    // value through is transparent.
+    expect(incomplete("<p><span>Every change is tracked</span><span>{x}</span></p>")).toEqual([]);
+    // But a wrapper that has words AND a value names BOTH values, because both
+    // sit in the sentence a visitor reads. An earlier draft excluded such a
+    // wrapper from transparency and named only the first.
+    expect(incomplete("<p><span>Every {a}</span><span>{b}</span></p>")).toEqual([
+      "copy/incomplete-claim",
+      "copy/incomplete-claim",
+    ]);
+    expect(incomplete("<div>\n  <span>{head}</span>\n  <span>{tail}</span>\n</div>")).toEqual([]);
+    expect(incomplete("<p><span>{head}</span></p>")).toEqual([]);
   });
 
   it("REFUSED — a JSON import that carries its own extension", () => {
