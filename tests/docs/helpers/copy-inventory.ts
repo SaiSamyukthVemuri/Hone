@@ -218,7 +218,7 @@ export function marketingClosure(): string[] {
  * outside-scope list did not move when one appeared.
  */
 const CONVENTION_FILENAME =
-  /^(page|route|layout|template|default|loading|not-found|error|global-error|forbidden|unauthorized|opengraph-image|twitter-image|apple-icon|icon)\.tsx?$/;
+  /^(page|route|layout|template|default|loading|not-found|error|global-error|forbidden|unauthorized|opengraph-image|twitter-image|apple-icon|icon|manifest|sitemap|robots)\.tsx?$/;
 
 /**
  * Does Next render this filename without anything importing it?
@@ -490,6 +490,13 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
         (sum, t) => sum + t.text.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length,
         0,
       );
+  const assembled = assembledBindings(sf);
+  const namesAnAssembly = (hole: ts.JsxExpression): boolean => {
+    const e = hole.expression;
+    if (e === undefined) return false;
+    const root = ts.isIdentifier(e) ? e.text : null;
+    return root !== null && assembled.has(root);
+  };
   const visit = (n: ts.Node) => {
     if (ts.isJsxElement(n) || ts.isJsxFragment(n)) {
       const holes: ts.JsxExpression[] = [];
@@ -518,7 +525,10 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
       // reading — any two holes — flagged 118 places, nearly all of them a
       // container holding a header and a list. This one flags ONE.
       const together = runsTogether(n);
-      if ((directWords(n) > 0 && holes.length > 0) || together) {
+      // A hole naming a locally assembled value is a claim built from parts even
+      // when it stands alone, so it is refused without needing a neighbour.
+      const computed = holes.filter(namesAnAssembly);
+      if ((directWords(n) > 0 && holes.length > 0) || together || computed.length > 0) {
         for (const hole of holes) {
           if (reported.has(hole.getStart(sf))) continue;
           reported.add(hole.getStart(sf));
@@ -591,8 +601,23 @@ function runsTogether(el: ts.JsxElement | ts.JsxFragment): boolean {
     if (!ts.isJsxElement(c)) return false;
     return c.children.some((x) => opaque(x));
   };
-  // Words JSX keeps on this line. A whitespace run containing a newline is
-  // dropped, so formatted children are separate lines rather than a sentence.
+  // A PRAGMATIC CUT, and NOT what JSX actually does — stated plainly because an
+  // earlier comment here claimed the opposite and was wrong.
+  //
+  // JSX REMOVES a whitespace-only run containing a newline; it does not render a
+  // break. So `<p>\n  <Head />\n  <Tail />\n</p>` really does render both
+  // results adjacently, and a rule faithful to that would refuse it.
+  //
+  // Measured what faithful costs: 144 refusals across 28 files — `<Container>`,
+  // `<Reveal>`, a fragment with two children. That is a census of ordinary React
+  // composition, not a list of suspicious claims, and freezing it would refuse
+  // any second child added anywhere in the marketing tree.
+  //
+  // Separating a sentence from a layout container needs block-versus-inline tag
+  // semantics, which is the interpreter this architecture exists without. So the
+  // line cut is kept as a deliberate under-refusal, and the residual is recorded
+  // rather than hidden: two opaque children on SEPARATE SOURCE LINES can compose
+  // a claim across modules and this rule will not see it.
   const keptText = (c: ts.Node | undefined): boolean =>
     c !== undefined && ts.isJsxText(c) && !c.text.includes("\n");
   const keptSpace = (c: ts.Node | undefined): boolean =>
@@ -611,6 +636,37 @@ function runsTogether(el: ts.JsxElement | ts.JsxFragment): boolean {
     if (keptWords(kids[i - 1]) || keptWords(kids[i + 1])) return true;
   }
   return false;
+}
+
+/**
+ * Names this file binds to an ASSEMBLY of other values.
+ *
+ * `const claim = head + tail` is not a complete copy value, and rendering it as
+ * `<p>{claim}</p>` presents one hole with no authored words beside it — which R5
+ * reads as consumption, and R3 cannot join because the literals sit behind
+ * `head` and `tail` in whatever order they were declared.
+ *
+ * ONE LOOKUP, same file, by name. Not dataflow: nothing is evaluated and nothing
+ * is followed across a module. The question is only whether the thing this hole
+ * names was written as a single value or built from parts.
+ */
+function assembledBindings(sf: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const visit = (n: ts.Node) => {
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
+      const e = n.initializer;
+      const assembles =
+        (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) ||
+        ts.isTemplateExpression(e) ||
+        (ts.isCallExpression(e) &&
+          ts.isPropertyAccessExpression(e.expression) &&
+          ["join", "concat"].includes(e.expression.name.text));
+      if (assembles) names.add(n.name.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return names;
 }
 
 /** Is every string this expression can produce written in this file? */

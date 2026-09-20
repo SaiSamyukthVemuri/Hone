@@ -87,6 +87,21 @@ const FORBIDDEN = forbiddenWordings(REGISTER);
  * canonical modules, where such a value would live, are exempt from the freeze,
  * so nothing else would have caught it either.
  */
+/**
+ * A joined reading split into sentences.
+ *
+ * The append-only rules are an exact-match allow-list over a complete claim, so
+ * they cannot be given a whole-file join: every file containing a sanctioned
+ * sentence would read as unsanctioned the moment anything else was joined to it.
+ * A sentence is the unit those rules were written for, and splitting on terminal
+ * punctuation is text work with no notion of markup.
+ */
+const sentencesOf = (text: string): string[] =>
+  text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
 const forbiddenHits = (text: string): string[] => {
   const folded = foldForMatching(text);
   return FORBIDDEN.filter((rule) => rule.pattern.test(folded)).map((rule) => rule.id);
@@ -95,6 +110,16 @@ const SANCTIONED = sanctionedAppendOnlyWordings(REGISTER);
 
 const CLOSURE = marketingClosure();
 const FROZEN = frozenSurface();
+
+/**
+ * The one place sentence-splitting cannot separate a heading from the claim
+ * below it: `Traceability and logs` has no terminal punctuation, so it merges
+ * into the sanctioned sentence that follows and the pair reads as unsanctioned.
+ *
+ * Declared as an artefact of the SPLIT rather than a claim anybody made — the
+ * sanctioned sentence itself is judged on its own by R2 and passes there.
+ */
+const APPEND_ONLY_JOIN_BASELINE = ["app/features/charting-records/page.tsx: Traceability and logs"];
 
 /** R2. Every fragment the closure contains, plus the copy modules by value. */
 const FRAGMENTS = [
@@ -887,6 +912,47 @@ describe("R3. ADJACENCY: a claim assembled from harmless pieces", () => {
     ).toEqual([]);
   });
 
+  it("an append-only promise split across fragments is judged too", () => {
+    // R3 applied only the forbidden phrases, so a trigger split across fragments
+    // bypassed the allow-list entirely: `['All disinfectant ', 'logs use an ',
+    // 'append', '-', 'only timeline.']` renders an unsanctioned promise while
+    // every fragment is harmless and below the inventory threshold.
+    //
+    // At SENTENCE granularity, because these rules match a complete claim
+    // exactly — handed a whole-file join, every file holding a sanctioned
+    // sentence would read as unsanctioned.
+    const offenders = ADJACENT.flatMap(({ file, text }) =>
+      sentencesOf(text)
+        .filter((sentence) => judgeAppendOnlyClaim(sentence, SANCTIONED).kind === "unsanctioned")
+        .map((sentence) => `${file}: ${sentence}`),
+    );
+    expect(
+      offenders.filter((o) => !APPEND_ONLY_JOIN_BASELINE.some((b) => o.startsWith(b))),
+      "text that is harmless fragment by fragment renders an append-only promise §0.4 N1 does not support",
+    ).toEqual([]);
+
+    // POSITIVE CONTROL, because the assertion above is silent while the closure
+    // is clean and would have shipped unpinned otherwise. This is the exact
+    // shape the finding described: a trigger split across five fragments, every
+    // one of them harmless and below the inventory threshold.
+    const split = adjacentText(
+      "app/probe/page.tsx",
+      "export const A = () => <p>{[\"All disinfectant \", \"logs use an \", \"append\", \"-\", \"only timeline.\"]}</p>;",
+    );
+    expect(
+      split.flatMap(sentencesOf).some((s) => judgeAppendOnlyClaim(s, SANCTIONED).kind === "unsanctioned"),
+      "a split append-only trigger is not judged",
+    ).toBe(true);
+    // And a sanctioned sentence joined to a heading is NOT reported twice over:
+    // it is judged whole by R2 and passes there.
+    expect(
+      judgeAppendOnlyClaim(
+        "Trace a probe lot to the areas that recorded it, and keep sterile-item and disinfectant logs with lot numbers, expiry, and replace-by dates, with an append-only edit history.",
+        SANCTIONED,
+      ).kind,
+    ).toBe("sanctioned");
+  });
+
   it("the joined text is real, and longer than any single fragment", () => {
     const longest = ADJACENT.reduce((a, b) => (a.text.length > b.text.length ? a : b));
     expect(longest.text.length).toBeGreaterThan(1000);
@@ -1058,6 +1124,57 @@ describe("NEGATIVE CONTROLS: each rule is red on the defect it claims to catch",
     ]);
     expect(incomplete("<div>\n  <span>{head}</span>\n  <span>{tail}</span>\n</div>")).toEqual([]);
     expect(incomplete("<p><span>{head}</span></p>")).toEqual([]);
+  });
+
+  it("REFUSED — a claim computed into a single hole", () => {
+    // `const claim = head + tail` rendered as `<p>{claim}</p>` presents one hole
+    // with no authored words beside it, which reads as consumption — and R3
+    // cannot join the literals because they sit behind `head` and `tail` in
+    // whatever order those were declared.
+    expect(
+      incompleteClaimViolations(
+        "app/_components/marketing/P.tsx",
+        'const tail = "is tracked";\nconst head = "Every change ";\nconst claim = head + tail;\nexport const A = () => <p>{claim}</p>;\n',
+      ).map((v) => v.rule),
+    ).toEqual(["copy/incomplete-claim"]);
+    // Every spelling of an assembly, and a template too.
+    for (const initializer of [
+      "head + tail",
+      "`${head}${tail}`",
+      '[head, tail].join(" ")',
+      "head.concat(tail)",
+    ]) {
+      expect(
+        incompleteClaimViolations(
+          "app/_components/marketing/P.tsx",
+          `const claim = ${initializer};\nexport const A = () => <p>{claim}</p>;\n`,
+        ).map((v) => v.rule),
+        initializer,
+      ).toEqual(["copy/incomplete-claim"]);
+    }
+  });
+
+  it("ACCEPTED — a hole naming a value that was written as one", () => {
+    // The distinction is how the thing was AUTHORED, not what it holds. One
+    // lookup, same file, by name: nothing is evaluated and nothing is followed
+    // across a module.
+    expect(
+      incompleteClaimViolations(
+        "app/_components/marketing/P.tsx",
+        'const claim = "Every treated area keeps its own history.";\nexport const A = () => <p>{claim}</p>;\n',
+      ),
+    ).toEqual([]);
+    expect(
+      incompleteClaimViolations("app/_components/marketing/P.tsx", "export const A = () => <p>{children}</p>;\n"),
+    ).toEqual([]);
+  });
+
+  it("the convention set knows the metadata files Next publishes", () => {
+    // `manifest.ts` publishes application names and descriptions without being
+    // imported. `sitemap` and `robots` join it for the same reason.
+    for (const filename of ["manifest.ts", "sitemap.ts", "robots.ts"]) {
+      expect(isConventionFilename(filename), filename).toBe(true);
+    }
   });
 
   it("REFUSED — a JSON import that carries its own extension", () => {
