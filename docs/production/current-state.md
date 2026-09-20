@@ -479,9 +479,18 @@ direct booking route and is live today.
 Two different things share this name. They are at **different stages** and must not be merged
 into one status sentence.
 
-### WAIT-01 — the email-delivered waitlist. LIVE at Willow.
+### WAIT-01 — the email-delivered waitlist. SUPERSEDED at Willow; the FALLBACK path.
 
-**Implemented · merged (PR #601) · deployed · ENABLED for one studio · production exercised.**
+**Implemented · merged (PR #601) · deployed · admission gate still ENABLED for one studio ·
+its EMAIL COMMIT POINT no longer serves any studio.**
+
+> ⚠️ **CORRECTED 2026-09-19.** This section was headed *LIVE at Willow* and read as though the
+> email were still Willow's commit point. The **admission gate** below is indeed still on for
+> Willow — that part is unchanged and is why new-client booking is still refused. What changed is
+> what happens next: `app/book/[slug]/waitlist-actions.ts:562` routes a studio named on **both**
+> allowlists to the durable branch, and Willow has been on both since on or before 2026-08-25.
+> So for Willow the email is a **notification** and the row is the record. WAIT-01's commit point
+> now applies only to a waitlisted studio outside the durable allowlist — currently none.
 
 New-client booking at Willow is **refused and routed to a waitlist**. This is admission control:
 a studio whose existing treatment clients cannot be served on a clinically useful cadence stops

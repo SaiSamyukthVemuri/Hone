@@ -1053,7 +1053,12 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
     for (const [name, doc] of SCANNED_DOCS) {
       const prose = currentProse(doc);
       for (const shape of [
-        /WAIT-01[^.\n]{0,60}\b(?:enabled|live)\b[^.\n]{0,30}\bat Willow\b/i,
+        // BROADENED after Codex #740 found two survivors: the first draft could
+        // not cross the period before "LIVE" and accepted only "at Willow", so
+        // a heading reading "WAIT-01 - the email-delivered waitlist. LIVE at
+        // Willow." and a row reading "LIVE for Willow" both slipped through.
+        // `[\s\S]` spans sentences; at|for covers both prepositions.
+        /WAIT-01[\s\S]{0,90}?\b(?:enabled|live)\b[^\n]{0,40}?\b(?:at|for)\s+Willow\b/i,
         /\bWillow\b[^.\n]{0,50}\bWAIT-01\b[^.\n]{0,40}\bcommit point\b/i,
         /WAIT-01[^.\n]{0,40}\bcommit point\b[^.\n]{0,40}\bWillow\b/i,
       ]) {

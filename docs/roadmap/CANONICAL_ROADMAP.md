@@ -972,7 +972,7 @@ Quality and frequency of product feedback.
 | LANG-001 | Product quality | T0 | Hone Clear Language Standard; vocabulary dictionary, UNKNOWN/NONE rules, UI/error/docs rules; warning-only checker first. |
 | PR-HYGIENE-001 | PM/Governance | T0 | Close stale reference PRs #520/#521/#536/#541/#543/#544 with replacement roadmap IDs; keep history. |
 | ACCEPT-001 | Product acceptance | T0 | Seed formal Chloe acceptance register from the existing 17-item checklist; do not invent a new list. |
-| WAIT-01 | Interrupt / Planned Product | T2 implementation + T4a activation | Emergency migration-free new-client waitlist gate is now LIVE for Willow after default-OFF dark deploy, existing-client smoke, studio-inbox canary and zero-business-write proof. Continue observation and preserve kill switch; durable WAIT-02/03 remains the destination. |
+| WAIT-01 | Interrupt / Planned Product | T2 implementation + T4a activation | Emergency migration-free new-client waitlist **admission gate** went live for Willow after default-OFF dark deploy, existing-client smoke, studio-inbox canary and zero-business-write proof. ⚠️ **AMENDED 2026-09-19:** the admission gate remains on, but Willow's submissions no longer commit through email — the durable branch took over on or before 2026-08-25, so the email is a notification and the row is the record. Continue observation and preserve kill switch; durable WAIT-02/03 remains the destination. |
 | REL-EVID-01 | Trust / Release truth | T1/T2 | Resolve 0183/0184 apply-host provenance honestly: preserve #595 as failed discovery record, adjudicate #596 clean-room correction, close stale present-tense release claims and unlock the next migration train without weakening evidence standards. |
 
 <a id="hone_s_12"></a>
