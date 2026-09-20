@@ -73,6 +73,31 @@ export const POLICY_SOURCES: readonly string[] = [
 ];
 
 /**
+ * Every module a file REFERENCES: imported or re-exported.
+ *
+ * Extracted so the re-export half is provable. `export { Hero } from "./Hero"`
+ * pulls a component into the render tree without importing it, so a barrel
+ * index added the barrel and stopped there, and a colocated `Hero.tsx` outside
+ * the pre-scanned directories reached no guard.
+ */
+export function moduleSpecifiersOf(file: string, source?: string): string[] {
+  const sf = parse(file, source);
+  const out: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (
+      (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) &&
+      n.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(n.moduleSpecifier)
+    ) {
+      out.push(n.moduleSpecifier.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
  * Where a plain `.ts` module may still author rendered marketing copy.
  *
  * The walk follows `.tsx` anywhere first-party, because a component renders.
@@ -121,7 +146,13 @@ export function marketingComponentFiles(): string[] {
     seen.add(from);
     const sf = parse(from);
     const visit = (n: ts.Node) => {
-      if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
+      // Import OR re-export — see `moduleSpecifiersOf`, which is the same rule
+      // in a form a test can drive.
+      const isModuleRef =
+        (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) &&
+        n.moduleSpecifier !== undefined &&
+        ts.isStringLiteral(n.moduleSpecifier);
+      if (isModuleRef && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)) {
         const spec = n.moduleSpecifier.text;
         // `@/app/_components/...` and `../_components/...` are the same file.
         // The hand-kept list missed `DemoForm` because `app/demo/page.tsx`
@@ -852,6 +883,46 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
         ...parts.holes,
         ...parts.approvedHoles.filter((h) => parts.completing.includes(h)),
       ];
+      // A STANDALONE UNAPPROVED HOLE IS REFUSED ON ITS OWN.
+      // `<p>{getMarketingClaim()}</p>` has `textWithHoles` of just "something",
+      // so the substantive-prose gate below never opened, `pageClaims` dropped
+      // the container for having a hole, and the identity baseline recorded
+      // nothing — the whole sentence was whatever that call returned, judged by
+      // nobody. The prose threshold is an authoring heuristic and has no
+      // business deciding whether an unreadable claim is reported.
+      //
+      // NARROW, and measured: refusing EVERY standalone hole flagged 23 real
+      // ones — `{PRICING_PLANS.map(...)}`, which produces elements rather than
+      // text, and loop variables over arrays the page itself declares, whose
+      // copy is already frozen in the page-prose baseline. Neither is a claim
+      // produced by code. What is, is a CALL: `{getMarketingClaim()}` puts the
+      // whole sentence behind a function, which is precisely what the authoring
+      // law forbids a page to do. An iteration method is excluded because its
+      // result is a list of elements, not a sentence.
+      const authoredWords = parts.sequence.some((x) => "words" in x && x.words > 0);
+      const opaqueCall = (node: ts.Node): boolean => {
+        const expression = (node as ts.JsxExpression).expression;
+        if (!expression) return false;
+        const e = unwrap(expression) as ts.Expression;
+        if (!ts.isCallExpression(e)) return false;
+        return !(
+          ts.isPropertyAccessExpression(e.expression) &&
+          ITERATION_METHODS.has(e.expression.name.text)
+        );
+      };
+      if (
+        !authoredWords &&
+        parts.holes.length === 1 &&
+        parts.undeclared.length === 0 &&
+        opaqueCall(parts.holes[0])
+      ) {
+        out.push({
+          file,
+          line: lineOf(sf, parts.holes[0]),
+          rule: "claim/standalone-opaque-hole",
+          detail: parts.holes[0].getText().replace(/\s+/g, " ").slice(0, 70),
+        });
+      }
       // The gate reads the sentence WITH its holes counted as words, because a
       // hole renders as something and a claim missing one word is still a claim.
       if (isSubstantiveProse(parts.textWithHoles)) {
@@ -996,8 +1067,12 @@ function approvedCopyNames(sf: ts.SourceFile): Set<string> {
     ts.forEachChild(n, visit);
   };
   visit(sf);
+
   return names;
 }
+
+/** Iteration methods whose callback parameter carries the receiver's elements. */
+const ITERATION_METHODS = new Set(["map", "flatMap", "filter", "forEach", "find"]);
 
 /** The leftmost identifier of `A.b.c`, or null. */
 function rootIdentifier(e: ts.Expression): string | null {

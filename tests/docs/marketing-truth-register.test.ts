@@ -55,6 +55,7 @@ import {
   isSubstantiveProse,
   INLINE_IN_CLAIM,
   unreadableAssemblies,
+  moduleSpecifiersOf,
 } from "./helpers/copy-sources";
 
 const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), "utf8");
@@ -1589,6 +1590,55 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     // the law, so counting its prose as a component-prose violation would be a
     // category error.
     for (const module of CANONICAL_COPY_MODULES) expect(files).not.toContain(module);
+  });
+
+  it("a re-exported component is followed, not just an imported one", () => {
+    // `export { Hero } from "./Hero"` puts a component in the render tree
+    // without importing it, so a barrel index added the barrel and stopped —
+    // and a colocated `Hero.tsx` outside the pre-scanned directories reached
+    // neither the prose guard nor the corpus.
+    expect(
+      moduleSpecifiersOf(
+        "app/_components/marketing/index.tsx",
+        'import { Shell } from "./Shell";\nexport { Hero } from "./Hero";\nexport * from "./Nav";\n',
+      ),
+    ).toEqual(["./Shell", "./Hero", "./Nav"]);
+    // A local re-export names no module and must not be invented.
+    expect(
+      moduleSpecifiersOf("app/_components/marketing/index.tsx", "const Hero = 1;\nexport { Hero };\n"),
+    ).toEqual([]);
+  });
+
+  it("a standalone opaque call is refused as its own claim", () => {
+    // `<p>{getMarketingClaim()}</p>` has `textWithHoles` of just "something", so
+    // the substantive-prose gate never opened, `pageClaims` dropped the
+    // container for having a hole, and the identity baseline recorded nothing —
+    // the entire sentence was whatever that call returned, judged by nobody.
+    const probe = (body: string) =>
+      assembledClaimViolations("app/probe/page.tsx", `export const A = () => ${body};`)
+        .map((v) => v.rule);
+    expect(probe("<p>{getMarketingClaim()}</p>")).toEqual(["claim/standalone-opaque-hole"]);
+
+    // NARROW, and measured: refusing every standalone hole flagged 23 real ones.
+    // A map produces elements rather than a sentence.
+    expect(probe("<ul>{ITEMS.map((i) => <li key={i}>{i}</li>)}</ul>")).toEqual([]);
+    // A loop variable over copy the page declares is consumption, and its text
+    // is already frozen in the page-prose baseline.
+    expect(probe("<p>{plan.bestFor}</p>")).toEqual([]);
+    // And the sanctioned shape is untouched.
+    expect(
+      assembledClaimViolations(
+        "app/probe/page.tsx",
+        'import { POSITIONING } from "@/lib/marketing/content";\nexport const A = () => <p>{POSITIONING.corePromise}</p>;',
+      ),
+    ).toEqual([]);
+
+    // The real pages carry none, so this costs nothing to hold.
+    expect(
+      [...pageCopySources(), ...POLICY_SOURCES]
+        .flatMap((f) => assembledClaimViolations(f))
+        .filter((v) => v.rule === "claim/standalone-opaque-hole"),
+    ).toEqual([]);
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {
