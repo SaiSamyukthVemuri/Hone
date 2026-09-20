@@ -375,6 +375,11 @@ describe("truth register: provenance is declared, not assumed", () => {
     ...pageCopySources(),
     ...POLICY_SOURCES,
     ...CANONICAL_COPY_MODULES,
+    // The rendering components too. They feed `COMPONENT_CLAIMS`, so production
+    // could put unsupported copy in `SiteFooter` or `MarketingFooter` while this
+    // branch still holds the old text: the diff intersection would be empty and
+    // the local judgement would only ever inspect what is here.
+    ...marketingComponentFiles(),
     ...citedEvidenceFiles(REGISTER),
   ];
   // `--no-renames` is load-bearing. With rename detection on — Git's default —
@@ -477,6 +482,22 @@ describe("truth register: provenance is declared, not assumed", () => {
       ]),
       `the register's build head ${declaredHead()} is not an ancestor of the production head it claims to have been checked against, ${checkedProductionHead()}`,
     ).toBe(true);
+  });
+
+  it("every file the judgement reads is watched for production drift", () => {
+    // The watch set decides which production changes can make the register
+    // stale, so anything the corpus READS but the set omits is a blind spot:
+    // production could put unsupported copy in `SiteFooter` while this branch
+    // keeps the old text, the diff intersection would be empty, and the local
+    // judgement would only ever inspect what is here.
+    const judged = [
+      ...pageCopySources(),
+      ...POLICY_SOURCES,
+      ...CANONICAL_COPY_MODULES,
+      ...marketingComponentFiles(),
+    ];
+    expect(judged.length).toBeGreaterThan(30);
+    expect(judged.filter((f) => !isWatched(f, WATCHED))).toEqual([]);
   });
 
   it("nothing the register rests on has changed since the head it was checked against", () => {
@@ -1712,8 +1733,8 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     // the substantive-prose gate never opened, `pageClaims` dropped the
     // container for having a hole, and the identity baseline recorded nothing —
     // the entire sentence was whatever that call returned, judged by nobody.
-    const probe = (body: string) =>
-      assembledClaimViolations("app/probe/page.tsx", `export const A = () => ${body};`)
+    const probe = (body: string, head = "") =>
+      assembledClaimViolations("app/probe/page.tsx", `${head}export const A = () => ${body};`)
         .map((v) => v.rule);
     expect(probe("<p>{getMarketingClaim()}</p>")).toEqual(["claim/standalone-opaque-hole"]);
     // A BARE IDENTIFIER hides the same claim one binding away: `const claim =
@@ -1722,7 +1743,11 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     expect(probe("<p>{claim}</p>")).toEqual(["claim/standalone-opaque-hole"]);
     // And one level further out again, where the ITERATION exemption would
     // otherwise cover an unreadable receiver.
+    // Two now, not one: the iteration is unreadable AND `x` is no longer
+    // approved, because a callback variable is only consumption over a
+    // collection whose elements can actually be read.
     expect(probe("<ul>{getItems().map((x) => <li key={x}>{x}</li>)}</ul>")).toEqual([
+      "claim/standalone-opaque-hole",
       "claim/standalone-opaque-hole",
     ]);
 
@@ -1733,20 +1758,24 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
 
     // NARROW, and measured: refusing every standalone hole flagged 23 real ones.
     // A map produces elements rather than a sentence.
-    expect(probe("<ul>{ITEMS.map((i) => <li key={i}>{i}</li>)}</ul>")).toEqual([]);
+    // Declared receivers, because a callback variable is consumption only over a
+    // collection whose elements can be read.
+    const items = 'const ITEMS = ["a", "b"];\n';
+    expect(probe("<ul>{ITEMS.map((i) => <li key={i}>{i}</li>)}</ul>", items)).toEqual([]);
     // A default is readable when both sides are.
+    const plans = "const PLANS = [{ id: 1, priceLabel: null, bestFor: \"x\" }];\n";
     expect(
-      probe('<ul>{PLANS.map((plan) => <li key={plan.id}><span>{plan.priceLabel ?? "Talk to us"}</span></li>)}</ul>'),
+      probe('<ul>{PLANS.map((plan) => <li key={plan.id}><span>{plan.priceLabel ?? "Talk to us"}</span></li>)}</ul>', plans),
     ).toEqual([]);
     // A loop variable over copy the page declares is consumption, and its text
     // is already frozen in the page-prose baseline. This is what the
     // callback-parameter approval exists for: all five bare-identifier holes on
     // the real pages are loop variables, and without it every one is refused.
     expect(
-      probe("<ul>{ITEMS.map((line) => <li key={line}><span>{line}</span></li>)}</ul>"),
+      probe("<ul>{ITEMS.map((line) => <li key={line}><span>{line}</span></li>)}</ul>", items),
     ).toEqual([]);
     expect(
-      probe("<div>{PLANS.map((plan) => <article key={plan.id}><p>{plan.bestFor}</p></article>)}</div>"),
+      probe("<div>{PLANS.map((plan) => <article key={plan.id}><p>{plan.bestFor}</p></article>)}</div>", plans),
     ).toEqual([]);
     // The SAME property access with no iteration in sight is refused: nothing
     // here shows where `plan` came from, which is the whole test.
@@ -1809,6 +1838,36 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     expect(probe('const c = "flex flex-col border-b" + x;')).toEqual([]);
     // And a fully static assembly is folded and judged, not refused here.
     expect(probe('const s = "Every change" + " is tracked";')).toEqual([]);
+  });
+
+  it("an unreadable hole is refused whatever authored text surrounds it", () => {
+    // Requiring the hole to stand ALONE left `<p>Note: {claim}</p>` passing on
+    // both sides at once: authored words are present, so the standalone test was
+    // skipped; "Note: something" is two words, so the substantive-prose gate
+    // stayed shut. A short label does not make an unreadable claim readable.
+    const probe = (body: string, head = "") =>
+      assembledClaimViolations("app/probe/page.tsx", `${head}export const A = () => ${body};`)
+        .map((v) => v.rule);
+    expect(probe("<p>Note: {claim}</p>")).toEqual(["claim/standalone-opaque-hole"]);
+  });
+
+  it("a callback variable is approved only over a collection that can be read", () => {
+    // Approving every `map`-like callback marked `{items.map(item => <p>{item}
+    // </p>)}` readable even when `items` is a PROP — its contents arrive from a
+    // caller, so neither the iteration nor the element was ever judged.
+    const probe = (body: string, head = "") =>
+      assembledClaimViolations("app/probe/page.tsx", `${head}export const A = () => ${body};`)
+        .map((v) => v.rule);
+    // REFUSED: the receiver is a prop, and both holes it opens are reported.
+    expect(probe("<div>{items.map((item) => <p>{item}</p>)}</div>")).toEqual([
+      "claim/standalone-opaque-hole",
+      "claim/standalone-opaque-hole",
+    ]);
+    // ALLOWED: the elements are literals in this file, and they are judged.
+    expect(probe("<div>{ITEMS.map((item) => <p>{item}</p>)}</div>", 'const ITEMS = ["a", "b"];\n')).toEqual([]);
+    expect(probe('<div>{["a", "b"].map((item) => <p>{item}</p>)}</div>')).toEqual([]);
+    // And a branch that renders ELEMENTS is rendering, not an unreadable claim.
+    expect(probe("<p>{flag ? <span>x</span> : null}</p>")).toEqual([]);
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {

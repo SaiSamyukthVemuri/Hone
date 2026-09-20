@@ -961,7 +961,11 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
       // whole sentence behind a function, which is precisely what the authoring
       // law forbids a page to do. An iteration method is excluded because its
       // result is a list of elements, not a sentence.
-      const authoredWords = parts.sequence.some((x) => "words" in x && x.words > 0);
+      // WHATEVER SURROUNDS IT. Requiring the hole to stand alone left
+      // `<p>Note: {claim}</p>` passing on both sides: authored words are
+      // present so the standalone test was skipped, and "Note: something" is
+      // two words so the substantive-prose gate below stayed shut. A short
+      // label does not make an unreadable claim readable.
       // OPAQUE BY DEFAULT, exempting only what can positively be read.
       // Naming the unreadable shapes one at a time — first calls, then bare
       // identifiers — left `<p>{claim.text}</p>` passing on the next head. The
@@ -980,8 +984,25 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
         ) {
           return readable(e.left) && readable(e.right);
         }
+        // A branch that renders ELEMENTS or nothing is not a sentence this
+        // guard has to read — each element is its own claim container and is
+        // judged there. `{plan.cadence ? <span>…</span> : null}` is rendering,
+        // not an unreadable claim.
+        const rendersElements = (x: ts.Expression): boolean => {
+          const b = unwrap(x) as ts.Expression;
+          return (
+            ts.isJsxElement(b) ||
+            ts.isJsxFragment(b) ||
+            ts.isJsxSelfClosingElement(b) ||
+            b.kind === ts.SyntaxKind.NullKeyword ||
+            (ts.isIdentifier(b) && b.text === "undefined")
+          );
+        };
         if (ts.isConditionalExpression(e)) {
-          return readable(e.whenTrue) && readable(e.whenFalse);
+          return (
+            (readable(e.whenTrue) || rendersElements(e.whenTrue)) &&
+            (readable(e.whenFalse) || rendersElements(e.whenFalse))
+          );
         }
         // An iteration yields elements, not a sentence — but only when its
         // RECEIVER can be seen. `getItems().map(...)` hides the claim one level
@@ -989,10 +1010,15 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
         if (
           ts.isCallExpression(e) &&
           ts.isPropertyAccessExpression(e.expression) &&
-          ITERATION_METHODS.has(e.expression.name.text) &&
-          !ts.isCallExpression(unwrap(e.expression.expression))
+          ITERATION_METHODS.has(e.expression.name.text)
         ) {
-          return true;
+          // The RECEIVER must be something whose elements are here to read, not
+          // merely not-a-call. `{items.map(...)}` over a prop carries whatever a
+          // caller passes.
+          const receiver = unwrap(e.expression.expression) as ts.Expression;
+          if (ts.isArrayLiteralExpression(receiver)) return true;
+          const root = rootIdentifier(receiver);
+          return root !== null && approved.has(root);
         }
         // And anything rooted in an approved copy value, which includes a loop
         // variable over one.
@@ -1003,18 +1029,16 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
         const expression = (node as ts.JsxExpression).expression;
         return expression !== undefined && !readable(expression);
       };
-      if (
-        !authoredWords &&
-        parts.holes.length === 1 &&
-        parts.undeclared.length === 0 &&
-        isOpaque(parts.holes[0])
-      ) {
-        out.push({
-          file,
-          line: lineOf(sf, parts.holes[0]),
-          rule: "claim/standalone-opaque-hole",
-          detail: parts.holes[0].getText().replace(/\s+/g, " ").slice(0, 70),
-        });
+      if (parts.undeclared.length === 0) {
+        for (const hole of parts.holes) {
+          if (!isOpaque(hole)) continue;
+          out.push({
+            file,
+            line: lineOf(sf, hole),
+            rule: "claim/standalone-opaque-hole",
+            detail: hole.getText().replace(/\s+/g, " ").slice(0, 70),
+          });
+        }
       }
       // The gate reads the sentence WITH its holes counted as words, because a
       // hole renders as something and a claim missing one word is still a claim.
@@ -1197,6 +1221,28 @@ function approvedCopyNames(sf: ts.SourceFile): Set<string> {
   // flag set by the body reads the same but is not the same — proving this
   // guard, I removed the `add` and left the flag, and the suite hung instead of
   // failing. A mutation test should go red, never spin.
+  // Names bound IN THIS FILE to an array literal. `{items.map(...)}` over a
+  // PROP is not a copy collection — its contents arrive from a caller — and
+  // approving that callback parameter marked both the iteration and the element
+  // readable, so neither was judged. The receiver has to be something whose
+  // elements are here to read.
+  const arrayBound = new Set<string>();
+  const findArrays = (n: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.initializer &&
+      ts.isArrayLiteralExpression(unwrap(n.initializer))
+    ) {
+      arrayBound.add(n.name.text);
+    }
+    ts.forEachChild(n, findArrays);
+  };
+  findArrays(sf);
+  // The collection itself is readable copy, not only its loop variable: its
+  // elements are literals in this file and `pageClaims` already judges them.
+  for (const name of arrayBound) names.add(name);
+
   for (let size = -1; size !== names.size; ) {
     size = names.size;
     const collect = (n: ts.Node) => {
@@ -1205,8 +1251,14 @@ function approvedCopyNames(sf: ts.SourceFile): Set<string> {
         ts.isPropertyAccessExpression(n.expression) &&
         ITERATION_METHODS.has(n.expression.name.text)
       ) {
+        const receiver = unwrap(n.expression.expression);
+        const root = rootIdentifier(receiver as ts.Expression);
+        const provenCollection =
+          ts.isArrayLiteralExpression(receiver) ||
+          (root !== null && (names.has(root) || arrayBound.has(root)));
         const callback = n.arguments[0];
         if (
+          provenCollection &&
           callback &&
           (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
           callback.parameters[0] &&
