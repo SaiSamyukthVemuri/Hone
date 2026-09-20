@@ -93,3 +93,55 @@ describe("nextSetupStep", () => {
     expect(JSON.stringify(c)).toBe(before);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TWO ONBOARDING ORDERS, ONE GOVERNING STUDIO.
+//
+// Review caught that `/getting-started` stays reachable (AccountMenu, search)
+// for a studio whose dashboard has handed onboarding to the v2 wizard. Without
+// a gate the page would answer "what is next?" from the LEGACY order while the
+// studio actually ran ONBOARDING_STEP_ORDER — two authorities, two answers, and
+// no way for the operator to tell which was lying. That is the competing-map
+// failure this repository keeps re-learning, and the first revision of this
+// slice walked straight into it while claiming to avoid it.
+// ---------------------------------------------------------------------------
+describe("legacyChecklistMayOfferNextStep", () => {
+  it("stays silent when the v2 wizard owns onboarding for an owner", async () => {
+    const { legacyChecklistMayOfferNextStep } = await import(
+      "@/lib/onboarding/getting-started"
+    );
+    expect(
+      legacyChecklistMayOfferNextStep({ isOwner: true, onboardingV2Enabled: true }),
+    ).toBe(false);
+  });
+
+  it("still offers a next step to a NON-owner, whom the v2 wizard never gates", async () => {
+    const { legacyChecklistMayOfferNextStep } = await import(
+      "@/lib/onboarding/getting-started"
+    );
+    expect(
+      legacyChecklistMayOfferNextStep({ isOwner: false, onboardingV2Enabled: true }),
+    ).toBe(true);
+  });
+
+  it("offers a next step when v2 is off", async () => {
+    const { legacyChecklistMayOfferNextStep } = await import(
+      "@/lib/onboarding/getting-started"
+    );
+    expect(
+      legacyChecklistMayOfferNextStep({ isOwner: true, onboardingV2Enabled: false }),
+    ).toBe(true);
+  });
+
+  it("treats an ABSENT column as not-enabled — schema skew must fail toward the legacy flow", async () => {
+    const { legacyChecklistMayOfferNextStep } = await import(
+      "@/lib/onboarding/getting-started"
+    );
+    // The type is optional for skew tolerance; a studio without the column is
+    // genuinely on the legacy flow, so silence there would strand it.
+    expect(legacyChecklistMayOfferNextStep({ isOwner: true })).toBe(true);
+    expect(
+      legacyChecklistMayOfferNextStep({ isOwner: true, onboardingV2Enabled: null }),
+    ).toBe(true);
+  });
+});

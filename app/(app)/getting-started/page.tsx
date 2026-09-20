@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   buildGettingStarted,
+  legacyChecklistMayOfferNextStep,
   nextSetupStep,
   getGettingStartedSignals,
   type ChecklistItem,
@@ -75,7 +76,15 @@ export default async function GettingStartedPage() {
     practitioner.display_name?.trim() || practitioner.email,
   );
   const checklist = buildGettingStarted(signals);
-  const nextStep = nextSetupStep(checklist);
+  // Suppressed where the v2 wizard owns onboarding for this operator: two
+  // orders exist and only one governs a studio. See
+  // legacyChecklistMayOfferNextStep.
+  const nextStep = legacyChecklistMayOfferNextStep({
+    isOwner: practitioner.role === "owner",
+    onboardingV2Enabled: studio.onboarding_v2_enabled,
+  })
+    ? nextSetupStep(checklist)
+    : null;
 
   return (
     <div className="flex flex-col gap-6">

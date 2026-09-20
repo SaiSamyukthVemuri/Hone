@@ -116,6 +116,41 @@ function review(
  * continues past it. The checklist below still shows it as outstanding, so it
  * is surfaced, just not as the next click.
  */
+/**
+ * MAY THIS CHECKLIST CLAIM TO KNOW WHAT COMES NEXT?
+ *
+ * THERE ARE TWO ONBOARDING ORDERS IN THIS REPOSITORY, and only one of them
+ * governs a given studio:
+ *
+ *   this legacy checklist   basics -> booking -> charting -> records ->
+ *                           daily -> payments
+ *   ONBOARDING_STEP_ORDER   welcome -> service -> availability -> booking ->
+ *   (lib/onboarding/steps)  payments -> done
+ *
+ * The dashboard hands onboarding to the v2 wizard for an owner whose studio has
+ * `onboarding_v2_enabled`. `/getting-started` stays reachable regardless — via
+ * AccountMenu, MobileMenu and search — so without this gate it would answer
+ * "what is next?" from the LEGACY order while the studio's actual onboarding
+ * ran the v2 one. Two authorities, two different answers, and the operator has
+ * no way to tell which is lying.
+ *
+ * So the CTA is suppressed exactly where v2 owns the flow. The checklist itself
+ * still renders: it remains a useful readiness view, and a status display that
+ * claims no sequence cannot contradict one.
+ *
+ * MIRRORS THE DASHBOARD'S OWN PREDICATE (`isOwner && onboarding_v2_enabled ===
+ * true`) rather than inventing a second reading of the flag, and treats an
+ * absent column as "not enabled" because the type is optional for schema-skew
+ * tolerance — failing toward the legacy flow, which is what a studio without
+ * the column is actually on.
+ */
+export function legacyChecklistMayOfferNextStep(opts: {
+  isOwner: boolean;
+  onboardingV2Enabled?: boolean | null;
+}): boolean {
+  return !(opts.isOwner && opts.onboardingV2Enabled === true);
+}
+
 export function nextSetupStep(checklist: GettingStarted): ChecklistItem | null {
   for (const section of checklist.sections) {
     for (const item of section.items) {
