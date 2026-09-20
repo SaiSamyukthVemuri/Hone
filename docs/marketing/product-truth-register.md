@@ -13,9 +13,10 @@ every page and in `lib/marketing/content.ts`.
 
 | | |
 |---|---|
-| Built against production head | `a946a983ac9b8da379bc869e21b32a5a3d50e548` |
-| Head resolved | `git rev-parse origin/claude/build-hone-saas-hOex7`, 2026-09-17 |
-| Production head at last check | `673080bcbc55681bcf315d82fbc654c8bff667c3` (2026-09-18) — see below |
+| Built against production head | `cde6be9401649c38b034e1f0a861e9f46ee76012` — see "valid at", below |
+| Originally derived at | `a946a983ac9b8da379bc869e21b32a5a3d50e548` (2026-09-17) |
+| Head resolved | `git rev-parse origin/claude/build-hone-saas-hOex7`, 2026-09-20 |
+| Production head at last check | `cde6be9401649c38b034e1f0a861e9f46ee76012` (2026-09-20) — see below |
 | Repository migration max | **0198** (derived — `npm run migration:state -- --json`) |
 | Hosted migration max | **0198** (declared — `docs/production/migration-state.json`) |
 | Repo/hosted parity | yes |
@@ -27,24 +28,52 @@ authority for what may ship. §§1-8 below are the earlier capability survey, re
 because their structure and their standing rules are still useful; where §0 and a later
 section disagree, **§0 wins**, and where §0 and code disagree, **code wins**.
 
-**A database capability is not a public product capability.** Every row in §0 was
-re-derived from application code at the head above, not from a table definition and not
-from this register's own earlier revision.
+**A database capability is not a public product capability.** Every row in §0 was derived
+from application code, not from a table definition and not from this register's own earlier
+revision.
 
-**Production has advanced past the build head, and nothing this register rests on moved.**
-The build head is not bumped to `673080bc` here, because bumping it would claim a
-re-derivation that was not performed. What was performed is narrower and is mechanical:
-`git diff --name-only a946a983..673080bc` touches **21 deployed files** — **11**
-authenticated-app surfaces under `app/(app)/**`, **8** shared UI primitives under
-`components/`, `app/globals.css`, and one token-route form
-(`app/reschedule/[token]/RescheduleForm.tsx`). It touches **zero** files under `lib/`,
-**zero** under `app/_components/marketing/` or `lib/marketing/`, **zero** public marketing
-route files, and **no migration**. No file §0 cites as evidence — `lib/sessions/
-before-today.ts`, `components/before-today-card.tsx`, `app/(app)/clients/[id]/page.tsx`,
+**What "built against head X" claims, precisely.** Not that every row was re-read on the day
+X was cut. It claims each row is **valid at X**: either it was derived at X, or it was
+derived at an earlier head and **none of the evidence it cites has changed since**. Those are
+the same statement — a classification cannot go stale while the code it was read from is
+byte-identical. That is also exactly the invariant this register's guard enforces: it fails
+on **cited evidence moving**, never on production moving. So the head above advances when,
+and only when, every row that cites a file which moved has been re-derived.
+
+**ONE cited file moved between `a946a983` and `cde6be94`, and both rows that cite it were
+re-derived.** That is what moved the head above, and it is stated exactly rather than
+asserted.
+
+`git diff --no-renames --name-only a946a983..cde6be94` touches **84 files**. Intersected
+with §0's own backticked citations, the result is **one** file (the same one, and the only
+one, in `673080bc..cde6be94`; the earlier span `a946a983..673080bc` touched **none**):
+
+- `components/before-today-card.tsx` — UI-06 (`95f09bb9`, `04a84f55`), +47/−29. A surface
+  vocabulary change: three private `SectionLabel` duplicates retired, and the imported-memory
+  rows flattened from nested cards to a divided list.
+
+It is cited by **V1** and **V9**, and both were re-derived against `cde6be94`:
+
+- **V1 — HOLDS, unchanged.** Its assembly evidence is `lib/sessions/before-today.ts`, which
+  is **not** in the diff. The card still takes `briefing: BeforeToday` from that assembly and
+  renders the areas line, probe lot, minutes and reaction it carries.
+- **V9 — HOLDS; the citation and the mechanism description were both corrected.** The section
+  is now `:232-314` (was cited `:218-290`), still a distinct amber block headed "Imported
+  treatment memory" with no edit/void/merge/convert action in it. **The old wording said
+  `IMPORTED_PROVENANCE_NOTE` renders "on every row". It does not, and it did not at
+  `a946a983` either** — it renders once, in the section lede. That was an inaccurate
+  description of the mechanism, not a regression introduced by UI-06, and the public claim it
+  supports is unaffected: every imported row sits inside the labelled section.
+
+The other **30** rows were **not** re-read, and do not need to be: none of the evidence they
+cite is in the diff. `lib/sessions/before-today.ts`, `app/(app)/clients/[id]/page.tsx`,
 `lib/dashboard/missing-records-assistant.ts`, `lib/record-keeping/**`,
-`lib/export/resource-registry.ts`, `app/features/charting-records/page.tsx` — is in that
-set. §0 therefore still classifies the code production is running. A change that DOES touch
-one of those files is a change that must re-derive §0 and move the build head together.
+`lib/export/resource-registry.ts`, `app/features/charting-records/page.tsx` and the rest are
+byte-identical across all 84 commits, so a derivation made at `a946a983` reads the same code
+at `cde6be94` and is valid there.
+
+A change that touches a cited file must re-derive the rows that cite it **in the same
+change**, and move both heads with them. That is what this was.
 
 **This paragraph is no longer trusted prose.** `tests/docs/marketing-truth-register.test.ts`
 re-derives it: the diff between the two heads above is intersected with the public marketing
@@ -172,7 +201,7 @@ Classification of every claim the v2.2 copy deck makes, against application code
 | V6 | The checks that flag record gaps are rules, not AI | home 7 | same module, stated in source: *"deliberately RULES-BASED ONLY: no AI, no model call, no provider integration, no chatbot, no autonomous action"* |
 | V7 | Probe lots recorded on the treatment and linked to your inventory | home 6, charting | `lib/record-keeping/probe-lot-autofill.ts` states a five-level precedence and refuses to auto-fill a lot that is expired or discarded; `probe_lots` is a real studio-owned table |
 | V8 | Sterile-item and disinfectant expiry logged | home 6, charting | `lib/record-keeping/expiry.ts` (30-day window, four states) and `lib/record-keeping/disinfectant-status.ts` (7-day window, six states) |
-| V9 | Imported history is always marked as imported | home 1/2/7, TM, FAQ | `components/before-today-card.tsx:218-290` renders a distinct amber section headed "Imported treatment memory", read-only, `IMPORTED_PROVENANCE_NOTE` on every row |
+| V9 | Imported history is always marked as imported | home 1/2/7, TM, FAQ | `components/before-today-card.tsx:232-314` renders a distinct amber section headed "Imported treatment memory", read-only (no edit/void/merge/convert action in it), with `IMPORTED_PROVENANCE_NOTE` in the section lede and every imported row inside that labelled section. **Re-derived at `cde6be94`** — see the provenance note on the mechanism |
 | V10 | Consent shows the exact text signed, with signature and timestamp | home 5 | `ClientConsentSignature` stores `template_body_snapshot` + `template_title_snapshot` + `template_version` + `template_hash` + `signature_name` + `signed_at`. The body itself is snapshotted, not referenced |
 | V11 | Per-studio record isolation | home 2/7, SEO | 100 `enable row level security` statements across 53 migration files, plus a dedicated `tests/security/**` suite proving the boundary from the other side |
 | V12 | Photos stored privately, camera metadata stripped, short-lived links | home 7, charting | `lib/images/treatment-image-sanitize.ts` re-encodes without metadata so EXIF/GPS/XMP/ICC are stripped before storage; signed-link TTL is **60 s** (`TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS`), capped at 300 s by test |

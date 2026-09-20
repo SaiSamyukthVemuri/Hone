@@ -563,6 +563,33 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
       if (authored) push(authored.text);
     }
 
+    // A COMPLETE concatenation anywhere, not only in a prop.
+    //
+    // `const title = "Energy settings have an append-" + "only edit history"` in
+    // an imported copy module renders one sentence and was scanned as two
+    // fragments, neither of which triggers anything. `unreconstructableIn`
+    // ignores it too — correctly, because there is no hole: both operands are
+    // readable, so this is not an unreconstructable sentence, it is a sentence
+    // nobody reassembled. The joined text is pushed as its own claim and the
+    // fragments still go through below, so a rule matching either still fires.
+    if (
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.PlusToken) ||
+      ts.isTemplateExpression(node)
+    ) {
+      const parent = node.parent;
+      const inNonCopyAttribute =
+        parent &&
+        ts.isJsxExpression(parent) &&
+        parent.parent &&
+        ts.isJsxAttribute(parent.parent) &&
+        isNonCopyAttribute(parent.parent);
+      if (!inNonCopyAttribute) {
+        const joined = readExpression(node);
+        if (joined?.complete) push(joined.text);
+      }
+    }
+
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       if (!isModuleSpecifier(node) && !isNonCopyAttributeValue(node)) {
         push(node.text);
