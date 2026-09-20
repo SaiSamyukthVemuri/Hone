@@ -175,6 +175,12 @@ const COMPONENT_PROSE_BASELINE: readonly string[] = [
   // marketing route — and no guard had ever read them. Clean against the
   // register. Six entries because the pair is authored three times.
   "app/layout.tsx",
+  // A server action, reached because `DemoForm` RENDERS what it returns through
+  // `{status.message}`. Its three visitor-facing messages were public copy that
+  // no guard had read: changing one to a forbidden claim altered neither the
+  // component's identity nor any scanned claim while appearing on screen after
+  // submission.
+  "app/actions/demo.ts",
 ];
 
 /**
@@ -201,7 +207,7 @@ const ASSEMBLED_CLAIM_BASELINE: readonly string[] = ["app/resources/page.tsx"];
  * `lib/marketing/content.ts` per the ruling, and every item that moves there
  * both shrinks this number and enters the judged corpus.
  */
-const PAGE_PROSE_BASELINE = 213;
+const PAGE_PROSE_BASELINE = 212;
 
 /**
  * The declared exceptions, BY IDENTITY.
@@ -1378,7 +1384,7 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     // silently, and the assertion is an upper bound so the list cannot grow.
     const prose = marketingComponentFiles().flatMap((f) => componentProseViolations(f));
     expect(new Set(prose.map((v) => v.file))).toEqual(new Set(COMPONENT_PROSE_BASELINE));
-    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(14);
+    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(17);
 
     // BY IDENTITY, like the page half. A count alone let one exception be
     // swapped for another. Identity catches a REWRITTEN exception; it cannot
@@ -1433,6 +1439,14 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     for (const key of Object.keys(recorded)) recorded[key] = recorded[key].sort();
     expect(recorded).toEqual(BASELINE.componentHoles);
     expect(componentViolations.length, "component holes grew").toBeLessThanOrEqual(61);
+    // Identities are recorded IN FULL. The `JsonLd.tsx` map entry was exactly 70
+    // characters, ending at `return (`, so everything after that prefix could be
+    // rewritten — assigning `it.name` from an opaque producer, say — with the
+    // recorded identity unchanged. Prose identities were fixed this way earlier;
+    // holes were not.
+    expect(
+      Object.values(BASELINE.componentHoles).flat().some((d) => d.length > 70),
+    ).toBe(true);
 
     // And no binding anywhere assembles authored words with something dynamic.
     // ZERO, so it is asserted as zero rather than baselined.
@@ -1703,10 +1717,13 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
       "lib/supabase/server.ts",
       "lib/rate-limit/public.ts",
       "lib/waitlist/delivery/policy.ts",
-      "app/actions/demo.ts",
+      "lib/email/send-refusals.ts",
     ]) {
       expect(files, `${infrastructure} is not a copy source`).not.toContain(infrastructure);
     }
+    // `app/actions/demo.ts` is NOT in that list any more: a component renders
+    // what it returns, so it authors public copy. The bound still holds — it is
+    // reached, and the modules IT imports are not.
 
     // And a canonical copy module is not a component: authoring copy there is
     // the law, so counting its prose as a component-prose violation would be a
@@ -1922,6 +1939,55 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
         "export const A = () => <p>Every <Words /> tracked here today.</p>;",
       ).map((v) => v.rule),
     ).toEqual(["claim/unknown-element-inside-claim"]);
+  });
+
+  it("a join or concat mixing authored words with something dynamic is refused", () => {
+    // `["Every change is", status].join(" ")` mixes exactly as `+` does:
+    // `foldStatic` cannot complete it, and the refusal for unreadable calls
+    // ignores array receivers by design, so only the harmless fragment was
+    // judged. Applied to the baselined `SiteFooter` `{year}` hole it would have
+    // rendered N1 with every identity unchanged.
+    const probe = (src: string) =>
+      mixedAssemblyViolations("app/_components/marketing/X.tsx", src).map((v) => v.rule);
+    expect(probe('const year = ["Every change is", status].join(" ");')).toEqual([
+      "claim/assembled-binding",
+    ]);
+    expect(probe('const year = "Every change is".concat(status);')).toEqual([
+      "claim/assembled-binding",
+    ]);
+    // A fully static one folds and is judged, so it is not refused here.
+    expect(probe('const year = ["Every change", "is tracked"].join(" ");')).toEqual([]);
+  });
+
+  it("dangerouslySetInnerHTML is a hole unless its HTML is a complete static value", () => {
+    // It renders visitor-visible text and arrives through an ATTRIBUTE, so the
+    // text-position test excluded it, `claimParts` saw no JSX child and
+    // `pageClaims` found no literal — a policy page could pass the explicit
+    // zero-hole assertion while rendering arbitrary HTML.
+    const probe = (body: string) =>
+      jsxHoles("app/probe/page.tsx", `export const A = () => ${body};`).map((v) => v.rule);
+    expect(probe("<div dangerouslySetInnerHTML={{ __html: getClaim() }} />")).toEqual([
+      "source/hole-in-text-position",
+    ]);
+    expect(probe('<div dangerouslySetInnerHTML={{ __html: "<p>x</p>" }} />')).toEqual([]);
+    // And the policy sources still carry none, which is what makes their
+    // inclusion in the corpus safe.
+    expect(POLICY_SOURCES.flatMap((f) => jsxHoles(f))).toEqual([]);
+  });
+
+  it("a server action whose text a component renders is read", () => {
+    // `DemoForm` shows `submitDemoRequest(...).error` through `{status.message}`.
+    expect(marketingComponentFiles()).toContain("app/actions/demo.ts");
+    // Still bounded: a `.ts` import is followed only inside a copy directory, so
+    // reaching the action does NOT pull in the infrastructure it imports.
+    for (const infrastructure of [
+      "lib/supabase/server.ts",
+      "lib/rate-limit/public.ts",
+      "lib/waitlist/delivery/policy.ts",
+      "lib/email/send-refusals.ts",
+    ]) {
+      expect(marketingComponentFiles()).not.toContain(infrastructure);
+    }
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {

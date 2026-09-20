@@ -206,8 +206,7 @@
       "The technical detail that lets you reproduce, or deliberately adjust, what you did.",
       "We'll walk through charting a session so every item here is captured cleanly, and reply within one business day.",
       "What touched the client, in enough detail to trace it later.",
-      "Where you worked, on which side, and for how long.",
-      "charting and records in Hone"
+      "Where you worked, on which side, and for how long."
     ],
     "app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx": [
       "1. Decide what to bring over",
@@ -251,6 +250,11 @@
       "By {article.author} · Published {fmt(article.datePublished)} · Last reviewed {fmt(article.dateModified)} · {article.readingTime}",
       "Spotted something that needs a correction, or have a question? Email {CONTACT_EMAIL} and we'll review it."
     ],
+    "app/actions/demo.ts": [
+      "Something went wrong. Try again in a moment.",
+      "That doesn't look like a valid email.",
+      "Your name is required."
+    ],
     "app/layout.tsx": [
       "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
       "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
@@ -263,16 +267,16 @@
   "componentHoles": {
     "app/_components/DemoForm.tsx": [
       "claim/standalone-opaque-hole {label}",
-      "claim/standalone-opaque-hole {options.map((opt) => { const selected = value === opt.value; const id",
+      "claim/standalone-opaque-hole {options.map((opt) => { const selected = value === opt.value; const id = `${name}-${opt.value}`; return ( <label key={opt.value} htmlFor={id} className=\"flex min-h-[44px] cursor-pointer items-center gap-2.5 text-[0.9375rem] text-ink\" > <input id={id} type=\"radio\" name={name} value={opt.value} checked={selected} onChange={() => onChange(opt.value)} className=\"sr-only\" /> <span aria-hidden=\"true\" style={{ display: \"inline-block\", width: 14, height: 14, borderRadius: 999, border: `1px solid ${selected ? \"var(--color-mineral)\" : \"var(--color-hairline-strong)\"}`, backgroundColor: selected ? \"var(--color-mineral)\" : \"transparent\", }} /> {opt.label} </label> ); })}",
       "claim/standalone-opaque-hole {status.message}"
     ],
     "app/_components/MarketingHeader.tsx": [
-      "claim/standalone-opaque-hole {MARKETING_NAV.map((item) => ( <Link key={item.href} href={item.href} ",
+      "claim/standalone-opaque-hole {MARKETING_NAV.map((item) => ( <Link key={item.href} href={item.href} className=\"text-[14px] font-medium hover:underline\" > {item.label} </Link> ))}",
       "claim/standalone-opaque-hole {item.label}"
     ],
     "app/_components/MobileNav.tsx": [
       "claim/standalone-opaque-hole {MARKETING_CTA.label}",
-      "claim/standalone-opaque-hole {MARKETING_NAV.map((item) => ( <Link key={item.href} href={item.href} ",
+      "claim/standalone-opaque-hole {MARKETING_NAV.map((item) => ( <Link key={item.href} href={item.href} onClick={() => setOpen(false)} className=\"font-[var(--font-fraunces)] text-[32px] font-bold leading-none\" style={{ letterSpacing: \"-0.03em\" }} > {item.label} </Link> ))}",
       "claim/standalone-opaque-hole {item.label}"
     ],
     "app/_components/PolicyLayout.tsx": [
@@ -288,7 +292,7 @@
     "app/_components/marketing/JsonLd.tsx": [
       "claim/standalone-opaque-hole {it.name}",
       "claim/standalone-opaque-hole {it.name}",
-      "claim/standalone-opaque-hole {items.map((it, i) => { const last = i === items.length - 1; return ( "
+      "claim/standalone-opaque-hole {items.map((it, i) => { const last = i === items.length - 1; return ( <li key={it.path} className=\"flex items-center gap-2\"> {last ? ( <span aria-current=\"page\" className=\"text-ink\"> {it.name} </span> ) : ( <Link href={it.path} className=\"hover:text-mineral\"> {it.name} </Link> )} {last ? null : ( <span aria-hidden=\"true\" className=\"text-[color:var(--color-hairline-strong)]\"> / </span> )} </li> ); })}"
     ],
     "app/_components/marketing/ProductFrame.tsx": [
       "claim/standalone-opaque-hole {children}",
@@ -335,13 +339,13 @@
       "claim/standalone-opaque-hole {it.eyebrow}",
       "claim/standalone-opaque-hole {it.link.label}",
       "claim/standalone-opaque-hole {it.title}",
-      "claim/standalone-opaque-hole {items.map((it) => ( <div key={it.title} className={featureCell}> {it.",
+      "claim/standalone-opaque-hole {items.map((it) => ( <div key={it.title} className={featureCell}> {it.eyebrow ? ( <p className=\"mb-2 text-[0.75rem] font-semibold uppercase tracking-[0.12em] text-mineral\"> {it.eyebrow} </p> ) : null} <Subtitle as=\"h3\" className={it.body ? \"lg:min-h-[3.4rem]\" : \"\"}> {it.title} </Subtitle> {it.body ? ( <p className=\"mt-2 max-w-[42ch] text-[1.0625rem] leading-[1.55] text-muted\"> {it.body} </p> ) : null} {it.link ? ( <Link href={it.link.href} className=\"mt-auto inline-block pt-4 text-[0.875rem] font-medium text-mineral underline underline-offset-4\" > {it.link.label} → </Link> ) : null} </div> ))}",
       "claim/standalone-opaque-hole {l.blurb}",
       "claim/standalone-opaque-hole {l.label}",
-      "claim/standalone-opaque-hole {links.map((l) => ( <Link key={l.href} href={l.href} className=\"group ",
+      "claim/standalone-opaque-hole {links.map((l) => ( <Link key={l.href} href={l.href} className=\"group flex h-full flex-col rounded-[12px] border border-[color:var(--color-hairline)] bg-white p-6 transition-colors hover:border-[color:var(--color-hairline-strong)]\" > <Subtitle as=\"h3\" className=\"text-[1.125rem] group-hover:text-mineral\"> {l.label} </Subtitle> <p className=\"mt-2 text-[0.9375rem] leading-[1.55] text-muted\">{l.blurb}</p> <span className=\"mt-auto pt-4 text-[0.875rem] font-medium text-mineral\"> Read more → </span> </Link> ))}",
       "claim/standalone-opaque-hole {s.body}",
       "claim/standalone-opaque-hole {s.title}",
-      "claim/standalone-opaque-hole {steps.map((s) => ( <div key={s.n} className=\"flex flex-col\"> <span cl",
+      "claim/standalone-opaque-hole {steps.map((s) => ( <div key={s.n} className=\"flex flex-col\"> <span className=\"text-[1rem] font-semibold tabular-nums tracking-[0.02em] text-mineral\"> {s.n} </span> <h3 className=\"mt-2 text-[1.375rem] font-semibold leading-[1.15] tracking-[-0.02em] text-ink lg:min-h-[3.2rem]\" style={{ fontFamily: \"var(--font-marketing-sans)\" }} > {s.title} </h3> <Hairline className=\"my-3.5\" /> <p className=\"text-[1.0625rem] leading-[1.5] text-muted\">{s.body}</p> </div> ))}",
       "claim/standalone-opaque-hole {title}",
       "claim/standalone-opaque-hole {title}"
     ],

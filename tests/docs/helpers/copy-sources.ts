@@ -104,7 +104,19 @@ export function moduleSpecifiersOf(file: string, source?: string): string[] {
  * A `.ts` module is followed only here: these are the two places copy is
  * authored, and everything outside them is infrastructure.
  */
-const COPY_MODULE_DIRS = ["app/_components/", "lib/marketing/"];
+const COPY_MODULE_DIRS = [
+  "app/_components/",
+  "lib/marketing/",
+  // Server actions return text a component RENDERS. `DemoForm` shows
+  // `submitDemoRequest(...).error` through its `{status.message}` hole, so an
+  // error string changed to a forbidden claim altered neither the component's
+  // identity nor any scanned claim while appearing on screen after submission.
+  //
+  // Still bounded: a `.ts` import is only followed when it is itself under one
+  // of these directories, so reaching `app/actions/demo.ts` does NOT pull in the
+  // `lib/supabase`, `lib/rate-limit` and `lib/waitlist` modules it imports.
+  "app/actions/",
+];
 
 /** Marketing route files, from the MARKETING_PAGES registry. */
 export function pageCopySources(): string[] {
@@ -368,8 +380,18 @@ export function mixedAssemblyViolations(file: string, source?: string): CopyViol
         : undefined;
     if (initializer) {
       const e = unwrap(initializer) as ts.Expression;
+      // `.join()` and `.concat()` as well. `["Every change is", status]
+      // .join(" ")` mixes authored words with something dynamic exactly as `+`
+      // does: `foldStatic` cannot complete it, and the refusal for unreadable
+      // calls deliberately ignores array receivers, so only the harmless
+      // fragment was judged.
+      const joinsParts =
+        ts.isCallExpression(e) &&
+        ts.isPropertyAccessExpression(e.expression) &&
+        (e.expression.name.text === "join" || e.expression.name.text === "concat");
       const assembles =
         ts.isTemplateExpression(e) ||
+        joinsParts ||
         (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken);
       if (assembles && foldStatic(e) === undefined) {
         const words: string[] = [];
@@ -1036,7 +1058,13 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
             file,
             line: lineOf(sf, hole),
             rule: "claim/standalone-opaque-hole",
-            detail: hole.getText().replace(/\s+/g, " ").slice(0, 70),
+            // NOT TRUNCATED. The baseline compares these strings, and the
+            // recorded `JsonLd.tsx` map entry was exactly 70 characters, ending
+            // at `return (` — so everything after that prefix could be rewritten,
+            // for instance to assign `it.name` from an opaque producer, with the
+            // identity unchanged. Prose identities were already fixed this way;
+            // holes were not. Callers truncate for display.
+            detail: hole.getText().replace(/\s+/g, " "),
           });
         }
       }
@@ -1532,6 +1560,34 @@ export function jsxHoles(file: string, source?: string): CopyViolation[] {
   const sf = parse(file, source);
   const out: CopyViolation[] = [];
   const visit = (n: ts.Node) => {
+    // `dangerouslySetInnerHTML` renders visitor-visible TEXT, and it arrives
+    // through an attribute — so the text-position test excluded it, `claimParts`
+    // saw no JSX child, and `pageClaims` found no literal. A policy page could
+    // pass the explicit zero-hole assertion while rendering arbitrary HTML.
+    if (ts.isJsxAttribute(n) && n.name.getText() === "dangerouslySetInnerHTML") {
+      const value = n.initializer;
+      const html =
+        value && ts.isJsxExpression(value) && value.expression
+          ? unwrap(value.expression)
+          : undefined;
+      const proven =
+        html !== undefined &&
+        ts.isObjectLiteralExpression(html) &&
+        html.properties.every(
+          (prop) =>
+            ts.isPropertyAssignment(prop) &&
+            (ts.isStringLiteral(unwrap(prop.initializer)) ||
+              ts.isNoSubstitutionTemplateLiteral(unwrap(prop.initializer))),
+        );
+      if (!proven) {
+        out.push({
+          file,
+          line: lineOf(sf, n),
+          rule: "source/hole-in-text-position",
+          detail: n.getText().replace(/\s+/g, " "),
+        });
+      }
+    }
     if (
       ts.isJsxExpression(n) &&
       n.expression &&
@@ -1544,7 +1600,7 @@ export function jsxHoles(file: string, source?: string): CopyViolation[] {
         file,
         line: lineOf(sf, n),
         rule: "source/hole-in-text-position",
-        detail: n.expression.getText().replace(/\s+/g, " ").slice(0, 70),
+        detail: n.expression.getText().replace(/\s+/g, " "),
       });
     }
     ts.forEachChild(n, visit);
