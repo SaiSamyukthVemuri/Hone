@@ -40,7 +40,7 @@ export default function DemoPage() {
           { name: "Walkthrough", path: "/demo" },
         ]}
       />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="overflow-x-hidden">
         <Container className="grid gap-12 pb-20 pt-8 lg:grid-cols-[1fr_1fr] lg:gap-16 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Walkthrough</Eyebrow>

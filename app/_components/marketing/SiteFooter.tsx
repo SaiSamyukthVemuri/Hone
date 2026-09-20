@@ -5,6 +5,13 @@ import { MK_FONT_DISPLAY } from "./tokens";
 
 // Marketing footer, brand + the treatment-memory positioning line + grouped
 // links to every shipped public page (§9). No dead Phase-2 links.
+/** Stable id fragment for a footer group's heading, so <nav aria-labelledby>
+ *  points at a real element. Group titles are authored constants (Product,
+ *  Features, Resources, Company), so this only has to handle spaces and case. */
+function slugify(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
 export function SiteFooter() {
   const year = 2026; // static; no build-time date fabrication.
   return (
@@ -28,8 +35,25 @@ export function SiteFooter() {
           </div>
 
           {FOOTER_GROUPS.map((group) => (
-            <div key={group.title}>
-              <p className="text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-muted">
+            // Each group is its own navigation landmark, named by its own
+            // heading (WCAG 1.3.1 / 2.4.1). Before this the four link lists sat
+            // loose in <footer> with the group name in a plain <p>, so nothing
+            // associated "Product" with the links under it: a screen reader
+            // navigating by landmark found no footer navigation at all, and
+            // navigating by list found four unlabelled lists.
+            <nav
+              key={group.title}
+              aria-labelledby={`footer-group-${slugify(group.title)}`}
+            >
+              {/* Stays a <p>, not a heading. `aria-labelledby` names the
+                  landmark from any element, and promoting "Product" to an <h2>
+                  would place a footer group at the same level as the page's
+                  own sections in the heading outline, which is the wrong
+                  hierarchy for a subordinate link list. */}
+              <p
+                id={`footer-group-${slugify(group.title)}`}
+                className="text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-muted"
+              >
                 {group.title}
               </p>
               <ul className="mt-4 space-y-2.5">
@@ -44,7 +68,7 @@ export function SiteFooter() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </nav>
           ))}
         </div>
 

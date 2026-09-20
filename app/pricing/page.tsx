@@ -148,7 +148,7 @@ export default function PricingPage() {
           { name: "Pricing", path: "/pricing" },
         ]}
       />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="overflow-x-hidden">
         <Container className="pb-4 pt-8 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Pricing</Eyebrow>
