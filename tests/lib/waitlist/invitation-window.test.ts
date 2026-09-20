@@ -6,6 +6,7 @@ import {
   TTL_HOURS_MAX,
   TTL_HOURS_MIN,
   TTL_PRESETS,
+  ttlBoundLabel,
 } from "@/lib/waitlist/invitation-window";
 import { activeTtlPreset, emptyDraft } from "@/lib/waitlist/b4-invitation-draft";
 
@@ -268,16 +269,20 @@ describe("CENSUS — the database's own default can never decide the window", ()
     }
   });
 
-  it("ANTI-VACUITY — the invitation commands really do default to something else", () => {
-    // If the SQL default were already 48 the censuses above would still pass
-    // while proving nothing, because there would be no wrong value left for a
-    // missing argument to fall back to.
+  it("ANTI-VACUITY — there really IS a database default for a missing argument to hit", () => {
+    // The censuses above are only worth running while omitting `p_ttl_hours`
+    // would silently produce SOME window. If no command declared a default the
+    // omission would be an error rather than a wrong answer, and these checks
+    // would be guarding nothing.
     //
-    // SCOPED TO THE INVITATION COMMANDS. An earlier form collected every
-    // `p_ttl_hours … default N` in the tree, which swept in
-    // `issue_waitlist_preference_grant`'s 168 — a different clock — and would
-    // have failed spuriously if the invitation window were ever set to 168,
-    // which is legal, equal to TTL_HOURS_MAX and already offered as a preset.
+    // WHAT THIS DELIBERATELY NO LONGER ASSERTS: that the SQL default DIFFERS
+    // from TTL_HOURS_DEFAULT. An earlier form did, which pinned the
+    // DISAGREEMENT as the invariant and would have failed the day someone
+    // aligned the migration on 48 — the actual repair for the divergence this
+    // file documents. It also would have failed on setting the product default
+    // to 168, which is in range and an offered preset. The rule being enforced
+    // is "the application always says which window it wants", and that holds
+    // whatever the database would otherwise have chosen.
     const INVITATION_COMMANDS = [
       "issue_new_client_waitlist_invitation",
       "issue_scoped_new_client_waitlist_invitation",
@@ -289,10 +294,74 @@ describe("CENSUS — the database's own default can never decide the window", ()
       return m ? [{ name: f.name, value: Number(m[1]) }] : [];
     });
 
-    expect(declared.length).toBeGreaterThan(0);
+    expect(declared.length, "no invitation command declares a TTL default").toBeGreaterThan(
+      0,
+    );
     for (const { name, value } of declared) {
-      expect(value, `${name} declares a SQL default`).not.toBe(TTL_HOURS_DEFAULT);
+      expect(Number.isInteger(value), `${name} declares an integer default`).toBe(true);
     }
+  });
+
+  it("CENSUS — SQL callers pass the argument too, not just TypeScript", () => {
+    // THE HOLE THE TS CENSUS CANNOT SEE. 0192 and 0193 already call these
+    // commands SQL-to-SQL, and those calls are POSITIONAL — there is no
+    // `p_ttl_hours:` to grep for. A future migration adding a call that stops
+    // one argument short would silently mint invitations on the database
+    // default, and every check above would stay green.
+    //
+    // Arity is the observable: a caller that omits the trailing TTL passes
+    // fewer arguments than the command declares.
+    const paramCount = (params: string): number => {
+      let depth = 0;
+      let n = 1;
+      for (const ch of params) {
+        if (ch === "(" || ch === "[") depth += 1;
+        else if (ch === ")" || ch === "]") depth -= 1;
+        else if (ch === "," && depth === 0) n += 1;
+      }
+      return params.trim() === "" ? 0 : n;
+    };
+
+    const ttlCommands = SQL_FUNCTIONS.filter((f) => f.params.includes("p_ttl_hours"));
+    expect(ttlCommands.length).toBeGreaterThan(0);
+
+    let callsChecked = 0;
+    for (const cmd of ttlCommands) {
+      const declaredArity = paramCount(cmd.params);
+      const callRe = new RegExp(`public\\.${cmd.name}\\s*\\(`, "g");
+      for (const m of MIGRATION_SQL.matchAll(callRe)) {
+        const at = m.index ?? 0;
+        // Skip DECLARATIONS and ACL/DROP statements, which carry a type
+        // signature rather than arguments.
+        const before = MIGRATION_SQL.slice(Math.max(0, at - 60), at).toLowerCase();
+        if (before.includes("function")) continue;
+
+        const open = at + m[0].length - 1;
+        let depth = 0;
+        let close = -1;
+        for (let i = open; i < MIGRATION_SQL.length; i += 1) {
+          if (MIGRATION_SQL[i] === "(") depth += 1;
+          else if (MIGRATION_SQL[i] === ")") {
+            depth -= 1;
+            if (depth === 0) {
+              close = i;
+              break;
+            }
+          }
+        }
+        expect(close, `unbalanced call to ${cmd.name}`).toBeGreaterThan(open);
+        const args = MIGRATION_SQL.slice(open + 1, close);
+        callsChecked += 1;
+        expect(
+          paramCount(args),
+          `${cmd.name} called with fewer arguments than it declares -- the TTL would fall back to the database default`,
+        ).toBe(declaredArity);
+      }
+    }
+
+    // NON-VACUITY: the scan really found the SQL-to-SQL calls that exist today
+    // (0192 -> issue_new_client_waitlist_invitation, 0193 -> issue_scoped_...).
+    expect(callsChecked, "no SQL-to-SQL call sites were examined").toBeGreaterThan(0);
   });
 });
 
@@ -339,6 +408,21 @@ describe("CENSUS — the bound is stated once", () => {
     expect(element).toMatch(/min=\{TTL_HOURS_MIN\}/);
     expect(element).toMatch(/max=\{TTL_HOURS_MAX\}/);
     expect(element).not.toMatch(/\b(min|max)=\{\s*\d+\s*\}/);
+  });
+
+  it("states the bound in PROSE from the constants too", () => {
+    // The help text above the custom hours field read "Hours, from 1 hour to 7
+    // days" as a literal. A census that greps for `min={<digits>}` cannot see a
+    // sentence, so this was the one statement of the bound that survived the
+    // first pass -- and the one that would keep promising seven days after the
+    // bound narrowed, while the input beside it refused.
+    expect(ttlBoundLabel()).toBe("Hours, from 1 hour to 7 days");
+    expect(ttlBoundLabel()).toContain(String(TTL_HOURS_MAX / 24));
+
+    const composer = TS_SOURCES.find((x) => x.file === COMPOSER)!.code;
+    expect(composer).toContain("ttlBoundLabel()");
+    // And the sentence is not ALSO written out anywhere.
+    expect(composer).not.toMatch(/from \d+ hours? to \d+ days?/);
   });
 
   it("NEGATIVE CONTROL — no module outside the owner bounds the window itself", () => {

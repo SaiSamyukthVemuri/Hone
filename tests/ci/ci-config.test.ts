@@ -479,12 +479,12 @@ describe("PR CI — path-aware lane selection", () => {
     // Run 30767725631 cancelled both 2-shard jobs at the 10-minute hard
     // timeout with ZERO test failures (shard 2 reached 72/90). Four shards
     // halve the per-shard load to ~45 tests.
-    expect(CI).toMatch(/browser_shards=\$\{r\.extended \? "\[1,2,3,4\]" : "\[1,2\]"\}/);
+    expect(CI).toMatch(/browser_shards=\$\{extended \? "\[1,2,3,4\]" : "\[1,2,3\]"\}/);
     expect(CI).toMatch(/--shard=\$\{\{ matrix\.shard \}\}\/4/);
     expect(CI).toMatch(/fromJson\(needs\.changes\.outputs\.browser_shards\)/);
   });
 
-  it("targeted coverage is split across TWO shards", () => {
+  it("targeted coverage is split across THREE shards", () => {
     // WAS "remains a SINGLE browser job". This REPLACES that assertion rather
     // than relaxing it, and the reason is the one recorded in the test above.
     //
@@ -499,8 +499,13 @@ describe("PR CI — path-aware lane selection", () => {
     // The alternative was raising 15, which buys EVERY PR more time to solve one
     // lane's problem and hides the slowness the block above `timeout-minutes`
     // says is still worth investigating.
-    expect(CI).toMatch(/: "\[1,2\]"/);
-    expect(CI).toMatch(/browser_specs \}\}\s+--shard=\$\{\{ matrix\.shard \}\}\/2/);
+    //
+    // THREE RATHER THAN TWO, because each shard pays the fixed setup cost again
+    // and this workflow records that cost swinging 266s -> 508s between runners.
+    // Two shards left the worst case at ~14m48s against the 15 min cap, which
+    // is not a margin; three brings it to ~12m42s.
+    expect(CI).toMatch(/: "\[1,2,3\]"/);
+    expect(CI).toMatch(/browser_specs \}\}\s+--shard=\$\{\{ matrix\.shard \}\}\/3/);
     // That the split loses nothing is proved by test IDENTITY rather than by a
     // regex over this file: tests/ci/browser-shard-coverage.test.ts.
   });

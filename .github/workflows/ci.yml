@@ -150,9 +150,20 @@ jobs:
               const files = fs.readFileSync("changed.txt","utf8").split("\n").filter(Boolean);
               const r = m.selectBrowserGroups(files);
               const specs = m.specsForGroups(r.groups);
+              // AN EMPTY SELECTION THAT STILL RAN MEANS "RUN EVERYTHING".
+              // This job is gated on `browser_run || full_matrix_required`, so
+              // reaching it with NO groups can only mean the second: the whole
+              // suite, unselected. That is extended coverage by definition, and
+              // it must be treated as such -- 4 shards and the 18 min ceiling.
+              // Before this line it fell through the targeted branch and ran the
+              // entire suite split across the TARGETED shard count under the
+              // TARGETED 15 min cap, which is strictly less time and fewer
+              // runners than the same workload gets when it is named extended.
+              const fullSuite = !specs || specs.length === 0;
+              const extended = r.extended || fullSuite;
               const out = [
                 `browser_run=${r.groups.length > 0}`,
-                `browser_extended=${r.extended}`,
+                `browser_extended=${extended}`,
                 `browser_specs=${specs ? specs.map(s => "e2e/" + s).join(" ") : ""}`,
                 // Extended coverage is split across two SEPARATE JOBS, so each
                 // shard gets its own runner and its own Supabase stack. That
@@ -167,12 +178,14 @@ jobs:
                 // One of those four runs passed. The workload was never the
                 // variable; the runner was.
                 //
-                // TWO, NOT FOUR. Each shard pays the full setup cost again -
-                // Supabase stack plus the migration chain from scratch - so
-                // splitting further buys less test time than it spends. Two
-                // halves the test phase to ~6 min and leaves the 15 min cap
-                // untouched, which is the point: no OTHER lane pays for this one.
-                `browser_shards=${r.extended ? "[1,2,3,4]" : "[1,2]"}`,
+                // THREE, NOT TWO, AND THE SETUP COST IS WHY.
+                // Each shard pays the fixed cost again, and this file records
+                // that cost swinging 266s -> 508s between runners. Two shards
+                // put the worst case at 380s of tests plus 508s of setup =
+                // ~14m48s against a 15 min cap, which is not a margin. Three
+                // brings the test phase to ~254s and the worst case to ~12m42s.
+                // Still no ceiling moves: no OTHER lane pays for this one.
+                `browser_shards=${extended ? "[1,2,3,4]" : "[1,2,3]"}`,
                 `browser_reason=${r.reason.replace(/\n/g," ").slice(0,300)}`,
               ].join("\n");
               fs.appendFileSync(process.env.GITHUB_OUTPUT, out + "\n");
@@ -494,7 +507,7 @@ jobs:
     # minutes is still too slow and still worth investigating; it now reports
     # its own result instead of being cut mid-run and misread as a test failure.
     #
-    #   targeted  : target <10 min per shard, hard timeout 15 min  (2 shards)
+    #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
     #   extended  : target <10 min per shard, hard timeout 18 min  (4 shards)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
@@ -590,9 +603,9 @@ jobs:
             # above still decides WHAT runs and this only decides who runs which
             # half. Disjoint and exhaustive by construction - proved, not
             # assumed, by tests/ci/browser-shard-coverage.test.ts.
-            echo "targeted coverage: native Playwright shard ${{ matrix.shard }} of 2"
+            echo "targeted coverage: native Playwright shard ${{ matrix.shard }} of 3"
             echo "targeted specs: ${{ needs.changes.outputs.browser_specs }}"
-            npx playwright test ${{ needs.changes.outputs.browser_specs }} --shard=${{ matrix.shard }}/2
+            npx playwright test ${{ needs.changes.outputs.browser_specs }} --shard=${{ matrix.shard }}/3
           fi
         env:
           # Enables the guarded fake-Resend transport for the welcome-email

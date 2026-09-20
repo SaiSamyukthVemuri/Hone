@@ -89,3 +89,28 @@ export const TTL_PRESETS: ReadonlyArray<{ hours: number; label: string }> = [
   { hours: 72, label: "3 days" },
   { hours: 168, label: "7 days" },
 ];
+
+/**
+ * The bound as the sentence a practitioner reads above the custom hours field.
+ *
+ * THE FOURTH STATEMENT OF THE BOUND, AND THE ONE NO CENSUS COULD SEE. The
+ * composer's help text read "Hours, from 1 hour to 7 days" as a literal, one
+ * line above the `min`/`max` this module now owns. A census that greps for
+ * `min={<digits>}` cannot find a sentence, so narrowing `TTL_HOURS_MAX` would
+ * have left the label promising seven days while the input beside it and the
+ * adapter behind it both refused — which is the exact "reads as the product
+ * being broken rather than as the input being wrong" case the composer's own
+ * comment warns about.
+ *
+ * Derived, so it cannot say something the bound does not permit.
+ */
+export function ttlBoundLabel(): string {
+  const unit = (hours: number): string => {
+    if (hours % 24 === 0 && hours >= 24) {
+      const days = hours / 24;
+      return `${days} day${days === 1 ? "" : "s"}`;
+    }
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  };
+  return `Hours, from ${unit(TTL_HOURS_MIN)} to ${unit(TTL_HOURS_MAX)}`;
+}

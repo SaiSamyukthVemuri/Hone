@@ -97,7 +97,7 @@ describe("the targeted browser lane's shard count is stated consistently", () =>
   // lines apart. The extended lane already carries that risk with its `4`; this
   // pins BOTH lanes rather than adding a second unpinned pair.
   it("the targeted matrix and the --shard divisor agree", () => {
-    const matrix = CI_YML.match(/browser_shards=\$\{r\.extended \? "\[1,2,3,4\]" : "\[([\d,]+)\]"\}/);
+    const matrix = CI_YML.match(/browser_shards=\$\{extended \? "\[1,2,3,4\]" : "\[([\d,]+)\]"\}/);
     expect(matrix, "targeted shard matrix not found in ci.yml").not.toBeNull();
     const matrixCount = matrix![1].split(",").length;
 
@@ -110,7 +110,7 @@ describe("the targeted browser lane's shard count is stated consistently", () =>
   });
 
   it("the extended lane still runs exactly four, untouched", () => {
-    expect(CI_YML).toContain('`browser_shards=${r.extended ? "[1,2,3,4]" : "[1,2]"}`');
+    expect(CI_YML).toContain('`browser_shards=${extended ? "[1,2,3,4]" : "[1,2,3]"}`');
     expect(CI_YML).toMatch(/--shard=\$\{\{ matrix\.shard \}\}\/4/);
   });
 
@@ -156,6 +156,43 @@ describe("the step that emits the matrix actually RUNS", () => {
     return kept.join("\n");
   }
 
+  it("a selection with NO groups is treated as EXTENDED, not as targeted", () => {
+    // THE STATE, AND IT IS REACHABLE. This job is gated on
+    // `browser_run || full_matrix_required`, so it can be reached with an EMPTY
+    // selection — a diff touching only `vitest.config.ts` classifies as
+    // full-matrix with no browser groups. An empty `browser_specs` makes the
+    // command `npx playwright test --shard=N/M`, which runs THE WHOLE SUITE.
+    //
+    // Before this was fixed the whole suite ran under the TARGETED shard count
+    // and the TARGETED 15 min ceiling, while the identical workload gets 4
+    // shards and 18 min when it is named extended: fewer runners and less time
+    // for strictly more work. Both shards would be cut at the cap and the
+    // required check fails closed behind them.
+    const script = stepScript("Select browser groups");
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-ci-step-"));
+    const outFile = path.join(dir, "github_output");
+    try {
+      writeFileSync(outFile, "");
+      symlinkSync(path.join(ROOT, "scripts"), path.join(dir, "scripts"));
+      symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"));
+      writeFileSync(path.join(dir, "changed.txt"), "vitest.config.ts\n");
+      execFileSync("bash", ["-c", script], {
+        cwd: dir,
+        env: { ...localOnlyEnv(), GITHUB_OUTPUT: outFile },
+        encoding: "utf8",
+      });
+      const emitted = readFileSync(outFile, "utf8");
+      // Non-vacuity: this really is the empty-selection state.
+      expect(emitted, "an empty selection means run everything").toMatch(
+        /browser_specs=\s*$/m,
+      );
+      expect(emitted).toContain("browser_extended=true");
+      expect(emitted).toContain("browser_shards=[1,2,3,4]");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("emits a well-formed matrix for a targeted diff", () => {
     const script = stepScript("Select browser groups");
     expect(script).toContain("browser_shards=");
@@ -196,7 +233,7 @@ describe("the step that emits the matrix actually RUNS", () => {
       expect(emitted, "targeted, not extended").toContain("browser_extended=false");
       // THE MATRIX THIS CHANGE IS ABOUT, read from what the step actually
       // produced rather than from what the file says it would produce.
-      expect(emitted).toContain("browser_shards=[1,2]");
+      expect(emitted).toContain("browser_shards=[1,2,3]");
       expect(emitted).toMatch(/browser_specs=e2e\/\S+/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -206,32 +243,36 @@ describe("the step that emits the matrix actually RUNS", () => {
 
 describe("the split covers the same specs, once and only once", () => {
   it(
-    "union of the two shards equals the unsharded run, with no overlap",
+    "union of the shards equals the unsharded run, with no overlap",
     { timeout: 120_000 },
     () => {
       const specs = targetedSpecs();
       expect(specs.length, "the worst-case targeted selection").toBeGreaterThan(30);
 
       const all = listTests(specs);
-      const one = listTests(specs, "1/2");
-      const two = listTests(specs, "2/2");
+      const shards = ["1/3", "2/3", "3/3"].map((s) => listTests(specs, s));
 
       // NON-VACUITY. A selection that listed nothing would satisfy every set
       // identity below and mean the opposite of what they claim.
       expect(all.length, "the unsharded run found no tests").toBeGreaterThan(100);
-      expect(one.length).toBeGreaterThan(0);
-      expect(two.length).toBeGreaterThan(0);
+      for (const [i, sh] of shards.entries()) {
+        expect(sh.length, `shard ${i + 1} is empty`).toBeGreaterThan(0);
+      }
 
       // EXHAUSTIVE: nothing dropped by the split.
-      expect([...one, ...two].sort()).toEqual(all);
+      expect(shards.flat().sort()).toEqual(all);
 
       // DISJOINT: nothing runs twice. Stated separately from the union because
-      // a duplicated test and a dropped test can cancel out in a length check.
-      const overlap = one.filter((t) => two.includes(t));
-      expect(overlap, "tests present in BOTH shards").toEqual([]);
+      // a duplicated test and a dropped test cancel out in a length check.
+      for (let i = 0; i < shards.length; i += 1) {
+        for (let j = i + 1; j < shards.length; j += 1) {
+          const overlap = shards[i].filter((t) => shards[j].includes(t));
+          expect(overlap, `tests in BOTH shard ${i + 1} and shard ${j + 1}`).toEqual([]);
+        }
+      }
 
       // And the counts really do add up, which is the form a human checks.
-      expect(one.length + two.length).toBe(all.length);
+      expect(shards.reduce((n, sh) => n + sh.length, 0)).toBe(all.length);
     },
   );
 });

@@ -12,6 +12,7 @@ import {
   TTL_HOURS_MAX,
   TTL_HOURS_MIN,
   TTL_PRESETS,
+  ttlBoundLabel,
 } from "@/lib/waitlist/invitation-window";
 import {
   ALLOWED_DAYS_PRESET_LABEL,
@@ -659,7 +660,7 @@ export function InviteComposerView({
                 enforced silently: it REFUSES an out-of-range window instead of
                 clamping it, so a practitioner who types 200 needs to know why
                 nothing happened. */}
-            <span className="text-xs text-fg-muted">Hours, from 1 hour to 7 days</span>
+            <span className="text-xs text-fg-muted">{ttlBoundLabel()}</span>
             <input
               type="number"
               name={COMPOSER_FIELD_NAMES.expiresInHoursCustom}

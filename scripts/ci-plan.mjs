@@ -75,6 +75,13 @@ export function buildPlan(files) {
   );
 
   const specs = specsForGroups(b.groups);
+  // THE FULL-SUITE RULE, MIRRORED FROM THE WORKFLOW. The shard job is gated on
+  // `browser_run || full_matrix_required`, so reaching it with NO groups means
+  // the whole suite, unselected -- which the workflow treats as extended
+  // coverage. Without this the planner would tell a contributor the targeted
+  // lane runs when CI runs the extended one.
+  const runsBrowser = b.groups.length > 0 || c.full_matrix_required;
+  const fullSuite = runsBrowser && (specs?.length ?? 0) === 0;
   return {
     changed_file_count: files.length,
     classification: c,
@@ -84,7 +91,11 @@ export function buildPlan(files) {
       reason: b.reason,
       spec_count: b.extended ? "all" : (specs?.length ?? 0),
       specs: b.extended ? null : specs,
-      sharded: b.extended,
+      // SHARD COUNT, NOT A BOOLEAN. Both lanes are sharded now; reporting
+      // `b.extended` said "targeted is one job", and CLAUDE.md tells
+      // contributors to size CI from this output rather than by guessing.
+      shards: b.extended || fullSuite ? 4 : 3,
+      sharded: true,
     },
     full_matrix_required: c.full_matrix_required,
     lanes,
@@ -111,10 +122,10 @@ if (process.argv[1] && process.argv[1].endsWith("ci-plan.mjs")) {
     if (plan.browser.groups.length === 0) {
       console.log(`  none, ${plan.browser.reason}`);
     } else if (plan.browser.extended) {
-      console.log(`  EXTENDED (all specs, 2 shards), ${plan.browser.reason}`);
+      console.log(`  EXTENDED (all specs, ${plan.browser.shards} shards), ${plan.browser.reason}`);
     } else {
       console.log(`  groups: ${plan.browser.groups.join(", ")}`);
-      console.log(`  specs:  ${plan.browser.spec_count}`);
+      console.log(`  specs:  ${plan.browser.spec_count} across ${plan.browser.shards} shards`);
       console.log(`  reason: ${plan.browser.reason}`);
     }
     console.log("");
