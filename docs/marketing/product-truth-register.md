@@ -13,12 +13,12 @@ every page and in `lib/marketing/content.ts`.
 
 | | |
 |---|---|
-| Built against production head | `cde6be9401649c38b034e1f0a861e9f46ee76012` — see "valid at", below |
+| Built against production head | `d6295aa90dac79ff04ca8a011084f06422eec231` — see "valid at", below |
 | Originally derived at | `a946a983ac9b8da379bc869e21b32a5a3d50e548` (2026-09-17) |
 | Head resolved | `git rev-parse origin/claude/build-hone-saas-hOex7`, 2026-09-20 |
-| Production head at last check | `cde6be9401649c38b034e1f0a861e9f46ee76012` (2026-09-20) — see below |
-| Repository migration max | **0198** (derived — `npm run migration:state -- --json`) |
-| Hosted migration max | **0198** (declared — `docs/production/migration-state.json`) |
+| Production head at last check | `d6295aa90dac79ff04ca8a011084f06422eec231` (2026-09-20) — see below |
+| Repository migration max | **0199** (derived — `npm run migration:state -- --json`) |
+| Hosted migration max | **0199** (declared — `docs/production/migration-state.json`) |
 | Repo/hosted parity | yes |
 | Copy deck classified | `hone-marketing-copy-deck-v2-2.md`, sha256 `ad9127e8…d78f6c` |
 | Previous revision | head `325b124`, migration max 0133 — **superseded**, it was ~65 migrations stale |
@@ -40,37 +40,21 @@ byte-identical. That is also exactly the invariant this register's guard enforce
 on **cited evidence moving**, never on production moving. So the head above advances when,
 and only when, every row that cites a file which moved has been re-derived.
 
-**ONE cited file moved between `a946a983` and `cde6be94`, and both rows that cite it were
-re-derived.** That is what moved the head above, and it is stated exactly rather than
-asserted.
+**FOUR cited files moved between `cde6be94` and `d6295aa9`, and every row that
+cites one was re-derived.** That is what moved the head above.
 
-`git diff --no-renames --name-only a946a983..cde6be94` touches **84 files**. Intersected
-with §0's own backticked citations, the result is **one** file (the same one, and the only
-one, in `673080bc..cde6be94`; the earlier span `a946a983..673080bc` touched **none**):
+`git diff --no-renames --name-only cde6be94..d6295aa9` touches **31 files**.
+Intersected with §0's own backticked citations:
 
-- `components/before-today-card.tsx` — UI-06 (`95f09bb9`, `04a84f55`), +47/−29. A surface
-  vocabulary change: three private `SectionLabel` duplicates retired, and the imported-memory
-  rows flattened from nested cards to a divided list.
+| File | Change | Rows | Verdict at `d6295aa9` |
+|---|---|---|---|
+| `app/(app)/clients/[id]/page.tsx` | +58/−16, RESP-CLIENT-INTAKE-01 | **V2** | **HOLDS.** The per-area selects still carry `primary_area, side, mode, apilus_modality, energy_level, probe_label, probe_lot_number, tolerance_rating, reaction_type, caution_for_next_session`. Citation corrected `:604,640` → `:609,645` |
+| `app/(app)/clients/[id]/intake/page.tsx` | +18 | **Q7** | **HOLDS.** The EpiPen banner is still its own surface, separate from the pacemaker review flag in `lib/intake/review-flags.ts`. Citation corrected `:330-336` → `:340-343` |
+| `lib/types/database.ts` | +10 | **Q6** | **HOLDS.** The addition is `clients.sms_phone` (migration 0199). `probe_lots` is untouched and still carries **no** quantity and no reorder concept, which is the whole of Q6's qualifier |
+| `lib/export/resource-registry.ts` | +1 | **Q2** | **HOLDS.** The addition excludes the generated `sms_phone` column from an existing resource; it changes no resource's export disposition, and `session_blocks` / `session_block_areas` still do not export — which is what Q2's qualifier is about |
 
-It is cited by **V1** and **V9**, and both were re-derived against `cde6be94`:
-
-- **V1 — HOLDS, unchanged.** Its assembly evidence is `lib/sessions/before-today.ts`, which
-  is **not** in the diff. The card still takes `briefing: BeforeToday` from that assembly and
-  renders the areas line, probe lot, minutes and reaction it carries.
-- **V9 — HOLDS; the citation and the mechanism description were both corrected.** The section
-  is now `:232-314` (was cited `:218-290`), still a distinct amber block headed "Imported
-  treatment memory" with no edit/void/merge/convert action in it. **The old wording said
-  `IMPORTED_PROVENANCE_NOTE` renders "on every row". It does not, and it did not at
-  `a946a983` either** — it renders once, in the section lede. That was an inaccurate
-  description of the mechanism, not a regression introduced by UI-06, and the public claim it
-  supports is unaffected: every imported row sits inside the labelled section.
-
-The other **30** rows were **not** re-read, and do not need to be: none of the evidence they
-cite is in the diff. `lib/sessions/before-today.ts`, `app/(app)/clients/[id]/page.tsx`,
-`lib/dashboard/missing-records-assistant.ts`, `lib/record-keeping/**`,
-`lib/export/resource-registry.ts`, `app/features/charting-records/page.tsx` and the rest are
-byte-identical across all 84 commits, so a derivation made at `a946a983` reads the same code
-at `cde6be94` and is valid there.
+The remaining rows were **not** re-read, and do not need to be: none of the
+evidence they cite is in the diff.
 
 A change that touches a cited file must re-derive the rows that cite it **in the same
 change**, and move both heads with them. That is what this was.
@@ -194,7 +178,7 @@ Classification of every claim the v2.2 copy deck makes, against application code
 | # | Claim (deck wording) | Where in deck | Evidence at `a946a983` |
 |---|---|---|---|
 | V1 | Before Today assembles last areas, settings, probe lot, response, plan left, cautions | hero, home 1, TM, SEO | `lib/sessions/before-today.ts` carries per-area `blockLots` / `blockMinutes` / `blockReactionNotes`; rendered by `components/before-today-card.tsx` |
-| V2 | Every treated area keeps its own history; multi-area sessions do not collapse | home 3, TM, charting | `session_block_areas` is a real per-area table; `app/(app)/clients/[id]/page.tsx:604,640` selects `primary_area, side, mode, apilus_modality, energy_level, probe_label, probe_lot_number, tolerance_rating, reaction_type, caution_for_next_session` per area |
+| V2 | Every treated area keeps its own history; multi-area sessions do not collapse | home 3, TM, charting | `session_block_areas` is a real per-area table; `app/(app)/clients/[id]/page.tsx:609,645` selects `primary_area, side, mode, apilus_modality, energy_level, probe_label, probe_lot_number, tolerance_rating, reaction_type, caution_for_next_session` per area |
 | V3 | Structured fields: mode, modality, energy, frequency, probe + lot, laterality, tolerance, skin response | home 4, TM, charting | typed columns, not prose. `machine_frequency` accepts exactly two values (13.56 / 27.12 MHz); `apilus_modality` is an 11-value enum (`APILUS_MODALITY_VALUES`) |
 | V4 | Next-treatment notes and cautions resurface automatically | TM, home 5 | `caution_for_next_session` / `caution_note` selected into the Before Today assembly on every returning client |
 | V5 | Record gaps flagged: missing probe lot, aftercare not marked, completed appointment not yet charted | home 6, charting | `lib/dashboard/missing-records-assistant.ts` — all three named gaps exist, plus two the deck does not claim (intake incomplete; for-next-visit note with no upcoming appointment) |
@@ -223,7 +207,7 @@ The qualifier is part of the claim. Dropping it makes the line false.
 | Q4 | Appointment reminders by email | Email 24h + 2h is **live and default ON**; SMS is **live but opt-in and consent-gated**; intake reminders are live and unmentioned. Reminders run on an **external scheduler**, not an internal timer | `app/api/cron/appointment-reminders/route.ts`; `studios.send_24h_reminders` / `send_2h_reminders` (0025); `send_intake_reminders` (0186) |
 | Q5 | Sterile-item / disinfectant expiry | It is a **computed display**, not a notification. Stated in source: *"a computed display, never a stored or sent reminder. NO cron / notification / email here"*. Never write "reminds you" / "alerts you" — appointment reminders **are** sent, so mixed vocabulary reads as a promise | `lib/record-keeping/disinfectant-status.ts` |
 | Q6 | Probe lots linked to inventory | Traceability only, **never causation**, and **never stock counts**. `probe_lots` has no quantity and no reorder concept — columns are `probe_size`, `lot_number`, `expiry_date`, `active`, `notes` | `lib/types/database.ts` |
-| Q7 | Intake: a pacemaker or an EpiPen is flagged before the appointment | True, but by **two different mechanisms**, and a reader of one module alone will wrongly conclude the claim is false. Pacemaker is an intake **review flag** (`lib/intake/review-flags.ts` → galvanic + authorization). EpiPen is deliberately **excluded** from review flags and surfaced instead as its own banner (`app/(app)/clients/[id]/intake/page.tsx:330-336`), because it "already ha[s] dedicated cards on the review page" | both verified |
+| Q7 | Intake: a pacemaker or an EpiPen is flagged before the appointment | True, but by **two different mechanisms**, and a reader of one module alone will wrongly conclude the claim is false. Pacemaker is an intake **review flag** (`lib/intake/review-flags.ts` → galvanic + authorization). EpiPen is deliberately **excluded** from review flags and surfaced instead as its own banner (`app/(app)/clients/[id]/intake/page.tsx:340-343`), because it "already ha[s] dedicated cards on the review page" | both verified |
 | Q8 | Studio plan: up to three practitioners | A **packaging promise honoured during onboarding**, never enforced in code — there is no seat column and no automatic seat billing. Separately: the public booking page attributes bookings **studio-wide** and availability is a **single studio-wide schedule**, so copy must not claim clients pick a specific practitioner or that each practitioner has independent online availability | `lib/marketing/content.ts:98-110` records the boundary; no enforcing column exists |
 | Q9 | Append-only edit history (as shipped on `/features/charting-records`) | Only where **scoped to traceability and logs**. Migration 0086 covers sterile items, disinfectants, exposure incidents, the aftercare mark, and `session_blocks.probe_lot_number` — that column only. It does **not** cover other charted clinical values. See N1 for the surface-split ruling | `supabase/migrations/0086_record_keeping_audit_events.sql` |
 

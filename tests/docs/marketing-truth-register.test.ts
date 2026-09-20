@@ -62,8 +62,30 @@ const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
 const FORBIDDEN = forbiddenWordings(REGISTER);
 const SANCTIONED = sanctionedAppendOnlyWordings(REGISTER);
 
-/** Every complete claim the declared copy sources carry. */
-const PAGE_CLAIMS = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) => pageClaims(f));
+/**
+ * Every complete claim the JUDGED copy sources carry.
+ *
+ * OWNER RULING, option 1: marketing route pages are checked for the AUTHORING
+ * LAW only. They are not a judged claim surface, and claims come from the copy
+ * modules and the policy sources.
+ *
+ * The reason is a measured one rather than a preference. Judging page JSX means
+ * deciding what a hole renders — and of 75 holes in text position across the
+ * declared pages, the bulk resolve through `.map` callbacks
+ * (`PRICING_PLANS.map((plan) => <p>{plan.name}</p>)`). Approving `plan.name`
+ * requires following a binding from an approved array into a callback parameter,
+ * and that is dataflow: the analysis this architecture exists to remove.
+ *
+ * The cost is stated, bounded and monotonic. 213 page prose items are not
+ * judged; the baseline below freezes that number so it can only shrink, and the
+ * way it shrinks is by copy moving into a canonical module — where it IS judged.
+ * The unjudged surface can therefore only get smaller.
+ *
+ * The policy sources keep their claims: they carry ZERO holes in text position,
+ * so nothing about them needs a hole rule at all. That is asserted below rather
+ * than assumed, because it is what makes their inclusion safe.
+ */
+const PAGE_CLAIMS = POLICY_SOURCES.flatMap((f) => pageClaims(f));
 const MODULE_CLAIMS = [
   // Statically, so a module whose copy is RETURNED BY A FUNCTION is covered and
   // so both branches of a complete conditional are judged rather than only the
@@ -102,18 +124,28 @@ const COMPONENT_PROSE_BASELINE: readonly string[] = [
 /**
  * The one place a claim is still assembled from a value.
  *
- * EMPTY, and that is a result rather than an oversight.
+ * ONE entry, and it is the architecture review's A3 case.
  *
- * `/resources` renders its lede author through `{RESOURCE_AUTHOR}` — the exact
- * case the architecture review's **A3** named, and the same shape as
- * `{POSITIONING.corePromise}` on the homepage. Neither is a claim assembled from
- * fragments: both CONSUME a complete approved value from a declared copy module,
- * which is precisely what the authoring law asks rendering code to do. The
- * architecture dissolved A3 rather than needing an exemption for it.
+ * `{POSITIONING.corePromise}` alone in its element is CONSUMPTION — the pattern
+ * the law prescribes — and is exempt. `/resources` instead embeds
+ * `{RESOURCE_AUTHOR}` among authored words ("Operational guides from …, the
+ * people behind Hone"), which is a claim assembled across the boundary, so the
+ * exemption stops applying.
  *
- * A hole that does NOT resolve to a declared copy module is still refused.
+ * Measured before the rule was chosen: 71 standalone consumptions, and exactly
+ * ONE embedded case — this one. A3 offered rewrite, declare, or a narrow
+ * declared exemption; this is the declared exemption, and it costs one line.
  */
-const ASSEMBLED_CLAIM_BASELINE: readonly string[] = [];
+const ASSEMBLED_CLAIM_BASELINE: readonly string[] = ["app/resources/page.tsx"];
+
+/**
+ * Page prose that is not judged, frozen at what exists today.
+ *
+ * Not a permission — a ceiling. New product-marketing copy belongs in
+ * `lib/marketing/content.ts` per the ruling, and every item that moves there
+ * both shrinks this number and enters the judged corpus.
+ */
+const PAGE_PROSE_BASELINE = 213;
 
 /** The production head the register declares it was verified against. */
 function declaredHead(): string {
@@ -881,14 +913,71 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
 
     // NEGATIVE, and the one that matters most: consuming a complete approved
     // value from a declared copy module is the pattern the law PRESCRIBES.
-    // Refusing it would forbid correct authoring, which the first cut of this
-    // check did.
+    // Refusing it would forbid correct authoring, which the first cut did.
     expect(
       assembledIn(
         `import { POSITIONING } from "@/lib/marketing/content";\n` +
-          `export const A = () => <p>{POSITIONING.corePromise} and every area keeps its history.</p>;`,
+          `export const A = () => <p>{POSITIONING.corePromise}</p>;`,
       ),
     ).toEqual([]);
+  });
+
+  it("pages are checked for the authoring law, and are not a judged surface", () => {
+    // Owner ruling, option 1. The judged corpus is the copy modules and the
+    // policy sources; a marketing route page contributes no claims.
+    expect(MODULE_CLAIMS.length).toBeGreaterThan(0);
+    expect(PAGE_CLAIMS.length).toBeGreaterThan(0);
+    // The corpus is exactly the policy sources plus the copy modules.
+    expect(CLAIMS.length).toBe(PAGE_CLAIMS.length + MODULE_CLAIMS.length);
+    expect(PAGE_CLAIMS.length).toBe(
+      POLICY_SOURCES.reduce((n, f) => n + pageClaims(f).length, 0),
+    );
+    // They are still checked: assembly is refused there.
+    expect(
+      assembledIn(`export const A = () => <p>Every treated area keeps {label} of its own.</p>;`)
+        .map((v) => v.rule),
+    ).toContain("claim/assembled-from-fragments");
+  });
+
+  it("the policy sources carry no holes, which is what makes judging them safe", () => {
+    // The one thing that could hide a claim in a judged JSX surface is a hole.
+    // There are none, so no hole rule is needed for the judged corpus at all —
+    // and this assertion is what keeps that true.
+    for (const file of POLICY_SOURCES) {
+      expect(
+        assembledClaimViolations(file).filter(
+          (v) => v.rule === "claim/assembled-from-fragments",
+        ),
+        `${file} grew a hole; the judged surface must stay hole-free`,
+      ).toEqual([]);
+    }
+  });
+
+  it("unjudged page prose is frozen, and can only shrink", () => {
+    // The cost of option 1, made visible. Copy that moves into a canonical
+    // module leaves this count AND enters the judged corpus, so the unjudged
+    // surface is monotonically decreasing by construction.
+    const prose = pageCopySources().reduce((n, f) => n + pageClaims(f).length, 0);
+    expect(
+      prose,
+      "page prose grew; new marketing copy belongs in a canonical copy module",
+    ).toBeLessThanOrEqual(PAGE_PROSE_BASELINE);
+  });
+
+  it("consuming an approved value is allowed alone, and refused among authored words", () => {
+    const decl = `import { POSITIONING } from "@/lib/marketing/content";\n`;
+    // PASS — standalone consumption, the prescribed pattern.
+    expect(
+      assembledIn(`${decl}export const A = () => <p>{POSITIONING.corePromise}</p>;`),
+    ).toEqual([]);
+    // FAIL — the same value among authored words assembles a claim across the
+    // boundary, which is how `FRAGMENT = "change is"` plus "Every {FRAGMENT}
+    // tracked." renders N1 out of two halves that trip nothing alone.
+    expect(
+      assembledIn(
+        `${decl}export const A = () => <p>Every {POSITIONING.corePromise} tracked here.</p>;`,
+      ).map((v) => v.rule),
+    ).toContain("claim/assembled-from-fragments");
   });
 
   it("the pre-existing exceptions are declared, counted, and shrink-only", () => {
@@ -901,7 +990,10 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
 
     const assembled = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) => assembledClaimViolations(f));
     expect(new Set(assembled.map((v) => v.file))).toEqual(new Set(ASSEMBLED_CLAIM_BASELINE));
-    expect(assembled.length, "a claim is assembled from something that is not approved copy").toBe(0);
+    expect(
+      assembled.length,
+      "a claim is assembled from something that is not approved copy",
+    ).toBeLessThanOrEqual(1);
   });
 });
 

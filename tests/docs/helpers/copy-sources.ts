@@ -111,7 +111,12 @@ export function marketingComponentFiles(): string[] {
           : spec.startsWith(".")
             ? relative(REPO_ROOT, join(REPO_ROOT, dirname(page), spec))
             : null;
-        if (rel && /^(app\/_components|components)\//.test(rel)) {
+        // ANY directly imported first-party component, not just two blessed
+        // directories. A page can colocate one — `app/pricing/Hero.tsx` via
+        // `./Hero` — and a directory allow-list silently omits it, which is the
+        // same rot as the hand-kept list it already replaced. A page importing a
+        // `.tsx` is importing a component; that is the whole test.
+        if (rel && !rel.startsWith("..")) {
           for (const ext of [".tsx", "/index.tsx"]) {
             if (existsSync(join(REPO_ROOT, rel + ext))) out.add(rel + ext);
           }
@@ -434,10 +439,26 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
   const visit = (n: ts.Node) => {
     if (ts.isJsxElement(n)) {
       const parts = claimParts(n, approved);
+      // CONSUMPTION vs COMPLETION, and the test is position rather than
+      // presence. An approved value is exempt unless authored words sit on BOTH
+      // sides of it — which is what "completing a claim across the boundary"
+      // physically is:
+      //
+      //   <p>{corePromise} <Link>See the full picture</Link></p>   consumption
+      //   <p>Operational guides from {AUTHOR}, the people …</p>    completion
+      //
+      // Measured before the rule was chosen: 71 standalone consumptions on the
+      // declared pages and exactly ONE completion. A cruder "any authored words"
+      // test flagged the first line too, which would have forbidden a trailing
+      // call to action for no reason.
+      const countedHoles = [
+        ...parts.holes,
+        ...parts.approvedHoles.filter((h) => parts.completing.includes(h)),
+      ];
       // The gate reads the sentence WITH its holes counted as words, because a
       // hole renders as something and a claim missing one word is still a claim.
       if (isSubstantiveProse(parts.textWithHoles)) {
-        for (const hole of parts.holes) {
+        for (const hole of countedHoles) {
           out.push({
             file,
             line: lineOf(sf, hole),
@@ -513,6 +534,21 @@ type ClaimParts = {
   readonly textWithHoles: string;
   /** Expressions inside the claim that are not complete literals. */
   readonly holes: ts.Node[];
+  /**
+   * Holes that resolve to a declared copy module.
+   *
+   * Kept apart from `holes` rather than dropped, because whether consuming an
+   * approved value is legitimate depends on WHERE it sits: alone in its element
+   * it is consumption, and among authored words it is a claim being assembled
+   * across the boundary. `FRAGMENT = "change is"` plus `<p>Every {FRAGMENT}
+   * tracked.</p>` renders the N1 sentence out of two halves neither of which
+   * trips anything on its own.
+   */
+  readonly approvedHoles: ts.Node[];
+  /** Holes with authored words on BOTH sides, within this sentence. */
+  readonly completing: ts.Node[];
+  /** Internal: the flat run this was built from, so nesting can compose. */
+  readonly sequence: Array<{ words: number } | { hole: ts.Node }>;
   /** Element children inside the claim that nothing declared inline. */
   readonly undeclared: ts.JsxElement[] | ts.Node[];
 };
@@ -568,37 +604,54 @@ function claimParts(node: ts.JsxElement, approved: Set<string> = new Set()): Cla
   let text = "";
   let textWithHoles = "";
   const holes: ts.Node[] = [];
+  const approvedHoles: ts.Node[] = [];
   const undeclared: ts.Node[] = [];
+  // A flat run of what this sentence is made of, in source order, so "is there
+  // authored text on both sides of this hole" is a lookup rather than a guess.
+  const sequence: Array<{ words: number } | { hole: ts.Node }> = [];
   for (const child of node.children) {
     if (ts.isJsxText(child)) {
-      text += decodeEntities(child.text);
-      textWithHoles += decodeEntities(child.text);
+      const t = decodeEntities(child.text);
+      text += t;
+      textWithHoles += t;
+      sequence.push({ words: t.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length });
     } else if (ts.isJsxExpression(child) && child.expression) {
       const e = child.expression;
       if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
         text += e.text;
         textWithHoles += e.text;
+        sequence.push({ words: e.text.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length });
       } else {
         const root = rootIdentifier(e);
         // A placeholder WORD, with no padding of its own: the authored text
         // around it already carries the spacing, and adding any detached the
         // full stop from the last word so the sentence stopped reading as one.
         textWithHoles += "something";
-        if (!(root && approved.has(root))) holes.push(child);
+        sequence.push({ hole: child });
+        if (root && approved.has(root)) approvedHoles.push(child);
+        else holes.push(child);
       }
     } else if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
       if (ts.isJsxElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
         const inner = claimParts(child, approved);
         text += inner.text;
         textWithHoles += inner.textWithHoles;
+        sequence.push(...inner.sequence);
         holes.push(...inner.holes);
+        approvedHoles.push(...inner.approvedHoles);
         undeclared.push(...inner.undeclared);
       } else if (!INLINE_IN_CLAIM.includes(tagNameOf(child))) {
         undeclared.push(child);
       }
     }
   }
-  return { text, textWithHoles, holes, undeclared };
+  const completing = sequence.flatMap((item, i) => {
+    if (!("hole" in item)) return [];
+    const before = sequence.slice(0, i).some((x) => "words" in x && x.words > 0);
+    const after = sequence.slice(i + 1).some((x) => "words" in x && x.words > 0);
+    return before && after ? [item.hole] : [];
+  });
+  return { text, textWithHoles, holes, approvedHoles, undeclared, completing, sequence };
 }
 
 const claimText = (node: ts.JsxElement, approved?: Set<string>): string =>
