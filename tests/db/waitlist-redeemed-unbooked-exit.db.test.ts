@@ -354,17 +354,30 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
     expect(await newEventsSince(p.entryId, before)).toHaveLength(0);
   });
 
-  it("an appointment stranded by the pre-0195 flow is RECORDED, not refused over", async () => {
+  it("an appointment stranded by the pre-0195 flow is CLOSED OVER — 0201 supersedes the repair", async () => {
     // THE PRE-0195 SHAPE. Before the atomic command the flow was three
     // transactions, and a process death between the appointment and the
     // conversion left a durable appointment behind an entry still reading
     // `invited`.
     //
-    // THE FIRST REVISION REFUSED HERE, with `booking_exists`, and told the
-    // operator to record the booking instead — an operation NOTHING in the
-    // product invokes. The entry stayed `invited`, pressing Close again
-    // returned the same refusal, and the dead end came back wearing a different
-    // word. The repair is performed here instead.
+    // THIS TEST IS THE RECORD OF TWO SUPERSESSIONS, kept whole because the
+    // fixture below is the only one in the suite that builds the stranded shape.
+    //
+    //   The FIRST revision REFUSED here with `booking_exists`, telling the
+    //   operator to record the booking through an operation nothing in the
+    //   product invokes. The dead end came back wearing a different word.
+    //
+    //   0200 then REPAIRED here, answering `converted_instead` and moving the
+    //   entry to a terminal `converted`. 0201 WITHDRAWS that, because the scan
+    //   it rested on could not tell this appointment from one `create_waitlist_
+    //   public_appointment` would have refused, and could not be made to
+    //   decide deterministically against a concurrent writer. The exit now
+    //   answers `closed` and records no conversion it cannot prove.
+    //
+    // What survives unchanged is the property this test was written for: the
+    // entry does not stay stuck, and the appointment is not disturbed.
+    // `tests/db/waitlist-exit-authority-contraction.db.test.ts` carries the
+    // full matrix behind the change.
     const f = await fixture("stranded");
     const p = await redeemedUnbooked(f, "st");
     const client = await q<{ client_id: string }>(
@@ -381,26 +394,25 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
     expect(await statusOf(p.entryId)).toBe("invited");
 
     const before = await eventIdSet(p.entryId);
-    expect(await close(f, p.entryId)).toBe("converted_instead");
+    expect(await close(f, p.entryId)).toBe("closed");
 
-    // THE TRUTH IS RECORDED, and it is the conversion — not a close.
-    expect(await statusOf(p.entryId)).toBe("converted");
+    // THE ENTRY IS RELEASED, and NO conversion is claimed on evidence the
+    // command cannot check.
+    expect(await statusOf(p.entryId)).toBe("released");
     const entry = await q<{ converted_client_id: string | null; converted_at: string | null }>(
       `select converted_client_id::text, converted_at::text from ${EN_T} where id = $1`,
       [p.entryId],
     );
-    expect(entry[0].converted_client_id).toBe(client[0].client_id);
-    expect(entry[0].converted_at).not.toBeNull();
+    expect(entry[0].converted_client_id, "0201 must claim no conversion").toBeNull();
+    expect(entry[0].converted_at).toBeNull();
 
-    // THE CYCLE IS NOT STAMPED CLOSED. It ended in a conversion, and `closed_at`
-    // means an operator close.
+    // THE CYCLE IS STAMPED CLOSED, by the operator who closed it.
     const ev = await inviteEvidence(p.entryId);
-    expect(ev.closed_at, "a conversion was recorded as an operator close").toBeNull();
+    expect(ev.closed_at, "the close must be recorded as an operator close").not.toBeNull();
     expect(ev.redeemed_at).not.toBeNull();
-    expect(ev.released_at).toBeNull();
 
     // ONE lifecycle event, and it is the transition that was made.
-    await expectExactlyOneNewEvent(p.entryId, before, "invited", "converted");
+    await expectExactlyOneNewEvent(p.entryId, before, "invited", "released");
 
     // THE APPOINTMENT STANDS — nothing was rolled back to make this tidy.
     const appts = await q<{ c: number }>(
@@ -411,20 +423,26 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
     expect(appts[0].c).toBe(1);
 
     // AND THE ROW IS NO LONGER STUCK: a retry says so rather than repeating.
-    expect(await close(f, p.entryId)).toBe("already_booked");
+    expect(await close(f, p.entryId)).toBe("already_closed");
   });
 
-  it("RACE: an email edit cannot slip a different identity into the repair", async () => {
-    // THE SECOND P1 REVIEW FINDING. The aggregate that resolves the stranded
-    // booking's client took NO lock, and
-    // `record_new_client_waitlist_conversion` checks only studio membership —
-    // not the recipient binding. So an owner editing that client's email
-    // concurrently with Close could have the match made on the OLD normalised
-    // address and the conversion recorded AFTER the edit committed, converting
-    // the entry to a client that no longer satisfies the binding at all.
+  it("RACE: a concurrent email edit no longer reaches the exit at all — 0201", async () => {
+    // THE SECOND P1 REVIEW FINDING, AND ITS WITHDRAWAL.
     //
-    // 0195 prevents exactly this by reading the matched client FOR SHARE; the
-    // repair path now does the same and re-compares under that lock.
+    // 0200's aggregate resolved the stranded booking's client, and
+    // `record_new_client_waitlist_conversion` checks only studio membership —
+    // not the recipient binding. An owner editing that client's email
+    // concurrently with Close could have the match made on the OLD normalised
+    // address and the conversion recorded after the edit committed. 0200 held
+    // the matched client FOR SHARE and re-compared under that lock, and this
+    // test proved the resulting refusal.
+    //
+    // 0201 removes the client read entirely, so there is no identity to
+    // re-point and no lock to park on. The property inverts, and the inverted
+    // form is the stronger one: THE EXIT COMPLETES WHILE THE EDIT IS STILL
+    // HELD OPEN. Completing against a held `UPDATE clients` — which takes FOR
+    // NO KEY UPDATE, the very mode 0200's FOR SHARE conflicted with — is
+    // positive proof that the read is gone, not merely that it was reordered.
     const f = await fixture("client-edit");
     const p = await redeemedUnbooked(f, "ce");
     const client = await q<{ client_id: string }>(
@@ -439,12 +457,13 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
 
     const s1 = new Client({ connectionString: resolveLocalDbUrl() });
     const s2 = new Client({ connectionString: resolveLocalDbUrl() });
+    const observer = new Client({ connectionString: resolveLocalDbUrl() });
     await s1.connect();
     await s2.connect();
+    await observer.connect();
     let closeResult: string | undefined;
     try {
-      // S1 re-points the identity and HOLDS it. `UPDATE clients` takes
-      // FOR NO KEY UPDATE, which conflicts with the repair's FOR SHARE.
+      // S1 re-points the identity and HOLDS it, exactly as before.
       await s1.query("begin");
       await s1.query(`update public.clients set email = $2 where id = $1`, [
         client[0].client_id,
@@ -452,35 +471,39 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
       ]);
 
       const pid = (await s2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
-      await s2.query("begin");
-      const closing = s2.query(CLOSE, [f.studioId, p.entryId, f.userId]);
-      await expectBlockedOn(
-        pid,
-        "the repair did not park on the client identity it was about to convert to",
+      const closing = s2.query(CLOSE, [f.studioId, p.entryId, f.userId]).then(
+        (r) => r.rows[0].r as string,
       );
+      await new Promise((r) => setTimeout(r, 1_200));
+
+      // NOT BLOCKED BY ANYTHING — the discriminator. Under 0200 this pid was
+      // parked on s1; the empty blocker list is what changed.
+      const w = await observer.query(
+        `select pg_blocking_pids(pid) as blockers from pg_stat_activity where pid = $1`,
+        [pid],
+      );
+      expect(w.rows[0]?.blockers, "the exit still parks on a client identity").toEqual([]);
+
+      // And it has ALREADY ANSWERED, while the edit is still uncommitted.
+      closeResult = await closing;
 
       await s1.query("commit");
-      closeResult = (await closing).rows[0].r as string;
-      await s2.query("commit");
     } finally {
       await s1.query("rollback").catch(() => undefined);
-      await s2.query("rollback").catch(() => undefined);
       await s1.end();
       await s2.end();
+      await observer.end();
     }
 
-    // The identity it matched is no longer this prospect's, so it refuses
-    // rather than converting to a client that fails the binding.
-    expect(closeResult).toBe("booking_unresolved");
+    // It closes the cycle on its own authority and claims no conversion.
+    expect(closeResult).toBe("closed");
     const entry = await q<{ status: string; converted_client_id: string | null }>(
       `select status, converted_client_id::text from ${EN_T} where id = $1`,
       [p.entryId],
     );
-    expect(entry[0].status, "the entry was converted across a re-pointed identity").toBe(
-      "invited",
-    );
+    expect(entry[0].status).toBe("released");
     expect(entry[0].converted_client_id).toBeNull();
-    expect((await inviteEvidence(p.entryId)).closed_at).toBeNull();
+    expect((await inviteEvidence(p.entryId)).closed_at).not.toBeNull();
   });
 
   it("the repair binds to the entry's OWN recipient, never to a neighbour", async () => {

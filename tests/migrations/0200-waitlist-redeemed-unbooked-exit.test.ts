@@ -49,50 +49,54 @@ const FN_BODY = (() => {
 })();
 
 describe("0200 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Taken over from 0198 (and 0199 before it, whose own file lives on the
-    // WAIT S3 branch), per CLAUDE.md: only the CURRENT max asserts this.
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
-
-  it("has nothing above it, and owns its number alone", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0201 is", () => {
+    // HANDED OFF, per CLAUDE.md: only the CURRENT max may assert `isRepoMax`,
+    // and 0201 now holds it. This block moved rather than being deleted, which
+    // is the hand-off this file's own previous revision asked for.
+    //
+    // NOTE THE ASYMMETRY, WHICH IS CORRECT: 0201 takes the REPO max, and 0200
+    // KEEPS the HOSTED-head claim below, because 0201 is authored and NOT
+    // applied. Those are two different claims and only the first has moved.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0201"]);
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
-    // 0200 NOW OWNS THE EXACT HOSTED-HEAD CLAIM, handed off from 0199 when this
-    // migration was applied to production on 2026-09-20 under explicit
-    // per-change owner authorization, from the reviewed #741 head
-    // 6de5fb4c6c3197ad3d2f1abdf33ef5c23f9d87b6 with the dry run and the apply
-    // each naming exactly one file.
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
+    // HANDED OFF EXACTLY AS THIS BLOCK REQUIRED. Its previous revision said
+    // "WHOEVER APPLIES 0201 moves this block: narrow 0200 to a floor the same
+    // way, and let the new head take equality." 0201 was applied to production
+    // on 2026-09-20 under explicit per-change owner authorization, from the
+    // reviewed PR #747 head 1f1f582314a6aa63b503e4d3850ae52e304138f5, so this
+    // file now keeps only a FLOOR — `hosted >= 0200` — which is the durable
+    // fact about an older applied migration and stays true forever.
     //
-    // An earlier revision of this block said "IS THE PENDING SUFFIX — authored
-    // here, NOT applied". That was true when it was written and stopped being
-    // true when the apply landed. 0199 was correspondingly narrowed to a floor,
-    // the way 0198, 0197, 0196 and 0191 were.
-    //
-    // Equality is a CURRENT claim, so exactly one file may hold it. WHOEVER
-    // APPLIES 0201 moves this block: narrow 0200 to a floor the same way, and
-    // let the new head take equality.
+    // Equality is a CURRENT claim and exactly one file may hold it;
+    // tests/migrations/0201-waitlist-exit-authority-contraction.test.ts does.
+    // Re-asserting equality here would be the mechanical sweep CLAUDE.md
+    // forbids, and would go red on the next apply.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);
   });
 
-  it("leaves NOTHING pending — repo and hosted are at PARITY at 0200", () => {
-    // The reconciliation's own assertion, and the reason this file changed after
-    // the apply. Before it, this branch was the ordinary MIGRATION-FIRST PENDING
-    // shape: repo one above hosted, `0200` named as the pending suffix. After
-    // it, the pending set is empty and the two numbers are the same one.
+  it("is no longer the applied head — 0201 is, and the chain is back at PARITY", () => {
+    // SUPERSEDED TWICE, AND BOTH TRANSITIONS ARE THE POINT.
     //
-    // 0201 is merely the next FREE number. It is not allocated, and nothing here
-    // claims it.
+    // This first asserted PARITY at 0200. Authoring 0201 returned the chain to
+    // MIGRATION-FIRST PENDING — repo one above hosted, `0201` the pending
+    // suffix. Applying 0201 on 2026-09-20 closed that gap the ordinary way, so
+    // the chain is at PARITY again, one migration higher.
+    //
+    // 0200 has now given up BOTH claims it once held: the repository maximum
+    // (to 0201's authoring) and the hosted head (to 0201's apply). What it
+    // keeps is the floor above, which no later apply can falsify.
     const state = migrationState();
     expect(state.pending_migrations).toEqual([]);
     expect(state.repo_equals_hosted).toBe(true);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.next_free_migration).toBe("0201");
+    expect(state.repo_migration_max).toBe("0201");
+    expect(state.hosted_migration_max).toBe("0201");
+    expect(state.next_free_migration).toBe("0202");
   });
 
   it("0199 is still carried, still frozen, and was NOT re-applied", () => {
