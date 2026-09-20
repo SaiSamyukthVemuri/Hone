@@ -506,11 +506,14 @@ accepting brand-new consultations, because each new client consumes capacity alr
 - Default OFF, exact-slug match only. Clearing the env var is the entire kill switch.
 - Release record: [releases/2026-08-19-willow-new-client-waitlist.md](./releases/2026-08-19-willow-new-client-waitlist.md).
 
-### WAIT-02B Stage A — the durable waitlist. ACTIVATED, and collecting.
+### WAIT-02B Stage A — the durable waitlist. ACTIVATED and collecting at every measured instant (2026-08-25 – 2026-09-15).
 
 **Implemented · merged (PR #629, `48f02389`) · DB applied (migration 0185) · deployed ·
-ACTIVATED for `willow-electrolysis` · production exercised.** Owner device acceptance is
-**still outstanding** and is not implied by any row below.
+WAS ACTIVATED for `willow-electrolysis` at every measured instant · production exercised
+(joining only).** ⚠️ **Dated evidence, not current configuration** — the bound is
+2026-08-25T22:27Z through 2026-09-15; see the paragraph in Stage B1 below for why committed rows
+cannot report the present. Owner device acceptance is **still outstanding** and is not implied by
+any row below.
 
 > ⚠️ **CORRECTED 2026-09-19 (WAIT-DOCS-RECON).** Every bullet in this subsection previously
 > described the durable path as deployed-but-dark, switched on for no studio at all. Production

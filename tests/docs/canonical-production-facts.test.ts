@@ -1041,19 +1041,47 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // present-tense verb, so "was durable-OFF" stays legal history.
       /\b(?:is|remains|stays)\b[^.\n]{0,60}\bdurable[-\u2011\s]?OFF\b/i,
       /\bNOT ENABLED anywhere\b/i,
+      /durable[^.\n]{0,60}\b0 rows\b/i,
+    ];
+
+    /**
+     * DISABLED-STATE CLAIMS, which are stale ONLY while undated.
+     *
+     * Codex #740, sixth round, and it is the same defect one last time. These
+     * shapes were in the list above, rejected unconditionally, in every scanned
+     * document, forever. But the committed rows bound an activation INTERVAL --
+     * 2026-08-25T22:27Z through 2026-09-15 -- and say nothing about what
+     * follows it. If an operator clears the allowlist tomorrow, "no studio was
+     * enabled as of <tomorrow>" becomes the truthful observation, every
+     * persisted row still exists, and CI would have forbidden recording it.
+     *
+     * A guard that forbids the opposite claim PINS THE POSTURE just as surely as
+     * one that mandates it. So these are rejected only as STANDING claims: carry
+     * a date, in either direction within the sentence, and the observation is
+     * admissible.
+     */
+    const DISABLED_STATE: RegExp[] = [
       // EVERY CONJUGATION, not one. Codex #740 P2: the list previously held
       // only "is enabled", so `known-limitations.md` sat green while its L25
       // table still said "No studio HAS BEEN enabled" three rows below the
-      // correction that contradicted it. A stale-wording guard that matches one
-      // tense is a guard against one typo, not against the claim.
+      // correction that contradicted it.
       /\bNo studio (?:is|has been|was|had been) enabled\b/i,
       /\bWillow is\s+\*{0,2}not\s+enabled\*{0,2}/i,
       // The activation-authorization claim, which is the same falsehood stated
       // as a gate rather than as a count.
       /activation\s+(?:—|-|--)?\s*is ungranted/i,
       /Stage B2[^.\n]{0,40}\b(?:has not been granted|remains blocked|is ungranted)\b/i,
-      /durable[^.\n]{0,60}\b0 rows\b/i,
     ];
+
+    /** A date anywhere in the surrounding sentence makes it an observation. */
+    const DATED = /\b(?:as of|as at|20\d\d-\d\d-\d\d)\b/i;
+    const sentenceAround = (text: string, at: number): string => {
+      const start = Math.max(0, text.lastIndexOf(".", at) + 1, text.lastIndexOf("\n", at) + 1);
+      const dot = text.indexOf(".", at);
+      const nl = text.indexOf("\n", at);
+      const ends = [dot, nl].filter((n) => n !== -1);
+      return text.slice(start, ends.length > 0 ? Math.min(...ends) : text.length);
+    };
     // (SCANNED_DOCS is defined once for the whole block, below.)
     // THE ROADMAP IS IN SCOPE FOR THIS RULE, THOUGH NOT FOR THE MIGRATION-NUMBER
     // RULES ABOVE. It is not a production-state document, so it is correctly
@@ -1068,6 +1096,18 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
           `${name} still describes the durable waitlist with a posture production has ` +
             `disproved. Correct it, or move the sentence into an auditable ` +
             `canonical-facts:ignore block if it is being preserved as history.`,
+        ).toBeNull();
+      }
+      for (const shape of DISABLED_STATE) {
+        const hit = [...prose.matchAll(new RegExp(shape.source, `${shape.flags}g`))].find(
+          (m) => !DATED.test(sentenceAround(prose, m.index ?? 0)),
+        );
+        expect(
+          hit?.[0] ?? null,
+          `${name} states a disabled posture as a STANDING claim. The committed rows bound the ` +
+            `activation to 2026-08-25T22:27Z - 2026-09-15 and say nothing about what follows, ` +
+            `so a later observation is legitimate -- DATE IT ("as of <date>") and it is ` +
+            `admissible. What is banned is the undated standing form.`,
         ).toBeNull();
       }
     }
