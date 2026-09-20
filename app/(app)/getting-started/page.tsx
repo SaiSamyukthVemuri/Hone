@@ -76,9 +76,12 @@ export default async function GettingStartedPage() {
     practitioner.display_name?.trim() || practitioner.email,
   );
   const checklist = buildGettingStarted(signals);
-  // Suppressed where the v2 wizard owns onboarding for this operator: two
-  // orders exist and only one governs a studio. See
-  // legacyChecklistMayOfferNextStep.
+  // The CTA needs BOTH gates to clear: the operator must be an OWNER (the
+  // sequence contains owner-only tasks — /settings/consent and three others
+  // refuse a practitioner outright), and the legacy checklist rather than the
+  // v2 wizard must own the sequence for this studio. A non-owner still sees
+  // the whole checklist below; only the directive is withheld.
+  // See legacyChecklistMayOfferNextStep.
   const nextStep = legacyChecklistMayOfferNextStep({
     isOwner: practitioner.role === "owner",
     onboardingV2Enabled: studio.onboarding_v2_enabled,
