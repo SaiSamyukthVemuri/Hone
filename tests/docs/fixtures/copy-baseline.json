@@ -262,6 +262,9 @@
       "Hone | Treatment Memory for Electrologists",
       "Hone | Treatment Memory for Electrologists",
       "Hone | Treatment Memory for Electrologists"
+    ],
+    "lib/rate-limit/public.ts": [
+      "Too many requests right now. Please wait a moment and try again."
     ]
   },
   "componentHoles": {

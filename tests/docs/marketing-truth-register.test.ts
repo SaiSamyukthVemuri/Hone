@@ -181,6 +181,10 @@ const COMPONENT_PROSE_BASELINE: readonly string[] = [
   // component's identity nor any scanned claim while appearing on screen after
   // submission.
   "app/actions/demo.ts",
+  // Not a copy module — a rate limiter — but `RATE_LIMIT_MESSAGE` is returned
+  // by that action and shown to visitors through `{status.message}`, so the
+  // wording is public copy wherever it happens to live.
+  "lib/rate-limit/public.ts",
 ];
 
 /**
@@ -571,6 +575,48 @@ describe("truth register: provenance is declared, not assumed", () => {
         "§0 must be re-derived against the new head and the provenance rows updated in the same change — " +
         "the classification no longer describes the code production runs",
     ).toEqual([]);
+  });
+
+  it("a branch that changes cited evidence re-derives the register in the same change", () => {
+    // Both existing comparisons look at PRODUCTION: checked-head to live head.
+    // Neither endpoint includes THIS branch, so a PR editing a watched evidence
+    // file — `lib/sessions/before-today.ts`, say — left `touched` empty and the
+    // documented invariant unenforced. The register's own rule is that a change
+    // touching cited evidence re-derives the affected rows in the same change,
+    // and that is checkable here: the diff of this branch against the head the
+    // register was built on.
+    if (!headObjectPresent()) {
+      expect(shallowClone(), "the declared head is absent and this clone is NOT shallow").toBe(true);
+      return;
+    }
+    const changedBetween = (from: string, to: string): string[] =>
+      git(["diff", "--no-renames", "--name-only", `${from}..${to}`])
+        .stdout.split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+
+    const touched = evidenceTouchedBetween(declaredHead(), "HEAD");
+    if (touched.length > 0) {
+      expect(
+        changedBetween(declaredHead(), "HEAD"),
+        `this branch changes ${touched.length} file(s) the register cites (${touched.join(", ")}) ` +
+          "without re-deriving it; §0 and the provenance rows must move in the same change",
+      ).toContain("docs/marketing/product-truth-register.md");
+    }
+
+    // NON-VACUITY, because the arm above is inert whenever a branch happens to
+    // touch no cited file — which is the common case and is exactly how a rule
+    // comes to look armed while testing nothing. This repo has been bitten by
+    // history-derived checks that silently never ran, so the machinery is proven
+    // on a range that DID move evidence rather than assumed from a quiet branch.
+    const before = "a1639a84e33c0aed618c41ab63f589f7cb33678a";
+    const after = "25c066abaaa8a64e16952371ec4db28c85904d2c";
+    if (!gitOk(["cat-file", "-e", `${before}^{commit}`])) return;
+    expect(
+      evidenceTouchedBetween(before, after).length,
+      "the branch-side comparison cannot see a change to cited evidence at all",
+    ).toBeGreaterThan(0);
+    expect(changedBetween(before, after).length).toBeGreaterThan(0);
   });
 
   it("the same comparison re-proves the register's own claim, and is not vacuous", () => {
@@ -1384,7 +1430,7 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     // silently, and the assertion is an upper bound so the list cannot grow.
     const prose = marketingComponentFiles().flatMap((f) => componentProseViolations(f));
     expect(new Set(prose.map((v) => v.file))).toEqual(new Set(COMPONENT_PROSE_BASELINE));
-    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(17);
+    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(18);
 
     // BY IDENTITY, like the page half. A count alone let one exception be
     // swapped for another. Identity catches a REWRITTEN exception; it cannot
@@ -1715,12 +1761,16 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     // drag WAIT-adjacent code into the marketing surface.
     for (const infrastructure of [
       "lib/supabase/server.ts",
-      "lib/rate-limit/public.ts",
       "lib/waitlist/delivery/policy.ts",
       "lib/email/send-refusals.ts",
     ]) {
       expect(files, `${infrastructure} is not a copy source`).not.toContain(infrastructure);
     }
+    // `lib/rate-limit/public.ts` is deliberately NOT on that list. It is a rate
+    // limiter, but `RATE_LIMIT_MESSAGE` is returned by the demo action and shown
+    // to visitors, so the wording is public copy wherever it happens to live. It
+    // is declared one FILE at a time, not by opening `lib/rate-limit/`.
+    expect(files).toContain("lib/rate-limit/public.ts");
     // `app/actions/demo.ts` is NOT in that list any more: a component renders
     // what it returns, so it authors public copy. The bound still holds — it is
     // reached, and the modules IT imports are not.
@@ -1982,7 +2032,6 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     // reaching the action does NOT pull in the infrastructure it imports.
     for (const infrastructure of [
       "lib/supabase/server.ts",
-      "lib/rate-limit/public.ts",
       "lib/waitlist/delivery/policy.ts",
       "lib/email/send-refusals.ts",
     ]) {

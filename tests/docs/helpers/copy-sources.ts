@@ -118,6 +118,21 @@ const COPY_MODULE_DIRS = [
   "app/actions/",
 ];
 
+/**
+ * Individual modules outside those directories that still author rendered copy.
+ *
+ * NAMED ONE BY ONE, like `POLICY_SOURCES`, because the alternative is opening a
+ * whole infrastructure tree. `lib/rate-limit/public.ts` is a rate limiter, not a
+ * copy module — but `RATE_LIMIT_MESSAGE` is returned by the demo action and
+ * shown to visitors through `DemoForm`'s `{status.message}`, so changing that
+ * constant to a forbidden claim reached no guard at all.
+ *
+ * Naming the file rather than the directory keeps the bound: `lib/rate-limit/`
+ * is not a copy directory, so this module's own `.ts` imports are still not
+ * followed.
+ */
+export const DECLARED_COPY_PRODUCERS: readonly string[] = ["lib/rate-limit/public.ts"];
+
 /** Marketing route files, from the MARKETING_PAGES registry. */
 export function pageCopySources(): string[] {
   return publicRouteFiles().filter((f) => !POLICY_SOURCES.includes(f));
@@ -231,6 +246,9 @@ export function marketingComponentFiles(): string[] {
   // and counting their prose as a component-prose VIOLATION is a category
   // error — authoring copy there is the law, not a breach of it. They are
   // declared, read and judged as modules in their own right.
+  for (const producer of DECLARED_COPY_PRODUCERS) {
+    if (existsSync(join(REPO_ROOT, producer))) out.add(producer);
+  }
   for (const module of CANONICAL_COPY_MODULES) out.delete(module);
   return [...out].sort();
 }
