@@ -163,7 +163,30 @@ for (const surface of SURFACES) {
       await gate.release();
     });
 
-    test("a second activation cannot dispatch a second logout", async ({ page }) => {
+    test("only one logout ever reaches the wire", async ({ page }) => {
+      // WHAT THIS DOES AND DOES NOT PROVE — established by mutation, because
+      // the first version of this test claimed the wrong thing.
+      //
+      // It was written as "a second activation cannot dispatch a second
+      // logout", with a failure message blaming the `disabled` attribute. Then
+      // `disabled={pending}` was replaced with `disabled={false}` and the test
+      // stayed GREEN. A diagnostic run showed why: with the control fully
+      // enabled, a second pointer click lands with no error AND a raw
+      // `dispatchEvent(new MouseEvent("click"))` reaches the button — and the
+      // POST count still stays at 1. React serialises the form's action; a
+      // second submission while one is in flight simply does not dispatch.
+      //
+      // So the single-dispatch guarantee is REACT'S, not this control's, and a
+      // test that credited it to `disabled` was measuring the framework while
+      // naming the product. What it genuinely guards is the regression that
+      // would take the guarantee away: replacing `<form action={signOut}>` with
+      // an onClick + fetch, or growing a second submit path into this form.
+      //
+      // The `disabled` attribute is proved where it is actually observable —
+      // `toBeDisabled()` in the acknowledgement test above, which DOES red
+      // under that mutation, on both surfaces. It is the interactive and
+      // visible guard: a keyboard user cannot re-activate the control and it
+      // no longer reads as pressable. It is not the wire guard.
       await loginAsOwner(page, seed);
       await page.goto("/dashboard");
 
@@ -175,19 +198,24 @@ for (const surface of SURFACES) {
         timeout: 5_000,
       });
 
-      // Press it again, hard. `force` skips actionability so Playwright will
-      // genuinely dispatch at a disabled control rather than politely waiting
-      // for it to become enabled — which would make this test pass by never
-      // pressing anything.
+      // Press it again, hard, and then again past the pointer layer entirely.
+      // `force` skips actionability so Playwright dispatches at the disabled
+      // control instead of politely waiting for it to become enabled — which
+      // would let this test pass by never pressing anything at all.
       await panel
         .locator("[data-signout-pending]")
         .click({ force: true, noWaitAfter: true })
         .catch(() => {});
+      await page.evaluate(() => {
+        document
+          .querySelector("[data-signout-pending]")
+          ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
       await page.waitForTimeout(400);
 
       expect(
         gate.state.held,
-        "a second logout reached the wire — the disable is advisory, not a guard",
+        "a second logout reached the wire — the submit path no longer serialises",
       ).toBe(1);
 
       await gate.release();
