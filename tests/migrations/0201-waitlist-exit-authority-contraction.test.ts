@@ -53,21 +53,37 @@ describe("0201 position in the chain", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("is AUTHORED and PENDING — it is NOT applied to production", () => {
-    // THE ORDINARY MIGRATION-FIRST SHAPE, and the honest one for this branch.
-    // 0200 keeps the hosted-head claim because 0200 is what production has run;
-    // this file claims only that it is the repository head and awaits its own
-    // apply authorization.
+  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+    // THE HAND-OFF THIS FILE'S PREVIOUS REVISION DEMANDED, now performed.
     //
-    // WHOEVER APPLIES 0201 MOVES THE OTHER BLOCK: narrow 0200 to a floor the way
-    // 0199, 0198, 0197, 0196 and 0191 were narrowed, and let this file take the
-    // equality. Re-asserting equality here before the apply would be a claim
-    // about production that nobody has made.
+    // It previously asserted the MIGRATION-FIRST PENDING shape and said
+    // "WHOEVER APPLIES 0201 MOVES THE OTHER BLOCK: narrow 0200 to a floor the
+    // way 0199, 0198, 0197, 0196 and 0191 were narrowed, and let this file take
+    // the equality." 0201 was applied on 2026-09-20 under explicit per-change
+    // owner authorization, from the reviewed PR #747 head
+    // 1f1f582314a6aa63b503e4d3850ae52e304138f5, with the dry run and the apply
+    // each naming exactly one file and NO --include-all. 0200 has been narrowed
+    // to a floor accordingly.
+    //
+    // EQUALITY IS A CURRENT CLAIM, so exactly one file may hold it, and this is
+    // now that file. WHOEVER APPLIES 0202 MOVES THIS BLOCK: narrow 0201 to a
+    // floor the same way and let the new head take equality. Leaving it here
+    // would go red on that apply, which is the whole reason the claim travels.
     const state = migrationState();
-    expect(state.pending_migrations).toEqual([VERSION]);
+    expect(state.hosted_migration_max).toBe(VERSION);
     expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.hosted_migration_max).toBe("0200");
-    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.next_free_migration).toBe("0202");
+  });
+
+  it("the applied bytes are the authorized bytes", () => {
+    // The apply was authorized against an exact sha256 and the file must still
+    // hash to it. An applied migration is FROZEN from here on: any later change
+    // to these bytes is a change to something production has already run.
+    expect(createHash("sha256").update(SQL_BYTES).digest("hex")).toBe(
+      "1567610577e84cb717c77cf8451d57a97150f8fc169de33df2d48370be5ef82f",
+    );
   });
 
   it("does not claim the next free number for anything", () => {
