@@ -1098,11 +1098,46 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         /\bthen\s+explicitly\s+enable\s+durable\b/i,
         /\b(?:before|prior to)\s+Willow\s+migration\b/i,
         /\bsilently\s+durable-enabling\s+Willow\b/i,
+        // Codex #740, eighth round: the same instruction phrased as a CUTOVER
+        // rather than an enable. Five active sections still sequenced work
+        // "before" or "only then authorize" a cutover performed in August.
+        /\b(?:before|prior to)\s+(?:Willow\s+)?durable\s+cutover\b/i,
+        /\bonly then\s+authoriz\w*[^.\n]{0,40}\bcutover\b/i,
+        /\bauthorize\s+Willow\s+durable\s+cutover\b/i,
       ]) {
         expect(
           prose.match(shape)?.[0] ?? null,
           `${name} carries a pre-cutover Willow instruction. The durable enable happened on ` +
             `or before 2026-08-25; what remains is retrospective reconciliation.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("no doc presents 0199 as claimable — it is applied and frozen", () => {
+    // THE ONE FINDING IN THIS FAMILY WITH A CONCRETE HAZARD. An allocator
+    // reading "0199 is unclaimed" from an ACTIVE allocation section would author
+    // against a number already applied to production and frozen. Codex #740
+    // found it in two such sections -- "Current allocation" and "Current
+    // assigned WIP" -- after four earlier rounds had corrected the same claim
+    // elsewhere in the same file.
+    //
+    // Scoped to CLAIMABILITY, not to the literal. Apply records, checksums and
+    // historical rows must keep saying 0199 freely; what is banned is calling it
+    // free.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /`?0199`?[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:still\s+)?(?:unclaimed|unallocated|not claimed|not allocated|available|free)\b/i,
+        /\bnext[- ]free[^.\n]{0,30}\b0199\b/i,
+        /\bnext free (?:number|migration)[^.\n]{0,25}\b0199\b/i,
+        /\b0199\b[^.\n]{0,30}\bclaimable\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} presents 0199 as claimable. It was APPLIED to production on 2026-09-18 and ` +
+            `is frozen; the next free number is 0200. An allocator acting on this collides ` +
+            `with a live migration.`,
         ).toBeNull();
       }
     }
