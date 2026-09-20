@@ -1211,6 +1211,89 @@ describe("negative controls: the guard bites", () => {
     ).toContain("unsanctioned");
   });
 
+  it("reads a custom component's props, and an intrinsic element's technical ones", () => {
+    // The attribute allow-list is an HTML/SVG vocabulary, and those names only
+    // mean what they mean on an intrinsic element. Excluding them globally
+    // dropped real copy: `name` is technical on <input> and is the sentence a
+    // visitor reads on <Testimonial name="…" />.
+    expect(
+      collectClaims(
+        `export const A = () => <Testimonial name="Every change is tracked" />;`,
+        "sections.tsx",
+      ),
+      "a custom component's prop may be copy and must be scanned",
+    ).toContain("Every change is tracked");
+
+    // NEGATIVE: the same name on an intrinsic element stays technical.
+    expect(
+      collectClaims(`export const A = () => <input name="email-field" />;`, "sections.tsx"),
+    ).toEqual([]);
+    expect(
+      collectClaims(`export const A = () => <path d="M0 0L1 1" role="presentation" />;`, "sections.tsx"),
+    ).toEqual([]);
+
+    // NEGATIVE: framework and resource plumbing stays technical EVERYWHERE, so
+    // widening this did not turn every forwarded prop into a claim.
+    expect(
+      collectClaims(
+        `export const A = () => <Card className="p-4" href="/pricing" as="section" />;`,
+        "sections.tsx",
+      ),
+    ).toEqual([]);
+
+    // And the element-kind test resolves a dotted tag as a COMPONENT, so its
+    // props are read rather than silently dropped.
+    expect(
+      collectClaims(
+        `export const A = () => <Layout.Quote name="Every change is tracked" />;`,
+        "sections.tsx",
+      ),
+    ).toContain("Every change is tracked");
+  });
+
+  it("does not fuse a block descendant into the container's loose text", () => {
+    // `bearsText` made a container with ANY direct text swallow its whole
+    // subtree. The paragraph below is independently rendered, and fusing it with
+    // "Intro" invents a sentence nobody wrote — then classifies the invention.
+    // If the paragraph is a SANCTIONED wording, the fused claim reads as
+    // unsanctioned and blocks valid copy, which is the worse direction to fail.
+    const fused = `export const A = () => <div>Intro<p>Trace it with an append-only edit history.</p></div>;`;
+    const claims = collectClaims(fused, "sections.tsx");
+    expect(claims).toContain("Intro");
+    expect(claims).toContain("Trace it with an append-only edit history.");
+    expect(
+      claims.some((c) => /Intro\s*Trace/.test(c)),
+      "loose text and a block descendant were concatenated into one claim",
+    ).toBe(false);
+
+    // NEGATIVE 1: inline markup inside authored text is still ONE sentence.
+    // This is the case the whole sentence-assembly rule exists for.
+    expect(
+      collectClaims(
+        `export const A = () => <div>Every record has <strong>an append-only edit history</strong>.</div>;`,
+        "sections.tsx",
+      ),
+    ).toContain("Every record has an append-only edit history.");
+
+    // NEGATIVE 2: an unknown COMPONENT beside text stays dissolved. Only an
+    // intrinsic non-phrasing tag counts as a known block — a component could be
+    // inline markup and no tag list can know, which is why `bearsText` exists.
+    expect(
+      collectClaims(
+        `export const A = () => <div>Every record has <Emph>an append-only edit history</Emph>.</div>;`,
+        "sections.tsx",
+      ),
+    ).toContain("Every record has an append-only edit history.");
+
+    // NEGATIVE 3: a phrasing-only container is unaffected by any of this.
+    expect(
+      collectClaims(
+        `export const A = () => <p>Every record has <em>an append-only edit history</em>.</p>;`,
+        "sections.tsx",
+      ),
+    ).toContain("Every record has an append-only edit history.");
+  });
+
   it("splits a group whose alternatives carry an optional plural", () => {
     // Codex, at 3d9c93f4. Refusing any alternative with a `?` in it threw away
     // the whole N1 verb group `(keeps?|retains?|holds?|preserves?|has|have)`,

@@ -269,6 +269,51 @@ const NON_COPY_ATTRIBUTES = new Set(
 );
 
 /**
+ * The subset that is technical on ANY element, custom components included.
+ *
+ * The list above is an HTML/SVG vocabulary, and those names only mean what they
+ * mean on an intrinsic element. `name` is the case that proved it: technical on
+ * `<input>`, and on `<Testimonial name="Every change is tracked" />` it is the
+ * copy a visitor reads — excluded globally, that claim shipped with the guard
+ * green.
+ *
+ * What survives here is framework and resource plumbing, which a component prop
+ * of the same name is overwhelmingly likely to be forwarding rather than
+ * rendering as a sentence. Everything HTML-specific — `name`, `role`, `path`,
+ * `color`, `width`, the SVG geometry, the form attributes — is deliberately NOT
+ * here, so on a custom component it is read as copy.
+ */
+const NON_COPY_ATTRIBUTES_ANY_ELEMENT = new Set(
+  [
+    "className", "class", "style", "id", "key", "ref", "htmlFor", "tabIndex",
+    "href", "src", "srcSet", "target", "rel", "as", "type", "loading",
+    "decoding", "fetchPriority", "crossOrigin", "referrerPolicy", "xmlns",
+    "viewBox",
+  ].map((a) => a.toLowerCase()),
+);
+
+/**
+ * Is the element this attribute sits on an intrinsic DOM element?
+ *
+ * JSX settles this by case: a lowercase tag is `div`/`input`/`path`, a
+ * capitalised one is a component, and a dotted one (`Foo.Bar`) is always a
+ * component. Anything this cannot resolve is treated as a COMPONENT, so the
+ * narrower universal list applies and the attribute is read rather than dropped
+ * — the failure that matters is silently discarding copy.
+ */
+function attributeOwnerIsIntrinsic(attr: ts.JsxAttribute): boolean {
+  const owner = attr.parent?.parent;
+  if (
+    !owner ||
+    !(ts.isJsxOpeningElement(owner) || ts.isJsxSelfClosingElement(owner))
+  ) {
+    return false;
+  }
+  const tag = owner.tagName;
+  return ts.isIdentifier(tag) && /^[a-z]/.test(tag.text);
+}
+
+/**
  * The JSX attribute an expression ultimately belongs to, however deeply nested.
  *
  * Checking only the DIRECT parent was not enough. `className={active ? "append-"
@@ -317,7 +362,10 @@ function insideNonCopyAttribute(node: ts.Node): boolean {
 function isNonCopyAttribute(attr: ts.JsxAttribute): boolean {
   const name = ts.isIdentifier(attr.name) ? attr.name.text : attr.name.getText();
   const lowered = name.toLowerCase();
-  return lowered.startsWith("data-") || NON_COPY_ATTRIBUTES.has(lowered);
+  if (lowered.startsWith("data-")) return true;
+  if (NON_COPY_ATTRIBUTES_ANY_ELEMENT.has(lowered)) return true;
+  // The HTML/SVG vocabulary applies only where those names are HTML/SVG.
+  return attributeOwnerIsIntrinsic(attr) && NON_COPY_ATTRIBUTES.has(lowered);
 }
 
 type JsxContainer = ts.JsxElement | ts.JsxFragment | ts.JsxSelfClosingElement;
@@ -390,8 +438,34 @@ export function isSentenceContainer(node: JsxContainer): boolean {
   return (
     (tag !== null && PHRASING_ONLY_CONTAINERS.has(tag)) ||
     subtreeIsAllPhrasing(node) ||
-    bearsText
+    (bearsText && !hasKnownBlockChild(node))
   );
+}
+
+/**
+ * Does a child of this container definitely start a new block?
+ *
+ * `bearsText` alone was too strong. It exists to catch a COMPONENT used as
+ * inline markup inside authored text — which no tag list can know — but it also
+ * swallowed children that HTML already settles:
+ *
+ *   <div>Intro<p>Trace … with an append-only edit history.</p></div>
+ *
+ * fused into "IntroTrace … edit history.", a sentence nobody wrote. If the
+ * paragraph is a sanctioned wording, the fused claim is classified unsanctioned
+ * and blocks valid copy — a false positive, and a worse failure than the misses
+ * this scan usually hunts, because it stops true sentences shipping.
+ *
+ * Only an INTRINSIC non-phrasing tag counts. A capitalised component stays
+ * unknown and is still dissolved when the container bears text, which is the
+ * behaviour `bearsText` was added for and which the tests hold open.
+ */
+function hasKnownBlockChild(node: JsxContainer): boolean {
+  return jsxChildren(node).some((child) => {
+    if (!isJsxContainer(child)) return false;
+    const tag = tagOf(child);
+    return tag !== null && /^[a-z]/.test(tag) && !PHRASING_CONTENT.has(tag);
+  });
 }
 
 function subtreeIsAllPhrasing(node: JsxContainer): boolean {
