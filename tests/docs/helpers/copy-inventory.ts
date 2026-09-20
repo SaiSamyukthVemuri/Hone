@@ -93,10 +93,27 @@ export const DECLARED_COPY_DIRS: readonly string[] = [
  * `lib/rate-limit/public.ts` is a rate limiter, but `RATE_LIMIT_MESSAGE` is
  * returned by the demo action and shown to visitors.
  */
-export const DECLARED_COPY_FILES: readonly string[] = [
-  "app/layout.tsx",
-  "lib/rate-limit/public.ts",
-];
+export const DECLARED_COPY_FILES: readonly string[] = ["lib/rate-limit/public.ts"];
+
+/**
+ * Next's FILE-CONVENTION routes at the app root.
+ *
+ * Wired by the framework from their filename, so no import names them and no
+ * registry lists them. `app/opengraph-image.tsx` exports
+ * `alt = "Hone. Treatment memory for electrologists…"` and renders branded copy
+ * into the card every social preview shows — public marketing text that reached
+ * neither the inventory nor judgement. `app/layout.tsx` is the same convention.
+ *
+ * Non-recursive on purpose: this is the app ROOT, so the authenticated
+ * application under `app/(app)/` stays out.
+ */
+const appRootFiles = (): string[] => {
+  const abs = join(REPO_ROOT, "app");
+  if (!existsSync(abs)) return [];
+  return readdirSync(abs)
+    .filter((name) => /\.tsx?$/.test(name))
+    .map((name) => `app/${name}`);
+};
 
 /** Marketing route files, from the MARKETING_PAGES registry. */
 export function pageCopySources(): string[] {
@@ -141,6 +158,7 @@ export function frozenSurface(): string[] {
     ...pageCopySources(),
     ...POLICY_SOURCES,
     ...DECLARED_COPY_FILES,
+    ...appRootFiles(),
   ]);
   for (const dir of DECLARED_COPY_DIRS) for (const f of filesUnder(dir)) out.add(f);
   for (const module of CANONICAL_COPY_MODULES) out.delete(module);
@@ -454,21 +472,46 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
   const out: CopyViolation[] = [];
   const visit = (n: ts.Node) => {
     if (ts.isJsxElement(n) || ts.isJsxFragment(n)) {
+      // THE TEXT FLOW, not just the direct children. `<p>Every
+      // <strong>{NOUN}</strong> is tracked</p>` puts the words on the outer
+      // element and the hole on the inner one, so a direct-children test sees a
+      // sentence with no hole and a hole with no sentence.
+      //
+      // A "flow" child is text, a hole, or a wrapper whose ENTIRE content is
+      // text and holes. That last clause is doing the work a tag allow-list
+      // would otherwise do, without naming a single tag: an element that
+      // contains other ELEMENTS starts a structure of its own, and its words
+      // belong to that rather than to this sentence. Measured, because the
+      // whole-subtree reading flagged 158 places where a heading and an
+      // unrelated list simply shared a container.
       let words = 0;
       const holes: ts.JsxExpression[] = [];
+      const countText = (t: string) => {
+        words += t.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length;
+      };
+      const isHole = (c: ts.Node): c is ts.JsxExpression =>
+        ts.isJsxExpression(c) && c.expression !== undefined && !isProvenStatic(c.expression);
       for (const child of n.children) {
-        if (ts.isJsxText(child)) {
-          words += child.text
-            .trim()
-            .split(/\s+/)
-            .filter((w) => /[A-Za-z]/.test(w)).length;
-        }
-        if (
-          ts.isJsxExpression(child) &&
-          child.expression &&
-          !isProvenStatic(child.expression)
-        ) {
-          holes.push(child);
+        if (ts.isJsxText(child)) countText(child.text);
+        if (isHole(child)) holes.push(child);
+        if (ts.isJsxElement(child)) {
+          const inner = child.children;
+          const carriesOnlyFlow = inner.every((c) => ts.isJsxText(c) || ts.isJsxExpression(c));
+          if (carriesOnlyFlow) {
+            // HOLES from a leaf wrapper, but not its WORDS. The asymmetry is
+            // what separates a sentence from a layout container without naming
+            // a single tag:
+            //
+            //   <p>Every <strong>{NOUN}</strong> is tracked</p>   refused
+            //   <div><h2>Pricing</h2>{PLANS.map(…)}</div>         allowed
+            //
+            // The first has authored words on the element ITSELF, so the hole
+            // sits inside its sentence. The second has none — the words belong
+            // to the heading, and the list beside it is a different thing. A
+            // symmetric reading refused both, and the second is ordinary markup
+            // that new work would hit constantly.
+            for (const c of inner) if (isHole(c)) holes.push(c);
+          }
         }
       }
       if (words > 0 && holes.length > 0) {
@@ -581,6 +624,26 @@ export function undeclaredCopyImportViolations(
     // value instead of the NAME of the attribute needs no such knowledge.
     if (ts.isJsxAttribute(n) && n.initializer && ts.isJsxExpression(n.initializer)) {
       if (n.initializer.expression) check(n.initializer.expression, n);
+    }
+    // TAG position — `<Hero />`. The visitor-facing import need not be a value
+    // at all: an imported component renders whatever text it holds, and its
+    // module is outside the declared surface, so the route carries no text and
+    // nothing judges the component. Same escape, one syntactic position over.
+    if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
+      const root = n.tagName.getText().split(".")[0];
+      const from = origin.get(root);
+      if (from !== undefined && !known.has(from)) {
+        const key = `${lineOf(sf, n)}:${root}:${from}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push({
+            file,
+            line: lineOf(sf, n),
+            rule: "copy/undeclared-copy-import",
+            detail: `<${root}> from ${from}`,
+          });
+        }
+      }
     }
     ts.forEachChild(n, visit);
   };

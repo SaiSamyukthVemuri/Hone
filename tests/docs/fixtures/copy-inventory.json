@@ -131,6 +131,10 @@
       "We'll walk through the Before Today briefing and how your charting carries forward, and reply within one business day.",
       "Your charting, brought forward when it matters."
     ],
+    "app/global-error.tsx": [
+      "Hone could not finish loading this page. This is a problem on our side, not something you did.",
+      "Nothing was intentionally changed by this screen. If you were part-way through saving something, open the page again and check that it saved before you rely on it."
+    ],
     "app/layout.tsx": [
       "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
       "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
@@ -138,6 +142,11 @@
       "Hone | Treatment Memory for Electrologists",
       "Hone | Treatment Memory for Electrologists",
       "Hone | Treatment Memory for Electrologists"
+    ],
+    "app/opengraph-image.tsx": [
+      "Before Today · Charting · Procedure records · Lot traceability",
+      "Hone. Treatment memory for electrologists: before-today prep, charting, and procedure records.",
+      "Remember what happened last time."
     ],
     "app/page.tsx": [
       "A calendar tells you who is coming. When a returning client sits down, the details that shape the treatment live somewhere else, or nowhere. Hone carries them from one appointment into the next.",
@@ -552,6 +561,11 @@
     "copy/incomplete-claim app/_components/PublicPolicyReminderCard.tsx {studioName}",
     "copy/incomplete-claim app/_components/marketing/SiteFooter.tsx {POSITIONING.category}",
     "copy/incomplete-claim app/_components/marketing/SiteFooter.tsx {year}",
+    "copy/incomplete-claim app/_components/marketing/article.tsx {CONTACT_EMAIL}",
+    "copy/incomplete-claim app/_components/marketing/article.tsx {article.author}",
+    "copy/incomplete-claim app/_components/marketing/article.tsx {fmt(article.dateModified)}",
+    "copy/incomplete-claim app/_components/marketing/article.tsx {fmt(article.datePublished)}",
+    "copy/incomplete-claim app/global-error.tsx {reference}",
     "copy/incomplete-claim app/page.tsx {plan.seats}",
     "copy/incomplete-claim app/pricing/page.tsx {plan.seats}",
     "copy/incomplete-claim app/resources/page.tsx {RESOURCE_AUTHOR}",

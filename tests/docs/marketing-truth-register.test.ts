@@ -190,7 +190,10 @@ describe("R1. the surface is DECLARED, not discovered", () => {
     // `.ts` as well as `.tsx`, then layouts Next applies without an import, then
     // re-exports. A directory does not have that question.
     expect(DECLARED_COPY_DIRS).toEqual(["app/_components", "app/actions", "app/_fonts"]);
-    expect(DECLARED_COPY_FILES).toEqual(["app/layout.tsx", "lib/rate-limit/public.ts"]);
+    // `app/layout.tsx` is no longer listed here: it is an app-root CONVENTION
+    // route and arrives with the rest of them, so naming it twice would let the
+    // two disagree.
+    expect(DECLARED_COPY_FILES).toEqual(["lib/rate-limit/public.ts"]);
     expect(CANONICAL_COPY_MODULES.length).toBe(3);
     expect(POLICY_SOURCES).toEqual(["app/privacy/page.tsx", "app/terms/page.tsx"]);
   });
@@ -886,11 +889,21 @@ describe("R4. REFUSAL: shapes that put words on the page without leaving text", 
     // not contain, so it is declared rather than tolerated silently.
     const recorded = currentExceptions().map((v) => `${v.rule} ${v.file} ${v.detail}`).sort();
     expect(recorded).toEqual(INVENTORY.exceptions);
-    expect(recorded.length, "refusals grew").toBeLessThanOrEqual(8);
+    // 13, and the number is the point rather than an embarrassment. Twelve are
+    // pre-existing sentences with a value in the middle — `© {year} Hone.`,
+    // `Published {date}` — which the owner ruling says are not to be moved.
+    // Declaring them makes the cost of that ruling visible and shrink-only,
+    // which is what the predecessor's silent filtering did not.
+    expect(recorded.length, "refusals grew").toBeLessThanOrEqual(13);
     // Every rule that can produce one is represented in the recorded set, or a
     // rule could be switched off without the count noticing.
     expect(new Set(recorded.map((r) => r.split(" ")[0]))).toEqual(
       new Set(["copy/dynamic-text-attribute", "copy/incomplete-claim"]),
+    );
+    // The convention routes are covered, which is what carries the social card.
+    expect(FROZEN).toContain("app/opengraph-image.tsx");
+    expect(Object.values(INVENTORY.inventory).flat()).toContain(
+      "Hone. Treatment memory for electrologists: before-today prep, charting, and procedure records.",
     );
   });
 });
@@ -1288,6 +1301,89 @@ describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catc
     expect(() => assertDeclaredExist(["lib/rate-limit/moved-away.ts"])).toThrow(
       /no longer exist/,
     );
+  });
+
+  // --- P1: a hole one level below the words ---------------------------------
+
+  it("REFUSED — a hole nested inside inline markup within a sentence", () => {
+    // `<p>Every <strong>{NOUN}</strong> is tracked</p>` puts the words on the
+    // outer element and the hole on the inner one, so a direct-children test saw
+    // a sentence with no hole and a hole with no sentence.
+    const incomplete = (body: string) =>
+      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
+    expect(incomplete("<p>Every <strong>{NOUN}</strong> is tracked</p>")).toEqual([
+      "copy/incomplete-claim",
+    ]);
+    expect(incomplete('<p>Every <a href="/x">{NOUN}</a> is tracked</p>')).toEqual([
+      "copy/incomplete-claim",
+    ]);
+    expect(incomplete("<p>Every <em>change</em> is {STATE}</p>")).toEqual([
+      "copy/incomplete-claim",
+    ]);
+  });
+
+  it("ACCEPTED — a heading and an unrelated list simply sharing a container", () => {
+    // A wrapper that contains other ELEMENTS starts a structure of its own, so
+    // its words are not part of this sentence. Measured: reading the whole
+    // subtree instead flagged 158 such places, which is a census rather than a
+    // guard.
+    const incomplete = (body: string) =>
+      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
+    expect(incomplete("<div><h2>Pricing</h2>{PLANS.map((p) => <Card key={p.id} />)}</div>")).toEqual([]);
+
+    expect(incomplete("<section><p>A complete sentence here.</p><div>{widget}</div></section>")).toEqual([]);
+  });
+
+  // --- P1: an imported component used as a TAG ------------------------------
+
+  it("REFUSED — a component imported from an undeclared module and rendered", () => {
+    // The visitor-facing import need not be a value at all: `<Hero />` renders
+    // whatever text that component holds, its module is outside the declared
+    // surface, and the route itself carries no text.
+    const escape = (body: string, spec = "@/components/hero") =>
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        `import { Hero } from "${spec}";\nexport const A = () => ${body};\n`,
+      ).map((v) => v.rule);
+    expect(escape("<Hero />")).toEqual(["copy/undeclared-copy-import"]);
+    expect(escape("<Hero>child</Hero>")).toEqual(["copy/undeclared-copy-import"]);
+    // A namespaced tag is the same binding one dot along.
+    expect(escape("<Hero.Title />")).toEqual(["copy/undeclared-copy-import"]);
+  });
+
+  it("ACCEPTED — a declared component, and a third-party tag", () => {
+    const tag = (spec: string) =>
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/P.tsx",
+        DECLARED,
+        `import { T } from "${spec}";\nexport const A = () => <T />;\n`,
+      );
+    expect(tag("@/app/_components/marketing/primitives")).toEqual([]);
+    // Bare specifiers are packages, not first-party copy, and resolve to no path.
+    expect(tag("next/link")).toEqual([]);
+    expect(tag("react")).toEqual([]);
+  });
+
+  // --- P1: framework convention routes --------------------------------------
+
+  it("the app-root convention routes are declared, and not the authenticated app", () => {
+    // Next wires these from their FILENAME, so no import names them and no
+    // registry lists them. `app/opengraph-image.tsx` renders the card every
+    // social preview shows.
+    for (const convention of [
+      "app/opengraph-image.tsx",
+      "app/apple-icon.tsx",
+      "app/icon.tsx",
+      "app/global-error.tsx",
+      "app/robots.ts",
+      "app/sitemap.ts",
+      "app/layout.tsx",
+    ]) {
+      expect(FROZEN, `${convention} is a public convention route`).toContain(convention);
+    }
+    // Non-recursive: the authenticated application stays out.
+    expect(FROZEN.filter((f) => f.startsWith("app/(app)/"))).toEqual([]);
   });
 
   it("the prose heuristic still separates copy from class names", () => {
