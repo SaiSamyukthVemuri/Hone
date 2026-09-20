@@ -1090,8 +1090,14 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // capability. An over-broad guard does not merely annoy; it taxes
       // unrelated work with a failure whose message names the wrong subject.
       // Punctuation support is kept; WAIT context is now required.
-      /(?:allowlist|WAIT-01|durable|waitlist|studio)[^.\n]{0,70}\bcurrently none\b/i,
-      /\bcurrently none\b[^.\n]{0,70}(?:allowlist|WAIT-01|durable|waitlist|studio)/i,
+      //
+      // AND `studio` IS NOT WAIT CONTEXT. A second pass by Codex showed the
+      // token was still too generic -- "The studio has unresolved payment
+      // alerts; currently none remain" matches within 70 characters and fails a
+      // WAIT test about an absence of alerts. Only allowlist / WAIT-01 /
+      // durable / waitlist count.
+      /(?:allowlist|WAIT-01|durable|waitlist)[^.\n]{0,70}\bcurrently none\b/i,
+      /\bcurrently none\b[^.\n]{0,70}(?:allowlist|WAIT-01|durable|waitlist)/i,
       /(?:allowlist|WAIT-01|durable|waitlist)[^.\n]{0,70}\bthere are\s+(?:currently\s+)?none\b/i,
       /\bthere are\s+(?:currently\s+)?none\b[^.\n]{0,70}(?:allowlist|WAIT-01|durable|waitlist)/i,
       /\ballowlist\s+names\s+(?:none|no studio)\b/i,
