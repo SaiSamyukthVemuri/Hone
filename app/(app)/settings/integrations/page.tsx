@@ -37,7 +37,7 @@ export default async function IntegrationsSettingsPage() {
   // 0191's owner policy and column grant are what decide whether a row comes
   // back and which columns it carries. Handing this a service-role client would
   // move that decision out of the database and into this page.
-  const [google, smsSender] = await Promise.all([
+  const [google, smsRead] = await Promise.all([
     googleEnabled
       ? getOwnConnectionReadiness(studio.id, practitioner.id)
       : Promise.resolve({ metadata: null, readiness: "disconnected" as const }),
@@ -88,7 +88,7 @@ export default async function IntegrationsSettingsPage() {
           whether their studio has a sender at all. This card is that view and
           nothing more: it starts no provisioning, constructs no provider, and
           offers no control. */}
-      <SmsSenderStatusCard view={presentSenderStatus(smsSender)} />
+      <SmsSenderStatusCard view={presentSenderStatus(smsRead)} />
     </section>
   );
 }

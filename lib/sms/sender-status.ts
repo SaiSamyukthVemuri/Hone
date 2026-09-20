@@ -151,9 +151,16 @@ export const RECOVERY_ROUTE_BY_ERROR_CODE: Record<string, RecoveryRoute> = {
   provider_network: "retry",
   provider_unavailable: "retry",
   provider_rate_limited: "retry",
-  // The chosen number is gone, or search found none. A new choice is needed,
-  // which from `error` means a fresh provisioning attempt, never a reset.
-  number_no_longer_available: "retry",
+  // THE CHOSEN NUMBER IS GONE, AND THIS ATTEMPT CANNOT OUTLIVE IT.
+  // `provisioning.ts` fails this one `retryable: false` on purpose — "The owner
+  // chose THAT number. We do not quietly hand them another one." The claim's
+  // phone number is write-once, so retrying this attempt can only ask about the
+  // same vanished number again. The exit is to give the attempt up and choose
+  // afresh, which is `releasing`, not `provisioning`.
+  number_no_longer_available: "release_only",
+  // Search found nothing for the requested country/area code. No number was
+  // ever bound, so nothing is stranded and a later search genuinely can
+  // succeed — this one really is a retry.
   no_numbers_available: "retry",
   // Hone is not wired to a provider, or is not authorized against it. An
   // operator cannot fix either from this screen.
@@ -166,17 +173,42 @@ export const RECOVERY_ROUTE_BY_ERROR_CODE: Record<string, RecoveryRoute> = {
   provider_response_unparseable: "support",
   provider_rejected: "support",
   provider_error_unspecified: "support",
-  // Bookkeeping failures around the claim, not provider conditions.
+  // Bookkeeping around the claim rather than provider conditions — and the two
+  // finalize outcomes are NOT the same answer. `provisioning.ts` passes
+  // `retryable = (finalized !== "conflict")`, so a plain finalize failure is
+  // retryable and a CONFLICT explicitly is not: mismatched identifiers, a
+  // resource already held by another studio, or a constraint refusing the
+  // write. Reconciliation would return the same resources and hit the same
+  // conflict, so this needs looking at, not attempting again.
   finalize_failed: "retry",
-  finalize_conflict: "retry",
+  finalize_conflict: "support",
   lease_lost: "retry",
 };
 
+/**
+ * The outcome of reading this studio's sender.
+ *
+ * A FAILED READ IS NOT AN ABSENT SENDER, and collapsing the two is a defect
+ * this repository has already shipped once and fixed elsewhere:
+ * `getAuditEventsByRecord` ignored its `error` and rendered "No history
+ * recorded yet." over a read that had failed. The same shape here would have
+ * the card assert "No sender configured" — and, worse, "Messages are sent
+ * using Hone's shared sender" — while an ACTIVE or ERRORED sender sat behind a
+ * transient failure. Those are authoritative claims, and a surface may not make
+ * them from a read it did not get.
+ *
+ * `{ ok: true, sender: null }` means the database answered and there is no
+ * live row. `{ ok: false }` means it did not answer.
+ */
+export type SenderRead =
+  | { ok: true; sender: StudioSmsSenderState | null }
+  | { ok: false };
+
 export type SenderStatusView = {
-  /** The row, or null when this studio has never had a sender. */
+  /** The row's status; null when there is no row OR the read did not answer. */
   status: SenderStatus | null;
   /** Coarse grouping for presentation. */
-  tone: "none" | "working" | "live" | "attention" | "retired";
+  tone: "none" | "working" | "live" | "attention" | "retired" | "unknown";
   headline: string;
   detail: string;
   /** Owner-safe: a phone number the owner already owns, never a provider SID. */
@@ -196,9 +228,24 @@ export type SenderStatusView = {
  * That is not a placeholder — it is the true answer, and making it visible is
  * most of this slice's value.
  */
-export function presentSenderStatus(
-  row: StudioSmsSenderState | null,
-): SenderStatusView {
+export function presentSenderStatus(read: SenderRead): SenderStatusView {
+  // THE READ DID NOT ANSWER. Say exactly that and claim nothing about whether
+  // a sender exists — see SenderRead above for why this branch is separate.
+  if (!read.ok) {
+    return {
+      status: null,
+      tone: "unknown",
+      headline: "Sender status unavailable",
+      detail:
+        "Hone could not read this studio's SMS sender just now. Try again in a moment.",
+      phoneNumber: null,
+      recovery: "none",
+      errorCode: null,
+      lastTestOkAt: null,
+    };
+  }
+
+  const row = read.sender;
   if (!row) {
     return {
       status: null,
@@ -348,18 +395,20 @@ function detailForError(route: RecoveryRoute): string {
  * decide what comes back. A service-role client would bypass both and make
  * this module the thing granting access, which is exactly what it must not be.
  *
- * Returns `null` both when no row exists and when the caller may not see one.
- * Those are deliberately indistinguishable here — a non-owner learns nothing
- * about whether a sender exists, and the panel renders the same honest "no
- * sender configured" either way.
+ * `{ ok: true, sender: null }` covers both "no row" and "the caller may not see
+ * one", deliberately: RLS returns nothing in either case, so a non-owner learns
+ * nothing about whether a sender exists. Both are genuine answers from the
+ * database.
  *
- * A failed read also returns `null` rather than throwing: this is a status
- * panel on a settings page, and it must never be the reason the page 500s.
+ * A FAILED read is `{ ok: false }` — a different answer, never `sender: null`.
+ * It still does not throw: this is a status panel on a settings page and must
+ * never be the reason the page 500s. But it must not launder a failure into a
+ * confident claim about sender state either.
  */
 export async function readOwnStudioSmsSender(
   client: SupabaseClient,
   studioId: string,
-): Promise<StudioSmsSenderState | null> {
+): Promise<SenderRead> {
   const { data, error } = await client
     .from("studio_sms_senders")
     .select(OWNER_READABLE_SENDER_COLUMNS.join(", "))
@@ -367,6 +416,6 @@ export async function readOwnStudioSmsSender(
     .neq("status", "released")
     .maybeSingle();
 
-  if (error) return null;
-  return (data as StudioSmsSenderState | null) ?? null;
+  if (error) return { ok: false };
+  return { ok: true, sender: (data as StudioSmsSenderState | null) ?? null };
 }

@@ -7,6 +7,8 @@ import {
   RECOVERY_ROUTE_BY_ERROR_CODE,
   SENDER_STATUSES,
   presentSenderStatus,
+  readOwnStudioSmsSender,
+  type SenderRead,
   type SenderStatus,
   type StudioSmsSenderState,
 } from "@/lib/sms/sender-status";
@@ -34,6 +36,15 @@ function row(over: Partial<StudioSmsSenderState> = {}): StudioSmsSenderState {
     ...over,
   };
 }
+
+/** The database answered, and this is what it said. */
+const ok = (sender: StudioSmsSenderState | null): SenderRead => ({
+  ok: true,
+  sender,
+});
+
+/** The database did not answer. */
+const unavailable: SenderRead = { ok: false };
 
 describe("the status vocabulary matches migration 0191, not a restatement", () => {
   const migration = read(
@@ -88,7 +99,7 @@ describe("the status vocabulary matches migration 0191, not a restatement", () =
 
 describe("every status presents, including the one production is actually in", () => {
   it("no row -> the honest empty state, which every studio is in today", () => {
-    const view = presentSenderStatus(null);
+    const view = presentSenderStatus(ok(null));
     expect(view.status).toBeNull();
     expect(view.tone).toBe("none");
     expect(view.headline).toBe("No sender configured");
@@ -101,7 +112,7 @@ describe("every status presents, including the one production is actually in", (
 
   for (const status of SENDER_STATUSES) {
     it(`${status} renders a headline and a sentence`, () => {
-      const view = presentSenderStatus(row({ status }));
+      const view = presentSenderStatus(ok(row({ status })));
       expect(view.status).toBe(status);
       expect(view.headline.length).toBeGreaterThan(0);
       expect(view.detail.length).toBeGreaterThan(0);
@@ -110,12 +121,14 @@ describe("every status presents, including the one production is actually in", (
 
   it("active reports the number and the passed test", () => {
     const view = presentSenderStatus(
-      row({
-        status: "active",
-        phone_number: "+15555550123",
-        provisioned_at: "2026-09-20T00:00:00Z",
-        last_test_ok_at: "2026-09-20T00:00:00Z",
-      }),
+      ok(
+        row({
+          status: "active",
+          phone_number: "+15555550123",
+          provisioned_at: "2026-09-20T00:00:00Z",
+          last_test_ok_at: "2026-09-20T00:00:00Z",
+        }),
+      ),
     );
     expect(view.tone).toBe("live");
     expect(view.phoneNumber).toBe("+15555550123");
@@ -125,7 +138,9 @@ describe("every status presents, including the one production is actually in", (
 
   it("released is history and offers nothing", () => {
     const view = presentSenderStatus(
-      row({ status: "released", released_at: "2026-09-20T00:00:00Z" }),
+      ok(
+        row({ status: "released", released_at: "2026-09-20T00:00:00Z" }),
+      ),
     );
     expect(view.tone).toBe("retired");
     expect(view.recovery).toBe("none");
@@ -137,15 +152,17 @@ describe("every status presents, including the one production is actually in", (
     // that offered "start over" would be asking for a transition the database
     // refuses — and the gesture abandons a possibly-purchased number.
     for (const status of SENDER_STATUSES) {
-      const view = presentSenderStatus(row({ status }));
+      const view = presentSenderStatus(ok(row({ status })));
       expect(view.recovery).not.toBe("reset");
     }
     const errored = presentSenderStatus(
-      row({
-        status: "error",
-        last_error_code: "provider_timeout",
-        last_error_at: "2026-09-20T00:00:00Z",
-      }),
+      ok(
+        row({
+          status: "error",
+          last_error_code: "provider_timeout",
+          last_error_at: "2026-09-20T00:00:00Z",
+        }),
+      ),
     );
     expect(errored.recovery).toBe("retry");
     expect(errored.detail).not.toMatch(/start over|reset/i);
@@ -180,11 +197,13 @@ describe("#677 stays load-bearing: provider_configuration_required is not a dead
       "operator_decision",
     );
     const view = presentSenderStatus(
-      row({
-        status: "error",
-        last_error_code: "provider_resource_mismatch",
-        last_error_at: "2026-09-20T00:00:00Z",
-      }),
+      ok(
+        row({
+          status: "error",
+          last_error_code: "provider_resource_mismatch",
+          last_error_at: "2026-09-20T00:00:00Z",
+        }),
+      ),
     );
     expect(view.recovery).toBe("operator_decision");
     expect(view.recovery).not.toBe("none");
@@ -205,11 +224,13 @@ describe("#677 stays load-bearing: provider_configuration_required is not a dead
 
   it("an UNKNOWN code falls to support, never to retry", () => {
     const view = presentSenderStatus(
-      row({
-        status: "error",
-        last_error_code: "something_new_from_a_later_slice",
-        last_error_at: "2026-09-20T00:00:00Z",
-      }),
+      ok(
+        row({
+          status: "error",
+          last_error_code: "something_new_from_a_later_slice",
+          last_error_at: "2026-09-20T00:00:00Z",
+        }),
+      ),
     );
     expect(view.recovery).toBe("support");
   });
@@ -221,5 +242,125 @@ describe("the status type stays aligned with the DB status domain", () => {
     // unnoticed if the type is widened.
     const statuses: SenderStatus[] = [...SENDER_STATUSES];
     expect(statuses).toHaveLength(8);
+  });
+});
+
+describe("a route may not promise more than the orchestration allows (#749 review)", () => {
+  // Each of these was routed to `retry` in the first revision. `provisioning.ts`
+  // calls `failWith(code, retryable, mayOwn)`, and for BOTH of these the
+  // retryable argument is literally `false` — so the card was offering an
+  // attempt the engine had already declared pointless.
+  const provisioning = read("lib/sms/provisioning.ts");
+
+  it("the vanished number really is non-retryable in the engine", () => {
+    expect(provisioning).toMatch(
+      /failWith\("number_no_longer_available",\s*false,\s*false\)/,
+    );
+  });
+
+  it("a vanished number routes to release, not retry", () => {
+    // The claim's phone number is write-once, so this attempt can only ever ask
+    // about the same gone number again. The exit is `releasing`.
+    expect(RECOVERY_ROUTE_BY_ERROR_CODE.number_no_longer_available).toBe(
+      "release_only",
+    );
+    const view = presentSenderStatus(
+      ok(
+        row({
+          status: "error",
+          last_error_code: "number_no_longer_available",
+          last_error_at: "2026-09-20T00:00:00Z",
+        }),
+      ),
+    );
+    expect(view.recovery).toBe("release_only");
+    expect(view.detail).not.toMatch(/attempted again/i);
+  });
+
+  it("the finalize CONFLICT really is non-retryable in the engine", () => {
+    // `retryable = (finalized !== "conflict")`, so conflict is false and a
+    // plain finalize failure is true. They are not the same answer.
+    expect(provisioning).toMatch(
+      /finalized === "conflict" \? "finalize_conflict" : "finalize_failed",\s*\n?\s*finalized !== "conflict",/,
+    );
+  });
+
+  it("a finalize conflict needs looking at; a finalize failure may retry", () => {
+    expect(RECOVERY_ROUTE_BY_ERROR_CODE.finalize_conflict).toBe("support");
+    expect(RECOVERY_ROUTE_BY_ERROR_CODE.finalize_failed).toBe("retry");
+    const conflict = presentSenderStatus(
+      ok(
+        row({
+          status: "error",
+          last_error_code: "finalize_conflict",
+          last_error_at: "2026-09-20T00:00:00Z",
+        }),
+      ),
+    );
+    expect(conflict.recovery).toBe("support");
+    expect(conflict.detail).not.toMatch(/attempted again/i);
+  });
+});
+
+describe("a failed read is never reported as an absent sender (#749 review)", () => {
+  // The defect this repository has already shipped once and fixed elsewhere:
+  // `getAuditEventsByRecord` ignored its `error` and rendered "No history
+  // recorded yet." over a read that had failed. The same shape here would
+  // assert "No sender configured" — and "Messages are sent using Hone's shared
+  // sender" — over an ACTIVE sender behind a transient failure.
+  it("an unanswered read is its own state, not the empty state", () => {
+    const view = presentSenderStatus(unavailable);
+    expect(view.tone).toBe("unknown");
+    expect(view.status).toBeNull();
+    expect(view.headline).not.toBe("No sender configured");
+    expect(view.headline).toMatch(/unavailable/i);
+  });
+
+  it("it claims NOTHING about whether a sender exists or how messages are sent", () => {
+    const view = presentSenderStatus(unavailable);
+    expect(view.detail).not.toMatch(/shared sender/i);
+    expect(view.detail).not.toMatch(/no sender/i);
+    expect(view.phoneNumber).toBeNull();
+    expect(view.recovery).toBe("none");
+  });
+
+  it("an ANSWERED empty read still gets the honest empty state", () => {
+    // Anti-vacuity for the pair: the fix must not collapse the other way and
+    // make a genuine "no row" look like a failure.
+    const view = presentSenderStatus(ok(null));
+    expect(view.tone).toBe("none");
+    expect(view.headline).toBe("No sender configured");
+    expect(view.detail).toMatch(/shared sender/i);
+  });
+
+  it("the reader returns the two outcomes distinguishably", async () => {
+    const failing = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            neq: () => ({
+              maybeSingle: async () => ({ data: null, error: { message: "boom" } }),
+            }),
+          }),
+        }),
+      }),
+    } as never;
+    const answered = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            neq: () => ({
+              maybeSingle: async () => ({ data: null, error: null }),
+            }),
+          }),
+        }),
+      }),
+    } as never;
+
+    expect(await readOwnStudioSmsSender(failing, "s")).toEqual({ ok: false });
+    expect(await readOwnStudioSmsSender(answered, "s")).toEqual({
+      ok: true,
+      sender: null,
+    });
   });
 });

@@ -20,6 +20,9 @@ const TONE_CLASSES: Record<SenderStatusView["tone"], string> = {
   live: "border-emerald-300 dark:border-emerald-800",
   attention: "border-amber-300 dark:border-amber-800",
   retired: "border-neutral-300 dark:border-neutral-700",
+  // A read that did not answer looks like neither a healthy sender nor an
+  // absent one, and must not borrow either's colour.
+  unknown: "border-neutral-300 dark:border-neutral-700",
 };
 
 // The state is carried by the HEADLINE and the sentence beneath it, never by
@@ -32,13 +35,18 @@ const TONE_LABEL: Record<SenderStatusView["tone"], string> = {
   live: "Active",
   attention: "Needs attention",
   retired: "Released",
+  unknown: "Unavailable",
 };
 
 export function SmsSenderStatusCard({ view }: { view: SenderStatusView }) {
   return (
     <div
       data-testid="sms-sender-status"
-      data-sender-status={view.status ?? "none"}
+      // `?? view.tone` and not `?? "none"`: a read that did not answer also has
+      // a null status, and labelling it "none" in the DOM would repeat the
+      // absent-vs-unreadable conflation one layer further out, where a browser
+      // proof would then assert it.
+      data-sender-status={view.status ?? view.tone}
       data-sender-tone={view.tone}
       className={`rounded-lg border p-5 ${TONE_CLASSES[view.tone]}`}
     >
