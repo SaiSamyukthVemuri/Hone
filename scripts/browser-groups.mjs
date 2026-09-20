@@ -155,6 +155,11 @@ export const BROWSER_GROUPS = {
     specs: [
       "ui01g-cluster-b-touch-floor.spec.ts",
       "client-booking-outside-hours.spec.ts",
+      // BOOK-NEXT-FAST-01: the public "Next available" press — acknowledgement,
+      // the day it lands on, that day's slots, and one-press-one-request. It is
+      // the /book/[slug] surface, so it belongs with the other public booking
+      // specs rather than with the shell interaction family.
+      "book-next-available-fast.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",

@@ -9,6 +9,7 @@ import {
   RATE_LIMIT_MESSAGE,
 } from "@/lib/rate-limit/public";
 import { getStudioBySlug } from "@/lib/booking/queries";
+import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
 import {
   filterFutureSlots,
   getAvailableSlots,
@@ -231,22 +232,50 @@ export async function fetchPublicSlotsAction(params: {
 // future-instant slot for the requested service.
 //
 // Why server-side: avoids 90 sequential client roundtrips for a 3-month
-// horizon. One client call -> one server action -> bounded server loop.
+// horizon. One client call -> one server action -> ONE bulk read.
 //
-// Algorithm: linear day-by-day scan from `from` to horizon.maxDateStr,
-// calling getAvailableSlots per day and applying the same past-time filter
-// fetchPublicSlotsAction uses. Returns the first date with a non-empty
-// future-slot list, or `date: null` if the horizon is exhausted.
+// BOOK-NEXT-FAST-01 — WHAT THIS USED TO DO, AND WHY IT HAD TO STOP.
 //
-// Worst case: horizon days (3-month = ~92, 4-month = ~123, 6-month = ~184)
-// getAvailableSlots calls, hard-capped by MAX_NEXT_AVAILABLE_SCAN_DAYS as a
-// belt-and-braces safety. Each getAvailableSlots is a single bounded
-// admin-scoped read of the day's overrides/blockouts/appointments; total
-// cost is O(N) cheap queries within one server roundtrip.
+// The previous implementation walked the horizon one day at a time, awaiting
+// `getAvailableSlots` per date. That call is a DAY LOADER: for the public
+// (capacity-off) path it issues a blockout read, an availability-override read,
+// a weekday-default read and a reservation read, each awaited in turn. So the
+// cost was not "N cheap queries" as the note here used to claim — it was
+// roughly 4N queries in 4N SERIAL round trips. At the 12-month horizon a studio
+// can configure, a "no availability anywhere" answer cost ~1,500 sequential
+// reads, and the person who pressed "Next available" waited for all of them.
+// This is F-SCALE-002.
 //
-// Boundaries preserved: same rate limiter as fetchPublicSlotsAction;
-// same soft-gate (loadPublicReadiness); same past-time filter; no booking
-// engine / conflict logic changes.
+// Parallelising those calls was considered and rejected: it converts a latency
+// problem into a connection-pool problem and leaves the database doing the same
+// ~1,500 reads. The work itself has to become bounded, not merely concurrent.
+//
+// Algorithm now: name the candidate dates (max(fromDate, today) through the
+// studio's horizon), then hand the whole range to `loadPublicSlotsByDate`,
+// which reads every input ONCE and evaluates each date in memory through the
+// same `buildDaySlots` the single-date path uses. The earliest group it returns
+// IS the answer, because that helper omits dates with no offerable slot.
+//
+// Cost is now FLAT IN THE HORIZON: two query waves over four queries, plus one
+// extra reservation page per 1,000 overlapping reservations. A 12-month scan
+// issues the same waves as a 7-day one.
+//
+// ONE AUTHORITY PASS, ONE DATA PASS. The sibling entry point
+// `fetchPublicSlotsForDates` does its own studio/readiness/service validation,
+// which this action has already done — it cannot name a date without first
+// knowing the studio's timezone and horizon. Calling that wrapper would have
+// re-read the studio, re-run readiness, re-read the service and re-read
+// `studio_availability_default`. It calls the lower-level pass instead.
+//
+// A READ FAILURE IS NO LONGER SILENCE. `getAvailableSlots` discards each
+// query's `error`, so a failed read used to become an empty day, the scan
+// continued, and the horizon was reported exhausted — "we could not read"
+// rendered as "nothing is open", on the surface where that lie costs a booking.
+// The range loader propagates the failure and this action now returns an error.
+//
+// Boundaries preserved: same rate limiter as fetchPublicSlotsAction; same
+// soft-gate (loadPublicReadiness); same past-time filter; same response
+// contract; no booking engine / conflict logic changes.
 // ---------------------------------------------------------------------------
 
 // Belt-and-braces cap on the next-available scan. Derived from the largest
@@ -312,33 +341,57 @@ export async function fetchNextAvailableDateAction(params: {
     return { ok: true, date: null };
   }
 
-  // Capture `now` ONCE before the loop so every iteration's
-  // future-filter uses a single clock reading (shared helper in
-  // lib/booking/slots.ts, PR #149).
-  const nowRef = new Date();
+  // The candidate dates, named up front. This is a string list, not a query
+  // plan: every one of them is answered by the single bulk pass below.
+  //
+  // MAX_NEXT_AVAILABLE_SCAN_DAYS survives as a LOOP GUARD, not as a cost
+  // control. It no longer bounds database work — the bulk pass does that — but
+  // a date-arithmetic bug that failed to advance the cursor would otherwise
+  // build an unbounded array, so the guard stays.
+  const dates: string[] = [];
   let cursor = startDate;
-  let scans = 0;
-  while (cursor <= horizon.maxDateStr && scans < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
-    scans += 1;
-    const slots = await getAvailableSlots(
-      admin,
-      {
-        id: studio.id,
-        timezone: studio.timezone,
-        default_appointment_duration_minutes:
-          studio.default_appointment_duration_minutes,
-        buffer_minutes: studio.buffer_minutes,
-      },
-      cursor,
-      service.default_duration_minutes,
-    );
-    const futureSlots = filterFutureSlots(slots, nowRef);
-    if (futureSlots.length > 0) {
-      return { ok: true, date: cursor };
-    }
+  while (cursor <= horizon.maxDateStr && dates.length < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
+    dates.push(cursor);
     cursor = addDays(cursor, 1);
   }
-  return { ok: true, date: null };
+
+  // Capture `now` ONCE for the whole range so every date's future-filter uses a
+  // single clock reading, exactly as the day-by-day version did across its
+  // iterations (shared helper in lib/booking/slots.ts, PR #149).
+  const nowRef = new Date();
+
+  const range = await loadPublicSlotsByDate(
+    admin,
+    {
+      studioId: studio.id,
+      timezone: studio.timezone,
+      publicBookingHorizonMonths: studio.public_booking_horizon_months,
+      bufferMinutes: studio.buffer_minutes,
+      serviceDurationMinutes: service.default_duration_minutes,
+    },
+    dates,
+    nowRef,
+    // Only the EARLIEST date is wanted, so generating candidates for the rest
+    // of the horizon is work nobody reads. Measured: without this the bulk pass
+    // answered in 1.5-2.3s whenever slots existed, because `buildDaySlots` ran
+    // over every open day in the window and formatted each label through Intl.
+    { stopAfterFirstMatch: true },
+  );
+
+  if (!range.ok) {
+    // A read that failed is NOT "no availability". Reporting `date: null` here
+    // would tell the client the studio is booked solid to the horizon on the
+    // strength of a query that never answered.
+    logInternalBookingError("public_next_available_range_read_failed", {
+      studioId: studio.id,
+    });
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+
+  // `byDate` is ascending and contains only dates that HAVE an offerable slot,
+  // so the first group is the earliest available date and an empty list means
+  // the horizon really is exhausted.
+  return { ok: true, date: range.byDate[0]?.date ?? null };
 }
 
 // BOOK-01 Tranche 1. A COMMITTED booking now returns the client's management

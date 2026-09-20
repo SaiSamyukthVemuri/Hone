@@ -153,18 +153,127 @@ export async function fetchPublicSlotsForDates(params: {
   if (serviceError) return { ok: false, error: "Availability could not be read." };
   if (!service) return { ok: false, error: "Service not found." };
 
+  // Everything above this line is the AUTHORITY pass — studio, readiness,
+  // service — and everything below it is the DATA pass. BOOK-NEXT-FAST-01 split
+  // them so a caller that has already done the authority pass can reach the data
+  // pass without repeating it; see `loadPublicSlotsByDate`.
+  const grouped = await loadPublicSlotsByDate(
+    admin,
+    {
+      studioId: studio.id,
+      timezone: tz,
+      publicBookingHorizonMonths: studio.public_booking_horizon_months,
+      bufferMinutes: studio.buffer_minutes,
+      serviceDurationMinutes: service.default_duration_minutes as number,
+    },
+    params.dates,
+  );
+  if (!grouped.ok) return grouped;
+
+  // This entry point's contract is a FLAT slot list, and it is preserved
+  // exactly: the groups are built in sorted-date order, so flattening them
+  // reproduces the order the single list was always emitted in.
+  return {
+    ok: true,
+    slots: grouped.byDate.flatMap((d) => d.slots),
+    scanned: grouped.scanned,
+    skippedOutsideHorizon: grouped.skippedOutsideHorizon,
+  };
+}
+
+/** A studio + service context that has ALREADY passed the authority checks. */
+export type PublicRangeContext = {
+  studioId: string;
+  timezone: string;
+  publicBookingHorizonMonths: number | null;
+  bufferMinutes: number | null;
+  serviceDurationMinutes: number;
+};
+
+export type PublicSlotsByDateResult =
+  | {
+      ok: true;
+      /** Sorted ascending by date. Only dates with at least one slot appear. */
+      byDate: Array<{ date: string; slots: Slot[] }>;
+      scanned: string[];
+      skippedOutsideHorizon: string[];
+    }
+  | { ok: false; error: string };
+
+/**
+ * The DATA pass: one bulk load for a whole window, grouped by local date.
+ *
+ * WHY THIS IS SEPARATE FROM `fetchPublicSlotsForDates` (BOOK-NEXT-FAST-01).
+ *
+ * That function performs its own authority pass — studio lookup, public
+ * readiness, service lookup — which is exactly right for a caller that has none.
+ * `fetchNextAvailableDateAction` has all three ALREADY, because it must resolve
+ * the studio's timezone and horizon before it can even name the dates it wants.
+ * Calling the wrapper from there would have re-read the studio, re-run
+ * readiness and re-read the service, and re-read `studio_availability_default`
+ * a second time — four redundant round trips on the public path, for answers the
+ * caller was holding. So the pass it actually needs is exported on its own.
+ *
+ * WHY IT RETURNS GROUPS RATHER THAN A FLAT LIST. `Slot` carries `start`/`end` as
+ * ISO UTC instants and no date. Recovering "which local day is this slot on"
+ * from a UTC instant is the precise mistake `weekdayOfLocalDate` above exists to
+ * prevent: at UTC+13/+14 the arithmetic lands on the neighbouring day. The date
+ * is known for free at generation time — `buildDaySlots` is called per
+ * `dateStr` — so it is kept rather than thrown away and re-derived. A caller
+ * asking "the earliest date with a slot" then reads it directly.
+ *
+ * THE QUERY BUDGET IS THE POINT, and it is flat in the number of dates: two
+ * waves, four queries, plus one extra reservation page per additional 1000
+ * overlapping reservations. A 12-month window costs the same waves as a 7-day
+ * one. Every RULE still lives in `buildDaySlots`; nothing here re-decides what
+ * a slot is.
+ *
+ * `now` is taken as a parameter so a caller that evaluates many dates applies
+ * ONE clock reading to all of them, rather than letting the boundary move
+ * underneath a long scan.
+ */
+export async function loadPublicSlotsByDate(
+  admin: ReturnType<typeof createAdminClient>,
+  ctx: PublicRangeContext,
+  dates: readonly string[],
+  now: Date = new Date(),
+  opts: {
+    /**
+     * Stop generating once a date with at least one offerable slot is found.
+     *
+     * MEASURED, not assumed. With the whole horizon evaluated, the bulk pass
+     * answered a 12-month "nothing is open" case in 24 ms but took 1.5-2.3 s
+     * whenever slots DID exist — the inverse of what a query-cost problem looks
+     * like, because the all-blocked case never reaches slot generation at all.
+     * The remaining time was `buildDaySlots` running over ~370 open days and
+     * formatting every candidate's label through `Intl.DateTimeFormat`.
+     *
+     * A caller that wants the EARLIEST date needs exactly one group, so the
+     * rest of that work is waste. This flag is off by default because the
+     * range caller genuinely wants every slot; `fetchNextAvailableDateAction`
+     * turns it on.
+     *
+     * It changes no RULE and no ANSWER: the dates are evaluated in ascending
+     * order, so the first group found is the same first group a full pass
+     * would have produced.
+     */
+    stopAfterFirstMatch?: boolean;
+  } = {},
+): Promise<PublicSlotsByDateResult> {
+  const tz = ctx.timezone;
+
   // THE HORIZON CLAMP. Beyond it a date is unbookable by any route, so querying
   // it buys nothing and discovering that one refusal at a time is how an
   // over-wide range spends its budget on nothing.
-  const horizon = horizonRangeInStudioTz(tz, studio.public_booking_horizon_months);
+  const horizon = horizonRangeInStudioTz(tz, ctx.publicBookingHorizonMonths);
   const scanned: string[] = [];
   const skippedOutsideHorizon: string[] = [];
-  for (const d of params.dates) {
+  for (const d of dates) {
     if (d < horizon.minDateStr || d > horizon.maxDateStr) skippedOutsideHorizon.push(d);
     else scanned.push(d);
   }
   if (scanned.length === 0) {
-    return { ok: true, slots: [], scanned, skippedOutsideHorizon };
+    return { ok: true, byDate: [], scanned, skippedOutsideHorizon };
   }
 
   const sorted = [...scanned].sort();
@@ -185,8 +294,8 @@ export async function fetchPublicSlotsForDates(params: {
     // Both FAIL CLOSED by throwing on any error other than a genuinely absent
     // 0135 column, which is exactly the propagation this helper needs.
     [overrides, defaults] = (await Promise.all([
-      getStudioWideOverridesSafe(admin, studio.id, first, last),
-      getStudioWideDefaultsSafe(admin, studio.id),
+      getStudioWideOverridesSafe(admin, ctx.studioId, first, last),
+      getStudioWideDefaultsSafe(admin, ctx.studioId),
     ])) as [typeof overrides, typeof defaults];
   } catch {
     return { ok: false, error: "Availability could not be read." };
@@ -196,7 +305,7 @@ export async function fetchPublicSlotsForDates(params: {
     admin
       .from("studio_blockouts")
       .select("starts_on, ends_on")
-      .eq("studio_id", studio.id)
+      .eq("studio_id", ctx.studioId)
       .lte("starts_on", last)
       .gte("ends_on", first),
     // PAGINATED, because PostgREST caps a response at `max_rows` (1000 in
@@ -217,7 +326,7 @@ export async function fetchPublicSlotsForDates(params: {
       admin
         .from("studio_calendar_reservations")
         .select("starts_at, ends_at, source_kind, source_id")
-        .eq("studio_id", studio.id)
+        .eq("studio_id", ctx.studioId)
         .lt("starts_at", rangeEndUtc.toISOString())
         .gt("ends_at", rangeStartUtc.toISOString())
         .order("starts_at", { ascending: true })
@@ -241,10 +350,10 @@ export async function fetchPublicSlotsForDates(params: {
   const overrideByDate = new Map(overrides.map((o) => [o.effective_date, o]));
   const defaultByDow = new Map(defaults.map((d) => [d.day_of_week, d]));
 
-  const duration = service.default_duration_minutes as number;
-  const buffer = Math.max(0, studio.buffer_minutes ?? 0);
+  const duration = ctx.serviceDurationMinutes;
+  const buffer = Math.max(0, ctx.bufferMinutes ?? 0);
 
-  const collected: Slot[] = [];
+  const byDate: Array<{ date: string; slots: Slot[] }> = [];
   for (const dateStr of sorted) {
     if (blockouts.some((b) => b.starts_on <= dateStr && b.ends_on >= dateStr)) continue;
 
@@ -265,9 +374,13 @@ export async function fetchPublicSlotsForDates(params: {
       return Number.isFinite(s) && Number.isFinite(e) && s < dayEnd && e > dayStart;
     });
 
-    collected.push(
+    // The same past-time guard the single-date action applies, so the two
+    // cannot drift about whether today's earlier hours are offerable. Applied
+    // PER DATE with the caller's single `now`, which is what lets a long scan
+    // avoid letting the boundary move underneath it.
+    const daySlots = filterFutureSlots(
       // The SAME candidate generation the single-date path uses. One algorithm.
-      ...buildDaySlots({
+      buildDaySlots({
         dateStr,
         tz,
         duration,
@@ -276,15 +389,17 @@ export async function fetchPublicSlotsForDates(params: {
         closeTime,
         reservations: dayReservations,
       }),
+      now,
     );
+
+    // A date with no offerable time is not a date — omitting it here is what
+    // makes "the first group" mean "the first date that actually has a slot"
+    // for the caller, with no second emptiness rule to keep in step.
+    if (daySlots.length > 0) {
+      byDate.push({ date: dateStr, slots: daySlots });
+      if (opts.stopAfterFirstMatch) break;
+    }
   }
 
-  // The same past-time guard the single-date action applies, so the two cannot
-  // drift about whether today's earlier hours are offerable.
-  return {
-    ok: true,
-    slots: filterFutureSlots(collected),
-    scanned: sorted,
-    skippedOutsideHorizon,
-  };
+  return { ok: true, byDate, scanned: sorted, skippedOutsideHorizon };
 }
