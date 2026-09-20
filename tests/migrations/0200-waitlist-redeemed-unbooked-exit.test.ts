@@ -456,6 +456,63 @@ describe("0200's close record cannot drift from its own rules", () => {
   });
 });
 
+describe("0200 — KNOWN WINDOW, recorded because the file is now FROZEN", () => {
+  // RAISED BY REVIEW AT 05476154, AFTER 0200 WAS APPLIED TO PRODUCTION.
+  //
+  // THE WINDOW. The repair path's appointment aggregate takes NO lock on
+  // `appointments`, so between it observing `status <> 'cancelled'` and
+  // `record_new_client_waitlist_conversion` running, a concurrent
+  // `public_cancel_appointment_with_token` or `practitioner_cancel_appointment`
+  // can commit. Close then answers `converted_instead` for an entry whose only
+  // qualifying appointment is cancelled.
+  //
+  // WHAT IT IS AND IS NOT — measured, not assumed:
+  //
+  //   * NO CANCELLATION PATH TOUCHES THE WAITLIST ENTRY. Verified across
+  //     0176 and 0173: cancelling never reverses a recorded conversion.
+  //   * SO THE ORDINARY FLOW ALREADY PRODUCES THIS STATE. A prospect who books
+  //     through 0195 and later cancels leaves the entry `converted` with a
+  //     cancelled appointment, and `remove_new_client_waitlist_entry` answers
+  //     `not_removable` on it. That is shipped, accepted behaviour.
+  //   * THE DEFECT IS THEREFORE NARROWER than "marks an entry booked with no
+  //     appointment": it is that one real-world instant can yield `closed` OR
+  //     `converted_instead` depending on microsecond ordering. Both outcomes
+  //     are individually reachable and individually defensible; the
+  //     non-determinism between them is the part worth closing.
+  //
+  // WHY IT IS NOT FIXED HERE. `0200` is APPLIED to production (2026-09-20) and
+  // is therefore FROZEN — CLAUDE.md: "An applied migration is frozen — never
+  // edit it. Write a new one." Locking the matched appointment, or revalidating
+  // its status under a lock immediately before the conversion, is a FORWARD
+  // MIGRATION. That needs its own number from a fresh single-allocator
+  // decision, its own review, and its own explicit apply authorization. None of
+  // those exist, so this is recorded rather than silently carried.
+  //
+  // THIS BLOCK ASSERTS THE FROZEN FACTS ONLY. It deliberately does not pin the
+  // racy outcome as correct — a future forward migration should change the
+  // behaviour, and a test asserting today's behaviour would obstruct it.
+  it("the aggregate that reads appointments takes no lock — the window is real", () => {
+    const from = FN_BODY.indexOf("from public.appointments a");
+    expect(from, "the repair no longer reads appointments").toBeGreaterThan(0);
+    const stmt = FN_BODY.slice(FN_BODY.indexOf("select count(distinct"), FN_BODY.indexOf(";", from));
+    expect(stmt).toMatch(/a\.status\s*<>\s*'cancelled'/);
+    expect(
+      stmt,
+      "an appointment lock appeared in an APPLIED migration — its bytes must not change",
+    ).not.toMatch(/for (share|update)/);
+  });
+
+  it("the file still hashes to the applied bytes, so this window cannot be patched in place", () => {
+    // The same digest the apply was gated on. If someone "fixes" the window by
+    // editing this file, this goes red and the frozen-history rule is enforced.
+    expect(
+      createHash("sha256")
+        .update(readFileSync(path.join(ROOT, "supabase/migrations", FILE)))
+        .digest("hex"),
+    ).toBe(APPLIED_SHA256);
+  });
+});
+
 describe("0200 answers the states it refuses with distinguishable words", () => {
   it("returns every code the server action maps, and no undeclared one", () => {
     // The action's union and this list are the same contract read from two
