@@ -303,6 +303,20 @@ export function copyModuleViolations(file: string, source?: string): CopyViolati
       assemblesProse(staticFragments(n))
     ) {
       flag("copy-module/no-concatenation", n.getText().slice(0, 70));
+    } else if (
+      (ts.isCallExpression(n) || ts.isTaggedTemplateExpression(n)) &&
+      assemblesProse(staticFragments(n))
+    ) {
+      // NOT a three-construct denylist. `["Every change is", "tracked"].join(" ")`
+      // produced a forbidden sentence through none of template/`+`/conditional,
+      // so the guard that called itself fail-closed was a list of three shapes.
+      //
+      // The test is the FRAGMENTS, not the callee: a call whose string literals
+      // amount to prose is prose being assembled, whatever the method is named.
+      // Structural calls stay clean because their literals are not prose —
+      // measured across the declared modules, `abs("/pricing")`, the `"@type"`
+      // maps and `label.replace(/[^0-9.]/g, "")` all pass.
+      flag("copy-module/no-assembled-copy", n.getText().replace(/\s+/g, " ").slice(0, 70));
     } else if (ts.isConditionalExpression(n)) {
       // A conditional is allowed when EACH branch is already a complete value —
       // that is the law's own wording, and `PUBLISHED ? "CAD $99" : null` is a
@@ -681,6 +695,44 @@ export function moduleClaims(file: string, source?: string): string[] {
       isSubstantiveProse(n.text)
     ) {
       out.push(normalise(n.text));
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Every JSX expression in TEXT position that is not a complete literal.
+ *
+ * Reported directly, with no substantive-prose gate in front of it. The previous
+ * "policy sources carry no holes" assertion went through
+ * `assembledClaimViolations`, which only reports holes inside text it already
+ * judged substantive — so `<p>{state}</p>` passed, its one-word placeholder
+ * failing the gate, while `pageClaims` dropped the element for having a hole. If
+ * `state` rendered a whole forbidden claim, the supposedly safe judged surface
+ * stayed green.
+ *
+ * An invariant that guards a judged surface has to be asserted on its own terms.
+ */
+export function jsxHoles(file: string, source?: string): CopyViolation[] {
+  const sf = parse(file, source);
+  const out: CopyViolation[] = [];
+  const visit = (n: ts.Node) => {
+    if (
+      ts.isJsxExpression(n) &&
+      n.expression &&
+      n.parent &&
+      (ts.isJsxElement(n.parent) || ts.isJsxFragment(n.parent)) &&
+      !ts.isStringLiteral(n.expression) &&
+      !ts.isNoSubstitutionTemplateLiteral(n.expression)
+    ) {
+      out.push({
+        file,
+        line: lineOf(sf, n),
+        rule: "source/hole-in-text-position",
+        detail: n.expression.getText().replace(/\s+/g, " ").slice(0, 70),
+      });
     }
     ts.forEachChild(n, visit);
   };

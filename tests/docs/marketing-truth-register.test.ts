@@ -47,6 +47,7 @@ import {
   componentProseViolations,
   assembledClaimViolations,
   pageClaims,
+  jsxHoles,
   moduleClaims,
   walkStrings,
   isSubstantiveProse,
@@ -939,29 +940,57 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     ).toContain("claim/assembled-from-fragments");
   });
 
-  it("the policy sources carry no holes, which is what makes judging them safe", () => {
+  it("the policy sources carry no holes, asserted directly", () => {
     // The one thing that could hide a claim in a judged JSX surface is a hole.
-    // There are none, so no hole rule is needed for the judged corpus at all —
-    // and this assertion is what keeps that true.
+    //
+    // The previous version of this test routed through `assembledClaimViolations`,
+    // which only reports holes inside text it has already judged substantive — so
+    // `<p>{state}</p>` passed it, while `pageClaims` dropped the element for
+    // having a hole. The invariant that makes the judged surface safe was never
+    // actually asserted. It is now asserted on its own terms.
     for (const file of POLICY_SOURCES) {
       expect(
-        assembledClaimViolations(file).filter(
-          (v) => v.rule === "claim/assembled-from-fragments",
-        ),
-        `${file} grew a hole; the judged surface must stay hole-free`,
+        jsxHoles(file).map((h) => `${h.file}:${h.line} ${h.detail}`),
+        `${file} grew a hole; a judged surface must stay hole-free or its claims go unjudged`,
       ).toEqual([]);
     }
+    // NON-VACUITY: the check can see a hole when there is one.
+    expect(
+      jsxHoles("app/privacy/page.tsx", `export default () => <div><p>{state}</p></div>;`),
+    ).toHaveLength(1);
   });
 
-  it("unjudged page prose is frozen, and can only shrink", () => {
-    // The cost of option 1, made visible. Copy that moves into a canonical
-    // module leaves this count AND enters the judged corpus, so the unjudged
-    // surface is monotonically decreasing by construction.
-    const prose = pageCopySources().reduce((n, f) => n + pageClaims(f).length, 0);
+  it("unjudged page prose is frozen BY IDENTITY, not by total", () => {
+    // A `<= 213` ceiling is not monotonic, and calling it so was wrong: remove
+    // five existing lines, add five new ones, and the count still passes while
+    // the new lines are unjudged and could say anything. A total leaves reusable
+    // capacity behind every deletion.
+    //
+    // The identities are frozen instead. Every page claim must already appear in
+    // the recorded baseline; removing one is fine, introducing one is not. New
+    // product-marketing copy belongs in a canonical copy module, where it IS
+    // judged — which is the only way to add a page-level sentence at all.
+    const baseline = JSON.parse(
+      read("tests/docs/fixtures/page-prose-baseline.json"),
+    ) as Record<string, string[]>;
+    const known = new Set(Object.values(baseline).flat());
+
+    const introduced: string[] = [];
+    for (const file of pageCopySources()) {
+      for (const claim of pageClaims(file)) {
+        if (!known.has(claim)) introduced.push(`${file}: ${claim.slice(0, 80)}`);
+      }
+    }
     expect(
-      prose,
-      "page prose grew; new marketing copy belongs in a canonical copy module",
-    ).toBeLessThanOrEqual(PAGE_PROSE_BASELINE);
+      introduced,
+      "new inline page prose was introduced; it is NOT judged against the register, so it belongs in a canonical copy module",
+    ).toEqual([]);
+
+    // The baseline is a ceiling too, so a file cannot repeat a known line to
+    // buy capacity.
+    const total = pageCopySources().reduce((n, f) => n + pageClaims(f).length, 0);
+    expect(total).toBeLessThanOrEqual(PAGE_PROSE_BASELINE);
+    expect(known.size, "the recorded baseline is not empty").toBeGreaterThan(100);
   });
 
   it("consuming an approved value is allowed alone, and refused among authored words", () => {
