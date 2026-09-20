@@ -31,6 +31,12 @@ export const BROWSER_GROUPS = {
   sessions: {
     description: "sessions / treatment-memory charting",
     specs: [
+      // UI-06: the flattened dashboard memory cards at 390/768/1440.
+      // PATH_TO_GROUP maps /treatment[-_]?memory/i here, and these three cards
+      // ARE the treatment-memory surface, so a diff to them selects this group
+      // and runs this spec — unlike UI-04, whose /clients/** paths match no
+      // pattern at all.
+      "ui06-dashboard-chrome.spec.ts",
       "charting-usability-polish.spec.ts",
       // Budget context is a peer section of the Consultation & Skin/Hair
       // surface, so it belongs with the clinical-notes coverage.
@@ -41,6 +47,14 @@ export const BROWSER_GROUPS = {
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
       "multi-area-charting.spec.ts",
+      // SESSION-START-01. /clients/[id]/sessions/new IS a sessions route, so
+      // this is its group. Filing it elsewhere to dodge the targeted-lane cost
+      // pin would be misfiling to avoid a decision the pin exists to surface.
+      "session-start-01-modality-ack.spec.ts",
+      // SESSION-START-01 slice 2A measurement rig. Skips itself unless
+      // HONE_PERF_TIMING=1, so it adds no runtime to the lane — but every spec
+      // on disk must map to a group, and this one drives a sessions journey.
+      "session-start-01-latency-measure.spec.ts",
       "multi-area-charting-release.spec.ts",
       "observation-chips-loading.spec.ts",
       "observation-chips-save-cycle.spec.ts",
@@ -120,6 +134,11 @@ export const BROWSER_GROUPS = {
   portal: {
     description: "client portal and tokenised links",
     specs: [
+      // UI-05: archiving a portal message now opens the shipped ConfirmDialog
+      // instead of window.confirm. Filed in `portal` because PATH_TO_GROUP maps
+      // /portal/i here, so a diff to the portal-messages card actually runs it —
+      // the targeting lesson from #721.
+      "ui05-native-confirm-retirement.spec.ts",
       "appointment-token-hash.spec.ts",
       // B7 / 0176: the only browser proof that a policy edited between render
       // and submit is refused, re-presented, and requires a SECOND consent.
@@ -272,7 +291,32 @@ export const BROWSER_GROUPS = {
   },
   responsive: {
     description: "cross-cutting responsive behaviour",
-    specs: ["mobile-ux.spec.ts"],
+    specs: [
+      "mobile-ux.spec.ts",
+      // SIGNOUT-01: the authenticated Sign out path on BOTH shells, proved by
+      // real session destruction in auth.sessions rather than by a pathname.
+      //
+      // WHY HERE AND NOT `owner_admin`, WHERE THE REST OF THE SHELL/AUTH-GATE
+      // FAMILY LIVES (invite-only, authenticated-route-error-containment).
+      // Because SELECTION, not taxonomy, decides whether a proof ever runs:
+      //
+      //   * `app/(app)/MobileMenu.tsx` matches the /mobile/i rule below, so a
+      //     MobileMenu-only diff IS attributed, the extended fallback does not
+      //     fire, and it selects `responsive` + `smoke`. Filed under
+      //     `owner_admin`, this spec would have been SKIPPED for a diff to one
+      //     of the two components it exists to protect.
+      //   * `app/(app)/AccountMenu.tsx` and `app/(app)/dashboard/actions.ts`
+      //     match no rule, so they fall through to EXTENDED and run it anyway.
+      //
+      // Filing it here covers both directions with no new path rule. The
+      // alternative — an exact AccountMenu path rule — would NARROW that file
+      // from extended to one group, which is a coverage REDUCTION and the same
+      // trade the ui04 note above declines to make for /clients/.
+      //
+      // Deliberately still not in `smoke`: that group runs on every targeted PR
+      // and its size is a pinned cost.
+      "signout-session-destruction.spec.ts",
+    ],
   },
   google: {
     description: "Google Calendar surfaces (fake Google)",
@@ -311,7 +355,29 @@ const PATH_TO_GROUP = [
   { group: "intake", patterns: [/intake/i] },
   { group: "portal", patterns: [/portal/i, /pinned[-_]?note/i, /personal[-_]?note/i] },
   { group: "booking", patterns: [/booking/i, /appointments?/i, /reschedule/i, /\bbook\b/i, /treatment-plans/i] },
-  { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i] },
+  // UI-06. `appointment-prep-memory-card` is matched by the BOOKING rule's
+  // /appointments?/i purely because of its filename, and by nothing here — so a
+  // diff touching it selected `booking` + `smoke` and never ran
+  // ui06-dashboard-chrome.spec.ts, which lives in `sessions` and exists to
+  // prove that card. Registering a spec in a group is only half the job; the
+  // CHANGED PATH has to select that group. Same hole the OWNER-CAP note below
+  // records for the capacity page, and the third time this class has been
+  // caught in this stack.
+  //
+  // The pattern is ANCHORED TO THE CARD rather than a bare /prep[-_]?memory/i,
+  // following the OWNER-CAP precedent in this file. A loose pattern would also
+  // capture app/(app)/dashboard/prep-memory-actions.ts and
+  // lib/sessions/appointment-prep-memory.ts, and the first of those currently
+  // falls through to EXTENDED — so a loose rule would NARROW that file's
+  // coverage from everything to one group. Additive only: the card already
+  // selected `booking`, and now also selects `sessions`.
+  //
+  // Its sibling last-treatment-memory-card already reaches `sessions` via
+  // /treatment[-_]?memory/i. before-today-card still matches no rule and keeps
+  // its EXTENDED fail-safe; that is pre-existing behaviour for an
+  // unattributable path, and narrowing it would reduce coverage, so it is
+  // reported rather than changed here.
+  { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i, /appointment[-_]?prep[-_]?memory[-_]?card/i] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
   // job: selection maps CHANGED PATHS to groups, and the capacity page matched

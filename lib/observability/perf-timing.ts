@@ -103,6 +103,39 @@ export const PERF_SPAN_IDS = [
   "calendar.domain",
   "records.identity",
   "records.domain",
+  // SESSION-START-01 slice 2. The charting entry path, which the recon showed
+  // is the product's worst measured wait and had NO instrumentation at all.
+  // Split finely on purpose: the question is not "is it slow" but WHICH term
+  // dominates, and an aggregate cannot answer that.
+  "session-start.identity",
+  "session-start.lineage",
+  "session-start.rpc",
+  "session-start.appointment-complete",
+  "session-start.postcare",
+  "session-start.revalidate",
+  // The destination chart. One span per independent read, because the
+  // optimisation question is exactly which of these can move.
+  "session-chart.identity",
+  "session-chart.core",
+  "session-chart.recent-entry",
+  "session-chart.audit",
+  "session-chart.tags",
+  "session-chart.clinical-notes",
+  "session-chart.payment-eligibility",
+  "session-chart.payment-amount",
+  // Both of these are CONDITIONAL reads inside the wave — laser-only, and
+  // linked-appointment-only. They were the two the first instrumentation pass
+  // missed entirely, and then the two left untimed when the wave was built, so
+  // the "slowest individual read" evidence covered 6 of 8. A conditional read is
+  // exactly the kind that regresses unnoticed.
+  "session-chart.treatment-counts",
+  "session-chart.settlements",
+  "session-chart.appointment",
+  "session-chart.plans",
+  "session-chart.previous-note",
+  "session-chart.last-treatment",
+  "session-chart.copy-descriptor",
+  "session-chart.domain",
 ] as const;
 
 export type PerfSpanId = (typeof PERF_SPAN_IDS)[number];
@@ -135,7 +168,12 @@ export type PerfSurface =
   | "clients"
   | "client-profile"
   | "calendar"
-  | "records";
+  | "records"
+  // A server ACTION, not a page. surfaceOf() reads the prefix, so the action's
+  // spans aggregate separately from the page they redirect to — which is the
+  // whole point: the recon's hypothesis is that the wait is split across both.
+  | "session-start"
+  | "session-chart";
 
 /**
  * How a span finished. `threw` covers a real error AND Next's control-flow

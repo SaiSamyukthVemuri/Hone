@@ -1,4 +1,7 @@
-import Link from "next/link";
+import {
+  PendingContainerLink,
+  PendingLink,
+} from "@/components/pending-link";
 import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
 import { GlobalSearch } from "./GlobalSearch";
@@ -84,13 +87,15 @@ export default async function AppLayout({
                 nav tab labeled "Today" (since renamed "Dashboard"),
                 and on phones the wordmark is the only always-visible
                 way home now that the tab row lives inside the Menu. */}
-            <Link
+            <PendingLink
               href="/dashboard"
               aria-label="Go to Dashboard"
+              data-testid="nav-wordmark"
+              pendingLabel="Opening Dashboard…"
               className="select-none text-xl font-semibold tracking-tight"
             >
               Hone
-            </Link>
+            </PendingLink>
             {/* PR #228: the full horizontal nav is DESKTOP-ONLY. On
                 phones the whitespace-nowrap row was wider than the
                 viewport and dragged the whole page sideways; smaller
@@ -115,24 +120,30 @@ export default async function AppLayout({
             >
               {/* PR #208: the landing page is the practice Dashboard
                   (it contains the Today section). */}
-              <Link
+              <PendingLink
                 href="/dashboard"
+                data-testid="nav-dashboard"
+                pendingLabel="Opening Dashboard…"
                 className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Dashboard
-              </Link>
-              <Link
+              </PendingLink>
+              <PendingLink
                 href="/clients"
+                data-testid="nav-clients"
+                pendingLabel="Opening Clients…"
                 className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Clients
-              </Link>
-              <Link
+              </PendingLink>
+              <PendingLink
                 href="/calendar"
+                data-testid="nav-calendar"
+                pendingLabel="Opening Calendar…"
                 className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Calendar
-              </Link>
+              </PendingLink>
               {/* PR #229: Notifications moved out of the main tab
                   row to the header bell (right side, both
                   breakpoints), so the primary nav competes less and
@@ -142,12 +153,14 @@ export default async function AppLayout({
                   under Settings (Chloe's ask). PR #209: nav label
                   shortened to "Records" so the header fits without
                   wrapping; the page heading stays "Record Keeping". */}
-              <Link
+              <PendingLink
                 href="/records"
+                data-testid="nav-records"
+                pendingLabel="Opening Records…"
                 className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Records
-              </Link>
+              </PendingLink>
               {/* OWNER-CAP follow-up: a PERMANENT owner entry point.
                   Labelled "Business", not "Capacity": capacity is the
                   first owner operating surface, not the whole domain,
@@ -166,12 +179,14 @@ export default async function AppLayout({
                   advertising a surface they cannot use, rather than
                   offering a disabled item or a permission placeholder. */}
               {practitioner.role === "owner" && (
-                <Link
+                <PendingLink
                   href="/dashboard/capacity"
+                  data-testid="nav-business"
+                  pendingLabel="Opening Business…"
                   className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
                 >
                   Business
-                </Link>
+                </PendingLink>
               )}
               {/* PR #231: Settings and Admin moved into the account
                   dropdown; the primary nav is the working surfaces. */}
@@ -283,10 +298,26 @@ function NotificationsBell({ unread }: { unread: number }) {
   const label =
     unread > 0 ? `Notifications, ${unread} unread` : "Notifications";
   return (
-    <Link
+    // THE CONTAINER FORM, and the only one of the seven that needs it.
+    //
+    // The other six anchors are LABELS — a word, which may fade to `opacity-0`
+    // because its accessible name survives the fade. This one's content is a
+    // LAYOUT: an icon plus a count badge positioned against the anchor itself.
+    // `PendingLink` would wrap both in a single in-flow span (collapsing the
+    // flex arrangement) and fade them, so the bell AND its unread count would
+    // blank on press — a control going empty reads as a bug, not as an
+    // acknowledgement. `PendingContainerLink` leaves both children exactly
+    // where they were and dims them under an out-of-flow scrim instead.
+    //
+    // `relative` is NOT repeated here: the primitive owns that class precisely
+    // so the scrim cannot escape to a distant positioned ancestor. The badge
+    // below still resolves against this same anchor, unchanged.
+    <PendingContainerLink
       href="/notifications"
       aria-label={label}
-      className="relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900"
+      data-testid="nav-notifications"
+      pendingLabel="Opening Notifications…"
+      className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900"
     >
       <svg
         aria-hidden="true"
@@ -309,6 +340,6 @@ function NotificationsBell({ unread }: { unread: number }) {
           {unread > 99 ? "99+" : unread}
         </span>
       )}
-    </Link>
+    </PendingContainerLink>
   );
 }

@@ -112,7 +112,24 @@ describe("app shell: responsive navigation", () => {
 
   it("the wordmark is an accessible Dashboard link (PR #230)", () => {
     expect(LAYOUT).toMatch(/aria-label="Go to Dashboard"/);
-    expect(LAYOUT).toMatch(/href="\/dashboard"[\s\S]{0,200}Hone/);
+    // NAV-ACK-02: bound to the ELEMENT, not to a character distance.
+    //
+    // This previously asserted `href="/dashboard"[\s\S]{0,200}Hone` — a fixed
+    // proximity window between the href and the label. Giving the wordmark its
+    // acknowledgement added two attributes inside that window and the guard
+    // failed on a change that does exactly what the guard asks for, while
+    // saying only "no match". A distance is not the property anyone wants
+    // pinned; the anchor is.
+    //
+    // Located by its own accessible name and then read WHOLE, so an added
+    // attribute can never break it — and removing the href, or emptying the
+    // wordmark, still does.
+    const wordmark = LAYOUT.match(
+      /<(\w+)[^>]*aria-label="Go to Dashboard"[^>]*>([\s\S]*?)<\/\1>/,
+    );
+    expect(wordmark).not.toBeNull();
+    expect(wordmark![0]).toMatch(/href="\/dashboard"/);
+    expect(wordmark![2].trim()).toBe("Hone");
   });
 
   it("the notifications bell carries the destination and the unread count", () => {
@@ -158,6 +175,101 @@ describe("desktop account dropdown (PR #231)", () => {
     expect(navRow).not.toContain('"/settings/profile"');
     expect(navRow).not.toContain('"/admin"');
     expect(LAYOUT).toMatch(/<AccountMenu/);
+  });
+});
+
+// SIGNOUT-01. An authenticated practitioner pressed "Sign out" and stayed
+// signed in: the submit button's own onClick closed the menu, React flushed
+// that discrete update synchronously, and the <form> was detached before the
+// button's activation behaviour ran — so the browser cancelled the submission
+// and the Server Action never dispatched.
+//
+// The behaviour is proved in the browser by
+// e2e/signout-session-destruction.spec.ts, which drives a real logout on both
+// surfaces and reads auth.sessions / auth.refresh_tokens. These pins keep the
+// load-bearing SOURCE property from being reintroduced in the fast lane.
+describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () => {
+  // These pins assert over CODE, never prose. Both shells DISCUSS `onClick`,
+  // `<Link>` and the withdrawn mechanisms BY NAME in load-bearing comments, and
+  // since NAV-ACK-01 (DESIGN.md contract 2d) MobileMenu.tsx explains in a
+  // comment that `useLinkStatus` must run inside the `<Link>` that owns the
+  // navigation. Matched against raw source, that sentence reads as a `<Link>`
+  // carrying no onClick and fails the link pin below for a reason that has
+  // nothing to do with the panel — a false positive on a real contract. Strip
+  // comments first, so each assertion is about what actually renders.
+  //
+  // LINE comments are stripped BEFORE block comments, deliberately: a `//` line
+  // containing `/*` would otherwise leave the block stripper eating everything
+  // to the next `*/`, silently removing real code and making every assertion
+  // here vacuously true.
+  const codeOnly = (source: string) =>
+    source
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .split("\n")
+      .filter((line) => !/^\s*\/\//.test(line))
+      .join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+  function signOutForm(name: string, source: string): string {
+    const code = codeOnly(source);
+    const open = code.indexOf("<form action={signOut}>");
+    expect(open, `${name}: the Sign out form exists`).toBeGreaterThan(-1);
+    const close = code.indexOf("</form>", open);
+    expect(close, `${name}: the Sign out form is closed`).toBeGreaterThan(open);
+    return code.slice(open, close);
+  }
+
+  for (const [name, source] of [
+    ["MobileMenu.tsx", MENU],
+    ["AccountMenu.tsx", ACCOUNT],
+  ] as const) {
+    // If the stripper over-eats, every assertion below passes for the wrong
+    // reason. Prove it keeps real code and drops real prose.
+    it(`${name}: the comment stripper keeps code and drops prose`, () => {
+      const code = codeOnly(source);
+      expect(code, `${name}: the Sign out form survives`).toContain(
+        "<form action={signOut}>",
+      );
+      expect(code, `${name}: real links survive`).toMatch(/<Link\b/);
+      // This token exists ONLY inside a comment in both shells.
+      expect(code, `${name}: comment prose is gone`).not.toContain(
+        "SIGNOUT-01",
+      );
+    });
+
+    it(`${name}: the Sign out button carries no click handler of its own`, () => {
+      const form = signOutForm(name, source);
+      expect(form).toContain("Sign out");
+      expect(form).toContain('type="submit"');
+      // THE DEFECT, in one assertion. Any onClick on this submit path closes
+      // the menu during the click, detaches the form before its activation
+      // behaviour runs, and the logout never dispatches.
+      expect(
+        form,
+        "a click handler here unmounts the form mid-click and cancels the submission",
+      ).not.toMatch(/onClick/);
+    });
+
+    it(`${name}: ordinary links still dismiss the panel themselves`, () => {
+      // Deliberately NOT pinned to one spelling of the handler: the point is
+      // that a link inside a panel that survives the navigation must dismiss
+      // it, not which function does the dismissing.
+      const links = codeOnly(source).match(/<Link\b[\s\S]*?>/g) ?? [];
+      expect(links.length, `${name}: the panel still renders links`).toBeGreaterThan(0);
+      for (const link of links) {
+        expect(
+          link,
+          `${name}: a <Link> with no onClick would leave the panel open`,
+        ).toMatch(/onClick=/);
+      }
+    });
+  }
+
+  it("logout authority stays server-side, with Supabase semantics unchanged", () => {
+    const ACTIONS = read("app/(app)/dashboard/actions.ts");
+    expect(ACTIONS).toMatch(/"use server"/);
+    expect(ACTIONS).toMatch(/await supabase\.auth\.signOut\(\)/);
+    expect(ACTIONS).toMatch(/redirect\("\/login"\)/);
   });
 });
 

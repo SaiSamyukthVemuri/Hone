@@ -109,6 +109,12 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   ...(process.env.HONE_E2E_FAKE_RESEND === "1"
     ? { HONE_E2E_FAKE_RESEND: "1" }
     : {}),
+  // SESSION-START-01 slice 2 measurement. webServer.env REPLACES process.env,
+  // so the timing switch has to be listed here to reach the server — same
+  // pattern as the fake-Resend and fake-Stripe markers above. Forwarded ONLY
+  // when the outer process asks for it, so ordinary e2e runs are unmeasured
+  // and unaffected.
+  ...(process.env.HONE_PERF_TIMING === "1" ? { HONE_PERF_TIMING: "1" } : {}),
   // REL-001 route fault injection. Server-only marker; the module's own guard
   // (lib/reliability/e2e-route-fault.ts) refuses it in any deployed runtime and
   // the fault page 404s without it, so it is safe to arm unconditionally for
