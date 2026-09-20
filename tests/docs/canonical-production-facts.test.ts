@@ -1083,10 +1083,19 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // allowlist names none" both walked past it. Membership and occupancy are
       // the same claim class -- what the environment holds RIGHT NOW -- and
       // neither is derivable from rows.
-      /\bcurrently none\b/i,
+      // SCOPED TO THE SUBJECT. Codex #740: the first draft of these two was
+      // SUBJECT-FREE -- any "currently none" or "there are none" anywhere in six
+      // canonical documents would have failed a WAIT-specific test, including a
+      // perfectly legitimate statement about alerts, migrations or any other
+      // capability. An over-broad guard does not merely annoy; it taxes
+      // unrelated work with a failure whose message names the wrong subject.
+      // Punctuation support is kept; WAIT context is now required.
+      /(?:allowlist|WAIT-01|durable|waitlist|studio)[^.\n]{0,70}\bcurrently none\b/i,
+      /\bcurrently none\b[^.\n]{0,70}(?:allowlist|WAIT-01|durable|waitlist|studio)/i,
+      /(?:allowlist|WAIT-01|durable|waitlist)[^.\n]{0,70}\bthere are\s+(?:currently\s+)?none\b/i,
+      /\bthere are\s+(?:currently\s+)?none\b[^.\n]{0,70}(?:allowlist|WAIT-01|durable|waitlist)/i,
       /\ballowlist\s+names\s+(?:none|no studio)\b/i,
       /\ballowlist\s+(?:is|remains)\s+empty\b/i,
-      /\bthere are\s+(?:currently\s+)?none\b/i,
     ];
 
     /** A date anywhere in the surrounding sentence makes it an observation. */
@@ -1327,12 +1336,29 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
 });
 
 describe("canonical production docs: frozen-region markers are explicit and justified", () => {
+  /**
+   * EVERY DOCUMENT WHOSE IGNORE BLOCKS ARE VALIDATED.
+   *
+   * Codex #740: the marker tests inspected NO_CURRENT_MAX_DOCS, the changelog
+   * and the ledger, while the durable-waitlist rules had since grown to scan the
+   * roadmap, the security doc and the deployment doc too. A balanced block
+   * without `reason=` in any of those three would have silently exempted
+   * arbitrary text -- the exact invariant the helper header says is
+   * non-negotiable -- and nothing would have gone red. An exemption mechanism
+   * that is itself unguarded in half the documents it applies to is not an
+   * exemption mechanism.
+   */
+  const MARKER_VALIDATED_DOCS = [
+    ...NO_CURRENT_MAX_DOCS,
+    ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
+    ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
+    ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
+    ["docs/03_SECURITY_AND_PRIVACY.md", read("docs/03_SECURITY_AND_PRIVACY.md")],
+    ["docs/10_DEPLOYMENT_AND_ENV.md", read("docs/10_DEPLOYMENT_AND_ENV.md")],
+  ] as const;
+
   it("every ignore marker declares a reason", () => {
-    for (const [name, doc] of [
-      ...NO_CURRENT_MAX_DOCS,
-      ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
-      ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
-    ] as const) {
+    for (const [name, doc] of MARKER_VALIDATED_DOCS) {
       for (const marker of ignoreMarkers(doc)) {
         expect(
           marker,
@@ -1344,11 +1370,7 @@ describe("canonical production docs: frozen-region markers are explicit and just
   });
 
   it("every ignore block is closed", () => {
-    for (const [name, doc] of [
-      ...NO_CURRENT_MAX_DOCS,
-      ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
-      ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
-    ] as const) {
+    for (const [name, doc] of MARKER_VALIDATED_DOCS) {
       const starts = (doc.match(/canonical-facts:ignore-start/g) ?? []).length;
       const ends = (doc.match(/canonical-facts:ignore-end/g) ?? []).length;
       expect(starts, `${name} has unbalanced ignore markers`).toBe(ends);

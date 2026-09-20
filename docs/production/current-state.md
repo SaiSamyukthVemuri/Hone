@@ -488,7 +488,8 @@ measured instant · its EMAIL COMMIT POINT no longer served any studio.**
 > email were still Willow's commit point. The **admission gate** below is indeed still on for
 > Willow — that part is unchanged and is why new-client booking is still refused. What changed is
 > what happens next: `app/book/[slug]/waitlist-actions.ts:562` routes a studio named on **both**
-> allowlists to the durable branch, and Willow has been on both since on or before 2026-08-25.
+> allowlists to the durable branch, and Willow was on both at every measured instant from on or
+> before 2026-08-25 to 2026-09-15.
 > So for Willow the email was a **notification** and the row the record, at every measured
 > instant. WAIT-01's commit point applies to a waitlisted studio outside the durable allowlist;
 > **no such studio existed at any measured instant, and that is a dated observation, not a
@@ -987,7 +988,8 @@ practitioner selection and assignment.
 **Dormant** (deployed but not acting): all Google Calendar sync phases · practitioner capacity
 at Willow · onboarding v2 at Willow. ⚠️ **CORRECTED 2026-09-19 — the durable new-client waitlist
 (WAIT-02B) HAS LEFT THIS LIST.** It was recorded here as dormant *on every studio*; it is
-enabled for `willow-electrolysis` and collecting, **31 rows measured 2026-09-19** — see §5b.
+was enabled for `willow-electrolysis` and collecting at every measured instant, **31 rows
+measured 2026-09-19** — see §5b.
 *(The reasoning that kept it here was sound and is worth preserving: Stage B1 replaced the
 build-time prohibition with a report-only gate, so what governed activation became **runtime
 allowlist membership** across two allowlists. That is configuration rather than structure — and
@@ -996,7 +998,8 @@ configuration is exactly what changed, unobserved, on or before 2026-08-25.)*
 **Shipped since the previous reconciliation, and NOT production-exercised:** non-card
 appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage measured).
 ⚠️ **CORRECTED 2026-09-19 — WAIT-02B Stage B1 HAS LEFT THIS LIST**; it was recorded here as
-having none. One studio is enabled and joining is exercised (§5b). It is still
+having none. One studio was enabled and joining exercised at every measured instant (§5b). It is
+still
 **not accepted**, and no invitation has ever been issued on that studio.
 
 **Retired by product decision (2026-07-29), enforced by migration 0159:** signed / finalized
