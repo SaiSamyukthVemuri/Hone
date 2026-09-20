@@ -79,7 +79,10 @@
 ## Twilio
 
 - Off by default per `studios.send_*_sms`. Per-client gated by `sms_consent_at` / `sms_opted_out_at`. STOP webhook at `/api/twilio/inbound-sms` signature-verifies via Twilio's standard validator.
-- Either `TWILIO_MESSAGING_SERVICE_SID` (preferred) or `TWILIO_FROM_NUMBER` (E.164) must be set. `TWILIO_WEBHOOK_BASE_URL` should be the public origin Twilio POSTs to (`https://hone.care` in production).
+- **The outbound SENDER is per-studio database routing, NOT environment configuration.** `sendSmsSafely` resolves nothing itself: `lib/sms/send-appointment.ts` calls `resolve_active_studio_sms_sender` (migration `0194`) and passes the studio's own `messaging_service_sid` explicitly. **An ACTIVE `studio_sms_senders` row for that studio is a prerequisite for any SMS to leave.** With no active sender the send is **refused before the attempt is claimed** — no provider call, no attempt consumed, and an `sms_sender_not_active_for_studio` ops alert (deduped to one open alert per studio/event by `ops_alerts_sms_routing_open_uniq`).
+- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` remain provider **authentication** and are still required.
+- **`TWILIO_MESSAGING_SERVICE_SID` and `TWILIO_FROM_NUMBER` are NO LONGER READ AT RUNTIME.** They are retained only as **TEST/LOCAL/CI fixtures** (`.github/workflows/ci.yml`, `e2e/helpers/local-env.ts`, `tests/source-guards/sms-adoption-boundary.test.ts`). **Setting them does not make production SMS ready and never will** — a studio with no active sender cannot send no matter what those variables hold.
+- `TWILIO_WEBHOOK_BASE_URL` should be the public origin Twilio POSTs to (`https://hone.care` in production).
 
 ## Upstash Redis
 
@@ -132,8 +135,8 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `UPSTASH_REDIS_REST_TOKEN` | **Required in production** | Same. |
 | `TWILIO_ACCOUNT_SID` | Optional | SMS subsystem gated on this. |
 | `TWILIO_AUTH_TOKEN` | Optional | Same. |
-| `TWILIO_FROM_NUMBER` | Optional | E.164 number. Either this or `TWILIO_MESSAGING_SERVICE_SID` must be set if SMS is in use. |
-| `TWILIO_MESSAGING_SERVICE_SID` | Optional | Preferred over `TWILIO_FROM_NUMBER` when both are set. |
+| `TWILIO_FROM_NUMBER` | **TEST/CI fixture only — NOT runtime** | No longer read by runtime. Kept for CI and the local e2e harness. Setting it does **not** enable production SMS. |
+| `TWILIO_MESSAGING_SERVICE_SID` | **TEST/CI fixture only — NOT runtime** | Same. The real sender is the studio's own `studio_sms_senders` row, resolved per send via `resolve_active_studio_sms_sender` (`0194`). |
 | `HONE_PERF_TIMING` | Optional, **off by default** | Set to the literal `"1"` to enable the coarse authenticated-route timing spans in `lib/observability/perf-timing.ts` (app shell, Clients, Client profile, Calendar, Records). Any other value, including unset, is a true passthrough that records nothing. Emits ONE structured `perf_route_timing` JSON line per request to stderr (Vercel logs) plus a Sentry span per phase on sampled traces — **no new observability vendor**. The payload carries durations and a closed set of span names only; there is no free-text field, the request path is never read (an authenticated path such as `/clients/<uuid>` is itself a client identifier), and a span name outside the allowlist is dropped without being logged. **Intended for a measurement window, not as a permanent production default** — every line is written at error level, so leaving it on will colour error-rate dashboards. No production env gate: this var guards a feature's *absence*, not its presence.
 | `TWILIO_WEBHOOK_BASE_URL` | Recommended | Public origin Twilio POSTs to. Falls back to `request.url`. |
 | `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` | Optional | **Server-only** comma-separated allowlist of studio **slugs**, matched exactly after trim + lowercase. Unset or empty disables the feature. Never prefix `NEXT_PUBLIC_`. Read by `lib/booking/new-client-waitlist.ts`; behaviour is defined by PR #601. |
