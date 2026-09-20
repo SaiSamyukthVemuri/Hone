@@ -239,6 +239,10 @@
       "Anything we should know before the walkthrough?",
       "There is no automatic booking, a real person will email you to find a time that works. You can reply to that email with anything else we should know."
     ],
+    "app/_components/MarketingFooter.tsx": [
+      "Treatment memory for electrologists.",
+      "Treatment memory, made carefully."
+    ],
     "app/_components/marketing/SiteFooter.tsx": [
       "Operated from Canada.",
       "© {year} Hone. {POSITIONING.category}."

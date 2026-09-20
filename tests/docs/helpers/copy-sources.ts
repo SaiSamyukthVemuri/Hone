@@ -95,11 +95,22 @@ export function marketingComponentFiles(): string[] {
   // authors visitor-facing prose: `pageClaims` cannot see through `<DemoForm />`
   // and the prose guard never ran on it, so a claim added there shipped green.
   //
-  // One level, and components only. Going transitive is what made the previous
-  // architecture unbounded; a component a declared page renders is a rendering
-  // source, and that is where the line sits.
-  for (const page of [...pageCopySources(), ...POLICY_SOURCES]) {
-    const sf = parse(page);
+  // TRANSITIVE, with a visited set. One level was the line because "going
+  // transitive" was what made the PREVIOUS architecture unbounded — but that was
+  // unbounded INTERPRETATION of rendered text, not import following. Walking a
+  // first-party import graph is a finite traversal over files on disk: it
+  // terminates, it reads no semantics, and it needs no dataflow.
+  //
+  // One level leaked. Both policy pages import `PolicyLayout.tsx`, which renders
+  // `MarketingFooter` and `MarketingHeader`; those author visitor-facing prose,
+  // sit outside the two blessed directories, and are imported by no page
+  // directly. Forbidden copy added there reached neither the prose guard nor the
+  // judged corpus. A wrapper is not a boundary — what it renders is on the page.
+  const seen = new Set<string>();
+  const walkImports = (from: string) => {
+    if (seen.has(from)) return;
+    seen.add(from);
+    const sf = parse(from);
     const visit = (n: ts.Node) => {
       if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
         const spec = n.moduleSpecifier.text;
@@ -109,7 +120,7 @@ export function marketingComponentFiles(): string[] {
         const rel = spec.startsWith("@/")
           ? spec.slice(2)
           : spec.startsWith(".")
-            ? relative(REPO_ROOT, join(REPO_ROOT, dirname(page), spec))
+            ? relative(REPO_ROOT, join(REPO_ROOT, dirname(from), spec))
             : null;
         // ANY directly imported first-party component, not just two blessed
         // directories. A page can colocate one — `app/pricing/Hero.tsx` via
@@ -118,15 +129,89 @@ export function marketingComponentFiles(): string[] {
         // `.tsx` is importing a component; that is the whole test.
         if (rel && !rel.startsWith("..")) {
           for (const ext of [".tsx", "/index.tsx"]) {
-            if (existsSync(join(REPO_ROOT, rel + ext))) out.add(rel + ext);
+            if (existsSync(join(REPO_ROOT, rel + ext))) {
+              out.add(rel + ext);
+              walkImports(rel + ext);
+            }
           }
         }
       }
       ts.forEachChild(n, visit);
     };
     visit(sf);
-  }
+  };
+  for (const page of [...pageCopySources(), ...POLICY_SOURCES]) walkImports(page);
   return [...out].sort();
+}
+
+/**
+ * A complete claim that is SPELLED as an assembly of complete parts.
+ *
+ * `copyModuleViolations` refuses assembly inside a canonical copy module, so
+ * this cannot arise there. Components are rendering code, where `+` is ordinary
+ * and allowed — and that is the hole: `const state = "Every change" + " is
+ * tracked"` behind a baselined `{state}` leaves the identity, the count and the
+ * file set untouched, while judgement sees only the two harmless halves.
+ *
+ * Folding is NOT the interpreter coming back. It reads one expression node whose
+ * every leaf is already a complete literal and returns the string that node
+ * denotes. There is no dataflow, no branch selection and no rendering model; an
+ * operand that is not a literal makes the whole fold undefined, so it fails
+ * closed into "not a complete value" rather than guessing.
+ */
+function foldStatic(node: ts.Expression): string | undefined {
+  const e = unwrap(node) as ts.Expression;
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+  if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = foldStatic(e.left);
+    const right = foldStatic(e.right);
+    return left !== undefined && right !== undefined ? left + right : undefined;
+  }
+  // `.join()` as well as `+`, because fixing one spelling and leaving the other
+  // is how this class of defect kept coming back a round later.
+  if (
+    ts.isCallExpression(e) &&
+    ts.isPropertyAccessExpression(e.expression) &&
+    e.expression.name.text === "join"
+  ) {
+    const receiver = unwrap(e.expression.expression);
+    if (!ts.isArrayLiteralExpression(receiver)) return undefined;
+    const separator =
+      e.arguments.length === 0 ? "," : foldStatic(e.arguments[0] as ts.Expression);
+    if (separator === undefined) return undefined;
+    const parts = receiver.elements.map((el) => foldStatic(el as ts.Expression));
+    return parts.every((part) => part !== undefined)
+      ? (parts as string[]).join(separator)
+      : undefined;
+  }
+  return undefined;
+}
+
+/** Every complete value a file spells as an assembly, judged as the whole it renders. */
+export function staticConcatClaims(file: string, source?: string): string[] {
+  const sf = parse(file, source);
+  const out: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isBinaryExpression(n) || ts.isCallExpression(n)) {
+      // Only at the TOP of an assembly: a nested `+` inside a larger one folds
+      // to a prefix of its parent, which is noise, not evidence.
+      const parent = parentPastWrappers(n);
+      const nestedInConcat =
+        parent !== undefined &&
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.PlusToken;
+      if (!nestedInConcat) {
+        const folded = foldStatic(n as ts.Expression);
+        if (folded !== undefined) {
+          const value = normalise(folded);
+          if (value) out.push(value);
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
 }
 
 /**
@@ -932,7 +1017,8 @@ export function moduleClaims(file: string, source?: string): string[] {
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  return out;
+  // And the whole that an assembly denotes, not only its halves.
+  return [...out, ...staticConcatClaims(file, source)];
 }
 
 /**
@@ -1019,7 +1105,9 @@ export function pageClaims(file: string, source?: string): string[] {
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  return out.filter(Boolean);
+  // Same here. A component is rendering code, so `+` is ordinary and allowed
+  // there; judging only the halves is what let a split binding launder N1.
+  return [...out, ...staticConcatClaims(file, source)].filter(Boolean);
 }
 
 /**

@@ -145,6 +145,12 @@ const MARKETING_COPY = CLAIMS.join(" ¶ ");
  */
 const COMPONENT_PROSE_BASELINE: readonly string[] = [
   "app/_components/DemoForm.tsx",
+  // Reached only once the import walk went transitive. Both policy pages import
+  // `PolicyLayout`, which renders this footer; no page imports it directly, so
+  // its two sentences — "Treatment memory, made carefully." and "Treatment
+  // memory for electrologists." — were public prose that no guard had ever
+  // read. They are clean against the register. They are listed, not excused.
+  "app/_components/MarketingFooter.tsx",
   "app/_components/marketing/SiteFooter.tsx",
   "app/_components/marketing/article.tsx",
 ];
@@ -1281,7 +1287,7 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     // silently, and the assertion is an upper bound so the list cannot grow.
     const prose = marketingComponentFiles().flatMap((f) => componentProseViolations(f));
     expect(new Set(prose.map((v) => v.file))).toEqual(new Set(COMPONENT_PROSE_BASELINE));
-    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(6);
+    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(8);
 
     // BY IDENTITY, like the page half. A count alone let one exception be
     // swapped for another. Identity catches a REWRITTEN exception; it cannot
@@ -1338,6 +1344,61 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
       pageClaims(FILE, src).some((c) => FORBIDDEN.some((r) => r.pattern.test(c)));
     expect(judged(laundered)).toBe(true);
     expect(judged(clean)).toBe(false);
+  });
+
+  it("judgement folds a claim that is SPELLED as an assembly, in both spellings", () => {
+    // `copyModuleViolations` refuses assembly inside a canonical copy module, so
+    // this cannot arise there. A component is rendering code, where `+` is
+    // ordinary and allowed — and that is exactly where it was used to launder N1
+    // past a stable `{state}`: judgement saw two harmless halves.
+    const FILE = "app/_components/marketing/Row.tsx";
+    const row = (binding: string) =>
+      `const state = ${binding};\n` +
+      `export const Row = () => <p>Value: {state} here in the record.</p>;\n`;
+    const judged = (binding: string) =>
+      pageClaims(FILE, row(binding)).some((c) =>
+        FORBIDDEN.some((r) => r.pattern.test(c)),
+      );
+    expect(judged('"Every change" + " is tracked"')).toBe(true);
+    // The other spelling, in the same commit rather than a round later.
+    expect(judged('["Every change", "is tracked"].join(" ")')).toBe(true);
+    expect(judged('"under review"')).toBe(false);
+
+    // And the identity really is blind to the difference, which is why folding
+    // is what closes this and the baseline cannot.
+    const detail = (binding: string) =>
+      componentProseViolations(FILE, row(binding)).map((v) => v.detail);
+    expect(detail('"Every change" + " is tracked"')).toEqual(detail('"under review"'));
+
+    // BOTH call sites, asserted here rather than one round later. Folding is
+    // defence in depth for a canonical module — `copyModuleViolations` refuses
+    // assembly there, so it cannot arise — but an extractor that folds in one
+    // place and not the other is the shape of every repeat finding in this PR.
+    expect(
+      moduleClaims("lib/marketing/probe.ts", 'export const T = "Every change" + " is tracked";')
+        .some((c) => FORBIDDEN.some((r) => r.pattern.test(c))),
+    ).toBe(true);
+  });
+
+  it("a component reached only through a wrapper is read and judged", () => {
+    // Both policy pages import `PolicyLayout`, which renders `MarketingFooter`;
+    // no page imports that footer directly. At one level of import following it
+    // was invisible to every guard, so copy added there shipped unread.
+    expect(marketingComponentFiles()).toContain("app/_components/PolicyLayout.tsx");
+    expect(marketingComponentFiles()).toContain("app/_components/MarketingFooter.tsx");
+    // Listed is not enough — its prose is in the judged corpus.
+    expect(MARKETING_COPY).toContain("Treatment memory for electrologists.");
+  });
+
+  it("V15's absence claim watches the whole migration directory", () => {
+    // V15 asserts that NO migration adds a plan, client or appointment cap. An
+    // absence claim over a directory is only watched if the directory is cited;
+    // citing only the global-search file left a production migration that
+    // introduces a cap able to land with this row still reading as current.
+    const cited = citedEvidenceFiles(REGISTER);
+    expect(isWatched("supabase/migrations/0200_plan_caps.sql", cited)).toBe(true);
+    // Non-vacuous: it is that directory that is watched, not everything.
+    expect(isWatched("supabase/seed.sql", cited)).toBe(false);
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {
