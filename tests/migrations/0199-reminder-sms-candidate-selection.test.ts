@@ -50,7 +50,7 @@ describe("0199 position in the chain", () => {
     expect(versionsAbove(VERSION)).toEqual(["0200"]);
   });
 
-  it("IS APPLIED to production, and is STILL the current hosted head", () => {
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
     // 0199 NOW OWNS THE EXACT HOSTED-HEAD CLAIM, handed off from 0198 when this
     // migration was applied to production on 2026-09-18 under explicit
     // per-change authorization, from the reviewed #716 head. That apply took
@@ -61,26 +61,19 @@ describe("0199 position in the chain", () => {
     // was written and stopped being true when the apply landed. 0198 was
     // correspondingly narrowed to a floor, the way 0197, 0196 and 0191 were.
     //
-    // 0199 KEEPS THE HOSTED-HEAD EQUALITY, and that is the whole point of
-    // separating "authored" from "applied". 0200 exists on this branch and is
-    // PENDING; nothing has applied it, so production's head is still 0199 and
-    // this file is still the one entitled to say so.
+    // 0199 NO LONGER OWNS THE EQUALITY CLAIM. `0200` was applied on 2026-09-20
+    // under explicit owner authorization, so this file keeps only a FLOOR —
+    // `hosted >= 0199` — which is the durable fact about an older applied
+    // migration and stays true forever.
     //
-    // WHAT IT GAVE UP is the PARITY half. Authoring 0200 took the chain out of
-    // PARITY and into the ordinary MIGRATION-FIRST PENDING shape — repo one
-    // above hosted, with `0200` named as the entire pending suffix — so the
-    // two claims that asserted parity moved to 0200's own file along with the
-    // repo max.
-    //
-    // WHOEVER APPLIES 0200 moves this block properly: narrow 0199 to a FLOOR
-    // (`hosted >= 0199`) the way 0198, 0197, 0196 and 0191 were narrowed, and
-    // let 0200 take equality. Re-asserting equality on an older file is the
-    // mechanical sweep CLAUDE.md forbids.
+    // That is exactly the hand-off the previous revision of this block
+    // required: "whoever applies 0200 moves this block properly: narrow 0199 to
+    // a FLOOR the way 0198, 0197, 0196 and 0191 were narrowed, and let 0200
+    // take equality." Re-asserting equality on an older file is the mechanical
+    // sweep CLAUDE.md forbids.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);
-    expect(state.pending_migrations).toEqual(["0200"]);
-    expect(state.repo_equals_hosted).toBe(false);
   });
 
   it("THE FILE STILL HASHES TO THE APPLIED BYTES", () => {
@@ -112,18 +105,19 @@ describe("0199 position in the chain", () => {
     // ONE literal, shared with the digest check above, so the record and the
     // bytes can never be updated independently of each other.
     expect(ledger, "the ledger must carry 0199's COMPLETE sha256").toContain(APPLIED_SHA256);
-    expect(ledger, "the ledger's current block must record 0199 as APPLIED").toMatch(
-      // Anchored by SECTION, not by a character count: the match must sit between
-      // "## Current state" and the first "## Previous state", so a future apply
-      // that lengthens the block cannot silently slide this assertion out of it,
-      // and a stale record in a preserved section can never satisfy it.
-      /## Current state(?:(?!## Previous state)[\s\S])*?0199_reminder_sms_candidate_selection\.sql`? \| \*\*APPLIED\*\*/,
+    // THE CURRENT-BLOCK CLAIM MOVED TO 0200 with the 0200 apply on 2026-09-20.
+    // 0199's record is now a PRESERVED "## Previous state" section — historical
+    // apply records are never rewritten — so what stays true is that the ledger
+    // records 0199 as APPLIED, not that it does so in the current block. This
+    // is the same narrowing 0198's file received when 0199 landed.
+    expect(ledger, "the ledger must record 0199 as APPLIED").toMatch(
+      /0199_reminder_sms_candidate_selection\.sql`? \| \*\*APPLIED\*\*/,
     );
   });
 
   it("does not claim the next free number for anything", () => {
-    // 0200 IS NO LONGER FREE — WAIT-P1-EXIT authored it on this branch — so the
-    // next free number moved on. This file still claims none of it.
+    // 0200 IS NO LONGER FREE — WAIT-P1-EXIT authored it and it is now APPLIED —
+    // so the next free number moved on. This file still claims none of it.
     expect(migrationState().next_free_migration).toBe("0201");
   });
 });

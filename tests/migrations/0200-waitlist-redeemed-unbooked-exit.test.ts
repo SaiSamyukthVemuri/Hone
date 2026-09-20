@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   countVersion,
@@ -23,6 +24,9 @@ const FILE = fileForVersion(VERSION);
 const SQL = readFileSync(path.join(ROOT, "supabase/migrations", FILE), "utf8");
 /** Comment- and COMMENT ON-stripped, so prose can never satisfy an assertion. */
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, " ");
+
+/** The digest verified immediately before the production write on 2026-09-20. */
+const APPLIED_SHA256 = "a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158";
 
 const FN = "close_unbooked_new_client_waitlist_invitation";
 const SIG = `public.${FN}(uuid, uuid, uuid)`;
@@ -56,30 +60,54 @@ describe("0200 position in the chain", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("IS THE PENDING SUFFIX — authored here, NOT applied", () => {
-    // MIGRATION-FIRST PENDING, the ordinary pre-apply shape: the repository sits
-    // exactly one migration above hosted, and `pending_migrations` names this
-    // one and nothing else. Nothing in this repository may claim 0200 is
-    // applied until an operator applies it and records it.
+  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+    // 0200 NOW OWNS THE EXACT HOSTED-HEAD CLAIM, handed off from 0199 when this
+    // migration was applied to production on 2026-09-20 under explicit
+    // per-change owner authorization, from the reviewed #741 head
+    // 6de5fb4c6c3197ad3d2f1abdf33ef5c23f9d87b6 with the dry run and the apply
+    // each naming exactly one file.
+    //
+    // An earlier revision of this block said "IS THE PENDING SUFFIX — authored
+    // here, NOT applied". That was true when it was written and stopped being
+    // true when the apply landed. 0199 was correspondingly narrowed to a floor,
+    // the way 0198, 0197, 0196 and 0191 were.
+    //
+    // Equality is a CURRENT claim, so exactly one file may hold it. WHOEVER
+    // APPLIES 0201 moves this block: narrow 0200 to a floor the same way, and
+    // let the new head take equality.
     const state = migrationState();
-    expect(state.pending_migrations).toEqual([VERSION]);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(Number(state.hosted_migration_max)).toBe(Number(VERSION) - 1);
-    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 
-  it("the hosted head this branch declares is the one production actually has", () => {
-    // THE NUMBER THIS LANE HAD TO REPAIR BEFORE IT COULD AUTHOR ANYTHING.
+  it("leaves NOTHING pending — repo and hosted are at PARITY at 0200", () => {
+    // The reconciliation's own assertion, and the reason this file changed after
+    // the apply. Before it, this branch was the ordinary MIGRATION-FIRST PENDING
+    // shape: repo one above hosted, `0200` named as the pending suffix. After
+    // it, the pending set is empty and the two numbers are the same one.
     //
-    // 0199 is APPLIED to production but its file and apply record live on the
-    // WAIT S3 branch, which is deliberately held. A branch taken from production
-    // therefore derives `next free = 0199` — a number production has already
-    // used. This lane carries 0199 so the derivation is honest, and the number
-    // it then derives is 0200, which is what the WAIT current-state audit
-    // expected.
+    // 0201 is merely the next FREE number. It is not allocated, and nothing here
+    // claims it.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe("0199");
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.repo_migration_max).toBe(VERSION);
+    expect(state.next_free_migration).toBe("0201");
+  });
+
+  it("0199 is still carried, still frozen, and was NOT re-applied", () => {
+    // THE NUMBER THIS LANE HAD TO REPAIR BEFORE IT COULD AUTHOR ANYTHING: 0199
+    // was applied to production while its file lived only on the held WAIT S3
+    // branch, so a branch taken from production derived `next free = 0199` — a
+    // number production had already used. #740 reconciled that into production
+    // history, and this branch normal-merged it.
+    //
+    // What stays true forever: 0199 is in the repository exactly once, and this
+    // migration sits above it rather than beside it.
+    const state = migrationState();
     expect(state.versions).toContain("0199");
+    expect(state.versions.filter((v: string) => v === "0199")).toHaveLength(1);
+    expect(Number(VERSION)).toBeGreaterThan(199);
   });
 });
 
@@ -103,9 +131,44 @@ describe("0200 is ATOMIC and arms its own lock timeout", () => {
   });
 
   it("makes no hosted claim in its own SQL", () => {
-    // The apply record is the ledger's and migration-state.json's job.
+    // The apply record is the ledger's and migration-state.json's job. A
+    // migration file that claimed to be applied would be a second,
+    // unverifiable source for that fact.
     expect(SQL).not.toMatch(/\bAPPLIED\b/);
     expect(SQL).not.toMatch(/hosted_migration_max/);
+  });
+
+  it("IS APPLIED, AND THEREFORE FROZEN — it still hashes to the applied bytes", () => {
+    // THE BYTE-IDENTITY LINK, taken over from 0199 with the apply. This one
+    // value ties together four things that can otherwise drift apart: what was
+    // reviewed on #741, what the owner authorized, what production actually
+    // ran, and what this repository still contains.
+    //
+    // IF THIS GOES RED, DO NOT UPDATE THE CONSTANT. The file was edited and
+    // must be restored; applied history is FROZEN and any correction is a NEW
+    // forward migration.
+    const digest = createHash("sha256")
+      .update(readFileSync(path.join(ROOT, "supabase/migrations", FILE)))
+      .digest("hex");
+    expect(
+      digest,
+      `${FILE} no longer hashes to the bytes applied to production on ` +
+        `2026-09-20. Applied migrations are FROZEN: restore the file, and put ` +
+        `any correction in a new forward migration.`,
+    ).toBe(APPLIED_SHA256);
+  });
+
+  it("is recorded in the ledger under its COMPLETE sha256, and as APPLIED", () => {
+    // A truncated or mis-transcribed hash is not a record — the 0197 apply was
+    // refused once for exactly that.
+    const ledger = readFileSync(path.join(ROOT, "docs/production/migration-ledger.md"), "utf8");
+    expect(ledger, "the ledger must carry 0200's COMPLETE sha256").toContain(APPLIED_SHA256);
+    expect(ledger, "the ledger's current block must record 0200 as APPLIED").toMatch(
+      // Anchored by SECTION: the match must sit between "## Current state" and
+      // the first "## Previous state", so a stale record in a preserved section
+      // can never satisfy it.
+      /## Current state(?:(?!## Previous state)[\s\S])*?0200_waitlist_redeemed_unbooked_exit\.sql`? \| \*\*APPLIED\*\*/,
+    );
   });
 });
 
