@@ -1204,6 +1204,13 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         /\b(?:before|prior to)\s+(?:Willow\s+)?durable\s+cutover\b/i,
         /\bonly then\s+authoriz\w*[^.\n]{0,40}\bcutover\b/i,
         /\bauthorize\s+Willow\s+durable\s+cutover\b/i,
+        // GENERIC "before migration", with no Willow or durable token in the
+        // sentence at all. Codex #740, twelfth direction: an acceptance-debt row
+        // told operators to close WAIT-CONTINUITY-01 "before migration". Scoped
+        // to WAIT work items so unrelated migrations keep their own ordering
+        // language.
+        /\b(?:WAIT|waitlist|continuity)[^.\n]{0,60}\bbefore migration\b/i,
+        /\bbefore migration\b[^.\n]{0,60}\b(?:WAIT|waitlist|rollout state)\b/i,
         // BARE WORDING. Codex #740, ninth round: "then Willow cutover" listed as
         // remaining work, with no "durable" and no verb to anchor on. The guard
         // had been matching the decorated forms only.
