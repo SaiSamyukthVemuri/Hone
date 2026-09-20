@@ -259,5 +259,94 @@
       "Hone | Treatment Memory for Electrologists",
       "Hone | Treatment Memory for Electrologists"
     ]
+  },
+  "componentHoles": {
+    "app/_components/DemoForm.tsx": [
+      "claim/standalone-opaque-hole {label}",
+      "claim/standalone-opaque-hole {options.map((opt) => { const selected = value === opt.value; const id",
+      "claim/standalone-opaque-hole {status.message}"
+    ],
+    "app/_components/MarketingHeader.tsx": [
+      "claim/standalone-opaque-hole {MARKETING_NAV.map((item) => ( <Link key={item.href} href={item.href} ",
+      "claim/standalone-opaque-hole {item.label}"
+    ],
+    "app/_components/MobileNav.tsx": [
+      "claim/standalone-opaque-hole {MARKETING_CTA.label}",
+      "claim/standalone-opaque-hole {MARKETING_NAV.map((item) => ( <Link key={item.href} href={item.href} ",
+      "claim/standalone-opaque-hole {item.label}"
+    ],
+    "app/_components/PolicyLayout.tsx": [
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {effectiveDate}",
+      "claim/standalone-opaque-hole {lastUpdated}",
+      "claim/standalone-opaque-hole {title}"
+    ],
+    "app/_components/marketing/JsonLd.tsx": [
+      "claim/standalone-opaque-hole {it.name}",
+      "claim/standalone-opaque-hole {it.name}",
+      "claim/standalone-opaque-hole {items.map((it, i) => { const last = i === items.length - 1; return ( "
+    ],
+    "app/_components/marketing/ProductFrame.tsx": [
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {contextLabel}",
+      "claim/standalone-opaque-hole {label}"
+    ],
+    "app/_components/marketing/Reveal.tsx": [
+      "claim/standalone-opaque-hole {children}"
+    ],
+    "app/_components/marketing/SiteFooter.tsx": [
+      "claim/assembled-from-fragments {POSITIONING.category}",
+      "claim/assembled-from-fragments {year}",
+      "claim/standalone-opaque-hole {year}"
+    ],
+    "app/_components/marketing/SiteHeader.tsx": [
+      "claim/standalone-opaque-hole {item.label}"
+    ],
+    "app/_components/marketing/article.tsx": [
+      "claim/assembled-from-fragments {CONTACT_EMAIL}",
+      "claim/assembled-from-fragments {article.author}",
+      "claim/assembled-from-fragments {article.readingTime}",
+      "claim/assembled-from-fragments {fmt(article.dateModified)}",
+      "claim/assembled-from-fragments {fmt(article.datePublished)}",
+      "claim/standalone-opaque-hole {article.author}",
+      "claim/standalone-opaque-hole {article.readingTime}",
+      "claim/standalone-opaque-hole {fmt(article.dateModified)}",
+      "claim/standalone-opaque-hole {fmt(article.datePublished)}"
+    ],
+    "app/_components/marketing/primitives.tsx": [
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}",
+      "claim/standalone-opaque-hole {children}"
+    ],
+    "app/_components/marketing/sections.tsx": [
+      "claim/standalone-opaque-hole {body}",
+      "claim/standalone-opaque-hole {eyebrow}",
+      "claim/standalone-opaque-hole {it.body}",
+      "claim/standalone-opaque-hole {it.eyebrow}",
+      "claim/standalone-opaque-hole {it.link.label}",
+      "claim/standalone-opaque-hole {it.title}",
+      "claim/standalone-opaque-hole {items.map((it) => ( <div key={it.title} className={featureCell}> {it.",
+      "claim/standalone-opaque-hole {l.blurb}",
+      "claim/standalone-opaque-hole {l.label}",
+      "claim/standalone-opaque-hole {links.map((l) => ( <Link key={l.href} href={l.href} className=\"group ",
+      "claim/standalone-opaque-hole {s.body}",
+      "claim/standalone-opaque-hole {s.title}",
+      "claim/standalone-opaque-hole {steps.map((s) => ( <div key={s.n} className=\"flex flex-col\"> <span cl",
+      "claim/standalone-opaque-hole {title}",
+      "claim/standalone-opaque-hole {title}"
+    ],
+    "app/layout.tsx": [
+      "claim/standalone-opaque-hole {children}"
+    ]
   }
 }

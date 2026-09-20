@@ -1226,13 +1226,46 @@ function approvedCopyNames(sf: ts.SourceFile): Set<string> {
   // approving that callback parameter marked both the iteration and the element
   // readable, so neither was judged. The receiver has to be something whose
   // elements are here to read.
+  // ELEMENTS CHECKED, not just the shape. `const ITEMS = [getMarketingClaim()]`
+  // is an array literal, and approving it on that alone made both the
+  // collection and its loop variable readable while nothing ever saw the text
+  // the call returns. A collection is readable only when everything in it is.
+  const staticValue = (node: ts.Node): boolean => {
+    const e = unwrap(node) as ts.Expression;
+    if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true;
+    if (ts.isNumericLiteral(e)) return true;
+    if (
+      e.kind === ts.SyntaxKind.TrueKeyword ||
+      e.kind === ts.SyntaxKind.FalseKeyword ||
+      e.kind === ts.SyntaxKind.NullKeyword
+    ) {
+      return true;
+    }
+    if (ts.isJsxElement(e) || ts.isJsxFragment(e) || ts.isJsxSelfClosingElement(e)) return true;
+    // An approved copy value counts as static: `a: REPLACES_STATEMENT` in the
+    // pricing FAQ is an import from a canonical module, which IS judged. Without
+    // this the element check un-approved a real collection.
+    {
+      const root = rootIdentifier(e);
+      if (root !== null && names.has(root)) return true;
+    }
+    if (ts.isArrayLiteralExpression(e)) return e.elements.every(staticValue);
+    if (ts.isObjectLiteralExpression(e)) {
+      // A spread hides its source, so an object carrying one is not proven.
+      return e.properties.every(
+        (prop) => ts.isPropertyAssignment(prop) && staticValue(prop.initializer),
+      );
+    }
+    return false;
+  };
   const arrayBound = new Set<string>();
   const findArrays = (n: ts.Node) => {
     if (
       ts.isVariableDeclaration(n) &&
       ts.isIdentifier(n.name) &&
       n.initializer &&
-      ts.isArrayLiteralExpression(unwrap(n.initializer))
+      ts.isArrayLiteralExpression(unwrap(n.initializer)) &&
+      staticValue(n.initializer)
     ) {
       arrayBound.add(n.name.text);
     }

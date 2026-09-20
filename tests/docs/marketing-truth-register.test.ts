@@ -214,6 +214,7 @@ const PAGE_PROSE_BASELINE = 213;
  * fixed the same way rather than one round later.
  */
 const BASELINE = JSON.parse(read("tests/docs/fixtures/copy-baseline.json")) as {
+  componentHoles: Record<string, string[]>;
   pageProse: Record<string, string[]>;
   componentProse: Record<string, string[]>;
 };
@@ -1389,9 +1390,20 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
       "a component exception was replaced; the new sentence is NOT judged against the register",
     ).toEqual([]);
 
+    // EVERY RULE, no filter. Keeping only `assembled-from-fragments` here meant
+    // `claim/unknown-element-inside-claim` was enforced nowhere outside a
+    // synthetic probe: `<p>Every <Words /> tracked here today.</p>` emits it,
+    // extraction judges only the harmless parent and child fragments, and the
+    // filter dropped the one thing that noticed. A filtered assertion is a
+    // silent exemption, which is what this architecture replaced.
     const pageViolations = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) =>
       assembledClaimViolations(f),
     );
+    expect(pageViolations.map((v) => `${v.rule} ${v.file} ${v.detail}`).sort()).toEqual([
+      "claim/assembled-from-fragments app/resources/page.tsx {RESOURCE_AUTHOR}",
+      "claim/standalone-opaque-hole app/resources/electrolysis-treatment-record-checklist/page.tsx {article.title}",
+      "claim/standalone-opaque-hole app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx {article.title}",
+    ]);
     const assembled = pageViolations.filter((v) => v.rule === "claim/assembled-from-fragments");
     expect(new Set(assembled.map((v) => v.file))).toEqual(new Set(ASSEMBLED_CLAIM_BASELINE));
     expect(
@@ -1399,37 +1411,28 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
       "a claim is assembled from something that is not approved copy",
     ).toBeLessThanOrEqual(1);
 
-    // DECLARED, because opaque-by-default reaches them and the owner ruling does
-    // not move existing copy. Both resource articles render `{article.title}`
-    // from `const article = getResourceArticle(...)` — a call, so the guard
-    // cannot read it, and it is a genuine unreadable claim by this
-    // architecture's own standard rather than a false positive. Its text lives
-    // in `RESOURCE_ARTICLES`, which IS judged; what is missing is any way for
-    // the guard to see that without dataflow. BY IDENTITY, so one cannot be
-    // swapped for another.
-    const opaque = pageViolations.filter((v) => v.rule === "claim/standalone-opaque-hole");
-    expect(opaque.map((v) => `${v.file}::${v.detail}`).sort()).toEqual([
-      "app/resources/electrolysis-treatment-record-checklist/page.tsx::{article.title}",
-      "app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx::{article.title}",
-    ]);
+    // The two opaque page holes above are DECLARED, not overlooked: both
+    // resource articles render `{article.title}` from `const article =
+    // getResourceArticle(...)` — a call, so the guard cannot read it. That is a
+    // genuine unreadable claim by this architecture's own standard. Its text
+    // lives in `RESOURCE_ARTICLES`, which IS judged; what is missing is any way
+    // for the guard to see that without dataflow.
 
-    // THE ASSEMBLY GUARD RUNS ON COMPONENTS TOO, which it previously did not.
-    // Only the fragment rule: a component's `{children}` and `{label}` are React
-    // composition, not claims, and the owner ruled the authoring law is checked
-    // on pages. These seven are the holes inside prose the same ruling keeps in
-    // place, now visible rather than merely unexamined.
-    const componentAssembled = marketingComponentFiles()
-      .flatMap((f) => assembledClaimViolations(f))
-      .filter((v) => v.rule === "claim/assembled-from-fragments");
-    expect(componentAssembled.map((v) => `${v.file}::${v.detail}`).sort()).toEqual([
-      "app/_components/marketing/SiteFooter.tsx::{POSITIONING.category}",
-      "app/_components/marketing/SiteFooter.tsx::{year}",
-      "app/_components/marketing/article.tsx::{CONTACT_EMAIL}",
-      "app/_components/marketing/article.tsx::{article.author}",
-      "app/_components/marketing/article.tsx::{article.readingTime}",
-      "app/_components/marketing/article.tsx::{fmt(article.dateModified)}",
-      "app/_components/marketing/article.tsx::{fmt(article.datePublished)}",
-    ]);
+    // COMPONENTS, EVERY RULE, BY IDENTITY. The previous head ran the guard on
+    // components and then filtered to the fragment rule, which dropped 54
+    // opaque holes — so a component rendering `<p>{claim}</p>` could take a
+    // forbidden string through a prop with nothing to say so. Filtering was the
+    // silent exemption; recording them is not. Props like `{children}` are React
+    // composition and stay, but they are now frozen: one cannot be swapped for
+    // another, and the set can only shrink.
+    const componentViolations = marketingComponentFiles().flatMap((f) =>
+      assembledClaimViolations(f),
+    );
+    const recorded: Record<string, string[]> = {};
+    for (const v of componentViolations) (recorded[v.file] ??= []).push(`${v.rule} ${v.detail}`);
+    for (const key of Object.keys(recorded)) recorded[key] = recorded[key].sort();
+    expect(recorded).toEqual(BASELINE.componentHoles);
+    expect(componentViolations.length, "component holes grew").toBeLessThanOrEqual(61);
 
     // And no binding anywhere assembles authored words with something dynamic.
     // ZERO, so it is asserted as zero rather than baselined.
@@ -1868,6 +1871,57 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     expect(probe('<div>{["a", "b"].map((item) => <p>{item}</p>)}</div>')).toEqual([]);
     // And a branch that renders ELEMENTS is rendering, not an unreadable claim.
     expect(probe("<p>{flag ? <span>x</span> : null}</p>")).toEqual([]);
+  });
+
+  it("a collection is readable only when its elements are", () => {
+    // `const ITEMS = [getMarketingClaim()]` is an array literal, and approving
+    // it on shape alone made both the collection and its loop variable readable
+    // while nothing ever saw the text the call returns.
+    const probe = (body: string, head = "") =>
+      assembledClaimViolations("app/probe/page.tsx", `${head}export const A = () => ${body};`)
+        .map((v) => v.rule);
+    const map = "<div>{ITEMS.map((i) => <p>{i}</p>)}</div>";
+    expect(probe(map, "const ITEMS = [getMarketingClaim()];\n")).toEqual([
+      "claim/standalone-opaque-hole",
+      "claim/standalone-opaque-hole",
+    ]);
+    // A spread hides its source, so the object carrying one is not proven.
+    expect(
+      probe(
+        "<div>{PLANS.map((p) => <article key={p.id}><h2>{p.name}</h2></article>)}</div>",
+        'const PLANS = [{ ...base, name: "Solo" }];\n',
+      ),
+    ).toEqual(["claim/standalone-opaque-hole", "claim/standalone-opaque-hole"]);
+
+    // ALLOWED: literals, objects of literals, and APPROVED copy values — the
+    // pricing FAQ carries `a: REPLACES_STATEMENT`, an import from a canonical
+    // module, and a literals-only rule un-approved that whole real collection.
+    expect(probe(map, 'const ITEMS = ["a", "b"];\n')).toEqual([]);
+    expect(
+      probe(
+        "<div>{PLANS.map((p) => <article key={p.id}><h2>{p.name}</h2></article>)}</div>",
+        'const PLANS = [{ id: 1, name: "Solo" }];\n',
+      ),
+    ).toEqual([]);
+    expect(
+      probe(
+        map,
+        'import { POSITIONING } from "@/lib/marketing/content";\nconst ITEMS = [POSITIONING.corePromise];\n',
+      ),
+    ).toEqual([]);
+  });
+
+  it("an unknown element inside a claim is refused on the real pages too", () => {
+    // `<p>Every <Words /> tracked here today.</p>` with `Words` rendering
+    // "change is" renders the forbidden sentence while extraction judges only
+    // the harmless parent and child fragments. The rule caught it; the page
+    // assertion filtered it away, so it was enforced nowhere real.
+    expect(
+      assembledClaimViolations(
+        "app/probe/page.tsx",
+        "export const A = () => <p>Every <Words /> tracked here today.</p>;",
+      ).map((v) => v.rule),
+    ).toEqual(["claim/unknown-element-inside-claim"]);
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {
