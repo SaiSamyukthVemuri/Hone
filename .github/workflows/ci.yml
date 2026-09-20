@@ -171,7 +171,7 @@ jobs:
                 // Supabase stack plus the migration chain from scratch - so
                 // splitting further buys less test time than it spends. Two
                 // halves the test phase to ~6 min and leaves the 15 min cap
-                // untouched, which is the point: no other lane's budget moves.
+                // untouched, which is the point: no OTHER lane pays for this one.
                 `browser_shards=${r.extended ? "[1,2,3,4]" : "[1,2]"}`,
                 `browser_reason=${r.reason.replace(/\n/g," ").slice(0,300)}`,
               ].join("\n");

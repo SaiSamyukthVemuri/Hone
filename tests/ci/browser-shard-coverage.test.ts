@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 // ===========================================================================
@@ -89,6 +90,77 @@ describe("the targeted browser lane's shard count is stated consistently", () =>
     expect(CI_YML).toContain(
       "timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 18 || 15 }}",
     );
+  });
+});
+
+describe("the step that emits the matrix actually RUNS", () => {
+  // THIS TEST EXISTS BECAUSE EVERY OTHER ASSERTION ABOUT ci.yml IS A REGEX.
+  //
+  // Text matching proves the file SAYS the right thing. It cannot prove the
+  // file WORKS, and the gap between those is not academic: the step below is a
+  // `node -e '…'` inside a SINGLE-QUOTED shell string, so one apostrophe in a
+  // comment ends the quote and the script dies with `SyntaxError: Unexpected
+  // end of input`. That happened — a comment containing "lane's" was added in
+  // this very change, every text assertion stayed green, and CI failed at the
+  // first job with browser coverage unprovable and the required check failing
+  // closed behind it.
+  //
+  // So this extracts the step's real `run:` body and executes it through bash,
+  // with the same quoting the runner uses. A shell-quoting break now fails here
+  // rather than on a runner ten minutes later.
+
+  /** The literal shell body of a named step in the `changes` job. */
+  function stepScript(name: string): string {
+    const start = CI_YML.indexOf(`- name: ${name}`);
+    expect(start, `step "${name}" not found in ci.yml`).toBeGreaterThan(-1);
+    const body = CI_YML.slice(start);
+    const runAt = body.indexOf("run: |");
+    const after = body.slice(runAt + "run: |".length);
+    // The block scalar ends at the first line indented less than its contents.
+    const lines = after.split("\n");
+    const kept: string[] = [];
+    for (const line of lines.slice(1)) {
+      if (line.trim() !== "" && !line.startsWith(" ".repeat(10))) break;
+      kept.push(line.startsWith(" ".repeat(10)) ? line.slice(10) : line);
+    }
+    return kept.join("\n");
+  }
+
+  it("emits a well-formed matrix for a targeted diff", () => {
+    const script = stepScript("Select browser groups");
+    expect(script).toContain("browser_shards=");
+
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-ci-step-"));
+    const outFile = path.join(dir, "github_output");
+    writeFileSync(outFile, "");
+    const changed = path.join(ROOT, "changed.txt");
+    const hadChanged = existsSync(changed);
+    const saved = hadChanged ? readFileSync(changed, "utf8") : null;
+
+    try {
+      writeFileSync(
+        changed,
+        "lib/booking/waitlist-invitation.ts\ncomponents/waitlist/invite-composer.tsx\n",
+      );
+      // Runs, or throws with the shell's own diagnostic.
+      execFileSync("bash", ["-c", script], {
+        cwd: ROOT,
+        env: { ...process.env, GITHUB_OUTPUT: outFile },
+        encoding: "utf8",
+      });
+
+      const emitted = readFileSync(outFile, "utf8");
+      expect(emitted, "browser_run").toContain("browser_run=true");
+      expect(emitted, "targeted, not extended").toContain("browser_extended=false");
+      // THE MATRIX THIS CHANGE IS ABOUT, read from what the step actually
+      // produced rather than from what the file says it would produce.
+      expect(emitted).toContain("browser_shards=[1,2]");
+      expect(emitted).toMatch(/browser_specs=e2e\/\S+/);
+    } finally {
+      if (saved === null) rmSync(changed, { force: true });
+      else writeFileSync(changed, saved);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
