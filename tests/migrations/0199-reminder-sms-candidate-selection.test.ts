@@ -39,16 +39,20 @@ const UNROUTABLE =
   "reminder_sms_unroutable_studios(text, timestamptz, timestamptz, integer, integer)";
 
 describe("0199 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Taken over from 0198, per CLAUDE.md: only the CURRENT max asserts this.
-    expect(isRepoMax(VERSION)).toBe(true);
+  it("is no longer the repository maximum — 0201 is", () => {
+    // HANDED OFF EXACTLY AS THIS FILE ASKED. Its own block below said "whoever
+    // applies 0200 moves this block", and the trigger is in fact AUTHORING
+    // 0200, not applying it: `isRepoMax` is derived from the migrations
+    // directory, so it flipped the moment WAIT-P1-EXIT's file landed on this
+    // branch, and again when 0201 was authored above it. Per CLAUDE.md only the
+    // CURRENT max may assert it, and
+    // tests/migrations/0201-waitlist-exit-authority-contraction.test.ts
+    // carries it.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0200", "0201"]);
   });
 
-  it("has nothing above it", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
-
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
     // 0199 NOW OWNS THE EXACT HOSTED-HEAD CLAIM, handed off from 0198 when this
     // migration was applied to production on 2026-09-18 under explicit
     // per-change authorization, from the reviewed #716 head. That apply took
@@ -59,14 +63,19 @@ describe("0199 position in the chain", () => {
     // was written and stopped being true when the apply landed. 0198 was
     // correspondingly narrowed to a floor, the way 0197, 0196 and 0191 were.
     //
-    // Whoever applies 0200 moves this block: narrow 0199 to a floor the same
-    // way, and let the new head take equality. Re-asserting equality on an
-    // older file is the mechanical sweep CLAUDE.md forbids.
+    // 0199 NO LONGER OWNS THE EQUALITY CLAIM. `0200` was applied on 2026-09-20
+    // under explicit owner authorization, so this file keeps only a FLOOR —
+    // `hosted >= 0199` — which is the durable fact about an older applied
+    // migration and stays true forever.
+    //
+    // That is exactly the hand-off the previous revision of this block
+    // required: "whoever applies 0200 moves this block properly: narrow 0199 to
+    // a FLOOR the way 0198, 0197, 0196 and 0191 were narrowed, and let 0200
+    // take equality." Re-asserting equality on an older file is the mechanical
+    // sweep CLAUDE.md forbids.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.repo_equals_hosted).toBe(true);
   });
 
   it("THE FILE STILL HASHES TO THE APPLIED BYTES", () => {
@@ -98,17 +107,22 @@ describe("0199 position in the chain", () => {
     // ONE literal, shared with the digest check above, so the record and the
     // bytes can never be updated independently of each other.
     expect(ledger, "the ledger must carry 0199's COMPLETE sha256").toContain(APPLIED_SHA256);
-    expect(ledger, "the ledger's current block must record 0199 as APPLIED").toMatch(
-      // Anchored by SECTION, not by a character count: the match must sit between
-      // "## Current state" and the first "## Previous state", so a future apply
-      // that lengthens the block cannot silently slide this assertion out of it,
-      // and a stale record in a preserved section can never satisfy it.
-      /## Current state(?:(?!## Previous state)[\s\S])*?0199_reminder_sms_candidate_selection\.sql`? \| \*\*APPLIED\*\*/,
+    // THE CURRENT-BLOCK CLAIM MOVED TO 0200 with the 0200 apply on 2026-09-20.
+    // 0199's record is now a PRESERVED "## Previous state" section — historical
+    // apply records are never rewritten — so what stays true is that the ledger
+    // records 0199 as APPLIED, not that it does so in the current block. This
+    // is the same narrowing 0198's file received when 0199 landed.
+    expect(ledger, "the ledger must record 0199 as APPLIED").toMatch(
+      /0199_reminder_sms_candidate_selection\.sql`? \| \*\*APPLIED\*\*/,
     );
   });
 
   it("does not claim the next free number for anything", () => {
-    expect(migrationState().next_free_migration).toBe("0200");
+    // 0200 IS NO LONGER FREE — WAIT-P1-EXIT authored it and it is now APPLIED —
+    // and 0201 is no longer free either: its successor claims it on this
+    // branch, AUTHORED AND PENDING. So the next free number moved on twice.
+    // This file still claims none of it.
+    expect(migrationState().next_free_migration).toBe("0202");
   });
 });
 
