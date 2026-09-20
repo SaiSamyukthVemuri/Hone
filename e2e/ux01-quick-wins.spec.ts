@@ -349,12 +349,31 @@ test.describe("UX-01 QW4 · a keyboard user can leave the dialog", () => {
     const dialog = page.getByRole("dialog", { name: /postcare email preview/i });
     await expect(dialog).toBeVisible({ timeout: T });
 
+    const inside = () =>
+      page.evaluate(() => {
+        const panel = document.querySelector('[role="dialog"]');
+        return !!panel && panel.contains(document.activeElement);
+      });
+
+    // REVERSE FIRST, and this direction is the one that was broken.
+    //
+    // Codex P2: on open, focus rests on the PANEL, which is `tabIndex={-1}` and
+    // therefore outside the tabbable set. The trap only rewrote Shift+Tab when
+    // the active element WAS the first focusable, so this exact keystroke —
+    // the first one a reverse-tabbing user makes — fell through to the
+    // browser's default order and left the dialog. Forward tabbing from the
+    // same state happened to work, which is why the original version of this
+    // test passed while the hole was open.
+    await page.keyboard.press("Shift+Tab");
+    expect(await inside(), "Shift+Tab escaped straight out of the dialog").toBe(
+      true,
+    );
+
     for (let i = 0; i < 8; i += 1) await page.keyboard.press("Tab");
-    const stillInside = await page.evaluate(() => {
-      const panel = document.querySelector('[role="dialog"]');
-      return !!panel && panel.contains(document.activeElement);
-    });
-    expect(stillInside, "Tab walked out from behind the modal").toBe(true);
+    expect(await inside(), "Tab walked out from behind the modal").toBe(true);
+
+    for (let i = 0; i < 8; i += 1) await page.keyboard.press("Shift+Tab");
+    expect(await inside(), "reverse tabbing walked out").toBe(true);
   });
 });
 

@@ -50,9 +50,18 @@ export function isCurrentSection(
   match: NavMatch,
 ): boolean {
   if (!pathname) return false;
-  if (pathname === href) return true;
+  // TRAILING SLASHES ARE NORMALISED FIRST, because this app does not
+  // canonicalise them: `next.config.ts` sets `skipTrailingSlashRedirect: true`,
+  // so `/dashboard/` is a live URL that is never redirected to `/dashboard`.
+  // Comparing raw strings therefore left Dashboard with NO current state on a
+  // page that was plainly the dashboard — an equality check quietly failing on
+  // a URL the router happily serves.
+  const norm = (p: string) => (p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p);
+  const path = norm(pathname);
+  const target = norm(href);
+  if (path === target) return true;
   if (match === "exact") return false;
-  return pathname.startsWith(`${href}/`);
+  return path.startsWith(`${target}/`);
 }
 
 /** The resting shell-nav anchor, unchanged from what the shell already used. */

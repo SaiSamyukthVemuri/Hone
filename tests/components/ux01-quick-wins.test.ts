@@ -183,6 +183,62 @@ describe("UX-01 QW2 · bounded, and provably not UX-03", () => {
   it("a section match requires a path boundary", () => {
     // Without the `/`, `/records` would also claim a sibling like
     // `/records-archive`.
-    expect(nav).toContain("pathname.startsWith(`${href}/`)");
+    expect(nav).toContain("path.startsWith(`${target}/`)");
+  });
+});
+
+describe("UX-01 QW2 · the matching rule itself", () => {
+  // `isCurrentSection` is exported precisely so the rule can be exercised
+  // directly rather than inferred from rendered output.
+
+  it("lights the section it is on, and its subtree", async () => {
+    const { isCurrentSection } = await import("@/app/(app)/PrimaryNavLink");
+    expect(isCurrentSection("/clients", "/clients", "section")).toBe(true);
+    expect(isCurrentSection("/clients/abc", "/clients", "section")).toBe(true);
+    expect(isCurrentSection("/calendar", "/clients", "section")).toBe(false);
+  });
+
+  it("does not let one section claim a prefix-sharing sibling", async () => {
+    const { isCurrentSection } = await import("@/app/(app)/PrimaryNavLink");
+    expect(isCurrentSection("/records-archive", "/records", "section")).toBe(false);
+  });
+
+  it("keeps Dashboard and Business apart", async () => {
+    const { isCurrentSection } = await import("@/app/(app)/PrimaryNavLink");
+    expect(isCurrentSection("/dashboard/capacity", "/dashboard", "exact")).toBe(false);
+    expect(
+      isCurrentSection("/dashboard/capacity", "/dashboard/capacity", "section"),
+    ).toBe(true);
+  });
+
+  it("tolerates a trailing slash, which this app does NOT canonicalise", async () => {
+    // Codex P2. `next.config.ts` sets `skipTrailingSlashRedirect: true`, so
+    // `/dashboard/` is served as-is and a raw equality check left the dashboard
+    // with no current state while the dashboard was on screen.
+    const { isCurrentSection } = await import("@/app/(app)/PrimaryNavLink");
+    expect(isCurrentSection("/dashboard/", "/dashboard", "exact")).toBe(true);
+    expect(isCurrentSection("/clients/", "/clients", "section")).toBe(true);
+    // And the normalisation must not turn root into the empty string.
+    expect(isCurrentSection("/", "/dashboard", "exact")).toBe(false);
+  });
+
+  it("the config premise is real, not assumed", async () => {
+    // If this ever flips, the normalisation above is dead weight and should be
+    // re-justified rather than left as cargo.
+    expect(read("next.config.ts")).toContain("skipTrailingSlashRedirect: true");
+  });
+});
+
+describe("UX-01 QW4 · the trap has no open edge", () => {
+  it("treats focus outside the tabbable set as a boundary in BOTH directions", () => {
+    // Codex P2. On open, focus rests on the PANEL, which carries
+    // `tabIndex={-1}` and is excluded from FOCUSABLE by design — so the first
+    // Shift+Tab after opening matched neither the `first` nor the `last`
+    // branch, no handler fired, and focus followed the browser's default order
+    // out of the dialog, past an `aria-modal` that had already hidden that
+    // content from assistive technology.
+    const code = codeOnly(read(HOOK));
+    expect(code).toContain("!focusables.includes(active as HTMLElement)");
+    expect(code).toContain("(e.shiftKey ? last : first).focus();");
   });
 });

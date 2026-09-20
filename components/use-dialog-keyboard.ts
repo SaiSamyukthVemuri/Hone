@@ -104,6 +104,27 @@ export function useDialogKeyboard<
       const first = focusables[0]!;
       const last = focusables[focusables.length - 1]!;
       const active = document.activeElement;
+
+      // FOCUS RESTING OUTSIDE THE TABBABLE SET IS A BOUNDARY IN BOTH
+      // DIRECTIONS, and missing this left a real hole.
+      //
+      // On open, focus is placed on the PANEL, which carries `tabIndex={-1}`
+      // and is therefore excluded by FOCUSABLE by design. So the very first
+      // keystroke after opening had an `activeElement` that was neither `first`
+      // nor `last`, no branch fired, and Shift+Tab followed the browser's
+      // default order straight out of the dialog to the opener behind it — past
+      // an `aria-modal` that had already hidden that content from assistive
+      // technology. `confirm-dialog` never hit this because it rests focus on a
+      // real button; this hook rests it on the panel.
+      //
+      // The same clause covers focus having escaped by any other route (a
+      // backdrop click, say): wherever it is, the next Tab pulls it back in.
+      if (!focusables.includes(active as HTMLElement)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
+
       if (e.shiftKey && active === first) {
         e.preventDefault();
         last.focus();
