@@ -7,6 +7,7 @@ import {
   sendWaitlistInvitationEmail,
   type DeliveryStudio,
 } from "@/lib/waitlist/delivery/send";
+import { TTL_HOURS_MAX, TTL_HOURS_MIN } from "@/lib/waitlist/b4-invitation-draft";
 import {
   type BookingScope,
   type DefiniteInviteToBookRefusal,
@@ -434,10 +435,18 @@ export function validateInviteInput(input: InviteToBookInput): InviteToBookFailu
   }
   // Bounds are the shipped command's own; out of range is refused, never
   // clamped — a clamped window is one the caller cannot see.
+  //
+  // IMPORTED, NOT REPEATED. These two lines read `1` and `168` as literals under
+  // this same comment, which meant the bound was stated twice: once here, where
+  // it is enforced against a submission that has already crossed the network,
+  // and once in `b4-invitation-draft.ts`, where the composer decides what to
+  // offer. Nothing failed when the two disagreed, and the direction the drift
+  // would take is the dangerous one — a composer offering a window this check
+  // then refuses, or worse, accepting one the composer would never show.
   if (
     !Number.isInteger(input.expiresInHours) ||
-    input.expiresInHours < 1 ||
-    input.expiresInHours > 168
+    input.expiresInHours < TTL_HOURS_MIN ||
+    input.expiresInHours > TTL_HOURS_MAX
   ) {
     return "invalid_ttl";
   }

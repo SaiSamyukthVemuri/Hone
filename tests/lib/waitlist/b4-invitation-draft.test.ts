@@ -20,6 +20,9 @@ import {
   PRACTITIONER_ACTIONS,
   PRACTITIONER_ACTION_LABEL,
   PRACTITIONER_STATUS_LABEL,
+  TTL_HOURS_DEFAULT,
+  TTL_HOURS_MAX,
+  TTL_HOURS_MIN,
   TTL_PRESETS,
   UNKNOWN_INVITATION_FAILS_CLOSED,
   WEEKDAYS_IN_DISPLAY_ORDER,
@@ -2086,10 +2089,15 @@ describe("the composer's draft", () => {
     expect(draftToInviteInput("e1", draft({ expiresInHours: 999 }))).toBeNull();
     // A draft with no service chosen is invalid too, so it reaches nothing.
     expect(draftToInviteInput("e1", draft({ serviceId: null }))).toBeNull();
+    // The window travels from the constant, not from a number copied into this
+    // assertion. Written as a literal it asserted 72 and failed the moment the
+    // default became 48 — which is the right failure for a behaviour change and
+    // the wrong one for a projection test, whose subject is that the payload is
+    // whole rather than what any one field happens to hold today.
     expect(draftToInviteInput("e1", draft())).toEqual({
       entryId: "e1",
       scope: { serviceId: "svc-1", windowDays: 7, allowedWeekdays: null },
-      expiresInHours: 72,
+      expiresInHours: TTL_HOURS_DEFAULT,
     });
   });
 

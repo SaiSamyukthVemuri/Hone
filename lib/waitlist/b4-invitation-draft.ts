@@ -856,9 +856,45 @@ export const WEEKDAYS_IN_DISPLAY_ORDER: ReadonlyArray<{
 // range is REFUSED rather than clamped, because a clamped window is one the
 // caller did not ask for and cannot see. This model refuses identically, so the
 // composer never offers a value the server would have changed underneath it.
+//
+// THE BOUND IS STATED HERE AND NOWHERE ELSE. `invite-to-book-adapter.ts`
+// re-checks it before calling the command — correctly, since a bound the
+// browser could skip is not a bound — but it imports these two constants rather
+// than repeating `1` and `168`. It used to repeat them, under a comment saying
+// "bounds are the shipped command's own", which is the shape of a drift: two
+// statements of one rule, and nothing that fails when they disagree.
 export const TTL_HOURS_MIN = 1;
 export const TTL_HOURS_MAX = 168;
-export const TTL_HOURS_DEFAULT = 72;
+
+/**
+ * THE OPPORTUNITY IS TWO DAYS.
+ *
+ * Every invitation this composer opens offers the recipient 48 hours to book.
+ * It was 72, which is not a bound being relaxed or tightened — `TTL_HOURS_MIN`
+ * and `TTL_HOURS_MAX` are untouched and a studio may still choose any value in
+ * range. What changed is the window a practitioner gets without deciding
+ * anything, and that is the window nearly every invitation will actually carry.
+ *
+ * WHY THE SQL DEFAULT STILL SAYS 72, AND WHY THAT IS NOT A DISAGREEMENT.
+ * `issue_new_client_waitlist_invitation(..., p_ttl_hours integer default 72)`
+ * is unchanged, because changing it is a migration and this slice authors none.
+ * That default is UNREACHABLE: both TypeScript call sites pass `p_ttl_hours`
+ * explicitly, so the database's own fallback never fires.
+ *
+ * THERE ARE TWO CALL SITES, AND THE SECOND IS WHY THIS IS A CONSTANT RATHER
+ * THAN AN EDIT IN ONE PLACE. `invite-to-book-adapter.ts` is the live one, and
+ * it passes the composer's chosen value. `lib/booking/waitlist-invitation.ts`
+ * (`issueScopedInvitation`) is DORMANT — it has no caller outside tests — and
+ * it carried its own `?? 72` fallback. Left alone it would have woken up on the
+ * old window, issuing 72-hour invitations from one surface while the composer
+ * issued 48 from the other, with nothing failing in between. It now reads this
+ * constant.
+ *
+ * `tests/lib/waitlist/invitation-window.test.ts` censuses both facts: that no
+ * call to a command taking `p_ttl_hours` omits the argument (which would make
+ * the SQL default live at 72), and that none states a fallback of its own.
+ */
+export const TTL_HOURS_DEFAULT = 48;
 
 export const TTL_PRESETS: ReadonlyArray<{ hours: number; label: string }> = [
   { hours: 24, label: "24 hours" },
