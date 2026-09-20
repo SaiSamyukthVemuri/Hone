@@ -379,8 +379,15 @@ export async function requeueWaitlistEntryAction(formData: FormData): Promise<vo
 
 // --- CLOSE A USED INVITATION THAT NEVER BECAME A BOOKING ---------------------
 // WAIT-P1-EXIT, migration 0200:
-//   `closed` | `not_found` | `not_invited` | `not_redeemed` | `already_booked`
-//   | `booking_exists` | `already_closed` + owner codes.
+//   `closed` | `converted_instead` | `not_found` | `not_invited`
+//   | `not_redeemed` | `already_booked` | `booking_unresolved` | `already_closed`
+//   + owner codes.
+//
+// THIS LIST WENT STALE ONCE AND IS THE CONTRACT, so it is worth keeping exact:
+// it still named `booking_exists`, which was REMOVED when the refusal became a
+// repair, and omitted both codes that replaced it. The authoritative census is
+// asserted against the migration in
+// tests/migrations/0200-waitlist-redeemed-unbooked-exit.test.ts.
 //
 // THIS IS THE ONE EXIT FROM THE STATE THE OTHER FOUR REFUSE. Redemption stamps
 // the invitation and LEAVES the entry at `invited`, so a prospect who opens
