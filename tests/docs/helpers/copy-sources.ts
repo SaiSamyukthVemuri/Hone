@@ -140,7 +140,24 @@ export function marketingComponentFiles(): string[] {
     };
     visit(sf);
   };
-  for (const page of [...pageCopySources(), ...POLICY_SOURCES]) walkImports(page);
+  // Next.js applies a layout WITHOUT the route importing it, so an
+  // import-following walk starting at pages alone never reaches one. Every
+  // marketing route is wrapped by `app/layout.tsx`, which authors public
+  // metadata — keywords, descriptions — that would be emitted on every page
+  // while reaching no guard and no rule. Seed them, then walk from there.
+  const declared = [...pageCopySources(), ...POLICY_SOURCES];
+  const layouts = new Set<string>();
+  for (const page of declared) {
+    // Every ancestor segment up to `app/`, because nested and route-group
+    // layouts apply the same way the root one does.
+    for (let dir = dirname(page); dir === "app" || dir.startsWith("app/"); dir = dirname(dir)) {
+      const layout = `${dir}/layout.tsx`;
+      if (existsSync(join(REPO_ROOT, layout))) layouts.add(layout);
+      if (dir === "app") break;
+    }
+  }
+  for (const layout of layouts) out.add(layout);
+  for (const page of [...declared, ...layouts]) walkImports(page);
   return [...out].sort();
 }
 
@@ -171,6 +188,17 @@ const FOLDABLE_METHODS = new Set(["concat", "join"]);
 function foldStatic(node: ts.Expression): string | undefined {
   const e = unwrap(node) as ts.Expression;
   if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+  // A template whose every substitution is itself static is just a spelling of
+  // the same concatenation: `Every ${"change is tracked"}`.
+  if (ts.isTemplateExpression(e)) {
+    let out = e.head.text;
+    for (const span of e.templateSpans) {
+      const value = foldStatic(span.expression);
+      if (value === undefined) return undefined;
+      out += value + span.literal.text;
+    }
+    return out;
+  }
   if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
     const left = foldStatic(e.left);
     const right = foldStatic(e.right);
@@ -219,9 +247,12 @@ function unreadableStaticStringCalls(sf: ts.SourceFile, file: string): CopyViola
   const out: CopyViolation[] = [];
   const visit = (n: ts.Node) => {
     if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
-      const receiver = unwrap(n.expression.expression);
-      const isStaticString =
-        ts.isStringLiteral(receiver) || ts.isNoSubstitutionTemplateLiteral(receiver);
+      // RESOLVABLE, not merely literal. An unsupported operation chained after a
+      // supported one — `"Every_change".concat("_is_tracked").replaceAll("_", " ")`
+      // — has a CallExpression receiver, so an immediate-literal check saw
+      // nothing and the underscored fragments passed as harmless.
+      const receiver = unwrap(n.expression.expression) as ts.Expression;
+      const isStaticString = foldStatic(receiver) !== undefined;
       if (isStaticString && !FOLDABLE_METHODS.has(n.expression.name.text)) {
         out.push({
           file,
@@ -247,7 +278,7 @@ export function staticConcatClaims(file: string, source?: string): string[] {
   const sf = parse(file, source);
   const out: string[] = [];
   const visit = (n: ts.Node) => {
-    if (ts.isBinaryExpression(n) || ts.isCallExpression(n)) {
+    if (ts.isBinaryExpression(n) || ts.isCallExpression(n) || ts.isTemplateExpression(n)) {
       // Only at the TOP of an assembly: a nested `+` inside a larger one folds
       // to a prefix of its parent, which is noise, not evidence.
       const parent = parentPastWrappers(n);

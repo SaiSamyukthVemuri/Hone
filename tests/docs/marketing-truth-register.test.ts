@@ -154,6 +154,12 @@ const COMPONENT_PROSE_BASELINE: readonly string[] = [
   "app/_components/MarketingFooter.tsx",
   "app/_components/marketing/SiteFooter.tsx",
   "app/_components/marketing/article.tsx",
+  // Next.js applies this without any route importing it. Its `metadata`,
+  // `openGraph` and `twitter` blocks each repeat the site title and description
+  // — the copy that appears in search results and social cards, on every
+  // marketing route — and no guard had ever read them. Clean against the
+  // register. Six entries because the pair is authored three times.
+  "app/layout.tsx",
 ];
 
 /**
@@ -1288,7 +1294,7 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     // silently, and the assertion is an upper bound so the list cannot grow.
     const prose = marketingComponentFiles().flatMap((f) => componentProseViolations(f));
     expect(new Set(prose.map((v) => v.file))).toEqual(new Set(COMPONENT_PROSE_BASELINE));
-    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(8);
+    expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(14);
 
     // BY IDENTITY, like the page half. A count alone let one exception be
     // swapped for another. Identity catches a REWRITTEN exception; it cannot
@@ -1366,6 +1372,7 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     // added in the same breath, and `.concat()` still came back as a finding.
     expect(judged('["Every change", "is tracked"].join(" ")')).toBe(true);
     expect(judged('"Every change".concat(" is tracked")')).toBe(true);
+    expect(judged('`Every ${"change is tracked"}`')).toBe(true);
     expect(judged('"under review"')).toBe(false);
 
     // And the identity really is blind to the difference, which is why folding
@@ -1418,6 +1425,14 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     expect(probe('export const T = "Every change".concat(" is tracked");')).toEqual([]);
     expect(probe('export const T = ["a", "b"].join(" ");')).toEqual([]);
 
+    // And CHAINED past a fold. The receiver here is a CallExpression, so an
+    // immediate-literal check saw nothing and the underscored fragments passed
+    // as harmless while the render is N1.
+    expect(
+      probe('export const T = "Every_change".concat("_is_tracked").replaceAll("_", " ");')
+        .map((v) => v.rule),
+    ).toEqual(["claim/unreadable-static-string-call"]);
+
     // And the real surface carries none, so this costs nothing to hold.
     const real = [
       ...marketingComponentFiles(),
@@ -1457,6 +1472,17 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
         '<p>{POSITIONING.corePromise} <Link href="/features">See the full picture</Link></p>',
       ),
     ).toEqual([]);
+  });
+
+  it("a layout Next.js applies without an import is read and judged", () => {
+    // No route imports `app/layout.tsx`; Next.js wraps every one of them in it.
+    // An import-following walk that starts at pages alone never arrives, so its
+    // `metadata`, `openGraph` and `twitter` copy — what search results and
+    // social cards show for every marketing route — reached no guard and no rule.
+    expect(marketingComponentFiles()).toContain("app/layout.tsx");
+    expect(MARKETING_COPY).toContain(
+      "Hone helps electrologists prepare for returning clients",
+    );
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {

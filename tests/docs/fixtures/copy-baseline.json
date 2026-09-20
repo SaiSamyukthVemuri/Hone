@@ -250,6 +250,14 @@
     "app/_components/marketing/article.tsx": [
       "By {article.author} · Published {fmt(article.datePublished)} · Last reviewed {fmt(article.dateModified)} · {article.readingTime}",
       "Spotted something that needs a correction, or have a question? Email {CONTACT_EMAIL} and we'll review it."
+    ],
+    "app/layout.tsx": [
+      "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
+      "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
+      "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
+      "Hone | Treatment Memory for Electrologists",
+      "Hone | Treatment Memory for Electrologists",
+      "Hone | Treatment Memory for Electrologists"
     ]
   }
 }
