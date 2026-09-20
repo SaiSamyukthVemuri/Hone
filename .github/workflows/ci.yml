@@ -96,6 +96,10 @@ jobs:
       browser_extended: ${{ steps.browser.outputs.browser_extended }}
       browser_specs: ${{ steps.browser.outputs.browser_specs }}
       browser_shards: ${{ steps.browser.outputs.browser_shards }}
+      # The DENOMINATOR the targeted run divides by. Declared here because a
+      # step output that is not surfaced on the job resolves to an empty string
+      # downstream, which would make the flag `--shard=N/` and fail the lane.
+      browser_shard_total: ${{ steps.browser.outputs.browser_shard_total }}
       browser_reason: ${{ steps.browser.outputs.browser_reason }}
     steps:
       - name: Checkout repository
@@ -161,6 +165,11 @@ jobs:
               // runners than the same workload gets when it is named extended.
               const fullSuite = !specs || specs.length === 0;
               const extended = r.extended || fullSuite;
+              // Extended runs the whole suite, which is never fewer files than
+              // shards. Targeted is capped at what it actually selected.
+              const shardTotal = extended
+                ? 4
+                : Math.max(1, Math.min(3, specs.length));
               const out = [
                 `browser_run=${r.groups.length > 0}`,
                 `browser_extended=${extended}`,
@@ -185,7 +194,26 @@ jobs:
                 // ~14m48s against a 15 min cap, which is not a margin. Three
                 // brings the test phase to ~254s and the worst case to ~12m42s.
                 // Still no ceiling moves: no OTHER lane pays for this one.
-                `browser_shards=${extended ? "[1,2,3,4]" : "[1,2,3]"}`,
+                //
+                // ...BUT NEVER MORE SHARDS THAN THERE ARE SPEC FILES.
+                // `playwright.config.ts` sets `fullyParallel: false`, so
+                // Playwright shards BY FILE. Hand two files to three shards and
+                // the third gets nothing, exits "No tests found", and fails the
+                // matrix child -- which fails the REQUIRED aggregator and blocks
+                // a PR for a reason that has nothing to do with its diff.
+                //
+                // THAT IS REACHABLE, NOT THEORETICAL: `smoke`, `marketing`,
+                // `responsive` and `google` are each TWO spec files, so four of
+                // the ten groups trip it on their own.
+                //
+                // Capping is preferred over `--pass-with-no-tests` deliberately.
+                // An empty shard still costs a full runner, a Supabase stack and
+                // a `next build` -- the 266s-508s this file already records --
+                // to execute nothing. And permitting empty shards globally would
+                // also silence a genuinely empty SELECTION, which is a real bug
+                // this lane should keep failing on.
+                `browser_shard_total=${shardTotal}`,
+                `browser_shards=[${Array.from({ length: shardTotal }, (_, i) => i + 1).join(",")}]`,
                 `browser_reason=${r.reason.replace(/\n/g," ").slice(0,300)}`,
               ].join("\n");
               fs.appendFileSync(process.env.GITHUB_OUTPUT, out + "\n");
@@ -603,9 +631,14 @@ jobs:
             # above still decides WHAT runs and this only decides who runs which
             # half. Disjoint and exhaustive by construction - proved, not
             # assumed, by tests/ci/browser-shard-coverage.test.ts.
-            echo "targeted coverage: native Playwright shard ${{ matrix.shard }} of 3"
+            # THE DENOMINATOR IS DERIVED, NEVER LITERAL. It is capped at the
+            # selected file count upstream, so a two-file selection runs 1/2 and
+            # 2/2 rather than launching an empty 3/3 that fails "No tests found"
+            # and blocks the required aggregator.
+            SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
+            echo "targeted coverage: native Playwright shard ${{ matrix.shard }} of ${SHARD_TOTAL}"
             echo "targeted specs: ${{ needs.changes.outputs.browser_specs }}"
-            npx playwright test ${{ needs.changes.outputs.browser_specs }} --shard=${{ matrix.shard }}/3
+            npx playwright test ${{ needs.changes.outputs.browser_specs }} --shard=${{ matrix.shard }}/${SHARD_TOTAL}
           fi
         env:
           # Enables the guarded fake-Resend transport for the welcome-email

@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+// @ts-expect-error - .mjs utilities ship without type declarations
+import { specsForGroups, BROWSER_GROUPS } from "../../scripts/browser-groups.mjs";
 
 // ===========================================================================
 // THE TARGETED BROWSER LANE IS SPLIT, AND THE SPLIT LOSES NOTHING
@@ -96,22 +98,65 @@ describe("the targeted browser lane's shard count is stated consistently", () =>
   // The matrix and the divisor are two statements of one number, three hundred
   // lines apart. The extended lane already carries that risk with its `4`; this
   // pins BOTH lanes rather than adding a second unpinned pair.
-  it("the targeted matrix and the --shard divisor agree", () => {
-    const matrix = CI_YML.match(/browser_shards=\$\{extended \? "\[1,2,3,4\]" : "\[([\d,]+)\]"\}/);
-    expect(matrix, "targeted shard matrix not found in ci.yml").not.toBeNull();
-    const matrixCount = matrix![1].split(",").length;
-
-    const divisor = CI_YML.match(/browser_specs \}\}\s+--shard=\$\{\{ matrix\.shard \}\}\/(\d+)/);
-    expect(divisor, "targeted --shard divisor not found in ci.yml").not.toBeNull();
-
-    expect(Number(divisor![1]), "divisor must equal the number of matrix shards").toBe(
-      matrixCount,
+  it("the matrix and the --shard divisor come from ONE derived value", () => {
+    // THEY USED TO BE TWO LITERALS THAT HAPPENED TO AGREE, and this test
+    // compared them. A literal divisor cannot track a capped matrix, so both
+    // now derive from `shardTotal` and the agreement is structural rather than
+    // coincidental.
+    expect(
+      CI_YML,
+      "the matrix no longer enumerates from the derived shard total",
+    ).toContain("`browser_shards=[${Array.from({ length: shardTotal }, (_, i) => i + 1).join(\",\")}]`");
+    expect(CI_YML, "the shard total is not published as an output").toContain(
+      "`browser_shard_total=${shardTotal}`",
     );
+    expect(
+      CI_YML,
+      "a step output not surfaced on the job resolves empty downstream",
+    ).toContain("browser_shard_total: ${{ steps.browser.outputs.browser_shard_total }}");
+    // The TARGETED divisor is that same published value, never a number.
+    //
+    // SCOPED TO THE TARGETED COMMAND ON PURPOSE. A blanket ban on a literal
+    // divisor fires on the EXTENDED lane, which legitimately runs `/4` because
+    // the whole suite is always more files than shards. The targeted command is
+    // the one that consumes `browser_specs`.
+    const targetedCmd = CI_YML.slice(CI_YML.indexOf("npx playwright test ${{ needs.changes.outputs.browser_specs }}"));
+    const targetedLine = targetedCmd.slice(0, targetedCmd.indexOf("\n"));
+    expect(targetedLine, "the targeted divisor is not the derived total").toContain(
+      "--shard=${{ matrix.shard }}/${SHARD_TOTAL}",
+    );
+    expect(targetedLine, "the targeted divisor is a literal again").not.toMatch(/\/\d+\s*$/);
+  });
+
+  it("the targeted lane NEVER launches more shards than it has spec files", () => {
+    // THE DEFECT THIS PINS, and it was reachable rather than theoretical.
+    // `playwright.config.ts` sets `fullyParallel: false`, so Playwright shards
+    // BY FILE. The lane launched a fixed three, and `smoke`, `marketing`,
+    // `responsive` and `google` are each TWO spec files -- so four of the ten
+    // groups handed shard 3/3 nothing, which exits "No tests found", fails the
+    // matrix child and blocks the REQUIRED aggregator for a reason unrelated to
+    // the diff.
+    expect(CI_YML).toContain("Math.max(1, Math.min(3, specs.length))");
+
+    // Proved over EVERY group rather than the one that was reported.
+    const cap = (fileCount: number) => Math.max(1, Math.min(3, fileCount));
+    for (const group of Object.keys(BROWSER_GROUPS)) {
+      const files = specsForGroups([group]).length;
+      expect(files, `${group} selects no specs`).toBeGreaterThan(0);
+      expect(
+        cap(files),
+        `${group} has ${files} spec file(s) but would launch ${cap(files)} shards`,
+      ).toBeLessThanOrEqual(files);
+    }
   });
 
   it("the extended lane still runs exactly four, untouched", () => {
-    expect(CI_YML).toContain('`browser_shards=${extended ? "[1,2,3,4]" : "[1,2,3]"}`');
-    expect(CI_YML).toMatch(/--shard=\$\{\{ matrix\.shard \}\}\/4/);
+    // Extended runs the whole suite, which is never fewer files than shards, so
+    // the cap cannot reduce it. Pinned so the repair to targeted cannot quietly
+    // change the lane it was not about.
+    expect(CI_YML).toContain("const shardTotal = extended");
+    expect(CI_YML).toMatch(/extended\s*\n\s*\?\s*4/);
+    expect(specsForGroups(Object.keys(BROWSER_GROUPS)).length).toBeGreaterThanOrEqual(4);
   });
 
   it("NEITHER timeout budget moved", () => {

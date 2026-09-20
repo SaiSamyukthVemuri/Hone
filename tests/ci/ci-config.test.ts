@@ -479,7 +479,12 @@ describe("PR CI — path-aware lane selection", () => {
     // Run 30767725631 cancelled both 2-shard jobs at the 10-minute hard
     // timeout with ZERO test failures (shard 2 reached 72/90). Four shards
     // halve the per-shard load to ~45 tests.
-    expect(CI).toMatch(/browser_shards=\$\{extended \? "\[1,2,3,4\]" : "\[1,2,3\]"\}/);
+    //
+    // THE LITERAL PAIR IS GONE, and that is the repair rather than a relaxation:
+    // the targeted half is now CAPPED at the selected file count, so a fixed
+    // `[1,2,3]` could no longer be true. Extended is unchanged at four and is
+    // still asserted -- from the expression that produces it.
+    expect(CI).toMatch(/const shardTotal = extended\s*\n\s*\?\s*4/);
     expect(CI).toMatch(/--shard=\$\{\{ matrix\.shard \}\}\/4/);
     expect(CI).toMatch(/fromJson\(needs\.changes\.outputs\.browser_shards\)/);
   });
@@ -504,10 +509,18 @@ describe("PR CI — path-aware lane selection", () => {
     // and this workflow records that cost swinging 266s -> 508s between runners.
     // Two shards left the worst case at ~14m48s against the 15 min cap, which
     // is not a margin; three brings it to ~12m42s.
-    expect(CI).toMatch(/: "\[1,2,3\]"/);
-    expect(CI).toMatch(/browser_specs \}\}\s+--shard=\$\{\{ matrix\.shard \}\}\/3/);
-    // That the split loses nothing is proved by test IDENTITY rather than by a
-    // regex over this file: tests/ci/browser-shard-coverage.test.ts.
+    //
+    // ...BUT CAPPED AT THE SELECTED FILE COUNT, which the fixed three was not.
+    // `playwright.config.ts` sets `fullyParallel: false`, so Playwright shards
+    // BY FILE: `smoke`, `marketing`, `responsive` and `google` are each two
+    // spec files, so a fixed three handed shard 3/3 nothing, which exits "No
+    // tests found" and fails the REQUIRED aggregator on a diff that did nothing
+    // wrong. Three remains the CEILING, for the setup-cost reason above.
+    expect(CI).toMatch(/Math\.max\(1, Math\.min\(3, specs\.length\)\)/);
+    expect(CI).toMatch(/browser_specs \}\}\s+--shard=\$\{\{ matrix\.shard \}\}\/\$\{SHARD_TOTAL\}/);
+    // That the split loses nothing, and that no group can out-shard its files,
+    // is proved by test IDENTITY and by enumeration over every group rather
+    // than by a regex over this file: tests/ci/browser-shard-coverage.test.ts.
   });
 
   it("the aggregator requires all four extended shards", () => {
