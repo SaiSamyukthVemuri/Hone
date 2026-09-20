@@ -187,6 +187,8 @@ for (const surface of SURFACES) {
       // under that mutation, on both surfaces. It is the interactive and
       // visible guard: a keyboard user cannot re-activate the control and it
       // no longer reads as pressable. It is not the wire guard.
+      //
+      // Which is why the second activation below has to get PAST it first.
       await loginAsOwner(page, seed);
       await page.goto("/dashboard");
 
@@ -198,20 +200,45 @@ for (const surface of SURFACES) {
         timeout: 5_000,
       });
 
-      // Press it again, hard, and then again past the pointer layer entirely.
-      // `force` skips actionability so Playwright dispatches at the disabled
-      // control instead of politely waiting for it to become enabled — which
-      // would let this test pass by never pressing anything at all.
-      await panel
-        .locator("[data-signout-pending]")
-        .click({ force: true, noWaitAfter: true })
-        .catch(() => {});
-      await page.evaluate(() => {
-        document
-          .querySelector("[data-signout-pending]")
-          ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      // THE DISABLED STATE IS DEFEATED FIRST, DELIBERATELY — second Codex P2,
+      // and the correction to my own correction.
+      //
+      // The previous version pressed a control that was still `disabled`.
+      // Playwright's `force` skips PLAYWRIGHT's actionability checks; it does
+      // not make a disabled form control eligible for activation, and
+      // `dispatchEvent` does not give a disabled submit button its
+      // form-submission default either. So the count stayed at 1 because of
+      // `disabled` — meaning the test would still have passed if action
+      // serialisation vanished entirely. That is the exact false attribution
+      // this test was renamed to stop making, surviving the rename.
+      //
+      // (My earlier diagnostic DID show serialisation holds — but it ran with
+      // `disabled={false}` compiled in, which is not the state the shipped
+      // test runs against. Right conclusion, wrong evidence for this test.)
+      //
+      // Now the attribute is stripped and the form is submitted directly, so
+      // the second activation genuinely reaches the submit path with no visual
+      // guard in the way. What survives is the thing actually being claimed:
+      // one logout on the wire.
+      const resubmitted = await page.evaluate(() => {
+        const el = document.querySelector(
+          "[data-signout-pending]",
+        ) as HTMLButtonElement | null;
+        if (!el) return "no control";
+        el.removeAttribute("disabled");
+        el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        const form = el.closest("form");
+        if (!form) return "no form";
+        // Straight at the form, bypassing the button entirely.
+        form.requestSubmit();
+        return "resubmitted";
       });
-      await page.waitForTimeout(400);
+      // ANTI-VACUITY: if the control or the form could not be found, nothing
+      // was pressed and the count below would be 1 for an empty reason.
+      expect(resubmitted, "the second activation never reached a form").toBe(
+        "resubmitted",
+      );
+      await page.waitForTimeout(600);
 
       expect(
         gate.state.held,

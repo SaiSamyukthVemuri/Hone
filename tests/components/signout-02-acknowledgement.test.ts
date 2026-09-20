@@ -139,6 +139,20 @@ describe("SIGNOUT-02 · the press survives reduced motion", () => {
     expect(leaf).toContain("hone-transition-press");
   });
 
+  it("carries the pointer cursor iOS Safari needs to apply :active", () => {
+    // Codex P2. Tailwind v4's preflight leaves a <button> at `cursor: default`,
+    // and button.tsx records that restoring the pointer is what makes iOS
+    // Safari apply `:active` at all. Without it the press step above could
+    // never paint on an iPhone — a touch device, where :hover never fires
+    // either, so the control would acknowledge nothing.
+    //
+    // This is pinned at SOURCE because the browser lane structurally cannot
+    // see it: chromium-only, and the phone-width tests are Chromium wearing an
+    // iPhone user agent rather than Safari. Asserting the class is the honest
+    // limit of what this repo can prove here.
+    expect(leaf).toContain("cursor-pointer");
+  });
+
   it("the press differs from the hover fill at source", () => {
     // Repeating the hover colour is invisible to a mouse user, because
     // pressing necessarily hovers first. The browser proof compares the two

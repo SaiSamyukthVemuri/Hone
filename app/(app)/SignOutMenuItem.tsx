@@ -63,8 +63,27 @@ import { cx } from "@/components/ui/control-base";
 // keyboard, both shells — by e2e/signout-session-destruction.spec.ts, which
 // reads auth.sessions and auth.refresh_tokens rather than the URL bar.
 
-/** The menu-row shape, identical to the `<Link>` rows this control sits with. */
-const ROW = "flex w-full items-center rounded-md px-3 py-2 text-left";
+/**
+ * The menu-row shape, identical to the `<Link>` rows this control sits with.
+ *
+ * `cursor-pointer` IS NOT COSMETIC HERE, and leaving it out was a real defect
+ * on the one surface this slice exists for. button.tsx spells out why:
+ * "Tailwind v4's preflight leaves a <button> at `cursor: default`. Restoring
+ * the pointer is also what makes iOS Safari apply :active to the control, so
+ * the press acknowledgement above actually paints on a phone."
+ *
+ * The sibling rows are `<a>` elements and get the pointer for free; this is a
+ * `<button>` and does not. Without it the `active:` step below could simply
+ * never paint on an iPhone — a touch device, where :hover never fires either,
+ * so the control would be back to acknowledging nothing at all.
+ *
+ * The browser lane CANNOT catch this: it is chromium-only, and the phone-width
+ * tests are Chromium wearing an iPhone user agent, not Safari. The source pin
+ * in tests/components/signout-02-acknowledgement.test.ts is the guard, which
+ * is the same arrangement button.tsx relies on for the same reason.
+ */
+const ROW =
+  "flex w-full cursor-pointer items-center rounded-md px-3 py-2 text-left";
 
 /**
  * The press, and the reason it is a COLOUR step rather than the house
