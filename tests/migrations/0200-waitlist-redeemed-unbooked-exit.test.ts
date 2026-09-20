@@ -502,6 +502,43 @@ describe("0200 — KNOWN WINDOW, recorded because the file is now FROZEN", () =>
     ).not.toMatch(/for (share|update)/);
   });
 
+  // SECOND OBSERVATION, RAISED AT 286397d8, SAME FROZEN FILE.
+  //
+  // THE SCOPE GAP. A redeemed invitation can carry an offer scope --
+  // `scope_service_id`, `scope_start_date`, `scope_end_date`,
+  // `scope_allowed_weekdays` (0192 §2) -- and 0195's atomic booking path
+  // enforces all four before it will book. This repair's aggregate does NOT:
+  // it filters on studio, recipient email, non-cancelled status and
+  // `created_at >= redeemed_at` only. So an appointment the prospect made
+  // through ORDINARY public booking, outside the offer, is treated as the
+  // stranded invitation booking and the conversion is recorded against it.
+  //
+  // HOW MUCH THIS MATTERS, STATED HONESTLY RATHER THAN TALKED UP OR DOWN.
+  // `record_new_client_waitlist_conversion` records that a client the canonical
+  // booking authority already created CORRESPONDS TO THIS PROSPECT -- its own
+  // comment says exactly that, and says nothing about which slot. A person who
+  // redeemed and then booked anything in that studio under the same address has
+  // become a client, which is what the entry exists to record; `converted` is
+  // arguably MORE truthful there than `released`. What is genuinely inaccurate
+  // is this file's own justification, which calls the match "the pre-0195
+  // stranded shape" -- an out-of-scope booking is not that.
+  //
+  // EITHER WAY IT IS A FORWARD MIGRATION, and the reviewer says so too: re-read
+  // the redeemed invitation's scope and repair only an appointment satisfying
+  // it. It cannot be done by editing this file.
+  it("the aggregate does not consult the invitation's offer scope — recorded, not fixed", () => {
+    const from = FN_BODY.indexOf("from public.appointments a");
+    const stmt = FN_BODY.slice(FN_BODY.indexOf("select count(distinct"), FN_BODY.indexOf(";", from));
+    for (const scoped of ["scope_service_id", "scope_start_date", "scope_end_date", "scope_allowed_weekdays"]) {
+      expect(
+        stmt,
+        `${scoped} appeared in an APPLIED migration — its bytes must not change`,
+      ).not.toContain(scoped);
+    }
+    // What it DOES bind on, which is the recipient rule 0195 also enforces.
+    expect(stmt).toMatch(/c\.normalized_email\s*=\s*v_entry_email/);
+  });
+
   it("the file still hashes to the applied bytes, so this window cannot be patched in place", () => {
     // The same digest the apply was gated on. If someone "fixes" the window by
     // editing this file, this goes red and the frozen-history rule is enforced.
