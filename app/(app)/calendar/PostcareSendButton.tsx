@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import { sendPostcareEmailAction } from "./actions";
 import {
   PostcareSendFooter,
@@ -107,6 +108,22 @@ export function PostcareSendButton({
     setOpen(false);
     setOutcome({ kind: "idle" });
   }
+
+  // UX-01 QW4. This surface declared `role="dialog" aria-modal="true"` and
+  // implemented none of what that promises: focus never entered the panel,
+  // never returned to the opener, and Escape did nothing — so a keyboard user
+  // could open the preview and not get out of it, while `aria-modal` had
+  // already removed the rest of the page from the accessibility tree.
+  //
+  // `busy: pending` suppresses Escape mid-send. A postcare email is handed to a
+  // provider on confirm, and the panel is the only place its outcome is
+  // reported; dismissing it in flight would abandon a result the practitioner
+  // still needs. `closeModal` carries the same guard, so the two agree.
+  const { panelRef } = useDialogKeyboard<HTMLDivElement>({
+    open,
+    busy: pending,
+    onClose: closeModal,
+  });
   function confirm() {
     setOutcome({ kind: "idle" });
     startTransition(async () => {
@@ -192,7 +209,16 @@ export function PostcareSendButton({
           aria-label="Send postcare preview"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
         >
-          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-4 overflow-hidden rounded-lg border border-neutral-200 bg-white p-6 shadow-xl dark:border-neutral-800 dark:bg-neutral-950">
+          {/* `tabIndex={-1}` makes the PANEL a programmatic focus target
+              without putting it in the Tab order: focus lands here on open so
+              the dialog is announced from its heading and the preview reads
+              from the top, and the trap parks here if every control is
+              disabled mid-send. */}
+          <div
+            ref={panelRef}
+            tabIndex={-1}
+            className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-4 overflow-hidden rounded-lg border border-neutral-200 bg-white p-6 shadow-xl outline-none dark:border-neutral-800 dark:bg-neutral-950"
+          >
             <header className="flex flex-col gap-1">
               <h2 className="text-base font-medium">
                 {isResend
