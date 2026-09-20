@@ -1090,6 +1090,30 @@ describe("negative controls: the guard bites", () => {
     expect(couldCompleteForbidden("corded on every visit", [rule])?.source).toBe(rule.source);
   });
 
+  it("splits a group whose alternatives carry an optional plural", () => {
+    // Codex, at 3d9c93f4. Refusing any alternative with a `?` in it threw away
+    // the whole N1 verb group `(keeps?|retains?|holds?|preserves?|has|have)`,
+    // so a fragment stopping inside "retain" generated no head at all.
+    const rule = FORBIDDEN.find((r) => r.source.includes("keeps?"))!;
+    expect(
+      rule.pattern.test("Treatment records retain their edit history"),
+      "precondition: the rendered sentence IS banned",
+    ).toBe(true);
+    expect(
+      FORBIDDEN.some((r) => r.pattern.test("Treatment records ret")),
+      "precondition: the readable half alone trips nothing",
+    ).toBe(false);
+
+    expect(couldCompleteForbidden("Treatment records ret", [rule])?.source).toBe(rule.source);
+
+    const src = `export const COPY = { line: "Treatment records ret" + ending };`;
+    expect(unreconstructableIn(src, "lib/marketing/content.ts", [rule])).toHaveLength(1);
+
+    // Both branches of the optional are readable, not just the longer one.
+    expect(couldCompleteForbidden("Treatment records keep", [rule])?.source).toBe(rule.source);
+    expect(couldCompleteForbidden("Treatment records keeps", [rule])?.source).toBe(rule.source);
+  });
+
   it("leaves a phrase that is already a full match to the substring guard", () => {
     // couldCompleteForbidden is about what a value could ADD. A fragment that
     // already contains the whole banned phrase is the substring guard's job, and

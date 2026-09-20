@@ -979,13 +979,51 @@ type CompletionPatterns = {
  */
 const LITERAL_GROUP_ATOM = /^\((?!\?)([^()]*)\)\??$/;
 
+/**
+ * `keeps?` is two words, and both of them are readable.
+ *
+ * Codex at `3d9c93f4`. Rejecting any alternative that carries a `?` threw away
+ * the whole N1 verb group `(keeps?|retains?|holds?|preserves?|has|have)`, so
+ * `"Treatment records ret" + ending` — which renders a sentence that rule
+ * forbids — generated no head to match. An optional single character is the only
+ * regex construct these alternatives use, and it expands to exactly two
+ * branches, so it is expanded rather than refused.
+ *
+ * Anything richer still disqualifies the atom. This is a plural `s`, not an
+ * expression language.
+ */
+const OPTIONAL_EXPANSION_CAP = 64;
+
+function expandOptionalChars(alternative: string): string[] | null {
+  let variants: string[] = [""];
+  for (let i = 0; i < alternative.length; i += 1) {
+    const ch = alternative[i];
+    // A `?` reaching here is leading or doubled — not a quantifier this
+    // understands.
+    if (ch === "?" || /[\\+*{}[\]().^$|]/.test(ch)) return null;
+    if (alternative[i + 1] === "?") {
+      variants = variants.flatMap((v) => [v + ch, v]);
+      i += 1;
+    } else {
+      variants = variants.map((v) => v + ch);
+    }
+    if (variants.length > OPTIONAL_EXPANSION_CAP) return null;
+  }
+  return [...new Set(variants)].filter(Boolean);
+}
+
 function literalAlternatives(atom: string): string[] | null {
   const match = LITERAL_GROUP_ATOM.exec(atom);
   if (!match) return null;
   const alternatives = match[1].split("|").filter(Boolean);
   if (alternatives.length === 0) return null;
-  if (alternatives.some((alt) => /[\\+*{}[\]().^$?|]/.test(alt))) return null;
-  return alternatives;
+  const expanded: string[] = [];
+  for (const alternative of alternatives) {
+    const branches = expandOptionalChars(alternative);
+    if (!branches) return null;
+    expanded.push(...branches);
+  }
+  return expanded.length > 0 ? [...new Set(expanded)] : null;
 }
 
 const escapeLiteral = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
