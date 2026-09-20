@@ -44,6 +44,7 @@ import {
   judgeAppendOnlyClaim,
   sanctionedAppendOnlyWordings,
   citedEvidenceFiles,
+  foldForMatching,
   isWatched,
   publicRouteFiles,
 } from "./helpers/register-provenance";
@@ -75,6 +76,20 @@ const REGISTER = read("docs/marketing/product-truth-register.md");
 const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
 
 const FORBIDDEN = forbiddenWordings(REGISTER);
+
+/**
+ * A forbidden rule matched against text a BROWSER would render identically.
+ *
+ * `foldForMatching` exists for exactly this and was only being used by the
+ * append-only judgement. `synthetic‑twin` written with U+2011 renders as
+ * `synthetic-twin` and walks straight through `synthetic[- ]twin` — and the
+ * canonical modules, where such a value would live, are exempt from the freeze,
+ * so nothing else would have caught it either.
+ */
+const forbiddenHits = (text: string): string[] => {
+  const folded = foldForMatching(text);
+  return FORBIDDEN.filter((rule) => rule.pattern.test(folded)).map((rule) => rule.id);
+};
 const SANCTIONED = sanctionedAppendOnlyWordings(REGISTER);
 
 const CLOSURE = marketingClosure();
@@ -830,7 +845,7 @@ describe("R2. JUDGEMENT: every fragment in the closure, against the register", (
 
   it("no forbidden wording appears anywhere in the closure", () => {
     const offenders = FRAGMENTS.flatMap((claim) =>
-      FORBIDDEN.filter((rule) => rule.pattern.test(claim)).map((rule) => `${rule.id}: ${claim}`),
+      forbiddenHits(claim).map((id) => `${id}: ${claim}`),
     );
     expect(offenders, "public copy carries wording the register forbids").toEqual([]);
   });
@@ -855,9 +870,7 @@ describe("R2. JUDGEMENT: every fragment in the closure, against the register", (
     const probe = "export const A = () => <p>Every change is tracked</p>;";
     expect(copyInventory("app/probe/page.tsx", probe)).toEqual([]);
     expect(
-      textFragments("app/probe/page.tsx", probe).some((t) =>
-        FORBIDDEN.some((r) => r.pattern.test(t)),
-      ),
+      textFragments("app/probe/page.tsx", probe).some((t) => forbiddenHits(t).length > 0),
     ).toBe(true);
   });
 });
@@ -865,7 +878,7 @@ describe("R2. JUDGEMENT: every fragment in the closure, against the register", (
 describe("R3. ADJACENCY: a claim assembled from harmless pieces", () => {
   it("no file's fragments join into forbidden wording", () => {
     const offenders = ADJACENT.flatMap(({ file, text }) =>
-      FORBIDDEN.filter((rule) => rule.pattern.test(text)).map((rule) => `${file}: ${rule.id}`),
+      forbiddenHits(text).map((id) => `${file}: ${id}`),
     );
     expect(
       offenders,
@@ -915,13 +928,18 @@ describe("R5. HOLES: a sentence whose middle comes from another file", () => {
     const recorded = currentExceptions().map((v) => `${v.rule} ${v.file} ${v.detail}`).sort();
     expect(recorded).toEqual(INVENTORY.exceptions);
     expect(recorded.length, "holes in authored sentences grew").toBeLessThanOrEqual(13);
+    // Two of the thirteen are `{PAYMENT_QUALIFIER} {REPLACES_STATEMENT}` on the
+    // pricing page: two canonical copy values rendered as one run of text. Each
+    // is judged on its own; what is not judged is the sentence they make
+    // together, which is the whole reason the rule looks at this shape.
+    expect(recorded.filter((r) => r.includes("app/pricing/page.tsx")).length).toBe(3);
   });
 });
 
 describe("NEGATIVE CONTROLS: each rule is red on the defect it claims to catch", () => {
   const probe = (body: string, head = "") => `${head}export const A = () => ${body};\n`;
   const joined = (src: string) =>
-    FORBIDDEN.some((r) => r.pattern.test(adjacentText("app/probe/page.tsx", src)));
+    forbiddenHits(adjacentText("app/probe/page.tsx", src)).length > 0;
   const incomplete = (body: string) =>
     incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
 
@@ -951,6 +969,60 @@ describe("NEGATIVE CONTROLS: each rule is red on the defect it claims to catch",
     ] as [string, string][]) {
       expect(joined(src), name).toBe(true);
     }
+  });
+
+  it("REFUSED — two values running together, which source order cannot join", () => {
+    // Source order is not render order once literals are bound to names:
+    // declaring `tail` before `head` and rendering `<p>{head} {tail}</p>` gives
+    // the forbidden sentence while R3 joins the file as "is tracked Every
+    // change". R5 catches the SHAPE instead of resolving the names.
+    expect(incomplete("<p>{head} {tail}</p>")).toEqual([
+      "copy/incomplete-claim",
+      "copy/incomplete-claim",
+    ]);
+    expect(incomplete("<p>{head}{tail}</p>")).toEqual([
+      "copy/incomplete-claim",
+      "copy/incomplete-claim",
+    ]);
+  });
+
+  it("ACCEPTED — children on separate lines, which JSX does not run together", () => {
+    // JSX DROPS a whitespace run containing a newline, so formatted children are
+    // separate lines of a page rather than one sentence. Reading any two holes
+    // as a claim instead flagged 118 places, nearly all of them a container
+    // holding a header and a list.
+    expect(incomplete("<div>\n  {header}\n  {list}\n</div>")).toEqual([]);
+    expect(incomplete("<div>{children}</div>")).toEqual([]);
+  });
+
+  it("REFUSED — a JSON module is a local module, not a package", () => {
+    // `resolveJsonModule` is enabled here, so `import copy from "./copy.json"`
+    // is ordinary — and a resolver that only knew TypeScript returned null for
+    // it, which reads as "a package" and dropped the file out of the closure
+    // entirely.
+    expect(resolveSpecifier("@/lib/marketing/content", "app/page.tsx")).toBe(
+      "lib/marketing/content.ts",
+    );
+    const helper = "tests/docs/fixtures/copy-inventory.json";
+    expect(resolveSpecifier("@/tests/docs/fixtures/copy-inventory", "app/page.tsx")).toBe(helper);
+    // And its strings are read as DATA: parsing JSON as TSX yields nothing, so
+    // admitting the file without this would have left it invisible anyway.
+    const fragments = textFragments("probe.json", '{"claim": "Every change is tracked"}');
+    expect(fragments).toEqual(["Every change is tracked"]);
+    expect(forbiddenHits(fragments[0]).length).toBeGreaterThan(0);
+  });
+
+  it("REFUSED — wording a browser renders identically but the bytes do not", () => {
+    // `foldForMatching` existed for exactly this and only the append-only
+    // judgement was using it. A U+2011 non-breaking hyphen renders as a hyphen
+    // and walked straight through a `[- ]` pattern — and the canonical modules,
+    // where such a value would live, are exempt from the freeze, so nothing else
+    // would have caught it.
+    const straight = "synthetic-twin";
+    const nonBreaking = "synthetic\u2011twin";
+    expect(straight).not.toEqual(nonBreaking);
+    expect(forbiddenHits(straight)).toEqual(forbiddenHits(nonBreaking));
+    expect(forbiddenHits(nonBreaking).length).toBeGreaterThan(0);
   });
 
   it("ACCEPTED — ordinary copy that happens to share a file", () => {

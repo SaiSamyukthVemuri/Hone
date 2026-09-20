@@ -142,8 +142,14 @@ export function resolveSpecifier(spec: string, from: string): string | null {
       ? relative(REPO_ROOT, join(REPO_ROOT, dirname(from), spec))
       : null;
   if (rel === null || rel.startsWith("..")) return null;
+  // `.json` TOO. `resolveJsonModule` is enabled in this repository, so
+  // `import copy from "./copy.json"` is an ordinary local module — and a
+  // resolver that only knows TypeScript returns null for it, which reads as "a
+  // package" and drops the file out of the closure entirely. The extension list
+  // is the boundary's edge, so anything the compiler can resolve locally belongs
+  // in it.
   return (
-    [".ts", ".tsx", "/index.ts", "/index.tsx"]
+    [".ts", ".tsx", ".json", "/index.ts", "/index.tsx"]
       .map((ext) => rel + ext)
       .find((candidate) => existsSync(join(REPO_ROOT, candidate))) ?? null
   );
@@ -169,6 +175,8 @@ export function marketingClosure(): string[] {
     const file = stack.pop();
     if (file === undefined || seen.has(file)) continue;
     seen.add(file);
+    // A JSON module imports nothing, so it is a leaf of the closure.
+    if (file.endsWith(".json")) continue;
     const sf = parse(file);
     const visit = (n: ts.Node) => {
       if (
@@ -250,6 +258,17 @@ export function frozenSurface(): string[] {
  * markup is arranged, which is what makes both readings stable.
  */
 export function textFragments(file: string, source?: string): string[] {
+  // A JSON module has no syntax to walk — it is a value. Parsing it as TSX
+  // yields nothing, which would have made a `.json` copy file invisible even
+  // once the resolver admitted it.
+  if (file.endsWith(".json")) {
+    const raw = source ?? readFileSync(join(REPO_ROOT, file), "utf8");
+    try {
+      return walkStrings(JSON.parse(raw) as unknown).map(normalise).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
   const sf = parse(file, source);
   const found: { at: number; text: string }[] = [];
   const visit = (n: ts.Node) => {
@@ -391,7 +410,24 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
         }
       };
       gatherHoles(n);
-      if (directWords(n) > 0 && holes.length > 0) {
+      // WORDS AND A HOLE, **OR TWO VALUES RUNNING TOGETHER**. Source order is
+      // not render order once literals are bound to names: declaring `tail`
+      // before `head` and rendering `<p>{head} {tail}</p>` produces the
+      // forbidden sentence while R3 joins the file as "is tracked Every change".
+      // Closing that by ordering fragments by their JSX REFERENCE would be
+      // same-file name resolution, and the round after it would be about object
+      // properties.
+      //
+      // So it is refused on shape: a sentence made of two values is no more a
+      // complete copy value than one made of a value and half a sentence.
+      //
+      // "RUNNING TOGETHER" is JSX's own whitespace rule, not a guess about
+      // layout. A whitespace run containing a NEWLINE is dropped by JSX, so
+      // formatted children are separate lines of a page; a plain space is
+      // rendered, so `{head} {tail}` is one line of text. Measured: the blunt
+      // reading — any two holes — flagged 118 places, nearly all of them a
+      // container holding a header and a list. This one flags ONE.
+      if ((directWords(n) > 0 && holes.length > 0) || runsTogether(n)) {
         for (const hole of holes) {
           if (reported.has(hole.getStart(sf))) continue;
           reported.add(hole.getStart(sf));
@@ -408,6 +444,33 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
   };
   visit(sf);
   return out;
+}
+
+/**
+ * Do two values render as one run of text inside this element?
+ *
+ * Adjacent, or separated only by a space JSX keeps. A whitespace run containing
+ * a newline is dropped by JSX, which is what makes formatted children separate
+ * lines rather than one sentence.
+ */
+function runsTogether(el: ts.JsxElement | ts.JsxFragment): boolean {
+  const kids = el.children;
+  const hole = (c: ts.Node | undefined): boolean =>
+    c !== undefined &&
+    ts.isJsxExpression(c) &&
+    c.expression !== undefined &&
+    !spelledOutHere(c.expression);
+  const keptSpace = (c: ts.Node | undefined): boolean =>
+    c !== undefined &&
+    ts.isJsxText(c) &&
+    c.text.trim() === "" &&
+    c.text.length > 0 &&
+    !c.text.includes("\n");
+  for (let i = 0; i < kids.length - 1; i += 1) {
+    if (hole(kids[i]) && hole(kids[i + 1])) return true;
+    if (hole(kids[i]) && keptSpace(kids[i + 1]) && hole(kids[i + 2])) return true;
+  }
+  return false;
 }
 
 /** Is every string this expression can produce written in this file? */

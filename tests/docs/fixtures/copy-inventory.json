@@ -555,6 +555,8 @@
     "copy/incomplete-claim app/_components/marketing/article.tsx {fmt(article.datePublished)}",
     "copy/incomplete-claim app/global-error.tsx {reference}",
     "copy/incomplete-claim app/page.tsx {plan.seats}",
+    "copy/incomplete-claim app/pricing/page.tsx {PAYMENT_QUALIFIER}",
+    "copy/incomplete-claim app/pricing/page.tsx {REPLACES_STATEMENT}",
     "copy/incomplete-claim app/pricing/page.tsx {plan.seats}",
     "copy/incomplete-claim app/resources/page.tsx {RESOURCE_AUTHOR}",
     "copy/incomplete-claim app/resources/page.tsx {a.readingTime}"
