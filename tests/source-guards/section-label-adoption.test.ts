@@ -157,7 +157,18 @@ function classNameLiterals(source: string, fileName: string): string[] {
   const scopeOf = (node: ts.Node): ts.Node => {
     let cur: ts.Node | undefined = node.parent;
     while (cur) {
+      // BLOCKS are scopes too. Recognising only functions put two sibling
+      // `if`/`else` blocks, each declaring a conventional `const LABEL`, into
+      // one map under the enclosing function — so the later declaration
+      // answered for usages in the earlier block. That is the same collision as
+      // before, one level down.
       if (
+        ts.isBlock(cur) ||
+        ts.isCaseClause(cur) ||
+        ts.isDefaultClause(cur) ||
+        ts.isForStatement(cur) ||
+        ts.isForOfStatement(cur) ||
+        ts.isForInStatement(cur) ||
         ts.isFunctionDeclaration(cur) ||
         ts.isFunctionExpression(cur) ||
         ts.isArrowFunction(cur) ||
@@ -232,14 +243,29 @@ function classNameLiterals(source: string, fileName: string): string[] {
       if (ts.isStringLiteral(node.initializer)) {
         out.push(node.initializer.text);
       } else if (ts.isJsxExpression(node.initializer) && node.initializer.expression) {
-        const parts = staticStrings(node.initializer.expression);
-        // Each fragment on its own...
-        out.push(...parts);
-        // ...AND their combination, because `cx("a b c", "d")` renders the
-        // concatenation. Testing fragments independently let a contract split
-        // across two arguments pass, and multi-fragment cx() is a convention
-        // here rather than an evasion.
-        if (parts.length > 1) out.push(parts.join(" "));
+        const expr = node.initializer.expression;
+        // Each statically-known fragment, judged on its own.
+        out.push(...staticStrings(expr));
+        // AND the combination — but ONLY across arguments that render
+        // together, which means the arguments of a single call.
+        //
+        // The previous version joined every static string it could reach,
+        // including BOTH branches of a conditional. `flag ? "a b c" : "d"`
+        // renders one branch or the other and never their union, yet the join
+        // produced exactly the contract and failed the file. That is a false
+        // positive on valid code — worse than the gap it was closing — so the
+        // combination is now built only from a call's own arguments, and a
+        // conditional argument contributes nothing to it.
+        if (ts.isCallExpression(expr)) {
+          const parts = expr.arguments
+            .map((arg) => {
+              if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) return arg.text;
+              if (ts.isIdentifier(arg)) return resolve(arg);
+              return null; // conditional, logical, spread — may not render
+            })
+            .filter((v): v is string => v !== null);
+          if (parts.length > 1) out.push(parts.join(" "));
+        }
       }
     }
     ts.forEachChild(node, visit);
@@ -395,6 +421,43 @@ describe("UX-02: the uppercase section label has one owner", () => {
       });
       expect(matched, `${name} escaped the guard`).toBe(true);
     }
+  });
+
+  it("never joins branches that cannot render together", () => {
+    // A REGRESSION THIS GUARD CAUSED ONCE. Joining every reachable static
+    // string combined both arms of a ternary into the exact contract, so a file
+    // rendering one arm or the other was failed for a class list neither arm
+    // produces. A guard that fails valid code is worse than one with a gap.
+    const contract = "text-xs font-medium uppercase tracking-wider";
+    const conditional = classNameLiterals(
+      `export const X = <span className={flag ? "${contract}" : "text-neutral-500"} />;`,
+      "conditional.tsx",
+    );
+    for (const literal of conditional) {
+      const set = new Set(literal.split(/\s+/).filter(Boolean));
+      const isContract =
+        [...TYPOGRAPHY].every((c) => set.has(c)) &&
+        [...set].some((c) => MUTED.has(c)) &&
+        [...set].some((c) => SIZES.has(c));
+      expect(isContract, `mutually exclusive branches were joined into "${literal}"`).toBe(false);
+    }
+  });
+
+  it("resolves constants per BLOCK, not merely per function", () => {
+    // Two sibling blocks may each declare a conventional name. Keying only by
+    // enclosing function let the later declaration answer for the earlier block.
+    const contract = "text-xs font-medium uppercase tracking-wider";
+    const blocks = classNameLiterals(
+      `export function A(flag: boolean) {\n` +
+        `  if (flag) { const LABEL = "${contract} text-neutral-500"; return <span className={LABEL} />; }\n` +
+        `  else { const LABEL = "text-sm text-red-600"; return <span className={LABEL} />; }\n` +
+        `}`,
+      "blocks.tsx",
+    );
+    expect(blocks, "the first block's constant did not resolve to its own value").toContain(
+      `${contract} text-neutral-500`,
+    );
+    expect(blocks).toContain("text-sm text-red-600");
   });
 
   it("leaves real composition alone", () => {
