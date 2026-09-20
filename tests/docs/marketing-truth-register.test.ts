@@ -1,35 +1,33 @@
 /**
  * The marketing truth register, enforced.
  *
- * FOUR RULES, AND NO RENDERING MODEL
+ * FIVE RULES, AND NO RENDERING MODEL
  * ----------------------------------
- * Owner ruling, 2026-09-20. The predecessor asked "what does this React tree
- * render?" Answering that needs a TypeScript compiler and a React renderer, and
- * approximating both produced a finding every round for twenty-two rounds: `+`,
- * then `.join()`, then `.concat()`, then a template, then a chained method, then
- * a bare identifier, then a property access, then a short label prefix, then a
- * callback parameter, then an array element, then a server action, then a
- * constant two modules away. Every repair was correct. The sequence had no end.
+ * Owner ruling, 2026-09-20, after the convergence-stop law fired twice. Two
+ * predecessors asked "what does this React tree render", and each produced a
+ * finding every round — never a repeat, always a different SYNTACTIC ROUTE from
+ * text to a screen: nested JSX, JSX expressions, arrays of fragments, imported
+ * values, imported components, props, spread props, metadata helpers,
+ * re-exports, convention files. Enumerating routes cannot terminate, because
+ * the route set is the grammar of two languages.
  *
- * That question is not asked here. These are:
+ * That question is not asked here. Text reaching a visitor has exactly two
+ * origins — a LITERAL in some file, or a VALUE from another file — and both are
+ * closed without interpreting anything:
  *
- *   R1 DECLARE — which files carry public copy. Lists and directories, never a
- *      discovered import graph.
- *   R2 JUDGE — every string on the declared surface against the register's own
- *      rules. No length gate, no prose gate: a phrase match costs nothing.
- *   R3 FREEZE — the prose inventory of every file OUTSIDE the canonical copy
- *      modules, by identity, shrink-only. New copy has to be new text somewhere,
- *      and new text is what is refused.
- *   R4 REFUSE — three shapes that put words in front of a visitor without
- *      leaving text in the file: an assembly, an unproven rendered array, and a
- *      dynamic text-bearing attribute. Refusals, not inferences: they do not ask
- *      what a value renders, they refuse a shape that cannot be read.
- *
- * R3 and R2 divide the work deliberately. The inventory holds substantive prose
- * only, so it stays stable and a CSS tweak does not redden the build — but that
- * gate needs five plain words or a full stop, and `Every change is tracked` is
- * four words with neither. Judgement has no threshold and sees it. Neither rule
- * is asked to do the other's job.
+ *   R1 CLOSURE     the transitive first-party import/re-export closure of the
+ *                  marketing routes and the framework's convention files. A
+ *                  module outside it cannot be reached from a route, so it
+ *                  cannot render. This is what makes the boundary COMPLETE:
+ *                  there is no "undeclared module" left to import from.
+ *   R2 FRAGMENTS   every literal and JSX text run in that closure, judged
+ *                  unfiltered.
+ *   R3 ADJACENCY   those fragments joined per file in source order and judged
+ *                  again, which catches a claim assembled from harmless pieces
+ *                  with no notion of element, array, spread or hole.
+ *   R4 FREEZE      the prose inventory, shrink-only. An authoring rule.
+ *   R5 HOLES       the one surviving shape rule: a sentence whose middle comes
+ *                  from another file, which R3 cannot join across.
  *
  * Provenance (git only) is unchanged from the version that already worked.
  */
@@ -52,23 +50,21 @@ import {
 import {
   CANONICAL_COPY_MODULES,
   POLICY_SOURCES,
-  DECLARED_COPY_DIRS,
-  DECLARED_COPY_FILES,
+  CONVENTION_ROUTES,
   pageCopySources,
+  seedFiles,
+  marketingClosure,
   frozenSurface,
+  resolveSpecifier,
+  textFragments,
+  adjacentText,
   copyInventory,
-  judgeableText,
-  moduleLiterals,
-  walkStrings,
   isSubstantiveProse,
-  assembledCopyViolations,
-  unprovenArrayViolations,
-  dynamicTextAttributeViolations,
-  isProvenStatic,
-  undeclaredCopyImportViolations,
   incompleteClaimViolations,
   assertDeclaredExist,
-  TEXT_BEARING_ATTRIBUTES,
+  outsideMarketingScope,
+  publicRouteEntryPoints,
+  walkStrings,
   type CopyViolation,
 } from "./helpers/copy-inventory";
 
@@ -81,45 +77,51 @@ const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
 const FORBIDDEN = forbiddenWordings(REGISTER);
 const SANCTIONED = sanctionedAppendOnlyWordings(REGISTER);
 
+const CLOSURE = marketingClosure();
 const FROZEN = frozenSurface();
-const DECLARED = [...FROZEN, ...CANONICAL_COPY_MODULES];
 
-/**
- * R2. Every string the declared surface carries, plus the copy modules by value.
- *
- * UNFILTERED, deliberately and at some cost in size. Using an authoring
- * heuristic to decide what gets judged is how `export const title = "Every
- * change is tracked"` — four words, no full stop, the exact forbidden wording —
- * reached no rule at all in the predecessor. Short technical strings are free:
- * the register's rules are specific phrases and match no class name.
- */
-const JUDGED = [
-  ...DECLARED.flatMap((f) => judgeableText(f)),
-  ...CANONICAL_COPY_MODULES.flatMap((f) => moduleLiterals(f)),
+/** R2. Every fragment the closure contains, plus the copy modules by value. */
+const FRAGMENTS = [
+  ...CLOSURE.flatMap((f) => textFragments(f)),
   // And by VALUE, which proves the static and runtime readings agree for a
   // plain data module.
   ...walkStrings(marketingContent),
   ...walkStrings(marketingResources),
 ];
 
-/**
- * R3. The frozen prose inventory.
- *
- * Regenerate deliberately with `MARKETING_INVENTORY=write`, never as a reflex:
- * the script refuses ADDITIONS, so growth cannot arrive this way. The
- * predecessor regenerated its baselines by hand four times; once that silently
- * carried a stale entry for two heads, and once it wrote a wrong baseline that
- * had to be restored from git.
- */
-const INVENTORY_PATH = "tests/docs/fixtures/copy-inventory.json";
-type Fixture = { inventory: Record<string, string[]>; exceptions: string[] };
+/** R3. Each file's fragments as one string, for the phrase rules only. */
+const ADJACENT = CLOSURE.map((f) => ({ file: f, text: adjacentText(f) }));
 
-// LET, not const, because the regeneration block below rewrites the file and
-// the rest of this run must see what it wrote. Parsed once and never refreshed,
-// the documented `MARKETING_INVENTORY=write` command could not complete: it
-// updated the JSON correctly and then failed its own equality assertions
-// against the object it had replaced, so a legitimate shrink needed a second
-// run to look green.
+/** The production head the register declares it was verified against. */
+function declaredHead(): string {
+  const m = REGISTER.match(/Built against production head \| `([0-9a-f]{40})`/);
+  return m ? m[1] : "";
+}
+
+/**
+ * The production head the register says it last COMPARED itself against.
+ *
+ * Distinct from the build head on purpose. Production moves for reasons that
+ * have nothing to do with marketing copy, and bumping the build head each time
+ * would claim a re-derivation nobody performed — the exact defect this register
+ * exists to prevent.
+ */
+function checkedProductionHead(): string {
+  const m = REGISTER.match(/Production head at last check \| `([0-9a-f]{40})`/);
+  return m ? m[1] : "";
+}
+
+type Fixture = {
+  inventory: Record<string, string[]>;
+  exceptions: string[];
+  outsideScope: string[];
+};
+
+const INVENTORY_PATH = "tests/docs/fixtures/copy-inventory.json";
+// LET, not const: the regeneration block rewrites the file and the rest of this
+// run must see what it wrote. Parsed once and never refreshed, the documented
+// command could not complete — it updated the JSON and then failed its own
+// equality assertions against the object it had replaced.
 let INVENTORY = JSON.parse(read(INVENTORY_PATH)) as Fixture;
 
 const currentInventory = (): Record<string, string[]> => {
@@ -131,27 +133,16 @@ const currentInventory = (): Record<string, string[]> => {
   return out;
 };
 
-const currentExceptions = (): CopyViolation[] => [
-  ...DECLARED.flatMap((f) => dynamicTextAttributeViolations(f)),
-  ...DECLARED.flatMap((f) => unprovenArrayViolations(f)),
-  ...DECLARED.flatMap((f) => incompleteClaimViolations(f)),
-];
+const currentExceptions = (): CopyViolation[] =>
+  CLOSURE.flatMap((f) => incompleteClaimViolations(f));
 
 if (process.env.MARKETING_INVENTORY === "write") {
   const inventory = currentInventory();
   const exceptions = currentExceptions().map((v) => `${v.rule} ${v.file} ${v.detail}`).sort();
-  // BOTH HALVES, and this is the half that was missing. The first draft checked
-  // additions in the prose inventory and then replaced `exceptions`
-  // unconditionally — so removing the one placeholder exception and introducing
-  // a different dynamic attribute would have written the new identity, and both
-  // the equality check and the `length <= 1` ceiling would then have passed. A
-  // set that calls itself shrink-only has to refuse growth everywhere it is
-  // written, not only where it is convenient.
-  // FILE-QUALIFIED, AND WITH MULTIPLICITY. Flattening every file's entries into
-  // one set of text meant moving an existing sentence to a different page, or
-  // repeating it in the same file, counted as no addition at all — so the
-  // documented command would have recorded a new public-copy occurrence and
-  // every later comparison would have agreed with it.
+  // FILE-QUALIFIED AND WITH MULTIPLICITY, in BOTH halves. Flattening entries
+  // into one set of text meant moving an existing sentence to another page, or
+  // repeating it in the same file, counted as no addition at all; checking only
+  // the inventory meant the exception list could be replaced wholesale.
   const additions = (current: string[], recorded: string[]): string[] => {
     const left = new Map<string, number>();
     for (const item of recorded) left.set(item, (left.get(item) ?? 0) + 1);
@@ -178,73 +169,95 @@ if (process.env.MARKETING_INVENTORY === "write") {
   }
   writeFileSync(
     join(REPO_ROOT, INVENTORY_PATH),
-    JSON.stringify({ inventory, exceptions }, null, 2) + "\n",
+    JSON.stringify(
+      { inventory, exceptions, outsideScope: outsideMarketingScope() },
+      null,
+      2,
+    ) + "\n",
   );
   INVENTORY = JSON.parse(read(INVENTORY_PATH)) as Fixture;
 }
 
-/** The production head the register declares it was verified against. */
-function declaredHead(): string {
-  const m = REGISTER.match(/Built against production head \| `([0-9a-f]{40})`/);
-  return m ? m[1] : "";
-}
-
-/**
- * The production head the register says it last COMPARED itself against.
- *
- * Distinct from the build head on purpose. Production moves for reasons that
- * have nothing to do with marketing copy, and bumping the build head each time
- * would claim a re-derivation nobody performed — which is the exact defect this
- * register exists to prevent. So the two are recorded separately: what §0 was
- * derived at, and how far production has run since.
- */
-function checkedProductionHead(): string {
-  const m = REGISTER.match(/Production head at last check \| `([0-9a-f]{40})`/);
-  return m ? m[1] : "";
-}
-
-describe("R1. the surface is DECLARED, not discovered", () => {
-  it("the declared surface is lists and directories, with no import walk", () => {
-    // The predecessor derived its component set by following imports, and spent
-    // four rounds on where that walk stopped: one level, then transitive, then
-    // `.ts` as well as `.tsx`, then layouts Next applies without an import, then
-    // re-exports. A directory does not have that question.
-    expect(DECLARED_COPY_DIRS).toEqual(["app/_components", "app/actions", "app/_fonts"]);
-    // `app/layout.tsx` is no longer listed here: it is an app-root CONVENTION
-    // route and arrives with the rest of them, so naming it twice would let the
-    // two disagree.
-    expect(DECLARED_COPY_FILES).toEqual(["lib/rate-limit/public.ts", "lib/marketing/metadata.ts"]);
-    expect(CANONICAL_COPY_MODULES.length).toBe(3);
-    expect(POLICY_SOURCES).toEqual(["app/privacy/page.tsx", "app/terms/page.tsx"]);
+describe("R1. the boundary is CLOSED, not enumerated", () => {
+  it("the closure is the transitive reach of the routes and the conventions", () => {
+    // The step both predecessors refused. They followed imports one level, then
+    // two, then argued about `.ts` versus `.tsx`, because every file they
+    // admitted had to carry a frozen prose baseline. It is affordable here
+    // because the closure feeds JUDGEMENT, which has no per-file baseline.
+    expect(CLOSURE.length).toBeGreaterThan(40);
+    expect(CLOSURE.length).toBeLessThan(200);
+    for (const seed of seedFiles()) expect(CLOSURE).toContain(seed);
+    assertDeclaredExist(CLOSURE);
   });
 
-  it("every declared file exists, and the route list comes from the registry", () => {
-    for (const file of DECLARED) {
-      expect(existsSync(join(REPO_ROOT, file)), `${file} is declared but absent`).toBe(true);
+  it("the closure is closed: every first-party import of a member is a member", () => {
+    // THE COMPLETENESS PROPERTY, asserted directly rather than argued. If this
+    // holds, a value rendered by a marketing route came from a module in the
+    // closure — so every literal it can produce is judged by R2, whatever syntax
+    // carried it there. All ten bypass families reduce to this one line.
+    const members = new Set(CLOSURE);
+    const escapes: string[] = [];
+    for (const file of CLOSURE) {
+      const source = read(file);
+      for (const match of source.matchAll(/\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
+        const resolved = resolveSpecifier(match[1], file);
+        if (resolved !== null && !members.has(resolved)) escapes.push(`${file} -> ${resolved}`);
+      }
     }
-    // Not a second hand-kept list: the routes are whatever the registry says.
+    expect(escapes, "a marketing module reaches a first-party module outside the closure").toEqual([]);
+  });
+
+  it("the authenticated application is NOT in the closure", () => {
+    // The boundary has to be a boundary in both directions, or "closed" is just
+    // "everything".
+    expect(CLOSURE.filter((f) => f.startsWith("app/(app)/"))).toEqual([]);
+    expect(CLOSURE.filter((f) => f.includes("/(app)/"))).toEqual([]);
+  });
+
+  it("the seeds are the registry plus the framework's own conventions", () => {
+    // Next wires these from their FILENAME, so no import names them and no
+    // registry lists them; `app/opengraph-image.tsx` renders the card every
+    // social preview shows. Seeds, not special cases: what they import follows
+    // by closure like any route.
     expect(pageCopySources().sort()).toEqual(
       publicRouteFiles().filter((f) => !POLICY_SOURCES.includes(f)).sort(),
     );
+    for (const convention of CONVENTION_ROUTES) {
+      if (existsSync(join(REPO_ROOT, convention))) expect(CLOSURE).toContain(convention);
+    }
+    expect(CLOSURE).toContain("app/opengraph-image.tsx");
   });
 
-  it("a new component file is covered the moment it exists", () => {
-    // The property a directory buys and a file list does not. Every `.tsx` in
-    // the declared directories is in the frozen surface, so a component added
-    // tomorrow arrives already inventoried.
-    for (const known of [
-      "app/_components/DemoForm.tsx",
-      "app/_components/MarketingFooter.tsx",
-      "app/_components/marketing/SiteFooter.tsx",
-      "app/_components/marketing/visuals/CalendarPreview.tsx",
-      "app/actions/demo.ts",
-      "app/layout.tsx",
-      "lib/rate-limit/public.ts",
-    ]) {
-      expect(FROZEN, `${known} is not covered`).toContain(known);
+  it("every public route is either inside the closure or declared outside it", () => {
+    // THE SEED COMPLETENESS PROPERTY. A closure is only as complete as what it
+    // starts from, and the seeds come from a registry a person maintains — so
+    // the routes it does NOT reach are frozen too. A new public page is then
+    // either registered as marketing, in which case closure covers it, or it
+    // shows up here and somebody decides. What cannot happen is a public route
+    // quietly belonging to neither.
+    //
+    // The 32 recorded today are the booking journey, the admin console and the
+    // API handlers: public, but product surfaces rather than marketing ones.
+    // That is a scope limit of the register, and it is declared rather than
+    // assumed.
+    expect(outsideMarketingScope()).toEqual(INVENTORY.outsideScope);
+    const closure = new Set(CLOSURE);
+    const unaccounted = publicRouteEntryPoints().filter(
+      (f) => !closure.has(f) && !INVENTORY.outsideScope.includes(f),
+    );
+    expect(unaccounted, "a public route belongs to neither the closure nor the declared scope limit").toEqual([]);
+    // Non-vacuous: the two sets really do partition the public routes.
+    expect(INVENTORY.outsideScope.length).toBeGreaterThan(20);
+    expect(publicRouteEntryPoints().length).toBe(
+      publicRouteEntryPoints().filter((f) => closure.has(f)).length + INVENTORY.outsideScope.length,
+    );
+  });
+
+  it("the canonical copy modules are judged but not frozen", () => {
+    for (const module of CANONICAL_COPY_MODULES) {
+      expect(CLOSURE).toContain(module);
+      expect(FROZEN).not.toContain(module);
     }
-    // And the canonical modules are NOT frozen: authoring copy there is the law.
-    for (const module of CANONICAL_COPY_MODULES) expect(FROZEN).not.toContain(module);
   });
 });
 
@@ -329,7 +342,7 @@ describe("truth register: provenance is declared, not assumed", () => {
     // `SiteFooter` while this branch still holds the old text: the diff
     // intersection would be empty and the local judgement would only ever
     // inspect what is here.
-    ...frozenSurface(),
+    ...CLOSURE,
     ...citedEvidenceFiles(REGISTER),
   ];
   // `--no-renames` is load-bearing. With rename detection on — Git's default —
@@ -444,7 +457,7 @@ describe("truth register: provenance is declared, not assumed", () => {
       ...pageCopySources(),
       ...POLICY_SOURCES,
       ...CANONICAL_COPY_MODULES,
-      ...frozenSurface(),
+      ...CLOSURE,
     ];
     expect(judged.length).toBeGreaterThan(30);
     expect(judged.filter((f) => !isWatched(f, WATCHED))).toEqual([]);
@@ -801,28 +814,33 @@ describe("the register's cited evidence stays watched", () => {
   });
 });
 
-describe("R2. JUDGEMENT: every string on the declared surface, against the register", () => {
-  it("the corpus is real, and large enough to be the whole surface", () => {
-    expect(JUDGED.length).toBeGreaterThan(1000);
-    expect(JUDGED.join(" ¶ ")).toMatch(/electrolysis/i);
-    // Non-vacuous at a sentence only a COMPONENT authors, and one only a page
-    // does: a corpus that quietly covered the copy modules alone would pass a
-    // size check and miss both.
-    expect(JUDGED).toContain("Treatment memory for electrologists.");
-    expect(JUDGED.some((c) => /\bprivacy policy\b/i.test(c))).toBe(true);
+describe("R2. JUDGEMENT: every fragment in the closure, against the register", () => {
+  it("the corpus is the whole closure, not a chosen part of it", () => {
+    expect(FRAGMENTS.length).toBeGreaterThan(2000);
+    expect(FRAGMENTS.join(" ¶ ")).toMatch(/electrolysis/i);
+    // Non-vacuous at three different origins: a component, a page and the
+    // framework's social card. A corpus covering only the copy modules would
+    // pass a size check and miss all three.
+    expect(FRAGMENTS).toContain("Treatment memory for electrologists.");
+    expect(FRAGMENTS.some((c) => /\bprivacy policy\b/i.test(c))).toBe(true);
+    expect(
+      FRAGMENTS.some((c) => c.startsWith("Hone. Treatment memory for electrologists:")),
+    ).toBe(true);
   });
 
-  it("no forbidden wording appears anywhere on the declared surface", () => {
-    const offenders = JUDGED.flatMap((claim) =>
-      FORBIDDEN.filter((rule) => rule.pattern.test(claim)).map(
-        (rule) => `${rule.id}: ${claim}`,
-      ),
+  it("no forbidden wording appears anywhere in the closure", () => {
+    const offenders = FRAGMENTS.flatMap((claim) =>
+      FORBIDDEN.filter((rule) => rule.pattern.test(claim)).map((rule) => `${rule.id}: ${claim}`),
     );
     expect(offenders, "public copy carries wording the register forbids").toEqual([]);
   });
 
   it("every append-only claim is one the register sanctions", () => {
-    const verdicts = JUDGED.map((c) => ({ c, v: judgeAppendOnlyClaim(c, SANCTIONED) })).filter(
+    // Judged on COMPLETE VALUES only, never on joined text. These rules are an
+    // exact-match allow-list, so a joined window is not a claim: judging R3's
+    // output here reported nine sanctioned sentences as unsanctioned purely for
+    // having a heading in front of them.
+    const verdicts = FRAGMENTS.map((c) => ({ c, v: judgeAppendOnlyClaim(c, SANCTIONED) })).filter(
       ({ v }) => v.kind === "unsanctioned",
     );
     expect(
@@ -832,29 +850,42 @@ describe("R2. JUDGEMENT: every string on the declared surface, against the regis
   });
 
   it("judgement has NO length or prose gate", () => {
-    // The exact wording that escaped the predecessor: four plain words, no
-    // terminal punctuation, and therefore below every authoring threshold. It is
-    // not inventory-worthy prose and it must still be judged.
+    // Four plain words, no terminal punctuation, below every authoring
+    // threshold — and the exact wording that escaped the first architecture.
     const probe = "export const A = () => <p>Every change is tracked</p>;";
     expect(copyInventory("app/probe/page.tsx", probe)).toEqual([]);
     expect(
-      judgeableText("app/probe/page.tsx", probe).some((t) =>
+      textFragments("app/probe/page.tsx", probe).some((t) =>
         FORBIDDEN.some((r) => r.pattern.test(t)),
       ),
-      "a four-word forbidden sentence fell through the gap between freeze and judgement",
     ).toBe(true);
   });
 });
 
-describe("R3. FREEZE: prose outside the copy modules can only shrink", () => {
+describe("R3. ADJACENCY: a claim assembled from harmless pieces", () => {
+  it("no file's fragments join into forbidden wording", () => {
+    const offenders = ADJACENT.flatMap(({ file, text }) =>
+      FORBIDDEN.filter((rule) => rule.pattern.test(text)).map((rule) => `${file}: ${rule.id}`),
+    );
+    expect(
+      offenders,
+      "text that is harmless fragment by fragment renders as wording the register forbids",
+    ).toEqual([]);
+  });
+
+  it("the joined text is real, and longer than any single fragment", () => {
+    const longest = ADJACENT.reduce((a, b) => (a.text.length > b.text.length ? a : b));
+    expect(longest.text.length).toBeGreaterThan(1000);
+    expect(ADJACENT.length).toBe(CLOSURE.length);
+  });
+});
+
+describe("R4. FREEZE: prose outside the copy modules can only shrink", () => {
   it("the recorded inventory is exactly what the surface holds", () => {
     expect(currentInventory()).toEqual(INVENTORY.inventory);
   });
 
   it("no file gains prose, by identity rather than by count", () => {
-    // A count alone lets one line be swapped for another. The predecessor was
-    // bitten by exactly that twice, and by a 70-character truncation that made
-    // two different sentences compare equal.
     const known = new Set(Object.values(INVENTORY.inventory).flat());
     const unknown = FROZEN.flatMap((f) =>
       copyInventory(f).filter((item) => !known.has(item)).map((item) => `${f}: ${item}`),
@@ -870,214 +901,130 @@ describe("R3. FREEZE: prose outside the copy modules can only shrink", () => {
     expect([...known].some((item) => item.length > 120)).toBe(true);
   });
 
-  it("the inventory shrinks when copy moves into a canonical module, and only then", () => {
-    // The cost this architecture accepts is stated and monotonic: prose outside
-    // the copy modules is not judged claim-by-claim, but it cannot grow, and the
-    // only way it falls is by moving somewhere that IS judged.
+  it("the inventory can only shrink, and shrinks by copy moving where it is judged", () => {
     const total = FROZEN.reduce((n, f) => n + copyInventory(f).length, 0);
-    const recorded = Object.values(INVENTORY.inventory).flat().length;
-    expect(total).toBeLessThanOrEqual(recorded);
+    expect(total).toBeLessThanOrEqual(Object.values(INVENTORY.inventory).flat().length);
   });
 });
 
-describe("R4. REFUSAL: shapes that put words on the page without leaving text", () => {
-  it("no assembly of authored words with something dynamic", () => {
-    expect(
-      DECLARED.flatMap((f) => assembledCopyViolations(f)).map((v) => `${v.file}:${v.line} ${v.detail}`),
-      "a claim is assembled from fragments; author it as one complete copy value",
-    ).toEqual([]);
-  });
-
-  it("no copy is imported from a module outside the declared surface", () => {
-    // The escape is ordinary refactoring: a declared component imports `CLAIM`
-    // from a new `lib/…` helper and renders `{CLAIM}`. The component holds no
-    // text for the inventory, the helper is on no declared list so nothing
-    // judges it, and a bare identifier is not an assembly, an array or an
-    // attribute. ZERO today, so it is asserted as zero rather than baselined.
-    expect(
-      DECLARED.flatMap((f) => undeclaredCopyImportViolations(f, DECLARED)).map(
-        (v) => `${v.file}: ${v.detail}`,
-      ),
-      "copy is rendered from a module the register never sees; move it into " +
-        "lib/marketing/content.ts",
-    ).toEqual([]);
-  });
-
+describe("R5. HOLES: a sentence whose middle comes from another file", () => {
   it("the declared exceptions are recorded, by identity, and shrink-only", () => {
-    // ONE today: `placeholder={placeholder}` in the demo form, a prop passed
-    // through a field component. It is visitor-facing text that this file does
-    // not contain, so it is declared rather than tolerated silently.
+    // Pre-existing sentences with a value in the middle — `© {year} Hone.`,
+    // `Published {date}` — which the owner ruling says are not to be moved.
+    // Declaring them makes the cost of that ruling visible and shrink-only.
     const recorded = currentExceptions().map((v) => `${v.rule} ${v.file} ${v.detail}`).sort();
     expect(recorded).toEqual(INVENTORY.exceptions);
-    // 13, and the number is the point rather than an embarrassment. Twelve are
-    // pre-existing sentences with a value in the middle — `© {year} Hone.`,
-    // `Published {date}` — which the owner ruling says are not to be moved.
-    // Declaring them makes the cost of that ruling visible and shrink-only,
-    // which is what the predecessor's silent filtering did not.
-    expect(recorded.length, "refusals grew").toBeLessThanOrEqual(13);
-    // Every rule that can produce one is represented in the recorded set, or a
-    // rule could be switched off without the count noticing.
-    expect(new Set(recorded.map((r) => r.split(" ")[0]))).toEqual(
-      new Set(["copy/dynamic-text-attribute", "copy/incomplete-claim"]),
-    );
-    // The convention routes are covered, which is what carries the social card.
-    expect(FROZEN).toContain("app/opengraph-image.tsx");
-    expect(Object.values(INVENTORY.inventory).flat()).toContain(
-      "Hone. Treatment memory for electrologists: before-today prep, charting, and procedure records.",
-    );
+    expect(recorded.length, "holes in authored sentences grew").toBeLessThanOrEqual(13);
   });
 });
 
-describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catch", () => {
-  const probe = (body: string, head = "") =>
-    `${head}export const A = () => ${body};\n`;
-  const arrays = (src: string) =>
-    unprovenArrayViolations("app/probe/page.tsx", src).map((v) => v.rule);
-  const attrs = (src: string) =>
-    dynamicTextAttributeViolations("app/probe/page.tsx", src).map((v) => v.rule);
-  const assembled = (src: string) =>
-    assembledCopyViolations("app/probe/page.tsx", src).map((v) => v.rule);
+describe("NEGATIVE CONTROLS: each rule is red on the defect it claims to catch", () => {
+  const probe = (body: string, head = "") => `${head}export const A = () => ${body};\n`;
+  const joined = (src: string) =>
+    FORBIDDEN.some((r) => r.pattern.test(adjacentText("app/probe/page.tsx", src)));
+  const incomplete = (body: string) =>
+    incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
 
-  // --- P2 class 1: inline arrays whose members are not statically proven ------
+  // --- R3 replaces six shape rules. One control per family it retired. -------
 
-  it("REFUSED — an inline array containing a dynamic member", () => {
-    expect(
-      arrays(probe('<ul>{["Every change is", status].map((line) => <li key={line}>{line}</li>)}</ul>')),
-    ).toEqual(["copy/unproven-array-element"]);
-  });
-
-  it("REFUSED — an inline array containing a function-returned member", () => {
-    expect(
-      arrays(probe('<ul>{["Intro", getClaim()].map((line) => <li key={line}>{line}</li>)}</ul>')),
-    ).toEqual(["copy/unproven-array-element"]);
-  });
-
-  it("REFUSED — every unproven member is named, not just the first", () => {
-    expect(
-      arrays(probe('<ul>{[getOne(), "static", getTwo()].map((l) => <li key={l}>{l}</li>)}</ul>')),
-    ).toEqual(["copy/unproven-array-element", "copy/unproven-array-element"]);
-  });
-
-  it("REFUSED — a spread hides its source", () => {
-    expect(
-      arrays(probe('<ul>{[...lines, "tail"].map((l) => <li key={l}>{l}</li>)}</ul>')),
-    ).toEqual(["copy/unproven-array-element"]);
-  });
-
-  it("ACCEPTED — an inline array of complete literals", () => {
-    expect(
-      arrays(probe('<ul>{["Every change", "is tracked"].map((l) => <li key={l}>{l}</li>)}</ul>')),
-    ).toEqual([]);
-  });
-
-  it("ACCEPTED — an array of literal objects, and of JSX", () => {
-    expect(
-      arrays(probe('<ul>{[{ id: 1, label: "Solo" }].map((p) => <li key={p.id}>{p.label}</li>)}</ul>')),
-    ).toEqual([]);
-    expect(arrays(probe("<div>{[<span key=\"a\">A</span>]}</div>"))).toEqual([]);
-  });
-
-  it("ACCEPTED — a dynamic array that is DATA, not rendered text", () => {
-    // `<Chart data={[1, 2, load()]} />` is not copy, and refusing it would be
-    // noise. The rule is scoped to arrays written in text position or iterated,
-    // which is why it asks what POSITION the array occupies rather than what it
-    // contains.
-    expect(arrays(probe("<Chart data={[1, 2, load()]} />"))).toEqual([]);
-  });
-
-  // --- P2 class 2: dynamic visitor-facing text attributes --------------------
-
-  it("REFUSED — a dynamic alt", () => {
-    expect(attrs(probe("<img src={src} alt={describe(photo)} />"))).toEqual([
-      "copy/dynamic-text-attribute",
-    ]);
-  });
-
-  it("REFUSED — a dynamic aria-label", () => {
-    expect(attrs(probe("<button aria-label={label}>x</button>"))).toEqual([
-      "copy/dynamic-text-attribute",
-    ]);
-  });
-
-  it("REFUSED — a dynamic title", () => {
-    expect(attrs(probe("<abbr title={expand(term)}>RF</abbr>"))).toEqual([
-      "copy/dynamic-text-attribute",
-    ]);
-  });
-
-  it("REFUSED — the remaining text-bearing attributes, each one", () => {
-    for (const attribute of TEXT_BEARING_ATTRIBUTES) {
-      expect(
-        attrs(probe(`<span ${attribute}={value}>x</span>`)),
-        `${attribute} carries words a visitor reads and must be refused when dynamic`,
-      ).toEqual(["copy/dynamic-text-attribute"]);
+  it("REFUSED — every composition family, by adjacency alone", () => {
+    // Each of these needed its own rule in the previous architecture, and each
+    // rule arrived one review round after the last. None of them is recognised
+    // here: they are all adjacent authored strings in source order.
+    const families: [string, string][] = [
+      ["nested markup", "<p>Every change <strong>is tracked</strong></p>"],
+      ["deeper nesting", "<p>Every <span><em><b>change is</b></em></span> tracked</p>"],
+      ["a fragment", "<p>Every <>change is</> tracked</p>"],
+      ["a literal array", '<p>{["Every change ", "is tracked"]}</p>'],
+      ["JSX inside an expression", "<p>Every {<strong>change</strong>} is tracked</p>"],
+      ["a literal in an expression", '<p>Every change {"is tracked"}</p>'],
+    ];
+    for (const [name, body] of families) {
+      expect(joined(probe(body)), name).toBe(true);
+    }
+    // And outside JSX entirely, which used to be three more rules.
+    for (const [name, src] of [
+      ["concatenation", 'const s = "Every change" + " is tracked";'],
+      ["a template", "const s = `Every change ${x} is tracked`;"],
+      ["a join call", 'const s = ["Every change", "is tracked"].join(" ");'],
+      ["a concat call", 'const s = "Every change".concat(" is tracked");'],
+    ] as [string, string][]) {
+      expect(joined(src), name).toBe(true);
     }
   });
 
-  it("ACCEPTED — the static equivalents, which must keep working", () => {
-    expect(attrs(probe('<img src={src} alt="Hone calendar, week view" />'))).toEqual([]);
-    expect(attrs(probe('<button aria-label="Close">x</button>'))).toEqual([]);
-    expect(attrs(probe('<abbr title="Radio frequency">RF</abbr>'))).toEqual([]);
-    // Braced literals are the same value written differently.
-    expect(attrs(probe('<img src={src} alt={"Hone calendar"} />'))).toEqual([]);
+  it("ACCEPTED — ordinary copy that happens to share a file", () => {
+    // Over-joining can only ADD a candidate, so the question is whether it adds
+    // one that MATCHES. Measured across the real closure: zero. These are the
+    // shapes that would have been most likely to.
+    expect(joined(probe("<p>Hone carries <strong>the details</strong> forward.</p>"))).toBe(false);
+    expect(
+      joined(probe("<div><h2>Every studio</h2><p>Records are kept for each client.</p></div>")),
+    ).toBe(false);
+    expect(joined('const c = "flex flex-col rounded-[12px] border bg-white";')).toBe(false);
   });
 
-  it("ACCEPTED — an empty alt, which is the decorative case and is correct", () => {
-    expect(attrs(probe('<img src={src} alt="" />'))).toEqual([]);
-    expect(attrs(probe("<img src={src} alt />"))).toEqual([]);
-  });
+  // --- R1 replaces four more. -----------------------------------------------
 
-  it("ACCEPTED — an id reference is not text", () => {
-    // `aria-labelledby` holds element ids, not words. Refusing it would be
-    // wrong and would push authors toward the dynamic `aria-label` this rule
-    // exists to prevent.
-    expect(attrs(probe("<div aria-labelledby={headingId}>x</div>"))).toEqual([]);
-    expect(attrs(probe("<div aria-describedby={noteId}>x</div>"))).toEqual([]);
-  });
-
-  it("ACCEPTED — a non-text attribute carrying a dynamic value", () => {
-    expect(attrs(probe("<img src={src} className={cls} width={w} />"))).toEqual([]);
-  });
-
-  // --- R4 assembly, both spellings and the negative -------------------------
-
-  it("REFUSED — an assembly of authored words with something dynamic", () => {
-    for (const source of [
-      'const state = "Every change is " + status;',
-      "const state = `Every change is ${status}`;",
-      'const state = ["Every change is", status].join(" ");',
-      'const state = "Every change is ".concat(status);',
+  it("the closure is what retires the import families", () => {
+    // Imported values, imported components, props, spread props, metadata
+    // helpers, re-exports and convention files were seven separate rules, each
+    // asking WHERE an import appeared. None of that is asked now: the module is
+    // either in the closure, in which case its literals are judged, or it is not
+    // reachable from a route at all.
+    const members = new Set(CLOSURE);
+    // Every module the previous architecture had to name explicitly is simply a
+    // member now.
+    for (const reached of [
+      "lib/marketing/metadata.ts",
+      "lib/rate-limit/public.ts",
+      "app/actions/demo.ts",
+      "app/_components/MarketingFooter.tsx",
+      "app/_components/marketingNav.ts",
     ]) {
-      expect(assembled(source), source).toEqual(["copy/assembled-from-fragments"]);
+      expect(members.has(reached), `${reached} should be reached by closure`).toBe(true);
     }
+    // And a module nothing imports is not in the closure, which is what makes it
+    // a boundary rather than a list of everything.
+    expect(members.has("lib/supabase/admin.ts")).toBe(false);
   });
 
-  it("ACCEPTED — a class string, which is tokens rather than prose", () => {
-    // Measured: the only mixed assemblies on the real surface are two Tailwind
-    // templates. Counting plain words alone flagged both — `flex` and `border`
-    // are two words — so the rule also requires the literal to be MOSTLY plain
-    // words, which a class list is not. No length gate, because that is what the
-    // four-word forbidden wording walks through.
-    expect(
-      assembled("const c = `flex flex-col rounded-[12px] border bg-white ${extra}`;"),
-    ).toEqual([]);
-    expect(assembled('const c = "px-4 py-2 " + size;')).toEqual([]);
+  it("a specifier resolves without the file being opened", () => {
+    // NOT DISCOVERY-BY-READING: a first-party path that does not exist resolves
+    // to null and is simply not a closure member, so nothing is followed into
+    // the void. The closure grows only through files that are really there.
+    expect(resolveSpecifier("@/lib/marketing/content", "app/page.tsx")).toBe(
+      "lib/marketing/content.ts",
+    );
+    expect(resolveSpecifier("next/link", "app/page.tsx")).toBe(null);
+    expect(resolveSpecifier("@/lib/does-not-exist-anywhere", "app/page.tsx")).toBe(null);
   });
 
-  it("REFUSED — a fully static assembly, because the fragments are not the claim", () => {
-    // This one surfaced while writing the controls, and the first expectation
-    // was wrong. `"Every change" + " is tracked"` is entirely literal, so it
-    // looks harmless — but it renders the forbidden sentence while each fragment
-    // is below the prose threshold and matches no rule alone. The predecessor
-    // answered this by FOLDING, which is how it ended up chasing `.join()`,
-    // `.concat()`, templates and chained methods one round at a time. Refusing
-    // the shape needs no fold: author it as one complete value.
-    expect(assembled('const s = "Every change" + " is tracked";')).toEqual([
-      "copy/assembled-from-fragments",
+  // --- R5, the one shape rule left. -----------------------------------------
+
+  it("REFUSED — a sentence whose middle comes from another file", () => {
+    expect(incomplete("<p>Every {NOUN} is tracked</p>")).toEqual(["copy/incomplete-claim"]);
+    expect(incomplete("<p>Every <strong>{NOUN}</strong> is tracked</p>")).toEqual([
+      "copy/incomplete-claim",
     ]);
+    expect(incomplete("<p>Every <><strong>{NOUN}</strong></> is tracked</p>")).toEqual([
+      "copy/incomplete-claim",
+    ]);
+    expect(incomplete("<p>Every change is {STATE}.</p>")).toEqual(["copy/incomplete-claim"]);
   });
 
-  // --- the freeze itself ----------------------------------------------------
+  it("ACCEPTED — a hole alone, a literal hole, and a layout container", () => {
+    // A hole ALONE is consumption, not a claim built around a gap.
+    expect(incomplete("<p>{children}</p>")).toEqual([]);
+    expect(incomplete("<p>{POSITIONING.corePromise}</p>")).toEqual([]);
+    // A literal in an expression is spelled out here, so R3 already has it.
+    expect(incomplete('<p>Every change {"is tracked"}</p>')).toEqual([]);
+    expect(incomplete("<p>Every {<strong>change</strong>} is tracked</p>")).toEqual([]);
+    // Words on a heading are not the words of the list beside it.
+    expect(incomplete("<div><h2>Pricing</h2>{PLANS.map((p) => <Card key={p.id} />)}</div>")).toEqual([]);
+  });
+
+  // --- R4, and the guards around the fixture. -------------------------------
 
   it("REFUSED — new prose in a file outside the canonical copy modules", () => {
     const known = new Set(Object.values(INVENTORY.inventory).flat());
@@ -1089,467 +1036,23 @@ describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catc
     expect(added.filter((item) => known.has(item))).toEqual([]);
   });
 
-  it("ACCEPTED — the same prose in a canonical copy module is not frozen at all", () => {
-    // Because that is where it belongs, and there it is judged instead.
-    expect(FROZEN).not.toContain("lib/marketing/content.ts");
-  });
-
-  // --- the readability primitive the refusals share -------------------------
-
-  it("isProvenStatic fails closed on everything it cannot read", () => {
-    const expr = (src: string): boolean => {
-      const sf = require("typescript").createSourceFile(
-        "p.tsx",
-        `const x = ${src};`,
-        99,
-        true,
-        4,
-      );
-      return isProvenStatic(sf.statements[0].declarationList.declarations[0].initializer);
-    };
-    for (const readable of ['"text"', "`text`", "1", "true", "null", '["a", "b"]', '{ a: "b" }']) {
-      expect(expr(readable), readable).toBe(true);
-    }
-    for (const unreadable of [
-      "getClaim()",
-      "claim",
-      "claim.text",
-      "`a ${b}`",
-      '"a" + b',
-      "[...rest]",
-      '{ ...base, a: "b" }',
-      "cond ? a : b",
-    ]) {
-      expect(expr(unreadable), unreadable).toBe(false);
-    }
-  });
-
-  // --- P1: a sentence split by markup ---------------------------------------
-
-  it("REFUSED — a claim split across nested JSX is judged as the whole sentence", () => {
-    // `<p>Every change <strong>is tracked</strong></p>` emitted "Every change"
-    // and "is tracked": neither fragment matches a rule, neither reaches the
-    // prose threshold, and no shape check rejects ordinary nested markup. The
-    // sentence a visitor reads existed nowhere in the corpus.
-    const texts = judgeableText(
-      "app/probe/page.tsx",
-      probe("<p>Every change <strong>is tracked</strong></p>"),
-    );
-    expect(texts).toContain("Every change is tracked");
-    expect(texts.some((t) => FORBIDDEN.some((r) => r.pattern.test(t)))).toBe(true);
-  });
-
-  it("REFUSED — split by a link, by a fragment, and across three levels", () => {
-    const caught = (body: string) =>
-      judgeableText("app/probe/page.tsx", probe(body)).some((t) =>
-        FORBIDDEN.some((r) => r.pattern.test(t)),
-      );
-    expect(caught('<p>Every change <a href="/x">is tracked</a></p>')).toBe(true);
-    expect(caught("<p>Every <>change is</> tracked</p>")).toBe(true);
-    expect(caught("<div><span>Every <em>change <b>is</b></em></span> tracked</div>")).toBe(true);
-    // A literal in an expression container is text too.
-    expect(caught('<p>Every change {"is tracked"}</p>')).toBe(true);
-  });
-
-  it("ACCEPTED — joining adds candidates, it does not invent a violation", () => {
-    // Concatenation can only ADD strings, never hide one, and an extra candidate
-    // fails closed. Ordinary split markup that says nothing forbidden stays
-    // clean, which is what keeps the asymmetry usable.
-    const texts = judgeableText(
-      "app/probe/page.tsx",
-      probe("<p>Hone carries <strong>the details</strong> forward.</p>"),
-    );
-    expect(texts).toContain("Hone carries the details forward.");
-    expect(texts.some((t) => FORBIDDEN.some((r) => r.pattern.test(t)))).toBe(false);
-  });
-
-  // --- P1: copy imported from an undeclared module ---------------------------
-
-  it("REFUSED — a value rendered from a module on no declared list", () => {
-    const escape = (from: string) =>
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        `import { CLAIM } from "${from}";\nexport const A = () => <p>{CLAIM}</p>;\n`,
-      ).map((v) => v.rule);
-    expect(escape("@/lib/copy-helper")).toEqual(["copy/undeclared-copy-import"]);
-    expect(escape("@/lib/marketing/extra-claims")).toEqual(["copy/undeclared-copy-import"]);
-    // A property access on such an import is the same escape one step along.
-    expect(
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        'import { COPY } from "@/lib/copy-helper";\nexport const A = () => <p>{COPY.claim}</p>;\n',
-      ).map((v) => v.rule),
-    ).toEqual(["copy/undeclared-copy-import"]);
-  });
-
-  it("ACCEPTED — a canonical module, and another declared file", () => {
-    const from = (spec: string, expr: string) =>
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        `import { X } from "${spec}";\nexport const A = () => <p>{${expr}}</p>;\n`,
-      );
-    expect(from("@/lib/marketing/content", "X.corePromise")).toEqual([]);
-    // Declared but not canonical: its text is frozen and judged where it lives.
-    expect(from("@/app/_components/marketingNav", "X.label")).toEqual([]);
-    // A local binding is not an import and is not this rule's business.
-    expect(
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        "const X = 1;\nexport const A = () => <p>{X}</p>;\n",
-      ),
-    ).toEqual([]);
-  });
-
-  it("the import rule reads the specifier and never opens the file", () => {
-    // NOT DISCOVERY. A module that does not exist on disk still resolves to a
-    // path, and the only question asked is whether that path is already
-    // declared. Nothing is followed, so the walk this architecture dropped
-    // cannot come back this way.
-    expect(
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        'import { C } from "@/lib/does-not-exist-anywhere";\nexport const A = () => <p>{C}</p>;\n',
-      ).map((v) => v.rule),
-    ).toEqual(["copy/undeclared-copy-import"]);
-  });
-
-  // --- the regeneration path -------------------------------------------------
-
-  it("regeneration refuses additions in BOTH halves, not just the inventory", () => {
-    // The first draft checked the prose inventory and then replaced `exceptions`
-    // unconditionally, so swapping the one placeholder exception for a different
-    // dynamic attribute would have written the new identity and passed both the
-    // equality check and the `length <= 1` ceiling.
-    const source = readFileSync(join(REPO_ROOT, "tests/docs/marketing-truth-register.test.ts"), "utf8");
-    const block = source.slice(
-      source.indexOf('if (process.env.MARKETING_INVENTORY === "write")'),
-      source.indexOf("describe(\"R1."),
-    );
-    expect(block).toContain("INVENTORY.exceptions");
-    expect(block.match(/additions\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
-  });
-
-  // --- P1: a sentence whose middle is a value --------------------------------
-
-  it("REFUSED — authored words wrapped around a hole", () => {
-    // `<p>Every {TRACKING_NOUN} is tracked</p>` renders the forbidden claim while
-    // the joined candidate reads "Every is tracked" and every fragment is
-    // harmless. Concatenation cannot close this: the missing word is not in the
-    // file, and the value may come from a canonical module the import rule
-    // allows. Reading it would mean resolving a binding, so it is refused.
-    const incomplete = (body: string) =>
-      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
-    expect(incomplete("<p>Every {NOUN} is tracked</p>")).toEqual(["copy/incomplete-claim"]);
-    expect(incomplete("<p>Every change is {STATE}.</p>")).toEqual(["copy/incomplete-claim"]);
-    expect(incomplete("<p>{PREFIX} change is tracked</p>")).toEqual(["copy/incomplete-claim"]);
-    // Each hole is named, so a two-gap sentence reports both.
-    expect(incomplete("<p>Every {A} is {B}</p>")).toEqual([
-      "copy/incomplete-claim",
-      "copy/incomplete-claim",
-    ]);
-  });
-
-  it("ACCEPTED — a hole ALONE, which is consumption rather than a gap", () => {
-    const incomplete = (body: string) =>
-      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
-    expect(incomplete("<p>{children}</p>")).toEqual([]);
-    expect(incomplete("<p>{POSITIONING.corePromise}</p>")).toEqual([]);
-    expect(incomplete("<div>{items.map((i) => <span key={i}>{i}</span>)}</div>")).toEqual([]);
-    // A complete literal in an expression container is not a hole at all.
-    expect(incomplete('<p>Every change {"is tracked"}</p>')).toEqual([]);
-  });
-
-  // --- P1: an undeclared import reaching a custom component prop -------------
-
-  it("REFUSED — an undeclared import passed as a component prop", () => {
-    // `<Hero headline={CLAIM} />` renders whatever `Hero` does with it, and no
-    // fixed list of DOM text attributes can know that `headline` is copy.
-    // Checking the SOURCE of the value rather than the NAME of the attribute
-    // needs no such knowledge.
-    const escape = (body: string) =>
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        `import { CLAIM } from "@/lib/copy-helper";\nexport const A = () => ${body};\n`,
-      ).map((v) => v.rule);
-    expect(escape("<Hero headline={CLAIM} />")).toEqual(["copy/undeclared-copy-import"]);
-    expect(escape("<p>{CLAIM}</p>")).toEqual(["copy/undeclared-copy-import"]);
-    // Nested inside a wrapper expression, where a root-only test reads the
-    // wrapper instead of the value.
-    expect(escape("<Hero headline={pick(CLAIM)} />")).toEqual(["copy/undeclared-copy-import"]);
-    expect(escape("<Hero headline={`${CLAIM} today`} />")).toEqual(["copy/undeclared-copy-import"]);
-  });
-
-  it("ACCEPTED — a prop whose value comes from a declared module", () => {
-    const from = (spec: string) =>
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        `import { X } from "${spec}";\nexport const A = () => <Hero headline={X.label} />;\n`,
-      );
-    expect(from("@/lib/marketing/content")).toEqual([]);
-    expect(from("@/app/_components/marketingNav")).toEqual([]);
-    expect(from("@/app/actions/demo")).toEqual([]);
-  });
-
-  // --- P2: a declaration that names a file which is gone ---------------------
-
-  it("a declared copy source that disappears fails loudly, not silently", () => {
-    // Filtering missing files out made the declaration self-healing in the worst
-    // way: move `lib/rate-limit/public.ts`, the stale entry vanishes, and its
-    // replacement sits outside the declared directories carrying visitor-facing
-    // text. The test that checks existence then iterates an already-filtered
-    // list and can never notice.
-    for (const declaredFile of DECLARED_COPY_FILES) {
-      expect(existsSync(join(REPO_ROOT, declaredFile))).toBe(true);
-      expect(FROZEN, `${declaredFile} is declared and must be in the surface`).toContain(declaredFile);
-    }
-    for (const dir of DECLARED_COPY_DIRS) {
-      expect(existsSync(join(REPO_ROOT, dir)), `${dir} is declared but absent`).toBe(true);
-    }
-
-    // And it is RED when a declaration really is stale. Proven with a path that
-    // is genuinely missing, because the alternative is deleting a real source
-    // file — so left inline this would have shipped unpinned, and a guard that
-    // cannot be shown red is not yet a guard.
-    expect(() => assertDeclaredExist(["lib/rate-limit/public.ts"])).not.toThrow();
-    expect(() => assertDeclaredExist(["lib/rate-limit/moved-away.ts"])).toThrow(
-      /no longer exist/,
-    );
-  });
-
-  // --- P1: a hole one level below the words ---------------------------------
-
-  it("REFUSED — a hole nested inside inline markup within a sentence", () => {
-    // `<p>Every <strong>{NOUN}</strong> is tracked</p>` puts the words on the
-    // outer element and the hole on the inner one, so a direct-children test saw
-    // a sentence with no hole and a hole with no sentence.
-    const incomplete = (body: string) =>
-      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
-    expect(incomplete("<p>Every <strong>{NOUN}</strong> is tracked</p>")).toEqual([
-      "copy/incomplete-claim",
-    ]);
-    expect(incomplete('<p>Every <a href="/x">{NOUN}</a> is tracked</p>')).toEqual([
-      "copy/incomplete-claim",
-    ]);
-    expect(incomplete("<p>Every <em>change</em> is {STATE}</p>")).toEqual([
-      "copy/incomplete-claim",
-    ]);
-
-    // AT ANY DEPTH, and through a fragment, which is not even an element. One
-    // level of descent left `<p>Every <><strong>{NOUN}</strong></> is
-    // tracked</p>` green: the outer element had the words and no hole, and every
-    // wrapper between had a hole and no words.
-    expect(incomplete("<p>Every <><strong>{NOUN}</strong></> is tracked</p>")).toEqual([
-      "copy/incomplete-claim",
-    ]);
-    expect(incomplete("<p>Every <span><em><b>{NOUN}</b></em></span> is tracked</p>")).toEqual([
-      "copy/incomplete-claim",
-    ]);
-  });
-
-  it("ACCEPTED — a heading and an unrelated list simply sharing a container", () => {
-    // A wrapper that contains other ELEMENTS starts a structure of its own, so
-    // its words are not part of this sentence. Measured: reading the whole
-    // subtree instead flagged 158 such places, which is a census rather than a
-    // guard.
-    const incomplete = (body: string) =>
-      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
-    expect(incomplete("<div><h2>Pricing</h2>{PLANS.map((p) => <Card key={p.id} />)}</div>")).toEqual([]);
-
-    expect(incomplete("<section><p>A complete sentence here.</p><div>{widget}</div></section>")).toEqual([]);
-
-    // What keeps this allowed is the WORD side, not the hole side: the outer
-    // element has no authored text of its own, so there is no sentence for the
-    // list to be inside. The descent itself is unconditional; an earlier draft
-    // also stopped at wrappers carrying their own words, measured identical at
-    // twelve, and that branch is gone.
-    expect(
-      incomplete("<div><h2>Pricing plans for every studio</h2><ul>{PLANS.map((p) => <li key={p.id} />)}</ul></div>"),
-    ).toEqual([]);
-
-    // A hole inside a wrapper that has words of its own is caught either way —
-    // the stop only decided which element it was reported against. Reported
-    // ONCE, which is what the dedupe is for: without it this hole belongs to two
-    // sentences at once and is counted twice.
-    expect(incomplete("<p>Intro <span>Heading {hole}</span></p>")).toEqual([
-      "copy/incomplete-claim",
-    ]);
-  });
-
-  // --- P1: an imported component used as a TAG ------------------------------
-
-  it("REFUSED — a component imported from an undeclared module and rendered", () => {
-    // The visitor-facing import need not be a value at all: `<Hero />` renders
-    // whatever text that component holds, its module is outside the declared
-    // surface, and the route itself carries no text.
-    const escape = (body: string, spec = "@/components/hero") =>
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        `import { Hero } from "${spec}";\nexport const A = () => ${body};\n`,
-      ).map((v) => v.rule);
-    expect(escape("<Hero />")).toEqual(["copy/undeclared-copy-import"]);
-    expect(escape("<Hero>child</Hero>")).toEqual(["copy/undeclared-copy-import"]);
-    // A namespaced tag is the same binding one dot along.
-    expect(escape("<Hero.Title />")).toEqual(["copy/undeclared-copy-import"]);
-  });
-
-  it("REFUSED — in EVERY JSX position, including both spreads", () => {
-    // Enumerating positions cost three rounds — child, then attribute, then tag
-    // — and `JsxSpreadAttribute` is a distinct node that reached none of them,
-    // so `<LocalHero {...HERO_COPY} />` walked straight past. `JsxSpreadChild`
-    // is another. Naming the next one would only postpone the round after that,
-    // so the question is no longer WHERE the import appears but whether it
-    // appears in JSX at all.
-    const escape = (body: string) =>
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        `import { X } from "@/lib/copy-helper";\nexport const A = () => ${body};\n`,
-      ).map((v) => v.rule);
-    for (const position of [
-      "<LocalHero {...X} />",
-      "<div>{...X}</div>",
-      "<p>{X}</p>",
-      "<Hero headline={X} />",
-      "<X />",
-      "<p>{X(1)}</p>",
-      "<p>{cond ? X : null}</p>",
-      '<img alt={X} src="/a.png" />',
-    ]) {
-      expect(escape(position), position).toEqual(["copy/undeclared-copy-import"]);
-    }
-    // Still silent where it should be: a declared module and a package.
-    const ok = (spec: string) =>
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        `import { X } from "${spec}";\nexport const A = () => <X />;\n`,
-      );
-    expect(ok("@/lib/marketing/content")).toEqual([]);
-    expect(ok("next/link")).toEqual([]);
-  });
-
-  it("ACCEPTED — a declared component, and a third-party tag", () => {
-    const tag = (spec: string) =>
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/P.tsx",
-        DECLARED,
-        `import { T } from "${spec}";\nexport const A = () => <T />;\n`,
-      );
-    expect(tag("@/app/_components/marketing/primitives")).toEqual([]);
-    // Bare specifiers are packages, not first-party copy, and resolve to no path.
-    expect(tag("next/link")).toEqual([]);
-    expect(tag("react")).toEqual([]);
-  });
-
-  // --- P1: framework convention routes --------------------------------------
-
-  it("the app-root convention routes are declared, and not the authenticated app", () => {
-    // Next wires these from their FILENAME, so no import names them and no
-    // registry lists them. `app/opengraph-image.tsx` renders the card every
-    // social preview shows.
-    for (const convention of [
-      "app/opengraph-image.tsx",
-      "app/apple-icon.tsx",
-      "app/icon.tsx",
-      "app/global-error.tsx",
-      "app/robots.ts",
-      "app/sitemap.ts",
-      "app/layout.tsx",
-    ]) {
-      expect(FROZEN, `${convention} is a public convention route`).toContain(convention);
-    }
-    // And the metadata BUILDER, whose titles and descriptions every route sets
-    // through `export const metadata = marketingMetadata("/")`. An imported
-    // identifier consumed outside JSX is not something the import rule can see,
-    // so the module is declared instead of a rule being stretched to reach it.
-    expect(FROZEN).toContain("lib/marketing/metadata.ts");
-    // Non-recursive: the authenticated application stays out.
-    expect(FROZEN.filter((f) => f.startsWith("app/(app)/"))).toEqual([]);
-  });
-
-  it("the documented regeneration command can actually complete", () => {
-    // `INVENTORY` is parsed once at module load and the write block replaces the
-    // file, so a legitimate shrink used to update the JSON correctly and then
-    // fail its own equality assertions against the object it had replaced — only
-    // a SECOND run looked green. The baseline is re-read after writing.
-    const source = read("tests/docs/marketing-truth-register.test.ts");
-    const block = source.slice(
-      source.indexOf('if (process.env.MARKETING_INVENTORY === "write")'),
-      source.indexOf('describe("R1.'),
-    );
-    expect(block).toContain("INVENTORY = JSON.parse(read(INVENTORY_PATH))");
-    expect(source).toContain("let INVENTORY");
-  });
-
-  it("REFUSED — a literal array whose fragments concatenate into a claim", () => {
-    // React renders array children with NOTHING between them, so
-    // `<p>{["Every change ", "is tracked"]}</p>` shows the forbidden sentence
-    // while each two-word literal is harmless alone — and the array is "proven"
-    // precisely because every element is a literal, so no shape rule fires.
-    // Judgement now reads any literal inside a child expression, at any depth.
-    const texts = judgeableText(
-      "app/probe/page.tsx",
-      probe('<p>{["Every change ", "is tracked"]}</p>'),
-    );
-    expect(texts.some((t) => FORBIDDEN.some((r) => r.pattern.test(t)))).toBe(true);
-    // An ATTRIBUTE array is not rendered text and stays out of the corpus.
-    expect(
-      judgeableText("app/probe/page.tsx", probe('<Chart labels={["Every change ", "is tracked"]} />'))
-        .some((t) => FORBIDDEN.some((r) => r.pattern.test(t))),
-    ).toBe(false);
-  });
-
-  it("REFUSED — a JSX element nested inside an expression", () => {
-    // `isProvenStatic` treated every JSX node as static, so
-    // `<p>Every {<strong>{NOUN}</strong>} is tracked</p>` had a complete value in
-    // the middle rather than a hole, and the sentence read as finished. An
-    // element is proven only when everything it can render is.
-    const incomplete = (body: string) =>
-      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
-    expect(incomplete("<p>Every {<strong>{NOUN}</strong>} is tracked</p>")).toEqual([
-      "copy/incomplete-claim",
-    ]);
-    // Still static when it really is: no expression inside means nothing to fill.
-    expect(incomplete("<p>Every {<strong>change</strong>} is tracked</p>")).toEqual([]);
-  });
-
-  it("REFUSED — a declared barrel forwarding from an undeclared module", () => {
-    // `export { Hero } from "@/components/hero"` launders the origin: a route
-    // imports `Hero` from the barrel, which IS declared, so the import check is
-    // satisfied while the component itself is judged by nothing.
-    const barrel = (spec: string) =>
-      undeclaredCopyImportViolations(
-        "app/_components/marketing/index.tsx",
-        DECLARED,
-        `export { Hero } from "${spec}";\n`,
-      ).map((v) => v.rule);
-    expect(barrel("@/components/hero")).toEqual(["copy/undeclared-copy-import"]);
-    expect(barrel("@/lib/marketing/content")).toEqual([]);
-    expect(barrel("react")).toEqual([]);
-  });
-
-  it("the addition guard is file-qualified and counts occurrences", () => {
-    // Flattening every file's entries into one set meant moving an existing
-    // sentence to a different page, or repeating it in the same file, counted as
-    // no addition at all — so the documented command would have recorded a new
-    // public-copy occurrence and every later comparison would have agreed.
+  it("the addition guard is file-qualified, counts occurrences, and covers both halves", () => {
     const source = read("tests/docs/marketing-truth-register.test.ts");
     const block = source.slice(
       source.indexOf('if (process.env.MARKETING_INVENTORY === "write")'),
       source.indexOf('describe("R1.'),
     );
     expect(block).toContain("qualify(");
-    expect(block).toContain(":: ${item}");
-    // Multiplicity, not set membership.
     expect(block).toContain("remaining - 1");
+    expect(block).toContain("INVENTORY.exceptions");
+    // And the documented command can complete: the baseline is re-read.
+    expect(block).toContain("INVENTORY = JSON.parse(read(INVENTORY_PATH))");
+    expect(source).toContain("let INVENTORY");
+  });
+
+  it("a declared source that disappears fails loudly, not silently", () => {
+    expect(() => assertDeclaredExist(["lib/rate-limit/public.ts"])).not.toThrow();
+    expect(() => assertDeclaredExist(["lib/rate-limit/moved-away.ts"])).toThrow(/no longer exist/);
   });
 
   it("the prose heuristic still separates copy from class names", () => {

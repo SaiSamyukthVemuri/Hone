@@ -8,12 +8,6 @@
       "Treatment memory for electrologists.",
       "Treatment memory, made carefully."
     ],
-    "app/_components/PublicPolicyReminderCard.tsx": [
-      "’s appointment policies before making changes"
-    ],
-    "app/_components/WaitlistForm.tsx": [
-      "Thanks. We’ll be in touch when we’re ready for you."
-    ],
     "app/_components/marketing/SiteFooter.tsx": [
       "Operated from Canada."
     ],
@@ -24,10 +18,6 @@
       "Something went wrong. Try again in a moment.",
       "That doesn't look like a valid email.",
       "Your name is required."
-    ],
-    "app/actions/waitlist.ts": [
-      "Something went wrong. Try again in a moment.",
-      "That doesn't look like a valid email."
     ],
     "app/demo/page.tsx": [
       "A short, founder-led walkthrough of the real app, no slides, no recorded demo. Bring one or two of your typical client scenarios so we can walk through them together.",
@@ -557,8 +547,6 @@
     ]
   },
   "exceptions": [
-    "copy/dynamic-text-attribute app/_components/DemoForm.tsx placeholder={placeholder}",
-    "copy/incomplete-claim app/_components/PublicPolicyReminderCard.tsx {studioName}",
     "copy/incomplete-claim app/_components/marketing/SiteFooter.tsx {POSITIONING.category}",
     "copy/incomplete-claim app/_components/marketing/SiteFooter.tsx {year}",
     "copy/incomplete-claim app/_components/marketing/article.tsx {CONTACT_EMAIL}",
@@ -570,5 +558,39 @@
     "copy/incomplete-claim app/pricing/page.tsx {plan.seats}",
     "copy/incomplete-claim app/resources/page.tsx {RESOURCE_AUTHOR}",
     "copy/incomplete-claim app/resources/page.tsx {a.readingTime}"
+  ],
+  "outsideScope": [
+    "app/(auth)/accept-invitation/page.tsx",
+    "app/(auth)/auth/callback/route.ts",
+    "app/(auth)/login/page.tsx",
+    "app/(auth)/no-access/page.tsx",
+    "app/admin/audit/page.tsx",
+    "app/admin/layout.tsx",
+    "app/admin/ops-alerts/page.tsx",
+    "app/admin/page.tsx",
+    "app/admin/payments/manual-review/page.tsx",
+    "app/admin/studios/[id]/page.tsx",
+    "app/admin/studios/new/page.tsx",
+    "app/api/cron/appointment-reminders/route.ts",
+    "app/api/cron/calendar-reconcile/route.ts",
+    "app/api/cron/calendar-sync/route.ts",
+    "app/api/cron/materialize-recurring-breaks/route.ts",
+    "app/api/cron/no-show-check/route.ts",
+    "app/api/google-calendar/e2e/authorize/route.ts",
+    "app/api/google-calendar/oauth/callback/route.ts",
+    "app/api/stripe/webhook/route.ts",
+    "app/api/twilio/inbound-sms/route.ts",
+    "app/book/[slug]/page.tsx",
+    "app/book/layout.tsx",
+    "app/calendar-feed/[token]/route.ts",
+    "app/cancel/[token]/page.tsx",
+    "app/intake/[token]/page.tsx",
+    "app/intake/thank-you/page.tsx",
+    "app/invitation/[token]/page.tsx",
+    "app/manage/[token]/page.tsx",
+    "app/portal/login/page.tsx",
+    "app/portal/page.tsx",
+    "app/portal/verify/[token]/page.tsx",
+    "app/reschedule/[token]/page.tsx"
   ]
 }

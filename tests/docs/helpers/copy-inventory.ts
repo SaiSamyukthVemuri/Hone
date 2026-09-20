@@ -1,29 +1,40 @@
 /**
- * The marketing copy surface, declared and frozen — never interpreted.
+ * The marketing truth boundary, closed by construction.
  *
- * WHY THIS IS NOT THE PREVIOUS SCANNER
- * ------------------------------------
- * The predecessor asked "what will this expression render". Answering that needs
- * a TypeScript compiler and a React renderer, and approximating both produced a
- * finding every round for twenty-two rounds: `+`, then `.join()`, then
- * `.concat()`, then a template, then a chained method, then a bare identifier,
- * then a property access, then a short label prefix, then a callback parameter,
- * then an array element. Each repair was correct and the sequence had no end.
+ * WHY THIS IS NOT A SYNTAX SCANNER
+ * --------------------------------
+ * Two predecessors tried to answer "what will this React tree render". Both
+ * produced a finding every round, and the findings were never repeats — they
+ * were different SYNTACTIC ROUTES from text to a screen: nested JSX, then JSX
+ * expressions, then arrays of fragments, then imported values, then imported
+ * components, then props, then spread props, then metadata helpers, then
+ * re-exports, then framework convention files. Enumerating routes cannot
+ * terminate, because the route set is the grammar of two languages.
  *
- * This asks a different question:
+ * So the question is abandoned. Text that reaches a visitor has exactly two
+ * origins — a LITERAL in some file, or a VALUE from another file — and this
+ * closes both without ever asking what anything renders:
  *
- *     did visitor-facing text OUTSIDE the canonical copy modules grow?
+ *   R1 CLOSURE     the transitive first-party import/re-export closure of the
+ *                  marketing routes and the framework's convention files. A
+ *                  module outside it cannot be reached from a marketing route,
+ *                  so it cannot render. 55 modules today.
  *
- * That needs no rendering model. The parser is used as a tokeniser — find text
- * runs and string literals — and the answer is compared against a frozen
- * inventory. Spelling stops mattering, because nothing is read for meaning: a
- * template, a concatenation, an alias, a wrapper and a re-export all fail
- * identically, since all of them require NEW TEXT somewhere and new text is what
- * is refused.
+ *   R2 FRAGMENTS   every literal and JSX text run in that closure, judged
+ *                  against the register. No filter of any kind.
  *
- * Two shape refusals sit alongside the freeze, for the places where text can
- * arrive without appearing in the file. They are refusals, not inferences: they
- * do not ask what a value renders, they refuse a shape that cannot be read.
+ *   R3 ADJACENCY   those fragments joined per file in SOURCE ORDER and judged
+ *                  again, which catches a claim assembled from harmless pieces
+ *                  without knowing what an element, an array or a spread is.
+ *
+ *   R4 FREEZE      the prose inventory, shrink-only. An authoring rule, not a
+ *                  completeness one.
+ *
+ *   R5 HOLES       the single remaining shape rule, and the only one: a
+ *                  sentence whose middle comes from another file.
+ *
+ * Every bypass family above collapses into R1 or R3. No rule here names an
+ * attribute, an element, a spread, an array method or a prop.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -36,152 +47,7 @@ import {
 } from "./register-provenance";
 
 // ---------------------------------------------------------------------------
-// R1. DECLARE — lists and directories, never a discovered import graph
-// ---------------------------------------------------------------------------
-
-/**
- * Where marketing copy may be AUTHORED.
- *
- * Judged in full against the register, and shape-guarded so every value in them
- * is a complete literal. They are not frozen: adding copy here is the law.
- */
-export const CANONICAL_COPY_MODULES: readonly string[] = [
-  "lib/marketing/content.ts",
-  "lib/marketing/resources.ts",
-  "lib/marketing/jsonld.ts",
-];
-
-/**
- * Legally reviewed policy text, authored in its own routes.
- *
- * Owner ruling: `/privacy` and `/terms` are canonical copy sources in their own
- * right and their text is NOT moved to satisfy this architecture. Named one by
- * one rather than matched, so their existence authorises nothing elsewhere.
- */
-export const POLICY_SOURCES: readonly string[] = [
-  "app/privacy/page.tsx",
-  "app/terms/page.tsx",
-];
-
-/**
- * Directories whose every file renders to the public site.
- *
- * A DIRECTORY, not a hand-kept file list and not an import walk. A list rots the
- * moment a component is added; an import walk is the discovery this architecture
- * dropped. Every `.ts`/`.tsx` under these is inventoried, so a new file arrives
- * already covered.
- *
- * `app/_components/` holds only public surface at this head — the authenticated
- * application lives under `app/(app)/`. `app/actions/` holds the public form
- * actions whose returned text a component displays.
- */
-export const DECLARED_COPY_DIRS: readonly string[] = [
-  "app/_components",
-  "app/actions",
-  // Referenced from marketing components, so a value imported from here reaches
-  // the page. It carries no prose today; declaring it costs nothing and keeps
-  // the import rule from having to make an exception.
-  "app/_fonts",
-];
-
-/**
- * Individual files outside those directories that still carry rendered copy.
- *
- * NAMED ONE AT A TIME, because the alternative is opening an infrastructure
- * tree. `app/layout.tsx` is applied by Next to every route without any route
- * importing it, and its metadata is what search results and social cards show.
- * `lib/rate-limit/public.ts` is a rate limiter, but `RATE_LIMIT_MESSAGE` is
- * returned by the demo action and shown to visitors.
- */
-export const DECLARED_COPY_FILES: readonly string[] = [
-  "lib/rate-limit/public.ts",
-  // Every marketing route sets `export const metadata = marketingMetadata("/")`.
-  // The titles and descriptions that builder writes are what search results and
-  // browser tabs show, and an imported identifier consumed OUTSIDE JSX is not
-  // something the import rule can see — so the module is declared instead.
-  "lib/marketing/metadata.ts",
-];
-
-/**
- * Next's FILE-CONVENTION routes at the app root.
- *
- * Wired by the framework from their filename, so no import names them and no
- * registry lists them. `app/opengraph-image.tsx` exports
- * `alt = "Hone. Treatment memory for electrologists…"` and renders branded copy
- * into the card every social preview shows — public marketing text that reached
- * neither the inventory nor judgement. `app/layout.tsx` is the same convention.
- *
- * Non-recursive on purpose: this is the app ROOT, so the authenticated
- * application under `app/(app)/` stays out.
- */
-const appRootFiles = (): string[] => {
-  const abs = join(REPO_ROOT, "app");
-  if (!existsSync(abs)) return [];
-  return readdirSync(abs)
-    .filter((name) => /\.tsx?$/.test(name))
-    .map((name) => `app/${name}`);
-};
-
-/** Marketing route files, from the MARKETING_PAGES registry. */
-export function pageCopySources(): string[] {
-  return publicRouteFiles().filter((f) => !POLICY_SOURCES.includes(f));
-}
-
-const filesUnder = (dir: string): string[] => {
-  const abs = join(REPO_ROOT, dir);
-  if (!existsSync(abs)) return [];
-  return readdirSync(abs).flatMap((name) => {
-    const rel = `${dir}/${name}`;
-    if (statSync(join(REPO_ROOT, rel)).isDirectory()) return filesUnder(rel);
-    return /\.tsx?$/.test(name) ? [rel] : [];
-  });
-};
-
-/**
- * A declaration that names a file which is gone is a BROKEN declaration.
- *
- * Exported so it can be driven with a path that really is missing. Left inline,
- * it could only be proven by deleting a real source file, so it would have
- * shipped unpinned — and a guard that cannot be shown red is not yet a guard.
- */
-export function assertDeclaredExist(files: readonly string[]): void {
-  const missing = files.filter((f) => !existsSync(join(REPO_ROOT, f)));
-  if (missing.length) {
-    throw new Error(
-      `declared copy source(s) no longer exist: ${missing.join(", ")} — ` +
-        "update the declaration in the same change that moves the file",
-    );
-  }
-}
-
-/**
- * Every declared file whose text is FROZEN.
- *
- * The canonical modules are excluded: authoring copy there is the law, not a
- * breach of it, and they are judged instead.
- */
-export function frozenSurface(): string[] {
-  const out = new Set<string>([
-    ...pageCopySources(),
-    ...POLICY_SOURCES,
-    ...DECLARED_COPY_FILES,
-    ...appRootFiles(),
-  ]);
-  for (const dir of DECLARED_COPY_DIRS) for (const f of filesUnder(dir)) out.add(f);
-  for (const module of CANONICAL_COPY_MODULES) out.delete(module);
-  // NOT FILTERED BY EXISTENCE. Dropping a missing file here made the declaration
-  // self-healing in the worst way: move `lib/rate-limit/public.ts`, and the
-  // stale entry vanishes silently while its replacement sits outside the
-  // declared directories carrying visitor-facing text. The test that checks
-  // every declared file exists then iterates an already-filtered list and can
-  // never notice. A declaration that names a file that is gone is a broken
-  // declaration, and it fails here.
-  assertDeclaredExist([...out]);
-  return [...out].sort();
-}
-
-// ---------------------------------------------------------------------------
-// Parsing — as a TOKENISER, not a semantic model
+// Reading text — the parser as a tokeniser, never as a semantic model
 // ---------------------------------------------------------------------------
 
 const parse = (file: string, source?: string): ts.SourceFile =>
@@ -203,6 +69,239 @@ export type CopyViolation = {
   readonly detail: string;
 };
 
+// ---------------------------------------------------------------------------
+// R1. CLOSURE
+// ---------------------------------------------------------------------------
+
+/**
+ * Where marketing copy may be AUTHORED.
+ *
+ * Judged in full and exempt from the freeze: adding copy here is the law.
+ */
+export const CANONICAL_COPY_MODULES: readonly string[] = [
+  "lib/marketing/content.ts",
+  "lib/marketing/resources.ts",
+  "lib/marketing/jsonld.ts",
+];
+
+/**
+ * Legally reviewed policy text, authored in its own routes.
+ *
+ * Owner ruling: `/privacy` and `/terms` are canonical copy sources in their own
+ * right and their text is NOT moved to satisfy this architecture.
+ */
+export const POLICY_SOURCES: readonly string[] = [
+  "app/privacy/page.tsx",
+  "app/terms/page.tsx",
+];
+
+/**
+ * Next's file-convention routes at the app root.
+ *
+ * Wired by the framework from their FILENAME, so no import names them and no
+ * registry lists them — `app/opengraph-image.tsx` renders the card every social
+ * preview shows. They are SEEDS, not a special case: once seeded, everything
+ * they import follows by closure like any route.
+ *
+ * Listed rather than globbed so that a new convention file is a decision
+ * somebody makes, and non-recursive so the authenticated application under
+ * `app/(app)/` stays out.
+ */
+export const CONVENTION_ROUTES: readonly string[] = [
+  "app/layout.tsx",
+  "app/opengraph-image.tsx",
+  "app/apple-icon.tsx",
+  "app/icon.tsx",
+  "app/global-error.tsx",
+  "app/robots.ts",
+  "app/sitemap.ts",
+];
+
+/** Marketing route files, from the MARKETING_PAGES registry. */
+export function pageCopySources(): string[] {
+  return publicRouteFiles().filter((f) => !POLICY_SOURCES.includes(f));
+}
+
+/** Everything a visitor can arrive at directly, before closure. */
+export function seedFiles(): string[] {
+  return [...publicRouteFiles(), ...CONVENTION_ROUTES]
+    .filter((f) => existsSync(join(REPO_ROOT, f)))
+    .sort();
+}
+
+/**
+ * A module specifier as a repository path, or null for a package.
+ *
+ * Reads the string. The file is opened only because it is IN the closure, never
+ * to decide whether it belongs there.
+ */
+export function resolveSpecifier(spec: string, from: string): string | null {
+  const rel = spec.startsWith("@/")
+    ? spec.slice(2)
+    : spec.startsWith(".")
+      ? relative(REPO_ROOT, join(REPO_ROOT, dirname(from), spec))
+      : null;
+  if (rel === null || rel.startsWith("..")) return null;
+  return (
+    [".ts", ".tsx", "/index.ts", "/index.tsx"]
+      .map((ext) => rel + ext)
+      .find((candidate) => existsSync(join(REPO_ROOT, candidate))) ?? null
+  );
+}
+
+/**
+ * THE BOUNDARY. Every first-party module a marketing route can reach.
+ *
+ * Imports AND re-exports, transitively, to a fixed point. This is the step both
+ * predecessors refused: they followed imports one level, then two, then argued
+ * about `.ts` versus `.tsx`, because every file they admitted had to carry a
+ * frozen prose baseline and the noise was unaffordable.
+ *
+ * It is affordable here because the closure feeds JUDGEMENT, which is a phrase
+ * match with no per-file baseline. Measured on the real tree: 55 modules, 2,616
+ * fragments, zero forbidden and zero unsanctioned. Following the graph costs
+ * nothing and buys the completeness the syntax rules kept failing to reach.
+ */
+export function marketingClosure(): string[] {
+  const seen = new Set<string>();
+  const stack = seedFiles();
+  while (stack.length) {
+    const file = stack.pop();
+    if (file === undefined || seen.has(file)) continue;
+    seen.add(file);
+    const sf = parse(file);
+    const visit = (n: ts.Node) => {
+      if (
+        (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) &&
+        n.moduleSpecifier !== undefined &&
+        ts.isStringLiteral(n.moduleSpecifier)
+      ) {
+        const resolved = resolveSpecifier(n.moduleSpecifier.text, file);
+        if (resolved !== null && !seen.has(resolved)) stack.push(resolved);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return [...seen].sort();
+}
+
+/**
+ * Every public route in the application, marketing or not.
+ *
+ * The closure is only as complete as its SEEDS, and seeds come from a registry
+ * a person maintains. So the routes the closure does NOT reach are enumerated
+ * and frozen too: a new public page is then either registered as marketing, in
+ * which case closure covers it, or it appears here and somebody decides. What
+ * cannot happen is a public route quietly belonging to neither.
+ *
+ * `(app)` is excluded by path: that group is the authenticated application, and
+ * the marketing register does not govern it.
+ */
+export function publicRouteEntryPoints(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    const abs = join(REPO_ROOT, dir);
+    if (!existsSync(abs)) return;
+    for (const name of readdirSync(abs)) {
+      const rel = `${dir}/${name}`;
+      if (statSync(join(REPO_ROOT, rel)).isDirectory()) {
+        walk(rel);
+      } else if (
+        /^(page|route|layout|opengraph-image|twitter-image|not-found|error|global-error)\.tsx?$/.test(
+          name,
+        )
+      ) {
+        out.push(rel);
+      }
+    }
+  };
+  walk("app");
+  return out.filter((f) => !f.includes("/(app)/")).sort();
+}
+
+/** Public routes the marketing closure does not reach — the declared scope limit. */
+export function outsideMarketingScope(): string[] {
+  const closure = new Set(marketingClosure());
+  return publicRouteEntryPoints().filter((f) => !closure.has(f));
+}
+
+/**
+ * The closure minus the canonical modules: where prose is FROZEN.
+ *
+ * Judgement covers the whole closure; the freeze covers only the part where
+ * authoring new copy is a breach rather than the law.
+ */
+export function frozenSurface(): string[] {
+  return marketingClosure().filter((f) => !CANONICAL_COPY_MODULES.includes(f));
+}
+
+// ---------------------------------------------------------------------------
+// R2 / R3. READING
+// ---------------------------------------------------------------------------
+
+/**
+ * Every text fragment a file contains, IN SOURCE ORDER.
+ *
+ * JSX text runs, string literals and the literal segments of templates. No
+ * element types, no attributes, no arrays, no holes, no approval, no
+ * readability — the file is read as a sequence of authored strings and nothing
+ * more. Two files with the same text produce the same fragments however their
+ * markup is arranged, which is what makes both readings stable.
+ */
+export function textFragments(file: string, source?: string): string[] {
+  const sf = parse(file, source);
+  const found: { at: number; text: string }[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxText(n)) {
+      const text = normalise(decodeEntities(n.text));
+      if (text) found.push({ at: n.getStart(sf), text });
+    }
+    if (
+      ts.isStringLiteral(n) ||
+      ts.isNoSubstitutionTemplateLiteral(n) ||
+      ts.isTemplateHead(n) ||
+      ts.isTemplateMiddle(n) ||
+      ts.isTemplateTail(n)
+    ) {
+      // A module specifier is a path, not copy.
+      const isSpecifier =
+        n.parent !== undefined &&
+        (ts.isImportDeclaration(n.parent) || ts.isExportDeclaration(n.parent));
+      if (!isSpecifier) {
+        const text = normalise((n as ts.LiteralLikeNode).text);
+        if (text) found.push({ at: n.getStart(sf), text });
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return found.sort((a, b) => a.at - b.at).map((f) => f.text);
+}
+
+/**
+ * R3. The file's fragments as one string.
+ *
+ * This is what replaces six separate shape rules. A claim split by markup, an
+ * array of fragments React concatenates, a `+`, a `.join()`, an element inside
+ * an expression — every one of them is adjacent authored strings in source
+ * order, so every one appears here, and none has to be recognised as itself.
+ *
+ * Over-joining is safe in exactly one direction, and it is the direction that
+ * matters: joining text that does not actually render together can ADD a
+ * candidate string, never hide one, and an extra candidate fails closed into a
+ * build failure a human reads. Measured across the real closure: zero.
+ *
+ * Used for the FORBIDDEN rules only. Those are phrase patterns, so containment
+ * is the question and a longer string can only help. The append-only rules are
+ * an exact-match allow-list over a complete authored value — a joined window is
+ * not one, and judging it there reported nine sanctioned sentences as
+ * unsanctioned purely for having a heading in front of them.
+ */
+export function adjacentText(file: string, source?: string): string {
+  return textFragments(file, source).join(" ");
+}
+
 const FUNCTION_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "before", "but", "by", "can",
   "do", "does", "each", "every", "for", "from", "has", "have", "in", "into",
@@ -214,29 +313,21 @@ const FUNCTION_WORDS = new Set([
 /**
  * Is this text the SORT OF THING a person wrote for a visitor to read?
  *
- * Lifted unchanged from the predecessor, where it was validated against the real
- * surface. It decides what the INVENTORY holds — an authoring question. It is
- * deliberately never used to decide what gets JUDGED: a length gate there hid a
- * four-word forbidden sentence behind its own threshold.
+ * It decides what the INVENTORY holds — an authoring question. It is never used
+ * to decide what gets JUDGED: a length gate there hid a four-word forbidden
+ * sentence behind its own threshold in the first architecture.
  */
 export function isSubstantiveProse(text: string): boolean {
   const value = normalise(decodeEntities(text));
   const tokens = value.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return false;
-
   // A PLAIN WORD is letters, with an optional internal hyphen or apostrophe and
-  // optional trailing punctuation. `append-only` is a word; `min-h-[44px]` and
-  // `text-[color:var(--x)]` are not — without this a Tailwind class string reads
-  // as a nine-word sentence.
+  // optional trailing punctuation. `append-only` is a word; `min-h-[44px]` is
+  // not — without this a Tailwind class string reads as a nine-word sentence.
   const plain = tokens.filter((t) => /^[A-Za-z][A-Za-z'’-]*[.,;:!?)”"']*$/.test(t));
   if (plain.length < 3) return false;
   if (plain.length / tokens.length < 0.6) return false;
-
   const endsASentence = /[A-Za-z]{3,}[.!?]("|”|'|’)?(\s|$)/.test(value);
-
-  // ENGLISH, NOT TOKENS. `inline-flex items-center justify-center rounded-md
-  // border` is five hyphenated "words" by any shape test. Prose has function
-  // words; a class list and an SVG path do not.
   const hasFunctionWord = plain.some((t) =>
     FUNCTION_WORDS.has(t.replace(/[^A-Za-z'’-]/g, "").toLowerCase()),
   );
@@ -245,309 +336,53 @@ export function isSubstantiveProse(text: string): boolean {
   return endsASentence;
 }
 
-// ---------------------------------------------------------------------------
-// R3. FREEZE — a lexical inventory, compared by identity, shrink-only
-// ---------------------------------------------------------------------------
-
-/**
- * Prose-like text a file contains, read lexically.
- *
- * Raw JSX text runs and string literals — no folding, no holes, no approval, no
- * readability, no notion of what renders. Two files with the same text produce
- * the same entries whatever their markup does, which is the property that makes
- * this stable to freeze.
- */
+/** R4. The prose a file contains, for the frozen inventory. */
 export function copyInventory(file: string, source?: string): string[] {
-  const sf = parse(file, source);
-  const out: string[] = [];
-  const visit = (n: ts.Node) => {
-    if (ts.isJsxText(n)) {
-      const text = normalise(decodeEntities(n.text));
-      if (text && isSubstantiveProse(text)) out.push(text);
-    }
-    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
-      const text = normalise(n.text);
-      if (text && isSubstantiveProse(text)) out.push(text);
-    }
-    // A template's literal SEGMENTS are authored text too, whatever fills the
-    // gaps between them.
-    if (ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) {
-      const text = normalise((n as ts.LiteralLikeNode).text);
-      if (text && isSubstantiveProse(text)) out.push(text);
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return out.sort();
+  return textFragments(file, source).filter(isSubstantiveProse).sort();
 }
 
 // ---------------------------------------------------------------------------
-// Shape refusals — "this cannot be read", never "this renders X"
+// R5. The one shape rule that survives
 // ---------------------------------------------------------------------------
 
-const unwrap = (node: ts.Node): ts.Node => {
-  let cur = node;
-  while (
-    ts.isParenthesizedExpression(cur) ||
-    ts.isAsExpression(cur) ||
-    ts.isSatisfiesExpression(cur) ||
-    ts.isNonNullExpression(cur) ||
-    ts.isTypeAssertionExpression(cur)
-  ) {
-    cur = cur.expression;
-  }
-  return cur;
-};
-
 /**
- * Can this expression be read completely, right here, with no dataflow?
+ * A sentence whose middle comes from ANOTHER FILE.
  *
- * Literals, JSX, and structures built only from those. A spread hides its
- * source, so anything carrying one is not proven. Everything else — a call, an
- * identifier, a property access — is unproven, and unproven fails closed.
- */
-export function isProvenStatic(node: ts.Node): boolean {
-  const e = unwrap(node);
-  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true;
-  if (ts.isNumericLiteral(e)) return true;
-  if (
-    e.kind === ts.SyntaxKind.TrueKeyword ||
-    e.kind === ts.SyntaxKind.FalseKeyword ||
-    e.kind === ts.SyntaxKind.NullKeyword
-  ) {
-    return true;
-  }
-  // JSX IS NOT PROVEN JUST FOR BEING JSX. `<p>Every {<strong>{NOUN}</strong>} is
-  // tracked</p>` put an element inside an expression, and treating every JSX
-  // node as static made that expression a complete value — so it was not a hole,
-  // and the sentence around it read as finished. An element is proven only when
-  // everything it can render is.
-  if (ts.isJsxElement(e) || ts.isJsxFragment(e) || ts.isJsxSelfClosingElement(e)) {
-    let proven = true;
-    const check = (x: ts.Node) => {
-      if (ts.isJsxExpression(x) && x.expression && !isProvenStatic(x.expression)) proven = false;
-      ts.forEachChild(x, check);
-    };
-    ts.forEachChild(e, check);
-    return proven;
-  }
-  if (ts.isArrayLiteralExpression(e)) return e.elements.every(isProvenStatic);
-  if (ts.isObjectLiteralExpression(e)) {
-    return e.properties.every(
-      (prop) => ts.isPropertyAssignment(prop) && isProvenStatic(prop.initializer),
-    );
-  }
-  return false;
-}
-
-/**
- * P2 CLASS 1 — an inline array rendered as copy whose elements are not proven.
+ * Why this one and not the others: R3 joins fragments within a file, so
+ * `<p>Every <strong>change</strong> is tracked</p>` is caught as adjacent text
+ * with no rule about elements at all. But `<p>Every {NOUN} is tracked</p>`, with
+ * `NOUN` exported from a copy module, has only "Every" and "is tracked" in this
+ * file — the missing word is somewhere else, and joining cannot reach across a
+ * module boundary without following values, which is the dataflow this
+ * architecture exists without.
  *
- * `{[intro, getClaim()].map((line) => <li>{line}</li>)}` puts visitor-facing
- * text on the page that appears nowhere in this file, so the inventory cannot
- * see it grow. The refusal is a SHAPE test: this array contains something that
- * cannot be read here, so it may not be rendered as copy. It makes no claim
- * about what the element evaluates to.
+ * So it is REFUSED rather than read: a sentence with a gap is not a complete
+ * copy value. That is the authoring law stated exactly, and it is the last place
+ * this code looks at JSX shape.
  *
- * Scoped to arrays that actually render — written inside a JSX expression, or
- * iterated — so ordinary data arrays elsewhere in a file are untouched.
- */
-export function unprovenArrayViolations(file: string, source?: string): CopyViolation[] {
-  const sf = parse(file, source);
-  const out: CopyViolation[] = [];
-  const visit = (n: ts.Node) => {
-    if (ts.isArrayLiteralExpression(n) && !isProvenStatic(n) && rendersAsCopy(n)) {
-      const unproven = n.elements.filter((el) => !isProvenStatic(el));
-      for (const element of unproven) {
-        out.push({
-          file,
-          line: lineOf(sf, element),
-          rule: "copy/unproven-array-element",
-          detail: element.getText().replace(/\s+/g, " "),
-        });
-      }
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return out;
-}
-
-const ITERATION_METHODS = new Set(["map", "flatMap"]);
-
-/**
- * Is this array literal written where its elements reach the page as TEXT?
+ * HOLES from any depth, WORDS only from the element itself. The asymmetry
+ * separates a sentence from a layout container without naming a tag:
  *
- * Two positions count: inside a JSX expression that sits in CHILD position, and
- * the receiver of an iteration. An attribute value does not — `<Chart data={[1,
- * 2, load()]} />` is data, and the attributes a visitor actually reads have
- * their own rule. Distinguishing the two is why this looks at the JSX
- * expression's parent rather than stopping at the first `JsxExpression`.
- */
-function rendersAsCopy(node: ts.ArrayLiteralExpression): boolean {
-  for (let cur: ts.Node = node; cur.parent; cur = cur.parent) {
-    // `[...].map(...)` — the receiver position of an iteration.
-    const parent = cur.parent;
-    if (
-      ts.isPropertyAccessExpression(parent) &&
-      ITERATION_METHODS.has(parent.name.text) &&
-      unwrap(parent.expression) === cur
-    ) {
-      return true;
-    }
-    if (
-      ts.isJsxExpression(parent) &&
-      parent.parent &&
-      (ts.isJsxElement(parent.parent) || ts.isJsxFragment(parent.parent))
-    ) {
-      return true;
-    }
-    if (ts.isJsxAttribute(parent)) return false;
-  }
-  return false;
-}
-
-/**
- * Attributes whose value a visitor READS.
- *
- * DOM text attributes and the ARIA members that carry literal text. The ARIA
- * `*-labelledby` / `*-describedby` members are deliberately absent: they hold
- * element ids, not words.
- */
-export const TEXT_BEARING_ATTRIBUTES: readonly string[] = [
-  "alt",
-  "title",
-  "placeholder",
-  "summary",
-  "aria-label",
-  "aria-description",
-  "aria-placeholder",
-  "aria-roledescription",
-  "aria-valuetext",
-];
-
-/**
- * P2 CLASS 2 — visitor-facing text passed through an attribute, dynamically.
- *
- * `<img alt={describe(photo)} />` and `<button aria-label={label}>` put words in
- * front of a visitor — including a screen-reader user, for whom `alt` IS the
- * content — while the file contains no such text for the inventory to hold.
- * Refused on SHAPE: an attribute a visitor reads must carry a complete value
- * written here.
- *
- * A static `alt="Close"` stays accepted and enters the inventory like any other
- * authored text.
- */
-export function dynamicTextAttributeViolations(
-  file: string,
-  source?: string,
-): CopyViolation[] {
-  const sf = parse(file, source);
-  const out: CopyViolation[] = [];
-  const visit = (n: ts.Node) => {
-    if (ts.isJsxAttribute(n) && TEXT_BEARING_ATTRIBUTES.includes(n.name.getText())) {
-      const value = n.initializer;
-      // `alt` with no value at all is the empty-alt decorative case, which is
-      // correct and carries no text.
-      const proven =
-        value === undefined ||
-        ts.isStringLiteral(value) ||
-        (ts.isJsxExpression(value) &&
-          value.expression !== undefined &&
-          isProvenStatic(value.expression));
-      if (!proven) {
-        out.push({
-          file,
-          line: lineOf(sf, n),
-          rule: "copy/dynamic-text-attribute",
-          detail: n.getText().replace(/\s+/g, " "),
-        });
-      }
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return out;
-}
-
-/**
- * P1 — a sentence that mixes authored words with a hole.
- *
- * `<p>Every {TRACKING_NOUN} is tracked</p>` renders the forbidden claim while
- * the joined candidate reads "Every is tracked" and each fragment is harmless.
- * Concatenation cannot close this: the missing word is not in the file, and the
- * value may come from a canonical module the import rule allows.
- *
- * REFUSED, not evaluated. Reading the hole means resolving a binding, which is
- * the analysis this architecture exists without. A sentence whose middle is a
- * value is not a complete copy value; author it as one. Existing occurrences are
- * declared by identity — six, today.
- *
- * A hole ALONE is untouched: `<p>{children}</p>` and `<p>{POSITIONING.corePromise}</p>`
- * carry no authored words, so they are consumption rather than a claim built
- * around a gap.
+ *   <p>Every <strong>{NOUN}</strong> is tracked</p>   refused
+ *   <div><h2>Pricing</h2>{PLANS.map(…)}</div>         allowed
  */
 export function incompleteClaimViolations(file: string, source?: string): CopyViolation[] {
   const sf = parse(file, source);
   const out: CopyViolation[] = [];
-  // ONE REPORT PER HOLE. The rule fires at every level whose own words enclose
-  // it, so `<p>Intro <span>Heading {hole}</span></p>` reported the same
-  // expression twice — once for the paragraph, once for the span. Two entries
-  // for one defect inflate the declared ceiling and make the exception list read
-  // as though there were more places to fix than there are.
+  // One report per hole: the rule fires at every level whose own words enclose
+  // it, so a nested case was otherwise counted twice.
   const reported = new Set<number>();
+  const isHole = (c: ts.Node): c is ts.JsxExpression =>
+    ts.isJsxExpression(c) && c.expression !== undefined && !spelledOutHere(c.expression);
+  const directWords = (el: ts.JsxElement | ts.JsxFragment): number =>
+    el.children
+      .filter(ts.isJsxText)
+      .reduce(
+        (sum, t) => sum + t.text.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length,
+        0,
+      );
   const visit = (n: ts.Node) => {
     if (ts.isJsxElement(n) || ts.isJsxFragment(n)) {
-      // THE TEXT FLOW, not just the direct children. `<p>Every
-      // <strong>{NOUN}</strong> is tracked</p>` puts the words on the outer
-      // element and the hole on the inner one, so a direct-children test sees a
-      // sentence with no hole and a hole with no sentence.
-      //
-      // A "flow" child is text, a hole, or a wrapper whose ENTIRE content is
-      // text and holes. That last clause is doing the work a tag allow-list
-      // would otherwise do, without naming a single tag: an element that
-      // contains other ELEMENTS starts a structure of its own, and its words
-      // belong to that rather than to this sentence. Measured, because the
-      // whole-subtree reading flagged 158 places where a heading and an
-      // unrelated list simply shared a container.
-      const isHole = (c: ts.Node): c is ts.JsxExpression =>
-        ts.isJsxExpression(c) && c.expression !== undefined && !isProvenStatic(c.expression);
-      const directWords = (el: ts.JsxElement | ts.JsxFragment): number =>
-        el.children
-          .filter(ts.isJsxText)
-          .reduce(
-            (sum, t) => sum + t.text.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length,
-            0,
-          );
-
-      // HOLES from any depth of wrapper, WORDS only from the element itself.
-      // That asymmetry is what separates a sentence from a layout container
-      // without naming a single tag:
-      //
-      //   <p>Every <strong>{NOUN}</strong> is tracked</p>   refused
-      //   <div><h2>Pricing</h2>{PLANS.map(…)}</div>         allowed
-      //
-      // The first has authored words on the element ITSELF, so the hole sits
-      // inside its sentence. The second has none — the words belong to the
-      // heading, and the list beside it is a different thing.
-      //
-      // RECURSIVE AND UNCONDITIONAL, because one level was not enough: `<p>Every
-      // <><strong>{NOUN}</strong></> is tracked</p>` hides the hole two wrappers
-      // down, and a fragment is not even an element.
-      //
-      // An earlier draft stopped descending at any wrapper carrying words of its
-      // own, on the theory that this was what kept the rule from returning the
-      // 158-place census an unrestricted subtree reading produced. Measured with
-      // and without: TWELVE either way. The census came entirely from counting a
-      // wrapper's WORDS, never from reaching its holes.
-      //
-      // The stop changes ATTRIBUTION, not coverage: with it,
-      // `<p>Intro <span>Heading {hole}</span></p>` is reported against the span,
-      // which the outer traversal reaches on its own; without it, against the
-      // paragraph. Both find the hole. Dropped because an inert branch that
-      // looks like a safeguard is worse than no branch — and the dedupe below is
-      // the price of dropping it, since one hole can now sit inside two
-      // sentences at once.
       const holes: ts.JsxExpression[] = [];
       const gatherHoles = (el: ts.JsxElement | ts.JsxFragment) => {
         for (const child of el.children) {
@@ -556,8 +391,7 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
         }
       };
       gatherHoles(n);
-      const words = directWords(n);
-      if (words > 0 && holes.length > 0) {
+      if (directWords(n) > 0 && holes.length > 0) {
         for (const hole of holes) {
           if (reported.has(hole.getStart(sf))) continue;
           reported.add(hole.getStart(sf));
@@ -576,339 +410,47 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
   return out;
 }
 
-/**
- * P1 — a value rendered as text that was imported from an UNDECLARED module.
- *
- * The escape this closes is ordinary refactoring: a declared component imports
- * `CLAIM` from a new `lib/…` helper and renders `{CLAIM}`. The component holds
- * no text for the inventory, the helper is on no declared list so nothing judges
- * it, and a bare identifier is not an assembly, an array or an attribute.
- *
- * NOT DISCOVERY. The import is never FOLLOWED and the module is never read. The
- * only question asked is whether the specifier names a file already on the
- * declared surface — a set membership test against a path written in the import
- * statement. Copy may come from a canonical module, or from another declared
- * file whose text is already frozen and judged; anywhere else is refused.
- */
-export function undeclaredCopyImportViolations(
-  file: string,
-  declared: readonly string[],
-  source?: string,
-): CopyViolation[] {
-  const sf = parse(file, source);
-  const known = new Set(declared);
-
-  // Which local names came from where. Lexical: it reads the import statement,
-  // it does not open the file named there.
-  const origin = new Map<string, string>();
-  const collectImports = (n: ts.Node) => {
-    if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
-      const resolved = resolveSpecifier(n.moduleSpecifier.text, file);
-      if (resolved === null) return;
-      const clause = n.importClause;
-      if (clause?.name) origin.set(clause.name.text, resolved);
-      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
-        for (const el of clause.namedBindings.elements) origin.set(el.name.text, resolved);
-      }
-      if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
-        origin.set(clause.namedBindings.name.text, resolved);
-      }
-    }
-    ts.forEachChild(n, collectImports);
-  };
-  collectImports(sf);
-
-  const out: CopyViolation[] = [];
-  const seen = new Set<string>();
-
-  // A DECLARED BARREL MAY NOT FORWARD FROM AN UNDECLARED MODULE.
-  // `export { Hero } from "@/components/hero"` in a declared file launders the
-  // origin: a route imports `Hero` from the barrel, which IS declared, so the
-  // import check is satisfied while the component itself is judged by nothing.
-  // Refused here rather than followed — the specifier is read, the module is
-  // not opened, exactly as with imports.
-  const forwards = (n: ts.Node) => {
-    if (ts.isExportDeclaration(n) && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)) {
-      const from = resolveSpecifier(n.moduleSpecifier.text, file);
-      if (from !== null && !known.has(from)) {
-        out.push({
-          file,
-          line: lineOf(sf, n),
-          rule: "copy/undeclared-copy-import",
-          detail: `re-export from ${from}`,
-        });
-      }
-    }
-    ts.forEachChild(n, forwards);
-  };
-  forwards(sf);
-  // EVERY IDENTIFIER INSIDE JSX, rather than a list of positions.
-  //
-  // Enumerating positions cost three rounds: child, then attribute, then tag,
-  // and `JsxSpreadAttribute` is a distinct node that reached none of them, so
-  // `<LocalHero {...HERO_COPY} />` walked straight past. `JsxSpreadChild` is
-  // another. Naming the next one would only postpone the round after that.
-  //
-  // So the question stops being WHERE the import appears and becomes whether it
-  // appears in JSX at all. Anything reached from a JSX root renders; an import
-  // from an undeclared module has no business being rendered whatever syntax
-  // carries it. The tag name is included, which is how `<Hero />` is caught.
-  const isJsxRoot = (n: ts.Node): boolean =>
-    ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n) || ts.isJsxFragment(n);
-  const visit = (n: ts.Node) => {
-    if (isJsxRoot(n) && !(n.parent && isJsxRoot(n.parent))) {
-      // Once per outermost JSX node; `seen` keeps a nested one from repeating.
-      const scan = (x: ts.Node) => {
-        if (ts.isIdentifier(x)) {
-          const from = origin.get(x.text);
-          if (from !== undefined && !known.has(from)) {
-            const key = `${x.text}:${from}`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              out.push({
-                file,
-                line: lineOf(sf, x),
-                rule: "copy/undeclared-copy-import",
-                detail: `${x.text} from ${from}`,
-              });
-            }
-          }
-        }
-        ts.forEachChild(x, scan);
-      };
-      scan(n);
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return out;
-}
-
-/**
- * A module specifier as a repository path, or null for a package.
- *
- * Reads the string; never opens the file. A first-party path that does not exist
- * on disk still resolves, which is what keeps a missing module refused rather
- * than silently allowed.
- */
-function resolveSpecifier(spec: string, from: string): string | null {
-  const rel = spec.startsWith("@/")
-    ? spec.slice(2)
-    : spec.startsWith(".")
-      ? relative(REPO_ROOT, join(REPO_ROOT, dirname(from), spec))
-      : null;
-  if (rel === null || rel.startsWith("..")) return null;
-  return (
-    [".ts", ".tsx", "/index.ts", "/index.tsx"]
-      .map((ext) => rel + ext)
-      .find((candidate) => existsSync(join(REPO_ROOT, candidate))) ?? rel
-  );
-}
-
-/** The leftmost identifier of `A.b.c`, or null. */
-function rootIdentifier(e: ts.Expression): string | null {
-  let cur = unwrap(e) as ts.Expression;
-  while (ts.isPropertyAccessExpression(cur)) cur = unwrap(cur.expression) as ts.Expression;
-  return ts.isIdentifier(cur) ? cur.text : null;
-}
-
-/**
- * R4 — copy assembled from authored words and something dynamic.
- *
- * The one rule about spelling that survives, and it is a refusal: a binding or
- * property that glues authored words to a value cannot be read as a whole, so it
- * is reported rather than guessed at. `+`, a template, `.join()` and `.concat()`
- * are all the same shape.
- *
- * TWO PLAIN WORDS, measured. The only mixed assembly on the declared surface is
- * a Tailwind class string, whose tokens carry hyphens, colons and brackets; a
- * sentence fragment does not. A prose-LENGTH gate would have missed the
- * four-word forbidden wording, which is why the threshold counts bare
- * alphabetic words instead.
- */
-export function assembledCopyViolations(file: string, source?: string): CopyViolation[] {
-  const sf = parse(file, source);
-  const out: CopyViolation[] = [];
-  const visit = (n: ts.Node) => {
-    const e = unwrap(n);
-    const assembles =
-      ts.isTemplateExpression(e) ||
-      (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) ||
-      (ts.isCallExpression(e) &&
-        ts.isPropertyAccessExpression(e.expression) &&
-        (e.expression.name.text === "join" || e.expression.name.text === "concat"));
-    // NO "unless it is fully static" exemption. `"Every change" + " is tracked"`
-    // is entirely literal and still renders the forbidden sentence, while each
-    // fragment is below the prose threshold and matches no rule on its own. The
-    // predecessor answered that by FOLDING the expression, which is how it ended
-    // up chasing `.join()`, `.concat()`, templates and chained methods one round
-    // at a time. Refusing the shape needs none of that: author it as one value.
-    if (assembles && e === n) {
-      const words: string[] = [];
-      let literalText = "";
-      const collect = (x: ts.Node) => {
-        if (
-          ts.isStringLiteral(x) ||
-          ts.isNoSubstitutionTemplateLiteral(x) ||
-          ts.isTemplateHead(x) ||
-          ts.isTemplateMiddle(x) ||
-          ts.isTemplateTail(x)
-        ) {
-          literalText += ` ${(x as ts.LiteralLikeNode).text}`;
-          for (const w of (x as ts.LiteralLikeNode).text.split(/\s+/)) {
-            if (/^[A-Za-z]+$/.test(w)) words.push(w);
-          }
-        }
-        ts.forEachChild(x, collect);
-      };
-      collect(e);
-      // TWO PLAIN WORDS AND A PROSE RATIO. Counting plain words alone flagged
-      // two real Tailwind templates: `flex flex-col rounded-[12px] border
-      // bg-white` yields "flex" and "border" and nothing else, which is two. A
-      // sentence fragment is mostly plain words; a class list is mostly not. The
-      // ratio separates them without a LENGTH gate, which is what let the
-      // four-word forbidden wording through everywhere else.
-      const tokens = literalText.split(/\s+/).filter(Boolean);
-      const proseRatio = tokens.length === 0 ? 0 : words.length / tokens.length;
-      if (words.length >= 2 && proseRatio >= 0.6) {
-        out.push({
-          file,
-          line: lineOf(sf, n),
-          rule: "copy/assembled-from-fragments",
-          detail: e.getText().replace(/\s+/g, " "),
-        });
-      }
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return out;
-}
-
-// ---------------------------------------------------------------------------
-// R2. JUDGE — every string a canonical module holds, unfiltered
-// ---------------------------------------------------------------------------
-
-/**
- * Every string literal a canonical copy module contains.
- *
- * NO PROSE FILTER, deliberately. `isSubstantiveProse` decides what may be
- * AUTHORED where; using it here meant `export const title = "Every change is
- * tracked"` — four words, no full stop, the exact forbidden wording — never
- * reached the rules. Short technical strings cost nothing: the rules are
- * specific phrases and do not match `"@type"`.
- */
-export function moduleLiterals(file: string, source?: string): string[] {
-  const sf = parse(file, source);
-  const out: string[] = [];
-  const visit = (n: ts.Node) => {
-    if (
-      (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
-      !(n.parent && (ts.isImportDeclaration(n.parent) || ts.isExportDeclaration(n.parent)))
-    ) {
-      const value = normalise(n.text);
-      if (value) out.push(value);
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return out;
-}
-
-/**
- * Every piece of text a file contains, WITHOUT the prose filter.
- *
- * The inventory holds substantive prose only, so it stays stable and a CSS tweak
- * does not redden the build — but that gate needs five plain words or a full
- * stop, and `Every change is tracked` is four words with neither. The exact
- * forbidden wording would therefore never have entered the frozen set.
- *
- * Judgement has no such threshold and costs nothing: the rules are specific
- * phrases and match no class name. So the freeze answers "did prose grow" and
- * this answers "did forbidden wording appear", and neither is asked to do the
- * other's job.
- */
-export function judgeableText(file: string, source?: string): string[] {
-  const sf = parse(file, source);
-  const out: string[] = [];
-
-  // WHOLE SUBTREES, not one text node at a time. `<p>Every change <strong>is
-  // tracked</strong></p>` emits "Every change" and "is tracked", and neither
-  // fragment matches a rule or reaches the prose threshold — the sentence a
-  // visitor reads existed nowhere in the corpus.
-  //
-  // This is CONCATENATION, not a rendering model. It does not decide which tags
-  // are inline, what a hole evaluates to, or how React composes the tree: it
-  // joins the text a subtree contains, at every level. Joining too eagerly
-  // across a block boundary can only ADD a candidate string, never hide one, and
-  // an extra candidate fails closed — a build failure a human looks at, rather
-  // than a silent pass. That asymmetry is why concatenation is safe here and
-  // interpretation was not.
-  const inChildExpression = (node: ts.Node): boolean => {
-    for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
-      if (ts.isJsxAttribute(cur)) return false;
-      if (
-        ts.isJsxExpression(cur) &&
-        cur.parent &&
-        (ts.isJsxElement(cur.parent) || ts.isJsxFragment(cur.parent))
-      ) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  const subtreeText = (node: ts.Node): string => {
-    let text = "";
-    const gather = (x: ts.Node) => {
-      if (ts.isJsxText(x)) text += ` ${decodeEntities(x.text)}`;
-      // Any literal ANYWHERE inside a child expression, not only one that is the
-      // expression itself. `<p>{["Every change ", "is tracked"]}</p>` renders
-      // those fragments with nothing between them — React concatenates array
-      // children — while each two-word literal is harmless alone and the array
-      // is "proven" because every element is a literal.
-      if (
-        (ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) &&
-        inChildExpression(x)
-      ) {
-        text += ` ${x.text}`;
-      }
-      ts.forEachChild(x, gather);
+/** Is every string this expression can produce written in this file? */
+function spelledOutHere(node: ts.Node): boolean {
+  const e = ts.isParenthesizedExpression(node) ? node.expression : node;
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true;
+  if (ts.isJsxElement(e) || ts.isJsxFragment(e) || ts.isJsxSelfClosingElement(e)) {
+    let spelled = true;
+    const check = (x: ts.Node) => {
+      if (ts.isJsxExpression(x) && x.expression && !spelledOutHere(x.expression)) spelled = false;
+      ts.forEachChild(x, check);
     };
-    gather(node);
-    return normalise(text);
-  };
-
-  const visit = (n: ts.Node) => {
-    if (ts.isJsxElement(n) || ts.isJsxFragment(n)) {
-      const joined = subtreeText(n);
-      if (joined) out.push(joined);
-    }
-    if (ts.isJsxText(n)) {
-      const text = normalise(decodeEntities(n.text));
-      if (text) out.push(text);
-    }
-    if (
-      ts.isStringLiteral(n) ||
-      ts.isNoSubstitutionTemplateLiteral(n) ||
-      ts.isTemplateHead(n) ||
-      ts.isTemplateMiddle(n) ||
-      ts.isTemplateTail(n)
-    ) {
-      const text = normalise((n as ts.LiteralLikeNode).text);
-      if (text) out.push(text);
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return out;
+    ts.forEachChild(e, check);
+    return spelled;
+  }
+  return false;
 }
 
-/** Every string reachable in a runtime value, so a data module is judged by value too. */
+// ---------------------------------------------------------------------------
+// Judging a canonical module by value as well as by source
+// ---------------------------------------------------------------------------
+
+/** Every string reachable in a runtime value, so a data module is judged twice. */
 export function walkStrings(value: unknown, seen = new Set<unknown>()): string[] {
   if (typeof value === "string") return [value];
   if (value === null || typeof value !== "object") return [];
   if (seen.has(value)) return [];
   seen.add(value);
   return Object.values(value as Record<string, unknown>).flatMap((v) => walkStrings(v, seen));
+}
+
+/**
+ * A declaration that names a file which is gone is a BROKEN declaration.
+ *
+ * Exported so it can be driven with a path that really is missing; left inline
+ * it could only be proven by deleting a real source file.
+ */
+export function assertDeclaredExist(files: readonly string[]): void {
+  const missing = files.filter((f) => !existsSync(join(REPO_ROOT, f)));
+  if (missing.length) {
+    throw new Error(
+      `declared copy source(s) no longer exist: ${missing.join(", ")} — ` +
+        "update the declaration in the same change that moves the file",
+    );
+  }
 }
