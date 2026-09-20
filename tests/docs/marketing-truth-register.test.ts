@@ -1446,6 +1446,13 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
         .map((v) => v.rule),
     ).toEqual(["claim/unreadable-static-string-call"]);
 
+    // Exemption is by FOLD, never by method name. A supported method whose call
+    // does not actually fold is refused: the spread defeats the fold, so nothing
+    // judged the whole, and the name `concat` was still buying the exemption.
+    expect(
+      probe('export const T = "Every change".concat(...[" is tracked"]);').map((v) => v.rule),
+    ).toEqual(["claim/unreadable-static-string-call"]);
+
     // And the real surface carries none, so this costs nothing to hold.
     const real = [
       ...marketingComponentFiles(),
@@ -1554,6 +1561,34 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     expect(
       pageClaims("app/probe/page.tsx", "export const A = () => <p>{ok ? <em>Every change is tracked</em> : null}</p>;"),
     ).toContain("Every change is tracked");
+  });
+
+  it("copy in a plain .ts module is followed; server infrastructure is not", () => {
+    // `MarketingHeader` and `MobileNav` render `MARKETING_CTA.label` and
+    // `MARKETING_NAV` on every policy page, but a `.tsx`-only walk never opened
+    // the `.ts` module holding them, so a forbidden label changed nothing any
+    // guard reads.
+    const files = marketingComponentFiles();
+    expect(files).toContain("app/_components/marketingNav.ts");
+    expect(MARKETING_COPY).toContain("Book walkthrough");
+
+    // BOUNDED, and this is the half that matters. Following every first-party
+    // `.ts` transitively reaches server infrastructure that authors no copy —
+    // that is the unbounded expansion this architecture replaced, and it would
+    // drag WAIT-adjacent code into the marketing surface.
+    for (const infrastructure of [
+      "lib/supabase/server.ts",
+      "lib/rate-limit/public.ts",
+      "lib/waitlist/delivery/policy.ts",
+      "app/actions/demo.ts",
+    ]) {
+      expect(files, `${infrastructure} is not a copy source`).not.toContain(infrastructure);
+    }
+
+    // And a canonical copy module is not a component: authoring copy there is
+    // the law, so counting its prose as a component-prose violation would be a
+    // category error.
+    for (const module of CANONICAL_COPY_MODULES) expect(files).not.toContain(module);
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {

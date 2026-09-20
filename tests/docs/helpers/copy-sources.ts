@@ -72,6 +72,15 @@ export const POLICY_SOURCES: readonly string[] = [
   "app/terms/page.tsx",
 ];
 
+/**
+ * Where a plain `.ts` module may still author rendered marketing copy.
+ *
+ * The walk follows `.tsx` anywhere first-party, because a component renders.
+ * A `.ts` module is followed only here: these are the two places copy is
+ * authored, and everything outside them is infrastructure.
+ */
+const COPY_MODULE_DIRS = ["app/_components/", "lib/marketing/"];
+
 /** Marketing route files, from the MARKETING_PAGES registry. */
 export function pageCopySources(): string[] {
   return publicRouteFiles().filter((f) => !POLICY_SOURCES.includes(f));
@@ -127,8 +136,25 @@ export function marketingComponentFiles(): string[] {
         // `./Hero` — and a directory allow-list silently omits it, which is the
         // same rot as the hand-kept list it already replaced. A page importing a
         // `.tsx` is importing a component; that is the whole test.
+        // `.ts` AS WELL AS `.tsx`, but only where copy lives. Components render
+        // values from plain modules — `app/_components/marketingNav.ts` holds
+        // `MARKETING_CTA.label` and `MARKETING_NAV`, rendered by the header and
+        // the mobile nav on every policy page — and a `.tsx`-only walk never saw
+        // them, so a forbidden label there changed nothing any guard reads.
+        //
+        // BOUNDED deliberately. Following every first-party `.ts` transitively
+        // reaches `lib/supabase/server.ts`, `lib/rate-limit/**`,
+        // `lib/waitlist/**` and `app/actions/**` — 13 files of server
+        // infrastructure that author no copy. That is the unbounded expansion
+        // this architecture exists to avoid, so `.ts` is followed only where
+        // marketing copy is authored.
+        const inCopyModuleDir =
+          rel !== null && COPY_MODULE_DIRS.some((dir) => rel.startsWith(dir));
+        const extensions = inCopyModuleDir
+          ? [".tsx", "/index.tsx", ".ts", "/index.ts"]
+          : [".tsx", "/index.tsx"];
         if (rel && !rel.startsWith("..")) {
-          for (const ext of [".tsx", "/index.tsx"]) {
+          for (const ext of extensions) {
             if (existsSync(join(REPO_ROOT, rel + ext))) {
               out.add(rel + ext);
               walkImports(rel + ext);
@@ -158,6 +184,11 @@ export function marketingComponentFiles(): string[] {
   }
   for (const layout of layouts) out.add(layout);
   for (const page of [...declared, ...layouts]) walkImports(page);
+  // A canonical copy module is not a component. Following `.ts` reaches them,
+  // and counting their prose as a component-prose VIOLATION is a category
+  // error — authoring copy there is the law, not a breach of it. They are
+  // declared, read and judged as modules in their own right.
+  for (const module of CANONICAL_COPY_MODULES) out.delete(module);
   return [...out].sort();
 }
 
@@ -187,12 +218,6 @@ const LINK_TAGS = ["a", "Link"];
  * one word. Treating them alike split `track<wbr />ed` into "track ed".
  */
 const BOUNDARY_TAGS = ["br"];
-
-/**
- * String methods this fold understands. Anything else on a static string
- * receiver is REFUSED rather than guessed at — see `staticConcatClaims`.
- */
-const FOLDABLE_METHODS = new Set(["concat", "join"]);
 
 function foldStatic(node: ts.Expression): string | undefined {
   const e = unwrap(node) as ts.Expression;
@@ -260,9 +285,18 @@ function unreadableStaticStringCalls(sf: ts.SourceFile, file: string): CopyViola
       // supported one — `"Every_change".concat("_is_tracked").replaceAll("_", " ")`
       // — has a CallExpression receiver, so an immediate-literal check saw
       // nothing and the underscored fragments passed as harmless.
+      // EXEMPT BY FOLD, never by name. Exempting every call named `concat` let
+      // `"Every change".concat(...[" is tracked"])` through: the spread makes
+      // the fold fail, so nothing judged the whole, and the method name still
+      // bought the exemption. The question is only ever "can this be read", and
+      // `foldStatic` is what answers it.
+      //
+      // Array receivers stay out: `["a","b"].map(...)` yields a list, not a
+      // sentence, its elements are judged individually, and it is the one such
+      // call on the declared surface.
       const receiver = unwrap(n.expression.expression) as ts.Expression;
       const isStaticString = foldStatic(receiver) !== undefined;
-      if (isStaticString && !FOLDABLE_METHODS.has(n.expression.name.text)) {
+      if (isStaticString && foldStatic(n as ts.Expression) === undefined) {
         out.push({
           file,
           line: lineOf(sf, n),
