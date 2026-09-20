@@ -399,6 +399,21 @@ test.describe("UX-01 QW4 · Escape does not abandon an in-flight send", () => {
     // nothing, stays dismissible at all times. A source pin can show the flag
     // is passed; only this can show it reaches the key handler.
     //
+    // WHAT THE MUTATIONS ESTABLISHED, including the one that did not red.
+    // The in-flight behaviour is guarded TWICE and independently: the hook's
+    // `busy` suppresses the Escape keystroke, and `closeModal` refuses while
+    // pending. Removing either one alone leaves this test GREEN, which is a
+    // fact about the component rather than a hole in the test — the file says
+    // the two agree, and they do. Measured:
+    //
+    //   `busy` removed, closeModal guard intact ....... PASS
+    //   closeModal guard removed, `busy` intact ....... PASS
+    //   BOTH removed .................................. FAIL, on the message below
+    //
+    // So the third run is the non-vacuity proof, and the second is what shows
+    // the hook's own gate is load-bearing rather than decorative: it holds the
+    // line by itself with the component's guard gone.
+    //
     // THE FIXTURE IS A COMPLETED APPOINTMENT, not a confirmed one. Postcare is
     // completed-only (B8 / 0177) — the surface deliberately does not offer a
     // send the command would refuse — so seeding a confirmed appointment
@@ -473,6 +488,11 @@ test.describe("UX-01 QW4 · Escape does not abandon an in-flight send", () => {
 
 test.describe("UX-01 QW3 · the row shares one baseline", () => {
   test("Book appointment matches the day-nav it sits beside", async ({ page }) => {
+    // NON-VACUITY, and why this is not a duplicate of the floor test above.
+    // Giving the action `min-h-[60px]` keeps every `>= 44px` assertion green
+    // and reds THIS one ("book 60px vs day-nav 44px"), which is exactly the
+    // defect class the floor cannot see: a control that clears the floor and
+    // still does not line up with what it sits beside.
     // The defect was not only "below the floor" — it was a 44px control and a
     // 36px control sharing a row, with the page's flagship action as the
     // shorter one. Height parity is the part a floor assertion alone misses.
@@ -497,6 +517,9 @@ test.describe("UX-01 QW3 · the row shares one baseline", () => {
   });
 });
 
+// NON-VACUITY: swapping this control back to a plain `Link` reds the test on
+// the missing `[data-link-pending]`, so it observes the acknowledgement rather
+// than the anchor.
 test.describe("UX-01 · #739 acknowledgement is intact", () => {
   test("the client-profile Log session control still acknowledges", async ({
     page,
