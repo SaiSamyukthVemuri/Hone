@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { buttonClasses } from "@/components/ui/button";
 import {
   PendingContainerLink,
   PendingLink,
@@ -181,6 +182,31 @@ const DAY_NAV_SEGMENT =
   "inline-flex min-h-[44px] items-center px-3 text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900";
 const DAY_NAV_SEGMENT_DISABLED =
   "inline-flex min-h-[44px] cursor-default items-center px-3 text-sm text-neutral-400 dark:text-neutral-600";
+/**
+ * UX-01 QW1 · the segment you are ON.
+ *
+ * It used to reuse `DAY_NAV_SEGMENT_DISABLED`, which inverted the affordance on
+ * the most-visited surface in the product: the day you are VIEWING was painted
+ * in the disabled vocabulary — `text-neutral-400`, measured at ≈2.5:1 on white
+ * against the AA floor of 4.5:1 — while the days you can travel to were painted
+ * as ordinary live text. The current item looked the least available thing in
+ * its own row, and the one segment that is not disabled was the only one
+ * failing contrast. (The genuinely disabled arrows keep that token and are
+ * exempt, which is exactly why overloading it here was wrong.)
+ *
+ * IT IS MARKED BY GROUND, NOT BY WEIGHT, and that is a constraint rather than a
+ * preference. This control carries a promise stated a few lines below — the two
+ * arrows must not move under the thumb between days — and `font-medium` changes
+ * the text's advance width, so a weight change would shift both arrows every
+ * time the practitioner stepped a day. The box metrics here are byte-identical
+ * to the other segments (`min-h-[44px] px-3 text-sm`, no weight); only the fill
+ * and the ink change, so nothing reflows.
+ *
+ * `text-neutral-900` on `bg-neutral-100` measures ≈16.4:1. The group is
+ * `overflow-hidden`, so the fill clips to its radius without a second corner.
+ */
+const DAY_NAV_SEGMENT_CURRENT =
+  "inline-flex min-h-[44px] cursor-default items-center px-3 text-sm bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100";
 /** Divider between segments; the first segment carries no left border. */
 const DAY_NAV_DIVIDE = " border-l border-neutral-300 dark:border-neutral-700";
 
@@ -723,7 +749,7 @@ export default async function DashboardPage({
               <span
                 aria-current="page"
                 data-testid="dashboard-today"
-                className={DAY_NAV_SEGMENT_DISABLED + DAY_NAV_DIVIDE}
+                className={DAY_NAV_SEGMENT_CURRENT + DAY_NAV_DIVIDE}
               >
                 Today
               </span>
@@ -768,12 +794,25 @@ export default async function DashboardPage({
               to the calendar, where the quick-book flow lives — CARRYING the
               day being viewed, so stepping to a date and pressing the obvious
               book button does not silently land on today's week. */}
+          {/* UX-01 QW3. This was a hand-rolled solid button at `py-2 text-sm`,
+              i.e. ~36px, sitting in the same flex row as the day-nav's 44px
+              segments — an 8px baseline clash, with the page's flagship action
+              as the SHORTER of the two. `buttonClasses` composes
+              CONTROL_MIN_TOUCH, so it reaches the floor and the row shares one
+              baseline.
+
+              Identity is unchanged, not restyled: `--color-accent` IS
+              neutral-900 and `--color-accent-hover` IS neutral-800, so this
+              paints exactly what it painted before. What it gains is the
+              `active:` step the hand-rolled copy never had — the press
+              acknowledgement LAW 4 asks for, through the existing CSS contract
+              rather than any new motion. */}
           <Link
             href={calendarHrefForDashboardDay({
               selectedDay: selectedDayLocal,
               todayLocal,
             })}
-            className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            className={buttonClasses({ variant: "primary" })}
           >
             Book appointment
           </Link>
