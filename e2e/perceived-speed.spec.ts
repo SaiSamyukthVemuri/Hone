@@ -848,7 +848,22 @@ test.describe("UI-01D Client Profile tabs — desktop", () => {
     });
     const overview = tabRow.getByRole("button", { name: "Overview" });
     const sessions = tabRow.getByRole("button", { name: "Sessions" });
-    const liveRegion = tabRow.locator('[role="status"]');
+    // `:scope >` — the tab bar's OWN region, and deliberately not any region
+    // inside it.
+    //
+    // RESP-CLIENT-INTAKE-01 gave the Treatment Photos control (both the mobile
+    // and the md+ form) the shipped `PendingLink`, and that primitive mounts a
+    // `role="status"` of its own. This nav therefore holds THREE regions now,
+    // and the bare descendant match this line used to make resolved to all
+    // three — Playwright strict mode, correctly, refused to guess.
+    //
+    // The distinction is structural, not incidental: the bar's own region is a
+    // direct child of the <nav>, while each link's region is nested inside its
+    // <a>. Scoping to the direct child says "the SECTION SWITCHER announced
+    // this", which is the claim this test makes; `.first()`/`.last()` would
+    // have restored a green by asserting against whichever region the markup
+    // happened to emit first.
+    const liveRegion = tabRow.locator(':scope > [role="status"]');
 
     await expect(overview).toBeVisible({ timeout: T });
     await expect(overview).toHaveAttribute("aria-current", "page");

@@ -1,4 +1,9 @@
 import Link from "next/link";
+// RESP-CLIENT-INTAKE-01. The four outbound controls measured as dead clicks on
+// this page use the shipped navigation leaf (DESIGN contract 2c). The remaining
+// bare <Link>s here — the /clients back link and the two Edit links — were NOT
+// in the measured slice and are deliberately left alone.
+import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -911,12 +916,18 @@ export default async function ClientCheatSheetPage({
           </Link>
         </div>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Link
+          {/* RESP-CLIENT-INTAKE-01 RANK 1. The entry to charting, and the
+              highest-frequency outbound control on this page. Its destination
+              is a TRUE depth-3 dependency chain (identity -> client -> last
+              charted treatment), so no wave collapse is available there and
+              acknowledgement is the only remedy the route admits. */}
+          <PendingLink
             href={`/clients/${client.id}/sessions/new`}
+            pendingLabel="Opening new session…"
             className="rounded-md bg-neutral-900 px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
             + Log session
-          </Link>
+          </PendingLink>
           {/* Collapsed: a compact "+ Book appointment" button paired
               with Log session. Expanded: the booking card grows into
               the remaining row width (full-width on phones). */}
@@ -1017,12 +1028,20 @@ export default async function ClientCheatSheetPage({
                 visually outranked the real clinical record. This link makes the
                 canonical path the obvious one and is deliberately rendered
                 BEFORE the legacy block below. */}
-            <a
+            {/* RESP-CLIENT-INTAKE-01 RANK 3. This was a raw <a>, and a raw <a>
+                to an in-app URL leaves the client router entirely: measured, the
+                tap issued a DOCUMENT request carrying no RSC header and REPLACED
+                the document, re-running the whole shell and re-hydrating all JS
+                — for a navigation that only changes the query string. The href
+                is byte-identical; only the element changed. The dashboard already
+                ships a PendingLink to this very destination. */}
+            <PendingLink
               href={`/clients/${client.id}?tab=consultation`}
+              pendingLabel="Opening consultation…"
               className="mt-4 inline-flex items-center rounded-md border border-neutral-900 px-3 py-2 text-xs font-medium uppercase tracking-wider text-neutral-900 hover:bg-neutral-50 dark:border-neutral-100 dark:text-neutral-100 dark:hover:bg-neutral-900"
             >
               Add skin &amp; hair analysis
-            </a>
+            </PendingLink>
 
             {/* LEGACY, READ-ONLY (Chloe Session 1A). This column predates the
                 append-only clinical record and was editable in place: every
@@ -1465,12 +1484,17 @@ export default async function ClientCheatSheetPage({
                   Intake started <FormattedDateTime iso={intake.started_at} />,
                   not yet submitted.
                 </p>
-                <Link
+                {/* RESP-CLIENT-INTAKE-01 RANK 4 (1 of 3). All three status
+                    branches reach the same route and must acknowledge
+                    identically — a branch left bare would acknowledge only for
+                    some intake states, which reads as a bug in the others. */}
+                <PendingLink
                   href={`/clients/${client.id}/intake`}
+                  pendingLabel="Opening intake…"
                   className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                 >
                   View intake →
-                </Link>
+                </PendingLink>
               </div>
               {/* PR #293 follow-up: surface the Resend intake link CTA on the
                   Health & Forms tab practitioners actually use (this overview
@@ -1493,12 +1517,14 @@ export default async function ClientCheatSheetPage({
               <p className="text-sm text-neutral-600">
                 Submitted <FormattedDateTime iso={intake.submitted_at} />
               </p>
-              <Link
+              {/* RESP-CLIENT-INTAKE-01 RANK 4 (2 of 3). */}
+              <PendingLink
                 href={`/clients/${client.id}/intake`}
+                pendingLabel="Opening intake…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 View intake →
-              </Link>
+              </PendingLink>
             </div>
           )}
           {intake?.status === "reviewed" && intake.reviewed_at && (
@@ -1506,12 +1532,14 @@ export default async function ClientCheatSheetPage({
               <p className="text-sm text-neutral-600">
                 Reviewed <FormattedDateTime iso={intake.reviewed_at} />
               </p>
-              <Link
+              {/* RESP-CLIENT-INTAKE-01 RANK 4 (3 of 3). */}
+              <PendingLink
                 href={`/clients/${client.id}/intake`}
+                pendingLabel="Opening intake…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 View intake →
-              </Link>
+              </PendingLink>
             </div>
           )}
         </section>
@@ -1569,12 +1597,18 @@ export default async function ClientCheatSheetPage({
                       </p>
                     )}
                   </div>
-                  <Link
+                  {/* RESP-CLIENT-INTAKE-01 RANK 2. This lands on Session
+                      Detail, the slowest destination measured on this surface
+                      (714 ms median against 444-463 ms for the others), and
+                      said nothing for all of it. The route's own waterfall is
+                      owned by #732 and is deliberately untouched here. */}
+                  <PendingLink
                     href={`/clients/${client.id}/sessions/${lastTreatment.id}`}
+                    pendingLabel="Opening session…"
                     className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                   >
                     Open →
-                  </Link>
+                  </PendingLink>
                 </div>
                 {/* The same per-area summary the charting screen
                     shows. Charted laser/legacy sessions without
