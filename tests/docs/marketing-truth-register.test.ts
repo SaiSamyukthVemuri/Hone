@@ -53,6 +53,7 @@ import {
   walkStrings,
   isSubstantiveProse,
   INLINE_IN_CLAIM,
+  unreadableAssemblies,
 } from "./helpers/copy-sources";
 
 const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), "utf8");
@@ -1346,7 +1347,7 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     expect(judged(clean)).toBe(false);
   });
 
-  it("judgement folds a claim that is SPELLED as an assembly, in both spellings", () => {
+  it("judgement folds a claim that is SPELLED as an assembly, in every spelling", () => {
     // `copyModuleViolations` refuses assembly inside a canonical copy module, so
     // this cannot arise there. A component is rendering code, where `+` is
     // ordinary and allowed — and that is exactly where it was used to launder N1
@@ -1360,8 +1361,11 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
         FORBIDDEN.some((r) => r.pattern.test(c)),
       );
     expect(judged('"Every change" + " is tracked"')).toBe(true);
-    // The other spelling, in the same commit rather than a round later.
+    // Every spelling, in the same commit rather than a round apart. Naming them
+    // one at a time is what kept this alive: `+` was fixed, then `.join()` was
+    // added in the same breath, and `.concat()` still came back as a finding.
     expect(judged('["Every change", "is tracked"].join(" ")')).toBe(true);
+    expect(judged('"Every change".concat(" is tracked")')).toBe(true);
     expect(judged('"under review"')).toBe(false);
 
     // And the identity really is blind to the difference, which is why folding
@@ -1399,6 +1403,60 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
     expect(isWatched("supabase/migrations/0200_plan_caps.sql", cited)).toBe(true);
     // Non-vacuous: it is that directory that is watched, not everything.
     expect(isWatched("supabase/seed.sql", cited)).toBe(false);
+  });
+
+  it("a static string put through an unreadable operation is REFUSED, not read", () => {
+    // The reason there is no fourth spelling to chase. `+`, `.join()` and
+    // `.concat()` fold; every other method on a string-literal receiver is
+    // reported rather than guessed at, so an unfoldable assembly is visible
+    // instead of silently passing as two harmless halves.
+    const probe = (src: string) => unreadableAssemblies("app/probe/page.tsx", src);
+    expect(
+      probe('export const T = "Every change  is tracked".trim();').map((v) => v.rule),
+    ).toEqual(["claim/unreadable-static-string-call"]);
+    // Not always-on: the folded spellings are read, so they are not refused.
+    expect(probe('export const T = "Every change".concat(" is tracked");')).toEqual([]);
+    expect(probe('export const T = ["a", "b"].join(" ");')).toEqual([]);
+
+    // And the real surface carries none, so this costs nothing to hold.
+    const real = [
+      ...marketingComponentFiles(),
+      ...pageCopySources(),
+      ...POLICY_SOURCES,
+      ...CANONICAL_COPY_MODULES,
+    ].flatMap((f) => unreadableAssemblies(f));
+    expect(real.map((v) => `${v.file}:${v.detail}`)).toEqual([]);
+  });
+
+  it("an approved value is completed from the RIGHT as well as the left", () => {
+    // Position alone was the rule and it left the right-hand shape exempt:
+    // `{FRAGMENT} is tracked.` kept the hole as consumption, so `pageClaims`
+    // judged only "is tracked." and `moduleClaims` only "Every change" while the
+    // rendered sentence is N1.
+    const decl = `import { POSITIONING } from "@/lib/marketing/content";\n`;
+    const assembled = (body: string) =>
+      assembledClaimViolations("app/probe/page.tsx", `${decl}export const A = () => ${body};`)
+        .map((v) => v.detail);
+
+    // REFUSED — authored words continue this sentence's own run.
+    expect(assembled("<p>{POSITIONING.corePromise} is tracked.</p>")).toEqual([
+      "{POSITIONING.corePromise}",
+    ]);
+    // Refused for a non-link inline element too: `<strong>` is the same
+    // sentence continuing, and exempting it would just move the hole.
+    expect(
+      assembled("<p>{POSITIONING.corePromise} <strong>is tracked</strong>.</p>"),
+    ).toEqual(["{POSITIONING.corePromise}"]);
+
+    // ALLOWED — the owner-sanctioned shapes are untouched. What distinguishes
+    // them is not that the words come after, but that they are a trailing call
+    // to action rather than part of the claim.
+    expect(assembled("<p>{POSITIONING.corePromise}</p>")).toEqual([]);
+    expect(
+      assembled(
+        '<p>{POSITIONING.corePromise} <Link href="/features">See the full picture</Link></p>',
+      ),
+    ).toEqual([]);
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {

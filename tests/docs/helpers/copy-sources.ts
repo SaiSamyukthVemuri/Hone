@@ -159,6 +159,15 @@ export function marketingComponentFiles(): string[] {
  * operand that is not a literal makes the whole fold undefined, so it fails
  * closed into "not a complete value" rather than guessing.
  */
+/** Inline elements whose text is a separate call to action, not this sentence. */
+const LINK_TAGS = ["a", "Link"];
+
+/**
+ * String methods this fold understands. Anything else on a static string
+ * receiver is REFUSED rather than guessed at — see `staticConcatClaims`.
+ */
+const FOLDABLE_METHODS = new Set(["concat", "join"]);
+
 function foldStatic(node: ts.Expression): string | undefined {
   const e = unwrap(node) as ts.Expression;
   if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
@@ -167,24 +176,70 @@ function foldStatic(node: ts.Expression): string | undefined {
     const right = foldStatic(e.right);
     return left !== undefined && right !== undefined ? left + right : undefined;
   }
-  // `.join()` as well as `+`, because fixing one spelling and leaving the other
-  // is how this class of defect kept coming back a round later.
-  if (
-    ts.isCallExpression(e) &&
-    ts.isPropertyAccessExpression(e.expression) &&
-    e.expression.name.text === "join"
-  ) {
+  // `.join()` and `.concat()` as well as `+`. Naming spellings one at a time is
+  // what kept this class of defect alive a round at a time, so the unfoldable
+  // remainder is refused in `staticConcatClaims` instead of being enumerated.
+  if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
+    const method = e.expression.name.text;
     const receiver = unwrap(e.expression.expression);
-    if (!ts.isArrayLiteralExpression(receiver)) return undefined;
-    const separator =
-      e.arguments.length === 0 ? "," : foldStatic(e.arguments[0] as ts.Expression);
-    if (separator === undefined) return undefined;
-    const parts = receiver.elements.map((el) => foldStatic(el as ts.Expression));
-    return parts.every((part) => part !== undefined)
-      ? (parts as string[]).join(separator)
-      : undefined;
+    const args = e.arguments.map((a) => foldStatic(a as ts.Expression));
+    if (args.some((a) => a === undefined)) return undefined;
+    if (method === "join") {
+      if (!ts.isArrayLiteralExpression(receiver)) return undefined;
+      const separator = e.arguments.length === 0 ? "," : (args[0] as string);
+      const parts = receiver.elements.map((el) => foldStatic(el as ts.Expression));
+      return parts.every((part) => part !== undefined)
+        ? (parts as string[]).join(separator)
+        : undefined;
+    }
+    if (method === "concat") {
+      // String receiver only. `["a"].concat("b")` yields an ARRAY, and folding
+      // it to a string would be inventing a render.
+      const base = foldStatic(receiver as ts.Expression);
+      return base === undefined ? undefined : base + (args as string[]).join("");
+    }
+    return undefined;
   }
   return undefined;
+}
+
+/**
+ * A static string put through an operation this fold does not understand.
+ *
+ * REFUSAL, not interpretation, and the reason there is no third spelling to
+ * chase: `+`, `.join()` and `.concat()` are folded, and every OTHER method on a
+ * string-literal receiver is reported instead of being read. Adding a fold later
+ * shrinks this set; adding none still leaves the claim visible.
+ *
+ * Array receivers are left alone deliberately — `.map()` on a list of literals
+ * yields a list, not a sentence, and it is the one such call on the declared
+ * surface.
+ */
+function unreadableStaticStringCalls(sf: ts.SourceFile, file: string): CopyViolation[] {
+  const out: CopyViolation[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+      const receiver = unwrap(n.expression.expression);
+      const isStaticString =
+        ts.isStringLiteral(receiver) || ts.isNoSubstitutionTemplateLiteral(receiver);
+      if (isStaticString && !FOLDABLE_METHODS.has(n.expression.name.text)) {
+        out.push({
+          file,
+          line: lineOf(sf, n),
+          rule: "claim/unreadable-static-string-call",
+          detail: n.getText().replace(/\s+/g, " ").slice(0, 70),
+        });
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** Static string assemblies this fold cannot read, for the file's own guard. */
+export function unreadableAssemblies(file: string, source?: string): CopyViolation[] {
+  return unreadableStaticStringCalls(parse(file, source), file);
 }
 
 /** Every complete value a file spells as an assembly, judged as the whole it renders. */
@@ -825,7 +880,7 @@ type ClaimParts = {
   /** Holes with authored words on BOTH sides, within this sentence. */
   readonly completing: ts.Node[];
   /** Internal: the flat run this was built from, so nesting can compose. */
-  readonly sequence: Array<{ words: number } | { hole: ts.Node }>;
+  readonly sequence: Array<{ words: number; direct: boolean } | { hole: ts.Node }>;
   /** Element children inside the claim that nothing declared inline. */
   readonly undeclared: ts.JsxElement[] | ts.Node[];
 };
@@ -900,21 +955,30 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
   const undeclared: ts.Node[] = [];
   // A flat run of what this sentence is made of, in source order, so "is there
   // authored text on both sides of this hole" is a lookup rather than a guess.
-  const sequence: Array<{ words: number } | { hole: ts.Node }> = [];
+  // `direct` marks words authored in THIS sentence's own text run, as opposed
+  // to words that live inside a trailing link. That is the whole difference
+  // between a value being consumed and a value being completed from the right.
+  const sequence: Array<{ words: number; direct: boolean } | { hole: ts.Node }> = [];
   for (const child of node.children) {
     if (ts.isJsxText(child)) {
       const t = decodeEntities(child.text);
       text += t;
       textWithHoles += t;
       identityText += t;
-      sequence.push({ words: t.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length });
+      sequence.push({
+        words: t.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length,
+        direct: true,
+      });
     } else if (ts.isJsxExpression(child) && child.expression) {
       const e = unwrap(child.expression) as ts.Expression;
       if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
         text += e.text;
         textWithHoles += e.text;
         identityText += e.text;
-        sequence.push({ words: e.text.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length });
+        sequence.push({
+          words: e.text.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length,
+          direct: true,
+        });
       } else {
         const root = rootIdentifier(e);
         // A placeholder WORD, with no padding of its own: the authored text
@@ -948,13 +1012,22 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
         text += " ";
         textWithHoles += " ";
         identityText += " ";
-        sequence.push({ words: 0 });
+        sequence.push({ words: 0, direct: true });
       } else if (ts.isJsxElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
         const inner = claimParts(child, approved);
         text += inner.text;
         textWithHoles += inner.textWithHoles;
         identityText += inner.identityText;
-        sequence.push(...inner.sequence);
+        // A trailing LINK is a separate call to action, which the owner ruling
+        // keeps sayable after a consumed value. Any other inline element —
+        // `<strong>`, `<em>` — is the same sentence continuing, so its words
+        // complete a claim exactly as bare text does.
+        const inLink = LINK_TAGS.includes(tagNameOf(child));
+        sequence.push(
+          ...inner.sequence.map((item) =>
+            "words" in item && inLink ? { ...item, direct: false } : item,
+          ),
+        );
         holes.push(...inner.holes);
         approvedHoles.push(...inner.approvedHoles);
         undeclared.push(...inner.undeclared);
@@ -972,7 +1045,16 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
     // complete value and follows it with a separate call to action, which is
     // consumption and must stay sayable.
     const before = sequence.slice(0, i).some((x) => "words" in x && x.words > 0);
-    return before ? [item.hole] : [];
+    // AND from the right. Position alone was the rule, and it left
+    // `<p>{FRAGMENT} is tracked.</p>` exempt: the approved hole stayed
+    // consumption, `pageClaims` judged only "is tracked." and `moduleClaims`
+    // only "Every change", while the rendered sentence is N1. What actually
+    // distinguishes the sanctioned shape is not that the words come after, but
+    // that they live in a trailing LINK rather than in this sentence's own run.
+    const after = sequence
+      .slice(i + 1)
+      .some((x) => "words" in x && x.words > 0 && x.direct);
+    return before || after ? [item.hole] : [];
   });
   return { text, textWithHoles, identityText, holes, approvedHoles, undeclared, completing, sequence };
 }
