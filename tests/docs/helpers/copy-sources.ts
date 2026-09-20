@@ -420,19 +420,49 @@ function assemblesText(node: ts.Node): boolean {
  * `["a", "b"].join(" ")` is a sentence being built.
  */
 function joinsTextArray(call: ts.CallExpression): boolean {
-  const candidates: ts.Node[] = [...call.arguments];
+  const isTextLiteral = (e: ts.Node): boolean =>
+    (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) &&
+    bearsWord((e as ts.StringLiteral).text) &&
+    !looksLikeResourcePath((e as ts.StringLiteral).text);
+
+  // An array being combined — `[…].join(" ")`.
+  const arrays: ts.Node[] = [...call.arguments];
   if (ts.isPropertyAccessExpression(call.expression)) {
-    candidates.push(call.expression.expression);
+    arrays.push(call.expression.expression);
   }
-  for (const c of candidates) {
+  for (const c of arrays) {
     if (!ts.isArrayLiteralExpression(c)) continue;
-    const literals = wordBearingLiterals(c.elements);
+    const literals = c.elements.filter(isTextLiteral);
     const values = c.elements.filter(
       (e) => !ts.isStringLiteral(e) && !ts.isNoSubstitutionTemplateLiteral(e),
     );
     if (literals.length >= 2 || (literals.length >= 1 && values.length >= 1)) return true;
   }
-  return false;
+
+  // A STRING being combined — `"Every change".concat(" is tracked")`. Scoping
+  // this to arrays let the same assembly through under a different method name,
+  // which is the third spelling of one escape.
+  //
+  // The receiver counts only when it is itself a text literal or array. An
+  // identifier receiver must not count, or `t("a complete authored sentence")`
+  // — passing a whole value to a function — reads as assembly, which it is not.
+  const parts: ts.Node[] = [...call.arguments];
+  if (
+    ts.isPropertyAccessExpression(call.expression) &&
+    (isTextLiteral(call.expression.expression) ||
+      ts.isArrayLiteralExpression(call.expression.expression))
+  ) {
+    parts.push(call.expression.expression);
+  }
+  const literals = parts.filter(isTextLiteral);
+  const values = parts.filter(
+    (e) =>
+      !ts.isStringLiteral(e) &&
+      !ts.isNoSubstitutionTemplateLiteral(e) &&
+      !ts.isArrowFunction(e) &&
+      !ts.isFunctionExpression(e),
+  );
+  return literals.length >= 2 || (literals.length >= 1 && values.length >= 1);
 }
 
 /** A complete value needs no assembly: a literal, or an absence. */
@@ -475,7 +505,7 @@ export function componentProseViolations(file: string, source?: string): CopyVio
     // Build the sentence first, exactly as `pageClaims` does. Classifying each
     // JsxText node on its own let `<p>Every <strong>change is tracked</strong>.
     // </p>` pass as three harmless fragments.
-    if (ts.isJsxElement(n)) {
+    if (isClaimContainer(n)) {
       const parts = claimParts(n, approved);
       if (isSubstantiveProse(parts.textWithHoles)) {
         out.push({
@@ -491,7 +521,7 @@ export function componentProseViolations(file: string, source?: string): CopyVio
       isSubstantiveProse(n.text)
     ) {
       const attr = enclosingAttributeName(n);
-      const insideJsxText = ts.isJsxExpression(n.parent) && ts.isJsxElement(n.parent.parent);
+      const insideJsxText = ts.isJsxExpression(n.parent) && isClaimContainer(n.parent.parent);
       if ((!attr || !isPlumbingAttribute(attr)) && !insideJsxText) {
         out.push({
           file,
@@ -520,7 +550,7 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
   const approved = approvedCopyNames(sf);
   const out: CopyViolation[] = [];
   const visit = (n: ts.Node) => {
-    if (ts.isJsxElement(n)) {
+    if (isClaimContainer(n)) {
       const parts = claimParts(n, approved);
       // CONSUMPTION vs COMPLETION, and the test is position rather than
       // presence. An approved value is exempt unless authored words sit on BOTH
@@ -683,7 +713,21 @@ function rootIdentifier(e: ts.Expression): string | null {
   return ts.isIdentifier(cur) ? cur.text : null;
 }
 
-function claimParts(node: ts.JsxElement, approved: Set<string> = new Set()): ClaimParts {
+/**
+ * A container that can hold a sentence.
+ *
+ * A fragment is one. `export default () => <>Every change is tracked</>` authored
+ * the exact N1 wording, and every check here asked `ts.isJsxElement` — so the
+ * text reached neither the shape guard nor the corpus. There is no reason a
+ * fragment should behave differently from a `<div>`; it was simply not in the
+ * predicate.
+ */
+type ClaimContainer = ts.JsxElement | ts.JsxFragment;
+
+const isClaimContainer = (n: ts.Node): n is ClaimContainer =>
+  ts.isJsxElement(n) || ts.isJsxFragment(n);
+
+function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): ClaimParts {
   let text = "";
   let textWithHoles = "";
   const holes: ts.Node[] = [];
@@ -750,7 +794,7 @@ function claimParts(node: ts.JsxElement, approved: Set<string> = new Set()): Cla
   return { text, textWithHoles, holes, approvedHoles, undeclared, completing, sequence };
 }
 
-const claimText = (node: ts.JsxElement, approved?: Set<string>): string =>
+const claimText = (node: ClaimContainer, approved?: Set<string>): string =>
   claimParts(node, approved).text;
 
 /**
@@ -846,7 +890,7 @@ export function pageClaims(file: string, source?: string): string[] {
   const approved = approvedCopyNames(sf);
   const out: string[] = [];
   const visit = (n: ts.Node) => {
-    if (ts.isJsxElement(n)) {
+    if (isClaimContainer(n)) {
       const parts = claimParts(n, approved);
       // A sentence with a hole is not a complete value, so it is not judged
       // here — it was already REFUSED by `assembledClaimViolations`, which is
@@ -864,7 +908,7 @@ export function pageClaims(file: string, source?: string): string[] {
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
       const attr = enclosingAttributeName(n);
       const insideClaimElement =
-        ts.isJsxExpression(n.parent) && ts.isJsxElement(n.parent.parent);
+        ts.isJsxExpression(n.parent) && isClaimContainer(n.parent.parent);
       if ((!attr || !isPlumbingAttribute(attr)) && !insideClaimElement) {
         const value = normalise(n.text);
         if (value) out.push(value);

@@ -982,6 +982,65 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     ).toContain("claim/assembled-from-fragments");
   });
 
+  it("reads a fragment exactly as it reads an element", () => {
+    // `export default () => <>Every change is tracked</>` authored the exact N1
+    // wording, and every container check asked `ts.isJsxElement`. There is no
+    // reason a fragment should behave differently from a `<div>`; it was simply
+    // not in the predicate, so the text reached neither guard nor corpus.
+    const claims = pageClaims(
+      "app/probe/page.tsx",
+      `export default () => <>Every change is tracked</>;`,
+    );
+    expect(claims).toContain("Every change is tracked");
+    expect(FORBIDDEN.some((r) => claims.some((c) => r.pattern.test(c)))).toBe(true);
+
+    // A hole in a fragment is refused, like a hole anywhere else.
+    expect(
+      assembledIn(`export default () => <>Every change is {v}.</>;`).map((x) => x.rule),
+    ).toContain("claim/assembled-from-fragments");
+
+    // NEGATIVE: a fragment does not fuse its block children either.
+    const separated = pageClaims(
+      "app/probe/page.tsx",
+      `export default () => <>Intro<p>Trace it with an append-only edit history.</p></>;`,
+    );
+    expect(separated).toContain("Trace it with an append-only edit history.");
+    expect(separated.some((c) => /Intro\s*Trace/.test(c))).toBe(false);
+  });
+
+  it("refuses assembly whatever the method is called", () => {
+    // Three rounds found three spellings of one escape. The rule is structural,
+    // so the fourth spelling is covered by the same predicate rather than a
+    // fourth case: a call combines text when its LITERAL parts do.
+    for (const assembly of [
+      `export const d = ['Every change','is tracked'].join(' ');`,
+      `export const d = ["Every change", suffix].join(" ");`,
+      `export const d = "Every change".concat(" is tracked");`,
+      'export const d = `Every change is ${state}`;',
+      `export const d = "Every change" + " is tracked";`,
+    ]) {
+      expect(
+        copyModuleViolations("lib/marketing/probe.ts", assembly).length,
+        assembly.slice(0, 54),
+      ).toBeGreaterThan(0);
+    }
+
+    // NEGATIVES, all measured on the real modules: a LIST of complete copy
+    // lines, a resource path, and a whole sentence handed to a function.
+    for (const fine of [
+      `export const P = ["Built for electrolysis records", "History by treated area"];`,
+      'export const u = `mailto:${EMAIL}`;',
+      'export const i = `${CANONICAL_HOST}/icon`;',
+      `export const d = t("Every treated area keeps its own history");`,
+      `export const n = Number(label.replace(/[^0-9.]/g, ""));`,
+    ]) {
+      expect(
+        copyModuleViolations("lib/marketing/probe.ts", fine),
+        fine.slice(0, 54),
+      ).toEqual([]);
+    }
+  });
+
   it("the policy sources carry no holes, asserted directly", () => {
     // The one thing that could hide a claim in a judged JSX surface is a hole.
     //
