@@ -342,6 +342,68 @@ function unreadableStaticStringCalls(sf: ts.SourceFile, file: string): CopyViola
   return out;
 }
 
+/**
+ * A string BINDING built from authored words and something dynamic.
+ *
+ * `const state = "Every change is " + status` rendered through `<p>{state}</p>`
+ * is reachable by no other guard: the placeholder is not substantive prose, the
+ * concatenation cannot be folded because `status` is dynamic, and judgement sees
+ * only the harmless fragments. `copyModuleViolations` refuses this inside a
+ * canonical module; a component is where it was still allowed.
+ *
+ * TWO PLAIN WORDS, measured. The only mixed binding on the declared surface is a
+ * Tailwind class string, whose tokens carry hyphens, colons and brackets; a
+ * sentence fragment does not. Requiring two bare alphabetic words separates them
+ * without a prose-length gate, which is what let the four-word N1 wording
+ * through everywhere else.
+ */
+export function mixedAssemblyViolations(file: string, source?: string): CopyViolation[] {
+  const sf = parse(file, source);
+  const out: CopyViolation[] = [];
+  const visit = (n: ts.Node) => {
+    const initializer = ts.isVariableDeclaration(n)
+      ? n.initializer
+      : ts.isPropertyAssignment(n)
+        ? n.initializer
+        : undefined;
+    if (initializer) {
+      const e = unwrap(initializer) as ts.Expression;
+      const assembles =
+        ts.isTemplateExpression(e) ||
+        (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken);
+      if (assembles && foldStatic(e) === undefined) {
+        const words: string[] = [];
+        const collect = (x: ts.Node) => {
+          if (
+            ts.isStringLiteral(x) ||
+            ts.isNoSubstitutionTemplateLiteral(x) ||
+            ts.isTemplateHead(x) ||
+            ts.isTemplateMiddle(x) ||
+            ts.isTemplateTail(x)
+          ) {
+            for (const w of (x as ts.LiteralLikeNode).text.split(/\s+/)) {
+              if (/^[A-Za-z]+$/.test(w)) words.push(w);
+            }
+          }
+          ts.forEachChild(x, collect);
+        };
+        collect(e);
+        if (words.length >= 2) {
+          out.push({
+            file,
+            line: lineOf(sf, n),
+            rule: "claim/assembled-binding",
+            detail: e.getText().replace(/\s+/g, " ").slice(0, 70),
+          });
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
 /** Static string assemblies this fold cannot read, for the file's own guard. */
 export function unreadableAssemblies(file: string, source?: string): CopyViolation[] {
   return unreadableStaticStringCalls(parse(file, source), file);
@@ -900,26 +962,46 @@ export function assembledClaimViolations(file: string, source?: string): CopyVio
       // law forbids a page to do. An iteration method is excluded because its
       // result is a list of elements, not a sentence.
       const authoredWords = parts.sequence.some((x) => "words" in x && x.words > 0);
-      const isOpaque = (node: ts.Node): boolean => {
-        const expression = (node as ts.JsxExpression).expression;
-        if (!expression) return false;
-        const e = unwrap(expression) as ts.Expression;
-        // A BARE IDENTIFIER is opaque too. Catching only an immediate call left
-        // `const claim = getMarketingClaim()` rendered as `<p>{claim}</p>`
-        // passing: the predicate said no, `pageClaims` omitted the hole-bearing
-        // container, and the baseline recorded nothing. An approved copy value
-        // never reaches here — it is an approved hole, not a hole — and a loop
-        // variable is approved just above.
-        if (ts.isIdentifier(e)) return true;
-        if (!ts.isCallExpression(e)) return false;
+      // OPAQUE BY DEFAULT, exempting only what can positively be read.
+      // Naming the unreadable shapes one at a time — first calls, then bare
+      // identifiers — left `<p>{claim.text}</p>` passing on the next head. The
+      // polarity was wrong: a standalone hole IS the whole sentence, so the
+      // burden belongs on showing it can be read, not on enumerating ways it
+      // cannot.
+      const readable = (expr: ts.Expression): boolean => {
+        const e = unwrap(expr) as ts.Expression;
+        if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true;
+        // A default or a branch is readable when every alternative is:
+        // `{plan.priceLabel ?? "Talk to us"}` is consumption on both sides.
+        if (
+          ts.isBinaryExpression(e) &&
+          (e.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+            e.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+        ) {
+          return readable(e.left) && readable(e.right);
+        }
+        if (ts.isConditionalExpression(e)) {
+          return readable(e.whenTrue) && readable(e.whenFalse);
+        }
         // An iteration yields elements, not a sentence — but only when its
-        // RECEIVER can be seen. `getItems().map(...)` hides the same claim one
-        // level further out.
-        return !(
+        // RECEIVER can be seen. `getItems().map(...)` hides the claim one level
+        // further out.
+        if (
+          ts.isCallExpression(e) &&
           ts.isPropertyAccessExpression(e.expression) &&
           ITERATION_METHODS.has(e.expression.name.text) &&
           !ts.isCallExpression(unwrap(e.expression.expression))
-        );
+        ) {
+          return true;
+        }
+        // And anything rooted in an approved copy value, which includes a loop
+        // variable over one.
+        const root = rootIdentifier(e);
+        return root !== null && approved.has(root);
+      };
+      const isOpaque = (node: ts.Node): boolean => {
+        const expression = (node as ts.JsxExpression).expression;
+        return expression !== undefined && !readable(expression);
       };
       if (
         !authoredWords &&
@@ -1078,6 +1160,26 @@ function approvedCopyNames(sf: ts.SourceFile): Set<string> {
     ts.forEachChild(n, visit);
   };
   visit(sf);
+
+  // A NAME BOUND LOCALLY IS NOT THE IMPORTED ONE.
+  // Approval is a set of identifier TEXT, so a prop or local named `POSITIONING`
+  // in a nested component was treated as the canonical import and its runtime
+  // text was neither refused nor judged. Without a type checker the binding
+  // cannot be resolved exactly, so the safe reading is that a name declared
+  // anywhere in the file is no longer reliably the import. Zero occurrences on
+  // the real surface today; this keeps it that way.
+  const locallyBound = new Set<string>();
+  const findLocals = (n: ts.Node) => {
+    if (
+      (ts.isParameter(n) || ts.isVariableDeclaration(n) || ts.isBindingElement(n)) &&
+      ts.isIdentifier(n.name)
+    ) {
+      locallyBound.add(n.name.text);
+    }
+    ts.forEachChild(n, findLocals);
+  };
+  findLocals(sf);
+  for (const name of locallyBound) names.delete(name);
 
   // A LOOP VARIABLE IS CONSUMPTION, NOT AN OPAQUE CLAIM.
   // This was written one head earlier, measured to change nothing, and removed

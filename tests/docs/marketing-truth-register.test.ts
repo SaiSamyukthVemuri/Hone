@@ -56,6 +56,7 @@ import {
   INLINE_IN_CLAIM,
   unreadableAssemblies,
   moduleSpecifiersOf,
+  mixedAssemblyViolations,
 } from "./helpers/copy-sources";
 
 const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), "utf8");
@@ -326,6 +327,36 @@ describe("truth register: provenance is declared, not assumed", () => {
   const shallowClone = (): boolean =>
     git(["rev-parse", "--is-shallow-repository"]).stdout?.trim() === "true";
 
+  /**
+   * A remote-tracking ref is only as fresh as the last fetch.
+   *
+   * `origin/<production>` exists in any full clone and can lag production by
+   * weeks, so the comparison below ran against a cached commit and stayed green
+   * while production moved over the cited evidence. Nothing in the test or in
+   * `verify:prepush` fetched.
+   *
+   * ONLY IN A FULL CLONE, deliberately. Fetching here would also arm the
+   * comparison in CI's depth-1 checkouts, and the skip below records that
+   * arming it is an operator decision about repo-wide CI rather than one a docs
+   * lane takes on its own. This changes nothing about where the guard runs; it
+   * makes the data it runs on current.
+   */
+  let refreshed: boolean | undefined;
+  const refreshProductionRef = (): boolean => {
+    if (refreshed === undefined) {
+      refreshed =
+        shallowClone() ||
+        gitOk([
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          "origin",
+          `+refs/heads/${PRODUCTION_BRANCH}:refs/remotes/origin/${PRODUCTION_BRANCH}`,
+        ]);
+    }
+    return refreshed;
+  };
+
   const headObjectPresent = (): boolean =>
     gitOk(["cat-file", "-e", `${declaredHead()}^{commit}`]);
 
@@ -459,6 +490,23 @@ describe("truth register: provenance is declared, not assumed", () => {
     // canonical-production-facts came to carry three permanent failures. So the
     // check is on the DIFF, not the distance. Production may run ahead freely;
     // it may not run over the evidence without the register being re-derived.
+    // Current, or not compared at all. A stale cached ref is worse than no
+    // comparison: it looks like evidence.
+    if (!refreshProductionRef()) {
+      expect(
+        shallowClone(),
+        `origin/${PRODUCTION_BRANCH} could not be fetched and this clone is NOT shallow — ` +
+          "the comparison would run against a cached ref of unknown age, which looks like " +
+          "evidence and is not",
+      ).toBe(true);
+      return;
+    }
+    // Pins the refresh to THIS test rather than to a helper nobody calls:
+    // delete the guard above and `refreshed` stays undefined.
+    expect(
+      refreshed,
+      "the production ref was compared without being refreshed",
+    ).toBe(true);
     if (!gitOk(["rev-parse", "--verify", `origin/${PRODUCTION_BRANCH}`])) {
       // WHERE THIS RUNS, AND WHERE IT DOES NOT. A depth-1 PR checkout has no
       // remote branches at all, so this comparison cannot run in CI's validate
@@ -1320,12 +1368,55 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
       "a component exception was replaced; the new sentence is NOT judged against the register",
     ).toEqual([]);
 
-    const assembled = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) => assembledClaimViolations(f));
+    const pageViolations = [...pageCopySources(), ...POLICY_SOURCES].flatMap((f) =>
+      assembledClaimViolations(f),
+    );
+    const assembled = pageViolations.filter((v) => v.rule === "claim/assembled-from-fragments");
     expect(new Set(assembled.map((v) => v.file))).toEqual(new Set(ASSEMBLED_CLAIM_BASELINE));
     expect(
       assembled.length,
       "a claim is assembled from something that is not approved copy",
     ).toBeLessThanOrEqual(1);
+
+    // DECLARED, because opaque-by-default reaches them and the owner ruling does
+    // not move existing copy. Both resource articles render `{article.title}`
+    // from `const article = getResourceArticle(...)` — a call, so the guard
+    // cannot read it, and it is a genuine unreadable claim by this
+    // architecture's own standard rather than a false positive. Its text lives
+    // in `RESOURCE_ARTICLES`, which IS judged; what is missing is any way for
+    // the guard to see that without dataflow. BY IDENTITY, so one cannot be
+    // swapped for another.
+    const opaque = pageViolations.filter((v) => v.rule === "claim/standalone-opaque-hole");
+    expect(opaque.map((v) => `${v.file}::${v.detail}`).sort()).toEqual([
+      "app/resources/electrolysis-treatment-record-checklist/page.tsx::{article.title}",
+      "app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx::{article.title}",
+    ]);
+
+    // THE ASSEMBLY GUARD RUNS ON COMPONENTS TOO, which it previously did not.
+    // Only the fragment rule: a component's `{children}` and `{label}` are React
+    // composition, not claims, and the owner ruled the authoring law is checked
+    // on pages. These seven are the holes inside prose the same ruling keeps in
+    // place, now visible rather than merely unexamined.
+    const componentAssembled = marketingComponentFiles()
+      .flatMap((f) => assembledClaimViolations(f))
+      .filter((v) => v.rule === "claim/assembled-from-fragments");
+    expect(componentAssembled.map((v) => `${v.file}::${v.detail}`).sort()).toEqual([
+      "app/_components/marketing/SiteFooter.tsx::{POSITIONING.category}",
+      "app/_components/marketing/SiteFooter.tsx::{year}",
+      "app/_components/marketing/article.tsx::{CONTACT_EMAIL}",
+      "app/_components/marketing/article.tsx::{article.author}",
+      "app/_components/marketing/article.tsx::{article.readingTime}",
+      "app/_components/marketing/article.tsx::{fmt(article.dateModified)}",
+      "app/_components/marketing/article.tsx::{fmt(article.datePublished)}",
+    ]);
+
+    // And no binding anywhere assembles authored words with something dynamic.
+    // ZERO, so it is asserted as zero rather than baselined.
+    expect(
+      [...marketingComponentFiles(), ...pageCopySources(), ...POLICY_SOURCES, ...CANONICAL_COPY_MODULES]
+        .flatMap((f) => mixedAssemblyViolations(f))
+        .map((v) => `${v.file}::${v.detail}`),
+    ).toEqual([]);
   });
 });
 
@@ -1635,17 +1726,31 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
       "claim/standalone-opaque-hole",
     ]);
 
+    // A PROPERTY ACCESS on an unreadable root, which is the shape that survived
+    // naming the unreadable forms one at a time. The rule is now opaque BY
+    // DEFAULT: the burden is on showing a standalone hole can be read.
+    expect(probe("<p>{claim.text}</p>")).toEqual(["claim/standalone-opaque-hole"]);
+
     // NARROW, and measured: refusing every standalone hole flagged 23 real ones.
     // A map produces elements rather than a sentence.
     expect(probe("<ul>{ITEMS.map((i) => <li key={i}>{i}</li>)}</ul>")).toEqual([]);
+    // A default is readable when both sides are.
+    expect(
+      probe('<ul>{PLANS.map((plan) => <li key={plan.id}><span>{plan.priceLabel ?? "Talk to us"}</span></li>)}</ul>'),
+    ).toEqual([]);
     // A loop variable over copy the page declares is consumption, and its text
     // is already frozen in the page-prose baseline. This is what the
     // callback-parameter approval exists for: all five bare-identifier holes on
     // the real pages are loop variables, and without it every one is refused.
-    expect(probe("<p>{plan.bestFor}</p>")).toEqual([]);
     expect(
       probe("<ul>{ITEMS.map((line) => <li key={line}><span>{line}</span></li>)}</ul>"),
     ).toEqual([]);
+    expect(
+      probe("<div>{PLANS.map((plan) => <article key={plan.id}><p>{plan.bestFor}</p></article>)}</div>"),
+    ).toEqual([]);
+    // The SAME property access with no iteration in sight is refused: nothing
+    // here shows where `plan` came from, which is the whole test.
+    expect(probe("<p>{plan.bestFor}</p>")).toEqual(["claim/standalone-opaque-hole"]);
     // And the sanctioned shape is untouched.
     expect(
       assembledClaimViolations(
@@ -1654,12 +1759,56 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
       ),
     ).toEqual([]);
 
-    // The real pages carry none, so this costs nothing to hold.
+    // The real pages carry exactly two, both declared: `{article.title}` behind
+    // `const article = getResourceArticle(...)`. They are a genuine unreadable
+    // claim by this architecture's own standard, not a false positive — the
+    // text is in `RESOURCE_ARTICLES` and IS judged, but nothing lets the guard
+    // see that without dataflow. Frozen by identity in the exceptions test.
     expect(
       [...pageCopySources(), ...POLICY_SOURCES]
         .flatMap((f) => assembledClaimViolations(f))
-        .filter((v) => v.rule === "claim/standalone-opaque-hole"),
-    ).toEqual([]);
+        .filter((v) => v.rule === "claim/standalone-opaque-hole")
+        .map((v) => v.detail),
+    ).toEqual(["{article.title}", "{article.title}"]);
+  });
+
+  it("an approved name shadowed by a local binding is no longer approved", () => {
+    // Approval is a set of identifier TEXT, so a prop or local named
+    // `POSITIONING` in a nested component was read as the canonical import and
+    // its runtime text was neither refused nor judged. Without a type checker
+    // the binding cannot be resolved exactly, so a name declared anywhere in the
+    // file is no longer reliably the import.
+    const decl = 'import { POSITIONING } from "@/lib/marketing/content";\n';
+    const probe = (head: string) =>
+      assembledClaimViolations(
+        "app/probe/page.tsx",
+        `${decl}${head}export const A = () => <p>{POSITIONING.corePromise}</p>;`,
+      ).map((v) => v.rule);
+    expect(probe("")).toEqual([]);
+    expect(probe("const POSITIONING = getIt();\n")).toEqual(["claim/standalone-opaque-hole"]);
+  });
+
+  it("a binding that assembles authored words with something dynamic is refused", () => {
+    // Reachable by no other guard: `const state = "Every change is " + status`
+    // rendered through `<p>{state}</p>` is not substantive prose at the
+    // placeholder, cannot be folded because `status` is dynamic, and judgement
+    // sees only the harmless fragments. `copyModuleViolations` refuses this in a
+    // canonical module; a component is where it was still allowed.
+    const probe = (src: string) =>
+      mixedAssemblyViolations("app/_components/marketing/X.tsx", src).map((v) => v.rule);
+    expect(probe('const state = "Every change is " + status;')).toEqual([
+      "claim/assembled-binding",
+    ]);
+    expect(probe("const state = `Every change is ${status}`;")).toEqual([
+      "claim/assembled-binding",
+    ]);
+    // TWO PLAIN WORDS, measured: the only mixed binding on the declared surface
+    // is a Tailwind class string, whose tokens carry hyphens, colons and
+    // brackets. A prose-length gate would have missed the four-word N1 wording,
+    // which is the mistake this avoids repeating.
+    expect(probe('const c = "flex flex-col border-b" + x;')).toEqual([]);
+    // And a fully static assembly is folded and judged, not refused here.
+    expect(probe('const s = "Every change" + " is tracked";')).toEqual([]);
   });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {
