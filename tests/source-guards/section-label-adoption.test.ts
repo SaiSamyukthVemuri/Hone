@@ -48,8 +48,24 @@ const ROOTS = ["app", "components"];
 
 const PRIMITIVE_SOURCE = readFileSync(path.join(REPO_ROOT, PRIMITIVE), "utf8");
 
-/** The size rungs the primitive offers. A className carries exactly one. */
-const SIZES = new Set(["text-xs", "text-[11px]"]);
+/**
+ * The size rungs, READ FROM the primitive's own SIZE map.
+ *
+ * These were restated here while the tone was derived, which is the same
+ * source-of-truth gap one rung down: changing `SIZE.caption` in the primitive
+ * would have left this guard treating the OLD value as canonical, unable to see
+ * a duplicate using the new one, and green throughout.
+ */
+function sizeRungs(): Set<string> {
+  const block = /const SIZE = \{([\s\S]*?)\} as const;/.exec(PRIMITIVE_SOURCE);
+  expect(
+    block,
+    `${PRIMITIVE} no longer declares a SIZE map — update this guard with it`,
+  ).toBeTruthy();
+  const values = [...block![1].matchAll(/:\s*"([^"]+)"/g)].map((m) => m[1]);
+  expect(values.length, "the primitive's SIZE map went unread").toBeGreaterThan(0);
+  return new Set(values);
+}
 
 /**
  * The contract, READ FROM THE PRIMITIVE rather than restated here.
@@ -91,6 +107,7 @@ function mutedSpellings(): Set<string> {
 }
 
 const TYPOGRAPHY = canonicalTypography();
+const SIZES = sizeRungs();
 const MUTED = mutedSpellings();
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -121,8 +138,32 @@ function classNameLiterals(source: string, fileName: string): string[] {
   const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const out: string[] = [];
 
+  // Module-level string constants, so an extracted class name is followed to
+  // its value. `const LABEL = "…"; <span className={LABEL}>` is an exact
+  // duplicate that an identifier-blind walk never sees, and extracting class
+  // constants is already a pattern in this repository — `btnPrimary` and
+  // `btnSecondary` in the Google Calendar settings card are two of them.
+  const constants = new Map<string, string>();
+  const collectConstants = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      (ts.isStringLiteral(node.initializer) ||
+        ts.isNoSubstitutionTemplateLiteral(node.initializer))
+    ) {
+      constants.set(node.name.text, node.initializer.text);
+    }
+    ts.forEachChild(node, collectConstants);
+  };
+  ts.forEachChild(sf, collectConstants);
+
   const collectStrings = (node: ts.Node): void => {
-    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) out.push(node.text);
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      out.push(node.text);
+    } else if (ts.isIdentifier(node) && constants.has(node.text)) {
+      out.push(constants.get(node.text)!);
+    }
     ts.forEachChild(node, collectStrings);
   };
 
@@ -244,6 +285,15 @@ describe("UX-02: the uppercase section label has one owner", () => {
       ["token spelling", `<span className="${contract} text-fg-muted" />`],
       ["reordered", `<span className="uppercase text-neutral-500 tracking-wider text-xs font-medium" />`],
     ];
+    // An extracted constant is the same duplicate with a name on it.
+    const viaConstant = classNameLiterals(
+      `const LABEL = "${contract} text-neutral-500";\nexport const X = <span className={LABEL} />;`,
+      "constant.tsx",
+    );
+    expect(
+      viaConstant.some((l) => l.includes("tracking-wider")),
+      "a duplicate stored in a constant escaped the guard",
+    ).toBe(true);
     for (const [name, src] of cases) {
       const literals = classNameLiterals(`export const X = ${src};`, "case.tsx");
       const matched = literals.some((literal) => {
