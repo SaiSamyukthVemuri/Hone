@@ -142,12 +142,15 @@ export function resolveSpecifier(spec: string, from: string): string | null {
       ? relative(REPO_ROOT, join(REPO_ROOT, dirname(from), spec))
       : null;
   if (rel === null || rel.startsWith("..")) return null;
-  // `.json` TOO. `resolveJsonModule` is enabled in this repository, so
-  // `import copy from "./copy.json"` is an ordinary local module — and a
-  // resolver that only knows TypeScript returns null for it, which reads as "a
-  // package" and drops the file out of the closure entirely. The extension list
-  // is the boundary's edge, so anything the compiler can resolve locally belongs
-  // in it.
+  // AS WRITTEN FIRST. `import copy from "./copy.json"` carries its extension,
+  // which is the documented form — appending to it produced `copy.json.ts`,
+  // `copy.json.tsx` and `copy.json.json`, none of which exist, so the import
+  // read as a package and the file fell out of the boundary. The previous
+  // control tested an extensionless specifier and masked exactly this.
+  if (existsSync(join(REPO_ROOT, rel)) && /\.[a-z]+$/.test(rel)) return rel;
+  // `.json` alongside TypeScript, because `resolveJsonModule` is enabled here
+  // and the extension list IS the boundary's edge: anything the compiler can
+  // resolve locally belongs in it.
   return (
     [".ts", ".tsx", ".json", "/index.ts", "/index.tsx"]
       .map((ext) => rel + ext)
@@ -206,6 +209,27 @@ export function marketingClosure(): string[] {
  * `(app)` is excluded by path: that group is the authenticated application, and
  * the marketing register does not govern it.
  */
+/**
+ * Filenames Next renders without anything importing them.
+ *
+ * `loading`, `template` and `default` were missing: Next shows
+ * `app/pricing/loading.tsx` during navigation, so it is visitor-facing, and it
+ * was neither a closure seed nor part of the route scan — which meant even the
+ * outside-scope list did not move when one appeared.
+ */
+const CONVENTION_FILENAME =
+  /^(page|route|layout|template|default|loading|not-found|error|global-error|forbidden|unauthorized|opengraph-image|twitter-image|apple-icon|icon)\.tsx?$/;
+
+/**
+ * Does Next render this filename without anything importing it?
+ *
+ * Exported so it can be driven with names that do not exist in the tree yet.
+ * Left private it could only be proven by creating a real `loading.tsx`, so it
+ * would have shipped unpinned — and a guard that cannot be shown red is not yet
+ * a guard.
+ */
+export const isConventionFilename = (name: string): boolean => CONVENTION_FILENAME.test(name);
+
 export function publicRouteEntryPoints(): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
@@ -215,11 +239,7 @@ export function publicRouteEntryPoints(): string[] {
       const rel = `${dir}/${name}`;
       if (statSync(join(REPO_ROOT, rel)).isDirectory()) {
         walk(rel);
-      } else if (
-        /^(page|route|layout|opengraph-image|twitter-image|not-found|error|global-error)\.tsx?$/.test(
-          name,
-        )
-      ) {
+      } else if (CONVENTION_FILENAME.test(name)) {
         out.push(rel);
       }
     }
@@ -317,8 +337,71 @@ export function textFragments(file: string, source?: string): string[] {
  * not one, and judging it there reported nine sanctioned sentences as
  * unsanctioned purely for having a heading in front of them.
  */
-export function adjacentText(file: string, source?: string): string {
-  return textFragments(file, source).join(" ");
+export function adjacentText(file: string, source?: string): string[] {
+  return [
+    // RENDERED adjacency: JSX text and child-position literals only. An
+    // attribute literal sits between two text runs in source order, so joining
+    // everything turned `<p>Every change <strong className="font-bold">is
+    // tracked</strong></p>` into "Every change font-bold is tracked" and pushed
+    // the sentence apart with a class name.
+    renderedFragments(file, source).join(" "),
+    // AND every fragment, which is what catches assembly with no JSX in it at
+    // all — `"Every change" + " is tracked"`, a template, `.join()`, `.concat()`.
+    // Two joins rather than one because they fail in opposite directions:
+    // interleaving can BREAK a rendered match, and restricting to rendered text
+    // loses the non-JSX cases. Their union is strictly more coverage than
+    // either, and both are measured clean across the closure.
+    textFragments(file, source).join(" "),
+  ];
+}
+
+/**
+ * The fragments that render as BODY TEXT, in source order.
+ *
+ * R2 judges every fragment a file holds, including attribute values. R3 must
+ * not: an attribute literal sits between two text runs in source order, so
+ * `<p>Every change <strong className="font-bold">is tracked</strong></p>` joined
+ * as "Every change font-bold is tracked" and the sentence a visitor reads was
+ * pushed apart by a class name.
+ *
+ * This REMOVES text from the join rather than adding a case to it. Over-joining
+ * is safe because it can only add a candidate; interleaving is not, because it
+ * can break one — so the join takes JSX text and literals in child position, and
+ * nothing else.
+ */
+export function renderedFragments(file: string, source?: string): string[] {
+  if (file.endsWith(".json")) return textFragments(file, source);
+  const sf = parse(file, source);
+  const found: { at: number; text: string }[] = [];
+  const inChildPosition = (node: ts.Node): boolean => {
+    for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
+      if (ts.isJsxAttribute(cur)) return false;
+      if (
+        ts.isJsxExpression(cur) &&
+        cur.parent &&
+        (ts.isJsxElement(cur.parent) || ts.isJsxFragment(cur.parent))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxText(n)) {
+      const text = normalise(decodeEntities(n.text));
+      if (text) found.push({ at: n.getStart(sf), text });
+    }
+    if (
+      (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
+      inChildPosition(n)
+    ) {
+      const text = normalise(n.text);
+      if (text) found.push({ at: n.getStart(sf), text });
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return found.sort((a, b) => a.at - b.at).map((f) => f.text);
 }
 
 const FUNCTION_WORDS = new Set([
@@ -427,7 +510,8 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
       // rendered, so `{head} {tail}` is one line of text. Measured: the blunt
       // reading — any two holes — flagged 118 places, nearly all of them a
       // container holding a header and a list. This one flags ONE.
-      if ((directWords(n) > 0 && holes.length > 0) || runsTogether(n)) {
+      const together = runsTogether(n);
+      if ((directWords(n) > 0 && holes.length > 0) || together) {
         for (const hole of holes) {
           if (reported.has(hole.getStart(sf))) continue;
           reported.add(hole.getStart(sf));
@@ -436,6 +520,19 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
             line: lineOf(sf, hole),
             rule: "copy/incomplete-claim",
             detail: hole.getText().replace(/\s+/g, " "),
+          });
+        }
+        // A COMPONENT is not an expression, so a sentence assembled from two of
+        // them — `<p><Head /><Tail /></p>` — has nothing in `holes` to attribute
+        // the refusal to. The element itself is the claim in that case.
+        if (together && holes.length === 0 && !reported.has(n.getStart(sf))) {
+          reported.add(n.getStart(sf));
+          const opening = ts.isJsxElement(n) ? n.openingElement.getText() : "<>";
+          out.push({
+            file,
+            line: lineOf(sf, n),
+            rule: "copy/incomplete-claim",
+            detail: `${opening.replace(/\s+/g, " ")} assembled from adjacent parts`,
           });
         }
       }
@@ -455,20 +552,41 @@ export function incompleteClaimViolations(file: string, source?: string): CopyVi
  */
 function runsTogether(el: ts.JsxElement | ts.JsxFragment): boolean {
   const kids = el.children;
-  const hole = (c: ts.Node | undefined): boolean =>
-    c !== undefined &&
-    ts.isJsxExpression(c) &&
-    c.expression !== undefined &&
-    !spelledOutHere(c.expression);
+  // OPAQUE: text this file does not spell out. A non-literal expression, or a
+  // COMPONENT — `<p><Head /><Tail /></p>` renders the sentence those two return
+  // while each module holds a harmless fragment and the closure judges them
+  // separately. A component is recognised by its capital initial, which is
+  // JSX's own rule for the distinction, not a guess about what it does.
+  const opaque = (c: ts.Node | undefined): boolean => {
+    if (c === undefined) return false;
+    if (ts.isJsxExpression(c)) {
+      return c.expression !== undefined && !spelledOutHere(c.expression);
+    }
+    const tag = ts.isJsxSelfClosingElement(c)
+      ? c.tagName.getText()
+      : ts.isJsxElement(c)
+        ? c.openingElement.tagName.getText()
+        : null;
+    return tag !== null && /^[A-Z]/.test(tag);
+  };
+  // Words JSX keeps on this line. A whitespace run containing a newline is
+  // dropped, so formatted children are separate lines rather than a sentence.
+  const keptText = (c: ts.Node | undefined): boolean =>
+    c !== undefined && ts.isJsxText(c) && !c.text.includes("\n");
   const keptSpace = (c: ts.Node | undefined): boolean =>
+    c !== undefined && keptText(c) && (c as ts.JsxText).text.trim() === "" && (c as ts.JsxText).text.length > 0;
+  const keptWords = (c: ts.Node | undefined): boolean =>
     c !== undefined &&
-    ts.isJsxText(c) &&
-    c.text.trim() === "" &&
-    c.text.length > 0 &&
-    !c.text.includes("\n");
-  for (let i = 0; i < kids.length - 1; i += 1) {
-    if (hole(kids[i]) && hole(kids[i + 1])) return true;
-    if (hole(kids[i]) && keptSpace(kids[i + 1]) && hole(kids[i + 2])) return true;
+    keptText(c) &&
+    (c as ts.JsxText).text.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length > 0;
+  for (let i = 0; i < kids.length; i += 1) {
+    if (!opaque(kids[i])) continue;
+    // Two values with nothing, or only a kept space, between them.
+    if (opaque(kids[i + 1])) return true;
+    if (keptSpace(kids[i + 1]) && opaque(kids[i + 2])) return true;
+    // Or authored words on the same line as one: `<p>Every <Head /> tracked</p>`
+    // completes a sentence out of this file and another.
+    if (keptWords(kids[i - 1]) || keptWords(kids[i + 1])) return true;
   }
   return false;
 }

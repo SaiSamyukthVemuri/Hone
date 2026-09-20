@@ -65,6 +65,7 @@ import {
   assertDeclaredExist,
   outsideMarketingScope,
   publicRouteEntryPoints,
+  isConventionFilename,
   walkStrings,
   type CopyViolation,
 } from "./helpers/copy-inventory";
@@ -105,7 +106,7 @@ const FRAGMENTS = [
 ];
 
 /** R3. Each file's fragments as one string, for the phrase rules only. */
-const ADJACENT = CLOSURE.map((f) => ({ file: f, text: adjacentText(f) }));
+const ADJACENT = CLOSURE.flatMap((f) => adjacentText(f).map((text) => ({ file: f, text })));
 
 /** The production head the register declares it was verified against. */
 function declaredHead(): string {
@@ -889,7 +890,9 @@ describe("R3. ADJACENCY: a claim assembled from harmless pieces", () => {
   it("the joined text is real, and longer than any single fragment", () => {
     const longest = ADJACENT.reduce((a, b) => (a.text.length > b.text.length ? a : b));
     expect(longest.text.length).toBeGreaterThan(1000);
-    expect(ADJACENT.length).toBe(CLOSURE.length);
+    // TWO readings per file: rendered adjacency, and every fragment. They fail
+    // in opposite directions, so the union is strictly more coverage.
+    expect(ADJACENT.length).toBe(CLOSURE.length * 2);
   });
 });
 
@@ -939,7 +942,7 @@ describe("R5. HOLES: a sentence whose middle comes from another file", () => {
 describe("NEGATIVE CONTROLS: each rule is red on the defect it claims to catch", () => {
   const probe = (body: string, head = "") => `${head}export const A = () => ${body};\n`;
   const joined = (src: string) =>
-    forbiddenHits(adjacentText("app/probe/page.tsx", src)).length > 0;
+    adjacentText("app/probe/page.tsx", src).some((text) => forbiddenHits(text).length > 0);
   const incomplete = (body: string) =>
     incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
 
@@ -984,6 +987,70 @@ describe("NEGATIVE CONTROLS: each rule is red on the defect it claims to catch",
       "copy/incomplete-claim",
       "copy/incomplete-claim",
     ]);
+  });
+
+  it("REFUSED — a claim assembled by two adjacent COMPONENTS", () => {
+    // Cross-module composition: `<p><Head /><Tail /></p>` renders the sentence
+    // those two return while each module holds a harmless fragment and the
+    // closure judges them separately. Recognised by JSX's own rule for what a
+    // component is — a capital initial — not by a guess about what it does.
+    expect(incomplete("<p><Head /><Tail /></p>")).toEqual(["copy/incomplete-claim"]);
+    expect(incomplete("<p><Head /> <Tail /></p>")).toEqual(["copy/incomplete-claim"]);
+    // Words on the same line as one component complete a sentence out of this
+    // file and another.
+    expect(incomplete("<p>Every <Head /> tracked</p>")).toEqual(["copy/incomplete-claim"]);
+    // A component beside a hole is the same shape once more.
+    expect(incomplete("<p><Head />{tail}</p>")).toEqual(["copy/incomplete-claim"]);
+  });
+
+  it("ACCEPTED — a lone component, and a lowercase element", () => {
+    // Treating every component inside a text element as a hole flagged 436
+    // places. What makes the rule affordable is the same whitespace rule as
+    // everywhere else: only things running together on ONE rendered line.
+    expect(incomplete("<p><Head /></p>")).toEqual([]);
+    expect(incomplete("<div>\n  <Section />\n  <Section />\n</div>")).toEqual([]);
+    expect(incomplete("<p><strong>Every change is tracked</strong></p>")).toEqual([]);
+  });
+
+  it("REFUSED — an attribute literal no longer pushes a sentence apart", () => {
+    // Joining every literal in source order let a class name land between two
+    // text runs: `<p>Every change <strong className="font-bold">is
+    // tracked</strong></p>` joined as "Every change font-bold is tracked".
+    expect(joined(probe('<p>Every change <strong className="font-bold">is tracked</strong></p>'))).toBe(true);
+    expect(joined(probe('<p>Every change <strong className="a" id="b" style={{}}>is tracked</strong></p>'))).toBe(true);
+  });
+
+  it("REFUSED — a JSON import that carries its own extension", () => {
+    // The documented form. Appending to a specifier that already ends in
+    // `.json` produced `copy.json.ts`, `copy.json.tsx` and `copy.json.json`, so
+    // the import read as a package — and the previous control tested an
+    // EXTENSIONLESS specifier, which masked exactly this.
+    expect(resolveSpecifier("./fixtures/copy-inventory.json", "tests/docs/probe.ts")).toBe(
+      "tests/docs/fixtures/copy-inventory.json",
+    );
+    expect(resolveSpecifier("@/tests/docs/fixtures/copy-inventory.json", "app/page.tsx")).toBe(
+      "tests/docs/fixtures/copy-inventory.json",
+    );
+    expect(resolveSpecifier("./does-not-exist.json", "tests/docs/probe.ts")).toBe(null);
+  });
+
+  it("the route scan knows every filename Next renders without an import", () => {
+    // `loading` was missing: Next shows `app/pricing/loading.tsx` during
+    // navigation, so it is visitor-facing, and it was neither a closure seed nor
+    // part of the scan — which meant even the outside-scope list did not move
+    // when one appeared.
+    for (const filename of [
+      "page.tsx", "route.ts", "layout.tsx", "template.tsx", "default.tsx",
+      "loading.tsx", "not-found.tsx", "error.tsx", "global-error.tsx",
+      "forbidden.tsx", "unauthorized.tsx", "opengraph-image.tsx",
+      "twitter-image.tsx", "apple-icon.tsx", "icon.tsx",
+    ]) {
+      expect(isConventionFilename(filename), `${filename} is rendered without an import`).toBe(true);
+    }
+    // And not everything, or "convention" would mean "every file".
+    for (const ordinary of ["helpers.ts", "Button.tsx", "page.test.tsx", "loading.css"]) {
+      expect(isConventionFilename(ordinary), ordinary).toBe(false);
+    }
   });
 
   it("ACCEPTED — children on separate lines, which JSX does not run together", () => {
