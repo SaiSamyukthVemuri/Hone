@@ -20,6 +20,9 @@ import {
   PRACTITIONER_ACTIONS,
   PRACTITIONER_ACTION_LABEL,
   PRACTITIONER_STATUS_LABEL,
+  TTL_HOURS_DEFAULT,
+  TTL_HOURS_MAX,
+  TTL_HOURS_MIN,
   TTL_PRESETS,
   UNKNOWN_INVITATION_FAILS_CLOSED,
   WEEKDAYS_IN_DISPLAY_ORDER,
@@ -418,6 +421,86 @@ function reachableFromApp(): Map<string, string[]> {
   return reached;
 }
 
+/**
+ * Every shipped root that can reach each module — ALL of them, not the first.
+ *
+ * WHY `reachableFromApp` IS NOT ENOUGH, AND WHY THIS IS NOT A TIDY-UP.
+ * That walk keeps one path per module (`if (reached.has(target)) continue`) and
+ * every root shares one queue and one visited set. So whichever root arrives
+ * first owns `path[0]`, and every other root's path to the same module is
+ * discarded. That answers "is this reachable at all" and CANNOT answer "is
+ * every path to it sanctioned" — the question the dormancy guard actually asks.
+ *
+ * The failure is not theoretical and it is one-directional: a SANCTIONED import
+ * at depth 1 always wins the race against an UNSANCTIONED one at greater depth,
+ * so the guard goes blind in exactly the direction that matters. It happened —
+ * a constant imported from this prototype into `lib/booking/waitlist-invitation.ts`
+ * put the prototype on the public booking and invitation-recipient paths, and
+ * this guard stayed green through the whole change.
+ *
+ * Propagating the root SET to a fixpoint costs one more traversal and removes
+ * the blind spot.
+ */
+/**
+ * `importSpecifiers` for a file, parsed at most once.
+ *
+ * THE FIXPOINT BELOW REVISITS MODULES; THE PARSE MUST NOT. `reachableFromApp`
+ * visits each module exactly once, so reading and parsing inside its loop costs
+ * nothing. The root-set propagation re-enqueues a module every time its set
+ * grows, and with ~319 roots under `app/` a shared module is re-enqueued dozens
+ * of times — each one previously a fresh `readFileSync` plus a full
+ * `ts.createSourceFile`. Measured on one machine: 2.9s before, 14.5s after,
+ * against this test's own `{ timeout: 30_000 }`. A hosted runner is commonly
+ * 2-3x slower, which put a REQUIRED guard at its own ceiling — and a guard that
+ * flakes is a guard people learn to re-run rather than read.
+ *
+ * The specifier list is a pure function of the file's bytes, so memoising it is
+ * free of behaviour change and makes the extra traversal nearly free.
+ */
+const specifierCache = new Map<string, string[]>();
+
+function cachedImportSpecifiers(file: string): string[] {
+  const hit = specifierCache.get(file);
+  if (hit !== undefined) return hit;
+  let specs: string[];
+  try {
+    specs = importSpecifiers(file, readFileSync(join(ROOT, file), "utf8"));
+  } catch {
+    specs = [];
+  }
+  specifierCache.set(file, specs);
+  return specs;
+}
+
+function rootsReachingEachModule(): Map<string, Set<string>> {
+  const roots = new Map<string, Set<string>>();
+  const queue: string[] = [];
+  for (const entry of shippedApplicationRoots()) {
+    roots.set(entry, new Set([entry]));
+    queue.push(entry);
+  }
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const mine = roots.get(current)!;
+    for (const spec of cachedImportSpecifiers(current)) {
+      const target = resolveSpecifier(current, spec);
+      if (target === null) continue;
+      const theirs = roots.get(target);
+      if (theirs === undefined) {
+        roots.set(target, new Set(mine));
+        queue.push(target);
+        continue;
+      }
+      const before = theirs.size;
+      for (const r of mine) theirs.add(r);
+      // Re-enqueue ONLY on growth. That is what terminates this on a graph
+      // with cycles.
+      if (theirs.size !== before) queue.push(target);
+    }
+  }
+  return roots;
+}
+
 const CONTRACT_MODULE = "lib/waitlist/invite-to-book-contract.ts";
 
 /**
@@ -784,14 +867,21 @@ describe("this module is UNREACHABLE from the application", () => {
     const deepest = Math.max(...[...reached.values()].map((p) => p.length));
     expect(deepest, "the walk never went beyond a single hop").toBeGreaterThan(3);
 
+    // EVERY ROOT THAT REACHES IT, NOT THE FIRST ONE FOUND. `reached` keeps a
+    // single path per module, so `path[0]` names whichever root won the race —
+    // and a sanctioned root at depth 1 always beats an unsanctioned one deeper,
+    // which made this assertion blind in the one direction it exists to watch.
+    // See `rootsReachingEachModule`.
+    const rootsByModule = rootsReachingEachModule();
     for (const entry of PROTOTYPE_ENTRY_POINTS) {
-      const path = reached.get(entry);
-      if (path === undefined) continue;
-      // The path's FIRST element is the shipped entry point it was reached
-      // from. Only the integration binding may be that root.
+      const rootSet = rootsByModule.get(entry);
+      if (rootSet === undefined) continue;
+      const unsanctioned = [...rootSet]
+        .filter((r) => !SANCTIONED_INTEGRATION_ENTRY.includes(r))
+        .sort();
       expect(
-        SANCTIONED_INTEGRATION_ENTRY.includes(path[0]) ? null : path.join("\n  -> "),
-        `an UNSANCTIONED shipped path now reaches ${entry}`,
+        unsanctioned.length === 0 ? null : unsanctioned.join("\n  "),
+        `UNSANCTIONED shipped roots now reach ${entry}`,
       ).toBeNull();
     }
 
@@ -2086,10 +2176,15 @@ describe("the composer's draft", () => {
     expect(draftToInviteInput("e1", draft({ expiresInHours: 999 }))).toBeNull();
     // A draft with no service chosen is invalid too, so it reaches nothing.
     expect(draftToInviteInput("e1", draft({ serviceId: null }))).toBeNull();
+    // The window travels from the constant, not from a number copied into this
+    // assertion. Written as a literal it asserted 72 and failed the moment the
+    // default became 48 — which is the right failure for a behaviour change and
+    // the wrong one for a projection test, whose subject is that the payload is
+    // whole rather than what any one field happens to hold today.
     expect(draftToInviteInput("e1", draft())).toEqual({
       entryId: "e1",
       scope: { serviceId: "svc-1", windowDays: 7, allowedWeekdays: null },
-      expiresInHours: 72,
+      expiresInHours: TTL_HOURS_DEFAULT,
     });
   });
 

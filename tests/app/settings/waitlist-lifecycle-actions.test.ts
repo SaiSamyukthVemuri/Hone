@@ -272,7 +272,7 @@ describe("source contract", () => {
     expect(CODE).toMatch(/export async function claimWaitlistEntryAction/);
   });
 
-  it("wires exactly the six permitted commands and no others", () => {
+  it("wires exactly the seven permitted commands and no others", () => {
     // TWO CALL SHAPES, and a census that saw only one would under-report.
     // `remove` and `claim-next` name their command at the `.rpc(` call; the four
     // single-entry actions pass it to the shared runner as `rpc: "…"`. Both are
@@ -284,7 +284,7 @@ describe("source contract", () => {
     ];
     // Fails closed: if the runner is ever refactored to take a non-literal, the
     // count drops and this assertion goes red rather than passing quietly.
-    expect(rpcs).toHaveLength(6);
+    expect(rpcs).toHaveLength(7);
     expect(new Set(rpcs)).toEqual(
       new Set([
         "remove_new_client_waitlist_entry",
@@ -293,6 +293,10 @@ describe("source contract", () => {
         "release_new_client_waitlist_entry",
         "expire_new_client_waitlist_invitation",
         "requeue_new_client_waitlist_entry",
+        // WAIT-P1-EXIT, migration 0200. The seventh, and it goes through the
+        // SAME shared runner as the four single-entry commands — one entry id
+        // from the browser, studio and actor resolved server-side.
+        "close_unbooked_new_client_waitlist_invitation",
       ]),
     );
   });

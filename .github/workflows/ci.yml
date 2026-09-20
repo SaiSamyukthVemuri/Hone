@@ -96,6 +96,10 @@ jobs:
       browser_extended: ${{ steps.browser.outputs.browser_extended }}
       browser_specs: ${{ steps.browser.outputs.browser_specs }}
       browser_shards: ${{ steps.browser.outputs.browser_shards }}
+      # The DENOMINATOR the targeted run divides by. Declared here because a
+      # step output that is not surfaced on the job resolves to an empty string
+      # downstream, which would make the flag `--shard=N/` and fail the lane.
+      browser_shard_total: ${{ steps.browser.outputs.browser_shard_total }}
       browser_reason: ${{ steps.browser.outputs.browser_reason }}
     steps:
       - name: Checkout repository
@@ -150,14 +154,66 @@ jobs:
               const files = fs.readFileSync("changed.txt","utf8").split("\n").filter(Boolean);
               const r = m.selectBrowserGroups(files);
               const specs = m.specsForGroups(r.groups);
+              // AN EMPTY SELECTION THAT STILL RAN MEANS "RUN EVERYTHING".
+              // This job is gated on `browser_run || full_matrix_required`, so
+              // reaching it with NO groups can only mean the second: the whole
+              // suite, unselected. That is extended coverage by definition, and
+              // it must be treated as such -- 4 shards and the 18 min ceiling.
+              // Before this line it fell through the targeted branch and ran the
+              // entire suite split across the TARGETED shard count under the
+              // TARGETED 15 min cap, which is strictly less time and fewer
+              // runners than the same workload gets when it is named extended.
+              const fullSuite = !specs || specs.length === 0;
+              const extended = r.extended || fullSuite;
+              // Extended runs the whole suite, which is never fewer files than
+              // shards. Targeted is capped at what it actually selected.
+              const shardTotal = extended
+                ? 4
+                : Math.max(1, Math.min(3, specs.length));
               const out = [
                 `browser_run=${r.groups.length > 0}`,
-                `browser_extended=${r.extended}`,
+                `browser_extended=${extended}`,
                 `browser_specs=${specs ? specs.map(s => "e2e/" + s).join(" ") : ""}`,
                 // Extended coverage is split across two SEPARATE JOBS, so each
                 // shard gets its own runner and its own Supabase stack. That
                 // preserves the isolation the single-worker config protects.
-                `browser_shards=${r.extended ? "[1,2,3,4]" : "[1]"}`,
+                //
+                // TARGETED IS SPLIT TOO, AND IT WAS THE LANE THAT NEEDED IT.
+                // It ran every selected spec in ONE shard while extended - the
+                // lane with FEWER specs per shard - already had four. On a diff
+                // touching `booking` + `owner_admin` that is 36 specs in one
+                // job: measured at 680s, 745s and 761s of tests on identical
+                // work, against a 15 min budget that ~180s of setup eats into.
+                // One of those four runs passed. The workload was never the
+                // variable; the runner was.
+                //
+                // THREE, NOT TWO, AND THE SETUP COST IS WHY.
+                // Each shard pays the fixed cost again, and this file records
+                // that cost swinging 266s -> 508s between runners. Two shards
+                // put the worst case at 380s of tests plus 508s of setup =
+                // ~14m48s against a 15 min cap, which is not a margin. Three
+                // brings the test phase to ~254s and the worst case to ~12m42s.
+                // Still no ceiling moves: no OTHER lane pays for this one.
+                //
+                // ...BUT NEVER MORE SHARDS THAN THERE ARE SPEC FILES.
+                // `playwright.config.ts` sets `fullyParallel: false`, so
+                // Playwright shards BY FILE. Hand two files to three shards and
+                // the third gets nothing, exits "No tests found", and fails the
+                // matrix child -- which fails the REQUIRED aggregator and blocks
+                // a PR for a reason that has nothing to do with its diff.
+                //
+                // THAT IS REACHABLE, NOT THEORETICAL: `smoke`, `marketing`,
+                // `responsive` and `google` are each TWO spec files, so four of
+                // the ten groups trip it on their own.
+                //
+                // Capping is preferred over `--pass-with-no-tests` deliberately.
+                // An empty shard still costs a full runner, a Supabase stack and
+                // a `next build` -- the 266s-508s this file already records --
+                // to execute nothing. And permitting empty shards globally would
+                // also silence a genuinely empty SELECTION, which is a real bug
+                // this lane should keep failing on.
+                `browser_shard_total=${shardTotal}`,
+                `browser_shards=[${Array.from({ length: shardTotal }, (_, i) => i + 1).join(",")}]`,
                 `browser_reason=${r.reason.replace(/\n/g," ").slice(0,300)}`,
               ].join("\n");
               fs.appendFileSync(process.env.GITHUB_OUTPUT, out + "\n");
@@ -479,8 +535,14 @@ jobs:
     # minutes is still too slow and still worth investigating; it now reports
     # its own result instead of being cut mid-run and misread as a test failure.
     #
-    #   targeted  : target <10 min,          hard timeout 15 min
-    #   extended  : target <10 min per shard, hard timeout 18 min
+    #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
+    #   extended  : target <10 min per shard, hard timeout 18 min  (4 shards)
+    #
+    # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
+    # one breaching its budget, and the repair was to give it the sharding
+    # extended already had rather than to buy every PR more time. Raising 15
+    # would have moved the cliff for lanes that are nowhere near it; splitting
+    # moves the work.
     timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 18 || 15 }}
     strategy:
       fail-fast: false
@@ -564,8 +626,19 @@ jobs:
             echo "extended coverage: native Playwright shard ${{ matrix.shard }} of 4"
             npx playwright test --shard=${{ matrix.shard }}/4
           else
+            # SHARDED OVER THE SELECTED SET, not over the whole suite. Playwright
+            # partitions exactly the specs it is handed, so the group selection
+            # above still decides WHAT runs and this only decides who runs which
+            # half. Disjoint and exhaustive by construction - proved, not
+            # assumed, by tests/ci/browser-shard-coverage.test.ts.
+            # THE DENOMINATOR IS DERIVED, NEVER LITERAL. It is capped at the
+            # selected file count upstream, so a two-file selection runs 1/2 and
+            # 2/2 rather than launching an empty 3/3 that fails "No tests found"
+            # and blocks the required aggregator.
+            SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
+            echo "targeted coverage: native Playwright shard ${{ matrix.shard }} of ${SHARD_TOTAL}"
             echo "targeted specs: ${{ needs.changes.outputs.browser_specs }}"
-            npx playwright test ${{ needs.changes.outputs.browser_specs }}
+            npx playwright test ${{ needs.changes.outputs.browser_specs }} --shard=${{ matrix.shard }}/${SHARD_TOTAL}
           fi
         env:
           # Enables the guarded fake-Resend transport for the welcome-email
