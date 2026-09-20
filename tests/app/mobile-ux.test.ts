@@ -13,6 +13,8 @@ function read(rel: string): string {
 const LAYOUT = read("app/(app)/layout.tsx");
 const MENU = read("app/(app)/MobileMenu.tsx");
 const ACCOUNT = read("app/(app)/AccountMenu.tsx");
+// SIGNOUT-02: the submit control both shells now delegate to.
+const SIGNOUT_LEAF = read("app/(app)/SignOutMenuItem.tsx");
 const DAY_COLUMN = read("app/(app)/calendar/DayColumn.tsx");
 const CALENDAR_PAGE = read("app/(app)/calendar/page.tsx");
 const GLOBALS = read("app/globals.css");
@@ -237,16 +239,36 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
       );
     });
 
-    it(`${name}: the Sign out button carries no click handler of its own`, () => {
+    it(`${name}: the Sign out submit path carries no click handler of its own`, () => {
       const form = signOutForm(name, source);
-      expect(form).toContain("Sign out");
-      expect(form).toContain('type="submit"');
-      // THE DEFECT, in one assertion. Any onClick on this submit path closes
-      // the menu during the click, detaches the form before its activation
-      // behaviour runs, and the logout never dispatches.
+
+      // SIGNOUT-02 moved the control itself into a leaf, because
+      // `useFormStatus` reports nothing unless it runs INSIDE the form it
+      // reads. The property this test exists for did not move, so the
+      // assertion follows it into the leaf rather than being relaxed to fit
+      // the new shape. Both halves are checked: the call site, and the control.
+      expect(form, `${name}: the form delegates to the shared submit leaf`).toContain(
+        "<SignOutMenuItem",
+      );
+      // No hand-rolled control left behind beside the leaf.
+      expect(form, `${name}: the leaf is the only control in this form`).not.toMatch(
+        /<button/,
+      );
+
+      // THE DEFECT, in one assertion, now applied to BOTH files. Any onClick on
+      // this submit path closes the menu during the click, detaches the form
+      // before its activation behaviour runs, and the logout never dispatches.
       expect(
         form,
         "a click handler here unmounts the form mid-click and cancels the submission",
+      ).not.toMatch(/onClick/);
+
+      const leaf = codeOnly(SIGNOUT_LEAF);
+      expect(leaf, "the leaf is a real submit control").toContain('type="submit"');
+      expect(leaf, "the leaf still renders the label").toContain("Sign out");
+      expect(
+        leaf,
+        "a click handler in the leaf detaches the form exactly as one in the menu did",
       ).not.toMatch(/onClick/);
     });
 

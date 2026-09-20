@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { signOut } from "./dashboard/actions";
+import { SignOutMenuItem } from "./SignOutMenuItem";
 
 // PR #231: desktop account dropdown (LinkedIn-style "Me" menu). The
 // always-visible Sign out button and the Settings/Admin nav tabs
@@ -129,13 +130,14 @@ export function AccountMenu({
                 Proved by e2e/signout-session-destruction.spec.ts on both
                 surfaces, pointer and keyboard; pinned in
                 tests/app/mobile-ux.test.ts. */}
+            {/* SIGNOUT-02. The control now acknowledges the press: a CSS
+                active step that paints before any JS, then `useFormStatus`
+                pending -> disabled + aria-busy + "Signing out…" until the real
+                action settles. The hook only reports for a form it runs
+                INSIDE, which is why this is a leaf and not markup here. No
+                onClick, above or below — see the note above. */}
             <form action={signOut}>
-              <button
-                type="submit"
-                className="flex min-h-[40px] w-full items-center rounded-md px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-900"
-              >
-                Sign out
-              </button>
+              <SignOutMenuItem minHeight="min-h-[40px]" />
             </form>
           </div>
         </nav>

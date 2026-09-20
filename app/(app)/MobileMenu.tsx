@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
+import { SignOutMenuItem } from "./SignOutMenuItem";
 import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
 import { spinnerClasses } from "@/components/ui/spinner";
 
@@ -315,13 +316,12 @@ export function MobileMenu({
                 Proved by e2e/signout-session-destruction.spec.ts on both
                 surfaces, pointer and keyboard; pinned in
                 tests/app/mobile-ux.test.ts. */}
+            {/* SIGNOUT-02. Same leaf, same mechanism, the phone's own 44px
+                row. The press step matters MORE here than on the desktop: a
+                touch device never fires :hover, so before this the tap painted
+                literally nothing for the ~530ms until the shell was replaced. */}
             <form action={signOut}>
-              <button
-                type="submit"
-                className="flex min-h-[44px] w-full items-center rounded-md px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-900"
-              >
-                Sign out
-              </button>
+              <SignOutMenuItem minHeight="min-h-[44px]" />
             </form>
           </div>
         </nav>
