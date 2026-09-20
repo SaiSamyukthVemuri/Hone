@@ -1078,7 +1078,15 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // rule as the rest: date it and it is an observation.
       /WAIT-01[^.\n]{0,60}\b(?:currently\s+)?serves\s+(?:NO|no|nobody|any)\b/i,
       /\bcurrently serves\s+(?:NO|no|nobody)\s+studio\b/i,
-      /durable allowlist\s*[—-]\s*currently none\b/i,
+      // BROADENED: the first draft required an em-dash immediately before
+      // "currently none", so "of which there are currently none" and "the
+      // allowlist names none" both walked past it. Membership and occupancy are
+      // the same claim class -- what the environment holds RIGHT NOW -- and
+      // neither is derivable from rows.
+      /\bcurrently none\b/i,
+      /\ballowlist\s+names\s+(?:none|no studio)\b/i,
+      /\ballowlist\s+(?:is|remains)\s+empty\b/i,
+      /\bthere are\s+(?:currently\s+)?none\b/i,
     ];
 
     /** A date anywhere in the surrounding sentence makes it an observation. */

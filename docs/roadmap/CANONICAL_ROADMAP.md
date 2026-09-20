@@ -3253,7 +3253,9 @@ CURRENT PRODUCTION CHECKPOINT: GitHub production branch claude/build-hone-saas-h
 
 PAY-SETTLE is CLOSED_EVIDENCED and PRODUCTION-EXERCISED. #636 merged/deployed; migration 0187 is applied and frozen; a controlled synthetic practitioner-UI smoke recorded paid_cash with operator amount 1000 cents and an independently server-derived quoted_amount_cents snapshot of 1234 cents, created zero payment_charge_attempt rows and no Stripe/email/SMS attributable to the smoke. Provider-verified card money and studio-attested settlement remain separate evidence classes.
 
+<!-- canonical-facts:ignore-start reason=version-1.8-historical-decision-delta-records-the-allowlist-state-as-it-stood-then -->
 WAIT-02B Stage B1 (#637) and OWNER-CAP Slice 1 (#638) are the active product release candidates. Both are on the post-#640 production base and remain UNMERGED until exact-head CI + completed exact-head Codex gates are clean. #637 does not activate Willow: the production durable allowlist remains empty and the privacy effective-date/account-holder-notice decision remains a separate human gate. #638 is owner-only capacity/rebooking truth and must fail closed to UNKNOWN rather than publish partial absence.
+<!-- canonical-facts:ignore-end -->
 
 #639 vendors six design-engineering skills as development-only tooling. It changes no runtime/dependency/CI/production authority and should refresh/merge after the active product PRs so it does not cause avoidable production-base churn.
 
