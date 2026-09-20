@@ -95,9 +95,49 @@ const MIGRATION_SQL = readdirSync(MIGRATION_DIR)
   .join("\n");
 
 /** `create or replace function public.NAME( … )` → its parameter text. */
-const SQL_FUNCTIONS = [
-  ...MIGRATION_SQL.matchAll(/create or replace function public\.(\w+)\s*\(([^)]*)\)/gi),
-].map((m) => ({ name: m[1], params: m[2] }));
+//
+// ANCHORED ON `returns`, NOT ON THE FIRST `)`. Written `([^)]*)` the capture
+// stops at the first closing paren, so a parameter with a parenthesised type —
+// `p_amount numeric(10,2)` — truncates the list and the function silently drops
+// out of `commandsTakingTtl`. Its call sites then drop out of the census that
+// exists to catch a missing `p_ttl_hours`, which is the same shape of failure
+// this file was written to close: a rule nothing can fail is not a rule.
+// Every one of these declarations is followed by `returns`, so that is the
+// reliable terminator.
+function parseSqlFunctions(sql: string): Array<{ name: string; params: string }> {
+  return [
+    ...sql.matchAll(/create or replace function public\.(\w+)\s*\(([\s\S]*?)\)\s*returns/gi),
+  ].map((m) => ({ name: m[1], params: m[2] }));
+}
+
+const SQL_FUNCTIONS = parseSqlFunctions(MIGRATION_SQL);
+
+describe("the SQL declaration parser the census depends on", () => {
+  it("survives a parenthesised parameter type", () => {
+    // THE CENSUS IS ONLY AS GOOD AS THIS. A command whose parameters this fails
+    // to read drops out of `commandsTakingTtl`, its call sites drop out of
+    // `callSites`, and a call that omits `p_ttl_hours` then passes the very
+    // check written to catch it — silently, and in the permissive direction.
+    const fns = parseSqlFunctions(`
+      create or replace function public.some_future_command(
+        p_amount    numeric(10,2),
+        p_ttl_hours integer default 72
+      )
+      returns text
+    `);
+    expect(fns.map((f) => f.name)).toContain("some_future_command");
+    expect(fns[0].params, "the whole parameter list, not just up to the first )").toContain(
+      "p_ttl_hours",
+    );
+  });
+
+  it("finds the real commands it is pointed at", () => {
+    const names = SQL_FUNCTIONS.map((f) => f.name);
+    expect(names).toContain("admit_new_client_waitlist_entry");
+    expect(names).toContain("issue_new_client_waitlist_invitation");
+    expect(names.length, "the migration tree parsed to almost nothing").toBeGreaterThan(100);
+  });
+});
 
 describe("the window a recipient actually gets", () => {
   it("is 48 hours", () => {

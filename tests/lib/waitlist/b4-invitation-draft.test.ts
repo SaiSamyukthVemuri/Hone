@@ -441,6 +441,37 @@ function reachableFromApp(): Map<string, string[]> {
  * Propagating the root SET to a fixpoint costs one more traversal and removes
  * the blind spot.
  */
+/**
+ * `importSpecifiers` for a file, parsed at most once.
+ *
+ * THE FIXPOINT BELOW REVISITS MODULES; THE PARSE MUST NOT. `reachableFromApp`
+ * visits each module exactly once, so reading and parsing inside its loop costs
+ * nothing. The root-set propagation re-enqueues a module every time its set
+ * grows, and with ~319 roots under `app/` a shared module is re-enqueued dozens
+ * of times — each one previously a fresh `readFileSync` plus a full
+ * `ts.createSourceFile`. Measured on one machine: 2.9s before, 14.5s after,
+ * against this test's own `{ timeout: 30_000 }`. A hosted runner is commonly
+ * 2-3x slower, which put a REQUIRED guard at its own ceiling — and a guard that
+ * flakes is a guard people learn to re-run rather than read.
+ *
+ * The specifier list is a pure function of the file's bytes, so memoising it is
+ * free of behaviour change and makes the extra traversal nearly free.
+ */
+const specifierCache = new Map<string, string[]>();
+
+function cachedImportSpecifiers(file: string): string[] {
+  const hit = specifierCache.get(file);
+  if (hit !== undefined) return hit;
+  let specs: string[];
+  try {
+    specs = importSpecifiers(file, readFileSync(join(ROOT, file), "utf8"));
+  } catch {
+    specs = [];
+  }
+  specifierCache.set(file, specs);
+  return specs;
+}
+
 function rootsReachingEachModule(): Map<string, Set<string>> {
   const roots = new Map<string, Set<string>>();
   const queue: string[] = [];
@@ -451,13 +482,7 @@ function rootsReachingEachModule(): Map<string, Set<string>> {
   while (queue.length > 0) {
     const current = queue.shift()!;
     const mine = roots.get(current)!;
-    let text: string;
-    try {
-      text = readFileSync(join(ROOT, current), "utf8");
-    } catch {
-      continue;
-    }
-    for (const spec of importSpecifiers(current, text)) {
+    for (const spec of cachedImportSpecifiers(current)) {
       const target = resolveSpecifier(current, spec);
       if (target === null) continue;
       const theirs = roots.get(target);

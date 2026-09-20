@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -44,6 +44,35 @@ function targetedSpecs(): string[] {
   return out.split("\n").filter(Boolean);
 }
 
+/**
+ * A environment Playwright's config will agree to load.
+ *
+ * `playwright.config.ts` imports `e2e/helpers/local-env.ts`, which calls
+ * `refuseHostedOverrides()` AT MODULE SCOPE and throws if any Supabase URL in
+ * the environment looks hosted — or merely fails to look local. That guard is
+ * right and is not being weakened here: this test only ever asks Playwright to
+ * LIST tests, and it must not be able to reach a real database to do it.
+ *
+ * IT IS ALSO THE REASON THIS TEST FAILED IN CI AND PASSED LOCALLY. The `validate`
+ * job sets `NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co"` at job
+ * level (ci.yml), `npm test` inherits it, and the guard refused. A dev shell has
+ * no such variable, so the failure was invisible until CI ran it.
+ */
+function localOnlyEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const name of [
+    "SUPABASE_DB_URL",
+    "HONE_LOCAL_DB_URL",
+    "E2E_SUPABASE_URL",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_ALLOW_LIVE_MODE",
+  ]) {
+    delete env[name];
+  }
+  env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
+  return env;
+}
+
 /** Every test id Playwright would run for `specs`, optionally sharded. */
 function listTests(specs: string[], shard?: string): string[] {
   const args = ["playwright", "test", ...specs, "--list", "--reporter=list"];
@@ -52,6 +81,7 @@ function listTests(specs: string[], shard?: string): string[] {
     cwd: ROOT,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
+    env: localOnlyEnv(),
   });
   return out
     .split("\n")
@@ -130,22 +160,34 @@ describe("the step that emits the matrix actually RUNS", () => {
     const script = stepScript("Select browser groups");
     expect(script).toContain("browser_shards=");
 
+    // RUNS IN A TEMP DIRECTORY, NOT THE REPOSITORY.
+    //
+    // The step reads `changed.txt` from its working directory, and an earlier
+    // revision supplied that by writing the file into the repo root and deleting
+    // it in a `finally`. A `finally` does not run when the worker is SIGKILLed —
+    // a CI job timeout, a cancel, an OOM — and vitest runs files in PARALLEL, so
+    // for the duration of this test an untracked `changed.txt` sat in a working
+    // tree other tests and tools can observe. It is not in `.gitignore` either.
+    //
+    // A temp cwd with `scripts/` and `node_modules/` symlinked in gives the
+    // script everything it resolves relative to cwd and touches nothing shared.
+    // Node resolves symlinks, so `browser-groups.mjs` still loads its own
+    // imports from the real `scripts/` directory.
     const dir = mkdtempSync(path.join(tmpdir(), "hone-ci-step-"));
     const outFile = path.join(dir, "github_output");
-    writeFileSync(outFile, "");
-    const changed = path.join(ROOT, "changed.txt");
-    const hadChanged = existsSync(changed);
-    const saved = hadChanged ? readFileSync(changed, "utf8") : null;
 
     try {
+      writeFileSync(outFile, "");
+      symlinkSync(path.join(ROOT, "scripts"), path.join(dir, "scripts"));
+      symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"));
       writeFileSync(
-        changed,
+        path.join(dir, "changed.txt"),
         "lib/booking/waitlist-invitation.ts\ncomponents/waitlist/invite-composer.tsx\n",
       );
       // Runs, or throws with the shell's own diagnostic.
       execFileSync("bash", ["-c", script], {
-        cwd: ROOT,
-        env: { ...process.env, GITHUB_OUTPUT: outFile },
+        cwd: dir,
+        env: { ...localOnlyEnv(), GITHUB_OUTPUT: outFile },
         encoding: "utf8",
       });
 
@@ -157,8 +199,6 @@ describe("the step that emits the matrix actually RUNS", () => {
       expect(emitted).toContain("browser_shards=[1,2]");
       expect(emitted).toMatch(/browser_specs=e2e\/\S+/);
     } finally {
-      if (saved === null) rmSync(changed, { force: true });
-      else writeFileSync(changed, saved);
       rmSync(dir, { recursive: true, force: true });
     }
   });
