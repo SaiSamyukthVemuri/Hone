@@ -17,7 +17,7 @@ import {
   isWatched,
   unreconstructableSentences,
   unreconstructableIn,
-  literalVariants,
+  ruleAtoms,
   couldCompleteForbidden,
   APPEND_ONLY_OVERREACH,
   APPEND_ONLY_TRIGGER,
@@ -1007,36 +1007,62 @@ describe("negative controls: the guard bites", () => {
     expect(FORBIDDEN.length, "the shipped guard is armed with real rules").toBeGreaterThan(0);
   });
 
-  it("expands the register's rule language, and stops safely where it cannot", () => {
-    // The completion test is only as good as its reading of the rules. These are
-    // the four shapes §0.4 actually uses.
-    const literal = literalVariants("edits kept as history");
-    expect(literal.whole).toBe(true);
-    expect(literal.variants).toEqual(["edits kept as history"]);
+  it("cuts a rule into atoms so any run of them is still a valid regex", () => {
+    // The completion test is only as good as its reading of the rules. An atom
+    // is one literal character, one group, or one class, WITH its quantifier —
+    // so a group is never cut in half and a quantifier never floats free.
+    expect(ruleAtoms("edits kept as history")).toHaveLength("edits kept as history".length);
 
-    const alternation = literalVariants("every change is (tracked|recorded|kept|preserved)");
-    expect(alternation.whole).toBe(true);
-    expect(alternation.variants).toContain("every change is tracked");
-    expect(alternation.variants).toContain("every change is preserved");
+    expect(ruleAtoms("every change is (tracked|recorded|kept|preserved)")).toContain(
+      "(tracked|recorded|kept|preserved)",
+    );
+    expect(ruleAtoms("full (edit )?history of every (change|edit)")).toContain("(edit )?");
+    expect(ruleAtoms("synthetic[- ]twin")).toContain("[- ]");
 
-    const optional = literalVariants("full (edit )?history of every (change|edit)");
-    expect(optional.whole).toBe(true);
-    expect(optional.variants).toContain("full edit history of every change");
-    expect(optional.variants).toContain("full history of every edit");
-
-    expect(literalVariants("synthetic[- ]twin").variants.sort()).toEqual([
-      "synthetic twin",
-      "synthetic-twin",
-    ]);
-
-    // The one rule that cannot be fully expanded: `(?:[\w-]+ ){0,3}` is a
-    // wildcard, so expansion stops there and reports itself incomplete. What it
-    // produced is still a real PREFIX, which is all the prefix test consumes.
-    const partial = literalVariants(
+    // The rule that defeated expansion. The wildcard is ONE atom, quantifier
+    // included, so the atoms after it survive — which is the whole point.
+    const atoms = ruleAtoms(
       "(treatment|clinical|session) records? (keeps?|retains?|holds?|preserves?|has|have) (its|their|an|a|the )?(own )?(?:[\\w-]+ ){0,3}(edit|change|revision) history",
     );
-    expect(partial.whole).toBe(false);
-    expect(partial.variants.some((v) => v.startsWith("treatment record"))).toBe(true);
+    expect(atoms).toContain("(?:[\\w-]+ ){0,3}");
+    expect(atoms).toContain("(edit|change|revision)");
+    // A quantified literal keeps its quantifier: "records?" is seven atoms, the
+    // last of which is "s?" — never a bare "s" with the "?" orphaned after it.
+    expect(atoms).toContain("s?");
+
+    // The invariant that matters more than any single atom: splitting loses
+    // nothing and invents nothing, for EVERY rule the register declares.
+    for (const rule of FORBIDDEN) {
+      expect(ruleAtoms(rule.source).join(""), rule.source).toBe(rule.source);
+    }
+    // Every run of atoms compiles. If this ever fails, some rule is being cut
+    // mid-construct and the completion test would be silently skipping it.
+    for (let k = 1; k <= atoms.length; k += 1) {
+      expect(() => new RegExp(atoms.slice(0, k).join("")), `prefix run of ${k}`).not.toThrow();
+      expect(() => new RegExp(atoms.slice(atoms.length - k).join("")), `suffix run of ${k}`).not.toThrow();
+    }
+  });
+
+  it("tests prefixes that reach THROUGH a bounded wildcard", () => {
+    // Codex, at b0de6390. Expanding the rules into literal phrases had to stop
+    // at `(?:[\w-]+ ){0,3}`, so every prefix reaching past the wildcard was
+    // lost: this fragment was compared only against the truncated opening
+    // "treatment records keep their ", which it does not end with.
+    const rendered = "Treatment records keep their complete edit history";
+    const rule = FORBIDDEN.find((r) => r.source.includes("(?:"))!;
+    expect(rule.pattern.test(rendered), "precondition: the rendered sentence IS banned").toBe(true);
+
+    const fragment = "Treatment records keep their complete edit ";
+    expect(
+      FORBIDDEN.some((r) => r.pattern.test(fragment)),
+      "precondition: the readable half alone trips nothing",
+    ).toBe(false);
+
+    // Against THAT rule alone, not merely caught by some other rule's opening.
+    expect(couldCompleteForbidden(fragment, [rule])?.source).toBe(rule.source);
+
+    const src = `export const COPY = { line: "Treatment records keep their complete edit " + lastWord };`;
+    expect(unreconstructableIn(src, "lib/marketing/content.ts", [rule])).toHaveLength(1);
   });
 
   it("leaves a phrase that is already a full match to the substring guard", () => {

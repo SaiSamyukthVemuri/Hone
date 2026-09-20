@@ -867,123 +867,79 @@ export type UnreconstructableSentence = {
 };
 
 /**
- * The literal phrases a forbidden rule can begin with.
+ * A forbidden rule, split into its top-level regex atoms.
  *
- * The rules in §0.4 are regexes, but they are regexes over AUTHORED ENGLISH:
- * literal words, small alternations, optional groups. Expanding that subset
- * gives the concrete phrases a visitor could read, which is what a half-written
- * sentence has to be judged against.
+ * The first cut of this tried to EXPAND the rules into literal phrases. Codex
+ * found the hole that approach cannot close: expansion has to stop at
+ * `(?:[\w-]+ ){0,3}`, so every prefix reaching THROUGH the wildcard was lost,
+ * and `"Treatment records keep their complete edit " + lastWord` — which renders
+ * a sentence N1 matches — was compared only against the truncated opening. The
+ * same pass also leaked regex syntax into supposed literals, because a group's
+ * alternatives were taken verbatim: `keeps?` was treated as the word "keeps?".
  *
- * Expansion runs left to right and STOPS at the first construct it cannot
- * expand faithfully (`\w`, `+`, `*`, `{n,m}`, `(?:…)`, a nested group). Stopping
- * early is safe for the caller below, because every string produced so far is
- * still a genuine PREFIX of something the rule matches, and a prefix is what the
- * prefix test needs. `whole` records whether expansion reached the end of the
- * rule, because only then are the variants complete phrases whose SUFFIXES also
- * mean something.
+ * Atoms avoid both. An atom is one literal character, one group, or one
+ * character class, together with any quantifier bound to it — so any RUN of
+ * atoms is itself a valid regex, and the engine does the matching instead of an
+ * enumerator that has to understand every construct. Nothing needs expanding,
+ * nothing gets truncated, and a wildcard is just another atom.
  */
-export function literalVariants(source: string): {
-  variants: string[];
-  whole: boolean;
-} {
-  const CAP = 256;
-  const UNEXPANDABLE = /[\\+*{.^$]/;
-  let variants: string[] = [""];
-  let index = 0;
-  let whole = true;
-
-  const extend = (pieces: string[]): boolean => {
-    const next: string[] = [];
-    for (const variant of variants) {
-      for (const piece of pieces) next.push(variant + piece);
-    }
-    if (next.length > CAP) return false;
-    variants = next;
-    return true;
-  };
-
-  while (index < source.length) {
-    const ch = source[index];
-    if (UNEXPANDABLE.test(ch) || source.startsWith("(?:", index)) {
-      whole = false;
-      break;
-    }
-    if (ch === "(") {
+export function ruleAtoms(source: string): string[] {
+  const atoms: string[] = [];
+  let i = 0;
+  while (i < source.length) {
+    const start = i;
+    const ch = source[i];
+    if (ch === "\\") {
+      i += 2;
+    } else if (ch === "(") {
       let depth = 0;
-      let close = -1;
-      for (let j = index; j < source.length; j += 1) {
-        if (source[j] === "(") depth += 1;
-        else if (source[j] === ")") {
+      for (; i < source.length; i += 1) {
+        if (source[i] === "\\") {
+          i += 1;
+          continue;
+        }
+        if (source[i] === "(") depth += 1;
+        else if (source[i] === ")") {
           depth -= 1;
           if (depth === 0) {
-            close = j;
+            i += 1;
             break;
           }
         }
       }
-      const body = close < 0 ? "" : source.slice(index + 1, close);
-      if (close < 0 || UNEXPANDABLE.test(body) || body.includes("(")) {
-        whole = false;
-        break;
+    } else if (ch === "[") {
+      i += 1;
+      for (; i < source.length; i += 1) {
+        if (source[i] === "\\") {
+          i += 1;
+          continue;
+        }
+        if (source[i] === "]") {
+          i += 1;
+          break;
+        }
       }
-      const optional = source[close + 1] === "?";
-      if (!extend(optional ? [...body.split("|"), ""] : body.split("|"))) {
-        whole = false;
-        break;
-      }
-      index = close + 1 + (optional ? 1 : 0);
-      continue;
+    } else {
+      i += 1;
     }
-    if (ch === "[") {
-      const close = source.indexOf("]", index);
-      const members = close < 0 ? "" : source.slice(index + 1, close);
-      if (close < 0 || /[\\^]/.test(members)) {
-        whole = false;
-        break;
-      }
-      if (!extend(members.split(""))) {
-        whole = false;
-        break;
-      }
-      index = close + 1;
-      continue;
+    while (i < source.length && "?*+".includes(source[i])) i += 1;
+    if (source[i] === "{") {
+      const close = source.indexOf("}", i);
+      if (close > 0) i = close + 1;
     }
-    // An ordinary character, optionally made optional by a trailing `?`.
-    const optional = source[index + 1] === "?";
-    if (!extend(optional ? [ch, ""] : [ch])) {
-      whole = false;
-      break;
-    }
-    index += optional ? 2 : 1;
+    atoms.push(source.slice(start, i));
   }
-
-  const folded = new Set<string>();
-  for (const variant of variants) {
-    const value = foldForMatching(variant);
-    if (value) folded.add(value);
-  }
-  return { variants: [...folded], whole };
+  return atoms;
 }
 
 /**
  * The shortest overlap that counts as "this half is starting a banned claim".
  *
  * Below this it is coincidence: almost any sentence ends in two letters that
- * also open some rule. At four characters, aligned to a word boundary on both
- * sides, the fragment is committing to the wording rather than brushing past it.
+ * also open some rule. At four characters, aligned to a word boundary, the
+ * fragment is committing to the wording rather than brushing past it.
  */
 const MIN_COMPLETION_OVERLAP = 4;
-
-/**
- * Folded for comparison the way the rules themselves are matched.
- *
- * `foldForMatching` settles dashes and spaces but deliberately keeps case,
- * because the claim text it produces is also what gets reported. The rules are
- * compiled case-insensitively, so a comparison against them must lower too —
- * without this, "Edits kept as " never matched "edits kept as history" and the
- * whole completion test silently passed everything.
- */
-const foldForCompletion = (text: string) => foldForMatching(text).toLowerCase();
 
 /** Does `overlap` sit at the start of a word within `text`? */
 const overlapStartsAWord = (text: string, overlap: string): boolean => {
@@ -998,20 +954,51 @@ const overlapEndsAWord = (text: string, overlap: string): boolean => {
 };
 
 /**
- * Could a value spliced onto this half-written text finish a forbidden claim?
+ * Folded for comparison the way the rules themselves are matched.
  *
- * This is the question the substring guard cannot ask, and the hole this closes.
- * `collectClaims` reads `{"Edits kept as " + label}` as the sentence "Edits kept
- * as", which matches no rule — while the page renders "Edits kept as history",
- * which matches N1. The readable half is a PROPER PREFIX of a banned wording and
- * the hole is exactly where the rest of it goes.
- *
- * Both directions are checked. Text before a hole is dangerous when it ENDS with
- * a proper prefix of a banned phrase; text after a hole is dangerous when it
- * BEGINS with a proper suffix of one. Text that already contains a whole banned
- * phrase is not this function's business — `collectClaims` and the rule's own
- * regex catch that, and repeating it here would only double-report it.
+ * `foldForMatching` settles dashes and spaces but deliberately keeps case,
+ * because the claim text it produces is also what gets reported. The rules are
+ * compiled case-insensitively, so a comparison against them must lower too —
+ * without this, "Edits kept as " never matched "edits kept as history" and the
+ * whole completion test silently passed everything.
  */
+const foldForCompletion = (text: string) => foldForMatching(text).toLowerCase();
+
+type CompletionPatterns = {
+  /** Openings of the rule, longest first, each anchored to the END of input. */
+  readonly heads: readonly RegExp[];
+  /** Endings of the rule, longest first, each anchored to the START of input. */
+  readonly tails: readonly RegExp[];
+};
+
+/**
+ * Compiled once per rule. Every rule produces two patterns per atom boundary,
+ * and this runs for every concatenation in every scanned file.
+ */
+const completionCache = new Map<string, CompletionPatterns>();
+
+function completionPatterns(source: string): CompletionPatterns {
+  const cached = completionCache.get(source);
+  if (cached) return cached;
+  const atoms = ruleAtoms(source);
+  const heads: RegExp[] = [];
+  const tails: RegExp[] = [];
+  // `k < atoms.length`: a run covering the WHOLE rule is a complete match, which
+  // the rule's own pattern already catches. Only proper parts are completions.
+  for (let k = atoms.length - 1; k >= 1; k -= 1) {
+    try {
+      heads.push(new RegExp(`(${atoms.slice(0, k).join("")})$`, "i"));
+      tails.push(new RegExp(`^(${atoms.slice(atoms.length - k).join("")})`, "i"));
+    } catch {
+      // An atom run that does not compile is skipped rather than thrown: a rule
+      // the splitter cannot cut cleanly must not take the whole guard down.
+    }
+  }
+  const patterns = { heads, tails };
+  completionCache.set(source, patterns);
+  return patterns;
+}
+
 export function couldCompleteForbidden(
   text: string,
   rules: readonly ForbiddenWording[],
@@ -1020,31 +1007,34 @@ export function couldCompleteForbidden(
   if (!folded) return null;
   for (const rule of rules) {
     if (rule.pattern.test(folded)) continue; // a full match; already catchable
-    const { variants, whole } = literalVariants(rule.source);
-    for (const variant of variants) {
-      const lowered = variant.toLowerCase();
-      const limit = Math.min(folded.length, lowered.length - 1);
-      for (let k = limit; k >= MIN_COMPLETION_OVERLAP; k -= 1) {
-        // Text BEFORE a hole: it ends with the opening of a banned phrase, and
-        // the value supplies the rest.
-        const head = lowered.slice(0, k);
-        if (folded.endsWith(head) && overlapStartsAWord(folded, head)) return rule;
+    const { heads, tails } = completionPatterns(rule.source);
 
-        // Text AFTER a hole: it opens with the END of a banned phrase. Only
-        // meaningful once the rule expanded in full, and only when the overlap
-        // is a whole word on BOTH sides — otherwise the four-letter tail "edit"
-        // of "full history of every edit" matches the front of any sentence
-        // starting "edits…", which is every N1 phrase there is.
-        if (!whole) continue;
-        const tail = lowered.slice(lowered.length - k);
-        const boundary = lowered[lowered.length - k - 1] ?? " ";
-        if (
-          folded.startsWith(tail) &&
-          /[^A-Za-z0-9]/.test(boundary) &&
-          overlapEndsAWord(folded, tail)
-        ) {
-          return rule;
-        }
+    // Text BEFORE a hole: it ends with an opening of the rule, and the value
+    // supplies the rest. Longest run first, so the reported rule is the one the
+    // fragment commits to hardest rather than the first four letters that agree.
+    for (const head of heads) {
+      const match = head.exec(folded);
+      if (
+        match &&
+        match[1].length >= MIN_COMPLETION_OVERLAP &&
+        overlapStartsAWord(folded, match[1])
+      ) {
+        return rule;
+      }
+    }
+
+    // Text AFTER a hole: it opens with an ending of the rule. The overlap must
+    // be a whole word on BOTH sides — otherwise the four-letter tail "edit" of
+    // "full history of every edit" matches the front of any sentence beginning
+    // "edits…", which is every N1 phrase there is.
+    for (const tail of tails) {
+      const match = tail.exec(folded);
+      if (
+        match &&
+        match[1].length >= MIN_COMPLETION_OVERLAP &&
+        overlapEndsAWord(folded, match[1])
+      ) {
+        return rule;
       }
     }
   }
