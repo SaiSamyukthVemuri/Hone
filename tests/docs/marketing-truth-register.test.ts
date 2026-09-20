@@ -101,7 +101,30 @@ const MODULE_CLAIMS = [
   ...walkStrings(marketingContent),
   ...walkStrings(marketingResources),
 ];
-const CLAIMS = [...PAGE_CLAIMS, ...MODULE_CLAIMS];
+/**
+ * Components render to the same public page, so they are judged the same way.
+ *
+ * They were left out because a component is not an approved place to AUTHOR copy
+ * under the authoring law — existing component prose is baselined, not moved.
+ * But that is an authoring verdict, and it was silently doing duty as a
+ * judgement verdict too: nothing a component said ever reached the rules.
+ *
+ * Which turned a baselined exception into a laundering route. The exception's
+ * identity records a hole as its SOURCE text (`{state}`), and that is stable by
+ * design — it is exactly what lets the baseline notice a rewritten sentence. A
+ * stable identifier is not a stable claim: rebinding `const state` to a
+ * forbidden wording changes the rendered sentence and changes nothing the
+ * baseline can see. The binding is a four-word unpunctuated literal, so
+ * `componentProseViolations` filters it out as well, and the wording shipped.
+ *
+ * Judging the component closes it at the VALUE, which is where the defect is,
+ * rather than by refusing holes in text that the owner ruled stays put.
+ * `pageClaims` deliberately: a component's text is public copy by the same route
+ * a page's is, so it is read by the same extractor.
+ */
+const COMPONENT_CLAIMS = marketingComponentFiles().flatMap((f) => pageClaims(f));
+
+const CLAIMS = [...PAGE_CLAIMS, ...MODULE_CLAIMS, ...COMPONENT_CLAIMS];
 const MARKETING_COPY = CLAIMS.join(" ¶ ");
 
 /**
@@ -965,7 +988,20 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     // instead. No dataflow at any point.
     expect(MODULE_CLAIMS.length).toBeGreaterThan(0);
     expect(PAGE_CLAIMS.length).toBeGreaterThan(0);
-    expect(CLAIMS.length).toBe(PAGE_CLAIMS.length + MODULE_CLAIMS.length);
+    expect(COMPONENT_CLAIMS.length).toBeGreaterThan(0);
+
+    // The property, asserted BEFORE the arithmetic below, because the arithmetic
+    // is not a guard — it goes red when the corpus is narrowed, but only because
+    // it counts itself, and being first it masked the real failure. This is a
+    // real visitor-facing sentence that ONLY a component authors: narrowing the
+    // corpus goes red on the copy.
+    expect(MARKETING_COPY).toContain(
+      "There is no automatic booking, a real person will email you to find a time that works.",
+    );
+
+    expect(CLAIMS.length).toBe(
+      PAGE_CLAIMS.length + MODULE_CLAIMS.length + COMPONENT_CLAIMS.length,
+    );
 
     // The exact wording that escaped: four words, no punctuation, N1.
     const short = pageClaims(
@@ -1248,7 +1284,9 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
     expect(prose.length, "component prose grew; the authoring law binds new work").toBeLessThanOrEqual(6);
 
     // BY IDENTITY, like the page half. A count alone let one exception be
-    // swapped for another, and component prose is not judged.
+    // swapped for another. Identity catches a REWRITTEN exception; it cannot
+    // catch a rebound hole inside one, because the hole's source text does not
+    // move. `COMPONENT_CLAIMS` is what covers that half.
     const knownComponent = new Set(Object.values(BASELINE.componentProse).flat());
     expect(
       prose.map((v) => v.detail).filter((d) => !knownComponent.has(d)),
@@ -1268,6 +1306,39 @@ describe("MUTATION PROOF: each guard can be made red by the defect it claims to 
   // A guard that cannot fail is not a guard. Each case below injects the exact
   // defect the guard exists for and asserts it goes red — and asserts the clean
   // counterpart stays green, so the guard is not simply always-on.
+
+  it("judgement bites on the VALUE behind a preserved component hole", () => {
+    // The laundering route `COMPONENT_CLAIMS` exists to close, as a live pair.
+    // The component is a baselined exception whose identity contains a hole, so
+    // the identity, the violation count and the file set are all blind to what
+    // the binding actually says.
+    const shape = (binding: string) =>
+      `const state = ${JSON.stringify(binding)};\n` +
+      `export const Row = () => <p>Value: {state} here in the record.</p>;\n`;
+    const clean = shape("under review");
+    const laundered = shape("Every change is tracked");
+    const FILE = "app/_components/marketing/Row.tsx";
+
+    // 1. The authoring guard genuinely cannot tell the two apart — not a
+    //    weakness to fix there, since the owner ruled the prose stays put.
+    const authored = (src: string) => componentProseViolations(FILE, src);
+    // Non-vacuity first: comparing two EMPTY results would prove nothing, and
+    // the first cut of this test did exactly that. There is a real exception
+    // here, and its identity really does preserve the hole.
+    expect(authored(clean).map((v) => v.detail)).toEqual([
+      "Value: {state} here in the record.",
+    ]);
+    expect(authored(laundered).map((v) => v.detail)).toEqual(
+      authored(clean).map((v) => v.detail),
+    );
+    expect(authored(laundered).length).toBe(authored(clean).length);
+
+    // 2. Judgement does.
+    const judged = (src: string) =>
+      pageClaims(FILE, src).some((c) => FORBIDDEN.some((r) => r.pattern.test(c)));
+    expect(judged(laundered)).toBe(true);
+    expect(judged(clean)).toBe(false);
+  });
 
   it("the forbidden-wording rule bites on the register's own N1 sentence", () => {
     const banned = "Edits kept as history, not written over.";
