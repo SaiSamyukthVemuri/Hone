@@ -189,10 +189,14 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `0f07dae6` all four check `unavailable` **before** `hasHistory`, and
+At `c6bc5949` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
-Sessions tabs. Read failure now renders *clinical history could not be loaded*.
+Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-pinned from
+the original #659 observation (`0f07dae6`), and verified mechanically rather than assumed: across
+`0f07dae6..c6bc5949` no added or removed line in `app/(app)/clients/[id]/page.tsx` touches
+`unavailable`, `hasHistory` or any of the four surfaces, so the property carries to the current
+baseline without being re-measured by hand.**
 
 **Deliberate non-change, recorded so it is not mistaken for a gap:** `attachStructuredAreas`
 still **throws** on a `session_block_areas` read failure, surfacing the error boundary. That is
