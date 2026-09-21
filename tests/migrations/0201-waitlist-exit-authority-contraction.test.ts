@@ -43,17 +43,17 @@ const CLOSE_BODY = (() => {
 })();
 
 describe("0201 position in the chain", () => {
-  it("is the repository maximum", () => {
+  it("is no longer the repository maximum — 0202 is", () => {
     // Taken over from 0200, per CLAUDE.md: only the CURRENT max asserts this.
-    expect(isRepoMax(VERSION)).toBe(true);
+    expect(isRepoMax(VERSION)).toBe(false);
   });
 
   it("has nothing above it, and owns its number alone", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
+    expect(versionsAbove(VERSION)).toEqual(["0202"]);
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+  it("IS APPLIED to production and is the hosted head, with 0202 pending above", () => {
     // THE HAND-OFF THIS FILE'S PREVIOUS REVISION DEMANDED, now performed.
     //
     // It previously asserted the MIGRATION-FIRST PENDING shape and said
@@ -69,12 +69,21 @@ describe("0201 position in the chain", () => {
     // now that file. WHOEVER APPLIES 0202 MOVES THIS BLOCK: narrow 0201 to a
     // floor the same way and let the new head take equality. Leaving it here
     // would go red on that apply, which is the whole reason the claim travels.
+    //
+    // THE CHAIN IS BACK AT MIGRATION-FIRST PENDING. WAIT-04B authors `0202` on
+    // its own branch and has NOT applied it, so 0201 keeps the hosted head
+    // while the repository maximum has moved one above it. That is the same
+    // shape this file asserted before 0201 was applied, and the equality claim
+    // has moved on to 0202 accordingly.
+    //
+    // WHOEVER APPLIES 0202 narrows THIS block to a floor the way 0200 was
+    // narrowed above, and lets 0202's file take the equality.
     const state = migrationState();
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0202");
+    expect(state.repo_migration_max).toBe("0202");
+    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.pending_migrations).toEqual(["0202"]);
+    expect(state.next_free_migration).toBe("0203");
   });
 
   it("the applied bytes are the authorized bytes", () => {
@@ -87,7 +96,7 @@ describe("0201 position in the chain", () => {
   });
 
   it("does not claim the next free number for anything", () => {
-    expect(migrationState().next_free_migration).toBe("0202");
+    expect(migrationState().next_free_migration).toBe("0203");
   });
 
   it("0200 IS FROZEN — this migration does not edit a single byte of it", () => {
