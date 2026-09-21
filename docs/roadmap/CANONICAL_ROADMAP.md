@@ -55,10 +55,11 @@ WAIT-03 core is **MERGED / DEPLOYED** and, since v1.15, **PRODUCTION-EXERCISED E
 **20 September 2026 — Level 3 WAIT checkpoint / TOP PRODUCT PRIORITY**
 
 Production now includes the WAIT-P1-EXIT application release (#741, carrying the 0201
-forward correction from #747), the fixed **48-hour** invitation default (#748), and the
+forward correction from #747), the **48-hour default** for invitation opportunities (#748), and the
 owner-visible **read-only SMS sender status** (#749). #741 closes the redeemed-but-unbooked
-dead end without inferring an appointment relationship Hone cannot prove; #748 centralizes
-the normal invitation opportunity at 48 hours while preserving the 1..168 configured bound;
+dead end without inferring an appointment relationship Hone cannot prove; #748 changes the
+normal/default invitation opportunity to 48 hours while preserving the 1..168 configured bound;
+the live composer still permits another TTL, so the frozen no-expiry-choice 48-hour policy remains Level 3 work;
 #749 lets an owner see sender state without provisioning, purchasing, releasing, adopting,
 rewiring #716 or removing the shared fallback.
 
@@ -68,7 +69,8 @@ These releases move Hone through **Level 1 (durable queue)** and the shipped cor
 DONE until the retrospective Willow queue/provenance reconciliation, trustworthy owner
 discoverability/control, WAIT-04B rich prospect profile, verified mobile + prospect
 STOP/suppression, supported studio-sender provisioning/adoption and Willow sender proof,
-email + eligible SMS as one opportunity, the WAIT-specific 24-hour reminder, all four
+**fixed 48-hour policy with no practitioner expiry choice**, email + eligible SMS as one opportunity,
+the WAIT-specific 24-hour reminder, all four
 recipient response choices, first-consult cancellation/reschedule/no-show boundaries, and
 Chloe's real-device acceptance are complete. A controlled email-only canary may be used only
 under the normal release/activation gates; this roadmap does not itself authorize a real
@@ -80,7 +82,7 @@ customer message or provider effect.
 | --- | --- |
 | Accepted production outcomes / 7 days | UNMEASURED — merges are not user acceptance. |
 | Scope-to-acceptance elapsed time | UNMEASURED — no matched start/acceptance series. |
-| Unfinished delivery units + oldest age | PARTIAL — #741/#747, #748 and #749 are shipped. The active critical path is now **Level 3 WAIT**: retrospective Willow reconciliation/owner control → WAIT-04B profile authority → verified mobile + STOP/suppression → supported sender provisioning/adoption + Willow proof → WAIT-04C dual-channel + 24h reminder → WAIT-04D four responses → first-consult boundaries → Chloe acceptance. Full count and oldest age remain unmeasured. |
+| Unfinished delivery units + oldest age | PARTIAL — #741/#747, #748 and #749 are shipped. The active critical path is now **Level 3 WAIT**: retrospective Willow reconciliation/owner control → WAIT-04B profile authority → verified mobile + STOP/suppression → supported sender provisioning/adoption + Willow proof → **fixed/no-choice 48h enforcement** → WAIT-04C dual-channel + 24h reminder → WAIT-04D four responses → first-consult boundaries → Chloe acceptance. Full count and oldest age remain unmeasured. |
 | Independent paying studios with proof | NOT ESTABLISHED — census missing; Willow excluded. |
 | Support minutes / studio / week | UNMEASURED — no operator time log supplied. |
 
@@ -92,7 +94,7 @@ Derived from §23.6. These are outcome groups, not three oversized pull requests
 
 | **Order / owner** | **Outcome and completion evidence** |
 | --- | --- |
-| 1  ·  **LEVEL 3 — Full Willow WAIT Operating System**<br>Sam: release<br>Chloe: acceptance | **TOP PRIORITY.** Level 1 durable queue and the Level 2 Invite-to-book core are shipped; #741/#747 add the safe redeemed-no-booking exit, #748 makes the normal opportunity 48 hours, and #749 exposes read-only sender state. Finish retrospective Willow reconciliation + owner control, WAIT-04B rich profile, verified mobile/STOP, supported Willow sender activation, email+eligible SMS, 24h reminder, four response choices, first-consult lifecycle rules, then record Chloe real-device acceptance. Only then call Willow WAIT launch DONE. |
+| 1  ·  **LEVEL 3 — Full Willow WAIT Operating System**<br>Sam: release<br>Chloe: acceptance | **TOP PRIORITY.** Level 1 durable queue and the Level 2 Invite-to-book core are shipped; #741/#747 add the safe redeemed-no-booking exit, #748 makes the default opportunity 48 hours (the composer still allows other TTLs), and #749 exposes read-only sender state. Finish retrospective Willow reconciliation + owner control, WAIT-04B rich profile, verified mobile/STOP, supported Willow sender activation, **fixed/no-choice 48h policy**, email+eligible SMS, 24h reminder, four response choices, first-consult lifecycle rules, then record Chloe real-device acceptance. Only then call Willow WAIT launch DONE. |
 | 2  ·  MultiPlex<br>Chloe: field contract<br>Builder: assigned by Sam | Capture the complete agreed MultiPlex settings and retrieve the relevant setup at the next visit. MPX-01 freezes fields; MPX-02/03 supply storage and charting; MPX-04/05 preserve memory and prep. Confirm the TM-01 dependency and record on-device acceptance. |
 | 3  ·  September 7 workflow batch<br>Chloe: acceptance<br>One owner per item | Deliver notes fixes, reduced checkout friction, actionable disinfection, notification preferences and the agreed client-management/booking-privacy improvements. Keep each item bounded; record its acceptance separately. Follow the existing bugs → friction → features order. |
 
@@ -171,7 +173,7 @@ v1.15 changes: records merged/deployed #708 WAIT core, hosted 0192–0196, the c
 
 v1.16 changes: synchronizes the v1.15 publication into the repository. Records #709/0197, #713/0198 and #712 (WAIT-04A) as merged, hosted max `0198` with `0199` unallocated, CANARY_PASS 12/12 with post-canary cleanup complete, and the Vercel exact-source match at `a946a983…`. Preserves all 89 repository v1.1 IDs and the SEC-09 clinical-finalization retirement in Appendix G. WAIT → MultiPlex → September 7 remains the product order; WAIT is not DONE until the Willow journey and accepted WAIT-04 policy are complete. [S42]
 
-v1.17 changes: **Level 3 — Full WAIT Operating System becomes the sole top product priority.** Records #741/#747, #748 and #749 as shipped production software; the normal invitation opportunity is now 48 hours, the redeemed-but-unbooked exit is live under the 0201 authority contraction, and the owner can see truthful SMS sender state. These do not make WAIT SMS, the rich profile, the 24-hour WAIT reminder, four-response UX, first-consult lifecycle or Chloe acceptance complete. MultiPlex remains next only after Level 3 is operationally accepted; ONB/UI/UX remain parallel/subordinate and production concurrency remains one.
+v1.17 changes: **Level 3 — Full WAIT Operating System becomes the sole top product priority.** Records #741/#747, #748 and #749 as shipped production software; the normal invitation default is now 48 hours, while the fixed/no-expiry-choice 48-hour policy remains open, the redeemed-but-unbooked exit is live under the 0201 authority contraction, and the owner can see truthful SMS sender state. These do not make WAIT SMS, the rich profile, the 24-hour WAIT reminder, four-response UX, first-consult lifecycle or Chloe acceptance complete. MultiPlex remains next only after Level 3 is operationally accepted; ONB/UI/UX remain parallel/subordinate and production concurrency remains one.
 
 Appendices A–E retain artifact disposition, failed-workstream contracts, illustrative record schemas, source provenance and the historical Willow capacity baseline. Appendix F preserves superseded operating records. No roadmap item ID or accepted capability is deleted.
 
@@ -1234,7 +1236,7 @@ The waitlist is therefore not a generic CRM list. It is the first control in a n
 | ADMIT-02 | Assisted admission control | T2 | Hone calculates Safe to invite N with a deterministic explanation; Chloe chooses Invite next N; server/database enforces exact N and invitation state atomically. Human-in-loop is the required production proving stage. |
 | ADMIT-03 | Opt-in automatic release | T3/T4a | Studio default OFF. Same deterministic admission budget used by assisted mode; automatic worker may claim no more than N; expiration may release the next entry; monitored pilot and immediate pause/kill switch. |
 | ADMIT-04 | Capacity-expansion economics | T1/T2 | Use waitlist growth, unmet admissions, treatment lead time, utilization and collected-value contracts to quantify when another practitioner day materially increases service capacity and revenue. No fabricated LTV or fixed-rate assumption. |
-| WAIT-04 | **Level 3 — Chloe launch policy / contact / communication** | T2/T3 + T4a | **TOP PRIORITY / PARTIALLY EFFECTIVE / NOT COMPLETE.** Shipped pieces now include the production Invite-to-book core, the safe redeemed-no-booking exit (#741/#747), fixed normal 48-hour opportunity (#748) and owner-visible read-only SMS sender status (#749). Still required before Level 3 is DONE: rich profile/legacy completion, verified mobile + prospect STOP/suppression, supported per-studio sender activation, email+eligible SMS, WAIT-specific 24h reminder, four response choices, first-consultation rules and Chloe real-device acceptance. |
+| WAIT-04 | **Level 3 — Chloe launch policy / contact / communication** | T2/T3 + T4a | **TOP PRIORITY / PARTIALLY EFFECTIVE / NOT COMPLETE.** Shipped pieces now include the production Invite-to-book core, the safe redeemed-no-booking exit (#741/#747), 48-hour default opportunity (#748; fixed/no-choice policy still open) and owner-visible read-only SMS sender status (#749). Still required before Level 3 is DONE: rich profile/legacy completion, verified mobile + prospect STOP/suppression, supported per-studio sender activation, email+eligible SMS, WAIT-specific 24h reminder, four response choices, first-consultation rules and Chloe real-device acceptance. |
 | WAIT-FORECAST-01 | Time-to-invitation estimate | T2 | LATER / NOT BUILT. Instrument now. Forecast access to consultation invitation, not treatment start; show calibrated ranges only after enough matching history and accepted capacity assumptions. Maps to ADMIT-01, not a second admission engine. |
 
 ### 14.5.0 WAIT maturity levels — current product priority
@@ -1242,7 +1244,7 @@ The waitlist is therefore not a generic CRM list. It is the first control in a n
 | **Level** | **What it means** | **Current state** |
 | --- | --- | --- |
 | **Level 1 — Durable queue** | Studio-scoped durable join/removal, owner queue visibility, manual/legacy entry and basic availability/provenance operations. | **SHIPPED / active at Willow on the last measured durable interval.** Human acceptance is separate. |
-| **Level 2 — Invite-to-book core** | Invitation capacity; scoped email invitation; recipient proof; permitted-slot booking; decline; atomic waitlist conversion; delivery truth; release/expire/requeue; safe redeemed-no-booking exit; fixed normal 48-hour opportunity. | **SHIPPED SOFTWARE.** Controlled test-studio journey is production-exercised. Willow real-client exercise/acceptance is not inferred. |
+| **Level 2 — Invite-to-book core** | Invitation capacity; scoped email invitation; recipient proof; permitted-slot booking; decline; atomic waitlist conversion; delivery truth; release/expire/requeue; safe redeemed-no-booking exit; 48-hour default opportunity. The fixed/no-choice 48-hour policy is not yet complete. | **SHIPPED SOFTWARE.** Controlled test-studio journey is production-exercised. Willow real-client exercise/acceptance is not inferred. |
 | **Level 3 — Full WAIT Operating System** | Retrospective Willow reconciliation + owner control; complete profile; verified mobile and STOP; supported Willow sender; email+eligible SMS; WAIT 24h reminder; all four responses; first-consult lifecycle; Chloe acceptance. | **TOP PRIORITY — INCOMPLETE.** No other planned product gets the production slot ahead of this program unless Sam explicitly reorders. |
 
 <a id="hone_s_14_5_1"></a>
@@ -1399,7 +1401,7 @@ Binding points to prove: practitioner adapter → authenticated atomic admission
 | WAIT-04A / profile and join | Typed fields/validation, mobile-accessible join/profile presentation, canonical areas and consent model; reuse the shipped availability/manual/legacy-entry authority. | **PARTIAL FOUNDATION SHIPPED.** #712 made availability/manual/legacy commands reachable; richer profile components/contracts exist but remain dormant until WAIT-04B supplies durable authority and privacy changes atomically. |
 | WAIT-04B / policy authority | Persist/bind the complete prospect profile; preserve legacy priority/provenance; completion capability; verified-mobile authority; prospect STOP/suppression integration; response/deadline/reminder and first-consult policy records as required. | **NOW — TOP ACTIVE BUILD.** Derive migration need/number fresh; never edit applied history. Split into bounded children rather than one giant migration/PR. Privacy wording changes in the same release that starts collecting the richer fields. |
 | WAIT-04C / dual-channel delivery | Consent-aware email + eligible SMS as one opportunity, per-channel delivery truth, WAIT-specific 24-hour reminder, retry/UNKNOWN handling and safe timeout inputs. | **NEXT INSIDE LEVEL 3.** Requires verified prospect mobile + STOP and a supported product-operable Willow sender lifecycle. #749 status visibility is only the first product surface; #716 routing remains held until sender activation is proven end to end. |
-| WAIT-04D / response UX | Four client choices, consequence copy, policy acknowledgement, contact/profile completion and truthful practitioner outcomes; no expiry selector. | **NEXT INSIDE LEVEL 3.** Book/Decline already exist in the core; add the accepted keep-place/update-availability/remove taxonomy against the matching authority, then prove real-device Chloe acceptance. |
+| WAIT-04D / response UX | Four client choices, consequence copy, policy acknowledgement, contact/profile completion and truthful practitioner outcomes; **remove the expiry selector and enforce the frozen 48-hour policy**. | **NEXT INSIDE LEVEL 3.** Book/Decline already exist in the core; add the accepted keep-place/update-availability/remove taxonomy against the matching authority, remove practitioner TTL choice, then prove real-device Chloe acceptance. |
 | WAIT-FORECAST-01 / ADMIT-01 | Record inputs/events now; later calibrated estimate of time to invitation. | LATER / no estimator implementation authorized as a launch blocker. No AI probability or fixed-date claim from a two-and-a-half-week anecdotal sample. |
 
 ### 14.5.7E Bounded decisions still needed inside implementation
@@ -2140,7 +2142,7 @@ vgpu / WebGPU as a package dependency before VISUAL-02 proves a material advanta
 
 | **Order** | **Deliverable** | **Exit / gate** |
 | --- | --- | --- |
-| **NOW — TOP PRIORITY** | **LEVEL 3 — Full Willow WAIT Operating System** | Close the remaining Level 3 chain in order: retrospective Willow queue/provenance reconciliation + trustworthy owner control → WAIT-04B complete profile/verified mobile/STOP authority → supported Willow sender provisioning/adoption/test → WAIT-04C email+eligible SMS + WAIT 24h reminder → WAIT-04D four responses → first-consult cancellation/reschedule/no-show/exception rules → Chloe real-device acceptance. Production concurrency remains one; clean non-WAIT candidates freeze behind this program. |
+| **NOW — TOP PRIORITY** | **LEVEL 3 — Full Willow WAIT Operating System** | Close the remaining Level 3 chain in order: retrospective Willow queue/provenance reconciliation + trustworthy owner control → WAIT-04B complete profile/verified mobile/STOP authority → supported Willow sender provisioning/adoption/test → **enforce the fixed 48h/no-expiry-choice policy** → WAIT-04C email+eligible SMS + WAIT 24h reminder → WAIT-04D four responses → first-consult cancellation/reschedule/no-show/exception rules → Chloe real-device acceptance. Production concurrency remains one; clean non-WAIT candidates freeze behind this program. |
 | ~~NOW A~~ · **DONE 16 Sep** | ~~Close #709 at one exact head~~ | Completed: #709 merged, 0197 applied, and the P2 current-state migration record resolved. Original gate preserved for the record: "Fix only the remaining P2 current-state migration record; fresh exact-head Codex + CI; freeze runtime/0197 if clean." |
 | NOW B, parallel | **WAIT-CONTINUITY-01 + owner-control design** | Restore Chloe’s waitlist discoverability without durable-enabling Willow; specify one server/database-owned Open / Waitlist / Closed intake mode. No production migration slot while #709 owns 0197. |
 | ~~RELEASE 1~~ · **DONE 16 Sep** | ~~0197 hosted preflight → apply → verify → reconcile~~ | Completed under its stated gate. Hosted max moved to 0197, and then to 0198 through #713. Original gate preserved for the record: "exact 0197 bytes/checksum; service-role gateway privilege proof; explicit Sam T3 GO; hosted max becomes 0197 before application merge." |
@@ -2201,7 +2203,7 @@ This is the sole maintained product-priority list. Sam’s Work Plan v3 ordering
 
 | **#** | **Item** | **IDs** | **State / gate** |
 | --- | --- | --- | --- |
-| 1 | **LEVEL 3 — Full Willow WAIT Operating System** | ~~#709/0197~~ done; ~~test-studio canary~~ done; ~~#741/#747 exit~~ done; ~~#748 48h~~ done; ~~#749 sender status~~ done; WAIT-CONTINUITY/owner control; retrospective Willow reconciliation; WAIT-04B/C/D; Chloe acceptance | **SOLE TOP PRODUCT PRIORITY.** Level 1 durable queue and Level 2 Invite-to-book software are shipped. Finish the complete Level 3 chain in §23.1; do not call WAIT DONE from email-only Book/Decline or sender-status visibility. MultiPlex starts after Level 3 is operationally accepted. |
+| 1 | **LEVEL 3 — Full Willow WAIT Operating System** | ~~#709/0197~~ done; ~~test-studio canary~~ done; ~~#741/#747 exit~~ done; ~~#748 48h default~~ done; fixed/no-choice 48h policy open; ~~#749 sender status~~ done; WAIT-CONTINUITY/owner control; retrospective Willow reconciliation; WAIT-04B/C/D; Chloe acceptance | **SOLE TOP PRODUCT PRIORITY.** Level 1 durable queue and Level 2 Invite-to-book software are shipped. Finish the complete Level 3 chain in §23.1; do not call WAIT DONE from email-only Book/Decline or sender-status visibility. MultiPlex starts after Level 3 is operationally accepted. |
 | 2 | MultiPlex capture | MPX-01 → MPX-02 → MPX-03; MPX-04/05 payoff | THEN, after Willow WAIT launch is operationally accepted. Chloe field interview first; TM-01 contract check; migration-first; on-device acceptance. |
 | 3 | Chloe 7 September evening batch: bugs → friction → features | DASH-NOTE-01/02; FLOW-03 checkout; RECORDS-01 action; NOTIF-PREFS-01; CLIENT-STATUS-01; BOOK-PRIVACY-01 | After MPX. One PR per item; §14.6.1 definitions; no production slot before rows 1 and 2. |
 | 4 | Financials | FIN-02A / FIN-02B (§14.8) | Parallel preparation only; production slot follows MPX unless Sam reorders; no #666 fallback; no migration number from this document. |
