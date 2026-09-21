@@ -106,51 +106,130 @@ describe("nextSetupStep", () => {
 // slice walked straight into it while claiming to avoid it.
 // ---------------------------------------------------------------------------
 describe("legacyChecklistMayOfferNextStep", () => {
-  // The CTA needs BOTH gates to clear: the operator must be an owner (the
-  // sequence contains owner-only tasks — /settings/consent answers "Only studio
-  // owners can manage consent forms", and services/payments/profile gate the
-  // same way), and the legacy checklist rather than the v2 wizard must own the
-  // sequence for that studio. The full truth table is pinned because a
-  // one-sided gate is exactly what shipped and had to be corrected twice.
-  let gate: (o: { isOwner: boolean; onboardingV2Enabled?: boolean | null }) => boolean;
+  // THREE gates, all of which must clear. The CTA is an AUTHORITATIVE
+  // directive, so each gate answers a different "may it speak?":
+  //   owner?            the sequence contains owner-only tasks
+  //   legacy flow?      v2 owns the sequence where it is enabled
+  //   signals read?     a collapsed read must never become a directive
+  let gate: (o: {
+    isOwner: boolean;
+    onboardingV2Enabled?: boolean | null;
+    signalsAvailable: boolean;
+  }) => boolean;
   beforeAll(async () => {
     ({ legacyChecklistMayOfferNextStep: gate } = await import(
       "@/lib/onboarding/getting-started"
     ));
   });
 
-  it("1. owner + legacy -> CTA shown", () => {
-    expect(gate({ isOwner: true, onboardingV2Enabled: false })).toBe(true);
+  it("1. owner + legacy + signals read -> CTA shown", () => {
+    expect(
+      gate({ isOwner: true, onboardingV2Enabled: false, signalsAvailable: true }),
+    ).toBe(true);
   });
 
-  it("2. owner + v2 -> CTA hidden, because v2 owns that sequence", () => {
-    expect(gate({ isOwner: true, onboardingV2Enabled: true })).toBe(false);
+  it("2. owner + v2 -> hidden, because v2 owns that sequence", () => {
+    expect(
+      gate({ isOwner: true, onboardingV2Enabled: true, signalsAvailable: true }),
+    ).toBe(false);
   });
 
-  it("3. non-owner + legacy -> CTA hidden, though the checklist still renders", () => {
-    // The directive is withheld, not the page: a practitioner keeps the
-    // readiness view and simply is not told to go do owner-only work.
-    expect(gate({ isOwner: false, onboardingV2Enabled: false })).toBe(false);
+  it("3. non-owner + legacy -> hidden, though the checklist still renders", () => {
+    expect(
+      gate({ isOwner: false, onboardingV2Enabled: false, signalsAvailable: true }),
+    ).toBe(false);
   });
 
-  it("4. non-owner + v2 -> CTA hidden", () => {
-    // Previously this case returned TRUE: the v2 gate narrowed the audience
-    // without asking whether the remaining audience could act, so a
-    // practitioner in a v2 studio got a LEGACY-ordered step pointing at a page
-    // that refuses them. Both gates now have to clear.
-    expect(gate({ isOwner: false, onboardingV2Enabled: true })).toBe(false);
+  it("4. non-owner + v2 -> hidden", () => {
+    // Previously TRUE: the v2 gate narrowed the audience without asking
+    // whether the remaining audience could act.
+    expect(
+      gate({ isOwner: false, onboardingV2Enabled: true, signalsAvailable: true }),
+    ).toBe(false);
   });
 
   it("5. owner + MISSING optional column -> legacy CTA shown (skew-tolerant)", () => {
-    // The field is optional for schema-skew tolerance and such a studio is
-    // genuinely on the legacy flow; silence there would strand its owner.
-    expect(gate({ isOwner: true })).toBe(true);
-    expect(gate({ isOwner: true, onboardingV2Enabled: null })).toBe(true);
+    expect(gate({ isOwner: true, signalsAvailable: true })).toBe(true);
+    expect(
+      gate({ isOwner: true, onboardingV2Enabled: null, signalsAvailable: true }),
+    ).toBe(true);
   });
 
-  it("non-owner is refused regardless of the flag's value", () => {
-    for (const v of [true, false, null, undefined]) {
-      expect(gate({ isOwner: false, onboardingV2Enabled: v })).toBe(false);
+  it("FAILS CLOSED: an unreadable signal hides the CTA even for an eligible owner", () => {
+    // The whole point. An owner on the legacy flow is otherwise entitled to the
+    // directive; an unreadable signal withdraws it rather than guessing.
+    expect(
+      gate({ isOwner: true, onboardingV2Enabled: false, signalsAvailable: false }),
+    ).toBe(false);
+    expect(gate({ isOwner: true, signalsAvailable: false })).toBe(false);
+  });
+
+  it("unavailable signals are never rescued by the other gates passing", () => {
+    for (const v2 of [true, false, null, undefined]) {
+      for (const owner of [true, false]) {
+        expect(
+          gate({ isOwner: owner, onboardingV2Enabled: v2, signalsAvailable: false }),
+        ).toBe(false);
+      }
     }
+  });
+});
+
+describe("nextStepSignalsAvailable covers every collapsing read", () => {
+  // A failed read that is NOT in the availability expression silently becomes
+  // a legitimate zero and can be selected as the next task. Enumerating the
+  // reads here means adding a new collapsing read without adding it to the
+  // guard fails this test rather than shipping a confident wrong directive.
+  //
+  // Source-level on purpose: proving it per-read at runtime would mean mocking
+  // Supabase failure for eight reads, which is an ONB-02-sized harness. This
+  // pins the contract that matters — every collapsing read is consulted.
+  it("every read whose failure collapses to 0/[]/false is consulted", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/onboarding/getting-started.ts", "utf8");
+    const expr = src.slice(
+      src.indexOf("const nextStepSignalsAvailable ="),
+      src.indexOf("const blocks = (blockRows"),
+    );
+    for (const read of [
+      "appointments.error",
+      "clients.error",
+      "sterile.error",
+      "disinfectants.error",
+      "payments.error",
+      "blocksRes.error",
+      "notesRes.error",
+      "treatmentConsent.ok",
+    ]) {
+      expect(expr, `${read} must gate next-step selection`).toContain(read);
+    }
+  });
+
+  it("the block and note responses keep their error — destructuring must not discard it", async () => {
+    // `{ data: blockRows }` at the await site threw the error away; that is
+    // precisely how a failed read became an empty studio.
+    //
+    // COMMENTS ARE STRIPPED FIRST, AND LINE BEFORE BLOCK. The source now
+    // QUOTES the old destructuring in a comment explaining why it is gone, so
+    // a naive scan matches the explanation and reports the defect it documents
+    // — which is exactly what the first draft of this test did. Line-then-block
+    // is the repository's existing rule: doing it the other way lets a `/*`
+    // inside a line comment swallow real code.
+    const { readFileSync } = await import("node:fs");
+    const code = readFileSync("lib/onboarding/getting-started.ts", "utf8")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(code).not.toMatch(/\{\s*data:\s*blockRows\s*\}/);
+    expect(code).not.toMatch(/\{\s*data:\s*noteRows\s*\}/);
+    // and the responses themselves are what the guard reads
+    expect(code).toContain("blocksRes.error");
+    expect(code).toContain("notesRes.error");
+  });
+
+  it("getActiveServices is deliberately absent — it throws rather than collapsing", async () => {
+    const { readFileSync } = await import("node:fs");
+    const q = readFileSync("lib/booking/queries.ts", "utf8");
+    // If this ever starts returning [] on error it MUST join the guard above.
+    expect(q).toMatch(/getActiveServices[\s\S]{0,400}if \(error\) throw/);
   });
 });

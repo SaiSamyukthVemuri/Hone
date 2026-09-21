@@ -85,6 +85,7 @@ export default async function GettingStartedPage() {
   const nextStep = legacyChecklistMayOfferNextStep({
     isOwner: practitioner.role === "owner",
     onboardingV2Enabled: studio.onboarding_v2_enabled,
+    signalsAvailable: signals.nextStepSignalsAvailable,
   })
     ? nextSetupStep(checklist)
     : null;

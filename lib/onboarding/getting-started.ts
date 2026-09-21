@@ -66,6 +66,31 @@ export type GettingStartedSignals = {
   // "test-mode payments" item).
   paymentAttempts: number;
   runtimeLivemode: boolean;
+  /**
+   * Did EVERY read that next-step selection depends on actually succeed?
+   *
+   * THE DEFECT THIS CLOSES. The counts below collapse a failed read into a
+   * legitimate zero: `appointments.count ?? 0`, `clients.count ?? 0`,
+   * `(blockRows ?? [])`. A Supabase error and a genuinely empty studio produce
+   * byte-identical signals. The checklist has always rendered that as a `todo`
+   * tick — passive, and visibly a checklist. The "Next step" CTA is different
+   * in kind: it is an AUTHORITATIVE directive, so the same ambiguity would tell
+   * an owner to create a test client they already have, because the clients
+   * read failed.
+   *
+   * This is the CLIN-01-B rule — a failed read is never an empty result —
+   * applied to onboarding. `liveTreatmentConsent` already models it correctly
+   * as tri-state; this extends the same epistemics to the reads that cannot,
+   * WITHOUT rewriting them into tri-state, which would be an ONB-02 data-model
+   * change rather than a bounded fix.
+   *
+   * `getActiveServices` is deliberately absent from the set: it THROWS on a
+   * read error rather than returning `[]`, so it is loud already and cannot
+   * masquerade as an empty catalogue.
+   *
+   * FALSE MEANS "DO NOT CHOOSE A TASK" — never "nothing is set up".
+   */
+  nextStepSignalsAvailable: boolean;
 };
 
 function auto(
@@ -119,7 +144,7 @@ function review(
 /**
  * MAY THIS CHECKLIST CLAIM TO KNOW WHAT COMES NEXT?
  *
- * Two independent reasons it may not, and the CTA needs BOTH to clear.
+ * Three independent reasons it may not, and the CTA needs ALL to clear.
  *
  * 1. IT IS AN OWNER AFFORDANCE, because the sequence contains owner-only work.
  *
@@ -149,6 +174,11 @@ function review(
  *    two authorities, two answers, and no way for the operator to tell which is
  *    lying.
  *
+ * 3. THE SIGNALS IT WOULD SELECT FROM MUST HAVE BEEN READ. See
+ *    `nextStepSignalsAvailable`: a failed count read collapses into a
+ *    legitimate zero, and an authoritative directive built on that tells an
+ *    owner to redo finished work. Unknown is never optimism.
+ *
  * AN ABSENT COLUMN READS AS NOT-ENABLED. The type is optional for schema-skew
  * tolerance, and a studio without the column is genuinely on the legacy flow;
  * failing the other way would strand its owner in silence.
@@ -160,9 +190,15 @@ function review(
 export function legacyChecklistMayOfferNextStep(opts: {
   isOwner: boolean;
   onboardingV2Enabled?: boolean | null;
+  signalsAvailable: boolean;
 }): boolean {
   // Owner-only: the sequence contains tasks a practitioner cannot perform.
   if (!opts.isOwner) return false;
+  // FAIL CLOSED on an unreadable signal. A directive built on a collapsed read
+  // would tell an owner to repeat work that may already be done; silence is
+  // the honest answer to "I could not establish this". The checklist below
+  // keeps rendering whatever it independently owns.
+  if (!opts.signalsAvailable) return false;
   // And only where the legacy checklist, not the v2 wizard, owns the sequence.
   return opts.onboardingV2Enabled !== true;
 }
@@ -488,8 +524,8 @@ export async function getGettingStartedSignals(
     // One bounded existence read, in the SAME Promise.all as everything else:
     // no additional round trip and no per-item query.
     treatmentConsent,
-    { data: blockRows },
-    { data: noteRows },
+    blocksRes,
+    notesRes,
   ] = await Promise.all([
     getActiveServices(studio.id),
     count("appointments"),
@@ -521,6 +557,26 @@ export async function getGettingStartedSignals(
       .order("started_at", { ascending: false })
       .limit(200),
   ]);
+
+  // Destructured AFTER the await so `error` survives: the previous
+  // `{ data: blockRows }` form discarded it at the call site, which is how a
+  // failed read became an empty studio.
+  const blockRows = blocksRes.data;
+  const noteRows = notesRes.data;
+
+  // Every read whose failure would silently become "not done". Consent is
+  // included because its `null` renders a `review` item, which nextSetupStep
+  // SKIPS — so an unreadable consent state would send the owner past a step
+  // that may genuinely be outstanding.
+  const nextStepSignalsAvailable =
+    !appointments.error &&
+    !clients.error &&
+    !sterile.error &&
+    !disinfectants.error &&
+    !payments.error &&
+    !blocksRes.error &&
+    !notesRes.error &&
+    treatmentConsent.ok;
 
   const blocks = (blockRows ?? []) as Array<{
     machine_frequency: string | null;
@@ -566,5 +622,6 @@ export async function getGettingStartedSignals(
     disinfectants: disinfectants.count ?? 0,
     paymentAttempts: payments.count ?? 0,
     runtimeLivemode: inferStripeLivemode(),
+    nextStepSignalsAvailable,
   };
 }
