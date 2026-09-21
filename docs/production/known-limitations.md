@@ -61,6 +61,12 @@ production re-measurement. What changed:
   fixture for `#659`; it reproduces on the baseline before `#659` as well, so it is **not** a
   regression from that change.
 
+**Amended 2026-09-20 / 2026-09-21 UTC — WAIT Level 3 priority, scoped update only.**
+This pass does **not** reverify every limitation. It updates **L14** because the old sender-strategy
+description is now materially stale: per-studio sender lifecycle/schema and a fail-closed resolver
+exist, and #749 has shipped owner-visible read-only sender status. What remains open is the
+product-operable sender activation/routing/registration path and WAIT dual-channel delivery.
+
 **Amended 2026-07-29:** **L9** and **L10** were rewritten because signed / finalized clinical
 records are now **RETIRED by product decision**, enforced by migration **0159**. **Amended
 2026-07-30: 0159 is APPLIED and verified in production** — the retirement is database-enforced, and
@@ -235,16 +241,16 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Next gate** | Lawyer review before relying on enforceability. |
 | **Blocks** | **Broader launch** (and is a standing risk for the pilot). |
 
-## L14 — Broad-SaaS SMS is not built
+## L14 — Broad-SaaS SMS and WAIT dual-channel delivery are not complete
 
 | Field | Value |
 |---|---|
-| **Impact** | SMS works at pilot scale only. There is no A2P/10DLC registration, no per-studio-versus-shared sender strategy, and no SMS rate limiting. |
-| **Evidence** | Env-gated on `TWILIO_*` with per-studio toggle and per-client consent; no registration or sender-strategy code exists. |
-| **Current mitigation** | Off by default per studio; consent-gated per client; STOP/HELP handled. |
+| **Impact** | SMS still works at pilot scale only, and **WAIT invitations are not yet an email+SMS opportunity**. The sender-strategy decision is no longer the blocker: Hone has a per-studio sender lifecycle, provisioning/adoption engines and a fail-closed resolver foundation. What is missing is a supported product path that can provision/adopt/test a studio sender, prove Willow's real sender, integrate prospect verification + STOP/suppression, and then use that sender for WAIT without an unsafe fallback. A2P/10DLC rollout and production-scale SMS rate/ops posture are also still incomplete. |
+| **Evidence** | #715 shipped the fail-closed studio-sender resolver. #749 shipped an **owner-visible read-only status card** and explicitly performs zero provider effects. #716 remains unmerged/held; it would change routing and cannot be treated as live. WAIT profile/SMS source contracts fail closed for an unverified prospect mobile, and the Level 3 roadmap still requires WAIT-specific STOP/suppression + dual-channel proof. |
+| **Current mitigation** | Existing appointment SMS keeps its current shared fallback posture. WAIT Invite-to-book remains email-first/email-only. A typed prospect phone is not treated as a verified SMS destination; unknown or unreadable sender state is not collapsed to "no sender". No routing cutover occurs until sender activation is product-operable and proven. |
 | **Owner** | Sam |
-| **Next gate** | The P0 sender-strategy decision (shared versus per-studio) is still open. |
-| **Blocks** | **Broader launch.** |
+| **Next gate** | **Level 3 sequence:** product-operable provisioning/adoption/test → verified Willow studio sender → prospect mobile verification + STOP/suppression → email + eligible SMS WAIT delivery → WAIT 24h reminder → only then consider the #716-style no-fallback routing cutover. A2P/10DLC and scale controls remain required before broader multi-studio SMS rollout. |
+| **Blocks** | **Level 3 full WAIT launch** and **broader SMS rollout**. It does **not** block a controlled email-only WAIT canary under the normal release gates. |
 
 ## L15 — Observation-chip vocabulary is still a placeholder
 
