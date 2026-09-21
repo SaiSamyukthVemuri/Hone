@@ -27,8 +27,8 @@ not a PR diary — per-capability evidence lives in
 | **Reconciliation date** | **2026-09-20 / 2026-09-21 UTC source sync**; production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
 | **Current Git branch HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` — merge of #745.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
-| **Last runtime-bearing application HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` (#745).** This is also the branch HEAD above: the two merges since `c6bc5949` were `c00bcfed` (#753), which carried **0** runtime-bearing files — documentation, one migration and tests — and `410e5039` (#745), which carried **2** (`app/(app)/getting-started/page.tsx`, `lib/onboarding/getting-started.ts`). Classification is `scripts/classify-changes.mjs`, not judgement. |
-| **Current Vercel Production deployment evidence** | Vercel commit status for `410e5039…` is **success**, and the serving Production deployment `6574545529` is bound to that exact sha (`state=success`, 2026-09-21T17:47:07Z). No deployment id, alias/runtime probe or current health measurement is inferred from that status. |
+| **Last runtime-bearing application HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` (#745).** This is also the branch HEAD above. `git log --first-parent --merges c6bc5949..410e5039` returns **three** merges, not two: `27a4c960` (#751), which carried **0** runtime-bearing files — documentation only; `c00bcfed` (#753), which carried **0** — documentation, one migration and tests; and `410e5039` (#745), which carried **2** (`app/(app)/getting-started/page.tsx`, `lib/onboarding/getting-started.ts`). #751 is documentation-only and does not move the runtime baseline, but omitting it made the derivation incomplete. Classification is `scripts/classify-changes.mjs`, not judgement. |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `410e5039…` is **success**. No deployment id, alias/runtime probe or current health measurement is inferred from that status. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
@@ -36,11 +36,27 @@ not a PR diary — per-capability evidence lives in
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
+### Re-derived at this reconciliation
+
+**Re-derived on 2026-09-21 (PROD-TRUTH-01), from the repository at `410e5039`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (eighty-one merges);
+- which of those merges are runtime-bearing, by `scripts/classify-changes.mjs` rather than by PR
+  title or intuition;
+- repository migration max, total, next free number and pending set (`npm run migration:state`);
+- hosted migration max as **declared** in [`migration-state.json`](./migration-state.json).
+
+These are derivations from the repository and the Git graph. The **2026-08-30** measurement
+boundary recorded below is unchanged: the figures derived there from `bf6f09c4` remain dated
+evidence of that reconciliation and are not restated as facts about today. That is why the
+ancestry count appears twice — **twenty-nine** through `bf6f09c4` on 2026-08-30, **eighty-one**
+through `410e5039` today — and why neither number is edited into the other's block.
+
 ### Historical preceding baseline from the 2026-08-30 reconciliation
 
 `4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge — is preserved here only as the
 baseline that preceded the **2026-08-30** reconciliation. It is **not** the predecessor of the
-current #749 runtime baseline and must not be used as a current release boundary. The current
+current #745 runtime baseline and must not be used as a current release boundary. The current
 production ancestry must be re-read from GitHub at action time.
 
 ### What this reconciliation did and did not measure
@@ -56,7 +72,7 @@ caveat:
 
 **Re-derived on 2026-08-30, from the repository at `bf6f09c4`:**
 
-- the production branch head and the full merge ancestry back to `b9e0003f` (eighty-one merges);
+- the production branch head and the full merge ancestry back to `b9e0003f` (twenty-nine merges);
 - the nine merges since the previous baseline `4fee652f`, and that **all nine are
   runtime-bearing** (none is documentation-only), by changed-path analysis;
 - which of those merges are runtime-bearing, by changed-path analysis;
