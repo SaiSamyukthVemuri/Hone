@@ -35,7 +35,7 @@ describe("0198 position in the chain", () => {
     // migration has to be acknowledged in this file — and it is a per-file
     // hand-off, not the eighteen-file sweep CLAUDE.md records.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0199", "0200", "0201"])
+    expect(versionsAbove(VERSION)).toEqual(["0199", "0200", "0201", "0202"])
   });
 
   it("IS APPLIED to production, and hosted has not gone backwards past it", () => {

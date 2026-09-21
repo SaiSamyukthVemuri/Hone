@@ -13,9 +13,10 @@ not a PR diary — per-capability evidence lives in
 > *dormant*, *held*, *deferred*, *retired* are distinct, and a capability normally holds several
 > at once. **Retired is terminal** — not a later phase, not a gate someone can grant.
 
-> **This document pins the last runtime-bearing baseline, not its own documentation commit.**
-> Later documentation-only commits may move the branch HEAD **above** the SHA below without
-> changing anything Hone *does*.
+> **This document records a dated source/runtime baseline, not live telemetry.**
+> Documentation-only commits may move the branch HEAD above a runtime-bearing SHA without changing
+> product behavior; runtime-bearing merges move the baseline. Every production count/health/provider
+> observation keeps its own measurement date and is not refreshed merely because source advanced.
 
 ---
 
@@ -23,23 +24,24 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | 2026-08-30 |
+| **Reconciliation date** | **2026-09-20 / 2026-09-21 UTC source sync**; production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `bf6f09c4a987e0e251f414bdf5dfc520c5d02d42` — the PR #660 merge (CI-HARDEN-01B: every action pinned to a vetted SHA, `contents: read`, checkout token no longer persisted). Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`0f07dae68efe06d493421af715cb0b7234153de9` — the PR #659 merge, and DELIBERATELY NOT the branch head above.** Derived mechanically, not asserted: the **nine** merges from the previous baseline `4fee652f` through `#659` (`#651`, `#653`, `#652`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659`) change **21** deployed files across `app/`, `components/` and `lib/` — classified by `scripts/classify-changes.mjs`, the same map CI uses. Every one of those nine is runtime-bearing. The **two** merges since (`#631` canonical docs reconciliation, `#660` CI-HARDEN-01B) change **13** files — documentation, CI workflows and tests — and **not one deployed file**, so the branch advanced while the runtime baseline did not. **This is the baseline for every behavioural claim in this document.** |
-| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The Vercel commit status for `0f07dae6` reports **success**, and that status is the whole of the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
+| **Current Git branch HEAD at this sync** | **`c6bc5949fda353610bbd3477b2395a5ed490cf1b` — merge of #749.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`c6bc5949fda353610bbd3477b2395a5ed490cf1b` (#749).** The production branch has advanced through later runtime-bearing releases since the old #659 baseline, including #741/#747 and #748/#749. **Older per-capability measurements in this document remain dated at their own observation times; advancing this source baseline does not re-measure them.** |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `c6bc5949…` is **success**. No deployment id, alias/runtime probe or current health measurement is inferred from that status. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
-| **Health** | ⚠️ **NOT RE-PROBED AT THIS RECONCILIATION.** The last probe was **2026-08-23**: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Those readings describe a runtime **twenty-seven merges old** and are retained as dated evidence, not as current health. |
+| **Health** | ⚠️ **NOT RE-PROBED AT THIS SOURCE SYNC.** The last probe remains the **2026-08-23** reading: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Production has moved substantially since then; this document deliberately does **not** restate a merge-age count. These are dated observations, not current health. |
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
-### Immediately preceding runtime baseline
+### Historical preceding baseline from the 2026-08-30 reconciliation
 
-`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge (UI-01D, Client Profile tab
-acknowledgement), the baseline this document carried before the 2026-08-30 refresh. Its code
-remains live because the nine merges above were built on top of it.
+`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge — is preserved here only as the
+baseline that preceded the **2026-08-30** reconciliation. It is **not** the predecessor of the
+current #749 runtime baseline and must not be used as a current release boundary. The current
+production ancestry must be re-read from GitHub at action time.
 
 ### What this reconciliation did and did not measure
 
@@ -187,10 +189,17 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `0f07dae6` all four check `unavailable` **before** `hasHistory`, and
+At `c6bc5949` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
-Sessions tabs. Read failure now renders *clinical history could not be loaded*.
+Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-pinned from
+the original #659 observation (`0f07dae6`), and verified mechanically rather than assumed: across
+`0f07dae6..c6bc5949` no added or removed line touching `unavailable` or `hasHistory` appears in
+any of the five files that carry these guards — `app/(app)/clients/[id]/page.tsx`,
+`components/last-visit-card.tsx`, `components/treatment-intelligence-card.tsx`,
+`components/before-today-card.tsx` and `components/clinical-unavailable-notice.tsx`. The guards
+are unchanged across the interval, so the property carries to the current baseline rather than
+being re-asserted at it.**
 
 **Deliberate non-change, recorded so it is not mistaken for a gap:** `attachStructuredAreas`
 still **throws** on a `session_block_areas` read failure, surfacing the error boundary. That is
@@ -475,6 +484,33 @@ Willow is currently **refused and routed to a waitlist**, which is a different c
 direct booking route and is live today.
 
 ## 5b. New-client waitlist (admission control)
+
+### 2026-09-20 Level 3 WAIT checkpoint — TOP PRODUCT PRIORITY
+
+**Decision scope:** this is a product-priority and shipped-software reconciliation. It is **not**
+a customer-message, provider-effect, migration or launch-acceptance authorization.
+
+At this checkpoint the production branch contains the following WAIT tranche:
+
+| Layer | Shipped production software | What it establishes | What it does **not** establish |
+|---|---|---|---|
+| **Level 1 — durable queue** | Existing WAIT-02B durable queue + owner lifecycle/manual/legacy tools | A studio-scoped durable waiting list exists; Willow was collecting on it throughout the last measured interval. | Present allowlist configuration, complete historical reconciliation or Chloe acceptance. |
+| **Level 2 — Invite-to-book core** | #708/#709/#713 core; **#741/#747** redeemed-no-booking exit; **#748** 48-hour invitation **default** | Scoped email invitation, proof-bound Book/Decline, atomic booking/conversion, lifecycle exits, a 48-hour default, and a safe operator exit after redemption without booking. | **Fixed/no-choice 48h policy remains open** because the composer still permits alternate TTLs; the full four-response Chloe taxonomy, WAIT-specific 24h reminder, dual-channel delivery and Willow real-client acceptance also remain open. |
+| **Level 3 — Full WAIT Operating System** | **NOT COMPLETE — now Hone's top product priority.** | The required finish line is explicit and bounded. | It must not be inferred from Level 1/2 software being deployed. |
+| **SMS sender visibility** | **#749**, read-only owner status on Settings → Integrations | An owner can see whether Hone has a recorded studio sender and its truthful state; UNKNOWN/read-failed stays distinct. | No provisioning, purchase, adoption, release, #716 routing cutover or WAIT SMS. The shared fallback is unchanged. |
+
+**Level 3 exit contract:** retrospective Willow queue/provenance reconciliation + trustworthy
+owner discoverability/control → WAIT-04B durable rich profile and completion authority → verified
+mobile + waitlist-prospect STOP/suppression → supported studio sender provisioning/adoption/test +
+real Willow sender proof → **fixed 48-hour policy with no practitioner expiry choice** → email + eligible SMS as one invitation opportunity → WAIT-specific
+24-hour reminder → all four recipient response choices → first-consult cancellation/reschedule/
+no-show/exception boundaries → Chloe real-device acceptance.
+
+**Controlled use before Level 3:** the shipped email Invite-to-book core may be exercised only under
+the normal current release/activation gates. Before any real Willow send, confirm the current
+waitlist gate and delivery posture from their authorities. This section does not infer a current
+allowlist value, a real Willow invitation, a provider send or human acceptance.
+
 
 Two different things share this name. They are at **different stages** and must not be merged
 into one status sentence.
