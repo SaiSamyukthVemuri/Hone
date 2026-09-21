@@ -513,7 +513,13 @@ begin
        case when p_sms_consent then v_now end,
        case when p_sms_consent then 'public_form' end,
        case when p_sms_consent then 'waitlist_sms_operational_v1' end)
-    on conflict (studio_id, email_normalized) where status = 'waiting'
+    -- The predicate is written to MATCH the index exactly rather than to imply
+    -- it. `where status = 'waiting'` also infers `..._one_active_per_email`,
+    -- because a narrower predicate implies a wider one -- but it reads as
+    -- though the index were waiting-only, which is the misreading that left the
+    -- read-back below too narrow in the first place.
+    on conflict (studio_id, email_normalized)
+      where status in ('waiting', 'claimed', 'invited')
     do nothing
     returning id into v_id;
 
