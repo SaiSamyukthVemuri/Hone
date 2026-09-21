@@ -15,6 +15,13 @@ import { E2E_APP_ORIGIN, E2E_WEB_SERVER_ENV } from "./e2e/helpers/local-env";
 // per run and are not cleaned up; reset wipes them), which also
 // respects the 0087 clinical delete hardening: no hard deletes.
 export default defineConfig({
+  // E2E SCHEMA PREFLIGHT. Refuses to run when the local Supabase stack's applied
+  // migrations do not match the migrations THIS checkout defines. Every browser
+  // lane reaches the same stack (local-env's endpoints are literals), so a
+  // reset from another worktree's branch would otherwise let this lane test its
+  // application against that branch's schema and report green.
+  // One shared module, deliberately: see e2e/global-setup.ts.
+  globalSetup: "./e2e/global-setup",
   testDir: "./e2e",
   timeout: 120_000,
   expect: { timeout: 15_000 },
