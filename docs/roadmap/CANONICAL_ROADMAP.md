@@ -1,19 +1,19 @@
 ---
 title: Hone Canonical Roadmap & Development North Star
 id: RDM-001
-version: 1.16
+version: 1.17
 publication_structure: v1.15 (RDM-001, 15 September 2026)
 status: CANONICAL — repository working edition, synchronized from the v1.15 publication
 owner: Sam Vemuri
-as_of: 2026-09-17
+as_of: 2026-09-20
 repository: SaiSamyukthVemuri/Hone
 production_branch: claude/build-hone-saas-hOex7
-production_sha_at_sync: a946a983ac9b8da379bc869e21b32a5a3d50e548
-hosted_migration_max_at_sync: "0198"
+production_sha_at_sync: c6bc5949fda353610bbd3477b2395a5ed490cf1b
+hosted_migration_max_at_sync: "0201"
 hosted_state_authority: docs/production/migration-state.json
 ---
 
-<!-- RDM-001 v1.16 | Repository synchronization of the v1.15 publication. PERFORMED. -->
+<!-- RDM-001 v1.17 | Level 3 WAIT priority decision + 20 September production synchronization. PERFORMED. -->
 <!-- Working path: docs/roadmap/CANONICAL_ROADMAP.md (this file is the repository edition). -->
 <!-- Source v1.15 MD SHA-256: 7795a75fa766a37aa84a31062e9d591ff0a5d5a7d4db4b7193edbdcb9ac36b8d -->
 <!-- Source v1.14 MD SHA-256: 356b3ceda49850b26b6729d0a140100a5f5afd3809c625c7d3437d06e08cf2e2 -->
@@ -23,15 +23,17 @@ hosted_state_authority: docs/production/migration-state.json
 
 **Treatment Memory into daily practice**
 
-Canonical Roadmap & Development North Star  ·  RDM-001  ·  v1.16
+Canonical Roadmap & Development North Star  ·  RDM-001  ·  v1.17
 
-17 September 2026 edition  |  repository synchronization of the v1.15 publication, with post-#712 production evidence
+20 September 2026 decision edition  |  Level 3 WAIT becomes Hone's top product priority; synchronized through production #749
 
-> **The publication structure is v1.15 as published (RDM-001, 15 September 2026),**
-> adopted here unchanged. This edition changes no product scope, no authority rule,
-> no gate, no priority order and no migration allocation. It refreshes only
-> independently reverified mutable evidence to the post-#712 state, and preserves
-> every superseded record rather than rewriting it. [§0.10]
+> **v1.17 records a product-priority decision, not a hidden release authorization.**
+> Level 3 — the full Willow WAIT operating system — is now Hone's **top product priority**
+> until Chloe can run and accept the complete real workflow. This edition also records
+> the 20 September production tranche through #749. MultiPlex remains next after Level 3;
+> ONB/UI/UX and supporting lanes may build/review in parallel but do not take the production
+> slot while Level 3 is active unless Sam explicitly reorders. Production concurrency remains one.
+> No provider send, hosted mutation or migration number is authorized merely by this document. [§§0.10, 7–8, 23]
 
 Hone helps an electrology practitioner carry reliable treatment context from one visit to the next and operate the surrounding booking, payment and record-keeping workflow. The immediate product outcome is Willow’s complete waitlist-to-consultation journey.
 
@@ -50,13 +52,35 @@ Historically shipped: clinical notes, multi-area charting, repeat-client fast st
 
 WAIT-03 core is **MERGED / DEPLOYED** and, since v1.15, **PRODUCTION-EXERCISED END TO END** on the controlled test studio. The Invitation-capacity gap that v1.15 recorded — `no_admission_round` — was repaired by #709, which merged on 16 September with its migration 0197; #713 then added the live-invitation read as 0198. The post-0198 canary **passed all twelve seams** on the test studio, covering capacity opening, invitation, recipient proof, scoped slot offers, booking, atomic waitlist conversion and the fail-closed refusal on exhausted capacity. Post-canary cleanup is complete and no open canary state remains. #712 then shipped **WAIT-04A**, wiring three commands migration 0193 had already applied. ⚠️ **CORRECTED 2026-09-19: #712 IS NOT THE CURRENT PRODUCTION HEAD** — this paragraph said it was, which §3 in this same document now marks superseded. Production has advanced through at least #715, #727, #730, #734, #736 and #738; a fresh `git rev-parse origin/claude/build-hone-saas-hOex7` on **2026-09-20** returned `249b7456982f6f7e1fa750b577552beda6758f19` (merge of #739). **Re-read it rather than quoting any SHA from this paragraph.** Willow’s existing waitlist is preserved. **CORRECTED 2026-09-19 (WAIT-DOCS-RECON) — recorded, not deleted:** this sentence declared Willow’s durable WAIT switched off by intent, with no durable cutover performed — and that was **false when written**. Willow has been on the **durable** commit point since on or before **2026-08-25**; a read-only query on 2026-09-19 returned **28 durable Willow rows**, 27 of them `waiting`. The cutover was performed without a release record. What has **not** happened on that studio is anything beyond joining: **zero invitations have ever been issued there**, and owner device acceptance is outstanding. The continuity defect Chloe raised — rollout gating hiding the Waitlist navigation while the list still exists — is unchanged and still owed. WAIT-04 seams S1–S5 and Chloe device acceptance remain required; **no provider or SMS activation has occurred.** [§§3, 14.5, 15, 17, 23; S37–S40, S42]
 
+**20 September 2026 — Level 3 WAIT checkpoint / TOP PRODUCT PRIORITY**
+
+Production now includes the WAIT-P1-EXIT application release (#741, carrying the 0201
+forward correction from #747), the fixed **48-hour** invitation default (#748), and the
+owner-visible **read-only SMS sender status** (#749). #741 closes the redeemed-but-unbooked
+dead end without inferring an appointment relationship Hone cannot prove; #748 centralizes
+the normal invitation opportunity at 48 hours while preserving the 1..168 configured bound;
+#749 lets an owner see sender state without provisioning, purchasing, releasing, adopting,
+rewiring #716 or removing the shared fallback.
+
+These releases move Hone through **Level 1 (durable queue)** and the shipped core of
+**Level 2 (Invite-to-book)**. They do **not** complete the original Willow contract.
+**Level 3 — Full WAIT Operating System** is now the sole top customer outcome. It is not
+DONE until the retrospective Willow queue/provenance reconciliation, trustworthy owner
+discoverability/control, WAIT-04B rich prospect profile, verified mobile + prospect
+STOP/suppression, supported studio-sender provisioning/adoption and Willow sender proof,
+email + eligible SMS as one opportunity, the WAIT-specific 24-hour reminder, all four
+recipient response choices, first-consult cancellation/reschedule/no-show boundaries, and
+Chloe's real-device acceptance are complete. A controlled email-only canary may be used only
+under the normal release/activation gates; this roadmap does not itself authorize a real
+customer message or provider effect.
+
 **Five-measure scorecard**
 
 | **Measure** | **Initial reading from supplied evidence** |
 | --- | --- |
 | Accepted production outcomes / 7 days | UNMEASURED — merges are not user acceptance. |
 | Scope-to-acceptance elapsed time | UNMEASURED — no matched start/acceptance series. |
-| Unfinished delivery units + oldest age | PARTIAL — #708, #709/0197, #713/0198 and #712 (WAIT-04A) are all released. Willow waitlist continuity/owner control, WAIT-04 seams S1–S5 and Chloe device acceptance remain active. Full count and oldest age are unmeasured. |
+| Unfinished delivery units + oldest age | PARTIAL — #741/#747, #748 and #749 are shipped. The active critical path is now **Level 3 WAIT**: retrospective Willow reconciliation/owner control → WAIT-04B profile authority → verified mobile + STOP/suppression → supported sender provisioning/adoption + Willow proof → WAIT-04C dual-channel + 24h reminder → WAIT-04D four responses → first-consult boundaries → Chloe acceptance. Full count and oldest age remain unmeasured. |
 | Independent paying studios with proof | NOT ESTABLISHED — census missing; Willow excluded. |
 | Support minutes / studio / week | UNMEASURED — no operator time log supplied. |
 
@@ -68,13 +92,13 @@ Derived from §23.6. These are outcome groups, not three oversized pull requests
 
 | **Order / owner** | **Outcome and completion evidence** |
 | --- | --- |
-| 1  ·  Willow WAIT launch<br>Sam: release<br>Chloe: acceptance | #709/0197 shipped and the test-studio canary **passed all twelve seams** (Invitation capacity → Invite to book → recipient proof → scoped booking/conversion → fail-closed refusal). What remains: restore Willow waitlist visibility without silently migrating it; replace founder/Vercel slug control with one studio-owned New client intake setting; ⚠️ **reconcile Willow’s existing waiting people — RETROSPECTIVELY, not before a cutover** *(corrected 2026-09-19: the durable cutover happened on or before 2026-08-25, so reconciliation now follows it rather than gating it)*. Then complete the accepted WAIT-04 email+SMS, reminder, response and consultation-policy matrix and record Chloe device acceptance. |
+| 1  ·  **LEVEL 3 — Full Willow WAIT Operating System**<br>Sam: release<br>Chloe: acceptance | **TOP PRIORITY.** Level 1 durable queue and the Level 2 Invite-to-book core are shipped; #741/#747 add the safe redeemed-no-booking exit, #748 makes the normal opportunity 48 hours, and #749 exposes read-only sender state. Finish retrospective Willow reconciliation + owner control, WAIT-04B rich profile, verified mobile/STOP, supported Willow sender activation, email+eligible SMS, 24h reminder, four response choices, first-consult lifecycle rules, then record Chloe real-device acceptance. Only then call Willow WAIT launch DONE. |
 | 2  ·  MultiPlex<br>Chloe: field contract<br>Builder: assigned by Sam | Capture the complete agreed MultiPlex settings and retrieve the relevant setup at the next visit. MPX-01 freezes fields; MPX-02/03 supply storage and charting; MPX-04/05 preserve memory and prep. Confirm the TM-01 dependency and record on-device acceptance. |
 | 3  ·  September 7 workflow batch<br>Chloe: acceptance<br>One owner per item | Deliver notes fixes, reduced checkout friction, actionable disinfection, notification preferences and the agreed client-management/booking-privacy improvements. Keep each item bounded; record its acceptance separately. Follow the existing bugs → friction → features order. |
 
 **Parallel and deferred**
 
-FIN-02 remains isolated preparation; production order is §23.6. Trust gates continue. A bounded security-guard hardening lane, Laura/ONBOARD-04 synthetic-studio readiness proof and inert #699/#704 charting groundwork may run in parallel only when they do not contend with WAIT’s migration/release train. Receipt assembly #702 is shipped/observe-only; cash/e-transfer/webhook receipt follow-ons stay out of the critical path. CI-cost #688 waits until WAIT stabilizes. Forecasting, bulk messaging and broad automation remain deferred. Developer-platform canaries do not change WAIT → MultiPlex priority. [§23.8; S37, S40]
+FIN-02 remains isolated preparation; production order is §23.6. Trust gates continue. **Level 3 WAIT owns the product production slot.** ONB and UI/UX may continue bounded build/review work in parallel, but clean candidates freeze behind Level 3 rather than competing with it. A bounded security-guard hardening lane, Laura/ONBOARD readiness proof, marketing successor architecture and inert charting groundwork may run in parallel only when they do not contend with the WAIT release train. Receipt follow-ons stay out of the critical path. Forecasting, bulk messaging and broad automation remain deferred. Developer-platform work does not change **Level 3 WAIT → MultiPlex** priority. [§23.8; S37, S40]
 
 **Next release decisions**
 
@@ -146,6 +170,8 @@ Start with the two-page operating brief. Use §23.6 as the single current produc
 v1.15 changes: records merged/deployed #708 WAIT core, hosted 0192–0196, the controlled test-studio canary, #709/0197 Invitation-capacity authority repair, Willow navigation continuity and the accepted owner-control direction; records #702 automatic card receipt + PDF as shipped. WAIT → MultiPlex → September 7 remains the product order; WAIT is not DONE until the Willow journey and accepted WAIT-04 policy are complete. Retired overlays remain in F.7. [S37–S40]
 
 v1.16 changes: synchronizes the v1.15 publication into the repository. Records #709/0197, #713/0198 and #712 (WAIT-04A) as merged, hosted max `0198` with `0199` unallocated, CANARY_PASS 12/12 with post-canary cleanup complete, and the Vercel exact-source match at `a946a983…`. Preserves all 89 repository v1.1 IDs and the SEC-09 clinical-finalization retirement in Appendix G. WAIT → MultiPlex → September 7 remains the product order; WAIT is not DONE until the Willow journey and accepted WAIT-04 policy are complete. [S42]
+
+v1.17 changes: **Level 3 — Full WAIT Operating System becomes the sole top product priority.** Records #741/#747, #748 and #749 as shipped production software; the normal invitation opportunity is now 48 hours, the redeemed-but-unbooked exit is live under the 0201 authority contraction, and the owner can see truthful SMS sender state. These do not make WAIT SMS, the rich profile, the 24-hour WAIT reminder, four-response UX, first-consult lifecycle or Chloe acceptance complete. MultiPlex remains next only after Level 3 is operationally accepted; ONB/UI/UX remain parallel/subordinate and production concurrency remains one.
 
 Appendices A–E retain artifact disposition, failed-workstream contracts, illustrative record schemas, source provenance and the historical Willow capacity baseline. Appendix F preserves superseded operating records. No roadmap item ID or accepted capability is deleted.
 
@@ -1208,8 +1234,16 @@ The waitlist is therefore not a generic CRM list. It is the first control in a n
 | ADMIT-02 | Assisted admission control | T2 | Hone calculates Safe to invite N with a deterministic explanation; Chloe chooses Invite next N; server/database enforces exact N and invitation state atomically. Human-in-loop is the required production proving stage. |
 | ADMIT-03 | Opt-in automatic release | T3/T4a | Studio default OFF. Same deterministic admission budget used by assisted mode; automatic worker may claim no more than N; expiration may release the next entry; monitored pilot and immediate pause/kill switch. |
 | ADMIT-04 | Capacity-expansion economics | T1/T2 | Use waitlist growth, unmet admissions, treatment lead time, utilization and collected-value contracts to quantify when another practitioner day materially increases service capacity and revenue. No fabricated LTV or fixed-rate assumption. |
-| WAIT-04 | Chloe launch policy / contact / communication | T2/T3 + T4a | **AUTHORIZED / STILL REQUIRED FOR WILLOW LAUNCH; output not accepted.** Complete only after the core canary is trustworthy: required profile, four responses, fixed 48-hour policy, 24-hour reminder, eligible email+SMS and consultation restrictions. Do not let the deployed WAIT-03 core silently redefine the frozen Chloe contract. Dependencies and verification remain §§14.5.7–14.5.9. |
+| WAIT-04 | **Level 3 — Chloe launch policy / contact / communication** | T2/T3 + T4a | **TOP PRIORITY / PARTIALLY EFFECTIVE / NOT COMPLETE.** Shipped pieces now include the production Invite-to-book core, the safe redeemed-no-booking exit (#741/#747), fixed normal 48-hour opportunity (#748) and owner-visible read-only SMS sender status (#749). Still required before Level 3 is DONE: rich profile/legacy completion, verified mobile + prospect STOP/suppression, supported per-studio sender activation, email+eligible SMS, WAIT-specific 24h reminder, four response choices, first-consultation rules and Chloe real-device acceptance. |
 | WAIT-FORECAST-01 | Time-to-invitation estimate | T2 | LATER / NOT BUILT. Instrument now. Forecast access to consultation invitation, not treatment start; show calibrated ranges only after enough matching history and accepted capacity assumptions. Maps to ADMIT-01, not a second admission engine. |
+
+### 14.5.0 WAIT maturity levels — current product priority
+
+| **Level** | **What it means** | **Current state** |
+| --- | --- | --- |
+| **Level 1 — Durable queue** | Studio-scoped durable join/removal, owner queue visibility, manual/legacy entry and basic availability/provenance operations. | **SHIPPED / active at Willow on the last measured durable interval.** Human acceptance is separate. |
+| **Level 2 — Invite-to-book core** | Invitation capacity; scoped email invitation; recipient proof; permitted-slot booking; decline; atomic waitlist conversion; delivery truth; release/expire/requeue; safe redeemed-no-booking exit; fixed normal 48-hour opportunity. | **SHIPPED SOFTWARE.** Controlled test-studio journey is production-exercised. Willow real-client exercise/acceptance is not inferred. |
+| **Level 3 — Full WAIT Operating System** | Retrospective Willow reconciliation + owner control; complete profile; verified mobile and STOP; supported Willow sender; email+eligible SMS; WAIT 24h reminder; all four responses; first-consult lifecycle; Chloe acceptance. | **TOP PRIORITY — INCOMPLETE.** No other planned product gets the production slot ahead of this program unless Sam explicitly reorders. |
 
 <a id="hone_s_14_5_1"></a>
 ## 14.5.1 Admission dependency law
@@ -1314,9 +1348,9 @@ Binding points to prove: practitioner adapter → authenticated atomic admission
 <a id="hone_s_14_5_7"></a>
 ## 14.5.7 WAIT-04 — frozen Chloe launch contract
 
-| **ACCEPTED TO BUILD; NOT EFFECTIVE PRODUCTION POLICY YET** |
+| **LEVEL 3 TOP PRIORITY — PARTIALLY EFFECTIVE, NOT COMPLETE** |
 | --- |
-| Sam authorized execution after Chloe’s final feedback. These requirements replace the earlier email-first / generic-decline / permissive consult-reschedule product defaults. Construction proceeds as a bounded follow-on stack; no numbered migration, hosted mutation or customer-message authorization is supplied by this roadmap. [S19] |
+| Sam has now made the full Level 3 WAIT operating system Hone's top product priority. Parts of the frozen contract are already effective in production: the email Invite-to-book core, fixed normal 48-hour opportunity and redeemed-no-booking exit. #749 exposes sender state but does not provision or route SMS. The remaining profile, verified-mobile/STOP, dual-channel reminder/response and first-consult rules stay required. This roadmap authorizes bounded development, not a migration number, provider effect, real-customer send or launch acceptance. [S19] |
 
 ### 14.5.7A Join and complete a waitlist profile
 
@@ -1362,10 +1396,10 @@ Binding points to prove: practitioner adapter → authenticated atomic admission
 
 | **Delivery unit** | **Assigned output** | **State / boundaries** |
 | --- | --- | --- |
-| WAIT-04A / profile and join | Typed fields/validation, mobile-accessible join and profile-completion presentation, canonical area selection and consent model. | AUTHORIZED / ASSIGNED. No branch, commit, PR or test completion established here. Prototype/UI may build; live DB binding waits for authority. |
-| WAIT-04B / policy authority | Unnumbered follow-on prototype: profile authority, response taxonomy, priority cycles, deadlines/reminder eligibility, consultation restrictions and event records. | AUTHORIZED / ASSIGNED. Disposable isolated DB proof only. Do not edit applied migrations or silently widen moving 0192/0193. Split implementation into bounded child PRs if scope exceeds §7 budgets. |
-| WAIT-04C / dual-channel delivery | Consent-aware email+SMS, per-channel delivery evidence, 24-hour reminder, retry/unknown handling and safe timeout inputs. | NEXT BUILD after #680 convergence; reuse transport primitives. No assumption of live shared/dedicated sender readiness; no real provider messages without separate GO. |
-| WAIT-04D / response UX | Four client choices, consequence copy, policy acknowledgement, contact completion and truthful practitioner outcomes; remove expiry choice. | NEXT BUILD after the relevant UI/authority contracts settle. Do not confuse the #683 practitioner component with the #686 recipient owner; designate disjoint files and one integrator. |
+| WAIT-04A / profile and join | Typed fields/validation, mobile-accessible join/profile presentation, canonical areas and consent model; reuse the shipped availability/manual/legacy-entry authority. | **PARTIAL FOUNDATION SHIPPED.** #712 made availability/manual/legacy commands reachable; richer profile components/contracts exist but remain dormant until WAIT-04B supplies durable authority and privacy changes atomically. |
+| WAIT-04B / policy authority | Persist/bind the complete prospect profile; preserve legacy priority/provenance; completion capability; verified-mobile authority; prospect STOP/suppression integration; response/deadline/reminder and first-consult policy records as required. | **NOW — TOP ACTIVE BUILD.** Derive migration need/number fresh; never edit applied history. Split into bounded children rather than one giant migration/PR. Privacy wording changes in the same release that starts collecting the richer fields. |
+| WAIT-04C / dual-channel delivery | Consent-aware email + eligible SMS as one opportunity, per-channel delivery truth, WAIT-specific 24-hour reminder, retry/UNKNOWN handling and safe timeout inputs. | **NEXT INSIDE LEVEL 3.** Requires verified prospect mobile + STOP and a supported product-operable Willow sender lifecycle. #749 status visibility is only the first product surface; #716 routing remains held until sender activation is proven end to end. |
+| WAIT-04D / response UX | Four client choices, consequence copy, policy acknowledgement, contact/profile completion and truthful practitioner outcomes; no expiry selector. | **NEXT INSIDE LEVEL 3.** Book/Decline already exist in the core; add the accepted keep-place/update-availability/remove taxonomy against the matching authority, then prove real-device Chloe acceptance. |
 | WAIT-FORECAST-01 / ADMIT-01 | Record inputs/events now; later calibrated estimate of time to invitation. | LATER / no estimator implementation authorized as a launch blocker. No AI probability or fixed-date claim from a two-and-a-half-week anecdotal sample. |
 
 ### 14.5.7E Bounded decisions still needed inside implementation
@@ -2106,6 +2140,7 @@ vgpu / WebGPU as a package dependency before VISUAL-02 proves a material advanta
 
 | **Order** | **Deliverable** | **Exit / gate** |
 | --- | --- | --- |
+| **NOW — TOP PRIORITY** | **LEVEL 3 — Full Willow WAIT Operating System** | Close the remaining Level 3 chain in order: retrospective Willow queue/provenance reconciliation + trustworthy owner control → WAIT-04B complete profile/verified mobile/STOP authority → supported Willow sender provisioning/adoption/test → WAIT-04C email+eligible SMS + WAIT 24h reminder → WAIT-04D four responses → first-consult cancellation/reschedule/no-show/exception rules → Chloe real-device acceptance. Production concurrency remains one; clean non-WAIT candidates freeze behind this program. |
 | ~~NOW A~~ · **DONE 16 Sep** | ~~Close #709 at one exact head~~ | Completed: #709 merged, 0197 applied, and the P2 current-state migration record resolved. Original gate preserved for the record: "Fix only the remaining P2 current-state migration record; fresh exact-head Codex + CI; freeze runtime/0197 if clean." |
 | NOW B, parallel | **WAIT-CONTINUITY-01 + owner-control design** | Restore Chloe’s waitlist discoverability without durable-enabling Willow; specify one server/database-owned Open / Waitlist / Closed intake mode. No production migration slot while #709 owns 0197. |
 | ~~RELEASE 1~~ · **DONE 16 Sep** | ~~0197 hosted preflight → apply → verify → reconcile~~ | Completed under its stated gate. Hosted max moved to 0197, and then to 0198 through #713. Original gate preserved for the record: "exact 0197 bytes/checksum; service-role gateway privilege proof; explicit Sam T3 GO; hosted max becomes 0197 before application merge." |
@@ -2139,7 +2174,7 @@ Session handoff: role; owner; unit; worktree/branch; local and remote heads; dir
 
 | **Gate** | **Meaning** |
 | --- | --- |
-| GO — authorized development | WAIT-04 seam work under its own scope, beginning with the zero-migration units (S2 invalidate caller, S3 resolver caller with a fail-closed assertion, S1 preference-grant callers); WAIT-CONTINUITY-01 and WAIT-SAAS-01 design/implementation under their own scope; isolated Laura-readiness preparation. This is not a hosted-apply, merge, provider or Willow-migration GO. |
+| GO — authorized development | **Level 3 WAIT** bounded work is authorized as the primary product program: retrospective reconciliation/discoverability, WAIT-04B profile + verified-mobile/STOP authority, supported sender provisioning/adoption/test, WAIT-04C dual-channel + 24h reminder, WAIT-04D response UX and first-consult boundaries. Parallel ONB/UI/UX/marketing architecture may build/review but has no competing production authority. Provider effects, customer sends and any new migration still require their own exact gates. |
 | HOLD — release / activation | Real provider sends and WAIT-04 effective policy each require their exact current gates and separate human authorization. ⚠️ **Willow durable enablement is NO LONGER ON THIS HOLD** *(corrected 2026-09-19)* — it was taken on or before 2026-08-25. What is held in its place is the **data reconciliation** that was supposed to precede it, and the **governance record** it never received. The 0197 apply and #709 merge this row previously held are **done**; the hold now covers what follows them. |
 | HOLD — numbering | **SUPERSEDED 2026-09-17 — recorded, not deleted.** The hold read: "0197 is allocated to #709 and remains pending; hosted max is 0196. Treat 0198 as next-free only after 0197 apply/verify/reconcile releases the migration lock." Both 0197 and 0198 are now applied, `0199` followed on 2026-09-18, and ⚠️ **as of 2026-09-20 `0200` is applied too**, so hosted max is **`0201`** (⚠️ advanced again 2026-09-20 when the `0201` authority contraction was applied). **the next free number is NOT stated here** — it was stated as `0200`, and `0200` was then allocated and applied; derive it with `npm run migration:state`. WAIT-04, MPX and FIN still do not claim a number from this document; S1–S5 migrations require a new single-allocator decision. |
 | STOP — evidence or authority failure | Moved authorized head/base; unexpected hosted/provider state; uncertain billable effect; conflicting ownership or shared DB contention; malformed/unavailable facts treated as success; bearer/identity bypass; stale review treated as current; same-family or scope threshold without recorded re-entry. |
@@ -2166,7 +2201,7 @@ This is the sole maintained product-priority list. Sam’s Work Plan v3 ordering
 
 | **#** | **Item** | **IDs** | **State / gate** |
 | --- | --- | --- | --- |
-| 1 | **Willow WAIT launch — finish the production-exercised core, owner control and accepted policy** | ~~#709/0197~~ done; ~~test-studio canary~~ done; WAIT-CONTINUITY-01; WAIT-SAAS-01; Willow **retrospective** reconciliation *(the migration itself is done — corrected 2026-09-19)*; WAIT-04A done, B/C/D open | **PRIMARY — rank unchanged.** §23.1 is the exact sequence. #708/0192–0198 plus WAIT-04A is shipped core and a passed twelve-seam canary, not launch completion. Remaining: trustworthy owner control; ⚠️ **Willow's RETROSPECTIVE reconciliation and the activation's missing governance record** *(corrected 2026-09-19 — this listed the Willow cutover as a later step, though it happened on or before 2026-08-25)*; and the frozen §14.5.7/§14.5.9 contract with Chloe acceptance. |
+| 1 | **LEVEL 3 — Full Willow WAIT Operating System** | ~~#709/0197~~ done; ~~test-studio canary~~ done; ~~#741/#747 exit~~ done; ~~#748 48h~~ done; ~~#749 sender status~~ done; WAIT-CONTINUITY/owner control; retrospective Willow reconciliation; WAIT-04B/C/D; Chloe acceptance | **SOLE TOP PRODUCT PRIORITY.** Level 1 durable queue and Level 2 Invite-to-book software are shipped. Finish the complete Level 3 chain in §23.1; do not call WAIT DONE from email-only Book/Decline or sender-status visibility. MultiPlex starts after Level 3 is operationally accepted. |
 | 2 | MultiPlex capture | MPX-01 → MPX-02 → MPX-03; MPX-04/05 payoff | THEN, after Willow WAIT launch is operationally accepted. Chloe field interview first; TM-01 contract check; migration-first; on-device acceptance. |
 | 3 | Chloe 7 September evening batch: bugs → friction → features | DASH-NOTE-01/02; FLOW-03 checkout; RECORDS-01 action; NOTIF-PREFS-01; CLIENT-STATUS-01; BOOK-PRIVACY-01 | After MPX. One PR per item; §14.6.1 definitions; no production slot before rows 1 and 2. |
 | 4 | Financials | FIN-02A / FIN-02B (§14.8) | Parallel preparation only; production slot follows MPX unless Sam reorders; no #666 fallback; no migration number from this document. |
@@ -2175,16 +2210,12 @@ This is the sole maintained product-priority list. Sam’s Work Plan v3 ordering
 | 7 | Business decisions still open | Paid consults; consult value-add (§17.7) | Chloe decides; not build items. |
 | 8 | Open product decision | WAIT-INTAKE-01 interest/readiness level (§0.7, §14.6.1) | Decide before the richer WAIT intake binds: add as a structured select or explicitly drop. |
 
-**Product-wide design programme — authorized, and deliberately UNRANKED.**
-`ACCEPTED_PRIORITY`: **UX-01 Quick Wins is AUTHORIZED**, to proceed once its
-prebuild is reconciled against current production. It is recorded outside the
-numbered rows **on purpose** — the numbered list is ordered and rows 2–8 carry
-explicit `THEN`/`After` sequencing, so a row number would assert a rank against
-those items that **has not been decided**. UX-01's position relative to rows 2–8
-is **unordered**; only the row-1 rule below applies to it.
-
-UX-02 … UX-11 are `PROPOSED_DESIGN`: **PROPOSED / NOT SCHEDULED**, carrying **no
-implementation authority**. **Appearing in the sequence never authorizes a
+**Product-wide design programme — subordinate to Level 3 WAIT.**
+**UX-01 is SHIPPED** (#743). **UX-02 remains an AUTHORIZED / FROZEN candidate**
+that must be refreshed and revalidated from then-current production before release;
+it does not take the production slot ahead of Level 3. UX-03 … UX-11 remain
+`PROPOSED_DESIGN`: **PROPOSED / NOT SCHEDULED**, carrying **no implementation
+authority**. **Appearing in the sequence never authorizes a
 stage** — each needs its own acceptance recorded here. MOTION-01 remains a
 **PILOT, not adopted**, and keeps its sequencing constraint. The contract and the
 open design questions live in `DESIGN.md` (§0.4). No dates and no implementation
@@ -2192,11 +2223,11 @@ PR numbers are allocated by this entry.
 
 **Rules that hold across the list. **
 
-Production concurrency stays one. Nothing below row 1 takes a production slot until WAIT releases.
+Production concurrency stays one. **Level 3 WAIT owns the production slot until its release unit is accepted;** clean ONB/UI/UX/marketing/support candidates freeze behind it unless Sam explicitly reorders.
 
 Migration truth is now: hosted/applied 0192–**0201** (⚠️ updated 2026-09-20 and advanced again the same day: `0200` is WAIT-P1-EXIT, #741, and `0201` is its forward authority contraction, #747 — 0201 does not edit 0200, it redefines the command so the exit stops reading `public.appointments`), with parity between hosted and repository maxima and nothing pending; **the next free number is NOT stated here** — it was stated as `0200`, and `0200` was then allocated and applied; derive it with `npm run migration:state`. The 0194 schema is applied through the WAIT assembly while #674 runtime routing remains a separate, unperformed provider operation. New WAIT-04, MPX-02 and FIN migrations remain unnumbered. The decision index (§0.4) is a pointer, not a second ledger.
 
-Chloe's WAIT requirements are frozen (§14.5.7). No more product discovery on WAIT until the contract works end to end; reopen only for a real operational defect.
+Chloe's WAIT requirements are frozen (§14.5.7) and are now the **Level 3 execution contract**. No more product discovery on WAIT until that contract works end to end; reopen only for a real operational defect or an explicit Sam/Chloe product decision.
 
 One PR per item; no item absorbs another; the six WAIT-03 PRs take only current-head blockers and new requirements go in the WAIT-04 slices.
 
@@ -2228,10 +2259,12 @@ This is the order **within the supporting Developer Platform / Agentic Engineeri
 <a id="hone_s_23_8"></a>
 ## 23.8 Current parallel support lanes — subordinate to WAIT
 
-These lanes may prepare in parallel because they do not own the current production migration/release train. More panes do not create more production movers.
+These lanes may prepare in parallel because they do not own the current production migration/release train. **Level 3 WAIT is the primary product lane and owns production.** More panes do not create more production movers.
 
 | **Lane** | **Current treatment** | **Boundary** |
 | --- | --- | --- |
+| ONB + UI/UX | Continue bounded Day-1/onboarding and product-quality build/review work only where it does not contend with WAIT. | No production merge ahead of Level 3; clean candidates freeze and refresh when their turn arrives. |
+| Marketing successor architecture | Replace #744's parser/evaluator approach with the simpler declared-scope/truth-register successor. | Draft/review only; no production priority and no new syntax-patch loop on #744. |
 | Trust / security guard hardening | Preserve the IDOR/ACL audit evidence and close the bounded test-coverage defects before adding more privileged commands where practical. | No broad new audit and no competing migration unless separately scheduled. |
 | Laura / ONBOARD-04 readiness | Run a synthetic fresh-studio path: owner/invite acceptance → service → availability → client → booking → chart/completion → email/test-payment posture. Correct the runbook’s missing mandatory accept-invitation step. | No real Laura mutation until launch is authorized; no hidden Sam-only configuration accepted as normal. |
 | #699 Start charting / #704 groundwork | Keep reviewed resolver/guard groundwork preserved and inert. | No reachable CTA and no migration allocation until WAIT releases the migration lock; rebuild/revalidate from then-current production before release work. |
