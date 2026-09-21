@@ -310,8 +310,21 @@ after the join is unexercised, and none of it is acceptance. **Do not round that
 **Eighty-one** production merges landed between `b9e0003f` and the current branch head. **Ten**
 carry a capability that belongs in this register.
 
-**Those two numbers are derived over different spans, and saying so is the point.** The
-twenty-nine decompose exactly, by `git log --first-parent --merges b9e0003f..bf6f09c4`:
+**THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
+**eighty-one** is the merge ancestry through the *current* branch head, `410e5039`. The **ten**
+is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
+through `bf6f09c4`, and it has not been re-run since.
+
+**This section is scoped to that dated derivation and must not be read as a current capability
+count.** The fifty-two merges between `bf6f09c4` and `410e5039` are recorded row by row in
+[release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
+`#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
+has **not** re-enumerated them. Re-running the capability derivation across all eighty-one merges
+is its own lane with its own evidence; raising the number here without doing that work would
+manufacture a figure nobody derived, which is the precise failure this document exists to
+prevent.
+
+The twenty-nine decompose exactly, by `git log --first-parent --merges b9e0003f..bf6f09c4`:
 
 | Group | Merges | Capabilities |
 |---|---|---|
