@@ -626,6 +626,81 @@ describe("a NULL treatment area is refused, never silently dropped", () => {
   });
 });
 
+describe("an already-active prospect is told so, in every active state", () => {
+  // `..._one_active_per_email` is unique across ALL THREE active states, so the
+  // second insert always conflicts and no duplicate row is ever created. The
+  // defect was the READ-BACK: it matched only `waiting`, so a conflict against
+  // a claimed or invited row found nothing to report, exhausted the retry loop
+  // and answered `unknown` -- the command's "I cannot tell you what happened"
+  // code -- to someone whose place was never in doubt.
+  for (const status of ["claimed", "invited"] as const) {
+    it(`a second submission from a ${status} prospect is answered already_waiting`, async () => {
+      const s = await seedStudio(`w04b-dup-${status}`);
+      const email = `dup-${status}-${Math.random().toString(16).slice(2)}@example.com`;
+      const first = await joinWithProfile(s.studioId, { email });
+      expect(first.result).toBe("created");
+
+      await adminQuery(
+        `update public.new_client_waitlist_entries
+            set status = 'claimed', claimed_at = now(), claimed_by_practitioner_id = $2
+          where id = $1`,
+        [first.entry_id, s.practitionerId],
+      );
+      if (status === "invited") {
+        await adminQuery(
+          `update public.new_client_waitlist_entries
+              set status = 'invited', invited_at = now() where id = $1`,
+          [first.entry_id],
+        );
+      }
+
+      const second = await joinWithProfile(s.studioId, { email, first: "Mallory" });
+      expect(second.result).toBe("already_waiting");
+      expect(second.entry_id).toBe(first.entry_id);
+
+      const rows = await adminQuery(
+        `select id from public.new_client_waitlist_entries
+          where studio_id = $1 and email_normalized = $2`,
+        [s.studioId, email],
+      );
+      expect(rows.rows.length, "exactly one entry for this address").toBe(1);
+
+      const prefs = await adminQuery(
+        `select entry_id from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+        [first.entry_id],
+      );
+      expect(prefs.rows.length).toBe(1);
+
+      // Finding an existing entry still writes NOTHING to it.
+      expect((await entryRow(first.entry_id!)).first_name).toBe("Ada");
+    });
+  }
+
+  it("a still-waiting prospect is found by the read-back as before", async () => {
+    const s = await seedStudio("w04b-dup-waiting");
+    const email = `dup-waiting-${Math.random().toString(16).slice(2)}@example.com`;
+    const first = await joinWithProfile(s.studioId, { email });
+    const second = await joinWithProfile(s.studioId, { email });
+    expect(second.result).toBe("already_waiting");
+    expect(second.entry_id).toBe(first.entry_id);
+  });
+
+  it("a REMOVED prospect may join again — removal is not an active state", async () => {
+    const s = await seedStudio("w04b-dup-removed");
+    const email = `dup-removed-${Math.random().toString(16).slice(2)}@example.com`;
+    const first = await joinWithProfile(s.studioId, { email });
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'removed', removed_at = now(), removed_by_practitioner_id = $2
+        where id = $1`,
+      [first.entry_id, s.practitionerId],
+    );
+    const second = await joinWithProfile(s.studioId, { email });
+    expect(second.result).toBe("created");
+    expect(second.entry_id).not.toBe(first.entry_id);
+  });
+});
+
 describe("no browser-reachable role gains anything", () => {
   it("anon and authenticated hold no DML on the entries table", async () => {
     for (const role of ["anon", "authenticated"] as const) {

@@ -530,11 +530,22 @@ begin
       return;
     end if;
 
+    -- THE READ-BACK MUST COVER EVERY STATE THE INDEX GUARDS, NOT JUST ONE.
+    -- `new_client_waitlist_entries_one_active_per_email` is unique on
+    -- (studio_id, email_normalized) WHERE status in ('waiting','claimed',
+    -- 'invited'), and the ON CONFLICT predicate above infers it because
+    -- `status = 'waiting'` implies that set. So the insert correctly conflicts
+    -- for a prospect in ANY active state and no duplicate is ever created --
+    -- but matching only `waiting` here then found nothing to report. The loop
+    -- burned every attempt and returned `unknown` to someone who was simply
+    -- already on the list, mid-claim or mid-invitation. `unknown` is the
+    -- command's "I cannot tell you what happened" code; a known, settled place
+    -- in the queue is the opposite of that.
     select e.id into v_id
       from public.new_client_waitlist_entries e
      where e.studio_id        = p_studio_id
        and e.email_normalized = v_email
-       and e.status           = 'waiting'
+       and e.status in ('waiting', 'claimed', 'invited')
      limit 1;
 
     if v_id is not null then
