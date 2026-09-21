@@ -204,34 +204,20 @@ The audit records two further motion *candidates*. They are **not** pilots and
 
 ## Authorized work
 
-**UX-01 Quick Wins is AUTHORIZED**, to proceed once its prebuild is reconciled
-against current production. Its home is the canonical roadmap §23.6; this is a
-pointer, not a second register.
+**UX-01 Quick Wins is SHIPPED** (#743).
 
-It is stated **here rather than below** because the next section is defined as
-*not decided* — recording a decided item inside it would tell an agent both that
-UX-01 may proceed and that it may not.
+**UX-02 is AUTHORIZED** by Sam's explicit 2026-09-20 product/release decision to
+keep UI/UX moving and shipping in parallel with Level 3 WAIT. Its bounded
+contract remains the existing SectionLabel adoption slice and convergence-stop
+architecture; this authorization does **not** revive the removed general
+class-expression evaluator or authorize UX-03+.
 
-**UX-02 Primitive Adoption + anti-regression is AUTHORIZED**, by owner product
-decision of 2026-09-20, for **bounded** implementation in parallel with WAIT. It
-is recorded here for the same reason UX-01 is: the next section is defined as
-*not decided*, so a decided item placed inside it would tell an agent both that
-UX-02 may proceed and that it may not.
+**UX-03 … UX-11 remain PROPOSED and NOT SCHEDULED**, and MOTION-01 remains a
+**PILOT, not adopted**, with its sequencing constraint intact.
 
-Its bound is the part that carries the authority. Implementation applies **only
-to replacing a hand-rolled control with an EXISTING approved primitive it is an
-exact equivalent of** — same rendered output, same behaviour. A call site that
-differs from the primitive in geometry, colour or semantics is **not** in scope
-and does not become so by being adjacent to one that is. In particular this
-authorizes no new primitive, no variant of an existing one, and no change to
-clinical caution treatments.
-
-**WAIT retains production priority. UX-02 does not take the WAIT production
-slot**, and production concurrency remains one.
-
-Nothing else **in the UX programme** is authorized. **UX-03 … UX-11 are PROPOSED
-and NOT SCHEDULED**, and MOTION-01 remains a **PILOT, not adopted**, with its
-sequencing constraint intact.
+The canonical roadmap §23.6 remains the product-priority/release home; this
+section records the design-program authority so the two documents do not issue
+contradictory instructions.
 
 **NAV-ACK-01 is AUTHORIZED** — a **bounded LAW 4 repair**, by owner product
 ruling of 2026-09-18. It sits **outside** the UX programme and must not be
@@ -311,10 +297,9 @@ None of these is decided. None may be smuggled into a polish PR.
    **PROPOSED and NOT SCHEDULED**, carrying no implementation authority.
    **Appearing in the sequence never authorizes a stage** — a later slice does not
    become startable because the one before it shipped. Adoption belongs in the
-   canonical roadmap, not in a review document and not here. *(UX-01 and **UX-02**
-   are **not** part of this question — both are authorized; see "Authorized work"
-   above. UX-02's authorization is **bounded to exact-equivalent primitive
-   replacement** and does not reach the slices after it.)*
+   canonical roadmap and must also be reflected here so the authority documents
+   agree. *(UX-01 is shipped and UX-02 is authorized; neither is part of this
+   undecided question — see "Authorized work" above.)*
 
    | Slice | Family |
    |---|---|
