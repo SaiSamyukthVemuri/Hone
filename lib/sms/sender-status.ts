@@ -340,21 +340,28 @@ export function presentSenderStatus(read: SenderRead): SenderStatusView {
         lastTestOkAt: row.last_test_ok_at,
       };
     case "releasing":
-      // A RELEASE STATE DOES NOT IMPLY A PURCHASED NUMBER.
+      // `phone_number` IS A RECORD, NOT A HISTORY. It says what Hone has
+      // stored. It does not say what the provider holds, and it does not say
+      // what was or was not bought.
       //
-      // 0191 requires `claimed_phone_number` for every status past `off`, but
-      // `purchased_matches_claimed_check` is `phone_number is null or
-      // phone_number = claimed_phone_number` — null is permitted at EVERY
-      // status, and no constraint requires a purchase before `releasing` or
-      // `released`. So an attempt that failed before buying anything reaches
-      // here with `phone_number` null, and this slice's own routing makes that
-      // the expected path: `number_no_longer_available` is `release_only`
-      // precisely because the chosen number vanished before it was bought.
+      // 0191 permits null at every status — `purchased_matches_claimed_check`
+      // is `phone_number is null or phone_number = claimed_phone_number` — and
+      // nothing requires a purchase before `releasing` or `released`. That
+      // much makes "Releasing the number" an over-claim over a null.
       //
-      // "Releasing the number" over a null would invent a provider resource
-      // Hone has no evidence ever existed. A CLAIM is not a purchase, and
-      // `claimed_phone_number` is not owner-readable anyway, so there is no
-      // number to name here — the honest sentence is about the attempt.
+      // BUT THE OPPOSITE SENTENCE IS EQUALLY AN OVER-CLAIM, and it is the one
+      // an earlier revision of this branch made. `provisioning.ts` is built
+      // around the case where "the purchase SUCCEEDS and Hone's finalize write
+      // is LOST": `phone_number` is written only by `finalize`, the claim key
+      // is written into the provider resource so it outlives that lost write,
+      // and every retry looks at the provider first precisely so it ADOPTS a
+      // number Hone already owns instead of buying a second one. The
+      // orchestration even carries `mayOwnUnfinalizedResources` to say so.
+      //
+      // So a null means exactly one thing: HONE HAS NO NUMBER RECORDED. It
+      // does not mean none was purchased, and a surface that says either way
+      // is inventing evidence. The null branch therefore describes the setup
+      // and says nothing about numbers at all.
       return row.phone_number
         ? {
             status: row.status,
@@ -369,21 +376,23 @@ export function presentSenderStatus(read: SenderRead): SenderStatusView {
         : {
             status: row.status,
             tone: "working",
-            headline: "Closing the setup attempt",
-            detail:
-              "Setting up a sender did not get as far as buying a number, so there is none to give up. Hone is closing the attempt.",
+            headline: "Closing sender setup",
+            detail: "This studio's sender setup is being closed.",
             phoneNumber: null,
             recovery: "none",
             errorCode: null,
             lastTestOkAt: null,
           };
     case "released":
-      // Same split as `releasing`, and for the same reason: this row may record
-      // an abandoned attempt rather than a number that was owned and given up.
+      // Same split as `releasing`, and bounded by the same rule: say what the
+      // row proves. With a number recorded, "this number was given up" is a
+      // fact. With none, the only fact is that the setup was closed — whether
+      // a provider resource was ever bought, and whether one still exists, are
+      // both outside what this row can answer.
       //
       // Both shapes keep the shared-sender sentence. It is the CURRENT-STATE
       // half of the answer and it is true either way — an owner reading only
-      // what happened to the attempt would be left with the same "are my texts
+      // what happened to the setup would be left with the same "are my texts
       // going out?" question the empty state exists to answer.
       return row.phone_number
         ? {
@@ -400,9 +409,9 @@ export function presentSenderStatus(read: SenderRead): SenderStatusView {
         : {
             status: row.status,
             tone: "retired",
-            headline: "Setup attempt closed",
+            headline: "Sender setup closed",
             detail:
-              "An earlier attempt to set up a sender ended before a number was bought. Messages are sent using Hone's shared sender.",
+              "This studio's previous sender setup was closed. Messages are sent using Hone's shared sender.",
             phoneNumber: null,
             recovery: "none",
             errorCode: null,

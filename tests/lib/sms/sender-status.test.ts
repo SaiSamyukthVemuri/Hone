@@ -436,22 +436,32 @@ describe("a released sender is reachable, not filtered away (#749 review)", () =
 });
 
 /**
- * A RELEASE STATE DOES NOT IMPLY A PURCHASED NUMBER (#749 review, P2).
+ * `phone_number` IS A RECORD, NOT A HISTORY (#749 review, P2 x2).
  *
- * 0191 requires `claimed_phone_number` past `off`, but permits `phone_number`
- * to stay null at EVERY status — `purchased_matches_claimed_check` is
- * `phone_number is null or phone_number = claimed_phone_number`, and no
- * constraint requires a purchase before `releasing` or `released`. An attempt
- * that failed before buying anything therefore reaches these two states with
- * no number, and this module's own routing makes that the expected path:
- * `number_no_longer_available` routes to `release_only` precisely because the
- * chosen number vanished before it was bought.
+ * The first revision of this block only stopped the panel over-claiming in one
+ * direction — saying a number was given up when none was recorded. The fix
+ * then over-claimed in the OTHER direction, saying the setup "ended before a
+ * number was bought". Both are inventions, and the second is the more
+ * dangerous one because `provisioning.ts` is built around exactly the case it
+ * denies:
  *
- * So the panel must not say a number is being, or was, given up unless one was
- * actually purchased. A claim is not a purchase.
+ *   - `phone_number` is written ONLY by `finalize`;
+ *   - the purchase happens BEFORE finalize, and "the purchase SUCCEEDS and
+ *     Hone's finalize write is LOST" is a case the file names in its own
+ *     header;
+ *   - the claim key is written into the PROVIDER resource so it survives that
+ *     lost write, and every retry looks at the provider first precisely so it
+ *     ADOPTS a number Hone already owns rather than buying a second one;
+ *   - the orchestration carries `mayOwnUnfinalizedResources` to say that Hone
+ *     may hold provider resources it never recorded.
+ *
+ * So a null `phone_number` means ONE thing: Hone has no number recorded. It
+ * does not establish that a number was purchased, and it does not establish
+ * that none was. The null branches must therefore say nothing about numbers,
+ * purchases or provider resources in either direction.
  */
-describe("release states never invent a number that was not bought", () => {
-  /** Wording that ASSERTS a provider resource existed. */
+describe("the null branches claim only what the row proves", () => {
+  /** Wording that asserts a provider resource EXISTED. */
   const CLAIMS_A_NUMBER = [
     /\bthe number\b/i,
     /\bthis number\b/i,
@@ -460,30 +470,43 @@ describe("release states never invent a number that was not bought", () => {
     /never reused/i,
   ];
 
+  /** Wording that asserts a purchase DID NOT happen — the opposite invention. */
+  const CLAIMS_NO_PURCHASE = [
+    /\bno number\b/i,
+    /\bnone to give up\b/i,
+    /nothing to (give up|release)/i,
+    /(before|without) (a number|buying)/i,
+    /(never|not) (bought|purchased)/i,
+    /did not get as far/i,
+    /\bno provider resource\b/i,
+  ];
+
   const sentence = (v: { headline: string; detail: string }) =>
     `${v.headline} ${v.detail}`;
 
-  it("releasing WITH a number describes that number", () => {
+  const mustBeNeutral = (v: { headline: string; detail: string }) => {
+    for (const claim of [...CLAIMS_A_NUMBER, ...CLAIMS_NO_PURCHASE]) {
+      expect(sentence(v), String(claim)).not.toMatch(claim);
+    }
+  };
+
+  it("1. releasing WITH a known number may name it", () => {
     const v = presentSenderStatus(
       ok(row({ status: "releasing", phone_number: "+15551230000" })),
     );
     expect(v.phoneNumber).toBe("+15551230000");
-    expect(sentence(v)).toMatch(/number/i);
     expect(v.detail).toMatch(/given up/i);
   });
 
-  it("releasing WITHOUT a number describes the attempt, not a number", () => {
+  it("2. releasing WITHOUT a recorded number is neutral", () => {
     const v = presentSenderStatus(ok(row({ status: "releasing" })));
     expect(v.status).toBe("releasing");
     expect(v.phoneNumber).toBeNull();
-    for (const claim of CLAIMS_A_NUMBER) {
-      expect(sentence(v), String(claim)).not.toMatch(claim);
-    }
-    // It still has to say something true about what is happening.
-    expect(sentence(v)).toMatch(/attempt/i);
+    mustBeNeutral(v);
+    expect(sentence(v)).toMatch(/sender setup/i);
   });
 
-  it("released WITH a number describes that number", () => {
+  it("3. released WITH a known number may name it", () => {
     const v = presentSenderStatus(
       ok(
         row({
@@ -498,43 +521,92 @@ describe("release states never invent a number that was not bought", () => {
     expect(v.detail).toMatch(/never reused/i);
   });
 
-  it("released WITHOUT a number describes the attempt, not a number", () => {
+  it("4. released WITHOUT a recorded number is neutral", () => {
     const v = presentSenderStatus(
       ok(row({ status: "released", released_at: "2026-09-20T00:00:00Z" })),
     );
     expect(v.status).toBe("released");
     expect(v.phoneNumber).toBeNull();
-    for (const claim of CLAIMS_A_NUMBER) {
-      expect(sentence(v), String(claim)).not.toMatch(claim);
-    }
-    expect(sentence(v)).toMatch(/attempt/i);
+    mustBeNeutral(v);
+    expect(sentence(v)).toMatch(/sender setup/i);
   });
 
-  it("BOTH null shapes keep the current-state answer the owner needs", () => {
-    // The shared-sender sentence is the half that answers "are my texts going
-    // out?". Correcting the history half must not drop it.
-    const released = presentSenderStatus(
+  /**
+   * THE REGRESSION FIXTURE. A purchase that succeeded and a finalize that did
+   * not: `provisioning.ts` reports `finalize_conflict` / `finalize_failed`
+   * with `mayOwnUnfinalizedResources: true`, and `phone_number` stays null
+   * because only `finalize` writes it. Hone may well own a number here.
+   *
+   * This row is indistinguishable, in stored state, from one that never bought
+   * anything — which is the whole point. The presenter may not tell them apart
+   * and must not pretend to.
+   */
+  const purchasedThenFinalizeFailed = (status: "releasing" | "released") =>
+    row({
+      status,
+      phone_number: null,
+      last_error_code: "finalize_conflict",
+      last_error_at: "2026-09-20T00:00:00Z",
+      released_at: status === "released" ? "2026-09-20T00:00:00Z" : null,
+    });
+
+  for (const status of ["releasing", "released"] as const) {
+    it(`a purchase-succeeded-then-finalize-failed row (${status}) is never called "no number"`, () => {
+      const v = presentSenderStatus(ok(purchasedThenFinalizeFailed(status)));
+      expect(v.phoneNumber).toBeNull();
+      mustBeNeutral(v);
+      for (const claim of CLAIMS_NO_PURCHASE) {
+        expect(sentence(v), `may own an unfinalized number: ${claim}`).not.toMatch(claim);
+      }
+    });
+  }
+
+  it("the released null branch keeps the current-state answer", () => {
+    // Correcting the history half must not drop the half that answers
+    // "are my texts going out?".
+    const v = presentSenderStatus(
       ok(row({ status: "released", released_at: "2026-09-20T00:00:00Z" })),
     );
-    expect(released.detail).toMatch(/shared sender/i);
+    expect(v.detail).toMatch(/shared sender/i);
   });
 
-  it("the guard is not vacuous: it FIRES on the pre-fix wording", () => {
-    // Negative control. If `CLAIMS_A_NUMBER` matched nothing, the two null
-    // assertions above would pass no matter what the module said.
-    const preFix = {
-      headline: "Number released",
-      detail:
-        "This number was given up and is never reused. Messages are sent using Hone's shared sender.",
-    };
-    const fired = CLAIMS_A_NUMBER.filter((c) => c.test(sentence(preFix)));
-    expect(fired.length).toBeGreaterThan(0);
-  });
-
-  it("no null-number release ever renders a number to the card", () => {
+  it("no null-number release renders a number to the card", () => {
     for (const status of ["releasing", "released"] as const) {
-      const v = presentSenderStatus(ok(row({ status })));
-      expect(v.phoneNumber, status).toBeNull();
+      expect(presentSenderStatus(ok(row({ status }))).phoneNumber, status).toBeNull();
     }
+  });
+
+  describe("the guards are not vacuous", () => {
+    // Without these, every `not.toMatch` above could pass because the patterns
+    // match nothing at all. Each family must fire on the revision it was
+    // written to forbid.
+    it("CLAIMS_A_NUMBER fires on the original wording", () => {
+      const original = {
+        headline: "Number released",
+        detail:
+          "This number was given up and is never reused. Messages are sent using Hone's shared sender.",
+      };
+      expect(CLAIMS_A_NUMBER.filter((c) => c.test(sentence(original))).length)
+        .toBeGreaterThan(0);
+    });
+
+    it("CLAIMS_NO_PURCHASE fires on the over-corrected wording", () => {
+      const overCorrected = {
+        headline: "Setup attempt closed",
+        detail:
+          "An earlier attempt to set up a sender ended before a number was bought. Messages are sent using Hone's shared sender.",
+      };
+      expect(
+        CLAIMS_NO_PURCHASE.filter((c) => c.test(sentence(overCorrected))).length,
+      ).toBeGreaterThan(0);
+    });
+
+    it("neither family fires on the shipped neutral wording", () => {
+      // The complement of the two assertions above: the guards must be
+      // satisfiable, not merely strict.
+      for (const status of ["releasing", "released"] as const) {
+        mustBeNeutral(presentSenderStatus(ok(row({ status }))));
+      }
+    });
   });
 });
