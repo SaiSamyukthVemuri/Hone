@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import ts from "typescript";
@@ -132,9 +132,19 @@ function classNameLiterals(source: string, fileName: string): string[] {
   return out;
 }
 
-/** Hand-rolled duplicates of the primitive in `file`. */
+/**
+ * Hand-rolled duplicates of the primitive in `file`.
+ *
+ * A baseline file that no longer exists counts as ZERO, not as an error.
+ * Deleting a legacy component is a legitimate way for its count to fall, and
+ * reading it unconditionally made the shrink-only rule throw ENOENT on exactly
+ * that — turning every listed path into permanent bookkeeping and failing the
+ * guard for an adoption succeeding.
+ */
 function duplicates(file: string): string[] {
-  const source = readFileSync(path.join(REPO_ROOT, file), "utf8");
+  const full = path.join(REPO_ROOT, file);
+  if (!existsSync(full)) return [];
+  const source = readFileSync(full, "utf8");
   return classNameLiterals(source, file).filter((literal) => {
     const classes = [...new Set(literal.split(/\s+/).filter(Boolean))];
     const set = new Set(classes);
@@ -250,6 +260,13 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
       if (actual > baseline) grown.push(`${file}: baseline ${baseline}, found ${actual}`);
     }
     expect(grown, "a legacy file gained hand-rolled labels").toEqual([]);
+  });
+
+  it("3c. a deleted baseline file counts as zero, not as an error", () => {
+    // Deleting a legacy component is a legitimate way for its count to fall.
+    // Reading it unconditionally threw ENOENT and failed the shrink-only rule
+    // for an adoption that had SUCCEEDED.
+    expect(duplicates("app/(app)/settings/availability/__deleted__.tsx")).toEqual([]);
   });
 
   it("3b. no file outside the baseline introduces the duplicate", () => {
