@@ -51,7 +51,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >
 > ⚠️ **ONE CONSTRAINT NAME WAS TRUNCATED BY POSTGRES, AND THE SOURCE STILL READS
 > THE LONG NAME.** `0202` writes
-> `new_client_waitlist_entries_mobile_verified_requires_number_check` (67 chars);
+> `new_client_waitlist_entries_mobile_verified_requires_number_check` (65 chars);
 > the stored name is
 > `new_client_waitlist_entries_mobile_verified_requires_number_che` (63, the
 > identifier limit), reported as `NOTICE (42622)` during the apply. This is
