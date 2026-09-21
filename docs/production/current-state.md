@@ -26,9 +26,9 @@ not a PR diary — per-capability evidence lives in
 |---|---|
 | **Reconciliation date** | **2026-09-20 / 2026-09-21 UTC source sync**; production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD at this sync** | **`c6bc5949fda353610bbd3477b2395a5ed490cf1b` — merge of #749.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
-| **Last runtime-bearing application HEAD at this sync** | **`c6bc5949fda353610bbd3477b2395a5ed490cf1b` (#749).** The production branch has advanced through later runtime-bearing releases since the old #659 baseline, including #741/#747 and #748/#749. **Older per-capability measurements in this document remain dated at their own observation times; advancing this source baseline does not re-measure them.** |
-| **Current Vercel Production deployment evidence** | Vercel commit status for `c6bc5949…` is **success**. No deployment id, alias/runtime probe or current health measurement is inferred from that status. |
+| **Current Git branch HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` — merge of #745.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` (#745).** This is also the branch HEAD above: the two merges since `c6bc5949` were `c00bcfed` (#753), which carried **0** runtime-bearing files — documentation, one migration and tests — and `410e5039` (#745), which carried **2** (`app/(app)/getting-started/page.tsx`, `lib/onboarding/getting-started.ts`). Classification is `scripts/classify-changes.mjs`, not judgement. |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `410e5039…` is **success**, and the serving Production deployment `6574545529` is bound to that exact sha (`state=success`, 2026-09-21T17:47:07Z). No deployment id, alias/runtime probe or current health measurement is inferred from that status. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
@@ -56,7 +56,7 @@ caveat:
 
 **Re-derived on 2026-08-30, from the repository at `bf6f09c4`:**
 
-- the production branch head and the full merge ancestry back to `b9e0003f` (twenty-nine merges);
+- the production branch head and the full merge ancestry back to `b9e0003f` (eighty-one merges);
 - the nine merges since the previous baseline `4fee652f`, and that **all nine are
   runtime-bearing** (none is documentation-only), by changed-path analysis;
 - which of those merges are runtime-bearing, by changed-path analysis;
@@ -86,8 +86,18 @@ claim about today, and a later reader must re-measure before treating it as one.
 
 | PR | State | Why it is not production |
 |---|---|---|
-| **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged (carried by draft #647) | The registry and the disclosure landed in TRUTH-01A; **the export payload is byte-for-byte unchanged**, so nothing here is live. See §12. |
-| **#647** — TRUTH-01B-1, the joinable archive | **OPEN**, and a **DRAFT** | Parked. `#648` records it as untouched. Nothing here is live. |
+| **#752** — WAIT fixed 48-hour opportunity | **OPEN**, release candidate | Not merged. Nothing in it is deployed, and the fixed/no-expiry-choice policy is therefore **not** in production. |
+| **#754** — MARKETING-UI successor | **OPEN**, release candidate | Not merged, so none of its public-page or accessibility repair is deployed. |
+| **#746** — UX-02 SectionLabel adoption | **OPEN**, and a **DRAFT** | Not merged. UX-02 is authorized by `DESIGN.md`, but authorization is not deployment. |
+| **#750** — SIGNOUT-02 logout acknowledgement | **OPEN**, and a **DRAFT** | Not merged. The logout acknowledgement is **not** live. |
+| **#755** — R1/E2 browser-lane audit | **OPEN**, release candidate | Not merged. It changes no product behaviour. |
+
+⚠️ **CORRECTION, 2026-09-21 (PROD-TRUTH-01) — `#647` WAS REMOVED FROM THE TABLE ABOVE.** It carried two rows
+declaring TRUTH-01B-1 open and `#647` a parked draft. `#647` merged on **2026-08-30** as `1d6d7c48` and is
+contained in this history, so those rows had been false for three weeks. Describing a merged PR as open is the
+same class of defect as the converse, and production advancing creates it by default — which is why the rows
+were deleted rather than reworded: a merged PR does not belong in a table about what is *not* production. The
+rows now listed are the candidates genuinely open at this reconciliation.
 
 > **No head SHA is recorded for an open PR, deliberately.** An open branch's head moves whenever
 > it is pushed to, so a SHA written here is stale the moment it is useful — the same defect this
@@ -189,7 +199,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `c6bc5949` all four check `unavailable` **before** `hasHistory`, and
+At `410e5039` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-pinned from
