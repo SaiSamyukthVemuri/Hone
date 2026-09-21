@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
+import { FOOTER_GROUPS } from "@/lib/marketing/content";
+
 // MARKETING-UI: the skip-link and landmark contract, pinned.
 //
 // WHY THIS FILE IS SMALL AND LITERAL. The predecessors this successor replaces
@@ -87,10 +89,18 @@ describe("the comment stripper itself", () => {
 });
 
 describe("1 + 2: the skip link exists once, and names the canonical target", () => {
-  it("there is exactly ONE definition of the link", () => {
-    // Two definitions is how the pair silently drifts: one gets renamed.
-    const defs = codeOnly(read(SKIP_LINK)).match(/export function SkipLink/g) ?? [];
-    expect(defs).toHaveLength(1);
+  it("the component renders exactly ONE bypass anchor", () => {
+    // COUNTS ANCHORS, NOT THE DECLARATION. An earlier revision asserted that
+    // `export function SkipLink` appeared once, which is a statement about the
+    // module rather than about what renders: adding a SECOND
+    // `<a href="#...">` inside the component puts two skip links on every page
+    // while leaving exactly one exported function, and every later assertion
+    // here reads only the FIRST matching href. A rendered-once contract has to
+    // be asserted on the rendered thing.
+    const code = codeOnly(read(SKIP_LINK));
+    expect(code.match(/export function SkipLink/g) ?? []).toHaveLength(1);
+    const anchors = code.match(/<a\s[^>]*href="#/g) ?? [];
+    expect(anchors, `SkipLink renders ${anchors.length} bypass anchors`).toHaveLength(1);
   });
 
   it("it points at a fragment, via a plain anchor", () => {
@@ -236,20 +246,44 @@ describe("5: footer navigation groups keep accessible names", () => {
     ).toBe(true);
   });
 
-  it("an aria-labelledby reference actually resolves in this file", () => {
-    // A dangling reference names NOTHING, and looks identical to a working one
-    // in every source assertion that only checks the attribute is present.
-    const labelledBy = [...code.matchAll(/aria-labelledby=\{`([^`]+)`\}/g)].map(
-      (m) => m[1],
-    );
-    if (labelledBy.length === 0) return; // aria-label form; nothing to resolve.
-    for (const expr of labelledBy) {
+  it("an aria-labelledby reference actually resolves, in EITHER syntax", () => {
+    // A dangling reference names NOTHING and looks identical to a working one
+    // to any assertion that merely sees the attribute present.
+    //
+    // BOTH SPELLINGS, because an earlier revision extracted only the
+    // template-literal form and RETURNED EARLY when it found none. Refactoring
+    // the footer to a static `aria-labelledby="footer-links"` with a missing id
+    // would then have matched zero references, taken that early return, and
+    // reported green on precisely the defect this test exists for. An early
+    // return on "no matches" is indistinguishable from a pass.
+    const tpl = [...code.matchAll(/aria-labelledby=\{`([^`]+)`\}/g)].map((m) => m[1]);
+    const stat = [...code.matchAll(/aria-labelledby="([^"]+)"/g)].map((m) => m[1]);
+
+    if (tpl.length === 0 && stat.length === 0) {
+      // Genuinely nothing to resolve is a valid state — but it must be PROVED
+      // from the aria-label technique being present, never assumed from an
+      // empty match set.
+      expect(
+        code,
+        "no aria-labelledby found, so aria-label must be the technique in use",
+      ).toMatch(/aria-label=/);
+      return;
+    }
+
+    for (const expr of tpl) {
       // The id is built by the same expression on both sides; compare the
       // expressions rather than evaluating them.
       expect(
         code,
         `aria-labelledby=\`${expr}\` has no element declaring that id`,
       ).toContain(`id={\`${expr}\`}`);
+    }
+    for (const id of stat) {
+      const declared = code.includes(`id="${id}"`) || code.includes(`id={"${id}"}`);
+      expect(
+        declared,
+        `aria-labelledby="${id}" has no element declaring that id`,
+      ).toBe(true);
     }
   });
 
@@ -258,10 +292,22 @@ describe("5: footer navigation groups keep accessible names", () => {
   });
 
   it("there are groups to label — otherwise this is vacuous", () => {
-    // Read from the content module the footer maps over, so an emptied list
-    // fails here rather than passing a footer with nothing in it.
-    const content = read("lib/marketing/content.ts");
-    const titles = [...content.matchAll(/title:\s*"([^"]+)"/g)].map((m) => m[1]);
-    expect(titles.length).toBeGreaterThanOrEqual(3);
+    // READS THE EXPORTED VALUE, NOT THE FILE. An earlier revision grepped
+    // `title:` across the whole content module, which carries FOURTEEN such
+    // properties — marketing metadata, section copy, unrelated structures.
+    // Emptying FOOTER_GROUPS entirely would have left eleven of them behind
+    // and the count still passing, so the anti-vacuity check was itself
+    // vacuous: the footer could render no navigation at all and this stayed
+    // green.
+    //
+    // Importing the value makes the assertion about the thing the footer
+    // actually maps over, and nothing else in the module can prop it up.
+    expect(FOOTER_GROUPS.length).toBeGreaterThanOrEqual(3);
+    for (const group of FOOTER_GROUPS) {
+      expect(group.title.trim().length, "a group with no title cannot be named")
+        .toBeGreaterThan(0);
+      expect(group.links.length, `group "${group.title}" has no links`)
+        .toBeGreaterThan(0);
+    }
   });
 });
