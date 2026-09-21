@@ -43,26 +43,21 @@
  * passes `p_ttl_hours` explicitly, and `tests/lib/waitlist/invitation-window.test.ts`
  * censuses that no call to a TTL-taking command omits the argument.
  *
- * THE DATABASE'S 1..168 SUPPORT IS DELIBERATELY LEFT INTACT — see the bound
- * below. Removing a chooser is a product decision; narrowing what the shipped
- * command will accept is a schema decision, and this slice makes only the first.
+ * THE DATABASE'S 1..168 SUPPORT IS DELIBERATELY LEFT INTACT. Removing a chooser
+ * is a product decision; narrowing what the shipped command will accept is a
+ * schema decision, and this slice makes only the first.
+ *
+ * THIS MODULE NO LONGER RESTATES THAT BOUND, AND THAT IS THE POINT.
+ * It exported `TTL_HOURS_MIN = 1` and `TTL_HOURS_MAX = 168` so a test could
+ * check 48 sat inside them. Nothing read them at runtime, and the check they
+ * enabled was circular: it compared one TypeScript number against two other
+ * TypeScript numbers and proved only that this file agreed with itself. If the
+ * database's own guard ever changed, these copies would have gone on asserting
+ * the old range and the test would have stayed green.
+ *
+ * The containment proof now DERIVES the accepted range from the SQL that
+ * enforces it — `issue_new_client_waitlist_invitation`, which both application
+ * paths reach — so it turns red when the real authority moves.
+ * See `tests/lib/waitlist/invitation-window.test.ts`.
  */
 export const WAIT_INVITATION_TTL_HOURS = 48;
-
-/**
- * The bound the shipped command itself enforces: 1 hour .. 7 days.
- *
- * KEPT, THOUGH NO APPLICATION PATH CAN NOW REACH ITS EDGES. These describe what
- * `admit_new_client_waitlist_entry` and its siblings will ACCEPT, which is a
- * fact about the database and is still true. The application simply no longer
- * exercises the range: it always sends `WAIT_INVITATION_TTL_HOURS`.
- *
- * They are not dead, and they are not a chooser waiting to be re-enabled. They
- * are the statement that the fixed window sits INSIDE what the command permits
- * — which is the one thing that would silently break if someone later changed
- * the window to a number the command refuses as `invalid_ttl`. The test asserts
- * exactly that containment, so the constants earn their place by catching a
- * future edit rather than by being read at runtime.
- */
-export const TTL_HOURS_MIN = 1;
-export const TTL_HOURS_MAX = 168;

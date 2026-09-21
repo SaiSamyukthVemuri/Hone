@@ -2,11 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import * as invitationWindow from "@/lib/waitlist/invitation-window";
-import {
-  TTL_HOURS_MAX,
-  TTL_HOURS_MIN,
-  WAIT_INVITATION_TTL_HOURS,
-} from "@/lib/waitlist/invitation-window";
+import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import {
   COMPOSER_FIELD_NAMES,
   emptyDraft,
@@ -116,6 +112,57 @@ function parseSqlFunctions(sql: string): Array<{ name: string; params: string }>
 
 const SQL_FUNCTIONS = parseSqlFunctions(MIGRATION_SQL);
 
+// ---------------------------------------------------------------------------
+// THE TTL AUTHORITY, READ FROM THE MIGRATIONS THAT DEFINE IT
+// ---------------------------------------------------------------------------
+//
+// `issue_new_client_waitlist_invitation` holds the only TTL guard in the
+// invitation chain. Both application paths reach it — the live one through
+// `admit_new_client_waitlist_entry` -> `issue_scoped_...`, the dormant one
+// through `issue_scoped_...` directly — which the test above asserts rather
+// than assumes.
+const TTL_AUTHORITY = "issue_new_client_waitlist_invitation";
+
+/** Migration files in APPLY ORDER, so a later redefinition wins. */
+const MIGRATION_FILES = readdirSync(MIGRATION_DIR)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((f) => readFileSync(path.join(MIGRATION_DIR, f), "utf8"));
+
+/**
+ * The body of the LAST definition of a command.
+ *
+ * LAST, NOT FIRST. A command redefined by a later migration is governed by that
+ * later body; reading the first would pin a rule production stopped following.
+ */
+function latestBodyOf(name: string): string {
+  let found: string | null = null;
+  for (const sql of MIGRATION_FILES) {
+    const marker = `create or replace function public.${name}`;
+    let from = sql.indexOf(marker);
+    while (from !== -1) {
+      const next = sql.indexOf("create or replace function public.", from + marker.length);
+      found = sql.slice(from, next === -1 ? undefined : next);
+      from = sql.indexOf(marker, from + marker.length);
+    }
+  }
+  expect(found, `no definition of ${name} found in the migrations`).not.toBeNull();
+  return found!;
+}
+
+type TtlGuard = { min: number; max: number };
+
+/** `if v_ttl < A or v_ttl > B then` -> {min: A, max: B}; null when absent. */
+function ttlGuardFrom(body: string): TtlGuard | null {
+  const m = body.match(/v_ttl\s*<\s*(\d+)\s*or\s*v_ttl\s*>\s*(\d+)/i);
+  return m ? { min: Number(m[1]), max: Number(m[2]) } : null;
+}
+
+function ttlGuardOf(name: string): TtlGuard | null {
+  return ttlGuardFrom(latestBodyOf(name));
+}
+
+
 describe("the SQL declaration parser the census depends on", () => {
   it("survives a parenthesised parameter type", () => {
     // THE CENSUS IS ONLY AS GOOD AS THIS. A command whose parameters this fails
@@ -148,14 +195,62 @@ describe("the window a recipient actually gets", () => {
     expect(WAIT_INVITATION_TTL_HOURS).toBe(48);
   });
 
-  it("is inside the bound the shipped command enforces", () => {
-    // THE REASON THE BOUND CONSTANTS SURVIVED THE REMOVAL OF THE CHOOSER.
-    // Nothing reads them at runtime any more. They exist to fail HERE, if the
-    // fixed window is ever moved to a number `admit_new_client_waitlist_entry`
-    // would refuse as `invalid_ttl` — a defect with no UI to reveal it, because
-    // there is no longer a form to refuse.
-    expect(WAIT_INVITATION_TTL_HOURS).toBeGreaterThanOrEqual(TTL_HOURS_MIN);
-    expect(WAIT_INVITATION_TTL_HOURS).toBeLessThanOrEqual(TTL_HOURS_MAX);
+  it("IS ACCEPTED BY THE DATABASE COMMAND THAT ENFORCES THE BOUND", () => {
+    // DERIVED FROM THE SQL, NOT FROM A TYPESCRIPT COPY OF IT.
+    //
+    // This previously read `expect(48).toBeGreaterThanOrEqual(TTL_HOURS_MIN)`
+    // against two constants in the same module as the 48. That proved the file
+    // agreed with itself and nothing else: had the database's own guard moved,
+    // the copies would have gone on asserting the old range and this would have
+    // stayed green while production refused every invitation as `invalid_ttl`.
+    //
+    // The bound is now read out of the command that actually enforces it, so
+    // the authority and the assertion cannot drift apart.
+    const guard = ttlGuardOf(TTL_AUTHORITY);
+    expect(
+      guard,
+      `no TTL guard found in ${TTL_AUTHORITY} — the assertion below would be vacuous`,
+    ).not.toBeNull();
+    expect(WAIT_INVITATION_TTL_HOURS).toBeGreaterThanOrEqual(guard!.min);
+    expect(WAIT_INVITATION_TTL_HOURS).toBeLessThanOrEqual(guard!.max);
+  });
+
+  it("the command it derives from is the one BOTH application paths reach", () => {
+    // The derivation is only worth anything if it reads the right command.
+    // Chain, by delegation, each link asserted from the SQL rather than assumed:
+    //
+    //   admit_new_client_waitlist_entry          (live path)
+    //     -> issue_scoped_new_client_waitlist_invitation
+    //          -> issue_new_client_waitlist_invitation   <- the only TTL guard
+    //
+    // `issueScopedInvitation` (the dormant path) enters at the middle link, so
+    // both application paths are governed by the same guard.
+    expect(latestBodyOf("admit_new_client_waitlist_entry")).toContain(
+      "public.issue_scoped_new_client_waitlist_invitation(",
+    );
+    expect(latestBodyOf("issue_scoped_new_client_waitlist_invitation")).toContain(
+      "public.issue_new_client_waitlist_invitation(",
+    );
+    // And the middle link states no bound of its own, so it cannot disagree.
+    expect(ttlGuardOf("issue_scoped_new_client_waitlist_invitation")).toBeNull();
+  });
+
+  it("ANTI-VACUITY — the guard parser can actually fail to find a bound", () => {
+    // Every derivation above rests on this regex. A parser that silently
+    // matches nothing would make the containment check pass forever, so it is
+    // exercised on a body that HAS a bound and one that does not.
+    expect(ttlGuardFrom("if v_ttl < 3 or v_ttl > 99 then")).toEqual({ min: 3, max: 99 });
+    expect(ttlGuardFrom("if v_ttl is null then")).toBeNull();
+  });
+
+  it("A NARROWER DATABASE BOUND WOULD TURN THIS RED", () => {
+    // The point of deriving: if a future migration narrows the command to, say,
+    // 1..24, the fixed 48-hour window becomes illegal and every invitation
+    // starts failing as `invalid_ttl`. There is no UI left to reveal that, so
+    // the derived guard is the only thing standing between that migration and a
+    // silent production outage. Simulated here against the real assertion.
+    const narrowed = ttlGuardFrom("if v_ttl < 1 or v_ttl > 24 then")!;
+    expect(WAIT_INVITATION_TTL_HOURS).toBeGreaterThan(narrowed.max);
   });
 
   it("is FIXED — the module offers no presets, no custom value and no default", () => {
@@ -164,11 +259,12 @@ describe("the window a recipient actually gets", () => {
     // while the product was wrong. A default implies a chooser somewhere; this
     // asserts the chooser's vocabulary does not exist to be re-imported.
     const mod = invitationWindow as unknown as Record<string, unknown>;
-    expect(Object.keys(mod).sort()).toEqual([
-      "TTL_HOURS_MAX",
-      "TTL_HOURS_MIN",
-      "WAIT_INVITATION_TTL_HOURS",
-    ]);
+    // ONE EXPORT. The bound constants were removed with this finding: nothing
+    // read them at runtime and they were a second, unenforceable statement of a
+    // rule the database already owns.
+    expect(Object.keys(mod).sort()).toEqual(["WAIT_INVITATION_TTL_HOURS"]);
+    expect(mod.TTL_HOURS_MIN, "a copied bound is a fake second authority").toBeUndefined();
+    expect(mod.TTL_HOURS_MAX, "a copied bound is a fake second authority").toBeUndefined();
     expect(mod.TTL_PRESETS, "presets are a chooser").toBeUndefined();
     expect(mod.TTL_HOURS_DEFAULT, "a default implies alternatives").toBeUndefined();
     expect(mod.ttlBoundLabel, "the custom field's help text").toBeUndefined();

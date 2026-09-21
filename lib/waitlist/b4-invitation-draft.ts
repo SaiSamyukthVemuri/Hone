@@ -852,21 +852,17 @@ export const WEEKDAYS_IN_DISPLAY_ORDER: ReadonlyArray<{
   { index: 0, label: "Sun" },
 ];
 
-// THE WINDOW LIVES IN ITS OWN MODULE, AND THESE ARE RE-EXPORTS.
+// THE DRAFT CARRIES NO WINDOW, SO IT RE-EXPORTS NO WINDOW VOCABULARY.
 //
-// `lib/waitlist/invitation-window.ts` owns the bound and the one fixed window,
-// because shipped modules need them and this one is a PROTOTYPE that the
-// application must not reach.
+// `lib/waitlist/invitation-window.ts` owns the one fixed window. This module is
+// a PROTOTYPE the application must not reach, and it used to re-export the
+// presets, the default and the bound for the composer's readers.
 //
-// THE PRESETS AND THE DEFAULT ARE GONE FROM HERE BECAUSE THE DRAFT NO LONGER
-// CARRIES A WINDOW AT ALL. The composer asked "Invitation expires" with presets
+// ALL OF IT IS GONE BECAUSE THE DRAFT NO LONGER CARRIES A WINDOW AT ALL. The composer asked "Invitation expires" with presets
 // and a custom field; Level 3 is a FIXED 48-hour opportunity, so the question,
 // the field names it submitted under, and the draft key they parsed into have
 // all been removed rather than defaulted. A draft that cannot express a window
 // cannot submit one.
-import { TTL_HOURS_MAX, TTL_HOURS_MIN } from "@/lib/waitlist/invitation-window";
-
-export { TTL_HOURS_MAX, TTL_HOURS_MIN };
 
 export type InviteDraft = {
   serviceId: string | null;
