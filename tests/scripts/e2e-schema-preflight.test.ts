@@ -534,7 +534,22 @@ describe("10. control 4 — a reset between proof and recording cannot be accept
     // impossible and the guard would be turned off within a day.
     expect(setup).toContain("fingerprintDatabaseState");
     expect(teardown).toContain("fingerprintDatabaseState");
-    expect(teardown).toContain("readLocalDatabaseState");
+  });
+
+  it("teardown COMPUTES the end fingerprint rather than echoing the start", () => {
+    // ASSERTS THE CALL, NOT THE IMPORT. A first draft checked only that the
+    // module mentioned `readLocalDatabaseState` — which the import line
+    // satisfies. Replacing the whole computation with `actual = expected`
+    // therefore left the guard green while making the end-of-run check
+    // compare a value against itself: it could no longer fail at all, which
+    // is the precise failure this whole file exists to prevent, reproduced
+    // inside its own proof.
+    expect(teardown).toMatch(
+      /actual\s*=\s*fingerprintDatabaseState\(\s*await\s+readLocalDatabaseState\(/,
+    );
+    // And the comparison must be between two independently obtained values.
+    expect(teardown).not.toMatch(/actual\s*=\s*expected/);
+    expect(teardown).toContain("if (actual === expected) return;");
   });
 });
 
