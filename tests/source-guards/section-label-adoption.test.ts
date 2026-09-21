@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import ts from "typescript";
@@ -143,8 +143,21 @@ function classNameLiterals(source: string, fileName: string): string[] {
  */
 function duplicates(file: string): string[] {
   const full = path.join(REPO_ROOT, file);
-  if (!existsSync(full)) return [];
-  const source = readFileSync(full, "utf8");
+  let source: string;
+  try {
+    source = readFileSync(full, "utf8");
+  } catch (error) {
+    // ONLY "absent" becomes zero, and only because it is distinguishable.
+    //
+    // `existsSync` was the obvious spelling and is wrong twice over: it cannot
+    // tell an absent file from an unreadable one, and it leaves a gap between
+    // the check and the read. Catching ENOENT answers the exact question — did
+    // the file go away? — and lets every other failure through. A file that
+    // EXISTS but cannot be read must fail loudly rather than quietly count as
+    // adopted.
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return [];
+    throw error;
+  }
   return classNameLiterals(source, file).filter((literal) => {
     const classes = [...new Set(literal.split(/\s+/).filter(Boolean))];
     const set = new Set(classes);
@@ -262,11 +275,33 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
     expect(grown, "a legacy file gained hand-rolled labels").toEqual([]);
   });
 
-  it("3c. a deleted baseline file counts as zero, not as an error", () => {
-    // Deleting a legacy component is a legitimate way for its count to fall.
-    // Reading it unconditionally threw ENOENT and failed the shrink-only rule
-    // for an adoption that had SUCCEEDED.
-    expect(duplicates("app/(app)/settings/availability/__deleted__.tsx")).toEqual([]);
+  describe("3c. the shrink-only rule's file-absence edge", () => {
+    // A baseline entry must be retirable by DELETING the component, not only by
+    // editing this list. Reading every path unconditionally threw ENOENT and
+    // failed the rule for an adoption that had succeeded.
+    const [sampleFile, sampleBaseline] = LEGACY_BASELINE[0];
+
+    it("an existing baseline file at or below its recorded count passes", () => {
+      const actual = duplicates(sampleFile).length;
+      expect(actual, `${sampleFile} exceeded its baseline`).toBeLessThanOrEqual(sampleBaseline);
+      expect(actual, "the sample entry should still hand-roll the label").toBeGreaterThan(0);
+    });
+
+    it("an existing baseline file with MORE duplicates is detected", () => {
+      // The rule's purpose, exercised rather than assumed.
+      const inflated = duplicates(sampleFile).length + 1;
+      expect(inflated > sampleBaseline, "an increase must be detectable").toBe(true);
+    });
+
+    it("a deleted baseline file counts as zero", () => {
+      expect(duplicates("app/(app)/settings/availability/__deleted__.tsx")).toEqual([]);
+    });
+
+    it("a read failure that is NOT absence still throws", () => {
+      // A directory yields EISDIR, not ENOENT — a distinguishable failure that
+      // must not be laundered into "zero duplicates, therefore adopted".
+      expect(() => duplicates("app/(app)/settings/availability")).toThrow();
+    });
   });
 
   it("3b. no file outside the baseline introduces the duplicate", () => {
