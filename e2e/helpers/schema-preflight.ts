@@ -76,6 +76,14 @@ async function loadMigrationState(): Promise<MigrationStateModule> {
   return migrationStateModule;
 }
 
+/**
+ * Where globalSetup hands the verified fingerprint to globalTeardown.
+ *
+ * Named here, once, so the two hooks cannot drift apart on a string literal.
+ * It carries a hash, never a connection string or a credential.
+ */
+export const SCHEMA_FINGERPRINT_ENV = "HONE_E2E_SCHEMA_FINGERPRINT";
+
 /** One migration, identified the same way on both sides: version + name. */
 export type MigrationIdentity = { version: string; name: string };
 
@@ -210,6 +218,42 @@ export function compareMigrationState(
     identityMismatches: identityMismatches.sort((a, b) => a.version.localeCompare(b.version)),
     unavailableReason: null,
   };
+}
+
+/**
+ * A stable fingerprint of an applied-migration set.
+ *
+ * Exists because the preflight is a SNAPSHOT. It proves the database matched
+ * the checkout at the moment the lane started, and nothing more: another
+ * worktree can run `supabase db reset --local` while the suite is mid-flight,
+ * and the run would carry on against the replacement schema. The replacement
+ * can easily be similar enough that the specs still pass, so the lane would
+ * report green about a database it never verified.
+ *
+ * This lane cannot PREVENT that — preventing it needs real per-worktree
+ * database isolation, which is an architectural change and deliberately out of
+ * scope here. What it can do is refuse to call the result evidence: the
+ * fingerprint is taken at start and re-taken at the end, and a run whose
+ * database changed underneath fails instead of passing.
+ *
+ * Detection, not prevention — which is this guard's whole remit.
+ */
+export function fingerprintMigrationState(entries: readonly MigrationIdentity[]): string {
+  // Order-independent and content-sensitive: a reset that swapped one migration
+  // for another of the same count and the same maximum must produce a different
+  // fingerprint, or the end-of-run check would be as weak as a count compare.
+  const canonical = [...entries]
+    .map((e) => `${e.version}_${e.name}`)
+    .sort()
+    .join("\n");
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < canonical.length; i++) {
+    const c = canonical.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 + c + i, 0x85ebca6b) >>> 0;
+  }
+  return `${entries.length}:${h1.toString(16)}${h2.toString(16)}`;
 }
 
 /** The migrations THIS CHECKOUT defines, derived by the repository's own scanner. */

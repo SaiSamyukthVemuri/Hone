@@ -2,7 +2,12 @@ import { execFileSync } from "node:child_process";
 import { basename } from "node:path";
 import type { FullConfig } from "@playwright/test";
 import { E2E_DB_URL } from "./helpers/local-env";
-import { runSchemaPreflight } from "./helpers/schema-preflight";
+import {
+  fingerprintMigrationState,
+  readLocalMigrationState,
+  runSchemaPreflight,
+  SCHEMA_FINGERPRINT_ENV,
+} from "./helpers/schema-preflight";
 
 // ===========================================================================
 // Playwright globalSetup — ONE hook, shared by every browser lane
@@ -78,11 +83,21 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
   );
 
   if (verdict.ok) {
+    // Hand the verified state to globalTeardown, which re-checks it at the end
+    // of the run. The preflight alone is a snapshot: the stack is shared, so a
+    // reset landing mid-run would otherwise go unnoticed and the lane would
+    // report green about a database it never verified.
+    const fingerprint = fingerprintMigrationState(
+      await readLocalMigrationState(E2E_DB_URL, lane),
+    );
+    process.env[SCHEMA_FINGERPRINT_ENV] = fingerprint;
+
     // One line, so a passing run still records WHAT it verified against. A
     // guard that is silent on success is a guard nobody can tell is wired up.
     console.log(
       `[e2e schema preflight] OK — ${lane}: ${verdict.matched} migration(s) match between ` +
-        `${context.branch}@${context.sha.slice(0, 8)} and the local Supabase stack.`,
+        `${context.branch}@${context.sha.slice(0, 8)} and the local Supabase stack ` +
+        `(fingerprint ${fingerprint}; re-checked at end of run).`,
     );
   }
 }

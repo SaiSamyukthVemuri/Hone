@@ -4,7 +4,9 @@ import path from "node:path";
 import {
   assertLoopbackDatabase,
   compareMigrationState,
+  fingerprintMigrationState,
   formatPreflightFailure,
+  SCHEMA_FINGERPRINT_ENV,
   type MigrationIdentity,
 } from "../../e2e/helpers/schema-preflight";
 
@@ -298,5 +300,81 @@ describe("containment — the guard never mutates the database", () => {
       expect(q.toLowerCase().startsWith('"select')).toBe(true);
       expect(q.replace(/^"select/i, "")).not.toMatch(sqlish);
     }
+  });
+});
+
+describe("8. the run is re-verified at the END, not only at the start", () => {
+  // Codex P1 at 7608081d: the preflight is a one-time snapshot, so a
+  // `supabase db reset --local` from another worktree landing mid-run would go
+  // unnoticed and the lane could report green against a schema it never
+  // verified. This guard cannot PREVENT that without real per-worktree
+  // isolation (out of scope, recorded as follow-up), but it must refuse to call
+  // such a run evidence.
+
+  it("the fingerprint is content-sensitive, not a count or a maximum", () => {
+    const base = [m("0001", "init"), m("0002", "clients"), m("0003", "top")];
+
+    // same count, same maximum, one migration swapped — the exact shape a reset
+    // from a sibling branch produces.
+    const swapped = [m("0001", "init"), m("0002", "other_branch"), m("0003", "top")];
+    expect(fingerprintMigrationState(swapped)).not.toBe(fingerprintMigrationState(base));
+
+    // one migration missing
+    const missing = [m("0001", "init"), m("0003", "top")];
+    expect(fingerprintMigrationState(missing)).not.toBe(fingerprintMigrationState(base));
+
+    // one migration added
+    const added = [...base, m("0004", "someone_elses")];
+    expect(fingerprintMigrationState(added)).not.toBe(fingerprintMigrationState(base));
+  });
+
+  it("the fingerprint is stable and order-independent", () => {
+    const a = [m("0001", "init"), m("0002", "clients")];
+    const b = [m("0002", "clients"), m("0001", "init")];
+    expect(fingerprintMigrationState(a)).toBe(fingerprintMigrationState(b));
+    expect(fingerprintMigrationState(a)).toBe(fingerprintMigrationState([...a]));
+  });
+
+  it("every browser config wires the shared teardown", () => {
+    for (const cfg of BROWSER_CONFIGS) {
+      expect(read(cfg), `${cfg} must declare globalTeardown`).toMatch(
+        /globalTeardown:\s*"\.\/e2e\/global-teardown"/,
+      );
+    }
+  });
+
+  it("setup and teardown share ONE env-var name, not two literals", () => {
+    const setup = read("e2e/global-setup.ts");
+    const teardown = read("e2e/global-teardown.ts");
+    expect(setup).toMatch(/SCHEMA_FINGERPRINT_ENV/);
+    expect(teardown).toMatch(/SCHEMA_FINGERPRINT_ENV/);
+    // Neither may re-spell the variable name inline.
+    expect(setup).not.toMatch(/"HONE_E2E_SCHEMA_FINGERPRINT"/);
+    expect(teardown).not.toMatch(/"HONE_E2E_SCHEMA_FINGERPRINT"/);
+    expect(SCHEMA_FINGERPRINT_ENV).toBe("HONE_E2E_SCHEMA_FINGERPRINT");
+  });
+
+  it("teardown fails the run on a changed fingerprint, and says the results are not evidence", () => {
+    const teardown = read("e2e/global-teardown.ts");
+    expect(teardown).toMatch(/throw new Error/);
+    expect(teardown).toMatch(/NOT evidence/i);
+    expect(teardown).toMatch(/changed DURING this run/);
+    // It must not offer to reset, and must not pretend to prevent the reset.
+    expect(teardown).not.toMatch(/db reset --local`\s*$/m);
+    expect(teardown).toMatch(/cannot prevent it/);
+  });
+
+  it("teardown stays silent when the preflight never reached its PASS path", () => {
+    // No fingerprint recorded means the run was already refused and reported.
+    // Teardown must not invent a second, confusing failure on top of it.
+    const teardown = read("e2e/global-teardown.ts");
+    expect(teardown).toMatch(/if \(!expected\)/);
+    expect(teardown).toMatch(/return;/);
+  });
+
+  it("the fingerprint carries no credential or connection string", () => {
+    const fp = fingerprintMigrationState([m("0001", "init"), m("0002", "clients")]);
+    expect(fp).toMatch(/^\d+:[0-9a-f]+$/);
+    expect(fp).not.toMatch(/postgres|127\.0\.0\.1|@|:\/\//);
   });
 });
