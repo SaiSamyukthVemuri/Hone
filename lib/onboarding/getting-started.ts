@@ -527,6 +527,14 @@ export function buildGettingStarted(
  */
 const BLOCK_SIGNAL_CAP = 500;
 const NOTE_SIGNAL_CAP = 200;
+/**
+ * supabase/config.toml `max_rows` — the ceiling the Data API applies to an
+ * EMBEDDED rowset too, PER PARENT ROW, where the response's Content-Range
+ * describes only the ROOT. Nothing in the body says embedded rows went
+ * missing, so a full-looking embed is the only evidence of a clip there is.
+ * Measured against the real Data API in tests/db/owner-capacity.db.test.ts.
+ */
+const EMBEDDED_ROW_CEILING = 1_000;
 
 export async function getGettingStartedSignals(
   studio: { id: string; name: string; slug: string | null },
@@ -595,6 +603,26 @@ export async function getGettingStartedSignals(
   const blocksTruncated = (blockRows?.length ?? 0) > BLOCK_SIGNAL_CAP;
   const notesTruncated = (noteRows?.length ?? 0) > NOTE_SIGNAL_CAP;
 
+  const blocks = (blockRows ?? []) as Array<{
+    machine_frequency: string | null;
+    probe_label: string | null;
+    probe_key: string | null;
+    probe_lot_number: string | null;
+    reaction_type: string | null;
+    tolerance_rating: number | null;
+    electrolysis_entries?:
+      | Array<{ observation_chips: unknown; deleted_at: string | null }>
+      | null;
+  }>;
+
+  // The SAME truncation rule one level down. A block whose embedded entries came
+  // back AT the ceiling may have more behind it, and `hasReactionOrTolerance` is
+  // the one predicate derived from those embedded rows — so a clip there makes a
+  // missing reaction chip indistinguishable from an absent one.
+  const reactionRowsClipped = blocks.some(
+    (b) => (b.electrolysis_entries?.length ?? 0) >= EMBEDDED_ROW_CEILING,
+  );
+
   // Every read whose failure would silently become "not done". Consent is
   // included because its `null` renders a `review` item, which nextSetupStep
   // SKIPS — so an unreadable consent state would send the owner past a step
@@ -611,19 +639,9 @@ export async function getGettingStartedSignals(
     !notesRes.error &&
     !blocksTruncated &&
     !notesTruncated &&
+    !reactionRowsClipped &&
     treatmentConsent.ok;
 
-  const blocks = (blockRows ?? []) as Array<{
-    machine_frequency: string | null;
-    probe_label: string | null;
-    probe_key: string | null;
-    probe_lot_number: string | null;
-    reaction_type: string | null;
-    tolerance_rating: number | null;
-    electrolysis_entries?:
-      | Array<{ observation_chips: unknown; deleted_at: string | null }>
-      | null;
-  }>;
   const notes = (noteRows ?? []) as Array<{
     next_session_note: string | null;
   }>;

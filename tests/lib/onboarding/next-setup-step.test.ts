@@ -199,7 +199,10 @@ describe("nextStepSignalsAvailable covers every collapsing read", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "");
     return code.slice(
       code.indexOf("const nextStepSignalsAvailable ="),
-      code.indexOf("const blocks = (blockRows"),
+      // End anchor is `const notes`: the typed `blocks` declaration was
+      // LIFTED above the guard so the embedded-clip check can read it, so
+      // slicing to it would now end BEFORE the guard begins.
+      code.indexOf("const notes = (noteRows"),
     );
   };
 
@@ -215,6 +218,7 @@ describe("nextStepSignalsAvailable covers every collapsing read", () => {
       "notesRes.error",
       "blocksTruncated",
       "notesTruncated",
+      "reactionRowsClipped",
       "treatmentConsent.ok",
     ]) {
       expect(expr, `${read} must gate next-step selection`).toContain(read);
@@ -247,6 +251,52 @@ describe("nextStepSignalsAvailable covers every collapsing read", () => {
     expect(code).toContain("NOTE_SIGNAL_CAP + 1");
     expect(code).toMatch(/blocksTruncated\s*=\s*\(blockRows\?\.length \?\? 0\) > BLOCK_SIGNAL_CAP/);
     expect(code).toMatch(/notesTruncated\s*=\s*\(noteRows\?\.length \?\? 0\) > NOTE_SIGNAL_CAP/);
+  });
+
+  it("the EMBEDDED rowset is clip-checked at >=, because it cannot be probed", async () => {
+    const { readFileSync } = await import("node:fs");
+    const code = readFileSync("lib/onboarding/getting-started.ts", "utf8")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    // The parent rowsets are probed at cap + 1, so `>` is exact there. An
+    // EMBEDDED rowset admits no such probe: the Data API will never return
+    // ceiling + 1 embedded rows, so `> CEILING` can never once be true and the
+    // check would be dead code. `>=` is the only reachable form, and it is
+    // deliberately conservative — exactly-ceiling real rows read as unknown.
+    expect(code).toMatch(
+      /reactionRowsClipped\s*=\s*blocks\.some\(\s*\(b\)\s*=>\s*\(b\.electrolysis_entries\?\.length \?\? 0\) >= EMBEDDED_ROW_CEILING/,
+    );
+    expect(code).toMatch(/EMBEDDED_ROW_CEILING = 1_?000/);
+  });
+
+  it("the embedded ceiling matches the Data API's configured max_rows", async () => {
+    // A constant that drifts from supabase/config.toml stops describing the
+    // clip it exists to detect.
+    const { readFileSync } = await import("node:fs");
+    const cfg = readFileSync("supabase/config.toml", "utf8");
+    const configured = Number(/^max_rows\s*=\s*(\d+)/m.exec(cfg)?.[1]);
+    const code = readFileSync("lib/onboarding/getting-started.ts", "utf8");
+    const pinned = Number(
+      /EMBEDDED_ROW_CEILING = ([\d_]+)/.exec(code)?.[1]?.replace(/_/g, ""),
+    );
+    expect(configured).toBeGreaterThan(0);
+    expect(pinned).toBe(configured);
+  });
+
+  it("a clipped embed makes the reaction predicate unknown, never 'not done'", () => {
+    // The defect in its own terms, as data: a block holding a full embedded
+    // page with no reaction in the rows we can see is INDISTINGUISHABLE from a
+    // block that genuinely has none. Selecting a next step from it would tell
+    // an owner to go chart a reaction they already charted.
+    const CEILING = 1_000;
+    const clipped = [{ electrolysis_entries: new Array(CEILING).fill({}) }];
+    const complete = [{ electrolysis_entries: new Array(CEILING - 1).fill({}) }];
+    const isClipped = (rows: Array<{ electrolysis_entries?: unknown[] }>) =>
+      rows.some((b) => (b.electrolysis_entries?.length ?? 0) >= CEILING);
+    expect(isClipped(clipped)).toBe(true);
+    expect(isClipped(complete)).toBe(false);
+    // and a block with no embed at all is complete, not unknown
+    expect(isClipped([{}])).toBe(false);
   });
 
   it("the block and note responses keep their error — destructuring must not discard it", async () => {
