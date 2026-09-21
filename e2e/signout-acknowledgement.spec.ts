@@ -57,15 +57,33 @@ async function liveSessionCount(userId: string): Promise<number> {
 /**
  * Holds the FIRST sign-out Server Action until released, and counts every one.
  *
- * The held request is CONTINUED on release, not aborted. The wire test below
- * needs the first action to genuinely settle — session destroyed, app navigated
- * — because that settling is what would let a queued duplicate dispatch. (It
- * was measured both ways while diagnosing that test; the queue behaves the same
- * either way, but `continue` is the path a practitioner actually takes.)
+ * `onRelease` decides what happens to the held request, and the default is
+ * ABORT for a reason that is easy to get wrong.
+ *
+ * `signOut()` is a GLOBAL Supabase logout, and every test in this file reuses
+ * the same seeded owner. A released request that completes after its test has
+ * returned would revoke the session the NEXT test just logged in with — a
+ * cross-test failure that would look like a flaky product rather than a leaky
+ * fixture, in a spec that runs serially.
+ *
+ * So only the wire test asks for `continue`, because only it needs the first
+ * action to genuinely settle — session destroyed, app navigated — since that
+ * settling is what frees a queued duplicate to dispatch. It then waits for
+ * /login before returning, so its logout is finished, not merely started.
+ * Every other test aborts: it never needed the logout to complete, only to be
+ * in flight.
+ *
+ * (Measured both ways while diagnosing the wire test: the queue behaves the
+ * same under `abort` and `continue`. The choice here is about fixture safety,
+ * not about what is being proved.)
  */
-async function holdActions(page: Page) {
+async function holdActions(
+  page: Page,
+  opts: { onRelease?: "abort" | "continue" } = {},
+) {
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
+  const onRelease = opts.onRelease ?? "abort";
   const state = { held: 0 };
   let first = true;
   // Resolves the INSTANT a second sign-out action reaches the wire. Proving a
@@ -84,6 +102,10 @@ async function holdActions(page: Page) {
       if (first) {
         first = false;
         await gate;
+        if (onRelease === "abort") {
+          await route.abort();
+          return;
+        }
       } else {
         markDuplicate();
       }
@@ -234,7 +256,7 @@ for (const surface of SURFACES) {
       await loginAsOwner(page, seed);
       await page.goto("/dashboard");
 
-      const gate = await holdActions(page);
+      const gate = await holdActions(page, { onRelease: "continue" });
       const panel = await surface.open(page);
       const control = panel.getByRole("button", { name: "Sign out" });
       const box = (await control.boundingBox())!;
