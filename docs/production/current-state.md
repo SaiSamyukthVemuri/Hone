@@ -13,9 +13,10 @@ not a PR diary — per-capability evidence lives in
 > *dormant*, *held*, *deferred*, *retired* are distinct, and a capability normally holds several
 > at once. **Retired is terminal** — not a later phase, not a gate someone can grant.
 
-> **This document pins the last runtime-bearing baseline, not its own documentation commit.**
-> Later documentation-only commits may move the branch HEAD **above** the SHA below without
-> changing anything Hone *does*.
+> **This document records a dated source/runtime baseline, not live telemetry.**
+> Documentation-only commits may move the branch HEAD above a runtime-bearing SHA without changing
+> product behavior; runtime-bearing merges move the baseline. Every production count/health/provider
+> observation keeps its own measurement date and is not refreshed merely because source advanced.
 
 ---
 
@@ -23,11 +24,11 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | 2026-08-30 |
+| **Reconciliation date** | **2026-09-20 / 2026-09-21 UTC source sync**; production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `bf6f09c4a987e0e251f414bdf5dfc520c5d02d42` — the PR #660 merge (CI-HARDEN-01B: every action pinned to a vetted SHA, `contents: read`, checkout token no longer persisted). Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`0f07dae68efe06d493421af715cb0b7234153de9` — the PR #659 merge, and DELIBERATELY NOT the branch head above.** Derived mechanically, not asserted: the **nine** merges from the previous baseline `4fee652f` through `#659` (`#651`, `#653`, `#652`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659`) change **21** deployed files across `app/`, `components/` and `lib/` — classified by `scripts/classify-changes.mjs`, the same map CI uses. Every one of those nine is runtime-bearing. The **two** merges since (`#631` canonical docs reconciliation, `#660` CI-HARDEN-01B) change **13** files — documentation, CI workflows and tests — and **not one deployed file**, so the branch advanced while the runtime baseline did not. **This is the baseline for every behavioural claim in this document.** |
-| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The Vercel commit status for `0f07dae6` reports **success**, and that status is the whole of the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
+| **Current Git branch HEAD at this sync** | **`c6bc5949fda353610bbd3477b2395a5ed490cf1b` — merge of #749.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`c6bc5949fda353610bbd3477b2395a5ed490cf1b` (#749).** The production branch has advanced through later runtime-bearing releases since the old #659 baseline, including #741/#747 and #748/#749. **Older per-capability measurements in this document remain dated at their own observation times; advancing this source baseline does not re-measure them.** |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `c6bc5949…` is **success**. No deployment id, alias/runtime probe or current health measurement is inferred from that status. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
