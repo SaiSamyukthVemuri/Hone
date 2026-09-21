@@ -5,8 +5,12 @@ import {
   assertLoopbackDatabase,
   compareMigrationState,
   fingerprintMigrationState,
+  fingerprintDatabaseState,
+  formatIncarnation,
   formatPreflightFailure,
   SCHEMA_FINGERPRINT_ENV,
+  type DatabaseIncarnation,
+  type LocalDatabaseState,
   type MigrationIdentity,
 } from "../../e2e/helpers/schema-preflight";
 
@@ -376,5 +380,234 @@ describe("8. the run is re-verified at the END, not only at the start", () => {
     const fp = fingerprintMigrationState([m("0001", "init"), m("0002", "clients")]);
     expect(fp).toMatch(/^\d+:[0-9a-f]+$/);
     expect(fp).not.toMatch(/postgres|127\.0\.0\.1|@|:\/\//);
+  });
+});
+
+// ===========================================================================
+// 9. DATABASE INCARNATION — `A -> reset -> A` is still a replacement
+// ===========================================================================
+//
+// The migration fingerprint alone answers "does the database have the same
+// migrations?". That is not the question a mid-run reset poses. The most
+// LIKELY reset of all — a lane resetting to the branch it already had —
+// restores an identical migration set, so the fingerprint matched, the
+// end-of-run check passed, and a browser run that lived through a complete
+// database replacement still reported green.
+
+/** A plausible incarnation, with named limbs so each can be moved alone. */
+function incarnation(over: Partial<DatabaseIncarnation> = {}): DatabaseIncarnation {
+  return {
+    systemIdentifier: "7686678812421562407",
+    databaseOid: "5",
+    postmasterStartTime: "2026-09-18 01:19:39.885595+00",
+    migrationSchemaOid: "18512",
+    migrationTableOid: "18513",
+    publicTableCount: "96",
+    publicTableOidLow: "18520",
+    publicTableOidHigh: "23676",
+    publicTableOidSum: "2020304",
+    ...over,
+  };
+}
+
+const state = (
+  migrations: MigrationIdentity[],
+  over: Partial<DatabaseIncarnation> = {},
+): LocalDatabaseState => ({ migrations, incarnation: incarnation(over) });
+
+const SET_A = [m("0200", "waitlist_redeemed_unbooked_exit"), m("0201", "waitlist_exit_authority_contraction")];
+
+describe("9. the fingerprint refuses a replaced database", () => {
+  it("control 1 — same DB, same migration set: PASSES", () => {
+    // Anti-vacuity for the four failing controls below: if this did not pass,
+    // they would all "fail" for a reason that has nothing to do with the thing
+    // being tested, and the suite would prove nothing.
+    expect(fingerprintDatabaseState(state(SET_A))).toBe(
+      fingerprintDatabaseState(state([...SET_A])),
+    );
+  });
+
+  it("control 2 — a different migration set: FAILS", () => {
+    const withExtra = [...SET_A, m("0202", "waitlist_profile_and_sms_consent_authority")];
+    expect(fingerprintDatabaseState(state(SET_A))).not.toBe(
+      fingerprintDatabaseState(state(withExtra)),
+    );
+  });
+
+  it("control 3 — reset to the SAME migration labels, different incarnation: FAILS", () => {
+    // THE DEFECT THIS WHOLE SECTION EXISTS FOR. Identical migrations, so the
+    // migration half of the fingerprint is byte-identical; only the database
+    // changed. Before the incarnation limb this compared EQUAL and the run
+    // passed.
+    const before = state(SET_A);
+    const after = state([...SET_A], {
+      // A reset re-applies every migration, so the recreated tables take fresh
+      // OIDs from a forward-running counter — they never reuse the old ones.
+      publicTableOidLow: "24000",
+      publicTableOidHigh: "29000",
+      publicTableOidSum: "2600000",
+      migrationTableOid: "23990",
+      migrationSchemaOid: "23989",
+    });
+    expect(fingerprintMigrationState(before.migrations)).toBe(
+      fingerprintMigrationState(after.migrations),
+    );
+    expect(fingerprintDatabaseState(before)).not.toBe(fingerprintDatabaseState(after));
+  });
+
+  it("control 5 — A -> B -> A during the suite still fails if the incarnation moved", () => {
+    // Returning to migration set A is not returning to database A. The round
+    // trip is invisible to a migration-only fingerprint by construction.
+    const start = state(SET_A);
+    const endSameLabels = state([...SET_A], { publicTableOidSum: "9999999" });
+    expect(fingerprintDatabaseState(start)).not.toBe(fingerprintDatabaseState(endSameLabels));
+  });
+
+  it("every limb of the incarnation is load-bearing", () => {
+    // A limb nothing can move is decoration that makes the signal look
+    // stronger than it is. Each one is moved ALONE and must change the
+    // fingerprint by itself.
+    const base = state(SET_A);
+    const limbs: (keyof DatabaseIncarnation)[] = [
+      "systemIdentifier",
+      "databaseOid",
+      "postmasterStartTime",
+      "migrationSchemaOid",
+      "migrationTableOid",
+      "publicTableCount",
+      "publicTableOidLow",
+      "publicTableOidHigh",
+      "publicTableOidSum",
+    ];
+    for (const limb of limbs) {
+      const moved = state([...SET_A], { [limb]: "MOVED" } as Partial<DatabaseIncarnation>);
+      expect(
+        fingerprintDatabaseState(moved),
+        `moving ${limb} alone did not change the fingerprint`,
+      ).not.toBe(fingerprintDatabaseState(base));
+    }
+  });
+
+  it("the incarnation is order-fixed, so it is never accidentally canonicalised", () => {
+    // The migration half is deliberately order-INdependent; the incarnation
+    // half must not be, or two different databases whose limbs happen to be
+    // permutations of each other would collide.
+    const a = formatIncarnation(incarnation({ databaseOid: "1", systemIdentifier: "2" }));
+    const b = formatIncarnation(incarnation({ databaseOid: "2", systemIdentifier: "1" }));
+    expect(a).not.toBe(b);
+  });
+});
+
+// ===========================================================================
+// 10. THE SNAPSHOT THAT PASSED IS THE SNAPSHOT RECORDED
+// ===========================================================================
+describe("10. control 4 — a reset between proof and recording cannot be accepted", () => {
+  const preflight = read("e2e/helpers/schema-preflight.ts");
+  const setup = read("e2e/global-setup.ts");
+  const teardown = read("e2e/global-teardown.ts");
+
+  it("the verdict carries the validated snapshot", () => {
+    expect(preflight).toMatch(/ok:\s*true;\s*matched:\s*number;\s*state:\s*LocalDatabaseState/);
+    expect(preflight).toMatch(/return \{ ok: true, matched: verdict\.matched, state \};/);
+  });
+
+  it("globalSetup fingerprints THAT snapshot and never re-reads", () => {
+    // The race, stated as code: a second read here would be a different
+    // observation of a shared database, and a reset landing between them would
+    // be validated in the first and recorded in the second.
+    expect(setup).toContain("fingerprintDatabaseState(verdict.state)");
+    expect(setup).not.toContain("readLocalMigrationState");
+    expect(setup).not.toContain("readLocalDatabaseState");
+  });
+
+  it("the setup reads the database exactly ONCE, via the preflight", () => {
+    // Counted rather than asserted by absence: a re-read added under a
+    // different name would slip past a `not.toContain`.
+    const reads = setup.match(/await\s+read[A-Za-z]*\(/g) ?? [];
+    expect(reads, `globalSetup performs ${reads.length} direct database read(s)`).toHaveLength(0);
+    expect(setup).toContain("runSchemaPreflight");
+  });
+
+  it("both hooks compare the SAME kind of fingerprint", () => {
+    // A start fingerprint that included the incarnation and an end fingerprint
+    // that did not would compare unequal on every run — green would become
+    // impossible and the guard would be turned off within a day.
+    expect(setup).toContain("fingerprintDatabaseState");
+    expect(teardown).toContain("fingerprintDatabaseState");
+    expect(teardown).toContain("readLocalDatabaseState");
+  });
+});
+
+describe("11. the incarnation read stays read-only and local", () => {
+  const preflight = read("e2e/helpers/schema-preflight.ts");
+
+  it("Postgres ENFORCES the read-only claim", () => {
+    // Not a comment promising good behaviour: the transaction is declared
+    // read only, so a write would error rather than succeed quietly on a stack
+    // shared with every other lane.
+    expect(preflight).toContain("begin transaction read only isolation level repeatable read");
+  });
+
+  it("no sentinel table, no write, no DDL", () => {
+    const body = preflight.slice(preflight.indexOf("export async function readLocalDatabaseState"));
+    for (const banned of ["insert into", "update ", "delete from", "create table", "drop ", "alter "]) {
+      expect(body.toLowerCase(), `incarnation read contains "${banned}"`).not.toContain(banned);
+    }
+  });
+
+  it("it reads identity Postgres already keeps, rather than inventing one", () => {
+    expect(preflight).toContain("pg_control_system()");
+    expect(preflight).toContain("pg_postmaster_start_time()");
+    expect(preflight).toContain("to_regclass('supabase_migrations.schema_migrations')");
+  });
+
+  it("an unreadable limb is a failure, never a pass", () => {
+    // A null limb would otherwise compare equal to another null limb, and two
+    // different databases would fingerprint the same.
+    expect(preflight).toContain('throw new Error(`database incarnation could not be read');
+  });
+
+  it("it is still bounded to loopback", () => {
+    const body = preflight.slice(preflight.indexOf("export async function readLocalDatabaseState"));
+    expect(body).toContain("assertLoopbackDatabase(databaseUrl, lane)");
+  });
+
+  it("this repair did NOT quietly become per-worktree isolation", () => {
+    // The stronger architectural follow-up stays a follow-up.
+    //
+    // COMMENT-STRIPPED, and the first draft was not: this module names
+    // `supabase db reset --local` repeatedly in prose while explaining the
+    // defect it exists for and the remedy it deliberately refuses to perform.
+    // Matching raw source made the guard fire on its own documentation — the
+    // assertion has to be about what the module DOES.
+    //
+    // LINE comments first, then block: a `//` line containing `/*` would
+    // otherwise leave the block stripper eating real code to the next `*/`,
+    // and every "does not contain" check here would pass vacuously.
+    const code = preflight
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    // Anti-vacuity: the stripper must have kept the implementation.
+    expect(code).toContain("export async function readLocalDatabaseState");
+
+    // ASSERTS THE CAPABILITY, NOT A PHRASE. A first draft banned the substring
+    // "supabase start" and fired on the operator help text — "Is the local
+    // Supabase stack running (supabase start)?" — which is guidance this guard
+    // SHOULD give. Telling someone to start their stack is not provisioning
+    // one. What must remain impossible is this module running anything.
+    for (const spawner of [
+      "child_process",
+      "execFileSync",
+      "execSync",
+      "spawnSync",
+      "spawn(",
+      "exec(",
+    ]) {
+      expect(code, `preflight can invoke a process via ${spawner}`).not.toContain(spawner);
+    }
+    // And it still must not perform the remedy it names.
+    expect(code).not.toContain("db reset");
   });
 });

@@ -1,7 +1,7 @@
 import { E2E_DB_URL } from "./helpers/local-env";
 import {
-  fingerprintMigrationState,
-  readLocalMigrationState,
+  fingerprintDatabaseState,
+  readLocalDatabaseState,
   SCHEMA_FINGERPRINT_ENV,
 } from "./helpers/schema-preflight";
 
@@ -46,8 +46,10 @@ export default async function globalTeardown(): Promise<void> {
 
   let actual: string;
   try {
-    const local = await readLocalMigrationState(E2E_DB_URL, "teardown");
-    actual = fingerprintMigrationState(local);
+    // Same shape, same single read-only snapshot as the preflight took, so the
+    // two fingerprints are comparable observations rather than two different
+    // kinds of measurement.
+    actual = fingerprintDatabaseState(await readLocalDatabaseState(E2E_DB_URL, "teardown"));
   } catch (err) {
     // The database became unreadable during the run. That is not a clean pass
     // either: the suite's own evidence was produced against something whose
@@ -82,8 +84,13 @@ export default async function globalTeardown(): Promise<void> {
       "The preflight verified this database against the checkout before the",
       "suite started. It is not the same database now.",
       "",
-      `  migration fingerprint at start: ${expected}`,
-      `  migration fingerprint at end:   ${actual}`,
+      `  database fingerprint at start: ${expected}`,
+      `  database fingerprint at end:   ${actual}`,
+      "",
+      "  The fingerprint covers the applied migration set AND a database",
+      "  incarnation, so this also fires when a reset restored the SAME",
+      "  migrations — `A -> reset -> A` is still a different database, and a",
+      "  run that spanned the replacement is still not evidence.",
       "",
       "Almost certainly another worktree ran `supabase db reset --local` while",
       "this suite was running. The stack is shared — see",

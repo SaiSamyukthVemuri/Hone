@@ -3,8 +3,7 @@ import { basename } from "node:path";
 import type { FullConfig } from "@playwright/test";
 import { E2E_DB_URL } from "./helpers/local-env";
 import {
-  fingerprintMigrationState,
-  readLocalMigrationState,
+  fingerprintDatabaseState,
   runSchemaPreflight,
   SCHEMA_FINGERPRINT_ENV,
 } from "./helpers/schema-preflight";
@@ -87,9 +86,20 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
     // of the run. The preflight alone is a snapshot: the stack is shared, so a
     // reset landing mid-run would otherwise go unnoticed and the lane would
     // report green about a database it never verified.
-    const fingerprint = fingerprintMigrationState(
-      await readLocalMigrationState(E2E_DB_URL, lane),
-    );
+    // FINGERPRINT THE SNAPSHOT THAT PASSED — not a fresh read (Codex P2).
+    //
+    // This previously re-read the database here. Those were two observations of
+    // a shared stack, and a reset landing between the preflight's read and this
+    // one would be VALIDATED in the first and RECORDED in the second: the
+    // "expected" fingerprint would describe the replacement, and teardown —
+    // comparing replacement against replacement — would pass. The window was
+    // small and entirely real, and it sat inside the guard whose whole job is
+    // refusing unverified databases.
+    //
+    // `verdict.state` is the exact snapshot `compareMigrationState` accepted,
+    // read in one read-only repeatable-read transaction together with the
+    // database incarnation. There is no second read to race.
+    const fingerprint = fingerprintDatabaseState(verdict.state);
     process.env[SCHEMA_FINGERPRINT_ENV] = fingerprint;
 
     // One line, so a passing run still records WHAT it verified against. A
@@ -97,7 +107,7 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
     console.log(
       `[e2e schema preflight] OK — ${lane}: ${verdict.matched} migration(s) match between ` +
         `${context.branch}@${context.sha.slice(0, 8)} and the local Supabase stack ` +
-        `(fingerprint ${fingerprint}; re-checked at end of run).`,
+        `(fingerprint ${fingerprint}, incarnation included; re-checked at end of run).`,
     );
   }
 }

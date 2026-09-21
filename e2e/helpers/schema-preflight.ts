@@ -94,7 +94,7 @@ export type PreflightFailureCode =
   | "STATE_UNAVAILABLE";
 
 export type PreflightVerdict =
-  | { ok: true; matched: number }
+  | { ok: true; matched: number; state: LocalDatabaseState }
   | {
       ok: false;
       codes: PreflightFailureCode[];
@@ -158,10 +158,14 @@ export function assertLoopbackDatabase(url: string, lane: string): void {
  * also agree on NAME — two different migrations sharing a number is precisely
  * the collision a shared stack produces when two branches both author "0202".
  */
+export type ComparisonVerdict =
+  | { ok: true; matched: number }
+  | Extract<PreflightVerdict, { ok: false }>;
+
 export function compareMigrationState(
   checkout: readonly MigrationIdentity[],
   local: readonly MigrationIdentity[],
-): PreflightVerdict {
+): ComparisonVerdict {
   // An empty side is never "compatible"; it is unknown. A repository with no
   // migrations cannot be verified against a database, and a database with no
   // migration history has not been migrated at all.
@@ -256,6 +260,139 @@ export function fingerprintMigrationState(entries: readonly MigrationIdentity[])
   return `${entries.length}:${h1.toString(16)}${h2.toString(16)}`;
 }
 
+/**
+ * A DATABASE INCARNATION — "is this still the same database?"
+ *
+ * WHY THE MIGRATION FINGERPRINT IS NOT ENOUGH (Codex P1).
+ * The fingerprint covers migration versions, names and count. So
+ * `A -> reset -> A` — another worktree resetting the shared stack to a set that
+ * happens to be IDENTICAL — produces the same fingerprint, and a browser run
+ * can live through a complete database replacement and still finish green. The
+ * whole point of the end-of-run re-check is to refuse exactly that, and on the
+ * most likely reset of all (a lane resetting to the branch it already had) it
+ * was blind.
+ *
+ * WHY THIS IS A COMPOSITE OF THINGS POSTGRES ALREADY KEEPS.
+ * Postgres has no single incarnation counter — nothing like Oracle's. Asked to
+ * invent one, the obvious move is a sentinel table holding a UUID, and that was
+ * rejected: it would make this guard WRITE to a database it exists only to
+ * observe, on a stack shared with every other lane.
+ *
+ * MEASURED, NOT ASSUMED — and two obvious limbs turned out to be useless.
+ * Two INDEPENDENTLY CREATED local Supabase stacks carrying the SAME 96-table
+ * schema were read side by side (pure SELECTs, nothing reset):
+ *
+ *   limb                    stack A                stack B                differs
+ *   system_identifier       7686678812421562407    7687687241716015144    YES
+ *   database_oid            5                      5                      no
+ *   postmaster_start_time   2026-09-18 01:19:39    2026-09-20 18:32:53    YES
+ *   migration_schema_oid    18512                  17810                  YES
+ *   migration_table_oid     18513                  17811                  YES
+ *   public_table_count      96                     96                     no
+ *   public_table_oid_low    18520                  17818                  YES
+ *   public_table_oid_high   23676                  22974                  YES
+ *   public_table_oid_sum    1992402                1925010                YES
+ *
+ * That is the `A -> reset -> A` SHAPE reproduced without a reset: two distinct
+ * databases holding the same migration set. Seven limbs separate them.
+ *
+ * The two that do NOT are precisely the two a guess would reach for first.
+ * `database_oid` is **5** on both — the original, template-created database,
+ * which a local reset does not drop, so a database-OID check would never fire
+ * on the event this exists to catch. `public_table_count` is 96 on both, so a
+ * count is no better than the migration fingerprint it was meant to strengthen.
+ * Both are kept in the composite anyway: each still moves under a reset shape
+ * the other limbs do not cover (the database genuinely being dropped; a table
+ * added or removed), and a limb that is merely redundant costs nothing, whereas
+ * a missing one is a blind spot.
+ *
+ * WHAT REMAINS UNPROVEN, AND IS NOT CLAIMED. The reading above proves the
+ * composite DISCRIMINATES BETWEEN TWO DATABASE INCARNATIONS. It does not prove
+ * that `supabase db reset --local` on ONE stack moves these limbs. The
+ * inference is strong — OIDs are allocated from a forward-running counter, so
+ * objects recreated by a re-applied migration chain cannot reuse their previous
+ * numbers — but it is inference, not observation. Observing it requires
+ * destroying a stack, and both stacks on this host are owned: one is shared by
+ * every lane, the other belongs to the active release unit. That proof is
+ * therefore DEFERRED to a released DB slot rather than taken, and this comment
+ * is the record that it is owed.
+ *
+ * The limbs that move are the RECREATED OBJECTS.
+ *
+ *   systemIdentifier      cluster re-init (`initdb`, a fresh container)
+ *   databaseOid           the database itself dropped and recreated
+ *   postmasterStartTime   the server restarting
+ *   migrationSchemaOid    `supabase_migrations` rebuilt
+ *   migrationTableOid     `schema_migrations` rebuilt
+ *   publicTable*          the migrated schema dropped and re-applied — OIDs come
+ *                         from a forward-running counter, so recreated tables
+ *                         never reuse their old numbers
+ *
+ * None of these moves because rows were inserted, which is the "stable through
+ * an untouched run" half of the requirement and the reason row- or
+ * statistics-based signals were not used.
+ *
+ * NOT per-worktree isolation. This DETECTS replacement; it does not prevent it.
+ * Real isolation — a Supabase project per lane, or a reservation protocol —
+ * stays separate architecture work and is deliberately not smuggled in here.
+ */
+export type DatabaseIncarnation = {
+  systemIdentifier: string;
+  databaseOid: string;
+  postmasterStartTime: string;
+  migrationSchemaOid: string;
+  migrationTableOid: string;
+  publicTableCount: string;
+  publicTableOidLow: string;
+  publicTableOidHigh: string;
+  publicTableOidSum: string;
+};
+
+/** Everything one connection observed, at one instant. */
+export type LocalDatabaseState = {
+  migrations: MigrationIdentity[];
+  incarnation: DatabaseIncarnation;
+};
+
+/** The incarnation as one comparable string. Order fixed, never re-sorted. */
+export function formatIncarnation(i: DatabaseIncarnation): string {
+  return [
+    i.systemIdentifier,
+    i.databaseOid,
+    i.postmasterStartTime,
+    i.migrationSchemaOid,
+    i.migrationTableOid,
+    i.publicTableCount,
+    i.publicTableOidLow,
+    i.publicTableOidHigh,
+    i.publicTableOidSum,
+  ].join("|");
+}
+
+function hashString(input: string): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < input.length; i++) {
+    const c = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 + c + i, 0x85ebca6b) >>> 0;
+  }
+  return `${h1.toString(16)}${h2.toString(16)}`;
+}
+
+/**
+ * The fingerprint the two hooks compare: migrations AND incarnation.
+ *
+ * Both halves are load-bearing and neither subsumes the other. Migrations alone
+ * miss `A -> reset -> A`; incarnation alone would miss a migration applied
+ * forward into a database that was never recreated.
+ */
+export function fingerprintDatabaseState(state: LocalDatabaseState): string {
+  return `${fingerprintMigrationState(state.migrations)}@${hashString(
+    formatIncarnation(state.incarnation),
+  )}`;
+}
+
 /** The migrations THIS CHECKOUT defines, derived by the repository's own scanner. */
 export async function readCheckoutMigrationState(dir?: string): Promise<MigrationIdentity[]> {
   const mod = await loadMigrationState();
@@ -289,6 +426,95 @@ export async function readLocalMigrationState(
       "select version, name from supabase_migrations.schema_migrations order by version asc",
     );
     return rows.map((r) => ({ version: r.version, name: r.name ?? "" }));
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+/**
+ * Read the migrations AND the incarnation from ONE connection, in ONE
+ * read-only snapshot.
+ *
+ * ATOMIC RELATIVE TO EACH OTHER, deliberately. Two separate reads would
+ * reintroduce one level down the very race this repair closes: a reset landing
+ * between them would pair migration state from before with an incarnation from
+ * after, and the fingerprint would describe a database that never existed.
+ *
+ * `read only` is not decoration. It makes "this guard never writes" something
+ * Postgres ENFORCES rather than something a reviewer takes on trust — a write
+ * here would error instead of succeeding quietly on a shared stack.
+ *
+ * `repeatable read` so both statements see one snapshot: a concurrent reset is
+ * then wholly before or wholly after what we read, never spliced through it.
+ */
+export async function readLocalDatabaseState(
+  databaseUrl: string,
+  lane: string,
+): Promise<LocalDatabaseState> {
+  assertLoopbackDatabase(databaseUrl, lane);
+  const { Client } = await import("pg");
+  const client = new Client({
+    connectionString: databaseUrl,
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 10_000,
+  });
+  await client.connect();
+  try {
+    await client.query("begin transaction read only isolation level repeatable read");
+
+    const { rows: migrationRows } = await client.query<{
+      version: string;
+      name: string | null;
+    }>("select version, name from supabase_migrations.schema_migrations order by version asc");
+
+    // to_regclass / to_regnamespace rather than a cast: a cast RAISES when the
+    // object is absent, and "the migration table is gone" is information this
+    // signal should carry, not an exception that hides it.
+    const { rows: incarnationRows } = await client.query<Record<string, string | null>>(
+      `select
+         (select system_identifier::text from pg_control_system())              as system_identifier,
+         (select oid::text from pg_database where datname = current_database()) as database_oid,
+         (select pg_postmaster_start_time()::text)                              as postmaster_start_time,
+         coalesce(to_regnamespace('supabase_migrations')::oid::text, 'absent')  as migration_schema_oid,
+         coalesce(to_regclass('supabase_migrations.schema_migrations')::oid::text, 'absent') as migration_table_oid,
+         (select count(*)::text from pg_class
+            where relnamespace = 'public'::regnamespace and relkind = 'r')      as public_table_count,
+         (select coalesce(min(oid)::text, 'none') from pg_class
+            where relnamespace = 'public'::regnamespace and relkind = 'r')      as public_table_oid_low,
+         (select coalesce(max(oid)::text, 'none') from pg_class
+            where relnamespace = 'public'::regnamespace and relkind = 'r')      as public_table_oid_high,
+         (select coalesce(sum(oid::bigint)::text, 'none') from pg_class
+            where relnamespace = 'public'::regnamespace and relkind = 'r')      as public_table_oid_sum`,
+    );
+
+    await client.query("commit");
+
+    const r = incarnationRows[0] ?? {};
+    const need = (k: string): string => {
+      const v = r[k];
+      if (v === null || v === undefined) {
+        // Unknown is a failure, never a pass — the same posture the migration
+        // side takes. A null limb would compare equal to another null limb, so
+        // two different databases would fingerprint the same.
+        throw new Error(`database incarnation could not be read: "${k}" is null`);
+      }
+      return v;
+    };
+
+    return {
+      migrations: migrationRows.map((m) => ({ version: m.version, name: m.name ?? "" })),
+      incarnation: {
+        systemIdentifier: need("system_identifier"),
+        databaseOid: need("database_oid"),
+        postmasterStartTime: need("postmaster_start_time"),
+        migrationSchemaOid: need("migration_schema_oid"),
+        migrationTableOid: need("migration_table_oid"),
+        publicTableCount: need("public_table_count"),
+        publicTableOidLow: need("public_table_oid_low"),
+        publicTableOidHigh: need("public_table_oid_high"),
+        publicTableOidSum: need("public_table_oid_sum"),
+      },
+    };
   } finally {
     await client.end().catch(() => {});
   }
@@ -390,9 +616,11 @@ export async function runSchemaPreflight(
     );
   }
 
-  let local: MigrationIdentity[];
+  // READ ONCE. The snapshot validated below is the snapshot returned, and the
+  // caller fingerprints exactly it — see the note on the return value.
+  let state: LocalDatabaseState;
   try {
-    local = await readLocalMigrationState(policy.databaseUrl, policy.lane);
+    state = await readLocalDatabaseState(policy.databaseUrl, policy.lane);
   } catch (err) {
     throw new Error(
       formatPreflightFailure(
@@ -413,15 +641,28 @@ export async function runSchemaPreflight(
     );
   }
 
-  const verdict = compareMigrationState(checkout, local);
+  const verdict = compareMigrationState(checkout, state.migrations);
   if (!verdict.ok) {
     throw new Error(
       formatPreflightFailure(
         policy,
-        { ...context, checkoutCount: checkout.length, localCount: local.length },
+        {
+          ...context,
+          checkoutCount: checkout.length,
+          localCount: state.migrations.length,
+        },
         verdict,
       ),
     );
   }
-  return verdict;
+  // THE SNAPSHOT THAT PASSED, not a fresh read (Codex P2).
+  //
+  // This used to return only `{ ok, matched }`, leaving globalSetup to issue a
+  // SECOND read and fingerprint that. Those are two observations of a shared
+  // database: a reset landing between them would be VALIDATED in the first and
+  // RECORDED in the second, so the run's "expected" fingerprint would describe
+  // the REPLACEMENT — and teardown, comparing replacement against replacement,
+  // would pass. The proof and the record must be the same observation, so the
+  // observation is what is returned.
+  return { ok: true, matched: verdict.matched, state };
 }
