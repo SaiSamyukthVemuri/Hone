@@ -2,115 +2,67 @@
 // THE INVITATION WINDOW — HOW LONG A RECIPIENT HAS TO BOOK
 // ===========================================================================
 //
-// PURE, AND DELIBERATELY TINY. No import, no I/O, no server-only. Four values
-// and nothing else, so that every surface which needs to know the window can
-// import it without dragging anything along.
+// PURE, AND DELIBERATELY TINY. No import, no I/O, no server-only, so that every
+// surface which needs to know the window can import it without dragging
+// anything along.
 //
 // WHY THIS IS ITS OWN MODULE, AND NOT A SECTION OF b4-invitation-draft.ts.
 // The composer's model is a PROTOTYPE: its header says "PURE, AND NOT REACHED
 // BY THE APPLICATION", and `tests/lib/waitlist/b4-invitation-draft.test.ts`
 // walks the import graph to prove exactly two sanctioned entry points reach it.
+// The window is needed by surfaces reachable from `app/book/[slug]` and
+// `app/invitation/[token]`, so putting it in the prototype would have made the
+// prototype reachable from them — the precise thing its header promises is
+// impossible. An earlier revision did exactly that and the reachability guard
+// stayed green: its breadth-first walk keeps only the FIRST path to each module,
+// so a sanctioned depth-1 path always won the race and hid the violations.
 //
-// The window is not prototype material. It is needed by:
-//
-//   * the composer model            (which offers the choice)
-//   * invite-to-book-adapter.ts     (which re-checks the submission)
-//   * lib/booking/waitlist-invitation.ts  (whose issue path needs a fallback)
-//   * components/waitlist/invite-composer.tsx (whose number input advertises
-//                                              the bound to a practitioner)
-//
-// and the last two are reachable from the PUBLIC booking and invitation
-// surfaces. Putting the constants in the prototype and importing them from
-// there would have made the prototype reachable from `app/book/[slug]` and
-// `app/invitation/[token]` — which is the precise thing its header promises is
-// impossible. An earlier revision of this change did exactly that, and the
-// reachability guard stayed green through it: its breadth-first walk keeps only
-// the FIRST path it finds to each module and tests that path's root, so a
-// sanctioned depth-1 path always won the race against the new depth-3
-// violations and hid them. A rule nothing can fail is not a rule.
-//
-// So the values live here, where anything may import them, and the prototype
-// re-exports them for its existing readers.
+// So the values live here, where anything may import them.
 // ===========================================================================
 
 /**
- * The bound is the shipped command's own: 1 hour .. 7 days.
+ * THE WINDOW IS FIXED AT 48 HOURS, AND NOBODY CHOOSES IT.
  *
- * Out of range is REFUSED rather than clamped, because a clamped window is one
- * the caller did not ask for and cannot see. Every layer that re-checks does so
- * against these two constants — the composer's model, the adapter that receives
- * the submission, and the number input that advertises the range — so the four
- * statements of one rule that existed before this module cannot disagree.
- */
-export const TTL_HOURS_MIN = 1;
-export const TTL_HOURS_MAX = 168;
-
-/**
- * THE OPPORTUNITY IS TWO DAYS.
+ * This is the whole product policy for a WAIT invitation: one canonical
+ * opportunity, two days long, identical for every recipient. There is no
+ * practitioner expiry question, no preset list and no custom value.
  *
- * Every invitation offers the recipient 48 hours to book. It was 72, which is
- * not a bound being relaxed or tightened — `TTL_HOURS_MIN` and `TTL_HOURS_MAX`
- * are untouched and a studio may still choose any value in range. What changed
- * is the window a practitioner gets without deciding anything, and that is the
- * window nearly every invitation will actually carry.
+ * WHY A FIXED WINDOW IS A DIFFERENT THING FROM A DEFAULT. A default is the
+ * answer you get without deciding; alternatives still exist beside it, and any
+ * surface that forgets to pass one silently lands somewhere else. #748 shipped
+ * 48 as a DEFAULT — the constant was right and the product was still wrong,
+ * because the composer went on offering 24, 48, 72, 168 and custom 1..168. A
+ * practitioner could issue a 7-day opportunity by tapping one radio button.
+ * This constant is now the ONLY window any application path can issue: no call
+ * site accepts a TTL argument, so there is nothing left to forget to pass.
  *
  * WHY THE SQL DEFAULT STILL SAYS 72, AND WHY THAT IS NOT A DISAGREEMENT.
  * `issue_new_client_waitlist_invitation(..., p_ttl_hours integer default 72)`
- * is unchanged, because changing it is a migration. That default is
- * UNREACHABLE: every TypeScript call site passes `p_ttl_hours` explicitly, so
- * the database's own fallback never fires.
+ * is unchanged, because changing it is a migration and this slice is
+ * zero-migration. That default is UNREACHABLE: every TypeScript call site
+ * passes `p_ttl_hours` explicitly, and `tests/lib/waitlist/invitation-window.test.ts`
+ * censuses that no call to a TTL-taking command omits the argument.
  *
- * THERE ARE TWO CALL SITES, AND THE SECOND IS WHY THIS IS A CONSTANT RATHER
- * THAN AN EDIT IN ONE PLACE. `invite-to-book-adapter.ts` is the live one and
- * passes the composer's chosen value. `lib/booking/waitlist-invitation.ts`
- * (`issueScopedInvitation`) is DORMANT — nothing outside tests calls it — and
- * carried its own `?? 72` fallback. Left alone it would have woken up on the
- * old window, issuing 72-hour invitations from one surface while the composer
- * issued 48 from the other, with nothing failing in between.
- *
- * `tests/lib/waitlist/invitation-window.test.ts` censuses both facts: that no
- * call to a command taking `p_ttl_hours` omits the argument, and that none
- * states a numeric fallback of its own.
+ * THE DATABASE'S 1..168 SUPPORT IS DELIBERATELY LEFT INTACT — see the bound
+ * below. Removing a chooser is a product decision; narrowing what the shipped
+ * command will accept is a schema decision, and this slice makes only the first.
  */
-export const TTL_HOURS_DEFAULT = 48;
+export const WAIT_INVITATION_TTL_HOURS = 48;
 
 /**
- * The windows the composer offers as one tap.
+ * The bound the shipped command itself enforces: 1 hour .. 7 days.
  *
- * EVERY PRESET MUST LIE INSIDE THE BOUND, and the test asserts it rather than
- * trusting the list. A preset outside the range is not a validation failure at
- * the type level — it is a radio button a practitioner can select and a
- * submission the adapter then refuses as `invalid_ttl`, which reads as the
- * product being broken rather than as the input being wrong.
+ * KEPT, THOUGH NO APPLICATION PATH CAN NOW REACH ITS EDGES. These describe what
+ * `admit_new_client_waitlist_entry` and its siblings will ACCEPT, which is a
+ * fact about the database and is still true. The application simply no longer
+ * exercises the range: it always sends `WAIT_INVITATION_TTL_HOURS`.
+ *
+ * They are not dead, and they are not a chooser waiting to be re-enabled. They
+ * are the statement that the fixed window sits INSIDE what the command permits
+ * — which is the one thing that would silently break if someone later changed
+ * the window to a number the command refuses as `invalid_ttl`. The test asserts
+ * exactly that containment, so the constants earn their place by catching a
+ * future edit rather than by being read at runtime.
  */
-export const TTL_PRESETS: ReadonlyArray<{ hours: number; label: string }> = [
-  { hours: 24, label: "24 hours" },
-  { hours: 48, label: "2 days" },
-  { hours: 72, label: "3 days" },
-  { hours: 168, label: "7 days" },
-];
-
-/**
- * The bound as the sentence a practitioner reads above the custom hours field.
- *
- * THE FOURTH STATEMENT OF THE BOUND, AND THE ONE NO CENSUS COULD SEE. The
- * composer's help text read "Hours, from 1 hour to 7 days" as a literal, one
- * line above the `min`/`max` this module now owns. A census that greps for
- * `min={<digits>}` cannot find a sentence, so narrowing `TTL_HOURS_MAX` would
- * have left the label promising seven days while the input beside it and the
- * adapter behind it both refused — which is the exact "reads as the product
- * being broken rather than as the input being wrong" case the composer's own
- * comment warns about.
- *
- * Derived, so it cannot say something the bound does not permit.
- */
-export function ttlBoundLabel(): string {
-  const unit = (hours: number): string => {
-    if (hours % 24 === 0 && hours >= 24) {
-      const days = hours / 24;
-      return `${days} day${days === 1 ? "" : "s"}`;
-    }
-    return `${hours} hour${hours === 1 ? "" : "s"}`;
-  };
-  return `Hours, from ${unit(TTL_HOURS_MIN)} to ${unit(TTL_HOURS_MAX)}`;
-}
+export const TTL_HOURS_MIN = 1;
+export const TTL_HOURS_MAX = 168;

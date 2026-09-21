@@ -1041,33 +1041,33 @@ describe("B — the invite-to-book adapter binds #683's contract to 0193", () =>
     // says as much: "a narrower TypeScript type is not a browser guarantee".
     // The cast lives in the TEST, never on the production path.
     const untyped = validateInviteInput as unknown as (i: unknown) => string | null;
-    expect(untyped({ entryId, scope: { ...ok, serviceId: null }, expiresInHours: 72 })).toBe(
+    expect(untyped({ entryId, scope: { ...ok, serviceId: null } })).toBe(
       "scope_not_supported",
     );
     // A BLANK or whitespace-only id is not a chosen service either, and must not
     // reach the command as an id nothing matches.
-    expect(untyped({ entryId, scope: { ...ok, serviceId: "" }, expiresInHours: 72 })).toBe(
+    expect(untyped({ entryId, scope: { ...ok, serviceId: "" } })).toBe(
       "scope_not_supported",
     );
-    expect(untyped({ entryId, scope: { ...ok, serviceId: "   " }, expiresInHours: 72 })).toBe(
+    expect(untyped({ entryId, scope: { ...ok, serviceId: "   " } })).toBe(
       "scope_not_supported",
     );
     // TTL out of the command's own 1..168: refused, never clamped.
-    expect(validateInviteInput({ entryId, scope: ok, expiresInHours: 999 })).toBe("invalid_ttl");
-    expect(validateInviteInput({ entryId, scope: ok, expiresInHours: 0 })).toBe("invalid_ttl");
+    expect(validateInviteInput({ entryId, scope: ok })).toBe("invalid_ttl");
+    expect(validateInviteInput({ entryId, scope: ok })).toBe("invalid_ttl");
     // Empty weekday array authorises nothing; null means every day.
     expect(
-      validateInviteInput({ entryId, scope: { ...ok, allowedWeekdays: [] }, expiresInHours: 72 }),
+      validateInviteInput({ entryId, scope: { ...ok, allowedWeekdays: [] } }),
     ).toBe("invalid_input");
     expect(
-      validateInviteInput({ entryId, scope: { ...ok, allowedWeekdays: [7] }, expiresInHours: 72 }),
+      validateInviteInput({ entryId, scope: { ...ok, allowedWeekdays: [7] } }),
     ).toBe("invalid_input");
-    expect(validateInviteInput({ entryId, scope: { ...ok, windowDays: 0 }, expiresInHours: 72 })).toBe(
+    expect(validateInviteInput({ entryId, scope: { ...ok, windowDays: 0 } })).toBe(
       "invalid_input",
     );
     // A well-formed request passes.
     expect(
-      validateInviteInput({ entryId, scope: { ...ok, allowedWeekdays: [1, 3] }, expiresInHours: 72 }),
+      validateInviteInput({ entryId, scope: { ...ok, allowedWeekdays: [1, 3] } }),
     ).toBeNull();
   });
 
@@ -1084,7 +1084,6 @@ describe("B — the invite-to-book adapter binds #683's contract to 0193", () =>
         windowDays: 7,
         allowedWeekdays: null,
       },
-      expiresInHours: 72,
     });
     expect(out.state).not.toBe("committed");
     if (out.state === "refused") {

@@ -5,8 +5,6 @@ import {
   inviteSubmissionFromFormData,
   WINDOW_DAYS_MAX,
   WINDOW_DAYS_MIN,
-  TTL_HOURS_MAX,
-  TTL_HOURS_MIN,
   type InviteSubmission,
 } from "@/lib/waitlist/b4-invitation-draft";
 import {
@@ -98,22 +96,21 @@ function rejectSubmission(s: InviteSubmission): "malformed_submission" | null {
   // and eligibility remain the DATABASE's questions; this refuses only a value
   // nobody could have picked.
   if (!isChosenServiceId(s.serviceId)) return "malformed_submission";
-  // FAIL CLOSED ON ABSENCE. The composer can express "no answer yet" for each of
-  // these, and an absent answer must never fall back to a default here — a
-  // defaulted window or expiry is one the practitioner never chose and cannot
-  // see on the confirmation they just read.
-  if (s.windowDays === null || s.expiresInHours === null) return "malformed_submission";
+  // FAIL CLOSED ON ABSENCE. The composer can express "no answer yet" for the
+  // booking window, and an absent answer must never fall back to a default here
+  // — a defaulted window is one the practitioner never chose and cannot see on
+  // the confirmation they just read.
+  //
+  // THE INVITATION'S EXPIRY IS NOT CHECKED HERE, AND ITS ABSENCE IS NOT A
+  // FAILURE. It is fixed at `WAIT_INVITATION_TTL_HOURS` and supplied by the
+  // adapter; no control submits it, the submission type has no field for it,
+  // and there is nothing for this boundary to validate. Reading one here would
+  // mean accepting one.
+  if (s.windowDays === null) return "malformed_submission";
   if (
     !Number.isInteger(s.windowDays) ||
     s.windowDays < WINDOW_DAYS_MIN ||
     s.windowDays > WINDOW_DAYS_MAX
-  ) {
-    return "malformed_submission";
-  }
-  if (
-    !Number.isInteger(s.expiresInHours) ||
-    s.expiresInHours < TTL_HOURS_MIN ||
-    s.expiresInHours > TTL_HOURS_MAX
   ) {
     return "malformed_submission";
   }
@@ -155,19 +152,14 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
   // wrote `submission.windowDays as number`, and a cast is precisely the thing
   // that would let a future edit drop the guard above and still compile — the
   // failure mode #683's revalidation obligation warns about, one line further on.
-  const { serviceId, windowDays, expiresInHours } = s;
-  if (
-    !isChosenServiceId(serviceId) ||
-    typeof windowDays !== "number" ||
-    typeof expiresInHours !== "number"
-  ) {
+  const { serviceId, windowDays } = s;
+  if (!isChosenServiceId(serviceId) || typeof windowDays !== "number") {
     return { outcome: null, reason: "malformed_submission" };
   }
 
   const input = {
     entryId: s.entryId,
     scope: { serviceId, windowDays, allowedWeekdays: s.allowedWeekdays },
-    expiresInHours,
   };
   // The adapter's own product-input rules, applied before the command so a
   // refusal costs no round trip. It re-applies them internally too; this is the

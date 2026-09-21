@@ -854,24 +854,24 @@ export const WEEKDAYS_IN_DISPLAY_ORDER: ReadonlyArray<{
 
 // THE WINDOW LIVES IN ITS OWN MODULE, AND THESE ARE RE-EXPORTS.
 //
-// `lib/waitlist/invitation-window.ts` owns the bound, the default and the
-// presets, because three shipped modules need them and this one is a PROTOTYPE
-// that the application must not reach. Re-exported here so the composer and its
-// tests keep importing the vocabulary from the model they already read.
-import {
-  TTL_HOURS_DEFAULT,
-  TTL_HOURS_MAX,
-  TTL_HOURS_MIN,
-  TTL_PRESETS,
-} from "@/lib/waitlist/invitation-window";
+// `lib/waitlist/invitation-window.ts` owns the bound and the one fixed window,
+// because shipped modules need them and this one is a PROTOTYPE that the
+// application must not reach.
+//
+// THE PRESETS AND THE DEFAULT ARE GONE FROM HERE BECAUSE THE DRAFT NO LONGER
+// CARRIES A WINDOW AT ALL. The composer asked "Invitation expires" with presets
+// and a custom field; Level 3 is a FIXED 48-hour opportunity, so the question,
+// the field names it submitted under, and the draft key they parsed into have
+// all been removed rather than defaulted. A draft that cannot express a window
+// cannot submit one.
+import { TTL_HOURS_MAX, TTL_HOURS_MIN } from "@/lib/waitlist/invitation-window";
 
-export { TTL_HOURS_DEFAULT, TTL_HOURS_MAX, TTL_HOURS_MIN, TTL_PRESETS };
+export { TTL_HOURS_MAX, TTL_HOURS_MIN };
 
 export type InviteDraft = {
   serviceId: string | null;
   windowDays: number;
   allowedWeekdays: ReadonlyArray<number> | null;
-  expiresInHours: number;
 };
 
 /**
@@ -888,8 +888,10 @@ export const COMPOSER_FIELD_NAMES = {
   windowDaysCustom: "window_days_custom",
   allowedDaysPreset: "allowed_days_preset",
   allowedWeekdays: "allowed_weekdays",
-  expiresInHours: "expires_in_hours",
-  expiresInHoursCustom: "expires_in_hours_custom",
+  // NO EXPIRY FIELD. `expires_in_hours` and `expires_in_hours_custom` were
+  // removed with the question. Their absence is asserted rather than assumed:
+  // the composer test proves no control submits under either name, so a
+  // practitioner's form data has no way to carry a window.
 } as const;
 
 /** The value a preset radio carries when the practitioner wants to type a
@@ -919,7 +921,6 @@ export type InviteSubmission = {
   serviceId: string | null;
   windowDays: number | null;
   allowedWeekdays: ReadonlyArray<number> | null;
-  expiresInHours: number | null;
 };
 
 function numberOrNull(value: FormDataEntryValue | null): number | null {
@@ -1014,11 +1015,6 @@ export function inviteSubmissionFromFormData(formData: FormData): InviteSubmissi
       daysPreset === CUSTOM_PRESET_VALUE
         ? checkedWeekdays
         : ALLOWED_DAYS_PRESET_VALUES[daysPreset as Exclude<AllowedDaysPreset, "custom">],
-    expiresInHours: presetOrCustom(
-      formData,
-      COMPOSER_FIELD_NAMES.expiresInHours,
-      COMPOSER_FIELD_NAMES.expiresInHoursCustom,
-    ),
     },
   };
 }
@@ -1040,7 +1036,6 @@ export type ComposerState = {
   draft: InviteDraft;
   windowMode: number | typeof CUSTOM_PRESET_VALUE;
   daysMode: AllowedDaysPreset;
-  expiryMode: number | typeof CUSTOM_PRESET_VALUE;
 };
 
 export type ComposerEvent =
@@ -1048,9 +1043,7 @@ export type ComposerEvent =
   | { type: "windowPreset"; preset: number | typeof CUSTOM_PRESET_VALUE }
   | { type: "windowCustom"; days: number }
   | { type: "daysPreset"; preset: AllowedDaysPreset }
-  | { type: "weekday"; index: number; checked: boolean }
-  | { type: "expiryPreset"; preset: number | typeof CUSTOM_PRESET_VALUE }
-  | { type: "expiryCustom"; hours: number };
+  | { type: "weekday"; index: number; checked: boolean };
 
 /**
  * WHICH STARTING POINT THIS COMPOSER IS SHOWING — entry plus the draft the
@@ -1072,7 +1065,6 @@ export function composerIdentity(entryId: string, draft: InviteDraft): string {
     draft.serviceId,
     draft.windowDays,
     draft.allowedWeekdays === null ? null : [...draft.allowedWeekdays],
-    draft.expiresInHours,
   ]);
 }
 
@@ -1082,7 +1074,6 @@ export function initialComposerState(draft: InviteDraft): ComposerState {
     draft,
     windowMode: activeWindowPreset(draft.windowDays),
     daysMode: activeAllowedDaysPreset(draft.allowedWeekdays),
-    expiryMode: activeTtlPreset(draft.expiresInHours),
   };
 }
 
@@ -1145,18 +1136,6 @@ export function composerReducer(state: ComposerState, event: ComposerEvent): Com
       // a set that happens to match and take the checkboxes away mid-edit.
       return { ...state, daysMode: "custom", draft: { ...state.draft, allowedWeekdays: next } };
     }
-
-    case "expiryPreset":
-      return event.preset === CUSTOM_PRESET_VALUE
-        ? { ...state, expiryMode: CUSTOM_PRESET_VALUE }
-        : {
-            ...state,
-            expiryMode: event.preset,
-            draft: { ...state.draft, expiresInHours: event.preset },
-          };
-
-    case "expiryCustom":
-      return { ...state, draft: { ...state.draft, expiresInHours: event.hours } };
   }
 }
 
@@ -1165,14 +1144,13 @@ export function emptyDraft(): InviteDraft {
     serviceId: null,
     windowDays: BOOKING_WINDOW_PRESETS[0].days,
     allowedWeekdays: null,
-    expiresInHours: TTL_HOURS_DEFAULT,
   };
 }
 
-export type DraftFieldId = "service" | "window" | "days" | "expiry";
+export type DraftFieldId = "service" | "window" | "days";
 
 export type DraftValidation =
-  | { ok: true; scope: BookingScope; expiresInHours: number }
+  | { ok: true; scope: BookingScope }
   | { ok: false; errors: Partial<Record<DraftFieldId, string>> };
 
 /**
@@ -1266,14 +1244,6 @@ export function validateDraft(
     }
   }
 
-  if (
-    !Number.isInteger(draft.expiresInHours) ||
-    draft.expiresInHours < TTL_HOURS_MIN ||
-    draft.expiresInHours > TTL_HOURS_MAX
-  ) {
-    errors.expiry = "An invitation must last between 1 hour and 7 days.";
-  }
-
   if (Object.keys(errors).length > 0) return { ok: false, errors };
 
   // THE SAME RULE, RE-STATED WHERE THE TYPE NEEDS IT — not a cast and not an
@@ -1293,7 +1263,6 @@ export function validateDraft(
       windowDays: draft.windowDays,
       allowedWeekdays: draft.allowedWeekdays,
     },
-    expiresInHours: draft.expiresInHours,
   };
 }
 
@@ -1311,7 +1280,9 @@ export function draftToInviteInput(
 ): InviteToBookInput | null {
   const validation = validateDraft(draft, context);
   if (!validation.ok) return null;
-  return { entryId, scope: validation.scope, expiresInHours: validation.expiresInHours };
+  // NO WINDOW IN THE PAYLOAD. The adapter supplies the one fixed window; a
+  // draft has nothing to say about it and cannot smuggle one through.
+  return { entryId, scope: validation.scope };
 }
 
 /** Plain-language summary of what the invitation will permit. Used by the
@@ -1469,10 +1440,6 @@ export function activeAllowedDaysPreset(
   if (sameDaySet(weekdays, ALLOWED_DAYS_PRESET_VALUES.weekdays!)) return "weekdays";
   if (sameDaySet(weekdays, ALLOWED_DAYS_PRESET_VALUES.weekends!)) return "weekends";
   return "custom";
-}
-
-export function activeTtlPreset(hours: number): number | "custom" {
-  return TTL_PRESETS.some((p) => p.hours === hours) ? hours : "custom";
 }
 
 // --- 7. WHETHER THE COMPOSER MAY SEND ---------------------------------------
