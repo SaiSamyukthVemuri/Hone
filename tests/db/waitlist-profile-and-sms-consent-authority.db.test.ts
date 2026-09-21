@@ -344,6 +344,288 @@ describe("prospect suppression: the two halves the STOP path will need", () => {
   });
 });
 
+/** A legacy row: the shape that predates every column 0202 adds. */
+async function legacyEntry(
+  studioId: string,
+  over: Partial<{ name: string; email: string; phone: string | null }> = {},
+) {
+  const r = await adminQuery(
+    `insert into public.new_client_waitlist_entries (studio_id, name, email, phone)
+     values ($1, $2, $3, $4) returning id`,
+    [
+      studioId,
+      over.name ?? "Old Name",
+      over.email ?? `legacy-${Math.random().toString(16).slice(2)}@example.com`,
+      over.phone ?? null,
+    ],
+  );
+  return r.rows[0].id as string;
+}
+
+/** 0193's issue command — the only thing that mints a real grant. */
+async function issueGrant(studioId: string, entryId: string, actorUserId: string) {
+  const r = await adminQuery(
+    `select * from public.issue_waitlist_preference_grant($1, $2, $3, $4)`,
+    [studioId, entryId, actorUserId, 48],
+  );
+  const row = r.rows[0] as { result: string; raw_token: string | null };
+  expect(row.result, "grant issued").toBe("issued");
+  return row.raw_token!;
+}
+
+async function complete(
+  token: string,
+  over: Partial<{
+    first: string; last: string; areas: Array<string | null>;
+    preference: string; mobile: string | null; consent: boolean;
+  }> = {},
+) {
+  const r = await adminQuery(
+    `select public.complete_waitlist_profile_by_grant($1,$2,$3,$4,$5,$6,$7) as result`,
+    [
+      token,
+      over.first ?? "Ada",
+      over.last ?? "Lovelace",
+      over.areas ?? ["chin", "neck"],
+      over.preference ?? "weekdays",
+      over.mobile === undefined ? "647-555-1234" : over.mobile,
+      over.consent ?? false,
+    ],
+  );
+  return r.rows[0].result as string;
+}
+
+const prefRow = async (entryId: string) =>
+  (
+    await adminQuery(
+      `select preference, source, stated_at, confirmed_at, recorded_by_practitioner_id
+         from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    )
+  ).rows[0];
+
+const grantRow = async (entryId: string) =>
+  (
+    await adminQuery(
+      `select redeemed_at, revoked_at, expires_at
+         from public.new_client_waitlist_preference_grants where entry_id = $1`,
+      [entryId],
+    )
+  ).rows[0];
+
+describe("a legacy prospect completes their profile through a grant", () => {
+  // THIS BLOCK IS THE ONE THAT WAS MISSING. The command shipped with no
+  // behavioural test at all — only an ACL check that its name existed — and a
+  // two-line displacement made its flagship path return `refused` while a
+  // spent token kept writing. Every assertion below is reachable only by
+  // actually redeeming a grant.
+
+  it("writes the whole profile, creates the preference row, and spends the grant", async () => {
+    const s = await seedStudio("w04b-complete");
+    const entry = await legacyEntry(s.studioId);
+    const token = await issueGrant(s.studioId, entry, s.userId);
+
+    expect(await complete(token, { consent: true })).toBe("accepted");
+
+    const row = await entryRow(entry);
+    expect(row.first_name).toBe("Ada");
+    expect(row.last_name).toBe("Lovelace");
+    expect(row.treatment_area_ids).toEqual(["chin", "neck"]);
+    expect(row.phone).toBe("647-555-1234");
+    // The legacy combined name is NOT rewritten — the guard freezes it, and
+    // there is still no correction command.
+    expect(row.name).toBe("Old Name");
+    // A bearer link collects a CANDIDATE. Nothing it carries verifies itself.
+    expect(row.mobile_verified_at).toBeNull();
+    expect(row.sms_consent_at).not.toBeNull();
+    expect(row.sms_consent_source).toBe("prospect_link");
+
+    const pref = await prefRow(entry);
+    expect(pref.preference).toBe("weekdays");
+    expect(pref.source).toBe("prospect_link");
+    expect(pref.recorded_by_practitioner_id).toBeNull();
+
+    expect((await grantRow(entry)).redeemed_at).not.toBeNull();
+  });
+
+  it("REGRESSION: a spent grant writes nothing, even when a preference row exists", async () => {
+    // The other half of the displacement. An entry that ALREADY held a
+    // preference row made the misread `found` TRUE, so the replay branch was
+    // skipped entirely and an exhausted token rewrote the profile and returned
+    // `accepted` — for ever, because the redeeming UPDATE matched no row.
+    const s = await seedStudio("w04b-spent");
+    const out = await joinWithProfile(s.studioId, { mobile: "647-555-0001", consent: false });
+    const entry = out.entry_id!;
+    const token = await issueGrant(s.studioId, entry, s.userId);
+
+    expect(await complete(token, { mobile: null })).toBe("accepted");
+    const afterFirst = await entryRow(entry);
+    expect((await grantRow(entry)).redeemed_at).not.toBeNull();
+
+    expect(await complete(token, { first: "Mallory", last: "Doe", mobile: null })).toBe("refused");
+    const afterReplay = await entryRow(entry);
+    expect(afterReplay.first_name).toBe("Ada");
+    expect(afterReplay.updated_at).toEqual(afterFirst.updated_at);
+  });
+
+  it("an identical second tap is accepted and writes NOTHING", async () => {
+    const s = await seedStudio("w04b-replay");
+    const entry = await legacyEntry(s.studioId);
+    const token = await issueGrant(s.studioId, entry, s.userId);
+    expect(await complete(token, { consent: true })).toBe("accepted");
+    const before = await entryRow(entry);
+    const beforePref = await prefRow(entry);
+
+    expect(await complete(token, { consent: true })).toBe("accepted");
+    const after = await entryRow(entry);
+    expect(after.updated_at).toEqual(before.updated_at);
+    expect(after.sms_consent_at).toEqual(before.sms_consent_at);
+    expect((await prefRow(entry)).confirmed_at).toEqual(beforePref.confirmed_at);
+  });
+
+  it("an EXPIRED grant writes nothing", async () => {
+    const s = await seedStudio("w04b-expired");
+    const entry = await legacyEntry(s.studioId);
+    const token = await issueGrant(s.studioId, entry, s.userId);
+    await adminQuery(
+      `update public.new_client_waitlist_preference_grants
+          set issued_at = now() - interval '2 hours',
+              expires_at = now() - interval '1 minute'
+        where entry_id = $1`,
+      [entry],
+    );
+    expect(await complete(token)).toBe("refused");
+    const row = await entryRow(entry);
+    expect(row.first_name).toBeNull();
+    expect(row.phone).toBeNull();
+  });
+
+  it("a REVOKED grant writes nothing", async () => {
+    const s = await seedStudio("w04b-revoked");
+    const entry = await legacyEntry(s.studioId);
+    const token = await issueGrant(s.studioId, entry, s.userId);
+    await adminQuery(
+      `update public.new_client_waitlist_preference_grants
+          set revoked_at = now() where entry_id = $1`,
+      [entry],
+    );
+    expect(await complete(token)).toBe("refused");
+    expect((await entryRow(entry)).first_name).toBeNull();
+  });
+
+  it("a live grant on a REMOVED entry writes nothing", async () => {
+    // Removal never touches the grant, whose own columns stay perfectly valid.
+    const s = await seedStudio("w04b-removed");
+    const entry = await legacyEntry(s.studioId);
+    const token = await issueGrant(s.studioId, entry, s.userId);
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'removed', removed_at = now(), removed_by_practitioner_id = $2
+        where id = $1`,
+      [entry, s.practitionerId],
+    );
+    expect(await complete(token)).toBe("refused");
+    expect((await entryRow(entry)).first_name).toBeNull();
+  });
+
+  it("an unknown token is refused", async () => {
+    expect(await complete("not-a-real-token")).toBe("refused");
+  });
+
+  it("a candidate offered against a stored mobile is refused outright", async () => {
+    const s = await seedStudio("w04b-replace");
+    const out = await joinWithProfile(s.studioId, { mobile: "647-555-4004" });
+    const token = await issueGrant(s.studioId, out.entry_id!, s.userId);
+    expect(await complete(token, { mobile: "647-555-9999" })).toBe("refused");
+    expect((await entryRow(out.entry_id!)).phone).toBe("647-555-4004");
+  });
+
+  it("a submission that cannot complete the profile is refused and LEAVES THE GRANT LIVE", async () => {
+    // No candidate supplied and none on file. Accepting would spend the
+    // single-use link on a write that leaves the profile PROFILE_INCOMPLETE,
+    // stranding the prospect with no way to finish.
+    const s = await seedStudio("w04b-nomobile");
+    const entry = await legacyEntry(s.studioId, { phone: null });
+    const token = await issueGrant(s.studioId, entry, s.userId);
+
+    expect(await complete(token, { mobile: null })).toBe("invalid_submission");
+    expect((await entryRow(entry)).first_name).toBeNull();
+    expect((await grantRow(entry)).redeemed_at).toBeNull();
+
+    // The same link still works, which is the point of refusing.
+    expect(await complete(token, { mobile: "647-555-3003" })).toBe("accepted");
+    expect((await entryRow(entry)).phone).toBe("647-555-3003");
+  });
+});
+
+describe("completion may only ever ADD consent, never move or erase it", () => {
+  it("an unticked box does not erase a consent the join already recorded", async () => {
+    const s = await seedStudio("w04b-consent-keep");
+    const out = await joinWithProfile(s.studioId, { consent: true, mobile: "647-555-2002" });
+    const entry = out.entry_id!;
+    const before = await entryRow(entry);
+    expect(before.sms_consent_at).not.toBeNull();
+
+    const token = await issueGrant(s.studioId, entry, s.userId);
+    expect(await complete(token, { consent: false, mobile: null })).toBe("accepted");
+
+    const after = await entryRow(entry);
+    expect(after.sms_consent_at).toEqual(before.sms_consent_at);
+    expect(after.sms_consent_source).toBe(before.sms_consent_source);
+    expect(after.sms_consent_text_version).toBe(before.sms_consent_text_version);
+  });
+
+  it("a ticked box does not RE-STAMP a consent already held", async () => {
+    const s = await seedStudio("w04b-consent-restamp");
+    const out = await joinWithProfile(s.studioId, { consent: true, mobile: "647-555-2003" });
+    const entry = out.entry_id!;
+    const before = await entryRow(entry);
+
+    const token = await issueGrant(s.studioId, entry, s.userId);
+    expect(await complete(token, { consent: true, mobile: null })).toBe("accepted");
+
+    const after = await entryRow(entry);
+    expect(after.sms_consent_at).toEqual(before.sms_consent_at);
+    // Still attributed to where it actually happened.
+    expect(after.sms_consent_source).toBe("public_form");
+  });
+
+  it("a replay that newly ticks the box is NOT reported accepted without writing", async () => {
+    const s = await seedStudio("w04b-consent-replay");
+    const entry = await legacyEntry(s.studioId);
+    const token = await issueGrant(s.studioId, entry, s.userId);
+
+    expect(await complete(token, { consent: false })).toBe("accepted");
+    expect((await entryRow(entry)).sms_consent_at).toBeNull();
+
+    // The grant is spent, so the new answer cannot be honoured — and must not
+    // be reported as though it had been.
+    expect(await complete(token, { consent: true })).toBe("refused");
+    expect((await entryRow(entry)).sms_consent_at).toBeNull();
+  });
+});
+
+describe("a NULL treatment area is refused, never silently dropped", () => {
+  // `= any` drops NULL members, so array['chin', null] would have been stored
+  // as array['chin'] — a shorter treatment list than the person submitted,
+  // recorded as though it were what they chose.
+  it("the join command refuses", async () => {
+    const s = await seedStudio("w04b-nullarea-join");
+    const out = await joinWithProfile(s.studioId, {
+      areas: ["chin", null as unknown as string],
+    });
+    expect(out.result).toBe("invalid_input");
+  });
+
+  it("the completion command refuses, and writes nothing", async () => {
+    const s = await seedStudio("w04b-nullarea-complete");
+    const entry = await legacyEntry(s.studioId);
+    const token = await issueGrant(s.studioId, entry, s.userId);
+    expect(await complete(token, { areas: ["chin", null] })).toBe("invalid_submission");
+    expect((await entryRow(entry)).treatment_area_ids).toBeNull();
+  });
+});
+
 describe("no browser-reachable role gains anything", () => {
   it("anon and authenticated hold no DML on the entries table", async () => {
     for (const role of ["anon", "authenticated"] as const) {

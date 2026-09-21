@@ -468,6 +468,14 @@ begin
   -- refusal. A submission naming a retired or invented area is an error, not a
   -- shorter list -- an invitation composed from a silently narrowed list would
   -- be composed from something the prospect did not choose.
+  -- REFUSE RATHER THAN NARROW. `= any` silently drops a NULL member, so
+  -- array['chin', null] would have been accepted AS array['chin'] -- a shorter
+  -- treatment list than the person submitted, recorded as though it were theirs.
+  if array_position(v_in, null) is not null then
+    return query select 'invalid_input'::text, null::uuid;
+    return;
+  end if;
+
   select array_agg(c.id order by c.ord) into v_areas
     from unnest(c_areas) with ordinality as c(id, ord)
    where c.id = any (v_in);
@@ -594,6 +602,15 @@ declare
   v_distinct integer;
   v_entry_row record;
   v_pref     text;
+  -- WHY THIS BOOLEAN EXISTS RATHER THAN A BARE `found`.
+  -- `found` reflects the MOST RECENT statement, and two reads sit between the
+  -- grant re-resolve and the branch below. Reading `found` there asked "does a
+  -- preference row exist", which is a different question with the same spelling:
+  -- a legacy entry (no preference row) took the replay branch and was refused,
+  -- and an entry that HAD one skipped the replay branch on an expired, revoked
+  -- or already-spent token and wrote anyway. Capturing the answer on the next
+  -- line makes the branch independent of what is read after it.
+  v_grant_found boolean;
 begin
   if p_raw_token is null or p_sms_consent is null then
     return 'refused';
@@ -636,6 +653,13 @@ begin
     return 'invalid_submission';
   end if;
 
+  -- REFUSE RATHER THAN NARROW. `= any` silently drops a NULL member, so
+  -- array['chin', null] would have been accepted AS array['chin'] -- a shorter
+  -- treatment list than the person submitted, recorded as though it were theirs.
+  if array_position(v_in, null) is not null then
+    return 'invalid_submission';
+  end if;
+
   select array_agg(c.id order by c.ord) into v_areas
     from unnest(c_areas) with ordinality as c(id, ord)
    where c.id = any (v_in);
@@ -664,8 +688,10 @@ begin
      and g.expires_at  > v_now
      and e.status not in ('removed', 'converted')
    for update of g;
+  v_grant_found := found;   -- MUST stay on the line after the select above.
 
-  select e.first_name, e.last_name, e.treatment_area_ids, e.phone
+  select e.first_name, e.last_name, e.treatment_area_ids, e.phone,
+         e.sms_consent_at
     into v_entry_row
     from public.new_client_waitlist_entries e
    where e.id = v_entry;
@@ -674,7 +700,7 @@ begin
     from public.new_client_waitlist_entry_preferences p
    where p.entry_id = v_entry;
 
-  if not found then
+  if not v_grant_found then
     -- STEP 4a: IDEMPOTENT REPLAY, AND ONLY THAT.
     --
     -- 0193's grant is single-use, so a person who taps twice on a slow
@@ -697,7 +723,13 @@ begin
     and v_entry_row.last_name          is not distinct from v_last
     and v_entry_row.treatment_area_ids is not distinct from v_areas
     and v_pref                         is not distinct from p_preference
-    and (v_cand is null or v_entry_row.phone is not distinct from v_cand) then
+    and (v_cand is null or v_entry_row.phone is not distinct from v_cand)
+    -- AND THE CONSENT ANSWER, which is the one field a replay can legitimately
+    -- differ on: a person who ticked the box on the second tap has NOT already
+    -- been recorded, so reporting `accepted` while writing nothing would claim a
+    -- consent that does not exist. Ticking requires consent to be on the row;
+    -- not ticking is a no-op under STEP 5 and is therefore always satisfied.
+    and (not p_sms_consent or v_entry_row.sms_consent_at is not null) then
       return 'accepted';
     end if;
     return 'refused';
@@ -713,6 +745,16 @@ begin
     return 'refused';
   end if;
 
+  -- AND THE OTHER ARM: no candidate supplied and none on file. `mobile` is a
+  -- required field of `assessProfileCompleteness`, so accepting this would spend
+  -- the single-use grant on a write that leaves the profile PROFILE_INCOMPLETE
+  -- and the prospect with no second link -- permanently unable to finish. It is
+  -- a deficient SUBMISSION, so it is refused the way a deficient submission is,
+  -- leaving the grant live for the retry.
+  if v_cand is null and v_entry_row.phone is null then
+    return 'invalid_submission';
+  end if;
+
   update public.new_client_waitlist_entries e
      set first_name         = v_first,
          last_name          = v_last,
@@ -720,9 +762,20 @@ begin
          -- Written only when the entry held none. `mobile_verified_at` is NOT
          -- in this SET list: nothing a bearer link supplies may verify itself.
          phone              = case when v_cand is not null then v_cand else e.phone end,
-         sms_consent_at           = case when p_sms_consent then v_now end,
-         sms_consent_source       = case when p_sms_consent then 'prospect_link' end,
-         sms_consent_text_version = case when p_sms_consent then 'waitlist_sms_operational_v1' end
+         -- CONSENT IS EVIDENCE OF AN ACT AT A TIME, so this command may only
+         -- ever ADD it. Writing the three columns unconditionally re-stamped
+         -- `sms_consent_at` for someone who had already consented -- moving
+         -- evidence the join command refuses to move -- and silently NULLED all
+         -- three when the box was left unticked, erasing a consent through a
+         -- surface that is not a withdrawal surface. Withdrawal has its own
+         -- path: `sms_opted_out_at`, which the guard makes terminal.
+         sms_consent_at           = case when p_sms_consent and e.sms_consent_at is null
+                                         then v_now else e.sms_consent_at end,
+         sms_consent_source       = case when p_sms_consent and e.sms_consent_at is null
+                                         then 'prospect_link' else e.sms_consent_source end,
+         sms_consent_text_version = case when p_sms_consent and e.sms_consent_at is null
+                                         then 'waitlist_sms_operational_v1'
+                                         else e.sms_consent_text_version end
    where e.id = v_entry;
 
   if v_pref is null then

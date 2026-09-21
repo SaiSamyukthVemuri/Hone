@@ -104,8 +104,20 @@ describe("it adds columns and commands, and nothing structural", () => {
     expect(CODE).not.toMatch(/add column if not exists\s+availability/i);
   });
 
-  it("backfills nothing", () => {
-    expect(CODE).not.toMatch(/^\s*update\s+public\.new_client_waitlist_entries\s+set/im);
+  it("backfills nothing: every UPDATE of the table binds rows by id", () => {
+    // THE PREVIOUS FORM OF THIS ASSERTION COULD NOT FAIL. It required `set` to
+    // follow the table name on the same line, but every update in this file
+    // aliases the table -- `update public.new_client_waitlist_entries e` with
+    // `set` on the next line -- so no text matched it, a genuine backfill
+    // written that way included. This asserts the property instead of a
+    // spelling: a backfill is an update that names no row.
+    const stmts = [
+      ...CODE.matchAll(/update\s+public\.new_client_waitlist_entries\b[\s\S]*?;/gi),
+    ].map((m) => m[0]);
+    expect(stmts.length).toBeGreaterThan(0);
+    for (const stmt of stmts) {
+      expect(stmt, stmt.slice(0, 90)).toMatch(/\bwhere\b[\s\S]*?\b(?:e\.)?id\s*(?:=|in\b)/i);
+    }
   });
 
   it("never writes joined_at or its provenance", () => {
