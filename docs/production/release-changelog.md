@@ -44,7 +44,7 @@ and each merge's own diff; the 36 pre-existing in-range rows are preserved verba
 the repository's second PR-subject form, `...(#N)`; until then they were invisible to the rule
 that certifies this range complete. A backfilled row states its **application** file count
 (`app/`, `lib/`, `components/`) and its migration from the diff — application files are a
-NARROWER measure than the classifier's runtime-bearing verdict, which also counts
+NARROWER measure than A3's composed deployed predicate, which also counts
 `supabase/migrations/`, and the rows say which they mean. A backfilled row deliberately does
 **not** claim runtime ENABLEMENT, which was not re-verified. Roughly 150 merges between #479 and #601
 — including migrations 0159–0184 — still have **no row here**. Those releases are recorded in
