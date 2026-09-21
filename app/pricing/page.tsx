@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SafeAnalytics } from "../_components/SafeAnalytics";
 import { SiteHeader } from "../_components/marketing/SiteHeader";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SiteFooter } from "../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
@@ -141,6 +142,7 @@ function PlanCard({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
 export default function PricingPage() {
   return (
     <MarketingSurface>
+      <SkipLink />
       <SiteHeader />
       <Breadcrumbs
         items={[
@@ -148,7 +150,7 @@ export default function PricingPage() {
           { name: "Pricing", path: "/pricing" },
         ]}
       />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="overflow-x-hidden">
         <Container className="pb-4 pt-8 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Pricing</Eyebrow>

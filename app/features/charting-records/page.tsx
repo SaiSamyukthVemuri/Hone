@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { SafeAnalytics } from "../../_components/SafeAnalytics";
 import { SiteHeader } from "../../_components/marketing/SiteHeader";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SiteFooter } from "../../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
@@ -62,6 +63,7 @@ const CAPABILITIES: { title: string; body: string }[] = [
 export default function ChartingRecordsPage() {
   return (
     <MarketingSurface>
+      <SkipLink />
       <SiteHeader />
       <Breadcrumbs
         items={[
@@ -70,7 +72,7 @@ export default function ChartingRecordsPage() {
           { name: "Charting and records", path: "/features/charting-records" },
         ]}
       />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="overflow-x-hidden">
         <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Charting and records</Eyebrow>
