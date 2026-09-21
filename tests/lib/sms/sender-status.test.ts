@@ -137,9 +137,18 @@ describe("every status presents, including the one production is actually in", (
   });
 
   it("released is history and offers nothing", () => {
+    // THE NUMBER IS EXPLICIT HERE ON PURPOSE. This assertion is about the
+    // shape where a number really was owned and given up, and `row()` defaults
+    // `phone_number` to null — so an earlier revision of this test built an
+    // ABANDONED attempt and asserted the wording for a released purchase. The
+    // null shape is a genuinely different sentence and is covered below.
     const view = presentSenderStatus(
       ok(
-        row({ status: "released", released_at: "2026-09-20T00:00:00Z" }),
+        row({
+          status: "released",
+          phone_number: "+15551230000",
+          released_at: "2026-09-20T00:00:00Z",
+        }),
       ),
     );
     expect(view.tone).toBe("retired");
@@ -423,5 +432,109 @@ describe("a released sender is reachable, not filtered away (#749 review)", () =
     expect(view.headline).toBe("Number released");
     expect(view.headline).not.toBe("No sender configured");
     expect(view.phoneNumber).toBe("+15555550123");
+  });
+});
+
+/**
+ * A RELEASE STATE DOES NOT IMPLY A PURCHASED NUMBER (#749 review, P2).
+ *
+ * 0191 requires `claimed_phone_number` past `off`, but permits `phone_number`
+ * to stay null at EVERY status — `purchased_matches_claimed_check` is
+ * `phone_number is null or phone_number = claimed_phone_number`, and no
+ * constraint requires a purchase before `releasing` or `released`. An attempt
+ * that failed before buying anything therefore reaches these two states with
+ * no number, and this module's own routing makes that the expected path:
+ * `number_no_longer_available` routes to `release_only` precisely because the
+ * chosen number vanished before it was bought.
+ *
+ * So the panel must not say a number is being, or was, given up unless one was
+ * actually purchased. A claim is not a purchase.
+ */
+describe("release states never invent a number that was not bought", () => {
+  /** Wording that ASSERTS a provider resource existed. */
+  const CLAIMS_A_NUMBER = [
+    /\bthe number\b/i,
+    /\bthis number\b/i,
+    /number (was|is being) (given up|released)/i,
+    /\bnumber released\b/i,
+    /never reused/i,
+  ];
+
+  const sentence = (v: { headline: string; detail: string }) =>
+    `${v.headline} ${v.detail}`;
+
+  it("releasing WITH a number describes that number", () => {
+    const v = presentSenderStatus(
+      ok(row({ status: "releasing", phone_number: "+15551230000" })),
+    );
+    expect(v.phoneNumber).toBe("+15551230000");
+    expect(sentence(v)).toMatch(/number/i);
+    expect(v.detail).toMatch(/given up/i);
+  });
+
+  it("releasing WITHOUT a number describes the attempt, not a number", () => {
+    const v = presentSenderStatus(ok(row({ status: "releasing" })));
+    expect(v.status).toBe("releasing");
+    expect(v.phoneNumber).toBeNull();
+    for (const claim of CLAIMS_A_NUMBER) {
+      expect(sentence(v), String(claim)).not.toMatch(claim);
+    }
+    // It still has to say something true about what is happening.
+    expect(sentence(v)).toMatch(/attempt/i);
+  });
+
+  it("released WITH a number describes that number", () => {
+    const v = presentSenderStatus(
+      ok(
+        row({
+          status: "released",
+          phone_number: "+15551230000",
+          released_at: "2026-09-20T00:00:00Z",
+        }),
+      ),
+    );
+    expect(v.phoneNumber).toBe("+15551230000");
+    expect(v.headline).toMatch(/number released/i);
+    expect(v.detail).toMatch(/never reused/i);
+  });
+
+  it("released WITHOUT a number describes the attempt, not a number", () => {
+    const v = presentSenderStatus(
+      ok(row({ status: "released", released_at: "2026-09-20T00:00:00Z" })),
+    );
+    expect(v.status).toBe("released");
+    expect(v.phoneNumber).toBeNull();
+    for (const claim of CLAIMS_A_NUMBER) {
+      expect(sentence(v), String(claim)).not.toMatch(claim);
+    }
+    expect(sentence(v)).toMatch(/attempt/i);
+  });
+
+  it("BOTH null shapes keep the current-state answer the owner needs", () => {
+    // The shared-sender sentence is the half that answers "are my texts going
+    // out?". Correcting the history half must not drop it.
+    const released = presentSenderStatus(
+      ok(row({ status: "released", released_at: "2026-09-20T00:00:00Z" })),
+    );
+    expect(released.detail).toMatch(/shared sender/i);
+  });
+
+  it("the guard is not vacuous: it FIRES on the pre-fix wording", () => {
+    // Negative control. If `CLAIMS_A_NUMBER` matched nothing, the two null
+    // assertions above would pass no matter what the module said.
+    const preFix = {
+      headline: "Number released",
+      detail:
+        "This number was given up and is never reused. Messages are sent using Hone's shared sender.",
+    };
+    const fired = CLAIMS_A_NUMBER.filter((c) => c.test(sentence(preFix)));
+    expect(fired.length).toBeGreaterThan(0);
+  });
+
+  it("no null-number release ever renders a number to the card", () => {
+    for (const status of ["releasing", "released"] as const) {
+      const v = presentSenderStatus(ok(row({ status })));
+      expect(v.phoneNumber, status).toBeNull();
+    }
   });
 });

@@ -340,34 +340,74 @@ export function presentSenderStatus(read: SenderRead): SenderStatusView {
         lastTestOkAt: row.last_test_ok_at,
       };
     case "releasing":
-      return {
-        status: row.status,
-        tone: "working",
-        headline: "Releasing the number",
-        detail: "This number is being given up and will not be used again.",
-        phoneNumber: row.phone_number,
-        recovery: "none",
-        errorCode: null,
-        lastTestOkAt: null,
-      };
+      // A RELEASE STATE DOES NOT IMPLY A PURCHASED NUMBER.
+      //
+      // 0191 requires `claimed_phone_number` for every status past `off`, but
+      // `purchased_matches_claimed_check` is `phone_number is null or
+      // phone_number = claimed_phone_number` — null is permitted at EVERY
+      // status, and no constraint requires a purchase before `releasing` or
+      // `released`. So an attempt that failed before buying anything reaches
+      // here with `phone_number` null, and this slice's own routing makes that
+      // the expected path: `number_no_longer_available` is `release_only`
+      // precisely because the chosen number vanished before it was bought.
+      //
+      // "Releasing the number" over a null would invent a provider resource
+      // Hone has no evidence ever existed. A CLAIM is not a purchase, and
+      // `claimed_phone_number` is not owner-readable anyway, so there is no
+      // number to name here — the honest sentence is about the attempt.
+      return row.phone_number
+        ? {
+            status: row.status,
+            tone: "working",
+            headline: "Releasing the number",
+            detail: "This number is being given up and will not be used again.",
+            phoneNumber: row.phone_number,
+            recovery: "none",
+            errorCode: null,
+            lastTestOkAt: null,
+          }
+        : {
+            status: row.status,
+            tone: "working",
+            headline: "Closing the setup attempt",
+            detail:
+              "Setting up a sender did not get as far as buying a number, so there is none to give up. Hone is closing the attempt.",
+            phoneNumber: null,
+            recovery: "none",
+            errorCode: null,
+            lastTestOkAt: null,
+          };
     case "released":
-      return {
-        status: row.status,
-        tone: "retired",
-        headline: "Number released",
-        // Says what happens NOW as well as what happened. This branch is
-        // reached when a studio released its number and has not started a
-        // replacement, so it is a current-state answer, not just a history
-        // note — and an owner reading only "this number was given up" would be
-        // left with the same "are my texts going out?" question the empty
-        // state exists to answer.
-        detail:
-          "This number was given up and is never reused. Messages are sent using Hone's shared sender.",
-        phoneNumber: row.phone_number,
-        recovery: "none",
-        errorCode: null,
-        lastTestOkAt: null,
-      };
+      // Same split as `releasing`, and for the same reason: this row may record
+      // an abandoned attempt rather than a number that was owned and given up.
+      //
+      // Both shapes keep the shared-sender sentence. It is the CURRENT-STATE
+      // half of the answer and it is true either way — an owner reading only
+      // what happened to the attempt would be left with the same "are my texts
+      // going out?" question the empty state exists to answer.
+      return row.phone_number
+        ? {
+            status: row.status,
+            tone: "retired",
+            headline: "Number released",
+            detail:
+              "This number was given up and is never reused. Messages are sent using Hone's shared sender.",
+            phoneNumber: row.phone_number,
+            recovery: "none",
+            errorCode: null,
+            lastTestOkAt: null,
+          }
+        : {
+            status: row.status,
+            tone: "retired",
+            headline: "Setup attempt closed",
+            detail:
+              "An earlier attempt to set up a sender ended before a number was bought. Messages are sent using Hone's shared sender.",
+            phoneNumber: null,
+            recovery: "none",
+            errorCode: null,
+            lastTestOkAt: null,
+          };
   }
 }
 
