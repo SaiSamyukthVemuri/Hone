@@ -263,7 +263,7 @@ before assuming the diff broke something.**
 | changed-path detection | 2 min |
 | validate (typecheck/lint/build/unit) | 8 min |
 | db integration | 8 min |
-| targeted browser lane | target ~6 min · **hard timeout 15 min** |
+| targeted browser shard (×3) | target ~6 min · **hard timeout 15 min** |
 | extended browser shard (×4) | target <10 min · **hard timeout 18 min** |
 | nightly browser shard (×4) | hard timeout 15 min |
 | payment browser e2e (fake stripe) | target ~10 min · **hard timeout 18 min** |

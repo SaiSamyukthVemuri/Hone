@@ -40,6 +40,31 @@ export function buildPlan(files) {
   const b = selectBrowserGroups(files);
 
   const lanes = [];
+
+  // THE DERIVED BROWSER STATE, COMPUTED ONCE AND USED EVERYWHERE BELOW.
+  //
+  // THE FULL-SUITE RULE, MIRRORED FROM THE WORKFLOW. The shard job is gated on
+  // `browser_run || full_matrix_required`, so reaching it with NO groups means
+  // the whole suite, unselected -- which the workflow treats as extended
+  // coverage. Without this the planner would tell a contributor the targeted
+  // lane runs when CI runs the extended one.
+  //
+  // IT IS COMPUTED HERE, ABOVE THE LANE LIST, BECAUSE IT WAS PREVIOUSLY
+  // COMPUTED BELOW IT. The lane verdict then used the raw `b.groups.length > 0`
+  // while the shard count used the derived value, so a full-matrix trigger with
+  // no selected groups -- `vitest.config.ts`, for instance -- reported the
+  // browser lane SKIPPED and printed "Browser coverage: none" while CI ran the
+  // entire extended suite. CLAUDE.md tells contributors to size their work from
+  // this output rather than guessing, so the planner understating coverage is
+  // the one failure it must not have.
+  const specs = specsForGroups(b.groups);
+  const runsBrowser = b.groups.length > 0 || c.full_matrix_required;
+  const fullSuite = runsBrowser && (specs?.length ?? 0) === 0;
+  const extended = b.extended || fullSuite;
+  // MIRRORS THE WORKFLOW'S CAP. Targeted never launches more shards than it has
+  // spec files, because `fullyParallel: false` shards by file and an empty
+  // shard fails "No tests found".
+  const shards = extended ? 4 : Math.max(1, Math.min(3, specs?.length ?? 0));
   const add = (lane, run, why) => lanes.push({ lane, run, why });
 
   add("changed-path detection", true, "always: classifies the diff");
@@ -55,7 +80,7 @@ export function buildPlan(files) {
   );
   add(
     "browser e2e (local stack)",
-    b.groups.length > 0,
+    runsBrowser,
     b.reason,
   );
   add(
@@ -74,17 +99,23 @@ export function buildPlan(files) {
     c.mobile ? "mobile/responsive paths changed" : c.full_matrix_required ? "full matrix required" : "skipped: no mobile paths",
   );
 
-  const specs = specsForGroups(b.groups);
+
   return {
     changed_file_count: files.length,
     classification: c,
     browser: {
-      extended: b.extended,
+      // DERIVED, NOT RAW. `b.extended` alone reported false for a full-matrix
+      // trigger that CI runs as the extended suite.
+      extended,
       groups: b.groups,
       reason: b.reason,
-      spec_count: b.extended ? "all" : (specs?.length ?? 0),
-      specs: b.extended ? null : specs,
-      sharded: b.extended,
+      spec_count: extended ? "all" : (specs?.length ?? 0),
+      specs: extended ? null : specs,
+      // SHARD COUNT, NOT A BOOLEAN. Both lanes are sharded now; reporting
+      // `b.extended` said "targeted is one job", and CLAUDE.md tells
+      // contributors to size CI from this output rather than by guessing.
+      shards,
+      sharded: true,
     },
     full_matrix_required: c.full_matrix_required,
     lanes,
@@ -108,13 +139,17 @@ if (process.argv[1] && process.argv[1].endsWith("ci-plan.mjs")) {
       console.log(`  ${l.run ? "RUN " : "skip"}  ${l.lane.padEnd(48)} ${l.why}`);
     }
     console.log("\nBrowser coverage:");
-    if (plan.browser.groups.length === 0) {
+    // EXTENDED IS TESTED FIRST, AND THE ORDER IS THE FIX. A full-matrix trigger
+    // selects no GROUPS but still runs the whole suite, so keying the first
+    // branch on `groups.length === 0` printed "none" for the widest coverage CI
+    // offers -- the planner understating what will run.
+    if (plan.browser.extended) {
+      console.log(`  EXTENDED (all specs, ${plan.browser.shards} shards), ${plan.browser.reason}`);
+    } else if (plan.browser.groups.length === 0) {
       console.log(`  none, ${plan.browser.reason}`);
-    } else if (plan.browser.extended) {
-      console.log(`  EXTENDED (all specs, 2 shards), ${plan.browser.reason}`);
     } else {
       console.log(`  groups: ${plan.browser.groups.join(", ")}`);
-      console.log(`  specs:  ${plan.browser.spec_count}`);
+      console.log(`  specs:  ${plan.browser.spec_count} across ${plan.browser.shards} shards`);
       console.log(`  reason: ${plan.browser.reason}`);
     }
     console.log("");

@@ -479,13 +479,48 @@ describe("PR CI — path-aware lane selection", () => {
     // Run 30767725631 cancelled both 2-shard jobs at the 10-minute hard
     // timeout with ZERO test failures (shard 2 reached 72/90). Four shards
     // halve the per-shard load to ~45 tests.
-    expect(CI).toMatch(/browser_shards=\$\{r\.extended \? "\[1,2,3,4\]" : "\[1\]"\}/);
+    //
+    // THE LITERAL PAIR IS GONE, and that is the repair rather than a relaxation:
+    // the targeted half is now CAPPED at the selected file count, so a fixed
+    // `[1,2,3]` could no longer be true. Extended is unchanged at four and is
+    // still asserted -- from the expression that produces it.
+    expect(CI).toMatch(/const shardTotal = extended\s*\n\s*\?\s*4/);
     expect(CI).toMatch(/--shard=\$\{\{ matrix\.shard \}\}\/4/);
     expect(CI).toMatch(/fromJson\(needs\.changes\.outputs\.browser_shards\)/);
   });
 
-  it("targeted coverage remains a SINGLE browser job", () => {
-    expect(CI).toMatch(/: "\[1\]"/);
+  it("targeted coverage is split across THREE shards", () => {
+    // WAS "remains a SINGLE browser job". This REPLACES that assertion rather
+    // than relaxing it, and the reason is the one recorded in the test above.
+    //
+    // THE SAME REMEDY, APPLIED TO THE OTHER LANE. Extended went 2 -> 4 shards
+    // because run 30767725631 cancelled both jobs at the hard timeout with zero
+    // test failures. The targeted lane then reached the identical state, having
+    // never been sharded at all: on a `booking` + `owner_admin` diff it ran 36
+    // specs / 213 tests in ONE job, measured at 680s (passed), then 745s and
+    // 761s (both cut at the cap, zero test failures, no traces) on an identical
+    // workload, with ~180s of setup inside the same 15 min budget.
+    //
+    // The alternative was raising 15, which buys EVERY PR more time to solve one
+    // lane's problem and hides the slowness the block above `timeout-minutes`
+    // says is still worth investigating.
+    //
+    // THREE RATHER THAN TWO, because each shard pays the fixed setup cost again
+    // and this workflow records that cost swinging 266s -> 508s between runners.
+    // Two shards left the worst case at ~14m48s against the 15 min cap, which
+    // is not a margin; three brings it to ~12m42s.
+    //
+    // ...BUT CAPPED AT THE SELECTED FILE COUNT, which the fixed three was not.
+    // `playwright.config.ts` sets `fullyParallel: false`, so Playwright shards
+    // BY FILE: `smoke`, `marketing`, `responsive` and `google` are each two
+    // spec files, so a fixed three handed shard 3/3 nothing, which exits "No
+    // tests found" and fails the REQUIRED aggregator on a diff that did nothing
+    // wrong. Three remains the CEILING, for the setup-cost reason above.
+    expect(CI).toMatch(/Math\.max\(1, Math\.min\(3, specs\.length\)\)/);
+    expect(CI).toMatch(/browser_specs \}\}\s+--shard=\$\{\{ matrix\.shard \}\}\/\$\{SHARD_TOTAL\}/);
+    // That the split loses nothing, and that no group can out-shard its files,
+    // is proved by test IDENTITY and by enumeration over every group rather
+    // than by a regex over this file: tests/ci/browser-shard-coverage.test.ts.
   });
 
   it("the aggregator requires all four extended shards", () => {
