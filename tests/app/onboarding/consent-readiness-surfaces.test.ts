@@ -48,6 +48,9 @@ function signals(
     disinfectants: 1,
     paymentAttempts: 1,
     runtimeLivemode: false,
+    // Default: every signal read succeeded. Read-failure behaviour is pinned
+    // in tests/lib/onboarding/next-setup-step.test.ts.
+    nextStepSignalsAvailable: true,
     ...over,
   };
 }
