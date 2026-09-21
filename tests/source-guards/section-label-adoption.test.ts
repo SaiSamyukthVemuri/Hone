@@ -173,6 +173,23 @@ function duplicates(file: string): string[] {
 }
 
 /**
+ * THE SHRINK-ONLY RULE, as a pure function.
+ *
+ * For a baseline of N: 0..N are all valid and N+1 is not. Zero is a valid
+ * destination, not a floor — a fully adopted file has no duplicates left, and a
+ * deleted one has no file left.
+ *
+ * It lives here, separate from any file, because the rule and the counting are
+ * different things. Asserting it through real file contents could only ever
+ * exercise whichever count the tree happens to hold today, and an earlier
+ * control did exactly that: it pinned the sample "> 0", quietly making a
+ * successful adoption to zero a FAILURE of the rule that exists to permit it.
+ */
+function exceedsBaseline(actual: number, baseline: number): boolean {
+  return actual > baseline;
+}
+
+/**
  * The measured baseline: files still hand-rolling the label, and how many times.
  *
  * Counts may FALL as surfaces are adopted; they may not RISE. An exact-equality
@@ -270,7 +287,9 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
     const grown: string[] = [];
     for (const [file, baseline] of LEGACY_BASELINE) {
       const actual = duplicates(file).length;
-      if (actual > baseline) grown.push(`${file}: baseline ${baseline}, found ${actual}`);
+      if (exceedsBaseline(actual, baseline)) {
+        grown.push(`${file}: baseline ${baseline}, found ${actual}`);
+      }
     }
     expect(grown, "a legacy file gained hand-rolled labels").toEqual([]);
   });
@@ -281,16 +300,30 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
     // failed the rule for an adoption that had succeeded.
     const [sampleFile, sampleBaseline] = LEGACY_BASELINE[0];
 
-    it("an existing baseline file at or below its recorded count passes", () => {
-      const actual = duplicates(sampleFile).length;
-      expect(actual, `${sampleFile} exceeded its baseline`).toBeLessThanOrEqual(sampleBaseline);
-      expect(actual, "the sample entry should still hand-roll the label").toBeGreaterThan(0);
+    it("0..N all pass and only N+1 fails — including shrink to ZERO", () => {
+      // Driven synthetically against the rule itself, so every count is
+      // exercised rather than only the one today's tree happens to hold.
+      const N = sampleBaseline;
+      expect(N, "the sample entry needs a baseline above zero to be meaningful").toBeGreaterThan(0);
+      for (let actual = 0; actual <= N; actual += 1) {
+        expect(exceedsBaseline(actual, N), `${actual} of ${N} must be allowed`).toBe(false);
+      }
+      expect(exceedsBaseline(N + 1, N), "N+1 must be rejected").toBe(true);
     });
 
-    it("an existing baseline file with MORE duplicates is detected", () => {
-      // The rule's purpose, exercised rather than assumed.
-      const inflated = duplicates(sampleFile).length + 1;
-      expect(inflated > sampleBaseline, "an increase must be detectable").toBe(true);
+    it("a fully adopted file — zero left — is a PASS, not a floor violation", () => {
+      // Stated on its own because it is the case the previous control forbade.
+      expect(exceedsBaseline(0, sampleBaseline)).toBe(false);
+      expect(exceedsBaseline(0, 0)).toBe(false);
+    });
+
+    it("the real sample is within its baseline", () => {
+      // No lower bound asserted: the sample may legitimately reach zero.
+      const actual = duplicates(sampleFile).length;
+      expect(
+        exceedsBaseline(actual, sampleBaseline),
+        `${sampleFile}: baseline ${sampleBaseline}, found ${actual}`,
+      ).toBe(false);
     });
 
     it("a deleted baseline file counts as zero", () => {
