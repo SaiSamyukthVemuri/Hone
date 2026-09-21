@@ -184,13 +184,27 @@ describe("nextStepSignalsAvailable covers every collapsing read", () => {
   // Source-level on purpose: proving it per-read at runtime would mean mocking
   // Supabase failure for eight reads, which is an ONB-02-sized harness. This
   // pins the contract that matters — every collapsing read is consulted.
-  it("every read whose failure collapses to 0/[]/false is consulted", async () => {
+  // COMMENTS ARE STRIPPED BEFORE ANY IDENTIFIER IS LOOKED FOR, line before
+  // block. Review proved the first draft's hole with a one-line change:
+  // commenting out `!clients.error &&` left the guard inert and this test
+  // still passed 18/18, because the identifier survived inside the comment.
+  // A guard proof that a comment can satisfy is not a proof.
+  //
+  // Line-before-block is this repository's existing rule: stripping blocks
+  // first lets a `/*` sitting inside a line comment swallow real code.
+  const guardExpression = async () => {
     const { readFileSync } = await import("node:fs");
-    const src = readFileSync("lib/onboarding/getting-started.ts", "utf8");
-    const expr = src.slice(
-      src.indexOf("const nextStepSignalsAvailable ="),
-      src.indexOf("const blocks = (blockRows"),
+    const code = readFileSync("lib/onboarding/getting-started.ts", "utf8")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    return code.slice(
+      code.indexOf("const nextStepSignalsAvailable ="),
+      code.indexOf("const blocks = (blockRows"),
     );
+  };
+
+  it("every read whose failure or truncation collapses the signal is consulted", async () => {
+    const expr = await guardExpression();
     for (const read of [
       "appointments.error",
       "clients.error",
@@ -199,10 +213,40 @@ describe("nextStepSignalsAvailable covers every collapsing read", () => {
       "payments.error",
       "blocksRes.error",
       "notesRes.error",
+      "blocksTruncated",
+      "notesTruncated",
       "treatmentConsent.ok",
     ]) {
       expect(expr, `${read} must gate next-step selection`).toContain(read);
     }
+  });
+
+  it("a COMMENTED-OUT guard term fails the proof — line and block form alike", async () => {
+    // The negative control for the hole above, run against synthetic source so
+    // it cannot pass by accident on a repo that happens to be correct today.
+    const strip = (src: string) =>
+      src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(strip("  // !clients.error &&\n  !payments.error")).not.toContain(
+      "clients.error",
+    );
+    expect(strip("  /* !clients.error && */\n  !payments.error")).not.toContain(
+      "clients.error",
+    );
+    // and a live term still survives stripping
+    expect(strip("  // note\n  !clients.error &&")).toContain("clients.error");
+  });
+
+  it("the bounded reads probe at cap + 1 so truncation is detectable", async () => {
+    const { readFileSync } = await import("node:fs");
+    const code = readFileSync("lib/onboarding/getting-started.ts", "utf8")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    // A bare .limit(N) cannot distinguish "exactly N" from "more than N", which
+    // is how a capped read became a confident false negative.
+    expect(code).toContain("BLOCK_SIGNAL_CAP + 1");
+    expect(code).toContain("NOTE_SIGNAL_CAP + 1");
+    expect(code).toMatch(/blocksTruncated\s*=\s*\(blockRows\?\.length \?\? 0\) > BLOCK_SIGNAL_CAP/);
+    expect(code).toMatch(/notesTruncated\s*=\s*\(noteRows\?\.length \?\? 0\) > NOTE_SIGNAL_CAP/);
   });
 
   it("the block and note responses keep their error — destructuring must not discard it", async () => {

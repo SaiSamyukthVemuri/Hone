@@ -503,6 +503,31 @@ export function buildGettingStarted(
   };
 }
 
+/**
+ * WORKING CAPS for the two bounded signal reads, and why they are probed at
+ * cap + 1.
+ *
+ * `.limit(N)` makes a false negative indistinguishable from a true one. A
+ * studio with more than N non-deleted sessions whose only `next_session_note`
+ * is older than the newest N returns `hasNextVisitNote: false` with NO error —
+ * the read succeeded and still lied. The same holds for frequency, probe,
+ * probe-lot and reaction evidence sitting outside the returned blocks.
+ *
+ * That is the SAME defect as a swallowed read error, arriving through the quiet
+ * door: the first guard closed the channel where failure is loud (`error`) and
+ * left the one where it is silent (truncation).
+ *
+ * So each read asks for one MORE row than it needs. Getting cap + 1 back proves
+ * the set is larger than the window and the derived predicates cannot be
+ * trusted; getting cap or fewer proves the window held everything. TRUNCATION
+ * IS THEN TREATED AS UNKNOWN — never as "not completed".
+ *
+ * Deliberately NOT per-predicate existence queries: that is a signals-layer
+ * redesign and belongs to ONB-02. This stays a suppression.
+ */
+const BLOCK_SIGNAL_CAP = 500;
+const NOTE_SIGNAL_CAP = 200;
+
 export async function getGettingStartedSignals(
   studio: { id: string; name: string; slug: string | null },
   practitionerName: string,
@@ -548,14 +573,14 @@ export async function getGettingStartedSignals(
       )
       .eq("studio_id", studio.id)
       .is("deleted_at", null)
-      .limit(500),
+      .limit(BLOCK_SIGNAL_CAP + 1),
     supabase
       .from("sessions")
       .select("id, next_session_note")
       .eq("studio_id", studio.id)
       .is("deleted_at", null)
       .order("started_at", { ascending: false })
-      .limit(200),
+      .limit(NOTE_SIGNAL_CAP + 1),
   ]);
 
   // Destructured AFTER the await so `error` survives: the previous
@@ -564,10 +589,18 @@ export async function getGettingStartedSignals(
   const blockRows = blocksRes.data;
   const noteRows = notesRes.data;
 
+  // A response that came back FULL may have more behind it, so the predicates
+  // derived from it are unknown rather than false. cap + 1 rows is proof of
+  // truncation; cap or fewer is proof of completeness.
+  const blocksTruncated = (blockRows?.length ?? 0) > BLOCK_SIGNAL_CAP;
+  const notesTruncated = (noteRows?.length ?? 0) > NOTE_SIGNAL_CAP;
+
   // Every read whose failure would silently become "not done". Consent is
   // included because its `null` renders a `review` item, which nextSetupStep
   // SKIPS — so an unreadable consent state would send the owner past a step
-  // that may genuinely be outstanding.
+  // that may genuinely be outstanding. Truncation sits here for the same
+  // reason as error: both make a false negative indistinguishable from a
+  // true one.
   const nextStepSignalsAvailable =
     !appointments.error &&
     !clients.error &&
@@ -576,6 +609,8 @@ export async function getGettingStartedSignals(
     !payments.error &&
     !blocksRes.error &&
     !notesRes.error &&
+    !blocksTruncated &&
+    !notesTruncated &&
     treatmentConsent.ok;
 
   const blocks = (blockRows ?? []) as Array<{
