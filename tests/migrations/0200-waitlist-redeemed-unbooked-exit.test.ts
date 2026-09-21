@@ -58,7 +58,7 @@ describe("0200 position in the chain", () => {
     // KEEPS the HOSTED-head claim below, because 0201 is authored and NOT
     // applied. Those are two different claims and only the first has moved.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0201"]);
+    expect(versionsAbove(VERSION)).toEqual(["0201", "0202"]);
     expect(countVersion(VERSION)).toBe(1);
   });
 
@@ -80,23 +80,24 @@ describe("0200 position in the chain", () => {
     expect(state.pending_migrations).not.toContain(VERSION);
   });
 
-  it("is no longer the applied head — 0201 is, and the chain is back at PARITY", () => {
-    // SUPERSEDED TWICE, AND BOTH TRANSITIONS ARE THE POINT.
+  it("is a FLOOR now — it holds no current claim at all", () => {
+    // SUPERSEDED THREE TIMES, AND EACH TRANSITION IS THE POINT.
     //
     // This first asserted PARITY at 0200. Authoring 0201 returned the chain to
-    // MIGRATION-FIRST PENDING — repo one above hosted, `0201` the pending
-    // suffix. Applying 0201 on 2026-09-20 closed that gap the ordinary way, so
-    // the chain is at PARITY again, one migration higher.
+    // MIGRATION-FIRST PENDING. Applying 0201 on 2026-09-20 closed that gap and
+    // this file took the parity claim one migration higher. Authoring 0202 on
+    // the WAIT-04B profile branch has now moved the chain back to
+    // MIGRATION-FIRST PENDING, and the equality claim travels with the head —
+    // exactly as 0201's own file said it must.
     //
-    // 0200 has now given up BOTH claims it once held: the repository maximum
-    // (to 0201's authoring) and the hosted head (to 0201's apply). What it
-    // keeps is the floor above, which no later apply can falsify.
+    // SO THIS FILE KEEPS ONLY WHAT NO LATER APPLY CAN FALSIFY: 0200 is applied,
+    // it is not the repository maximum, and it is not the hosted head. Asserting
+    // a CURRENT shape here is what went red when 0202 was authored, and it is
+    // why the claim is not allowed to live in more than one file.
     const state = migrationState();
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.repo_migration_max).toBe("0201");
-    expect(state.hosted_migration_max).toBe("0201");
-    expect(state.next_free_migration).toBe("0202");
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
+    expect(Number(state.repo_migration_max)).toBeGreaterThan(Number(VERSION));
+    expect(isRepoMax(VERSION)).toBe(false);
   });
 
   it("0199 is still carried, still frozen, and was NOT re-applied", () => {

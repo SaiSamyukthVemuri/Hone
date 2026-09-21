@@ -43,38 +43,33 @@ const CLOSE_BODY = (() => {
 })();
 
 describe("0201 position in the chain", () => {
-  it("is the repository maximum", () => {
+  it("is no longer the repository maximum — 0202 is", () => {
     // Taken over from 0200, per CLAUDE.md: only the CURRENT max asserts this.
-    expect(isRepoMax(VERSION)).toBe(true);
+    expect(isRepoMax(VERSION)).toBe(false);
   });
 
   it("has nothing above it, and owns its number alone", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
+    expect(versionsAbove(VERSION)).toEqual(["0202"]);
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
-    // THE HAND-OFF THIS FILE'S PREVIOUS REVISION DEMANDED, now performed.
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
+    // THE HAND-OFF THIS BLOCK DEMANDED HAS NOW BEEN PERFORMED. Its previous
+    // revision asserted the MIGRATION-FIRST PENDING shape and instructed
+    // "WHOEVER APPLIES 0202 narrows THIS block to a floor the way 0200 was
+    // narrowed above, and lets 0202's file take the equality." `0202` was applied
+    // on 2026-09-21 under explicit per-change owner authorization, from the
+    // reviewed PR #753 head b8fc30a60a11f643897bd3389261970f0d8a6259, with the dry
+    // run and the apply each naming exactly one file and NO --include-all.
     //
-    // It previously asserted the MIGRATION-FIRST PENDING shape and said
-    // "WHOEVER APPLIES 0201 MOVES THE OTHER BLOCK: narrow 0200 to a floor the
-    // way 0199, 0198, 0197, 0196 and 0191 were narrowed, and let this file take
-    // the equality." 0201 was applied on 2026-09-20 under explicit per-change
-    // owner authorization, from the reviewed PR #747 head
-    // 1f1f582314a6aa63b503e4d3850ae52e304138f5, with the dry run and the apply
-    // each naming exactly one file and NO --include-all. 0200 has been narrowed
-    // to a floor accordingly.
-    //
-    // EQUALITY IS A CURRENT CLAIM, so exactly one file may hold it, and this is
-    // now that file. WHOEVER APPLIES 0202 MOVES THIS BLOCK: narrow 0201 to a
-    // floor the same way and let the new head take equality. Leaving it here
-    // would go red on that apply, which is the whole reason the claim travels.
+    // So this file keeps only a FLOOR -- `hosted >= 0201` -- the durable fact
+    // about an older applied migration, which stays true forever. Re-asserting
+    // equality here would make this file red the moment anything else applies,
+    // which is the eighteen-file mechanical sweep CLAUDE.md forbids. The equality
+    // now lives in 0202's own file.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0202");
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 
   it("the applied bytes are the authorized bytes", () => {
@@ -87,7 +82,7 @@ describe("0201 position in the chain", () => {
   });
 
   it("does not claim the next free number for anything", () => {
-    expect(migrationState().next_free_migration).toBe("0202");
+    expect(migrationState().next_free_migration).toBe("0203");
   });
 
   it("0200 IS FROZEN — this migration does not edit a single byte of it", () => {
