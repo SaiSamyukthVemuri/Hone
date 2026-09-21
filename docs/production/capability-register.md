@@ -307,8 +307,12 @@ after the join is unexercised, and none of it is acceptance. **Do not round that
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**Eighty-one** production merges landed between `b9e0003f` and the current branch head. **Ten**
-carry a capability that belongs in this register.
+**Eighty-one** production merges landed between `b9e0003f` and the current branch head. That is
+the current ancestry count and nothing more — capability was **not** re-derived over it.
+
+Over the **twenty-nine** merges through `bf6f09c4`, derived on **2026-08-30**, **Ten**
+carry a capability that belongs in this register. The other fifty-two merges are recorded in
+[release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
 **eighty-one** is the merge ancestry through the *current* branch head, `410e5039`. The **ten**

@@ -34,13 +34,18 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
 production refresh since — **every** first-parent merge in `b9e0003f..410e5039`, all
-**79** PR merges among them (**#632–#753**, plus **#631**, whose number sits below that floor but
+**81** PR merges among them (**#632–#753**, plus **#631**, whose number sits below that floor but
 whose merge does not — see below). ⚠️ **EXTENDED 2026-09-21 by PROD-TRUTH-01:** the
 range previously ended at `bf6f09c4` and claimed 29 merges, so every production merge after that
 point was outside the document's own stated coverage and therefore invisible to it — a range
-complete at both ends can still be hollow. **43** rows were backfilled from the first-parent graph
-and each merge's own diff; the 36 pre-existing in-range rows are preserved verbatim. A backfilled
-row states its runtime-bearing file count and migration from the diff, and deliberately does
+complete at both ends can still be hollow. **45** rows were backfilled from the first-parent graph
+and each merge's own diff; the 36 pre-existing in-range rows are preserved verbatim. Two of the
+45 — **#696** and **#697** — were found only after the coverage extraction was widened to read
+the repository's second PR-subject form, `...(#N)`; until then they were invisible to the rule
+that certifies this range complete. A backfilled row states its **application** file count
+(`app/`, `lib/`, `components/`) and its migration from the diff — application files are a
+NARROWER measure than the classifier's runtime-bearing verdict, which also counts
+`supabase/migrations/`, and the rows say which they mean. A backfilled row deliberately does
 **not** claim runtime ENABLEMENT, which was not re-verified. Roughly 150 merges between #479 and #601
 — including migrations 0159–0184 — still have **no row here**. Those releases are recorded in
 [migration-ledger.md](./migration-ledger.md) and in the git history; they were deliberately
