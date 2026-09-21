@@ -185,9 +185,32 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     expect(s.groups).toEqual([]);
   });
 
-  it("targeted coverage is still ONE shard and extended still FOUR", () => {
-    expect(plan("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts").browser.sharded).toBe(false);
-    expect(plan("e2e/helpers/seed.ts").browser.sharded).toBe(true);
+  it("targeted coverage is THREE shards and extended still FOUR", () => {
+    // WAS "targeted is still ONE shard". Both lanes are sharded now: the
+    // targeted lane was running 36 specs in a single job at ~95% of its 15 min
+    // ceiling and being cancelled on the slower half of the runner spread.
+    //
+    // SELECTION is what this describe block asserts is unchanged, and it still
+    // is — the groups and specs above are untouched. Only the number of jobs
+    // they are spread over moved.
+    const targeted = plan("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts").browser;
+    const extended = plan("e2e/helpers/seed.ts").browser;
+
+    expect(targeted.sharded).toBe(true);
+    expect(targeted.shards).toBe(3);
+    expect(extended.sharded).toBe(true);
+    expect(extended.shards).toBe(4);
+  });
+
+  it("a full-matrix diff with NO browser groups is planned as the EXTENDED lane", () => {
+    // `vitest.config.ts` yields no groups, so `browser_specs` is empty and the
+    // shard command runs the WHOLE suite. The workflow treats that as extended
+    // coverage — 4 shards, 18 min — and this planner has to agree, or it tells
+    // a contributor the targeted lane runs when CI runs the other one.
+    const p = plan("vitest.config.ts");
+    expect(p.full_matrix_required).toBe(true);
+    expect(p.browser.groups).toEqual([]);
+    expect(p.browser.shards).toBe(4);
   });
 });
 

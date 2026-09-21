@@ -852,20 +852,20 @@ export const WEEKDAYS_IN_DISPLAY_ORDER: ReadonlyArray<{
   { index: 0, label: "Sun" },
 ];
 
-// The expiry bound is the shipped command's own: 1 hour .. 7 days, and out of
-// range is REFUSED rather than clamped, because a clamped window is one the
-// caller did not ask for and cannot see. This model refuses identically, so the
-// composer never offers a value the server would have changed underneath it.
-export const TTL_HOURS_MIN = 1;
-export const TTL_HOURS_MAX = 168;
-export const TTL_HOURS_DEFAULT = 72;
+// THE WINDOW LIVES IN ITS OWN MODULE, AND THESE ARE RE-EXPORTS.
+//
+// `lib/waitlist/invitation-window.ts` owns the bound, the default and the
+// presets, because three shipped modules need them and this one is a PROTOTYPE
+// that the application must not reach. Re-exported here so the composer and its
+// tests keep importing the vocabulary from the model they already read.
+import {
+  TTL_HOURS_DEFAULT,
+  TTL_HOURS_MAX,
+  TTL_HOURS_MIN,
+  TTL_PRESETS,
+} from "@/lib/waitlist/invitation-window";
 
-export const TTL_PRESETS: ReadonlyArray<{ hours: number; label: string }> = [
-  { hours: 24, label: "24 hours" },
-  { hours: 48, label: "2 days" },
-  { hours: 72, label: "3 days" },
-  { hours: 168, label: "7 days" },
-];
+export { TTL_HOURS_DEFAULT, TTL_HOURS_MAX, TTL_HOURS_MIN, TTL_PRESETS };
 
 export type InviteDraft = {
   serviceId: string | null;
