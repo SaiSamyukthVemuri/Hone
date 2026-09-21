@@ -111,7 +111,7 @@ FIN-02 remains isolated preparation; production order is §23.6. Trust gates con
 
 **Publish once; maintain one set of decisions**
 
-**Repository synchronization has occurred.** This file — `docs/roadmap/CANONICAL_ROADMAP.md` — **is** the maintained working edition as of **v1.16**; the brief and DOCX are derived publications from it. Update it on a material decision or evidence change—not every commit. *Superseded v1.15 wording, recorded rather than deleted:* "The matching Markdown file is prepared for reviewed synchronization to docs/roadmap/CANONICAL_ROADMAP.md. It has not been committed. After synchronization, that file is the maintained working edition." [§§0.5, 0.10]
+**Repository synchronization has occurred.** This file — `docs/roadmap/CANONICAL_ROADMAP.md` — **is** the maintained working edition as of **v1.17**; the brief and DOCX are derived publications from it. Update it on a material decision or evidence change—not every commit. *Superseded v1.15 wording, recorded rather than deleted:* "The matching Markdown file is prepared for reviewed synchronization to docs/roadmap/CANONICAL_ROADMAP.md. It has not been committed. After synchronization, that file is the maintained working edition." [§§0.5, 0.10]
 
 Read next: §23.6 for product priority; §23.1 for release exits; §14.5.7 for WAIT; §§16.6–16.8 for the developer platform; §20 for measurement; §§7–8 for release authority. Evidence limits remain in §3 and Appendix D.
 
