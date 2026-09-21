@@ -32,15 +32,16 @@ not a PR diary — per-capability evidence lives in
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
-| **Health** | ⚠️ **NOT RE-PROBED AT THIS RECONCILIATION.** The last probe was **2026-08-23**: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Those readings describe a runtime **twenty-seven merges old** and are retained as dated evidence, not as current health. |
+| **Health** | ⚠️ **NOT RE-PROBED AT THIS SOURCE SYNC.** The last probe remains the **2026-08-23** reading: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Production has moved substantially since then; this document deliberately does **not** restate a merge-age count. These are dated observations, not current health. |
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
-### Immediately preceding runtime baseline
+### Historical preceding baseline from the 2026-08-30 reconciliation
 
-`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge (UI-01D, Client Profile tab
-acknowledgement), the baseline this document carried before the 2026-08-30 refresh. Its code
-remains live because the nine merges above were built on top of it.
+`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge — is preserved here only as the
+baseline that preceded the **2026-08-30** reconciliation. It is **not** the predecessor of the
+current #749 runtime baseline and must not be used as a current release boundary. The current
+production ancestry must be re-read from GitHub at action time.
 
 ### What this reconciliation did and did not measure
 
