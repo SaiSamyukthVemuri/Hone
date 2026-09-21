@@ -54,24 +54,55 @@ async function liveSessionCount(userId: string): Promise<number> {
  * disabled still lets a second POST onto the wire, and only the wire can tell
  * the difference.
  */
+/**
+ * Holds the FIRST sign-out Server Action until released, and counts every one.
+ *
+ * The held request is CONTINUED on release, not aborted. The wire test below
+ * needs the first action to genuinely settle — session destroyed, app navigated
+ * — because that settling is what would let a queued duplicate dispatch. (It
+ * was measured both ways while diagnosing that test; the queue behaves the same
+ * either way, but `continue` is the path a practitioner actually takes.)
+ */
 async function holdActions(page: Page) {
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
   const state = { held: 0 };
+  let first = true;
+  // Resolves the INSTANT a second sign-out action reaches the wire. Proving a
+  // negative needs a bounded window, but the positive is event-driven: a
+  // duplicate is detected the moment it happens rather than by waiting out a
+  // timer and inspecting a counter afterwards.
+  let markDuplicate!: () => void;
+  const duplicateSeen = new Promise<void>((r) => (markDuplicate = r));
   await page.route("**/*", async (route) => {
     const req = route.request();
     if (req.method() === "POST" && req.headers()["next-action"]) {
       state.held += 1;
-      await gate;
-      await route.abort();
-      return;
+      // EVERY sign-out action is counted, not just the first, and the FIRST is
+      // the only one held. A later one reaching here is the duplicate the wire
+      // test exists to catch.
+      if (first) {
+        first = false;
+        await gate;
+      } else {
+        markDuplicate();
+      }
     }
     await route.continue();
   });
   return {
     state,
-    release: async () => {
-      release();
+    duplicateSeen,
+    /**
+     * Let the held request through. INTERCEPTION STAYS ACTIVE, deliberately:
+     * React serialises form actions rather than dropping them, so a second
+     * submission may be QUEUED behind the first and only dispatch once it
+     * settles. Tearing the route down here would let exactly that request
+     * reach the backend uncounted.
+     */
+    release: () => release(),
+    /** Stop counting. Only after any queued work has had its chance to arrive. */
+    unroute: async () => {
       await page.unrouteAll({ behavior: "ignoreErrors" });
     },
   };
@@ -160,92 +191,101 @@ for (const surface of SURFACES) {
       ).toBeGreaterThan(0);
       await expect(panel, "the panel unmounted mid-flight").toBeVisible();
 
-      await gate.release();
+      gate.release();
+      await gate.unroute();
     });
 
     test("only one logout ever reaches the wire", async ({ page }) => {
-      // WHAT THIS DOES AND DOES NOT PROVE — established by mutation, because
-      // the first version of this test claimed the wrong thing.
+      // THREE ROUNDS OF THIS TEST WERE GREEN FOR THE WRONG REASON. The history
+      // is kept because each round removed a different false attribution, and
+      // the final shape is only justified by all three.
       //
-      // It was written as "a second activation cannot dispatch a second
-      // logout", with a failure message blaming the `disabled` attribute. Then
-      // `disabled={pending}` was replaced with `disabled={false}` and the test
-      // stayed GREEN. A diagnostic run showed why: with the control fully
-      // enabled, a second pointer click lands with no error AND a raw
-      // `dispatchEvent(new MouseEvent("click"))` reaches the button — and the
-      // POST count still stays at 1. React serialises the form's action; a
-      // second submission while one is in flight simply does not dispatch.
+      //   1. "a second activation cannot dispatch a second logout", blaming
+      //      `disabled`. Replacing `disabled={pending}` with `disabled={false}`
+      //      left it green — React serialises form actions, so nothing
+      //      dispatches concurrently either way.
       //
-      // So the single-dispatch guarantee is REACT'S, not this control's, and a
-      // test that credited it to `disabled` was measuring the framework while
-      // naming the product. What it genuinely guards is the regression that
-      // would take the guarantee away: replacing `<form action={signOut}>` with
-      // an onClick + fetch, or growing a second submit path into this form.
+      //   2. Renamed, and the second press was forced past the guard with
+      //      `removeAttribute("disabled")` + `form.requestSubmit()`. Still
+      //      wrong twice over: the assertion ran while the first action was
+      //      still held, when a serialised submission is QUEUED and the count
+      //      is 1 by definition; and releasing the gate tore the counting route
+      //      down in the same call, so anything dispatched afterwards was
+      //      invisible.
       //
-      // The `disabled` attribute is proved where it is actually observable —
-      // `toBeDisabled()` in the acknowledgement test above, which DOES red
-      // under that mutation, on both surfaces. It is the interactive and
-      // visible guard: a keyboard user cannot re-activate the control and it
-      // no longer reads as pressable. It is not the wire guard.
+      //   3. Counting kept alive through the drain — which turned it RED at 3.
+      //      That was the test's fault, not the product's. Scripting past
+      //      `disabled` and calling `requestSubmit()` is not a duplicate
+      //      activation a practitioner can perform; it forces submissions into
+      //      React's queue and then observes the queue holding them. Measured
+      //      both ways, and the first action's fate makes no difference:
+      //      released via `continue` -> 3, released via `abort` -> 3.
       //
-      // Which is why the second activation below has to get PAST it first.
+      // So the duplicate is now attempted the ONLY way it can actually happen:
+      // a real pointer press at the control, while it reads "Signing out…".
+      // Measured through the drain, with nothing else changed:
+      //
+      //     guard intact  -> 1 request in total
+      //     guard removed -> 3 requests in total
+      //
+      // Which is what finally makes this test both true and load-bearing:
+      // `disabled={pending}` is the duplicate-submit guard, and only a
+      // drain-aware count can see it. The concurrent count is 1 either way.
       await loginAsOwner(page, seed);
       await page.goto("/dashboard");
 
       const gate = await holdActions(page);
       const panel = await surface.open(page);
       const control = panel.getByRole("button", { name: "Sign out" });
+      const box = (await control.boundingBox())!;
       await control.click({ noWaitAfter: true });
       await expect(panel.locator("[data-signout-pending]")).toBeVisible({
         timeout: 5_000,
       });
 
-      // THE DISABLED STATE IS DEFEATED FIRST, DELIBERATELY — second Codex P2,
-      // and the correction to my own correction.
-      //
-      // The previous version pressed a control that was still `disabled`.
-      // Playwright's `force` skips PLAYWRIGHT's actionability checks; it does
-      // not make a disabled form control eligible for activation, and
-      // `dispatchEvent` does not give a disabled submit button its
-      // form-submission default either. So the count stayed at 1 because of
-      // `disabled` — meaning the test would still have passed if action
-      // serialisation vanished entirely. That is the exact false attribution
-      // this test was renamed to stop making, surviving the rename.
-      //
-      // (My earlier diagnostic DID show serialisation holds — but it ran with
-      // `disabled={false}` compiled in, which is not the state the shipped
-      // test runs against. Right conclusion, wrong evidence for this test.)
-      //
-      // Now the attribute is stripped and the form is submitted directly, so
-      // the second activation genuinely reaches the submit path with no visual
-      // guard in the way. What survives is the thing actually being claimed:
-      // one logout on the wire.
-      const resubmitted = await page.evaluate(() => {
-        const el = document.querySelector(
-          "[data-signout-pending]",
-        ) as HTMLButtonElement | null;
-        if (!el) return "no control";
-        el.removeAttribute("disabled");
-        el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-        const form = el.closest("form");
-        if (!form) return "no form";
-        // Straight at the form, bypassing the button entirely.
-        form.requestSubmit();
-        return "resubmitted";
-      });
-      // ANTI-VACUITY: if the control or the form could not be found, nothing
-      // was pressed and the count below would be 1 for an empty reason.
-      expect(resubmitted, "the second activation never reached a form").toBe(
-        "resubmitted",
-      );
-      await page.waitForTimeout(600);
+      // Press again, twice, where the control is. No `force`, no attribute
+      // surgery, no scripted submit — the browser's own rules decide what a
+      // press at a disabled control does, which is the whole point.
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 
       expect(
         gate.state.held,
-        "a second logout reached the wire — the submit path no longer serialises",
+        "a second logout dispatched while the first was still in flight",
       ).toBe(1);
 
-      await gate.release();
+      // Release the first action for real — it runs, the session dies, the app
+      // navigates. INTERCEPTION STAYS UP so a queued submission is still seen.
+      gate.release();
+
+      // THE DRAIN, proved by events in the direction that matters.
+      //
+      // Reaching /login is the first action genuinely completing — session
+      // destroyed, app navigated — which is the moment a queued duplicate
+      // becomes free to dispatch.
+      await page.waitForURL(/\/login/, { timeout: 20_000 });
+
+      // Then watch. A duplicate resolves `duplicateSeen` the instant it hits
+      // the wire, so the failing case is detected by EVENT and fails fast;
+      // measured at ~1.2s after release when the guard is removed. The 4s is
+      // only a ceiling on how long we watch for something that must not
+      // happen — proving a negative has no completion event to wait on.
+      //
+      // `networkidle` was tried here first and is NOT usable: with the guard
+      // removed it never settles at all, so the test died on a 120s timeout
+      // instead of naming the defect. A red that reports a timeout is not
+      // evidence about duplicate submission.
+      await Promise.race([
+        gate.duplicateSeen,
+        new Promise((r) => setTimeout(r, 4_000)),
+      ]);
+
+      expect(
+        gate.state.held,
+        "a second logout reached the wire — in total, counted through the drain",
+      ).toBe(1);
+
+      await gate.unroute();
     });
 
     test("the state belongs to the action, not to a timer", async ({ page }) => {
@@ -266,7 +306,8 @@ for (const surface of SURFACES) {
       await expect(busy, "the pending state expired on its own").toBeVisible();
       await expect(busy).toHaveText("Signing out…");
 
-      await gate.release();
+      gate.release();
+      await gate.unroute();
     });
   });
 }
