@@ -222,9 +222,10 @@ At `410e5039` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-pinned from
-the original #659 observation (`0f07dae6`), and verified mechanically rather than assumed: across
-`0f07dae6..c6bc5949` no added or removed line touching `unavailable` or `hasHistory` appears in
-any of the five files that carry these guards — `app/(app)/clients/[id]/page.tsx`,
+the original #659 observation (`0f07dae6`), and verified mechanically rather than assumed — the
+comparison was RE-RUN through the current baseline on 2026-09-21, not merely re-pointed: across
+`0f07dae6..410e5039`, which now includes #751, #753 and #745, no added or removed line touching
+`unavailable` or `hasHistory` appears in any of the five files that carry these guards — `app/(app)/clients/[id]/page.tsx`,
 `components/last-visit-card.tsx`, `components/treatment-intelligence-card.tsx`,
 `components/before-today-card.tsx` and `components/clinical-unavailable-notice.tsx`. The guards
 are unchanged across the interval, so the property carries to the current baseline rather than
