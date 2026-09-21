@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   countVersion,
@@ -72,11 +73,53 @@ describe("0202 takes the number it derived", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("does not edit an applied migration", () => {
-    // Every version at or below the hosted maximum is frozen. This migration
-    // may only ADD a file.
+  it("IS APPLIED to production and is the hosted head, at PARITY", () => {
+    // THE EQUALITY CLAIM ARRIVED HERE when `0202` was applied on 2026-09-21 under
+    // explicit per-change owner authorization, from the reviewed PR #753 head
+    // b8fc30a60a11f643897bd3389261970f0d8a6259. The dry run and the apply each
+    // named exactly one file -- `0202` -- with NO --include-all, and `0201` was
+    // narrowed to a floor in the same change.
+    //
+    // The previous revision of this block asserted the OPPOSITE shape -- `0202`
+    // strictly ABOVE the hosted maximum, i.e. authored and pending -- which was
+    // true until the apply and false the instant it landed. That is exactly why
+    // the claim travels rather than being restated in every file.
+    //
+    // EQUALITY IS A CURRENT CLAIM, so exactly one file may hold it, and this is
+    // now that file. WHOEVER APPLIES 0203 MOVES THIS BLOCK: narrow 0202 to a floor
+    // the way 0201, 0200, 0199 and 0198 were narrowed, and let the new head take
+    // the equality.
     const state = migrationState();
-    expect(Number(VERSION)).toBeGreaterThan(Number(state.hosted_migration_max));
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.repo_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).toEqual([]);
+  });
+
+  it("the applied bytes are the authorized bytes", () => {
+    // THE BYTE-IDENTITY LINK. One value ties together four things that otherwise
+    // drift apart: what was reviewed on #753, what the operator authorized, what
+    // production actually ran, and what this repository still holds on disk. An
+    // applied migration is FROZEN -- behaviour changes need a NEW migration.
+    expect(
+      createHash("sha256").update(SQL).digest("hex"),
+      "0202 is APPLIED in production with this checksum. Never edit an applied " +
+        "migration -- write a new one (0203).",
+    ).toBe("7a95e4e66c7c5fe50dbb2d7e73d54f7155c54f376a504ff2fbac47826dbb4ce1");
+  });
+
+  it("is recorded in the ledger under its COMPLETE sha256, and as APPLIED", () => {
+    // A truncated or mis-transcribed hash is not a record -- the 0197 apply was
+    // refused once for exactly that.
+    const ledger = readFileSync(path.join(ROOT, "docs/production/migration-ledger.md"), "utf8");
+    expect(ledger, "the ledger must carry 0202's COMPLETE sha256").toContain(
+      "7a95e4e66c7c5fe50dbb2d7e73d54f7155c54f376a504ff2fbac47826dbb4ce1",
+    );
+    // Anchored by SECTION: the match must sit between "## Current state" and the
+    // first "## Previous state", so a stale record in a preserved section can
+    // never satisfy it.
+    expect(ledger, "the ledger's current block must record 0202 as APPLIED").toMatch(
+      /## Current state(?:(?!## Previous state)[\s\S])*?0202_waitlist_profile_and_sms_consent_authority\.sql`? \| \*\*APPLIED\*\*/,
+    );
   });
 });
 
