@@ -476,6 +476,33 @@ direct booking route and is live today.
 
 ## 5b. New-client waitlist (admission control)
 
+### 2026-09-20 Level 3 WAIT checkpoint — TOP PRODUCT PRIORITY
+
+**Decision scope:** this is a product-priority and shipped-software reconciliation. It is **not**
+a customer-message, provider-effect, migration or launch-acceptance authorization.
+
+At this checkpoint the production branch contains the following WAIT tranche:
+
+| Layer | Shipped production software | What it establishes | What it does **not** establish |
+|---|---|---|---|
+| **Level 1 — durable queue** | Existing WAIT-02B durable queue + owner lifecycle/manual/legacy tools | A studio-scoped durable waiting list exists; Willow was collecting on it throughout the last measured interval. | Present allowlist configuration, complete historical reconciliation or Chloe acceptance. |
+| **Level 2 — Invite-to-book core** | #708/#709/#713 core; **#741/#747** redeemed-no-booking exit; **#748** fixed normal 48-hour opportunity | Scoped email invitation, proof-bound Book/Decline, atomic booking/conversion, lifecycle exits, 48-hour normal window, and a safe operator exit after redemption without booking. | The full four-response Chloe taxonomy, a WAIT-specific 24h reminder, dual-channel delivery or Willow real-client acceptance. |
+| **Level 3 — Full WAIT Operating System** | **NOT COMPLETE — now Hone's top product priority.** | The required finish line is explicit and bounded. | It must not be inferred from Level 1/2 software being deployed. |
+| **SMS sender visibility** | **#749**, read-only owner status on Settings → Integrations | An owner can see whether Hone has a recorded studio sender and its truthful state; UNKNOWN/read-failed stays distinct. | No provisioning, purchase, adoption, release, #716 routing cutover or WAIT SMS. The shared fallback is unchanged. |
+
+**Level 3 exit contract:** retrospective Willow queue/provenance reconciliation + trustworthy
+owner discoverability/control → WAIT-04B durable rich profile and completion authority → verified
+mobile + waitlist-prospect STOP/suppression → supported studio sender provisioning/adoption/test +
+real Willow sender proof → email + eligible SMS as one invitation opportunity → WAIT-specific
+24-hour reminder → all four recipient response choices → first-consult cancellation/reschedule/
+no-show/exception boundaries → Chloe real-device acceptance.
+
+**Controlled use before Level 3:** the shipped email Invite-to-book core may be exercised only under
+the normal current release/activation gates. Before any real Willow send, confirm the current
+waitlist gate and delivery posture from their authorities. This section does not infer a current
+allowlist value, a real Willow invitation, a provider send or human acceptance.
+
+
 Two different things share this name. They are at **different stages** and must not be merged
 into one status sentence.
 
