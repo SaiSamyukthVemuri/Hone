@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import path from "node:path";
 
 // ===========================================================================
@@ -43,6 +44,157 @@ const codeOnly = (source: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, "");
 
 const CODE = codeOnly(RAW);
+
+/**
+ * Every `slots.length` use whose enclosing expression is NOT gated on
+ * `slotLoad`, as line numbers.
+ *
+ * WHY AN AST AND NOT A REGEX. The rule is about CONTAINMENT — "is this
+ * conclusion inside something that checked whether the day was read" — and a
+ * character window answers a different question, PROXIMITY. The two agree until
+ * someone writes an ungated conclusion next to an unrelated `slotLoad`, which
+ * is exactly the shape a regex version would wave through.
+ *
+ * A use counts as gated when some ancestor is a conditional (`?:`) or a
+ * short-circuit (`&&` / `||`) whose CONDITION subtree mentions `slotLoad`. The
+ * condition side is what matters: `slotLoad` appearing in the branch VALUE
+ * gates nothing.
+ */
+function ungatedSlotLengthUses(source: string): number[] {
+  const sf = ts.createSourceFile(
+    "card.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX,
+  );
+  const mentionsSlotLoad = (n: ts.Node): boolean => {
+    let found = false;
+    const walk = (x: ts.Node) => {
+      if (found) return;
+      if (ts.isIdentifier(x) && x.text === "slotLoad") found = true;
+      else ts.forEachChild(x, walk);
+    };
+    walk(n);
+    return found;
+  };
+  const out: number[] = [];
+  const visit = (node: ts.Node) => {
+    const isSlotsLength =
+      ts.isPropertyAccessExpression(node) &&
+      node.name.text === "length" &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "slots";
+    if (isSlotsLength) {
+      let gated = false;
+      for (let p: ts.Node | undefined = node.parent; p && !gated; p = p.parent) {
+        if (ts.isConditionalExpression(p) && mentionsSlotLoad(p.condition)) gated = true;
+        else if (
+          ts.isBinaryExpression(p) &&
+          (p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+            p.operatorToken.kind === ts.SyntaxKind.BarBarToken) &&
+          mentionsSlotLoad(p.left)
+        ) {
+          gated = true;
+        }
+      }
+      if (!gated) {
+        out.push(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Calls to `callee` that are NOT lexically inside a `try` BLOCK.
+ *
+ * Same argument as `ungatedSlotLengthUses`: containment is a question about
+ * ANCESTORS, and a character window answers proximity instead — a bare call a
+ * few lines after an unrelated `try` satisfies a regex and still reaches the
+ * route's error boundary in production. The check also requires the call to be
+ * in the try BLOCK rather than anywhere in the try STATEMENT, so a call sitting
+ * in the `catch` does not count as protected by it.
+ */
+function callsOutsideTry(
+  source: string,
+  callee: string,
+  kind: ts.ScriptKind = ts.ScriptKind.TSX,
+): number[] {
+  const sf = ts.createSourceFile("s.tsx", source, ts.ScriptTarget.Latest, true, kind);
+  const out: number[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === callee
+    ) {
+      let inTry = false;
+      for (let q: ts.Node | undefined = node.parent; q && !inTry; q = q.parent) {
+        if (
+          ts.isTryStatement(q) &&
+          q.tryBlock.getStart(sf) <= node.getStart(sf) &&
+          node.getEnd() <= q.tryBlock.getEnd()
+        ) {
+          inTry = true;
+        }
+      }
+      if (!inTry) out.push(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Calls to `callee` that are NOT lexically inside a call to `wrapper`.
+ *
+ * The post-commit law: every optional side effect sits inside the fail-soft
+ * helper, so a provider exception cannot turn a COMMITTED booking into a
+ * failure. Matching the callee IDENTIFIER means the generic form
+ * `postCommit<{...}>(...)` counts exactly as the plain form does — a regex
+ * version of this rule needed a special case for that and still measured only
+ * proximity.
+ */
+function callsNotWrappedBy(
+  source: string,
+  callee: string,
+  wrapper: string,
+  kind: ts.ScriptKind = ts.ScriptKind.TS,
+): number[] {
+  const sf = ts.createSourceFile("s.ts", source, ts.ScriptTarget.Latest, true, kind);
+  const out: number[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === callee
+    ) {
+      let wrapped = false;
+      for (let q: ts.Node | undefined = node.parent; q && !wrapped; q = q.parent) {
+        if (
+          ts.isCallExpression(q) &&
+          ts.isIdentifier(q.expression) &&
+          q.expression.text === wrapper
+        ) {
+          wrapped = true;
+        }
+      }
+      if (!wrapped) out.push(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** How many `slots.length` uses exist at all, so the invariant is not vacuous. */
+function slotLengthUseCount(source: string): number {
+  return (source.match(/slots\.length/g) ?? []).length;
+}
 const FORM_CODE = codeOnly(read(FORM_REL));
 
 describe("the comment stripper itself", () => {
@@ -545,6 +697,18 @@ describe("P2-2. the post-commit workflow is the established one", () => {
     ["portal revalidation", /revalidatePath\("\/portal"\)/],
   ] as const;
 
+  /** The same effects by CALLEE NAME, for the parsed containment rule. */
+  const CONTAINED_EFFECTS = [
+    ["client confirmation email", "sendBookingConfirmationToClient"],
+    ["truthful email bookkeeping", "recordEmailAttempt"],
+    ["email failure alerting", "logEmailFailure"],
+    ["practitioner notification record", "recordPractitionerNotification"],
+    ["practitioner email", "sendBookingNotificationToPractitioner"],
+    ["existing booking SMS path", "sendBookingConfirmationSmsToClient"],
+    ["intake link", "ensureIntakeForClient"],
+    ["cache revalidation", "revalidatePath"],
+  ] as const;
+
   for (const [label, shape] of EFFECTS) {
     it(`runs the ${label}`, () => {
       expect(CODE, label).toMatch(shape);
@@ -555,32 +719,44 @@ describe("P2-2. the post-commit workflow is the established one", () => {
     // Each one goes through the fail-soft helper. A bare call would let a
     // provider exception surface a COMMITTED booking as an error.
     //
-    // The search is restricted to the POST-COMMIT REGION. Searching the whole
-    // module would match the `import` line for each helper — which sits at the
-    // top of the file with no wrapper anywhere near it — and the rule would
-    // fail for a reason that has nothing to do with containment.
-    const region = CODE.slice(CODE.indexOf("const postCommit"));
-    expect(region.length, "the post-commit region must exist").toBeGreaterThan(0);
-    for (const [label, shape] of EFFECTS) {
-      if (label === "portal revalidation") continue; // same postCommit call as /calendar
-      const global = new RegExp(shape.source, "g");
-      const hits = [...region.matchAll(global)].map((m) => m.index ?? -1);
-      expect(hits.length, `${label} must appear in the post-commit region`).toBeGreaterThan(0);
-      // `postCommit<{...}>(` is a legitimate call shape — the helper is
-      // generic, so an `.includes("postCommit(")` check would miss every call
-      // that names its type argument and report a contained effect as bare.
-      const contained = hits.some((idx) =>
-        /postCommit\s*[<(]/.test(region.slice(Math.max(0, idx - 600), idx)),
-      );
-      expect(contained, `${label} must be inside a postCommit(...) wrapper`).toBe(true);
+    // PARSED, NOT MEASURED BY PROXIMITY. The previous version asked whether
+    // `postCommit` appeared in the preceding 600 characters, which an effect
+    // called bare immediately after a contained one satisfies. It also needed a
+    // special case for the generic form `postCommit<{...}>(`; matching the
+    // callee IDENTIFIER makes both call shapes the same thing.
+    const ACTION_SRC = read(ACTION_REL);
+    for (const [label, callee] of CONTAINED_EFFECTS) {
+      expect(
+        callsNotWrappedBy(ACTION_SRC, callee, "postCommit"),
+        `${label} must be inside a postCommit(...) wrapper`,
+      ).toEqual([]);
     }
   });
 
-  it("NEGATIVE CONTROL: containment fails for an effect called bare", () => {
-    const bare = "const postCommit = 1;\nawait sendBookingConfirmationToClient({});";
-    const region = bare.slice(bare.indexOf("const postCommit"));
-    const idx = region.search(/sendBookingConfirmationToClient/);
-    expect(region.slice(Math.max(0, idx - 400), idx)).not.toContain("postCommit(");
+  it("NON-VACUITY: those effects are actually called", () => {
+    const ACTION_SRC = read(ACTION_REL);
+    for (const [label, callee] of CONTAINED_EFFECTS) {
+      expect(ACTION_SRC, label).toContain(`${callee}(`);
+    }
+  });
+
+  it("NEGATIVE CONTROL: a bare effect is found even beside a contained one", () => {
+    const sneaky = `async function f() {
+      await postCommit("e", undefined, () => recordEmailAttempt(a, b, c, d));
+      await sendBookingConfirmationToClient({});
+    }`;
+    expect(
+      callsNotWrappedBy(sneaky, "sendBookingConfirmationToClient", "postCommit").length,
+      "proximity to a postCommit must not satisfy the rule",
+    ).toBeGreaterThan(0);
+  });
+
+  it("POSITIVE CONTROL: the generic call form counts as wrapped", () => {
+    const good = `async function f() {
+      await postCommit<{ ok: boolean }>("e", { ok: false }, () =>
+        sendBookingConfirmationToClient({}));
+    }`;
+    expect(callsNotWrappedBy(good, "sendBookingConfirmationToClient", "postCommit")).toEqual([]);
   });
 
   it("the raw management token is never logged", () => {
@@ -877,17 +1053,48 @@ describe("every action call is contained, not just the booking", () => {
     ["the booking", "bookAnotherAppointmentAction"],
   ] as const;
 
+  const CARD_SRC = read(FORM_REL);
+
   for (const [label, fn] of CALLS) {
     it(`${label} is awaited inside a try`, () => {
       // An unhandled rejection inside a transition propagates to the route's
       // error boundary and can replace the whole portal page — for a transient
       // network blip on a background fetch.
-      const call = FORM_CODE.indexOf(`await ${fn}(`);
-      expect(call, label).toBeGreaterThan(-1);
-      const before = FORM_CODE.slice(Math.max(0, call - 400), call);
-      expect(before, `${label} must be wrapped`).toMatch(/try\s*\{/);
+      //
+      // PARSED, NOT MEASURED BY PROXIMITY.
+      expect(callsOutsideTry(CARD_SRC, fn), `${label} must be inside a try`).toEqual([]);
     });
   }
+
+  it("NON-VACUITY: those calls exist in the component", () => {
+    for (const [label, fn] of CALLS) expect(CARD_SRC, label).toContain(`${fn}(`);
+  });
+
+  it("NEGATIVE CONTROL: an uncontained call is found even next to a try", () => {
+    const sneaky = `async function f() {
+      try { await somethingElse(); } catch {}
+      const res = await bookAnotherAppointmentAction(fd);
+      return res;
+    }`;
+    expect(
+      callsOutsideTry(sneaky, "bookAnotherAppointmentAction").length,
+      "proximity to a try must not satisfy the rule",
+    ).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: a call in the CATCH is not protected by its own try", () => {
+    const inCatch = `async function f() {
+      try { await other(); } catch { await bookAnotherAppointmentAction(fd); }
+    }`;
+    expect(callsOutsideTry(inCatch, "bookAnotherAppointmentAction").length).toBeGreaterThan(0);
+  });
+
+  it("POSITIVE CONTROL: a genuinely wrapped call passes", () => {
+    const good = `async function f() {
+      try { const r = await bookAnotherAppointmentAction(fd); return r; } catch { return null; }
+    }`;
+    expect(callsOutsideTry(good, "bookAnotherAppointmentAction")).toEqual([]);
+  });
 
   it("there are as many catches as there are contained calls", () => {
     const catches = [...FORM_CODE.matchAll(/\}\s*catch\s*(\([^)]*\))?\s*\{/g)];
@@ -1128,26 +1335,64 @@ describe("the card does not claim an empty horizon over bookable times", () => {
   });
 
   it("INVARIANT: every conclusion drawn from `slots.length` sits inside a load gate", () => {
-    // This class has now recurred twice — once for the no-times copy, once for
-    // the horizon copy — so it is pinned as a rule rather than as two
-    // instances. An empty list means "this day is empty" ONLY when the day was
-    // actually read; otherwise it means "we do not know", and any sentence
-    // built on it is a guess presented as a fact.
-    const uses = [...FORM_CODE.matchAll(/slots\.length/g)].map((m) => m.index ?? -1);
-    expect(uses.length, "there should be conclusions to check").toBeGreaterThan(0);
-    for (const idx of uses) {
-      const context = FORM_CODE.slice(Math.max(0, idx - 400), idx);
-      expect(
-        context,
-        `a slots.length conclusion at offset ${idx} is not inside a slotLoad gate`,
-      ).toMatch(/slotLoad/);
-    }
+    // This class has recurred twice — once for the no-times copy, once for the
+    // horizon copy — so it is pinned as a rule rather than as two instances. An
+    // empty list means "this day is empty" ONLY when the day was actually read;
+    // otherwise it means "we do not know", and any sentence built on it is a
+    // guess presented as a fact.
+    //
+    // PARSED, NOT MEASURED BY PROXIMITY. The first version of this rule asked
+    // whether `slotLoad` appeared in the preceding 400 characters, which is a
+    // claim about DISTANCE, not about CONTAINMENT: an ungated conclusion placed
+    // near any `slotLoad` mention — including one inside an explanatory comment
+    // — satisfied it. `ungatedSlotLengthUses` walks the real AST and asks
+    // whether an ANCESTOR conditional actually tests `slotLoad`, which is the
+    // property the rule is named after.
+    expect(ungatedSlotLengthUses(read(FORM_REL))).toEqual([]);
   });
 
-  it("NEGATIVE CONTROL: the invariant fires on an ungated conclusion", () => {
-    const naive = "{noneInHorizon && (<p>{slots.length > 0 ? 'later' : 'none'}</p>)}";
-    const idx = naive.indexOf("slots.length");
-    expect(naive.slice(Math.max(0, idx - 400), idx)).not.toMatch(/slotLoad/);
+  it("NON-VACUITY: the component really does contain conclusions to check", () => {
+    // An invariant over an empty set passes for free.
+    expect(slotLengthUseCount(read(FORM_REL))).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: it fires on an ungated conclusion", () => {
+    const bad = `export function C() { return <>{a && <p>{slots.length > 0 ? "x" : "y"}</p>}</>; }`;
+    expect(ungatedSlotLengthUses(bad).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: it fires when `slotLoad` is merely NEARBY, not gating", () => {
+    // THE CASE THE PROXIMITY VERSION MISSED, and the reason this rule is parsed.
+    // `slotLoad` appears immediately before the conclusion, in a sibling
+    // expression and in a comment, while gating nothing.
+    const sneaky = `export function C() {
+      return (
+        <>
+          {slotLoad === "loaded" && <p>unrelated</p>}
+          {/* slotLoad is discussed here but gates nothing */}
+          {noneInHorizon && <p>{slots.length > 0 ? "later" : "none"}</p>}
+        </>
+      );
+    }`;
+    expect(
+      ungatedSlotLengthUses(sneaky).length,
+      "proximity to slotLoad must not satisfy the rule",
+    ).toBeGreaterThan(0);
+  });
+
+  it("POSITIVE CONTROL: a genuinely gated conclusion passes", () => {
+    // Without this the rule could be passing by rejecting everything.
+    const good = `export function C() {
+      return <>{noneInHorizon && slotLoad === "loaded" && <p>{slots.length > 0 ? "later" : "none"}</p>}</>;
+    }`;
+    expect(ungatedSlotLengthUses(good)).toEqual([]);
+  });
+
+  it("POSITIVE CONTROL: a ternary gate passes too", () => {
+    const good = `export function C() {
+      return <>{slotLoad === "failed" ? null : slots.length === 0 ? <p>none</p> : <ul/>}</>;
+    }`;
+    expect(ungatedSlotLengthUses(good)).toEqual([]);
   });
 
   it("NEGATIVE CONTROL: one unconditional sentence fails the branching rule", () => {
