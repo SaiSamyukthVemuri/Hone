@@ -5,6 +5,7 @@ import {
   getAvailabilityDefaults,
 } from "@/lib/booking/queries";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   CONSENT_SETTINGS_HREF,
   getTreatmentConsentReadiness,
@@ -76,9 +77,12 @@ export default async function LaunchChecklistPage() {
     getTreatmentConsentReadiness(studio.id),
   ]);
 
-  const hasConsultation = services.some(
-    (s) => s.active && s.modality === "consultation",
-  );
+  // ONB-02: ask the predicate the BOOKING PATH enforces, not a second copy of
+  // it. `s.modality === "consultation"` missed `isConsultationService`'s
+  // name fallback, so a studio whose service is named "New Client
+  // Consultation" with no modality set was told to set one up while
+  // publicBookAppointmentAction was already taking its bookings.
+  const hasConsultation = services.some((s) => isBookableByNewClient(s));
   const hasOpenDay = availabilityDefaults.some(
     (d) => d.is_open && nonEmpty(d.open_time) && nonEmpty(d.close_time),
   );
