@@ -7,8 +7,11 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { MarkdownLiteBlock } from "@/app/_components/MarkdownLiteBlock";
 import { getCurrentPortalSession } from "@/lib/portal/session";
 import { PortalRebookCard } from "./PortalRebookCard";
-import { loadPortalRebookServicesAction } from "./rebook-actions";
+import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
+import { todayInTz } from "@/lib/booking/tz";
 import {
+  getPortalBookableServices,
+  getPortalBookingWindow,
   getPortalIdentity,
   getPortalIntakeStatus,
   getPortalMessagesForClient,
@@ -307,10 +310,29 @@ export default async function PortalHomePage() {
     || showCardAuthorizationNeeded
     || showCardAuthorizationOutOfDate;
 
-  // EMERG-PORTAL-REBOOK-01. Scoped to the SESSION's studio inside the action;
-  // this page passes no studio or client id to it, and could not, because the
-  // action takes none.
-  const rebookServices = await loadPortalRebookServicesAction();
+  // EMERG-PORTAL-REBOOK-01. Both reads are scoped by `session.studioId` — the
+  // value the session resolved — and neither takes a slug, a client id or
+  // anything else this page could have been handed by a browser.
+  //
+  // THEY ARE ADMIN-SCOPED BECAUSE THE PORTAL IS A SEPARATE REALM. Migration
+  // 0173 restricts `services` SELECT to authenticated studio MEMBERS, and a
+  // portal client is not one, so the RLS-bound `getActiveServices` returns an
+  // EMPTY LIST here rather than an error — which is how a returning client ends
+  // up shown a booking surface with nothing in it. See
+  // lib/portal/queries.ts:getPortalBookableServices.
+  const [rebookServices, bookingWindow] = await Promise.all([
+    getPortalBookableServices(session.studioId),
+    getPortalBookingWindow(session.studioId),
+  ]);
+  // NULL IS A FAILED READ, NOT AN EMPTY MENU. The two states render different
+  // copy below, because "this studio offers nothing" and "we could not ask" are
+  // different facts and only the first may be shown as an absence.
+  const rebookReadFailed = rebookServices == null || bookingWindow == null;
+  const rebookTimezone = bookingWindow?.timezone ?? studio.timezone;
+  const rebookHorizon = horizonRangeInStudioTz(
+    rebookTimezone,
+    bookingWindow?.publicBookingHorizonMonths ?? null,
+  );
 
   const nextAppointment = upcoming[0] ?? null;
   const laterAppointments = upcoming.slice(1);
@@ -384,6 +406,55 @@ export default async function PortalHomePage() {
             </div>
           </header>
 
+          {/* EMERG-PORTAL-REBOOK-01. THE BOOKING DOOR, AND IT IS A CAPABILITY
+              RATHER THAN A TASK.
+
+              This block used to live inside the "Needs you" branch below, which
+              made it invisible to precisely the population it was built for: an
+              established client with intake complete, no unsigned form, no
+              unread message and no card task has `hasNeedsYou === false` and saw
+              "You're all caught up" and no way to book. Whether a client owes
+              paperwork has nothing to do with whether they may book, so the two
+              decisions are no longer entangled.
+
+              It renders directly under the greeting, so it is above the fold on
+              a phone, and it is NOT framed as something requiring attention.
+
+              Three honest states, chosen on evidence rather than on a single
+              falsy check:
+                * a read did not answer      -> "couldn't load", never an absence
+                * the studio has no services -> a plain absence
+                * otherwise                  -> the card */}
+          <section className="flex flex-col gap-2">
+            {rebookReadFailed ? (
+              <p
+                data-testid="portal-rebook-unavailable"
+                className="text-[13px]"
+                style={{ color: "#3F3F3F" }}
+              >
+                We couldn&rsquo;t load booking right now. Please try again in a
+                moment, or contact {studio.name}.
+              </p>
+            ) : rebookServices.length === 0 ? (
+              <p
+                data-testid="portal-rebook-no-services"
+                className="text-[13px]"
+                style={{ color: "#3F3F3F" }}
+              >
+                {studio.name} isn&rsquo;t taking online bookings at the moment.
+                Please contact the studio directly.
+              </p>
+            ) : (
+              <PortalRebookCard
+                services={rebookServices}
+                timezone={rebookTimezone}
+                minDate={todayInTz(rebookTimezone)}
+                maxDate={rebookHorizon.maxDateStr}
+                studioName={studio.name}
+              />
+            )}
+          </section>
+
           {/* PR #136 zone 1: Needs you. Renders only when at least
               one pending action exists; otherwise the quiet
               "all caught up" line below stands in. Each pending
@@ -451,15 +522,6 @@ export default async function PortalHomePage() {
                     templates={unsignedConsentTemplates.map(
                       withRenderedTemplateHash,
                     )}
-                  />
-                </section>
-              )}
-
-              {rebookServices.ok && rebookServices.services.length > 0 && (
-                <section className="flex flex-col gap-3">
-                  <PortalRebookCard
-                    services={rebookServices.services}
-                    timezone={studio.timezone}
                   />
                 </section>
               )}
