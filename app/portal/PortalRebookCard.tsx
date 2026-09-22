@@ -80,9 +80,9 @@ export function PortalRebookCard({
   // read did not answer. Collapsing both into `slots.length === 0` renders
   // "No times are available on that date" after a failed read — which is the
   // exact false statement the server-side failure propagation exists to stop.
-  const [slotLoad, setSlotLoad] = useState<"loading" | "loaded" | "failed">(
-    "loading",
-  );
+  const [slotLoad, setSlotLoad] = useState<
+    "idle" | "loading" | "loaded" | "failed"
+  >("loading");
   const [picked, setPicked] = useState<Slot | null>(null);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -142,8 +142,16 @@ export function PortalRebookCard({
   // it actually stops being true.
   useEffect(() => {
     if (!serviceId || !date) {
+      // NOTHING IS SELECTED, SO NEITHER AVAILABILITY CONCLUSION IS TRUE. This
+      // branch used to return BEFORE the resets below, leaving `slotLoad` on
+      // its previous `loaded` and `noneInHorizon` on a previous verdict — so
+      // clearing the date rendered "No times are available on that date" for a
+      // date that no longer existed. An early return must still leave the state
+      // it skipped in a coherent place.
       setSlots([]);
       setPicked(null);
+      setSlotLoad("idle");
+      setNoneInHorizon(false);
       return;
     }
     let cancelled = false;
@@ -246,6 +254,11 @@ export function PortalRebookCard({
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (submittedRef.current) return;
+    // A NEXT-AVAILABLE SEARCH IS IN FLIGHT, so the date on screen is about to
+    // move. Submitting now books the slot the client picked for the PREVIOUS
+    // date while the UI is visibly looking for a later one. The button is
+    // disabled in this state; this covers a keyboard submit that bypasses it.
+    if (inFlight) return;
     if (!picked || !serviceId) {
       setError("Please choose a time first.");
       return;
@@ -301,6 +314,15 @@ export function PortalRebookCard({
         email: res.confirmationEmail,
         emailStatus: res.confirmationEmailStatus,
       });
+      // THE CONFIRMATION SAYS THE APPOINTMENT IS LISTED BELOW, SO IT HAD BETTER
+      // BE. The action's `revalidatePath("/portal")` invalidates the cache but
+      // does not re-render the page the client is already looking at, so the
+      // server-rendered Appointments section stayed as it was — still able to
+      // read "No upcoming appointments" directly underneath a confirmation
+      // claiming the opposite. `router.refresh()` re-fetches that tree while
+      // preserving this component's state, so the confirmation survives and the
+      // list catches up.
+      router.refresh();
     });
   }
 
@@ -436,7 +458,7 @@ export function PortalRebookCard({
         <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
           Loading times…
         </p>
-      ) : slotLoad === "failed" ? null : slots.length === 0 ? (
+      ) : slotLoad === "failed" || slotLoad === "idle" ? null : slots.length === 0 ? (
         <p
           data-testid="portal-rebook-no-slots"
           className="text-[13px]"
@@ -497,7 +519,7 @@ export function PortalRebookCard({
       <button
         type="submit"
         data-testid="portal-rebook-submit"
-        disabled={booking || picked == null}
+        disabled={inFlight || picked == null}
         className="self-start px-5 py-2 text-[12px] font-medium uppercase disabled:opacity-50"
         style={{
           backgroundColor: "#0A0A0A",

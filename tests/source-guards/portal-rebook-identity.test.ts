@@ -936,10 +936,13 @@ describe("a failed read is never rendered as an empty day", () => {
     const copy = FORM_CODE.indexOf("portal-rebook-no-slots");
     expect(copy).toBeGreaterThan(-1);
     const before = FORM_CODE.slice(Math.max(0, copy - 400), copy);
+    // The suppression condition may carry MORE states than `failed` (an idle
+    // selection suppresses both conclusions too), so the rule asserts that
+    // `failed` is part of it rather than that it is the whole of it.
     expect(
       before,
       'the "no times" branch must be gated on the read not having failed',
-    ).toMatch(/slotLoad === "failed" \? null/);
+    ).toMatch(/slotLoad === "failed"[\s\S]{0,60}\? null/);
   });
 
   it("the outcome is reset BEFORE each load, so a stale verdict cannot persist", () => {
@@ -956,6 +959,86 @@ describe("a failed read is never rendered as an empty day", () => {
   it("NEGATIVE CONTROL: an ungated branch fails the suppression rule", () => {
     const naive = ') : slots.length === 0 ? (\n <p data-testid="portal-rebook-no-slots">';
     const copy = naive.indexOf("portal-rebook-no-slots");
-    expect(naive.slice(0, copy)).not.toMatch(/slotLoad === "failed" \? null/);
+    expect(naive.slice(0, copy)).not.toMatch(/slotLoad === "failed"[\s\S]{0,60}\? null/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The card must not contradict itself, nor act on a selection that is moving.
+// ---------------------------------------------------------------------------
+
+describe("the confirmation does not outrun the page behind it", () => {
+  it("refreshes the route after a successful booking", () => {
+    // The action revalidates /portal, which invalidates the cache but does NOT
+    // re-render the page already on screen. Without this the Appointments
+    // section can read "No upcoming appointments" directly beneath a
+    // confirmation saying the appointment is listed there.
+    const done = FORM_CODE.indexOf("setDone({");
+    expect(done).toBeGreaterThan(-1);
+    const after = FORM_CODE.slice(done, done + 600);
+    expect(after).toMatch(/router\.refresh\(\)/);
+  });
+
+  it("NEGATIVE CONTROL: setting the success state alone does not satisfy it", () => {
+    const naive = "setDone({ startsAt, serviceName });\n return;";
+    expect(naive).not.toMatch(/router\.refresh\(\)/);
+  });
+
+  it("the submit control obeys the same in-flight window as the others", () => {
+    // A next-available search moves the date under the client. Submitting mid
+    // search books the slot picked for the PREVIOUS date.
+    const idx = FORM_CODE.indexOf('data-testid="portal-rebook-submit"');
+    expect(idx).toBeGreaterThan(-1);
+    expect(FORM_CODE.slice(idx, idx + 300)).toMatch(
+      /disabled=\{inFlight \|\| picked == null\}/,
+    );
+  });
+
+  it("the submit HANDLER also refuses mid-flight, for a keyboard submit", () => {
+    const handler = FORM_CODE.slice(
+      FORM_CODE.indexOf("function submit("),
+      FORM_CODE.indexOf("if (services.length === 0)"),
+    );
+    const guard = handler.search(/if \(inFlight\) return;/);
+    expect(guard, "the handler guard must exist").toBeGreaterThan(-1);
+    expect(handler.indexOf("startBooking("), "guard precedes the request").toBeGreaterThan(
+      guard,
+    );
+  });
+
+  it("NEGATIVE CONTROL: a booking-only submit binding fails the rule", () => {
+    expect("disabled={booking || picked == null}").not.toMatch(
+      /disabled=\{inFlight \|\| picked == null\}/,
+    );
+  });
+});
+
+describe("an empty selection states NEITHER availability conclusion", () => {
+  it("the early return leaves the state it skipped coherent", () => {
+    // It used to return BEFORE the resets, so clearing the date left
+    // `slotLoad` on `loaded` and rendered "No times are available on that
+    // date" for a date that no longer existed, and could keep a stale
+    // none-in-horizon verdict from an earlier search.
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    const branch = effect.indexOf("if (!serviceId || !date) {");
+    expect(branch).toBeGreaterThan(-1);
+    const body = effect.slice(branch, effect.indexOf("return;", branch));
+    expect(body).toMatch(/setSlotLoad\("idle"\)/);
+    expect(body).toMatch(/setNoneInHorizon\(false\)/);
+  });
+
+  it("both availability conclusions are suppressed while idle", () => {
+    const copy = FORM_CODE.indexOf("portal-rebook-no-slots");
+    const before = FORM_CODE.slice(Math.max(0, copy - 400), copy);
+    expect(before).toMatch(/slotLoad === "idle"/);
+  });
+
+  it("NEGATIVE CONTROL: an early return without the resets fails the rule", () => {
+    const naive = "if (!serviceId || !date) {\n setSlots([]);\n setPicked(null);\n return;\n}";
+    const body = naive.slice(0, naive.indexOf("return;"));
+    expect(body).not.toMatch(/setSlotLoad\("idle"\)/);
   });
 });

@@ -172,13 +172,22 @@ test.describe("portal rebooking", () => {
     // exercises the degraded path and must still report a committed booking.
     await expect(page.getByTestId("portal-rebook-manage-link")).toBeVisible();
 
-    // THE JOURNEY CLOSES: the appointment is in the client's own list.
+    // THE JOURNEY CLOSES: the appointment is in the client's own list, WITHOUT
+    // a reload.
+    //
+    // This assertion used to call `page.reload()` first, and that reload was
+    // hiding a real defect: the action revalidates /portal but does not
+    // re-render the page the client is already looking at, so the Appointments
+    // section stayed stale and could read "No upcoming appointments" directly
+    // beneath a confirmation saying the appointment was listed there. Reloading
+    // made the test agree with the fix that had not been written yet. The card
+    // now calls router.refresh(), and this proves it.
     //
     // Scoped to a paragraph on purpose. The service name also appears as an
     // <option> inside the rebooking card's own select, which Playwright reports
     // as hidden — a bare getByText would resolve to that and fail for a reason
     // that has nothing to do with the appointment.
-    await page.reload();
+    await expect(page.getByTestId("portal-rebook-confirmed")).toBeVisible();
     await expect(page.getByText("No upcoming appointments")).toHaveCount(0);
     await expect(
       page.locator("p").filter({ hasText: seed.serviceName }).first(),
