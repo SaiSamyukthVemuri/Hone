@@ -74,6 +74,14 @@ export function PortalRebookCard({
   const [serviceId, setServiceId] = useState<string>(services[0]?.id ?? "");
   const [date, setDate] = useState<string>(minDate);
   const [slots, setSlots] = useState<Slot[]>([]);
+  // WHY THE OUTCOME IS TRACKED SEPARATELY FROM THE LIST. An empty list has
+  // two causes with opposite meanings: the day really has no times, or the
+  // read did not answer. Collapsing both into `slots.length === 0` renders
+  // "No times are available on that date" after a failed read — which is the
+  // exact false statement the server-side failure propagation exists to stop.
+  const [slotLoad, setSlotLoad] = useState<"loading" | "loaded" | "failed">(
+    "loading",
+  );
   const [picked, setPicked] = useState<Slot | null>(null);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -140,8 +148,24 @@ export function PortalRebookCard({
     let cancelled = false;
     setPicked(null);
     setNoneInHorizon(false);
+    // Set synchronously, so a reload never shows the previous run's verdict.
+    setSlotLoad("loading");
     startLoadingSlots(async () => {
-      const res = await loadPortalRebookSlotsAction({ serviceId, date });
+      // A REJECTED ACTION MUST NOT REACH THE ERROR BOUNDARY. An unhandled
+      // rejection inside this transition propagates to the route boundary and
+      // can replace the whole portal page — for a transient network blip on a
+      // background slot fetch. It is caught and reported like any other
+      // unavailable, honouring the same cancellation flag.
+      let res: Awaited<ReturnType<typeof loadPortalRebookSlotsAction>> | null = null;
+      try {
+        res = await loadPortalRebookSlotsAction({ serviceId, date });
+      } catch {
+        if (cancelled) return;
+        setSlots([]);
+        setSlotLoad("failed");
+        setError(PORTAL_REBOOK_GENERIC_REFUSAL);
+        return;
+      }
       if (cancelled) return;
       if (!res.ok) {
         if (res.code === "session_expired") {
@@ -150,9 +174,11 @@ export function PortalRebookCard({
         }
         setError(res.error);
         setSlots([]);
+        setSlotLoad("failed");
         return;
       }
       setSlots(res.slots);
+      setSlotLoad("loaded");
     });
     return () => {
       cancelled = true;
@@ -166,20 +192,36 @@ export function PortalRebookCard({
     // The selection this search is ABOUT, captured before it starts.
     const asked = { serviceId, date };
     startFindingNext(async () => {
-      const res = await loadPortalRebookNextAvailableAction({
-        serviceId: asked.serviceId,
-        // Walk forward from the day AFTER the one on screen, so pressing this
-        // repeatedly keeps advancing instead of re-finding the same date.
-        fromDate: addOneDay(asked.date),
-      });
+      // Same containment as the slot fetch: a rejected action here would reach
+      // the route's error boundary instead of the card's own error line.
+      let res: Awaited<
+        ReturnType<typeof loadPortalRebookNextAvailableAction>
+      > | null = null;
+      let rejected = false;
+      try {
+        res = await loadPortalRebookNextAvailableAction({
+          serviceId: asked.serviceId,
+          // Walk forward from the day AFTER the one on screen, so pressing this
+          // repeatedly keeps advancing instead of re-finding the same date.
+          fromDate: addOneDay(asked.date),
+        });
+      } catch {
+        rejected = true;
+      }
       // A SUPERSEDED ANSWER IS DISCARDED, WHOLE. The controls are inert while
       // this runs, so the selection should not have moved — but if it did, this
       // answer is about service A and would move service B to a date that is
       // not its next available one, or overwrite a date the client just picked
       // by hand. Every branch below is about `asked`, so the guard covers the
       // error and the none-in-horizon verdict too, not only the date.
+      // The staleness guard runs ONCE, before every branch — including the
+      // rejection branch, which is about `asked` exactly as the others are.
       const now = selectionRef.current;
       if (now.serviceId !== asked.serviceId || now.date !== asked.date) return;
+      if (rejected || res === null) {
+        setError(PORTAL_REBOOK_GENERIC_REFUSAL);
+        return;
+      }
       if (!res.ok) {
         if (res.code === "session_expired") {
           router.push("/portal/login");
@@ -389,7 +431,7 @@ export function PortalRebookCard({
         <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
           Loading times…
         </p>
-      ) : slots.length === 0 ? (
+      ) : slotLoad === "failed" ? null : slots.length === 0 ? (
         <p
           data-testid="portal-rebook-no-slots"
           className="text-[13px]"

@@ -834,3 +834,101 @@ describe("the public-readiness gate cannot be forgotten by a new action", () => 
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// A rejected DISCOVERY action must not reach the route's error boundary, and a
+// failed read must never be spoken as "no times".
+// ---------------------------------------------------------------------------
+
+describe("every action call is contained, not just the booking", () => {
+  const CALLS = [
+    ["slot discovery", "loadPortalRebookSlotsAction"],
+    ["next available", "loadPortalRebookNextAvailableAction"],
+    ["the booking", "bookAnotherAppointmentAction"],
+  ] as const;
+
+  for (const [label, fn] of CALLS) {
+    it(`${label} is awaited inside a try`, () => {
+      // An unhandled rejection inside a transition propagates to the route's
+      // error boundary and can replace the whole portal page — for a transient
+      // network blip on a background fetch.
+      const call = FORM_CODE.indexOf(`await ${fn}(`);
+      expect(call, label).toBeGreaterThan(-1);
+      const before = FORM_CODE.slice(Math.max(0, call - 400), call);
+      expect(before, `${label} must be wrapped`).toMatch(/try\s*\{/);
+    });
+  }
+
+  it("there are as many catches as there are contained calls", () => {
+    const catches = [...FORM_CODE.matchAll(/\}\s*catch\s*(\([^)]*\))?\s*\{/g)];
+    expect(catches.length).toBeGreaterThanOrEqual(CALLS.length);
+  });
+
+  it("the slot catch honours the cancellation flag before writing state", () => {
+    const call = FORM_CODE.indexOf("await loadPortalRebookSlotsAction(");
+    const after = FORM_CODE.slice(call, call + 700);
+    const catchIdx = after.search(/\}\s*catch\s*(\([^)]*\))?\s*\{/);
+    expect(catchIdx).toBeGreaterThan(-1);
+    const body = after.slice(catchIdx, catchIdx + 300);
+    expect(body).toMatch(/if \(cancelled\) return;/);
+    expect(body).toMatch(/setSlotLoad\("failed"\)/);
+  });
+
+  it("the next-available staleness guard covers the REJECTION branch too", () => {
+    const handler = FORM_CODE.slice(
+      FORM_CODE.indexOf("function onNextAvailable()"),
+      FORM_CODE.indexOf("function submit("),
+    );
+    const guard = handler.search(
+      /if \(now\.serviceId !== asked\.serviceId \|\| now\.date !== asked\.date\) return;/,
+    );
+    expect(guard).toBeGreaterThan(-1);
+    // The rejection is about `asked` exactly as the other branches are, so it
+    // must sit AFTER the guard.
+    expect(handler.indexOf("if (rejected"), "rejection branch").toBeGreaterThan(guard);
+  });
+
+  it("NEGATIVE CONTROL: an uncontained await fails the wrapping rule", () => {
+    const naive = "startLoadingSlots(async () => {\n const res = await loadPortalRebookSlotsAction({});\n});";
+    const call = naive.indexOf("await loadPortalRebookSlotsAction(");
+    expect(naive.slice(Math.max(0, call - 400), call)).not.toMatch(/try\s*\{/);
+  });
+});
+
+describe("a failed read is never rendered as an empty day", () => {
+  it("the load OUTCOME is tracked separately from the list", () => {
+    // An empty list has two causes with opposite meanings. Collapsing them into
+    // `slots.length === 0` is what made a failed read say "No times are
+    // available on that date".
+    expect(FORM_CODE).toMatch(/setSlotLoad\("loading"\)/);
+    expect(FORM_CODE).toMatch(/setSlotLoad\("loaded"\)/);
+    expect(FORM_CODE).toMatch(/setSlotLoad\("failed"\)/);
+  });
+
+  it("the no-times copy is suppressed when the read failed", () => {
+    const copy = FORM_CODE.indexOf("portal-rebook-no-slots");
+    expect(copy).toBeGreaterThan(-1);
+    const before = FORM_CODE.slice(Math.max(0, copy - 400), copy);
+    expect(
+      before,
+      'the "no times" branch must be gated on the read not having failed',
+    ).toMatch(/slotLoad === "failed" \? null/);
+  });
+
+  it("the outcome is reset BEFORE each load, so a stale verdict cannot persist", () => {
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    const reset = effect.indexOf('setSlotLoad("loading")');
+    const start = effect.indexOf("startLoadingSlots(");
+    expect(reset).toBeGreaterThan(-1);
+    expect(reset, "reset must be synchronous, before the transition").toBeLessThan(start);
+  });
+
+  it("NEGATIVE CONTROL: an ungated branch fails the suppression rule", () => {
+    const naive = ') : slots.length === 0 ? (\n <p data-testid="portal-rebook-no-slots">';
+    const copy = naive.indexOf("portal-rebook-no-slots");
+    expect(naive.slice(0, copy)).not.toMatch(/slotLoad === "failed" \? null/);
+  });
+});
