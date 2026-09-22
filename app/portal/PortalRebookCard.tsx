@@ -444,7 +444,7 @@ export function PortalRebookCard({
             type="button"
             data-testid="portal-rebook-next-available"
             onClick={onNextAvailable}
-            disabled={inFlight || date.length === 0}
+            disabled={inFlight || date.length === 0 || noneInHorizon}
             className="border border-neutral-900 px-4 py-2 text-[12px] font-medium uppercase disabled:opacity-50"
             style={{ letterSpacing: "0.1em" }}
           >
@@ -453,14 +453,29 @@ export function PortalRebookCard({
         </div>
       </label>
 
+      {/* HORIZON EXHAUSTION IS TWO DIFFERENT FACTS, and saying the stronger
+          one while bookable times are on screen is simply false.
+
+          "Next available" searches forward from the day AFTER the one
+          displayed. So a null answer on a day that HAS times means only that
+          there is nothing LATER — not that the studio has nothing. The single
+          sentence this replaced said "No open times left in <studio>'s booking
+          window" directly above a list of still-bookable slots.
+
+          Both sentences are the PUBLIC picker's own, verbatim
+          (app/book/[slug]/PublicBookForm.tsx), which already distinguishes
+          these two states. A second voice for the same fact is how the two
+          surfaces start disagreeing. */}
       {noneInHorizon && (
         <p
           data-testid="portal-rebook-none-in-horizon"
+          data-horizon-state={slots.length > 0 ? "no-later" : "none-in-window"}
           className="text-[13px]"
           style={{ color: "#3F3F3F" }}
         >
-          No open times left in {studioName}&rsquo;s booking window. Please
-          contact the studio.
+          {slots.length > 0
+            ? "No later availability is currently published. Please contact the studio."
+            : "No availability within the current booking window. Please check back later or contact the studio."}
         </p>
       )}
 

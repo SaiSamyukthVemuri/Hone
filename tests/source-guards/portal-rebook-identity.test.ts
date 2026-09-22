@@ -752,7 +752,10 @@ describe("the selection cannot move underneath an in-flight booking", () => {
   it("Next available is ALSO disabled when there is no date to search from", () => {
     const idx = FORM_CODE.indexOf('data-testid="portal-rebook-next-available"');
     const element = FORM_CODE.slice(idx, idx + 420);
-    expect(element).toMatch(/disabled=\{inFlight \|\| date\.length === 0\}/);
+    // The condition may carry MORE terms (it also stops once the horizon is
+    // exhausted), so the rule asserts this term is present rather than that it
+    // is the whole expression.
+    expect(element).toMatch(/disabled=\{[^}]*date\.length === 0[^}]*\}/);
   });
 });
 
@@ -1060,5 +1063,62 @@ describe("an empty selection states NEITHER availability conclusion", () => {
     const naive = "if (!serviceId || !date) {\n setSlots([]);\n setPicked(null);\n return;\n}";
     const body = naive.slice(0, naive.indexOf("return;"));
     expect(body).not.toMatch(/setSlotLoad\("idle"\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Horizon exhaustion is TWO facts, and only one of them is ever true at a time.
+// ---------------------------------------------------------------------------
+
+describe("the card does not claim an empty horizon over bookable times", () => {
+  const PUBLIC_FORM = read(PUBLIC_FORM_REL);
+
+  it("branches the message on whether the displayed day HAS times", () => {
+    // "Next available" searches forward from the day AFTER the one displayed,
+    // so a null answer on a populated day means only that there is nothing
+    // LATER. The single sentence this replaced said the studio's whole booking
+    // window was empty, directly above still-bookable slots.
+    const block = FORM_CODE.slice(
+      FORM_CODE.indexOf("portal-rebook-none-in-horizon"),
+      FORM_CODE.indexOf("portal-rebook-none-in-horizon") + 700,
+    );
+    expect(block).toMatch(/slots\.length > 0/);
+    expect(block).toMatch(/No later availability is currently published/);
+    expect(block).toMatch(/No availability within the current booking window/);
+  });
+
+  it("both sentences are the PUBLIC picker's own, not a second voice", () => {
+    // The two surfaces share one availability authority; they must not describe
+    // the same state in two different ways.
+    expect(PUBLIC_FORM).toContain("No later availability is currently published");
+    expect(PUBLIC_FORM).toContain("No availability within the current booking window");
+  });
+
+  it("the state is exposed so a proof can tell the two apart", () => {
+    expect(FORM_CODE).toMatch(
+      /data-horizon-state=\{slots\.length > 0 \? "no-later" : "none-in-window"\}/,
+    );
+  });
+
+  it("Next available stops offering a search that can only repeat itself", () => {
+    const idx = FORM_CODE.indexOf('data-testid="portal-rebook-next-available"');
+    const element = FORM_CODE.slice(idx, idx + 300);
+    expect(element).toMatch(/disabled=\{[^}]*\bnoneInHorizon\b[^}]*\}/);
+  });
+
+  it("...and that control is re-armed when the selection moves", () => {
+    // Otherwise it would be disabled forever. `noneInHorizon` is cleared both
+    // by the slot effect and at the start of a new search.
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    expect(effect).toMatch(/setNoneInHorizon\(false\)/);
+  });
+
+  it("NEGATIVE CONTROL: one unconditional sentence fails the branching rule", () => {
+    const naive = "{noneInHorizon && (<p>No open times left in the booking window.</p>)}";
+    expect(naive).not.toMatch(/slots\.length > 0/);
+    expect(naive).not.toMatch(/No later availability is currently published/);
   });
 });
