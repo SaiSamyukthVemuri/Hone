@@ -49,7 +49,7 @@ describe("0199 position in the chain", () => {
     // tests/migrations/0201-waitlist-exit-authority-contraction.test.ts
     // carries it.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0200", "0201"]);
+    expect(versionsAbove(VERSION)).toEqual(["0200", "0201", "0202"]);
   });
 
   it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
@@ -122,7 +122,7 @@ describe("0199 position in the chain", () => {
     // and 0201 is no longer free either: its successor claims it on this
     // branch, AUTHORED AND PENDING. So the next free number moved on twice.
     // This file still claims none of it.
-    expect(migrationState().next_free_migration).toBe("0202");
+    expect(migrationState().next_free_migration).toBe("0203");
   });
 });
 

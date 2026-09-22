@@ -560,7 +560,7 @@ describe("0192 — proof is bound to the stored intended invitation and recipien
     } catch (e) {
       message = (e as { message?: string }).message ?? "";
     }
-    expect(message).toMatch(/contact details are immutable/i);
+    expect(message).toMatch(/name and email are immutable/i);
   });
 
   it("and if one ever could, complete_ REFUSES the changed recipient", async () => {
