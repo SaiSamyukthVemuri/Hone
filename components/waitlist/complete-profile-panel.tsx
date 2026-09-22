@@ -240,6 +240,7 @@ export function CompleteProfilePanel({
           link; that the person is already on the list has no bearing on whether
           the collection needs disclosing. */}
       <PublicCollectionSubmit
+        collectsSmsConsent={collectsSmsConsent}
         studioName={studioName}
         label={COMPLETE_SUBMIT}
         pendingLabel="Saving…"

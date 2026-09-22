@@ -193,6 +193,7 @@ export function WaitlistJoinForm({
           hand-rolled a notice beside it, which is exactly how the sibling surface
           came to have one without the other. */}
       <PublicCollectionSubmit
+        collectsSmsConsent={collectsSmsConsent}
         studioName={studioName}
         label="Join waitlist"
         pendingLabel="Joining…"

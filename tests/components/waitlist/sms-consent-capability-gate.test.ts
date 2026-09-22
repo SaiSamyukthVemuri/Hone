@@ -7,6 +7,7 @@ import { ProfileFields } from "@/components/waitlist/profile-fields";
 import { WaitlistJoinForm } from "@/components/waitlist/waitlist-join-form";
 import { CompleteProfilePanel } from "@/components/waitlist/complete-profile-panel";
 import { emptyJoinProfileDraft } from "@/lib/waitlist/join-profile";
+import { joinCollectionNotice } from "@/lib/waitlist/join-copy";
 import type { StoredWaitlistProfile } from "@/lib/waitlist/join-profile";
 
 // ===========================================================================
@@ -146,6 +147,70 @@ describe("both shipped surfaces pass the capability through", () => {
 
     it(`${name} offers it when the capability is true`, () => {
       expect(render(true)).toContain(CONSENT_INPUT);
+    });
+  }
+});
+
+describe("the disclosure enumerates only what is actually collected", () => {
+  // A point-of-collection notice is the one sentence that has to be exactly
+  // true. Gating the consent QUESTION off while the notice still said the
+  // submitted details include "whether you agreed to text messages" would tell
+  // a prospect that an answer they were never asked for would be used — the
+  // same class of untruth as describing collection nobody performs, pointed at
+  // a field instead of a policy.
+  const TEXT_CLAUSE = "whether you agreed to text messages";
+
+  it("omits the consent clause when the question is not asked", () => {
+    expect(joinCollectionNotice(false)).not.toContain(TEXT_CLAUSE);
+  });
+
+  it("includes it when the question IS asked", () => {
+    expect(joinCollectionNotice(true)).toContain(TEXT_CLAUSE);
+  });
+
+  it("both wordings still enumerate the fields that are always collected", () => {
+    // The clause is the ONLY difference. Dropping it must not quietly drop the
+    // rest of the sentence, which is what a hand-written second string would
+    // eventually do.
+    for (const on of [true, false]) {
+      const notice = joinCollectionNotice(on);
+      for (const field of ["name", "email", "mobile number", "treatment areas", "availability"]) {
+        expect(notice, `${on}: ${field}`).toContain(field);
+      }
+      expect(notice, `${on}: purpose`).toContain("to manage this waitlist");
+    }
+  });
+
+  for (const [name, render] of [
+    [
+      "WaitlistJoinForm",
+      (on: boolean) =>
+        renderToStaticMarkup(
+          createElement(WaitlistJoinForm, {
+            studioName: "Willow",
+            onSubmit: async () => ({ ok: true }) as const,
+            collectsSmsConsent: on,
+          }),
+        ),
+    ],
+    [
+      "CompleteProfilePanel",
+      (on: boolean) =>
+        renderToStaticMarkup(
+          createElement(CompleteProfilePanel, {
+            studioName: "Willow",
+            stored: STORED,
+            onSubmit: async () => ({ ok: true }) as const,
+            collectsSmsConsent: on,
+          }),
+        ),
+    ],
+  ] as const) {
+    it(`${name} renders a notice that matches its own question`, () => {
+      // The end-to-end version of the two assertions above: whatever the
+      // surface asked, the sentence beneath the button agrees with it.
+      expect(render(false)).not.toContain(TEXT_CLAUSE);
+      expect(render(true)).toContain(TEXT_CLAUSE);
     });
   }
 });
