@@ -6,6 +6,8 @@ import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { MarkdownLiteBlock } from "@/app/_components/MarkdownLiteBlock";
 import { getCurrentPortalSession } from "@/lib/portal/session";
+import { PortalRebookCard } from "./PortalRebookCard";
+import { loadPortalRebookServicesAction } from "./rebook-actions";
 import {
   getPortalIdentity,
   getPortalIntakeStatus,
@@ -305,6 +307,11 @@ export default async function PortalHomePage() {
     || showCardAuthorizationNeeded
     || showCardAuthorizationOutOfDate;
 
+  // EMERG-PORTAL-REBOOK-01. Scoped to the SESSION's studio inside the action;
+  // this page passes no studio or client id to it, and could not, because the
+  // action takes none.
+  const rebookServices = await loadPortalRebookServicesAction();
+
   const nextAppointment = upcoming[0] ?? null;
   const laterAppointments = upcoming.slice(1);
 
@@ -444,6 +451,15 @@ export default async function PortalHomePage() {
                     templates={unsignedConsentTemplates.map(
                       withRenderedTemplateHash,
                     )}
+                  />
+                </section>
+              )}
+
+              {rebookServices.ok && rebookServices.services.length > 0 && (
+                <section className="flex flex-col gap-3">
+                  <PortalRebookCard
+                    services={rebookServices.services}
+                    timezone={studio.timezone}
                   />
                 </section>
               )}
