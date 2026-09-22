@@ -6,6 +6,7 @@ import {
   buildBookingConfirmationCopy,
   type ConfirmationEmailStatus,
 } from "@/lib/booking/confirmation-presentation";
+import { PORTAL_REBOOK_GENERIC_REFUSAL } from "@/lib/portal/rebook-copy";
 import {
   bookAnotherAppointmentAction,
   loadPortalRebookNextAvailableAction,
@@ -77,6 +78,10 @@ export function PortalRebookCard({
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [noneInHorizon, setNoneInHorizon] = useState(false);
+  // Bumping this re-runs the ONE slot effect below. It exists so a refusal
+  // can ask for a refresh WITHOUT starting a second, parallel slot load that
+  // would carry the service/date captured when the submit began.
+  const [slotReloadNonce, setSlotReloadNonce] = useState(0);
   const [done, setDone] = useState<Confirmation | null>(null);
   const [loadingSlots, startLoadingSlots] = useTransition();
   const [findingNext, startFindingNext] = useTransition();
@@ -99,6 +104,19 @@ export function PortalRebookCard({
   // Any change to the service or date invalidates the slot list. Leaving a
   // stale list on screen would let someone submit a time that was offered for a
   // different service — refused by the server, but confusing to read.
+  //
+  // IT IS ALSO THE ONLY SLOT LOADER. A refusal that wants fresh times bumps
+  // `slotReloadNonce` rather than calling the action itself: a second call sited
+  // in the submit handler would close over the service and date as they were
+  // when the submit STARTED, and writing its answer back could show one
+  // service's times under another's if the client changed the selection while
+  // the booking was in flight. Here the values are always the current ones, and
+  // the cancellation flag retires any answer that arrives after they move.
+  //
+  // The error is NOT cleared here. Clearing it would wipe "that time is no
+  // longer available" the moment the refusal asked for the refresh that proves
+  // it. Changing the service or the date clears it instead, which is the moment
+  // it actually stops being true.
   useEffect(() => {
     if (!serviceId || !date) {
       setSlots([]);
@@ -106,7 +124,6 @@ export function PortalRebookCard({
       return;
     }
     let cancelled = false;
-    setError(null);
     setPicked(null);
     setNoneInHorizon(false);
     startLoadingSlots(async () => {
@@ -126,7 +143,7 @@ export function PortalRebookCard({
     return () => {
       cancelled = true;
     };
-  }, [serviceId, date, router]);
+  }, [serviceId, date, slotReloadNonce, router]);
 
   function onNextAvailable() {
     if (!serviceId) return;
@@ -173,7 +190,21 @@ export function PortalRebookCard({
 
     const chosen = picked;
     startBooking(async () => {
-      const res = await bookAnotherAppointmentAction(fd);
+      let res: Awaited<ReturnType<typeof bookAnotherAppointmentAction>>;
+      try {
+        res = await bookAnotherAppointmentAction(fd);
+      } catch {
+        // THE LATCH MUST NOT SURVIVE A REJECTION. A transient network failure or
+        // an unexpected pre-commit exception rejects the action rather than
+        // returning a structured refusal. React clears the pending flag, so the
+        // button looks usable again — but without this the latch stays set and
+        // every later press returns at it, leaving the client unable to book
+        // until they reload the page. Nothing was committed on this path, so the
+        // honest answer is retryable copy.
+        submittedRef.current = false;
+        setError(PORTAL_REBOOK_GENERIC_REFUSAL);
+        return;
+      }
       if (!res.ok) {
         // A refusal is retryable, so the one-press latch is released.
         submittedRef.current = false;
@@ -183,11 +214,11 @@ export function PortalRebookCard({
         }
         setError(res.error);
         if (res.code === "slot_taken") {
-          // The time is gone: drop the stale pick and refresh the day rather
-          // than leaving a dead button selected.
+          // The time is gone. Ask the ONE loader above for fresh times against
+          // whatever is selected NOW, rather than loading them here against a
+          // selection that may already have moved.
           setPicked(null);
-          const refreshed = await loadPortalRebookSlotsAction({ serviceId, date });
-          if (refreshed.ok) setSlots(refreshed.slots);
+          setSlotReloadNonce((n) => n + 1);
         }
         return;
       }
@@ -275,8 +306,12 @@ export function PortalRebookCard({
         <select
           data-testid="portal-rebook-service"
           value={serviceId}
-          onChange={(e) => setServiceId(e.target.value)}
-          className="border border-neutral-300 px-3 py-2 text-[14px]"
+          disabled={booking}
+          onChange={(e) => {
+            setError(null);
+            setServiceId(e.target.value);
+          }}
+          className="border border-neutral-300 px-3 py-2 text-[14px] disabled:opacity-50"
         >
           {services.map((s) => (
             <option key={s.id} value={s.id}>
@@ -295,14 +330,18 @@ export function PortalRebookCard({
             value={date}
             min={minDate}
             max={maxDate}
-            onChange={(e) => setDate(e.target.value)}
-            className="border border-neutral-300 px-3 py-2 text-[14px]"
+            disabled={booking}
+            onChange={(e) => {
+              setError(null);
+              setDate(e.target.value);
+            }}
+            className="border border-neutral-300 px-3 py-2 text-[14px] disabled:opacity-50"
           />
           <button
             type="button"
             data-testid="portal-rebook-next-available"
             onClick={onNextAvailable}
-            disabled={findingNext}
+            disabled={findingNext || booking}
             className="border border-neutral-900 px-4 py-2 text-[12px] font-medium uppercase disabled:opacity-50"
             style={{ letterSpacing: "0.1em" }}
           >
@@ -345,6 +384,7 @@ export function PortalRebookCard({
                 data-testid="portal-rebook-slot"
                 data-slot-start={s.start}
                 aria-pressed={selected}
+                disabled={booking}
                 onClick={() => setPicked(s)}
                 className="border border-neutral-900 px-4 py-2 text-[13px]"
                 style={{

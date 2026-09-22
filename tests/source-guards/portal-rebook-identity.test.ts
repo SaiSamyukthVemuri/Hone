@@ -561,3 +561,125 @@ describe("P2-2. the post-commit workflow is the established one", () => {
     expect(tail).not.toMatch(/return\s+refuse\(/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The submit latch and the slot loader must not be able to strand the client.
+// ---------------------------------------------------------------------------
+
+describe("the one-press latch survives a REJECTED action", () => {
+  /** The whole `startBooking(async () => { ... })` body. */
+  const bookingBody = (() => {
+    const start = FORM_CODE.indexOf("startBooking(async () =>");
+    expect(start, "the booking transition must exist").toBeGreaterThan(-1);
+    return FORM_CODE.slice(start, FORM_CODE.indexOf("if (services.length === 0)", start));
+  })();
+
+  it("awaits the action inside a try", () => {
+    const call = bookingBody.indexOf("await bookAnotherAppointmentAction(fd)");
+    expect(call).toBeGreaterThan(-1);
+    expect(bookingBody.slice(0, call)).toMatch(/try\s*\{/);
+  });
+
+  it("releases the latch in the catch, not only on a structured refusal", () => {
+    // A transient network failure or an unexpected pre-commit exception REJECTS
+    // the action. React clears the pending flag, so the button looks usable
+    // again — but a latch left set makes every later press return immediately,
+    // and the client cannot book again until they reload the page.
+    const catchIdx = bookingBody.search(/\}\s*catch\s*(\([^)]*\))?\s*\{/);
+    expect(catchIdx, "the action call must be wrapped").toBeGreaterThan(-1);
+    const catchBody = bookingBody.slice(catchIdx, catchIdx + 500);
+    expect(catchBody).toMatch(/submittedRef\.current\s*=\s*false/);
+  });
+
+  it("the catch reports RETRYABLE copy — nothing was committed on that path", () => {
+    // Bounded to the catch's OWN block. A fixed character window runs past it
+    // into the refusal handling and the success path, so `setDone` would be
+    // found there and the rule would fail against correct code.
+    const catchIdx = bookingBody.search(/\}\s*catch\s*(\([^)]*\))?\s*\{/);
+    const end = bookingBody.indexOf("if (!res.ok)", catchIdx);
+    expect(end, "the catch must be followed by the refusal handling").toBeGreaterThan(catchIdx);
+    const catchBody = bookingBody.slice(catchIdx, end);
+    expect(catchBody).toMatch(/setError\(/);
+    // ...and it must not claim a booking happened.
+    expect(catchBody).not.toMatch(/setDone\(/);
+  });
+
+  it("NEGATIVE CONTROL: the rule fires on the un-wrapped shape", () => {
+    const naive = `startBooking(async () => {
+      const res = await bookAnotherAppointmentAction(fd);
+      if (!res.ok) { submittedRef.current = false; return; }
+    });`;
+    const call = naive.indexOf("await bookAnotherAppointmentAction(fd)");
+    expect(naive.slice(0, call)).not.toMatch(/try\s*\{/);
+    expect(naive.search(/\}\s*catch\s*(\([^)]*\))?\s*\{/)).toBe(-1);
+  });
+});
+
+describe("there is exactly ONE slot loader, and it reads CURRENT state", () => {
+  it("the action is called from one place only", () => {
+    // A second call sited in the submit handler closes over the service and date
+    // as they were when the submit STARTED. If the client changes either while
+    // the booking is in flight, writing that answer back shows one service's
+    // times under another's — and every press then submits a choice the server
+    // refuses.
+    const calls = [...FORM_CODE.matchAll(/loadPortalRebookSlotsAction\(/g)];
+    expect(calls, "only the effect may load slots").toHaveLength(1);
+  });
+
+  it("a refusal asks for a refresh through the nonce instead", () => {
+    expect(FORM_CODE).toMatch(/setSlotReloadNonce\(\s*\(n\)\s*=>\s*n\s*\+\s*1\s*\)/);
+    expect(FORM_CODE).toMatch(/\}, \[serviceId, date, slotReloadNonce, router\]\);/);
+  });
+
+  it("the loader keeps its cancellation flag, so a late answer is retired", () => {
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    expect(effect).toMatch(/let cancelled = false;/);
+    expect(effect).toMatch(/if \(cancelled\) return;/);
+    expect(effect).toMatch(/cancelled = true;/);
+  });
+
+  it("the loader does NOT clear the error it was asked to explain", () => {
+    // Clearing it here would wipe "that time is no longer available" at the
+    // moment the refusal asked for the refresh that proves it. The selection
+    // controls clear it instead — the moment it stops being true.
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    expect(effect).not.toMatch(/setError\(null\)/);
+    expect(FORM_CODE).toMatch(/onChange=\{\(e\) => \{\s*setError\(null\);/);
+  });
+
+  it("NEGATIVE CONTROL: two call sites would fail the single-loader rule", () => {
+    const twoCalls = "loadPortalRebookSlotsAction({a});\nloadPortalRebookSlotsAction({b});";
+    expect([...twoCalls.matchAll(/loadPortalRebookSlotsAction\(/g)]).toHaveLength(2);
+  });
+});
+
+describe("the selection cannot move underneath an in-flight booking", () => {
+  const CONTROLS = [
+    ["service select", 'data-testid="portal-rebook-service"'],
+    ["date input", 'data-testid="portal-rebook-date"'],
+    ["next-available button", 'data-testid="portal-rebook-next-available"'],
+    ["slot buttons", 'data-testid="portal-rebook-slot"'],
+  ] as const;
+
+  for (const [label, testid] of CONTROLS) {
+    it(`${label} is inert while booking`, () => {
+      const idx = FORM_CODE.indexOf(testid);
+      expect(idx, label).toBeGreaterThan(-1);
+      const element = FORM_CODE.slice(idx, idx + 420);
+      expect(element, `${label} must carry disabled={... booking}`).toMatch(
+        /disabled=\{[^}]*\bbooking\b[^}]*\}/,
+      );
+    });
+  }
+
+  it("NEGATIVE CONTROL: the rule fires on a control with no disabled prop", () => {
+    const bare = 'data-testid="portal-rebook-service"\n value={serviceId}\n onChange={x}';
+    expect(bare).not.toMatch(/disabled=\{[^}]*\bbooking\b[^}]*\}/);
+  });
+});
