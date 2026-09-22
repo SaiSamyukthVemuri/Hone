@@ -1116,6 +1116,40 @@ describe("the card does not claim an empty horizon over bookable times", () => {
     expect(effect).toMatch(/setNoneInHorizon\(false\)/);
   });
 
+  it("the claim requires a SUCCESSFULLY READ day, not merely an empty list", () => {
+    // `slots.length === 0` has two causes — genuinely empty, or a failed read.
+    // Branching on the list alone let a failed current-day read plus a null
+    // forward search announce that the whole window is empty.
+    expect(FORM_CODE).toMatch(/\{noneInHorizon && slotLoad === "loaded" &&/);
+  });
+
+  it("NEGATIVE CONTROL: gating on noneInHorizon alone fails that rule", () => {
+    expect("{noneInHorizon && (").not.toMatch(/\{noneInHorizon && slotLoad === "loaded" &&/);
+  });
+
+  it("INVARIANT: every conclusion drawn from `slots.length` sits inside a load gate", () => {
+    // This class has now recurred twice — once for the no-times copy, once for
+    // the horizon copy — so it is pinned as a rule rather than as two
+    // instances. An empty list means "this day is empty" ONLY when the day was
+    // actually read; otherwise it means "we do not know", and any sentence
+    // built on it is a guess presented as a fact.
+    const uses = [...FORM_CODE.matchAll(/slots\.length/g)].map((m) => m.index ?? -1);
+    expect(uses.length, "there should be conclusions to check").toBeGreaterThan(0);
+    for (const idx of uses) {
+      const context = FORM_CODE.slice(Math.max(0, idx - 400), idx);
+      expect(
+        context,
+        `a slots.length conclusion at offset ${idx} is not inside a slotLoad gate`,
+      ).toMatch(/slotLoad/);
+    }
+  });
+
+  it("NEGATIVE CONTROL: the invariant fires on an ungated conclusion", () => {
+    const naive = "{noneInHorizon && (<p>{slots.length > 0 ? 'later' : 'none'}</p>)}";
+    const idx = naive.indexOf("slots.length");
+    expect(naive.slice(Math.max(0, idx - 400), idx)).not.toMatch(/slotLoad/);
+  });
+
   it("NEGATIVE CONTROL: one unconditional sentence fails the branching rule", () => {
     const naive = "{noneInHorizon && (<p>No open times left in the booking window.</p>)}";
     expect(naive).not.toMatch(/slots\.length > 0/);

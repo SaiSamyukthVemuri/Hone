@@ -466,7 +466,18 @@ export function PortalRebookCard({
           (app/book/[slug]/PublicBookForm.tsx), which already distinguishes
           these two states. A second voice for the same fact is how the two
           surfaces start disagreeing. */}
-      {noneInHorizon && (
+      {/* AND THE CONCLUSION NEEDS A SUCCESSFULLY READ DAY TO STAND ON.
+          `slots.length === 0` has the SAME two causes it had one paragraph
+          above: the day is genuinely empty, or its read failed. Branching the
+          horizon copy on the list alone therefore reintroduced the very defect
+          the `slotLoad` state was added to kill — a failed current-day read
+          followed by a null forward search announced that the whole booking
+          window is empty, on the strength of a day nobody managed to read.
+
+          So the horizon claim renders only from a LOADED day. After a failed
+          read the error line already says what happened, which is the true
+          thing to say; characterising the window is not available to us. */}
+      {noneInHorizon && slotLoad === "loaded" && (
         <p
           data-testid="portal-rebook-none-in-horizon"
           data-horizon-state={slots.length > 0 ? "no-later" : "none-in-window"}
