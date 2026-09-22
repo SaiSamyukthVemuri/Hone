@@ -732,19 +732,27 @@ describe("the selection cannot move underneath an in-flight booking", () => {
       const idx = FORM_CODE.indexOf(testid);
       expect(idx, label).toBeGreaterThan(-1);
       const element = FORM_CODE.slice(idx, idx + 420);
-      expect(element, `${label} must carry disabled={inFlight}`).toMatch(
-        /disabled=\{inFlight\}/,
+      // `inFlight` must be PART of the condition; a control may carry extra
+      // conditions of its own (Next available is also disabled with no date).
+      expect(element, `${label} must be disabled while inFlight`).toMatch(
+        /disabled=\{[^}]*\binFlight\b[^}]*\}/,
       );
     });
   }
 
   it("NEGATIVE CONTROL: the rule fires on a control with no disabled prop", () => {
     const bare = 'data-testid="portal-rebook-service"\n value={serviceId}\n onChange={x}';
-    expect(bare).not.toMatch(/disabled=\{inFlight\}/);
+    expect(bare).not.toMatch(/disabled=\{[^}]*\binFlight\b[^}]*\}/);
   });
 
   it("NEGATIVE CONTROL: a booking-only binding no longer satisfies the rule", () => {
-    expect('disabled={booking}').not.toMatch(/disabled=\{inFlight\}/);
+    expect('disabled={booking}').not.toMatch(/disabled=\{[^}]*\binFlight\b[^}]*\}/);
+  });
+
+  it("Next available is ALSO disabled when there is no date to search from", () => {
+    const idx = FORM_CODE.indexOf('data-testid="portal-rebook-next-available"');
+    const element = FORM_CODE.slice(idx, idx + 420);
+    expect(element).toMatch(/disabled=\{inFlight \|\| date\.length === 0\}/);
   });
 });
 
@@ -759,7 +767,26 @@ describe("a superseded next-available answer is discarded whole", () => {
     expect(handler).toMatch(/const asked = \{ serviceId, date \};/);
     // ...and the request is built from the capture, not from live state.
     expect(handler).toMatch(/serviceId: asked\.serviceId/);
-    expect(handler).toMatch(/addOneDay\(asked\.date\)/);
+    expect(handler).toMatch(/fromDate,/);
+  });
+
+  it("refuses to search when there is no next day to search from", () => {
+    // The date input can be CLEARED. The old inline helper answered
+    // "1900-01-02" for an empty string — a confident, silently wrong date the
+    // server then clamped to today.
+    expect(handler).toMatch(/const fromDate = nextCalendarDay\(date\);/);
+    const guard = handler.search(/if \(fromDate === null\) return;/);
+    expect(guard, "the null guard must exist").toBeGreaterThan(-1);
+    // It must precede the request and any state write.
+    expect(handler.indexOf("startFindingNext(")).toBeGreaterThan(guard);
+  });
+
+  it("the date step is a TESTABLE module, not a helper buried in the component", () => {
+    // It had two wrong answers that no source-regex assertion would have
+    // caught; both are now pinned by execution in
+    // tests/lib/portal/rebook-dates.test.ts.
+    expect(FORM_CODE).toContain('from "@/lib/portal/rebook-dates"');
+    expect(FORM_CODE).not.toMatch(/function addOneDay/);
   });
 
   it("compares against the CURRENT selection and returns before applying", () => {

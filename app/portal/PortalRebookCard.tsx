@@ -7,6 +7,7 @@ import {
   type ConfirmationEmailStatus,
 } from "@/lib/booking/confirmation-presentation";
 import { PORTAL_REBOOK_GENERIC_REFUSAL } from "@/lib/portal/rebook-copy";
+import { nextCalendarDay } from "@/lib/portal/rebook-dates";
 import {
   bookAnotherAppointmentAction,
   loadPortalRebookNextAvailableAction,
@@ -187,6 +188,10 @@ export function PortalRebookCard({
 
   function onNextAvailable() {
     if (!serviceId) return;
+    // NOTHING SENSIBLE TO SEARCH FROM. The control is disabled in this state,
+    // so this is the second line of defence rather than the first.
+    const fromDate = nextCalendarDay(date);
+    if (fromDate === null) return;
     setError(null);
     setNoneInHorizon(false);
     // The selection this search is ABOUT, captured before it starts.
@@ -203,7 +208,7 @@ export function PortalRebookCard({
           serviceId: asked.serviceId,
           // Walk forward from the day AFTER the one on screen, so pressing this
           // repeatedly keeps advancing instead of re-finding the same date.
-          fromDate: addOneDay(asked.date),
+          fromDate,
         });
       } catch {
         rejected = true;
@@ -407,7 +412,7 @@ export function PortalRebookCard({
             type="button"
             data-testid="portal-rebook-next-available"
             onClick={onNextAvailable}
-            disabled={inFlight}
+            disabled={inFlight || date.length === 0}
             className="border border-neutral-900 px-4 py-2 text-[12px] font-medium uppercase disabled:opacity-50"
             style={{ letterSpacing: "0.1em" }}
           >
@@ -504,11 +509,4 @@ export function PortalRebookCard({
       </button>
     </form>
   );
-}
-
-/** Next calendar day for a YYYY-MM-DD string, in that same local calendar. */
-function addOneDay(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const next = new Date(Date.UTC(y, (m ?? 1) - 1, (d ?? 1) + 1));
-  return next.toISOString().slice(0, 10);
 }
