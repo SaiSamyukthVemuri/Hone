@@ -65,6 +65,8 @@ const smsCalls: Array<{
 /** Post-commit effects that should throw, to prove containment. */
 const throwIn = new Set<string>();
 const revalidated: string[] = [];
+/** The date window handed to the bounded range loader. */
+let scannedDates: string[] = [];
 
 const scenario = {
   session: {
@@ -75,6 +77,7 @@ const scenario = {
   } as Session | null,
   clientArchived: false,
   timezone: "UTC",
+  horizonMonths: 3,
   clientEmail: "returning@example.test" as string | null,
   clientPhone: "+15550100" as string | null,
   smsConsentAt: null as string | null,
@@ -157,7 +160,7 @@ function resolveRow(table: string, f: Record<string, unknown>) {
         timezone: scenario.timezone,
         default_appointment_duration_minutes: 45,
         buffer_minutes: 0,
-        public_booking_horizon_months: 3,
+        public_booking_horizon_months: scenario.horizonMonths,
         send_confirmation_emails: scenario.sendConfirmationEmails,
         show_treatment_time_to_clients: false,
         notify_practitioner_on_new_booking: scenario.notifyPractitioner,
@@ -300,6 +303,16 @@ vi.mock("@/lib/booking/slots", async (importOriginal) => {
     },
   };
 });
+vi.mock("@/lib/booking/public-slot-range", () => ({
+  loadPublicSlotsByDate: async (
+    _admin: unknown,
+    _ctx: unknown,
+    dates: readonly string[],
+  ) => {
+    scannedDates = [...dates];
+    return { ok: true, byDate: [], scanned: [...dates], skippedOutsideHorizon: [] };
+  },
+}));
 vi.mock("@/lib/sms/send-appointment", () => ({
   sendBookingConfirmationSmsToClient: async (p: {
     appointmentId: string;
@@ -350,9 +363,11 @@ vi.mock("@/lib/notifications/practitioner-notifications", () => ({
   },
 }));
 
-const { bookAnotherAppointmentAction, loadPortalRebookSlotsAction } = await import(
-  "@/app/portal/rebook-actions"
-);
+const {
+  bookAnotherAppointmentAction,
+  loadPortalRebookSlotsAction,
+  loadPortalRebookNextAvailableAction,
+} = await import("@/app/portal/rebook-actions");
 
 /** The booking form. `over` adds forged fields; it never removes a real one. */
 function form(over: Record<string, string> = {}) {
@@ -374,6 +389,7 @@ beforeEach(() => {
   emails.length = 0;
   notifications.length = 0;
   slotCalls.length = 0;
+  scannedDates = [];
   smsCalls.length = 0;
   revalidated.length = 0;
   throwIn.clear();
@@ -387,6 +403,7 @@ beforeEach(() => {
     },
     clientArchived: false,
     timezone: "UTC",
+    horizonMonths: 3,
     clientEmail: "returning@example.test",
     clientPhone: "+15550100",
     smsConsentAt: null,
@@ -1220,5 +1237,59 @@ describe("P1-1. services are read through the portal-authorized admin path", () 
     expect(out.code).toBe("unavailable");
     expect(out.error).toBe(PORTAL_REBOOK_GENERIC_REFUSAL);
     expect(commits()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The next-available scan covers the WHOLE window, including its last day.
+// ---------------------------------------------------------------------------
+
+describe("the bounded next-available scan reaches the end of the horizon", () => {
+  it("scans today THROUGH the last bookable day at the widest horizon", async () => {
+    // 12 months is the widest preset: maxPublicBookingHorizonDays() is 12 * 31 =
+    // 372, and a window running from today through today+372 holds 373 dates
+    // INCLUSIVE. A loop guard of exactly 372 would drop the last one, and the
+    // action would answer "nothing left" for a studio whose only free slot sits
+    // on it. The public route carries the same slack for the same reason.
+    scenario.horizonMonths = 12;
+    const today = todayInTz(scenario.timezone);
+    const out = await loadPortalRebookNextAvailableAction({
+      serviceId: SERVICE_ID,
+      fromDate: today,
+    });
+    expect(out.ok).toBe(true);
+    expect(scannedDates[0]).toBe(today);
+    expect(scannedDates[scannedDates.length - 1]).toBe(addDays(today, 372));
+    expect(scannedDates).toHaveLength(373);
+  });
+
+  it("NON-VACUITY: a 372-date cap would have dropped the last day", () => {
+    const today = todayInTz(scenario.timezone);
+    // The exact off-by-one this guard exists to prevent.
+    expect(scannedDates.slice(0, 372)).not.toContain(addDays(today, 372));
+  });
+
+  it("clamps a past fromDate up to today rather than scanning backwards", async () => {
+    const today = todayInTz(scenario.timezone);
+    await loadPortalRebookNextAvailableAction({
+      serviceId: SERVICE_ID,
+      fromDate: addDays(today, -30),
+    });
+    expect(scannedDates[0]).toBe(today);
+  });
+
+  it("answers `unavailable`, never `no availability`, when the range read fails", async () => {
+    const mod = await import("@/lib/booking/public-slot-range");
+    const spy = vi
+      .spyOn(mod, "loadPublicSlotsByDate")
+      .mockResolvedValue({ ok: false, error: "read failed" } as never);
+    const out = await loadPortalRebookNextAvailableAction({
+      serviceId: SERVICE_ID,
+      fromDate: todayInTz(scenario.timezone),
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("unavailable");
+    spy.mockRestore();
   });
 });

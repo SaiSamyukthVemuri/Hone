@@ -390,12 +390,16 @@ export async function loadPortalRebookNextAvailableAction(params: {
 
   // A LOOP GUARD, not a cost control: the bulk pass below bounds the database
   // work. This only stops a date-arithmetic bug from building an endless array.
+  //
+  // THE SLACK IS LOAD-BEARING, and it is the same slack the public route
+  // carries. `maxPublicBookingHorizonDays()` is 372 (12 * 31), but a window
+  // running from today THROUGH today+372 holds 373 dates inclusive — so a bound
+  // of exactly 372 silently drops the LAST bookable day, and "Next available"
+  // would answer "nothing left" for a studio whose only free slot is on it.
+  const SCAN_CAP = maxPublicBookingHorizonDays() + 14;
   const dates: string[] = [];
   let cursor = startDate;
-  while (
-    cursor <= horizon.maxDateStr &&
-    dates.length < maxPublicBookingHorizonDays()
-  ) {
+  while (cursor <= horizon.maxDateStr && dates.length < SCAN_CAP) {
     dates.push(cursor);
     cursor = addDays(cursor, 1);
   }
