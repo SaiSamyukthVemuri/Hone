@@ -45,16 +45,32 @@ const codeOnly = (source: string) =>
 
 const CODE = codeOnly(RAW);
 
-/** Does this subtree mention the identifier `name`? */
-function mentions(node: ts.Node, name: string): boolean {
-  let found = false;
-  const walk = (x: ts.Node) => {
-    if (found) return;
-    if (ts.isIdentifier(x) && x.text === name) found = true;
-    else ts.forEachChild(x, walk);
-  };
-  walk(node);
-  return found;
+/**
+ * Does this expression, when TRUTHY, require `name` to be truthy?
+ *
+ * MENTIONING IS NOT REQUIRING. An earlier version asked only whether the
+ * identifier appeared somewhere in the gating subtree, which accepts the exact
+ * inversions the rule exists to forbid:
+ *
+ *     !dayWasRead && slots.length === 0        // concludes after a FAILED read
+ *     !dayWasRead ? slots.length === 0 : null  // same, via the true branch
+ *
+ * So the check is on IMPLICATION, and deliberately conservative: only a bare
+ * identifier, or a conjunction one of whose sides requires it, counts. A
+ * negation, a disjunction, or any comparison is rejected — if a future gate
+ * needs a shape this does not recognise, it fails CLOSED and someone has to
+ * teach the rule about it, which is the safe direction for a rule of this kind.
+ */
+function requiresTrue(node: ts.Node, name: string): boolean {
+  if (ts.isParenthesizedExpression(node)) return requiresTrue(node.expression, name);
+  if (ts.isIdentifier(node)) return node.text === name;
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+  ) {
+    return requiresTrue(node.left, name) || requiresTrue(node.right, name);
+  }
+  return false;
 }
 
 function parse(source: string, kind: ts.ScriptKind): ts.SourceFile {
@@ -101,13 +117,13 @@ function ungatedSlotLengthUses(
         if (
           ts.isBinaryExpression(q) &&
           q.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
-          mentions(q.left, predicate) &&
+          requiresTrue(q.left, predicate) &&
           within(sf, node, q.right)
         ) {
           gated = true;
         } else if (
           ts.isConditionalExpression(q) &&
-          mentions(q.condition, predicate) &&
+          requiresTrue(q.condition, predicate) &&
           within(sf, node, q.whenTrue)
         ) {
           gated = true;
@@ -145,15 +161,21 @@ function callsOutsideTry(
       ts.isIdentifier(node.expression) &&
       node.expression.text === callee
     ) {
+      // THE AWAIT MUST CONSUME THIS CALL, not merely enclose it. Accepting any
+      // lexical await ancestor lets `await ignore(action(args))` through: if
+      // `ignore` does not adopt its argument, the action's promise rejects on
+      // its own schedule, long after the catch stopped being relevant.
+      const awaitedDirectly =
+        node.parent !== undefined &&
+        ts.isAwaitExpression(node.parent) &&
+        node.parent.expression === node;
       let protectedCall = false;
-      let awaited = false;
       for (let q: ts.Node | undefined = node.parent; q && !protectedCall; q = q.parent) {
-        if (ts.isAwaitExpression(q)) awaited = true;
         if (
           ts.isTryStatement(q) &&
           within(sf, node, q.tryBlock) &&
           q.catchClause !== undefined &&
-          awaited
+          awaitedDirectly
         ) {
           protectedCall = true;
         }
@@ -195,11 +217,15 @@ function callsNotWrappedBy(
           ts.isCallExpression(q) &&
           ts.isIdentifier(q.expression) &&
           q.expression.text === wrapper &&
-          q.arguments.some(
-            (a) =>
-              (ts.isArrowFunction(a) || ts.isFunctionExpression(a)) &&
-              within(sf, node, a),
-          )
+          // THE CALLBACK IS THE THIRD ARGUMENT, and it is the only one that
+          // runs. `postCommit("e", () => effect(), () => undefined)` puts the
+          // effect in the FALLBACK VALUE — type-valid, never executed, and the
+          // established notification silently stops happening. "Some function
+          // argument" accepted it.
+          q.arguments.length > 2 &&
+          (ts.isArrowFunction(q.arguments[2]) ||
+            ts.isFunctionExpression(q.arguments[2])) &&
+          within(sf, node, q.arguments[2])
         ) {
           deferred = true;
         }
@@ -784,6 +810,19 @@ describe("P2-2. the post-commit workflow is the established one", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("NEGATIVE CONTROL: the effect in the FALLBACK argument is not protected", () => {
+    // postCommit runs only its third argument. Put in the fallback value the
+    // effect is type-valid, never executed, and the established notification
+    // silently stops happening — which "some function argument" accepted.
+    const wrongArg = `async function f() {
+      await postCommit<unknown>("e", () => sendBookingConfirmationToClient(args), () => undefined);
+    }`;
+    expect(
+      callsNotWrappedBy(wrongArg, "sendBookingConfirmationToClient", "postCommit").length,
+      "only the callback argument runs",
+    ).toBeGreaterThan(0);
+  });
+
   it("POSITIVE CONTROL: the generic call form counts as wrapped", () => {
     const good = `async function f() {
       await postCommit<{ ok: boolean }>("e", { ok: false }, () =>
@@ -1122,6 +1161,18 @@ describe("every action call is contained, not just the booking", () => {
     expect(callsOutsideTry(inCatch, "bookAnotherAppointmentAction").length).toBeGreaterThan(0);
   });
 
+  it("NEGATIVE CONTROL: an await that does not CONSUME the call is found", () => {
+    // `ignore` may not adopt its argument, in which case the action's promise
+    // rejects on its own schedule — after the catch stopped being relevant.
+    const notConsumed = `async function f() {
+      try { await ignore(bookAnotherAppointmentAction(fd)); } catch { return null; }
+    }`;
+    expect(
+      callsOutsideTry(notConsumed, "bookAnotherAppointmentAction").length,
+      "a lexical await ancestor is not the same as consuming the promise",
+    ).toBeGreaterThan(0);
+  });
+
   it("POSITIVE CONTROL: a genuinely wrapped call passes", () => {
     const good = `async function f() {
       try { const r = await bookAnotherAppointmentAction(fd); return r; } catch { return null; }
@@ -1455,6 +1506,29 @@ describe("the card does not claim an empty horizon over bookable times", () => {
       return <>{dayWasRead ? null : <p>{slots.length === 0 ? "none" : "some"}</p>}</>;
     }`;
     expect(ungatedSlotLengthUses(inverted).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: a NEGATED predicate is not a gate", () => {
+    // Draws the conclusion precisely after an unsuccessful read. Asking whether
+    // the subtree MENTIONS the predicate accepted this.
+    const negatedAnd = `export function C() {
+      return <>{!dayWasRead && <p>{slots.length === 0 ? "none" : "some"}</p>}</>;
+    }`;
+    expect(ungatedSlotLengthUses(negatedAnd).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: the TRUE branch of a NEGATED condition is not a gate", () => {
+    const negatedTernary = `export function C() {
+      return <>{!dayWasRead ? <p>{slots.length === 0 ? "none" : "some"}</p> : null}</>;
+    }`;
+    expect(ungatedSlotLengthUses(negatedTernary).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: a comparison against false is not a gate", () => {
+    const compared = `export function C() {
+      return <>{dayWasRead === false && <p>{slots.length === 0 ? "a" : "b"}</p>}</>;
+    }`;
+    expect(ungatedSlotLengthUses(compared).length).toBeGreaterThan(0);
   });
 
   it("NEGATIVE CONTROL: `||` is NOT a gate", () => {
