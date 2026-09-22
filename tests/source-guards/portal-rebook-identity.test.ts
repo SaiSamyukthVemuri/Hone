@@ -968,20 +968,40 @@ describe("a failed read is never rendered as an empty day", () => {
 // ---------------------------------------------------------------------------
 
 describe("the confirmation does not outrun the page behind it", () => {
-  it("refreshes the route after a successful booking", () => {
-    // The action revalidates /portal, which invalidates the cache but does NOT
-    // re-render the page already on screen. Without this the Appointments
-    // section can read "No upcoming appointments" directly beneath a
-    // confirmation saying the appointment is listed there.
-    const done = FORM_CODE.indexOf("setDone({");
-    expect(done).toBeGreaterThan(-1);
-    const after = FORM_CODE.slice(done, done + 600);
-    expect(after).toMatch(/router\.refresh\(\)/);
+  const SPEC = read("e2e/portal-rebook.spec.ts");
+
+  it("the journey asserts the list inside the APPOINTMENTS section, not page-wide", () => {
+    // The confirmation card renders the service name in its own paragraph, and
+    // again as an <option> in its service select. A page-wide
+    // `getByText(serviceName)` therefore passes while the list underneath is
+    // still empty — it matches the card. This is the anti-vacuity rule for the
+    // one assertion that closes the journey.
+    expect(SPEC).toMatch(
+      /const appointments = page\s*\n?\s*\.locator\("section"\)/,
+    );
+    expect(SPEC).toMatch(/appointments\.getByText\(seed\.serviceName\)/);
+    expect(SPEC).toMatch(/appointments\.getByText\("No upcoming appointments"\)/);
   });
 
-  it("NEGATIVE CONTROL: setting the success state alone does not satisfy it", () => {
-    const naive = "setDone({ startsAt, serviceName });\n return;";
-    expect(naive).not.toMatch(/router\.refresh\(\)/);
+  it("the SCOPE ITSELF is pinned, because `section` also matches the page wrapper", () => {
+    // The outer page <section> contains BOTH the card and the list, so a
+    // locator that silently resolved to it would make the assertions above
+    // pass on the confirmation's own text. Proving the confirmation is not
+    // inside the locator is what makes the scope real.
+    expect(SPEC).toMatch(
+      /appointments\.getByTestId\("portal-rebook-confirmed"\)\)\.toHaveCount\(0\)/,
+    );
+  });
+
+  it("NEGATIVE CONTROL: a page-wide assertion does not satisfy the rule", () => {
+    const naive = 'await expect(page.getByText(seed.serviceName)).toBeVisible();';
+    expect(naive).not.toMatch(/appointments\.getByText\(seed\.serviceName\)/);
+  });
+
+  it("the journey does not reload before asserting", () => {
+    // A reload makes the assertion agree with the page whatever the page did.
+    const body = SPEC.slice(SPEC.indexOf("THE JOURNEY CLOSES"));
+    expect(body).not.toMatch(/await page\.reload\(\)/);
   });
 
   it("the submit control obeys the same in-flight window as the others", () => {

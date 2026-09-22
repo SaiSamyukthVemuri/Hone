@@ -182,16 +182,24 @@ test.describe("portal rebooking", () => {
     // service select, so a page-wide `getByText(serviceName)` passes while the
     // list underneath is still empty — it was matching the card, not the list.
     //
-    // What carries this is `revalidatePath("/portal")` inside the action: a
-    // Server Action that revalidates the route it was invoked from returns the
-    // re-rendered payload with its response. Removing that revalidate turns
-    // these two assertions red; removing `router.refresh()` does not, which is
-    // why the card no longer calls it.
+    // WHAT CARRIES THIS, MEASURED RATHER THAN ASSUMED: Next re-renders the
+    // route a Server Action was invoked from when the action completes. The
+    // assertions below stay green with `router.refresh()` removed AND with
+    // `revalidatePath("/portal")` removed, so neither call is load-bearing for
+    // this property — which is why the card no longer calls the first, and why
+    // this spec does not claim to prove the second.
     await expect(page.getByTestId("portal-rebook-confirmed")).toBeVisible();
     const appointments = page
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: "Next appointment" }) })
       .last();
+    // THE SCOPE IS PINNED BEFORE IT IS TRUSTED. `section` matches the page
+    // wrapper too, which contains BOTH the card and the list — so a locator
+    // that silently resolved to it would make the two assertions below pass on
+    // the confirmation's own text. Proving the confirmation is NOT inside this
+    // locator is what makes them about the list.
+    await expect(appointments.getByText("You’re booked.")).toHaveCount(0);
+    await expect(appointments.getByTestId("portal-rebook-confirmed")).toHaveCount(0);
     await expect(appointments.getByText("No upcoming appointments")).toHaveCount(0);
     await expect(appointments.getByText(seed.serviceName).first()).toBeVisible();
   });

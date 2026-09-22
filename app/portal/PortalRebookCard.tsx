@@ -316,20 +316,23 @@ export function PortalRebookCard({
       });
       // NO `router.refresh()` HERE, AND THAT IS MEASURED RATHER THAN ASSUMED.
       //
-      // A review finding said this was needed: that `revalidatePath("/portal")`
-      // invalidates the cache without re-rendering the page the client is
-      // already looking at, leaving the Appointments section able to read "No
-      // upcoming appointments" beneath a confirmation saying the opposite. That
-      // is not what happens. A Server Action that revalidates the route it was
-      // invoked from returns the re-rendered RSC payload WITH its response, and
-      // the client applies it — so the list below is already current by the time
-      // this state is set.
+      // A review finding said one was needed: that the Appointments section
+      // below would stay stale and could read "No upcoming appointments"
+      // beneath a confirmation saying the opposite. It does not. Next re-renders
+      // the route a Server Action was invoked from when that action completes,
+      // and the client applies the returned payload — so the list is already
+      // current by the time this state is set.
       //
-      // Proven by removing the refresh and re-running the browser journey: the
-      // "No upcoming appointments" assertion still passes, and it fails when
-      // `revalidatePath("/portal")` is removed from the action instead. The
-      // revalidate is what carries this, so the refresh was a second round trip
-      // buying nothing.
+      // MEASURED, in the browser journey, with the appointments assertions
+      // scoped to the list and the scope itself pinned: the list is current
+      // with `router.refresh()` removed, AND with `revalidatePath("/portal")`
+      // removed as well. Neither call is what carries it. The refresh was a
+      // second round trip buying nothing, so it is gone.
+      //
+      // `revalidatePath` STAYS, for what it actually does: invalidating the
+      // cached route for OTHER entry points — a later soft navigation to
+      // /portal, and the studio-side /calendar surfaces. This journey does not
+      // depend on it, and no longer claims to prove it.
     });
   }
 
