@@ -1,3 +1,5 @@
+import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
+
 // EMERG-PORTAL-REBOOK-01 — the refusal vocabulary for portal-authenticated
 // rebooking, as data rather than as string literals scattered through a
 // "use server" module.
@@ -38,7 +40,13 @@ export type PortalRebookRefusalCode =
   /** The chosen time is gone, in the past, or was never an offered slot. */
   | "slot_taken"
   /** The chosen date lies outside the studio's public booking horizon. */
-  | "outside_window";
+  | "outside_window"
+  /**
+   * The studio is not publicly bookable at all — no active service, or no open
+   * studio-wide weekly day. Structural, not transient, so the copy must not
+   * invite a retry in a moment.
+   */
+  | "studio_unavailable";
 
 /**
  * Shown when the portal session is absent, expired or revoked.
@@ -76,6 +84,16 @@ export const PORTAL_REBOOK_SLOT_TAKEN =
 export const PORTAL_REBOOK_OUTSIDE_WINDOW =
   "That date is outside the booking window.";
 
+/**
+ * Shown when the studio is not publicly bookable.
+ *
+ * RE-EXPORTED FROM THE PUBLIC SURFACE'S OWN CONSTANT rather than restated. The
+ * two surfaces share one readiness predicate, so they must not describe the same
+ * structural state in two different voices — and a second copy of the sentence
+ * is how that drift starts.
+ */
+export const PORTAL_REBOOK_STUDIO_UNAVAILABLE = UNAVAILABLE_PUBLIC_BOOKING_MESSAGE;
+
 /** Every refusal sentence, for tests that assert none of them leaks a code. */
 export const PORTAL_REBOOK_REFUSALS: Readonly<
   Record<PortalRebookRefusalCode, string>
@@ -85,4 +103,5 @@ export const PORTAL_REBOOK_REFUSALS: Readonly<
   service_unavailable: PORTAL_REBOOK_SERVICE_UNAVAILABLE,
   slot_taken: PORTAL_REBOOK_SLOT_TAKEN,
   outside_window: PORTAL_REBOOK_OUTSIDE_WINDOW,
+  studio_unavailable: PORTAL_REBOOK_STUDIO_UNAVAILABLE,
 });

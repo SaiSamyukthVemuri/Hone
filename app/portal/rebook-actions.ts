@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPortalSession } from "@/lib/portal/session";
 import {
   getPortalBookableServices,
+  getPortalBookingReadiness,
   pickPortalBookableService,
   type PortalBookableService,
 } from "@/lib/portal/queries";
@@ -45,6 +46,7 @@ import {
   PORTAL_REBOOK_SERVICE_UNAVAILABLE,
   PORTAL_REBOOK_SESSION_EXPIRED,
   PORTAL_REBOOK_SLOT_TAKEN,
+  PORTAL_REBOOK_STUDIO_UNAVAILABLE,
   type PortalRebookRefusalCode,
 } from "@/lib/portal/rebook-copy";
 import type { Studio } from "@/lib/types/database";
@@ -250,6 +252,28 @@ async function resolvePortalBookingContext(): Promise<
       studioId,
     });
     return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
+  }
+
+  // PUBLIC-READINESS GATE, AND IT LIVES HERE SO NO ACTION CAN FORGET IT.
+  //
+  // `getAvailableSlots` resolves a day as `override ?? weekly default`, so a
+  // ONE-OFF open override yields offerable times for a studio with NO open
+  // studio-wide weekly day — while `create_public_appointment` refuses that
+  // studio outright with `public_booking_unavailable`. Discovery would then
+  // hand the client buttons that can never book. The public slot and
+  // next-available actions apply this same gate before generating anything;
+  // putting it in the shared resolver means every portal action inherits it,
+  // including any added later.
+  //
+  // A FAILED READ IS NOT A CLOSED STUDIO: null lands on the generic refusal,
+  // never on "this studio is not taking bookings".
+  const bookable = await getPortalBookingReadiness(studioId);
+  if (bookable === null) {
+    logRebookError("portal_rebook_readiness_read_failed", { studioId });
+    return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
+  }
+  if (!bookable) {
+    return refuse("studio_unavailable", PORTAL_REBOOK_STUDIO_UNAVAILABLE);
   }
 
   return {

@@ -11,6 +11,7 @@ import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { todayInTz } from "@/lib/booking/tz";
 import {
   getPortalBookableServices,
+  getPortalBookingReadiness,
   getPortalBookingWindow,
   getPortalIdentity,
   getPortalIntakeStatus,
@@ -320,14 +321,21 @@ export default async function PortalHomePage() {
   // EMPTY LIST here rather than an error — which is how a returning client ends
   // up shown a booking surface with nothing in it. See
   // lib/portal/queries.ts:getPortalBookableServices.
-  const [rebookServices, bookingWindow] = await Promise.all([
+  const [rebookServices, bookingWindow, rebookBookable] = await Promise.all([
     getPortalBookableServices(session.studioId),
     getPortalBookingWindow(session.studioId),
+    // The SAME public-readiness predicate the actions and the appointment
+    // command enforce. Without it this page can render a booking card for a
+    // studio whose every offered time the command would refuse — the card would
+    // load, show times, and fail on submit. Asking here means the absence is
+    // stated up front instead.
+    getPortalBookingReadiness(session.studioId),
   ]);
   // NULL IS A FAILED READ, NOT AN EMPTY MENU. The two states render different
   // copy below, because "this studio offers nothing" and "we could not ask" are
   // different facts and only the first may be shown as an absence.
-  const rebookReadFailed = rebookServices == null || bookingWindow == null;
+  const rebookReadFailed =
+    rebookServices == null || bookingWindow == null || rebookBookable == null;
   const rebookTimezone = bookingWindow?.timezone ?? studio.timezone;
   const rebookHorizon = horizonRangeInStudioTz(
     rebookTimezone,
@@ -435,7 +443,7 @@ export default async function PortalHomePage() {
                 We couldn&rsquo;t load booking right now. Please try again in a
                 moment, or contact {studio.name}.
               </p>
-            ) : rebookServices.length === 0 ? (
+            ) : !rebookBookable || rebookServices.length === 0 ? (
               <p
                 data-testid="portal-rebook-no-services"
                 className="text-[13px]"

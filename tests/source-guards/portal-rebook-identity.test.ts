@@ -368,6 +368,17 @@ describe("M. the booking door renders independently of the pending-actions zone"
     );
   });
 
+  it("the page does not render a card for a studio the gate would refuse", () => {
+    // Otherwise the card loads, shows times, and fails on submit — the same
+    // "button that can never book" the action-level gate exists to prevent.
+    expect(portalPage).toContain("getPortalBookingReadiness");
+    expect(portalPage).toMatch(/!rebookBookable \|\| rebookServices\.length === 0/);
+  });
+
+  it("a failed READINESS read is a failed read, not a closed studio", () => {
+    expect(portalPage).toMatch(/rebookBookable == null/);
+  });
+
   it("a failed read and an empty menu are DIFFERENT states", () => {
     // "We couldn't ask" must never be rendered as "this studio offers nothing".
     expect(portalPage).toContain("portal-rebook-unavailable");
@@ -667,19 +678,118 @@ describe("the selection cannot move underneath an in-flight booking", () => {
     ["slot buttons", 'data-testid="portal-rebook-slot"'],
   ] as const;
 
+  it("`inFlight` covers BOTH in-flight requests, not just the booking", () => {
+    // A control disabled only by `booking` is still editable during a
+    // next-available search, which is the second staleness window.
+    expect(FORM_CODE).toMatch(
+      /const inFlight = booking \|\| findingNext;|const inFlight = findingNext \|\| booking;/,
+    );
+  });
+
   for (const [label, testid] of CONTROLS) {
-    it(`${label} is inert while booking`, () => {
+    it(`${label} is inert while ANY request is in flight`, () => {
       const idx = FORM_CODE.indexOf(testid);
       expect(idx, label).toBeGreaterThan(-1);
       const element = FORM_CODE.slice(idx, idx + 420);
-      expect(element, `${label} must carry disabled={... booking}`).toMatch(
-        /disabled=\{[^}]*\bbooking\b[^}]*\}/,
+      expect(element, `${label} must carry disabled={inFlight}`).toMatch(
+        /disabled=\{inFlight\}/,
       );
     });
   }
 
   it("NEGATIVE CONTROL: the rule fires on a control with no disabled prop", () => {
     const bare = 'data-testid="portal-rebook-service"\n value={serviceId}\n onChange={x}';
-    expect(bare).not.toMatch(/disabled=\{[^}]*\bbooking\b[^}]*\}/);
+    expect(bare).not.toMatch(/disabled=\{inFlight\}/);
+  });
+
+  it("NEGATIVE CONTROL: a booking-only binding no longer satisfies the rule", () => {
+    expect('disabled={booking}').not.toMatch(/disabled=\{inFlight\}/);
+  });
+});
+
+describe("a superseded next-available answer is discarded whole", () => {
+  const handler = (() => {
+    const start = FORM_CODE.indexOf("function onNextAvailable()");
+    expect(start, "the next-available handler must exist").toBeGreaterThan(-1);
+    return FORM_CODE.slice(start, FORM_CODE.indexOf("function submit(", start));
+  })();
+
+  it("captures the selection the search is ABOUT before starting", () => {
+    expect(handler).toMatch(/const asked = \{ serviceId, date \};/);
+    // ...and the request is built from the capture, not from live state.
+    expect(handler).toMatch(/serviceId: asked\.serviceId/);
+    expect(handler).toMatch(/addOneDay\(asked\.date\)/);
+  });
+
+  it("compares against the CURRENT selection and returns before applying", () => {
+    expect(handler).toMatch(/selectionRef\.current/);
+    const guard = handler.search(
+      /if \(now\.serviceId !== asked\.serviceId \|\| now\.date !== asked\.date\) return;/,
+    );
+    expect(guard, "the staleness guard must exist").toBeGreaterThan(-1);
+    // It must come BEFORE every branch that writes state, so the error and the
+    // none-in-horizon verdict are discarded too, not only the date.
+    for (const write of ["setError(res.error)", "setNoneInHorizon(true)", "setDate(res.date)"]) {
+      expect(handler.indexOf(write), write).toBeGreaterThan(guard);
+    }
+  });
+
+  it("the current-selection ref is written from an effect, not during render", () => {
+    // Mutating a ref while React renders is unsafe under concurrent rendering.
+    expect(FORM_CODE).toMatch(
+      /useEffect\(\(\) => \{\s*selectionRef\.current = \{ serviceId, date \};\s*\}, \[serviceId, date\]\);/,
+    );
+  });
+
+  it("NEGATIVE CONTROL: an unguarded handler writes the date with no comparison", () => {
+    const naive = `startFindingNext(async () => {
+      const res = await loadPortalRebookNextAvailableAction({ serviceId, fromDate });
+      setDate(res.date);
+    });`;
+    expect(naive).not.toMatch(/selectionRef\.current/);
+  });
+});
+
+describe("the public-readiness gate cannot be forgotten by a new action", () => {
+  const queries = read("lib/portal/queries.ts");
+
+  it("lives in the ONE resolver every portal action goes through", () => {
+    const resolver = CODE.slice(
+      CODE.indexOf("async function resolvePortalBookingContext"),
+      CODE.indexOf("async function resolvePortalService"),
+    );
+    expect(resolver).toContain("getPortalBookingReadiness");
+    expect(resolver).toMatch(/if \(!bookable\)/);
+  });
+
+  it("asks the SHARED predicate rather than restating the rule", () => {
+    expect(queries).toContain("isPubliclyBookable");
+    const gate = queries.slice(queries.indexOf("export async function getPortalBookingReadiness"));
+    expect(gate).toMatch(/isPubliclyBookable\(\{/);
+  });
+
+  it("reads the STRICTER studio-wide weekly form the command enforces", () => {
+    const gate = queries.slice(queries.indexOf("export async function getPortalBookingReadiness"));
+    expect(gate).toMatch(/\.is\("practitioner_id", null\)/);
+    expect(gate).toMatch(/\.eq\("is_open", true\)/);
+  });
+
+  it("a failed readiness read is NOT reported as a closed studio", () => {
+    const gate = queries.slice(
+      queries.indexOf("export async function getPortalBookingReadiness"),
+    );
+    expect(gate).toMatch(/if \(services\.error \|\| days\.error\)[\s\S]{0,400}return null;/);
+    const resolver = CODE.slice(
+      CODE.indexOf("async function resolvePortalBookingContext"),
+      CODE.indexOf("async function resolvePortalService"),
+    );
+    expect(resolver).toMatch(/if \(bookable === null\)/);
+  });
+
+  it("the unavailable sentence is the PUBLIC one, not a second copy", () => {
+    const copy = read("lib/portal/rebook-copy.ts");
+    expect(copy).toMatch(
+      /PORTAL_REBOOK_STUDIO_UNAVAILABLE = UNAVAILABLE_PUBLIC_BOOKING_MESSAGE/,
+    );
   });
 });

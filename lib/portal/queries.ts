@@ -4,6 +4,7 @@ import { ensureIntakeForClient } from "@/lib/intake/queries";
 import type { ClientPortalMessage } from "@/lib/types/database";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { isPubliclyBookable } from "@/lib/booking/readiness";
 
 // Server-side queries that back the authenticated /portal home. Every
 // function on this file expects the caller to have already resolved a
@@ -698,4 +699,72 @@ export async function getPortalBookingWindow(
     publicBookingHorizonMonths:
       (data.public_booking_horizon_months as number | null) ?? null,
   };
+}
+
+/**
+ * Is this studio publicly bookable AT ALL, by the same predicate the public
+ * surfaces and the appointment command both enforce?
+ *
+ * WHY THE PORTAL NEEDS THIS AND CANNOT INFER IT FROM SLOTS.
+ *
+ * `getAvailableSlots` resolves a day as `override ?? weekly default`
+ * (lib/booking/slots.ts:pickDayWindow), so a ONE-OFF open override produces
+ * offerable times on a studio that has NO open studio-wide weekly day at all.
+ * `create_public_appointment` (0170) refuses that studio unconditionally with
+ * `public_booking_unavailable`, because its readiness clause requires at least
+ * one open weekly default. Without this gate the portal offers times that are
+ * impossible to book — a button that can never work.
+ *
+ * THE PREDICATE IS SHARED, NOT RESTATED. `isPubliclyBookable` is the same pure
+ * function the public booking page, the public slot action and the dashboard
+ * checklist ask, so the portal cannot drift from them.
+ *
+ * THE WEEKLY-DAY READ TAKES THE STRICTER `practitioner_id IS NULL` FORM — the
+ * one the command actually enforces and the one the studio-wide slot loader
+ * builds from. The public action's own copy omits that filter, so a
+ * practitioner-scoped row could satisfy it while the command still refused;
+ * matching the command is the point of the gate.
+ *
+ * Returns null when either read fails. A read that did not answer is NOT "this
+ * studio is closed", and the caller must surface it as unavailable rather than
+ * as an absence of times.
+ */
+export async function getPortalBookingReadiness(
+  studioId: string,
+): Promise<boolean | null> {
+  const admin = createAdminClient();
+  const [services, days] = await Promise.all([
+    admin
+      .from("services")
+      .select("id")
+      .eq("studio_id", studioId)
+      .eq("active", true)
+      .limit(1),
+    admin
+      .from("studio_availability_default")
+      .select("is_open, open_time, close_time")
+      .eq("studio_id", studioId)
+      .is("practitioner_id", null)
+      .eq("is_open", true),
+  ]);
+  if (services.error || days.error) {
+    console.error(
+      JSON.stringify({
+        event: "portal_booking_readiness_failed",
+        code: services.error?.code ?? days.error?.code ?? null,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return null;
+  }
+  const openAvailabilityDaysCount = (days.data ?? []).filter(
+    (d) =>
+      d.is_open === true &&
+      typeof d.open_time === "string" &&
+      typeof d.close_time === "string",
+  ).length;
+  return isPubliclyBookable({
+    activeServicesCount: (services.data ?? []).length,
+    openAvailabilityDaysCount,
+  });
 }

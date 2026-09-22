@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist";
 import { addDays, todayInTz } from "@/lib/booking/tz";
+import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
 import {
   PORTAL_REBOOK_GENERIC_REFUSAL,
   PORTAL_REBOOK_SERVICE_UNAVAILABLE,
@@ -90,6 +91,9 @@ const scenario = {
   sendConfirmationEmails: true,
   notifyPractitioner: true,
   serviceReadError: null as { code: string } | null,
+  /** Open studio-wide weekly days. Zero means the studio is not bookable. */
+  openWeeklyDays: 3,
+  availabilityReadError: null as { code: string } | null,
   slotOffered: true,
   commandResult: "created" as string | null,
   commandError: null as { code: string } | null,
@@ -180,6 +184,24 @@ function resolveRow(table: string, f: Record<string, unknown>) {
         (f.id === undefined || s.id === f.id),
     );
     return { data: rows, error: null, rows };
+  }
+  if (table === "studio_availability_default") {
+    if (scenario.availabilityReadError) {
+      return { data: null, error: scenario.availabilityReadError };
+    }
+    // The readiness gate reads the STRICTER studio-wide form, so the fake only
+    // serves rows when the query asked for `practitioner_id IS NULL`.
+    if (f.studio_id !== SESSION_STUDIO || f.practitioner_id !== null) {
+      return { data: [], error: null };
+    }
+    return {
+      data: Array.from({ length: scenario.openWeeklyDays }, () => ({
+        is_open: true,
+        open_time: "09:00",
+        close_time: "17:00",
+      })),
+      error: null,
+    };
   }
   if (table === "practitioners") {
     if (f.id !== PRACTITIONER_ID || f.studio_id !== SESSION_STUDIO) {
@@ -415,6 +437,8 @@ beforeEach(() => {
     sendConfirmationEmails: true,
     notifyPractitioner: true,
     serviceReadError: null,
+    openWeeklyDays: 3,
+    availabilityReadError: null,
     slotOffered: true,
     commandResult: "created",
     commandError: null,
@@ -1291,5 +1315,95 @@ describe("the bounded next-available scan reaches the end of the horizon", () =>
     if (out.ok) throw new Error("unreachable");
     expect(out.code).toBe("unavailable");
     spy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The portal never offers a time the command would refuse the whole studio for.
+// ---------------------------------------------------------------------------
+
+describe("the public-readiness gate applies to every portal action", () => {
+  it("refuses slot discovery when the studio has no open weekly day", async () => {
+    // A one-off open OVERRIDE can still make getAvailableSlots return times for
+    // such a studio (pickDayWindow is `override ?? default`), while
+    // create_public_appointment refuses it outright with
+    // public_booking_unavailable. Offering those times would hand the client
+    // buttons that can never book.
+    scenario.openWeeklyDays = 0;
+    const out = await loadPortalRebookSlotsAction({
+      serviceId: SERVICE_ID,
+      date: todayInTz(scenario.timezone),
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("studio_unavailable");
+    expect(slotCalls, "nothing may be generated for an unready studio").toHaveLength(0);
+  });
+
+  it("refuses next-available for the same studio", async () => {
+    scenario.openWeeklyDays = 0;
+    const out = await loadPortalRebookNextAvailableAction({
+      serviceId: SERVICE_ID,
+      fromDate: todayInTz(scenario.timezone),
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("studio_unavailable");
+    expect(scannedDates).toHaveLength(0);
+  });
+
+  it("refuses the booking itself, before the command is reached", async () => {
+    scenario.openWeeklyDays = 0;
+    const out = await bookAnotherAppointmentAction(form());
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("studio_unavailable");
+    expect(commits()).toHaveLength(0);
+  });
+
+  it("says the same sentence the PUBLIC surface says", async () => {
+    scenario.openWeeklyDays = 0;
+    const out = await loadPortalRebookSlotsAction({
+      serviceId: SERVICE_ID,
+      date: todayInTz(scenario.timezone),
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.error).toBe(UNAVAILABLE_PUBLIC_BOOKING_MESSAGE);
+    // ...and it does not invite a retry in a moment, which would be false for a
+    // structural state.
+    expect(out.error).not.toBe(PORTAL_REBOOK_GENERIC_REFUSAL);
+  });
+
+  it("NON-VACUITY: one open weekly day is enough, and slots flow again", async () => {
+    scenario.openWeeklyDays = 1;
+    const out = await loadPortalRebookSlotsAction({
+      serviceId: SERVICE_ID,
+      date: todayInTz(scenario.timezone),
+    });
+    expect(out.ok).toBe(true);
+    expect(slotCalls).toHaveLength(1);
+  });
+
+  it("an availability READ FAILURE is 'unavailable', not 'this studio is closed'", async () => {
+    scenario.availabilityReadError = { code: "57014" };
+    const out = await loadPortalRebookSlotsAction({
+      serviceId: SERVICE_ID,
+      date: todayInTz(scenario.timezone),
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("unavailable");
+    expect(out.error).toBe(PORTAL_REBOOK_GENERIC_REFUSAL);
+  });
+
+  it("asks for the STRICTER studio-wide weekly form the command enforces", async () => {
+    await bookAnotherAppointmentAction(form());
+    const read = reads.find((r) => r.table === "studio_availability_default");
+    expect(read?.filters).toMatchObject({
+      studio_id: SESSION_STUDIO,
+      practitioner_id: null,
+      is_open: true,
+    });
   });
 });

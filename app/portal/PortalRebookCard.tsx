@@ -101,6 +101,20 @@ export function PortalRebookCard({
   // trip and a confusing second error.
   const submittedRef = useRef(false);
 
+  // THE SELECTION MUST NOT MOVE UNDERNEATH AN IN-FLIGHT REQUEST. Both the
+  // booking and the next-available search read the service and the date when
+  // they START and act on them when they FINISH, so anything the client changes
+  // in between opens a gap between what was asked and what is applied.
+  const inFlight = booking || findingNext;
+
+  // The CURRENT selection, readable from inside an async closure that captured
+  // an older one. Written from an effect rather than during render, so nothing
+  // mutates a ref while React is rendering.
+  const selectionRef = useRef({ serviceId, date });
+  useEffect(() => {
+    selectionRef.current = { serviceId, date };
+  }, [serviceId, date]);
+
   // Any change to the service or date invalidates the slot list. Leaving a
   // stale list on screen would let someone submit a time that was offered for a
   // different service — refused by the server, but confusing to read.
@@ -149,13 +163,23 @@ export function PortalRebookCard({
     if (!serviceId) return;
     setError(null);
     setNoneInHorizon(false);
+    // The selection this search is ABOUT, captured before it starts.
+    const asked = { serviceId, date };
     startFindingNext(async () => {
       const res = await loadPortalRebookNextAvailableAction({
-        serviceId,
+        serviceId: asked.serviceId,
         // Walk forward from the day AFTER the one on screen, so pressing this
         // repeatedly keeps advancing instead of re-finding the same date.
-        fromDate: addOneDay(date),
+        fromDate: addOneDay(asked.date),
       });
+      // A SUPERSEDED ANSWER IS DISCARDED, WHOLE. The controls are inert while
+      // this runs, so the selection should not have moved — but if it did, this
+      // answer is about service A and would move service B to a date that is
+      // not its next available one, or overwrite a date the client just picked
+      // by hand. Every branch below is about `asked`, so the guard covers the
+      // error and the none-in-horizon verdict too, not only the date.
+      const now = selectionRef.current;
+      if (now.serviceId !== asked.serviceId || now.date !== asked.date) return;
       if (!res.ok) {
         if (res.code === "session_expired") {
           router.push("/portal/login");
@@ -306,7 +330,7 @@ export function PortalRebookCard({
         <select
           data-testid="portal-rebook-service"
           value={serviceId}
-          disabled={booking}
+          disabled={inFlight}
           onChange={(e) => {
             setError(null);
             setServiceId(e.target.value);
@@ -330,7 +354,7 @@ export function PortalRebookCard({
             value={date}
             min={minDate}
             max={maxDate}
-            disabled={booking}
+            disabled={inFlight}
             onChange={(e) => {
               setError(null);
               setDate(e.target.value);
@@ -341,7 +365,7 @@ export function PortalRebookCard({
             type="button"
             data-testid="portal-rebook-next-available"
             onClick={onNextAvailable}
-            disabled={findingNext || booking}
+            disabled={inFlight}
             className="border border-neutral-900 px-4 py-2 text-[12px] font-medium uppercase disabled:opacity-50"
             style={{ letterSpacing: "0.1em" }}
           >
@@ -384,7 +408,7 @@ export function PortalRebookCard({
                 data-testid="portal-rebook-slot"
                 data-slot-start={s.start}
                 aria-pressed={selected}
-                disabled={booking}
+                disabled={inFlight}
                 onClick={() => setPicked(s)}
                 className="border border-neutral-900 px-4 py-2 text-[13px]"
                 style={{
