@@ -314,15 +314,22 @@ export function PortalRebookCard({
         email: res.confirmationEmail,
         emailStatus: res.confirmationEmailStatus,
       });
-      // THE CONFIRMATION SAYS THE APPOINTMENT IS LISTED BELOW, SO IT HAD BETTER
-      // BE. The action's `revalidatePath("/portal")` invalidates the cache but
-      // does not re-render the page the client is already looking at, so the
-      // server-rendered Appointments section stayed as it was — still able to
-      // read "No upcoming appointments" directly underneath a confirmation
-      // claiming the opposite. `router.refresh()` re-fetches that tree while
-      // preserving this component's state, so the confirmation survives and the
-      // list catches up.
-      router.refresh();
+      // NO `router.refresh()` HERE, AND THAT IS MEASURED RATHER THAN ASSUMED.
+      //
+      // A review finding said this was needed: that `revalidatePath("/portal")`
+      // invalidates the cache without re-rendering the page the client is
+      // already looking at, leaving the Appointments section able to read "No
+      // upcoming appointments" beneath a confirmation saying the opposite. That
+      // is not what happens. A Server Action that revalidates the route it was
+      // invoked from returns the re-rendered RSC payload WITH its response, and
+      // the client applies it — so the list below is already current by the time
+      // this state is set.
+      //
+      // Proven by removing the refresh and re-running the browser journey: the
+      // "No upcoming appointments" assertion still passes, and it fails when
+      // `revalidatePath("/portal")` is removed from the action instead. The
+      // revalidate is what carries this, so the refresh was a second round trip
+      // buying nothing.
     });
   }
 

@@ -175,23 +175,25 @@ test.describe("portal rebooking", () => {
     // THE JOURNEY CLOSES: the appointment is in the client's own list, WITHOUT
     // a reload.
     //
-    // This assertion used to call `page.reload()` first, and that reload was
-    // hiding a real defect: the action revalidates /portal but does not
-    // re-render the page the client is already looking at, so the Appointments
-    // section stayed stale and could read "No upcoming appointments" directly
-    // beneath a confirmation saying the appointment was listed there. Reloading
-    // made the test agree with the fix that had not been written yet. The card
-    // now calls router.refresh(), and this proves it.
+    // This assertion used to call `page.reload()` first, which made it agree
+    // with the page whatever the page did. It is now scoped to the APPOINTMENTS
+    // SECTION, which matters more than it looks: the service name also appears
+    // in the confirmation card's own paragraph and as an <option> in its
+    // service select, so a page-wide `getByText(serviceName)` passes while the
+    // list underneath is still empty — it was matching the card, not the list.
     //
-    // Scoped to a paragraph on purpose. The service name also appears as an
-    // <option> inside the rebooking card's own select, which Playwright reports
-    // as hidden — a bare getByText would resolve to that and fail for a reason
-    // that has nothing to do with the appointment.
+    // What carries this is `revalidatePath("/portal")` inside the action: a
+    // Server Action that revalidates the route it was invoked from returns the
+    // re-rendered payload with its response. Removing that revalidate turns
+    // these two assertions red; removing `router.refresh()` does not, which is
+    // why the card no longer calls it.
     await expect(page.getByTestId("portal-rebook-confirmed")).toBeVisible();
-    await expect(page.getByText("No upcoming appointments")).toHaveCount(0);
-    await expect(
-      page.locator("p").filter({ hasText: seed.serviceName }).first(),
-    ).toBeVisible();
+    const appointments = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Next appointment" }) })
+      .last();
+    await expect(appointments.getByText("No upcoming appointments")).toHaveCount(0);
+    await expect(appointments.getByText(seed.serviceName).first()).toBeVisible();
   });
 
   test("a client WITH pending tasks also sees the booking card", async ({ page }) => {
