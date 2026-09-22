@@ -15,18 +15,31 @@ type Call = { fn: string; args: Record<string, unknown> };
 
 const h: {
   calls: Call[];
-  reply: { kind: "data"; data: unknown } | { kind: "error" } | { kind: "throw" };
+  reply:
+    | { kind: "data"; data: unknown }
+    | { kind: "error" }
+    | { kind: "throw" }
+    | { kind: "construct_throw" };
 } = { calls: [], reply: { kind: "data", data: "accepted" } };
 
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({
-    async rpc(fn: string, args: Record<string, unknown>) {
-      h.calls.push({ fn, args });
-      if (h.reply.kind === "throw") throw new Error("transport exploded");
-      if (h.reply.kind === "error") return { data: null, error: { message: "boom" } };
-      return { data: h.reply.data, error: null };
-    },
-  }),
+  // The factory itself can fail — that is the whole point of one of the cases
+  // below, and it is the shape the module originally let escape.
+  createAdminClient: () => {
+    if (h.reply.kind === "construct_throw") {
+      throw new Error("service-role key missing");
+    }
+    return {
+      async rpc(fn: string, args: Record<string, unknown>) {
+        h.calls.push({ fn, args });
+        if (h.reply.kind === "throw") throw new Error("transport exploded");
+        if (h.reply.kind !== "data") {
+          return { data: null, error: { message: "boom" } };
+        }
+        return { data: h.reply.data, error: null };
+      },
+    };
+  },
 }));
 
 const { completeWaitlistProfile, WAIT_04B_CAPABILITIES } = await import(
@@ -167,6 +180,15 @@ describe("result translation is closed and coarse", () => {
 
   it("a thrown transport failure does not cross the boundary", async () => {
     h.reply = { kind: "throw" };
+    await expect(run()).resolves.toEqual({ ok: false, code: "unavailable" });
+  });
+
+  it("a client that FAILS TO CONSTRUCT does not cross it either", async () => {
+    // The admin client was built outside the try, so a missing service-role key
+    // threw past every typed outcome in the module and out to the caller — on
+    // the one path whose job is to report IN DOUBT rather than raise. The
+    // construction is inside the boundary now, and this is what holds it there.
+    h.reply = { kind: "construct_throw" };
     await expect(run()).resolves.toEqual({ ok: false, code: "unavailable" });
   });
 });

@@ -100,8 +100,14 @@ export async function completeWaitlistProfile(
 ): Promise<CompletionOutcome> {
   const { patch } = input;
 
-  const admin = createAdminClient();
   try {
+    // CONSTRUCTED INSIDE THE BOUNDARY. This sat outside the `try`, so a client
+    // that failed to construct — a missing service-role key, a malformed URL —
+    // threw straight past every typed outcome in this file and out to the
+    // caller, which is exactly what the header above promises never happens.
+    // The failure mode it produced was the worst available: an exception on a
+    // path whose whole job is to report IN DOUBT rather than raise.
+    const admin = createAdminClient();
     const { data, error } = await admin.rpc("complete_waitlist_profile_by_grant", {
       p_raw_token: input.capabilityToken,
       p_first_name: patch.firstName,
