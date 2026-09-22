@@ -454,10 +454,51 @@ describe("P1-1. services come from the portal-authorized admin read", () => {
 // ---------------------------------------------------------------------------
 
 describe("P2-1. the offered set is the public set", () => {
-  it("applies the shared past-time filter to the offered slots", () => {
-    expect(CODE).toContain("filterFutureSlots");
-    // NEGATIVE CONTROL: the raw generator alone is not sufficient.
-    expect(CODE).toContain("getAvailableSlots");
+  /** The discovery action's body. */
+  const discovery = CODE.slice(
+    CODE.indexOf("export async function loadPortalRebookSlotsAction"),
+    CODE.indexOf("export async function loadPortalRebookNextAvailableAction"),
+  );
+
+  it("DISCOVERY uses the failure-aware loader, not the raw generator", () => {
+    // `getAvailableSlots` destructures the error away from its blockout and
+    // `studio_calendar_reservations` reads, so a transient failure is
+    // indistinguishable from "no conflicts": the day renders wide open and
+    // every occupied time is offered, then refused by the command.
+    expect(discovery).toContain("loadPublicSlotsByDate");
+    expect(discovery).not.toContain("getAvailableSlots");
+  });
+
+  it("DISCOVERY refuses when that read fails, rather than answering an empty day", () => {
+    expect(discovery).toMatch(/if \(!range\.ok\)/);
+    const guard = discovery.search(/if \(!range\.ok\)/);
+    const after = discovery.slice(guard, guard + 400);
+    expect(after).toMatch(/return refuse\("unavailable"/);
+  });
+
+  it("the past-time filter lives in that loader, and is still applied", () => {
+    // It moved rather than disappeared: asserting its absence from this file
+    // without asserting its presence there would be how the rule silently stops
+    // meaning anything.
+    const range = read("lib/booking/public-slot-range.ts");
+    expect(range).toContain("filterFutureSlots");
+  });
+
+  it("the PRE-COMMIT re-check deliberately keeps the raw generator", () => {
+    // The two want opposite behaviour from a failed read. Discovery must not
+    // OFFER what a missing conflict hides; this check must not REFUSE a booking
+    // that is fine, so a permissive read simply reaches the command, which
+    // re-reads under the lock and decides.
+    const book = CODE.slice(CODE.indexOf("export async function bookAnotherAppointmentAction"));
+    expect(book).toContain("getAvailableSlots");
+    // The sentence is wrapped, so the assertion must sit inside one source line.
+    expect(RAW).toContain("failure-aware loader here would turn a transient blip");
+  });
+
+  it("NEGATIVE CONTROL: the discovery rule fires on the raw-generator shape", () => {
+    const naive = "const slots = await getAvailableSlots(admin, shape, date, 45);";
+    expect(naive).toContain("getAvailableSlots");
+    expect(naive).not.toContain("loadPublicSlotsByDate");
   });
 
   it("bounds the requested date by the public booking horizon", () => {

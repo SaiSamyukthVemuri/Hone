@@ -10,11 +10,7 @@ import {
   type PortalBookableService,
 } from "@/lib/portal/queries";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
-import {
-  filterFutureSlots,
-  getAvailableSlots,
-  type Slot,
-} from "@/lib/booking/slots";
+import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
 import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
 import {
   horizonRangeInStudioTz,
@@ -373,16 +369,36 @@ export async function loadPortalRebookSlotsAction(params: {
   const service = await resolvePortalService(studio.id, params.serviceId);
   if (!service.ok) return service;
 
+  // THE FAILURE-AWARE LOADER, NOT THE RAW GENERATOR.
+  //
+  // `getAvailableSlots` destructures the error away from its blockout read and
+  // its `studio_calendar_reservations` read (lib/booking/slots.ts), so a
+  // TRANSIENT failure on either is indistinguishable from "no conflicts": the
+  // day renders as wide open and every occupied time is offered. The command
+  // then refuses each one, which is a list of buttons that can never book.
+  //
+  // `loadPublicSlotsByDate` reads the same inputs through the same
+  // `buildDaySlots` rules — one algorithm, not a second engine — but answers
+  // `{ ok: false }` when a read fails. It also applies the public past-time
+  // filter and the horizon clamp itself, so discovery cannot offer an elapsed
+  // start either. Using it here makes both discovery paths failure-aware; the
+  // next-available action already used it.
   const admin = createAdminClient();
-  const slots = await getAvailableSlots(
-    admin,
-    publicStudioShape(studio),
-    params.date,
-    service.service.default_duration_minutes,
-  );
-  // Public-surface past-time guard, shared helper. Today's earlier hours are
-  // never offered.
-  return { ok: true, slots: filterFutureSlots(slots) };
+  const range = await loadPublicSlotsByDate(admin, {
+    studioId: studio.id,
+    timezone: studio.timezone,
+    publicBookingHorizonMonths: studio.public_booking_horizon_months,
+    bufferMinutes: studio.buffer_minutes,
+    serviceDurationMinutes: service.service.default_duration_minutes,
+  }, [params.date]);
+  if (!range.ok) {
+    // A READ THAT FAILED IS NOT AN EMPTY DAY. Answering `slots: []` here would
+    // tell the client this date is fully booked on the strength of a query that
+    // never answered.
+    logRebookError("portal_rebook_slot_read_failed", { studioId: studio.id });
+    return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
+  }
+  return { ok: true, slots: range.byDate[0]?.slots ?? [] };
 }
 
 /**
@@ -518,6 +534,15 @@ export async function bookAnotherAppointmentAction(
   // This is an early, courteous refusal — NOT the authority. It runs before the
   // studio lock is taken, so the command re-derives the same grid under the
   // lock and is the thing that actually decides.
+  //
+  // AND THAT IS WHY THIS ONE KEEPS THE RAW GENERATOR WHILE DISCOVERY DOES NOT.
+  // The two want opposite behaviour from a failed read. Discovery must not
+  // OFFER what a missing conflict hides, so it propagates the failure. This
+  // check must not REFUSE a booking that is actually fine, so a failed read
+  // leaving it permissive is correct: the request simply reaches the command,
+  // which re-reads everything under the lock and decides authoritatively. A
+  // failure-aware loader here would turn a transient blip into a false refusal
+  // of a valid booking.
   const slots = await getAvailableSlots(
     admin,
     publicStudioShape(studio),

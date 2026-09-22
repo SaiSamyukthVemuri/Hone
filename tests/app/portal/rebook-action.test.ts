@@ -68,6 +68,8 @@ const throwIn = new Set<string>();
 const revalidated: string[] = [];
 /** The date window handed to the bounded range loader. */
 let scannedDates: string[] = [];
+/** Every call to the failure-aware range loader. */
+const rangeCalls: Array<{ dates: string[]; durationMinutes: number }> = [];
 
 const scenario = {
   session: {
@@ -91,6 +93,8 @@ const scenario = {
   sendConfirmationEmails: true,
   notifyPractitioner: true,
   serviceReadError: null as { code: string } | null,
+  /** Makes the failure-aware range loader answer { ok: false }. */
+  rangeReadFails: false,
   /** Open studio-wide weekly days. Zero means the studio is not bookable. */
   openWeeklyDays: 3,
   availabilityReadError: null as { code: string } | null,
@@ -325,16 +329,45 @@ vi.mock("@/lib/booking/slots", async (importOriginal) => {
     },
   };
 });
-vi.mock("@/lib/booking/public-slot-range", () => ({
-  loadPublicSlotsByDate: async (
-    _admin: unknown,
-    _ctx: unknown,
-    dates: readonly string[],
-  ) => {
-    scannedDates = [...dates];
-    return { ok: true, byDate: [], scanned: [...dates], skippedOutsideHorizon: [] };
-  },
-}));
+vi.mock("@/lib/booking/public-slot-range", async () => {
+  // The REAL past-time filter is applied here, so a test that asserts an
+  // elapsed start is never offered is still exercising the shipped rule rather
+  // than a fake that simply never returns one.
+  const { filterFutureSlots } = await import("@/lib/booking/slots");
+  return {
+    loadPublicSlotsByDate: async (
+      _admin: unknown,
+      ctx: { serviceDurationMinutes: number },
+      dates: readonly string[],
+    ) => {
+      scannedDates = [...dates];
+      rangeCalls.push({
+        dates: [...dates],
+        durationMinutes: ctx.serviceDurationMinutes,
+      });
+      if (scenario.rangeReadFails) {
+        return { ok: false, error: "Availability could not be read." };
+      }
+      const raw = scenario.generatedSlots
+        ? scenario.generatedSlots
+        : scenario.slotOffered
+          ? [
+              {
+                start: START_ISO,
+                end: new Date(START.getTime() + 45 * 60_000).toISOString(),
+                startLabel: "10:00 AM",
+              },
+            ]
+          : [];
+      // `byDate` omits dates with no offerable slot, exactly as the real loader
+      // does — that omission is what the next-available scan depends on.
+      const byDate = dates
+        .map((d) => ({ date: d, slots: filterFutureSlots(raw) }))
+        .filter((g) => g.slots.length > 0);
+      return { ok: true, byDate, scanned: [...dates], skippedOutsideHorizon: [] };
+    },
+  };
+});
 vi.mock("@/lib/sms/send-appointment", () => ({
   sendBookingConfirmationSmsToClient: async (p: {
     appointmentId: string;
@@ -411,6 +444,7 @@ beforeEach(() => {
   emails.length = 0;
   notifications.length = 0;
   slotCalls.length = 0;
+  rangeCalls.length = 0;
   scannedDates = [];
   smsCalls.length = 0;
   revalidated.length = 0;
@@ -437,6 +471,7 @@ beforeEach(() => {
     sendConfirmationEmails: true,
     notifyPractitioner: true,
     serviceReadError: null,
+    rangeReadFails: false,
     openWeeklyDays: 3,
     availabilityReadError: null,
     slotOffered: true,
@@ -1071,7 +1106,7 @@ describe("P2-1. only slots the public contract would accept are offered", () => 
       date: addDays(today(), 30),
     });
     expect(out.ok).toBe(true);
-    expect(slotCalls).toHaveLength(1);
+    expect(rangeCalls).toHaveLength(1);
   });
 
   it("refuses a date BEYOND the horizon, before generating anything", async () => {
@@ -1084,7 +1119,7 @@ describe("P2-1. only slots the public contract would accept are offered", () => 
     expect(out.ok).toBe(false);
     if (out.ok) throw new Error("unreachable");
     expect(out.code).toBe("outside_window");
-    expect(slotCalls, "no generation may happen for an out-of-window date").toHaveLength(0);
+    expect(rangeCalls, "no generation may happen for an out-of-window date").toHaveLength(0);
   });
 
   it("refuses a date BEFORE today", async () => {
@@ -1095,7 +1130,7 @@ describe("P2-1. only slots the public contract would accept are offered", () => 
     expect(out.ok).toBe(false);
     if (out.ok) throw new Error("unreachable");
     expect(out.code).toBe("outside_window");
-    expect(slotCalls).toHaveLength(0);
+    expect(rangeCalls).toHaveLength(0);
   });
 
   it("a stale pick still fails at SUBMISSION, not only in the list", async () => {
@@ -1130,6 +1165,46 @@ describe("P2-1. only slots the public contract would accept are offered", () => 
   it("asks the generator for the SERVICE's duration, from the shared read", async () => {
     await bookAnotherAppointmentAction(form());
     expect(slotCalls[0].durationMinutes).toBe(45);
+  });
+
+  it("DISCOVERY uses the FAILURE-AWARE loader, never the raw generator", () => {
+    // `getAvailableSlots` destructures away the error from its blockout and
+    // reservation reads, so a transient failure renders an occupied day as
+    // wide open and every occupied time gets offered.
+    expect(slotCalls, "the raw generator must not run for discovery").toHaveLength(0);
+  });
+
+  it("propagates a failed slot read as `unavailable`, never as an empty day", async () => {
+    scenario.rangeReadFails = true;
+    const out = await loadPortalRebookSlotsAction({
+      serviceId: SERVICE_ID,
+      date: today(),
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("unavailable");
+    expect(out.error).toBe(PORTAL_REBOOK_GENERIC_REFUSAL);
+  });
+
+  it("NON-VACUITY: the same call returns slots when the read succeeds", async () => {
+    const out = await loadPortalRebookSlotsAction({
+      serviceId: SERVICE_ID,
+      date: today(),
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("unreachable");
+    expect(out.slots.length).toBeGreaterThan(0);
+  });
+
+  it("next-available ALSO propagates a failed read", async () => {
+    scenario.rangeReadFails = true;
+    const out = await loadPortalRebookNextAvailableAction({
+      serviceId: SERVICE_ID,
+      fromDate: today(),
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("unavailable");
   });
 });
 
@@ -1337,7 +1412,7 @@ describe("the public-readiness gate applies to every portal action", () => {
     expect(out.ok).toBe(false);
     if (out.ok) throw new Error("unreachable");
     expect(out.code).toBe("studio_unavailable");
-    expect(slotCalls, "nothing may be generated for an unready studio").toHaveLength(0);
+    expect(rangeCalls, "nothing may be generated for an unready studio").toHaveLength(0);
   });
 
   it("refuses next-available for the same studio", async () => {
@@ -1382,7 +1457,7 @@ describe("the public-readiness gate applies to every portal action", () => {
       date: todayInTz(scenario.timezone),
     });
     expect(out.ok).toBe(true);
-    expect(slotCalls).toHaveLength(1);
+    expect(rangeCalls).toHaveLength(1);
   });
 
   it("an availability READ FAILURE is 'unavailable', not 'this studio is closed'", async () => {
