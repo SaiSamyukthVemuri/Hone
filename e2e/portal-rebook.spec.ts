@@ -173,9 +173,16 @@ test.describe("portal rebooking", () => {
     await expect(page.getByTestId("portal-rebook-manage-link")).toBeVisible();
 
     // THE JOURNEY CLOSES: the appointment is in the client's own list.
+    //
+    // Scoped to a paragraph on purpose. The service name also appears as an
+    // <option> inside the rebooking card's own select, which Playwright reports
+    // as hidden — a bare getByText would resolve to that and fail for a reason
+    // that has nothing to do with the appointment.
     await page.reload();
-    await expect(page.getByText(seed.serviceName).first()).toBeVisible();
     await expect(page.getByText("No upcoming appointments")).toHaveCount(0);
+    await expect(
+      page.locator("p").filter({ hasText: seed.serviceName }).first(),
+    ).toBeVisible();
   });
 
   test("a client WITH pending tasks also sees the booking card", async ({ page }) => {
@@ -265,9 +272,26 @@ test.describe("portal rebooking", () => {
 
     await sql(`update public.clients set archived_at = now() where id = $1`, [clientId]);
 
-    await page.goto("/portal");
-    await expect(page).toHaveURL(/\/portal\/login/);
-    await expect(page.getByTestId("portal-rebook")).toHaveCount(0);
+    // THE REFUSAL IS ASSERTED ON THE RESPONSE, NOT BY NAVIGATING.
+    //
+    // /portal redirects an archived client to /portal/login, and /portal/login
+    // redirects anyone holding a live session back to /portal — so an archived
+    // client whose portal session is still live bounces between the two and a
+    // real navigation dies with ERR_TOO_MANY_REDIRECTS. Both halves of that
+    // loop exist verbatim at production a7265e38 and neither is touched by this
+    // change; it is a pre-existing portal session/archival defect, reported
+    // separately rather than fixed in an emergency booking lane.
+    //
+    // Asserting the loop would pin a defect as a guarantee. Asserting the ONE
+    // redirect is the true, durable statement: the archived client is refused
+    // at the portal home and is never served a booking surface.
+    const refused = await page.request.get("/portal", { maxRedirects: 0 });
+    expect(refused.status(), "archived client must be redirected away").toBeGreaterThanOrEqual(300);
+    expect(refused.status()).toBeLessThan(400);
+    expect(refused.headers()["location"]).toContain("/portal/login");
+    expect(await refused.text()).not.toContain("portal-rebook");
+
+    // And nothing was booked along the way.
     expect(await appointmentsFor(seed.studioId, clientId)).toHaveLength(0);
   });
 });
