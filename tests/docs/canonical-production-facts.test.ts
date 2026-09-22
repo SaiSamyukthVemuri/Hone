@@ -2635,9 +2635,18 @@ describe("RULE X — canonical documents agree with each other", () => {
     const baseline = currentGitHeadSha();
     expect(baseline, "current-state must record a Current Git branch HEAD").toBeTruthy();
     const subjects = git("log", "--first-parent", "--merges", "--format=%s", `b9e0003f..${baseline}`) ?? "";
+    // TWO SUBJECT FORMS, AND ONLY ONE WAS READ. GitHub's merge button writes
+    // "Merge pull request #N from ...", but this repository also carries
+    // squash-style merges whose subject ends in "(#N)" — `8e1e5009` (#696) and
+    // `db4762db` (#697). Matching only the first form silently shrank the
+    // authority: Git held 81 PR merges in the span, the extraction saw 79, and
+    // a changelog missing both rows was certified COMPLETE. A completeness rule
+    // that cannot see part of the history is not a completeness rule, and the
+    // failure is invisible precisely because the omission is on the evidence
+    // side rather than the claim side.
     const merged = new Set(
-      [...subjects.matchAll(/Merge pull request #(\d{3,4})\b/g)]
-        .map((m) => Number(m[1]))
+      [...subjects.matchAll(/Merge pull request #(\d{3,4})\b|\(#(\d{3,4})\)\s*$/gm)]
+        .map((m) => Number(m[1] ?? m[2]))
         // Lower bound only: this is the reconciliation span. NO upper bound -
         // that is the defect above.
         .filter((n) => n >= 632),
@@ -2870,8 +2879,12 @@ describe("RULE F — open PRs are declared, and never described as shipped", () 
       return;
     }
     const merged = git("log", "--merges", "--format=%s", "HEAD") ?? "";
+    // Both subject forms, for the same reason X6 reads both: a PR squash-merged
+    // as "(#N)" would otherwise be invisible here, so it could sit in the
+    // open-PR table for ever while being part of production — exactly the
+    // falsehood this rule exists to catch.
     const landed = declaredOpenPrs().filter((pr) =>
-      new RegExp(`Merge pull request #${pr}\\b`).test(merged),
+      new RegExp(`Merge pull request #${pr}\\b|\\(#${pr}\\)\\s*$`, "m").test(merged),
     );
     expect(
       landed,
