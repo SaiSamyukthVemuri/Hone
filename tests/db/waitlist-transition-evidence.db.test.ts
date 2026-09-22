@@ -352,7 +352,7 @@ describe("F — what the repair did NOT change", () => {
     ).rejects.toThrow(/joined_at and source are immutable/);
     await expect(
       adminQuery(`update ${EN_T} set email = 'moved@harness.local' where id = $1`, [f.entryId]),
-    ).rejects.toThrow(/contact details are immutable/);
+    ).rejects.toThrow(/name and email are immutable/);
   });
 
   it("lets every command drive its own transition end to end", async () => {
