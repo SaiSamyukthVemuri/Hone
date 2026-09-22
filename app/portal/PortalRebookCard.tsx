@@ -83,6 +83,15 @@ export function PortalRebookCard({
   const [slotLoad, setSlotLoad] = useState<
     "idle" | "loading" | "loaded" | "failed"
   >("loading");
+  // THE ONE PREDICATE EVERY AVAILABILITY CONCLUSION HANGS OFF, stated
+  // positively and used positively. Reading it off `slotLoad` at each site
+  // invited the mistakes: the useful question is not "which state is it" but
+  // "did we actually read this day", and a negative form (`!== "failed"`) is
+  // one new state away from being wrong. It is also what makes the source rule
+  // tractable — "is this conclusion inside something that requires
+  // `dayWasRead`" is a question about one identifier on the TRUE side, not a
+  // judgement about which branch of which comparison implies what.
+  const dayWasRead = slotLoad === "loaded";
   const [picked, setPicked] = useState<Slot | null>(null);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -477,7 +486,7 @@ export function PortalRebookCard({
           So the horizon claim renders only from a LOADED day. After a failed
           read the error line already says what happened, which is the true
           thing to say; characterising the window is not available to us. */}
-      {noneInHorizon && slotLoad === "loaded" && (
+      {noneInHorizon && dayWasRead && (
         <p
           data-testid="portal-rebook-none-in-horizon"
           data-horizon-state={slots.length > 0 ? "no-later" : "none-in-window"}
@@ -494,7 +503,8 @@ export function PortalRebookCard({
         <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
           Loading times…
         </p>
-      ) : slotLoad === "failed" || slotLoad === "idle" ? null : slots.length === 0 ? (
+      ) : dayWasRead ? (
+        slots.length === 0 ? (
         <p
           data-testid="portal-rebook-no-slots"
           className="text-[13px]"
@@ -526,7 +536,8 @@ export function PortalRebookCard({
             );
           })}
         </div>
-      )}
+          )
+      ) : null}
 
       <label className="flex flex-col gap-1 text-[13px]">
         <span style={{ color: "#6B6B6B" }}>

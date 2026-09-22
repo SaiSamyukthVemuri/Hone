@@ -45,39 +45,49 @@ const codeOnly = (source: string) =>
 
 const CODE = codeOnly(RAW);
 
-/**
- * Every `slots.length` use whose enclosing expression is NOT gated on
- * `slotLoad`, as line numbers.
- *
- * WHY AN AST AND NOT A REGEX. The rule is about CONTAINMENT — "is this
- * conclusion inside something that checked whether the day was read" — and a
- * character window answers a different question, PROXIMITY. The two agree until
- * someone writes an ungated conclusion next to an unrelated `slotLoad`, which
- * is exactly the shape a regex version would wave through.
- *
- * A use counts as gated when some ancestor is a conditional (`?:`) or a
- * short-circuit (`&&` / `||`) whose CONDITION subtree mentions `slotLoad`. The
- * condition side is what matters: `slotLoad` appearing in the branch VALUE
- * gates nothing.
- */
-function ungatedSlotLengthUses(source: string): number[] {
-  const sf = ts.createSourceFile(
-    "card.tsx",
-    source,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-    ts.ScriptKind.TSX,
-  );
-  const mentionsSlotLoad = (n: ts.Node): boolean => {
-    let found = false;
-    const walk = (x: ts.Node) => {
-      if (found) return;
-      if (ts.isIdentifier(x) && x.text === "slotLoad") found = true;
-      else ts.forEachChild(x, walk);
-    };
-    walk(n);
-    return found;
+/** Does this subtree mention the identifier `name`? */
+function mentions(node: ts.Node, name: string): boolean {
+  let found = false;
+  const walk = (x: ts.Node) => {
+    if (found) return;
+    if (ts.isIdentifier(x) && x.text === name) found = true;
+    else ts.forEachChild(x, walk);
   };
+  walk(node);
+  return found;
+}
+
+function parse(source: string, kind: ts.ScriptKind): ts.SourceFile {
+  return ts.createSourceFile("s", source, ts.ScriptTarget.Latest, true, kind);
+}
+
+const lineOf = (sf: ts.SourceFile, n: ts.Node) =>
+  sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+
+/** Is `node` lexically inside `container`? */
+const within = (sf: ts.SourceFile, node: ts.Node, container: ts.Node) =>
+  container.getStart(sf) <= node.getStart(sf) && node.getEnd() <= container.getEnd();
+
+/**
+ * Every `slots.length` use that is NOT reached only when `dayWasRead` holds.
+ *
+ * WHY THIS IS ABOUT BRANCHES AND NOT ABOUT MENTIONS. An earlier version asked
+ * whether the enclosing CONDITION mentioned the predicate, which accepts two
+ * shapes that mean the opposite of what the rule wants:
+ *
+ *   dayWasRead ? null : slots.length === 0     // runs when it did NOT hold
+ *   dayWasRead || slots.length === 0           // right side runs when false
+ *
+ * So the rule follows the operator and the branch. A use is gated when it sits
+ * in the RIGHT operand of an `&&` whose LEFT requires the predicate, or inside
+ * the TRUE branch of a conditional whose condition requires it. Nothing else
+ * counts — in particular `||` never gates, and an else-branch never gates.
+ */
+function ungatedSlotLengthUses(
+  source: string,
+  predicate = "dayWasRead",
+): number[] {
+  const sf = parse(source, ts.ScriptKind.TSX);
   const out: number[] = [];
   const visit = (node: ts.Node) => {
     const isSlotsLength =
@@ -87,20 +97,23 @@ function ungatedSlotLengthUses(source: string): number[] {
       node.expression.text === "slots";
     if (isSlotsLength) {
       let gated = false;
-      for (let p: ts.Node | undefined = node.parent; p && !gated; p = p.parent) {
-        if (ts.isConditionalExpression(p) && mentionsSlotLoad(p.condition)) gated = true;
-        else if (
-          ts.isBinaryExpression(p) &&
-          (p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-            p.operatorToken.kind === ts.SyntaxKind.BarBarToken) &&
-          mentionsSlotLoad(p.left)
+      for (let q: ts.Node | undefined = node.parent; q && !gated; q = q.parent) {
+        if (
+          ts.isBinaryExpression(q) &&
+          q.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+          mentions(q.left, predicate) &&
+          within(sf, node, q.right)
+        ) {
+          gated = true;
+        } else if (
+          ts.isConditionalExpression(q) &&
+          mentions(q.condition, predicate) &&
+          within(sf, node, q.whenTrue)
         ) {
           gated = true;
         }
       }
-      if (!gated) {
-        out.push(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
-      }
+      if (!gated) out.push(lineOf(sf, node));
     }
     ts.forEachChild(node, visit);
   };
@@ -109,21 +122,22 @@ function ungatedSlotLengthUses(source: string): number[] {
 }
 
 /**
- * Calls to `callee` that are NOT lexically inside a `try` BLOCK.
+ * Calls to `callee` that are not AWAITED inside a try that HAS A CATCH.
  *
- * Same argument as `ungatedSlotLengthUses`: containment is a question about
- * ANCESTORS, and a character window answers proximity instead — a bare call a
- * few lines after an unrelated `try` satisfies a regex and still reaches the
- * route's error boundary in production. The check also requires the call to be
- * in the try BLOCK rather than anywhere in the try STATEMENT, so a call sitting
- * in the `catch` does not count as protected by it.
+ * All three conditions carry weight and each was missing from an earlier
+ * version:
+ *   * inside the try BLOCK — a call in the `catch` is not protected by its own
+ *     try;
+ *   * AWAITED — a bare call retains its promise, which rejects after the try
+ *     has already exited and sails straight past the catch;
+ *   * the try HAS A CATCH — `try { await x(); } finally {}` still propagates.
  */
 function callsOutsideTry(
   source: string,
   callee: string,
   kind: ts.ScriptKind = ts.ScriptKind.TSX,
 ): number[] {
-  const sf = ts.createSourceFile("s.tsx", source, ts.ScriptTarget.Latest, true, kind);
+  const sf = parse(source, kind);
   const out: number[] = [];
   const visit = (node: ts.Node) => {
     if (
@@ -131,17 +145,20 @@ function callsOutsideTry(
       ts.isIdentifier(node.expression) &&
       node.expression.text === callee
     ) {
-      let inTry = false;
-      for (let q: ts.Node | undefined = node.parent; q && !inTry; q = q.parent) {
+      let protectedCall = false;
+      let awaited = false;
+      for (let q: ts.Node | undefined = node.parent; q && !protectedCall; q = q.parent) {
+        if (ts.isAwaitExpression(q)) awaited = true;
         if (
           ts.isTryStatement(q) &&
-          q.tryBlock.getStart(sf) <= node.getStart(sf) &&
-          node.getEnd() <= q.tryBlock.getEnd()
+          within(sf, node, q.tryBlock) &&
+          q.catchClause !== undefined &&
+          awaited
         ) {
-          inTry = true;
+          protectedCall = true;
         }
       }
-      if (!inTry) out.push(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+      if (!protectedCall) out.push(lineOf(sf, node));
     }
     ts.forEachChild(node, visit);
   };
@@ -150,14 +167,13 @@ function callsOutsideTry(
 }
 
 /**
- * Calls to `callee` that are NOT lexically inside a call to `wrapper`.
+ * Calls to `callee` that are not inside a FUNCTION ARGUMENT of `wrapper`.
  *
- * The post-commit law: every optional side effect sits inside the fail-soft
- * helper, so a provider exception cannot turn a COMMITTED booking into a
- * failure. Matching the callee IDENTIFIER means the generic form
- * `postCommit<{...}>(...)` counts exactly as the plain form does — a regex
- * version of this rule needed a special case for that and still measured only
- * proximity.
+ * "Somewhere under the wrapper call" is not the same as "deferred by it". An
+ * eagerly evaluated argument —
+ * `postCommit("e", (send(args), undefined), () => undefined)` — is a descendant
+ * of the call while executing BEFORE it, so its rejection is uncontained. Only
+ * an arrow or function expression passed as an argument actually defers.
  */
 function callsNotWrappedBy(
   source: string,
@@ -165,7 +181,7 @@ function callsNotWrappedBy(
   wrapper: string,
   kind: ts.ScriptKind = ts.ScriptKind.TS,
 ): number[] {
-  const sf = ts.createSourceFile("s.ts", source, ts.ScriptTarget.Latest, true, kind);
+  const sf = parse(source, kind);
   const out: number[] = [];
   const visit = (node: ts.Node) => {
     if (
@@ -173,17 +189,22 @@ function callsNotWrappedBy(
       ts.isIdentifier(node.expression) &&
       node.expression.text === callee
     ) {
-      let wrapped = false;
-      for (let q: ts.Node | undefined = node.parent; q && !wrapped; q = q.parent) {
+      let deferred = false;
+      for (let q: ts.Node | undefined = node.parent; q && !deferred; q = q.parent) {
         if (
           ts.isCallExpression(q) &&
           ts.isIdentifier(q.expression) &&
-          q.expression.text === wrapper
+          q.expression.text === wrapper &&
+          q.arguments.some(
+            (a) =>
+              (ts.isArrowFunction(a) || ts.isFunctionExpression(a)) &&
+              within(sf, node, a),
+          )
         ) {
-          wrapped = true;
+          deferred = true;
         }
       }
-      if (!wrapped) out.push(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+      if (!deferred) out.push(lineOf(sf, node));
     }
     ts.forEachChild(node, visit);
   };
@@ -751,6 +772,18 @@ describe("P2-2. the post-commit workflow is the established one", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("NEGATIVE CONTROL: an EAGER argument is not deferred by the wrapper", () => {
+    // A descendant of the call that executes BEFORE the call does. Its
+    // rejection is uncontained even though it sits inside the parentheses.
+    const eager = `async function f() {
+      await postCommit("e", (sendBookingConfirmationToClient(args), undefined), () => undefined);
+    }`;
+    expect(
+      callsNotWrappedBy(eager, "sendBookingConfirmationToClient", "postCommit").length,
+      "being under the call is not the same as being deferred by it",
+    ).toBeGreaterThan(0);
+  });
+
   it("POSITIVE CONTROL: the generic call form counts as wrapped", () => {
     const good = `async function f() {
       await postCommit<{ ok: boolean }>("e", { ok: false }, () =>
@@ -1096,6 +1129,23 @@ describe("every action call is contained, not just the booking", () => {
     expect(callsOutsideTry(good, "bookAnotherAppointmentAction")).toEqual([]);
   });
 
+  it("NEGATIVE CONTROL: a call inside a try but NOT awaited is found", () => {
+    // The promise outlives the try; its rejection arrives after the block has
+    // exited and sails past the catch.
+    const bare = `async function f() {
+      try { bookAnotherAppointmentAction(fd); } catch { return null; }
+    }`;
+    expect(callsOutsideTry(bare, "bookAnotherAppointmentAction").length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: try/finally with NO catch is found", () => {
+    // `finally` runs, and the rejection still propagates to the boundary.
+    const noCatch = `async function f() {
+      try { await bookAnotherAppointmentAction(fd); } finally { cleanup(); }
+    }`;
+    expect(callsOutsideTry(noCatch, "bookAnotherAppointmentAction").length).toBeGreaterThan(0);
+  });
+
   it("there are as many catches as there are contained calls", () => {
     const catches = [...FORM_CODE.matchAll(/\}\s*catch\s*(\([^)]*\))?\s*\{/g)];
     expect(catches.length).toBeGreaterThanOrEqual(CALLS.length);
@@ -1146,13 +1196,11 @@ describe("a failed read is never rendered as an empty day", () => {
     const copy = FORM_CODE.indexOf("portal-rebook-no-slots");
     expect(copy).toBeGreaterThan(-1);
     const before = FORM_CODE.slice(Math.max(0, copy - 400), copy);
-    // The suppression condition may carry MORE states than `failed` (an idle
-    // selection suppresses both conclusions too), so the rule asserts that
-    // `failed` is part of it rather than that it is the whole of it.
+    // Stated POSITIVELY now: the branch runs only when the day was read.
     expect(
       before,
-      'the "no times" branch must be gated on the read not having failed',
-    ).toMatch(/slotLoad === "failed"[\s\S]{0,60}\? null/);
+      'the "no times" branch must be gated on the day having been read',
+    ).toMatch(/dayWasRead \? \(/);
   });
 
   it("the outcome is reset BEFORE each load, so a stale verdict cannot persist", () => {
@@ -1169,7 +1217,7 @@ describe("a failed read is never rendered as an empty day", () => {
   it("NEGATIVE CONTROL: an ungated branch fails the suppression rule", () => {
     const naive = ') : slots.length === 0 ? (\n <p data-testid="portal-rebook-no-slots">';
     const copy = naive.indexOf("portal-rebook-no-slots");
-    expect(naive.slice(0, copy)).not.toMatch(/slotLoad === "failed"[\s\S]{0,60}\? null/);
+    expect(naive.slice(0, copy)).not.toMatch(/dayWasRead \? \(/);
   });
 });
 
@@ -1260,10 +1308,14 @@ describe("an empty selection states NEITHER availability conclusion", () => {
     expect(body).toMatch(/setNoneInHorizon\(false\)/);
   });
 
-  it("both availability conclusions are suppressed while idle", () => {
+  it("both availability conclusions are suppressed unless the day was read", () => {
+    // `idle` and `failed` are both "not read", and so is any state added later.
+    // One positive predicate covers all of them; enumerating the negative
+    // states is one new state away from being wrong.
+    expect(FORM_CODE).toMatch(/const dayWasRead = slotLoad === "loaded";/);
+    expect(FORM_CODE).toMatch(/\{noneInHorizon && dayWasRead &&/);
     const copy = FORM_CODE.indexOf("portal-rebook-no-slots");
-    const before = FORM_CODE.slice(Math.max(0, copy - 400), copy);
-    expect(before).toMatch(/slotLoad === "idle"/);
+    expect(FORM_CODE.slice(Math.max(0, copy - 400), copy)).toMatch(/dayWasRead \? \(/);
   });
 
   it("NEGATIVE CONTROL: an early return without the resets fails the rule", () => {
@@ -1327,11 +1379,11 @@ describe("the card does not claim an empty horizon over bookable times", () => {
     // `slots.length === 0` has two causes — genuinely empty, or a failed read.
     // Branching on the list alone let a failed current-day read plus a null
     // forward search announce that the whole window is empty.
-    expect(FORM_CODE).toMatch(/\{noneInHorizon && slotLoad === "loaded" &&/);
+    expect(FORM_CODE).toMatch(/\{noneInHorizon && dayWasRead &&/);
   });
 
   it("NEGATIVE CONTROL: gating on noneInHorizon alone fails that rule", () => {
-    expect("{noneInHorizon && (").not.toMatch(/\{noneInHorizon && slotLoad === "loaded" &&/);
+    expect("{noneInHorizon && (").not.toMatch(/\{noneInHorizon && dayWasRead &&/);
   });
 
   it("INVARIANT: every conclusion drawn from `slots.length` sits inside a load gate", () => {
@@ -1383,16 +1435,35 @@ describe("the card does not claim an empty horizon over bookable times", () => {
   it("POSITIVE CONTROL: a genuinely gated conclusion passes", () => {
     // Without this the rule could be passing by rejecting everything.
     const good = `export function C() {
-      return <>{noneInHorizon && slotLoad === "loaded" && <p>{slots.length > 0 ? "later" : "none"}</p>}</>;
+      return <>{noneInHorizon && dayWasRead && <p>{slots.length > 0 ? "later" : "none"}</p>}</>;
     }`;
     expect(ungatedSlotLengthUses(good)).toEqual([]);
   });
 
-  it("POSITIVE CONTROL: a ternary gate passes too", () => {
+  it("POSITIVE CONTROL: the TRUE branch of a conditional gate passes", () => {
     const good = `export function C() {
-      return <>{slotLoad === "failed" ? null : slots.length === 0 ? <p>none</p> : <ul/>}</>;
+      return <>{dayWasRead ? (slots.length === 0 ? <p>none</p> : <ul/>) : null}</>;
     }`;
     expect(ungatedSlotLengthUses(good)).toEqual([]);
+  });
+
+  it("NEGATIVE CONTROL: the ELSE branch of the predicate is NOT a gate", () => {
+    // Runs precisely when the day was NOT read — the state the rule exists to
+    // stop from producing a conclusion. A "does the condition mention it"
+    // check accepted this.
+    const inverted = `export function C() {
+      return <>{dayWasRead ? null : <p>{slots.length === 0 ? "none" : "some"}</p>}</>;
+    }`;
+    expect(ungatedSlotLengthUses(inverted).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: `||` is NOT a gate", () => {
+    // The right operand runs when the left is FALSE, i.e. when the day was not
+    // read. Same acceptance bug, different operator.
+    const ored = `export function C() {
+      return <>{dayWasRead || slots.length === 0 ? <p>x</p> : null}</>;
+    }`;
+    expect(ungatedSlotLengthUses(ored).length).toBeGreaterThan(0);
   });
 
   it("NEGATIVE CONTROL: one unconditional sentence fails the branching rule", () => {
