@@ -1,6 +1,6 @@
 import { cx, CONTROL_MIN_TOUCH, FOCUS_RING } from "@/components/ui/control-base";
 import {
-  JOIN_COLLECTION_NOTICE,
+  joinCollectionNotice,
   PRIVACY_POLICY_PATH,
 } from "@/lib/waitlist/join-copy";
 
@@ -54,7 +54,7 @@ import {
 // WHAT THE COPY MAY AND MAY NOT SAY
 // ---------------------------------------------------------------------------
 //
-// `JOIN_COLLECTION_NOTICE` describes what happens when someone uses this form.
+// `joinCollectionNotice(collectsSmsConsent)` describes what happens when someone uses this form.
 // It does NOT claim the data is collected in production today, because both
 // WAIT-04 surfaces are dormant and unreachable from `app/`. The mirror error is
 // equally untrue and equally forbidden: `app/privacy/page.tsx` must NOT yet
@@ -78,7 +78,14 @@ export function PublicCollectionSubmit({
   testId,
   supportingLines = [],
   error = null,
+  collectsSmsConsent,
 }: {
+  /**
+   * Whether the surface above asked for SMS consent. The notice enumerates the
+   * fields being collected, so it has to know — see `joinCollectionNotice`.
+   * Required, for the same reason it is required on `ProfileFields`.
+   */
+  collectsSmsConsent: boolean;
   /** Named in the notice, so the sentence says whose waitlist this is. */
   studioName: string;
   label: string;
@@ -124,7 +131,7 @@ export function PublicCollectionSubmit({
         style={{ color: MUTED }}
         data-testid="public-collection-notice"
       >
-        {studioName} and Hone {JOIN_COLLECTION_NOTICE} See Hone&rsquo;s{" "}
+        {studioName} and Hone {joinCollectionNotice(collectsSmsConsent)} See Hone&rsquo;s{" "}
         <a
           href={PRIVACY_POLICY_PATH}
           target="_blank"
