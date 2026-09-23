@@ -612,128 +612,98 @@ describe("discovered paths are normalized before comparison", () => {
 
   it("every semantic call states its separator EXPLICITLY", () => {
     // THE P2 IS NOT BEHAVIOURALLY DETECTABLE HERE. On POSIX `path.sep` is already
-    // "/", so a semantic test that falls back to the runner's separator still
-    // passes on this machine and fails only on the Windows runner the repair
-    // exists for. That is exactly how this defect survived its own fix once.
+    // "/", so a semantic call that falls back to it still passes on this machine
+    // and fails only on the Windows runner the repair exists for.
     //
-    // AN ABSENCE CHECK WAS NOT ENOUGH, which is the hole this replaces. The
-    // previous guard only asserted that the text `path.sep` did not appear. Drop
-    // the argument entirely —
+    // THIS RULE HAS NOW BEEN WRONG THREE WAYS, EACH WEAKER THAN THE LAST CLAIM:
     //
-    //     unnormalizedUnder([legal], "/")  ->  unnormalizedUnder([legal])
+    //   1. it searched for the absence of the text `path.sep` — dropping the
+    //      argument entirely removed no such text and passed;
+    //   2. it asked whether the argument TEXT contained the separator — a nested
+    //      call supplied one while the outer helper omitted its own;
+    //   3. it matched `name(` literally — `unnormalizedUnder ([legal], "/")` is
+    //      valid TypeScript and was never inspected at all.
     //
-    // — and `path.sep` is still absent, so the guard stayed green while the
-    // helper silently fell back to the runner's separator. The mutation the rule
-    // exists to catch was invisible to it.
-    //
-    // So the calls themselves are inspected: inside a test that names a platform,
-    // every call to a separator-aware helper must pass that platform's separator
-    // as a literal. A missing argument now fails as loudly as a wrong one.
+    // Every one of those is a TEXT problem, so this reads the AST instead. The
+    // parser is already imported for `classNameLiterals`, so this adds no
+    // dependency and no architecture. A call is a CallExpression whose callee is
+    // the identifier; whitespace, line breaks and formatting are not its
+    // properties, and an argument's POSITION is structural rather than guessed.
     const self = readFileSync(__filename, "utf8");
+    const sf = ts.createSourceFile(__filename, self, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const HELPERS = ["toRepoPath", "unnormalizedUnder"] as const;
 
-    /**
-     * One call's arguments, split at the TOP LEVEL only.
-     *
-     * WHY SUBSTRING MATCHING WAS NOT ENOUGH, which is the hole this replaces.
-     * The previous check asked whether the argument TEXT contained the expected
-     * separator. A nested call satisfies that while the outer helper still omits
-     * its own:
-     *
-     *     unnormalizedUnder([toRepoPath(legal, "/")])
-     *
-     * The outer call has no separator and falls back to `path.sep`, yet the scan
-     * saw `"/"` from the inner call and passed. Position is the property that
-     * actually matters, so the arguments are split and the helper's OWN second
-     * one is read.
-     *
-     * Depth tracks (), [] and {}; string literals are skipped wholesale so a
-     * comma or bracket inside one cannot split an argument, and an escaped quote
-     * cannot end it early. That last part matters here more than usual: the
-     * Windows separator IS an escaped backslash in a string literal.
-     */
-    const topLevelArgs = (args: string): string[] => {
-      const out: string[] = [];
-      let depth = 0;
-      let current = "";
-      let quote: string | null = null;
-      for (let i = 0; i < args.length; i += 1) {
-        const ch = args[i];
-        if (quote) {
-          current += ch;
-          if (ch === "\\") {
-            current += args[i + 1] ?? "";
-            i += 1;
-          } else if (ch === quote) quote = null;
-          continue;
+    /** The `it("<title>…", …)` whose title starts with `prefix`. */
+    const testBody = (prefix: string): ts.Node => {
+      let found: ts.Node | undefined;
+      const visit = (node: ts.Node): void => {
+        if (
+          !found &&
+          ts.isCallExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "it" &&
+          node.arguments.length >= 2 &&
+          ts.isStringLiteralLike(node.arguments[0]) &&
+          node.arguments[0].text.startsWith(prefix)
+        ) {
+          found = node.arguments[1];
+          return;
         }
-        if (ch === '"' || ch === "'" || ch === "`") {
-          quote = ch;
-          current += ch;
-          continue;
+        ts.forEachChild(node, visit);
+      };
+      ts.forEachChild(sf, visit);
+      expect(found, `could not locate the ${prefix} test`).toBeTruthy();
+      return found!;
+    };
+
+    /** Every call to `name` anywhere inside `root`, nested calls included. */
+    const callsTo = (root: ts.Node, name: string): ts.CallExpression[] => {
+      const out: ts.CallExpression[] = [];
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isCallExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === name
+        ) {
+          out.push(node);
         }
-        if (ch === "(" || ch === "[" || ch === "{") depth += 1;
-        else if (ch === ")" || ch === "]" || ch === "}") depth -= 1;
-        if (ch === "," && depth === 0) {
-          out.push(current.trim());
-          current = "";
-          continue;
-        }
-        current += ch;
-      }
-      if (current.trim().length > 0) out.push(current.trim());
+        ts.forEachChild(node, visit);
+      };
+      visit(root);
       return out;
     };
 
-    /** Argument lists of `name(...)` in `body`, paren-balanced so nesting is safe. */
-    const callsTo = (body: string, name: string): string[] => {
-      const out: string[] = [];
-      let from = 0;
-      for (;;) {
-        const at = body.indexOf(`${name}(`, from);
-        if (at === -1) return out;
-        let depth = 0;
-        let i = at + name.length;
-        for (; i < body.length; i += 1) {
-          if (body[i] === "(") depth += 1;
-          else if (body[i] === ")") {
-            depth -= 1;
-            if (depth === 0) break;
-          }
-        }
-        out.push(body.slice(at + name.length + 1, i));
-        from = i + 1;
-      }
-    };
-
-    for (const [title, expected] of [
-      ["POSIX semantics:", '"/"'],
-      ["WINDOWS semantics:", '"\\\\"'],
+    for (const [prefix, expected] of [
+      ["POSIX semantics:", "/"],
+      ["WINDOWS semantics:", "\\"],
     ] as const) {
-      const start = self.indexOf(title);
-      expect(start, `could not locate the ${title} test`).toBeGreaterThan(-1);
-      const body = self.slice(start, self.indexOf("\n  });", start));
-
-      let checked = 0;
+      const body = testBody(prefix);
       for (const helper of HELPERS) {
-        for (const args of callsTo(body, helper)) {
-          checked += 1;
-          const own = topLevelArgs(args);
+        const calls = callsTo(body, helper);
+        // PER-HELPER, so one helper cannot keep a shared counter above zero while
+        // the other quietly disappears from the test.
+        expect(
+          calls.length,
+          `${prefix} contains no ${helper} call to check — the rule would pass vacuously`,
+        ).toBeGreaterThan(0);
+
+        for (const call of calls) {
+          const sep = call.arguments[1];
           expect(
-            own.length,
-            `${title} calls ${helper}(${args.trim()}) with no second argument — it ` +
-              `falls back to the runner's path.sep, which passes here and fails on ` +
-              `the other platform`,
-          ).toBeGreaterThanOrEqual(2);
+            sep,
+            `${prefix} calls ${helper} with no second argument, so it falls back to ` +
+              `the runner's path.sep — green here, broken on the other platform`,
+          ).toBeTruthy();
           expect(
-            own[1],
-            `${title} calls ${helper} whose OWN separator is ${own[1] ?? "(absent)"} ` +
-              `rather than ${expected}`,
+            sep && ts.isStringLiteralLike(sep),
+            `${prefix} passes ${helper} a computed separator instead of a literal`,
+          ).toBe(true);
+          expect(
+            (sep as ts.StringLiteralLike).text,
+            `${prefix} calls ${helper} whose OWN separator is not ${JSON.stringify(expected)}`,
           ).toBe(expected);
         }
       }
-      // Otherwise a renamed helper would empty the loop and pass vacuously.
-      expect(checked, `${title} contains no separator-aware calls to check`).toBeGreaterThan(0);
     }
   });
 
