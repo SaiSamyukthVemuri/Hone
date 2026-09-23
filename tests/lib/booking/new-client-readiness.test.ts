@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ONB-02 — canonical new-client booking readiness.
 //
@@ -285,5 +285,113 @@ describe("no surface re-derives 'consultation' for itself", () => {
     expect(strip('// modality === "consultation"')).not.toContain("modality");
     expect(strip('/* modality === "consultation" */')).not.toContain("modality");
     expect(strip('// note\nmodality === "consultation"')).toContain("modality");
+  });
+});
+
+// ONB-02 review repairs: the two ways this module could answer READY for a
+// studio that will not actually take a new client right now.
+describe("ONB-02: WAIT admission and a real timezone authority", () => {
+  const WAIT_ENV = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS";
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  describe("P1 — WAIT admission is part of the answer", () => {
+    it("a WAIT studio with every prerequisite satisfied is NOT ordinary-ready", () => {
+      // The defect: every structural check below can pass while ordinary
+      // new-client admission is deliberately paused behind the queue, so the
+      // canonical question answered READY for a studio that routes new clients
+      // to a waitlist instead of a booking.
+      vi.stubEnv(WAIT_ENV, "willow");
+      const r = computeNewClientReadiness(ALL_GOOD);
+      expect(r.status).toBe("not_ready");
+      if (r.status !== "not_ready") return;
+      expect(r.blockers.map((b) => b.key)).toContain("wait_admission");
+    });
+
+    it("the SAME evidence without the gate is ready — so the gate is what moved it", () => {
+      // The control. Without this the assertion above could be passing because
+      // ALL_GOOD was never ready in the first place.
+      vi.stubEnv(WAIT_ENV, "");
+      expect(computeNewClientReadiness(ALL_GOOD)).toEqual({ status: "ready" });
+    });
+
+    it("another studio's slug on the list does not pause THIS studio", () => {
+      vi.stubEnv(WAIT_ENV, "some-other-studio");
+      expect(computeNewClientReadiness(ALL_GOOD)).toEqual({ status: "ready" });
+    });
+
+    it("it reports admission, never a misconfiguration", () => {
+      vi.stubEnv(WAIT_ENV, "willow");
+      const r = computeNewClientReadiness(ALL_GOOD);
+      if (r.status !== "not_ready") throw new Error("expected not_ready");
+      const wait = r.blockers.find((b) => b.key === "wait_admission");
+      expect(wait?.label).toMatch(/waitlist/i);
+      // A factual statement, not a diagnosis: nothing is "missing" or "not set".
+      expect(wait?.label).not.toMatch(/not set|missing|incomplete|invalid/i);
+    });
+
+    it("it is the LAST step offered, behind anything structural", () => {
+      // An operator still lacking a consultation service must be sent there,
+      // not to the waitlist screen.
+      vi.stubEnv(WAIT_ENV, "willow");
+      const r = computeNewClientReadiness({
+        ...ALL_GOOD,
+        services: { ok: true, services: [] },
+      });
+      if (r.status !== "not_ready") throw new Error("expected not_ready");
+      expect(r.nextStep?.key).toBe("consultation_service");
+    });
+  });
+
+  describe("P2 — the timezone must be a real IANA zone", () => {
+    it("a non-empty but INVALID timezone is not readiness", () => {
+      // The defect: `nonEmpty` accepted any string, so a studio carrying
+      // "Not/AZone" answered READY and every downstream studio-local date
+      // computation would throw on it.
+      const r = computeNewClientReadiness({
+        ...ALL_GOOD,
+        studio: { ...STUDIO, timezone: "Not/AZone" },
+      });
+      expect(r.status).toBe("not_ready");
+      if (r.status !== "not_ready") return;
+      expect(r.blockers.map((b) => b.key)).toContain("booking_settings");
+    });
+
+    it("a real zone still passes — the rule is validity, not strictness", () => {
+      expect(
+        computeNewClientReadiness({
+          ...ALL_GOOD,
+          studio: { ...STUDIO, timezone: "America/Toronto" },
+        }),
+      ).toEqual({ status: "ready" });
+    });
+
+    it("empty is still caught, as before", () => {
+      const r = computeNewClientReadiness({
+        ...ALL_GOOD,
+        studio: { ...STUDIO, timezone: "" },
+      });
+      expect(r.status).toBe("not_ready");
+    });
+  });
+
+  describe("neither repair collapses UNKNOWN into NOT_READY", () => {
+    it("an unavailable authority with NO proven blocker stays unknown", () => {
+      vi.stubEnv(WAIT_ENV, "");
+      const r = computeNewClientReadiness({ ...ALL_GOOD, treatmentConsent: { ok: false } });
+      expect(r.status).toBe("unknown");
+    });
+
+    it("a WAIT pause is a PROVEN blocker, so it legitimately outranks unknown", () => {
+      // not_ready here is correct and is not a collapse: admission is proven
+      // paused regardless of what the unavailable authority would have said.
+      vi.stubEnv(WAIT_ENV, "willow");
+      const r = computeNewClientReadiness({ ...ALL_GOOD, treatmentConsent: { ok: false } });
+      expect(r.status).toBe("not_ready");
+      if (r.status !== "not_ready") return;
+      expect(r.unavailable).toContain("treatment_consent");
+    });
   });
 });

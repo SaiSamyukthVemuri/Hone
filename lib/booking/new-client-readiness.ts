@@ -1,6 +1,8 @@
 import "server-only";
 import type { Service, Studio, StudioAvailabilityDefault } from "@/lib/types/database";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
+import { isValidTimeZone } from "@/lib/studios/new-studio";
+import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
 import {
   CONSENT_SETTINGS_HREF,
   getTreatmentConsentReadiness,
@@ -77,7 +79,8 @@ export type NewClientBlockerKey =
   | "booking_settings"
   | "consultation_service"
   | "availability"
-  | "treatment_consent";
+  | "treatment_consent"
+  | "wait_admission";
 
 export type NewClientBlocker = {
   key: NewClientBlockerKey;
@@ -110,10 +113,22 @@ const BLOCKER_ORDER: NewClientBlockerKey[] = [
   "availability",
   "booking_settings",
   "treatment_consent",
+  // LAST ON PURPOSE. It is not a setup step a studio can "fix" by filling
+  // something in -- it is a deliberate admission choice. Ordering it above the
+  // structural blockers would send an operator to the waitlist screen when what
+  // they actually still need is a consultation service.
+  "wait_admission",
 ];
 
 const BLOCKERS: Record<NewClientBlockerKey, Omit<NewClientBlocker, "key">> = {
   studio_name: { label: "Studio name is not set.", href: "/settings/studio" },
+  // A FACT, NOT A DIAGNOSIS -- the rule every other label follows. It states
+  // what is true of admission today; it does not call the studio
+  // misconfigured, because it is not.
+  wait_admission: {
+    label: "New clients join the waitlist instead of booking directly.",
+    href: "/settings/waitlist",
+  },
   booking_link: { label: "Booking link is not set.", href: "/settings/booking" },
   booking_settings: {
     label: "Booking settings are incomplete.",
@@ -184,10 +199,27 @@ export function computeNewClientReadiness(
   // contributes nothing here — that is the whole no-collapse rule.
   const proven: NewClientBlockerKey[] = [];
 
+  // WAIT ADMISSION IS PART OF THE QUESTION, NOT A SEPARATE ONE.
+  //
+  // This module answers "can this studio accept a new client RIGHT NOW?". A
+  // studio running WAIT has ordinary new-client admission deliberately PAUSED:
+  // the public surface routes a new client to the queue instead of to a booking.
+  // Every structural prerequisite below can pass while that is true, so without
+  // this the canonical answer is READY for a studio that will not, in fact, take
+  // a new client directly.
+  //
+  // This states the ADMISSION boundary, not a capability failure, and it does
+  // not weaken the booking action: the gate is the same
+  // `isNewClientWaitlistEnabled` the public route already consults, read from
+  // the server-resolved slug. Nothing here decides whether WAIT is on -- it
+  // only reports it truthfully.
+  if (isNewClientWaitlistEnabled(studio.slug)) proven.push("wait_admission");
+
   if (!nonEmpty(studio.name)) proven.push("studio_name");
   if (!nonEmpty(studio.slug)) proven.push("booking_link");
   if (
     !nonEmpty(studio.timezone) ||
+    !isValidTimeZone(studio.timezone) ||
     typeof studio.default_appointment_duration_minutes !== "number" ||
     typeof studio.buffer_minutes !== "number" ||
     typeof studio.public_booking_horizon_months !== "number"
