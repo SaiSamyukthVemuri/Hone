@@ -301,9 +301,33 @@ const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
   ["components/treatment-plans-card.tsx", 3],
 ];
 
+/**
+ * A discovered absolute path, as this file's canonical lists spell it.
+ *
+ * `path.relative` emits the PLATFORM separator: `app\foo.tsx` on Windows, while
+ * `CONVERTED`, `PRIMITIVE` and `LEGACY_BASELINE` are all written with `/`. Every
+ * membership test here is a string comparison against those lists, so on a
+ * Windows runner or developer machine nothing matches: converted files look
+ * missing, baseline exclusions stop excluding, and the guard reports failures
+ * that are entirely an artefact of the separator.
+ *
+ * The canonical lists stay platform-independent — they describe the repository,
+ * not the machine reading it — so the DISCOVERED side is what normalizes.
+ *
+ * `split(sep).join("/")` rather than a blanket backslash replace: on POSIX a
+ * backslash is a legal filename character, and rewriting it would corrupt a real
+ * path. Splitting on the platform's own separator is a no-op on POSIX (where it
+ * is already "/") and correct on Windows.
+ *
+ * `sep` is a parameter so the Windows behaviour is provable on a POSIX runner.
+ */
+export function toRepoPath(relative: string, sep: string = path.sep): string {
+  return sep === "/" ? relative : relative.split(sep).join("/");
+}
+
 const BASELINE = new Map(LEGACY_BASELINE.map(([f, n]) => [f, n]));
 const FILES = ROOTS.flatMap((root) => walk(path.join(REPO_ROOT, root))).map((f) =>
-  path.relative(REPO_ROOT, f),
+  toRepoPath(path.relative(REPO_ROOT, f)),
 );
 const ADOPTED = CONVERTED;
 
@@ -460,5 +484,76 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
       }
     `;
     expect(classNameLiterals(commented, "commented.tsx")).toEqual([]);
+  });
+});
+
+// P2 (#746 exact-head review): discovered paths must be canonical before they
+// are compared to the lists in this file.
+//
+// Every membership test here is a string comparison against CONVERTED,
+// PRIMITIVE or LEGACY_BASELINE, all of which are written with "/". `path.relative`
+// emits the PLATFORM separator, so on Windows a discovered "app\foo.tsx" matches
+// none of them: converted files read as missing, baseline exclusions stop
+// excluding, and the guard fails for a reason that has nothing to do with the
+// code it is guarding.
+describe("discovered paths are normalized before comparison", () => {
+  it("a Windows-style discovered path becomes the canonical repository path", () => {
+    // The control the repair exists for. `sep` is passed explicitly so this runs
+    // identically on a POSIX runner, where path.sep would never reproduce it.
+    expect(toRepoPath("app\\(app)\\settings\\availability\\page.tsx", "\\")).toBe(
+      "app/(app)/settings/availability/page.tsx",
+    );
+    expect(toRepoPath("components\\probe-picker.tsx", "\\")).toBe(
+      "components/probe-picker.tsx",
+    );
+  });
+
+  it("a POSIX path is returned unchanged", () => {
+    expect(toRepoPath("components/probe-picker.tsx", "/")).toBe(
+      "components/probe-picker.tsx",
+    );
+  });
+
+  it("a backslash in a POSIX filename is NOT rewritten", () => {
+    // Why this is split(sep).join("/") and not a blanket replace: on POSIX a
+    // backslash is a legal filename character, and rewriting it would invent a
+    // directory boundary that does not exist.
+    expect(toRepoPath("components/odd\\name.tsx", "/")).toBe(
+      "components/odd\\name.tsx",
+    );
+  });
+
+  it("normalized discovery actually matches the canonical lists", () => {
+    // End-to-end rather than unit-only: a Windows-shaped path for a file that IS
+    // on the baseline must land on its entry once normalized.
+    const windowsShaped = "components\\probe-picker.tsx";
+    expect(BASELINE.has(toRepoPath(windowsShaped, "\\"))).toBe(true);
+    // And the un-normalized form must NOT — otherwise this proves nothing.
+    expect(BASELINE.has(windowsShaped)).toBe(false);
+  });
+
+  it("the live discovery is already canonical on this runner", () => {
+    expect(FILES.length, "no files discovered — vacuous").toBeGreaterThan(0);
+    const offenders = FILES.filter((f) => f.includes("\\"));
+    expect(offenders, "a discovered path still carries a platform separator").toEqual([]);
+  });
+});
+
+// The WIRING, provable on a POSIX runner.
+//
+// On POSIX `path.sep` is already "/", so `toRepoPath` is a no-op and removing it
+// from discovery changes nothing here — the behavioural tests above cannot catch
+// that regression on this machine, and it would only surface on the Windows
+// runner the repair exists for. This reads the discovery expression itself, so
+// dropping the call is RED everywhere.
+describe("the normalization is actually wired into discovery", () => {
+  it("discovery passes its relative paths through toRepoPath", () => {
+    const self = readFileSync(__filename, "utf8");
+    const discovery = /const FILES = [\s\S]{0,200}?;/.exec(self)?.[0] ?? "";
+    expect(discovery, "could not locate the discovery expression").toContain("path.relative");
+    expect(
+      discovery,
+      "discovery compares raw platform paths against the canonical lists again",
+    ).toContain("toRepoPath(");
   });
 });
