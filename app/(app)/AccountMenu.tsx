@@ -82,6 +82,33 @@ export function AccountMenu({
     if (signingOut) return;
     setOpen(false);
   };
+
+  // LINKS THAT LEAVE THE ROUTE GROUP ARE HELD, not deferred.
+  //
+  // Everything else here works because `app/(app)/layout.tsx` survives the
+  // navigation, carrying this component and the in-flight flag with it.
+  // `/admin` and `/no-access` sit OUTSIDE that layout: following either one
+  // unmounts this state owner and the leaf together, and `app/admin/layout.tsx`
+  // then renders its own enabled Sign out — a second logout, from a surface
+  // this slice does not own and cannot reach.
+  //
+  // Holding two links for the few hundred milliseconds a logout takes is the
+  // bounded answer. The alternative is lifting the flag above the route-group
+  // boundary, which is a larger change than this repair is scoped for.
+  //
+  // NOT REACHABLE FROM THE BROWSER LANE: both links are conditional on
+  // `isAdmin(email)` / multi-studio membership, and the harness owner is
+  // neither, so this is pinned at source in
+  // tests/components/signout-02-acknowledgement.test.ts rather than driven.
+  const leavesShell = (href: string) =>
+    href.startsWith("/admin") || href.startsWith("/no-access");
+  const holdWhileSigningOut = (href: string, e: { preventDefault: () => void }) => {
+    if (signingOut && leavesShell(href)) {
+      e.preventDefault();
+      return true;
+    }
+    return false;
+  };
   const firstName = displayName.trim().split(/\s+/)[0] || "Account";
   const roleLabel = role === "owner" ? "Owner" : "Practitioner";
 
@@ -132,7 +159,11 @@ export function AccountMenu({
             <Link
               key={item.href}
               href={item.href}
-              onClick={close}
+              aria-disabled={signingOut && leavesShell(item.href) ? true : undefined}
+              onClick={(e) => {
+                if (holdWhileSigningOut(item.href, e)) return;
+                close();
+              }}
               className="flex min-h-[40px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
             >
               {item.label}

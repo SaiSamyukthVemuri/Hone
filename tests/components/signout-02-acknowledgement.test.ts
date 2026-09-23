@@ -186,13 +186,33 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     }
   });
 
+  it("links that LEAVE the route group are held while a logout is in flight", () => {
+    // `app/(app)/layout.tsx` is what carries the in-flight flag through a
+    // navigation, so a link out of that route group unmounts the flag and the
+    // leaf together — and the destination layout renders its own Sign out.
+    // Two links do that: /admin and /no-access.
+    for (const f of shells) {
+      const code = codeOnly(read(f));
+      expect(code, f).toContain('href.startsWith("/admin") || href.startsWith("/no-access")');
+      expect(code, f).toContain("if (signingOut && leavesShell(href))");
+      expect(code, f).toContain("e.preventDefault();");
+    }
+  });
+
+  it("the premise is real: the admin layout has its own Sign out", () => {
+    // If this ever stops being true, the hold above is dead weight and should
+    // be re-justified rather than left as cargo.
+    const adminLayout = read("app/admin/layout.tsx");
+    expect(adminLayout).toContain("signOut");
+  });
+
   it("the links still navigate — only the dismissal is deferred", () => {
     // Bounded: no navigation was redesigned. The link still preventDefaults
     // and pushes (NAV-ACK-01); the panel simply outlives the push while a
     // logout is in flight, which is what keeps the observer alive.
     const menu = codeOnly(read(MENU));
-    expect(menu).toContain("onClick={(e) => navigate(e, item.href, item.label)}");
-    expect(codeOnly(read(ACCOUNT))).toContain("onClick={close}");
+    expect(menu).toContain("navigate(e, item.href, item.label);");
+    expect(codeOnly(read(ACCOUNT))).toContain("close();");
   });
 
   it("no click handler crept onto the submit path", () => {
