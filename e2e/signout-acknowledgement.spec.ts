@@ -92,6 +92,20 @@ async function holdActions(
   // timer and inspecting a counter afterwards.
   let markDuplicate!: () => void;
   const duplicateSeen = new Promise<void>((r) => (markDuplicate = r));
+  // "The first action is off the wire", independent of any navigation. The
+  // /login arrival is the better signal where it happens, but a logout started
+  // and then left behind by a link never applies its redirect to THIS page, so
+  // that test needs a signal that does not assume one.
+  let markSettled!: () => void;
+  const firstSettled = new Promise<void>((r) => (markSettled = r));
+  const isAction = (r: { method(): string; headers(): Record<string, string> }) =>
+    r.method() === "POST" && Boolean(r.headers()["next-action"]);
+  page.on("requestfinished", (r) => {
+    if (isAction(r)) markSettled();
+  });
+  page.on("requestfailed", (r) => {
+    if (isAction(r)) markSettled();
+  });
   await page.route("**/*", async (route) => {
     const req = route.request();
     if (req.method() === "POST" && req.headers()["next-action"]) {
@@ -115,6 +129,7 @@ async function holdActions(
   return {
     state,
     duplicateSeen,
+    firstSettled,
     /**
      * Let the held request through. INTERCEPTION STAYS ACTIVE, deliberately:
      * React serialises form actions rather than dropping them, so a second
@@ -137,6 +152,8 @@ async function bg(control: Locator): Promise<string> {
 type Surface = {
   name: string;
   use: Parameters<typeof test.use>[0];
+  /** Accessible name of the control that opens — and used to try to close — the panel. */
+  trigger: string;
   open: (page: Page) => Promise<Locator>;
 };
 
@@ -144,6 +161,7 @@ const SURFACES: Surface[] = [
   {
     name: "desktop AccountMenu",
     use: { viewport: { width: 1280, height: 900 } },
+    trigger: "Open account menu",
     open: async (page) => {
       await page.getByRole("button", { name: "Open account menu" }).click();
       return page.getByRole("navigation", { name: "Account menu" });
@@ -151,6 +169,7 @@ const SURFACES: Surface[] = [
   },
   {
     name: "phone-width MobileMenu",
+    trigger: "Open navigation menu",
     // Same explicit iPhone-12-class emulation SIGNOUT-01 uses: the devices[]
     // descriptors carry defaultBrowserType webkit, which this chromium-only
     // lane does not install.
@@ -305,6 +324,130 @@ for (const surface of SURFACES) {
       expect(
         gate.state.held,
         "a second logout reached the wire — in total, counted through the drain",
+      ).toBe(1);
+
+      await gate.unroute();
+    });
+
+    test("the panel cannot be dismissed out from under a logout", async ({ page }) => {
+      // THE DEFECT THIS CLOSES, which the earlier tests could not see because
+      // they never touched the panel. `useFormStatus` reports only for the form
+      // it runs inside, and that form lives in a panel rendered from the
+      // shell's `open` state — so Escape, an outside click or the trigger
+      // unmounted the acknowledgement mid-logout, and a reopened menu offered a
+      // fresh ENABLED "Sign out". Measured before the repair: two requests on
+      // the wire, `[294, 2404]`.
+      //
+      // Not a regression — the same path measured `[288, 2355]` on the
+      // pre-SIGNOUT-02 runtime, which had no guard at all. It is the boundary
+      // SIGNOUT-02 had not yet paid for.
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+
+      const gate = await holdActions(page, { onRelease: "continue" });
+      const panel = await surface.open(page);
+      await panel.getByRole("button", { name: "Sign out" }).click({ noWaitAfter: true });
+
+      const busy = panel.locator("[data-signout-pending]");
+      await expect(busy).toBeVisible({ timeout: 5_000 });
+
+      // 1. ESCAPE must not dismiss.
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+      await expect(panel, "Escape dismissed the panel mid-logout").toBeVisible();
+      await expect(busy, "the acknowledgement was lost to Escape").toBeVisible();
+
+      // 2. An OUTSIDE pointerdown must not dismiss. Top-left corner is outside
+      //    both the desktop dropdown and the phone sheet's root.
+      await page.mouse.click(4, 4);
+      await page.waitForTimeout(300);
+      await expect(panel, "an outside click dismissed the panel mid-logout").toBeVisible();
+
+      // 3. The TRIGGER must not close it either.
+      await page
+        .getByRole("button", { name: surface.trigger })
+        .click({ noWaitAfter: true, force: true });
+      await page.waitForTimeout(300);
+      await expect(panel, "the trigger closed the panel mid-logout").toBeVisible();
+
+      // Still the same in-flight control, still refusing a second press.
+      await expect(busy).toHaveText("Signing out…");
+      await expect(busy).toBeDisabled();
+      await expect(busy).toHaveAttribute("aria-busy", "true");
+
+      // AND NOTHING EXTRA REACHED THE WIRE, counted through the drain — the
+      // assertion the acknowledgement exists to protect.
+      gate.release();
+      await page.waitForURL(/\/login/, { timeout: 20_000 });
+      await Promise.race([
+        gate.duplicateSeen,
+        new Promise((r) => setTimeout(r, 4_000)),
+      ]);
+      expect(
+        gate.state.held,
+        "a second logout reached the wire after the panel was pushed at",
+      ).toBe(1);
+
+      await gate.unroute();
+    });
+
+    test("a remounted control is still truthful about the logout", async ({ page }) => {
+      // THE OTHER HALF OF THE REPAIR, and the only user-reachable path that can
+      // prove it. The dismissal gate keeps the panel mounted for Escape, an
+      // outside click and the trigger — so with the gate in place `pending` is
+      // never interrupted and `busy` is redundant for those three.
+      //
+      // An ordinary NAV LINK is different: it is not a dismissal, it is a
+      // navigation the practitioner chose, and it closes the panel by design
+      // (the links have always dismissed it themselves, which SIGNOUT-01
+      // documents as correct). That unmounts the form and its `useFormStatus`,
+      // so this is where the shell's remembered `signingOut` — handed back down
+      // as `busy` — is the only thing standing between the practitioner and a
+      // second logout.
+      //
+      // Gating the links too would be a navigation change, which this repair is
+      // explicitly not.
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+
+      const gate = await holdActions(page, { onRelease: "continue" });
+      const panel = await surface.open(page);
+      await panel.getByRole("button", { name: "Sign out" }).click({ noWaitAfter: true });
+      await expect(panel.locator("[data-signout-pending]")).toBeVisible({ timeout: 5_000 });
+
+      // Leave through a link, which really does dismiss the panel.
+      await panel.getByRole("link", { name: "Getting Started" }).click({ noWaitAfter: true });
+      await expect(panel, "the link did not dismiss the panel").toHaveCount(0, {
+        timeout: 10_000,
+      });
+
+      // Reopen. The leaf here is FRESHLY MOUNTED and its own useFormStatus
+      // knows nothing — everything below comes from the shell's memory.
+      const reopened = await surface.open(page);
+      const control = reopened.getByRole("button", { name: /Signing out|Sign out/ });
+      await expect(control).toBeVisible({ timeout: 10_000 });
+      await expect(
+        control,
+        "a remounted control offered a second logout while the first was in flight",
+      ).toBeDisabled();
+      await expect(control).toHaveText("Signing out…");
+      await expect(control).toHaveAttribute("aria-busy", "true");
+
+      // DRAINED ON THE WIRE, not on a URL. A logout the practitioner walked
+      // away from does not apply its redirect to the page they walked to, so
+      // waiting for /login here would hang on a navigation that is never
+      // coming — it did, for 20s, before this was understood. The action
+      // leaving the wire is the settlement that actually matters, and a queued
+      // duplicate would dispatch after exactly that.
+      gate.release();
+      await gate.firstSettled;
+      await Promise.race([
+        gate.duplicateSeen,
+        new Promise((r) => setTimeout(r, 4_000)),
+      ]);
+      expect(
+        gate.state.held,
+        "a second logout reached the wire after the panel remounted",
       ).toBe(1);
 
       await gate.unroute();

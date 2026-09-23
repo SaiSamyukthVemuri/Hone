@@ -122,9 +122,69 @@ describe("SIGNOUT-02 · the state is truthful", () => {
     expect(leaf).not.toMatch(/Signed out|Goodbye|See you|Success/i);
   });
 
-  it("disables on pending, which IS the duplicate-activation guard", () => {
-    expect(leaf).toContain("disabled={pending}");
+  it("disables while in flight, which IS the duplicate-activation guard", () => {
+    expect(leaf).toContain("disabled={inFlight}");
     expect(leaf).toContain("aria-busy");
+  });
+});
+
+describe("SIGNOUT-02b · the pending state outlives the panel", () => {
+  const shells = [ACCOUNT, MENU];
+
+  it("the leaf reports pending UP and accepts busy back DOWN", () => {
+    expect(leaf).toContain("onPendingChange");
+    expect(leaf).toContain("busy");
+    // Both are needed: the shell cannot know without the first, and a
+    // remounted leaf cannot know without the second.
+    expect(leaf).toContain("const inFlight = pending || busy;");
+  });
+
+  it("only TRANSITIONS are reported, never the initial false", () => {
+    // Load-bearing. Reporting the mount-time `false` would have a freshly
+    // reopened leaf immediately clear the shell's flag, reinstating the very
+    // defect this closes — and silently, since everything still compiles.
+    expect(leaf).toContain("if (pending === reported.current) return;");
+  });
+
+  it("each shell holds the flag and hands it back", () => {
+    for (const f of shells) {
+      const code = codeOnly(read(f));
+      expect(code, f).toContain("const [signingOut, setSigningOut] = useState(false);");
+      expect(code, f).toContain("busy={signingOut}");
+      expect(code, f).toContain("onPendingChange={setSigningOut}");
+    }
+  });
+
+  it("all three dismissal paths are gated on the in-flight logout", () => {
+    for (const f of shells) {
+      const code = codeOnly(read(f));
+      // Escape.
+      expect(code, f).toContain('if (e.key === "Escape" && !signingOut) setOpen(false);');
+      // Outside pointerdown.
+      expect(code, f).toContain("if (signingOut) return;");
+      // The trigger may still OPEN — refusing that too would strand the menu.
+      expect(code, f).toContain("setOpen((v) => (v && signingOut ? true : !v))");
+    }
+  });
+
+  it("the gate did NOT reach into navigation", () => {
+    // Links have always dismissed the panel themselves and must keep doing so;
+    // SIGNOUT-01 records why that is correct. The remount case is covered by
+    // `busy` instead, which is what keeps this bounded to a dismissal fix.
+    const menu = codeOnly(read(MENU));
+    expect(menu).toContain("onClick={(e) => navigate(e, item.href, item.label)}");
+    expect(menu).not.toContain("signingOut ? undefined : navigate");
+  });
+
+  it("no click handler crept onto the submit path", () => {
+    // The SIGNOUT-01 defect, re-checked because this change edits both shells.
+    expect(leaf).not.toMatch(/onClick/);
+    for (const f of shells) {
+      const code = codeOnly(read(f));
+      const open = code.indexOf("<form action={signOut}>");
+      const close = code.indexOf("</form>", open);
+      expect(code.slice(open, close), f).not.toMatch(/onClick/);
+    }
   });
 });
 

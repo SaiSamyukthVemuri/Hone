@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useFormStatus } from "react-dom";
 import { cx } from "@/components/ui/control-base";
 
@@ -115,17 +116,70 @@ const IDLE = "hover:bg-neutral-100 dark:hover:bg-neutral-900";
 const BUSY =
   "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400";
 
-export function SignOutMenuItem({ minHeight }: { minHeight: string }) {
+/**
+ * SIGNOUT-02b · the pending state has to outlive this component.
+ *
+ * THE DEFECT THIS CLOSES, measured rather than argued. `useFormStatus` only
+ * reports for the form it runs inside, and that form lives in a panel rendered
+ * from the shell's `open` state. So pressing Escape — or clicking outside, or
+ * the menu trigger — unmounted the form mid-logout, and reopening the menu
+ * built a FRESH leaf that knew nothing: enabled, labelled "Sign out", no
+ * `aria-busy`. Pressing it put a second logout on the wire. Measured:
+ * `[294, 2404]` — two requests, the second 2.1s after the first.
+ *
+ * The duplicate half is NOT a regression from SIGNOUT-02; the same path
+ * measured `[288, 2355]` on the pre-SIGNOUT-02 runtime, which had no guard at
+ * all. What SIGNOUT-02 owed and had not yet paid was making the guard and the
+ * acknowledgement survive the panel boundary.
+ *
+ * TWO HALVES, because either alone leaves a hole:
+ *
+ *   * `onPendingChange` lifts the fact into the SHELL, which is persistent —
+ *     it is the panel that unmounts, not AccountMenu/MobileMenu. The shell
+ *     then refuses to dismiss while a logout is in flight, which keeps this
+ *     leaf mounted and its `useFormStatus` live.
+ *   * `busy` comes back DOWN, so even if a fresh leaf is ever mounted while a
+ *     logout is still running, it renders as busy instead of as an invitation
+ *     to sign out twice.
+ *
+ * ONLY TRANSITIONS ARE REPORTED, and that is load-bearing. Reporting the
+ * initial `false` on mount would have a freshly-reopened leaf immediately
+ * clear the shell's flag — reinstating the exact defect this closes, and doing
+ * it invisibly.
+ *
+ * SIGNOUT-01 IS UNTOUCHED BY THIS. There is still no `onClick` anywhere on the
+ * submit path, and nothing here unmounts the form during a click: the change
+ * makes the form STRICTLY less likely to unmount, which is the same direction
+ * SIGNOUT-01's fix pushed.
+ */
+export function SignOutMenuItem({
+  minHeight,
+  busy = false,
+  onPendingChange,
+}: {
+  minHeight: string;
+  /** Remembered by the shell, so a remounted leaf is still truthful. */
+  busy?: boolean;
+  onPendingChange?: (pending: boolean) => void;
+}) {
   const { pending } = useFormStatus();
+  const reported = useRef(false);
+  useEffect(() => {
+    if (pending === reported.current) return;
+    reported.current = pending;
+    onPendingChange?.(pending);
+  }, [pending, onPendingChange]);
+
+  const inFlight = pending || busy;
   return (
     <button
       type="submit"
       // THE DUPLICATE-ACTIVATION GUARD, and not an advisory one: a second
       // press cannot reach a disabled control. Same ruling as PendingButton.
-      disabled={pending}
-      aria-busy={pending || undefined}
-      data-signout-pending={pending ? "true" : undefined}
-      className={cx(ROW, minHeight, PRESS, pending ? BUSY : IDLE)}
+      disabled={inFlight}
+      aria-busy={inFlight || undefined}
+      data-signout-pending={inFlight ? "true" : undefined}
+      className={cx(ROW, minHeight, PRESS, inFlight ? BUSY : IDLE)}
     >
       {/* TRUTHFUL, AND NOT A CLAIM OF SUCCESS. "Signing out…" says a request is
           in flight; it never says the session is gone. The state clears only
@@ -140,7 +194,7 @@ export function SignOutMenuItem({ minHeight }: { minHeight: string }) {
           cannot resize it or move anything beside it. The geometry-stable
           spinner Button prefers exists to protect a control that is sized by
           its own text. This one is not. */}
-      {pending ? "Signing out…" : "Sign out"}
+      {inFlight ? "Signing out…" : "Sign out"}
     </button>
   );
 }

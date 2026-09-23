@@ -29,16 +29,28 @@ export function MobileMenu({
   canSwitchStudio: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // SIGNOUT-02b. The logout's in-flight state is held HERE, on the persistent
+  // shell, because the panel below is the thing that unmounts. Escape, an
+  // outside pointerdown and the trigger could all dismiss the panel mid-logout,
+  // taking the form and its `useFormStatus` with them; reopening then built a
+  // fresh, enabled "Sign out" and a second logout went out on the wire.
+  //
+  // While this is true the panel REFUSES TO CLOSE, which keeps the form mounted
+  // and the acknowledgement truthful. It is also handed back down as `busy`, so
+  // a leaf that does somehow remount mid-flight still renders as busy rather
+  // than inviting a second press.
+  const [signingOut, setSigningOut] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      // Escape must not abandon a logout that is already talking to the server.
+      if (e.key === "Escape" && !signingOut) setOpen(false);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  }, [open, signingOut]);
 
   // PR #230: tapping OUTSIDE the menu dismisses it, like a native
   // dropdown. The listener exists only while the menu is open and
@@ -50,13 +62,14 @@ export function MobileMenu({
   useEffect(() => {
     if (!open) return;
     function onPointerDown(e: PointerEvent) {
+      if (signingOut) return;
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
+  }, [open, signingOut]);
 
   const close = () => setOpen(false);
 
@@ -175,7 +188,9 @@ export function MobileMenu({
         type="button"
         aria-label="Open navigation menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        // Refuses to CLOSE mid-logout, never refuses to OPEN — otherwise a
+        // stuck flag would leave the menu unreachable.
+        onClick={() => setOpen((v) => (v && signingOut ? true : !v))}
         // `relative` is owned here: the mark is absolutely positioned so the
         // trigger cannot change width mid-navigation.
         className="relative flex min-h-[44px] cursor-pointer select-none items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium dark:border-neutral-700"
@@ -321,7 +336,11 @@ export function MobileMenu({
                 touch device never fires :hover, so before this the tap painted
                 literally nothing for the ~530ms until the shell was replaced. */}
             <form action={signOut}>
-              <SignOutMenuItem minHeight="min-h-[44px]" />
+              <SignOutMenuItem
+                minHeight="min-h-[44px]"
+                busy={signingOut}
+                onPendingChange={setSigningOut}
+              />
             </form>
           </div>
         </nav>
