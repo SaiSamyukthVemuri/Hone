@@ -3,6 +3,8 @@ import {
   isNewClientWaitlistEnabled,
   isNewClientWaitlistDurableEnabled,
 } from "@/lib/booking/new-client-waitlist";
+import { createClient } from "@/lib/supabase/server";
+import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
 import { SettingsNav, type SettingsNavItem } from "./SettingsNav";
 
 // Settings layout. The tab list is computed server-side based on
@@ -29,25 +31,29 @@ export default async function SettingsLayout({
 }) {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
-  // WAIT-02. The durable waitlist tab appears only for a studio that is BOTH
-  // waitlisting new clients AND recording those requests durably — the same
-  // subordinate contract the submit path enforces, derived here from the
+  // WAIT-02. The durable waitlist tab appears for an owner whose studio is
+  // BOTH waitlisting new clients AND recording those requests durably — the
+  // same subordinate contract the submit path enforces, derived here from the
   // SERVER-RESOLVED slug and never from anything the browser sent.
   //
-  // BOTH flags, not just the durable one. Either half alone describes a studio
-  // that is not taking durable waitlist requests: with the gate off, new
-  // clients book normally and nothing new can arrive; with the durable flag
-  // off, the studio's queue is still its inbox and a tab reading "Waiting: 0"
-  // would be actively misleading. Advertising an intake surface in either state
-  // presents a stale queue as a live one.
+  // WAITLIST-NAV-VIS-01. ...OR whose studio already holds an entry the operator
+  // can still act on (waiting / claimed / invited / expired / released). A
+  // studio with a real queue must never lose its navigation to that queue just
+  // because the rollout flags are not both set; the flags also drive public
+  // booking behaviour, so they are not the lever for exposing a tab. Terminal
+  // history (converted / removed) alone does not count.
   //
-  // Hiding the TAB is not hiding the DATA: /settings/waitlist stays reachable
-  // by URL for an owner in every rollback shape, so entries already committed
-  // never become unreachable.
-  const waitlistTabVisible =
-    isOwner &&
+  // The presence read runs only for an owner, only when the flags have not
+  // already answered, on the RLS-scoped user client, HEAD-only. It fails
+  // closed (tab hidden). /settings/waitlist stays reachable by URL for an
+  // owner in every shape either way — this governs navigation, not access.
+  const waitlistLive =
     isNewClientWaitlistEnabled(studio.slug) &&
     isNewClientWaitlistDurableEnabled(studio.slug);
+  const waitlistTabVisible =
+    isOwner &&
+    (waitlistLive ||
+      (await hasActiveWaitlistEntries(await createClient(), studio.id)));
 
   const items: SettingsNavItem[] = [
     { href: "/settings/profile", label: "Profile" },

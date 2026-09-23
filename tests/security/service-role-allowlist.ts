@@ -431,6 +431,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "app/portal/rebook-actions.ts",
+    purpose:
+      "EMERG-PORTAL-REBOOK-01 — the portal-authenticated rebooking authority: the client and studio reads it scopes by the portal session, the slot generation it drives, and the create_public_appointment commit.",
+    why:
+      "SERVICE-ROLE BYPASSES RLS, so the scoping here is carried by the queries themselves rather than by a policy. It is required because a portal client holds NO Supabase auth session — the client portal is a separate realm keyed on the hone_portal_session cookie (lib/portal/session.ts) — and migration 0173 restricts services SELECT to authenticated studio MEMBERS, so the RLS-bound reads return an EMPTY result for a portal client rather than an error. " +
+      "STUDIO AND CLIENT IDENTITY ARE RESOLVED FROM hone_portal_session: getCurrentPortalSession() hashes the httpOnly cookie, matches it against a non-expired, non-revoked client_portal_sessions row, and yields (studioId, clientId). " +
+      "BROWSER INPUT SUPPLIES NEITHER studioId NOR clientId: the FormData carries serviceId, startsAt and an optional note and nothing else, the session is resolved BEFORE any submitted value is read, and tests/source-guards/portal-rebook-identity.test.ts forbids every submitted-identity shape with negative controls proving each rule fires. " +
+      "EVERY ADMIN QUERY IS EXPLICITLY SCOPED TO THOSE SESSION-DERIVED VALUES: the clients read filters id = session.clientId AND studio_id = session.studioId AND archived_at IS NULL; the studios read filters id = session.studioId; the service menu, the submitted-service validation and the duration all come from the single studio-scoped loader getPortalBookableServices(session.studioId), which filters studio_id AND active = true, so a cross-studio or inactive service is ABSENT rather than rejected. " +
+      "The appointment itself is written ONLY by create_public_appointment (migration 0170), granted to service_role alone, which independently re-validates studio/client/service tenancy, the archived-client rule, the service active rule and the full public availability contract under the studio lock — so the service-role client here cannot widen what that command accepts, and it exposes no duration, status, practitioner or override parameter for this caller to set.",
+    scopeGuard: "getCurrentPortalSession",
+  },
+  {
     path: "app/portal/verify/[token]/actions.ts",
     purpose: "Public, unauthenticated token-scoped route/query.",
     why: "No session; the bearer signed/hashed token is verified (hashToken) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",

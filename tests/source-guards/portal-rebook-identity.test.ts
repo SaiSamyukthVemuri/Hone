@@ -1,0 +1,1548 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
+import path from "node:path";
+
+// ===========================================================================
+// EMERG-PORTAL-REBOOK-01 — the identity boundary, pinned at the source.
+// ===========================================================================
+//
+// The whole unit rests on one property: the returning client's identity comes
+// from the portal session and from NOWHERE ELSE. The dormant unauthenticated
+// path in app/book/[slug]/actions.ts binds `client_type=existing` by matching a
+// TYPED email against an active client, which is an impersonation surface. This
+// action must never grow that shape, and the public UI must never start
+// offering the old one.
+//
+// A browser assertion cannot see this. An action that quietly read
+// `formData.get("email")` would render identically right up until someone used
+// it, and a behavioural test would need the attacker's exact request to notice.
+// So it is checked in the source — and EVERY "does not contain" rule below
+// carries a NEGATIVE CONTROL, because a forbidden-pattern rule that matches
+// nothing passes on an empty file.
+
+const ROOT = path.resolve(__dirname, "../..");
+const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
+
+const ACTION_REL = "app/portal/rebook-actions.ts";
+const FORM_REL = "app/portal/PortalRebookCard.tsx";
+const PORTAL_PAGE_REL = "app/portal/page.tsx";
+const PUBLIC_FORM_REL = "app/book/[slug]/PublicBookForm.tsx";
+
+const RAW = read(ACTION_REL);
+
+// LINE comments are stripped BEFORE block comments. A `//` line containing `/*`
+// would otherwise leave the block stripper eating real code to the next `*/`,
+// and every assertion below would be vacuously true. This file's own prose
+// names `email`, `client_type` and the dormant path when explaining what it
+// refuses to do, so prose must neither satisfy nor trip a source rule.
+const codeOnly = (source: string) =>
+  source
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join("\n")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+
+const CODE = codeOnly(RAW);
+
+/**
+ * Does this expression, when TRUTHY, require `name` to be truthy?
+ *
+ * MENTIONING IS NOT REQUIRING. An earlier version asked only whether the
+ * identifier appeared somewhere in the gating subtree, which accepts the exact
+ * inversions the rule exists to forbid:
+ *
+ *     !dayWasRead && slots.length === 0        // concludes after a FAILED read
+ *     !dayWasRead ? slots.length === 0 : null  // same, via the true branch
+ *
+ * So the check is on IMPLICATION, and deliberately conservative: only a bare
+ * identifier, or a conjunction one of whose sides requires it, counts. A
+ * negation, a disjunction, or any comparison is rejected — if a future gate
+ * needs a shape this does not recognise, it fails CLOSED and someone has to
+ * teach the rule about it, which is the safe direction for a rule of this kind.
+ */
+function requiresTrue(node: ts.Node, name: string): boolean {
+  if (ts.isParenthesizedExpression(node)) return requiresTrue(node.expression, name);
+  if (ts.isIdentifier(node)) return node.text === name;
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+  ) {
+    return requiresTrue(node.left, name) || requiresTrue(node.right, name);
+  }
+  return false;
+}
+
+function parse(source: string, kind: ts.ScriptKind): ts.SourceFile {
+  return ts.createSourceFile("s", source, ts.ScriptTarget.Latest, true, kind);
+}
+
+const lineOf = (sf: ts.SourceFile, n: ts.Node) =>
+  sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+
+/** Is `node` lexically inside `container`? */
+const within = (sf: ts.SourceFile, node: ts.Node, container: ts.Node) =>
+  container.getStart(sf) <= node.getStart(sf) && node.getEnd() <= container.getEnd();
+
+/**
+ * Every `slots.length` use that is NOT reached only when `dayWasRead` holds.
+ *
+ * WHY THIS IS ABOUT BRANCHES AND NOT ABOUT MENTIONS. An earlier version asked
+ * whether the enclosing CONDITION mentioned the predicate, which accepts two
+ * shapes that mean the opposite of what the rule wants:
+ *
+ *   dayWasRead ? null : slots.length === 0     // runs when it did NOT hold
+ *   dayWasRead || slots.length === 0           // right side runs when false
+ *
+ * So the rule follows the operator and the branch. A use is gated when it sits
+ * in the RIGHT operand of an `&&` whose LEFT requires the predicate, or inside
+ * the TRUE branch of a conditional whose condition requires it. Nothing else
+ * counts — in particular `||` never gates, and an else-branch never gates.
+ */
+function ungatedSlotLengthUses(
+  source: string,
+  predicate = "dayWasRead",
+): number[] {
+  const sf = parse(source, ts.ScriptKind.TSX);
+  const out: number[] = [];
+  const visit = (node: ts.Node) => {
+    const isSlotsLength =
+      ts.isPropertyAccessExpression(node) &&
+      node.name.text === "length" &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "slots";
+    if (isSlotsLength) {
+      let gated = false;
+      for (let q: ts.Node | undefined = node.parent; q && !gated; q = q.parent) {
+        if (
+          ts.isBinaryExpression(q) &&
+          q.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+          requiresTrue(q.left, predicate) &&
+          within(sf, node, q.right)
+        ) {
+          gated = true;
+        } else if (
+          ts.isConditionalExpression(q) &&
+          requiresTrue(q.condition, predicate) &&
+          within(sf, node, q.whenTrue)
+        ) {
+          gated = true;
+        }
+      }
+      if (!gated) out.push(lineOf(sf, node));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Calls to `callee` that are not AWAITED inside a try that HAS A CATCH.
+ *
+ * All three conditions carry weight and each was missing from an earlier
+ * version:
+ *   * inside the try BLOCK — a call in the `catch` is not protected by its own
+ *     try;
+ *   * AWAITED — a bare call retains its promise, which rejects after the try
+ *     has already exited and sails straight past the catch;
+ *   * the try HAS A CATCH — `try { await x(); } finally {}` still propagates.
+ */
+function callsOutsideTry(
+  source: string,
+  callee: string,
+  kind: ts.ScriptKind = ts.ScriptKind.TSX,
+): number[] {
+  const sf = parse(source, kind);
+  const out: number[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === callee
+    ) {
+      // THE AWAIT MUST CONSUME THIS CALL, not merely enclose it. Accepting any
+      // lexical await ancestor lets `await ignore(action(args))` through: if
+      // `ignore` does not adopt its argument, the action's promise rejects on
+      // its own schedule, long after the catch stopped being relevant.
+      const awaitedDirectly =
+        node.parent !== undefined &&
+        ts.isAwaitExpression(node.parent) &&
+        node.parent.expression === node;
+      let protectedCall = false;
+      for (let q: ts.Node | undefined = node.parent; q && !protectedCall; q = q.parent) {
+        if (
+          ts.isTryStatement(q) &&
+          within(sf, node, q.tryBlock) &&
+          q.catchClause !== undefined &&
+          awaitedDirectly
+        ) {
+          protectedCall = true;
+        }
+      }
+      if (!protectedCall) out.push(lineOf(sf, node));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Calls to `callee` that are not inside a FUNCTION ARGUMENT of `wrapper`.
+ *
+ * "Somewhere under the wrapper call" is not the same as "deferred by it". An
+ * eagerly evaluated argument —
+ * `postCommit("e", (send(args), undefined), () => undefined)` — is a descendant
+ * of the call while executing BEFORE it, so its rejection is uncontained. Only
+ * an arrow or function expression passed as an argument actually defers.
+ */
+function callsNotWrappedBy(
+  source: string,
+  callee: string,
+  wrapper: string,
+  kind: ts.ScriptKind = ts.ScriptKind.TS,
+): number[] {
+  const sf = parse(source, kind);
+  const out: number[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === callee
+    ) {
+      let deferred = false;
+      for (let q: ts.Node | undefined = node.parent; q && !deferred; q = q.parent) {
+        if (
+          ts.isCallExpression(q) &&
+          ts.isIdentifier(q.expression) &&
+          q.expression.text === wrapper &&
+          // THE CALLBACK IS THE THIRD ARGUMENT, and it is the only one that
+          // runs. `postCommit("e", () => effect(), () => undefined)` puts the
+          // effect in the FALLBACK VALUE — type-valid, never executed, and the
+          // established notification silently stops happening. "Some function
+          // argument" accepted it.
+          q.arguments.length > 2 &&
+          (ts.isArrowFunction(q.arguments[2]) ||
+            ts.isFunctionExpression(q.arguments[2])) &&
+          within(sf, node, q.arguments[2])
+        ) {
+          deferred = true;
+        }
+      }
+      if (!deferred) out.push(lineOf(sf, node));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** How many `slots.length` uses exist at all, so the invariant is not vacuous. */
+function slotLengthUseCount(source: string): number {
+  return (source.match(/slots\.length/g) ?? []).length;
+}
+const FORM_CODE = codeOnly(read(FORM_REL));
+
+describe("the comment stripper itself", () => {
+  it("keeps code and drops prose", () => {
+    expect(CODE).toContain("export async function bookAnotherAppointmentAction");
+    // This sentence exists only inside a comment in the action.
+    expect(RAW).toContain("It never supplies WHO");
+    expect(CODE).not.toContain("It never supplies WHO");
+  });
+
+  it("does not eat code that follows a line comment containing a block opener", () => {
+    const sample = ["// a note with /* inside it", "const kept = 1;"].join("\n");
+    expect(codeOnly(sample)).toContain("const kept = 1;");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Identity comes from the session, never from the form.
+// ---------------------------------------------------------------------------
+
+/**
+ * Any assignment to `clientId` that is NOT the one blessed binding.
+ *
+ * `test()` on a /g regex advances `lastIndex`, so this is declared without the
+ * global flag and used one call at a time.
+ */
+const REASSIGNED_CLIENT_ID = /\bclientId\s*=(?!\s*session\.clientId\b)/;
+
+/** Every shape that would let a caller name WHO they are. */
+const SUBMITTED_IDENTITY = [
+  /formData\.get\(\s*["']email["']\s*\)/,
+  /formData\.get\(\s*["']clientId["']\s*\)/,
+  /formData\.get\(\s*["']client_id["']\s*\)/,
+  /formData\.get\(\s*["']studioId["']\s*\)/,
+  /formData\.get\(\s*["']studio_id["']\s*\)/,
+  /formData\.get\(\s*["']name["']\s*\)/,
+  /formData\.get\(\s*["']phone["']\s*\)/,
+  /formData\.get\(\s*["']slug["']\s*\)/,
+  /formData\.get\(\s*["']clientType["']\s*\)/,
+  /formData\.get\(\s*["']client_type["']\s*\)/,
+];
+
+describe("identity comes from the session, never from the form", () => {
+  for (const shape of SUBMITTED_IDENTITY) {
+    it(`never reads ${String(shape)}`, () => {
+      expect(CODE).not.toMatch(shape);
+    });
+  }
+
+  it("resolves the session before it reads anything submitted", () => {
+    const session = CODE.indexOf("getCurrentPortalSession");
+    const firstForm = CODE.indexOf("formData.get");
+    expect(session).toBeGreaterThan(-1);
+    expect(firstForm).toBeGreaterThan(-1);
+    expect(
+      session,
+      "the session must be resolved before any submitted value is read, so a " +
+        "refusal cannot depend on submitted data",
+    ).toBeLessThan(firstForm);
+  });
+
+  it("takes both identity values straight off the session object", () => {
+    expect(CODE).toMatch(/const\s+studioId\s*=\s*session\.studioId\s*;/);
+    expect(CODE).toMatch(/const\s+clientId\s*=\s*session\.clientId\s*;/);
+  });
+
+  it("passes the SESSION's ids to the commit", () => {
+    expect(CODE).toMatch(/p_studio_id:\s*studio\.id\b/);
+    expect(CODE).toMatch(/p_client_id:\s*clientId\b/);
+    // `clientId` must not be reassigned anywhere after the session set it.
+    //
+    // The lookahead sits IMMEDIATELY after `=` and swallows the whitespace
+    // itself. Written as `\\s*=\\s*(?!session\\.clientId)` the trailing `\\s*` can
+    // backtrack to zero width, so the lookahead is evaluated at the SPACE
+    // before `session` — where the forbidden text does not start — and the rule
+    // fires on the one binding it is meant to bless.
+    expect(REASSIGNED_CLIENT_ID.test(CODE)).toBe(false);
+  });
+
+  it("NEGATIVE CONTROL: the rebinding rule fires on a real rebinding", () => {
+    expect(REASSIGNED_CLIENT_ID.test(`clientId = formData.get("clientId");`)).toBe(true);
+    expect(REASSIGNED_CLIENT_ID.test(`let clientId = winner.id;`)).toBe(true);
+    // ...and stays silent on the blessed binding.
+    expect(REASSIGNED_CLIENT_ID.test(`const clientId = session.clientId;`)).toBe(false);
+  });
+
+  it("scopes the client lookup by BOTH the session client and the session studio", () => {
+    expect(CODE).toMatch(/\.eq\("id",\s*clientId\)/);
+    expect(CODE).toMatch(/\.eq\("studio_id",\s*studioId\)/);
+  });
+
+  it("the form supplies ONLY choices", () => {
+    const reads = [
+      ...CODE.matchAll(/formData\.get\(\s*["']([a-zA-Z_]+)["']\s*\)/g),
+    ].map((m) => m[1]);
+    expect(reads.length).toBeGreaterThan(0);
+    expect(
+      [...new Set(reads)].sort(),
+      "serviceId and startsAt are the choices; notes is the existing booking " +
+        "contract's own optional note. Nothing else may be read.",
+    ).toEqual(["notes", "serviceId", "startsAt"]);
+  });
+
+  it("the BROWSER sends only those three fields too", () => {
+    const sent = [...FORM_CODE.matchAll(/fd\.set\(\s*["']([a-zA-Z_]+)["']/g)].map(
+      (m) => m[1],
+    );
+    expect(sent.length).toBeGreaterThan(0);
+    expect([...new Set(sent)].sort()).toEqual(["notes", "serviceId", "startsAt"]);
+  });
+
+  describe("the guards are not vacuous", () => {
+    it("SUBMITTED_IDENTITY fires on the shape it forbids", () => {
+      const forged = [
+        `const email = formData.get("email");`,
+        `const clientId = formData.get("clientId");`,
+        `const studioId = formData.get("studio_id");`,
+      ].join("\n");
+      const fired = SUBMITTED_IDENTITY.filter((p) => p.test(forged));
+      expect(fired.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("none of them fires on the shipped action", () => {
+      for (const shape of SUBMITTED_IDENTITY) {
+        expect(CODE, String(shape)).not.toMatch(shape);
+      }
+    });
+
+    it("the ordering rule fails when the session is resolved late", () => {
+      const inverted = codeOnly(
+        [`const x = formData.get("serviceId");`, `await getCurrentPortalSession();`].join(
+          "\n",
+        ),
+      );
+      expect(inverted.indexOf("getCurrentPortalSession")).toBeGreaterThan(
+        inverted.indexOf("formData.get"),
+      );
+    });
+
+    it("the allowed-field rule fails when a fourth field is read", () => {
+      const widened = codeOnly(
+        [
+          `formData.get("serviceId");`,
+          `formData.get("startsAt");`,
+          `formData.get("notes");`,
+          `formData.get("email");`,
+        ].join("\n"),
+      );
+      const reads = [
+        ...widened.matchAll(/formData\.get\(\s*["']([a-zA-Z_]+)["']\s*\)/g),
+      ].map((m) => m[1]);
+      expect([...new Set(reads)].sort()).not.toEqual([
+        "notes",
+        "serviceId",
+        "startsAt",
+      ]);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The commit goes through the locked command.
+// ---------------------------------------------------------------------------
+
+describe("the commit goes through the canonical command, not a raw insert", () => {
+  it("calls create_public_appointment", () => {
+    expect(CODE).toMatch(/\.rpc\(\s*\n?\s*["']create_public_appointment["']/);
+  });
+
+  it("never inserts into appointments directly", () => {
+    // The command writes the MANDATORY appointment_audit row in the same
+    // transaction. A direct insert here would reintroduce the exact defect
+    // migration 0170 exists to close.
+    const forbidden = /from\(\s*["']appointments["']\s*\)[\s\S]{0,200}\.insert\(/;
+    expect(CODE).not.toMatch(forbidden);
+    // NEGATIVE CONTROL.
+    expect(`admin.from("appointments").insert({ starts_at })`).toMatch(forbidden);
+  });
+
+  it("requests no duration, end time, status, practitioner or override", () => {
+    const FORBIDDEN_PARAMS = [
+      /p_duration/,
+      /p_ends_at/,
+      /p_end_time/,
+      /p_status/,
+      /p_override/,
+      /p_practitioner_id/,
+      /p_slot_verified/,
+    ];
+    for (const forbidden of FORBIDDEN_PARAMS) {
+      expect(CODE, String(forbidden)).not.toMatch(forbidden);
+    }
+    // NEGATIVE CONTROL: the patterns do match the shapes they name.
+    const bad = `p_duration: 60, p_status: "confirmed", p_practitioner_id: x`;
+    expect(FORBIDDEN_PARAMS.filter((p) => p.test(bad)).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("adds no migration dependency of its own", () => {
+    // The command already accepted p_client_id and already validated it. The
+    // emergency needed a caller, not new schema — and a source rule is what
+    // keeps a later edit honest.
+    const forbidden = /create_portal_appointment|p_portal_/;
+    expect(CODE).not.toMatch(forbidden);
+    expect(`admin.rpc("create_portal_appointment", {})`).toMatch(forbidden);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// It does not reopen, or depend on, the unauthenticated path.
+// ---------------------------------------------------------------------------
+
+describe("it does not reopen the unauthenticated existing-client path", () => {
+  it("imports nothing from the public booking route", () => {
+    const forbidden = /from\s+["']@\/app\/book\//;
+    expect(CODE).not.toMatch(forbidden);
+    expect(`import { x } from "@/app/book/[slug]/actions";`).toMatch(forbidden);
+  });
+
+  it("never sends or reads a client_type", () => {
+    expect(CODE).not.toMatch(/client_type/);
+    expect(FORM_CODE).not.toMatch(/client_type/);
+  });
+
+  it("never consults the new-client waitlist ADMISSION gate", () => {
+    // WAIT gates whether a visitor presenting nothing may be admitted as a NEW
+    // client. A returning client with a live session was admitted long ago and
+    // is not re-admitted here, so this file must not be able to refuse one.
+    const forbidden = /isNewClientWaitlistEnabled|new-client-waitlist|NEW_CLIENT_WAITLIST/;
+    expect(CODE).not.toMatch(forbidden);
+    expect(
+      `import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";`,
+    ).toMatch(forbidden);
+  });
+
+  it("never consults an invitation, scope or capability", () => {
+    const forbidden = /invitation_token|invitation_capability|authorizeInvitationForBooking/;
+    expect(CODE).not.toMatch(forbidden);
+    expect(`const t = formData.get("invitation_token");`).toMatch(forbidden);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L. The PUBLIC unauthenticated existing-client binding stays unreachable.
+// ---------------------------------------------------------------------------
+
+describe("L. the public existing-client email-binding path remains unreachable", () => {
+  const PUBLIC_FORM = read(PUBLIC_FORM_REL);
+
+  it("the existing-client choice still early-returns to the portal", () => {
+    const branch = PUBLIC_FORM.indexOf('if (clientType === "existing") {');
+    expect(branch, "the early return must still exist").toBeGreaterThan(-1);
+    const tail = PUBLIC_FORM.slice(branch, branch + 3000);
+    expect(tail).toContain("/portal/login");
+  });
+
+  it("that early return happens BEFORE the booking form can be rendered", () => {
+    const branch = PUBLIC_FORM.indexOf('if (clientType === "existing") {');
+    const bookingForm = PUBLIC_FORM.indexOf("onSubmit={submit}");
+    expect(bookingForm).toBeGreaterThan(-1);
+    expect(
+      branch,
+      "an existing-client visitor must return before the submitting form exists",
+    ).toBeLessThan(bookingForm);
+  });
+
+  it("NEGATIVE CONTROL: the ordering check fails when the early return is gone", () => {
+    const mutated = PUBLIC_FORM.replace('if (clientType === "existing") {', "if (false) {");
+    expect(mutated.indexOf('if (clientType === "existing") {')).toBe(-1);
+  });
+
+  it("the portal never points a client back at the public existing-client form", () => {
+    const portalPage = read(PORTAL_PAGE_REL);
+    expect(portalPage).not.toMatch(/href=\{?["'`]\/book\//);
+    expect(FORM_CODE).not.toMatch(/\/book\//);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M. Rebooking is a CAPABILITY, not a task. It must not depend on paperwork.
+// ---------------------------------------------------------------------------
+
+describe("M. the booking door renders independently of the pending-actions zone", () => {
+  const portalPage = read(PORTAL_PAGE_REL);
+
+  it("the portal offers 'Book another appointment' at all", () => {
+    expect(portalPage).toContain("PortalRebookCard");
+    expect(read(FORM_REL)).toContain("Book another appointment");
+  });
+
+  it("the card is rendered BEFORE the Needs-you branch, so it is outside it", () => {
+    // The Needs-you zone is one `{hasNeedsYou ? ( ... ) : ( ... )}` expression.
+    // Anything that appears before it in the source cannot be inside it — which
+    // is the whole of the P1: an established client with nothing outstanding
+    // has hasNeedsYou === false, sees "You're all caught up", and must still be
+    // able to book.
+    const card = portalPage.indexOf("<PortalRebookCard");
+    const needsYou = portalPage.indexOf("{hasNeedsYou ?");
+    expect(card).toBeGreaterThan(-1);
+    expect(needsYou).toBeGreaterThan(-1);
+    expect(
+      card,
+      "the rebooking card must not sit inside the pending-actions branch",
+    ).toBeLessThan(needsYou);
+  });
+
+  it("`hasNeedsYou` does not gate the rebooking section at all", () => {
+    // The section wrapping the card branches on read-failure and on an empty
+    // service list, and on nothing else.
+    const card = portalPage.indexOf("<PortalRebookCard");
+    const section = portalPage.lastIndexOf("<section", card);
+    const around = portalPage.slice(section, card);
+    expect(around).not.toContain("hasNeedsYou");
+    expect(around).toContain("rebookReadFailed");
+    expect(around).toContain("rebookServices.length === 0");
+  });
+
+  it("NEGATIVE CONTROL: the placement rule fires when the card moves inside", () => {
+    // Reproduce the shipped defect and prove the assertion catches it.
+    const defective = portalPage.replace("<PortalRebookCard", "<PortalRebookCardMoved");
+    const moved = `${defective}\n<PortalRebookCard services={x} />`;
+    expect(moved.indexOf("<PortalRebookCard services")).toBeGreaterThan(
+      moved.indexOf("{hasNeedsYou ?"),
+    );
+  });
+
+  it("the page does not render a card for a studio the gate would refuse", () => {
+    // Otherwise the card loads, shows times, and fails on submit — the same
+    // "button that can never book" the action-level gate exists to prevent.
+    expect(portalPage).toContain("getPortalBookingReadiness");
+    expect(portalPage).toMatch(/!rebookBookable \|\| rebookServices\.length === 0/);
+  });
+
+  it("a failed READINESS read is a failed read, not a closed studio", () => {
+    expect(portalPage).toMatch(/rebookBookable == null/);
+  });
+
+  it("a failed read and an empty menu are DIFFERENT states", () => {
+    // "We couldn't ask" must never be rendered as "this studio offers nothing".
+    expect(portalPage).toContain("portal-rebook-unavailable");
+    expect(portalPage).toContain("portal-rebook-no-services");
+    const unavailable = portalPage.indexOf("portal-rebook-unavailable");
+    const around = portalPage.slice(unavailable - 400, unavailable + 300);
+    expect(around).not.toMatch(/isn.t taking online bookings/);
+  });
+
+  it("the card is handed a service menu and a date window, never an identity", () => {
+    const card = portalPage.indexOf("<PortalRebookCard");
+    const props = portalPage.slice(card, portalPage.indexOf("/>", card));
+    expect(props).toContain("services=");
+    expect(props).toContain("minDate=");
+    expect(props).toContain("maxDate=");
+    expect(props).not.toMatch(/clientId|client_id|clientEmail|session\./);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1-1. The service menu, the validation and the duration are ONE read.
+// ---------------------------------------------------------------------------
+
+describe("P1-1. services come from the portal-authorized admin read", () => {
+  const portalPage = read(PORTAL_PAGE_REL);
+  const queries = read("lib/portal/queries.ts");
+
+  it("neither the action nor the page uses the RLS-bound getActiveServices", () => {
+    // It reads through the ordinary client, whose scope is a PRACTITIONER's
+    // Supabase auth session. A portal client has none, so 0173 returns an empty
+    // list rather than an error — a silent, total failure of this surface.
+    const forbidden = /getActiveServices/;
+    expect(CODE).not.toMatch(forbidden);
+    expect(codeOnly(portalPage)).not.toMatch(forbidden);
+    // NEGATIVE CONTROL.
+    expect(`const s = await getActiveServices(studio.id);`).toMatch(forbidden);
+  });
+
+  it("the ONE loader is scoped by studio_id AND active, as query filters", () => {
+    const loader = queries.slice(queries.indexOf("export async function getPortalBookableServices"));
+    expect(loader).toMatch(/\.eq\("studio_id",\s*studioId\)/);
+    expect(loader).toMatch(/\.eq\("active",\s*true\)/);
+  });
+
+  it("the loader answers null on a read failure, never an empty menu", () => {
+    const loader = queries.slice(
+      queries.indexOf("export async function getPortalBookableServices"),
+      queries.indexOf("export function pickPortalBookableService"),
+    );
+    expect(loader).toMatch(/if\s*\(error\)\s*\{[\s\S]*?return null;/);
+  });
+
+  it("the menu, the validation and the duration all come from that one read", () => {
+    // The action resolves a service ONLY through the shared loader + picker, so
+    // a service the menu would not show is one the validator cannot find.
+    expect(CODE).toContain("getPortalBookableServices");
+    expect(CODE).toContain("pickPortalBookableService");
+    expect(codeOnly(portalPage)).toContain("getPortalBookableServices");
+    // And the duration handed to slot generation and to the command is that
+    // row's own column, not a second lookup.
+    expect(CODE).toMatch(/service\.service\.default_duration_minutes/);
+  });
+
+  it("the action performs no services read of its own", () => {
+    const forbidden = /from\(\s*["']services["']\s*\)/;
+    expect(CODE).not.toMatch(forbidden);
+    expect(`admin.from("services").select("*")`).toMatch(forbidden);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2-1. Only slots the public contract would accept are ever offered.
+// ---------------------------------------------------------------------------
+
+describe("P2-1. the offered set is the public set", () => {
+  /** The discovery action's body. */
+  const discovery = CODE.slice(
+    CODE.indexOf("export async function loadPortalRebookSlotsAction"),
+    CODE.indexOf("export async function loadPortalRebookNextAvailableAction"),
+  );
+
+  it("DISCOVERY uses the failure-aware loader, not the raw generator", () => {
+    // `getAvailableSlots` destructures the error away from its blockout and
+    // `studio_calendar_reservations` reads, so a transient failure is
+    // indistinguishable from "no conflicts": the day renders wide open and
+    // every occupied time is offered, then refused by the command.
+    expect(discovery).toContain("loadPublicSlotsByDate");
+    expect(discovery).not.toContain("getAvailableSlots");
+  });
+
+  it("DISCOVERY refuses when that read fails, rather than answering an empty day", () => {
+    expect(discovery).toMatch(/if \(!range\.ok\)/);
+    const guard = discovery.search(/if \(!range\.ok\)/);
+    const after = discovery.slice(guard, guard + 400);
+    expect(after).toMatch(/return refuse\("unavailable"/);
+  });
+
+  it("the past-time filter lives in that loader, and is still applied", () => {
+    // It moved rather than disappeared: asserting its absence from this file
+    // without asserting its presence there would be how the rule silently stops
+    // meaning anything.
+    const range = read("lib/booking/public-slot-range.ts");
+    expect(range).toContain("filterFutureSlots");
+  });
+
+  it("the PRE-COMMIT re-check deliberately keeps the raw generator", () => {
+    // The two want opposite behaviour from a failed read. Discovery must not
+    // OFFER what a missing conflict hides; this check must not REFUSE a booking
+    // that is fine, so a permissive read simply reaches the command, which
+    // re-reads under the lock and decides.
+    const book = CODE.slice(CODE.indexOf("export async function bookAnotherAppointmentAction"));
+    expect(book).toContain("getAvailableSlots");
+    // The sentence is wrapped, so the assertion must sit inside one source line.
+    expect(RAW).toContain("failure-aware loader here would turn a transient blip");
+  });
+
+  it("NEGATIVE CONTROL: the discovery rule fires on the raw-generator shape", () => {
+    const naive = "const slots = await getAvailableSlots(admin, shape, date, 45);";
+    expect(naive).toContain("getAvailableSlots");
+    expect(naive).not.toContain("loadPublicSlotsByDate");
+  });
+
+  it("bounds the requested date by the public booking horizon", () => {
+    expect(CODE).toContain("horizonRangeInStudioTz");
+    expect(CODE).toMatch(/minDateStr/);
+    expect(CODE).toMatch(/maxDateStr/);
+  });
+
+  it("re-checks the submitted instant against the horizon and the clock", () => {
+    expect(CODE).toContain("isWithinPublicBookingHorizon");
+    expect(CODE).toMatch(/start\.getTime\(\)\s*<=\s*Date\.now\(\)/);
+  });
+
+  it("uses the STUDIO-LOCAL date for the re-check, never the UTC date", () => {
+    // Using the UTC date would look up the wrong calendar day for a
+    // late-evening booking west of UTC — the same trap the public route
+    // documents.
+    expect(CODE).toMatch(/localDateString\(start,\s*studio\.timezone\)/);
+  });
+
+  it("builds the capacity-OFF studio shape the public loader is given", () => {
+    // Passing `practitioner_capacity_enabled` or a practitioner here would put
+    // the portal on a different slot grid from the one the command re-derives.
+    const shape = CODE.slice(CODE.indexOf("function publicStudioShape"));
+    expect(shape).not.toContain("practitioner_capacity_enabled");
+    expect(CODE).not.toMatch(/getAvailableSlots\([\s\S]{0,400}?practitionerId/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2-2. A committed booking runs the established post-commit workflow.
+// ---------------------------------------------------------------------------
+
+describe("P2-2. the post-commit workflow is the established one", () => {
+  const EFFECTS = [
+    ["client confirmation email", /sendBookingConfirmationToClient/],
+    ["truthful email bookkeeping", /recordEmailAttempt/],
+    ["email failure alerting", /logEmailFailure/],
+    ["practitioner notification record", /recordPractitionerNotification/],
+    ["practitioner email", /sendBookingNotificationToPractitioner/],
+    ["existing booking SMS path", /sendBookingConfirmationSmsToClient/],
+    ["intake link", /ensureIntakeForClient/],
+    ["calendar revalidation", /revalidatePath\("\/calendar"\)/],
+    ["portal revalidation", /revalidatePath\("\/portal"\)/],
+  ] as const;
+
+  /** The same effects by CALLEE NAME, for the parsed containment rule. */
+  const CONTAINED_EFFECTS = [
+    ["client confirmation email", "sendBookingConfirmationToClient"],
+    ["truthful email bookkeeping", "recordEmailAttempt"],
+    ["email failure alerting", "logEmailFailure"],
+    ["practitioner notification record", "recordPractitionerNotification"],
+    ["practitioner email", "sendBookingNotificationToPractitioner"],
+    ["existing booking SMS path", "sendBookingConfirmationSmsToClient"],
+    ["intake link", "ensureIntakeForClient"],
+    ["cache revalidation", "revalidatePath"],
+  ] as const;
+
+  for (const [label, shape] of EFFECTS) {
+    it(`runs the ${label}`, () => {
+      expect(CODE, label).toMatch(shape);
+    });
+  }
+
+  it("every post-commit effect is contained so it cannot fail the booking", () => {
+    // Each one goes through the fail-soft helper. A bare call would let a
+    // provider exception surface a COMMITTED booking as an error.
+    //
+    // PARSED, NOT MEASURED BY PROXIMITY. The previous version asked whether
+    // `postCommit` appeared in the preceding 600 characters, which an effect
+    // called bare immediately after a contained one satisfies. It also needed a
+    // special case for the generic form `postCommit<{...}>(`; matching the
+    // callee IDENTIFIER makes both call shapes the same thing.
+    const ACTION_SRC = read(ACTION_REL);
+    for (const [label, callee] of CONTAINED_EFFECTS) {
+      expect(
+        callsNotWrappedBy(ACTION_SRC, callee, "postCommit"),
+        `${label} must be inside a postCommit(...) wrapper`,
+      ).toEqual([]);
+    }
+  });
+
+  it("NON-VACUITY: those effects are actually called", () => {
+    const ACTION_SRC = read(ACTION_REL);
+    for (const [label, callee] of CONTAINED_EFFECTS) {
+      expect(ACTION_SRC, label).toContain(`${callee}(`);
+    }
+  });
+
+  it("NEGATIVE CONTROL: a bare effect is found even beside a contained one", () => {
+    const sneaky = `async function f() {
+      await postCommit("e", undefined, () => recordEmailAttempt(a, b, c, d));
+      await sendBookingConfirmationToClient({});
+    }`;
+    expect(
+      callsNotWrappedBy(sneaky, "sendBookingConfirmationToClient", "postCommit").length,
+      "proximity to a postCommit must not satisfy the rule",
+    ).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: an EAGER argument is not deferred by the wrapper", () => {
+    // A descendant of the call that executes BEFORE the call does. Its
+    // rejection is uncontained even though it sits inside the parentheses.
+    const eager = `async function f() {
+      await postCommit("e", (sendBookingConfirmationToClient(args), undefined), () => undefined);
+    }`;
+    expect(
+      callsNotWrappedBy(eager, "sendBookingConfirmationToClient", "postCommit").length,
+      "being under the call is not the same as being deferred by it",
+    ).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: the effect in the FALLBACK argument is not protected", () => {
+    // postCommit runs only its third argument. Put in the fallback value the
+    // effect is type-valid, never executed, and the established notification
+    // silently stops happening — which "some function argument" accepted.
+    const wrongArg = `async function f() {
+      await postCommit<unknown>("e", () => sendBookingConfirmationToClient(args), () => undefined);
+    }`;
+    expect(
+      callsNotWrappedBy(wrongArg, "sendBookingConfirmationToClient", "postCommit").length,
+      "only the callback argument runs",
+    ).toBeGreaterThan(0);
+  });
+
+  it("POSITIVE CONTROL: the generic call form counts as wrapped", () => {
+    const good = `async function f() {
+      await postCommit<{ ok: boolean }>("e", { ok: false }, () =>
+        sendBookingConfirmationToClient({}));
+    }`;
+    expect(callsNotWrappedBy(good, "sendBookingConfirmationToClient", "postCommit")).toEqual([]);
+  });
+
+  it("the raw management token is never logged", () => {
+    // Only its SHA-256 is persisted; the raw token lives in the response URL.
+    const logCalls = [...CODE.matchAll(/logRebookError\([\s\S]*?\);/g)].map((m) => m[0]);
+    expect(logCalls.length).toBeGreaterThan(0);
+    for (const call of logCalls) {
+      expect(call).not.toMatch(/appointmentToken|manageUrl|cancellationUrl|rescheduleUrl/);
+      // Nor any raw client identifier.
+      expect(call).not.toMatch(/clientEmail|clientName|clientPhone/);
+    }
+  });
+
+  it("does not widen SMS eligibility, add consent, or change sender routing", () => {
+    // The gates live inside the sender. This caller passes the STORED values
+    // through and writes none of them.
+    const forbidden = /sms_consent_at:\s*(?!clientSmsConsentAt)/;
+    expect(CODE).not.toMatch(/sms_consent_source/);
+    expect(CODE).not.toMatch(/update\([\s\S]{0,120}sms_consent_at/);
+    expect(CODE).toMatch(/sms_consent_at:\s*clientSmsConsentAt/);
+    expect(CODE).toMatch(/sms_opted_out_at:\s*clientSmsOptedOutAt/);
+    expect(`sms_consent_at: nowIso`).toMatch(forbidden);
+  });
+
+  it("a committed booking is never reported as a failure", () => {
+    // The success return is unconditional once `createdId` exists: no post-commit
+    // branch may return a refusal after it.
+    const commitIdx = CODE.indexOf("const postCommit");
+    const tail = CODE.slice(commitIdx);
+    expect(tail).not.toMatch(/return\s+refuse\(/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The submit latch and the slot loader must not be able to strand the client.
+// ---------------------------------------------------------------------------
+
+describe("the one-press latch survives a REJECTED action", () => {
+  /** The whole `startBooking(async () => { ... })` body. */
+  const bookingBody = (() => {
+    const start = FORM_CODE.indexOf("startBooking(async () =>");
+    expect(start, "the booking transition must exist").toBeGreaterThan(-1);
+    return FORM_CODE.slice(start, FORM_CODE.indexOf("if (services.length === 0)", start));
+  })();
+
+  it("awaits the action inside a try", () => {
+    const call = bookingBody.indexOf("await bookAnotherAppointmentAction(fd)");
+    expect(call).toBeGreaterThan(-1);
+    expect(bookingBody.slice(0, call)).toMatch(/try\s*\{/);
+  });
+
+  it("releases the latch in the catch, not only on a structured refusal", () => {
+    // A transient network failure or an unexpected pre-commit exception REJECTS
+    // the action. React clears the pending flag, so the button looks usable
+    // again — but a latch left set makes every later press return immediately,
+    // and the client cannot book again until they reload the page.
+    const catchIdx = bookingBody.search(/\}\s*catch\s*(\([^)]*\))?\s*\{/);
+    expect(catchIdx, "the action call must be wrapped").toBeGreaterThan(-1);
+    const catchBody = bookingBody.slice(catchIdx, catchIdx + 500);
+    expect(catchBody).toMatch(/submittedRef\.current\s*=\s*false/);
+  });
+
+  it("the catch reports RETRYABLE copy — nothing was committed on that path", () => {
+    // Bounded to the catch's OWN block. A fixed character window runs past it
+    // into the refusal handling and the success path, so `setDone` would be
+    // found there and the rule would fail against correct code.
+    const catchIdx = bookingBody.search(/\}\s*catch\s*(\([^)]*\))?\s*\{/);
+    const end = bookingBody.indexOf("if (!res.ok)", catchIdx);
+    expect(end, "the catch must be followed by the refusal handling").toBeGreaterThan(catchIdx);
+    const catchBody = bookingBody.slice(catchIdx, end);
+    expect(catchBody).toMatch(/setError\(/);
+    // ...and it must not claim a booking happened.
+    expect(catchBody).not.toMatch(/setDone\(/);
+  });
+
+  it("NEGATIVE CONTROL: the rule fires on the un-wrapped shape", () => {
+    const naive = `startBooking(async () => {
+      const res = await bookAnotherAppointmentAction(fd);
+      if (!res.ok) { submittedRef.current = false; return; }
+    });`;
+    const call = naive.indexOf("await bookAnotherAppointmentAction(fd)");
+    expect(naive.slice(0, call)).not.toMatch(/try\s*\{/);
+    expect(naive.search(/\}\s*catch\s*(\([^)]*\))?\s*\{/)).toBe(-1);
+  });
+});
+
+describe("there is exactly ONE slot loader, and it reads CURRENT state", () => {
+  it("the action is called from one place only", () => {
+    // A second call sited in the submit handler closes over the service and date
+    // as they were when the submit STARTED. If the client changes either while
+    // the booking is in flight, writing that answer back shows one service's
+    // times under another's — and every press then submits a choice the server
+    // refuses.
+    const calls = [...FORM_CODE.matchAll(/loadPortalRebookSlotsAction\(/g)];
+    expect(calls, "only the effect may load slots").toHaveLength(1);
+  });
+
+  it("a refusal asks for a refresh through the nonce instead", () => {
+    expect(FORM_CODE).toMatch(/setSlotReloadNonce\(\s*\(n\)\s*=>\s*n\s*\+\s*1\s*\)/);
+    expect(FORM_CODE).toMatch(/\}, \[serviceId, date, slotReloadNonce, router\]\);/);
+  });
+
+  it("the loader keeps its cancellation flag, so a late answer is retired", () => {
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    expect(effect).toMatch(/let cancelled = false;/);
+    expect(effect).toMatch(/if \(cancelled\) return;/);
+    expect(effect).toMatch(/cancelled = true;/);
+  });
+
+  it("the loader does NOT clear the error it was asked to explain", () => {
+    // Clearing it here would wipe "that time is no longer available" at the
+    // moment the refusal asked for the refresh that proves it. The selection
+    // controls clear it instead — the moment it stops being true.
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    expect(effect).not.toMatch(/setError\(null\)/);
+    expect(FORM_CODE).toMatch(/onChange=\{\(e\) => \{\s*setError\(null\);/);
+  });
+
+  it("NEGATIVE CONTROL: two call sites would fail the single-loader rule", () => {
+    const twoCalls = "loadPortalRebookSlotsAction({a});\nloadPortalRebookSlotsAction({b});";
+    expect([...twoCalls.matchAll(/loadPortalRebookSlotsAction\(/g)]).toHaveLength(2);
+  });
+});
+
+describe("the selection cannot move underneath an in-flight booking", () => {
+  const CONTROLS = [
+    ["service select", 'data-testid="portal-rebook-service"'],
+    ["date input", 'data-testid="portal-rebook-date"'],
+    ["next-available button", 'data-testid="portal-rebook-next-available"'],
+    ["slot buttons", 'data-testid="portal-rebook-slot"'],
+  ] as const;
+
+  it("`inFlight` covers BOTH in-flight requests, not just the booking", () => {
+    // A control disabled only by `booking` is still editable during a
+    // next-available search, which is the second staleness window.
+    expect(FORM_CODE).toMatch(
+      /const inFlight = booking \|\| findingNext;|const inFlight = findingNext \|\| booking;/,
+    );
+  });
+
+  for (const [label, testid] of CONTROLS) {
+    it(`${label} is inert while ANY request is in flight`, () => {
+      const idx = FORM_CODE.indexOf(testid);
+      expect(idx, label).toBeGreaterThan(-1);
+      const element = FORM_CODE.slice(idx, idx + 420);
+      // `inFlight` must be PART of the condition; a control may carry extra
+      // conditions of its own (Next available is also disabled with no date).
+      expect(element, `${label} must be disabled while inFlight`).toMatch(
+        /disabled=\{[^}]*\binFlight\b[^}]*\}/,
+      );
+    });
+  }
+
+  it("NEGATIVE CONTROL: the rule fires on a control with no disabled prop", () => {
+    const bare = 'data-testid="portal-rebook-service"\n value={serviceId}\n onChange={x}';
+    expect(bare).not.toMatch(/disabled=\{[^}]*\binFlight\b[^}]*\}/);
+  });
+
+  it("NEGATIVE CONTROL: a booking-only binding no longer satisfies the rule", () => {
+    expect('disabled={booking}').not.toMatch(/disabled=\{[^}]*\binFlight\b[^}]*\}/);
+  });
+
+  it("Next available is ALSO disabled when there is no date to search from", () => {
+    const idx = FORM_CODE.indexOf('data-testid="portal-rebook-next-available"');
+    const element = FORM_CODE.slice(idx, idx + 420);
+    // The condition may carry MORE terms (it also stops once the horizon is
+    // exhausted), so the rule asserts this term is present rather than that it
+    // is the whole expression.
+    expect(element).toMatch(/disabled=\{[^}]*date\.length === 0[^}]*\}/);
+  });
+});
+
+describe("a superseded next-available answer is discarded whole", () => {
+  const handler = (() => {
+    const start = FORM_CODE.indexOf("function onNextAvailable()");
+    expect(start, "the next-available handler must exist").toBeGreaterThan(-1);
+    return FORM_CODE.slice(start, FORM_CODE.indexOf("function submit(", start));
+  })();
+
+  it("captures the selection the search is ABOUT before starting", () => {
+    expect(handler).toMatch(/const asked = \{ serviceId, date \};/);
+    // ...and the request is built from the capture, not from live state.
+    expect(handler).toMatch(/serviceId: asked\.serviceId/);
+    expect(handler).toMatch(/fromDate,/);
+  });
+
+  it("refuses to search when there is no next day to search from", () => {
+    // The date input can be CLEARED. The old inline helper answered
+    // "1900-01-02" for an empty string — a confident, silently wrong date the
+    // server then clamped to today.
+    expect(handler).toMatch(/const fromDate = nextCalendarDay\(date\);/);
+    const guard = handler.search(/if \(fromDate === null\) return;/);
+    expect(guard, "the null guard must exist").toBeGreaterThan(-1);
+    // It must precede the request and any state write.
+    expect(handler.indexOf("startFindingNext(")).toBeGreaterThan(guard);
+  });
+
+  it("the date step is a TESTABLE module, not a helper buried in the component", () => {
+    // It had two wrong answers that no source-regex assertion would have
+    // caught; both are now pinned by execution in
+    // tests/lib/portal/rebook-dates.test.ts.
+    expect(FORM_CODE).toContain('from "@/lib/portal/rebook-dates"');
+    expect(FORM_CODE).not.toMatch(/function addOneDay/);
+  });
+
+  it("compares against the CURRENT selection and returns before applying", () => {
+    expect(handler).toMatch(/selectionRef\.current/);
+    const guard = handler.search(
+      /if \(now\.serviceId !== asked\.serviceId \|\| now\.date !== asked\.date\) return;/,
+    );
+    expect(guard, "the staleness guard must exist").toBeGreaterThan(-1);
+    // It must come BEFORE every branch that writes state, so the error and the
+    // none-in-horizon verdict are discarded too, not only the date.
+    for (const write of ["setError(res.error)", "setNoneInHorizon(true)", "setDate(res.date)"]) {
+      expect(handler.indexOf(write), write).toBeGreaterThan(guard);
+    }
+  });
+
+  it("the current-selection ref is written from an effect, not during render", () => {
+    // Mutating a ref while React renders is unsafe under concurrent rendering.
+    expect(FORM_CODE).toMatch(
+      /useEffect\(\(\) => \{\s*selectionRef\.current = \{ serviceId, date \};\s*\}, \[serviceId, date\]\);/,
+    );
+  });
+
+  it("NEGATIVE CONTROL: an unguarded handler writes the date with no comparison", () => {
+    const naive = `startFindingNext(async () => {
+      const res = await loadPortalRebookNextAvailableAction({ serviceId, fromDate });
+      setDate(res.date);
+    });`;
+    expect(naive).not.toMatch(/selectionRef\.current/);
+  });
+});
+
+describe("the public-readiness gate cannot be forgotten by a new action", () => {
+  const queries = read("lib/portal/queries.ts");
+
+  it("lives in the ONE resolver every portal action goes through", () => {
+    const resolver = CODE.slice(
+      CODE.indexOf("async function resolvePortalBookingContext"),
+      CODE.indexOf("async function resolvePortalService"),
+    );
+    expect(resolver).toContain("getPortalBookingReadiness");
+    expect(resolver).toMatch(/if \(!bookable\)/);
+  });
+
+  it("asks the SHARED predicate rather than restating the rule", () => {
+    expect(queries).toContain("isPubliclyBookable");
+    const gate = queries.slice(queries.indexOf("export async function getPortalBookingReadiness"));
+    expect(gate).toMatch(/isPubliclyBookable\(\{/);
+  });
+
+  it("reads the STRICTER studio-wide weekly form the command enforces", () => {
+    const gate = queries.slice(queries.indexOf("export async function getPortalBookingReadiness"));
+    expect(gate).toMatch(/\.is\("practitioner_id", null\)/);
+    expect(gate).toMatch(/\.eq\("is_open", true\)/);
+  });
+
+  it("a failed readiness read is NOT reported as a closed studio", () => {
+    const gate = queries.slice(
+      queries.indexOf("export async function getPortalBookingReadiness"),
+    );
+    expect(gate).toMatch(/if \(services\.error \|\| days\.error\)[\s\S]{0,400}return null;/);
+    const resolver = CODE.slice(
+      CODE.indexOf("async function resolvePortalBookingContext"),
+      CODE.indexOf("async function resolvePortalService"),
+    );
+    expect(resolver).toMatch(/if \(bookable === null\)/);
+  });
+
+  it("the unavailable sentence is the PUBLIC one, not a second copy", () => {
+    const copy = read("lib/portal/rebook-copy.ts");
+    expect(copy).toMatch(
+      /PORTAL_REBOOK_STUDIO_UNAVAILABLE = UNAVAILABLE_PUBLIC_BOOKING_MESSAGE/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A rejected DISCOVERY action must not reach the route's error boundary, and a
+// failed read must never be spoken as "no times".
+// ---------------------------------------------------------------------------
+
+describe("every action call is contained, not just the booking", () => {
+  const CALLS = [
+    ["slot discovery", "loadPortalRebookSlotsAction"],
+    ["next available", "loadPortalRebookNextAvailableAction"],
+    ["the booking", "bookAnotherAppointmentAction"],
+  ] as const;
+
+  const CARD_SRC = read(FORM_REL);
+
+  for (const [label, fn] of CALLS) {
+    it(`${label} is awaited inside a try`, () => {
+      // An unhandled rejection inside a transition propagates to the route's
+      // error boundary and can replace the whole portal page — for a transient
+      // network blip on a background fetch.
+      //
+      // PARSED, NOT MEASURED BY PROXIMITY.
+      expect(callsOutsideTry(CARD_SRC, fn), `${label} must be inside a try`).toEqual([]);
+    });
+  }
+
+  it("NON-VACUITY: those calls exist in the component", () => {
+    for (const [label, fn] of CALLS) expect(CARD_SRC, label).toContain(`${fn}(`);
+  });
+
+  it("NEGATIVE CONTROL: an uncontained call is found even next to a try", () => {
+    const sneaky = `async function f() {
+      try { await somethingElse(); } catch {}
+      const res = await bookAnotherAppointmentAction(fd);
+      return res;
+    }`;
+    expect(
+      callsOutsideTry(sneaky, "bookAnotherAppointmentAction").length,
+      "proximity to a try must not satisfy the rule",
+    ).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: a call in the CATCH is not protected by its own try", () => {
+    const inCatch = `async function f() {
+      try { await other(); } catch { await bookAnotherAppointmentAction(fd); }
+    }`;
+    expect(callsOutsideTry(inCatch, "bookAnotherAppointmentAction").length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: an await that does not CONSUME the call is found", () => {
+    // `ignore` may not adopt its argument, in which case the action's promise
+    // rejects on its own schedule — after the catch stopped being relevant.
+    const notConsumed = `async function f() {
+      try { await ignore(bookAnotherAppointmentAction(fd)); } catch { return null; }
+    }`;
+    expect(
+      callsOutsideTry(notConsumed, "bookAnotherAppointmentAction").length,
+      "a lexical await ancestor is not the same as consuming the promise",
+    ).toBeGreaterThan(0);
+  });
+
+  it("POSITIVE CONTROL: a genuinely wrapped call passes", () => {
+    const good = `async function f() {
+      try { const r = await bookAnotherAppointmentAction(fd); return r; } catch { return null; }
+    }`;
+    expect(callsOutsideTry(good, "bookAnotherAppointmentAction")).toEqual([]);
+  });
+
+  it("NEGATIVE CONTROL: a call inside a try but NOT awaited is found", () => {
+    // The promise outlives the try; its rejection arrives after the block has
+    // exited and sails past the catch.
+    const bare = `async function f() {
+      try { bookAnotherAppointmentAction(fd); } catch { return null; }
+    }`;
+    expect(callsOutsideTry(bare, "bookAnotherAppointmentAction").length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: try/finally with NO catch is found", () => {
+    // `finally` runs, and the rejection still propagates to the boundary.
+    const noCatch = `async function f() {
+      try { await bookAnotherAppointmentAction(fd); } finally { cleanup(); }
+    }`;
+    expect(callsOutsideTry(noCatch, "bookAnotherAppointmentAction").length).toBeGreaterThan(0);
+  });
+
+  it("there are as many catches as there are contained calls", () => {
+    const catches = [...FORM_CODE.matchAll(/\}\s*catch\s*(\([^)]*\))?\s*\{/g)];
+    expect(catches.length).toBeGreaterThanOrEqual(CALLS.length);
+  });
+
+  it("the slot catch honours the cancellation flag before writing state", () => {
+    const call = FORM_CODE.indexOf("await loadPortalRebookSlotsAction(");
+    const after = FORM_CODE.slice(call, call + 700);
+    const catchIdx = after.search(/\}\s*catch\s*(\([^)]*\))?\s*\{/);
+    expect(catchIdx).toBeGreaterThan(-1);
+    const body = after.slice(catchIdx, catchIdx + 300);
+    expect(body).toMatch(/if \(cancelled\) return;/);
+    expect(body).toMatch(/setSlotLoad\("failed"\)/);
+  });
+
+  it("the next-available staleness guard covers the REJECTION branch too", () => {
+    const handler = FORM_CODE.slice(
+      FORM_CODE.indexOf("function onNextAvailable()"),
+      FORM_CODE.indexOf("function submit("),
+    );
+    const guard = handler.search(
+      /if \(now\.serviceId !== asked\.serviceId \|\| now\.date !== asked\.date\) return;/,
+    );
+    expect(guard).toBeGreaterThan(-1);
+    // The rejection is about `asked` exactly as the other branches are, so it
+    // must sit AFTER the guard.
+    expect(handler.indexOf("if (rejected"), "rejection branch").toBeGreaterThan(guard);
+  });
+
+  it("NEGATIVE CONTROL: an uncontained await fails the wrapping rule", () => {
+    const naive = "startLoadingSlots(async () => {\n const res = await loadPortalRebookSlotsAction({});\n});";
+    const call = naive.indexOf("await loadPortalRebookSlotsAction(");
+    expect(naive.slice(Math.max(0, call - 400), call)).not.toMatch(/try\s*\{/);
+  });
+});
+
+describe("a failed read is never rendered as an empty day", () => {
+  it("the load OUTCOME is tracked separately from the list", () => {
+    // An empty list has two causes with opposite meanings. Collapsing them into
+    // `slots.length === 0` is what made a failed read say "No times are
+    // available on that date".
+    expect(FORM_CODE).toMatch(/setSlotLoad\("loading"\)/);
+    expect(FORM_CODE).toMatch(/setSlotLoad\("loaded"\)/);
+    expect(FORM_CODE).toMatch(/setSlotLoad\("failed"\)/);
+  });
+
+  it("the no-times copy is suppressed when the read failed", () => {
+    const copy = FORM_CODE.indexOf("portal-rebook-no-slots");
+    expect(copy).toBeGreaterThan(-1);
+    const before = FORM_CODE.slice(Math.max(0, copy - 400), copy);
+    // Stated POSITIVELY now: the branch runs only when the day was read.
+    expect(
+      before,
+      'the "no times" branch must be gated on the day having been read',
+    ).toMatch(/dayWasRead \? \(/);
+  });
+
+  it("the outcome is reset BEFORE each load, so a stale verdict cannot persist", () => {
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    const reset = effect.indexOf('setSlotLoad("loading")');
+    const start = effect.indexOf("startLoadingSlots(");
+    expect(reset).toBeGreaterThan(-1);
+    expect(reset, "reset must be synchronous, before the transition").toBeLessThan(start);
+  });
+
+  it("NEGATIVE CONTROL: an ungated branch fails the suppression rule", () => {
+    const naive = ') : slots.length === 0 ? (\n <p data-testid="portal-rebook-no-slots">';
+    const copy = naive.indexOf("portal-rebook-no-slots");
+    expect(naive.slice(0, copy)).not.toMatch(/dayWasRead \? \(/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The card must not contradict itself, nor act on a selection that is moving.
+// ---------------------------------------------------------------------------
+
+describe("the confirmation does not outrun the page behind it", () => {
+  const SPEC = read("e2e/portal-rebook.spec.ts");
+
+  it("the journey asserts the list inside the APPOINTMENTS section, not page-wide", () => {
+    // The confirmation card renders the service name in its own paragraph, and
+    // again as an <option> in its service select. A page-wide
+    // `getByText(serviceName)` therefore passes while the list underneath is
+    // still empty — it matches the card. This is the anti-vacuity rule for the
+    // one assertion that closes the journey.
+    expect(SPEC).toMatch(
+      /const appointments = page\s*\n?\s*\.locator\("section"\)/,
+    );
+    expect(SPEC).toMatch(/appointments\.getByText\(seed\.serviceName\)/);
+    expect(SPEC).toMatch(/appointments\.getByText\("No upcoming appointments"\)/);
+  });
+
+  it("the SCOPE ITSELF is pinned, because `section` also matches the page wrapper", () => {
+    // The outer page <section> contains BOTH the card and the list, so a
+    // locator that silently resolved to it would make the assertions above
+    // pass on the confirmation's own text. Proving the confirmation is not
+    // inside the locator is what makes the scope real.
+    expect(SPEC).toMatch(
+      /appointments\.getByTestId\("portal-rebook-confirmed"\)\)\.toHaveCount\(0\)/,
+    );
+  });
+
+  it("NEGATIVE CONTROL: a page-wide assertion does not satisfy the rule", () => {
+    const naive = 'await expect(page.getByText(seed.serviceName)).toBeVisible();';
+    expect(naive).not.toMatch(/appointments\.getByText\(seed\.serviceName\)/);
+  });
+
+  it("the journey does not reload before asserting", () => {
+    // A reload makes the assertion agree with the page whatever the page did.
+    const body = SPEC.slice(SPEC.indexOf("THE JOURNEY CLOSES"));
+    expect(body).not.toMatch(/await page\.reload\(\)/);
+  });
+
+  it("the submit control obeys the same in-flight window as the others", () => {
+    // A next-available search moves the date under the client. Submitting mid
+    // search books the slot picked for the PREVIOUS date.
+    const idx = FORM_CODE.indexOf('data-testid="portal-rebook-submit"');
+    expect(idx).toBeGreaterThan(-1);
+    expect(FORM_CODE.slice(idx, idx + 300)).toMatch(
+      /disabled=\{inFlight \|\| picked == null\}/,
+    );
+  });
+
+  it("the submit HANDLER also refuses mid-flight, for a keyboard submit", () => {
+    const handler = FORM_CODE.slice(
+      FORM_CODE.indexOf("function submit("),
+      FORM_CODE.indexOf("if (services.length === 0)"),
+    );
+    const guard = handler.search(/if \(inFlight\) return;/);
+    expect(guard, "the handler guard must exist").toBeGreaterThan(-1);
+    expect(handler.indexOf("startBooking("), "guard precedes the request").toBeGreaterThan(
+      guard,
+    );
+  });
+
+  it("NEGATIVE CONTROL: a booking-only submit binding fails the rule", () => {
+    expect("disabled={booking || picked == null}").not.toMatch(
+      /disabled=\{inFlight \|\| picked == null\}/,
+    );
+  });
+});
+
+describe("an empty selection states NEITHER availability conclusion", () => {
+  it("the early return leaves the state it skipped coherent", () => {
+    // It used to return BEFORE the resets, so clearing the date left
+    // `slotLoad` on `loaded` and rendered "No times are available on that
+    // date" for a date that no longer existed, and could keep a stale
+    // none-in-horizon verdict from an earlier search.
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    const branch = effect.indexOf("if (!serviceId || !date) {");
+    expect(branch).toBeGreaterThan(-1);
+    const body = effect.slice(branch, effect.indexOf("return;", branch));
+    expect(body).toMatch(/setSlotLoad\("idle"\)/);
+    expect(body).toMatch(/setNoneInHorizon\(false\)/);
+  });
+
+  it("both availability conclusions are suppressed unless the day was read", () => {
+    // `idle` and `failed` are both "not read", and so is any state added later.
+    // One positive predicate covers all of them; enumerating the negative
+    // states is one new state away from being wrong.
+    expect(FORM_CODE).toMatch(/const dayWasRead = slotLoad === "loaded";/);
+    expect(FORM_CODE).toMatch(/\{noneInHorizon && dayWasRead &&/);
+    const copy = FORM_CODE.indexOf("portal-rebook-no-slots");
+    expect(FORM_CODE.slice(Math.max(0, copy - 400), copy)).toMatch(/dayWasRead \? \(/);
+  });
+
+  it("NEGATIVE CONTROL: an early return without the resets fails the rule", () => {
+    const naive = "if (!serviceId || !date) {\n setSlots([]);\n setPicked(null);\n return;\n}";
+    const body = naive.slice(0, naive.indexOf("return;"));
+    expect(body).not.toMatch(/setSlotLoad\("idle"\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Horizon exhaustion is TWO facts, and only one of them is ever true at a time.
+// ---------------------------------------------------------------------------
+
+describe("the card does not claim an empty horizon over bookable times", () => {
+  const PUBLIC_FORM = read(PUBLIC_FORM_REL);
+
+  it("branches the message on whether the displayed day HAS times", () => {
+    // "Next available" searches forward from the day AFTER the one displayed,
+    // so a null answer on a populated day means only that there is nothing
+    // LATER. The single sentence this replaced said the studio's whole booking
+    // window was empty, directly above still-bookable slots.
+    const block = FORM_CODE.slice(
+      FORM_CODE.indexOf("portal-rebook-none-in-horizon"),
+      FORM_CODE.indexOf("portal-rebook-none-in-horizon") + 700,
+    );
+    expect(block).toMatch(/slots\.length > 0/);
+    expect(block).toMatch(/No later availability is currently published/);
+    expect(block).toMatch(/No availability within the current booking window/);
+  });
+
+  it("both sentences are the PUBLIC picker's own, not a second voice", () => {
+    // The two surfaces share one availability authority; they must not describe
+    // the same state in two different ways.
+    expect(PUBLIC_FORM).toContain("No later availability is currently published");
+    expect(PUBLIC_FORM).toContain("No availability within the current booking window");
+  });
+
+  it("the state is exposed so a proof can tell the two apart", () => {
+    expect(FORM_CODE).toMatch(
+      /data-horizon-state=\{slots\.length > 0 \? "no-later" : "none-in-window"\}/,
+    );
+  });
+
+  it("Next available stops offering a search that can only repeat itself", () => {
+    const idx = FORM_CODE.indexOf('data-testid="portal-rebook-next-available"');
+    const element = FORM_CODE.slice(idx, idx + 300);
+    expect(element).toMatch(/disabled=\{[^}]*\bnoneInHorizon\b[^}]*\}/);
+  });
+
+  it("...and that control is re-armed when the selection moves", () => {
+    // Otherwise it would be disabled forever. `noneInHorizon` is cleared both
+    // by the slot effect and at the start of a new search.
+    const effect = FORM_CODE.slice(
+      FORM_CODE.indexOf("useEffect(() => {"),
+      FORM_CODE.indexOf("}, [serviceId, date, slotReloadNonce, router]);"),
+    );
+    expect(effect).toMatch(/setNoneInHorizon\(false\)/);
+  });
+
+  it("the claim requires a SUCCESSFULLY READ day, not merely an empty list", () => {
+    // `slots.length === 0` has two causes — genuinely empty, or a failed read.
+    // Branching on the list alone let a failed current-day read plus a null
+    // forward search announce that the whole window is empty.
+    expect(FORM_CODE).toMatch(/\{noneInHorizon && dayWasRead &&/);
+  });
+
+  it("NEGATIVE CONTROL: gating on noneInHorizon alone fails that rule", () => {
+    expect("{noneInHorizon && (").not.toMatch(/\{noneInHorizon && dayWasRead &&/);
+  });
+
+  it("INVARIANT: every conclusion drawn from `slots.length` sits inside a load gate", () => {
+    // This class has recurred twice — once for the no-times copy, once for the
+    // horizon copy — so it is pinned as a rule rather than as two instances. An
+    // empty list means "this day is empty" ONLY when the day was actually read;
+    // otherwise it means "we do not know", and any sentence built on it is a
+    // guess presented as a fact.
+    //
+    // PARSED, NOT MEASURED BY PROXIMITY. The first version of this rule asked
+    // whether `slotLoad` appeared in the preceding 400 characters, which is a
+    // claim about DISTANCE, not about CONTAINMENT: an ungated conclusion placed
+    // near any `slotLoad` mention — including one inside an explanatory comment
+    // — satisfied it. `ungatedSlotLengthUses` walks the real AST and asks
+    // whether an ANCESTOR conditional actually tests `slotLoad`, which is the
+    // property the rule is named after.
+    expect(ungatedSlotLengthUses(read(FORM_REL))).toEqual([]);
+  });
+
+  it("NON-VACUITY: the component really does contain conclusions to check", () => {
+    // An invariant over an empty set passes for free.
+    expect(slotLengthUseCount(read(FORM_REL))).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: it fires on an ungated conclusion", () => {
+    const bad = `export function C() { return <>{a && <p>{slots.length > 0 ? "x" : "y"}</p>}</>; }`;
+    expect(ungatedSlotLengthUses(bad).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: it fires when `slotLoad` is merely NEARBY, not gating", () => {
+    // THE CASE THE PROXIMITY VERSION MISSED, and the reason this rule is parsed.
+    // `slotLoad` appears immediately before the conclusion, in a sibling
+    // expression and in a comment, while gating nothing.
+    const sneaky = `export function C() {
+      return (
+        <>
+          {slotLoad === "loaded" && <p>unrelated</p>}
+          {/* slotLoad is discussed here but gates nothing */}
+          {noneInHorizon && <p>{slots.length > 0 ? "later" : "none"}</p>}
+        </>
+      );
+    }`;
+    expect(
+      ungatedSlotLengthUses(sneaky).length,
+      "proximity to slotLoad must not satisfy the rule",
+    ).toBeGreaterThan(0);
+  });
+
+  it("POSITIVE CONTROL: a genuinely gated conclusion passes", () => {
+    // Without this the rule could be passing by rejecting everything.
+    const good = `export function C() {
+      return <>{noneInHorizon && dayWasRead && <p>{slots.length > 0 ? "later" : "none"}</p>}</>;
+    }`;
+    expect(ungatedSlotLengthUses(good)).toEqual([]);
+  });
+
+  it("POSITIVE CONTROL: the TRUE branch of a conditional gate passes", () => {
+    const good = `export function C() {
+      return <>{dayWasRead ? (slots.length === 0 ? <p>none</p> : <ul/>) : null}</>;
+    }`;
+    expect(ungatedSlotLengthUses(good)).toEqual([]);
+  });
+
+  it("NEGATIVE CONTROL: the ELSE branch of the predicate is NOT a gate", () => {
+    // Runs precisely when the day was NOT read — the state the rule exists to
+    // stop from producing a conclusion. A "does the condition mention it"
+    // check accepted this.
+    const inverted = `export function C() {
+      return <>{dayWasRead ? null : <p>{slots.length === 0 ? "none" : "some"}</p>}</>;
+    }`;
+    expect(ungatedSlotLengthUses(inverted).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: a NEGATED predicate is not a gate", () => {
+    // Draws the conclusion precisely after an unsuccessful read. Asking whether
+    // the subtree MENTIONS the predicate accepted this.
+    const negatedAnd = `export function C() {
+      return <>{!dayWasRead && <p>{slots.length === 0 ? "none" : "some"}</p>}</>;
+    }`;
+    expect(ungatedSlotLengthUses(negatedAnd).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: the TRUE branch of a NEGATED condition is not a gate", () => {
+    const negatedTernary = `export function C() {
+      return <>{!dayWasRead ? <p>{slots.length === 0 ? "none" : "some"}</p> : null}</>;
+    }`;
+    expect(ungatedSlotLengthUses(negatedTernary).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: a comparison against false is not a gate", () => {
+    const compared = `export function C() {
+      return <>{dayWasRead === false && <p>{slots.length === 0 ? "a" : "b"}</p>}</>;
+    }`;
+    expect(ungatedSlotLengthUses(compared).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: `||` is NOT a gate", () => {
+    // The right operand runs when the left is FALSE, i.e. when the day was not
+    // read. Same acceptance bug, different operator.
+    const ored = `export function C() {
+      return <>{dayWasRead || slots.length === 0 ? <p>x</p> : null}</>;
+    }`;
+    expect(ungatedSlotLengthUses(ored).length).toBeGreaterThan(0);
+  });
+
+  it("NEGATIVE CONTROL: one unconditional sentence fails the branching rule", () => {
+    const naive = "{noneInHorizon && (<p>No open times left in the booking window.</p>)}";
+    expect(naive).not.toMatch(/slots\.length > 0/);
+    expect(naive).not.toMatch(/No later availability is currently published/);
+  });
+});
