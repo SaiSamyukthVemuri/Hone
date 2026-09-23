@@ -194,8 +194,18 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     for (const f of shells) {
       const code = codeOnly(read(f));
       expect(code, f).toContain('href.startsWith("/admin") || href.startsWith("/no-access")');
-      expect(code, f).toContain("if (signingOut && leavesShell(href))");
-      expect(code, f).toContain("e.preventDefault();");
+      expect(code, f).toContain("const isHeld = (href: string) => signingOut && leavesShell(href);");
+
+      // HELD MEANS NOT AN ANCHOR, not an anchor that argues. A first version
+      // kept a real `href` and cancelled the click, which closes exactly one
+      // of the ways a link is followed: `aria-disabled` is advisory, and
+      // `preventDefault` never runs for a middle-click, a Ctrl/Cmd-click, or
+      // "Open link in new tab". Each of those reaches the cross-layout
+      // destination in a fresh document, which renders its own enabled Sign
+      // out — the duplicate this guard exists to stop.
+      expect(code, f).toContain("isHeld(item.href) ? (");
+      expect(code, f).toMatch(/isHeld\(item\.href\) \? \(\s*<span/);
+      expect(code, f).not.toMatch(/aria-disabled=\{signingOut/);
     }
   });
 
@@ -211,8 +221,8 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     // and pushes (NAV-ACK-01); the panel simply outlives the push while a
     // logout is in flight, which is what keeps the observer alive.
     const menu = codeOnly(read(MENU));
-    expect(menu).toContain("navigate(e, item.href, item.label);");
-    expect(codeOnly(read(ACCOUNT))).toContain("close();");
+    expect(menu).toContain("navigate(e, item.href, item.label)");
+    expect(codeOnly(read(ACCOUNT))).toContain("onClick={close}");
   });
 
   it("no click handler crept onto the submit path", () => {

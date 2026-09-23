@@ -102,13 +102,15 @@ export function AccountMenu({
   // tests/components/signout-02-acknowledgement.test.ts rather than driven.
   const leavesShell = (href: string) =>
     href.startsWith("/admin") || href.startsWith("/no-access");
-  const holdWhileSigningOut = (href: string, e: { preventDefault: () => void }) => {
-    if (signingOut && leavesShell(href)) {
-      e.preventDefault();
-      return true;
-    }
-    return false;
-  };
+  // HELD MEANS NOT AN ANCHOR AT ALL, not an anchor that argues.
+  //
+  // The first version kept a real `href` and cancelled the click. That closes
+  // exactly one of the ways a link is followed: `aria-disabled` is advisory,
+  // and `preventDefault` never runs for a middle-click, a Ctrl/Cmd-click or
+  // "Open link in new tab" from the context menu. Any of those reaches the
+  // cross-layout destination in a fresh document, which renders its own
+  // enabled Sign out and hands back the duplicate this guard exists to stop.
+  const isHeld = (href: string) => signingOut && leavesShell(href);
   const firstName = displayName.trim().split(/\s+/)[0] || "Account";
   const roleLabel = role === "owner" ? "Owner" : "Practitioner";
 
@@ -156,18 +158,24 @@ export function AccountMenu({
               : []),
             ...(admin ? [{ href: "/admin", label: "Admin" }] : []),
           ].map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-disabled={signingOut && leavesShell(item.href) ? true : undefined}
-              onClick={(e) => {
-                if (holdWhileSigningOut(item.href, e)) return;
-                close();
-              }}
-              className="flex min-h-[40px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-            >
-              {item.label}
-            </Link>
+            isHeld(item.href) ? (
+              <span
+                key={item.href}
+                aria-disabled="true"
+                className="flex min-h-[40px] cursor-not-allowed items-center rounded-md px-3 py-2 opacity-50"
+              >
+                {item.label}
+              </span>
+            ) : (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={close}
+                className="flex min-h-[40px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              >
+                {item.label}
+              </Link>
+            )
           ))}
           <div className="mt-0.5 border-t border-neutral-200 pt-1 dark:border-neutral-800">
             {/* SIGNOUT-01. There is deliberately NO onClick={close} on this
