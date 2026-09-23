@@ -1,15 +1,11 @@
 import Link from "next/link";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import {
-  getActiveServices,
-  getAvailabilityDefaults,
-} from "@/lib/booking/queries";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
-import { isBookableByNewClient } from "@/lib/booking/consultation";
+import { CONSENT_SETTINGS_HREF } from "@/lib/consent/launch-readiness";
 import {
-  CONSENT_SETTINGS_HREF,
-  getTreatmentConsentReadiness,
-} from "@/lib/consent/launch-readiness";
+  getNewClientReadiness,
+  type NewClientBlockerKey,
+} from "@/lib/booking/new-client-readiness";
 import {
   StatusPill,
   type StatusTone,
@@ -69,31 +65,56 @@ function nonEmpty(s: string | null | undefined): boolean {
 
 export default async function LaunchChecklistPage() {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  // One extra bounded existence read, issued alongside the two that were
-  // already here rather than after them: no added round trip, no N+1.
-  const [services, availabilityDefaults, treatmentConsent] = await Promise.all([
-    getActiveServices(studio.id),
-    getAvailabilityDefaults(studio.id),
-    getTreatmentConsentReadiness(studio.id),
-  ]);
-
   // ONB-02: ask the predicate the BOOKING PATH enforces, not a second copy of
   // it. `s.modality === "consultation"` missed `isConsultationService`'s
   // name fallback, so a studio whose service is named "New Client
   // Consultation" with no modality set was told to set one up while
   // publicBookAppointmentAction was already taking its bookings.
-  const hasConsultation = services.some((s) => isBookableByNewClient(s));
-  const hasOpenDay = availabilityDefaults.some(
-    (d) => d.is_open && nonEmpty(d.open_time) && nonEmpty(d.close_time),
+  // ONB-02 P1: THE CANONICAL AUTHORITY ANSWERS FOR WHAT IT OWNS.
+  //
+  // This page used to re-derive new-client readiness itself. Two authorities for
+  // one question is one too many, and the second one was already wrong: it knew
+  // nothing about WAIT admission and accepted any non-empty timezone, so an
+  // owner whose studio routes new clients to the waitlist -- or carries an
+  // invalid zone -- was told they were ready to take bookings.
+  //
+  // `computeNewClientReadiness` owns studio name, booking link, booking
+  // settings, consultation service, availability and treatment consent. The rows
+  // below now READ its verdict rather than recomputing it. The page keeps only
+  // the facts it genuinely owns: confirmation emails, intake, postcare, policies
+  // and the calendar feed.
+  const readiness = await getNewClientReadiness(studio);
+  const provenBlockers = new Set<NewClientBlockerKey>(
+    readiness.status === "not_ready" ? readiness.blockers.map((b) => b.key) : [],
   );
+  const unavailableAuthorities = new Set(
+    readiness.status === "ready" ? [] : readiness.unavailable,
+  );
+
+  /**
+   * The authority's answer for one owned fact.
+   *
+   * UNKNOWN IS NOT NEEDS_SETUP. An authority that could not answer must not be
+   * rendered as a missing setup step -- that is the collapse the readiness model
+   * exists to prevent, and repeating it here would undo it at the last inch.
+   */
+  const owned = (
+    key: NewClientBlockerKey,
+    authority?: "services" | "availability" | "treatment_consent",
+  ): Row["status"] => {
+    if (authority && unavailableAuthorities.has(authority)) return "unknown";
+    return provenBlockers.has(key) ? "needs_setup" : "ready";
+  };
+
   const hasAftercare = nonEmpty(studio.postcare_aftercare_text);
   const hasBothPolicies =
     nonEmpty(studio.cancellation_policy_text) &&
     nonEmpty(studio.no_show_policy_text);
   // Migration 0116: feed existence is now derived from the hash (hash-only at rest).
   const hasFeedToken = nonEmpty(practitioner.calendar_feed_token_hash);
+  // Kept only to BUILD the public URL. The row's status comes from the
+  // authority, never from this.
   const hasSlug = nonEmpty(studio.slug);
-  const studioReady = nonEmpty(studio.name) && hasSlug;
   const bookingUrl = hasSlug
     ? `${getRequiredAppOrigin()}/book/${studio.slug}`
     : null;
@@ -101,15 +122,15 @@ export default async function LaunchChecklistPage() {
   const rows: Row[] = [
     {
       title: "Studio profile",
-      status: studioReady ? "ready" : "needs_setup",
-      detail: studioReady
-        ? "Studio name and booking slug set."
-        : "Set the studio name and booking slug.",
+      status: owned("studio_name"),
+      detail: provenBlockers.has("studio_name")
+        ? "Set the studio name and booking slug."
+        : "Studio name and booking slug set.",
       cta: { label: "Open Studio settings", href: "/settings/studio" },
     },
     {
       title: "Public booking link",
-      status: hasSlug ? "ready" : "needs_setup",
+      status: owned("booking_link"),
       detail: bookingUrl ?? "Set a booking slug to enable the public link.",
       cta: hasSlug && bookingUrl
         ? { label: "Open public booking page", href: bookingUrl }
@@ -120,19 +141,39 @@ export default async function LaunchChecklistPage() {
     },
     {
       title: "Consultation service",
-      status: hasConsultation ? "ready" : "needs_setup",
-      detail: hasConsultation
-        ? "At least one active consultation service exists."
-        : "Add an active service with modality 'consultation' (e.g. New Client Consultation).",
+      status: owned("consultation_service", "services"),
+      detail: unavailableAuthorities.has("services")
+        ? "Couldn't check your services just now. Open Services to confirm."
+        : provenBlockers.has("consultation_service")
+          ? "Add an active service a new client can book (e.g. New Client Consultation)."
+          : "At least one active consultation service exists.",
       cta: { label: "Open Services", href: "/settings/services" },
     },
     {
       title: "Availability",
-      status: hasOpenDay ? "ready" : "needs_setup",
-      detail: hasOpenDay
-        ? "At least one weekday is open with hours set."
-        : "Open at least one weekday in availability defaults.",
+      status: owned("availability", "availability"),
+      detail: unavailableAuthorities.has("availability")
+        ? "Couldn't check your availability just now. Open Availability to confirm."
+        : provenBlockers.has("availability")
+          ? "Open at least one weekday for public booking in availability defaults."
+          : "At least one weekday is open to public booking with hours set.",
       cta: { label: "Open Availability", href: "/settings/availability" },
+    },
+    // WAIT admission is a real boundary on "can a new client book right now",
+    // and it is the one the page could not see before: a studio routing new
+    // clients to the waitlist was told it was ready to take bookings.
+    //
+    // NOT "needs_setup" WHEN IT IS ON. A configured admission pause is a
+    // deliberate operator state, not a missing step, so the row states the fact
+    // and sends the owner to the waitlist surface rather than telling them to
+    // go fix something.
+    {
+      title: "New client admission",
+      status: provenBlockers.has("wait_admission") ? "manual" : "ready",
+      detail: provenBlockers.has("wait_admission")
+        ? "New clients join the waitlist instead of booking directly. Invited clients can still book."
+        : "New clients can book directly from the public booking page.",
+      cta: { label: "Open Waitlist settings", href: "/settings/waitlist" },
     },
     {
       title: "Client confirmation emails",
@@ -157,16 +198,12 @@ export default async function LaunchChecklistPage() {
     // asks for no consent at all.
     {
       title: "Treatment consent form",
-      status: !treatmentConsent.ok
-        ? "unknown"
-        : treatmentConsent.ready
-          ? "ready"
-          : "needs_setup",
-      detail: !treatmentConsent.ok
+      status: owned("treatment_consent", "treatment_consent"),
+      detail: unavailableAuthorities.has("treatment_consent")
         ? "Couldn't check your consent forms just now. Open Consent forms to confirm."
-        : treatmentConsent.ready
-          ? "A treatment consent form is live in the client portal, so the intake presents it."
-          : "Create a treatment consent form and make it live. Until you do, the intake asks new clients for no consent.",
+        : provenBlockers.has("treatment_consent")
+          ? "Create a treatment consent form and make it live. Until you do, the intake asks new clients for no consent."
+          : "A treatment consent form is live in the client portal, so the intake presents it.",
       cta: { label: "Open Consent forms", href: CONSENT_SETTINGS_HREF },
     },
     {

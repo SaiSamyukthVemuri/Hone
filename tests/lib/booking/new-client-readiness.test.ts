@@ -278,11 +278,14 @@ describe("no surface re-derives 'consultation' for itself", () => {
     }
   });
 
-  it("the launch checklist asks the canonical predicate", async () => {
+  it("the canonical authority asks the canonical predicate", async () => {
+    // The subject moved when the launch page stopped deriving this fact at
+    // all: the page now asks the AUTHORITY, and the authority asks the
+    // predicate the booking action enforces. Asserting the page still names
+    // `isBookableByNewClient` would now demand the very re-derivation P1
+    // removed, so the requirement lands where the derivation actually lives.
     const { readFileSync } = await import("node:fs");
-    const code = strip(
-      readFileSync("app/(app)/settings/launch/page.tsx", "utf8"),
-    );
+    const code = strip(readFileSync("lib/booking/new-client-readiness.ts", "utf8"));
     expect(code).toContain("isBookableByNewClient");
   });
 
@@ -462,5 +465,95 @@ describe("ONB-02 P2: readiness reads the SAME availability scope as public booki
     expect(r.status).toBe("unknown");
     if (r.status !== "unknown") return;
     expect(r.unavailable).toContain("availability");
+  });
+});
+
+describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority", () => {
+  // MUTATION CONTROL 1 — "canonical result not wired into the owner surface".
+  //
+  // An authority nothing calls makes nothing canonical. The launch checklist
+  // previously loaded services, availability and consent itself and rendered
+  // its own verdict, which knew nothing about WAIT admission and accepted any
+  // non-empty timezone. Two answers to one question is one too many.
+  //
+  // Comments stripped, LINE BEFORE BLOCK: stripping blocks first lets a `/*`
+  // inside a line comment swallow real code, and an identifier surviving inside
+  // a comment would let a commented-out wiring satisfy this proof.
+  const LAUNCH = "app/(app)/settings/launch/page.tsx";
+  const strip = (src: string) =>
+    src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const launchSource = async () => {
+    const { readFileSync } = await import("node:fs");
+    return strip(readFileSync(LAUNCH, "utf8"));
+  };
+
+  it("the launch page calls the canonical loader", async () => {
+    expect(await launchSource()).toContain("getNewClientReadiness");
+  });
+
+  it("the launch page re-derives NONE of the facts the authority owns", async () => {
+    const code = await launchSource();
+    // Each of these is an independent read of a fact `computeNewClientReadiness`
+    // already answers. Any one of them reintroduces the second authority.
+    for (const bypass of [
+      "getActiveServices",
+      "getAvailabilityDefaults",
+      "getTreatmentConsentReadiness",
+      "isBookableByNewClient",
+    ]) {
+      expect(code, `${LAUNCH} must not re-derive via ${bypass}`).not.toContain(
+        bypass,
+      );
+    }
+  });
+
+  it("the page renders UNKNOWN as its own state, never as a missing setup step", async () => {
+    const code = await launchSource();
+    // The collapse this model exists to prevent, repeated at the last inch,
+    // would look exactly like dropping this branch.
+    expect(code).toContain("unavailableAuthorities");
+    expect(code).toMatch(/return "unknown"/);
+  });
+
+  it("WAIT admission reaches the owner surface", async () => {
+    expect(await launchSource()).toContain("wait_admission");
+  });
+
+  it("the strip helper is not vacuous", () => {
+    expect(strip("// getActiveServices(")).not.toContain("getActiveServices");
+    expect(strip("/* getActiveServices( */")).not.toContain("getActiveServices");
+    expect(strip("// x\ngetActiveServices(")).toContain("getActiveServices");
+  });
+});
+
+describe("ONB-02 P2 control: retained practitioner rows must not cause READY", () => {
+  // MUTATION CONTROL 2 — migration 0135 retains practitioner-specific
+  // availability when a studio turns capacity back off. Public booking reads
+  // only `practitioner_id IS NULL`. Reading the wider set makes a studio with
+  // no public-bookable day answer READY while the booking page offers nothing.
+  it("the loader asks for the studio-wide scope, not every row", async () => {
+    const { readFileSync } = await import("node:fs");
+    const code = readFileSync("lib/booking/new-client-readiness.ts", "utf8")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(code).toContain("getStudioWideDefaultsSafe");
+    // The wider read is the defect, so its absence is the proof.
+    expect(code).not.toContain("getAvailabilityDefaults");
+  });
+
+  it("an open PRACTITIONER row cannot rescue a closed studio-wide week", () => {
+    // Pure-compute proof, independent of which query the loader picked: the
+    // authority is handed the studio-wide rows only, and a closed week is
+    // NOT_READY no matter what other rows exist in the table.
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      availability: {
+        ok: true,
+        days: [{ is_open: false, open_time: null, close_time: null }],
+      },
+    });
+    expect(r.status).toBe("not_ready");
+    if (r.status !== "not_ready") throw new Error("unreachable");
+    expect(r.blockers.map((b) => b.key)).toContain("availability");
   });
 });
