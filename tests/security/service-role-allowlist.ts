@@ -486,6 +486,30 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "resolveInvitation",
   },
   {
+    path: "lib/waitlist/profile-completion-server.ts",
+    purpose:
+      "WAIT-04B server authority for completing a legacy waitlist profile from a " +
+      "capability grant.",
+    why:
+      "0202 revokes EXECUTE on complete_waitlist_profile_by_grant from public, anon " +
+      "and authenticated BY NAME and grants it to service_role alone, so there is no " +
+      "RLS path to the command and service_role is the only way to call it at all. " +
+      "The table itself is unreachable either way: 0185 revoked ALL privileges on " +
+      "new_client_waitlist_entries from every role including service_role, and granted " +
+      "back only SELECT to authenticated -- so this module holds no DML on the row it " +
+      "causes to be written, and the write can only happen inside the command. " +
+      "THE CALLER NEVER NAMES THE ROW. The command takes no entry id, no email and no " +
+      "joined-at; it resolves the entry by hashing the capability itself, under the " +
+      "canonical studio -> entry lock order, and re-checks validity, revocation, " +
+      "expiry and lifecycle under those locks. A forged submission may therefore " +
+      "choose nothing but which token to present. The token is passed to the database " +
+      "and nowhere else -- never logged, never returned, never used as a key -- and " +
+      "every refusal collapses to one code so a holder cannot learn whether a token " +
+      "was valid but spent.",
+    // The capability IS the scope. Nothing else in the call selects a row.
+    scopeGuard: "p_raw_token: input.capabilityToken",
+  },
+  {
     path: "lib/booking/waitlist-invitation.ts",
     purpose:
       "WAIT-03B B2 server authority for scoped new-client waitlist invitations.",
