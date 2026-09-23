@@ -9,10 +9,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // guards in computeNewClientReadiness (so an unavailable authority is treated as
 // an empty list) and the UNKNOWN cases must go RED with status "not_ready".
 
-vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
+// The loader awaits createClient() before handing the client to the mocked
+// studio-wide reader, so it must resolve; the client itself is never used here.
+vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn(async () => ({})) }));
 vi.mock("@/lib/booking/queries", () => ({
   getActiveServices: vi.fn(),
-  getAvailabilityDefaults: vi.fn(),
+}));
+// P2: readiness reads STUDIO-WIDE availability (practitioner_id IS NULL), the
+// same scope public booking uses, so that is what the loader tests mock.
+vi.mock("@/lib/booking/studio-wide-availability", () => ({
+  getStudioWideDefaultsSafe: vi.fn(),
 }));
 vi.mock("@/lib/consent/launch-readiness", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -25,6 +31,7 @@ const {
   isOpenDay,
 } = await import("@/lib/booking/new-client-readiness");
 const queries = await import("@/lib/booking/queries");
+const wideAvailability = await import("@/lib/booking/studio-wide-availability");
 const consent = await import("@/lib/consent/launch-readiness");
 
 const STUDIO = {
@@ -214,7 +221,7 @@ describe("getNewClientReadiness — a throwing query becomes UNKNOWN, not zero",
 
   it("getActiveServices throwing is UNKNOWN, never 'no consultation service'", async () => {
     vi.mocked(queries.getActiveServices).mockRejectedValue(new Error("boom"));
-    vi.mocked(queries.getAvailabilityDefaults).mockResolvedValue([OPEN_DAY] as never);
+    vi.mocked(wideAvailability.getStudioWideDefaultsSafe).mockResolvedValue([OPEN_DAY] as never);
     vi.mocked(consent.getTreatmentConsentReadiness).mockResolvedValue({ ok: true, ready: true });
 
     const r = await getNewClientReadiness({ id: "st", ...STUDIO });
@@ -225,7 +232,7 @@ describe("getNewClientReadiness — a throwing query becomes UNKNOWN, not zero",
 
   it("one failed authority does not take out the others", async () => {
     vi.mocked(queries.getActiveServices).mockResolvedValue([CONSULTATION] as never);
-    vi.mocked(queries.getAvailabilityDefaults).mockRejectedValue(new Error("boom"));
+    vi.mocked(wideAvailability.getStudioWideDefaultsSafe).mockRejectedValue(new Error("boom"));
     vi.mocked(consent.getTreatmentConsentReadiness).mockResolvedValue({ ok: true, ready: false });
 
     // Consent is PROVEN missing, so the answer is still actionable.
@@ -238,7 +245,7 @@ describe("getNewClientReadiness — a throwing query becomes UNKNOWN, not zero",
 
   it("all three answering and satisfied is READY", async () => {
     vi.mocked(queries.getActiveServices).mockResolvedValue([CONSULTATION] as never);
-    vi.mocked(queries.getAvailabilityDefaults).mockResolvedValue([OPEN_DAY] as never);
+    vi.mocked(wideAvailability.getStudioWideDefaultsSafe).mockResolvedValue([OPEN_DAY] as never);
     vi.mocked(consent.getTreatmentConsentReadiness).mockResolvedValue({ ok: true, ready: true });
     expect((await getNewClientReadiness({ id: "st", ...STUDIO })).status).toBe("ready");
   });
@@ -393,5 +400,67 @@ describe("ONB-02: WAIT admission and a real timezone authority", () => {
       if (r.status !== "not_ready") return;
       expect(r.unavailable).toContain("treatment_consent");
     });
+  });
+});
+
+describe("ONB-02 P2: readiness reads the SAME availability scope as public booking", () => {
+  // WAIT admission is a PROVEN blocker and would outrank UNKNOWN, so it is
+  // stubbed off here: this block is about availability SCOPE, and leaving the
+  // ambient gate in play would let a wait_admission blocker answer for it.
+  beforeEach(() => {
+    vi.stubEnv("NEW_CLIENT_WAITLIST_STUDIO_SLUGS", "");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("asks for studio-wide defaults, not every row the studio owns", async () => {
+    // THE DEFECT. `getAvailabilityDefaults` returns every row including retained
+    // practitioner-specific ones, so a studio whose only open rows belong to a
+    // practitioner — with every studio-wide day closed — answered READY while the
+    // public booking page offered nothing. Public booking reads
+    // `practitioner_id IS NULL`; readiness must read the same set, and the way to
+    // prove that is which reader it calls.
+    vi.mocked(queries.getActiveServices).mockResolvedValue([CONSULTATION] as never);
+    vi.mocked(wideAvailability.getStudioWideDefaultsSafe).mockResolvedValue([OPEN_DAY] as never);
+    vi.mocked(consent.getTreatmentConsentReadiness).mockResolvedValue({ ok: true, ready: true });
+
+    await getNewClientReadiness({ id: "st", ...STUDIO });
+
+    expect(
+      vi.mocked(wideAvailability.getStudioWideDefaultsSafe),
+      "readiness must read studio-wide availability",
+    ).toHaveBeenCalled();
+    expect(
+      vi.mocked(wideAvailability.getStudioWideDefaultsSafe).mock.calls[0]?.[1],
+      "scoped to this studio",
+    ).toBe("st");
+  });
+
+  it("a studio whose studio-wide days are all closed is NOT ready", async () => {
+    // The practitioner-specific rows are invisible to this reader by
+    // construction, so "only practitioner rows open" reaches compute as
+    // "nothing open" — which is exactly what the public page would offer.
+    vi.mocked(queries.getActiveServices).mockResolvedValue([CONSULTATION] as never);
+    vi.mocked(wideAvailability.getStudioWideDefaultsSafe).mockResolvedValue([
+      { is_open: false, open_time: null, close_time: null },
+    ] as never);
+    vi.mocked(consent.getTreatmentConsentReadiness).mockResolvedValue({ ok: true, ready: true });
+
+    const r = await getNewClientReadiness({ id: "st", ...STUDIO });
+    expect(r.status).toBe("not_ready");
+  });
+
+  it("a failed studio-wide read is UNKNOWN, never 'no open days'", async () => {
+    // getStudioWideDefaultsSafe fails closed rather than returning []; an empty
+    // list would read as a proven blocker and collapse UNKNOWN into NOT_READY.
+    vi.mocked(queries.getActiveServices).mockResolvedValue([CONSULTATION] as never);
+    vi.mocked(wideAvailability.getStudioWideDefaultsSafe).mockRejectedValue(new Error("boom"));
+    vi.mocked(consent.getTreatmentConsentReadiness).mockResolvedValue({ ok: true, ready: true });
+
+    const r = await getNewClientReadiness({ id: "st", ...STUDIO });
+    expect(r.status).toBe("unknown");
+    if (r.status !== "unknown") return;
+    expect(r.unavailable).toContain("availability");
   });
 });

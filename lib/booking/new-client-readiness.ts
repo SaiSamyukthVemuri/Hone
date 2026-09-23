@@ -1,6 +1,8 @@
 import "server-only";
 import type { Service, Studio, StudioAvailabilityDefault } from "@/lib/types/database";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
+import { createClient } from "@/lib/supabase/server";
+import { getStudioWideDefaultsSafe } from "@/lib/booking/studio-wide-availability";
 import { isValidTimeZone } from "@/lib/studios/new-studio";
 import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
 import {
@@ -8,7 +10,7 @@ import {
   getTreatmentConsentReadiness,
   type TreatmentConsentReadiness,
 } from "@/lib/consent/launch-readiness";
-import { getActiveServices, getAvailabilityDefaults } from "@/lib/booking/queries";
+import { getActiveServices } from "@/lib/booking/queries";
 
 // ===========================================================================
 // ONB-02 — CANONICAL NEW-CLIENT BOOKING READINESS
@@ -38,7 +40,8 @@ import { getActiveServices, getAvailabilityDefaults } from "@/lib/booking/querie
 //
 //   services            -> getActiveServices + isBookableByNewClient
 //                          (the SAME predicate the booking action enforces)
-//   availability        -> getAvailabilityDefaults
+//   availability        -> getStudioWideDefaultsSafe (practitioner_id IS NULL,
+//                          the same scope public booking reads)
 //   booking link/route  -> studios.slug (what getStudioBySlug resolves on)
 //   booking settings    -> the studio columns the slot generator requires
 //   treatment consent   -> getTreatmentConsentReadiness (already three-state)
@@ -59,7 +62,7 @@ import { getActiveServices, getAvailabilityDefaults } from "@/lib/booking/querie
 // "not ready" tells an owner to build a form they already have; reported as
 // "ready" it green-lights a launch on no evidence. This is the same rule
 // `getTreatmentConsentReadiness` and `getCardAuthorizationCapability` already
-// apply, and it is why `getActiveServices` / `getAvailabilityDefaults` are
+// apply, and it is why `getActiveServices` / `getStudioWideDefaultsSafe` are
 // caught here rather than allowed to throw: an exception would take out the
 // whole surface, and a swallowed one would become a confident "0 services".
 //
@@ -266,7 +269,21 @@ export async function getNewClientReadiness(
       (s) => ({ ok: true, services: s }) as const,
       () => ({ ok: false }) as const,
     ),
-    getAvailabilityDefaults(studio.id).then(
+    // P2: THE SAME SCOPE PUBLIC BOOKING USES, NOT A WIDER ONE.
+    //
+    // `getAvailabilityDefaults` returns EVERY row for the studio, including
+    // retained practitioner-specific ones. Public booking reads studio-wide
+    // availability -- `practitioner_id IS NULL` -- so a studio whose only open
+    // rows belong to a practitioner, with every studio-wide day closed, answered
+    // READY while the public booking page offered nothing.
+    //
+    // `getStudioWideDefaultsSafe` is that scope, and it already carries the two
+    // behaviours this needs: a legacy fallback for a database without the column,
+    // and fail-closed on any other error rather than an empty list that would read
+    // as "no open days" and quietly become a blocker.
+    createClient()
+      .then((supabase) => getStudioWideDefaultsSafe(supabase, studio.id))
+      .then(
       (days) => ({ ok: true, days }) as const,
       () => ({ ok: false }) as const,
     ),
