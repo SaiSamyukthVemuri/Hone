@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SafeAnalytics } from "../_components/SafeAnalytics";
 import { SiteHeader } from "../_components/marketing/SiteHeader";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SiteFooter } from "../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
@@ -27,6 +28,7 @@ export const metadata: Metadata = marketingMetadata("/resources");
 export default function ResourcesPage() {
   return (
     <MarketingSurface>
+      <SkipLink />
       <SiteHeader />
       <Breadcrumbs
         items={[
@@ -34,7 +36,7 @@ export default function ResourcesPage() {
           { name: "Resources", path: "/resources" },
         ]}
       />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
         <Container className="pb-8 pt-8 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Resources</Eyebrow>
