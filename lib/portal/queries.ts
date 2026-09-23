@@ -4,6 +4,7 @@ import { ensureIntakeForClient } from "@/lib/intake/queries";
 import type { ClientPortalMessage } from "@/lib/types/database";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { isPubliclyBookable } from "@/lib/booking/readiness";
 
 // Server-side queries that back the authenticated /portal home. Every
 // function on this file expects the caller to have already resolved a
@@ -564,4 +565,206 @@ export async function getRecentPortalAccessEvents(
   } catch {
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// EMERG-PORTAL-REBOOK-01 — THE ONE SERVER-AUTHORIZED SERVICE READ.
+// ---------------------------------------------------------------------------
+
+export type PortalBookableService = {
+  id: string;
+  name: string;
+  /** The column the slot generator and create_public_appointment both key on. */
+  default_duration_minutes: number;
+  pre_care_instructions: string | null;
+  modality: string | null;
+};
+
+/**
+ * The services a portal client may currently choose, for ONE studio.
+ *
+ * WHY THIS EXISTS AT ALL, AND WHY IT IS ADMIN-SCOPED.
+ *
+ * `getActiveServices` in lib/booking/queries.ts reads through the ordinary
+ * Supabase client, whose scope comes from a PRACTITIONER's Supabase auth
+ * session. Migration 0173 restricts `services` SELECT to authenticated studio
+ * members. A portal client has no such session — the portal is a separate realm
+ * keyed on the `hone_portal_session` cookie (lib/portal/session.ts) — so that
+ * function returns an EMPTY LIST here rather than an error, and a returning
+ * client would simply be shown no services at all. That is the P1 this replaces.
+ *
+ * The fix is a bounded portal-specific read, not a weakened RLS policy and not
+ * a change to `getActiveServices`, which every practitioner surface depends on.
+ *
+ * WHAT CARRIES THE TENANCY GUARANTEE. `studioId` must come from
+ * `getCurrentPortalSession()`. It is applied as a QUERY FILTER together with
+ * `active = true`, so a service belonging to another studio, or a deactivated
+ * one, is ABSENT from the result rather than present-and-rejected. There is no
+ * slug, no browser-supplied studio id and no browser-supplied service ownership
+ * anywhere in this path.
+ *
+ * ONE READ FOR THREE JOBS. The rendered menu, the validation of the submitted
+ * choice, and the duration handed to slot generation and to the appointment
+ * command all come from THIS function's result, through
+ * `pickPortalBookableService` below. They therefore cannot drift: a service the
+ * menu would not show is a service the validator cannot find.
+ *
+ * ORDER MATCHES THE PUBLIC BOOKING MENU — `sort_order` then `name`, the order
+ * the practitioner arranged in Settings -> Services. A returning client should
+ * not see a different menu from the one on /book/<slug>.
+ *
+ * RETURNS NULL ON A READ FAILURE, never an empty array. "This studio offers
+ * nothing" and "the query did not answer" are different facts, and only the
+ * first one may ever be shown as an empty menu.
+ */
+export async function getPortalBookableServices(
+  studioId: string,
+): Promise<PortalBookableService[] | null> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("services")
+    .select("id, name, default_duration_minutes, pre_care_instructions, modality")
+    .eq("studio_id", studioId)
+    .eq("active", true)
+    .order("sort_order", { ascending: true })
+    .order("name");
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "portal_bookable_services_failed",
+        code: error.code,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return null;
+  }
+  return (data ?? []).map((s) => ({
+    id: s.id as string,
+    name: ((s.name as string | null) ?? "").trim() || "Appointment",
+    default_duration_minutes: s.default_duration_minutes as number,
+    pre_care_instructions: (s.pre_care_instructions as string | null) ?? null,
+    modality: (s.modality as string | null) ?? null,
+  }));
+}
+
+/**
+ * Select ONE service out of the studio-scoped list above.
+ *
+ * A plain array lookup, deliberately: the tenancy and `active` decisions were
+ * already made by the query that produced `services`, so this cannot
+ * accidentally admit a row those filters excluded. A cross-studio or inactive
+ * service id simply is not in the list and yields null, which every caller
+ * turns into the generic refusal.
+ */
+export function pickPortalBookableService(
+  services: readonly PortalBookableService[],
+  serviceId: string,
+): PortalBookableService | null {
+  return services.find((s) => s.id === serviceId) ?? null;
+}
+
+/** The studio's booking-calendar settings for the portal rebooking surface. */
+export type PortalBookingWindow = {
+  timezone: string;
+  publicBookingHorizonMonths: number | null;
+};
+
+/**
+ * Timezone + booking horizon for the session's studio.
+ *
+ * Scoped by the SESSION's studio id. Returns null when the row cannot be read,
+ * so the caller can say "unavailable" rather than inventing a default calendar.
+ */
+export async function getPortalBookingWindow(
+  studioId: string,
+): Promise<PortalBookingWindow | null> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("studios")
+    .select("timezone, public_booking_horizon_months")
+    .eq("id", studioId)
+    .maybeSingle();
+  if (error || !data) {
+    console.error(
+      JSON.stringify({
+        event: "portal_booking_window_failed",
+        code: error?.code ?? null,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return null;
+  }
+  return {
+    timezone: data.timezone as string,
+    publicBookingHorizonMonths:
+      (data.public_booking_horizon_months as number | null) ?? null,
+  };
+}
+
+/**
+ * Is this studio publicly bookable AT ALL, by the same predicate the public
+ * surfaces and the appointment command both enforce?
+ *
+ * WHY THE PORTAL NEEDS THIS AND CANNOT INFER IT FROM SLOTS.
+ *
+ * `getAvailableSlots` resolves a day as `override ?? weekly default`
+ * (lib/booking/slots.ts:pickDayWindow), so a ONE-OFF open override produces
+ * offerable times on a studio that has NO open studio-wide weekly day at all.
+ * `create_public_appointment` (0170) refuses that studio unconditionally with
+ * `public_booking_unavailable`, because its readiness clause requires at least
+ * one open weekly default. Without this gate the portal offers times that are
+ * impossible to book — a button that can never work.
+ *
+ * THE PREDICATE IS SHARED, NOT RESTATED. `isPubliclyBookable` is the same pure
+ * function the public booking page, the public slot action and the dashboard
+ * checklist ask, so the portal cannot drift from them.
+ *
+ * THE WEEKLY-DAY READ TAKES THE STRICTER `practitioner_id IS NULL` FORM — the
+ * one the command actually enforces and the one the studio-wide slot loader
+ * builds from. The public action's own copy omits that filter, so a
+ * practitioner-scoped row could satisfy it while the command still refused;
+ * matching the command is the point of the gate.
+ *
+ * Returns null when either read fails. A read that did not answer is NOT "this
+ * studio is closed", and the caller must surface it as unavailable rather than
+ * as an absence of times.
+ */
+export async function getPortalBookingReadiness(
+  studioId: string,
+): Promise<boolean | null> {
+  const admin = createAdminClient();
+  const [services, days] = await Promise.all([
+    admin
+      .from("services")
+      .select("id")
+      .eq("studio_id", studioId)
+      .eq("active", true)
+      .limit(1),
+    admin
+      .from("studio_availability_default")
+      .select("is_open, open_time, close_time")
+      .eq("studio_id", studioId)
+      .is("practitioner_id", null)
+      .eq("is_open", true),
+  ]);
+  if (services.error || days.error) {
+    console.error(
+      JSON.stringify({
+        event: "portal_booking_readiness_failed",
+        code: services.error?.code ?? days.error?.code ?? null,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return null;
+  }
+  const openAvailabilityDaysCount = (days.data ?? []).filter(
+    (d) =>
+      d.is_open === true &&
+      typeof d.open_time === "string" &&
+      typeof d.close_time === "string",
+  ).length;
+  return isPubliclyBookable({
+    activeServicesCount: (services.data ?? []).length,
+    openAvailabilityDaysCount,
+  });
 }
