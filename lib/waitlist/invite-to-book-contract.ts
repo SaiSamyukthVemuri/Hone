@@ -143,10 +143,10 @@ export type InviteToBookInput = {
    *  a browser may name an entry, never a tenant, an actor or a role. */
   entryId: string;
   scope: BookingScope;
-  /** 1..168. The bound is the shipped command's own, and out-of-range is
-   *  REFUSED rather than clamped — a clamped window is one the caller did not
-   *  ask for and cannot see. */
-  expiresInHours: number;
+  // NO WINDOW. Level 3 is a FIXED 48-hour opportunity: the adapter supplies
+  // `WAIT_INVITATION_TTL_HOURS` and no caller may name one. This field used to
+  // be `expiresInHours: number` with a 1..168 bound, which is what let the
+  // composer offer 24/48/72/168/custom.
 };
 
 export type ResendInvitationInput = {
@@ -156,7 +156,10 @@ export type ResendInvitationInput = {
    *  invitation from silently inheriting a scope the practitioner can no longer
    *  see on screen. */
   scope: BookingScope;
-  expiresInHours: number;
+  // NO WINDOW, for the same reason as above — and it matters MORE here, not
+  // less. `resendInvitation` is unimplemented and issues nothing today, so the
+  // field was harmless; it would have handed the first real implementation a
+  // window to choose, reintroducing the defect on a surface nobody was watching.
 };
 
 export type EntryOnlyInput = { entryId: string };
