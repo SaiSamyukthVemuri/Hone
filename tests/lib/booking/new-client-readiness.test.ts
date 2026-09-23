@@ -507,13 +507,17 @@ describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority",
     const code = await launchSource();
     expect(NEW_CLIENT_BLOCKER_KEYS.length).toBeGreaterThanOrEqual(7);
     for (const key of NEW_CLIENT_BLOCKER_KEYS) {
-      // A row may read the verdict either through `owned(...)` (a setup step)
-      // or through `provenBlockers.has(...)` (a state, like WAIT admission).
-      // What it may not do is go unrendered.
+      // THE STATUS POSITION, not a mention anywhere in the row. Mutation
+      // testing found the looser form vacuous: hard-coding `status: "ready"`
+      // while the row's COPY still read `provenBlockers.has(key)` satisfied it,
+      // so a row could display the blocker's text above a green pill.
+      //
+      // A setup step takes its status from `owned(key)`; a state the owner
+      // cannot "fix" (WAIT admission) takes it from `provenBlockers` directly.
       expect(
-        code.includes(`owned("${key}"`) ||
-          code.includes(`provenBlockers.has("${key}")`),
-        `${key} is owned by the authority but rendered by no row`,
+        code.includes(`status: owned("${key}"`) ||
+          code.includes(`status: provenBlockers.has("${key}")`),
+        `${key} is owned by the authority but no row takes its STATUS from it`,
       ).toBe(true);
     }
   });
