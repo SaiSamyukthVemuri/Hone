@@ -632,6 +632,59 @@ describe("discovered paths are normalized before comparison", () => {
     const self = readFileSync(__filename, "utf8");
     const HELPERS = ["toRepoPath", "unnormalizedUnder"] as const;
 
+    /**
+     * One call's arguments, split at the TOP LEVEL only.
+     *
+     * WHY SUBSTRING MATCHING WAS NOT ENOUGH, which is the hole this replaces.
+     * The previous check asked whether the argument TEXT contained the expected
+     * separator. A nested call satisfies that while the outer helper still omits
+     * its own:
+     *
+     *     unnormalizedUnder([toRepoPath(legal, "/")])
+     *
+     * The outer call has no separator and falls back to `path.sep`, yet the scan
+     * saw `"/"` from the inner call and passed. Position is the property that
+     * actually matters, so the arguments are split and the helper's OWN second
+     * one is read.
+     *
+     * Depth tracks (), [] and {}; string literals are skipped wholesale so a
+     * comma or bracket inside one cannot split an argument, and an escaped quote
+     * cannot end it early. That last part matters here more than usual: the
+     * Windows separator IS an escaped backslash in a string literal.
+     */
+    const topLevelArgs = (args: string): string[] => {
+      const out: string[] = [];
+      let depth = 0;
+      let current = "";
+      let quote: string | null = null;
+      for (let i = 0; i < args.length; i += 1) {
+        const ch = args[i];
+        if (quote) {
+          current += ch;
+          if (ch === "\\") {
+            current += args[i + 1] ?? "";
+            i += 1;
+          } else if (ch === quote) quote = null;
+          continue;
+        }
+        if (ch === '"' || ch === "'" || ch === "`") {
+          quote = ch;
+          current += ch;
+          continue;
+        }
+        if (ch === "(" || ch === "[" || ch === "{") depth += 1;
+        else if (ch === ")" || ch === "]" || ch === "}") depth -= 1;
+        if (ch === "," && depth === 0) {
+          out.push(current.trim());
+          current = "";
+          continue;
+        }
+        current += ch;
+      }
+      if (current.trim().length > 0) out.push(current.trim());
+      return out;
+    };
+
     /** Argument lists of `name(...)` in `body`, paren-balanced so nesting is safe. */
     const callsTo = (body: string, name: string): string[] => {
       const out: string[] = [];
@@ -665,12 +718,18 @@ describe("discovered paths are normalized before comparison", () => {
       for (const helper of HELPERS) {
         for (const args of callsTo(body, helper)) {
           checked += 1;
+          const own = topLevelArgs(args);
           expect(
-            args.includes(expected),
-            `${title} calls ${helper}(${args.trim()}) without its explicit ${expected} ` +
-              `separator — it would fall back to the runner's path.sep and pass here ` +
-              `while failing on the other platform`,
-          ).toBe(true);
+            own.length,
+            `${title} calls ${helper}(${args.trim()}) with no second argument — it ` +
+              `falls back to the runner's path.sep, which passes here and fails on ` +
+              `the other platform`,
+          ).toBeGreaterThanOrEqual(2);
+          expect(
+            own[1],
+            `${title} calls ${helper} whose OWN separator is ${own[1] ?? "(absent)"} ` +
+              `rather than ${expected}`,
+          ).toBe(expected);
         }
       }
       // Otherwise a renamed helper would empty the loop and pass vacuously.
