@@ -69,7 +69,7 @@ export default function HomePage() {
     <MarketingSurface>
       <SkipLink />
       <SiteHeader />
-      <main id="main-content" className="overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
         {/* Hero */}
         <Container className="grid items-start gap-12 pb-16 pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-24 lg:pt-20">
           <div>

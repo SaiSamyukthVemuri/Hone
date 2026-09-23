@@ -116,7 +116,7 @@ export default function ChecklistArticlePage() {
           { name: "Treatment record checklist", path: article.slug },
         ]}
       />
-      <main id="main-content" className="overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
         <article>
           <Container size="prose" className="pb-6 pt-6 lg:pt-8">
             <Reveal immediate>

@@ -36,7 +36,7 @@ export default function ResourcesPage() {
           { name: "Resources", path: "/resources" },
         ]}
       />
-      <main id="main-content" className="overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
         <Container className="pb-8 pt-8 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Resources</Eyebrow>

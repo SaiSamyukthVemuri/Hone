@@ -359,3 +359,77 @@ describe("5: footer navigation groups keep accessible names", () => {
     }
   });
 });
+
+// 7: the skip target must clear the sticky header it skips past.
+//
+// THE DEFECT THIS CLOSES. `SiteHeader` is `sticky top-0` over an `h-16` (64px)
+// bar. Activating the skip link focuses `#main-content` and scrolls it to the
+// VIEWPORT TOP — directly underneath that bar — so the first heading of the
+// content a keyboard user just asked for is the part they cannot see. The link
+// works, the landmark is correct, and the outcome is still wrong.
+//
+// The fix is the repository's existing Tailwind idiom (`scroll-mt-*`, already
+// used on settings and portal anchors), not a header redesign: the target
+// carries its own scroll margin, so the browser stops short by the header's
+// height.
+//
+// THE POLICY LAYOUT IS DELIBERATELY EXEMPT. `MarketingHeader` is not sticky —
+// it scrolls away with the page — so there is nothing to clear, and giving it an
+// offset would be a gap with no cause.
+describe("7: the skip target clears the sticky header", () => {
+  /** Tailwind spacing steps are 0.25rem; `h-16` is 4rem is 64px. */
+  const STICKY_HEADER_CLASS = "h-16";
+  const REQUIRED_SCROLL_MARGIN = /\bscroll-mt-(\d+)\b/;
+  const MIN_STEPS = 16;
+
+  it("the sticky header is still the height the offset assumes", () => {
+    // Binds the two numbers together. If the header grows to h-20 this fails
+    // here rather than silently leaving every target 16px short — the offset is
+    // derived from a real measurement, not a remembered one.
+    const header = codeOnly(read("app/_components/marketing/SiteHeader.tsx"));
+    expect(header, "SiteHeader is no longer sticky — re-derive this rule").toMatch(
+      /sticky[\s"]/,
+    );
+    expect(
+      header,
+      `SiteHeader no longer uses ${STICKY_HEADER_CLASS}; the scroll offset below was sized for it`,
+    ).toContain(STICKY_HEADER_CLASS);
+  });
+
+  it("every SiteHeader shell page offsets its main target by at least the header", () => {
+    const pages = shellPages();
+    expect(pages.length, "no shell pages found — vacuous").toBeGreaterThanOrEqual(10);
+    const bad: string[] = [];
+    for (const rel of pages) {
+      const src = codeOnly(read(rel));
+      const main = src.match(/<main[^>]*id="main-content"[^>]*>/)?.[0];
+      if (!main) {
+        bad.push(`${rel}: no <main id="main-content">`);
+        continue;
+      }
+      const m = main.match(REQUIRED_SCROLL_MARGIN);
+      if (!m) {
+        bad.push(`${rel}: main target has no scroll-mt-* — it will land under the sticky header`);
+        continue;
+      }
+      if (Number(m[1]) < MIN_STEPS) {
+        bad.push(`${rel}: scroll-mt-${m[1]} is less than the ${MIN_STEPS}-step header height`);
+      }
+    }
+    expect(
+      bad,
+      "a skip target does not clear the sticky header, so activating the skip " +
+        "link hides the first main content beneath it",
+    ).toEqual([]);
+  });
+
+  it("the policy layout is exempt because its header is not sticky", () => {
+    // Stated as an assertion rather than an omission: if MarketingHeader ever
+    // becomes sticky, this fails and the exemption has to be revisited.
+    const header = codeOnly(read("app/_components/MarketingHeader.tsx"));
+    expect(
+      header,
+      "MarketingHeader became sticky — the policy layout now needs a scroll offset too",
+    ).not.toMatch(/\bsticky\b/);
+  });
+});
