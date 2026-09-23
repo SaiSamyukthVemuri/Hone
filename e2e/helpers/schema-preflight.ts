@@ -183,6 +183,54 @@ export function compareMigrationState(
     };
   }
 
+  // DUPLICATE VERSIONS ARE MALFORMED STATE, AND MUST NOT SURVIVE INTO THE MAP.
+  //
+  // `new Map(xs.map(...))` keeps the LAST entry for a repeated key and discards
+  // the rest, silently. Two ways that turns an ambiguous input into a PASS:
+  //
+  //   * identical duplicates — [0202/a, 0202/a] collapses to one row and
+  //     compares equal to a side that legitimately holds one;
+  //   * conflicting duplicates — [0202/a, 0202/b] keeps whichever came last, so
+  //     the comparison silently ADOPTS one identity and the mismatch the
+  //     IDENTITY_MISMATCH rule exists to catch never reaches it.
+  //
+  // Either way the collapse happens before any comparison, so no later rule can
+  // see it. The count is the only place the evidence still exists: a side is
+  // well-formed exactly when its row count equals its unique-version count.
+  //
+  // This refuses rather than picking first-or-last, because choosing is itself
+  // the defect — the whole point of this preflight is that malformed or unknown
+  // state fails closed instead of becoming a measurement.
+  const duplicateVersions = (xs: readonly MigrationIdentity[]): string[] => {
+    const counts = new Map<string, number>();
+    for (const x of xs) counts.set(x.version, (counts.get(x.version) ?? 0) + 1);
+    // Sorted so the refusal reads the same regardless of input order.
+    return [...counts.entries()]
+      .filter(([, n]) => n > 1)
+      .map(([version]) => version)
+      .sort((a, b) => a.localeCompare(b));
+  };
+
+  const checkoutDupes = duplicateVersions(checkout);
+  const localDupes = duplicateVersions(local);
+  if (checkoutDupes.length > 0 || localDupes.length > 0) {
+    const sides: string[] = [];
+    if (checkoutDupes.length > 0) {
+      sides.push(`the checkout repeats ${checkoutDupes.join(", ")}`);
+    }
+    if (localDupes.length > 0) {
+      sides.push(`the local database repeats ${localDupes.join(", ")}`);
+    }
+    return {
+      ok: false,
+      codes: ["STATE_UNAVAILABLE"],
+      localOnly: [],
+      missingLocally: [],
+      identityMismatches: [],
+      unavailableReason: `duplicate migration versions make the state ambiguous: ${sides.join("; ")}`,
+    };
+  }
+
   const byVersion = (xs: readonly MigrationIdentity[]) =>
     new Map(xs.map((x) => [x.version, x] as const));
   const c = byVersion(checkout);

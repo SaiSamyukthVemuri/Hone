@@ -626,3 +626,97 @@ describe("11. the incarnation read stays read-only and local", () => {
     expect(code).not.toContain("db reset");
   });
 });
+
+// P1 (#755 exact-head review): duplicate migration versions must FAIL CLOSED.
+//
+// `new Map(xs.map(...))` keeps the LAST entry for a repeated key and drops the
+// rest before any comparison runs, so the ambiguity is invisible to every later
+// rule. This is the one place the evidence still exists: a well-formed side has
+// as many rows as it has unique versions.
+describe("duplicate migration versions are malformed state, not a comparison", () => {
+  const ok = (version: string, name: string) => ({ version, name });
+  const CLEAN = [ok("0201", "a"), ok("0202", "b")];
+
+  const expectRefused = (verdict: ReturnType<typeof compareMigrationState>, why: RegExp) => {
+    expect(verdict.ok, "duplicate versions must never compare equal").toBe(false);
+    if (verdict.ok) return;
+    expect(verdict.codes).toContain("STATE_UNAVAILABLE");
+    expect(verdict.unavailableReason ?? "").toMatch(why);
+  };
+
+  it("IDENTICAL duplicates on the local side are refused, not collapsed", () => {
+    // Without the check this passes: the Map collapses to one 0202 row and the
+    // two sides compare equal.
+    expectRefused(
+      compareMigrationState(CLEAN, [ok("0201", "a"), ok("0202", "b"), ok("0202", "b")]),
+      /local database repeats 0202/,
+    );
+  });
+
+  it("IDENTICAL duplicates on the checkout side are refused too", () => {
+    expectRefused(
+      compareMigrationState([ok("0201", "a"), ok("0202", "b"), ok("0202", "b")], CLEAN),
+      /checkout repeats 0202/,
+    );
+  });
+
+  it("CONFLICTING duplicates are refused rather than silently resolved", () => {
+    // The worse case: the Map keeps whichever came last, so the comparison
+    // ADOPTS one identity and the IDENTITY_MISMATCH rule never sees the other.
+    expectRefused(
+      compareMigrationState(CLEAN, [ok("0201", "a"), ok("0202", "b"), ok("0202", "DIFFERENT")]),
+      /local database repeats 0202/,
+    );
+  });
+
+  it("ORDER does not change the refusal", () => {
+    const first = compareMigrationState(CLEAN, [
+      ok("0202", "DIFFERENT"),
+      ok("0202", "b"),
+      ok("0201", "a"),
+    ]);
+    const second = compareMigrationState(CLEAN, [
+      ok("0201", "a"),
+      ok("0202", "b"),
+      ok("0202", "DIFFERENT"),
+    ]);
+    expect(first.ok).toBe(false);
+    expect(second.ok).toBe(false);
+    if (first.ok || second.ok) return;
+    expect(first.unavailableReason).toBe(second.unavailableReason);
+  });
+
+  it("it does not pick first or last — neither identity is adopted", () => {
+    const v = compareMigrationState(CLEAN, [
+      ok("0201", "a"),
+      ok("0202", "b"),
+      ok("0202", "DIFFERENT"),
+    ]);
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    // A resolved-by-choice implementation would have produced an identity
+    // mismatch (or nothing at all) instead of refusing the state outright.
+    expect(v.identityMismatches).toEqual([]);
+    expect(v.codes).toEqual(["STATE_UNAVAILABLE"]);
+  });
+
+  it("BOTH sides duplicated names both sides in one refusal", () => {
+    const v = compareMigrationState(
+      [ok("0201", "a"), ok("0201", "a")],
+      [ok("0202", "b"), ok("0202", "b")],
+    );
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.unavailableReason).toMatch(/checkout repeats 0201/);
+    expect(v.unavailableReason).toMatch(/local database repeats 0202/);
+  });
+
+  it("the control: clean input on both sides still passes", () => {
+    // Strict AND satisfiable. Without this the rules above could be passing
+    // because the comparison refuses everything.
+    const v = compareMigrationState(CLEAN, CLEAN);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.matched).toBe(2);
+  });
+});
