@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SafeAnalytics } from "./_components/SafeAnalytics";
 import { SiteHeader } from "./_components/marketing/SiteHeader";
+import { SkipLink } from "./_components/marketing/SkipLink";
 import { SiteFooter } from "./_components/marketing/SiteFooter";
 import {
   MarketingSurface,
@@ -66,8 +67,9 @@ const TRUST_POINTS: { title: string; body: string }[] = [
 export default function HomePage() {
   return (
     <MarketingSurface>
+      <SkipLink />
       <SiteHeader />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
         {/* Hero */}
         <Container className="grid items-start gap-12 pb-16 pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-24 lg:pt-20">
           <div>

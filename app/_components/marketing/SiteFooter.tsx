@@ -27,9 +27,23 @@ export function SiteFooter() {
             </p>
           </div>
 
+          {/* EACH GROUP IS ITS OWN LABELLED NAV. The titles rendered as plain
+              text above an unassociated list, so assistive technology reached
+              four anonymous link lists inside one contentinfo and the visible
+              heading — "Product", "Company" — was decoration a screen reader
+              never connected to the links under it. `aria-labelledby` pointing
+              at the existing title is what makes the association real, rather
+              than duplicating the word into an aria-label that can drift from
+              what is on screen. */}
           {FOOTER_GROUPS.map((group) => (
-            <div key={group.title}>
-              <p className="text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-muted">
+            <nav
+              key={group.title}
+              aria-labelledby={`footer-group-${group.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+            >
+              <p
+                id={`footer-group-${group.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                className="text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-muted"
+              >
                 {group.title}
               </p>
               <ul className="mt-4 space-y-2.5">
@@ -44,7 +58,7 @@ export function SiteFooter() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </nav>
           ))}
         </div>
 

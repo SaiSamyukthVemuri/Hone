@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SafeAnalytics } from "../../_components/SafeAnalytics";
 import { SiteHeader } from "../../_components/marketing/SiteHeader";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SiteFooter } from "../../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
@@ -75,6 +76,7 @@ const STEPS: { h: string; body: string[] }[] = [
 export default function MovingFromPaperArticlePage() {
   return (
     <MarketingSurface>
+      <SkipLink />
       <SiteHeader />
       <Breadcrumbs
         items={[
@@ -83,7 +85,7 @@ export default function MovingFromPaperArticlePage() {
           { name: "Moving from paper records", path: article.slug },
         ]}
       />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
         <article>
           <Container size="prose" className="pb-6 pt-6 lg:pt-8">
             <Reveal immediate>
