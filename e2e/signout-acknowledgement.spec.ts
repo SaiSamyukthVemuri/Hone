@@ -391,63 +391,75 @@ for (const surface of SURFACES) {
       await gate.unroute();
     });
 
-    test("a remounted control is still truthful about the logout", async ({ page }) => {
-      // THE OTHER HALF OF THE REPAIR, and the only user-reachable path that can
-      // prove it. The dismissal gate keeps the panel mounted for Escape, an
-      // outside click and the trigger — so with the gate in place `pending` is
-      // never interrupted and `busy` is redundant for those three.
+    test("leaving through a link does not strand the logout", async ({ page }) => {
+      // THE DEFECT THIS CLOSES, and it is the correction to my own first fix.
       //
-      // An ordinary NAV LINK is different: it is not a dismissal, it is a
-      // navigation the practitioner chose, and it closes the panel by design
-      // (the links have always dismissed it themselves, which SIGNOUT-01
-      // documents as correct). That unmounts the form and its `useFormStatus`,
-      // so this is where the shell's remembered `signingOut` — handed back down
-      // as `busy` — is the only thing standing between the practitioner and a
-      // second logout.
+      // That version gated Escape, the outside click and the trigger, but left
+      // the panel's LINKS alone, reasoning that a navigation is not a
+      // dismissal. It is not — but it closed the panel all the same, which
+      // unmounted the leaf. And the leaf's effect is the only thing that can
+      // report `false` when the action settles, so the shell's `signingOut`
+      // stuck ON permanently: reopening the menu showed a disabled
+      // "Signing out…" for a request that had already finished.
       //
-      // Gating the links too would be a navigation change, which this repair is
-      // explicitly not.
+      // Worse, it is unrecoverable in exactly this flow. A logout the
+      // practitioner walked away from never applies its redirect to the page
+      // they walked to — measured: waiting for /login here hung for the full
+      // 20s. So nothing would ever come along to clear it. The first fix traded
+      // a duplicate logout for a dead control.
       await loginAsOwner(page, seed);
       await page.goto("/dashboard");
 
       const gate = await holdActions(page, { onRelease: "continue" });
       const panel = await surface.open(page);
       await panel.getByRole("button", { name: "Sign out" }).click({ noWaitAfter: true });
-      await expect(panel.locator("[data-signout-pending]")).toBeVisible({ timeout: 5_000 });
+      const busy = panel.locator("[data-signout-pending]");
+      await expect(busy).toBeVisible({ timeout: 5_000 });
 
-      // Leave through a link, which really does dismiss the panel.
+      // Leave through a real link, mid-logout.
       await panel.getByRole("link", { name: "Getting Started" }).click({ noWaitAfter: true });
-      await expect(panel, "the link did not dismiss the panel").toHaveCount(0, {
-        timeout: 10_000,
-      });
+      await page.waitForTimeout(500);
 
-      // Reopen. The leaf here is FRESHLY MOUNTED and its own useFormStatus
-      // knows nothing — everything below comes from the shell's memory.
-      const reopened = await surface.open(page);
-      const control = reopened.getByRole("button", { name: /Signing out|Sign out/ });
-      await expect(control).toBeVisible({ timeout: 10_000 });
+      // THE PANEL SURVIVES THE NAVIGATION, which is what keeps the leaf — and
+      // therefore the only observer of settlement — alive.
       await expect(
-        control,
-        "a remounted control offered a second logout while the first was in flight",
-      ).toBeDisabled();
-      await expect(control).toHaveText("Signing out…");
-      await expect(control).toHaveAttribute("aria-busy", "true");
+        panel,
+        "a link dismissed the panel mid-logout and stranded the pending state",
+      ).toBeVisible();
+      await expect(busy).toHaveText("Signing out…");
+      await expect(busy).toBeDisabled();
 
-      // DRAINED ON THE WIRE, not on a URL. A logout the practitioner walked
-      // away from does not apply its redirect to the page they walked to, so
-      // waiting for /login here would hang on a navigation that is never
-      // coming — it did, for 20s, before this was understood. The action
-      // leaving the wire is the settlement that actually matters, and a queued
-      // duplicate would dispatch after exactly that.
+      // Let the logout finish. The leaf is still mounted, so it reports the
+      // settlement and the shell releases.
       gate.release();
       await gate.firstSettled;
+
+      // NOT STRANDED: the control comes back, or the app has already replaced
+      // the shell with /login. Either is a resolved logout; a permanently
+      // disabled "Signing out…" is not.
+      await expect
+        .poll(
+          async () => {
+            if (/\/login/.test(page.url())) return "resolved";
+            const n = await page.locator("[data-signout-pending]").count();
+            return n === 0 ? "resolved" : "still-busy";
+          },
+          {
+            timeout: 15_000,
+            message:
+              "the shell still claims a logout is in flight after the action settled",
+          },
+        )
+        .toBe("resolved");
+
+      // And still only ever one logout on the wire.
       await Promise.race([
         gate.duplicateSeen,
-        new Promise((r) => setTimeout(r, 4_000)),
+        new Promise((r) => setTimeout(r, 2_000)),
       ]);
       expect(
         gate.state.held,
-        "a second logout reached the wire after the panel remounted",
+        "a second logout reached the wire after leaving through a link",
       ).toBe(1);
 
       await gate.unroute();

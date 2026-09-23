@@ -167,13 +167,32 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     }
   });
 
-  it("the gate did NOT reach into navigation", () => {
-    // Links have always dismissed the panel themselves and must keep doing so;
-    // SIGNOUT-01 records why that is correct. The remount case is covered by
-    // `busy` instead, which is what keeps this bounded to a dismissal fix.
+  it("ONE dismissal function carries the rule, links included", () => {
+    // The correction to a first version that gated Escape, the outside click
+    // and the trigger but left the LINKS alone as "not a dismissal". They are
+    // not — but they closed the panel all the same, unmounting the leaf whose
+    // effect is the only thing that can report settlement. `signingOut` then
+    // stuck ON permanently, because a logout the practitioner walked away from
+    // never applies its redirect to the page they walked to. That traded a
+    // duplicate logout for a dead control.
+    //
+    // Stating the rule once, inside `close`, is what makes every caller
+    // inherit it instead of each one having to remember.
+    for (const f of shells) {
+      const code = codeOnly(read(f));
+      expect(code, f).toMatch(
+        /const close = \(\) => \{\s*if \(signingOut\) return;\s*setOpen\(false\);\s*\};/,
+      );
+    }
+  });
+
+  it("the links still navigate — only the dismissal is deferred", () => {
+    // Bounded: no navigation was redesigned. The link still preventDefaults
+    // and pushes (NAV-ACK-01); the panel simply outlives the push while a
+    // logout is in flight, which is what keeps the observer alive.
     const menu = codeOnly(read(MENU));
     expect(menu).toContain("onClick={(e) => navigate(e, item.href, item.label)}");
-    expect(menu).not.toContain("signingOut ? undefined : navigate");
+    expect(codeOnly(read(ACCOUNT))).toContain("onClick={close}");
   });
 
   it("no click handler crept onto the submit path", () => {

@@ -71,7 +71,27 @@ export function MobileMenu({
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [open, signingOut]);
 
-  const close = () => setOpen(false);
+  // SIGNOUT-02b. `close` is the ONE dismissal, so the in-flight rule is stated
+  // once and every caller inherits it — Escape, the outside pointerdown, the
+  // trigger, and the panel's own links.
+  //
+  // THE LINKS MATTER MOST, and this is the correction to a first version that
+  // deliberately left them alone as "not a dismissal". A link closed the panel,
+  // which unmounted the leaf — and the leaf's effect is the only thing that can
+  // report `false` when the action settles. So `signingOut` stuck ON forever,
+  // and because a logout the practitioner walked away from never applies its
+  // redirect to the page they walked to, reopening the menu showed a disabled
+  // "Signing out…" for a request that had already finished. Leaving them alone
+  // traded a duplicate logout for a dead control, which is a worse bargain.
+  //
+  // Keeping the panel mounted through the navigation costs nothing: the link
+  // still navigates (NAV-ACK-01 preventDefaults and pushes; the panel is not
+  // what carries the navigation), the leaf stays mounted, and it reports the
+  // settlement that releases everything.
+  const close = () => {
+    if (signingOut) return;
+    setOpen(false);
+  };
 
   // ---- NAV-ACK-01 · DESIGN.md contract 2d -----------------------------------
   //
