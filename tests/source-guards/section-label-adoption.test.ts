@@ -610,6 +610,28 @@ describe("discovered paths are normalized before comparison", () => {
     expect(unnormalizedUnder([toRepoPath(unnormalized, "\\")], "\\")).toEqual([]);
   });
 
+  it("neither semantic test depends on the runner's separator", () => {
+    // THE P2 ITSELF IS NOT BEHAVIOURALLY DETECTABLE HERE. On POSIX `path.sep` is
+    // already "/", so re-binding a semantic test to the live separator is a
+    // no-op on this runner and every assertion still passes — the failure would
+    // appear only on the Windows runner the repair exists for. That is exactly
+    // how the defect survived its own fix once already.
+    //
+    // So the property is asserted structurally: a test that names a platform in
+    // its title must state that platform's separator as a literal, never read it
+    // from the machine.
+    const self = readFileSync(__filename, "utf8");
+    for (const title of ["POSIX semantics:", "WINDOWS semantics:"]) {
+      const start = self.indexOf(title);
+      expect(start, `could not locate the ${title} test`).toBeGreaterThan(-1);
+      const body = self.slice(start, self.indexOf("\n  });", start));
+      expect(
+        body.includes("path.sep"),
+        `${title} reads the runner's separator instead of stating its own`,
+      ).toBe(false);
+    }
+  });
+
   it("the two semantics genuinely differ on the same input", () => {
     // Without this the pair above could both be passing for the same reason.
     const legal = "components/odd\\name.tsx";
