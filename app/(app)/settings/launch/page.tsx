@@ -5,6 +5,7 @@ import { CONSENT_SETTINGS_HREF } from "@/lib/consent/launch-readiness";
 import {
   getNewClientReadiness,
   NEW_CLIENT_BLOCKER_AUTHORITIES,
+  NEW_CLIENT_BLOCKER_PREREQUISITES,
   type NewClientBlockerKey,
 } from "@/lib/booking/new-client-readiness";
 import {
@@ -45,7 +46,13 @@ type Status =
   // purpose: telling an owner to create a consent form they already have
   // is a different lie from telling them they are ready. Excluded from
   // both counters below, because it is neither done nor to do.
-  | "unknown";
+  | "unknown"
+  // A CONDITIONAL fact whose prerequisites are not met yet, so it was never
+  // evaluated. Distinct from "ready" for the same reason "unknown" is: the
+  // absence of a blocker that was deliberately not computed is not evidence
+  // that the good thing is true. Excluded from both counters -- it is neither
+  // done nor to do, it is not yet askable.
+  | "not_applicable";
 
 type Row = {
   title: string;
@@ -107,6 +114,14 @@ export default async function LaunchChecklistPage() {
     // nothing had been read to say so.
     const authorities = NEW_CLIENT_BLOCKER_AUTHORITIES[key];
     if (authorities.some((a) => unavailableAuthorities.has(a))) return "unknown";
+    // A conditional fact whose prerequisites are themselves blocked was never
+    // computed, so "no blocker fired" says nothing about it. Reporting READY
+    // here claims a pairing that was never established, and inflates the count.
+    if (
+      NEW_CLIENT_BLOCKER_PREREQUISITES[key].some((pre) => provenBlockers.has(pre))
+    ) {
+      return "not_applicable";
+    }
     return provenBlockers.has(key) ? "needs_setup" : "ready";
   };
 
@@ -196,9 +211,12 @@ export default async function LaunchChecklistPage() {
         unavailableAuthorities.has("availability") ||
         unavailableAuthorities.has("services")
           ? "Couldn't check your services and availability just now. Open Availability to confirm."
-          : provenBlockers.has("bookable_window")
-            ? "No open window is long enough for one of your consultations. Lengthen a day, or shorten the consultation."
-            : "At least one open window fits a consultation a new client can book.",
+          : provenBlockers.has("consultation_service") ||
+              provenBlockers.has("availability")
+            ? "Checked once you have a consultation service and an open day."
+            : provenBlockers.has("bookable_window")
+              ? "No open window is long enough for one of your consultations. Lengthen a day, or shorten the consultation."
+              : "At least one open window fits a consultation a new client can book.",
       cta: { label: "Open Availability", href: "/settings/availability" },
     },
     // WAIT admission is a real boundary on "can a new client book right now",
@@ -212,9 +230,13 @@ export default async function LaunchChecklistPage() {
     {
       title: "New client admission",
       status: provenBlockers.has("wait_admission") ? "manual" : "ready",
+      // NARROW. A cleared gate proves only that ordinary new clients are not
+      // routed through the waitlist. It does NOT prove they can book: services,
+      // availability, booking settings and consent each still gate that, and
+      // the old copy contradicted the canonical NOT_READY sitting above it.
       detail: provenBlockers.has("wait_admission")
         ? "New clients join the waitlist instead of booking directly. Invited clients can still book."
-        : "New clients can book directly from the public booking page.",
+        : "Waitlist admission is off, so new clients are not routed to the waitlist.",
       cta: { label: "Open Waitlist settings", href: "/settings/waitlist" },
     },
     {
@@ -441,6 +463,9 @@ function ChecklistStatusPill({ status }: { status: Status }) {
       // "To do" would assert an absence it did not observe.
       case "unknown":
         return { label: "Check", tone: "warning" };
+      // Neither done nor to do: not askable yet.
+      case "not_applicable":
+        return { label: "Not yet", tone: "neutral" };
     }
   })();
   return <StatusPill tone={tone}>{label}</StatusPill>;

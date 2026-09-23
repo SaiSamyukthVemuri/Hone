@@ -32,6 +32,7 @@ const {
   windowFitsDuration,
   NEW_CLIENT_BLOCKER_KEYS,
   NEW_CLIENT_BLOCKER_AUTHORITIES,
+  NEW_CLIENT_BLOCKER_PREREQUISITES,
 } = await import("@/lib/booking/new-client-readiness");
 const queries = await import("@/lib/booking/queries");
 const wideAvailability = await import("@/lib/booking/studio-wide-availability");
@@ -760,5 +761,102 @@ describe("ONB-02 P2: an open window must actually FIT a bookable consultation", 
     expect(windowFitsDuration(win("bogus", "10:00:00"), 60)).toBe(false);
     expect(windowFitsDuration(win("25:00:00", "26:00:00"), 60)).toBe(false);
     expect(windowFitsDuration(win("09:00:00", "10:00:00"), 0)).toBe(false);
+  });
+});
+
+describe("ONB-02: a conditional fact is never READY on an unproven pairing", () => {
+  // P2-1. `bookable_window` is computed ONLY when a bookable consultation and
+  // an open day both exist. With either half missing the pairing was never
+  // established, so the absence of the blocker proves nothing — and a row that
+  // read it as READY claimed a consultation fits an open window that was never
+  // checked, and inflated the ready count.
+  const strip = (src: string) =>
+    src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const launch = async () => {
+    const { readFileSync } = await import("node:fs");
+    return strip(readFileSync("app/(app)/settings/launch/page.tsx", "utf8"));
+  };
+
+  it("the authority DECLARES the pairing's prerequisites", () => {
+    expect(NEW_CLIENT_BLOCKER_PREREQUISITES.bookable_window).toEqual([
+      "consultation_service",
+      "availability",
+    ]);
+    // every other key is unconditional, and every key must declare something
+    for (const key of NEW_CLIENT_BLOCKER_KEYS) {
+      expect(
+        NEW_CLIENT_BLOCKER_PREREQUISITES[key],
+        `${key} must declare its prerequisites`,
+      ).toBeDefined();
+      if (key !== "bookable_window") {
+        expect(NEW_CLIENT_BLOCKER_PREREQUISITES[key]).toEqual([]);
+      }
+    }
+  });
+
+  it("the compute really does omit the pairing when a half is missing", () => {
+    // The premise the page must not misread. No consultation -> the specific
+    // blocker fires and bookable_window does NOT, deliberately.
+    const noConsult = computeNewClientReadiness({
+      ...ALL_GOOD,
+      services: { ok: true, services: [] },
+    });
+    expect(noConsult.status).toBe("not_ready");
+    if (noConsult.status !== "not_ready") throw new Error("unreachable");
+    expect(noConsult.blockers.map((b) => b.key)).toContain("consultation_service");
+    expect(noConsult.blockers.map((b) => b.key)).not.toContain("bookable_window");
+
+    const noDay = computeNewClientReadiness({
+      ...ALL_GOOD,
+      availability: { ok: true, days: [] },
+    });
+    if (noDay.status !== "not_ready") throw new Error("unreachable");
+    expect(noDay.blockers.map((b) => b.key)).toContain("availability");
+    expect(noDay.blockers.map((b) => b.key)).not.toContain("bookable_window");
+  });
+
+  it("the page maps a blocked prerequisite to not_applicable, never ready", async () => {
+    const code = await launch();
+    expect(code).toContain("NEW_CLIENT_BLOCKER_PREREQUISITES[key]");
+    expect(code).toMatch(
+      /NEW_CLIENT_BLOCKER_PREREQUISITES\[key\]\.some\(\(pre\) => provenBlockers\.has\(pre\)\)[\s\S]{0,60}return "not_applicable";/,
+    );
+    // and the branch sits BEFORE the proven-blocker test, or a blocked
+    // prerequisite would still fall through to "ready"
+    expect(code.indexOf('return "not_applicable"')).toBeLessThan(
+      code.indexOf('provenBlockers.has(key) ? "needs_setup" : "ready"'),
+    );
+  });
+
+  it("not_applicable is counted as neither done nor to do", async () => {
+    const code = await launch();
+    // Both counters test for an exact status, so a new state is excluded by
+    // construction. Pinned because widening either to an inequality would
+    // silently absorb it.
+    expect(code).toContain('rows.filter((r) => r.status === "ready").length');
+    expect(code).toContain('rows.filter((r) => r.status === "needs_setup").length');
+    expect(code).toContain('case "not_applicable":');
+  });
+});
+
+describe("ONB-02: the admission row claims only what a cleared gate proves", () => {
+  // P2-2. A cleared wait_admission proves ordinary new clients are not routed
+  // through the waitlist. It does NOT prove they can book — services,
+  // availability, booking settings and consent each still gate that — and the
+  // old copy contradicted the canonical NOT_READY on the same page.
+  it("the ready-state copy does not assert that booking works", async () => {
+    const { readFileSync } = await import("node:fs");
+    const code = readFileSync("app/(app)/settings/launch/page.tsx", "utf8")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const row = code.slice(
+      code.indexOf('title: "New client admission"'),
+      code.indexOf('title: "Client confirmation emails"'),
+    );
+    expect(row.length).toBeGreaterThan(0);
+    expect(row, "must not promise direct booking").not.toMatch(
+      /can book directly/i,
+    );
+    expect(row).toMatch(/Waitlist admission is off/i);
   });
 });

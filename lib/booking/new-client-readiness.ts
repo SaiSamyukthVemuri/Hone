@@ -202,6 +202,38 @@ export const NEW_CLIENT_BLOCKER_AUTHORITIES: Record<
   treatment_consent: ["treatment_consent"],
 };
 
+/**
+ * Which OTHER blockers must be satisfied before a key's fact can be evaluated
+ * at all.
+ *
+ * `bookable_window` is CONDITIONAL: the pairing is computed only when a
+ * bookable consultation and an open window both exist, because with either
+ * half missing the more specific blocker already explains the problem and this
+ * one would tell an owner to lengthen a window they have not opened.
+ *
+ * That deliberate omission is not evidence of success, and a consumer reading
+ * "no blocker fired" as READY turns it into exactly that: a row claiming a
+ * consultation fits an open window when no pairing was ever established, and
+ * a ready count inflated by an unproven fact.
+ *
+ * So applicability is DECLARED here rather than inferred at the call site — the
+ * same reason the authority list is. `Record<NewClientBlockerKey, …>` again: a
+ * new key must state its prerequisites or the build fails.
+ */
+export const NEW_CLIENT_BLOCKER_PREREQUISITES: Record<
+  NewClientBlockerKey,
+  NewClientBlockerKey[]
+> = {
+  studio_name: [],
+  booking_link: [],
+  booking_settings: [],
+  wait_admission: [],
+  consultation_service: [],
+  availability: [],
+  bookable_window: ["consultation_service", "availability"],
+  treatment_consent: [],
+};
+
 /** What the caller loaded. Each fallible authority carries its own availability. */
 export type NewClientReadinessEvidence = {
   studio: Pick<
