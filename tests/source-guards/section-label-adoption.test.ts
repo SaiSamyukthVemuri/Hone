@@ -190,6 +190,49 @@ function exceedsBaseline(actual: number, baseline: number): boolean {
 }
 
 /**
+ * Did the path go away? Same question, and the same answer, as `duplicates`.
+ *
+ * Deliberately NOT `existsSync`, for the reasons recorded there: it cannot tell
+ * an absent file from an unreadable one, and it leaves a gap between the check
+ * and the read. Catching ENOENT answers the exact question and lets every other
+ * failure through, so an unreadable file fails loudly instead of quietly reading
+ * as "deleted, therefore adopted".
+ */
+function isAbsent(file: string): boolean {
+  try {
+    readFileSync(path.join(REPO_ROOT, file), "utf8");
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+/**
+ * The baseline has gone STALE: the file carries FEWER occurrences than recorded.
+ *
+ * WHY SHRINK-ONLY WAS NOT ENOUGH — the defect this closes. `actual > baseline`
+ * alone makes the recorded number a permanent CEILING. Adopt a file from 5 to 4
+ * without touching the table and the ceiling stays 5, so a later change may
+ * reintroduce the fifth hand-rolled label and still pass. The adoption becomes
+ * silently reversible, which is exactly what an anti-regression guard exists to
+ * prevent. This was not hypothetical: `calendar/[id]/page.tsx` was recorded at
+ * 15 and already measured 14 when this rule was added.
+ *
+ * THIS IS NOT THE EXACT-EQUALITY RULE THAT WAS TRIED AND REJECTED. That demanded
+ * the table track a moving target on every unrelated edit. This fires only where
+ * the table is PROVABLY out of date — the file really did shrink — and the fix is
+ * one number, in the same change that earned it.
+ *
+ * A DELETED FILE IS NOT STALE: it counts as zero, and zero is a valid final
+ * state, so deletion remains a legitimate way to retire an entry.
+ */
+function baselineIsStale(file: string, actual: number, baseline: number): boolean {
+  if (isAbsent(file)) return false;
+  return actual < baseline;
+}
+
+/**
  * The measured baseline: files still hand-rolling the label, and how many times.
  *
  * Counts may FALL as surfaces are adopted; they may not RISE. An exact-equality
@@ -206,7 +249,7 @@ const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
   ["app/(app)/calendar/PractitionerCancelForm.tsx", 1],
   ["app/(app)/calendar/QuickBookDrawer.tsx", 5],
   ["app/(app)/calendar/[id]/ManualFeeChargeCard.tsx", 1],
-  ["app/(app)/calendar/[id]/page.tsx", 15],
+  ["app/(app)/calendar/[id]/page.tsx", 14],
   ["app/(app)/clients/[id]/BookAppointment.tsx", 6],
   ["app/(app)/clients/[id]/intake/page.tsx", 1],
   ["app/(app)/clients/[id]/page.tsx", 1],
@@ -293,6 +336,26 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
     }
     expect(grown, "a legacy file gained hand-rolled labels").toEqual([]);
   });
+
+    it("3a. the baseline RATCHETS DOWN — a reduced file must record its reduction", () => {
+      // Without this the recorded number is a permanent ceiling and an adoption is
+      // silently reversible: shrink 5 -> 4 without editing the table and the fifth
+      // label may return, still green. The number must follow the code DOWN so it
+      // can never drift back up.
+      const stale: string[] = [];
+      for (const [file, baseline] of LEGACY_BASELINE) {
+        const actual = duplicates(file).length;
+        if (baselineIsStale(file, actual, baseline)) {
+          stale.push(`${file}: baseline ${baseline}, found ${actual} — lower it to ${actual}`);
+        }
+      }
+      expect(
+        stale,
+        "a legacy file has FEWER hand-rolled labels than its recorded baseline. " +
+          "Lower the baseline in the same change that earned the reduction, or the " +
+          "removed duplicate can be reintroduced later and still pass.",
+      ).toEqual([]);
+    });
 
   describe("3c. the shrink-only rule's file-absence edge", () => {
     // A baseline entry must be retirable by DELETING the component, not only by
