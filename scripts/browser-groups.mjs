@@ -146,6 +146,13 @@ export const BROWSER_GROUPS = {
       // PR #526: the only browser proof of the consent render -> comparand
       // -> submit chain (stale-form refusal + photo deny).
       "portal-consent-signing-integrity.spec.ts",
+      // EMERG-PORTAL-REBOOK-01: the only browser proof that an authenticated
+      // returning client can create an appointment at all — including the
+      // all-caught-up client the card used to be invisible to — plus the
+      // cross-studio isolation of that surface. Filed in `portal` because
+      // PATH_TO_GROUP maps /portal/i here, so a diff to the rebooking action,
+      // the card or the portal page actually runs it.
+      "portal-rebook.spec.ts",
       "personal-notes-bullets-mobile.spec.ts",
       "pinned-note-edit-mobile.spec.ts",
     ],

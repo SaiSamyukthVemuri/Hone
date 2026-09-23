@@ -39,7 +39,7 @@ function fieldsWith(consent: boolean): string {
     smsOperationalConsent: consent,
   };
   return renderToStaticMarkup(
-    createElement(ProfileFields, { draft, errors: {}, onChange: () => {} }),
+    createElement(ProfileFields, { collectsSmsConsent: true, draft, errors: {}, onChange: () => {} }),
   );
 }
 
@@ -122,7 +122,7 @@ describe("P2 A — CHECKED: declined-only copy is gone, in markup and in aria", 
 
 describe("P2 B — the join surface preserves the public disclosure", () => {
   const html = renderToStaticMarkup(
-    createElement(WaitlistJoinForm, {
+    createElement(WaitlistJoinForm, { collectsSmsConsent: true,
       studioName: "Willow",
       onSubmit: async () => ({ ok: true }) as const,
     }),

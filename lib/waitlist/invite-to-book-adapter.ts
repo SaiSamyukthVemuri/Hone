@@ -7,7 +7,7 @@ import {
   sendWaitlistInvitationEmail,
   type DeliveryStudio,
 } from "@/lib/waitlist/delivery/send";
-import { TTL_HOURS_MAX, TTL_HOURS_MIN } from "@/lib/waitlist/invitation-window";
+import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import {
   type BookingScope,
   type DefiniteInviteToBookRefusal,
@@ -446,13 +446,6 @@ export function validateInviteInput(input: InviteToBookInput): InviteToBookFailu
   // now the single home; this file, the composer model and the composer's own
   // number input all read it.
   if (
-    !Number.isInteger(input.expiresInHours) ||
-    input.expiresInHours < TTL_HOURS_MIN ||
-    input.expiresInHours > TTL_HOURS_MAX
-  ) {
-    return "invalid_ttl";
-  }
-  if (
     !Number.isInteger(input.scope.windowDays) ||
     input.scope.windowDays < 1 ||
     input.scope.windowDays > 365
@@ -502,7 +495,10 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
       p_start_date: start,
       p_end_date: end,
       p_allowed_weekdays: weekdays === null ? null : [...weekdays],
-      p_ttl_hours: input.expiresInHours,
+      // THE ONE FIXED WINDOW, supplied here and named by nobody. There is no
+      // `input.expiresInHours` to read: the contract no longer has the field,
+      // so this cannot silently fall back to a caller's value.
+      p_ttl_hours: WAIT_INVITATION_TTL_HOURS,
     });
 
     // A LOST ANSWER IS NOT A REFUSAL, AND THIS IS THE WHOLE REASON THE THIRD

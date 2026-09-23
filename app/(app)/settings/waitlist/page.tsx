@@ -63,6 +63,7 @@ import {
   type AdmissionAction,
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
+import { OPERATOR_QUEUE_STATUSES } from "@/lib/waitlist/operator-queue-presence";
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — OPERATOR QUEUE (WAIT-02)
@@ -194,13 +195,7 @@ type WaitlistRow = {
  * Reading them would spend a bound on rows nothing can be done to, and an
  * operator queue exists to show what still needs attention.
  */
-const SECTION_STATUSES = [
-  "waiting",
-  "claimed",
-  "invited",
-  "expired",
-  "released",
-] as const satisfies ReadonlyArray<WaitlistEntryStatus>;
+const SECTION_STATUSES = OPERATOR_QUEUE_STATUSES;
 
 /**
  * THE HEADING IS THE STATE'S ONE PRACTITIONER-FACING NAME, read from the model

@@ -431,6 +431,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "app/portal/rebook-actions.ts",
+    purpose:
+      "EMERG-PORTAL-REBOOK-01 — the portal-authenticated rebooking authority: the client and studio reads it scopes by the portal session, the slot generation it drives, and the create_public_appointment commit.",
+    why:
+      "SERVICE-ROLE BYPASSES RLS, so the scoping here is carried by the queries themselves rather than by a policy. It is required because a portal client holds NO Supabase auth session — the client portal is a separate realm keyed on the hone_portal_session cookie (lib/portal/session.ts) — and migration 0173 restricts services SELECT to authenticated studio MEMBERS, so the RLS-bound reads return an EMPTY result for a portal client rather than an error. " +
+      "STUDIO AND CLIENT IDENTITY ARE RESOLVED FROM hone_portal_session: getCurrentPortalSession() hashes the httpOnly cookie, matches it against a non-expired, non-revoked client_portal_sessions row, and yields (studioId, clientId). " +
+      "BROWSER INPUT SUPPLIES NEITHER studioId NOR clientId: the FormData carries serviceId, startsAt and an optional note and nothing else, the session is resolved BEFORE any submitted value is read, and tests/source-guards/portal-rebook-identity.test.ts forbids every submitted-identity shape with negative controls proving each rule fires. " +
+      "EVERY ADMIN QUERY IS EXPLICITLY SCOPED TO THOSE SESSION-DERIVED VALUES: the clients read filters id = session.clientId AND studio_id = session.studioId AND archived_at IS NULL; the studios read filters id = session.studioId; the service menu, the submitted-service validation and the duration all come from the single studio-scoped loader getPortalBookableServices(session.studioId), which filters studio_id AND active = true, so a cross-studio or inactive service is ABSENT rather than rejected. " +
+      "The appointment itself is written ONLY by create_public_appointment (migration 0170), granted to service_role alone, which independently re-validates studio/client/service tenancy, the archived-client rule, the service active rule and the full public availability contract under the studio lock — so the service-role client here cannot widen what that command accepts, and it exposes no duration, status, practitioner or override parameter for this caller to set.",
+    scopeGuard: "getCurrentPortalSession",
+  },
+  {
     path: "app/portal/verify/[token]/actions.ts",
     purpose: "Public, unauthenticated token-scoped route/query.",
     why: "No session; the bearer signed/hashed token is verified (hashToken) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",
@@ -472,6 +484,30 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
       "authority and the shared public booking action, both of which re-validate " +
       "recipient proof inside their own locked transactions.",
     scopeGuard: "resolveInvitation",
+  },
+  {
+    path: "lib/waitlist/profile-completion-server.ts",
+    purpose:
+      "WAIT-04B server authority for completing a legacy waitlist profile from a " +
+      "capability grant.",
+    why:
+      "0202 revokes EXECUTE on complete_waitlist_profile_by_grant from public, anon " +
+      "and authenticated BY NAME and grants it to service_role alone, so there is no " +
+      "RLS path to the command and service_role is the only way to call it at all. " +
+      "The table itself is unreachable either way: 0185 revoked ALL privileges on " +
+      "new_client_waitlist_entries from every role including service_role, and granted " +
+      "back only SELECT to authenticated -- so this module holds no DML on the row it " +
+      "causes to be written, and the write can only happen inside the command. " +
+      "THE CALLER NEVER NAMES THE ROW. The command takes no entry id, no email and no " +
+      "joined-at; it resolves the entry by hashing the capability itself, under the " +
+      "canonical studio -> entry lock order, and re-checks validity, revocation, " +
+      "expiry and lifecycle under those locks. A forged submission may therefore " +
+      "choose nothing but which token to present. The token is passed to the database " +
+      "and nowhere else -- never logged, never returned, never used as a key -- and " +
+      "every refusal collapses to one code so a holder cannot learn whether a token " +
+      "was valid but spent.",
+    // The capability IS the scope. Nothing else in the call selects a row.
+    scopeGuard: "p_raw_token: input.capabilityToken",
   },
   {
     path: "lib/booking/waitlist-invitation.ts",

@@ -20,14 +20,9 @@ import {
   PRACTITIONER_ACTIONS,
   PRACTITIONER_ACTION_LABEL,
   PRACTITIONER_STATUS_LABEL,
-  TTL_HOURS_DEFAULT,
-  TTL_HOURS_MAX,
-  TTL_HOURS_MIN,
-  TTL_PRESETS,
   UNKNOWN_INVITATION_FAILS_CLOSED,
   WEEKDAYS_IN_DISPLAY_ORDER,
   activeAllowedDaysPreset,
-  activeTtlPreset,
   activeWindowPreset,
   controlState,
   delegateFor,
@@ -2153,15 +2148,6 @@ describe("the composer's draft", () => {
     expect(empty.ok === false && empty.errors.days).toBeTruthy();
   });
 
-  it("refuses an expiry the shipped command would refuse, rather than clamping it", () => {
-    // 1 hour .. 7 days, and out of range is REFUSED — a clamped window is one
-    // the caller did not ask for and cannot see.
-    expect(validateDraft(draft({ expiresInHours: 1 })).ok).toBe(true);
-    expect(validateDraft(draft({ expiresInHours: 168 })).ok).toBe(true);
-    for (const bad of [0, 169, 2.5, Number.NaN]) {
-      expect(validateDraft(draft({ expiresInHours: bad })).ok, `${bad}`).toBe(false);
-    }
-  });
 
   it("bounds the booking window", () => {
     expect(validateDraft(draft({ windowDays: 1 })).ok).toBe(true);
@@ -2173,8 +2159,7 @@ describe("the composer's draft", () => {
 
   it("hands the adapter nothing at all for an invalid draft", () => {
     // A partially-repaired payload is the one thing worse than no payload.
-    expect(draftToInviteInput("e1", draft({ expiresInHours: 999 }))).toBeNull();
-    // A draft with no service chosen is invalid too, so it reaches nothing.
+    // A draft with no service chosen is invalid, so it reaches nothing.
     expect(draftToInviteInput("e1", draft({ serviceId: null }))).toBeNull();
     // The window travels from the constant, not from a number copied into this
     // assertion. Written as a literal it asserted 72 and failed the moment the
@@ -2184,7 +2169,6 @@ describe("the composer's draft", () => {
     expect(draftToInviteInput("e1", draft())).toEqual({
       entryId: "e1",
       scope: { serviceId: "svc-1", windowDays: 7, allowedWeekdays: null },
-      expiresInHours: TTL_HOURS_DEFAULT,
     });
   });
 
@@ -2219,8 +2203,6 @@ describe("the composer's draft", () => {
   it("derives the pressed preset from the value, so the two cannot disagree", () => {
     expect(activeWindowPreset(7)).toBe(7);
     expect(activeWindowPreset(9)).toBe("custom");
-    expect(activeTtlPreset(72)).toBe(72);
-    expect(activeTtlPreset(5)).toBe("custom");
     expect(activeAllowedDaysPreset(null)).toBe("every");
     expect(activeAllowedDaysPreset([1, 2, 3, 4, 5])).toBe("weekdays");
     // Order must not matter; a set is a set.
@@ -2245,7 +2227,7 @@ describe("the composer's draft", () => {
 
   it("blocks the send for a fixable field before blaming the missing service", () => {
     // A fixable draft must not look permanently broken.
-    const broken = sendState(draft({ expiresInHours: 999 }), null);
+    const broken = sendState(draft({ windowDays: 999 }), null);
     expect(broken.disabled).toBe(true);
     expect(broken.reason).toContain("highlighted");
 
@@ -2265,9 +2247,8 @@ describe("the composer's draft", () => {
   });
 
   it("offers presets that are all inside the bounds they claim", () => {
-    for (const preset of TTL_PRESETS) {
-      expect(validateDraft(draft({ expiresInHours: preset.hours })).ok).toBe(true);
-    }
+    // THE EXPIRY PRESETS ARE GONE WITH THE QUESTION. Only the booking window
+    // still offers a choice; the invitation window is fixed and unchoosable.
     for (const preset of BOOKING_WINDOW_PRESETS) {
       expect(validateDraft(draft({ windowDays: preset.days })).ok).toBe(true);
     }
