@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { localDateString, localDayOfWeek } from "@/lib/booking/tz";
-import { TTL_HOURS_DEFAULT } from "@/lib/waitlist/invitation-window";
+import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import {
   evaluateInvitationScope,
   type InvitationScope,
@@ -387,7 +387,6 @@ export async function issueScopedInvitation(input: {
   startDate: string;
   endDate: string;
   allowedWeekdays?: number[] | null;
-  ttlHours?: number;
 }): Promise<IssueOutcome> {
   const actor = await sessionActor();
   if (!actor) return { kind: "not_authorized" };
@@ -404,13 +403,15 @@ export async function issueScopedInvitation(input: {
         p_start_date: input.startDate,
         p_end_date: input.endDate,
         p_allowed_weekdays: input.allowedWeekdays ?? null,
-        // THE FALLBACK IS THE PRODUCT'S WINDOW, NOT A NUMBER TYPED HERE.
-        // This read `?? 72`. The path is dormant — nothing outside tests calls
-        // `issueScopedInvitation` — so the literal cost nothing while it slept,
-        // and would have cost exactly one silent defect on waking: invitations
-        // issued here would carry the old 72-hour window while the composer
-        // issued 48, and nothing compared the two.
-        p_ttl_hours: input.ttlHours ?? TTL_HOURS_DEFAULT,
+        // THE ONE FIXED WINDOW, AND NO PARAMETER TO OVERRIDE IT.
+        // This read `?? 72`, then `?? TTL_HOURS_DEFAULT`. Both were fallbacks
+        // behind a caller-supplied `ttlHours`, and this path is dormant —
+        // nothing outside tests calls `issueScopedInvitation` — so the override
+        // cost nothing while it slept and would have cost one silent defect on
+        // waking: a surface issuing some other window while the composer's
+        // successor issued 48, with nothing comparing the two. The parameter is
+        // removed, so waking this path cannot reintroduce the choice.
+        p_ttl_hours: WAIT_INVITATION_TTL_HOURS,
       },
     );
     if (error) return { kind: "unavailable" };
