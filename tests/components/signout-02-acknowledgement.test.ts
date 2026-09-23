@@ -134,8 +134,6 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
   it("the leaf reports pending UP and accepts busy back DOWN", () => {
     expect(leaf).toContain("onPendingChange");
     expect(leaf).toContain("busy");
-    // Both are needed: the shell cannot know without the first, and a
-    // remounted leaf cannot know without the second.
     expect(leaf).toContain("const inFlight = pending || busy;");
   });
 
@@ -155,74 +153,39 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     }
   });
 
-  it("all three dismissal paths are gated on the in-flight logout", () => {
+  it("NO destination stays navigable while a logout is in flight", () => {
+    // The contract three earlier versions each missed part of:
+    //   * `aria-disabled` is advisory;
+    //   * `preventDefault` on click is bypassed by Ctrl/Cmd-click, middle
+    //     click and "Open link in new tab";
+    //   * holding only the cross-layout links is right about client
+    //     navigation and irrelevant to a FRESH DOCUMENT, where the shell
+    //     rebuilds with `signingOut === false`.
+    // The SHAPE is pinned, not the intent: a held item renders a <span>, and
+    // no anchor may merely be conditioned on `signingOut`.
     for (const f of shells) {
       const code = codeOnly(read(f));
-      // Escape.
-      expect(code, f).toContain('if (e.key === "Escape" && !signingOut) setOpen(false);');
-      // Outside pointerdown.
-      expect(code, f).toContain("if (signingOut) return;");
-      // The trigger may still OPEN — refusing that too would strand the menu.
-      expect(code, f).toContain("setOpen((v) => (v && signingOut ? true : !v))");
-    }
-  });
-
-  it("ONE dismissal function carries the rule, links included", () => {
-    // The correction to a first version that gated Escape, the outside click
-    // and the trigger but left the LINKS alone as "not a dismissal". They are
-    // not — but they closed the panel all the same, unmounting the leaf whose
-    // effect is the only thing that can report settlement. `signingOut` then
-    // stuck ON permanently, because a logout the practitioner walked away from
-    // never applies its redirect to the page they walked to. That traded a
-    // duplicate logout for a dead control.
-    //
-    // Stating the rule once, inside `close`, is what makes every caller
-    // inherit it instead of each one having to remember.
-    for (const f of shells) {
-      const code = codeOnly(read(f));
-      expect(code, f).toMatch(
-        /const close = \(\) => \{\s*if \(signingOut\) return;\s*setOpen\(false\);\s*\};/,
-      );
-    }
-  });
-
-  it("links that LEAVE the route group are held while a logout is in flight", () => {
-    // `app/(app)/layout.tsx` is what carries the in-flight flag through a
-    // navigation, so a link out of that route group unmounts the flag and the
-    // leaf together — and the destination layout renders its own Sign out.
-    // Two links do that: /admin and /no-access.
-    for (const f of shells) {
-      const code = codeOnly(read(f));
-      expect(code, f).toContain('href.startsWith("/admin") || href.startsWith("/no-access")');
-      expect(code, f).toContain("const isHeld = (href: string) => signingOut && leavesShell(href);");
-
-      // HELD MEANS NOT AN ANCHOR, not an anchor that argues. A first version
-      // kept a real `href` and cancelled the click, which closes exactly one
-      // of the ways a link is followed: `aria-disabled` is advisory, and
-      // `preventDefault` never runs for a middle-click, a Ctrl/Cmd-click, or
-      // "Open link in new tab". Each of those reaches the cross-layout
-      // destination in a fresh document, which renders its own enabled Sign
-      // out — the duplicate this guard exists to stop.
-      expect(code, f).toContain("isHeld(item.href) ? (");
-      expect(code, f).toMatch(/isHeld\(item\.href\) \? \(\s*<span/);
+      expect(code, f).toContain("const isHeld = () => signingOut;");
+      expect(code, f).toMatch(/isHeld\(\) \? \(\s*<span/);
       expect(code, f).not.toMatch(/aria-disabled=\{signingOut/);
+      // The narrow containment must not creep back.
+      expect(code, f).not.toContain("leavesShell");
     }
   });
 
-  it("the premise is real: the admin layout has its own Sign out", () => {
-    // If this ever stops being true, the hold above is dead weight and should
-    // be re-justified rather than left as cargo.
-    const adminLayout = read("app/admin/layout.tsx");
-    expect(adminLayout).toContain("signOut");
-  });
-
-  it("the links still navigate — only the dismissal is deferred", () => {
-    // Bounded: no navigation was redesigned. The link still preventDefaults
-    // and pushes (NAV-ACK-01); the panel simply outlives the push while a
-    // logout is in flight, which is what keeps the observer alive.
-    const menu = codeOnly(read(MENU));
-    expect(menu).toContain("navigate(e, item.href, item.label)");
-    expect(codeOnly(read(ACCOUNT))).toContain("onClick={close}");
+  it("the dismissal is deferred and replayed, never dropped", () => {
+    // The panel must outlive the logout so `useFormStatus` can report the
+    // settlement — but a dismissal the practitioner asked for still has to
+    // happen, or the menu is left stuck open over whatever follows.
+    for (const f of shells) {
+      const code = codeOnly(read(f));
+      expect(code, f).toContain("deferredClose.current = true;");
+      expect(code, f).toContain("deferredClose.current = false;");
+      // Every dismissal path goes through the one rule.
+      expect(code, f).toContain('if (e.key === "Escape") close();');
+      expect(code, f).toContain("onClick={() => (open ? close() : setOpen(true))}");
+      expect(code, f).toContain("close();");
+    }
   });
 
   it("no click handler crept onto the submit path", () => {

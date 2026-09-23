@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
@@ -42,15 +42,60 @@ export function MobileMenu({
   const [signingOut, setSigningOut] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // SIGNOUT-02b · ONE dismissal rule, and it is deferred rather than dropped.
+  //
+  // Every caller inherits it — Escape, the outside pointerdown, the trigger and
+  // the panel's own links — because stating it once is what stops the next
+  // editor from having to remember it. While a logout is in flight the panel
+  // stays mounted, which is what keeps `useFormStatus` alive to report the
+  // settlement; the dismissal the practitioner asked for is REMEMBERED and
+  // applied the moment the flag clears, so the menu is never left stuck open.
+  const deferredClose = useRef(false);
+  const close = useCallback(() => {
+    if (signingOut) {
+      deferredClose.current = true;
+      return;
+    }
+    setOpen(false);
+  }, [signingOut]);
+  useEffect(() => {
+    if (signingOut || !deferredClose.current) return;
+    deferredClose.current = false;
+    setOpen(false);
+  }, [signingOut]);
+
+  // WHILE SIGNING OUT, NO MENU DESTINATION IS AN ANCHOR.
+  //
+  // Three versions of this were too narrow, each for a reason worth keeping.
+  // First `aria-disabled` — advisory, and nothing more. Then `preventDefault`
+  // on click — which covers the ordinary click and NOTHING else: a Ctrl/Cmd
+  // click, a middle click and "Open link in new tab" all bypass it. Then a
+  // hold on `/admin` and `/no-access` only, on the reasoning that those are the
+  // links which leave `app/(app)/layout.tsx` and so drop the in-flight flag.
+  // Right about CLIENT navigation, wrong about everything else: route-group
+  // persistence holds only inside the current browsing context, so ANY link
+  // opened into a FRESH DOCUMENT rebuilds the shell with `signingOut === false`
+  // and offers another enabled Sign out while the first request is in flight.
+  //
+  // So the rule is the blunt one: while signing out the menu shows its
+  // destinations and offers none of them. There is no href to middle-click, to
+  // copy, or to open in a tab. It lasts the few hundred milliseconds the logout
+  // takes, and the menu is in a terminal state for all of it.
+  //
+  // WHAT IT STILL DOES NOT CLOSE, said plainly: a practitioner can open a new
+  // tab themselves and sign out there. That path never goes through this menu
+  // and cannot be closed from these files — it needs state shared across
+  // documents, which is a larger change than this repair is scoped for.
+  const isHeld = () => signingOut;
+
   useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
-      // Escape must not abandon a logout that is already talking to the server.
-      if (e.key === "Escape" && !signingOut) setOpen(false);
+      if (e.key === "Escape") close();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, signingOut]);
+  }, [open, close]);
 
   // PR #230: tapping OUTSIDE the menu dismisses it, like a native
   // dropdown. The listener exists only while the menu is open and
@@ -62,65 +107,13 @@ export function MobileMenu({
   useEffect(() => {
     if (!open) return;
     function onPointerDown(e: PointerEvent) {
-      if (signingOut) return;
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
+        close();
       }
     }
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open, signingOut]);
-
-  // SIGNOUT-02b. `close` is the ONE dismissal, so the in-flight rule is stated
-  // once and every caller inherits it — Escape, the outside pointerdown, the
-  // trigger, and the panel's own links.
-  //
-  // THE LINKS MATTER MOST, and this is the correction to a first version that
-  // deliberately left them alone as "not a dismissal". A link closed the panel,
-  // which unmounted the leaf — and the leaf's effect is the only thing that can
-  // report `false` when the action settles. So `signingOut` stuck ON forever,
-  // and because a logout the practitioner walked away from never applies its
-  // redirect to the page they walked to, reopening the menu showed a disabled
-  // "Signing out…" for a request that had already finished. Leaving them alone
-  // traded a duplicate logout for a dead control, which is a worse bargain.
-  //
-  // Keeping the panel mounted through the navigation costs nothing: the link
-  // still navigates (NAV-ACK-01 preventDefaults and pushes; the panel is not
-  // what carries the navigation), the leaf stays mounted, and it reports the
-  // settlement that releases everything.
-  const close = () => {
-    if (signingOut) return;
-    setOpen(false);
-  };
-
-  // LINKS THAT LEAVE THE ROUTE GROUP ARE HELD, not deferred.
-  //
-  // Everything else here works because `app/(app)/layout.tsx` survives the
-  // navigation, carrying this component and the in-flight flag with it.
-  // `/admin` and `/no-access` sit OUTSIDE that layout: following either one
-  // unmounts this state owner and the leaf together, and `app/admin/layout.tsx`
-  // then renders its own enabled Sign out — a second logout, from a surface
-  // this slice does not own and cannot reach.
-  //
-  // Holding two links for the few hundred milliseconds a logout takes is the
-  // bounded answer. The alternative is lifting the flag above the route-group
-  // boundary, which is a larger change than this repair is scoped for.
-  //
-  // NOT REACHABLE FROM THE BROWSER LANE: both links are conditional on
-  // `isAdmin(email)` / multi-studio membership, and the harness owner is
-  // neither, so this is pinned at source in
-  // tests/components/signout-02-acknowledgement.test.ts rather than driven.
-  const leavesShell = (href: string) =>
-    href.startsWith("/admin") || href.startsWith("/no-access");
-  // HELD MEANS NOT AN ANCHOR AT ALL, not an anchor that argues.
-  //
-  // The first version kept a real `href` and cancelled the click. That closes
-  // exactly one of the ways a link is followed: `aria-disabled` is advisory,
-  // and `preventDefault` never runs for a middle-click, a Ctrl/Cmd-click or
-  // "Open link in new tab" from the context menu. Any of those reaches the
-  // cross-layout destination in a fresh document, which renders its own
-  // enabled Sign out and hands back the duplicate this guard exists to stop.
-  const isHeld = (href: string) => signingOut && leavesShell(href);
+  }, [open, close]);
 
   // ---- NAV-ACK-01 · DESIGN.md contract 2d -----------------------------------
   //
@@ -237,9 +230,10 @@ export function MobileMenu({
         type="button"
         aria-label="Open navigation menu"
         aria-expanded={open}
-        // Refuses to CLOSE mid-logout, never refuses to OPEN — otherwise a
+        // Opens freely; closing goes through the one dismissal rule, which
+        // defers while a logout is in flight. Never refuses to OPEN, or a
         // stuck flag would leave the menu unreachable.
-        onClick={() => setOpen((v) => (v && signingOut ? true : !v))}
+        onClick={() => (open ? close() : setOpen(true))}
         // `relative` is owned here: the mark is absolutely positioned so the
         // trigger cannot change width mid-navigation.
         className="relative flex min-h-[44px] cursor-pointer select-none items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium dark:border-neutral-700"
@@ -314,7 +308,7 @@ export function MobileMenu({
               ? [{ href: "/dashboard/capacity", label: "Business" }]
               : []),
           ].map((item) => (
-            isHeld(item.href) ? (
+            isHeld() ? (
               <span
                 key={item.href}
                 aria-disabled="true"
@@ -347,7 +341,7 @@ export function MobileMenu({
                 : []),
               ...(admin ? [{ href: "/admin", label: "Admin" }] : []),
             ].map((item) => (
-              isHeld(item.href) ? (
+              isHeld() ? (
                 <span
                   key={item.href}
                   aria-disabled="true"

@@ -391,75 +391,85 @@ for (const surface of SURFACES) {
       await gate.unroute();
     });
 
-    test("leaving through a link does not strand the logout", async ({ page }) => {
-      // THE DEFECT THIS CLOSES, and it is the correction to my own first fix.
+    test("no menu destination can open a document while signing out", async ({
+      page,
+      context,
+    }) => {
+      // THE NEW-DOCUMENT HOLE, closed by removing the anchors rather than by
+      // arguing with them.
       //
-      // That version gated Escape, the outside click and the trigger, but left
-      // the panel's LINKS alone, reasoning that a navigation is not a
-      // dismissal. It is not — but it closed the panel all the same, which
-      // unmounted the leaf. And the leaf's effect is the only thing that can
-      // report `false` when the action settles, so the shell's `signingOut`
-      // stuck ON permanently: reopening the menu showed a disabled
-      // "Signing out…" for a request that had already finished.
-      //
-      // Worse, it is unrecoverable in exactly this flow. A logout the
-      // practitioner walked away from never applies its redirect to the page
-      // they walked to — measured: waiting for /login here hung for the full
-      // 20s. So nothing would ever come along to clear it. The first fix traded
-      // a duplicate logout for a dead control.
+      // Three earlier containments were each too narrow, and each failed in a
+      // way this test now pins. `aria-disabled` is advisory. `preventDefault`
+      // on click covers the ordinary click and nothing else — a Ctrl/Cmd
+      // click, a middle click and "Open link in new tab" all go straight past
+      // it. And holding only /admin and /no-access was right about CLIENT
+      // navigation and irrelevant to a fresh document: route-group persistence
+      // holds only inside the current browsing context, so ANY link opened
+      // into a new document rebuilds the shell with `signingOut === false` and
+      // offers another enabled Sign out.
       await loginAsOwner(page, seed);
       await page.goto("/dashboard");
 
       const gate = await holdActions(page, { onRelease: "continue" });
       const panel = await surface.open(page);
+
+      // Precondition, so this cannot pass by the destinations never being
+      // there in the first place.
+      const before = await panel.getByRole("link").count();
+      expect(before, "the menu renders destinations before the logout").toBeGreaterThan(0);
+
       await panel.getByRole("button", { name: "Sign out" }).click({ noWaitAfter: true });
-      const busy = panel.locator("[data-signout-pending]");
-      await expect(busy).toBeVisible({ timeout: 5_000 });
+      await expect(panel.locator("[data-signout-pending]")).toBeVisible({ timeout: 5_000 });
 
-      // Leave through a real link, mid-logout.
-      await panel.getByRole("link", { name: "Getting Started" }).click({ noWaitAfter: true });
-      await page.waitForTimeout(500);
-
-      // THE PANEL SURVIVES THE NAVIGATION, which is what keeps the leaf — and
-      // therefore the only observer of settlement — alive.
-      await expect(
-        panel,
-        "a link dismissed the panel mid-logout and stranded the pending state",
-      ).toBeVisible();
-      await expect(busy).toHaveText("Signing out…");
-      await expect(busy).toBeDisabled();
-
-      // Let the logout finish. The leaf is still mounted, so it reports the
-      // settlement and the shell releases.
-      gate.release();
-      await gate.firstSettled;
-
-      // NOT STRANDED: the control comes back, or the app has already replaced
-      // the shell with /login. Either is a resolved logout; a permanently
-      // disabled "Signing out…" is not.
+      // 1. NOT ONE ANCHOR SURVIVES — nothing to middle-click, nothing to copy,
+      //    nothing for the context menu to offer.
       await expect
-        .poll(
-          async () => {
-            if (/\/login/.test(page.url())) return "resolved";
-            const n = await page.locator("[data-signout-pending]").count();
-            return n === 0 ? "resolved" : "still-busy";
-          },
-          {
-            timeout: 15_000,
-            message:
-              "the shell still claims a logout is in flight after the action settled",
-          },
-        )
-        .toBe("resolved");
+        .poll(() => panel.getByRole("link").count(), {
+          timeout: 10_000,
+          message: "a real anchor survived into the in-flight state",
+        })
+        .toBe(0);
+      expect(
+        await panel.locator("a[href]").count(),
+        "an element still carries a navigable href while signing out",
+      ).toBe(0);
 
-      // And still only ever one logout on the wire.
+      // 2. The destinations are still VISIBLE, held rather than removed, so the
+      //    menu does not reflow under the practitioner mid-press.
+      const held = panel.locator('[aria-disabled="true"]');
+      expect(
+        await held.count(),
+        "the destinations vanished instead of being held",
+      ).toBeGreaterThan(0);
+      await expect(held.first()).toBeVisible();
+
+      // 3. Every activation route is inert, including the three that bypass a
+      //    click handler entirely. A new document would appear as a new page
+      //    in this context.
+      const target = held.first();
+      const urlBefore = page.url();
+      const pagesBefore = context.pages().length;
+      await target.click({ force: true, noWaitAfter: true }).catch(() => {});
+      await target.click({ force: true, modifiers: ["ControlOrMeta"], noWaitAfter: true }).catch(() => {});
+      await target.click({ force: true, button: "middle", noWaitAfter: true }).catch(() => {});
+      await page.waitForTimeout(600);
+
+      expect(page.url(), "a held destination navigated this document").toBe(urlBefore);
+      expect(
+        context.pages().length,
+        "a held destination opened a NEW document, where the shell rebuilds with signingOut=false",
+      ).toBe(pagesBefore);
+
+      // 4. And the logout itself still dispatched exactly once.
+      gate.release();
+      await page.waitForURL(/\/login/, { timeout: 20_000 });
       await Promise.race([
         gate.duplicateSeen,
-        new Promise((r) => setTimeout(r, 2_000)),
+        new Promise((r) => setTimeout(r, 3_000)),
       ]);
       expect(
         gate.state.held,
-        "a second logout reached the wire after leaving through a link",
+        "the logout did not dispatch exactly once",
       ).toBe(1);
 
       await gate.unroute();
