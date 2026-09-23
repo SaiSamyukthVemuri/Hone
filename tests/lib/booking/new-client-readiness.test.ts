@@ -31,6 +31,7 @@ const {
   isOpenDay,
   windowFitsDuration,
   NEW_CLIENT_BLOCKER_KEYS,
+  NEW_CLIENT_BLOCKER_AUTHORITIES,
 } = await import("@/lib/booking/new-client-readiness");
 const queries = await import("@/lib/booking/queries");
 const wideAvailability = await import("@/lib/booking/studio-wide-availability");
@@ -518,11 +519,40 @@ describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority",
       // A setup step takes its status from `owned(key)`; a state the owner
       // cannot "fix" (WAIT admission) takes it from `provenBlockers` directly.
       expect(
-        code.includes(`status: owned("${key}"`) ||
+        code.includes(`status: owned("${key}")`) ||
           code.includes(`status: provenBlockers.has("${key}")`),
         `${key} is owned by the authority but no row takes its STATUS from it`,
       ).toBe(true);
     }
+  });
+
+  it("no row hand-writes its own authority list", async () => {
+    // A row that names its authorities can name them wrongly, and one did:
+    // `bookable_window` declared only `availability` and rendered green while
+    // the services read had failed. The list now comes from the authority, so
+    // the mistake is unavailable rather than merely untested.
+    const code = await launchSource();
+    expect(code).not.toMatch(/owned\(\s*"[a-z_]+"\s*,/);
+    expect(code).toContain("NEW_CLIENT_BLOCKER_AUTHORITIES[key]");
+  });
+
+  it("every key declares the authorities its truth actually depends on", () => {
+    // Exhaustive by construction on both sides: a new key must appear here, and
+    // the pairing must name BOTH halves it is computed from.
+    for (const key of NEW_CLIENT_BLOCKER_KEYS) {
+      expect(
+        NEW_CLIENT_BLOCKER_AUTHORITIES[key],
+        `${key} must declare its dependencies`,
+      ).toBeDefined();
+    }
+    expect(NEW_CLIENT_BLOCKER_AUTHORITIES.bookable_window).toEqual([
+      "services",
+      "availability",
+    ]);
+    expect(NEW_CLIENT_BLOCKER_AUTHORITIES.consultation_service).toEqual(["services"]);
+    expect(NEW_CLIENT_BLOCKER_AUTHORITIES.treatment_consent).toEqual(["treatment_consent"]);
+    // wait_admission is deterministic configuration, never a fallible read
+    expect(NEW_CLIENT_BLOCKER_AUTHORITIES.wait_admission).toEqual([]);
   });
 
   it("a row's copy claims ONLY what its own key proves", async () => {

@@ -173,6 +173,35 @@ export const NEW_CLIENT_BLOCKER_KEYS = Object.keys(
   BLOCKERS,
 ) as NewClientBlockerKey[];
 
+/**
+ * Which fallible authorities each blocker's truth depends on.
+ *
+ * A consumer that renders a row must treat the row as UNKNOWN when any of
+ * these could not answer. Exporting the map means the consumer cannot get the
+ * list wrong: mutation testing showed a row that declared only `availability`
+ * for `bookable_window` rendered GREEN while the services read had failed,
+ * claiming a consultation fits when nothing had been read to say so.
+ *
+ * `Record<NewClientBlockerKey, …>` again, so a new key must declare its
+ * dependencies or the build fails. Keys proven purely from the studio row the
+ * caller already holds, and `wait_admission` — deterministic configuration,
+ * not a data read — depend on nothing and list none.
+ */
+export const NEW_CLIENT_BLOCKER_AUTHORITIES: Record<
+  NewClientBlockerKey,
+  ReadinessAuthority[]
+> = {
+  studio_name: [],
+  booking_link: [],
+  booking_settings: [],
+  wait_admission: [],
+  consultation_service: ["services"],
+  availability: ["availability"],
+  // BOTH halves: the pairing cannot be proven or refuted on one of them.
+  bookable_window: ["services", "availability"],
+  treatment_consent: ["treatment_consent"],
+};
+
 /** What the caller loaded. Each fallible authority carries its own availability. */
 export type NewClientReadinessEvidence = {
   studio: Pick<

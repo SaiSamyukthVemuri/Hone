@@ -4,6 +4,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { CONSENT_SETTINGS_HREF } from "@/lib/consent/launch-readiness";
 import {
   getNewClientReadiness,
+  NEW_CLIENT_BLOCKER_AUTHORITIES,
   type NewClientBlockerKey,
 } from "@/lib/booking/new-client-readiness";
 import {
@@ -98,15 +99,13 @@ export default async function LaunchChecklistPage() {
    * rendered as a missing setup step -- that is the collapse the readiness model
    * exists to prevent, and repeating it here would undo it at the last inch.
    */
-  const owned = (
-    key: NewClientBlockerKey,
-    // EVERY authority the fact depends on, not just one. The bookable-window
-    // row needs services AND availability: with services unreadable the pairing
-    // cannot be proven either way, and a single-authority signature would have
-    // rendered it green -- claiming a consultation fits when nothing had been
-    // read to say so.
-    ...authorities: Array<"services" | "availability" | "treatment_consent">
-  ): Row["status"] => {
+  const owned = (key: NewClientBlockerKey): Row["status"] => {
+    // The dependency list comes from the AUTHORITY, never from this call site.
+    // A row that named its own authorities could name them wrongly, and one
+    // did: `bookable_window` declared only `availability` and so rendered green
+    // while the services read had failed, claiming a consultation fits when
+    // nothing had been read to say so.
+    const authorities = NEW_CLIENT_BLOCKER_AUTHORITIES[key];
     if (authorities.some((a) => unavailableAuthorities.has(a))) return "unknown";
     return provenBlockers.has(key) ? "needs_setup" : "ready";
   };
@@ -167,7 +166,7 @@ export default async function LaunchChecklistPage() {
     },
     {
       title: "Consultation service",
-      status: owned("consultation_service", "services"),
+      status: owned("consultation_service"),
       detail: unavailableAuthorities.has("services")
         ? "Couldn't check your services just now. Open Services to confirm."
         : provenBlockers.has("consultation_service")
@@ -177,7 +176,7 @@ export default async function LaunchChecklistPage() {
     },
     {
       title: "Availability",
-      status: owned("availability", "availability"),
+      status: owned("availability"),
       detail: unavailableAuthorities.has("availability")
         ? "Couldn't check your availability just now. Open Availability to confirm."
         : provenBlockers.has("availability")
@@ -192,7 +191,7 @@ export default async function LaunchChecklistPage() {
     // Depends on BOTH authorities, so it is unknown when either is unreadable.
     {
       title: "Bookable consultation window",
-      status: owned("bookable_window", "services", "availability"),
+      status: owned("bookable_window"),
       detail:
         unavailableAuthorities.has("availability") ||
         unavailableAuthorities.has("services")
@@ -241,7 +240,7 @@ export default async function LaunchChecklistPage() {
     // asks for no consent at all.
     {
       title: "Treatment consent form",
-      status: owned("treatment_consent", "treatment_consent"),
+      status: owned("treatment_consent"),
       detail: unavailableAuthorities.has("treatment_consent")
         ? "Couldn't check your consent forms just now. Open Consent forms to confirm."
         : provenBlockers.has("treatment_consent")
