@@ -184,8 +184,28 @@ export const MOBILE_ON_FILE_UNUSABLE =
  * done prematurely here. A policy that described collection nobody performs yet
  * would be exactly the reverse of this PR's problem, and equally untrue.
  */
-export const JOIN_COLLECTION_NOTICE =
-  "use the details you enter here — your name, email, mobile number, treatment areas, availability, and whether you agreed to text messages — to manage this waitlist and contact you about availability.";
+export function joinCollectionNotice(collectsSmsConsent: boolean): string {
+  // THE NOTICE ENUMERATES WHAT IS ACTUALLY COLLECTED, and that set is not fixed.
+  // When the binding cannot honour a STOP the consent question is not asked at
+  // all (`ProfileFields.collectsSmsConsent`), and a notice that still listed
+  // "whether you agreed to text messages" would tell a prospect their answer to
+  // a question they never saw would be used. That is the same failure as
+  // describing collection nobody performs — just pointed at a field instead of
+  // a policy — and a point-of-collection disclosure is the one sentence that
+  // has to be exactly true.
+  const fields = collectsSmsConsent
+    ? "your name, email, mobile number, treatment areas, availability, and whether you agreed to text messages"
+    : "your name, email, mobile number, treatment areas, and availability";
+  return `use the details you enter here — ${fields} — to manage this waitlist and contact you about availability.`;
+}
+
+/**
+ * The consent-INCLUSIVE wording, for surfaces that do ask.
+ *
+ * Derived from the function rather than written twice, so the two cannot drift
+ * into disagreeing about the shared half of the sentence.
+ */
+export const JOIN_COLLECTION_NOTICE = joinCollectionNotice(true);
 
 /** Where the full notice lives. Same destination the shipped form links to. */
 export const PRIVACY_POLICY_PATH = "/privacy";
