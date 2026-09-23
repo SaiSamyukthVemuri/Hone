@@ -487,8 +487,29 @@ describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority",
     return strip(readFileSync(LAUNCH, "utf8"));
   };
 
-  it("the launch page calls the canonical loader", async () => {
-    expect(await launchSource()).toContain("getNewClientReadiness");
+  it("the launch page CALLS the canonical loader, not merely imports it", async () => {
+    // `toContain("getNewClientReadiness")` was satisfiable by the import line
+    // alone: deleting the call and keeping the import passed it. Mutation
+    // testing caught that, so the assertion is on the awaited CALL.
+    expect(await launchSource()).toMatch(/await\s+getNewClientReadiness\s*\(/);
+  });
+
+  it("every fact the authority owns is rendered FROM the verdict", async () => {
+    const code = await launchSource();
+    // A row hard-coded to "ready" keeps the loader call and still bypasses the
+    // authority, so presence of the call is not sufficient evidence.
+    for (const [key, authority] of [
+      ["studio_name", null],
+      ["booking_link", null],
+      ["consultation_service", "services"],
+      ["availability", "availability"],
+      ["treatment_consent", "treatment_consent"],
+    ] as const) {
+      const call = authority
+        ? `owned("${key}", "${authority}")`
+        : `owned("${key}")`;
+      expect(code, `${key} row must read the verdict via ${call}`).toContain(call);
+    }
   });
 
   it("the launch page re-derives NONE of the facts the authority owns", async () => {
@@ -511,8 +532,15 @@ describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority",
     const code = await launchSource();
     // The collapse this model exists to prevent, repeated at the last inch,
     // would look exactly like dropping this branch.
-    expect(code).toContain("unavailableAuthorities");
-    expect(code).toMatch(/return "unknown"/);
+    // The exact branch, not just the words: an unavailable authority must
+    // short-circuit to "unknown" BEFORE the proven-blocker test, or UNKNOWN
+    // collapses into needs_setup at the last inch.
+    expect(code).toMatch(
+      /unavailableAuthorities\.has\(authority\)\s*\)\s*return "unknown";/,
+    );
+    expect(code).toMatch(
+      /provenBlockers\.has\(key\)\s*\?\s*"needs_setup"\s*:\s*"ready"/,
+    );
   });
 
   it("WAIT admission reaches the owner surface", async () => {
