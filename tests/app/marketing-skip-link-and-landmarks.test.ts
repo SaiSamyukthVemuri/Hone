@@ -199,12 +199,30 @@ describe("1 (boundary): 'where required' is a real boundary, not everywhere", ()
 describe("4: the policy shell's landmark hierarchy", () => {
   const code = codeOnly(read(POLICY_LAYOUT));
 
-  it("main holds the content, not the whole page", () => {
-    // The defect this replaces: one <main> wrapping header, article AND footer,
-    // which makes the site chrome part of the main content and leaves the skip
-    // link with nothing to skip TO.
-    expect(code.match(/<main[\s>]/g) ?? []).toHaveLength(1);
-  });
+    it("main holds the content, not the whole page", () => {
+      // The defect this replaces: one <main> wrapping header, article AND footer,
+      // which makes the site chrome part of the main content and leaves the skip
+      // link with nothing to skip TO.
+      expect(code.match(/<main[\s>]/g) ?? []).toHaveLength(1);
+    });
+
+    it("the policy article is BETWEEN the mains, not merely nearby", () => {
+      // COUNTING <main> DOES NOT PROVE CONTAINMENT, which is what the skip link
+      // actually needs. `<main id="main-content" />` followed by the article
+      // satisfies "exactly one main", "header before main" and "footer after
+      // </main>" simultaneously — and lands the reader on an EMPTY landmark.
+      // Only the open < article < close ordering proves the target holds the
+      // content it claims to.
+      const openAt = code.indexOf("<main");
+      const closeAt = code.indexOf("</main>");
+      const articleAt = code.indexOf("<article");
+      expect(openAt, "no <main>").toBeGreaterThan(-1);
+      expect(closeAt, "no </main>").toBeGreaterThan(-1);
+      expect(articleAt, "no <article> to contain").toBeGreaterThan(-1);
+      expect(openAt, "<main> must open before </main>").toBeLessThan(closeAt);
+      expect(articleAt, "the article must open AFTER <main>").toBeGreaterThan(openAt);
+      expect(articleAt, "the article must open BEFORE </main>").toBeLessThan(closeAt);
+    });
 
   it("the site header is OUTSIDE main", () => {
     const mainAt = code.indexOf("<main");
@@ -220,12 +238,42 @@ describe("4: the policy shell's landmark hierarchy", () => {
     expect(footerAt, "footer must follow </main>").toBeGreaterThan(closeAt);
   });
 
-  it("the skip link precedes the header it exists to bypass", () => {
-    const skipAt = code.indexOf("<SkipLink");
-    const headerAt = code.indexOf("<MarketingHeader");
-    expect(skipAt).toBeGreaterThan(-1);
-    expect(skipAt).toBeLessThan(headerAt);
-  });
+    it("the skip link precedes the header it exists to bypass", () => {
+      const skipAt = code.indexOf("<SkipLink");
+      const headerAt = code.indexOf("<MarketingHeader");
+      expect(skipAt).toBeGreaterThan(-1);
+      expect(skipAt).toBeLessThan(headerAt);
+    });
+
+    it("EVERY shell page puts the skip link before its header, not merely on the page", () => {
+      // CO-PRESENCE IS NOT ORDER. A page rendering <SiteHeader /> and then
+      // <SkipLink /> contains both components and bypasses nothing: the first
+      // Tab still lands in the navigation the link exists to skip. Only the
+      // relative position proves the bypass, and it has to hold on every shell
+      // page rather than on the one the policy layout happens to own.
+      const pages = shellPages();
+      expect(pages.length, "no shell pages found — vacuous").toBeGreaterThanOrEqual(10);
+      const wrong: string[] = [];
+      for (const rel of pages) {
+        const src = codeOnly(read(rel));
+        const skipAt = src.indexOf("<SkipLink");
+        const headerAt = src.search(/<(SiteHeader|MarketingHeader)\b/);
+        if (skipAt < 0) {
+          wrong.push(`${rel}: renders no SkipLink`);
+          continue;
+        }
+        // A page with no header has nothing to bypass; that is not a failure.
+        if (headerAt < 0) continue;
+        if (skipAt > headerAt) {
+          wrong.push(`${rel}: SkipLink at ${skipAt} comes AFTER the header at ${headerAt}`);
+        }
+      }
+      expect(
+        wrong,
+        "a shell page renders the skip link after its header, so the first Tab " +
+          "still enters the navigation it exists to skip",
+      ).toEqual([]);
+    });
 });
 
 describe("5: footer navigation groups keep accessible names", () => {
