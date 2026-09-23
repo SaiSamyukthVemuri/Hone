@@ -1,12 +1,19 @@
 import type { ReactNode } from "react";
 import { MarketingHeader } from "@/app/_components/MarketingHeader";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 
 // Shared shell for /privacy and /terms. Same header + footer as the
 // marketing surfaces; content area uses Fraunces for headings, Inter for
 // body, max-width about 65ch for readability.
+//
+// LANDMARKS. The outer element was <main>, which put the header's <nav> and
+// the footer's contentinfo INSIDE the main landmark — so "main" was the entire
+// page, and a landmark jump or a skip link led nowhere useful. The shell is a
+// plain <div> now; only the policy <article> sits in <main id="main-content">,
+// which is the same shape every other marketing page uses.
 export function PolicyLayout({
   title,
   effectiveDate,
@@ -19,7 +26,7 @@ export function PolicyLayout({
   children: ReactNode;
 }) {
   return (
-    <main
+    <div
       style={{
         backgroundColor: PALETTE.bg,
         color: PALETTE.ink,
@@ -27,8 +34,10 @@ export function PolicyLayout({
       }}
       className="min-h-screen font-[var(--font-inter)]"
     >
+      <SkipLink />
       <MarketingHeader />
-      <article className="px-6 py-16 md:px-12 md:py-24 lg:px-16">
+      <main id="main-content">
+        <article className="px-6 py-16 md:px-12 md:py-24 lg:px-16">
         <div className="mx-auto max-w-[65ch] flex flex-col gap-6">
           <header className="flex flex-col gap-2">
             <h1
@@ -53,14 +62,15 @@ export function PolicyLayout({
             {children}
           </div>
         </div>
-      </article>
+        </article>
+      </main>
       <MarketingFooter />
       {/* PR #142. PolicyLayout wraps the privacy + terms pages.
           Both are safe marketing routes (no bearer token in URL),
           so SafeAnalytics mounts here. Token routes never use
           PolicyLayout. */}
       <SafeAnalytics />
-    </main>
+    </div>
   );
 }
 

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SafeAnalytics } from "../../_components/SafeAnalytics";
 import { SiteHeader } from "../../_components/marketing/SiteHeader";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SiteFooter } from "../../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
@@ -106,6 +107,7 @@ const SECTIONS: { h: string; intro: string; items: string[] }[] = [
 export default function ChecklistArticlePage() {
   return (
     <MarketingSurface>
+      <SkipLink />
       <SiteHeader />
       <Breadcrumbs
         items={[
@@ -114,7 +116,7 @@ export default function ChecklistArticlePage() {
           { name: "Treatment record checklist", path: article.slug },
         ]}
       />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
         <article>
           <Container size="prose" className="pb-6 pt-6 lg:pt-8">
             <Reveal immediate>

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { SafeAnalytics } from "../_components/SafeAnalytics";
 import { SiteHeader } from "../_components/marketing/SiteHeader";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SiteFooter } from "../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
@@ -33,6 +34,7 @@ const WHAT_HAPPENS: { step: string; body: string }[] = [
 export default function DemoPage() {
   return (
     <MarketingSurface>
+      <SkipLink />
       <SiteHeader />
       <Breadcrumbs
         items={[
@@ -40,7 +42,7 @@ export default function DemoPage() {
           { name: "Walkthrough", path: "/demo" },
         ]}
       />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
         <Container className="grid gap-12 pb-20 pt-8 lg:grid-cols-[1fr_1fr] lg:gap-16 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Walkthrough</Eyebrow>
