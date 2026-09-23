@@ -610,25 +610,71 @@ describe("discovered paths are normalized before comparison", () => {
     expect(unnormalizedUnder([toRepoPath(unnormalized, "\\")], "\\")).toEqual([]);
   });
 
-  it("neither semantic test depends on the runner's separator", () => {
-    // THE P2 ITSELF IS NOT BEHAVIOURALLY DETECTABLE HERE. On POSIX `path.sep` is
-    // already "/", so re-binding a semantic test to the live separator is a
-    // no-op on this runner and every assertion still passes — the failure would
-    // appear only on the Windows runner the repair exists for. That is exactly
-    // how the defect survived its own fix once already.
+  it("every semantic call states its separator EXPLICITLY", () => {
+    // THE P2 IS NOT BEHAVIOURALLY DETECTABLE HERE. On POSIX `path.sep` is already
+    // "/", so a semantic test that falls back to the runner's separator still
+    // passes on this machine and fails only on the Windows runner the repair
+    // exists for. That is exactly how this defect survived its own fix once.
     //
-    // So the property is asserted structurally: a test that names a platform in
-    // its title must state that platform's separator as a literal, never read it
-    // from the machine.
+    // AN ABSENCE CHECK WAS NOT ENOUGH, which is the hole this replaces. The
+    // previous guard only asserted that the text `path.sep` did not appear. Drop
+    // the argument entirely —
+    //
+    //     unnormalizedUnder([legal], "/")  ->  unnormalizedUnder([legal])
+    //
+    // — and `path.sep` is still absent, so the guard stayed green while the
+    // helper silently fell back to the runner's separator. The mutation the rule
+    // exists to catch was invisible to it.
+    //
+    // So the calls themselves are inspected: inside a test that names a platform,
+    // every call to a separator-aware helper must pass that platform's separator
+    // as a literal. A missing argument now fails as loudly as a wrong one.
     const self = readFileSync(__filename, "utf8");
-    for (const title of ["POSIX semantics:", "WINDOWS semantics:"]) {
+    const HELPERS = ["toRepoPath", "unnormalizedUnder"] as const;
+
+    /** Argument lists of `name(...)` in `body`, paren-balanced so nesting is safe. */
+    const callsTo = (body: string, name: string): string[] => {
+      const out: string[] = [];
+      let from = 0;
+      for (;;) {
+        const at = body.indexOf(`${name}(`, from);
+        if (at === -1) return out;
+        let depth = 0;
+        let i = at + name.length;
+        for (; i < body.length; i += 1) {
+          if (body[i] === "(") depth += 1;
+          else if (body[i] === ")") {
+            depth -= 1;
+            if (depth === 0) break;
+          }
+        }
+        out.push(body.slice(at + name.length + 1, i));
+        from = i + 1;
+      }
+    };
+
+    for (const [title, expected] of [
+      ["POSIX semantics:", '"/"'],
+      ["WINDOWS semantics:", '"\\\\"'],
+    ] as const) {
       const start = self.indexOf(title);
       expect(start, `could not locate the ${title} test`).toBeGreaterThan(-1);
       const body = self.slice(start, self.indexOf("\n  });", start));
-      expect(
-        body.includes("path.sep"),
-        `${title} reads the runner's separator instead of stating its own`,
-      ).toBe(false);
+
+      let checked = 0;
+      for (const helper of HELPERS) {
+        for (const args of callsTo(body, helper)) {
+          checked += 1;
+          expect(
+            args.includes(expected),
+            `${title} calls ${helper}(${args.trim()}) without its explicit ${expected} ` +
+              `separator — it would fall back to the runner's path.sep and pass here ` +
+              `while failing on the other platform`,
+          ).toBe(true);
+        }
+      }
+      // Otherwise a renamed helper would empty the loop and pass vacuously.
+      expect(checked, `${title} contains no separator-aware calls to check`).toBeGreaterThan(0);
     }
   });
 
