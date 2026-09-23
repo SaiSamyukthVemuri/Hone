@@ -1319,15 +1319,17 @@ describe("the Settings tab is server-gated", () => {
     "utf8",
   );
 
-  it("requires BOTH rollout flags, not just the durable one", () => {
-    // Either half alone describes a studio that is not taking durable waitlist
-    // requests. With the gate cleared, new clients book normally and nothing
-    // new can arrive; with the durable flag cleared, the queue is still the
-    // inbox. Advertising an intake surface in either state presents a stale
-    // queue as a live one — and the durable flag is documented as SUBORDINATE
-    // to the gate, so consulting it alone contradicts the contract.
+  it("requires BOTH rollout flags for the live path, OR an active queue", () => {
+    // Either flag alone describes a studio that is not taking durable waitlist
+    // requests, so the LIVE path still needs both (the durable flag is
+    // SUBORDINATE to the gate). WAITLIST-NAV-VIS-01 adds the second path: a
+    // studio already holding active entries keeps its navigation to them.
+    // Behavioural proof lives in waitlist-nav-visibility.test.ts.
     expect(LAYOUT).toMatch(
-      /const waitlistTabVisible =\s*\n\s*isOwner &&\s*\n\s*isNewClientWaitlistEnabled\(studio\.slug\) &&\s*\n\s*isNewClientWaitlistDurableEnabled\(studio\.slug\);/,
+      /const waitlistLive =\s*\n\s*isNewClientWaitlistEnabled\(studio\.slug\) &&\s*\n\s*isNewClientWaitlistDurableEnabled\(studio\.slug\);/,
+    );
+    expect(LAYOUT).toMatch(
+      /const waitlistTabVisible =\s*\n\s*isOwner &&\s*\n\s*\(waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), studio\.id\)\)\);/,
     );
     expect(LAYOUT).toContain('{ href: "/settings/waitlist", label: "Waitlist" }');
   });
