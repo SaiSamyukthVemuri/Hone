@@ -123,9 +123,14 @@ export default async function LaunchChecklistPage() {
     {
       title: "Studio profile",
       status: owned("studio_name"),
+      // NAME ONLY. This row's verdict is `owned("studio_name")`, so its copy may
+      // claim only what studio_name proves. It used to say the booking slug was
+      // set too -- a fact the NEXT row owns and independently reports, so a
+      // studio with a name and no slug read "booking slug set" directly above
+      // "Set a booking slug".
       detail: provenBlockers.has("studio_name")
-        ? "Set the studio name and booking slug."
-        : "Studio name and booking slug set.",
+        ? "Set the studio name."
+        : "Studio name set.",
       cta: { label: "Open Studio settings", href: "/settings/studio" },
     },
     {
@@ -138,6 +143,22 @@ export default async function LaunchChecklistPage() {
       secondaryCta: hasSlug
         ? { label: "Open booking settings", href: "/settings/booking" }
         : undefined,
+    },
+    // THE AUTHORITY OWNS THIS FACT, SO THE PAGE MUST SHOW IT. Without this row
+    // a studio with an invalid timezone or a missing duration / buffer /
+    // horizon saw every authority-owned row green and zero items to do, while
+    // the canonical verdict was NOT_READY and the public booking page was
+    // unusable -- the same two-answers defect one layer up.
+    //
+    // Timezone validity is part of it: `isValidTimeZone`, not merely non-empty,
+    // because the public booking page calls todayInTz and throws on a bad zone.
+    {
+      title: "Booking settings",
+      status: owned("booking_settings"),
+      detail: provenBlockers.has("booking_settings")
+        ? "Set a valid time zone, appointment duration, buffer and booking horizon."
+        : "Time zone, appointment duration, buffer and booking horizon are set.",
+      cta: { label: "Open booking settings", href: "/settings/booking" },
     },
     {
       title: "Consultation service",

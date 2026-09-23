@@ -29,6 +29,7 @@ const {
   computeNewClientReadiness,
   getNewClientReadiness,
   isOpenDay,
+  NEW_CLIENT_BLOCKER_KEYS,
 } = await import("@/lib/booking/new-client-readiness");
 const queries = await import("@/lib/booking/queries");
 const wideAvailability = await import("@/lib/booking/studio-wide-availability");
@@ -494,22 +495,42 @@ describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority",
     expect(await launchSource()).toMatch(/await\s+getNewClientReadiness\s*\(/);
   });
 
-  it("every fact the authority owns is rendered FROM the verdict", async () => {
+  it("EVERY key the authority owns is rendered — exhaustive, not a hand list", async () => {
+    // The previous version of this guard listed the rows that existed, so it
+    // could only ever confirm what was already wired. `booking_settings` was
+    // owned by the authority, rendered nowhere, and this test passed: a studio
+    // with an invalid timezone saw every row green and zero items to do.
+    //
+    // The list now comes from the authority itself, where TypeScript forces
+    // `BLOCKERS` to cover the whole union. Add a key without rendering it and
+    // this fails.
     const code = await launchSource();
-    // A row hard-coded to "ready" keeps the loader call and still bypasses the
-    // authority, so presence of the call is not sufficient evidence.
-    for (const [key, authority] of [
-      ["studio_name", null],
-      ["booking_link", null],
-      ["consultation_service", "services"],
-      ["availability", "availability"],
-      ["treatment_consent", "treatment_consent"],
-    ] as const) {
-      const call = authority
-        ? `owned("${key}", "${authority}")`
-        : `owned("${key}")`;
-      expect(code, `${key} row must read the verdict via ${call}`).toContain(call);
+    expect(NEW_CLIENT_BLOCKER_KEYS.length).toBeGreaterThanOrEqual(7);
+    for (const key of NEW_CLIENT_BLOCKER_KEYS) {
+      // A row may read the verdict either through `owned(...)` (a setup step)
+      // or through `provenBlockers.has(...)` (a state, like WAIT admission).
+      // What it may not do is go unrendered.
+      expect(
+        code.includes(`owned("${key}"`) ||
+          code.includes(`provenBlockers.has("${key}")`),
+        `${key} is owned by the authority but rendered by no row`,
+      ).toBe(true);
     }
+  });
+
+  it("a row's copy claims ONLY what its own key proves", async () => {
+    // P2: the studio_name row asserted the booking slug was set — a fact the
+    // NEXT row owns and independently reports — so a studio with a name and no
+    // slug read "booking slug set" directly above "Set a booking slug".
+    const code = await launchSource();
+    const row = code.slice(
+      code.indexOf('title: "Studio profile"'),
+      code.indexOf('title: "Public booking link"'),
+    );
+    expect(row.length).toBeGreaterThan(0);
+    expect(row, "studio_name copy must not claim the slug").not.toMatch(/slug/i);
+    // and the booking-link row still reports that fact for itself
+    expect(code).toContain('owned("booking_link")');
   });
 
   it("the launch page re-derives NONE of the facts the authority owns", async () => {

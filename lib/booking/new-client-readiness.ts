@@ -151,6 +151,22 @@ const BLOCKERS: Record<NewClientBlockerKey, Omit<NewClientBlocker, "key">> = {
   },
 };
 
+/**
+ * EVERY key the authority owns, exhaustive BY CONSTRUCTION.
+ *
+ * Derived from `BLOCKERS`, which is a `Record<NewClientBlockerKey, …>` — so
+ * TypeScript already refuses to compile a new key that is not given an entry.
+ * Reading the list from there means a key cannot be added to the union and
+ * then quietly go unrendered by a consumer, which is exactly how the
+ * booking_settings blocker reached an owner as "nothing left to do".
+ *
+ * A hand-written array would not do this: it is just `NewClientBlockerKey[]`,
+ * and omitting a member of a union from an array is not a type error.
+ */
+export const NEW_CLIENT_BLOCKER_KEYS = Object.keys(
+  BLOCKERS,
+) as NewClientBlockerKey[];
+
 /** What the caller loaded. Each fallible authority carries its own availability. */
 export type NewClientReadinessEvidence = {
   studio: Pick<
