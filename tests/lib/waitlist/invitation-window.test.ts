@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import * as invitationWindow from "@/lib/waitlist/invitation-window";
+import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import {
-  TTL_HOURS_DEFAULT,
-  TTL_HOURS_MAX,
-  TTL_HOURS_MIN,
-  TTL_PRESETS,
-  ttlBoundLabel,
-} from "@/lib/waitlist/invitation-window";
-import { activeTtlPreset, emptyDraft } from "@/lib/waitlist/b4-invitation-draft";
+  COMPOSER_FIELD_NAMES,
+  emptyDraft,
+  inviteSubmissionFromFormData,
+} from "@/lib/waitlist/b4-invitation-draft";
 
 // ===========================================================================
 // THE INVITATION WINDOW IS 48 HOURS, AND IT IS STATED ONCE
@@ -113,6 +112,57 @@ function parseSqlFunctions(sql: string): Array<{ name: string; params: string }>
 
 const SQL_FUNCTIONS = parseSqlFunctions(MIGRATION_SQL);
 
+// ---------------------------------------------------------------------------
+// THE TTL AUTHORITY, READ FROM THE MIGRATIONS THAT DEFINE IT
+// ---------------------------------------------------------------------------
+//
+// `issue_new_client_waitlist_invitation` holds the only TTL guard in the
+// invitation chain. Both application paths reach it — the live one through
+// `admit_new_client_waitlist_entry` -> `issue_scoped_...`, the dormant one
+// through `issue_scoped_...` directly — which the test above asserts rather
+// than assumes.
+const TTL_AUTHORITY = "issue_new_client_waitlist_invitation";
+
+/** Migration files in APPLY ORDER, so a later redefinition wins. */
+const MIGRATION_FILES = readdirSync(MIGRATION_DIR)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((f) => readFileSync(path.join(MIGRATION_DIR, f), "utf8"));
+
+/**
+ * The body of the LAST definition of a command.
+ *
+ * LAST, NOT FIRST. A command redefined by a later migration is governed by that
+ * later body; reading the first would pin a rule production stopped following.
+ */
+function latestBodyOf(name: string): string {
+  let found: string | null = null;
+  for (const sql of MIGRATION_FILES) {
+    const marker = `create or replace function public.${name}`;
+    let from = sql.indexOf(marker);
+    while (from !== -1) {
+      const next = sql.indexOf("create or replace function public.", from + marker.length);
+      found = sql.slice(from, next === -1 ? undefined : next);
+      from = sql.indexOf(marker, from + marker.length);
+    }
+  }
+  expect(found, `no definition of ${name} found in the migrations`).not.toBeNull();
+  return found!;
+}
+
+type TtlGuard = { min: number; max: number };
+
+/** `if v_ttl < A or v_ttl > B then` -> {min: A, max: B}; null when absent. */
+function ttlGuardFrom(body: string): TtlGuard | null {
+  const m = body.match(/v_ttl\s*<\s*(\d+)\s*or\s*v_ttl\s*>\s*(\d+)/i);
+  return m ? { min: Number(m[1]), max: Number(m[2]) } : null;
+}
+
+function ttlGuardOf(name: string): TtlGuard | null {
+  return ttlGuardFrom(latestBodyOf(name));
+}
+
+
 describe("the SQL declaration parser the census depends on", () => {
   it("survives a parenthesised parameter type", () => {
     // THE CENSUS IS ONLY AS GOOD AS THIS. A command whose parameters this fails
@@ -142,36 +192,127 @@ describe("the SQL declaration parser the census depends on", () => {
 
 describe("the window a recipient actually gets", () => {
   it("is 48 hours", () => {
-    expect(TTL_HOURS_DEFAULT).toBe(48);
+    expect(WAIT_INVITATION_TTL_HOURS).toBe(48);
   });
 
-  it("is inside the bound the shipped command enforces", () => {
-    expect(TTL_HOURS_DEFAULT).toBeGreaterThanOrEqual(TTL_HOURS_MIN);
-    expect(TTL_HOURS_DEFAULT).toBeLessThanOrEqual(TTL_HOURS_MAX);
+  it("IS ACCEPTED BY THE DATABASE COMMAND THAT ENFORCES THE BOUND", () => {
+    // DERIVED FROM THE SQL, NOT FROM A TYPESCRIPT COPY OF IT.
+    //
+    // This previously read `expect(48).toBeGreaterThanOrEqual(TTL_HOURS_MIN)`
+    // against two constants in the same module as the 48. That proved the file
+    // agreed with itself and nothing else: had the database's own guard moved,
+    // the copies would have gone on asserting the old range and this would have
+    // stayed green while production refused every invitation as `invalid_ttl`.
+    //
+    // The bound is now read out of the command that actually enforces it, so
+    // the authority and the assertion cannot drift apart.
+    const guard = ttlGuardOf(TTL_AUTHORITY);
+    expect(
+      guard,
+      `no TTL guard found in ${TTL_AUTHORITY} — the assertion below would be vacuous`,
+    ).not.toBeNull();
+    expect(WAIT_INVITATION_TTL_HOURS).toBeGreaterThanOrEqual(guard!.min);
+    expect(WAIT_INVITATION_TTL_HOURS).toBeLessThanOrEqual(guard!.max);
   });
 
-  it("is a preset the composer actually offers, so it opens on a choice and not on Custom", () => {
-    // A default outside TTL_PRESETS is not a validation failure — the value is
-    // in range and the command would accept it. It is a UI defect: the composer
-    // would open with every preset radio unselected and the custom field
-    // holding a number nobody typed, which reads as a form already edited.
-    expect(TTL_PRESETS.map((p) => p.hours)).toContain(TTL_HOURS_DEFAULT);
-    expect(activeTtlPreset(TTL_HOURS_DEFAULT)).not.toBe("custom");
+  it("the command it derives from is the one BOTH application paths reach", () => {
+    // The derivation is only worth anything if it reads the right command.
+    // Chain, by delegation, each link asserted from the SQL rather than assumed:
+    //
+    //   admit_new_client_waitlist_entry          (live path)
+    //     -> issue_scoped_new_client_waitlist_invitation
+    //          -> issue_new_client_waitlist_invitation   <- the only TTL guard
+    //
+    // `issueScopedInvitation` (the dormant path) enters at the middle link, so
+    // both application paths are governed by the same guard.
+    expect(latestBodyOf("admit_new_client_waitlist_entry")).toContain(
+      "public.issue_scoped_new_client_waitlist_invitation(",
+    );
+    expect(latestBodyOf("issue_scoped_new_client_waitlist_invitation")).toContain(
+      "public.issue_new_client_waitlist_invitation(",
+    );
+    // And the middle link states no bound of its own, so it cannot disagree.
+    expect(ttlGuardOf("issue_scoped_new_client_waitlist_invitation")).toBeNull();
   });
 
-  it("EVERY preset is inside the bound, not just the default", () => {
-    // The same drift this file exists to close, one level down. Lower the max
-    // and the composer keeps rendering a radio for the window it no longer
-    // permits; a practitioner selects it and the adapter refuses the submission
-    // as `invalid_ttl`, which reads as the product being broken.
-    for (const preset of TTL_PRESETS) {
-      expect(preset.hours, preset.label).toBeGreaterThanOrEqual(TTL_HOURS_MIN);
-      expect(preset.hours, preset.label).toBeLessThanOrEqual(TTL_HOURS_MAX);
-    }
+  it("ANTI-VACUITY — the guard parser can actually fail to find a bound", () => {
+    // Every derivation above rests on this regex. A parser that silently
+    // matches nothing would make the containment check pass forever, so it is
+    // exercised on a body that HAS a bound and one that does not.
+    expect(ttlGuardFrom("if v_ttl < 3 or v_ttl > 99 then")).toEqual({ min: 3, max: 99 });
+    expect(ttlGuardFrom("if v_ttl is null then")).toBeNull();
   });
 
-  it("is what a freshly opened draft carries", () => {
-    expect(emptyDraft().expiresInHours).toBe(TTL_HOURS_DEFAULT);
+  it("A NARROWER DATABASE BOUND WOULD TURN THIS RED", () => {
+    // The point of deriving: if a future migration narrows the command to, say,
+    // 1..24, the fixed 48-hour window becomes illegal and every invitation
+    // starts failing as `invalid_ttl`. There is no UI left to reveal that, so
+    // the derived guard is the only thing standing between that migration and a
+    // silent production outage. Simulated here against the real assertion.
+    const narrowed = ttlGuardFrom("if v_ttl < 1 or v_ttl > 24 then")!;
+    expect(WAIT_INVITATION_TTL_HOURS).toBeGreaterThan(narrowed.max);
+  });
+
+  it("is FIXED — the module offers no presets, no custom value and no default", () => {
+    // NEGATIVE, AND AT THE MODULE BOUNDARY. #748 shipped the right number as a
+    // DEFAULT and left the alternatives standing, so the constant was correct
+    // while the product was wrong. A default implies a chooser somewhere; this
+    // asserts the chooser's vocabulary does not exist to be re-imported.
+    const mod = invitationWindow as unknown as Record<string, unknown>;
+    // ONE EXPORT. The bound constants were removed with this finding: nothing
+    // read them at runtime and they were a second, unenforceable statement of a
+    // rule the database already owns.
+    expect(Object.keys(mod).sort()).toEqual(["WAIT_INVITATION_TTL_HOURS"]);
+    expect(mod.TTL_HOURS_MIN, "a copied bound is a fake second authority").toBeUndefined();
+    expect(mod.TTL_HOURS_MAX, "a copied bound is a fake second authority").toBeUndefined();
+    expect(mod.TTL_PRESETS, "presets are a chooser").toBeUndefined();
+    expect(mod.TTL_HOURS_DEFAULT, "a default implies alternatives").toBeUndefined();
+    expect(mod.ttlBoundLabel, "the custom field's help text").toBeUndefined();
+  });
+
+  it("A FRESH DRAFT CANNOT EXPRESS A WINDOW AT ALL", () => {
+    // It used to carry `expiresInHours: TTL_HOURS_DEFAULT`. The key is gone, not
+    // defaulted: a draft with no window cannot submit one, whatever the UI does.
+    expect(Object.keys(emptyDraft()).sort()).toEqual([
+      "allowedWeekdays",
+      "serviceId",
+      "windowDays",
+    ]);
+    expect("expiresInHours" in emptyDraft()).toBe(false);
+  });
+
+  it("PRACTITIONER FORM DATA CANNOT CHOOSE A TTL — the parser ignores one entirely", () => {
+    // THE DECISIVE NEGATIVE, and it is about the SUBMISSION rather than the
+    // screen. Removing a control only stops an honest browser; the boundary
+    // that matters is what the server does with a hand-built POST. Both retired
+    // field names are supplied here with values a practitioner could once have
+    // selected, and neither reaches the submission.
+    const form = new FormData();
+    form.set(COMPOSER_FIELD_NAMES.entryId, "e1");
+    form.set(COMPOSER_FIELD_NAMES.serviceId, "s1");
+    form.set(COMPOSER_FIELD_NAMES.windowDays, "14");
+    form.set(COMPOSER_FIELD_NAMES.allowedDaysPreset, "every");
+    form.set("expires_in_hours", "168");
+    form.set("expires_in_hours_custom", "167");
+
+    const parsed = inviteSubmissionFromFormData(form);
+    expect(parsed.ok, "the fixture must parse, or the assertion below is vacuous").toBe(true);
+    if (!parsed.ok) throw new Error("unreachable");
+    const submission = parsed.submission as unknown as Record<string, unknown>;
+    expect(submission.expiresInHours, "a forged TTL reached the submission").toBeUndefined();
+    expect("expiresInHours" in submission).toBe(false);
+    expect(Object.keys(submission).sort()).toEqual([
+      "allowedWeekdays",
+      "entryId",
+      "serviceId",
+      "windowDays",
+    ]);
+  });
+
+  it("the retired field names are not known to the composer's vocabulary", () => {
+    const names = Object.values(COMPOSER_FIELD_NAMES);
+    expect(names).not.toContain("expires_in_hours");
+    expect(names).not.toContain("expires_in_hours_custom");
   });
 });
 
@@ -365,14 +506,17 @@ describe("CENSUS — the database's own default can never decide the window", ()
   });
 });
 
-describe("CENSUS — the bound is stated once", () => {
-  // The module that OWNS the bound is the one file allowed to write the numbers.
+describe("CENSUS — the window is supplied once, and chosen nowhere", () => {
+  // The module that OWNS the window is the one file allowed to write the number.
   const OWNER = "lib/waitlist/invitation-window.ts";
   const ADAPTER = "lib/waitlist/invite-to-book-adapter.ts";
   const COMPOSER = "components/waitlist/invite-composer.tsx";
+  const DRAFT = "lib/waitlist/b4-invitation-draft.ts";
+  const ACTION = "app/(app)/settings/waitlist/invite-actions.ts";
+  const DORMANT = "lib/booking/waitlist-invitation.ts";
 
   it("reads the files it censuses", () => {
-    for (const f of [OWNER, ADAPTER, COMPOSER]) {
+    for (const f of [OWNER, ADAPTER, COMPOSER, DRAFT, ACTION, DORMANT]) {
       expect(
         TS_SOURCES.some((s) => s.file === f),
         `${f} not found — the census would pass vacuously`,
@@ -380,55 +524,70 @@ describe("CENSUS — the bound is stated once", () => {
     }
   });
 
-  it("checks the submitted window against the constants, not against literals", () => {
-    // The adapter must keep checking — a bound the browser could skip is not a
-    // bound — but it must check against the same constants the composer offers
-    // from, or the two can disagree and nothing fails.
-    const adapter = TS_SOURCES.find((s) => s.file === ADAPTER)!.code;
-    expect(adapter).toMatch(/expiresInHours\s*<\s*TTL_HOURS_MIN/);
-    expect(adapter).toMatch(/expiresInHours\s*>\s*TTL_HOURS_MAX/);
-    expect(adapter).not.toMatch(/expiresInHours\s*[<>]=?\s*\d/);
+  it("ISSUANCE USES THE CANONICAL CONSTANT, at every call that supplies a window", () => {
+    // Both call sites, by name, because there are exactly two and the dormant
+    // one is the one nobody would notice waking up on the wrong number.
+    for (const f of [ADAPTER, DORMANT]) {
+      const code = TS_SOURCES.find((s) => s.file === f)!.code;
+      expect(code, `${f} must supply the window`).toMatch(
+        /p_ttl_hours:\s*WAIT_INVITATION_TTL_HOURS/,
+      );
+      expect(code, `${f} must not name a number`).not.toMatch(/p_ttl_hours:\s*\d/);
+      expect(code, `${f} must not take one from its caller`).not.toMatch(
+        /p_ttl_hours:\s*[a-zA-Z_$][\w$.]*\s*\?\?/,
+      );
+    }
   });
 
-  it("advertises the bound on the number input from the constants too", () => {
-    // The input's own `min`/`max` are a statement of the bound that no
-    // behavioural assertion can reach: they are enforced by the BROWSER, before
-    // any code this repo owns runs.
-    //
-    // SCOPED TO THE EXPIRY INPUT. The composer has a second number field —
-    // `composer-window-days`, `min={1} max={365}` — and that is the BOOKING
-    // WINDOW, a different rule with a different owner. A file-wide assertion
-    // against numeric bounds would have dragged it in and failed on code this
-    // slice has no business touching.
+  it("NO SURFACE ACCEPTS A WINDOW — the field is gone from every layer", () => {
+    // ONE ASSERTION PER LAYER, because removing the control alone would leave
+    // four other places a window could still arrive from.
+    for (const f of [COMPOSER, DRAFT, ACTION, ADAPTER]) {
+      const code = TS_SOURCES.find((s) => s.file === f)!.code;
+      expect(code, `${f} still reads a submitted window`).not.toMatch(/\bexpiresInHours\b/);
+    }
+    const dormant = TS_SOURCES.find((s) => s.file === DORMANT)!.code;
+    expect(dormant, "the dormant path still takes a ttl argument").not.toMatch(/\bttlHours\b/);
+  });
+
+  it("NO EXPIRY CONTROL RENDERS — the composer has no selector and no custom field", () => {
+    // SOURCE-LEVEL ON PURPOSE. These are the test ids and field names the
+    // component test drives; asserting their ABSENCE in the source catches a
+    // control that renders only under a branch the component test never takes.
     const composer = TS_SOURCES.find((s) => s.file === COMPOSER)!.code;
-    const anchor = composer.indexOf('data-testid="composer-expiry-hours"');
-    expect(anchor, "the expiry input's test id").toBeGreaterThan(-1);
-    const element = composer.slice(composer.lastIndexOf("<input", anchor), anchor);
-
-    expect(element).toMatch(/min=\{TTL_HOURS_MIN\}/);
-    expect(element).toMatch(/max=\{TTL_HOURS_MAX\}/);
-    expect(element).not.toMatch(/\b(min|max)=\{\s*\d+\s*\}/);
+    for (const marker of [
+      "composer-expiry-hours",
+      "composer-expiry-custom",
+      "Invitation expires",
+      "TTL_PRESETS",
+      "ttlBoundLabel",
+      "expires_in_hours",
+    ]) {
+      expect(composer, `the composer still carries ${marker}`).not.toContain(marker);
+    }
   });
 
-  it("states the bound in PROSE from the constants too", () => {
-    // The help text above the custom hours field read "Hours, from 1 hour to 7
-    // days" as a literal. A census that greps for `min={<digits>}` cannot see a
-    // sentence, so this was the one statement of the bound that survived the
-    // first pass -- and the one that would keep promising seven days after the
-    // bound narrowed, while the input beside it refused.
-    expect(ttlBoundLabel()).toBe("Hours, from 1 hour to 7 days");
-    expect(ttlBoundLabel()).toContain(String(TTL_HOURS_MAX / 24));
-
-    const composer = TS_SOURCES.find((x) => x.file === COMPOSER)!.code;
-    expect(composer).toContain("ttlBoundLabel()");
-    // And the sentence is not ALSO written out anywhere.
-    expect(composer).not.toMatch(/from \d+ hours? to \d+ days?/);
+  it("ANTI-VACUITY — these absence checks could actually fail", () => {
+    // Every assertion above is a `not.toMatch`, and a mistyped marker passes
+    // forever. So the same greps are run against the PRE-SLICE shapes to prove
+    // they are capable of firing.
+    const sample = [
+      'data-testid="composer-expiry-hours"',
+      'title="Invitation expires"',
+      "p_ttl_hours: input.expiresInHours,",
+      "p_ttl_hours: input.ttlHours ?? TTL_HOURS_DEFAULT,",
+    ].join("\n");
+    expect(sample).toContain("composer-expiry-hours");
+    expect(sample).toContain("Invitation expires");
+    expect(sample).toMatch(/\bexpiresInHours\b/);
+    expect(sample).toMatch(/\bttlHours\b/);
+    expect(sample).toMatch(/p_ttl_hours:\s*[a-zA-Z_$][\w$.]*\s*\?\?/);
   });
 
-  it("NEGATIVE CONTROL — no module outside the owner bounds the window itself", () => {
+  it("NEGATIVE CONTROL — no module outside the owner writes the window as a literal", () => {
     for (const { file, code } of TS_SOURCES) {
       if (file === OWNER) continue;
-      expect(code, file).not.toMatch(/expiresInHours\s*[<>]=?\s*\d/);
+      expect(code, file).not.toMatch(/p_ttl_hours:\s*\d/);
     }
   });
 });
