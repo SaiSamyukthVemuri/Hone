@@ -224,12 +224,34 @@ function isAbsent(file: string): boolean {
  * the table is PROVABLY out of date — the file really did shrink — and the fix is
  * one number, in the same change that earned it.
  *
- * A DELETED FILE IS NOT STALE: it counts as zero, and zero is a valid final
- * state, so deletion remains a legitimate way to retire an entry.
+ * A DELETED FILE IS NOT *STALE* IN THIS SENSE — it has no count to compare —
+ * but its ENTRY is a different question, answered by `entryIsOrphaned` below.
  */
 function baselineIsStale(file: string, actual: number, baseline: number): boolean {
   if (isAbsent(file)) return false;
   return actual < baseline;
+}
+
+/**
+ * The entry outlived the file it describes.
+ *
+ * WHY DELETION ALONE WAS NOT A RETIREMENT. Treating an absent path as "zero
+ * duplicates, nothing to report" let the ENTRY survive the file. The allowance
+ * it grants survives with it, so recreating that exact path later — a revert, a
+ * file moved back, a component restored — silently reinherits the historical
+ * duplicate budget. Every retired duplicate could return and the rule would
+ * still be green, because the table still says that path is allowed N of them.
+ *
+ * Deletion is a valid retirement only when the ALLOWANCE disappears too. So an
+ * absent path makes its own entry stale, and the entry must be removed. A
+ * recreated path then starts as what it actually is: a new, non-baselined file,
+ * held to zero by rule 3b like any other.
+ *
+ * Absence is still ENOENT-only. An unreadable file is not absent and must not
+ * quietly retire its own budget — `isAbsent` throws on anything else.
+ */
+function entryIsOrphaned(file: string): boolean {
+  return isAbsent(file);
 }
 
 /**
@@ -354,6 +376,26 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
         "a legacy file has FEWER hand-rolled labels than its recorded baseline. " +
           "Lower the baseline in the same change that earned the reduction, or the " +
           "removed duplicate can be reintroduced later and still pass.",
+      ).toEqual([]);
+    });
+
+    it("3a-bis. a DELETED path must RETIRE its entry, not keep its allowance", () => {
+      // Deletion retires the FILE; without this it does not retire the BUDGET.
+      // An absent path whose entry survives still says "this path may hold N
+      // hand-rolled labels", so recreating it later — a revert, a move back, a
+      // restored component — silently reinherits the whole historical allowance
+      // and every retired duplicate can return while the rule stays green.
+      //
+      // A recreated path must start as what it actually is: a new, non-baselined
+      // file, held to zero by 3b like any other.
+      const orphaned = LEGACY_BASELINE.filter(([file]) => entryIsOrphaned(file)).map(
+        ([file, baseline]) => `${file}: entry allows ${baseline} but the path is gone`,
+      );
+      expect(
+        orphaned,
+        "a baseline entry outlived its file. Remove the entry in the same change " +
+          "that deleted the path — deletion is a retirement only when the allowance " +
+          "goes with it, otherwise recreating the path reinherits the old budget.",
       ).toEqual([]);
     });
 
