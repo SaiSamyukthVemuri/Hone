@@ -325,6 +325,29 @@ export function toRepoPath(relative: string, sep: string = path.sep): string {
   return sep === "/" ? relative : relative.split(sep).join("/");
 }
 
+/**
+ * Which of these paths still carry an unnormalized separator?
+ *
+ * The downstream rule, as a function of the separator rather than of the machine
+ * running it. Written this way for one reason: the assertion it replaces used
+ * the LIVE `path.sep` even when simulating the OTHER platform's semantics, so a
+ * fixture that is legal only under POSIX was read as a Windows separator on a
+ * Windows runner and could never pass there.
+ *
+ * With the separator as a parameter, the live rule passes `path.sep` and each
+ * semantic test states which platform it means. Nothing is skipped, and both
+ * behaviours are proved on every runner.
+ *
+ * When the separator IS "/", nothing can be unnormalized — every path is
+ * canonical by construction, and a backslash is just a legal filename character.
+ */
+export function unnormalizedUnder(
+  files: readonly string[],
+  sep: string = path.sep,
+): string[] {
+  return sep === "/" ? [] : files.filter((f) => f.includes(sep));
+}
+
 const BASELINE = new Map(LEGACY_BASELINE.map(([f, n]) => [f, n]));
 const FILES = ROOTS.flatMap((root) => walk(path.join(REPO_ROOT, root))).map((f) =>
   toRepoPath(path.relative(REPO_ROOT, f)),
@@ -544,33 +567,54 @@ describe("discovered paths are normalized before comparison", () => {
     // IS "/", every discovered path is canonical by construction, and a
     // backslash means only what it says.
     expect(FILES.length, "no files discovered — vacuous").toBeGreaterThan(0);
-    if (path.sep === "/") return;
-    const offenders = FILES.filter((f) => f.includes(path.sep));
     expect(
-      offenders,
+      unnormalizedUnder(FILES),
       `a discovered path still carries the platform separator ${JSON.stringify(path.sep)}`,
     ).toEqual([]);
   });
 
-  it("a legal POSIX backslash filename survives normalization AND this rule", () => {
-    // Both halves together: the normalizer leaves it alone, and no assertion
-    // downstream may then reject it. Simulated rather than created on disk —
-    // writing a file whose name contains a backslash to prove a path rule would
-    // leave a real file in the repository for the lifetime of the test.
+  // THE SEMANTIC TESTS PIN THEIR OWN SEPARATOR, AND THAT IS THE WHOLE POINT.
+  //
+  // The previous revision wrote the POSIX case against the LIVE `path.sep`. On a
+  // Windows runner that is "\", so the fixture — a filename legal only under
+  // POSIX semantics — was read as containing the active separator and the
+  // assertion could never pass there. The test meant to prove "POSIX backslashes
+  // are legal" silently asserted Windows semantics instead, which is the same
+  // class of mistake as the rule it was written to protect.
+  //
+  // Both cases now state which semantics they are testing, so each runs and
+  // proves the same thing on every platform. Nothing is skipped.
+
+  it("POSIX semantics: a legal backslash filename is normalized AND not rejected", () => {
+    // Simulated rather than created on disk: writing a file whose name contains
+    // a backslash to prove a path rule would leave it in the repository for the
+    // lifetime of the test.
     const legal = "components/odd\\name.tsx";
-    expect(toRepoPath(legal, "/"), "POSIX: unchanged").toBe(legal);
-    const wouldReject = path.sep === "/" ? [] : [legal].filter((f) => f.includes(path.sep));
-    expect(wouldReject, "a legal POSIX filename was rejected as a bad path").toEqual([]);
+    expect(toRepoPath(legal, "/"), "POSIX: the normalizer leaves it alone").toBe(legal);
+    expect(
+      unnormalizedUnder([legal], "/"),
+      "POSIX: a legal filename was rejected as a bad path",
+    ).toEqual([]);
   });
 
-  it("a Windows separator IS still caught when it is the active one", () => {
-    // The Windows half of the same rule, provable on POSIX by passing the
-    // separator explicitly: an unnormalized path is normalized, and what the
-    // rule looks for is the active separator rather than a literal backslash.
-    const windowsSep = "\\";
+  it("WINDOWS semantics: an unnormalized separator is normalized AND caught", () => {
     const unnormalized = "app\\(app)\\settings\\availability\\page.tsx";
-    expect(unnormalized.includes(windowsSep), "the fixture must be unnormalized").toBe(true);
-    expect(toRepoPath(unnormalized, windowsSep).includes(windowsSep)).toBe(false);
+    expect(unnormalized.includes("\\"), "the fixture must be unnormalized").toBe(true);
+    // Caught while it is still raw...
+    expect(
+      unnormalizedUnder([unnormalized], "\\"),
+      "Windows: an unnormalized path was not caught",
+    ).toEqual([unnormalized]);
+    // ...and no longer caught once normalized, which is what discovery does.
+    expect(toRepoPath(unnormalized, "\\")).toBe("app/(app)/settings/availability/page.tsx");
+    expect(unnormalizedUnder([toRepoPath(unnormalized, "\\")], "\\")).toEqual([]);
+  });
+
+  it("the two semantics genuinely differ on the same input", () => {
+    // Without this the pair above could both be passing for the same reason.
+    const legal = "components/odd\\name.tsx";
+    expect(unnormalizedUnder([legal], "/")).toEqual([]);
+    expect(unnormalizedUnder([legal], "\\")).toEqual([legal]);
   });
 });
 
