@@ -100,9 +100,14 @@ export default async function LaunchChecklistPage() {
    */
   const owned = (
     key: NewClientBlockerKey,
-    authority?: "services" | "availability" | "treatment_consent",
+    // EVERY authority the fact depends on, not just one. The bookable-window
+    // row needs services AND availability: with services unreadable the pairing
+    // cannot be proven either way, and a single-authority signature would have
+    // rendered it green -- claiming a consultation fits when nothing had been
+    // read to say so.
+    ...authorities: Array<"services" | "availability" | "treatment_consent">
   ): Row["status"] => {
-    if (authority && unavailableAuthorities.has(authority)) return "unknown";
+    if (authorities.some((a) => unavailableAuthorities.has(a))) return "unknown";
     return provenBlockers.has(key) ? "needs_setup" : "ready";
   };
 
@@ -178,6 +183,23 @@ export default async function LaunchChecklistPage() {
         : provenBlockers.has("availability")
           ? "Open at least one weekday for public booking in availability defaults."
           : "At least one weekday is open to public booking with hours set.",
+      cta: { label: "Open Availability", href: "/settings/availability" },
+    },
+    // THE PAIRING, which neither of the two rows above proves on its own: a
+    // 09:00-09:30 window and a 60-minute consultation are each individually
+    // fine, and together generate no bookable time at all.
+    //
+    // Depends on BOTH authorities, so it is unknown when either is unreadable.
+    {
+      title: "Bookable consultation window",
+      status: owned("bookable_window", "services", "availability"),
+      detail:
+        unavailableAuthorities.has("availability") ||
+        unavailableAuthorities.has("services")
+          ? "Couldn't check your services and availability just now. Open Availability to confirm."
+          : provenBlockers.has("bookable_window")
+            ? "No open window is long enough for one of your consultations. Lengthen a day, or shorten the consultation."
+            : "At least one open window fits a consultation a new client can book.",
       cta: { label: "Open Availability", href: "/settings/availability" },
     },
     // WAIT admission is a real boundary on "can a new client book right now",

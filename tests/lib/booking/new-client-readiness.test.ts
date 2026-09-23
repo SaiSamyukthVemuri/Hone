@@ -29,6 +29,7 @@ const {
   computeNewClientReadiness,
   getNewClientReadiness,
   isOpenDay,
+  windowFitsDuration,
   NEW_CLIENT_BLOCKER_KEYS,
 } = await import("@/lib/booking/new-client-readiness");
 const queries = await import("@/lib/booking/queries");
@@ -49,6 +50,8 @@ const CONSULTATION = {
   name: "New Client Consultation",
   modality: "consultation",
   active: true,
+  // A real Service carries its own duration, and readiness now depends on it.
+  default_duration_minutes: 60,
 } as never;
 
 const OPEN_DAY = { is_open: true, open_time: "09:00:00", close_time: "17:00:00" };
@@ -161,7 +164,7 @@ describe("composition — the SAME predicates the booking path enforces", () => 
       ...ALL_GOOD,
       services: {
         ok: true,
-        services: [{ id: "s", name: "New Client Consultation", modality: null, active: true } as never],
+        services: [{ id: "s", name: "New Client Consultation", modality: null, active: true, default_duration_minutes: 60 } as never],
       },
     });
     expect(r.status).toBe("ready");
@@ -172,7 +175,7 @@ describe("composition — the SAME predicates the booking path enforces", () => 
       ...ALL_GOOD,
       services: {
         ok: true,
-        services: [{ id: "s", name: "Consultation", modality: "consultation", active: false } as never],
+        services: [{ id: "s", name: "Consultation", modality: "consultation", active: false, default_duration_minutes: 60 } as never],
       },
     });
     expect(r.status).toBe("not_ready");
@@ -185,7 +188,7 @@ describe("composition — the SAME predicates the booking path enforces", () => 
       ...ALL_GOOD,
       services: {
         ok: true,
-        services: [{ id: "s", name: "Upper Lip", modality: "electrolysis", active: true } as never],
+        services: [{ id: "s", name: "Upper Lip", modality: "electrolysis", active: true, default_duration_minutes: 60 } as never],
       },
     });
     expect(r.status).toBe("not_ready");
@@ -560,8 +563,11 @@ describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority",
     // The exact branch, not just the words: an unavailable authority must
     // short-circuit to "unknown" BEFORE the proven-blocker test, or UNKNOWN
     // collapses into needs_setup at the last inch.
+    // `owned()` now takes EVERY authority a fact depends on, so the
+    // short-circuit tests them collectively. The invariant is unchanged: an
+    // unavailable authority returns "unknown" BEFORE the proven-blocker test.
     expect(code).toMatch(
-      /unavailableAuthorities\.has\(authority\)\s*\)\s*return "unknown";/,
+      /authorities\.some\(\(a\) => unavailableAuthorities\.has\(a\)\)\s*\)\s*return "unknown";/,
     );
     expect(code).toMatch(
       /provenBlockers\.has\(key\)\s*\?\s*"needs_setup"\s*:\s*"ready"/,
@@ -608,5 +614,121 @@ describe("ONB-02 P2 control: retained practitioner rows must not cause READY", (
     expect(r.status).toBe("not_ready");
     if (r.status !== "not_ready") throw new Error("unreachable");
     expect(r.blockers.map((b) => b.key)).toContain("availability");
+  });
+});
+
+describe("ONB-02 P2: an open window must actually FIT a bookable consultation", () => {
+  // Two independently true facts -- "a consultation exists", "a day is open" --
+  // did not imply a single bookable appointment. A 09:00-09:30 window with a
+  // 60-minute consultation generates ZERO slots, because the public slot engine
+  // refuses any candidate whose SERVICE end passes closing time.
+  const win = (open: string, close: string) => ({
+    is_open: true,
+    open_time: open,
+    close_time: close,
+  });
+  const svc = (mins: number, id = "s") =>
+    ({
+      id,
+      name: "New Client Consultation",
+      modality: "consultation",
+      active: true,
+      default_duration_minutes: mins,
+    }) as never;
+
+  it("1. a 30-minute window and a 60-minute consultation is NOT ready", () => {
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      services: { ok: true, services: [svc(60)] },
+      availability: { ok: true, days: [win("09:00:00", "09:30:00")] },
+    });
+    expect(r.status).toBe("not_ready");
+    if (r.status !== "not_ready") throw new Error("unreachable");
+    expect(r.blockers.map((b) => b.key)).toContain("bookable_window");
+    // and NOT the two halves, which are each individually satisfied
+    expect(r.blockers.map((b) => b.key)).not.toContain("availability");
+    expect(r.blockers.map((b) => b.key)).not.toContain("consultation_service");
+  });
+
+  it("2. a 60-minute window and a 60-minute consultation satisfies availability", () => {
+    // Exactly-fits is bookable: the engine refuses `start + duration > close`,
+    // so a candidate starting at open ends exactly at close and stands.
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      services: { ok: true, services: [svc(60)] },
+      availability: { ok: true, days: [win("09:00:00", "10:00:00")] },
+    });
+    expect(r.status).toBe("ready");
+  });
+
+  it("3. ANY valid pairing across several services and windows is enough", () => {
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      // the 90 fits nowhere; the 30 fits the short day
+      services: { ok: true, services: [svc(90, "long"), svc(30, "short")] },
+      availability: {
+        ok: true,
+        days: [win("09:00:00", "09:30:00"), win("13:00:00", "13:20:00")],
+      },
+    });
+    expect(r.status).toBe("ready");
+  });
+
+  it("4. a retained PRACTITIONER row cannot satisfy the public requirement", async () => {
+    // The loader asks getStudioWideDefaultsSafe (practitioner_id IS NULL), so a
+    // practitioner-only open window never reaches the pairing at all: the
+    // studio-wide set it is handed is closed, and that is NOT_READY.
+    vi.mocked(queries.getActiveServices).mockResolvedValue([svc(60)] as never);
+    vi.mocked(consent.getTreatmentConsentReadiness).mockResolvedValue({
+      ok: true,
+      ready: true,
+    });
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      services: { ok: true, services: [svc(60)] },
+      availability: {
+        ok: true,
+        days: [{ is_open: false, open_time: null, close_time: null }],
+      },
+    });
+    expect(r.status).toBe("not_ready");
+    if (r.status !== "not_ready") throw new Error("unreachable");
+    expect(r.blockers.map((b) => b.key)).toContain("availability");
+  });
+
+  it("the pairing is UNKNOWN when EITHER authority could not answer", () => {
+    for (const override of [
+      { services: { ok: false as const } },
+      { availability: { ok: false as const } },
+    ]) {
+      const r = computeNewClientReadiness({
+        ...ALL_GOOD,
+        services: { ok: true, services: [svc(60)] },
+        availability: { ok: true, days: [win("09:00:00", "09:30:00")] },
+        ...override,
+      });
+      // never a proven pairing failure on half the evidence
+      if (r.status === "not_ready") {
+        expect(r.blockers.map((b) => b.key)).not.toContain("bookable_window");
+      } else {
+        expect(r.status).toBe("unknown");
+      }
+    }
+  });
+
+  it("the boundary is the SERVICE end against close, with no buffer subtracted", () => {
+    // lib/booking/slots.ts refuses `start + duration > close` and lets the
+    // trailing studio buffer spill past closing; validate_appointment_availability
+    // agrees in SQL (`v_end_time > v_close`). Subtracting the buffer here would
+    // refuse windows the booking path accepts -- the same drift, inverted.
+    expect(windowFitsDuration(win("09:00:00", "10:00:00"), 60)).toBe(true);
+    expect(windowFitsDuration(win("09:00:00", "09:59:00"), 60)).toBe(false);
+    expect(windowFitsDuration(win("09:00", "10:00"), 60)).toBe(true);
+    // a closed day fits nothing, whatever its times say
+    expect(windowFitsDuration({ is_open: false, open_time: "09:00:00", close_time: "18:00:00" }, 60)).toBe(false);
+    // unparseable or nonsense never reads as a long window
+    expect(windowFitsDuration(win("bogus", "10:00:00"), 60)).toBe(false);
+    expect(windowFitsDuration(win("25:00:00", "26:00:00"), 60)).toBe(false);
+    expect(windowFitsDuration(win("09:00:00", "10:00:00"), 0)).toBe(false);
   });
 });

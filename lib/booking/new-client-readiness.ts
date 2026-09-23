@@ -83,6 +83,7 @@ export type NewClientBlockerKey =
   | "consultation_service"
   | "availability"
   | "treatment_consent"
+  | "bookable_window"
   | "wait_admission";
 
 export type NewClientBlocker = {
@@ -114,6 +115,7 @@ const BLOCKER_ORDER: NewClientBlockerKey[] = [
   "booking_link",
   "consultation_service",
   "availability",
+  "bookable_window",
   "booking_settings",
   "treatment_consent",
   // LAST ON PURPOSE. It is not a setup step a studio can "fix" by filling
@@ -143,6 +145,10 @@ const BLOCKERS: Record<NewClientBlockerKey, Omit<NewClientBlocker, "key">> = {
   },
   availability: {
     label: "No open day in the weekly availability.",
+    href: "/settings/availability",
+  },
+  bookable_window: {
+    label: "No open window long enough to fit a consultation.",
     href: "/settings/availability",
   },
   treatment_consent: {
@@ -203,6 +209,46 @@ export function isOpenDay(
   return d.is_open === true && nonEmpty(d.open_time) && nonEmpty(d.close_time);
 }
 
+/**
+ * Minutes from midnight for a Postgres `time` value ("HH:MM" or "HH:MM:SS").
+ * Returns null for anything it cannot read, so an unparseable window is never
+ * silently treated as a long one.
+ */
+function minutesOfDay(t: string | null | undefined): number | null {
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec((t ?? "").trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+/**
+ * Can this open window hold a service of `duration` minutes?
+ *
+ * THE PUBLIC SLOT ENGINE'S OWN BOUNDARY, not a second opinion. lib/booking/slots.ts
+ * filters a candidate on the SERVICE end against closing time -- `start + duration
+ * > close` is refused -- and deliberately lets the trailing studio buffer spill
+ * past closing. `validate_appointment_availability` agrees in SQL: it tests
+ * `v_end_time > v_close`. So the buffer is NOT subtracted here; doing so would
+ * refuse windows the booking path accepts, which is the same drift in the other
+ * direction.
+ *
+ * The earliest candidate a day can offer starts at `open`, so a window can hold
+ * the service exactly when `close - open >= duration`.
+ */
+export function windowFitsDuration(
+  d: Pick<StudioAvailabilityDefault, "is_open" | "open_time" | "close_time">,
+  durationMinutes: number,
+): boolean {
+  if (!isOpenDay(d)) return false;
+  if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) return false;
+  const open = minutesOfDay(d.open_time);
+  const close = minutesOfDay(d.close_time);
+  if (open == null || close == null) return false;
+  return close - open >= durationMinutes;
+}
+
 /** Pure. No I/O, so every state below is reachable in a unit test. */
 export function computeNewClientReadiness(
   evidence: NewClientReadinessEvidence,
@@ -250,6 +296,27 @@ export function computeNewClientReadiness(
   }
   if (availability.ok && !availability.days.some(isOpenDay)) {
     proven.push("availability");
+  }
+  // THE PAIRING, which neither fact proves on its own.
+  //
+  // "A consultation exists" and "a day is open" were each true for a studio
+  // whose only window was 09:00-09:30 and whose only consultation ran 60
+  // minutes: the public slot engine generated ZERO appointments because every
+  // candidate's service end passed closing time. READY on two independently
+  // true facts is exactly the disagreement this module exists to end.
+  //
+  // Reported ONLY when both halves exist. With no consultation, or no open day,
+  // the blocker above already names the missing half; adding this one would tell
+  // an owner to lengthen a window they have not opened yet.
+  if (services.ok && availability.ok) {
+    const bookable = services.services.filter((s) => isBookableByNewClient(s));
+    const openWindows = availability.days.filter(isOpenDay);
+    const anyPairFits = openWindows.some((w) =>
+      bookable.some((s) => windowFitsDuration(w, s.default_duration_minutes)),
+    );
+    if (bookable.length > 0 && openWindows.length > 0 && !anyPairFits) {
+      proven.push("bookable_window");
+    }
   }
   if (treatmentConsent.ok && !treatmentConsent.ready) {
     proven.push("treatment_consent");
