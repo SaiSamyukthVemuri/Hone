@@ -75,7 +75,7 @@ export default function HomePage() {
           <div>
             <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
             <Display className="mt-4">{POSITIONING.heroH1}</Display>
-            <Lede className="mt-6 max-w-xl">{POSITIONING.heroSupporting}</Lede>
+            <Lede className="mt-6 max-w-xl">{POSITIONING.heroSub}</Lede>
             <p className="mt-5 max-w-xl text-[1.0625rem] font-medium text-ink">
               {POSITIONING.differentiationLine}
             </p>
@@ -84,7 +84,7 @@ export default function HomePage() {
                 {WALKTHROUGH.primaryLabel}
               </CTAButton>
               <CTAButton
-                href="#how-hone-works"
+                href={WALKTHROUGH.secondaryHref}
                 variant="secondary"
                 event={ANALYTICS_EVENTS.secondaryCtaClick}
               >
@@ -171,7 +171,9 @@ export default function HomePage() {
           <Container className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
             <Reveal>
               <Eyebrow>Treatment memory</Eyebrow>
-              <Title className="mt-4">The part other tools forget.</Title>
+              {/* Deck §3 section 3. The retired heading was a claim about
+                  rival tools; this one states the mechanism the section shows. */}
+              <Title className="mt-4">Every area keeps its own history</Title>
               <Lede className="mt-5">
                 Before a returning client sits down, Hone assembles a briefing from what you
                 already charted, the last treatment&apos;s areas and settings, the probe lot, how

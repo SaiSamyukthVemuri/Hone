@@ -41,15 +41,18 @@ const SURFACE = [PAGE, VISUAL, HEADER, FOOTER, MOBILE]
 
 describe("positioning: category + treatment-memory differentiator", () => {
   it("hero is not the eyebrow==H1 duplication of the old site", () => {
+    // v2.2. The H1 no longer restates the category at all — the eyebrow carries
+    // it and the H1 makes the promise, which is what this test was always for.
     expect(POSITIONING.heroEyebrow).toBe("Electrolysis practice software");
-    expect(POSITIONING.heroH1).toBe(
-      "Electrolysis practice software that remembers every treatment.",
-    );
+    expect(POSITIONING.heroH1).toBe("Start the next treatment where the last one ended.");
     expect(POSITIONING.heroEyebrow).not.toBe(POSITIONING.heroH1);
+    // And the H1 does not reintroduce the category phrase by other wording.
+    expect(POSITIONING.heroH1).not.toMatch(/practice software/i);
   });
 
   it("the homepage consumes the shared positioning + CTA constants", () => {
     expect(PAGE).toMatch(/POSITIONING\.heroEyebrow/);
+    expect(PAGE).toMatch(/POSITIONING\.heroSub/);
     expect(PAGE).toMatch(/POSITIONING\.heroH1/);
     expect(PAGE).toMatch(/POSITIONING\.differentiationLine/);
     expect(PAGE).toMatch(/WALKTHROUGH\.primaryLabel/);
@@ -91,7 +94,9 @@ describe("required homepage sections", () => {
   });
 
   it("has the treatment-memory differentiator section linking to the feature page", () => {
-    expect(PAGE).toMatch(/The part other tools forget\./);
+    // v2.2: the differentiator section heading is the deck's, not the retired
+    // claim about what rival tools fail to retain.
+    expect(PAGE).toMatch(/Every area keeps its own history/);
     expect(PAGE).toMatch(/href="\/features\/treatment-memory"/);
   });
 
