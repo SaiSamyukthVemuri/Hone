@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
-import { trackSignOut, useSignOutInFlight } from "./signout-flight";
+import { useSignOutInFlight } from "./signout-flight";
+import { SignOutFlightReporter } from "./SignOutFlightReporter";
 import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
 import { spinnerClasses } from "@/components/ui/spinner";
 
@@ -46,17 +47,6 @@ export function MobileMenu({
   // stays mounted, which is what keeps `useFormStatus` alive to report the
   // settlement; the dismissal the practitioner asked for is REMEMBERED and
   // applied the moment the flag clears, so the menu is never left stuck open.
-  // SIGNOUT-02c · the form dispatches through the tracked wrapper, so the
-  // ACTION owns the in-flight flag rather than any component. `trackSignOut`
-  // raises it, awaits the real call, and lowers it in a `finally` that runs
-  // even after this shell has unmounted.
-  //
-  // STILL A SERVER ACTION, and SIGNOUT-01 is untouched: this is a plain client
-  // function passed as the form's action, it takes the activation exactly as
-  // before, and `signOut()` is still what dispatches. There is no onClick here
-  // and the form is not unmounted by the press.
-  const runSignOut = () => trackSignOut(signOut);
-
   const deferredClose = useRef(false);
   const close = useCallback(() => {
     if (signingOut) {
@@ -232,6 +222,21 @@ export function MobileMenu({
     // compact shell owns every width below 1024px, where five primary items
     // plus search/bell/account could not fit on one line.
     <div ref={rootRef} className="relative lg:hidden">
+      {/* SIGNOUT-02c · THE FORM LIVES OUT HERE, not in the sheet.
+          `useFormStatus` reports only for the form it runs inside, so the
+          observer has to be in the form — and a form inside `{open && …}` is
+          taken down by the very dismissals this slice had to survive. Hoisted
+          to the persistent root it cannot be unmounted by closing the sheet or
+          crossing the breakpoint.
+
+          `action={signOut}` is UNCHANGED, deliberately. Wrapping it in a client
+          function to own the promise was tried twice and measured wrong: Next
+          stops routing the action's redirect and the soft navigation to /login
+          becomes a hard browser one, tearing down in-flight prefetches and
+          reddening five SIGNOUT-01 cases whose logouts were otherwise perfect. */}
+      <form action={signOut} id="signout-mobile" className="hidden">
+        <SignOutFlightReporter />
+      </form>
       <button
         ref={triggerRef}
         type="button"
@@ -405,12 +410,11 @@ export function MobileMenu({
                 row. The press step matters MORE here than on the desktop: a
                 touch device never fires :hover, so before this the tap painted
                 literally nothing for the ~530ms until the shell was replaced. */}
-            <form action={runSignOut}>
               <SignOutMenuItem
+                formId="signout-mobile"
                 minHeight="min-h-[44px]"
                 busy={signingOut}
               />
-            </form>
           </div>
         </nav>
       )}

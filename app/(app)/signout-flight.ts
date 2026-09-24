@@ -2,42 +2,42 @@
 
 import { useSyncExternalStore } from "react";
 
-// SIGNOUT-02c · ONE logout-in-flight authority, owned by the ACTION itself.
+// SIGNOUT-02c · ONE logout-in-flight authority, shared by both responsive shells.
 //
-// WHAT HAS TO BE TRUE. Exactly one thing must know that a logout started, that
-// it is still running, and that it really finished — and that thing has to
-// outlive everything the practitioner can dismantle while it runs: the open
-// panel, the submit leaf inside it, the responsive shell that happens to be
-// visible, and the `(app)` route group itself.
+// THE DEFECT THIS CLOSES. `app/(app)/layout.tsx` renders BOTH menus on every
+// page and hides one with CSS — `hidden … lg:flex` for the desktop account
+// menu, `… lg:hidden` for the phone sheet. They are siblings that are always
+// mounted, so when each owned its own `signingOut` useState the flag was
+// per-shell rather than per-practitioner: crossing the `lg` breakpoint
+// mid-logout revealed the other menu with its own flag still false, and a
+// fresh enabled Sign out with it.
 //
-// THE ONLY THING WITH THAT LIFETIME IS THE ACTION'S OWN PROMISE. So the promise
-// is the owner, and this module just holds the flag it drives. `trackSignOut`
-// wraps the call: the flag goes up before it starts and comes down in a
-// `finally`, which runs when the request genuinely settles — success, failure,
-// or the redirect throw — and keeps running after every React component
-// involved has unmounted, because a promise does not care about a component
-// tree.
+// WHO OWNS IT NOW. Not this module, and not any menu panel: the `<form>` lives
+// in the PERSISTENT part of each shell, outside the `{open && …}` panel, and a
+// `useFormStatus` reporter inside that form publishes here. The form cannot be
+// taken down by dismissing a panel, crossing a breakpoint, or holding a link,
+// so its status is a faithful account of the action for as long as the shell
+// exists.
 //
-// SETTLEMENT IS NEVER INFERRED. Not from a leaf remounting, not from an
-// orphaned claim, not from which shell is on screen, not from navigation, and
-// not from elapsed time. Three earlier revisions each inferred it a different
-// way and each one was wrong in its own direction:
+// WHY THE FORM WAS NOT WRAPPED IN A CLIENT FUNCTION, which was the obvious
+// route to "own the promise" and is MEASURED to be wrong here. Passing
+// `action={() => trackSignOut(signOut)}` makes the form's action a client
+// function, and Next then stops applying the action's redirect through the
+// router: the soft RSC navigation to /login becomes a HARD browser navigation,
+// which tears down every in-flight prefetch. Five SIGNOUT-01 cases reddened on
+// "ordinary logout logs no console error" while their logouts were otherwise
+// perfect — 1 POST, 0 sessions, 0 refresh tokens, cookie cleared, /login
+// reached, every single run. Both wrapper shapes were tried: an `async`
+// function that awaits, and one that returns the ORIGINAL promise untouched.
+// Identical result, locally and in CI, so the cause is the client function
+// itself and not how the promise is handled inside it.
 //
-//   * per-shell `useState` — crossing the `lg` breakpoint revealed the other
-//     menu with its own flag still false, and a second enabled Sign out;
-//   * a bare module boolean — leaving the route group unmounted the only
-//     reporter, stranding the flag with nothing able to clear it;
-//   * claim / orphan / adopt — a new leaf mounting ENDED the hold, which meant
-//     returning mid-logout reopened both shells while the first request was
-//     still running. That traded the stranded state for a live-request hole.
-//
-// The promise has none of those failure modes because it is not a proxy for
-// the action. It IS the action.
+// `<form action={signOut}>` therefore stays exactly as SIGNOUT-01 left it.
 //
 // DOCUMENT-SCOPED, deliberately. This is per-tab state, which is the correct
-// scope: a second document is a different browsing context, and is handled by
+// scope: a second document is a different browsing context and is handled by
 // the separate rule that holds every menu destination while a logout is in
-// flight so no link can open one.
+// flight, so no link can open one.
 
 let inFlight = 0;
 const listeners = new Set<() => void>();
@@ -47,37 +47,15 @@ function emit(): void {
 }
 
 /**
- * Run a logout and own its lifetime.
+ * Publish a transition seen by a reporter inside a persistent sign-out form.
  *
- * COUNTED, not a boolean, so the flag can never be lowered by a second
- * overlapping call finishing first. In practice the duplicate guards make a
- * second call unreachable; the counter means this module does not depend on
- * them being perfect.
- *
- * NOTHING IS CAUGHT HERE. `signOut()` ends in `redirect()`, which throws the
- * framework's redirect signal; swallowing it would strand the practitioner on
- * a page whose session no longer exists. `finally` lowers the flag and the
- * throw continues to React untouched.
+ * COUNTED rather than boolean: both shells host a form and a reporter, so two
+ * can publish, and a second one settling must not lower a hold the first is
+ * still holding.
  */
-export function trackSignOut(run: () => Promise<void>): Promise<void> {
-  inFlight += 1;
-  emit();
-  const running = run();
-  // OBSERVE the promise; do not REPLACE it. An `async` wrapper here returns a
-  // NEW promise built by awaiting the action, and React's action runtime then
-  // handled the redirect differently — measured: the soft RSC navigation to
-  // /login became a HARD browser navigation, which tore down every in-flight
-  // prefetch and surfaced as "Failed to fetch RSC payload" across five
-  // SIGNOUT-01 cases whose logouts were otherwise perfect.
-  //
-  // Attaching a settlement handler and returning the ORIGINAL promise leaves
-  // what React sees byte-for-byte unchanged, including the redirect throw.
-  running.then(settled, settled);
-  return running;
-}
-
-function settled(): void {
-  inFlight -= 1;
+export function setSignOutInFlight(next: boolean): void {
+  inFlight += next ? 1 : -1;
+  if (inFlight < 0) inFlight = 0;
   emit();
 }
 

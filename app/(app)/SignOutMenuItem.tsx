@@ -152,9 +152,12 @@ const BUSY =
  * SIGNOUT-01's fix pushed.
  */
 export function SignOutMenuItem({
+  formId,
   minHeight,
   busy = false,
 }: {
+  /** The hoisted sign-out form this control submits. */
+  formId: string;
   minHeight: string;
   /** The shared in-flight truth, owned by the action and passed down. */
   busy?: boolean;
@@ -174,6 +177,10 @@ export function SignOutMenuItem({
   return (
     <button
       type="submit"
+      // The form is not an ancestor any more — it lives on the shell's
+      // persistent root so its status observer cannot be unmounted with the
+      // panel. `form` is how a submit control reaches it.
+      form={formId}
       // THE DUPLICATE-ACTIVATION GUARD, and not an advisory one: a second
       // press cannot reach a disabled control. Same ruling as PendingButton.
       disabled={inFlight}

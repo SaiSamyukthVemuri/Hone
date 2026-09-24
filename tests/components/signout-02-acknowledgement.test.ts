@@ -91,12 +91,17 @@ describe("SIGNOUT-02 · SIGNOUT-01 is not weakened", () => {
     expect(leaf).not.toMatch(/onClick/);
   });
 
-  it("the form still dispatches the server action, through the tracked wrapper", () => {
+  it("the form is hoisted out of the panel, and its action is untouched", () => {
     for (const f of [ACCOUNT, MENU]) {
       const code = codeOnly(read(f));
-      expect(code, f).toContain("<form action={runSignOut}>");
-      expect(code, f).toContain("const runSignOut = () => trackSignOut(signOut);");
-      expect(code, f).toContain('import { signOut } from "./dashboard/actions";');
+      // Unchanged action: wrapping it in a client function was measured to
+      // turn the soft RSC redirect to /login into a HARD browser navigation,
+      // tearing down in-flight prefetches and reddening five SIGNOUT-01 cases
+      // whose logouts were otherwise perfect.
+      expect(code, f).toMatch(/<form action=\{signOut\} id="signout-/);
+      expect(code, f).toContain("<SignOutFlightReporter />");
+      // And the control reaches it from inside the panel.
+      expect(code, f).toMatch(/formId="signout-/);
     }
   });
 
@@ -158,34 +163,31 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     }
   });
 
-  it("the authority's lifetime is the REQUEST's, never a component's", () => {
+  it("the observer sits where it cannot be unmounted by a dismissal", () => {
+    // `useFormStatus` reports only for the form it runs inside. Every earlier
+    // revision put the observer in the panel's submit control, which is
+    // exactly why the flag kept being lost or stranded — the panel is the
+    // thing this slice had to survive. It now lives in a form on the shell's
+    // persistent root.
+    const reporter = codeOnly(read("app/(app)/SignOutFlightReporter.tsx"));
+    expect(reporter).toContain("useFormStatus");
+    expect(reporter).toContain("setSignOutInFlight(pending);");
+    // Only transitions, because the store COUNTS: a spurious mount-time
+    // `false` would decrement a hold this form never placed.
+    expect(reporter).toContain("if (pending === published.current) return;");
+    // It renders nothing — an observer, not a control.
+    expect(reporter).toContain("return null;");
+    expect(reporter).not.toContain("<button");
+
     const store = codeOnly(read("app/(app)/signout-flight.ts"));
-    // The flag is raised and lowered around the real call, and lowered in a
-    // `finally` so it also clears on failure and on the redirect throw.
-    expect(store).toContain("export function trackSignOut");
-    // THE PROMISE IS OBSERVED, NOT REPLACED, and that is load-bearing rather
-    // than stylistic. An `async` wrapper returns a NEW promise built by
-    // awaiting the action, and React's action runtime then handled the
-    // redirect differently — measured: the soft RSC navigation to /login
-    // became a HARD browser navigation, which tore down every in-flight
-    // prefetch and reddened five SIGNOUT-01 cases whose logouts were otherwise
-    // perfect. Returning the ORIGINAL promise leaves what React sees
-    // unchanged, redirect throw included.
-    expect(store).toContain("const running = run();");
-    expect(store).toContain("running.then(settled, settled);");
-    expect(store).toContain("return running;");
-    expect(store).not.toContain("await run()");
-    // Settlement must never be inferred. None of the inference levers that
-    // broke earlier revisions may exist at all.
+    expect(store).toContain("useSyncExternalStore");
+    expect(store).toContain("function getServerSnapshot(): boolean {");
+    // Counted, and floored, so a stray release cannot swallow the next hold.
+    expect(store).toContain("if (inFlight < 0) inFlight = 0;");
+    // No inference levers may exist at all.
     expect(store).not.toContain("orphan");
     expect(store).not.toContain("adopt");
     expect(store).not.toContain("setTimeout");
-    // Nothing may catch the redirect: swallowing it strands the practitioner
-    // on a page whose session is gone.
-    expect(store).not.toContain("catch");
-    // useSyncExternalStore is the API React provides for a store like this.
-    expect(store).toContain("useSyncExternalStore");
-    expect(store).toContain("function getServerSnapshot(): boolean {");
     // No provider, no layout surgery: the shell layout stays a server component.
     expect(read("app/(app)/layout.tsx")).not.toContain('"use client"');
   });

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
-import { trackSignOut, useSignOutInFlight } from "./signout-flight";
+import { useSignOutInFlight } from "./signout-flight";
+import { SignOutFlightReporter } from "./SignOutFlightReporter";
 
 // PR #231: desktop account dropdown (LinkedIn-style "Me" menu). The
 // always-visible Sign out button and the Settings/Admin nav tabs
@@ -43,17 +44,6 @@ export function AccountMenu({
   // stays mounted, which is what keeps `useFormStatus` alive to report the
   // settlement; the dismissal the practitioner asked for is REMEMBERED and
   // applied the moment the flag clears, so the menu is never left stuck open.
-  // SIGNOUT-02c · the form dispatches through the tracked wrapper, so the
-  // ACTION owns the in-flight flag rather than any component. `trackSignOut`
-  // raises it, awaits the real call, and lowers it in a `finally` that runs
-  // even after this shell has unmounted.
-  //
-  // STILL A SERVER ACTION, and SIGNOUT-01 is untouched: this is a plain client
-  // function passed as the form's action, it takes the activation exactly as
-  // before, and `signOut()` is still what dispatches. There is no onClick here
-  // and the form is not unmounted by the press.
-  const runSignOut = () => trackSignOut(signOut);
-
   const deferredClose = useRef(false);
   const close = useCallback(() => {
     if (signingOut) {
@@ -116,6 +106,25 @@ export function AccountMenu({
 
   return (
     <div ref={rootRef} className="relative">
+      {/* SIGNOUT-02c · THE FORM LIVES OUT HERE, not in the panel.
+          `useFormStatus` reports only for the form it runs inside, so the
+          observer has to be in the form — and a form inside `{open && …}` is
+          taken down by the very dismissals this slice had to survive. Hoisted
+          to the persistent root it cannot be unmounted by closing the panel or
+          crossing the breakpoint, and its status is a faithful account of the
+          action for as long as this shell exists.
+
+          `action={signOut}` is UNCHANGED, deliberately. Wrapping it in a
+          client function to own the promise was tried twice and measured wrong:
+          Next stops routing the action's redirect and the soft navigation to
+          /login becomes a hard browser one, tearing down in-flight prefetches
+          and reddening five SIGNOUT-01 cases whose logouts were otherwise
+          perfect. SIGNOUT-01's own rule stands untouched here: no onClick, and
+          nothing unmounts this form during the press — it is no longer even
+          adjacent to the thing that opens and closes. */}
+      <form action={signOut} id="signout-account" className="hidden">
+        <SignOutFlightReporter />
+      </form>
       <button
         type="button"
         aria-label="Open account menu"
@@ -211,12 +220,11 @@ export function AccountMenu({
                 action settles. The hook only reports for a form it runs
                 INSIDE, which is why this is a leaf and not markup here. No
                 onClick, above or below — see the note above. */}
-            <form action={runSignOut}>
               <SignOutMenuItem
+                formId="signout-account"
                 minHeight="min-h-[40px]"
                 busy={signingOut}
               />
-            </form>
           </div>
         </nav>
       )}
