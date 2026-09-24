@@ -94,7 +94,9 @@ describe("required homepage sections", () => {
   });
 
   it("has the treatment-memory differentiator section linking to the feature page", () => {
-    expect(PAGE).toMatch(/The part other tools forget\./);
+    // v2.2: the differentiator section heading is the deck's, not the retired
+    // claim about what rival tools fail to retain.
+    expect(PAGE).toMatch(/Every area keeps its own history/);
     expect(PAGE).toMatch(/href="\/features\/treatment-memory"/);
   });
 

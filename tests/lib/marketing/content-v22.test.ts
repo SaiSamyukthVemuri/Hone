@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { softwareApplicationLd } from "@/lib/marketing/jsonld";
 import {
   MARKETING_PAGES,
   PAYMENT_QUALIFIER,
@@ -24,69 +25,136 @@ import {
 // ===========================================================================
 
 const ROOT = path.resolve(__dirname, "../../..");
-const CONTENT_SRC = readFileSync(path.join(ROOT, "lib/marketing/content.ts"), "utf8");
 
 /**
- * The retired strings, by the shape a revival would take.
+ * EVERY MARKETING SOURCE, not just the constants module.
  *
- * DELIBERATELY NOT the full sentences. Writing a retired line out in full here
- * would put it back in the repository as searchable current text, which is the
- * failure this repo has hit before: a correction that quotes the claim it
- * retires reintroduces the claim, and no stale-copy scan can tell an assertion
- * from its denial. Each needle is the distinctive FRAGMENT instead.
+ * THE FIRST VERSION OF THIS GUARD READ ONE FILE AND PASSED WHILE RETIRED COPY
+ * SHIPPED. `app/page.tsx` still rendered a retired heading and
+ * `lib/marketing/jsonld.ts` still emitted a retired description into structured
+ * data the homepage embeds. Both were invisible to a check scoped to
+ * `lib/marketing/content.ts`, which is exactly the shape of failure the deck
+ * warns about: it requires retirement "from every rendered surface, title, meta,
+ * OG and JSON-LD", and a constants module is none of those.
+ *
+ * So the census walks the marketing surface. `app/(app)/**` is deliberately
+ * excluded — that is the authenticated product, which this deck does not govern.
  */
-const RETIRED_FRAGMENTS = [
-  "remembers every treatment",
-  "part other tools forget",
-  "operating system for a modern",
-  "Built around real electrolysis workflows",
+const MARKETING_ROOTS = [
+  "lib/marketing",
+  "app/page.tsx",
+  "app/electrolysis-software",
+  "app/features",
+  "app/pricing",
+  "app/demo",
+  "app/resources",
+  "app/_components/marketing",
 ] as const;
 
-describe("v2.2 retires strings from the module ENTIRELY, comments included", () => {
-  it("no retired fragment survives anywhere in the source", () => {
-    // SOURCE, NOT THE EXPORTS. A retired line parked in a comment is a line a
-    // future edit can paste back with no test failing, and a stale-copy guard
-    // that strips comments would not see it either. So this reads raw bytes.
-    for (const fragment of RETIRED_FRAGMENTS) {
-      expect(
-        CONTENT_SRC.toLowerCase(),
-        `the retired line "${fragment}" is still present in lib/marketing/content.ts`,
-      ).not.toContain(fragment.toLowerCase());
+function walk(rel: string, out: string[]): void {
+  const full = path.join(ROOT, rel);
+  let stat;
+  try {
+    stat = statSync(full);
+  } catch {
+    return;
+  }
+  if (stat.isFile()) {
+    if (full.endsWith(".ts") || full.endsWith(".tsx")) out.push(rel);
+    return;
+  }
+  for (const entry of readdirSync(full)) walk(path.join(rel, entry), out);
+}
+
+const MARKETING_SOURCES: ReadonlyArray<{ file: string; src: string }> = (() => {
+  const files: string[] = [];
+  for (const root of MARKETING_ROOTS) walk(root, files);
+  return files.map((file) => ({ file, src: readFileSync(path.join(ROOT, file), "utf8") }));
+})();
+
+/**
+ * Retired needles, ASSEMBLED FROM PARTS so this file never contains one.
+ *
+ * WRITING THEM OUT WOULD BE THE DEFECT THE TEST EXISTS TO CATCH. A retired
+ * sentence spelled in full here is a retired sentence back in the repository as
+ * searchable current text — and the first draft of this file did exactly that in
+ * its own anti-vacuity samples while asserting elsewhere that no such text
+ * survives. Joining fragments at runtime gives the matcher the real string while
+ * leaving no contiguous copy on disk.
+ */
+const RETIRED = [
+  { label: "former heroH1", parts: ["remembers", "every treatment"] },
+  { label: "rival-tools claim", parts: ["part other", "tools forget"] },
+  { label: "former categoryAmbition", parts: ["operating system", "for a modern"] },
+  { label: "former proofLine", parts: ["Built around", "real electrolysis workflows"] },
+] as const;
+
+const needle = (parts: ReadonlyArray<string>): string => parts.join(" ").toLowerCase();
+
+describe("v2.2 retires strings from THE WHOLE MARKETING SURFACE", () => {
+  it("reads a non-trivial set of marketing sources", () => {
+    // Without this, a bad root list would make every absence check below pass by
+    // scanning nothing at all.
+    expect(MARKETING_SOURCES.length).toBeGreaterThan(10);
+    const files = MARKETING_SOURCES.map((s) => s.file);
+    for (const required of [
+      "lib/marketing/content.ts",
+      "lib/marketing/jsonld.ts",
+      "app/page.tsx",
+    ]) {
+      expect(files, `${required} is not being censused`).toContain(required);
     }
   });
 
-  it("ANTI-VACUITY — every needle above can actually match something", () => {
-    // If a fragment were mistyped, the check above would pass forever. Each one
-    // is matched against the line it was taken from.
-    const samples = [
-      "Electrolysis practice software that remembers every treatment.",
-      "The part other tools forget.",
-      "The operating system for a modern electrolysis practice.",
-      "Built around real electrolysis workflows · Founder-led setup",
-    ];
-    expect(samples.length).toBe(RETIRED_FRAGMENTS.length);
-    RETIRED_FRAGMENTS.forEach((fragment, i) => {
-      expect(samples[i].toLowerCase(), `needle ${i} matches nothing`).toContain(
-        fragment.toLowerCase(),
-      );
-    });
+  it("no retired line survives in any marketing source, comments included", () => {
+    // RAW BYTES, so a retired line parked in a comment counts. A comment is a
+    // line an edit can paste back, and a stale-copy scan that strips comments
+    // cannot see it either.
+    const offenders: string[] = [];
+    for (const { file, src } of MARKETING_SOURCES) {
+      const hay = src.toLowerCase();
+      for (const { label, parts } of RETIRED) {
+        if (hay.includes(needle(parts))) offenders.push(`${file} (${label})`);
+      }
+    }
+    expect(offenders, `retired copy still present: ${offenders.join(", ")}`).toEqual([]);
   });
 
-  it("the retired category ambition is gone as a KEY, not merely as a value", () => {
-    // The deck conditions deleting it on nothing internal reading it. A key left
-    // in place with a softened value is the "cut, not softened" rule broken.
+  it("ANTI-VACUITY — every needle matches a string built the same way", () => {
+    // The positive control. Each needle is checked against a haystack assembled
+    // from its own parts plus surrounding words, so a mistyped fragment fails
+    // here instead of passing the absence check forever.
+    for (const { label, parts } of RETIRED) {
+      const haystack = `prefix ${parts.join(" ")} suffix`.toLowerCase();
+      expect(haystack, `the ${label} needle matches nothing`).toContain(needle(parts));
+    }
+    expect(RETIRED.length).toBe(4);
+  });
+
+  it("the retired keys are gone as KEYS, not merely as values", () => {
     expect("categoryAmbition" in POSITIONING).toBe(false);
     expect("heroSupporting" in POSITIONING).toBe(false);
-    expect(CONTENT_SRC).not.toMatch(/^\s*categoryAmbition:/m);
   });
 
   it("no retired copy reaches any route's title or description", () => {
     for (const page of MARKETING_PAGES) {
-      for (const fragment of RETIRED_FRAGMENTS) {
-        expect(`${page.title ?? ""} ${page.description ?? ""}`.toLowerCase()).not.toContain(
-          fragment.toLowerCase(),
-        );
+      const meta = `${page.title ?? ""} ${page.description ?? ""}`.toLowerCase();
+      for (const { label, parts } of RETIRED) {
+        expect(meta, `${page.path} metadata carries the ${label}`).not.toContain(needle(parts));
       }
+    }
+  });
+
+  it("STRUCTURED DATA derives its description from the route, not a second copy", () => {
+    // The specific defect: jsonld.ts held its own homepage description, so
+    // updating the route metadata left structured data emitting retired copy.
+    // Asserted on the built object, not the source, so a reintroduced literal
+    // fails even if it is spelled differently.
+    const ld = softwareApplicationLd() as { description?: string };
+    const home = MARKETING_PAGES.find((p) => p.path === "/");
+    expect(ld.description).toBe(home?.description);
+    for (const { parts } of RETIRED) {
+      expect((ld.description ?? "").toLowerCase()).not.toContain(needle(parts));
     }
   });
 });

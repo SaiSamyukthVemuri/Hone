@@ -163,7 +163,7 @@ export const WALKTHROUGH = {
   primaryLabelShort: "Request a walkthrough",
   // THE DURATION IS GONE, AND THAT IS A DELIBERATE READING OF v2.2.
   //
-  // This read "Request a 15-minute walkthrough" and rendered on ten surfaces
+  // This named a fifteen-minute meeting and rendered on ten surfaces
   // across eight pages. v2.2 does not state a duration ANYWHERE — the string
   // "15-minute" appears zero times in the deck — while §1 gives `ctaPrimary` as
   // "Request a walkthrough" and both the hero (§3) and the walkthrough CTA (§9)

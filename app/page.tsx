@@ -171,7 +171,9 @@ export default function HomePage() {
           <Container className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
             <Reveal>
               <Eyebrow>Treatment memory</Eyebrow>
-              <Title className="mt-4">The part other tools forget.</Title>
+              {/* Deck §3 section 3. The retired heading was a claim about
+                  rival tools; this one states the mechanism the section shows. */}
+              <Title className="mt-4">Every area keeps its own history</Title>
               <Lede className="mt-5">
                 Before a returning client sits down, Hone assembles a briefing from what you
                 already charted, the last treatment&apos;s areas and settings, the probe lot, how
