@@ -216,13 +216,27 @@ re-cut: the browser receives the identical binaries it received before.
 
 ## What is vendored
 
-Google serves **one variable `.woff2` per unicode-range subset**, so a family is
-several files. All 13 subsets the previous build downloaded are vendored, so
-Cyrillic, Greek and Vietnamese client names keep rendering in Inter rather than
-dropping to a fallback face.
+**TWO SURFACES, TWO FAMILIES — read this table with that split in mind.**
 
-The `weights` column is the union declared across loaders. The root layout
-declares Inter **400/500 only**; the marketing surface declares 400/500/600/700.
+| Surface | Family | Weights | Loader |
+|---|---|---|---|
+| Authenticated app (root layout) | **Inter** | 400, 500 | `app/_fonts/app-fonts.ts` |
+| Authenticated app (serif accents) | **Fraunces** | 400, 700 + italics | `app/_fonts/app-fonts.ts` |
+| Public marketing surface | **Instrument Sans** | 400, 500, 600, 700 | `app/_fonts/marketing-fonts.ts` |
+
+Google serves **one variable `.woff2` per unicode-range subset**, so Inter and
+Fraunces are several files each; all 13 of those subsets are vendored, so
+Cyrillic, Greek and Vietnamese **client names in the authenticated app** keep
+rendering in Inter rather than dropping to a fallback face. Instrument Sans is
+not subsetted — see below.
+
+**The `Weights` column is per family, and Inter's is now 400/500 — no longer a
+union across two loaders.** It read 400/500/600/700 while the marketing surface
+also loaded Inter at heading weights. Since MKT-02A the marketing surface loads
+Instrument Sans instead, so **nothing declares Inter 600 or 700 anywhere**: the
+root layout never did, and an authenticated element asking for bold still gets a
+browser-synthesised one from the 500 face. Reading 600/700 beside the Inter rows
+would now imply a face this application does not ship.
 
 | File | Family | Style | Subset | Weights | Bytes | Preloaded | sha256 |
 |---|---|---|---|---|---|---|---|
@@ -232,13 +246,13 @@ declares Inter **400/500 only**; the marketing surface declares 400/500/600/700.
 | `fraunces-latin-ext.woff2` | Fraunces | normal | latin-ext | 400, 700 | 33,640 | no | `f1451edd6434085c4f9f3a8b4a674182dd7d6acccf53bfced19fd167f0705a06` |
 | `fraunces-latin.woff2` | Fraunces | normal | latin | 400, 700 | 36,560 | yes | `88e17be075f1be50ab67b057b99e3701b828f44ed28f9452df6c02645bb0cba9` |
 | `fraunces-vietnamese.woff2` | Fraunces | normal | vietnamese | 400, 700 | 11,536 | no | `250cc2966c658fb6d336731de9d82a8129025e9839c20c253bbc477852f6cf4f` |
-| `inter-cyrillic-ext.woff2` | Inter | normal | cyrillic-ext | 400, 500, 600, 700 | 25,844 | no | `fccca918fea40089dacadc7045861314d1a6bc91f1f323cc1eeb22ebcdb321b5` |
-| `inter-cyrillic.woff2` | Inter | normal | cyrillic | 400, 500, 600, 700 | 18,744 | no | `aebf2ab4a4ce6810d73c1ac7be7cafb4e5ec4cee2d6db5fb3e09691747ec4bd6` |
-| `inter-greek-ext.woff2` | Inter | normal | greek-ext | 400, 500, 600, 700 | 11,272 | no | `a2e2c783ca6f9c20486e81e72a279203e86730bbf8f01ff6a5ee9dbd09e1c271` |
-| `inter-greek.woff2` | Inter | normal | greek | 400, 500, 600, 700 | 19,044 | no | `46dd4cdca58c26ae87cc6927657bf83b2e8abfc39ffd0ab176e301a8d28d22bf` |
-| `inter-latin-ext.woff2` | Inter | normal | latin-ext | 400, 500, 600, 700 | 85,272 | no | `a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2` |
-| `inter-latin.woff2` | Inter | normal | latin | 400, 500, 600, 700 | 48,432 | yes | `c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4` |
-| `inter-vietnamese.woff2` | Inter | normal | vietnamese | 400, 500, 600, 700 | 10,280 | no | `8db00ff46c67b22cda8bed865acf7077651cac8d2841d5b40980556b48961931` |
+| `inter-cyrillic-ext.woff2` | Inter | normal | cyrillic-ext | 400, 500 | 25,844 | no | `fccca918fea40089dacadc7045861314d1a6bc91f1f323cc1eeb22ebcdb321b5` |
+| `inter-cyrillic.woff2` | Inter | normal | cyrillic | 400, 500 | 18,744 | no | `aebf2ab4a4ce6810d73c1ac7be7cafb4e5ec4cee2d6db5fb3e09691747ec4bd6` |
+| `inter-greek-ext.woff2` | Inter | normal | greek-ext | 400, 500 | 11,272 | no | `a2e2c783ca6f9c20486e81e72a279203e86730bbf8f01ff6a5ee9dbd09e1c271` |
+| `inter-greek.woff2` | Inter | normal | greek | 400, 500 | 19,044 | no | `46dd4cdca58c26ae87cc6927657bf83b2e8abfc39ffd0ab176e301a8d28d22bf` |
+| `inter-latin-ext.woff2` | Inter | normal | latin-ext | 400, 500 | 85,272 | no | `a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2` |
+| `inter-latin.woff2` | Inter | normal | latin | 400, 500 | 48,432 | yes | `c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4` |
+| `inter-vietnamese.woff2` | Inter | normal | vietnamese | 400, 500 | 10,280 | no | `8db00ff46c67b22cda8bed865acf7077651cac8d2841d5b40980556b48961931` |
 | `instrument-sans-400.woff2` | Instrument Sans | normal | *(none — full charset)* | 400 | 34,628 | yes | `f28af62faa9eec1e5482cf6e2a3e06bc865fa2fa6937bd56c14d2be23c9b4c46` |
 | `instrument-sans-500.woff2` | Instrument Sans | normal | *(none — full charset)* | 500 | 35,580 | no | `65d25fc111c40fd6b481d9db860af365730752228dfd8a246e79648d8a01f02a` |
 | `instrument-sans-600.woff2` | Instrument Sans | normal | *(none — full charset)* | 600 | 35,812 | yes | `04235f235483213906d69cafb7a87ee197adaffacb081c8a7f809d00f9b353cd` |
@@ -296,6 +310,13 @@ drove the shape, and each one is a way this could have silently drifted:
    the Google-served CSS did. Only the latin call of each family carries the CSS
    variable, the preload and the metric-adjusted fallback.
 
+   **The marketing module now uses the same technique for a different reason.**
+   Instrument Sans has no unicode-range subsets to split, but it does have four
+   separate static weight files, and `preload` is per-call — so it is four calls
+   that each declare `font-family: Instrument Sans` and compose into one family,
+   with only the 400 carrying the CSS variable and the metric-adjusted fallback,
+   and 400 + 600 preloaded.
+
 2. **Weights are declared one per `src` entry, never as a range.** Writing
    `weight: "400 700"` against a variable font looks like a tidy simplification
    and is not equivalent. The root layout loads Inter 400/500 only, so an
@@ -304,7 +325,8 @@ drove the shape, and each one is a way this could have silently drifted:
    visual change smuggled in under a build fix.
 
 3. **The marketing module is never imported by the root layout.** Merging them
-   would put Inter 600/700 into every authenticated route's own CSS, with the
+   would put the marketing heading weights into every authenticated route's own
+   CSS, with the
    same consequence as (2) even on a direct load.
 
    **Separation is not isolation** — see the pre-existing defect recorded below.
