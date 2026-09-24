@@ -131,7 +131,13 @@ describe("the FAQ answers what it asks", () => {
   // RAISE a topic it has stopped answering. It is narrow on purpose; a general
   // "every answer addresses its question" rule is not decidable here.
   const FAQ_BLOCK = (() => {
-    const raw = read("app/pricing/page.tsx");
+    // COMMENTS STRIPPED FIRST. Written without this, the guard read raw source
+    // and the explanatory comment above the question — which necessarily says
+    // the word "contract" — satisfied the very check it was documenting. A
+    // mutation control caught it: restoring the over-broad question still
+    // passed. This file's own header says a rule a comment can satisfy is not
+    // a rule, and the first draft was exactly that.
+    const raw = strip(read("app/pricing/page.tsx"));
     const start = raw.indexOf("const FAQ:");
     expect(start, "the FAQ array exists").toBeGreaterThan(-1);
     return raw.slice(start, raw.indexOf("\n];", start));
