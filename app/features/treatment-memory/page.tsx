@@ -254,9 +254,10 @@ export default function TreatmentMemoryPage() {
               <Title className="mt-4">The briefing you would have written yourself</Title>
               <Lede className="mt-6">
                 Open a returning client&rsquo;s appointment and the briefing is already
-                assembled: when you last treated them, which areas, how each one
-                responded, and the caution you flagged for this visit. It is built
-                from your own charting, so there is nothing extra to maintain.
+                assembled: when you last treated them, which areas the setup covered,
+                how the skin responded, the note you left for this visit, and anything
+                pinned to the client&rsquo;s file. It is built from your own charting,
+                so there is nothing extra to maintain.
               </Lede>
             </div>
             <ScreenFigure
@@ -285,13 +286,13 @@ export default function TreatmentMemoryPage() {
               {[
                 {
                   n: "01",
-                  t: "You flag it once",
-                  b: "A caution, a tolerance you want watched, or a plan for the next visit, written while the session is still in front of you.",
+                  t: "You write it once",
+                  b: "The plan for next time, written at the end of the session while it is still in front of you. It can name any area you want watched, and most do.",
                 },
                 {
                   n: "02",
-                  t: "The caution rides with the setup",
-                  b: "A caution is stored on the block you flagged it in, which already names the areas that block covered, so it comes back attached to them. The plan for next time is one note for the session, and it returns with the session.",
+                  t: "It stays where you wrote it",
+                  b: "One note on the session, not filed and not tagged. The tolerance and response you recorded stay on the setup block they describe, and a standing instruction belongs on the client\u2019s pinned notes instead.",
                 },
                 {
                   n: "03",

@@ -26,6 +26,8 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 const PAGE = "app/features/treatment-memory/page.tsx";
 const MIGRATION = "supabase/migrations/0128_session_block_areas.sql";
 const INTELLIGENCE = "lib/sessions/treatment-intelligence.ts";
+const BLOCK_FORM =
+  "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx";
 
 // LINE comments are stripped BEFORE block comments. This page's comments
 // EXPLAIN the retired overclaim by quoting it, so a stripper that ran in the
@@ -174,5 +176,61 @@ describe('"Every area keeps its own history" is earned, not asserted', () => {
       src,
       "the block-contributes-to-every-area contract is no longer documented where it is implemented",
     ).toContain("contributes to EVERY area");
+  });
+});
+
+describe("the page advertises no retired input", () => {
+  // A COLUMN THAT STILL EXISTS IS NOT A FEATURE A PRACTITIONER CAN USE, and
+  // that gap is invisible to every other check here. `session_blocks` really
+  // does carry `caution_for_next_session` and `caution_note`, and the charting
+  // form really does round-trip them — but PR #199 removed the INPUTS, so a
+  // practitioner charting today cannot create one. Copy written from the schema
+  // alone therefore describes read-only legacy behaviour as if it were a
+  // workflow, which is exactly what this page did.
+
+  it("premise: the block caution inputs really are gone", () => {
+    const form = read(BLOCK_FORM);
+    // The removal is documented where it happened.
+    expect(form, "block-setup-form no longer documents the removed caution inputs")
+      .toContain("caution inputs are gone");
+    // And it is REAL: no control is bound to either caution field. Checked as
+    // a control binding rather than by absence of the identifier, because the
+    // draft legitimately still carries both to round-trip legacy values.
+    const bound = codeOnly(form)
+      .split("\n")
+      .filter(
+        (l) =>
+          /caution(Note|ForNextSession)/.test(l) &&
+          /(onChange|onCheckedChange|<input|<textarea|checked=\{|value=\{)/.test(l),
+      );
+    expect(
+      bound,
+      "a caution input exists again — the page may describe flagging one",
+    ).toEqual([]);
+  });
+
+  it("so the page never claims a caution can be flagged on a block", () => {
+    const c = copy().toLowerCase();
+    expect(c.length, "no copy extracted — vacuous").toBeGreaterThan(2000);
+    const BANNED = [
+      "caution you flagged",
+      "a caution you flag",
+      "flag a caution",
+      "caution is stored on the block",
+      "caution rides with the setup",
+      "caution rides with the area",
+      "the caution you flagged for this visit",
+    ];
+    expect(
+      BANNED.filter((b) => c.includes(b)),
+      "copy advertises the retired block-caution input",
+    ).toEqual([]);
+  });
+
+  it("and describes the note that DOES exist instead", () => {
+    // Positive half: passing by saying nothing about carry-forward would be a
+    // worse page, not a correct one.
+    expect(copy()).toMatch(/The plan for next time, written at the end of the session/);
+    expect(copy()).toMatch(/One note on the session, not filed and not tagged/);
   });
 });
