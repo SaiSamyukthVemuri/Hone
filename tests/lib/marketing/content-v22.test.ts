@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { softwareApplicationLd } from "@/lib/marketing/jsonld";
 import {
@@ -49,6 +50,32 @@ const MARKETING_ROOTS = [
   "app/demo",
   "app/resources",
   "app/_components/marketing",
+  // ROOT AND OG SURFACES, added because the first version of this list omitted
+  // them and the omission was invisible. `app/layout.tsx` supplies the DEFAULT
+  // metadata every marketing route inherits, and `app/opengraph-image.tsx`
+  // GENERATES the site-wide OG image. Both are rendered output the deck governs
+  // — it requires retirement from "every rendered surface, title, meta, OG and
+  // JSON-LD" — so retired wording restored in either would have shipped with
+  // every absence check still green.
+  "app/layout.tsx",
+  "app/opengraph-image.tsx",
+] as const;
+
+/**
+ * Entry points the census MUST reach, pinned by name.
+ *
+ * WITHOUT THIS PIN THE LIST CAN SILENTLY SHRINK. A refactor that renames or
+ * relocates one of these leaves `walk()` finding nothing for that root and every
+ * absence check still passing — the same failure shape as omitting it in the
+ * first place, which is how these two came to be missing. Naming them makes the
+ * loss an error rather than a smaller census.
+ */
+const REQUIRED_IN_CENSUS = [
+  "lib/marketing/content.ts",
+  "lib/marketing/jsonld.ts",
+  "app/page.tsx",
+  "app/layout.tsx",
+  "app/opengraph-image.tsx",
 ] as const;
 
 function walk(rel: string, out: string[]): void {
@@ -83,10 +110,26 @@ const MARKETING_SOURCES: ReadonlyArray<{ file: string; src: string }> = (() => {
  * leaving no contiguous copy on disk.
  */
 const RETIRED = [
-  { label: "former heroH1", parts: ["remembers", "every treatment"] },
-  { label: "rival-tools claim", parts: ["part other", "tools forget"] },
-  { label: "former categoryAmbition", parts: ["operating system", "for a modern"] },
-  { label: "former proofLine", parts: ["Built around", "real electrolysis workflows"] },
+  {
+    label: "former heroH1",
+    parts: ["remembers", "every treatment"],
+    sha256: "74c277654360668f59b27cbb51fcfcaa34c2258b9f7dc3bc59f8ccc50682b890",
+  },
+  {
+    label: "rival-tools claim",
+    parts: ["part other", "tools forget"],
+    sha256: "40c22797cfed9531f158bc9d75b4f35fb9a766e21e4ea4f21f2250d594c188da",
+  },
+  {
+    label: "former categoryAmbition",
+    parts: ["operating system", "for a modern"],
+    sha256: "4062ee43720afbb614363f1db9a25540fb4f411e1725fe80fb3bec2355fe65ab",
+  },
+  {
+    label: "former proofLine",
+    parts: ["Built around", "real electrolysis workflows"],
+    sha256: "f138dca97bc8f0be6c2544946bf55fe3ef399cace8c85bdc2a834ff407b01422",
+  },
 ] as const;
 
 const needle = (parts: ReadonlyArray<string>): string => parts.join(" ").toLowerCase();
@@ -97,11 +140,7 @@ describe("v2.2 retires strings from THE WHOLE MARKETING SURFACE", () => {
     // scanning nothing at all.
     expect(MARKETING_SOURCES.length).toBeGreaterThan(10);
     const files = MARKETING_SOURCES.map((s) => s.file);
-    for (const required of [
-      "lib/marketing/content.ts",
-      "lib/marketing/jsonld.ts",
-      "app/page.tsx",
-    ]) {
+    for (const required of REQUIRED_IN_CENSUS) {
       expect(files, `${required} is not being censused`).toContain(required);
     }
   });
@@ -120,14 +159,34 @@ describe("v2.2 retires strings from THE WHOLE MARKETING SURFACE", () => {
     expect(offenders, `retired copy still present: ${offenders.join(", ")}`).toEqual([]);
   });
 
-  it("ANTI-VACUITY — every needle matches a string built the same way", () => {
-    // The positive control. Each needle is checked against a haystack assembled
-    // from its own parts plus surrounding words, so a mistyped fragment fails
-    // here instead of passing the absence check forever.
-    for (const { label, parts } of RETIRED) {
-      const haystack = `prefix ${parts.join(" ")} suffix`.toLowerCase();
-      expect(haystack, `the ${label} needle matches nothing`).toContain(needle(parts));
+  it("ANTI-VACUITY — each needle matches an INDEPENDENTLY pinned digest", () => {
+    // THE PREVIOUS CONTROL PROVED NOTHING, and the flaw is worth stating because
+    // it is the exact failure this test exists to prevent. It built the haystack
+    // from `parts.join(" ")` and then searched it for `needle(parts)` — the same
+    // value on both sides. A mistyped fragment therefore matched its own typo
+    // and passed, so the guard could go silently blind to a retired line while
+    // reporting that it was watching for it.
+    //
+    // The reference is now independent of the value under test: a sha256 pinned
+    // when the retired line was read from the deck. A typo in `parts` changes the
+    // joined string, changes its digest, and fails HERE — before the absence
+    // check has a chance to pass vacuously.
+    //
+    // A digest rather than the sentence, deliberately: it is a one-way
+    // encoding, so pinning it does NOT put the retired copy back into the
+    // repository as searchable text. That is the whole reason this file uses
+    // fragments at all.
+    for (const { label, parts, sha256 } of RETIRED) {
+      const joined = parts.join(" ");
+      expect(
+        createHash("sha256").update(joined).digest("hex"),
+        `the ${label} needle does not match its pinned digest — a fragment was ` +
+          `edited, so the absence check above is no longer watching that line`,
+      ).toBe(sha256);
     }
+    // And the pins are distinct, so a copy-paste of one digest across two
+    // entries cannot hide a wrong fragment behind a right one.
+    expect(new Set(RETIRED.map((r) => r.sha256)).size).toBe(RETIRED.length);
     expect(RETIRED.length).toBe(4);
   });
 
