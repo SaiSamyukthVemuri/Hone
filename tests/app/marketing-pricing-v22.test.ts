@@ -121,6 +121,50 @@ describe("the assurance line under the cards", () => {
   });
 });
 
+describe("the FAQ answers what it asks", () => {
+  // THE GENERAL SHAPE OF FOUR DEFECTS IN THIS PR. Each time, a string changed
+  // and something that REFERRED to it did not: the badge and its browser spec,
+  // the H1 and a second spec, the assurance constant and two hardcoded copies,
+  // and then this — an answer edited without reading its own question.
+  //
+  // This asserts the one pair that is mechanically checkable: the page must not
+  // RAISE a topic it has stopped answering. It is narrow on purpose; a general
+  // "every answer addresses its question" rule is not decidable here.
+  const FAQ_BLOCK = (() => {
+    const raw = read("app/pricing/page.tsx");
+    const start = raw.indexOf("const FAQ:");
+    expect(start, "the FAQ array exists").toBeGreaterThan(-1);
+    return raw.slice(start, raw.indexOf("\n];", start));
+  })();
+
+  const questions = [...FAQ_BLOCK.matchAll(/^\s*q:\s*"([^"]+)"/gm)].map((m) => m[1]);
+  // NOT a symmetric parse: one answer is a shared constant (`a: REPLACES_STATEMENT`)
+  // rather than a literal, so counting quoted answers would under-count and an
+  // equal-length assertion would fail on correct code. The answer SIDE is
+  // therefore everything in the block that is not a question line, which covers
+  // literals and leaves constants visible by name.
+  const answerSide = FAQ_BLOCK.replace(/^\s*q:\s*"[^"]*",?$/gm, " ");
+
+  it("parses the questions, so the comparison below means something", () => {
+    expect(questions.length).toBeGreaterThan(0);
+    expect(answerSide.length).toBeGreaterThan(0);
+  });
+
+  it("asks about no topic the answers have stopped covering", () => {
+    // `contract` is the live instance. The list is the set of claims this PR
+    // withdrew, so withdrawing another one later fails here until its question
+    // is narrowed with it.
+    for (const topic of ["contract", "most popular", "annual"]) {
+      const asked = questions.some((q) => new RegExp(topic, "i").test(q));
+      const answered = new RegExp(topic, "i").test(answerSide);
+      expect(
+        asked && !answered,
+        `the FAQ asks about "${topic}" and no answer addresses it`,
+      ).toBe(false);
+    }
+  });
+});
+
 describe("payments may be named ONLY with its qualifier", () => {
   it("the qualifier travels in the bullet, not just the paragraph", () => {
     // Standing rule §4 permits the payments claim exclusively WITH "Payments are

@@ -73,7 +73,11 @@ const FAQ: { q: string; a: string }[] = [
     a: "Founding Solo is CAD $29/month for your first 12 months, then CAD $39/month while you stay continuously subscribed. Solo is CAD $49/month. Studio is CAD $99/month for up to three practitioners. All prices are in Canadian dollars.",
   },
   {
-    q: "Is there a setup fee or a contract?",
+    // NARROWED WITH ITS ANSWER. This asked "...or a contract?" and, once the
+    // contract half of the answer went, the page put a question to the visitor
+    // that it then declined to answer — and published that pairing as
+    // FAQPage structured data. A question is a promise to answer it.
+    q: "Is there a setup fee?",
     a: "No setup fee. Setup is founder-led during onboarding, and you can cancel anytime.",
   },
   {
