@@ -251,6 +251,18 @@ describe("accessible without sight and without sound", () => {
     ).toContain("pointer-events-none");
   });
 
+  it("moves focus to the video it swapped in", () => {
+    // Activation UNMOUNTS the button the keyboard user just pressed. Without a
+    // transfer their focus falls to the body, the film plays, and the pause and
+    // scrub controls they now need are a full tab sequence away.
+    expect(PLAYER).toMatch(/el\.focus\(\)/);
+    // And it happens in the activation effect, not on mount — focusing a video
+    // on mount would steal focus from wherever the person actually was.
+    const effect = PLAYER.slice(PLAYER.indexOf("useEffect("), PLAYER.indexOf("}, [activated]);"));
+    expect(effect).toContain("if (!activated) return;");
+    expect(effect).toContain("el.focus()");
+  });
+
   it("the play control is a real button, not a click handler on a div", () => {
     expect(PLAYER).toMatch(/<button\s/);
     expect(PLAYER).toMatch(/type="button"/);

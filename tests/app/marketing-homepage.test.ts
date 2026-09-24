@@ -167,6 +167,32 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
     expect(SURFACE).not.toMatch(/\$19\b/);
   });
 
+  it("no exit claim exceeds what the export actually carries", () => {
+    // The self-service export omits treatment photos, intake forms, signed
+    // consents, the service menu and payment records (/settings/data names them
+    // "Not included yet", and there is no documented route for the rest). So
+    // the page may describe the NAMED subset and must not promise a complete
+    // exit on top of it — a cancellation line reading "your records leave with
+    // you" shipped here once and contradicted the export item directly above.
+    // SCANNED ON THE STRIPPED SOURCE, not the raw file. This guard is about
+    // RENDERED copy, and the page's comments legitimately discuss the claims it
+    // retired — a raw scan makes the file fail for explaining itself, which it
+    // did twice while this assertion was being written.
+    const rendered = stripComments(PAGE);
+    for (const overclaim of [
+      /your records leave with you/i,
+      /all (of )?your (records|data) (leave|come|go) with you/i,
+      /take (all|everything|your full)[^.]{0,40}with you/i,
+      /full studio history/i,
+      /complete (export|record set)/i,
+    ]) {
+      expect(rendered, `homepage promises more than the export carries: ${overclaim}`)
+        .not.toMatch(overclaim);
+    }
+    // And the qualified description is still the one that ships.
+    expect(PAGE).toMatch(/does and does not yet include/);
+  });
+
   it("keeps the payment qualifier and the policy link", () => {
     expect(PAGE).toMatch(/PAYMENT_QUALIFIER/);
     expect(PAGE).toMatch(/href="\/privacy"/);

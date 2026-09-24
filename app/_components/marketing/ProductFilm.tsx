@@ -59,10 +59,24 @@ export function ProductFilm({ className = "" }: { className?: string }) {
   // an activated state.
   useEffect(() => {
     if (!activated) return;
+    const el = videoRef.current;
+    if (!el) return;
+
+    // FOCUS FOLLOWS THE CONTROL IT REPLACED. Activation unmounts the button the
+    // keyboard user just pressed, so without this their focus falls to the body
+    // — the film starts playing and the pause and scrub controls they now need
+    // are somewhere behind a fresh tab sequence from the top of the page. The
+    // video is the successor control, so focus moves to it.
+    //
+    // Safe to do unconditionally: `activated` can only become true through
+    // activate(), which is a click or an Enter/Space on that button, so this
+    // never steals focus from somewhere the person chose to be.
+    el.focus();
+
     // A rejected promise here is ordinary (a policy or a user gesture the
     // browser did not accept); the controls stay, so the film is still
     // reachable. It must not become an unhandled rejection.
-    void videoRef.current?.play().catch(() => {});
+    void el.play().catch(() => {});
   }, [activated]);
 
   return (

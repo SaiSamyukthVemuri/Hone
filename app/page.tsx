@@ -91,7 +91,7 @@ const RECORD_LINES: string[] = [
 // export is clients, sessions, charting, appointments, plans, clinical notes
 // and record-keeping logs — NOT photos, intake forms, signed consents, the
 // service menu or payment records. lib/export/resource-registry.ts is the
-// authority. "Full studio history" was the claim that had to go.
+// authority. The unbounded whole-history phrasing is the claim that had to go.
 const OWNERSHIP: { title: string; body: string }[] = [
   {
     title: "Export your records as CSV, on every plan",
@@ -114,8 +114,20 @@ const OWNERSHIP: { title: string; body: string }[] = [
     body: "History brought over from paper or another system stays labelled, never mixed into what you charted in Hone.",
   },
   {
+    // THE RETIRED LINE IS DESCRIBED, NEVER REPRODUCED — MKT-02A's rule, and it
+    // is load-bearing: the guard for this defect scans this file, so quoting the
+    // sentence back would trip the assertion that forbids it. (It did, once.)
+    //
+    // What was here was a cancellation promise that the studio's records leave
+    // with them in full. It was an overclaim and it contradicted the very first
+    // item in this list. The self-service export does NOT carry treatment
+    // photos, intake forms, signed consents, the service menu or payment
+    // records — /settings/data names them "Not included yet" — and there is no
+    // documented route for obtaining the rest, so naming one here would be a
+    // second overclaim stacked on the first. The line now bounds itself to the
+    // list above and promises nothing beyond it.
     title: "No contract. Cancel anytime.",
-    body: "The person who built Hone answers support, and your records leave with you.",
+    body: "No setup fee and no minimum term. What you can take with you is the export named above — nothing here promises more than that list.",
   },
 ];
 

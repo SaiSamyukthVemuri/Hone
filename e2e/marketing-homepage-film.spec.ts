@@ -152,6 +152,32 @@ test.describe("homepage film (desktop)", () => {
     await expectNoPageOverflow(page, "homepage film desktop");
   });
 
+  test("a keyboard user keeps focus on the control that replaced the button", async ({ page }) => {
+    // Activation UNMOUNTS the button that was just pressed. Without a transfer,
+    // focus falls to <body>: the film is playing and the pause and scrub
+    // controls the person now needs are a full tab sequence away from them.
+    // Proved through the keyboard, not by clicking — a mouse click never
+    // exposes this, which is why it shipped.
+    await page.goto("/");
+    const play = page.getByRole("button", { name: /Play: Hone treatment-memory/ });
+    await play.focus();
+    await expect(play).toBeFocused();
+
+    await page.keyboard.press("Enter");
+
+    const video = page.locator("video");
+    await expect(video).toHaveCount(1);
+    await expect(video).toBeFocused();
+
+    // Non-vacuity: focus is on the video specifically, not merely "not body".
+    expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("VIDEO");
+
+    // And the film actually started, so this is the state a real user is in.
+    await expect
+      .poll(async () => video.evaluate((v) => (v as HTMLVideoElement).currentTime))
+      .toBeGreaterThan(0.2);
+  });
+
   test("the poster is preloaded eagerly, and is never the lazy straggler", async ({ page }) => {
     // THE DECK ASKED FOR SOMETHING THE BRIEF'S ORDERING CANNOT GIVE, and this
     // test says so rather than asserting it anyway.
