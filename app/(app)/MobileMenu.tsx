@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
-import { setSignOutInFlight, useSignOutInFlight } from "./signout-flight";
+import { trackSignOut, useSignOutInFlight } from "./signout-flight";
 import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
 import { spinnerClasses } from "@/components/ui/spinner";
 
@@ -46,6 +46,17 @@ export function MobileMenu({
   // stays mounted, which is what keeps `useFormStatus` alive to report the
   // settlement; the dismissal the practitioner asked for is REMEMBERED and
   // applied the moment the flag clears, so the menu is never left stuck open.
+  // SIGNOUT-02c · the form dispatches through the tracked wrapper, so the
+  // ACTION owns the in-flight flag rather than any component. `trackSignOut`
+  // raises it, awaits the real call, and lowers it in a `finally` that runs
+  // even after this shell has unmounted.
+  //
+  // STILL A SERVER ACTION, and SIGNOUT-01 is untouched: this is a plain client
+  // function passed as the form's action, it takes the activation exactly as
+  // before, and `signOut()` is still what dispatches. There is no onClick here
+  // and the form is not unmounted by the press.
+  const runSignOut = () => trackSignOut(signOut);
+
   const deferredClose = useRef(false);
   const close = useCallback(() => {
     if (signingOut) {
@@ -394,11 +405,10 @@ export function MobileMenu({
                 row. The press step matters MORE here than on the desktop: a
                 touch device never fires :hover, so before this the tap painted
                 literally nothing for the ~530ms until the shell was replaced. */}
-            <form action={signOut}>
+            <form action={runSignOut}>
               <SignOutMenuItem
                 minHeight="min-h-[44px]"
                 busy={signingOut}
-                onPendingChange={setSignOutInFlight}
               />
             </form>
           </div>

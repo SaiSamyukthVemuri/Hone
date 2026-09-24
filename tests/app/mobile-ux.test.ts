@@ -101,7 +101,7 @@ describe("app shell: responsive navigation", () => {
     // Notifications moved to the header bell (PR #229).
     expect(MENU).not.toContain('"/notifications"');
     expect(MENU).toMatch(/Sign out/);
-    expect(MENU).toMatch(/form action=\{signOut\}/);
+    expect(MENU).toMatch(/form action=\{runSignOut\}/);
     // PR #229: every link tap closes the menu; Escape closes too.
     expect(MENU).toMatch(/onClick=\{close\}/);
     expect(MENU).toMatch(/e\.key === "Escape"/);
@@ -164,7 +164,7 @@ describe("desktop account dropdown (PR #231)", () => {
   it("contains the account destinations, the profile block, and Sign out", () => {
     expect(ACCOUNT).toContain('"/settings/profile"');
     expect(ACCOUNT).toContain('"/getting-started"');
-    expect(ACCOUNT).toMatch(/form action=\{signOut\}/);
+    expect(ACCOUNT).toMatch(/form action=\{runSignOut\}/);
     expect(ACCOUNT).toMatch(/Sign out/);
     expect(ACCOUNT).toMatch(/\{studioName\} · \{roleLabel\}/);
   });
@@ -214,7 +214,13 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
 
   function signOutForm(name: string, source: string): string {
     const code = codeOnly(source);
-    const open = code.indexOf("<form action={signOut}>");
+    // SIGNOUT-02c. The form's action is now a client wrapper, because the
+    // ACTION has to own the in-flight flag — it is the only thing that
+    // outlives the panel, the leaf, the shell and the route group. The
+    // property SIGNOUT-01 protects is unchanged and asserted right below:
+    // `signOut()` is still what dispatches, and nothing on this path has an
+    // onClick.
+    const open = code.indexOf("<form action={runSignOut}>");
     expect(open, `${name}: the Sign out form exists`).toBeGreaterThan(-1);
     const close = code.indexOf("</form>", open);
     expect(close, `${name}: the Sign out form is closed`).toBeGreaterThan(open);
@@ -230,7 +236,7 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
     it(`${name}: the comment stripper keeps code and drops prose`, () => {
       const code = codeOnly(source);
       expect(code, `${name}: the Sign out form survives`).toContain(
-        "<form action={signOut}>",
+        "<form action={runSignOut}>",
       );
       expect(code, `${name}: real links survive`).toMatch(/<Link\b/);
       // This token exists ONLY inside a comment in both shells.
@@ -250,6 +256,14 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
       expect(form, `${name}: the form delegates to the shared submit leaf`).toContain(
         "<SignOutMenuItem",
       );
+
+      // THE DISPATCH IS STILL THE SERVER ACTION. A wrapper that stopped
+      // calling signOut() would satisfy every other assertion here and sign
+      // nobody out, so this is pinned explicitly.
+      expect(
+        codeOnly(source),
+        `${name}: the form's action still dispatches signOut`,
+      ).toContain("const runSignOut = () => trackSignOut(signOut);");
       // No hand-rolled control left behind beside the leaf.
       expect(form, `${name}: the leaf is the only control in this form`).not.toMatch(
         /<button/,

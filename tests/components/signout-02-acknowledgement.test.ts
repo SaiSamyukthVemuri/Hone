@@ -91,9 +91,12 @@ describe("SIGNOUT-02 · SIGNOUT-01 is not weakened", () => {
     expect(leaf).not.toMatch(/onClick/);
   });
 
-  it("the form itself is untouched in both shells", () => {
+  it("the form still dispatches the server action, through the tracked wrapper", () => {
     for (const f of [ACCOUNT, MENU]) {
-      expect(codeOnly(read(f)), f).toContain("<form action={signOut}>");
+      const code = codeOnly(read(f));
+      expect(code, f).toContain("<form action={runSignOut}>");
+      expect(code, f).toContain("const runSignOut = () => trackSignOut(signOut);");
+      expect(code, f).toContain('import { signOut } from "./dashboard/actions";');
     }
   });
 
@@ -131,62 +134,59 @@ describe("SIGNOUT-02 · the state is truthful", () => {
 describe("SIGNOUT-02b · the pending state outlives the panel", () => {
   const shells = [ACCOUNT, MENU];
 
-  it("the leaf reports pending UP and accepts busy back DOWN", () => {
-    expect(leaf).toContain("onPendingChange");
-    expect(leaf).toContain("busy");
+  it("the leaf reports NOTHING upward — it only renders", () => {
+    // Every bug in this slice came from the leaf owning a fact that outlives
+    // it. It now takes the shared truth as a prop and has no way to change it.
     expect(leaf).toContain("const inFlight = pending || busy;");
-  });
-
-  it("only TRANSITIONS are reported, never the initial false", () => {
-    // Load-bearing. Reporting the mount-time `false` would have a freshly
-    // reopened leaf immediately clear the shell's flag, reinstating the very
-    // defect this closes — and silently, since everything still compiles.
-    expect(leaf).toContain("if (pending === reported.current) return;");
+    expect(leaf).not.toContain("onPendingChange");
+    expect(leaf).not.toContain("claimSignOut");
+    expect(leaf).not.toContain("orphanSignOut");
+    expect(leaf).not.toContain("adoptSignOut");
   });
 
   it("both shells read ONE authority, and neither owns a private copy", () => {
-    // SIGNOUT-02c. `app/(app)/layout.tsx` renders BOTH menus on every page and
-    // hides one with CSS, so they are always-mounted siblings. A per-shell
-    // `useState` made the flag per-SHELL rather than per-practitioner:
-    // crossing the `lg` breakpoint mid-logout revealed the other menu with its
-    // own flag still false, and a fresh enabled Sign out with it.
+    // `app/(app)/layout.tsx` renders BOTH menus on every page and hides one
+    // with CSS, so they are always-mounted siblings. A per-shell `useState`
+    // made the flag per-SHELL rather than per-practitioner: crossing the `lg`
+    // breakpoint mid-logout revealed the other menu with its own flag still
+    // false, and a fresh enabled Sign out with it.
     for (const f of shells) {
       const code = codeOnly(read(f));
       expect(code, f).toContain("const signingOut = useSignOutInFlight();");
       expect(code, f).toContain("busy={signingOut}");
-      expect(code, f).toContain("onPendingChange={setSignOutInFlight}");
-      // The private copy must not come back.
       expect(code, f).not.toContain("[signingOut, setSigningOut]");
     }
   });
 
-  it("the authority is a real shared store, not two synchronised copies", () => {
+  it("the authority's lifetime is the REQUEST's, never a component's", () => {
     const store = codeOnly(read("app/(app)/signout-flight.ts"));
-    // useSyncExternalStore is the API React provides for exactly this; a
-    // hand-rolled effect pair would tear between the two shells.
+    // The flag is raised and lowered around the real call, and lowered in a
+    // `finally` so it also clears on failure and on the redirect throw.
+    expect(store).toContain("export function trackSignOut");
+    // THE PROMISE IS OBSERVED, NOT REPLACED, and that is load-bearing rather
+    // than stylistic. An `async` wrapper returns a NEW promise built by
+    // awaiting the action, and React's action runtime then handled the
+    // redirect differently — measured: the soft RSC navigation to /login
+    // became a HARD browser navigation, which tore down every in-flight
+    // prefetch and reddened five SIGNOUT-01 cases whose logouts were otherwise
+    // perfect. Returning the ORIGINAL promise leaves what React sees
+    // unchanged, redirect throw included.
+    expect(store).toContain("const running = run();");
+    expect(store).toContain("running.then(settled, settled);");
+    expect(store).toContain("return running;");
+    expect(store).not.toContain("await run()");
+    // Settlement must never be inferred. None of the inference levers that
+    // broke earlier revisions may exist at all.
+    expect(store).not.toContain("orphan");
+    expect(store).not.toContain("adopt");
+    expect(store).not.toContain("setTimeout");
+    // Nothing may catch the redirect: swallowing it strands the practitioner
+    // on a page whose session is gone.
+    expect(store).not.toContain("catch");
+    // useSyncExternalStore is the API React provides for a store like this.
     expect(store).toContain("useSyncExternalStore");
-    expect(store).toContain("export function setSignOutInFlight");
-    expect(store).toContain("export function useSignOutInFlight");
-    // The server snapshot must be a STABLE value, or React re-renders forever.
     expect(store).toContain("function getServerSnapshot(): boolean {");
-    expect(store).toContain("return false;");
-    // The hold is tracked, not a bare boolean: a leaf that unmounts mid-flight
-    // must hand it over rather than drop it, and a fresh leaf must be able to
-    // end a hold nobody is watching — module scope outlives the component
-    // tree, so without this a history escape from the route group stranded the
-    // flag forever.
-    expect(store).toContain("export function claimSignOut");
-    expect(store).toContain("export function releaseSignOut");
-    expect(store).toContain("export function orphanSignOut");
-    expect(store).toContain("export function adoptSignOut");
-    // The leaf drives all four.
-    expect(leaf).toContain("adoptSignOut();");
-    expect(leaf).toContain("orphanSignOut();");
-    // Only a leaf that actually claimed may hand the hold over.
-    expect(leaf).toContain("if (reported.current) {");
-
     // No provider, no layout surgery: the shell layout stays a server component.
-    expect(codeOnly(read("app/(app)/layout.tsx"))).not.toContain("SignOutFlight");
     expect(read("app/(app)/layout.tsx")).not.toContain('"use client"');
   });
 

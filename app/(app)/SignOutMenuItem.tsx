@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { adoptSignOut, orphanSignOut } from "./signout-flight";
 import { useFormStatus } from "react-dom";
 import { cx } from "@/components/ui/control-base";
 
@@ -156,53 +154,22 @@ const BUSY =
 export function SignOutMenuItem({
   minHeight,
   busy = false,
-  onPendingChange,
 }: {
   minHeight: string;
-  /** Remembered by the shell, so a remounted leaf is still truthful. */
+  /** The shared in-flight truth, owned by the action and passed down. */
   busy?: boolean;
-  onPendingChange?: (pending: boolean) => void;
 }) {
   const { pending } = useFormStatus();
-  const reported = useRef(false);
 
-  // ADOPT ON MOUNT, and only an UNOWNED hold.
+  // NOTHING IS REPORTED UPWARD ANY MORE. Earlier revisions had this leaf tell
+  // the shell when its form went pending, which made the leaf the owner of a
+  // fact that outlives it — and every bug in this slice came from that. The
+  // action's own promise owns it now (see ./signout-flight), so this component
+  // only renders.
   //
-  // Module scope outlives the component tree, which is what makes one shared
-  // authority possible — and cut the other way once. Browser history can leave
-  // the `(app)` route group while a logout is in flight, unmounting the leaf
-  // that is the only thing able to report `pending === false`. Navigating back
-  // rebuilt both shells with the flag still set and nothing left to clear it,
-  // so Sign out and every destination stayed disabled for a request that had
-  // long since finished.
-  //
-  // This runs BEFORE the transition effect below so a fresh leaf clears a hold
-  // no one is watching, while leaving a live one — claimed by a leaf that is
-  // still mounted — completely alone.
-  useEffect(() => {
-    adoptSignOut();
-  }, []);
-
-  useEffect(() => {
-    if (pending === reported.current) return;
-    reported.current = pending;
-    onPendingChange?.(pending);
-  }, [pending, onPendingChange]);
-
-  // AND IT HANDS THE HOLD OVER IF IT GOES AWAY STILL CLAIMING IT.
-  //
-  // The hold STAYS — the other shell must not open up merely because a panel
-  // was taken down — but it is marked unowned, so the next leaf to mount can
-  // end it. Only a leaf that actually claimed may orphan.
-  useEffect(() => {
-    return () => {
-      if (reported.current) {
-        reported.current = false;
-        orphanSignOut();
-      }
-    };
-  }, []);
-
+  // `busy` is that shared truth arriving from the shell; `pending` is this
+  // form's own status, which is the same fact a beat earlier and keeps the
+  // control honest inside the form that owns it.
   const inFlight = pending || busy;
   return (
     <button
