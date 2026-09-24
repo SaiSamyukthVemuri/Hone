@@ -69,7 +69,7 @@ const RECORD_FIELDS: { eyebrow: string; title: string; body: string }[] = [
   {
     eyebrow: "Comfort",
     title: "Numbing and aftercare",
-    body: "Whether topical was used, when it went on, and what you advised afterwards, recorded where the next practitioner reading the chart will see it.",
+    body: "Numbing status is recorded on the area itself, with your own note beside it. Aftercare and risks are confirmed once for the session, stamped with who explained them and when.",
   },
 ];
 
@@ -256,8 +256,8 @@ export default function TreatmentMemoryPage() {
               <Lede className="mt-6">
                 At the end of a session you leave a short note for next time. You do
                 not file it, tag it or remember where it went. It reappears on the
-                client&rsquo;s last-visit card and inside the new session panel,
-                against the area it belongs to, at the moment it is useful.
+                client&rsquo;s last-visit card and inside the new session panel, at
+                the moment it is useful.
               </Lede>
             </div>
 
@@ -270,8 +270,8 @@ export default function TreatmentMemoryPage() {
                 },
                 {
                   n: "02",
-                  t: "It is stored against the area",
-                  b: "Not against the client in general. The chin's note travels with the chin, so it arrives with the right context attached.",
+                  t: "The caution rides with the area",
+                  b: "A caution you flag is stored on the treated area itself, so it comes back naming that area. The plan for next time is one note for the session, and it returns with the session.",
                 },
                 {
                   n: "03",
@@ -325,11 +325,11 @@ export default function TreatmentMemoryPage() {
                   {[
                     [
                       "From paper cards",
-                      "Transcribed into the same structured fields as everything else, so it is searchable rather than scanned.",
+                      "Kept as a labelled imported record in the client's history, in the practitioner's original wording rather than forced into Hone's charting fields.",
                     ],
                     [
                       "From a spreadsheet",
-                      "Mapped to areas, dates and settings during setup, with the founder doing the mapping rather than handing you an importer.",
+                      "Brought across row by row into that same imported record, with the founder doing the mapping rather than handing you an importer.",
                     ],
                     [
                       "Always labelled",
