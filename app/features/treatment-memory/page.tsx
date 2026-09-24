@@ -38,18 +38,31 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 export const metadata: Metadata = marketingMetadata("/features/treatment-memory");
 
 // The record's real vocabulary, transcribed from the fields the product
-// actually writes — not a paraphrase of them. Each cell names what a single
-// treated area stores, which is the claim the section header makes.
+// actually writes — not a paraphrase of them.
+//
+// THE UNIT IS THE SETTINGS BLOCK, NOT THE AREA, and this comment exists
+// because the first version of this page got it backwards. `session_blocks`
+// holds ONE setup — mode, energy, frequency, probe and lot, minutes, numbing,
+// the tolerance and reaction observed, and any caution. `session_block_areas`
+// (migration 0128) is a child table carrying ONLY `area`, `laterality` and an
+// ordering hint: no clinical value at all. So a block may cover SEVERAL areas
+// that shared one setup, and describing those settings as independent per-area
+// rows would be describing a product we did not build.
+//
+// What IS per-area is the HISTORY: `lib/sessions/treatment-intelligence.ts`
+// groups by area name and a block contributes to EVERY area it covered, which
+// is why "Every area keeps its own history" further up the page is a claim the
+// read model actually supports.
 const RECORD_FIELDS: { eyebrow: string; title: string; body: string }[] = [
   {
     eyebrow: "Where",
-    title: "Area and side",
-    body: "Midline upper lip. Bilateral chin. Each treated area is its own block, so a multi-area session stays legible instead of collapsing into one paragraph.",
+    title: "The areas it covered",
+    body: "Midline upper lip. Bilateral chin. A block lists every area the setup was used on, each with its own side, so a multi-area session stays legible instead of collapsing into one paragraph.",
   },
   {
     eyebrow: "How",
     title: "Mode and energy",
-    body: "Blend, thermolysis or galvanic, with the energy level, timing, intensity and pulse count you worked at, recorded per area rather than per appointment.",
+    body: "Blend, thermolysis or galvanic, with the energy level, timing, intensity and pulse count you worked at, recorded on the block rather than once for the whole appointment.",
   },
   {
     eyebrow: "With what",
@@ -58,21 +71,20 @@ const RECORD_FIELDS: { eyebrow: string; title: string; body: string }[] = [
   },
   {
     eyebrow: "How long",
-    title: "Time on each area",
-    body: "Minutes worked on that area, and the machine frequency it was worked at, so the next visit starts from a real number rather than an impression.",
+    title: "Time at that setup",
+    body: "Minutes worked and the machine frequency they were worked at, so the next visit starts from a real number rather than an impression.",
   },
   {
     eyebrow: "What happened",
     title: "Response and tolerance",
-    body: "Reaction type, a tolerance rating, and your own note on how the area behaved. This is the field that changes what you do next time.",
+    body: "Reaction type, a tolerance rating, and your own note on how the skin behaved at that setup. This is the field that changes what you do next time.",
   },
   {
     eyebrow: "Comfort",
     title: "Numbing and aftercare",
-    body: "Numbing status is recorded on the area itself, with your own note beside it. Aftercare and risks are confirmed once for the session, stamped with who explained them and when.",
+    body: "Whether numbing was used, with your own note beside it. Aftercare and risks are confirmed once for the session, stamped with who explained them and when.",
   },
 ];
-
 export default function TreatmentMemoryPage() {
   return (
     <MarketingSurface>
@@ -121,7 +133,7 @@ export default function TreatmentMemoryPage() {
                 <>
                   A short walkthrough of the real application: opening a returning
                   client, reading what the last visit left behind, and charting
-                  today&rsquo;s session area by area. Recorded against a
+                  today&rsquo;s session, setup by setup. Recorded against a
                   demonstration practice with invented clients. No client data
                   appears in it.
                 </>
@@ -171,15 +183,23 @@ export default function TreatmentMemoryPage() {
                 away the part you needed.
               </Lede>
               <Lede className="mt-4">
-                So the treated area is the unit. Each block carries its own settings,
-                its own probe, its own minutes and its own response, and each one
-                carries forward independently.
+                So the unit you chart is a setup: the mode, energy, probe, lot and
+                minutes you worked at, with the areas it covered listed against it.
+                Areas share a block when the same setup applied to them, and when the
+                settings differ they are separate blocks, which is how the difference
+                survives.
+              </Lede>
+              <Lede className="mt-4">
+                History is then read the other way round. Every block that covered an
+                area feeds that area&rsquo;s history, so the chin accumulates its own
+                record of what was used on it and how it responded, whether or not it
+                was ever charted on its own.
               </Lede>
             </div>
             <ScreenFigure
               base="session-record"
-              alt="A session record in Hone showing two separately charted areas. The midline upper lip and the bilateral chin each have their own response and tolerance entry and their own setup block listing frequency, probe, mode, energy level, timing, intensity and minutes."
-              caption="Two areas, two records. The chin tolerated less than the lip, and the record says so in the place that will be read next time."
+              alt="A session record in Hone showing two setup blocks. The midline upper lip and the bilateral chin were worked at different energy levels and for different lengths of time, so each has its own block listing frequency, probe, mode, energy level, timing, intensity and minutes, with its own response and tolerance."
+              caption="Two blocks here because the settings differed: the chin tolerated less than the lip and was worked down accordingly. Had both been treated at the same setup, they would share one block and still each keep their own history."
             />
           </Container>
         </Section>
@@ -210,10 +230,10 @@ export default function TreatmentMemoryPage() {
               <Eyebrow>The record, as fields</Eyebrow>
               <Title className="mt-4">Memory is only as good as what you wrote down</Title>
               <Lede className="mt-6">
-                Nothing here is free text pretending to be a record. Each treated area
-                is stored as structured fields, which is what lets the next session
-                retrieve it, compare it and put it in front of you without anyone
-                searching for it.
+                Nothing here is free text pretending to be a record. Each setup is
+                stored as structured fields with its treated areas listed against it,
+                which is what lets the next session retrieve it, compare it and put it
+                in front of you without anyone searching for it.
               </Lede>
             </div>
             <FeatureMatrix items={RECORD_FIELDS} />
@@ -270,8 +290,8 @@ export default function TreatmentMemoryPage() {
                 },
                 {
                   n: "02",
-                  t: "The caution rides with the area",
-                  b: "A caution you flag is stored on the treated area itself, so it comes back naming that area. The plan for next time is one note for the session, and it returns with the session.",
+                  t: "The caution rides with the setup",
+                  b: "A caution is stored on the block you flagged it in, which already names the areas that block covered, so it comes back attached to them. The plan for next time is one note for the session, and it returns with the session.",
                 },
                 {
                   n: "03",
@@ -354,7 +374,7 @@ export default function TreatmentMemoryPage() {
               href: "/features/charting-records",
               label: "Charting and records",
               blurb:
-                "Memory is only as good as the charting behind it. See how a session is recorded, area by area.",
+                "Memory is only as good as the charting behind it. See how a session is recorded, setup by setup.",
             },
             {
               href: "/features/booking-calendar",
