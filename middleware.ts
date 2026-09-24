@@ -28,8 +28,20 @@ export async function middleware(request: NextRequest) {
 // `/fonts/LICENSE-Inter.txt/extra` both still run the middleware.
 // tests/source-guards/self-hosted-fonts-guards.test.ts parses this matcher and
 // pins both directions. See FONTS.md.
+// MKT-02C added `mp4` to the static-extension alternation. The product film on
+// /features/treatment-memory is served from public/, and every extension NOT in
+// this list runs updateSession: an anonymous visitor requesting the film got
+// 307 -> /login, so the video on a PUBLIC marketing page would not play for the
+// exact audience it exists for. Identical in shape to the font-licence defect
+// above, and fixed in the same place rather than by allowlisting an asset in
+// `isPublicRoute`, which enumerates public ROUTES, not files.
+//
+// Extension-scoped rather than path-scoped, and that is safe here for the
+// reason the `fonts/` prefix was not: this alternative requires a literal dot
+// and a trailing `$`, and no Next route resolves to a URL ending in `.mp4` -
+// unlike `/fonts/private`, which a grouped route really does serve.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|fonts/LICENSE-Inter\\.txt$|fonts/LICENSE-Fraunces\\.txt$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|fonts/LICENSE-Inter\\.txt$|fonts/LICENSE-Fraunces\\.txt$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4)$).*)",
   ],
 };

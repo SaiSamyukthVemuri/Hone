@@ -33,3 +33,11 @@ tests/lib/email/studio-identity.test.ts diff
 # check would be the wrong trade. Binaries are marked so diffs stay readable.
 lib/billing/fonts/*.ttf binary
 lib/billing/fonts/LICENSE.txt -whitespace
+
+# MKT-02C: the product film and the synthetic-twin captures served on
+# /features/treatment-memory. Marked binary for the same reason as the vendored
+# faces above - no future core.autocrlf or diff setting may rewrite a byte - and
+# so a diff reports "binary files differ" rather than emitting megabytes of
+# mojibake into every review of this directory.
+public/marketing/**/*.mp4 binary
+public/marketing/**/*.webp binary
