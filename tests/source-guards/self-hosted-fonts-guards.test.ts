@@ -592,9 +592,19 @@ describe("the faces are loaded from local files", () => {
     // LICENSE" - which explicitly permitted ANY `LICENSE...` filename. Adding
     // `|fonts/LICENSE-Other.txt$` would have kept one entry, kept both required
     // substrings, matched none of the sampled paths, and passed the probe,
-    // while exempting a third path from authentication. Only two notices exist;
-    // anything else under /fonts is a boundary change and must be re-derived by
-    // a human, not waved through by a pattern that happens to spell LICENSE.
+    // while exempting a further path from authentication. Anything under /fonts
+    // that is not on this list is a boundary change and must be re-derived by a
+    // human, not waved through by a pattern that happens to spell LICENSE.
+    //
+    // RE-DERIVED FOR THREE NOTICES (MKT-02A). The marketing surface moved from
+    // Inter to Instrument Sans, so a third OFL notice must reach the browser on
+    // exactly the same terms. The list grew by one EXACT path; it did not widen
+    // to a prefix, and the trailing `$` is present on the new entry too. A
+    // FOURTH addition still trips here, which is the property worth keeping.
+    //
+    // Note what this does NOT license: the Inter notice stays because the
+    // authenticated app still loads Inter. Marketing changing its face does not
+    // retire the root layout's family.
     const fontsAlternatives = normalised.flatMap((e) =>
       [...e.matchAll(/fonts\/[^|)]+/g)].map((m) => m[0]),
     );
@@ -602,6 +612,7 @@ describe("the faces are loaded from local files", () => {
       [
         "fonts/LICENSE-Fraunces\\.txt$",
         "fonts/LICENSE-Inter\\.txt$",
+        "fonts/LICENSE-InstrumentSans\\.txt$",
       ].sort(),
     );
   });
@@ -654,16 +665,31 @@ describe("the faces are loaded from local files", () => {
     expect(fonts.length).toBeGreaterThan(0);
     for (const file of fonts) {
       const names = readWoff2NameTable(path.join(ROOT, "app/_fonts", file));
-      const family = file.startsWith("inter") ? "Inter" : "Fraunces";
-      const holder =
-        family === "Inter"
-          ? "The Inter Project Authors"
-          : "The Fraunces Project Authors";
+      // THREE FAMILIES NOW. Instrument Sans arrived with MKT-02A; Inter stays
+      // because the authenticated app still loads it.
+      const family = file.startsWith("inter")
+        ? "Inter"
+        : file.startsWith("instrument-sans")
+          ? "Instrument Sans"
+          : "Fraunces";
+      const holder = `The ${family} Project Authors`;
       expect(names[NAME_ID.copyright], `${file} name ID 0`).toContain(holder);
       expect(names[NAME_ID.licenseInfoUrl], `${file} name ID 14`).toMatch(
         /openfontlicense\.org|scripts\.sil\.org\/OFL/,
       );
-      expect(names[NAME_ID.family], `${file} name ID 1`).toBe(family);
+      // FAMILY IS A PREFIX MATCH FOR THE STATIC WEIGHTS, and the reason is a
+      // property of static fonts rather than a looser assertion. Upstream's
+      // per-weight webfonts name ID 1 the way static families are conventionally
+      // named: the 400 and 700 say "Instrument Sans", while the 500 and 600 say
+      // "Instrument Sans Medium" and "Instrument Sans SemiBold" — the weight is
+      // folded into the family so that pre-CSS3 consumers could select it. The
+      // browser never uses these names here: marketing-fonts.ts declares
+      // `font-family: Instrument Sans` explicitly, so CSS matching is by the
+      // declared family. What this assertion protects is that a re-vendor cannot
+      // quietly substitute a DIFFERENT family's bytes.
+      expect(names[NAME_ID.family], `${file} name ID 1`).toMatch(
+        new RegExp(`^${family}\\b`),
+      );
     }
   });
 
@@ -722,13 +748,33 @@ describe("the declared faces match what production rendered", () => {
     expect(weightsFor(APP_FONTS, "inter-latin.woff2")).toEqual(["400", "500"]);
   });
 
-  it("marketing Inter declares 400, 500, 600 and 700", () => {
-    expect(weightsFor(MARKETING_FONTS, "inter-latin.woff2")).toEqual([
-      "400",
-      "500",
-      "600",
-      "700",
-    ]);
+  it("marketing Instrument Sans declares 400, 500, 600 and 700 — one file each", () => {
+    // ONE FILE PER WEIGHT, unlike the Inter subsets, which declared all four
+    // weights against the SAME file because Google shipped them as variable
+    // fonts split by unicode-range. Upstream Instrument Sans publishes a static
+    // webfont per weight, so each weight has its own file and each file declares
+    // exactly one weight.
+    for (const weight of ["400", "500", "600", "700"]) {
+      expect(
+        weightsFor(MARKETING_FONTS, `instrument-sans-${weight}.woff2`),
+        `instrument-sans-${weight}.woff2 must declare exactly weight ${weight}`,
+      ).toEqual([weight]);
+    }
+    // AND THE MARKETING MODULE NO LONGER LOADS INTER AT ALL. Without this, the
+    // loop above would pass while a leftover Inter loader still put the old face
+    // into the marketing stylesheet beside the new one.
+    expect(codeOnly(MARKETING_FONTS)).not.toMatch(/inter-[a-z-]*\.woff2/);
+    // RAW SOURCE, not codeOnly: `codeOnly` strips string delimiters as well as
+    // comments, so a quoted declaration cannot be matched through it.
+    expect(MARKETING_FONTS).toMatch(/prop: "font-family", value: "Instrument Sans"/);
+  });
+
+  it("the authenticated app's faces are UNTOUCHED by the marketing swap", () => {
+    // The product decision was marketing-only. The root layout must still load
+    // Inter, and must not have gained Instrument Sans.
+    expect(weightsFor(APP_FONTS, "inter-latin.woff2")).toEqual(["400", "500"]);
+    expect(codeOnly(APP_FONTS)).not.toMatch(/instrument-sans/);
+    expect(codeOnly(APP_FONTS)).not.toMatch(/Instrument Sans/);
   });
 
   it("Fraunces declares 400 and 700 in both normal and italic", () => {
