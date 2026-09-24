@@ -13,7 +13,6 @@ import {
   Title,
   Subtitle,
   Lede,
-  Chip,
   CTAButton,
 } from "./_components/marketing/primitives";
 import { Reveal } from "./_components/marketing/Reveal";
