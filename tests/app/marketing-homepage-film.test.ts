@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import { FILM, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 
 // Film V1 contract (copy deck v2.2 §12b/§13).
@@ -287,5 +288,107 @@ describe("the homepage consumes the film as section 1", () => {
     // this lane's asset constant. What is pinned here is that the page actually
     // closes on it — the film's last frame and the page's last words agreeing.
     expect(PAGE).toMatch(/POSITIONING\.filmClosingLine/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The film must be reachable WITHOUT a session.
+// ---------------------------------------------------------------------------
+//
+// THIS IS HERE BECAUSE IT SHIPPED BROKEN ONCE. `public/film/...mp4` is a public
+// marketing asset on the anonymous homepage, but the Supabase session
+// middleware matches every path it does not explicitly exclude, so the request
+// answered 307 -> /login. The browser got an HTML login page where it expected
+// video and reported MEDIA_ERR_SRC_NOT_SUPPORTED: the film did not play for a
+// logged-out visitor, which is every visitor the homepage is for.
+//
+// Pinned in BOTH directions, because the interesting failure is not the film
+// becoming unreachable again — it is someone fixing that with a `film/` PREFIX.
+// The repo has already paid for that lesson once: a `fonts/` prefix exemption
+// silently un-authenticated `/fonts/private`, a real grouped route, with no
+// file named `app/fonts/...` anywhere to give it away. A prefix here would do
+// the same to anything under /film.
+//
+// Read from the TypeScript AST rather than by regex over the source, and from
+// EVERY matcher entry rather than the first: Next treats the array as
+// alternatives, so a later broad entry re-runs the middleware no matter what
+// entry [0] says, and a commented-out copy of an old pattern would feed a text
+// scan the stale one.
+function middlewareMatchers(): string[] {
+  const source = ts.createSourceFile(
+    "middleware.ts",
+    readFileSync(join(ROOT, "middleware.ts"), "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      ((ts.isIdentifier(node.name) && node.name.text === "matcher") ||
+        (ts.isStringLiteral(node.name) && node.name.text === "matcher")) &&
+      ts.isArrayLiteralExpression(node.initializer)
+    ) {
+      for (const el of node.initializer.elements) {
+        found.push(
+          ts.isStringLiteral(el) || ts.isNoSubstitutionTemplateLiteral(el)
+            ? el.text
+            : `<non-literal:${ts.SyntaxKind[el.kind]}>`,
+        );
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+describe("the film is reachable without a session, and nothing else is", () => {
+  const entries = middlewareMatchers();
+  const runsMiddleware = (p: string) =>
+    entries.some((e) => new RegExp(`^${e}$`).test(p));
+
+  it("the matcher was actually read", () => {
+    expect(entries.length, "no middleware matcher entries found").toBeGreaterThan(0);
+    for (const e of entries) expect(e).not.toMatch(/^<non-literal:/);
+  });
+
+  it("the film's exact URL bypasses the auth middleware", () => {
+    expect(
+      runsMiddleware(FILM.src),
+      `${FILM.src} must NOT be matched by ANY middleware matcher entry`,
+    ).toBe(false);
+  });
+
+  it("the exclusion is the exact file, never a /film prefix", () => {
+    for (const guarded of [
+      "/film",
+      "/film/anything",
+      "/film/private",
+      // A suffix must not ride on the exact filename.
+      `${FILM.src}/extra`,
+      // Near-miss prefixes and case.
+      "/filmx/dashboard",
+      "/xfilm/dashboard",
+      FILM.src.toUpperCase(),
+      // Another video must not inherit the exemption.
+      "/film/some-other-clip.mp4",
+      // And the authenticated app is untouched.
+      "/dashboard",
+      "/clients",
+    ]) {
+      expect(
+        runsMiddleware(guarded),
+        `${guarded} MUST still run through the auth middleware`,
+      ).toBe(true);
+    }
+  });
+
+  it("does NOT exempt .mp4 as a whole extension class", () => {
+    // One character cheaper, and it would serve every future .mp4 on every
+    // route without a session check. This application stores clinical media.
+    const images = "/x.png";
+    expect(runsMiddleware(images), "image class is pre-existing").toBe(false);
+    expect(runsMiddleware("/anywhere/else/video.mp4")).toBe(true);
   });
 });

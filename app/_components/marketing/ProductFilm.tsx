@@ -78,11 +78,27 @@ export function ProductFilm({ className = "" }: { className?: string }) {
           />
         ) : (
           <>
+            {/* alt="" ON PURPOSE. The poster is not decorative, but it is
+                already described twice over: the button stacked on top of it
+                carries the film's accessible name, and the transcript below
+                carries its content. A third description here would make a
+                screen reader announce the same frame three times before
+                offering the control. The image is the visual layer of a
+                control that names itself.
+
+                `sizes` DESCRIBES THE SHELL, NOT A GUESS. .mk-shell is
+                min(100% - clamp(3rem,14vw,15rem), 87.5rem): the gutter is 14vw
+                until it caps at 15rem, so the film is 86vw until the shell
+                reaches its 1400px ceiling at ~1640px of viewport. Saying
+                "1200px" here would hand the browser a candidate narrower than
+                the box it actually paints into, and the LCP image would land
+                softer than the file it came from. 1400 < the film's native
+                1920, so it never upscales either. */}
             <Image
               src={posterImage}
               alt=""
               priority
-              sizes="(min-width: 1280px) 1200px, 100vw"
+              sizes="(min-width: 1640px) 1400px, 86vw"
               className="absolute inset-0 h-full w-full object-cover"
             />
             <button
@@ -114,7 +130,12 @@ export function ProductFilm({ className = "" }: { className?: string }) {
                 player, because the poster is what a visitor who never presses
                 play actually sees. Verbatim, and the film carries the same
                 words in its own top-right corner. */}
-            <span className="absolute bottom-0 left-0 bg-[color:var(--color-band)]/80 px-3 py-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.12em] text-[color:var(--color-onband-muted)]">
+            {/* pointer-events-none MATTERS HERE. This span paints after the
+                button and overlaps it, so without it the bottom-left corner of
+                a full-bleed play target is silently dead to clicks — the one
+                part of the poster a visitor is most likely to be reading when
+                they decide to press play. */}
+            <span className="pointer-events-none absolute bottom-0 left-0 bg-[color:var(--color-band)]/80 px-3 py-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.12em] text-[color:var(--color-onband-muted)]">
               {POSITIONING.demoDataLabel}
             </span>
           </>

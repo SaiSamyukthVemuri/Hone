@@ -135,6 +135,19 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
     }
   });
 
+  it("the trust strip renders four lines, not one", () => {
+    // MKT-02A ships trustStrip as ONE string joined with " · " and the homepage
+    // splits it into a four-column ruled row. That split is a runtime read of a
+    // display string: change the separator upstream and the strip does not
+    // break loudly, it silently becomes a single long line that still renders.
+    // So the separator contract is pinned on both sides.
+    expect(PAGE).toMatch(/POSITIONING\.trustStrip\.split\(" · "\)/);
+    const lines = POSITIONING.trustStrip.split(" · ");
+    expect(lines, `trustStrip split into ${lines.length} lines`).toHaveLength(4);
+    for (const line of lines) expect(line.trim()).toBe(line);
+    for (const line of lines) expect(line.length).toBeGreaterThan(0);
+  });
+
   it("keeps the editorial pacing: three tones, and the band used as a spine", () => {
     // "Do not make all sections equal cards" is a pacing requirement. What is
     // checkable without freezing the layout is that the page still alternates:
