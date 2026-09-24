@@ -144,13 +144,35 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     expect(leaf).toContain("if (pending === reported.current) return;");
   });
 
-  it("each shell holds the flag and hands it back", () => {
+  it("both shells read ONE authority, and neither owns a private copy", () => {
+    // SIGNOUT-02c. `app/(app)/layout.tsx` renders BOTH menus on every page and
+    // hides one with CSS, so they are always-mounted siblings. A per-shell
+    // `useState` made the flag per-SHELL rather than per-practitioner:
+    // crossing the `lg` breakpoint mid-logout revealed the other menu with its
+    // own flag still false, and a fresh enabled Sign out with it.
     for (const f of shells) {
       const code = codeOnly(read(f));
-      expect(code, f).toContain("const [signingOut, setSigningOut] = useState(false);");
+      expect(code, f).toContain("const signingOut = useSignOutInFlight();");
       expect(code, f).toContain("busy={signingOut}");
-      expect(code, f).toContain("onPendingChange={setSigningOut}");
+      expect(code, f).toContain("onPendingChange={setSignOutInFlight}");
+      // The private copy must not come back.
+      expect(code, f).not.toContain("[signingOut, setSigningOut]");
     }
+  });
+
+  it("the authority is a real shared store, not two synchronised copies", () => {
+    const store = codeOnly(read("app/(app)/signout-flight.ts"));
+    // useSyncExternalStore is the API React provides for exactly this; a
+    // hand-rolled effect pair would tear between the two shells.
+    expect(store).toContain("useSyncExternalStore");
+    expect(store).toContain("export function setSignOutInFlight");
+    expect(store).toContain("export function useSignOutInFlight");
+    // The server snapshot must be a STABLE value, or React re-renders forever.
+    expect(store).toContain("function getServerSnapshot(): boolean {");
+    expect(store).toContain("return false;");
+    // No provider, no layout surgery: the shell layout stays a server component.
+    expect(codeOnly(read("app/(app)/layout.tsx"))).not.toContain("SignOutFlight");
+    expect(read("app/(app)/layout.tsx")).not.toContain('"use client"');
   });
 
   it("NO destination stays navigable while a logout is in flight", () => {

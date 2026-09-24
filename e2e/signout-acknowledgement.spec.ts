@@ -499,6 +499,159 @@ for (const surface of SURFACES) {
   });
 }
 
+// SIGNOUT-02c · ONE in-flight authority across the two responsive shells.
+//
+// `app/(app)/layout.tsx` renders BOTH menus on every page and hides one with
+// CSS (`hidden … lg:flex` / `… lg:hidden`). They are always-mounted siblings,
+// so a per-shell `signingOut` was per-SHELL rather than per-practitioner:
+// crossing the breakpoint mid-logout revealed the other menu with its own flag
+// still false, and a fresh enabled Sign out with it. Every other SIGNOUT-02
+// guard was intact and irrelevant — each read a flag the other shell lacked.
+//
+// These tests cross the breakpoint in BOTH directions, because the defect was
+// symmetric and fixing only the direction you happened to test is how it comes
+// back.
+const DESKTOP = { width: 1280, height: 900 };
+const PHONE = { width: 390, height: 844 };
+
+type Shell = {
+  name: string;
+  size: { width: number; height: number };
+  trigger: string;
+  nav: string;
+};
+const DESKTOP_SHELL: Shell = {
+  name: "desktop",
+  size: DESKTOP,
+  trigger: "Open account menu",
+  nav: "Account menu",
+};
+const PHONE_SHELL: Shell = {
+  name: "phone",
+  size: PHONE,
+  trigger: "Open navigation menu",
+  nav: "Mobile navigation",
+};
+
+for (const [from, to] of [
+  [DESKTOP_SHELL, PHONE_SHELL],
+  [PHONE_SHELL, DESKTOP_SHELL],
+] as const) {
+  test.describe(`SIGNOUT-02c · ${from.name} logout, then cross to ${to.name}`, () => {
+    test(`the ${to.name} shell does not offer a second logout`, async ({ page }) => {
+      await page.setViewportSize(from.size);
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+
+      const gate = await holdActions(page, { onRelease: "continue" });
+
+      // Start the logout in the FROM shell.
+      await page.getByRole("button", { name: from.trigger }).click();
+      const fromPanel = page.getByRole("navigation", { name: from.nav });
+      await fromPanel.getByRole("button", { name: "Sign out" }).click({ noWaitAfter: true });
+      await expect(fromPanel.locator("[data-signout-pending]")).toBeVisible({
+        timeout: 5_000,
+      });
+
+      // Cross the breakpoint. Nothing unmounts — the other shell was always
+      // there, and is simply revealed.
+      await page.setViewportSize(to.size);
+      await page.waitForTimeout(400);
+
+      // Open the NOW-VISIBLE shell and look for a way to sign out again.
+      await page.getByRole("button", { name: to.trigger }).click();
+      const toPanel = page.getByRole("navigation", { name: to.nav });
+      await expect(toPanel).toBeVisible({ timeout: 10_000 });
+
+      const control = toPanel.getByRole("button", { name: /Signing out|Sign out/ });
+      await expect(control).toBeVisible({ timeout: 10_000 });
+      await expect(
+        control,
+        `the ${to.name} shell exposed an enabled Sign out while a logout was in flight`,
+      ).toBeDisabled();
+      await expect(control).toHaveText("Signing out…");
+      await expect(control).toHaveAttribute("aria-busy", "true");
+
+      // The SIGNOUT-02 hold applies in this shell too: no navigable
+      // destination while the logout is in flight.
+      expect(
+        await toPanel.locator("a[href]").count(),
+        `the ${to.name} shell left a navigable destination during the logout`,
+      ).toBe(0);
+
+      // EXACTLY ONE dispatch across the whole transition.
+      gate.release();
+      await page.waitForURL(/\/login/, { timeout: 20_000 });
+      await Promise.race([
+        gate.duplicateSeen,
+        new Promise((r) => setTimeout(r, 3_000)),
+      ]);
+      expect(
+        gate.state.held,
+        "more than one logout reached the wire across the breakpoint crossing",
+      ).toBe(1);
+
+      await gate.unroute();
+    });
+  });
+}
+
+test.describe("SIGNOUT-02c · both shells restore after settlement", () => {
+  test("a settled logout leaves neither shell holding the flag", async ({ page }) => {
+    // The other half of one shared authority: clearing it must reach both
+    // shells too, or the fix trades a duplicate logout for a dead menu.
+    //
+    // Driven against a REAL settlement — the action is released and allowed to
+    // finish — and asserted on the page it lands on. A failed action is not
+    // usable here: measured, it renders the app's error boundary and replaces
+    // the whole shell, so there is nothing left to observe.
+    await page.setViewportSize(DESKTOP);
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+
+    const gate = await holdActions(page, { onRelease: "continue" });
+    await page.getByRole("button", { name: DESKTOP_SHELL.trigger }).click();
+    await page
+      .getByRole("navigation", { name: DESKTOP_SHELL.nav })
+      .getByRole("button", { name: "Sign out" })
+      .click({ noWaitAfter: true });
+    await expect(page.locator("[data-signout-pending]")).toBeVisible({ timeout: 5_000 });
+
+    gate.release();
+    await page.waitForURL(/\/login/, { timeout: 20_000 });
+
+    // The shell is gone with the logout, which is the settlement working. What
+    // must NOT survive is the flag: sign back in and both shells are normal.
+    expect(
+      await page.locator("[data-signout-pending]").count(),
+      '"Signing out…" survived into the post-logout page',
+    ).toBe(0);
+
+    await gate.unroute();
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+
+    for (const shell of [DESKTOP_SHELL, PHONE_SHELL]) {
+      await page.setViewportSize(shell.size);
+      await page.waitForTimeout(300);
+      await page.getByRole("button", { name: shell.trigger }).click();
+      const panel = page.getByRole("navigation", { name: shell.nav });
+      await expect(panel).toBeVisible({ timeout: 10_000 });
+      await expect(
+        panel.getByRole("button", { name: "Sign out" }),
+        `the ${shell.name} shell is still held after the logout settled`,
+      ).toBeEnabled();
+      expect(
+        await panel.getByRole("link").count(),
+        `the ${shell.name} shell never restored its destinations`,
+      ).toBeGreaterThan(0);
+      // Close it again before switching shells.
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(200);
+    }
+  });
+});
+
 test.describe("SIGNOUT-02 · the press is confirmed before any JS", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
 

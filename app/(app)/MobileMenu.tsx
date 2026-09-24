@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
+import { setSignOutInFlight, useSignOutInFlight } from "./signout-flight";
 import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
 import { spinnerClasses } from "@/components/ui/spinner";
 
@@ -29,17 +30,12 @@ export function MobileMenu({
   canSwitchStudio: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  // SIGNOUT-02b. The logout's in-flight state is held HERE, on the persistent
-  // shell, because the panel below is the thing that unmounts. Escape, an
-  // outside pointerdown and the trigger could all dismiss the panel mid-logout,
-  // taking the form and its `useFormStatus` with them; reopening then built a
-  // fresh, enabled "Sign out" and a second logout went out on the wire.
-  //
-  // While this is true the panel REFUSES TO CLOSE, which keeps the form mounted
-  // and the acknowledgement truthful. It is also handed back down as `busy`, so
-  // a leaf that does somehow remount mid-flight still renders as busy rather
-  // than inviting a second press.
-  const [signingOut, setSigningOut] = useState(false);
+  // SIGNOUT-02c. The in-flight flag is NOT owned here any more. Both shells are
+  // rendered on every page and hidden with CSS, so a per-shell `useState` made
+  // this per-shell rather than per-practitioner: crossing the `lg` breakpoint
+  // mid-logout revealed the other menu with its own flag still false, and a
+  // fresh enabled Sign out with it. One authority, read by both.
+  const signingOut = useSignOutInFlight();
   const rootRef = useRef<HTMLDivElement>(null);
 
   // SIGNOUT-02b · ONE dismissal rule, and it is deferred rather than dropped.
@@ -402,7 +398,7 @@ export function MobileMenu({
               <SignOutMenuItem
                 minHeight="min-h-[44px]"
                 busy={signingOut}
-                onPendingChange={setSigningOut}
+                onPendingChange={setSignOutInFlight}
               />
             </form>
           </div>
