@@ -75,7 +75,7 @@ export default function HomePage() {
           <div>
             <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
             <Display className="mt-4">{POSITIONING.heroH1}</Display>
-            <Lede className="mt-6 max-w-xl">{POSITIONING.heroSupporting}</Lede>
+            <Lede className="mt-6 max-w-xl">{POSITIONING.heroSub}</Lede>
             <p className="mt-5 max-w-xl text-[1.0625rem] font-medium text-ink">
               {POSITIONING.differentiationLine}
             </p>
@@ -84,7 +84,7 @@ export default function HomePage() {
                 {WALKTHROUGH.primaryLabel}
               </CTAButton>
               <CTAButton
-                href="#how-hone-works"
+                href={WALKTHROUGH.secondaryHref}
                 variant="secondary"
                 event={ANALYTICS_EVENTS.secondaryCtaClick}
               >
