@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { adoptSignOut, orphanSignOut } from "./signout-flight";
 import { useFormStatus } from "react-dom";
 import { cx } from "@/components/ui/control-base";
 
@@ -164,11 +165,43 @@ export function SignOutMenuItem({
 }) {
   const { pending } = useFormStatus();
   const reported = useRef(false);
+
+  // ADOPT ON MOUNT, and only an UNOWNED hold.
+  //
+  // Module scope outlives the component tree, which is what makes one shared
+  // authority possible — and cut the other way once. Browser history can leave
+  // the `(app)` route group while a logout is in flight, unmounting the leaf
+  // that is the only thing able to report `pending === false`. Navigating back
+  // rebuilt both shells with the flag still set and nothing left to clear it,
+  // so Sign out and every destination stayed disabled for a request that had
+  // long since finished.
+  //
+  // This runs BEFORE the transition effect below so a fresh leaf clears a hold
+  // no one is watching, while leaving a live one — claimed by a leaf that is
+  // still mounted — completely alone.
+  useEffect(() => {
+    adoptSignOut();
+  }, []);
+
   useEffect(() => {
     if (pending === reported.current) return;
     reported.current = pending;
     onPendingChange?.(pending);
   }, [pending, onPendingChange]);
+
+  // AND IT HANDS THE HOLD OVER IF IT GOES AWAY STILL CLAIMING IT.
+  //
+  // The hold STAYS — the other shell must not open up merely because a panel
+  // was taken down — but it is marked unowned, so the next leaf to mount can
+  // end it. Only a leaf that actually claimed may orphan.
+  useEffect(() => {
+    return () => {
+      if (reported.current) {
+        reported.current = false;
+        orphanSignOut();
+      }
+    };
+  }, []);
 
   const inFlight = pending || busy;
   return (

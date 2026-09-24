@@ -170,6 +170,21 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     // The server snapshot must be a STABLE value, or React re-renders forever.
     expect(store).toContain("function getServerSnapshot(): boolean {");
     expect(store).toContain("return false;");
+    // The hold is tracked, not a bare boolean: a leaf that unmounts mid-flight
+    // must hand it over rather than drop it, and a fresh leaf must be able to
+    // end a hold nobody is watching — module scope outlives the component
+    // tree, so without this a history escape from the route group stranded the
+    // flag forever.
+    expect(store).toContain("export function claimSignOut");
+    expect(store).toContain("export function releaseSignOut");
+    expect(store).toContain("export function orphanSignOut");
+    expect(store).toContain("export function adoptSignOut");
+    // The leaf drives all four.
+    expect(leaf).toContain("adoptSignOut();");
+    expect(leaf).toContain("orphanSignOut();");
+    // Only a leaf that actually claimed may hand the hold over.
+    expect(leaf).toContain("if (reported.current) {");
+
     // No provider, no layout surgery: the shell layout stays a server component.
     expect(codeOnly(read("app/(app)/layout.tsx"))).not.toContain("SignOutFlight");
     expect(read("app/(app)/layout.tsx")).not.toContain('"use client"');
