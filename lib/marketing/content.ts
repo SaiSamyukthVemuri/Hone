@@ -158,8 +158,14 @@ export const PRICING_PLANS: ReadonlyArray<PricingPlan> = [
   },
 ] as const;
 
-// Assurances, each is evidence-backed in the truth register (§23). No setup
-// fee / no contract / cancel anytime / free standard import / founder-led setup.
+// Assurances: founder-led setup / free standard client import / no setup fee /
+// cancel anytime.
+//
+// THE LIST ABOVE IS THE WHOLE SET. It previously also named "no contract" and
+// described every entry as evidence-backed in the truth register — while the
+// register records no contract claim at all. This module documents the
+// evidence gate for marketing copy, so a header contradicting the constant
+// beneath it is the likeliest way the unsupported assurance comes back.
 export const PRICING_ASSURANCES: ReadonlyArray<string> = [
   "Founder-led setup",
   "Free standard client import",

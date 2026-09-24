@@ -25,8 +25,58 @@ import {
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
-const strip = (s: string) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+/**
+ * Remove comments WITHOUT corrupting string literals.
+ *
+ * The previous version stripped only whole-line comments (`/^\\s*\\/\\//`), so a
+ * TRAILING one survived — and `a: "No setup fee.", // contract` would have made
+ * the FAQ guard see the topic as answered, recreating the exact
+ * comment-satisfies-the-rule defect that guard exists to prevent.
+ *
+ * Stripping `//` naively is not the fix either: these files contain URLs, and
+ * `https://…` would lose its tail. So this tracks string state and only treats
+ * `//` as a comment when it is not inside one.
+ */
+function strip(src: string): string {
+  let out = "";
+  let quote: string | null = null;
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (quote !== null) {
+      if (c === "\\") {
+        out += c + (next ?? "");
+        i += 2;
+        continue;
+      }
+      if (c === quote) quote = null;
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      quote = c;
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === "/" && next === "/") {
+      while (i < src.length && src[i] !== "\n") i += 1;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i += 1;
+      i += 2;
+      out += " ";
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
 
 const PRICING = strip(read("app/pricing/page.tsx")).replace(/\s+/g, " ");
 const HOME = strip(read("app/page.tsx")).replace(/\s+/g, " ");
