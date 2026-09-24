@@ -40,13 +40,28 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 export const metadata: Metadata = marketingMetadata("/pricing");
 
 // Every plan includes the full workflow, plans are NOT feature-gated.
+// Deck v2.2 enumerates nine inclusions. Each is rendered only because the truth
+// register classifies it as marketable, and the register section is named so a
+// reviewer can check the claim rather than the sentence:
+//
+//   treatment memory (§3) · charting (§2) · intake (§4) · consent (§4) ·
+//   photos (§5) · follow-up (§5) · payments (§6) · client portal (§5) ·
+//   CSV export (§8, narrowed by TRUTH-01A)
+//
+// PAYMENTS CARRIES ITS QUALIFIER IN THE BULLET, not only in the paragraph
+// below the list. Standing rule §4 permits the claim exclusively WITH "Payments
+// are enabled during guided onboarding", and a bullet is the unit that gets
+// screenshotted, excerpted and read alone. Relying on adjacency would make the
+// rule hold by layout.
 const INCLUDED: string[] = [
-  "Online booking page, calendar, services, and availability",
-  "Client health intake and your own consent forms",
-  "Treatment charting for electrolysis and laser",
   "Treatment memory, the Before Today briefing on every returning client",
+  "Treatment charting for electrolysis and laser",
+  "Client health intake",
+  "Your own consent forms",
   "Private treatment photos and procedure records",
-  "Client follow-up, postcare, and the client portal",
+  "Client follow-up and postcare",
+  `Owner-run card payments — ${PAYMENT_QUALIFIER}`,
+  "The client portal",
   // TRUTH-01A: "Full data export" overstated a named-subset export. See
   // lib/export/resource-registry.ts for the authoritative contents.
   "CSV data export, any time, listing exactly what it includes",
@@ -84,21 +99,13 @@ const FAQ: { q: string; a: string }[] = [
 ];
 
 function PlanCard({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
-  const featured = Boolean(plan.badge);
+  // EVERY CARD IS RENDERED IDENTICALLY. The emphasised border and shadow were
+  // driven by the badge, so one tier appeared recommended by styling alone.
   return (
-    <div
-      className={`flex flex-col rounded-[12px] border bg-white p-6 sm:p-7 ${
-        featured
-          ? "border-[color:var(--color-mineral)] shadow-[var(--mk-shadow-frame)]"
-          : "border-[color:var(--color-hairline)]"
-      }`}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <Subtitle as="h2" className="text-[1.375rem]">
-          {plan.name}
-        </Subtitle>
-        {plan.badge ? <Chip>{plan.badge}</Chip> : null}
-      </div>
+    <div className="flex flex-col rounded-[12px] border border-[color:var(--color-hairline)] bg-white p-6 sm:p-7">
+      <Subtitle as="h2" className="text-[1.375rem]">
+        {plan.name}
+      </Subtitle>
 
       <p className="mt-4">
         <span className="text-[2rem] font-semibold text-ink">
@@ -126,9 +133,11 @@ function PlanCard({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
       ) : null}
 
       <div className="mt-auto pt-6">
+        {/* One variant for every plan: a primary button on a single card is a
+            recommendation too, so the CTA no longer varies by tier. */}
         <CTAButton
           href={WALKTHROUGH.href}
-          variant={featured ? "primary" : "outline"}
+          variant="outline"
           event={ANALYTICS_EVENTS.foundingCtaClick}
           className="w-full"
         >
@@ -155,11 +164,29 @@ export default function PricingPage() {
           <Reveal immediate>
             <Eyebrow>Pricing</Eyebrow>
             <Display className="mt-4 max-w-3xl">
-              Straightforward pricing, in Canadian dollars.
+              Simple plans, in Canadian dollars.
             </Display>
+            {/* DECK v2.2 ALSO SPECIFIED "No client caps. No appointment caps."
+                THOSE TWO SENTENCES ARE DELIBERATELY NOT RENDERED.
+
+                They are true of the product today — no tier/plan cap mechanism
+                exists anywhere in the codebase; the only quota code is per-IP
+                request limiting and the Google API's own limits. But this lane
+                renders only claims the truth register verifies, and the
+                register makes no caps statement of any kind. A claim that is
+                true and unsourced is still unsourced, and "no caps" is a
+                forward promise about packaging, not just a fact about today.
+
+                `tests/app/marketing-pricing.test.ts` independently forbids the
+                wording. Narrowing that guard so the sentence fits would be
+                patching the rule at the spelling to admit the copy, which is
+                the move this repository keeps finding in its own history.
+
+                To publish it: record the claim in the truth register, then
+                narrow the guard to forbid affirmative cap claims rather than
+                the noun. Both are decisions for whoever owns the register. */}
             <Lede className="mt-6 max-w-2xl">
-              Founder-led setup and free standard client import on every plan. No setup
-              fee, no contract, cancel anytime.
+              Every plan includes the full treatment workflow.
             </Lede>
           </Reveal>
         </Container>
@@ -171,6 +198,21 @@ export default function PricingPage() {
               <PlanCard key={plan.id} plan={plan} />
             ))}
           </div>
+          {/* A LIST, not a styled sentence. The separator is decorative and
+              hidden, so a screen reader hears four assurances rather than one
+              run-on line punctuated by middots. */}
+          <ul className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[0.9375rem] text-ink">
+            {PRICING_ASSURANCES.map((a, i) => (
+              <li key={a} className="flex items-center gap-3">
+                {i > 0 ? (
+                  <span aria-hidden="true" className="text-mineral">
+                    ·
+                  </span>
+                ) : null}
+                <span>{a}</span>
+              </li>
+            ))}
+          </ul>
           <p className="mt-5 text-[0.8125rem] text-muted">
             Prices in Canadian dollars (CAD). Setup and payment activation happen during a
             guided onboarding, there is no self-service checkout.
@@ -187,11 +229,6 @@ export default function PricingPage() {
                 Treatment memory, charting, intake, consent, and records are never held
                 back to build a higher tier.
               </Lede>
-              <div className="mt-6 flex flex-wrap gap-2">
-                {PRICING_ASSURANCES.map((a) => (
-                  <Chip key={a}>{a}</Chip>
-                ))}
-              </div>
             </Reveal>
             <Reveal delay={80}>
               <ul className="grid gap-x-8 gap-y-3 sm:grid-cols-2">

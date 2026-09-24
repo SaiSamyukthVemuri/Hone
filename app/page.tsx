@@ -245,14 +245,9 @@ export default function HomePage() {
                   as="div"
                   key={plan.id}
                   delay={i * 70}
-                  className={`flex flex-col rounded-[12px] border bg-white p-6 ${
-                    plan.badge ? "border-[color:var(--color-mineral)]" : "border-[color:var(--color-hairline)]"
-                  }`}
+                  className="flex flex-col rounded-[12px] border border-[color:var(--color-hairline)] bg-white p-6"
                 >
-                  <div className="flex items-center justify-between">
-                    <Subtitle as="h3">{plan.name}</Subtitle>
-                    {plan.badge ? <Chip>{plan.badge}</Chip> : null}
-                  </div>
+                  <Subtitle as="h3">{plan.name}</Subtitle>
                   <p className="mt-3">
                     <span className="text-[1.75rem] font-semibold text-ink">
                       {plan.priceLabel ?? "Talk to us"}
