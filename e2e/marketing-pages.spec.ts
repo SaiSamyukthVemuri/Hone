@@ -8,7 +8,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 const ROUTES: { path: string; h1: string }[] = [
   { path: "/", h1: "Electrolysis practice software that remembers every treatment." },
-  { path: "/pricing", h1: "Straightforward pricing, in Canadian dollars." },
+  { path: "/pricing", h1: "Simple plans, in Canadian dollars." },
   { path: "/electrolysis-software", h1: "Software built for an electrolysis practice, not a generic salon." },
   { path: "/features/treatment-memory", h1: "Remember every treatment, before the client sits down." },
   { path: "/features/booking-calendar", h1: "Online booking and a calendar for the treatment room." },

@@ -55,8 +55,16 @@ test.describe("marketing homepage (desktop)", () => {
 
     // CAD pricing teaser (not the old $19 pilot).
     await expect(page.getByText("CAD $49")).toBeVisible();
-    await expect(page.getByText("Most popular")).toBeVisible();
     await expect(page.getByText("$19")).toHaveCount(0);
+
+    // MKT-02D: NO TIER IS RECOMMENDED. This asserted "Most popular" was
+    // VISIBLE. The badge is gone — along with the border, shadow and primary
+    // CTA it drove — so the assertion is inverted rather than deleted: a
+    // removed check would let the badge return without any browser-level
+    // notice, which is the same gap that made this a required-suite failure in
+    // the first place.
+    await expect(page.getByText("Most popular")).toHaveCount(0);
+    await expect(page.getByText(/recommended/i)).toHaveCount(0);
 
     // Trust: evidence-backed claims + policy link.
     await expect(page.getByText("Studio data stays isolated")).toBeVisible();
