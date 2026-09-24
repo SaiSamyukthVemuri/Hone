@@ -10,10 +10,12 @@ import { test, expect, type Page } from "@playwright/test";
 //                   a dozen uninteresting reasons; a network request either
 //                   happened or it did not, and 3.6 MB arriving on every
 //                   homepage view is the actual regression being guarded.
-//   "poster is LCP" Asserted from the browser's own
-//                   largest-contentful-paint entry, not from `priority` being
-//                   in the source. The source already says priority; only the
-//                   renderer can say whether it won.
+//   "poster eager" Asserted as a preload link the scanner sees plus an image
+//                   that really decoded — NOT as "the poster wins LCP". It
+//                   cannot: the film sits below a type-only hero and is never
+//                   in the initial viewport, and off-screen content is not an
+//                   LCP candidate at all. Deck §13's wording and the page's
+//                   ordering are incompatible; the ordering is the brief's.
 //   "NO AUTOPLAY"   Asserted after a full load AND settle, under both default
 //                   and reduced-motion preferences.
 //   "it plays"      Asserted as currentTime advancing and videoWidth reporting

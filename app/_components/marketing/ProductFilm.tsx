@@ -8,15 +8,25 @@ import { ANALYTICS_EVENTS, FILM, POSITIONING } from "@/lib/marketing/content";
 // Film V1 player (deck v2.2 §12b/§13). A FACADE, not a <video> that happens to
 // be paused.
 //
-// WHY A FACADE. The requirement is "poster is the LCP candidate, video lazy".
-// Those pull in opposite directions on one element: a <video poster="…"> loads
-// the poster as an unoptimised PNG the preloader cannot see, and `preload="none"`
-// still leaves the browser holding a media element it must lay out and decode
-// into. So the two jobs are split:
+// WHY A FACADE. The requirement is "poster eager, video lazy". Those pull in
+// opposite directions on one element: a <video poster="…"> loads the poster as
+// an unoptimised PNG the preload scanner cannot see, and `preload="none"` still
+// leaves the browser holding a media element it must lay out and decode into.
+// So the two jobs are split:
+//
+// AND THE POSTER IS NOT THE PAGE'S LCP, WHICH IS NOT A DEFECT. Deck §13 called
+// it "the LCP candidate on the homepage", but the homepage opens on a type-only
+// hero and this film is section 1 beneath it — at 1440x900 it starts roughly
+// 890px down and is never in the initial viewport. Off-screen content is not
+// eligible to be a largest-CONTENTFUL-paint candidate at all, and `priority`
+// changes fetch timing, not eligibility. Measured: LCP resolves to the H1.
+// What `priority` does buy is the thing §13 actually wanted — the poster is
+// fetched by the preload scanner rather than discovered late, so the film is
+// never a grey box someone scrolls into. That is what the proof asserts.
 //
 //   BEFORE activation  an ordinary next/image, `priority`, so the poster is in
 //                      the preload scanner, served as AVIF/WebP at the width
-//                      actually rendered, and is a first-class LCP candidate.
+//                      actually rendered, and fetched by the preload scanner.
 //                      The <video> does not exist. Zero media bytes are
 //                      fetched — not "deferred", not fetched.
 //   AFTER activation   the <video> mounts and plays, because a person asked.
@@ -91,7 +101,7 @@ export function ProductFilm({ className = "" }: { className?: string }) {
                 until it caps at 15rem, so the film is 86vw until the shell
                 reaches its 1400px ceiling at ~1640px of viewport. Saying
                 "1200px" here would hand the browser a candidate narrower than
-                the box it actually paints into, and the LCP image would land
+                the box it actually paints into, and the poster would land
                 softer than the file it came from. 1400 < the film's native
                 1920, so it never upscales either. */}
             <Image

@@ -180,13 +180,13 @@ describe("no autoplay — structurally, not by convention", () => {
   });
 });
 
-describe("the poster is the LCP candidate", () => {
+describe("the poster is fetched eagerly, not discovered late", () => {
   it("is a static import rendered through next/image with priority", () => {
     expect(PLAYER).toMatch(/from "next\/image"/);
     expect(PLAYER).toMatch(/import posterImage from "@\/app\/_media\//);
     expect(PLAYER).toMatch(/\bpriority\b/);
     // `loading="lazy"` would take the poster out of the preload scanner and
-    // hand LCP to whatever loads next.
+    // take the poster out of the preload scanner entirely.
     expect(PLAYER).not.toMatch(/loading="lazy"/);
   });
 
