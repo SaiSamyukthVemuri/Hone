@@ -30,8 +30,42 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // export as electrolysis_entries.csv and laser_entries.csv; the session BLOCK
 // that groups them has no file of its own yet, so do not imply the charting
 // record leaves whole.
+//
+// MKT-02E. Structure and copy follow marketing copy deck v2.2 section 5.
+//
+// THE EDIT-HISTORY SECTION IS DELIBERATELY NOT THE DECK'S. The deck heads it
+// "Corrections are recorded, not written over". Truth-register standing rule 7
+// (clinical-record rule, 2026-07-29) forbids marketing a *correction /
+// amendment workflow*: signed / finalized clinical records are RETIRED and
+// permanently rejected, and the register names the truthful, marketable story in
+// its own words — "treatment records stay editable, and every change is
+// attributed and time-stamped." That sentence is what this section says.
+//
+// The same rule expressly PRESERVES what the deck's body describes — append-only
+// clinical notes, the record-keeping audit trail and session edit history — so
+// the substance survives unchanged; only the framing moves off the retired one.
+//
+// The deck's two [DECIDE] items are left as they already ship: Apilus is named
+// in the capability list exactly as production names it today, and no laser line
+// is added. Neither is an MKT-02E decision to take.
 
 export const metadata: Metadata = marketingMetadata("/features/charting-records");
+
+/** Deck section 5, "The fields", verbatim. A list for layout, not an ordering claim. */
+const FIELDS: readonly string[] = [
+  "Area and side",
+  "Mode and modality",
+  "Energy",
+  "Frequency",
+  "Pulse count",
+  "Split readings",
+  "Probe type",
+  "Probe lot",
+  "Tolerance",
+  "Skin response",
+  "Aftercare",
+  "Next-treatment note",
+];
 
 const CAPABILITIES: { title: string; body: string }[] = [
   {
@@ -77,12 +111,10 @@ export default function ChartingRecordsPage() {
           <Reveal immediate>
             <Eyebrow>Charting and records</Eyebrow>
             <Display className="mt-4">
-              Chart the treatment while it&apos;s fresh, keep clean records.
+              Electrolysis charting built around treatments, not generic notes
             </Display>
             <Lede className="mt-6 max-w-xl">
-              Record electrolysis and laser sessions at the point of care, machine settings,
-              structured probe and lot, treatment areas, and observations, and keep
-              print-ready procedure records for your files and inspections.
+              The record is shaped like the work: per area, per treatment, in fields.
             </Lede>
             <div className="mt-8">
               <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
@@ -97,8 +129,18 @@ export default function ChartingRecordsPage() {
 
         <Section tone="warm">
           <Container size="wide">
-            <Eyebrow>What it captures</Eyebrow>
-            <Title className="mt-4 max-w-2xl">The detail an electrolysis record needs.</Title>
+            <Eyebrow>The fields</Eyebrow>
+            <Title className="mt-4 max-w-2xl">What one treatment records.</Title>
+            <ul className="mt-8 flex flex-wrap gap-3">
+              {FIELDS.map((field) => (
+                <li
+                  key={field}
+                  className="rounded-full border border-hairline bg-paper px-4 py-2 text-[0.875rem] leading-none text-ink"
+                >
+                  {field}
+                </li>
+              ))}
+            </ul>
             <FeatureMatrix items={CAPABILITIES} />
           </Container>
         </Section>
@@ -106,13 +148,67 @@ export default function ChartingRecordsPage() {
         <Section tone="paper">
           <Container size="prose">
             <Reveal>
-              <Eyebrow>Records you can stand behind</Eyebrow>
-              <Title className="mt-4">Structured now, useful later.</Title>
+              <Eyebrow>Per area, not per visit</Eyebrow>
+              <Title className="mt-4">Four areas, four records.</Title>
               <Lede className="mt-5">
-                Because charting is structured, not a free-text blob, the record you make
-                today becomes the treatment memory you rely on next time, the procedure record
-                you print for an inspection, and part of the CSV data export you can download
-                any time.
+                Every field is attached to the area it describes, so a session that covers four
+                areas produces four records, and each area&rsquo;s history reads on its own.
+              </Lede>
+            </Reveal>
+          </Container>
+        </Section>
+
+        <Section tone="warm">
+          <Container size="prose">
+            <Reveal>
+              <Eyebrow>Edit history</Eyebrow>
+              <Title className="mt-4">
+                Treatment records stay editable, and every change is attributed and
+                time-stamped.
+              </Title>
+              <Lede className="mt-5">
+                A treatment record keeps its edit history. Change a value and the record keeps
+                what it was, who changed it, and when.
+              </Lede>
+            </Reveal>
+          </Container>
+        </Section>
+
+        <Section tone="paper">
+          <Container size="prose">
+            <Reveal>
+              <Eyebrow>Lots, sterile items and expiry</Eyebrow>
+              <Title className="mt-4">Show what was used on the day.</Title>
+              <Lede className="mt-5">
+                The probe lot is part of the treatment record and linked to your inventory.
+                Sterile items and disinfectant carry expiry dates in a log. When you need to
+                show what was used on a given day, there&rsquo;s a print-friendly view.
+              </Lede>
+            </Reveal>
+          </Container>
+        </Section>
+
+        <Section tone="warm">
+          <Container size="prose">
+            <Reveal>
+              <Eyebrow>Photos</Eyebrow>
+              <Title className="mt-4">Attached to the record, kept private.</Title>
+              <Lede className="mt-5">
+                Treatment photos attach to the record. They&rsquo;re stored privately, camera
+                metadata is stripped, and they open through short-lived links.
+              </Lede>
+            </Reveal>
+          </Container>
+        </Section>
+
+        <Section tone="paper">
+          <Container size="prose">
+            <Reveal>
+              <Eyebrow>Gaps are flagged</Eyebrow>
+              <Title className="mt-4">Hone points out what&rsquo;s missing.</Title>
+              <Lede className="mt-5">
+                A missing probe lot. Aftercare not marked. A completed appointment not yet
+                charted. Hone flags each one.
               </Lede>
               <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
                 Hone supports record-keeping workflows; studios remain responsible for meeting

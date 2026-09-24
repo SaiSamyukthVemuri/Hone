@@ -23,6 +23,32 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // Feature: /features/booking-calendar. Intent: electrolysis booking / calendar
 // software. All capabilities are LIVE. SMS is opt-in (qualifier). Google
 // Calendar is NEVER mentioned (dormant).
+//
+// MKT-02E. Structure and copy follow marketing copy deck v2.2 section 6, which
+// opens by stating what this page is for: "Intentionally a supporting page.
+// Nothing on it claims better scheduling than anything else." Nothing here
+// compares Hone's scheduling to anything, names another product, or calls this
+// booking better — the page earns its place by what booking is CONNECTED to.
+//
+// TWO [VERIFY] MARKERS IN THE DECK WERE RESOLVED AGAINST THE TRUTH REGISTER,
+// AND THEY DID NOT RESOLVE THE SAME WAY.
+//
+//   Reminders — VERIFIED, with a correction. The deck's marker asks whether the
+//   scheduler is "live for all onboarded studios". It is not: the register
+//   classes automatic 24h/2h email reminders LIVE_WITH_GUIDED_SETUP (external
+//   scheduler) and still decides MARKET, giving the exact public phrasing used
+//   below. So the capability is marketable and the deck's stated precondition is
+//   simply the wrong test. No SMS line, per the deck and because both SMS rows
+//   are DEPLOYED_DEFAULT_OFF / QUALIFIER.
+//
+//   Client portal — PARTLY REFUSED. The deck line is "Clients see their upcoming
+//   appointments in a portal connected to the same record", marked
+//   [VERIFY scope]. The register has NO row granting that: its portal rows are
+//   magic-link sign-in, an append-only access log, an outstanding-items summary,
+//   two-way messaging, and photos explicitly NEVER shown in the portal. Cancel
+//   and reschedule are both "from their email", not from the portal. So the
+//   upcoming-appointments claim is not written, and this page says only what the
+//   register grants.
 
 export const metadata: Metadata = marketingMetadata("/features/booking-calendar");
 
@@ -45,11 +71,11 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Move an appointment in one step",
-    body: "Move a booking to a new time and it stays the same appointment, same client, notes, and history, still protected from double-booking.",
+    body: "Move a booking to a new time and the same client, notes, and history move with it, protected from double-booking.",
   },
   {
-    title: "Automatic email reminders",
-    body: "Every booking sends a confirmation, and automatic 24-hour and 2-hour email reminders help cut no-shows. Optional text reminders are available when you enable SMS and the client opts in.",
+    title: "Confirmations and reminders by email",
+    body: "Every booking emails the client a confirmation and notifies you. Automatic 24-hour and 2-hour email reminders help cut no-shows.",
   },
 ];
 
@@ -69,13 +95,11 @@ export default function BookingCalendarPage() {
         <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
           <Reveal immediate>
             <Eyebrow>Booking and calendar</Eyebrow>
-            <Display className="mt-4">
-              Online booking and a calendar for the treatment room.
-            </Display>
+            <Display className="mt-4">Booking connected to the treatment record</Display>
             <Lede className="mt-6 max-w-xl">
-              Give clients a booking page with real open times and double-booking protection,
-              and run your day on a calendar built for how an electrolysis practice works, not
-              a generic scheduler.
+              Your calendar remembers the appointment.
+              <br />
+              Hone helps you remember the treatment.
             </Lede>
             <div className="mt-8">
               <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
@@ -90,8 +114,14 @@ export default function BookingCalendarPage() {
 
         <Section tone="warm">
           <Container size="wide">
-            <Eyebrow>What it does</Eyebrow>
-            <Title className="mt-4 max-w-2xl">From first booking to the next visit.</Title>
+            <Eyebrow>Online booking for your studio</Eyebrow>
+            <Title className="mt-4 max-w-2xl">
+              Appointments land on the calendar with the record attached.
+            </Title>
+            <Lede className="mt-5 max-w-2xl">
+              Clients book from your studio&rsquo;s booking page. Appointments land on the
+              studio calendar with the client&rsquo;s record attached.
+            </Lede>
             <FeatureMatrix items={CAPABILITIES} />
           </Container>
         </Section>
@@ -99,42 +129,88 @@ export default function BookingCalendarPage() {
         <Section tone="paper">
           <Container size="prose">
             <Reveal>
-              <Eyebrow>Booking that feeds the record</Eyebrow>
-              <Title className="mt-4">The appointment is the start, not the end.</Title>
+              <Eyebrow>One shared calendar</Eyebrow>
+              <Title className="mt-4">The record always shows who treated.</Title>
               <Lede className="mt-5">
-                In Hone, a booking isn&apos;t a dead end on a calendar. It carries into intake,
-                charting, and treatment memory, so the schedule and the treatment record stay
-                connected, and a returning client&apos;s history is already there when they
-                book again.
+                A colour-coded calendar for the whole studio. Each practitioner charts under
+                their own name, so the record always shows who treated.
+              </Lede>
+            </Reveal>
+          </Container>
+        </Section>
+
+        <Section tone="warm">
+          <Container size="prose">
+            <Reveal>
+              <Eyebrow>Intake before the visit</Eyebrow>
+              <Title className="mt-4">Read the history before they arrive.</Title>
+              <Lede className="mt-5">
+                Health history is collected before the appointment and reviewed by you. Flags
+                like a pacemaker or an EpiPen are visible before the client arrives.
+              </Lede>
+            </Reveal>
+          </Container>
+        </Section>
+
+        <Section tone="paper">
+          <Container size="prose">
+            <Reveal>
+              <Eyebrow>Client portal</Eyebrow>
+              <Title className="mt-4">A signed-in space, connected to the same record.</Title>
+              <Lede className="mt-5">
+                Clients sign in with a passwordless, single-use magic link that expires in 60
+                minutes. The portal surfaces outstanding items &mdash; incomplete intake,
+                consent to sign, unread messages &mdash; and carries secure two-way messaging
+                whose content stays in the portal and never in notification emails.
+              </Lede>
+              <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
+                Treatment photos are never shown in the portal. Cancelling and rescheduling
+                happen from the client&rsquo;s confirmation and reminder emails.
+              </p>
+            </Reveal>
+          </Container>
+        </Section>
+
+        <Section tone="warm">
+          <Container size="prose">
+            <Reveal>
+              <Eyebrow>What booking is for on Hone</Eyebrow>
+              <Title className="mt-4">
+                The next appointment starts with the last treatment.
+              </Title>
+              <Lede className="mt-5">
+                Booking puts the appointment on the calendar. Charting puts the treatment in
+                the record. Hone connects the two so the next appointment starts with the last
+                treatment.
               </Lede>
             </Reveal>
           </Container>
         </Section>
 
         <RelatedLinks
-          title="What happens after the booking."
+          title="What the appointment connects to."
           links={[
-            {
-              href: "/features/charting-records",
-              label: "Charting and records",
-              blurb: "Chart the treatment at the point of care and keep clean procedure records.",
-            },
             {
               href: "/features/treatment-memory",
               label: "Treatment memory",
-              blurb: "Every appointment feeds the Before Today briefing for the next visit.",
+              blurb: "See how the last treatment reaches the next appointment.",
+            },
+            {
+              href: "/features/charting-records",
+              label: "Charting and records",
+              blurb: "The treatment you chart against the appointment you booked.",
             },
             {
               href: "/electrolysis-software",
               label: "Electrolysis practice software",
-              blurb: "See how booking fits the whole electrolysis workflow.",
+              blurb: "See how booking fits the rest of the workflow.",
             },
           ]}
         />
 
         <WalkthroughCTA
-          title="See the booking flow end to end."
-          body="We'll walk through your booking page, calendar, and reminders on a real workflow, and reply within one business day."
+          title="See booking and the record together."
+          body="We'll show a booking landing on the calendar and the treatment charted against it, and reply within one business day."
         />
       </main>
       <SiteFooter />
