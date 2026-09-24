@@ -9,10 +9,10 @@ import { test, expect, type Page } from "@playwright/test";
 const ROUTES: { path: string; h1: string }[] = [
   { path: "/", h1: "Electrolysis practice software that remembers every treatment." },
   { path: "/pricing", h1: "Straightforward pricing, in Canadian dollars." },
-  { path: "/electrolysis-software", h1: "Software built for an electrolysis practice, not a generic salon." },
+  { path: "/electrolysis-software", h1: "Electrolysis software built around how electrolysis is charted" },
   { path: "/features/treatment-memory", h1: "Remember every treatment, before the client sits down." },
-  { path: "/features/booking-calendar", h1: "Online booking and a calendar for the treatment room." },
-  { path: "/features/charting-records", h1: "Chart the treatment while it's fresh, keep clean records." },
+  { path: "/features/booking-calendar", h1: "Booking connected to the treatment record" },
+  { path: "/features/charting-records", h1: "Electrolysis charting built around treatments, not generic notes" },
   { path: "/resources", h1: "Practical guides for running an electrolysis practice." },
   { path: "/resources/electrolysis-treatment-record-checklist", h1: "What to record in an electrolysis treatment record" },
   { path: "/resources/moving-an-electrolysis-practice-from-paper-records", h1: "Moving an electrolysis practice from paper records" },

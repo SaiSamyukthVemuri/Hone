@@ -33,17 +33,36 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 //
 // MKT-02E. Structure and copy follow marketing copy deck v2.2 section 5.
 //
-// THE EDIT-HISTORY SECTION IS DELIBERATELY NOT THE DECK'S. The deck heads it
-// "Corrections are recorded, not written over". Truth-register standing rule 7
-// (clinical-record rule, 2026-07-29) forbids marketing a *correction /
-// amendment workflow*: signed / finalized clinical records are RETIRED and
-// permanently rejected, and the register names the truthful, marketable story in
-// its own words — "treatment records stay editable, and every change is
-// attributed and time-stamped." That sentence is what this section says.
+// THE EDIT-HISTORY SECTION IS NEITHER THE DECK'S NOR THE REGISTER'S SENTENCE,
+// AND THE SECOND HALF OF THAT IS A REGISTER DEFECT WORTH REPORTING.
 //
-// The same rule expressly PRESERVES what the deck's body describes — append-only
-// clinical notes, the record-keeping audit trail and session edit history — so
-// the substance survives unchanged; only the framing moves off the retired one.
+// The deck heads it "Corrections are recorded, not written over". Truth-register
+// standing rule 7 (clinical-record rule, 2026-07-29) forbids marketing a
+// *correction / amendment workflow* — signed / finalized clinical records are
+// RETIRED and permanently rejected — and offers its own replacement wording:
+// "treatment records stay editable, and every change is attributed and
+// time-stamped."
+//
+// THAT REPLACEMENT DOES NOT HOLD FOR THE FIELDS THIS PAGE IS ABOUT. Checked in
+// the schema: `update_session_block_with_areas`
+// (0156_conditional_numbing_notes.sql:102-169) UPDATEs the block in place and
+// DELETEs then reinserts its areas, writing no `session_audit` row at all. The
+// only audited fields anywhere are `started_at` (session time) and
+// `area_removed` (an area soft-delete, with a reason). So changing mode, energy,
+// probe, reaction or the treated areas retains nothing of the previous value,
+// and a general "every change is attributed and time-stamped" on a page that
+// lists exactly those fields would be read as an audit trail that does not
+// exist.
+//
+// What IS true is what this section now says, and rule 7 preserves all of it:
+// `client_clinical_notes` (0126) is append-only with in-place UPDATE blocked by
+// trigger, so a correction is a new revision via `supersedes_note_id`; and
+// migration 0086 keeps the sterile-item and disinfectant record-keeping trail.
+// (Named by migration rather than by table: tests/app/records/audit-trail.test.ts
+// allowlists which files under app/, lib/ and components/ may mention that
+// table's name, and a marketing comment is not one of them.) The homepage
+// carries the same register sentence and should be checked against this
+// finding.
 //
 // The deck's two [DECIDE] items are left as they already ship: Apilus is named
 // in the capability list exactly as production names it today, and no laser line
@@ -161,15 +180,17 @@ export default function ChartingRecordsPage() {
         <Section tone="warm">
           <Container size="prose">
             <Reveal>
-              <Eyebrow>Edit history</Eyebrow>
-              <Title className="mt-4">
-                Treatment records stay editable, and every change is attributed and
-                time-stamped.
-              </Title>
+              <Eyebrow>Notes are append-only</Eyebrow>
+              <Title className="mt-4">A saved note is never overwritten.</Title>
               <Lede className="mt-5">
-                A treatment record keeps its edit history. Change a value and the record keeps
-                what it was, who changed it, and when.
+                Correcting a clinical note records a new revision that supersedes the old one,
+                so the original stays readable. Sterile-item and disinfectant records keep an
+                append-only log of their own.
               </Lede>
+              <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
+                Treatment records themselves stay editable, so a value you change is the value
+                the record shows.
+              </p>
             </Reveal>
           </Container>
         </Section>
