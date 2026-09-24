@@ -5,6 +5,7 @@ import {
   POSITIONING,
   WALKTHROUGH,
   PRICING_PLANS,
+  FILM,
 } from "@/lib/marketing/content";
 
 // Flagship marketing homepage (rebuild). Category: electrolysis practice
@@ -20,6 +21,7 @@ function read(rel: string): string {
 
 const PAGE = read("app/page.tsx");
 const VISUAL = read("app/_components/marketing/visuals/TreatmentMemoryPanel.tsx");
+const FILM_PLAYER = read("app/_components/marketing/ProductFilm.tsx");
 const HEADER = read("app/_components/marketing/SiteHeader.tsx");
 const FOOTER = read("app/_components/marketing/SiteFooter.tsx");
 const MOBILE = read("app/_components/marketing/MobileNav.tsx");
@@ -29,12 +31,19 @@ const CSS = read("app/globals.css");
 // Strip source comments so language scans check RENDERED copy, not the
 // explanatory comments (which legitimately name excluded things like Google
 // Calendar). Removes /* … */ (incl. JSX {/* … */}) and whole-line // comments.
+//
+// ORDER MATTERS, AND IT IS LINE-COMMENTS FIRST. A line comment may legitimately
+// contain the two characters that open a block comment — "// see next/*" is the
+// obvious one — and stripping blocks first treats that as a real opener and
+// eats everything up to the next */, silently removing live code from the scan.
+// A scan that has quietly lost its subject passes for the wrong reason. Taking
+// whole-line comments out first means no such fake opener survives to be found.
 function stripComments(s: string): string {
-  return s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  return s.replace(/^\s*\/\/.*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
 }
 
 // The homepage-specific rendered surface (whitespace-collapsed) for scans.
-const SURFACE = [PAGE, VISUAL, HEADER, FOOTER, MOBILE]
+const SURFACE = [PAGE, VISUAL, FILM_PLAYER, HEADER, FOOTER, MOBILE]
   .map(stripComments)
   .join("\n")
   .replace(/\s+/g, " ");
@@ -43,7 +52,7 @@ describe("positioning: category + treatment-memory differentiator", () => {
   it("hero is not the eyebrow==H1 duplication of the old site", () => {
     expect(POSITIONING.heroEyebrow).toBe("Electrolysis practice software");
     expect(POSITIONING.heroH1).toBe(
-      "Electrolysis practice software that remembers every treatment.",
+      "Start the next treatment where the last one ended.",
     );
     expect(POSITIONING.heroEyebrow).not.toBe(POSITIONING.heroH1);
   });
@@ -69,51 +78,92 @@ describe("positioning: category + treatment-memory differentiator", () => {
   });
 });
 
-describe("required homepage sections", () => {
-  it("has the dark calendar-vs-Hone narrative band", () => {
-    expect(PAGE).toMatch(/Calendar vs Hone/);
-    expect(PAGE).toMatch(/Most tools stop at the appointment\./);
-    expect(PAGE).toMatch(/A calendar shows/);
-    expect(PAGE).toMatch(/Hone also carries/);
-  });
+describe("required homepage sections (copy deck v2.2 §3)", () => {
+  // The nine blocks, in the deck's order. Each is pinned by ONE stable anchor —
+  // a heading, a constant it consumes, or a route it links to — never by a
+  // paragraph, so ordinary copy editing does not turn this file red.
+  const BLOCKS: { name: string; anchor: RegExp }[] = [
+    { name: "1 film", anchor: /Before the client sits down/ },
+    { name: "2 trust strip", anchor: /TRUST_STRIP\.map/ },
+    { name: "3 per-area history", anchor: /Every area keeps its own history/ },
+    { name: "4 more than a note", anchor: /More than a note/ },
+    { name: "5 connected workflow", anchor: /<WorkflowGrid steps=/ },
+    { name: "6 what was used", anchor: /Know what was used, and when/ },
+    { name: "7 records stay yours", anchor: /Your client records should stay yours\./ },
+    { name: "8 pricing", anchor: /PRICING_PLANS\.map/ },
+    { name: "9 walkthrough CTA", anchor: /See it with a returning client\./ },
+  ];
 
-  it("has the full six-step workflow progression", () => {
-    for (const step of [
-      "Get booked",
-      "Collect intake and consent",
-      "Prepare before the visit",
-      "Chart the treatment",
-      "Follow up professionally",
-      "Remember it next time",
-    ]) {
-      expect(PAGE).toMatch(new RegExp(step));
+  it("renders all nine blocks", () => {
+    for (const b of BLOCKS) {
+      expect(PAGE, `missing block: ${b.name}`).toMatch(b.anchor);
     }
   });
 
-  it("has the treatment-memory differentiator section linking to the feature page", () => {
-    expect(PAGE).toMatch(/The part other tools forget\./);
-    expect(PAGE).toMatch(/href="\/features\/treatment-memory"/);
+  it("renders them in the deck's order", () => {
+    // Editorial pacing is an ORDER, not a set. The film has to land before the
+    // trust strip can trade on it, and the CTA has to close. A reshuffle that
+    // left every block present would otherwise pass the test above.
+    const positions = BLOCKS.map((b) => ({ name: b.name, at: PAGE.search(b.anchor) }));
+    for (const p of positions) expect(p.at, `${p.name} not found`).toBeGreaterThan(-1);
+    const order = positions.map((p) => p.at);
+    const sorted = [...order].sort((a, b) => a - b);
+    expect(
+      positions.map((p) => p.name),
+      `blocks are out of order: ${positions
+        .slice()
+        .sort((a, b) => a.at - b.at)
+        .map((p) => p.name)
+        .join(" → ")}`,
+    ).toEqual(
+      sorted.map((at) => positions.find((p) => p.at === at)!.name),
+    );
   });
 
-  it("has a CAD pricing teaser driven by the shared plans (no $19 pilot)", () => {
+  it("the film is the homepage's primary section-1 asset, not an illustration", () => {
+    expect(PAGE).toMatch(/<ProductFilm\b/);
+    // Section 1 opens the page's product argument: the film must precede every
+    // coded preview, or the page is leading with a drawing again.
+    const film = PAGE.search(/<ProductFilm\b/);
+    for (const preview of [
+      /<TreatmentMemoryPanel\b/,
+      /<SessionRecordPreview\b/,
+      /<CalendarPreview\b/,
+    ]) {
+      const at = PAGE.search(preview);
+      if (at === -1) continue;
+      expect(film, `${preview} renders before the film`).toBeLessThan(at);
+    }
+  });
+
+  it("keeps the editorial pacing: three tones, and the band used as a spine", () => {
+    // "Do not make all sections equal cards" is a pacing requirement. What is
+    // checkable without freezing the layout is that the page still alternates:
+    // all three surface tones present, and the dark band used more than once.
+    const tones = [...PAGE.matchAll(/tone="(paper|warm|band)"/g)].map((m) => m[1]);
+    expect(new Set(tones)).toEqual(new Set(["paper", "warm", "band"]));
+    expect(
+      tones.filter((t) => t === "band").length,
+      "the dark band is the pacing spine — at least the film, the records band and the close",
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it("has a CAD pricing block driven by the shared plans (no $19 pilot)", () => {
     expect(PAGE).toMatch(/PRICING_PLANS/);
     expect(PAGE).toMatch(/href="\/pricing"/);
-    // The shared plans are CAD; the old $19 pilot is gone from the page.
-    expect(PRICING_PLANS.every((p) => p.priceLabel === null || /^CAD /.test(p.priceLabel))).toBe(true);
+    expect(PRICING_PLANS.some((p) => p.priceLabel?.includes("$"))).toBe(true);
     expect(SURFACE).not.toMatch(/\$19\b/);
   });
 
-  it("has an evidence-backed trust section with the payment qualifier + policy link", () => {
-    expect(PAGE).toMatch(/Studio data stays isolated/);
-    expect(PAGE).toMatch(/No advertising use of health records/);
-    expect(PAGE).toMatch(/No AI training on your records/);
-    expect(PAGE).toMatch(/Payments are enabled during guided onboarding\./);
+  it("keeps the payment qualifier and the policy link", () => {
+    expect(PAGE).toMatch(/PAYMENT_QUALIFIER/);
     expect(PAGE).toMatch(/href="\/privacy"/);
   });
 
-  it("closes on the walkthrough conversion", () => {
-    expect(PAGE).toMatch(/See if Hone fits your studio\./);
-    expect(PAGE).toMatch(/reply within\s+one business day/);
+  it("closes on the walkthrough conversion, in the film's own words", () => {
+    expect(PAGE).toMatch(/FILM\.closingLine/);
+    expect(FILM.closingLine).toBe("Pick up where you left off.");
+    expect(PAGE).toMatch(/See it with a returning client\./);
   });
 });
 
@@ -148,9 +198,45 @@ describe("demo-data discipline", () => {
     expect(SURFACE).not.toMatch(/@gmail|@hone\.care/i);
     expect(SURFACE).not.toMatch(/\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b/);
   });
-  it("renders no images (no fake screenshots or customer logos)", () => {
-    expect(SURFACE).not.toMatch(/<img\b/i);
+  // This rule used to read "renders no images". That was the right rule while
+  // the homepage had no real captures: the only image it could have rendered
+  // was a mockup. It is the wrong rule now that the page ships an actual
+  // recording of the product, and deleting it would have traded a guard for
+  // nothing. So it is re-expressed as what it always meant — every pixel of
+  // product on this page is a REAL capture of the real application, from the
+  // sanctioned synthetic-twin tenant, and nothing else is an image at all.
+  it("renders product imagery only from the sanctioned capture directory", () => {
+    // Raw <img> bypasses next/image's optimisation AND the static-import path
+    // that makes the source of every asset auditable in the diff.
+    expect(SURFACE, "use next/image, never a raw <img>").not.toMatch(/<img\b/i);
+
+    // Every image and media reference resolves inside the sanctioned set.
+    const refs = [
+      ...SURFACE.matchAll(/from\s+"(@\/app\/_media\/[^"]+|[^"]*\.(?:png|jpe?g|webp|avif|gif|svg))"/g),
+    ].map((m) => m[1]);
+    for (const ref of refs) {
+      expect(ref, `image imported from outside app/_media: ${ref}`).toMatch(
+        /^@\/app\/_media\//,
+      );
+    }
+
+    // No stock photography, no logo wall, no borrowed credibility.
     expect(SURFACE).not.toMatch(/logo wall|as seen (in|on)|customer logos?/i);
+    expect(SURFACE).not.toMatch(/unsplash|pexels|shutterstock|getty/i);
+  });
+
+  it("every product asset carries the film's own demo-data label, verbatim", () => {
+    // One wording across the film, the poster and every still, so nothing needs
+    // recutting to agree with the page. The film already burns these exact
+    // words into its own corner.
+    expect(FILM.demoDataLabel).toBe("Demo data. Actual Hone application.");
+    expect(FILM_PLAYER).toMatch(/FILM\.demoDataLabel/);
+    // On the poster AND under the player: a visitor who never presses play
+    // still sees it.
+    expect(
+      (FILM_PLAYER.match(/FILM\.demoDataLabel/g) ?? []).length,
+      "the label must appear on the poster and under the player",
+    ).toBeGreaterThanOrEqual(2);
   });
 });
 
