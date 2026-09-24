@@ -5,8 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
-import { useSignOutInFlight } from "./signout-flight";
-import { SignOutFlightReporter } from "./SignOutFlightReporter";
+import { trackSignOut, useSignOutInFlight } from "./signout-flight";
 import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
 import { spinnerClasses } from "@/components/ui/spinner";
 
@@ -47,6 +46,12 @@ export function MobileMenu({
   // stays mounted, which is what keeps `useFormStatus` alive to report the
   // settlement; the dismissal the practitioner asked for is REMEMBERED and
   // applied the moment the flag clears, so the menu is never left stuck open.
+  // The hold is acquired and released by the ACTION, not by anything here.
+  // `trackSignOut` raises it, starts the real `signOut()`, and lowers it when
+  // that promise settles — which happens whether or not this component still
+  // exists.
+  const runSignOut = () => trackSignOut(signOut);
+
   const deferredClose = useRef(false);
   const close = useCallback(() => {
     if (signingOut) {
@@ -234,9 +239,7 @@ export function MobileMenu({
           stops routing the action's redirect and the soft navigation to /login
           becomes a hard browser one, tearing down in-flight prefetches and
           reddening five SIGNOUT-01 cases whose logouts were otherwise perfect. */}
-      <form action={signOut} id="signout-mobile" className="hidden">
-        <SignOutFlightReporter />
-      </form>
+      <form action={runSignOut} id="signout-mobile" className="hidden" />
       <button
         ref={triggerRef}
         type="button"

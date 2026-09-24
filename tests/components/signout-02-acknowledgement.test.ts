@@ -91,15 +91,12 @@ describe("SIGNOUT-02 · SIGNOUT-01 is not weakened", () => {
     expect(leaf).not.toMatch(/onClick/);
   });
 
-  it("the form is hoisted out of the panel, and its action is untouched", () => {
+  it("the form is hoisted out of the panel, and dispatches through the wrapper", () => {
     for (const f of [ACCOUNT, MENU]) {
       const code = codeOnly(read(f));
-      // Unchanged action: wrapping it in a client function was measured to
-      // turn the soft RSC redirect to /login into a HARD browser navigation,
-      // tearing down in-flight prefetches and reddening five SIGNOUT-01 cases
-      // whose logouts were otherwise perfect.
-      expect(code, f).toMatch(/<form action=\{signOut\} id="signout-/);
-      expect(code, f).toContain("<SignOutFlightReporter />");
+      expect(code, f).toMatch(/<form action=\{runSignOut\} id="signout-/);
+      expect(code, f).toContain("const runSignOut = () => trackSignOut(signOut);");
+      expect(code, f).toContain('import { signOut } from "./dashboard/actions";');
       // And the control reaches it from inside the panel.
       expect(code, f).toMatch(/formId="signout-/);
     }
@@ -163,31 +160,34 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     }
   });
 
-  it("the observer sits where it cannot be unmounted by a dismissal", () => {
-    // `useFormStatus` reports only for the form it runs inside. Every earlier
-    // revision put the observer in the panel's submit control, which is
-    // exactly why the flag kept being lost or stranded — the panel is the
-    // thing this slice had to survive. It now lives in a form on the shell's
-    // persistent root.
-    const reporter = codeOnly(read("app/(app)/SignOutFlightReporter.tsx"));
-    expect(reporter).toContain("useFormStatus");
-    expect(reporter).toContain("setSignOutInFlight(pending);");
-    // Only transitions, because the store COUNTS: a spurious mount-time
-    // `false` would decrement a hold this form never placed.
-    expect(reporter).toContain("if (pending === published.current) return;");
-    // It renders nothing — an observer, not a control.
-    expect(reporter).toContain("return null;");
-    expect(reporter).not.toContain("<button");
-
+  it("NO component may release the hold — the action owns it", () => {
+    // The invariant four revisions each broke a different half of. A
+    // per-shell useState, a bare module boolean, claim/orphan/adopt, and a
+    // persistent-form reporter with unmount cleanup all ended the hold
+    // because a COMPONENT went away. The promise cannot.
     const store = codeOnly(read("app/(app)/signout-flight.ts"));
-    expect(store).toContain("useSyncExternalStore");
-    expect(store).toContain("function getServerSnapshot(): boolean {");
-    // Counted, and floored, so a stray release cannot swallow the next hold.
+    expect(store).toContain("export function trackSignOut");
+    expect(store).toContain("const running = run();");
+    expect(store).toContain("running.then(settled, settled);");
+    // The ORIGINAL promise is handed back, so React sees what it always saw.
+    expect(store).toContain("return running;");
+    expect(store).not.toContain("await run()");
+    // Counted and floored, so overlapping calls cannot release each other.
     expect(store).toContain("if (inFlight < 0) inFlight = 0;");
-    // No inference levers may exist at all.
+
+    // There is no writable surface a component could reach for.
+    expect(store).not.toContain("export function setSignOutInFlight");
     expect(store).not.toContain("orphan");
     expect(store).not.toContain("adopt");
     expect(store).not.toContain("setTimeout");
+
+    // And the observer component is gone entirely: an observer that cannot
+    // write has nothing to do, and one that can is the defect.
+    expect(() => read("app/(app)/SignOutFlightReporter.tsx")).toThrow();
+    for (const f of [ACCOUNT, MENU]) {
+      expect(codeOnly(read(f)), f).not.toContain("SignOutFlightReporter");
+    }
+
     // No provider, no layout surgery: the shell layout stays a server component.
     expect(read("app/(app)/layout.tsx")).not.toContain('"use client"');
   });

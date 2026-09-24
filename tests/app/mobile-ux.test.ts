@@ -101,7 +101,7 @@ describe("app shell: responsive navigation", () => {
     // Notifications moved to the header bell (PR #229).
     expect(MENU).not.toContain('"/notifications"');
     expect(MENU).toMatch(/Sign out/);
-    expect(MENU).toMatch(/form action=\{signOut\}/);
+    expect(MENU).toMatch(/form action=\{runSignOut\}/);
     // PR #229: every link tap closes the menu; Escape closes too.
     expect(MENU).toMatch(/onClick=\{close\}/);
     expect(MENU).toMatch(/e\.key === "Escape"/);
@@ -164,7 +164,7 @@ describe("desktop account dropdown (PR #231)", () => {
   it("contains the account destinations, the profile block, and Sign out", () => {
     expect(ACCOUNT).toContain('"/settings/profile"');
     expect(ACCOUNT).toContain('"/getting-started"');
-    expect(ACCOUNT).toMatch(/form action=\{signOut\}/);
+    expect(ACCOUNT).toMatch(/form action=\{runSignOut\}/);
     expect(ACCOUNT).toMatch(/Sign out/);
     expect(ACCOUNT).toMatch(/\{studioName\} · \{roleLabel\}/);
   });
@@ -214,17 +214,22 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
 
   function signOutForm(name: string, source: string): string {
     const code = codeOnly(source);
-    // SIGNOUT-02c. The form MOVED — it is hoisted out of the dismissible
-    // panel onto the shell's persistent root, so the `useFormStatus` observer
-    // inside it cannot be unmounted by closing the panel. Its action is
-    // unchanged: still `signOut`, still a direct server action, because
-    // wrapping it in a client function was measured to turn the soft redirect
-    // to /login into a hard browser navigation.
-    const open = code.search(/<form action=\{signOut\} id="signout-/);
+    // SIGNOUT-02c. Two things moved. The form is hoisted out of the
+    // dismissible panel onto the shell's persistent root, so nothing about a
+    // press can unmount it — strictly stronger than the property SIGNOUT-01
+    // originally needed. And its action goes through `runSignOut`, which hands
+    // the in-flight hold to the ACTION'S OWN PROMISE, the only thing whose
+    // lifetime is the request's. `signOut()` is still what dispatches, pinned
+    // below, because a wrapper that stopped calling it would satisfy every
+    // other assertion here and sign nobody out.
+    const open = code.search(/<form action=\{runSignOut\} id="signout-/);
     expect(open, `${name}: the Sign out form exists`).toBeGreaterThan(-1);
-    const close = code.indexOf("</form>", open);
-    expect(close, `${name}: the Sign out form is closed`).toBeGreaterThan(open);
-    return code.slice(open, close);
+    // The form is SELF-CLOSING now: it holds nothing. The submit control lives
+    // in the panel and reaches it by `form=`, which is what lets the form sit
+    // on the persistent root where no dismissal can touch it.
+    const close = code.indexOf("/>", open);
+    expect(close, `${name}: the Sign out form tag is closed`).toBeGreaterThan(open);
+    return code.slice(open, close + 2);
   }
 
   for (const [name, source] of [
@@ -236,7 +241,7 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
     it(`${name}: the comment stripper keeps code and drops prose`, () => {
       const code = codeOnly(source);
       expect(code, `${name}: the Sign out form survives`).toMatch(
-        /<form action=\{signOut\} id="signout-/,
+        /<form action=\{runSignOut\} id="signout-/,
       );
       expect(code, `${name}: real links survive`).toMatch(/<Link\b/);
       // This token exists ONLY inside a comment in both shells.
@@ -253,11 +258,10 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
       // reads. The property this test exists for did not move, so the
       // assertion follows it into the leaf rather than being relaxed to fit
       // the new shape. Both halves are checked: the call site, and the control.
-      // The form now holds only its status observer; the control reaches it
-      // by `form=` from inside the panel.
-      expect(form, `${name}: the form hosts the status observer`).toContain(
-        "<SignOutFlightReporter />",
-      );
+      expect(
+        codeOnly(source),
+        `${name}: the form's action still dispatches signOut`,
+      ).toContain("const runSignOut = () => trackSignOut(signOut);");
       expect(
         codeOnly(source),
         `${name}: the panel's control submits the hoisted form`,
@@ -270,7 +274,7 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
       expect(
         codeOnly(source),
         `${name}: the sign-out form is hoisted out of the {open && ...} panel`,
-      ).toMatch(/<form action=\{signOut\} id="signout-/);
+      ).toMatch(/<form action=\{runSignOut\} id="signout-/);
       // No hand-rolled control left behind in the form.
       expect(form, `${name}: no control sits in the hoisted form`).not.toMatch(
         /<button/,

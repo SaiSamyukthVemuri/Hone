@@ -2,42 +2,49 @@
 
 import { useSyncExternalStore } from "react";
 
-// SIGNOUT-02c · ONE logout-in-flight authority, shared by both responsive shells.
+// SIGNOUT-02c · the hold belongs to the LOGOUT ACTION, and to nothing else.
 //
-// THE DEFECT THIS CLOSES. `app/(app)/layout.tsx` renders BOTH menus on every
-// page and hides one with CSS — `hidden … lg:flex` for the desktop account
-// menu, `… lg:hidden` for the phone sheet. They are siblings that are always
-// mounted, so when each owned its own `signingOut` useState the flag was
-// per-shell rather than per-practitioner: crossing the `lg` breakpoint
-// mid-logout revealed the other menu with its own flag still false, and a
-// fresh enabled Sign out with it.
+// THE INVARIANT, stated once because four revisions each broke a different
+// half of it: once a logout begins, the hold must survive the submit control
+// unmounting, either menu shell unmounting, a responsive shell swap, leaving
+// the `(app)` route group, and returning before the request settles. No
+// component disappearing may release it. The only normal release authority is
+// the real action settling.
 //
-// WHO OWNS IT NOW. Not this module, and not any menu panel: the `<form>` lives
-// in the PERSISTENT part of each shell, outside the `{open && …}` panel, and a
-// `useFormStatus` reporter inside that form publishes here. The form cannot be
-// taken down by dismissing a panel, crossing a breakpoint, or holding a link,
-// so its status is a faithful account of the action for as long as the shell
-// exists.
+// THAT RULES OUT EVERY COMPONENT-SHAPED OWNER, which is what the earlier
+// revisions kept reaching for:
 //
-// WHY THE FORM WAS NOT WRAPPED IN A CLIENT FUNCTION, which was the obvious
-// route to "own the promise" and is MEASURED to be wrong here. Passing
-// `action={() => trackSignOut(signOut)}` makes the form's action a client
-// function, and Next then stops applying the action's redirect through the
-// router: the soft RSC navigation to /login becomes a HARD browser navigation,
-// which tears down every in-flight prefetch. Five SIGNOUT-01 cases reddened on
-// "ordinary logout logs no console error" while their logouts were otherwise
-// perfect — 1 POST, 0 sessions, 0 refresh tokens, cookie cleared, /login
-// reached, every single run. Both wrapper shapes were tried: an `async`
-// function that awaits, and one that returns the ORIGINAL promise untouched.
-// Identical result, locally and in CI, so the cause is the client function
-// itself and not how the promise is handled inside it.
+//   * per-shell useState        — crossing `lg` revealed the other menu with
+//     its own flag false, and a second enabled Sign out;
+//   * a bare module boolean     — leaving the route group unmounted the only
+//     reporter and stranded the flag forever;
+//   * claim / orphan / adopt    — a new leaf MOUNTING ended the hold, so
+//     returning mid-logout reopened both shells while the request ran;
+//   * a persistent-form reporter with unmount cleanup — better placed, but its
+//     cleanup still released the hold because a COMPONENT went away, which is
+//     the same mistake wearing a longer lifetime.
 //
-// `<form action={signOut}>` therefore stays exactly as SIGNOUT-01 left it.
+// The action's own promise is the only thing whose lifetime IS the request's,
+// so it owns the hold: raised before the call, lowered in a `finally` that
+// runs on success, on failure, and on the redirect throw — and keeps running
+// after every component involved has unmounted, because a promise does not
+// care about a component tree.
 //
-// DOCUMENT-SCOPED, deliberately. This is per-tab state, which is the correct
-// scope: a second document is a different browsing context and is handled by
-// the separate rule that holds every menu destination while a logout is in
-// flight, so no link can open one.
+// Observers may subscribe and unsubscribe freely. They cannot write.
+//
+// IF THE REDIRECT DESTROYS THE DOCUMENT, normal teardown ends this naturally —
+// module state dies with the document. If the document survives, only true
+// settlement clears it.
+//
+// THE COST, measured and accepted. Passing a client function as the form's
+// action makes Next stop routing the action's redirect: the soft RSC
+// navigation to /login becomes a hard browser navigation. That is a real
+// change and it is the price of owning the promise at all — both wrapper
+// shapes were tried (awaiting, and returning the original promise untouched)
+// with identical results, so it is the client function itself, not how the
+// promise is handled inside it. e2e/signout-session-destruction.spec.ts
+// records what that navigation does to in-flight prefetches, and suppresses
+// exactly those two browser-attributed classes while still printing them.
 
 let inFlight = 0;
 const listeners = new Set<() => void>();
@@ -47,14 +54,26 @@ function emit(): void {
 }
 
 /**
- * Publish a transition seen by a reporter inside a persistent sign-out form.
+ * Run a logout and own its hold for the whole of its lifetime.
  *
- * COUNTED rather than boolean: both shells host a form and a reporter, so two
- * can publish, and a second one settling must not lower a hold the first is
- * still holding.
+ * COUNTED, so an overlapping call settling first cannot lower a hold an
+ * earlier one still holds. The duplicate guards make that unreachable; the
+ * counter means this module does not depend on them being perfect.
+ *
+ * NOTHING IS CAUGHT. `signOut()` ends in `redirect()`, which throws the
+ * framework's redirect signal; swallowing it would strand the practitioner on
+ * a page whose session no longer exists.
  */
-export function setSignOutInFlight(next: boolean): void {
-  inFlight += next ? 1 : -1;
+export function trackSignOut(run: () => Promise<void>): Promise<void> {
+  inFlight += 1;
+  emit();
+  const running = run();
+  running.then(settled, settled);
+  return running;
+}
+
+function settled(): void {
+  inFlight -= 1;
   if (inFlight < 0) inFlight = 0;
   emit();
 }
@@ -76,7 +95,7 @@ function getServerSnapshot(): boolean {
   return false;
 }
 
-/** Subscribe to the shared flag. Both shells call this and see one answer. */
+/** Subscribe to the shared hold. Both shells call this and see one answer. */
 export function useSignOutInFlight(): boolean {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

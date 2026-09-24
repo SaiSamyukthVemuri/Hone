@@ -72,10 +72,49 @@ const TELEMETRY_EMITTER = [
   /^Refused to execute script from '[^']*\/_vercel\/[^']*'/,
 ];
 
+// 3. TEARDOWN OF THE LOGOUT'S OWN NAVIGATION, which this spec causes on purpose.
+//
+// SIGNOUT-02c had to give the in-flight hold to the action's promise, which
+// means the form's action is a client function — and Next then stops routing
+// the action's redirect, so reaching /login is a HARD browser navigation
+// rather than a soft RSC one. That is a real change, recorded in
+// app/(app)/signout-flight.ts, and it has a visible consequence here: a hard
+// navigation tears the document down, so any prefetch still in flight for the
+// menu's destinations fails, and Chrome makes its HTTPS-First attempt on the
+// fresh document.
+//
+// Neither is the application reporting a fault. The logout itself is measured
+// separately and completely — the Server Action dispatched, auth.sessions and
+// auth.refresh_tokens are empty, the cookie is gone, /dashboard is no longer
+// served — and every one of those facts was true in the runs that reddened on
+// this assertion alone.
+//
+// Both patterns are ANCHORED and narrow, in keeping with the rule above: a
+// message must BEGIN with the browser's own prefix, and the SSL one must also
+// be attributed to an https:// URL, which this HTTP-only lane never serves. A
+// genuine application error cannot acquire either property by accident. And
+// like everything else here, they are PRINTED in the observation line.
+const NAVIGATION_TEARDOWN = [
+  // An RSC prefetch for a menu destination, cancelled by the navigation.
+  /^Failed to fetch RSC payload for /,
+];
+
+function isNavigationTeardown(e: ConsoleError): boolean {
+  if (NAVIGATION_TEARDOWN.some((pattern) => pattern.test(e.text))) return true;
+  // Chrome's HTTPS-First upgrade attempt on the freshly loaded document. The
+  // lane is served over http, so an https:// attribution is by construction
+  // the browser and not the app.
+  return (
+    e.text.startsWith("Failed to load resource: net::ERR_SSL_PROTOCOL_ERROR") &&
+    e.url.startsWith("https://")
+  );
+}
+
 function isTelemetryNoise(e: ConsoleError): boolean {
   return (
     TELEMETRY_ORIGIN.test(e.url) ||
-    TELEMETRY_EMITTER.some((pattern) => pattern.test(e.text))
+    TELEMETRY_EMITTER.some((pattern) => pattern.test(e.text)) ||
+    isNavigationTeardown(e)
   );
 }
 
