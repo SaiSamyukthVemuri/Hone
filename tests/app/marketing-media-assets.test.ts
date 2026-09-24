@@ -92,7 +92,12 @@ describe("every media path the page references actually exists", () => {
 
   it("every ScreenFigure stem resolves to both width variants", () => {
     const stems = [...read(PAGE).matchAll(/base="([a-z0-9-]+)"/g)].map((m) => m[1]);
-    expect(stems.length, "no ScreenFigure stems found — vacuous").toBeGreaterThanOrEqual(4);
+    // THREE, not four. The carry-forward section's figure was removed because
+    // its capture rendered a WATCH TODAY panel built from the retired
+    // `caution_note` input; see the comment at that section. This floor is an
+    // anti-vacuity guard, not a target — it only has to be high enough that an
+    // empty match set cannot pass.
+    expect(stems.length, "no ScreenFigure stems found — vacuous").toBeGreaterThanOrEqual(3);
     expect(new Set(stems).size, "a screenshot is used twice").toBe(stems.length);
     const missing: string[] = [];
     for (const stem of stems) {

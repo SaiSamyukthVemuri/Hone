@@ -234,3 +234,48 @@ describe("the page advertises no retired input", () => {
     expect(copy()).toMatch(/One note on the session, not filed and not tagged/);
   });
 });
+
+describe("the carry-forward section shows no capture of the retired panel", () => {
+  // STRUCTURAL, NOT A FILENAME BAN. Banning the `previous-session` stem would
+  // also reject a correctly re-captured asset that happened to reuse the name,
+  // and would miss the same defect shipped under any other name. What must hold
+  // is that THIS section carries no figure until someone has a capture proving
+  // the live path — so the assertion is about the section, and adding a figure
+  // back forces a human through this comment rather than past it.
+  //
+  // WHY THE SECTION IS SPECIAL. `point-of-care-memory.ts` builds its WATCH
+  // TODAY lines from `session_blocks.caution_note`, whose input PR #199
+  // removed. A capture rendering that panel, placed under "what comes forward",
+  // advertises the retired path in pictures after the prose stopped advertising
+  // it in words.
+
+  /** The "Carry forward" section's source, from its eyebrow to its close. */
+  const section = (() => {
+    const code = codeOnly(read(PAGE));
+    const start = code.indexOf("<Eyebrow>Carry forward</Eyebrow>");
+    expect(start, "the Carry forward section is gone — re-derive this rule").toBeGreaterThan(-1);
+    const end = code.indexOf("</Section>", start);
+    expect(end, "unterminated Carry forward section").toBeGreaterThan(start);
+    return code.slice(start, end);
+  })();
+
+  it("still contains the three carry-forward steps, so the section is real", () => {
+    // Anti-vacuity: an emptied section would trivially satisfy "no figure".
+    expect(section).toContain("You write it once");
+    expect(section).toContain("It stays where you wrote it");
+    expect(section).toContain("It resurfaces on its own");
+  });
+
+  it("renders no ScreenFigure", () => {
+    expect(
+      section.match(/<ScreenFigure\b/g) ?? [],
+      "a capture returned to the carry-forward section: prove it does not render " +
+        "the WATCH TODAY panel before removing this guard",
+    ).toHaveLength(0);
+  });
+
+  it("and the page still shows captures elsewhere, so this is not a blanket removal", () => {
+    const stems = [...read(PAGE).matchAll(/base="([a-z0-9-]+)"/g)].map((m) => m[1]);
+    expect(stems.length, "the page lost all its captures").toBeGreaterThanOrEqual(3);
+  });
+});

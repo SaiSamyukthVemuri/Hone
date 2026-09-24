@@ -313,11 +313,20 @@ export default function TreatmentMemoryPage() {
               ))}
             </div>
 
-            <ScreenFigure
-              base="previous-session"
-              alt="An earlier session record in Hone. Its last-treatment panel carries the previous visit's areas, responses and a watch note for the jawline, showing the same fields being carried forward one visit earlier in the same course of treatment."
-              caption="The visit before: the same fields, one appointment earlier, which is what makes the briefing above possible."
-            />
+            {/* NO FIGURE HERE, DELIBERATELY. The obvious capture to place under
+                these three steps was the previous visit's session record — and
+                it renders a WATCH TODAY panel, which `point-of-care-memory.ts`
+                builds from `session_blocks.caution_note`. PR #199 removed the
+                input that writes that column, so a practitioner charting today
+                cannot produce one. Showing it in the section about what carries
+                forward would advertise a retired path in pictures after the
+                prose had stopped advertising it in words, which is the same
+                claim made less accountably.
+
+                No existing capture can stand in: the only one containing the
+                live session-level plan cuts off at the viewport before the note
+                text. A replacement needs a fresh capture from the lab fixture,
+                and until there is one these steps carry the section alone. */}
           </Container>
         </Section>
 
