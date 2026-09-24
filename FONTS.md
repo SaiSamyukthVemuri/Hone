@@ -14,13 +14,13 @@ It replaced **Inter**, which the marketing surface used previously and which the
 `app/_fonts/app-fonts.ts` is untouched.
 
 - The face is loaded in `app/_fonts/marketing-fonts.ts` (self-hosted via
-  `next/font/local`, Inter weights 400/500/600/700), re-exported by
+  `next/font/local`, **Instrument Sans weights 400/500/600/700**), re-exported by
   `app/_components/marketing/fonts.ts` and exposed as `--font-marketing-sans`,
   scoped to the marketing surface via `.variable` on `MarketingSurface` — so the
   authenticated app's own font loading is untouched.
 - `--font-marketing-display` and `--font-marketing-text` (in `app/globals.css`)
   both resolve to `var(--font-marketing-sans)`, with a system sans fallback.
-- Headings render at Inter **Semibold (600)** with tight tracking.
+- Headings render at **Instrument Sans Semibold (600)** with tight tracking.
 
 ### History (why not a serif)
 
@@ -429,7 +429,7 @@ product decision, and one that runs against the recorded product-owner direction
 above that rejected the serif look. It needs its own change and its own sign-off.
 The marketing surface is unaffected: it sets its face through an inline
 `style={{ fontFamily }}` (`MK_FONT_DISPLAY`), which works correctly — its
-headings render Inter 600 as intended.
+headings render **Instrument Sans 600** as intended (Inter 600 before MKT-02A).
 
 `tests/source-guards/self-hosted-fonts-guards.test.ts` pins all of the above and
 fails if a `next/font/google` import reappears anywhere in the source.
