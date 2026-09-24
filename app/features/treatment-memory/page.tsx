@@ -49,7 +49,7 @@ const RECORD_FIELDS: { eyebrow: string; title: string; body: string }[] = [
   {
     eyebrow: "How",
     title: "Mode and energy",
-    body: "Blend, thermolysis or galvanic, with the energy level, timing, intensity and pulse count you worked at — recorded per area, not per appointment.",
+    body: "Blend, thermolysis or galvanic, with the energy level, timing, intensity and pulse count you worked at, recorded per area rather than per appointment.",
   },
   {
     eyebrow: "With what",
@@ -69,7 +69,7 @@ const RECORD_FIELDS: { eyebrow: string; title: string; body: string }[] = [
   {
     eyebrow: "Comfort",
     title: "Numbing and aftercare",
-    body: "Whether topical was used, when it went on, and what you advised afterwards — recorded where the next practitioner reading the chart will see it.",
+    body: "Whether topical was used, when it went on, and what you advised afterwards, recorded where the next practitioner reading the chart will see it.",
   },
 ];
 
@@ -115,7 +115,7 @@ export default function TreatmentMemoryPage() {
           <div className="mx-auto mt-14 max-w-5xl">
             <ProductFilm
               src="/marketing/hone-product-overview-v3-1.mp4"
-              poster="/marketing/treatment-memory/film-poster-1600.webp"
+              poster="/marketing/treatment-memory/film-poster-1920.webp"
               label="Hone product overview: a returning client's history carried from one appointment into the next"
               caption={
                 <>
@@ -152,7 +152,6 @@ export default function TreatmentMemoryPage() {
             <ScreenFigure
               base="client-profile"
               priority
-              sizes="(min-width: 1280px) 68rem, (min-width: 1024px) 90vw, 100vw"
               alt="A client profile in Hone. A pinned note reads that the client is sensitive along the jawline and that the area should be worked last, with a check-in before increasing energy. Below it are an allergies panel and the client's skin type and treatment history."
               caption="A returning client's profile. The caution is pinned to the top of the file, not buried in a note from four visits ago."
             />
@@ -179,7 +178,6 @@ export default function TreatmentMemoryPage() {
             </div>
             <ScreenFigure
               base="session-record"
-              sizes="(min-width: 1280px) 68rem, (min-width: 1024px) 90vw, 100vw"
               alt="A session record in Hone showing two separately charted areas. The midline upper lip and the bilateral chin each have their own response and tolerance entry and their own setup block listing frequency, probe, mode, energy level, timing, intensity and minutes."
               caption="Two areas, two records. The chin tolerated less than the lip, and the record says so in the place that will be read next time."
             />
@@ -243,7 +241,6 @@ export default function TreatmentMemoryPage() {
             </div>
             <ScreenFigure
               base="before-today"
-              sizes="(min-width: 1280px) 68rem, (min-width: 1024px) 90vw, 100vw"
               alt="An appointment in Hone before it begins. A pinned caution and allergies sit at the top, followed by the client's details and a last-treatment panel giving the date, the areas treated and the notes left for this visit."
               caption="The same appointment a generic booking tool would show as a name and a time."
             />
@@ -297,9 +294,8 @@ export default function TreatmentMemoryPage() {
 
             <ScreenFigure
               base="previous-session"
-              sizes="(min-width: 1280px) 68rem, (min-width: 1024px) 90vw, 100vw"
               alt="An earlier session record in Hone. Its last-treatment panel carries the previous visit's areas, responses and a watch note for the jawline, showing the same fields being carried forward one visit earlier in the same course of treatment."
-              caption="The visit before. The same fields, one appointment earlier — which is what makes the briefing above possible."
+              caption="The visit before: the same fields, one appointment earlier, which is what makes the briefing above possible."
             />
           </Container>
         </Section>

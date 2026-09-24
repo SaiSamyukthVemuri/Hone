@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 // WHY THESE ARE SHARED COMPONENTS AND NOT INLINE MARKUP. Both carry rules that
 // are easy to get right once and easy to drop on the second call site: an
 // explicit intrinsic size (so nothing reflows when the asset arrives), a
-// responsive `srcSet` so a phone never downloads the 1600px variant, and a
+// responsive `srcSet` so a phone is not sent a desktop-sized file, and a
 // caption that is a real `<figcaption>` rather than a paragraph that merely
 // sits underneath.
 //
@@ -13,15 +13,35 @@ import type { ReactNode } from "react";
 // JavaScript, so the film costs the page nothing but the bytes a viewer asks
 // for. Nothing here is interactive beyond what the browser already provides.
 
-/** Both screen captures are 16:10; both film posters are 16:9. */
+/** The screen captures are 8:5; these two only fix the aspect ratio. */
 const SHOT_W = 1600;
 const SHOT_H = 1000;
+
+/**
+ * What the figures actually measure on screen, not a guess at it.
+ *
+ * `Container size="wide"` resolves to `.mk-shell`, which is
+ * `min(100% - clamp(3rem, 14vw, 15rem), 87.5rem)` — a 14vw gutter, so 86vw,
+ * until the 87.5rem (1400px) cap takes over at about 1630px of viewport.
+ * Measured across eight viewports rather than derived from the CSS by eye: a
+ * `sizes` that UNDER-states the slot makes the browser pick a smaller file and
+ * upscale it, which on a screenshot full of 12px UI text is exactly the blur
+ * that makes people doubt the capture is real.
+ */
+const FIGURE_SIZES = "(min-width: 1630px) 1400px, 86vw";
+
+/**
+ * Three tiers, because two were not enough at the top end. A 1400px slot on a
+ * 2x display asks for 2800 device pixels; stopping at 1600w would have upscaled
+ * every screenshot by 1.75x on an ordinary large laptop.
+ */
+const WIDTHS = [800, 1600, 2400];
 
 export function ScreenFigure({
   base,
   alt,
   caption,
-  sizes = "(min-width: 1024px) 60rem, 100vw",
+  sizes = FIGURE_SIZES,
   priority = false,
 }: {
   /** Path stem under /marketing/treatment-memory, without the width suffix. */
@@ -35,9 +55,18 @@ export function ScreenFigure({
   return (
     <figure className="mt-10">
       <div className="overflow-hidden rounded-[14px] border border-[color:var(--color-hairline-strong)] bg-white">
+        {/* PLAIN <img>, AND THE LINT WARNING IS ANSWERED RATHER THAN MUTED BY
+            HABIT. `next/image` earns its keep by re-encoding and resizing at
+            request time; these assets were already encoded to WebP at two
+            widths ahead of the build (1.06MB of PNG became 178K), and the
+            srcSet below is the one the optimizer would have produced. Routing
+            them through the optimizer would add per-request image cost on the
+            host and a pipeline this repository does not otherwise use — it has
+            no other `next/image` call site — to arrive at the same bytes. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={`${src}-1600.webp`}
-          srcSet={`${src}-800.webp 800w, ${src}-1600.webp 1600w`}
+          srcSet={WIDTHS.map((w) => `${src}-${w}.webp ${w}w`).join(", ")}
           sizes={sizes}
           alt={alt}
           width={SHOT_W}

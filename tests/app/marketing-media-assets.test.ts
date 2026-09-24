@@ -52,7 +52,17 @@ describe("every media path the page references actually exists", () => {
   // string: the page passes a stem (`base="client-profile"`) and media.tsx
   // appends the width suffix, so no full screenshot URL appears in either file
   // and a naive grep would find nothing and pass vacuously.
-  const WIDTHS = [800, 1600];
+  //
+  // READ FROM THE COMPONENT rather than restated here. A literal list in this
+  // file would keep passing after someone adds a fourth tier to the srcSet and
+  // ships no file for it — the browser would then request a 404 on exactly the
+  // displays that asked for the largest image, which is the least-tested
+  // configuration and the one nobody notices.
+  const WIDTHS: number[] = (() => {
+    const m = read(MEDIA).match(/const WIDTHS = \[([\d,\s]+)\]/);
+    expect(m, `${MEDIA}: no WIDTHS array to read`).not.toBeNull();
+    return m![1].split(",").map((n) => Number(n.trim()));
+  })();
 
   it("media.tsx still builds screenshot URLs from a stem and a width", () => {
     // The premise the reconstruction below depends on. If the component stops
@@ -61,7 +71,23 @@ describe("every media path the page references actually exists", () => {
     const media = read(MEDIA);
     expect(media).toContain("/marketing/treatment-memory/");
     expect(media).toMatch(/\$\{src\}-1600\.webp/);
-    expect(media).toMatch(/\$\{src\}-800\.webp 800w/);
+    expect(media).toMatch(/\$\{src\}-\$\{w\}\.webp \$\{w\}w/);
+    expect(WIDTHS.length, "fewer than two widths is not a srcSet").toBeGreaterThanOrEqual(2);
+  });
+
+  it("the declared slot width is measured, not guessed", () => {
+    // `sizes` is the only input the browser has for picking a file, and an
+    // under-stated slot silently downgrades every image. It was wrong once
+    // already: the first version claimed 68rem against a shell that renders
+    // 86vw up to a 87.5rem cap. Pin it to the shell it actually measures.
+    const globals = read("app/globals.css");
+    expect(
+      globals,
+      ".mk-shell changed shape — re-measure the figure slot before trusting sizes",
+    ).toMatch(/\.mk-shell\s*\{\s*width:\s*min\(100% - clamp\(3rem, 14vw, 15rem\), 87\.5rem\)/);
+    const media = read(MEDIA);
+    expect(media).toContain("86vw");
+    expect(media).toContain("1400px");
   });
 
   it("every ScreenFigure stem resolves to both width variants", () => {
