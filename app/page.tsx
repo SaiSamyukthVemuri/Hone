@@ -26,6 +26,7 @@ import {
   WALKTHROUGH,
   CAPABILITY_GROUPS,
   PRICING_PLANS,
+  PRICING_ASSURANCES,
   ANALYTICS_EVENTS,
 } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
@@ -234,9 +235,13 @@ export default function HomePage() {
             <Reveal>
               <Eyebrow>Pricing</Eyebrow>
               <Title className="mt-4 max-w-2xl">Simple plans, in Canadian dollars.</Title>
+              {/* RENDERED FROM THE SHARED CONSTANT, not restated. This teaser
+                  carried its own copy of the assurances and kept publishing
+                  "no contract" after the pricing page dropped it — the two
+                  drifted precisely because they were two strings. Joining the
+                  shared list means the homepage cannot fall behind it again. */}
               <Lede className="mt-5 max-w-2xl">
-                Founder-led setup and free standard import on every plan. No setup fee, no
-                contract, cancel anytime.
+                {PRICING_ASSURANCES.join(" · ")} on every plan.
               </Lede>
             </Reveal>
             <div className="mt-10 grid gap-5 md:grid-cols-3">

@@ -101,18 +101,23 @@ describe("the assurance line under the cards", () => {
     ]);
   });
 
-  it("the assurance line itself no longer pairs cancellation with 'no contract'", () => {
-    // SCOPED TO WHAT v2.2 CHANGED. The deck rewrote this line from "No
-    // contract, cancel anytime" to "Cancel anytime", so the assurance no longer
-    // carries the contract half.
+  it("no marketing surface publishes the unsourced contract claim", () => {
+    // WIDENED, and the earlier narrow version was wrong. I first scoped this to
+    // the assurance constant on the reasoning that the FAQ's "no contract" was
+    // pre-existing copy the deck had not touched. That left `/` and the FAQ
+    // still publishing the exact claim this change drops as unsourced, which
+    // review caught on the homepage — and the same argument applied to the FAQ
+    // one section below. Dropping a claim in one place and keeping it in two is
+    // not a narrower change, it is an inconsistent one.
     //
-    // It does NOT assert the phrase is absent from the whole page. The FAQ
-    // answers "No setup fee and no contract" and that is pre-existing copy the
-    // deck did not touch — and nothing here shows it to be FALSE, only that the
-    // register does not record it. Purging it would be an editorial change
-    // dressed as a truth fix, and asserting its absence would quietly commit a
-    // later reader to that change.
+    // Whitespace-normalised because the homepage instance was split across a
+    // source line break ("no setup fee, no\ncontract") and survived an exact
+    // phrase search.
+    const flat = (s: string) => s.replace(/\s+/g, " ");
     expect(PRICING_ASSURANCES.join(" | ")).not.toMatch(/no contract/i);
+    expect(flat(PRICING)).not.toMatch(/no contract/i);
+    expect(flat(HOME)).not.toMatch(/no contract/i);
+    expect(flat(CONTENT)).not.toMatch(/no contract/i);
   });
 });
 

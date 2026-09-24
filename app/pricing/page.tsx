@@ -74,7 +74,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Is there a setup fee or a contract?",
-    a: "No setup fee and no contract. Setup is founder-led during onboarding, and you can cancel anytime.",
+    a: "No setup fee. Setup is founder-led during onboarding, and you can cancel anytime.",
   },
   {
     q: "What's included on each plan?",
