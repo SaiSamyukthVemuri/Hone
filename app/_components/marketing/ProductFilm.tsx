@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { MARKETING_PALETTE as PALETTE } from "../marketingNav";
 
 /**
@@ -22,6 +22,13 @@ import { MARKETING_PALETTE as PALETTE } from "../marketingNav";
  * `muted` and `playsInline` are still set: a silent film must not be the reason
  * iOS refuses inline playback, and muted is the honest description of a file
  * with no audio.
+ *
+ * FOCUS FOLLOWS THE SWAP. Pressing play unmounts the button that holds focus,
+ * and a focused element that disappears drops focus to `<body>` — so a keyboard
+ * or screen-reader visitor who just asked for the film is returned to the top of
+ * the document and has to tab the whole page again to reach the controls they
+ * asked for. The `<video>` only ever mounts as the result of that press, so its
+ * mount is exactly the right moment to hand focus over.
  */
 export function ProductFilm({
   poster,
@@ -34,6 +41,16 @@ export function ProductFilm({
 }) {
   const [playing, setPlaying] = useState(false);
 
+  // A callback ref rather than an effect: it fires on the node itself, so there
+  // is no frame in which focus sits nowhere. `preventScroll` because the poster
+  // and the video fill the same box — the element is already where the visitor
+  // is looking, and scrolling it "into view" would only move the page under
+  // them. No `tabIndex`: `controls` already puts a video in the tab order, and
+  // pinning it to -1 would take it back out.
+  const takeFocusOnMount = useCallback((node: HTMLVideoElement | null) => {
+    node?.focus({ preventScroll: true });
+  }, []);
+
   return (
     <figure className="m-0">
       <div
@@ -42,6 +59,7 @@ export function ProductFilm({
       >
         {playing ? (
           <video
+            ref={takeFocusOnMount}
             className="block aspect-video w-full"
             src={src}
             poster={poster}

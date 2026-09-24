@@ -44,15 +44,30 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // time-stamped."
 //
 // THAT REPLACEMENT DOES NOT HOLD FOR THE FIELDS THIS PAGE IS ABOUT. Checked in
-// the schema: `update_session_block_with_areas`
-// (0156_conditional_numbing_notes.sql:102-169) UPDATEs the block in place and
-// DELETEs then reinserts its areas, writing no `session_audit` row at all. The
-// only audited fields anywhere are `started_at` (session time) and
-// `area_removed` (an area soft-delete, with a reason). So changing mode, energy,
-// probe, reaction or the treated areas retains nothing of the previous value,
-// and a general "every change is attributed and time-stamped" on a page that
-// lists exactly those fields would be read as an audit trail that does not
-// exist.
+// the schema, not taken from the register. `update_session_block_with_areas` is
+// last defined in 0156_conditional_numbing_notes.sql:102-169 (0155 and 0129
+// before it; 0166 only calls it) and it UPDATEs the block in place, then DELETEs
+// and reinserts its areas, writing no `session_audit` row at all. Exactly two
+// live writers put rows in that table: `edit_session_started_at` (0167:425,
+// field `started_at`) and `soft_delete_session_area` (0123:116, field
+// `area_removed`). A third, in retired `finalize_session` (0119:603), is dead —
+// 0159 revoked EXECUTE from every runtime role. So changing mode, energy,
+// frequency, probe, lot, tolerance, reaction or the treated-area set retains
+// nothing of the previous value, and a general "every change is attributed and
+// time-stamped" on a page that lists exactly those fields would be read as an
+// audit trail that does not exist.
+//
+// The register row is the sharper defect, and it is not this page's to fix.
+// §2 (Charting & Records) line 113, "Correcting a charting mistake", is classed
+// LIVE_FOR_ALL_ONBOARDED / MARKET with the phrasing "records stay editable, and
+// every change is captured in the session edit history". Correcting a mis-charted
+// session means changing those same fields, which is precisely what
+// `session_audit` does not capture. (Its neighbour at line 105, "Session edit
+// history — see who changed a session and when", stays true for the two events
+// above; it is the generalisation to *every* change that is not.) No other
+// marketing surface carries either sentence today — the homepage does not — so
+// this page is the only copy affected, and the register row should be corrected
+// at source before the next page inherits it.
 //
 // What IS true is what this section now says, and rule 7 preserves all of it:
 // `client_clinical_notes` (0126) is append-only with in-place UPDATE blocked by
@@ -60,9 +75,7 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // migration 0086 keeps the sterile-item and disinfectant record-keeping trail.
 // (Named by migration rather than by table: tests/app/records/audit-trail.test.ts
 // allowlists which files under app/, lib/ and components/ may mention that
-// table's name, and a marketing comment is not one of them.) The homepage
-// carries the same register sentence and should be checked against this
-// finding.
+// table's name, and a marketing comment is not one of them.)
 //
 // The deck's two [DECIDE] items are left as they already ship: Apilus is named
 // in the capability list exactly as production names it today, and no laser line

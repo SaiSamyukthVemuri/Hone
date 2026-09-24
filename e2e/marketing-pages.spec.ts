@@ -72,3 +72,29 @@ test.describe("reduced motion", () => {
     await ctx.close();
   });
 });
+
+test.describe("the product film hands focus to the video", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  // Pressing play REPLACES the poster button with a <video>. The button holding
+  // focus is unmounted, and focus on a removed element falls to <body> — the
+  // visitor who just asked for the film is silently returned to the top of the
+  // document, with the controls they asked for reachable only by tabbing the
+  // whole page again. Driven by keyboard, because that is who it happens to.
+  test("/demo — keyboard play moves focus onto the film, not to the body", async ({ page }) => {
+    await page.goto("/demo");
+
+    const play = page.getByRole("button", { name: /^Play:/ });
+    await expect(play).toBeVisible();
+    await play.focus();
+    await page.keyboard.press("Enter");
+
+    const video = page.locator("video");
+    await expect(video).toBeVisible();
+    await expect(video).toBeFocused();
+    expect(
+      await page.evaluate(() => document.activeElement?.tagName ?? ""),
+      "focus fell out of the film when the poster was swapped for the video",
+    ).toBe("VIDEO");
+  });
+});
