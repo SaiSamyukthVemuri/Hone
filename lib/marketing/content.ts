@@ -146,6 +146,56 @@ export const POSITIONING = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// Film V1 — the treatment-memory product film (deck v2.2 §12b). MKT-02B.
+// ---------------------------------------------------------------------------
+//
+// THIS CONSTANT HOLDS FACTS ABOUT A FILE, NOT COPY. Every word the film's
+// placement needs — its closing line, its demo-data label — is POSITIONING's,
+// above, because it is copy and copy has one owner. What lives here is what
+// only the asset can answer.
+//
+// AND EVERY NUMBER WAS READ FROM THE BYTES, not from the deck and not from the
+// still. Parsed from the MP4 boxes:
+//
+//   moov/mvhd      duration 25.000 s
+//   trak/tkhd      1920 x 1080
+//   stbl/stts      750 frames -> 30.00 fps
+//   stbl/stsd      avc1 (H.264)
+//   trak/mdia/hdlr ONE handler, "vide". There is no "soun" track.
+//   file           3,647,564 bytes
+//
+// `hasAudioTrack: false` is the PREMISE for shipping a player with no unmute
+// control and no caption track, so it is recorded as a checked property rather
+// than left implicit in a design decision. tests/app/marketing-homepage-film
+// re-derives all of it from the file on every run: if a recut ever arrives with
+// sound, that goes red the same day, rather than on the day a Deaf visitor
+// finds out the page has an uncaptioned soundtrack.
+//
+// The transcript is the §12b card sequence, verbatim and in the film's order —
+// the film's text equivalent (WCAG 1.2.1). The film carries product claims, and
+// a claim only sighted visitors can reach is a claim the page makes selectively.
+export const FILM = {
+  src: "/film/hone-treatment-memory-v3-1.mp4",
+  type: "video/mp4",
+  durationSeconds: 25,
+  width: 1920,
+  height: 1080,
+  hasAudioTrack: false,
+  // Accessible name for the play control and the player. States the running
+  // time and that there is no sound, so nobody waits for narration.
+  accessibleName: "Hone treatment-memory product film, 25 seconds, silent",
+  transcript: [
+    "Monday, Sep 14. Your next client has a history. — the studio calendar, week view.",
+    "Hone. Treatment memory for electrologists. — title card.",
+    "Treatment memory: see what happened last time. Areas treated, how she responded, and the note left for this visit. — the Last Treatment card: areas treated, response and tolerance per area, a Watch Today caution, setup used per area, consultation and skin/hair.",
+    "Treatment memory: the exact setup you used. — the Setup Used card: two areas, each with frequency, probe and lot, modality, level, timing, percentage, pulses, duration and a numbing note.",
+    "Charting: record today's treatment. — the appointment page: confirmed session, pinned notes, allergies, client summary.",
+    "One client record: appointments, records, and treatment history together. — the client profile with its tabs and pinned notes marked visible on every appointment.",
+    "Hone. Pick up where you left off. hone.care — end card.",
+  ],
+} as const;
+
+// ---------------------------------------------------------------------------
 // Primary conversion, the founder-led walkthrough (prompt §5, §19; addendum §3)
 // ---------------------------------------------------------------------------
 //
@@ -468,5 +518,9 @@ export const ANALYTICS_EVENTS = {
   walkthroughFormSubmitted: "marketing:walkthrough_form_submitted",
   featureCtaClick: "marketing:feature_cta_click",
   resourceCtaClick: "marketing:resource_cta_click",
+  // MKT-02B. Film V1 play. Name only, fired by the same delegator that carries
+  // every other marketing event: no timing, no completion, no PII. It records
+  // that the film was started, and nothing else.
+  filmPlay: "marketing:film_play",
 } as const;
 export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[keyof typeof ANALYTICS_EVENTS];

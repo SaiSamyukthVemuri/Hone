@@ -83,8 +83,15 @@ test.describe("marketing homepage (desktop)", () => {
     await expect(signIn).toBeVisible();
     expect(await signIn.getAttribute("href")).toBe("/login");
 
-    // The hero CTA navigates to the walkthrough page.
-    await page.getByRole("link", { name: "Request a 15-minute walkthrough" }).first().click();
+    // The hero CTA navigates to the walkthrough page. Scoped to <main>: v2.2
+    // drops the duration from the label, so the hero and the sticky header now
+    // share one accessible name and an unscoped .first() would click the
+    // HEADER and prove nothing about the hero.
+    await page
+      .getByRole("main")
+      .getByRole("link", { name: "Request a walkthrough" })
+      .first()
+      .click();
     await page.waitForURL(/\/demo/);
   });
 });

@@ -26,10 +26,8 @@ import { CalendarPreview } from "./_components/marketing/visuals/CalendarPreview
 import {
   POSITIONING,
   WALKTHROUGH,
-  TRUST_STRIP,
   FILM,
   PRICING_PLANS,
-  PRICING_ASSURANCES,
   PAYMENT_QUALIFIER,
   ANALYTICS_EVENTS,
 } from "@/lib/marketing/content";
@@ -134,17 +132,20 @@ export default function HomePage() {
         <Container className="pb-[clamp(4rem,7vw,7rem)] pt-[clamp(3.5rem,6vw,6rem)]">
           <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
           <Display className="mt-5 max-w-[19ch]">{POSITIONING.heroH1}</Display>
-          <Lede className="mt-7 max-w-[46ch]">{POSITIONING.heroSupporting}</Lede>
+          <Lede className="mt-7 max-w-[46ch]">{POSITIONING.heroSub}</Lede>
           <div className="mt-9 flex flex-wrap items-center gap-x-6 gap-y-3">
             <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
               {WALKTHROUGH.primaryLabel}
             </CTAButton>
+            {/* Label and destination move together: MKT-02A repointed this at
+                the treatment-memory page, and a control may only promise what
+                its destination delivers. */}
             <CTAButton
-              href="/features/treatment-memory"
+              href={WALKTHROUGH.secondaryHref}
               variant="secondary"
               event={ANALYTICS_EVENTS.featureCtaClick}
             >
-              See how treatment memory works
+              {WALKTHROUGH.secondaryLabel}
             </CTAButton>
           </div>
           <Hairline className="mt-[clamp(3rem,5vw,4.5rem)]" />
@@ -176,7 +177,7 @@ export default function HomePage() {
             shell, that a visitor reads in a single pass on the way down. */}
         <Container className="py-[clamp(1.75rem,2.5vw,2.5rem)]">
           <ul className="grid grid-cols-1 divide-y divide-[color:var(--color-hairline)] border-y border-[color:var(--color-hairline)] sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4">
-            {TRUST_STRIP.map((line) => (
+            {POSITIONING.trustStrip.split(" · ").map((line) => (
               <li
                 key={line}
                 className="py-3.5 text-[0.875rem] leading-[1.45] text-muted sm:border-b sm:border-[color:var(--color-hairline)] sm:pr-6 lg:border-b-0 lg:[&:not(:first-child)]:border-l lg:[&:not(:first-child)]:border-[color:var(--color-hairline)] lg:[&:not(:first-child)]:pl-6"
@@ -292,7 +293,7 @@ export default function HomePage() {
             cards. No badges, no hosting-location line. */}
         <Section tone="paper" className="!py-[clamp(4.5rem,7vw,8rem)]">
           <Container>
-            <Title className="max-w-[18ch]">Your client records should stay yours.</Title>
+            <Title className="max-w-[18ch]">{POSITIONING.recordsHeading}</Title>
             <FeatureMatrix
               items={OWNERSHIP.map((o) => ({ title: o.title, body: o.body }))}
             />
@@ -311,14 +312,13 @@ export default function HomePage() {
             hairlines. A price list, not three cards competing for a click. */}
         <Section tone="warm" id="pricing" className="!py-[clamp(4.5rem,7vw,8rem)]">
           <Container>
-            <Title className="max-w-[20ch]">Simple plans, in Canadian dollars.</Title>
-            <Lede className="mt-6 max-w-[48ch]">
-              Every plan includes the full treatment workflow. No client caps. No appointment
-              caps.
-            </Lede>
+            <Title className="max-w-[20ch]">{POSITIONING.pricingHeading}</Title>
+            <Lede className="mt-6 max-w-[48ch]">{POSITIONING.noCapsLine}</Lede>
+            {/* everyPlanIncludes NAMES PAYMENTS, so the qualifier is not
+                optional — card-on-file is LIVE_WITH_GUIDED_SETUP, not live for
+                everyone, and MKT-02A pins the pairing obligation. */}
             <p className="mt-4 max-w-[52ch] text-[0.9375rem] leading-[1.6] text-muted">
-              Treatment memory, charting, intake, consent, photos, follow-up, payments, a
-              client portal and CSV export. On every plan.
+              {POSITIONING.everyPlanIncludes} {PAYMENT_QUALIFIER}
             </p>
 
             <div className="mt-[clamp(2.5rem,4vw,3.5rem)] grid grid-cols-1 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-3">
@@ -346,9 +346,7 @@ export default function HomePage() {
               ))}
             </div>
 
-            <p className="mt-6 text-[0.875rem] text-muted">
-              {PRICING_ASSURANCES.join(" · ")}
-            </p>
+            <p className="mt-6 text-[0.875rem] text-muted">{POSITIONING.assuranceLine}</p>
             <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
               <CTAButton href="/pricing" event={ANALYTICS_EVENTS.pricingPlanViewed}>
                 See pricing details
@@ -369,9 +367,9 @@ export default function HomePage() {
             on the same words the film ends on. */}
         <Section tone="band" className="!py-[clamp(5rem,8vw,9rem)]">
           <Container className="text-center">
-            <Eyebrow onBand>{FILM.closingLine}</Eyebrow>
+            <Eyebrow onBand>{POSITIONING.filmClosingLine}</Eyebrow>
             <Title className="mx-auto mt-5 max-w-[18ch] text-paper">
-              See it with a returning client.
+              {POSITIONING.walkthroughHeading}
             </Title>
             <Lede onBand className="mx-auto mt-6 max-w-[52ch]">
               In a walkthrough, we open a returning client and you watch Before Today assemble

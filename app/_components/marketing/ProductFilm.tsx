@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 import posterImage from "@/app/_media/treatment-memory-setup-frame.png";
-import { ANALYTICS_EVENTS, FILM } from "@/lib/marketing/content";
+import { ANALYTICS_EVENTS, FILM, POSITIONING } from "@/lib/marketing/content";
 
 // Film V1 player (deck v2.2 §12b/§13). A FACADE, not a <video> that happens to
 // be paused.
@@ -115,7 +115,7 @@ export function ProductFilm({ className = "" }: { className?: string }) {
                 play actually sees. Verbatim, and the film carries the same
                 words in its own top-right corner. */}
             <span className="absolute bottom-0 left-0 bg-[color:var(--color-band)]/80 px-3 py-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.12em] text-[color:var(--color-onband-muted)]">
-              {FILM.demoDataLabel}
+              {POSITIONING.demoDataLabel}
             </span>
           </>
         )}
@@ -133,7 +133,7 @@ export function ProductFilm({ className = "" }: { className?: string }) {
       </div>
 
       <figcaption className="mt-3 text-[0.8125rem] text-[color:var(--color-onband-muted)]">
-        {FILM.demoDataLabel}
+        {POSITIONING.demoDataLabel}
       </figcaption>
     </figure>
   );

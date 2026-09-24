@@ -5,7 +5,6 @@ import {
   POSITIONING,
   WALKTHROUGH,
   PRICING_PLANS,
-  FILM,
 } from "@/lib/marketing/content";
 
 // Flagship marketing homepage (rebuild). Category: electrolysis practice
@@ -84,14 +83,14 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
   // paragraph, so ordinary copy editing does not turn this file red.
   const BLOCKS: { name: string; anchor: RegExp }[] = [
     { name: "1 film", anchor: /Before the client sits down/ },
-    { name: "2 trust strip", anchor: /TRUST_STRIP\.map/ },
+    { name: "2 trust strip", anchor: /POSITIONING\.trustStrip/ },
     { name: "3 per-area history", anchor: /Every area keeps its own history/ },
     { name: "4 more than a note", anchor: /More than a note/ },
     { name: "5 connected workflow", anchor: /<WorkflowGrid steps=/ },
     { name: "6 what was used", anchor: /Know what was used, and when/ },
-    { name: "7 records stay yours", anchor: /Your client records should stay yours\./ },
+    { name: "7 records stay yours", anchor: /POSITIONING\.recordsHeading/ },
     { name: "8 pricing", anchor: /PRICING_PLANS\.map/ },
-    { name: "9 walkthrough CTA", anchor: /See it with a returning client\./ },
+    { name: "9 walkthrough CTA", anchor: /POSITIONING\.walkthroughHeading/ },
   ];
 
   it("renders all nine blocks", () => {
@@ -161,9 +160,11 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
   });
 
   it("closes on the walkthrough conversion, in the film's own words", () => {
-    expect(PAGE).toMatch(/FILM\.closingLine/);
-    expect(FILM.closingLine).toBe("Pick up where you left off.");
-    expect(PAGE).toMatch(/See it with a returning client\./);
+    // The film's end card, reused as the CTA eyebrow. The STRING is MKT-02A's
+    // (it is copy); this lane only pins that the close actually renders it.
+    expect(PAGE).toMatch(/POSITIONING\.filmClosingLine/);
+    expect(POSITIONING.filmClosingLine).toBe("Pick up where you left off.");
+    expect(PAGE).toMatch(/POSITIONING\.walkthroughHeading/);
   });
 });
 
@@ -229,12 +230,12 @@ describe("demo-data discipline", () => {
     // One wording across the film, the poster and every still, so nothing needs
     // recutting to agree with the page. The film already burns these exact
     // words into its own corner.
-    expect(FILM.demoDataLabel).toBe("Demo data. Actual Hone application.");
-    expect(FILM_PLAYER).toMatch(/FILM\.demoDataLabel/);
+    expect(POSITIONING.demoDataLabel).toBe("Demo data. Actual Hone application.");
+    expect(FILM_PLAYER).toMatch(/POSITIONING\.demoDataLabel/);
     // On the poster AND under the player: a visitor who never presses play
     // still sees it.
     expect(
-      (FILM_PLAYER.match(/FILM\.demoDataLabel/g) ?? []).length,
+      (FILM_PLAYER.match(/POSITIONING\.demoDataLabel/g) ?? []).length,
       "the label must appear on the poster and under the player",
     ).toBeGreaterThanOrEqual(2);
   });

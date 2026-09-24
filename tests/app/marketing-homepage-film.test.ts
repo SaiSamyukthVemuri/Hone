@@ -281,8 +281,11 @@ describe("analytics stays inside the existing allowlist", () => {
 });
 
 describe("the homepage consumes the film as section 1", () => {
-  it("renders the player and reuses the film's closing line at the close", () => {
+  it("renders the player, and the close reuses the film's own end card", () => {
     expect(PAGE).toMatch(/<ProductFilm\b/);
-    expect(PAGE).toMatch(/FILM\.closingLine/);
+    // The end-card wording is COPY and belongs to MKT-02A's POSITIONING, not to
+    // this lane's asset constant. What is pinned here is that the page actually
+    // closes on it — the film's last frame and the page's last words agreeing.
+    expect(PAGE).toMatch(/POSITIONING\.filmClosingLine/);
   });
 });
