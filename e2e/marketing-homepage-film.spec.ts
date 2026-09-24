@@ -173,8 +173,16 @@ test.describe("homepage film (desktop)", () => {
       preload,
       "next/image `priority` must emit a preload link for the poster",
     ).toHaveCount(1);
-    expect(await preload.getAttribute("href")).toMatch(
-      /treatment-memory-setup-frame|_next\/image/,
+
+    // READ THE WHOLE TAG, not one attribute. A RESPONSIVE preload carries its
+    // candidates in `imagesrcset`/`imagesizes` and has NO `href` at all, so an
+    // assertion on href alone reads null and fails against a perfectly correct
+    // preload — which is exactly what it did before this line was written this
+    // way. The tag naming the poster is the claim; which attribute Next chose
+    // to carry it is Next's business.
+    const tag = await preload.evaluate((el) => el.outerHTML);
+    expect(tag, `image preload does not name the poster: ${tag}`).toMatch(
+      /treatment-memory-setup-frame|_next%2Fstatic|_next\/image/,
     );
 
     const poster = page.locator("figure img").first();

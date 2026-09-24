@@ -234,6 +234,23 @@ describe("accessible without sight and without sound", () => {
     expect(PLAYER).toMatch(/aria-describedby=\{transcriptId\}/);
   });
 
+  it("the demo-data label cannot swallow a click meant for the play control", () => {
+    // MY OWN FIX, PINNED, because nothing else proves it. The label paints
+    // after the full-bleed button and overlaps it, so without pointer-events
+    // the bottom-left corner of the play target is silently dead — and the
+    // browser proof clicks the button's CENTRE, so it would never notice.
+    const at = PLAYER.indexOf("POSITIONING.demoDataLabel");
+    expect(at, "poster label not found").toBeGreaterThan(-1);
+    // The span that carries it, scanning back to its opening tag.
+    const openedAt = PLAYER.lastIndexOf("<span", at);
+    const label = PLAYER.slice(openedAt, at);
+    expect(label).toContain("absolute");
+    expect(
+      label,
+      "the poster's demo-data label overlaps the play button and must not take pointer events",
+    ).toContain("pointer-events-none");
+  });
+
   it("the play control is a real button, not a click handler on a div", () => {
     expect(PLAYER).toMatch(/<button\s/);
     expect(PLAYER).toMatch(/type="button"/);
