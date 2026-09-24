@@ -161,8 +161,14 @@ describe('"Every area keeps its own history" is earned, not asserted', () => {
     // would be recorded and never read back per area.
     const src = read(INTELLIGENCE);
     expect(src).toContain("resolveBlockAreas");
+    // `[^)]*` CANNOT CROSS THE CLOSING PAREN, and that is the whole point. An
+    // earlier version used a lazy `[\s\S]*?`, which happily ran past this
+    // signature to some LATER function's `: string[]` and reported a pass while
+    // blockAreaNames returned a bare string — the assertion was satisfied by a
+    // different function than the one it names. Proved by mutation: changing
+    // the return type here must be red.
     expect(src, "blockAreaNames no longer returns a list of areas per block").toMatch(
-      /function blockAreaNames\([\s\S]*?\): string\[\]/,
+      /function blockAreaNames\([^)]*\): string\[\]/,
     );
     expect(
       src,
