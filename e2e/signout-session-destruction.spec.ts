@@ -270,14 +270,23 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
   // very requests the exception exists for — measured: four real cases went
   // red that way, with their logouts provably perfect.
   page.on("response", (response) => {
-    if (traffic.phase !== "teardown") return;
-    if (response.status() >= 400) {
-      traffic.settledIndependently.add(withoutQuery(response.url()));
+    // NOT PHASE-GATED, deliberately. The rule accepts LATE messages about
+    // owned requests — a hard navigation keeps reporting after the window
+    // shuts — so settlement has to be recorded just as late, or an owned
+    // prefetch that 500s a moment after `waitForURL` resolves would leave no
+    // record and have its genuine regression forgiven. Ownership is already
+    // the bound here: `teardownOwned` only ever gains entries between the
+    // activation snapshot and the navigation settling.
+    const key = withoutQuery(response.url());
+    if (traffic.teardownOwned.has(key) && response.status() >= 400) {
+      traffic.settledIndependently.add(key);
     }
   });
   page.on("requestfailed", (request) => {
     bump(request.url(), -1);
-    if (traffic.phase !== "teardown") return;
+    // Same reasoning as the response handler: bounded by ownership, not by
+    // the phase Playwright happened to report the failure in.
+    if (!traffic.teardownOwned.has(withoutQuery(request.url()))) return;
     const reason = request.failure()?.errorText ?? "";
     // An ABORT is the navigation doing its work. Anything else — a refused
     // connection, a DNS failure, a reset — is the request failing on its own
@@ -856,6 +865,22 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
         settledIndependently: new Set<string>([OWNED]),
       }),
       "a request that failed independently was forgiven as teardown",
+    ).toBe(false);
+  });
+
+  test("an owned failure reported LATE is still real", () => {
+    // Codex P2. The rule accepts late `after` messages about owned requests,
+    // so settlement must be recordable just as late — otherwise an owned
+    // prefetch that 500s a moment after the window shuts leaves no record and
+    // has its regression forgiven. The recorders are bounded by ownership, not
+    // by phase, and this pins the consequence.
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "after" }, {
+        logoutNavigated: true,
+        teardownOwned: new Set<string>([OWNED]),
+        settledIndependently: new Set<string>([OWNED]),
+      }),
+      "a late-reported independent failure was forgiven as teardown",
     ).toBe(false);
   });
 
