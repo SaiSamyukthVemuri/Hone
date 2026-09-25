@@ -33,3 +33,9 @@ tests/lib/email/studio-identity.test.ts diff
 # check would be the wrong trade. Binaries are marked so diffs stay readable.
 lib/billing/fonts/*.ttf binary
 lib/billing/fonts/LICENSE.txt -whitespace
+
+# The product film (public/film) is the marketing asset itself, not source. A
+# single rewritten byte corrupts a video silently - it still "plays" until it
+# doesn't - so mark it binary explicitly for the same reason as the fonts above.
+*.mp4 binary
+*.png binary
