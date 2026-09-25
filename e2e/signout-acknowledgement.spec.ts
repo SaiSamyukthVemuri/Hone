@@ -154,6 +154,8 @@ type Surface = {
   use: Parameters<typeof test.use>[0];
   /** Accessible name of the control that opens — and used to try to close — the panel. */
   trigger: string;
+  /** The hoisted sign-out form; the panel's control carries `form="<this>"`. */
+  formId: string;
   open: (page: Page) => Promise<Locator>;
 };
 
@@ -162,6 +164,7 @@ const SURFACES: Surface[] = [
     name: "desktop AccountMenu",
     use: { viewport: { width: 1280, height: 900 } },
     trigger: "Open account menu",
+    formId: "signout-account",
     open: async (page) => {
       await page.getByRole("button", { name: "Open account menu" }).click();
       return page.getByRole("navigation", { name: "Account menu" });
@@ -170,6 +173,7 @@ const SURFACES: Surface[] = [
   {
     name: "phone-width MobileMenu",
     trigger: "Open navigation menu",
+    formId: "signout-mobile",
     // Same explicit iPhone-12-class emulation SIGNOUT-01 uses: the devices[]
     // descriptors carry defaultBrowserType webkit, which this chromium-only
     // lane does not install.
@@ -329,21 +333,38 @@ for (const surface of SURFACES) {
       await gate.unroute();
     });
 
-    test("a double-press with no pause dispatches exactly one logout", async ({
-      page,
-    }) => {
-      // THE GAP THIS CLOSES, and the reason the wire test above could not see
-      // it: that test waits for `[data-signout-pending]` before pressing
-      // again, so by then the control is already disabled. A practitioner
-      // double-tapping does not wait.
+    test("a rapid double-press dispatches exactly one logout", async ({ page }) => {
+      // THE CASE THE WIRE TEST BELOW STRUCTURALLY CANNOT SEE: it waits for
+      // `[data-signout-pending]` before pressing again, so by then the control
+      // is already disabled. A practitioner double-tapping does not wait.
       //
-      // The visible control lives in the panel, OUTSIDE the hidden sign-out
-      // form, so its own `useFormStatus()` never fires — it is disabled only
-      // by `busy` arriving from the shared store. While that was published
-      // from a passive effect, the control stayed enabled for the whole gap
-      // between the press and the effect running, and a second press in that
-      // gap queued another logout. The hold is now taken in the form's
-      // `onSubmit`, before any effect gets a turn.
+      // The presses here are real input events, delivered as fast as the
+      // driver can, with nothing awaited in between beyond the protocol round
+      // trip each one needs.
+      //
+      // WHAT MEASUREMENT ESTABLISHED ABOUT THE WINDOW, because it is easy to
+      // assert the wrong thing here and two earlier versions of this test did.
+      //
+      // The visible control sits OUTSIDE the hidden sign-out form, so its own
+      // `useFormStatus()` never fires; it is disabled only by `busy` arriving
+      // from the shared store. There is therefore a window between the press
+      // and that arriving. Measured:
+      //
+      //   * three real presses, separate input tasks -> ONE logout on the
+      //     wire, whether the hold is taken in the form's `onSubmit` or in the
+      //     reporter's passive effect. Between two real input events the
+      //     browser finishes the task and React commits, so input never enters
+      //     the window;
+      //   * three `element.click()` calls inside ONE `evaluate` -> THREE
+      //     logouts, and the control reads `disabled === false` after the
+      //     first, because React does not re-render synchronously inside a
+      //     single task. No acquisition timing changes that — the guard simply
+      //     is not up yet — so the window is real but is reachable only by
+      //     script, in the same way `form.requestSubmit()` was.
+      //
+      // This test therefore asserts the property a practitioner can actually
+      // obtain. The scripted case is recorded above rather than asserted,
+      // because asserting one logout there would be asserting something false.
       await loginAsOwner(page, seed);
       await page.goto("/dashboard");
 
@@ -354,8 +375,6 @@ for (const surface of SURFACES) {
       const x = box.x + box.width / 2;
       const y = box.y + box.height / 2;
 
-      // NO WAIT BETWEEN THEM. Two presses as fast as the driver can deliver
-      // them, which is faster than a passive effect can run.
       await page.mouse.click(x, y);
       await page.mouse.click(x, y);
       await page.mouse.click(x, y);
@@ -365,7 +384,7 @@ for (const surface of SURFACES) {
       });
       expect(
         gate.state.held,
-        "a press that landed before the acknowledgement queued a second logout",
+        "a rapid double-press queued a second logout",
       ).toBe(1);
 
       // And still exactly one through the drain.
@@ -377,7 +396,7 @@ for (const surface of SURFACES) {
       ]);
       expect(
         gate.state.held,
-        "more than one logout reached the wire after a double-press",
+        "more than one logout reached the wire after a rapid double-press",
       ).toBe(1);
 
       await gate.unroute();
