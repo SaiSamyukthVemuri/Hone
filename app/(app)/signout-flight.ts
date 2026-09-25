@@ -2,49 +2,53 @@
 
 import { useSyncExternalStore } from "react";
 
-// SIGNOUT-02c · the hold belongs to the LOGOUT ACTION, and to nothing else.
+// SIGNOUT-02c · ONE logout-in-flight hold, shared by both responsive shells.
 //
-// THE INVARIANT, stated once because four revisions each broke a different
-// half of it: once a logout begins, the hold must survive the submit control
-// unmounting, either menu shell unmounting, a responsive shell swap, leaving
-// the `(app)` route group, and returning before the request settles. No
-// component disappearing may release it. The only normal release authority is
-// the real action settling.
+// THE DEFECT THIS CLOSES. `app/(app)/layout.tsx` renders BOTH menus on every
+// page and hides one with CSS — `hidden … lg:flex` for the desktop account
+// menu, `… lg:hidden` for the phone sheet. They are always-mounted siblings,
+// so a per-shell `useState` made the flag per-SHELL rather than
+// per-practitioner: crossing the `lg` breakpoint mid-logout revealed the other
+// menu with its own flag still false, and a fresh enabled Sign out with it.
 //
-// THAT RULES OUT EVERY COMPONENT-SHAPED OWNER, which is what the earlier
-// revisions kept reaching for:
+// WHO WRITES IT. A `SignOutFlightReporter` inside each shell's persistent
+// sign-out form, via `useFormStatus`. The form sits outside the `{open && …}`
+// panel, so closing the panel, crossing the breakpoint or holding a link
+// cannot unmount the observer.
 //
-//   * per-shell useState        — crossing `lg` revealed the other menu with
-//     its own flag false, and a second enabled Sign out;
-//   * a bare module boolean     — leaving the route group unmounted the only
-//     reporter and stranded the flag forever;
-//   * claim / orphan / adopt    — a new leaf MOUNTING ended the hold, so
-//     returning mid-logout reopened both shells while the request ran;
-//   * a persistent-form reporter with unmount cleanup — better placed, but its
-//     cleanup still released the hold because a COMPONENT went away, which is
-//     the same mistake wearing a longer lifetime.
+// WHY THE FORM'S ACTION IS THE SERVER ACTION AND NOTHING ELSE. A previous
+// revision gave the hold to the action's own promise by passing a client
+// function as the form's action — `action={() => trackSignOut(signOut)}`. That
+// owned the request's lifetime properly, and it broke two things that matter
+// more, both MEASURED rather than argued:
 //
-// The action's own promise is the only thing whose lifetime IS the request's,
-// so it owns the hold: raised before the call, lowered in a `finally` that
-// runs on success, on failure, and on the redirect throw — and keeps running
-// after every component involved has unmounted, because a promise does not
-// care about a component tree.
+//   * PROGRESSIVE ENHANCEMENT. React then renders
+//     `action="javascript:throw new Error('React form unexpectedly
+//     submitted.')"` with no endpoint and no `$ACTION_ID_` field, so a press
+//     before hydration, or with JS disabled, signs nobody out. With the server
+//     action it renders a real POST target — which is the contract
+//     `recordSignOutTraffic`'s "progressive-enhancement form body" path
+//     already depends on.
+//   * THE SOFT REDIRECT. Next stops routing the action's redirect, so /login
+//     becomes a hard browser navigation that tears down in-flight prefetches.
 //
-// Observers may subscribe and unsubscribe freely. They cannot write.
+// Tracking is therefore layered ON the native submission, never in place of it.
 //
-// IF THE REDIRECT DESTROYS THE DOCUMENT, normal teardown ends this naturally —
-// module state dies with the document. If the document survives, only true
-// settlement clears it.
+// THE RESIDUAL THIS LEAVES, stated plainly rather than traded away. The
+// observer is a component, so it cannot report a settlement that happens after
+// the whole `(app)` route group has unmounted — reachable only through browser
+// history, since every menu destination is held while a logout is in flight.
+// In that case the hold persists until the document is replaced. It is NOT
+// released from unmount cleanup: a component going away is not evidence that
+// the request ended, and releasing there previously allowed a second logout to
+// be submitted while the first was still running. Of the two, a hold that
+// outlives its request is the safer failure, and the practitioner's session is
+// already destroyed by then, so the next request redirects them to /login
+// anyway.
 //
-// THE COST, measured and accepted. Passing a client function as the form's
-// action makes Next stop routing the action's redirect: the soft RSC
-// navigation to /login becomes a hard browser navigation. That is a real
-// change and it is the price of owning the promise at all — both wrapper
-// shapes were tried (awaiting, and returning the original promise untouched)
-// with identical results, so it is the client function itself, not how the
-// promise is handled inside it. e2e/signout-session-destruction.spec.ts
-// records what that navigation does to in-flight prefetches, and suppresses
-// exactly those two browser-attributed classes while still printing them.
+// DOCUMENT-SCOPED, deliberately. Per-tab is the correct scope: a second
+// document is a different browsing context, handled by the separate rule that
+// holds every menu destination while a logout is in flight.
 
 let inFlight = 0;
 const listeners = new Set<() => void>();
@@ -54,26 +58,14 @@ function emit(): void {
 }
 
 /**
- * Run a logout and own its hold for the whole of its lifetime.
+ * Publish a transition seen by a reporter inside a persistent sign-out form.
  *
- * COUNTED, so an overlapping call settling first cannot lower a hold an
- * earlier one still holds. The duplicate guards make that unreachable; the
- * counter means this module does not depend on them being perfect.
- *
- * NOTHING IS CAUGHT. `signOut()` ends in `redirect()`, which throws the
- * framework's redirect signal; swallowing it would strand the practitioner on
- * a page whose session no longer exists.
+ * COUNTED and floored: both shells host a form and a reporter, so two can
+ * publish, and neither a second one settling nor a stray release may lower a
+ * hold the other still holds.
  */
-export function trackSignOut(run: () => Promise<void>): Promise<void> {
-  inFlight += 1;
-  emit();
-  const running = run();
-  running.then(settled, settled);
-  return running;
-}
-
-function settled(): void {
-  inFlight -= 1;
+export function setSignOutInFlight(next: boolean): void {
+  inFlight += next ? 1 : -1;
   if (inFlight < 0) inFlight = 0;
   emit();
 }
@@ -106,9 +98,9 @@ export function isSignOutInFlight(): boolean {
 }
 
 /**
- * TEST SEAM ONLY. Resets the module state between cases in the unit lane, where
- * it would otherwise leak across tests in one worker. Never called by the
- * product.
+ * TEST SEAM ONLY. Resets the module state between cases in the unit lane,
+ * where it would otherwise leak across tests in one worker. Never called by
+ * the product.
  */
 export function __resetSignOutInFlightForTests(): void {
   inFlight = 0;

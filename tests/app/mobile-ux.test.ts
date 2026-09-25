@@ -101,7 +101,7 @@ describe("app shell: responsive navigation", () => {
     // Notifications moved to the header bell (PR #229).
     expect(MENU).not.toContain('"/notifications"');
     expect(MENU).toMatch(/Sign out/);
-    expect(MENU).toMatch(/form action=\{runSignOut\}/);
+    expect(MENU).toMatch(/form action=\{signOut\}/);
     // PR #229: every link tap closes the menu; Escape closes too.
     expect(MENU).toMatch(/onClick=\{close\}/);
     expect(MENU).toMatch(/e\.key === "Escape"/);
@@ -164,7 +164,7 @@ describe("desktop account dropdown (PR #231)", () => {
   it("contains the account destinations, the profile block, and Sign out", () => {
     expect(ACCOUNT).toContain('"/settings/profile"');
     expect(ACCOUNT).toContain('"/getting-started"');
-    expect(ACCOUNT).toMatch(/form action=\{runSignOut\}/);
+    expect(ACCOUNT).toMatch(/form action=\{signOut\}/);
     expect(ACCOUNT).toMatch(/Sign out/);
     expect(ACCOUNT).toMatch(/\{studioName\} · \{roleLabel\}/);
   });
@@ -214,15 +214,14 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
 
   function signOutForm(name: string, source: string): string {
     const code = codeOnly(source);
-    // SIGNOUT-02c. Two things moved. The form is hoisted out of the
-    // dismissible panel onto the shell's persistent root, so nothing about a
-    // press can unmount it — strictly stronger than the property SIGNOUT-01
-    // originally needed. And its action goes through `runSignOut`, which hands
-    // the in-flight hold to the ACTION'S OWN PROMISE, the only thing whose
-    // lifetime is the request's. `signOut()` is still what dispatches, pinned
-    // below, because a wrapper that stopped calling it would satisfy every
-    // other assertion here and sign nobody out.
-    const open = code.search(/<form action=\{runSignOut\} id="signout-/);
+    // SIGNOUT-02c. The form MOVED but its action did not. It is hoisted out
+    // of the dismissible panel onto the shell's persistent root, so nothing
+    // about a press can unmount it — strictly stronger than the property
+    // SIGNOUT-01 originally needed. Its action is still `signOut` itself,
+    // because wrapping it in a client function removed the POST target and the
+    // `$ACTION_ID_` field from the SERVER'S HTML, so a press before hydration
+    // dispatched nothing at all.
+    const open = code.search(/<form action=\{signOut\} id="signout-/);
     expect(open, `${name}: the Sign out form exists`).toBeGreaterThan(-1);
     // The form is SELF-CLOSING now: it holds nothing. The submit control lives
     // in the panel and reaches it by `form=`, which is what lets the form sit
@@ -241,7 +240,7 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
     it(`${name}: the comment stripper keeps code and drops prose`, () => {
       const code = codeOnly(source);
       expect(code, `${name}: the Sign out form survives`).toMatch(
-        /<form action=\{runSignOut\} id="signout-/,
+        /<form action=\{signOut\} id="signout-/,
       );
       expect(code, `${name}: real links survive`).toMatch(/<Link\b/);
       // This token exists ONLY inside a comment in both shells.
@@ -260,8 +259,8 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
       // the new shape. Both halves are checked: the call site, and the control.
       expect(
         codeOnly(source),
-        `${name}: the form's action still dispatches signOut`,
-      ).toContain("const runSignOut = () => trackSignOut(signOut);");
+        `${name}: the form's action is the server action itself`,
+      ).toMatch(/<form action=\{signOut\} id="signout-/);
       expect(
         codeOnly(source),
         `${name}: the panel's control submits the hoisted form`,
@@ -274,7 +273,7 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
       expect(
         codeOnly(source),
         `${name}: the sign-out form is hoisted out of the {open && ...} panel`,
-      ).toMatch(/<form action=\{runSignOut\} id="signout-/);
+      ).toMatch(/<form action=\{signOut\} id="signout-/);
       // No hand-rolled control left behind in the form.
       expect(form, `${name}: no control sits in the hoisted form`).not.toMatch(
         /<button/,

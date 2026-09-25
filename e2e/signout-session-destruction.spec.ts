@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { loginAsOwner } from "./helpers/flows";
 import { seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
@@ -792,6 +795,109 @@ test.describe("SIGNOUT-01 · after logout", () => {
 //
 // These cases pin each direction against synthetic records, so they cannot
 // drift with timing or with what the browser chose to report on the day.
+// ---------------------------------------------------------------------------
+// THE NATIVE SUBMISSION CONTRACT.
+//
+// READ FROM THE SERVER'S HTML, not from the live DOM, and that distinction is
+// the whole test. After hydration React replaces a server action's form
+// attribute with `action="javascript:throw new Error('React form unexpectedly
+// submitted.')"` — a guard, on a form that is working perfectly. Asserting
+// against the hydrated DOM therefore fails on correct code and would have sent
+// me chasing a defect that was not there. What a press before hydration
+// depends on is what the SERVER sent, so that is what this fetches.
+//
+// WHAT IT PROVES: the markup the browser receives can be submitted by the
+// browser alone — a POST target and the Server Action's own id, which is the
+// pair `recordSignOutTraffic`'s "progressive-enhancement form body" path reads.
+//
+// WHAT IT DOES NOT PROVE, said plainly rather than dressed up: an end-to-end
+// logout with scripting disabled. The menu holding the Sign out control is
+// opened by a client component, so with JS off a practitioner cannot reach the
+// control at all. That is a limitation of the MENU, not of the form, and
+// driving a hydrated click would prove neither.
+//
+// THE REGRESSION IT CATCHES, measured on this branch: giving the form a client
+// function as its action removed the endpoint and the action id from the
+// server's HTML entirely, so a pre-hydration press dispatched nothing.
+test.describe("SIGNOUT-01 · the form the server sends can be submitted without JavaScript", () => {
+  for (const shell of [
+    { name: "desktop AccountMenu", id: "signout-account" },
+    { name: "phone-width MobileMenu", id: "signout-mobile" },
+  ] as const) {
+    test(`${shell.name}: the served markup carries a POST target and the action id`, async ({
+      page,
+      context,
+    }) => {
+      await loginFresh(page);
+      await page.goto("/dashboard");
+
+      // The document as the SERVER wrote it. No scripts run against this.
+      const response = await context.request.get(
+        new URL("/dashboard", page.url()).toString(),
+      );
+      expect(response.status()).toBe(200);
+      const html = await response.text();
+
+      const at = html.indexOf(`id="${shell.id}"`);
+      expect(at, `${shell.name}: the sign-out form is in the served HTML`).toBeGreaterThan(
+        -1,
+      );
+      // The form element, from its own `<form` to the closing `>` of the tag,
+      // plus what it contains.
+      const open = html.lastIndexOf("<form", at);
+      const close = html.indexOf("</form>", at);
+      expect(close, `${shell.name}: the form is closed`).toBeGreaterThan(open);
+      const form = html.slice(open, close);
+
+      // A SUBMITTABLE TARGET. `action=""` is legitimate and means "post to
+      // this URL"; a `javascript:` action is what the client-function
+      // regression produced, and the browser cannot submit it.
+      expect(
+        /\bmethod="POST"/i.test(form),
+        `${shell.name}: the served form does not POST: ${form.slice(0, 200)}`,
+      ).toBe(true);
+      expect(
+        /action="javascript:/.test(form),
+        `${shell.name}: the action is a javascript: URL, so a browser cannot submit it`,
+      ).toBe(false);
+
+      // THE ACTION'S OWN ID, which is what tells the server which Server
+      // Action a native post is for. Without it the submission arrives with
+      // nothing to dispatch.
+      expect(
+        /name="\$ACTION_ID_[0-9a-f]+"/.test(form),
+        `${shell.name}: no $ACTION_ID_ field; a native submission has nothing to dispatch: ${form.slice(0, 240)}`,
+      ).toBe(true);
+    });
+  }
+
+  test("the control in the panel submits that form by id, not one of its own", () => {
+    // The form is hoisted to the shell's persistent root so its observer
+    // cannot be unmounted with the panel; the control therefore reaches it
+    // with `form=`. If the control ever grew its own <form> again, the served
+    // markup above would be proved about a form nothing submits.
+    const source = readFileSync(
+      join(process.cwd(), "app/(app)/SignOutMenuItem.tsx"),
+      "utf8",
+    );
+    // COMMENTS STRIPPED FIRST. That file discusses the `<form>` SIGNOUT-01
+    // was about, by name, in a load-bearing comment — matched against raw
+    // source the absence assertion below fails on prose rather than on code.
+    // Line comments before block comments, so a `//` line containing `/*`
+    // cannot leave the block stripper eating real code.
+    const leaf = source
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .split("\n")
+      .filter((line) => !/^\s*\/\//.test(line))
+      .join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+    expect(leaf, "the stripper kept real code").toContain("form={formId}");
+    expect(leaf).toContain('type="submit"');
+    expect(leaf).not.toMatch(/<form[\s>]/);
+  });
+});
+
 test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", () => {
   const RSC = (url: string) =>
     `Failed to fetch RSC payload for ${url}. Falling back to browser navigation. TypeError: Failed to fetch`;

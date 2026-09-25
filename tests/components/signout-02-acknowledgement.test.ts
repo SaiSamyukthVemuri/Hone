@@ -91,12 +91,16 @@ describe("SIGNOUT-02 · SIGNOUT-01 is not weakened", () => {
     expect(leaf).not.toMatch(/onClick/);
   });
 
-  it("the form is hoisted out of the panel, and dispatches through the wrapper", () => {
+  it("the form is hoisted out of the panel, and keeps the server action", () => {
     for (const f of [ACCOUNT, MENU]) {
       const code = codeOnly(read(f));
-      expect(code, f).toMatch(/<form action=\{runSignOut\} id="signout-/);
-      expect(code, f).toContain("const runSignOut = () => trackSignOut(signOut);");
-      expect(code, f).toContain('import { signOut } from "./dashboard/actions";');
+      // NATIVE SUBMISSION. A client function here removes the POST target and
+      // the `$ACTION_ID_` field from the server's HTML, so a press before
+      // hydration dispatches nothing. Proved against the served markup in
+      // e2e/signout-session-destruction.spec.ts.
+      expect(code, f).toMatch(/<form action=\{signOut\} id="signout-/);
+      expect(code, f).toContain("<SignOutFlightReporter />");
+      expect(code, f).not.toContain("trackSignOut");
       // And the control reaches it from inside the panel.
       expect(code, f).toMatch(/formId="signout-/);
     }
@@ -160,34 +164,35 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     }
   });
 
-  it("NO component may release the hold — the action owns it", () => {
-    // The invariant four revisions each broke a different half of. A
-    // per-shell useState, a bare module boolean, claim/orphan/adopt, and a
-    // persistent-form reporter with unmount cleanup all ended the hold
-    // because a COMPONENT went away. The promise cannot.
-    const store = codeOnly(read("app/(app)/signout-flight.ts"));
-    expect(store).toContain("export function trackSignOut");
-    expect(store).toContain("const running = run();");
-    expect(store).toContain("running.then(settled, settled);");
-    // The ORIGINAL promise is handed back, so React sees what it always saw.
-    expect(store).toContain("return running;");
-    expect(store).not.toContain("await run()");
-    // Counted and floored, so overlapping calls cannot release each other.
-    expect(store).toContain("if (inFlight < 0) inFlight = 0;");
+  it("the observer cannot be unmounted by a dismissal, and never writes on unmount", () => {
+    // `useFormStatus` reports only for the form it runs inside, so the
+    // observer has to be IN the form — and the form is on the shell's
+    // persistent root, which closing the panel or crossing the breakpoint
+    // cannot take down.
+    const reporter = codeOnly(read("app/(app)/SignOutFlightReporter.tsx"));
+    expect(reporter).toContain("useFormStatus");
+    expect(reporter).toContain("setSignOutInFlight(pending);");
+    // Only transitions: the store counts, so a mount-time `false` would
+    // decrement a hold this form never placed.
+    expect(reporter).toContain("if (pending === published.current) return;");
+    // It observes; it does not submit, and it renders nothing.
+    expect(reporter).toContain("return null;");
+    expect(reporter).not.toMatch(/<form[\s>]/);
+    // AND IT NEVER RELEASES ON UNMOUNT. A component going away is not
+    // evidence that the request ended; releasing there previously let a
+    // second logout be submitted while the first was still running.
+    expect(reporter).not.toMatch(/return \(\) =>/);
 
-    // There is no writable surface a component could reach for.
-    expect(store).not.toContain("export function setSignOutInFlight");
+    const store = codeOnly(read("app/(app)/signout-flight.ts"));
+    expect(store).toContain("useSyncExternalStore");
+    expect(store).toContain("function getServerSnapshot(): boolean {");
+    // Counted and floored, so overlapping publishers cannot release each other.
+    expect(store).toContain("if (inFlight < 0) inFlight = 0;");
+    // No inference levers, and no client wrapper.
     expect(store).not.toContain("orphan");
     expect(store).not.toContain("adopt");
     expect(store).not.toContain("setTimeout");
-
-    // And the observer component is gone entirely: an observer that cannot
-    // write has nothing to do, and one that can is the defect.
-    expect(() => read("app/(app)/SignOutFlightReporter.tsx")).toThrow();
-    for (const f of [ACCOUNT, MENU]) {
-      expect(codeOnly(read(f)), f).not.toContain("SignOutFlightReporter");
-    }
-
+    expect(store).not.toContain("trackSignOut");
     // No provider, no layout surgery: the shell layout stays a server component.
     expect(read("app/(app)/layout.tsx")).not.toContain('"use client"');
   });

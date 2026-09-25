@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
-import { trackSignOut, useSignOutInFlight } from "./signout-flight";
+import { useSignOutInFlight } from "./signout-flight";
+import { SignOutFlightReporter } from "./SignOutFlightReporter";
 
 // PR #231: desktop account dropdown (LinkedIn-style "Me" menu). The
 // always-visible Sign out button and the Settings/Admin nav tabs
@@ -43,12 +44,6 @@ export function AccountMenu({
   // stays mounted, which is what keeps `useFormStatus` alive to report the
   // settlement; the dismissal the practitioner asked for is REMEMBERED and
   // applied the moment the flag clears, so the menu is never left stuck open.
-  // The hold is acquired and released by the ACTION, not by anything here.
-  // `trackSignOut` raises it, starts the real `signOut()`, and lowers it when
-  // that promise settles — which happens whether or not this component still
-  // exists.
-  const runSignOut = () => trackSignOut(signOut);
-
   const deferredClose = useRef(false);
   const close = useCallback(() => {
     if (signingOut) {
@@ -127,7 +122,9 @@ export function AccountMenu({
           perfect. SIGNOUT-01's own rule stands untouched here: no onClick, and
           nothing unmounts this form during the press — it is no longer even
           adjacent to the thing that opens and closes. */}
-      <form action={runSignOut} id="signout-account" className="hidden" />
+      <form action={signOut} id="signout-account" className="hidden">
+        <SignOutFlightReporter />
+      </form>
       <button
         type="button"
         aria-label="Open account menu"
