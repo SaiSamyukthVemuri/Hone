@@ -12,7 +12,7 @@ const ROUTES: { path: string; h1: string }[] = [
   { path: "/", h1: "Start the next treatment where the last one ended." },
   { path: "/pricing", h1: "Simple plans, in Canadian dollars." },
   { path: "/electrolysis-software", h1: "Software built for an electrolysis practice, not a generic salon." },
-  { path: "/features/treatment-memory", h1: "Remember every treatment, before the client sits down." },
+  { path: "/features/treatment-memory", h1: "Treatment memory for electrologists" },
   { path: "/features/booking-calendar", h1: "Online booking and a calendar for the treatment room." },
   { path: "/features/charting-records", h1: "Chart the treatment while it's fresh, keep clean records." },
   { path: "/resources", h1: "Practical guides for running an electrolysis practice." },

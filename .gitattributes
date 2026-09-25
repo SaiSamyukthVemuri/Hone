@@ -39,3 +39,7 @@ lib/billing/fonts/LICENSE.txt -whitespace
 # doesn't - so mark it binary explicitly for the same reason as the fonts above.
 *.mp4 binary
 *.png binary
+# MKT-02C serves its synthetic-twin captures as WebP. Same reasoning, and the
+# rule is added to production's list rather than kept as a second, narrower
+# block scoped to one directory - one place decides what is binary.
+*.webp binary
