@@ -905,14 +905,24 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
       await route.fulfill({ status: 500, contentType: "text/plain", body: "boom" });
     });
 
+    const key = new URL("/__late_owned_probe", page.url()).origin + "/__late_owned_probe";
+
     traffic.openTeardownWindow();
     const started = page.evaluate(() =>
       fetch("/__late_owned_probe").catch(() => undefined),
     );
-    // Let the request reach the wire so it is recorded as owned.
+    // WAIT FOR THIS REQUEST SPECIFICALLY, not merely for the set to be
+    // non-empty. A busier page — CI, with analytics and prefetches still
+    // moving — satisfies "size > 0" with something else entirely, and the
+    // window then shuts before the probe is registered as owned. That made
+    // this test pass locally and fail in CI, which is the wrong way round for
+    // a control.
     await expect
-      .poll(() => traffic.teardownOwned.size, { timeout: 10_000 })
-      .toBeGreaterThan(0);
+      .poll(() => traffic.teardownOwned.has(key), {
+        timeout: 15_000,
+        message: "the probe request was never recorded as teardown-owned",
+      })
+      .toBe(true);
 
     traffic.closeTeardownWindow();
     expect(traffic.phase, "precondition: the window is shut before the 500 lands").toBe(
@@ -922,7 +932,6 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     deliver();
     await started;
 
-    const key = new URL("/__late_owned_probe", page.url()).origin + "/__late_owned_probe";
     await expect
       .poll(() => traffic.settledIndependently.has(key), {
         timeout: 10_000,
