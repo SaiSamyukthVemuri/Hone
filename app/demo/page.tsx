@@ -40,6 +40,26 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 //   is not written. A sentence about data use is exactly the kind that must be
 //   verifiable, and this one is not yet.
 //
+//   THE PERSONAL GUARANTEE IS GONE. The sub read "A walkthrough is a screen share
+//   with the person who built Hone." True today, but it makes the marketing
+//   contract depend on one person staying available, which is not a promise a
+//   public page should carry. "A live screen share" says the same thing about what
+//   the visitor gets. `founder-led` survives elsewhere as POSITIONING-level
+//   language about how setup and walkthroughs are run; what is removed is the
+//   commitment that a specific individual will be on the call.
+//
+//   "NO CONTRACT" IS GONE. MKT-02D rejected the contract claim as unverified, so
+//   it is not written here. Not softened to "no minimum term" either -- that is
+//   the same unverified claim in weaker words. NOTE FOR THE OWNER: the claim is
+//   still live on /pricing (twice), on the homepage, and in PRICING_ASSURANCES
+//   ("No contract, cancel anytime"), none of which is this lane's page. The
+//   rejection did not propagate.
+//
+//   THE 15-MINUTE PROMISE IS GONE from WALKTHROUGH.demoHeading, which is this
+//   page's H1. v2.2 promises no duration anywhere; #762 removed it from every
+//   constant it owned and parked this one for the /demo lane. The heading is now
+//   the deck's own, and content-v22's duration guard covers the key.
+//
 //   THE PHONE FIELD IS OMITTED. The deck's form lists "Phone (optional)", but
 //   tests/app/marketing-demo.test.ts forbids any phone field on this surface.
 //   The shipped decision wins, and it is coherent with the point above: while we
@@ -85,9 +105,9 @@ export default function DemoPage() {
             <Eyebrow>Walkthrough</Eyebrow>
             <Display className="mt-4 max-w-3xl">{WALKTHROUGH.demoHeading}</Display>
             <Lede className="mt-6 max-w-2xl">
-              A walkthrough is a screen share with the person who built Hone. We open a
-              returning client and you watch Before Today assemble from their history, then
-              chart a treatment together so you can see where the fields go.
+              A walkthrough is a live screen share. We open a returning client and you watch
+              Before Today assemble from their history, then chart a treatment together so you
+              can see where the fields go.
             </Lede>
           </Reveal>
         </Container>
@@ -133,7 +153,7 @@ export default function DemoPage() {
               <Title className="mt-4">If Hone fits, we set your studio up.</Title>
               <Lede className="mt-5">
                 If Hone fits, we set up your studio and bring your existing clients across.
-                Standard import is included. No setup fee. No contract.
+                Standard import is included. No setup fee.
               </Lede>
             </Reveal>
           </Container>

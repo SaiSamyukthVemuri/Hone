@@ -102,6 +102,17 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // shows up as one result. So each area does keep its own history; what it does
 // not get is its own settings inside a shared block.
 //
+// THREE KINDS OF NOTE, AND ONLY ONE OF THEM IS APPEND-ONLY. The eyebrow read
+// "Notes are append-only" over a field list that includes "Next-treatment note",
+// which made a true statement about one table read as a promise about the chart.
+// `set_next_session_note` (0167:315-334) is a plain `update public.sessions set
+// next_session_note = ...` — in place, no revision, nothing retained. `block_notes`
+// is a `session_blocks` column (0019) replaced by the block update. Only
+// `client_clinical_notes` (0126) is append-only: in-place UPDATE is blocked by
+// trigger and a correction inserts a new row via `supersedes_note_id`. The
+// distinction is now named in the eyebrow, the title and the body, and pinned by
+// tests/app/marketing-feature-pages.test.ts so the qualifier cannot be dropped.
+//
 // The deck's two [DECIDE] items are left as they already ship: Apilus is named
 // in the capability list exactly as production names it today, and no laser line
 // is added. Neither is an MKT-02E decision to take.
@@ -221,8 +232,8 @@ export default function ChartingRecordsPage() {
         <Section tone="warm">
           <Container size="prose">
             <Reveal>
-              <Eyebrow>Notes are append-only</Eyebrow>
-              <Title className="mt-4">A saved note is never overwritten.</Title>
+              <Eyebrow>Clinical notes are append-only</Eyebrow>
+              <Title className="mt-4">A saved clinical note is never overwritten.</Title>
               <Lede className="mt-5">
                 Correcting a clinical note records a new revision that supersedes the old one,
                 so the original stays readable. Sterile-item and disinfectant records keep an
@@ -230,7 +241,8 @@ export default function ChartingRecordsPage() {
               </Lede>
               <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
                 Treatment records themselves stay editable, so a value you change is the value
-                the record shows.
+                the record shows. The same goes for the next-treatment note: append-only applies
+                to clinical notes, not to the whole chart.
               </p>
             </Reveal>
           </Container>

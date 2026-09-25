@@ -189,7 +189,12 @@ export const WALKTHROUGH = {
   secondaryHref: "/features/treatment-memory",
   // Demo page, heading, submit control, and success state all describe the
   // same lead-capture reality (founder replies to schedule).
-  demoHeading: "Request a 15-minute Hone walkthrough.",
+  // THE DURATION IS GONE HERE TOO, closing the item #762 parked for the /demo
+  // lane. v2.2 promises no walkthrough length anywhere, and this heading was the
+  // last constant still promising one. It now carries the deck's own /demo H1.
+  // `tests/lib/marketing/content-v22.test.ts` covers this key from now on, so the
+  // duration cannot come back through it.
+  demoHeading: "See it with a returning client",
   submitLabel: "Request my walkthrough",
   submitPendingLabel: "Sending…",
   successMessage:

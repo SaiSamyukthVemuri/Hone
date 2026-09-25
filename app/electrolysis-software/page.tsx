@@ -220,9 +220,9 @@ export default function ElectrolysisSoftwarePage() {
               <Eyebrow>Know what was used, and when</Eyebrow>
               <Title className="mt-4">Traceable to the day.</Title>
               <Lede className="mt-5">
-                Probe lots linked to inventory. Sterile-item and disinfectant expiry logged.
-                Edit history kept. A print-friendly view of the record. Gaps flagged: a missing
-                lot, aftercare not marked, a completed appointment not yet charted.
+                Probe lots linked to inventory. Sterile-item and disinfectant expiry logged,
+                and that log is append-only. A print-friendly view of the record. Gaps flagged:
+                a missing lot, aftercare not marked, a completed appointment not yet charted.
               </Lede>
             </Reveal>
           </Container>

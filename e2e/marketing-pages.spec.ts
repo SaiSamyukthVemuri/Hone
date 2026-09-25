@@ -16,7 +16,7 @@ const ROUTES: { path: string; h1: string }[] = [
   { path: "/resources", h1: "Practical guides for running an electrolysis practice." },
   { path: "/resources/electrolysis-treatment-record-checklist", h1: "What to record in an electrolysis treatment record" },
   { path: "/resources/moving-an-electrolysis-practice-from-paper-records", h1: "Moving an electrolysis practice from paper records" },
-  { path: "/demo", h1: "Request a 15-minute Hone walkthrough." },
+  { path: "/demo", h1: "See it with a returning client" },
 ];
 
 async function noOverflow(page: Page, label: string) {
