@@ -98,28 +98,48 @@ describe("pillar + feature pages", () => {
     "app/electrolysis-software/page.tsx",
   ]) {
   describe(`${file}: append-only is scoped, never chart-wide`, () => {
-    const flat = stripComments(read(file)).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    // AN ELEMENT BOUNDARY IS A BOUNDARY. The first version of this flattened
+    // every JSX tag to a SPACE, which merged separately rendered text into one
+    // synthetic sentence: an eyebrow reading "Notes are append-only" was rescued
+    // by the word "clinical" in the <Title> next to it, and the guard passed on
+    // exactly the regression it advertises. My own mutation proof missed it
+    // because it changed the eyebrow AND the title together — a compound
+    // mutation cannot test a claim about one of its parts. So tags terminate a
+    // unit here just as `.`, `!` and `?` do, and each unit is judged alone.
+    const UNITS: ReadonlyArray<string> = stripComments(read(file))
+      .replace(/<[^>]*>/g, "\u0000")
+      .split(/[\u0000.!?]+/)
+      .map((u) => u.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    const CLAIM = /append-only|never (?:be )?overwritten|not overwritten/i;
+    const KIND = /clinical|sterile-item|disinfectant/i;
 
     it("never promises append-only or no-overwrite without saying what KIND", () => {
-      const claims = [/append-only/gi, /never (?:be )?overwritten/gi, /not overwritten/gi];
-      let found = 0;
-      for (const rx of claims) {
-        for (const m of flat.matchAll(rx)) {
-          found += 1;
-          // The qualifier must sit in the same sentence as the claim, not merely
-          // somewhere on the page: a reader takes the heading at face value.
-          const from = flat.lastIndexOf(".", m.index ?? 0) + 1;
-          const to = flat.indexOf(".", (m.index ?? 0) + m[0].length);
-          const sentence = flat.slice(from, to === -1 ? undefined : to + 1);
-          expect(
-            sentence,
-            `an unqualified append-only claim: "${sentence.trim()}" — it must name clinical notes, or the sterile-item / disinfectant log that also has one`,
-          ).toMatch(/clinical|sterile-item|disinfectant/i);
-        }
+      const claiming = UNITS.filter((u) => CLAIM.test(u));
+      for (const unit of claiming) {
+        expect(
+          unit,
+          `an unqualified append-only claim: "${unit}" — it must name clinical notes, or the sterile-item / disinfectant log that also has one, IN THE SAME heading or sentence`,
+        ).toMatch(KIND);
       }
       // Anti-vacuity: the assertions above are worthless if the page stopped
       // making the claim at all. It is the page's whole edit-history section.
-      expect(found, "the page makes no append-only claim, so nothing was checked").toBeGreaterThan(0);
+      expect(
+        claiming.length,
+        "the page makes no append-only claim, so nothing was checked",
+      ).toBeGreaterThan(0);
+    });
+
+    it("splits headings apart, so a neighbour cannot qualify them", () => {
+      // The guard above is only as good as this split. Proving the mechanism
+      // directly, rather than trusting that the page happens to be worded well:
+      // two adjacent elements must never land in one unit.
+      const merged = UNITS.filter((u) => /append-only/i.test(u) && /overwritten/i.test(u));
+      expect(
+        merged,
+        `an eyebrow and a title were flattened into one unit (${merged.join(" | ")}), so either could borrow the other's qualifier`,
+      ).toEqual([]);
     });
   });
   }
