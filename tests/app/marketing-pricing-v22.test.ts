@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  POSITIONING,
   PRICING_PLANS,
   PRICING_ASSURANCES,
   PAYMENT_QUALIFIER,
@@ -88,8 +89,23 @@ describe("v2.2 headline and seat lines", () => {
     expect(PRICING).not.toContain("Straightforward pricing, in Canadian dollars.");
   });
 
-  it("states the workflow-parity sub", () => {
-    expect(PRICING).toContain("Every plan includes the full treatment workflow.");
+  it("renders the verified no-caps line, from the shared constant", () => {
+    // TWO ASSERTIONS, BECAUSE EITHER ALONE IS SATISFIABLE WITHOUT THE OTHER.
+    // Checking the sentence appears in source would now fail against correct
+    // code — the page interpolates the constant, so the words are not in this
+    // file. Checking only that it interpolates something would pass if the
+    // constant were reworded. So: the page must render THAT constant, and the
+    // constant must be the sentence #762 verified, character for character.
+    expect(PRICING).toContain("{POSITIONING.noCapsLine}");
+    expect(POSITIONING.noCapsLine).toBe(
+      "Every plan includes the full treatment workflow. No client caps. No appointment caps.",
+    );
+  });
+
+  it("does not retype the claim anywhere on the page", () => {
+    // A second copy is how the page and the register drift apart. The words may
+    // exist once, in the constant.
+    expect(PRICING).not.toContain("No client caps");
   });
 
   it("gives every tier a seat line, and Studio's is the packaged boundary", () => {

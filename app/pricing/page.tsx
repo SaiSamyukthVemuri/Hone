@@ -20,6 +20,7 @@ import { Reveal } from "../_components/marketing/Reveal";
 import { JsonLd, Breadcrumbs } from "../_components/marketing/JsonLd";
 import { faqPageLd } from "@/lib/marketing/jsonld";
 import {
+  POSITIONING,
   PRICING_PLANS,
   PRICING_ASSURANCES,
   PAYMENT_QUALIFIER,
@@ -169,29 +170,21 @@ export default function PricingPage() {
             <Display className="mt-4 max-w-3xl">
               Simple plans, in Canadian dollars.
             </Display>
-            {/* DECK v2.2 ALSO SPECIFIED "No client caps. No appointment caps."
-                THOSE TWO SENTENCES ARE STILL NOT RENDERED HERE — but the reason
-                has changed, and only half of it survives.
+            {/* THE SHARED CONSTANT, VERBATIM — never a local retyping of it.
+                #762 established this sentence as verified product truth (a
+                VERIFIED ABSENCE row in the truth register, checked against
+                production `a5f3aa27`) and already publishes it in page
+                metadata. Rendering the constant is what keeps the page, the
+                metadata and the register saying one thing; a copy here would be
+                a second string to drift, which is the failure this PR spent
+                five rounds on.
 
-                WHEN THIS LANE OPENED the claim was true of the product and
-                absent from the truth register, so it was unsourced. #762 closed
-                that: the register now carries it as a VERIFIED ABSENCE row,
-                checked against production `a5f3aa27` by the same search this
-                lane ran, and `POSITIONING.noCapsLine` exists for a surface to
-                use. #762 also already publishes the claim in page metadata.
-
-                WHAT REMAINS is `tests/app/marketing-pricing.test.ts`, which
-                #762 did not touch and which still forbids the wording on THIS
-                page. So production currently proves the claim, publishes it in
-                metadata, and forbids it on the pricing page — an inconsistency
-                inside production rather than a gap in this branch.
-
-                Held back here on explicit instruction, pending that decision.
-                Publishing is now one narrowing of that guard plus rendering
-                `POSITIONING.noCapsLine` in place of the sentence below. */}
-            <Lede className="mt-6 max-w-2xl">
-              Every plan includes the full treatment workflow.
-            </Lede>
+                THE CLAIM IS EXACTLY THE ABSENCE THAT WAS VERIFIED: no cap on
+                clients, no cap on appointments. It is not a storage claim, a
+                usage quota, an SMS allowance, or the word "unlimited" — the
+                register is explicit that absence of a plan cap is not a promise
+                of infinite capacity, and the guard below holds that line. */}
+            <Lede className="mt-6 max-w-2xl">{POSITIONING.noCapsLine}</Lede>
           </Reveal>
         </Container>
 

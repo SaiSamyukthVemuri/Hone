@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PRICING_PLANS, CURRENCY } from "@/lib/marketing/content";
+import { PRICING_PLANS, CURRENCY, POSITIONING } from "@/lib/marketing/content";
 
 // Pricing page guards: CAD everywhere, three honest plans, no artificial
 // feature restrictions / caps / quotas, no unsupported annual, no self-service
@@ -62,7 +62,35 @@ describe("pricing: no forbidden pricing claims", () => {
   });
 
   it("makes no caps/quotas, multi-location, or named-competitor absolute claim", () => {
-    expect(PAGE).not.toMatch(/appointment (cap|limit)|client (cap|limit)|SMS (quota|limit)/i);
+    // NARROWED, BECAUSE THE CLAIM IS NOW VERIFIED — and widened in the same
+    // edit, because the old rule had gone blind.
+    //
+    // This forbade the NOUN. #762 established "No client caps. No appointment
+    // caps." as verified product truth: a VERIFIED ABSENCE row in the truth
+    // register, checked against production `a5f3aa27`, already published in
+    // page metadata. A rule that forbids a true, sourced sentence is not
+    // protecting anything; the thing worth forbidding is an AFFIRMATIVE cap the
+    // product does not have, and any restatement of the claim that drifts from
+    // the words the register actually verified.
+    //
+    // THE BLIND SPOT: `PAGE` is source, and the page now renders
+    // `{POSITIONING.noCapsLine}`, so the sentence is not in this file's text at
+    // all. Left alone, this rule would have started passing by accident — the
+    // claim moved into a constant rather than the rule being satisfied. The
+    // surface under test is therefore the page source PLUS the constant it
+    // interpolates, so an affirmative cap is caught wherever it is written.
+    const CLAIM_SURFACE = `${PAGE} ${POSITIONING.noCapsLine}`;
+    // Exact carve-out: the verified sentence is removed by literal match, and
+    // the original strict rule then runs on everything that remains. The page
+    // may say precisely what was verified, and nothing else in that family.
+    const beyondVerified = CLAIM_SURFACE.split(POSITIONING.noCapsLine).join(" ");
+    expect(beyondVerified).not.toMatch(
+      /appointment (cap|limit)|client (cap|limit)|SMS (quota|limit)/i,
+    );
+    // Not verified by anything, and explicitly NOT claimed by the register:
+    // absence of a plan cap is not a promise of infinite capacity.
+    expect(CLAIM_SURFACE).not.toMatch(/unlimited/i);
+    expect(CLAIM_SURFACE).not.toMatch(/storage (cap|limit|quota)|usage quota|SMS allowance/i);
     expect(PAGE).not.toMatch(/multi.?location/i);
     expect(PAGE).not.toMatch(/Calendly|Square Appointments/i);
     expect(PAGE).not.toMatch(/Jane/); // no absolute "replaces Jane"
