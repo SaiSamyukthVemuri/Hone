@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
+import posterFrame from "@/app/_media/treatment-memory-setup-frame.png";
 import { SafeAnalytics } from "../_components/SafeAnalytics";
 import { SiteHeader } from "../_components/marketing/SiteHeader";
 import { SkipLink } from "@/app/_components/marketing/SkipLink";
@@ -60,8 +62,6 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // electrolysis is charted — and names nothing.
 
 export const metadata: Metadata = marketingMetadata("/electrolysis-software");
-
-const FILM_POSTER = "/film/hone-product-overview-v3-1-poster.png";
 
 // SHAPE PRESERVED FROM PRODUCTION: flat `href` + `link` strings, mapped into the
 // matrix at the call site below. An earlier pass here collapsed both into a
@@ -170,14 +170,23 @@ export default function ElectrolysisSoftwarePage() {
             </Reveal>
             <Reveal delay={80}>
               <figure className="m-0 overflow-hidden rounded-[14px] border border-hairline bg-warm">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={FILM_POSTER}
-                  alt="Hone's treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing what was recorded for two treated areas &mdash; midline upper lip and bilateral chin &mdash; each with machine frequency, probe and lot number, mode, energy, timing and minutes."
-                  width={1920}
-                  height={1080}
-                  loading="lazy"
-                  decoding="async"
+                {/* THE SAME FRAME THE CANONICAL PLAYER USES, imported rather than
+                    fetched from a path of this lane's own. It was a second copy of
+                    that PNG under public/film with an identical sha256; #764 put it
+                    in app/_media so next/image can serve AVIF/WebP at the rendered
+                    width, and types/static-images.d.ts is what makes the import
+                    typecheck on a fresh CI checkout.
+
+                    alt IS DESCRIPTIVE HERE, unlike on the homepage. There the same
+                    frame is the visual layer of a play button that already names
+                    itself, so alt="" is correct. Here it is a still with no control
+                    over it and nothing else describing it, and it was written after
+                    LOOKING at the frame: two areas, and the frame carries its own
+                    baked-in provenance label. */}
+                <Image
+                  src={posterFrame}
+                  alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing what was recorded for two treated areas &mdash; midline upper lip and bilateral chin &mdash; each with machine frequency, probe and lot number, mode, energy, timing and minutes."
+                  sizes="(min-width: 1024px) 52vw, 92vw"
                   className="block aspect-video w-full object-cover"
                 />
               </figure>

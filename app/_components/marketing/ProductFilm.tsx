@@ -1,108 +1,185 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { MARKETING_PALETTE as PALETTE } from "../marketingNav";
+import Image from "next/image";
+import { useEffect, useId, useRef, useState } from "react";
+import posterImage from "@/app/_media/treatment-memory-setup-frame.png";
+import { ANALYTICS_EVENTS, FILM, POSITIONING } from "@/lib/marketing/content";
 
-/**
- * The product film, click-to-play.
- *
- * DELIBERATELY NOT AUTOPLAYING, and `preload="none"`. The file is 3.6 MB and the
- * page it sits on is a lead-capture form — downloading it for a visitor who
- * never presses play spends their data to show them nothing. The poster is the
- * film's own setup frame at the same 1920x1080 box, so it holds the layout and
- * the swap to video costs no shift.
- *
- * NO CAPTIONS TRACK, and that is a truth decision rather than an omission. The
- * approved cut carries exactly one `trak` and no audio stream at all, so there
- * is nothing to caption; shipping an empty `<track kind="captions">` would
- * advertise an accessibility affordance that does not exist. What a
- * non-watching visitor needs is in the text beside it, which is why the list of
- * what the walkthrough covers is on the page and not only in the film.
- *
- * `muted` and `playsInline` are still set: a silent film must not be the reason
- * iOS refuses inline playback, and muted is the honest description of a file
- * with no audio.
- *
- * FOCUS FOLLOWS THE SWAP. Pressing play unmounts the button that holds focus,
- * and a focused element that disappears drops focus to `<body>` — so a keyboard
- * or screen-reader visitor who just asked for the film is returned to the top of
- * the document and has to tab the whole page again to reach the controls they
- * asked for. The `<video>` only ever mounts as the result of that press, so its
- * mount is exactly the right moment to hand focus over.
- */
-export function ProductFilm({
-  poster,
-  src,
-  label,
-}: {
-  poster: string;
-  src: string;
-  label: string;
-}) {
-  const [playing, setPlaying] = useState(false);
+// Film V1 player (deck v2.2 §12b/§13). A FACADE, not a <video> that happens to
+// be paused.
+//
+// WHY A FACADE. The requirement is "poster eager, video lazy". Those pull in
+// opposite directions on one element: a <video poster="…"> loads the poster as
+// an unoptimised PNG the preload scanner cannot see, and `preload="none"` still
+// leaves the browser holding a media element it must lay out and decode into.
+// So the two jobs are split:
+//
+// AND THE POSTER IS NOT THE PAGE'S LCP, WHICH IS NOT A DEFECT. Deck §13 called
+// it "the LCP candidate on the homepage", but the homepage opens on a type-only
+// hero and this film is section 1 beneath it — at 1440x900 it starts roughly
+// 890px down and is never in the initial viewport. Off-screen content is not
+// eligible to be a largest-CONTENTFUL-paint candidate at all, and `priority`
+// changes fetch timing, not eligibility. Measured: LCP resolves to the H1.
+// What `priority` does buy is the thing §13 actually wanted — the poster is
+// fetched by the preload scanner rather than discovered late, so the film is
+// never a grey box someone scrolls into. That is what the proof asserts.
+//
+//   BEFORE activation  an ordinary next/image, `priority`, so the poster is in
+//                      the preload scanner, served as AVIF/WebP at the width
+//                      actually rendered, and fetched by the preload scanner.
+//                      The <video> does not exist. Zero media bytes are
+//                      fetched — not "deferred", not fetched.
+//   AFTER activation   the <video> mounts and plays, because a person asked.
+//
+// NO AUTOPLAY, STRUCTURALLY. There is no `autoPlay` attribute anywhere in this
+// file, and no `play()` in a mount effect that could fire on load. Playback is
+// reachable only through `activate()`, which only a click or an Enter/Space on
+// the button can call. A source guard asserts the absence rather than trusting
+// this comment (tests/app/marketing-homepage-film.test.ts).
+//
+// WHY THERE IS NO MUTE BUTTON. The asset has no audio track at all — one `vide`
+// handler, no `soun` (FILM.hasAudioTrack, parsed from the MP4 boxes). There is
+// nothing to unmute and no dialogue to caption. `muted` is still set so the
+// element can never surprise anyone if the file is ever swapped, and the
+// accessible name says "silent" so a screen-reader user is not left waiting for
+// narration that is not coming.
+//
+// REDUCED MOTION needs no branch here, and that is the point: the film never
+// moves unless a person starts it. `prefers-reduced-motion` asks for no
+// UNREQUESTED motion; suppressing a video someone just pressed play on would be
+// ignoring them, not accommodating them. The facade itself has no transition,
+// no pulse and no animated play glyph, so nothing moves before the click either.
+export function ProductFilm({ className = "" }: { className?: string }) {
+  const [activated, setActivated] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const transcriptId = useId();
 
-  // A callback ref rather than an effect: it fires on the node itself, so there
-  // is no frame in which focus sits nowhere. `preventScroll` because the poster
-  // and the video fill the same box — the element is already where the visitor
-  // is looking, and scrolling it "into view" would only move the page under
-  // them. No `tabIndex`: `controls` already puts a video in the tab order, and
-  // pinning it to -1 would take it back out.
-  const takeFocusOnMount = useCallback((node: HTMLVideoElement | null) => {
-    node?.focus({ preventScroll: true });
-  }, []);
+  // Runs only after `activated` flips, which only activate() can do. The guard
+  // keeps it from being a mount effect if this component is ever remounted in
+  // an activated state.
+  useEffect(() => {
+    if (!activated) return;
+    const el = videoRef.current;
+    if (!el) return;
+
+    // FOCUS FOLLOWS THE CONTROL IT REPLACED. Activation unmounts the button the
+    // keyboard user just pressed, so without this their focus falls to the body
+    // — the film starts playing and the pause and scrub controls they now need
+    // are somewhere behind a fresh tab sequence from the top of the page. The
+    // video is the successor control, so focus moves to it.
+    //
+    // Safe to do unconditionally: `activated` can only become true through
+    // activate(), which is a click or an Enter/Space on that button, so this
+    // never steals focus from somewhere the person chose to be.
+    el.focus();
+
+    // A rejected promise here is ordinary (a policy or a user gesture the
+    // browser did not accept); the controls stay, so the film is still
+    // reachable. It must not become an unhandled rejection.
+    void el.play().catch(() => {});
+  }, [activated]);
 
   return (
-    <figure className="m-0">
+    <figure className={`m-0 ${className}`}>
       <div
-        className="relative overflow-hidden rounded-[14px] border"
-        style={{ borderColor: PALETTE.rule, backgroundColor: PALETTE.bg }}
+        className="relative overflow-hidden bg-band"
+        style={{ aspectRatio: `${FILM.width} / ${FILM.height}` }}
       >
-        {playing ? (
+        {activated ? (
           <video
-            ref={takeFocusOnMount}
-            className="block aspect-video w-full"
-            src={src}
-            poster={poster}
+            ref={videoRef}
+            className="absolute inset-0 h-full w-full"
+            src={FILM.src}
+            poster={posterImage.src}
             controls
-            autoPlay
             muted
             playsInline
             preload="none"
-            aria-label={label}
+            aria-label={FILM.accessibleName}
+            aria-describedby={transcriptId}
+            width={FILM.width}
+            height={FILM.height}
           />
         ) : (
-          <button
-            type="button"
-            onClick={() => setPlaying(true)}
-            className="group relative block w-full cursor-pointer border-0 p-0"
-            aria-label={`Play: ${label}`}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={poster}
+          <>
+            {/* alt="" ON PURPOSE. The poster is not decorative, but it is
+                already described twice over: the button stacked on top of it
+                carries the film's accessible name, and the transcript below
+                carries its content. A third description here would make a
+                screen reader announce the same frame three times before
+                offering the control. The image is the visual layer of a
+                control that names itself.
+
+                `sizes` DESCRIBES THE SHELL, NOT A GUESS. .mk-shell is
+                min(100% - clamp(3rem,14vw,15rem), 87.5rem): the gutter is 14vw
+                until it caps at 15rem, so the film is 86vw until the shell
+                reaches its 1400px ceiling at ~1640px of viewport. Saying
+                "1200px" here would hand the browser a candidate narrower than
+                the box it actually paints into, and the poster would land
+                softer than the file it came from. 1400 < the film's native
+                1920, so it never upscales either. */}
+            <Image
+              src={posterImage}
               alt=""
-              width={1920}
-              height={1080}
-              loading="lazy"
-              decoding="async"
-              className="block aspect-video w-full object-cover"
+              priority
+              sizes="(min-width: 1640px) 1400px, 86vw"
+              className="absolute inset-0 h-full w-full object-cover"
             />
-            <span
-              aria-hidden="true"
-              className="absolute inset-0 flex items-center justify-center"
+            <button
+              type="button"
+              onClick={() => setActivated(true)}
+              data-event={ANALYTICS_EVENTS.filmPlay}
+              aria-describedby={transcriptId}
+              className="absolute inset-0 flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color:var(--color-paper)]"
             >
+              {/* The play affordance. A ring and a triangle, drawn with a
+                  border rather than an icon font or an SVG sprite, so it
+                  carries no asset and cannot animate. */}
               <span
-                className="flex h-16 w-16 items-center justify-center rounded-full shadow-sm transition-transform group-hover:scale-105"
-                style={{ backgroundColor: PALETTE.card }}
+                aria-hidden="true"
+                className="flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full border border-white/70 bg-[color:var(--color-band)]/55"
               >
-                <svg width="20" height="22" viewBox="0 0 20 22" fill="none" aria-hidden="true">
-                  <path d="M19 11 0 22V0l19 11Z" fill={PALETTE.ink} />
-                </svg>
+                <span
+                  className="ml-[0.3rem] block h-0 w-0"
+                  style={{
+                    borderTop: "0.6rem solid transparent",
+                    borderBottom: "0.6rem solid transparent",
+                    borderLeft: "1rem solid var(--color-paper)",
+                  }}
+                />
               </span>
+              <span className="sr-only">{`Play: ${FILM.accessibleName}`}</span>
+            </button>
+            {/* The demo-data label sits ON the poster as well as under the
+                player, because the poster is what a visitor who never presses
+                play actually sees. Verbatim, and the film carries the same
+                words in its own top-right corner. */}
+            {/* pointer-events-none MATTERS HERE. This span paints after the
+                button and overlaps it, so without it the bottom-left corner of
+                a full-bleed play target is silently dead to clicks — the one
+                part of the poster a visitor is most likely to be reading when
+                they decide to press play. */}
+            <span className="pointer-events-none absolute bottom-0 left-0 bg-[color:var(--color-band)]/80 px-3 py-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.12em] text-[color:var(--color-onband-muted)]">
+              {POSITIONING.demoDataLabel}
             </span>
-          </button>
+          </>
         )}
       </div>
+
+      {/* The text equivalent. Visually hidden, never display:none, so it stays
+          in the accessibility tree and is what aria-describedby points at. */}
+      <div id={transcriptId} className="sr-only">
+        <p>{`Transcript of the ${FILM.durationSeconds}-second silent film, in order:`}</p>
+        <ol>
+          {FILM.transcript.map((card) => (
+            <li key={card}>{card}</li>
+          ))}
+        </ol>
+      </div>
+
+      <figcaption className="mt-3 text-[0.8125rem] text-[color:var(--color-onband-muted)]">
+        {POSITIONING.demoDataLabel}
+      </figcaption>
     </figure>
   );
 }

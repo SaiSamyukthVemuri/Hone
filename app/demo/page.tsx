@@ -68,9 +68,6 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 
 export const metadata: Metadata = marketingMetadata("/demo");
 
-const FILM_SRC = "/film/hone-product-overview-v3-1.mp4";
-const FILM_POSTER = "/film/hone-product-overview-v3-1-poster.png";
-
 /** Deck section 9, "What you'll see", verbatim. */
 const WHAT_YOU_WILL_SEE: readonly string[] = [
   "The Before Today briefing for a returning client",
@@ -112,21 +109,25 @@ export default function DemoPage() {
           </Reveal>
         </Container>
 
-        {/* The film sits above the list, per deck section 9. */}
-        <Container className="pb-4">
-          <Reveal>
-            <div className="max-w-3xl">
-              <ProductFilm
-                src={FILM_SRC}
-                poster={FILM_POSTER}
-                label="A short walkthrough of Hone, recorded on a demonstration studio."
-              />
-              <p className="mt-3 text-[0.875rem] leading-[1.6] text-muted">
+        {/* The film sits above the list, per deck section 9.
+            ON THE BAND, BECAUSE THE PLAYER IS BUILT FOR IT. #764's ProductFilm is
+            the canonical player and this page adopted it wholesale rather than
+            keeping a second copy. It styles its own box `bg-band` and its caption
+            `--color-onband-muted` (#9fb3ad), which is legible on near-black and
+            almost invisible on paper — so the call site moves to `tone="band"`
+            rather than the component growing a theme prop for one page. Same
+            treatment the homepage gives it, which is also the honest reading of
+            §9: the film is a moment, not an illustration in a column. */}
+        <Section tone="band">
+          <Container>
+            <Reveal>
+              <ProductFilm />
+              <Lede onBand className="mt-6 max-w-[50ch]">
                 This is the short version. The walkthrough is the live one.
-              </p>
-            </div>
-          </Reveal>
-        </Container>
+              </Lede>
+            </Reveal>
+          </Container>
+        </Section>
 
         <Section tone="warm">
           <Container size="wide">
