@@ -65,6 +65,13 @@ type SignOutTraffic = {
    * earlier attempts came unstuck. Its membership is deterministic.
    */
   teardownOwned: Set<string>;
+  /**
+   * Owned requests that turned out NOT to be cancelled: they came back with a
+   * response, or failed for a reason of their own. Ownership proves only that
+   * a request was running when the navigation began — a 500 or a refused
+   * connection on one of them is a real failure and must stay RED.
+   */
+  settledIndependently: Set<string>;
 };
 
 // Console noise this LOCAL lane emits no matter what the app does. It arrives
@@ -128,7 +135,11 @@ const TELEMETRY_EMITTER = [
 // report or when. A forgiven message is still PRINTED in the observation line.
 export function isLogoutTeardownNoise(
   e: ConsoleError,
-  evidence: { logoutNavigated: boolean; teardownOwned: ReadonlySet<string> },
+  evidence: {
+    logoutNavigated: boolean;
+    teardownOwned: ReadonlySet<string>;
+    settledIndependently: ReadonlySet<string>;
+  },
 ): boolean {
   // Nothing logged before the logout is ever forgiven — first, because it is
   // the one gate ownership cannot supply on its own: the filter runs once at
@@ -141,7 +152,17 @@ export function isLogoutTeardownNoise(
   if (!evidence.logoutNavigated) return false;
 
   const rsc = /^Failed to fetch RSC payload for (\S+?)\. Falling back/.exec(e.text);
-  if (rsc) return evidence.teardownOwned.has(withoutQuery(rsc[1]!));
+  if (rsc) {
+    const named = withoutQuery(rsc[1]!);
+    // OWNERSHIP IS NECESSARY BUT NOT SUFFICIENT. It proves the request was
+    // running when the navigation began — not that the navigation is what
+    // ended it. A prefetch that was in flight at the boundary and then failed
+    // on its own account (a 500, a refused connection) would otherwise be
+    // forgiven for a regression it was actually reporting.
+    return (
+      evidence.teardownOwned.has(named) && !evidence.settledIndependently.has(named)
+    );
+  }
 
   // Chrome's HTTPS-First upgrade attempt on the document the logout navigated
   // TO. This lane is served over http, so an https:// attribution is by
@@ -212,6 +233,7 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
     phase: "before",
     logoutNavigated: false,
     teardownOwned: new Set<string>(),
+    settledIndependently: new Set<string>(),
     openTeardownWindow() {
       // THE BOUNDARY SNAPSHOT. Everything in flight at this instant is about
       // to be killed by the navigation the press is starting.
@@ -238,7 +260,32 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
     }
   });
   page.on("requestfinished", (request) => bump(request.url(), -1));
-  page.on("requestfailed", (request) => bump(request.url(), -1));
+
+  // A REAL ERROR STATUS is the request failing on its own account, and is the
+  // server-regression half of what ownership alone cannot see.
+  //
+  // `requestfinished` deliberately is NOT used for this. A streaming RSC
+  // response that the navigation cuts mid-body still reports as finished with
+  // status 200, so treating "finished" as "settled independently" excluded the
+  // very requests the exception exists for — measured: four real cases went
+  // red that way, with their logouts provably perfect.
+  page.on("response", (response) => {
+    if (traffic.phase !== "teardown") return;
+    if (response.status() >= 400) {
+      traffic.settledIndependently.add(withoutQuery(response.url()));
+    }
+  });
+  page.on("requestfailed", (request) => {
+    bump(request.url(), -1);
+    if (traffic.phase !== "teardown") return;
+    const reason = request.failure()?.errorText ?? "";
+    // An ABORT is the navigation doing its work. Anything else — a refused
+    // connection, a DNS failure, a reset — is the request failing on its own
+    // account, and stays RED.
+    if (!/ERR_ABORTED|NS_BINDING_ABORTED/.test(reason)) {
+      traffic.settledIndependently.add(withoutQuery(request.url()));
+    }
+  });
 
   page.on("request", (request) => {
     if (request.method() !== "POST") return;
@@ -448,6 +495,8 @@ function describeObservation(o: SignOutObservation): string {
     `url after a direct /dashboard navigation: ${o.dashboardUrlAfterwards}`,
     `authenticated shell served afterwards: ${o.shellPresentAfterwards}`,
     `console warnings: ${JSON.stringify(o.traffic.consoleWarnings)}`,
+    `teardown-owned: ${JSON.stringify([...o.traffic.teardownOwned])}`,
+    `settled independently: ${JSON.stringify([...o.traffic.settledIndependently])}`,
     `application console errors: ${JSON.stringify(
       applicationConsoleErrors(o.traffic.consoleErrors, o.traffic),
     )}`,
@@ -742,6 +791,7 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
   const evidence = {
     logoutNavigated: true,
     teardownOwned: new Set<string>([OWNED]),
+    settledIndependently: new Set<string>(),
   };
 
   test("1. an RSC failure BEFORE the logout is real", () => {
@@ -793,6 +843,22 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     ).toBe(true);
   });
 
+  test("an OWNED request that failed on its own account is real", () => {
+    // Codex P2. Ownership proves only that a request was in flight when the
+    // navigation began. A prefetch that was running at that boundary and then
+    // came back 500, or was refused, is reporting a REGRESSION — and would
+    // otherwise be forgiven for it. Anything the browser saw settle by itself
+    // is excluded from the exception.
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "teardown" }, {
+        logoutNavigated: true,
+        teardownOwned: new Set<string>([OWNED]),
+        settledIndependently: new Set<string>([OWNED]),
+      }),
+      "a request that failed independently was forgiven as teardown",
+    ).toBe(false);
+  });
+
   test("5. an ordinary console error is real, wherever it lands", () => {
     for (const phase of ["before", "teardown", "after"] as const) {
       for (const text of [
@@ -815,6 +881,7 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
       isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "teardown" }, {
         logoutNavigated: false,
         teardownOwned: new Set<string>([OWNED]),
+        settledIndependently: new Set<string>(),
       }),
       "noise was forgiven for a logout that never navigated",
     ).toBe(false);
