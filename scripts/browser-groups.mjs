@@ -316,7 +316,16 @@ export const BROWSER_GROUPS = {
   },
   marketing: {
     description: "public marketing site",
-    specs: ["marketing-homepage.spec.ts", "marketing-pages.spec.ts"],
+    specs: [
+      "marketing-homepage.spec.ts",
+      "marketing-pages.spec.ts",
+      // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
+      // motion preference, and the poster being preloaded eagerly. Filed here
+      // rather than in `smoke` on purpose — it is heavier than a smoke case
+      // (it decodes video) and nothing outside the marketing surface can break
+      // it.
+      "marketing-homepage-film.spec.ts",
+    ],
   },
   responsive: {
     description: "cross-cutting responsive behaviour",

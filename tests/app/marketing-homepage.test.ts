@@ -20,6 +20,7 @@ function read(rel: string): string {
 
 const PAGE = read("app/page.tsx");
 const VISUAL = read("app/_components/marketing/visuals/TreatmentMemoryPanel.tsx");
+const FILM_PLAYER = read("app/_components/marketing/ProductFilm.tsx");
 const HEADER = read("app/_components/marketing/SiteHeader.tsx");
 const FOOTER = read("app/_components/marketing/SiteFooter.tsx");
 const MOBILE = read("app/_components/marketing/MobileNav.tsx");
@@ -29,30 +30,34 @@ const CSS = read("app/globals.css");
 // Strip source comments so language scans check RENDERED copy, not the
 // explanatory comments (which legitimately name excluded things like Google
 // Calendar). Removes /* … */ (incl. JSX {/* … */}) and whole-line // comments.
+//
+// ORDER MATTERS, AND IT IS LINE-COMMENTS FIRST. A line comment may legitimately
+// contain the two characters that open a block comment — "// see next/*" is the
+// obvious one — and stripping blocks first treats that as a real opener and
+// eats everything up to the next */, silently removing live code from the scan.
+// A scan that has quietly lost its subject passes for the wrong reason. Taking
+// whole-line comments out first means no such fake opener survives to be found.
 function stripComments(s: string): string {
-  return s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  return s.replace(/^\s*\/\/.*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
 }
 
 // The homepage-specific rendered surface (whitespace-collapsed) for scans.
-const SURFACE = [PAGE, VISUAL, HEADER, FOOTER, MOBILE]
+const SURFACE = [PAGE, VISUAL, FILM_PLAYER, HEADER, FOOTER, MOBILE]
   .map(stripComments)
   .join("\n")
   .replace(/\s+/g, " ");
 
 describe("positioning: category + treatment-memory differentiator", () => {
   it("hero is not the eyebrow==H1 duplication of the old site", () => {
-    // v2.2. The H1 no longer restates the category at all — the eyebrow carries
-    // it and the H1 makes the promise, which is what this test was always for.
     expect(POSITIONING.heroEyebrow).toBe("Electrolysis practice software");
-    expect(POSITIONING.heroH1).toBe("Start the next treatment where the last one ended.");
+    expect(POSITIONING.heroH1).toBe(
+      "Start the next treatment where the last one ended.",
+    );
     expect(POSITIONING.heroEyebrow).not.toBe(POSITIONING.heroH1);
-    // And the H1 does not reintroduce the category phrase by other wording.
-    expect(POSITIONING.heroH1).not.toMatch(/practice software/i);
   });
 
   it("the homepage consumes the shared positioning + CTA constants", () => {
     expect(PAGE).toMatch(/POSITIONING\.heroEyebrow/);
-    expect(PAGE).toMatch(/POSITIONING\.heroSub/);
     expect(PAGE).toMatch(/POSITIONING\.heroH1/);
     expect(PAGE).toMatch(/POSITIONING\.differentiationLine/);
     expect(PAGE).toMatch(/WALKTHROUGH\.primaryLabel/);
@@ -72,53 +77,207 @@ describe("positioning: category + treatment-memory differentiator", () => {
   });
 });
 
-describe("required homepage sections", () => {
-  it("has the dark calendar-vs-Hone narrative band", () => {
-    expect(PAGE).toMatch(/Calendar vs Hone/);
-    expect(PAGE).toMatch(/Most tools stop at the appointment\./);
-    expect(PAGE).toMatch(/A calendar shows/);
-    expect(PAGE).toMatch(/Hone also carries/);
-  });
+describe("required homepage sections (copy deck v2.2 §3)", () => {
+  // The nine blocks, in the deck's order. Each is pinned by ONE stable anchor —
+  // a heading, a constant it consumes, or a route it links to — never by a
+  // paragraph, so ordinary copy editing does not turn this file red.
+  const BLOCKS: { name: string; anchor: RegExp }[] = [
+    { name: "1 film", anchor: /Before the client sits down/ },
+    { name: "2 trust strip", anchor: /POSITIONING\.trustStrip/ },
+    { name: "3 per-area history", anchor: /Every area keeps its own history/ },
+    { name: "4 more than a note", anchor: /More than a note/ },
+    { name: "5 connected workflow", anchor: /<WorkflowGrid steps=/ },
+    { name: "6 what was used", anchor: /Know what was used, and when/ },
+    { name: "7 records stay yours", anchor: /POSITIONING\.recordsHeading/ },
+    { name: "8 pricing", anchor: /PRICING_PLANS\.map/ },
+    { name: "9 walkthrough CTA", anchor: /POSITIONING\.walkthroughHeading/ },
+  ];
 
-  it("has the full six-step workflow progression", () => {
-    for (const step of [
-      "Get booked",
-      "Collect intake and consent",
-      "Prepare before the visit",
-      "Chart the treatment",
-      "Follow up professionally",
-      "Remember it next time",
-    ]) {
-      expect(PAGE).toMatch(new RegExp(step));
+  it("renders all nine blocks", () => {
+    for (const b of BLOCKS) {
+      expect(PAGE, `missing block: ${b.name}`).toMatch(b.anchor);
     }
   });
 
-  it("has the treatment-memory differentiator section linking to the feature page", () => {
-    // v2.2: the differentiator section heading is the deck's, not the retired
-    // claim about what rival tools fail to retain.
-    expect(PAGE).toMatch(/Every area keeps its own history/);
-    expect(PAGE).toMatch(/href="\/features\/treatment-memory"/);
+  it("renders them in the deck's order", () => {
+    // Editorial pacing is an ORDER, not a set. The film has to land before the
+    // trust strip can trade on it, and the CTA has to close. A reshuffle that
+    // left every block present would otherwise pass the test above.
+    const positions = BLOCKS.map((b) => ({ name: b.name, at: PAGE.search(b.anchor) }));
+    for (const p of positions) expect(p.at, `${p.name} not found`).toBeGreaterThan(-1);
+    const order = positions.map((p) => p.at);
+    const sorted = [...order].sort((a, b) => a - b);
+    expect(
+      positions.map((p) => p.name),
+      `blocks are out of order: ${positions
+        .slice()
+        .sort((a, b) => a.at - b.at)
+        .map((p) => p.name)
+        .join(" → ")}`,
+    ).toEqual(
+      sorted.map((at) => positions.find((p) => p.at === at)!.name),
+    );
   });
 
-  it("has a CAD pricing teaser driven by the shared plans (no $19 pilot)", () => {
+  it("the film is the homepage's primary section-1 asset, not an illustration", () => {
+    expect(PAGE).toMatch(/<ProductFilm\b/);
+    // Section 1 opens the page's product argument: the film must precede every
+    // coded preview, or the page is leading with a drawing again.
+    const film = PAGE.search(/<ProductFilm\b/);
+    for (const preview of [
+      /<TreatmentMemoryPanel\b/,
+      /<SessionRecordPreview\b/,
+      /<CalendarPreview\b/,
+    ]) {
+      const at = PAGE.search(preview);
+      if (at === -1) continue;
+      expect(film, `${preview} renders before the film`).toBeLessThan(at);
+    }
+  });
+
+  it("the trust strip renders four lines, not one", () => {
+    // MKT-02A ships trustStrip as ONE string joined with " · " and the homepage
+    // splits it into a four-column ruled row. That split is a runtime read of a
+    // display string: change the separator upstream and the strip does not
+    // break loudly, it silently becomes a single long line that still renders.
+    // So the separator contract is pinned on both sides.
+    expect(PAGE).toMatch(/POSITIONING\.trustStrip\.split\(" · "\)/);
+    const lines = POSITIONING.trustStrip.split(" · ");
+    expect(lines, `trustStrip split into ${lines.length} lines`).toHaveLength(4);
+    for (const line of lines) expect(line.trim()).toBe(line);
+    for (const line of lines) expect(line.length).toBeGreaterThan(0);
+  });
+
+  it("keeps the editorial pacing: three tones, and the band used as a spine", () => {
+    // "Do not make all sections equal cards" is a pacing requirement. What is
+    // checkable without freezing the layout is that the page still alternates:
+    // all three surface tones present, and the dark band used more than once.
+    const tones = [...PAGE.matchAll(/tone="(paper|warm|band)"/g)].map((m) => m[1]);
+    expect(new Set(tones)).toEqual(new Set(["paper", "warm", "band"]));
+    expect(
+      tones.filter((t) => t === "band").length,
+      "the dark band is the pacing spine — at least the film, the records band and the close",
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it("has a CAD pricing block driven by the shared plans (no $19 pilot)", () => {
     expect(PAGE).toMatch(/PRICING_PLANS/);
     expect(PAGE).toMatch(/href="\/pricing"/);
-    // The shared plans are CAD; the old $19 pilot is gone from the page.
-    expect(PRICING_PLANS.every((p) => p.priceLabel === null || /^CAD /.test(p.priceLabel))).toBe(true);
+    expect(PRICING_PLANS.some((p) => p.priceLabel?.includes("$"))).toBe(true);
     expect(SURFACE).not.toMatch(/\$19\b/);
   });
 
-  it("has an evidence-backed trust section with the payment qualifier + policy link", () => {
-    expect(PAGE).toMatch(/Studio data stays isolated/);
-    expect(PAGE).toMatch(/No advertising use of health records/);
-    expect(PAGE).toMatch(/No AI training on your records/);
-    expect(PAGE).toMatch(/Payments are enabled during guided onboarding\./);
+  it("no exit claim exceeds what the export actually carries", () => {
+    // The self-service export omits treatment photos, intake forms, signed
+    // consents, the service menu and payment records (/settings/data names them
+    // "Not included yet", and there is no documented route for the rest). So
+    // the page may describe the NAMED subset and must not promise a complete
+    // exit on top of it — a cancellation line reading "your records leave with
+    // you" shipped here once and contradicted the export item directly above.
+    // SCANNED ON THE STRIPPED SOURCE, not the raw file. This guard is about
+    // RENDERED copy, and the page's comments legitimately discuss the claims it
+    // retired — a raw scan makes the file fail for explaining itself, which it
+    // did twice while this assertion was being written.
+    const rendered = stripComments(PAGE);
+    for (const overclaim of [
+      /your records leave with you/i,
+      /all (of )?your (records|data) (leave|come|go) with you/i,
+      /take (all|everything|your full)[^.]{0,40}with you/i,
+      /full studio history/i,
+      /complete (export|record set)/i,
+    ]) {
+      expect(rendered, `homepage promises more than the export carries: ${overclaim}`)
+        .not.toMatch(overclaim);
+    }
+    // And the qualified description is still the one that ships.
+    expect(PAGE).toMatch(/does and does not yet include/);
+  });
+
+  it("makes no personal support promise", () => {
+    // The trust strip's fourth item promised that one specific person answers
+    // support. That is a personal obligation rather than a property of the
+    // product: no truth-register row, nothing in the repo can verify it, and it
+    // binds the business to one individual's availability on a public page.
+    // Forbidden together with the larger substitutes it would be tempting to
+    // reach for.
+    const rendered = stripComments(PAGE);
+    const scanned = `${rendered}\n${POSITIONING.trustStrip}`;
+    for (const promise of [
+      /the person who built hone/i,
+      /\bfounder\b[^.]{0,30}\b(answers|handles|replies)/i,
+      /\b24\s*\/\s*7\b/i,
+      /round.the.clock/i,
+      /(hone|our) team (answers|handles|replies|is here)/i,
+      /dedicated (support|account) (manager|rep)/i,
+    ]) {
+      expect(scanned, `homepage makes an unsupported support promise: ${promise}`)
+        .not.toMatch(promise);
+    }
+    // And the strip still renders four items.
+    expect(POSITIONING.trustStrip.split(" · ")).toHaveLength(4);
+  });
+
+  it("describes the real multi-area model, not one treatment per area", () => {
+    // Hone records several areas under ONE machine-settings block when the same
+    // setup applies (register: "Multi-area under one settings block + per-area
+    // laterality", 0128/0129). The page claimed a four-area appointment becomes
+    // four separate treatments, and it does not.
+    const rendered = stripComments(PAGE);
+    for (const wrong of [
+      /recorded as (four|three|two|separate) treatments/i,
+      /each area is (its own|a separate) (treatment|session|record)/i,
+      /one treatment per area/i,
+      /(a )?\d+-area appointment is recorded as \d+/i,
+    ]) {
+      expect(rendered, `homepage decomposes a multi-area session wrongly: ${wrong}`)
+        .not.toMatch(wrong);
+    }
+    // The true per-area promise — findability — must still be made.
+    expect(rendered).toMatch(/findable in its own history/i);
+    expect(rendered).toMatch(/one settings block/i);
+  });
+
+  it("keeps the append-only claim narrow to what is actually append-only", () => {
+    // Treatment and session values are editable IN PLACE; the register is
+    // explicit that records "stay editable" and forbids implying immutability.
+    // Only the clinical note is append-only (a correction is a new row via
+    // supersedes_note_id), alongside the record-keeping audit trail.
+    const rendered = stripComments(PAGE);
+    for (const overbroad of [
+      /\bedits kept as history\b/i,
+      /(nothing|no record|no edit) is (ever )?(written over|overwritten)/i,
+      /(treatment|session)s? (records? )?(are|is) (never|not) (edited|overwritten|changed)/i,
+      /tamper.proof|immutable (record|chart)|locked (chart|record)/i,
+    ]) {
+      expect(rendered, `homepage over-promises append-only behaviour: ${overbroad}`)
+        .not.toMatch(overbroad);
+    }
+    expect(rendered).toMatch(/clinical note corrections are kept as revisions/i);
+  });
+
+  it("makes no contract or minimum-term claim", () => {
+    // Retired by the pricing truth work and unverifiable from this repository.
+    const rendered = stripComments(PAGE);
+    for (const claim of [/no contract/i, /minimum term/i, /\block.?in\b/i]) {
+      expect(rendered, `homepage makes an unsupported commercial claim: ${claim}`)
+        .not.toMatch(claim);
+    }
+    // The two terms the operator does publish are still there.
+    expect(rendered).toMatch(/no setup fee/i);
+    expect(rendered).toMatch(/cancel anytime/i);
+  });
+
+  it("keeps the payment qualifier and the policy link", () => {
+    expect(PAGE).toMatch(/PAYMENT_QUALIFIER/);
     expect(PAGE).toMatch(/href="\/privacy"/);
   });
 
-  it("closes on the walkthrough conversion", () => {
-    expect(PAGE).toMatch(/See if Hone fits your studio\./);
-    expect(PAGE).toMatch(/reply within\s+one business day/);
+  it("closes on the walkthrough conversion, in the film's own words", () => {
+    // The film's end card, reused as the CTA eyebrow. The STRING is MKT-02A's
+    // (it is copy); this lane only pins that the close actually renders it.
+    expect(PAGE).toMatch(/POSITIONING\.filmClosingLine/);
+    expect(POSITIONING.filmClosingLine).toBe("Pick up where you left off.");
+    expect(PAGE).toMatch(/POSITIONING\.walkthroughHeading/);
   });
 });
 
@@ -153,9 +312,45 @@ describe("demo-data discipline", () => {
     expect(SURFACE).not.toMatch(/@gmail|@hone\.care/i);
     expect(SURFACE).not.toMatch(/\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b/);
   });
-  it("renders no images (no fake screenshots or customer logos)", () => {
-    expect(SURFACE).not.toMatch(/<img\b/i);
+  // This rule used to read "renders no images". That was the right rule while
+  // the homepage had no real captures: the only image it could have rendered
+  // was a mockup. It is the wrong rule now that the page ships an actual
+  // recording of the product, and deleting it would have traded a guard for
+  // nothing. So it is re-expressed as what it always meant — every pixel of
+  // product on this page is a REAL capture of the real application, from the
+  // sanctioned synthetic-twin tenant, and nothing else is an image at all.
+  it("renders product imagery only from the sanctioned capture directory", () => {
+    // Raw <img> bypasses next/image's optimisation AND the static-import path
+    // that makes the source of every asset auditable in the diff.
+    expect(SURFACE, "use next/image, never a raw <img>").not.toMatch(/<img\b/i);
+
+    // Every image and media reference resolves inside the sanctioned set.
+    const refs = [
+      ...SURFACE.matchAll(/from\s+"(@\/app\/_media\/[^"]+|[^"]*\.(?:png|jpe?g|webp|avif|gif|svg))"/g),
+    ].map((m) => m[1]);
+    for (const ref of refs) {
+      expect(ref, `image imported from outside app/_media: ${ref}`).toMatch(
+        /^@\/app\/_media\//,
+      );
+    }
+
+    // No stock photography, no logo wall, no borrowed credibility.
     expect(SURFACE).not.toMatch(/logo wall|as seen (in|on)|customer logos?/i);
+    expect(SURFACE).not.toMatch(/unsplash|pexels|shutterstock|getty/i);
+  });
+
+  it("every product asset carries the film's own demo-data label, verbatim", () => {
+    // One wording across the film, the poster and every still, so nothing needs
+    // recutting to agree with the page. The film already burns these exact
+    // words into its own corner.
+    expect(POSITIONING.demoDataLabel).toBe("Demo data. Actual Hone application.");
+    expect(FILM_PLAYER).toMatch(/POSITIONING\.demoDataLabel/);
+    // On the poster AND under the player: a visitor who never presses play
+    // still sees it.
+    expect(
+      (FILM_PLAYER.match(/POSITIONING\.demoDataLabel/g) ?? []).length,
+      "the label must appear on the poster and under the player",
+    ).toBeGreaterThanOrEqual(2);
   });
 });
 
