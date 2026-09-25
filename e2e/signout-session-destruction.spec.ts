@@ -868,12 +868,11 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     ).toBe(false);
   });
 
-  test("an owned failure reported LATE is still real", () => {
-    // Codex P2. The rule accepts late `after` messages about owned requests,
-    // so settlement must be recordable just as late — otherwise an owned
-    // prefetch that 500s a moment after the window shuts leaves no record and
-    // has its regression forgiven. The recorders are bounded by ownership, not
-    // by phase, and this pins the consequence.
+  test("the RULE rejects a late-reported independent failure", () => {
+    // Half of the property. The other half — that such a failure is actually
+    // RECORDED when it arrives late — is driven against the real recorder in
+    // the test below, because this one pre-populates the set and so cannot
+    // see the recorder at all.
     expect(
       isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "after" }, {
         logoutNavigated: true,
@@ -882,6 +881,66 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
       }),
       "a late-reported independent failure was forgiven as teardown",
     ).toBe(false);
+  });
+
+  test("the RECORDER captures an owned failure that arrives after the window shuts", async ({
+    page,
+  }) => {
+    // Codex P2, and the vacuity it names is real: every other case here hands
+    // `isLogoutTeardownNoise` a set built by hand, so restoring a
+    // `phase !== "teardown"` guard to the response/requestfailed handlers
+    // would leave them all green while the suppression quietly came back.
+    //
+    // This one drives `recordSignOutTraffic` itself. A request is started
+    // INSIDE the teardown window — so it is owned — and its 500 is delivered
+    // only after `closeTeardownWindow()`. If settlement recording is ever
+    // phase-gated again, nothing is recorded and this fails.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_owned_probe", async (route) => {
+      await held;
+      await route.fulfill({ status: 500, contentType: "text/plain", body: "boom" });
+    });
+
+    traffic.openTeardownWindow();
+    const started = page.evaluate(() =>
+      fetch("/__late_owned_probe").catch(() => undefined),
+    );
+    // Let the request reach the wire so it is recorded as owned.
+    await expect
+      .poll(() => traffic.teardownOwned.size, { timeout: 10_000 })
+      .toBeGreaterThan(0);
+
+    traffic.closeTeardownWindow();
+    expect(traffic.phase, "precondition: the window is shut before the 500 lands").toBe(
+      "after",
+    );
+
+    deliver();
+    await started;
+
+    const key = new URL("/__late_owned_probe", page.url()).origin + "/__late_owned_probe";
+    await expect
+      .poll(() => traffic.settledIndependently.has(key), {
+        timeout: 10_000,
+        message:
+          "an owned request's 500 was not recorded because it arrived after the window shut",
+      })
+      .toBe(true);
+
+    // And the rule consumes that record: the failure stays real.
+    expect(
+      isLogoutTeardownNoise(
+        { text: RSC(key), url: key, phase: "after" },
+        traffic,
+      ),
+      "the recorded independent failure was still forgiven",
+    ).toBe(false);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
   test("5. an ordinary console error is real, wherever it lands", () => {
