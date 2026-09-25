@@ -43,6 +43,17 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // carries its own baked-in provenance label, "DEMO DATA. ACTUAL HONE
 // APPLICATION." Nothing on this page describes it as anything else.
 //
+// THE FOUR-AREA CLAIM WAS WRONG AND IS CORRECTED. This section said "A four-area
+// appointment is recorded as four treatments, each attached to its area." It is
+// one record: `create_block_with_entry` (0166:390) writes ONE `session_blocks`
+// row with its area set and at most ONE entry, and every treatment field is a
+// block column that 0019 calls "Treatment-level params that apply to every entry
+// in this block". `session_block_areas` (0128:26) holds only area, laterality and
+// order. The heading stays, because per-area history IS real:
+// `lib/sessions/treatment-intelligence.ts:41-45` has a multi-area block contribute
+// to EVERY area's intelligence, and `lib/search/treatment-memory-merge.ts` makes a
+// secondary area findable by name. Full reasoning in the charting-records page.
+//
 // NO COMPETITOR NAMES. The truth register's stale-claim 4 retires the absolute
 // "You do not need Calendly, Jane, or Square Appointments on top" in favour of a
 // conditional. This page carries the conditional idea — specialist fit for how
@@ -180,8 +191,9 @@ export default function ElectrolysisSoftwarePage() {
               <Eyebrow>Every area keeps its own history</Eyebrow>
               <Title className="mt-4">The history of the chin is the history of the chin.</Title>
               <Lede className="mt-5">
-                A four-area appointment is recorded as four treatments, each attached to its
-                area.
+                Treat four areas at the same settings and those settings are recorded once, for
+                those four areas. Each one carries the treatment into its own history, and each
+                one is searchable by name.
               </Lede>
             </Reveal>
           </Container>

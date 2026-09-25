@@ -77,6 +77,31 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // allowlists which files under app/, lib/ and components/ may mention that
 // table's name, and a marketing comment is not one of them.)
 //
+// WHAT IS PER-AREA AND WHAT IS PER-BLOCK, BECAUSE THE COPY GOT THIS WRONG ONCE.
+//
+// This page said "Four areas, four records" and "every field is attached to the
+// area it describes". Both were false, and Codex was right to call it. The write
+// path is one command: `create_block_with_entry` (0166:390) makes ONE
+// `session_blocks` row plus its complete area set, then at most ONE
+// `electrolysis_entries` row. So a four-area block is one record, not four.
+//
+// `session_block_areas` (0128:26) carries only `area`, `laterality` and
+// `display_order` — and nothing was ever added to it. Every treatment field
+// lives on the parent block, which 0019 labels in as many words: "Treatment-level
+// params that apply to every entry in this block" — mode, apilus_modality,
+// energy_level, minutes_performed, probe_type, probe_size, machine_frequency.
+// That is why the capability line above no longer says "minutes performed per
+// area": `minutes_performed` is a block column.
+//
+// WHAT IS TRUE, AND IS WHAT THE SECTION NOW CLAIMS. Per-area history is real:
+// `lib/sessions/treatment-intelligence.ts:41-45` states that when structured
+// areas are present "the block contributes to EVERY area's intelligence (not just
+// primary_area)", so a "Cheeks + Sideburns" block appears under both areas. And a
+// secondary area is independently findable — `lib/search/treatment-memory-merge.ts`
+// exists to close exactly that recall gap, while merging so one treatment still
+// shows up as one result. So each area does keep its own history; what it does
+// not get is its own settings inside a shared block.
+//
 // The deck's two [DECIDE] items are left as they already ship: Apilus is named
 // in the capability list exactly as production names it today, and no laser line
 // is added. Neither is an MKT-02E decision to take.
@@ -110,7 +135,7 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Areas, laterality, and minutes",
-    body: "Record several treatment areas under one machine-settings block, each with its own laterality, plus minutes performed per area for treatment-time tracking.",
+    body: "Record several treatment areas under one machine-settings block, each with its own laterality, plus the minutes performed for that block for treatment-time tracking.",
   },
   {
     title: "Observations and response",
@@ -181,10 +206,13 @@ export default function ChartingRecordsPage() {
           <Container size="prose">
             <Reveal>
               <Eyebrow>Per area, not per visit</Eyebrow>
-              <Title className="mt-4">Four areas, four records.</Title>
+              <Title className="mt-4">Every area keeps its own history.</Title>
               <Lede className="mt-5">
-                Every field is attached to the area it describes, so a session that covers four
-                areas produces four records, and each area&rsquo;s history reads on its own.
+                Each treated area is recorded as an area, with its own side &mdash; not as one
+                line in a visit note. Treat several areas at the same settings and those
+                settings are recorded once, for that group, and every area in it carries the
+                treatment into its own history. Open the chin months later and you read the
+                chin.
               </Lede>
             </Reveal>
           </Container>
