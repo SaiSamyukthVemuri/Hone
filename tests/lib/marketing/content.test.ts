@@ -53,7 +53,7 @@ describe("marketing content — CTA truthfulness (addendum §3)", () => {
     for (const surface of ctaSurfaces) {
       expect(surface.toLowerCase()).not.toContain("book");
     }
-    expect(WALKTHROUGH.primaryLabel).toBe("Request a 15-minute walkthrough");
+    expect(WALKTHROUGH.primaryLabel).toBe("Request a walkthrough");
     expect(WALKTHROUGH.submitLabel.toLowerCase()).toContain("request");
   });
 
@@ -178,20 +178,20 @@ describe("marketing content — page metadata (prompt §21, §22)", () => {
   it("pins the required titles", () => {
     const byPath = Object.fromEntries(MARKETING_PAGES.map((p) => [p.path, p]));
     expect(byPath["/"].title).toBe(
-      "Electrolysis Practice Software That Remembers Every Treatment | Hone",
+      "Hone | Electrolysis practice software with treatment memory",
     );
     expect(byPath["/electrolysis-software"].title).toBe(
-      "Electrolysis Software for Booking, Charting & Client Records | Hone",
+      "Electrolysis software built around the treatment record | Hone",
     );
-    expect(byPath["/pricing"].title).toBe("Hone Pricing | Electrolysis Practice Software");
+    expect(byPath["/pricing"].title).toBe("Pricing | Hone");
     expect(byPath["/features/treatment-memory"].title).toBe(
-      "Treatment Memory Software for Electrologists | Hone",
+      "Treatment memory for electrologists | Hone",
     );
     expect(byPath["/features/booking-calendar"].title).toBe(
-      "Electrolysis Booking and Calendar Software | Hone",
+      "Booking and calendar, connected to the record | Hone",
     );
     expect(byPath["/features/charting-records"].title).toBe(
-      "Electrolysis Charting and Treatment Records | Hone",
+      "Electrolysis charting and records | Hone",
     );
   });
 

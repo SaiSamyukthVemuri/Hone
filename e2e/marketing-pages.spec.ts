@@ -7,7 +7,9 @@ import { test, expect, type Page } from "@playwright/test";
 // never scroll horizontally on phone, tablet, or desktop.
 
 const ROUTES: { path: string; h1: string }[] = [
-  { path: "/", h1: "Electrolysis practice software that remembers every treatment." },
+  // Home H1 is #762's (MKT-02A); pricing H1 is this branch's (MKT-02D). Each
+  // side changed a different row and the conflict is only positional.
+  { path: "/", h1: "Start the next treatment where the last one ended." },
   { path: "/pricing", h1: "Simple plans, in Canadian dollars." },
   { path: "/electrolysis-software", h1: "Software built for an electrolysis practice, not a generic salon." },
   { path: "/features/treatment-memory", h1: "Remember every treatment, before the client sits down." },

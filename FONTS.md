@@ -2,19 +2,25 @@
 
 **Scope:** the public marketing surface (pages wrapped in `.marketing-surface`).
 
-## Decision: clean sans-serif (Inter) throughout
+## Decision: Instrument Sans throughout the marketing surface
 
-Per the product owner's direction, the marketing site uses **Inter for both
-headings and body** — a clean, modern sans-serif with no serif letterforms.
+Per the product owner's direction (MKT-02A), the public marketing surface uses
+**Instrument Sans for both headings and body** — a clean, modern sans-serif with
+no serif letterforms. Weights: **400** body, **500** UI/nav/buttons, **600**
+headings, **700** rare emphasis. Default styling; no stylistic sets are enabled.
+
+It replaced **Inter**, which the marketing surface used previously and which the
+**authenticated app still uses** — this decision was marketing-only and
+`app/_fonts/app-fonts.ts` is untouched.
 
 - The face is loaded in `app/_fonts/marketing-fonts.ts` (self-hosted via
-  `next/font/local`, Inter weights 400/500/600/700), re-exported by
+  `next/font/local`, **Instrument Sans weights 400/500/600/700**), re-exported by
   `app/_components/marketing/fonts.ts` and exposed as `--font-marketing-sans`,
   scoped to the marketing surface via `.variable` on `MarketingSurface` — so the
   authenticated app's own font loading is untouched.
 - `--font-marketing-display` and `--font-marketing-text` (in `app/globals.css`)
   both resolve to `var(--font-marketing-sans)`, with a system sans fallback.
-- Headings render at Inter **Semibold (600)** with tight tracking.
+- Headings render at **Instrument Sans Semibold (600)** with tight tracking.
 
 ### History (why not a serif)
 
@@ -83,6 +89,35 @@ redistribution of the font files:
 |---|---|---|---|---|
 | Inter | Copyright (c) 2016 The Inter Project Authors | <https://github.com/rsms/inter> | `public/fonts/LICENSE-Inter.txt` | `/fonts/LICENSE-Inter.txt` |
 | Fraunces | Copyright 2018 The Fraunces Project Authors | <https://github.com/undercasetype/Fraunces> | `public/fonts/LICENSE-Fraunces.txt` | `/fonts/LICENSE-Fraunces.txt` |
+| Instrument Sans | Copyright 2022 The Instrument Sans Project Authors | <https://github.com/Instrument/instrument-sans> | `public/fonts/LICENSE-InstrumentSans.txt` | `/fonts/LICENSE-InstrumentSans.txt` |
+
+### Instrument Sans — exact provenance (MKT-02A)
+
+Fetched from the upstream project at a **pinned commit**, not from a package
+registry, a CDN, or Google Fonts:
+
+| | |
+|---|---|
+| Upstream | `https://github.com/Instrument/instrument-sans` |
+| Commit | `7fa22308a3d0c94ee2b3cd537a1196b65db34a3e` (2023-06-14) |
+| Path | `fonts/webfonts/InstrumentSans-{Regular,Medium,SemiBold,Bold}.woff2` |
+| Licence source | `OFL.txt` at the repository root, same commit |
+| Licence | SIL Open Font License 1.1 |
+| Retrieved | 2026-09-24 |
+
+The commit is recorded because "the upstream repo" is not a reproducible
+reference — `HEAD` moves. Re-verifying means fetching the same four paths at that
+SHA and comparing against the sha256 values in the table below.
+
+**These binaries are NOT Google-subsetted, and that changes the licence picture
+in our favour.** Google's subsetting strips name ID 13, the full licence body,
+which is why the Inter and Fraunces notices exist as separate files. Upstream's
+own webfonts retain **name ID 13 alongside ID 0 (copyright) and ID 14 (licence
+URL)**, so each served Instrument Sans file carries the complete OFL internally.
+`public/fonts/LICENSE-InstrumentSans.txt` is still vendored and still served: the
+internal copy satisfies OFL clause 2 for the binary, and the served text file
+means a human can read the terms without a font inspector. Both are pinned by
+`tests/source-guards/self-hosted-fonts-guards.test.ts`.
 
 **Naming the licence is not enough, and neither is a copy in the source tree.**
 OFL 1.1 clause 2 permits redistribution "provided that each copy contains the
@@ -181,13 +216,27 @@ re-cut: the browser receives the identical binaries it received before.
 
 ## What is vendored
 
-Google serves **one variable `.woff2` per unicode-range subset**, so a family is
-several files. All 13 subsets the previous build downloaded are vendored, so
-Cyrillic, Greek and Vietnamese client names keep rendering in Inter rather than
-dropping to a fallback face.
+**TWO SURFACES, TWO FAMILIES — read this table with that split in mind.**
 
-The `weights` column is the union declared across loaders. The root layout
-declares Inter **400/500 only**; the marketing surface declares 400/500/600/700.
+| Surface | Family | Weights | Loader |
+|---|---|---|---|
+| Authenticated app (root layout) | **Inter** | 400, 500 | `app/_fonts/app-fonts.ts` |
+| Authenticated app (serif accents) | **Fraunces** | 400, 700 + italics | `app/_fonts/app-fonts.ts` |
+| Public marketing surface | **Instrument Sans** | 400, 500, 600, 700 | `app/_fonts/marketing-fonts.ts` |
+
+Google serves **one variable `.woff2` per unicode-range subset**, so Inter and
+Fraunces are several files each; all 13 of those subsets are vendored, so
+Cyrillic, Greek and Vietnamese **client names in the authenticated app** keep
+rendering in Inter rather than dropping to a fallback face. Instrument Sans is
+not subsetted — see below.
+
+**The `Weights` column is per family, and Inter's is now 400/500 — no longer a
+union across two loaders.** It read 400/500/600/700 while the marketing surface
+also loaded Inter at heading weights. Since MKT-02A the marketing surface loads
+Instrument Sans instead, so **nothing declares Inter 600 or 700 anywhere**: the
+root layout never did, and an authenticated element asking for bold still gets a
+browser-synthesised one from the 500 face. Reading 600/700 beside the Inter rows
+would now imply a face this application does not ship.
 
 | File | Family | Style | Subset | Weights | Bytes | Preloaded | sha256 |
 |---|---|---|---|---|---|---|---|
@@ -197,17 +246,55 @@ declares Inter **400/500 only**; the marketing surface declares 400/500/600/700.
 | `fraunces-latin-ext.woff2` | Fraunces | normal | latin-ext | 400, 700 | 33,640 | no | `f1451edd6434085c4f9f3a8b4a674182dd7d6acccf53bfced19fd167f0705a06` |
 | `fraunces-latin.woff2` | Fraunces | normal | latin | 400, 700 | 36,560 | yes | `88e17be075f1be50ab67b057b99e3701b828f44ed28f9452df6c02645bb0cba9` |
 | `fraunces-vietnamese.woff2` | Fraunces | normal | vietnamese | 400, 700 | 11,536 | no | `250cc2966c658fb6d336731de9d82a8129025e9839c20c253bbc477852f6cf4f` |
-| `inter-cyrillic-ext.woff2` | Inter | normal | cyrillic-ext | 400, 500, 600, 700 | 25,844 | no | `fccca918fea40089dacadc7045861314d1a6bc91f1f323cc1eeb22ebcdb321b5` |
-| `inter-cyrillic.woff2` | Inter | normal | cyrillic | 400, 500, 600, 700 | 18,744 | no | `aebf2ab4a4ce6810d73c1ac7be7cafb4e5ec4cee2d6db5fb3e09691747ec4bd6` |
-| `inter-greek-ext.woff2` | Inter | normal | greek-ext | 400, 500, 600, 700 | 11,272 | no | `a2e2c783ca6f9c20486e81e72a279203e86730bbf8f01ff6a5ee9dbd09e1c271` |
-| `inter-greek.woff2` | Inter | normal | greek | 400, 500, 600, 700 | 19,044 | no | `46dd4cdca58c26ae87cc6927657bf83b2e8abfc39ffd0ab176e301a8d28d22bf` |
-| `inter-latin-ext.woff2` | Inter | normal | latin-ext | 400, 500, 600, 700 | 85,272 | no | `a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2` |
-| `inter-latin.woff2` | Inter | normal | latin | 400, 500, 600, 700 | 48,432 | yes | `c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4` |
-| `inter-vietnamese.woff2` | Inter | normal | vietnamese | 400, 500, 600, 700 | 10,280 | no | `8db00ff46c67b22cda8bed865acf7077651cac8d2841d5b40980556b48961931` |
+| `inter-cyrillic-ext.woff2` | Inter | normal | cyrillic-ext | 400, 500 | 25,844 | no | `fccca918fea40089dacadc7045861314d1a6bc91f1f323cc1eeb22ebcdb321b5` |
+| `inter-cyrillic.woff2` | Inter | normal | cyrillic | 400, 500 | 18,744 | no | `aebf2ab4a4ce6810d73c1ac7be7cafb4e5ec4cee2d6db5fb3e09691747ec4bd6` |
+| `inter-greek-ext.woff2` | Inter | normal | greek-ext | 400, 500 | 11,272 | no | `a2e2c783ca6f9c20486e81e72a279203e86730bbf8f01ff6a5ee9dbd09e1c271` |
+| `inter-greek.woff2` | Inter | normal | greek | 400, 500 | 19,044 | no | `46dd4cdca58c26ae87cc6927657bf83b2e8abfc39ffd0ab176e301a8d28d22bf` |
+| `inter-latin-ext.woff2` | Inter | normal | latin-ext | 400, 500 | 85,272 | no | `a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2` |
+| `inter-latin.woff2` | Inter | normal | latin | 400, 500 | 48,432 | yes | `c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4` |
+| `inter-vietnamese.woff2` | Inter | normal | vietnamese | 400, 500 | 10,280 | no | `8db00ff46c67b22cda8bed865acf7077651cac8d2841d5b40980556b48961931` |
+| `instrument-sans-400.woff2` | Instrument Sans | normal | *(none — full charset)* | 400 | 34,628 | yes | `f28af62faa9eec1e5482cf6e2a3e06bc865fa2fa6937bd56c14d2be23c9b4c46` |
+| `instrument-sans-500.woff2` | Instrument Sans | normal | *(none — full charset)* | 500 | 35,580 | no | `65d25fc111c40fd6b481d9db860af365730752228dfd8a246e79648d8a01f02a` |
+| `instrument-sans-600.woff2` | Instrument Sans | normal | *(none — full charset)* | 600 | 35,812 | yes | `04235f235483213906d69cafb7a87ee197adaffacb081c8a7f809d00f9b353cd` |
+| `instrument-sans-700.woff2` | Instrument Sans | normal | *(none — full charset)* | 700 | 35,352 | no | `3e67cdb08813ada42a8a58190c2082f60862ec84bf3d2a5033002d8475efc8da` |
 
-Total: **399,764 bytes**. Only the three latin files are preloaded, exactly as
-before; the rest are fetched on demand when a page actually contains those
-codepoints.
+Licence file: `public/fonts/LICENSE-InstrumentSans.txt`, 4,403 bytes, sha256
+`9e27a72ed30eb49a08678f6a5d6ed98ec7ba5368f541637ee0683ec9134ef966`.
+
+Total: **541,136 bytes**. The preloaded set is the three latin files plus
+Instrument Sans **400 and 600**; everything else is fetched on demand.
+
+### Why Instrument Sans has no unicode-range subsets
+
+A real difference from the other two families, and not an oversight. Inter and
+Fraunces arrived here as many files because Google's API had already split them
+per unicode-range. Upstream Instrument Sans publishes **one full-charset webfont
+per weight** and ships no subsets, so there is nothing to vendor per range.
+Generating them locally was rejected: it would mean re-deriving the family with
+our own tooling, which changes the bytes and destroys the provenance the pinned
+commit and sha256 values above establish.
+
+The practical consequence is honest to state: a marketing page in a language
+outside Instrument Sans' charset falls back to the system sans, where Inter
+covered Cyrillic, Greek and Vietnamese. The marketing site is English-language,
+so no current page is affected — but a future translated marketing page is, and
+this is where that decision was made.
+
+### Why four static weights and not the variable font
+
+Upstream ships both. `InstrumentSans[wdth,wght].woff2` is **88,784 bytes in one
+file**; the four statics are 141,372 across four. The variable font was rejected
+for two reasons:
+
+1. It carries a `wdth` axis this design never varies, so every visitor would
+   download width data to render exactly one width.
+2. This repository's guard forbids declaring a weight RANGE, for a reason that
+   still applies: the root layout deliberately loads Inter 400/500 only, and a
+   range would let an authenticated element match a weight the root never
+   intended to serve. Four files with one discrete `weight:` each cannot do that.
+
+On the critical path the statics also win: 400 + 600 preloaded is **70,440
+bytes**, against 88,784 for the variable file.
 
 ## How the loaders are shaped, and why
 
@@ -223,6 +310,13 @@ drove the shape, and each one is a way this could have silently drifted:
    the Google-served CSS did. Only the latin call of each family carries the CSS
    variable, the preload and the metric-adjusted fallback.
 
+   **The marketing module now uses the same technique for a different reason.**
+   Instrument Sans has no unicode-range subsets to split, but it does have four
+   separate static weight files, and `preload` is per-call — so it is four calls
+   that each declare `font-family: Instrument Sans` and compose into one family,
+   with only the 400 carrying the CSS variable and the metric-adjusted fallback,
+   and 400 + 600 preloaded.
+
 2. **Weights are declared one per `src` entry, never as a range.** Writing
    `weight: "400 700"` against a variable font looks like a tidy simplification
    and is not equivalent. The root layout loads Inter 400/500 only, so an
@@ -231,7 +325,8 @@ drove the shape, and each one is a way this could have silently drifted:
    visual change smuggled in under a build fix.
 
 3. **The marketing module is never imported by the root layout.** Merging them
-   would put Inter 600/700 into every authenticated route's own CSS, with the
+   would put the marketing heading weights into every authenticated route's own
+   CSS, with the
    same consequence as (2) even on a direct load.
 
    **Separation is not isolation** — see the pre-existing defect recorded below.
@@ -243,16 +338,32 @@ The metric-adjusted fallback pairing is preserved: Inter falls back to **Arial**
 Fraunces to **Times New Roman** (`adjustFontFallback`), matching what
 `next/font/google` generated from its own metrics table.
 
-## Pre-existing defect: marketing Inter 600/700 can reach authenticated routes
+## RESOLVED by MKT-02A: marketing weights could reach authenticated routes
 
-Found by review while verifying this change. **Real, pre-existing, not
-introduced or worsened here, and deliberately not fixed here.**
+**This section is kept as the record of a defect that is now closed**, because
+the reasoning explains why the families must stay distinct.
 
-Both loaders declare the same CSS family identity, `font-family: Inter` — as
-they did under `next/font/google`, where `--font-inter` and
-`--font-marketing-sans` both resolved to `"Inter","Inter Fallback"`. Module
-separation therefore governs which CSS a route loads *initially*, not which
-faces can participate in matching once loaded.
+**The defect.** Both loaders declared the same CSS family identity,
+`font-family: Inter` — as they did under `next/font/google`, where
+`--font-inter` and `--font-marketing-sans` both resolved to
+`"Inter","Inter Fallback"`. Module separation therefore governed which CSS a
+route loads *initially*, not which faces could participate in matching once
+loaded.
+
+**The fix, and why it was a side effect rather than a refactor.** The section
+below previously recorded that "giving marketing its own family identity is a
+real typography change and belongs in its own PR". MKT-02A is that PR: the
+marketing surface now declares `font-family: Instrument Sans`, a family the root
+layout does not load, so marketing's 600/700 can no longer be matched by an
+authenticated route under any navigation order. The product decision closed the
+defect; no separate change was needed.
+
+**What must stay true.** If marketing and the authenticated app are ever given
+the same family again, this defect returns with it.
+`tests/source-guards/self-hosted-fonts-guards.test.ts` pins that `app-fonts.ts`
+contains no Instrument Sans and that the marketing module contains no Inter.
+
+The original analysis follows.
 
 App Router **client navigation retains** the marketing stylesheet. So:
 
@@ -318,7 +429,7 @@ product decision, and one that runs against the recorded product-owner direction
 above that rejected the serif look. It needs its own change and its own sign-off.
 The marketing surface is unaffected: it sets its face through an inline
 `style={{ fontFamily }}` (`MK_FONT_DISPLAY`), which works correctly — its
-headings render Inter 600 as intended.
+headings render **Instrument Sans 600** as intended (Inter 600 before MKT-02A).
 
 `tests/source-guards/self-hosted-fonts-guards.test.ts` pins all of the above and
 fails if a `next/font/google` import reappears anywhere in the source.

@@ -37,27 +37,112 @@ export const CANONICAL_HOST = "https://hone.care" as const;
 export const CONTACT_EMAIL = "hello@hone.care" as const;
 
 // ---------------------------------------------------------------------------
-// Positioning (prompt §5), the fixed hero and category language.
+// POSITIONING — copy deck v2.2 §1, the fixed hero and category language.
 // ---------------------------------------------------------------------------
+//
+// EVERY VALUE HERE IS QUOTED FROM THE DECK, NOT PARAPHRASED. The deck says its
+// lines are "written to be pasted", and the difference matters: a rewritten
+// line is a claim nobody reviewed against the truth register.
+//
+// WHAT THE DECK RETIRES, AND WHY THE STRINGS ARE GONE RATHER THAN UNUSED.
+// v2.2 retires six strings outright. A retired string left exported is a string
+// a later surface can still render, so each is deleted with its test. They are
+// DESCRIBED here and never reproduced:
+//
+//   * the former `heroH1`, which restated the category and then claimed total recall
+//   * a short line about what rival tools fail to retain
+//   * the former `categoryAmbition`, a whole-business category metaphor
+//   * the former `proofLine`, whose four clauses were about onboarding terms
+//     rather than about the record
+//   * a "most popular" badge on the Solo pricing card
+//   * the six-box capability grid AS THE HOMEPAGE'S MAIN PRODUCT SECTION
+//
+// REPRODUCING A RETIRED LINE HERE WOULD BE A DEFECT, not documentation. A guard
+// that scans this file for retired copy has to strip comments to tell an
+// assertion from its denial, and the strip order is a known trap: line comments
+// must go before block comments or a `next/*` sequence eats the rest of the
+// file. Describing the retired lines keeps this file's prose out of that
+// question entirely, and `tests/lib/marketing/content-v22.test.ts` asserts the
+// retired strings appear nowhere in the module at all — comments included.
+//
+// THE LAST TWO ARE NOT THIS LANE'S TO REMOVE, and saying so is the point.
+// Both are rendering decisions: the badge lives on a pricing card and the grid's
+// content is absorbed into a homepage section this lane is explicitly told not
+// to build. `CAPABILITY_GROUPS` therefore stays exported and unchanged here —
+// retiring the grid's ROLE is a structural change, not a constant change.
+//
+// `categoryAmbition` IS deleted, because the deck conditions that on nothing
+// internal reading it and nothing does: the only occurrence in app/, lib/,
+// components/, tests/ or e2e/ was its own definition.
 export const POSITIONING = {
   category: "Electrolysis practice software",
   differentiator: "Treatment memory",
   corePromise: "Hone carries the important details from one appointment into the next.",
-  // "Operating system" is a category metaphor, not a claim that every business
-  // function already exists.
-  categoryAmbition: "The operating system for a modern electrolysis practice.",
   heroEyebrow: "Electrolysis practice software",
-  heroH1: "Electrolysis practice software that remembers every treatment.",
-  heroSupporting:
-    "Run booking, intake, consent, treatment records, photos, client follow-up, and next-visit preparation in one calm workflow built for electrologists.",
+  heroH1: "Start the next treatment where the last one ended.",
+  // Replaces `heroSupporting`, whose sentence listed eight capabilities in one
+  // breath. The deck's sub names ONE mechanism and is the claim the film shows.
+  heroSub:
+    "Each treated area keeps its own history. Before a returning client sits down, Hone brings forward last time's settings, response and notes.",
+  // KEPT VERBATIM. The deck moves this from the hero to the connected-workflow
+  // section header, which is a placement change and belongs to the lane that
+  // builds that section; the string itself does not change.
   differentiationLine:
     "Your calendar remembers the appointment. Hone helps you remember the treatment.",
-  // Kept in supporting copy, metadata, and footer, but never duplicated as
-  // both the eyebrow and the H1 (prompt §5).
   keepPhrase: "Treatment memory for electrologists",
-  // Proof line, every clause is evidence-backed in the truth register (§23).
+  // Every clause is register-backed, and the fourth is the one worth naming:
+  // "CSV export on every plan" rests on `lib/export/resource-registry.ts` plus
+  // the register's "Exportable records (full studio export)" row, class
+  // LIVE_FOR_ALL_ONBOARDED — not plan-gated, so "every plan" is literal.
   proofLine:
-    "Built around real electrolysis workflows · Founder-led setup · Free standard client import · Cancel anytime",
+    "Built for electrolysis records · History by treated area · Probe lots tied to treatments · CSV export on every plan",
+  // Rendered directly under the Before Today block (deck §3 section 2).
+  trustStrip:
+    "Records isolated by studio · Imported history stays marked as imported · CSV export on every plan · The person who built Hone answers support",
+  // Under the pricing cards and in the CTA block — deliberately NOT under the
+  // hero, which is where the retired proof line used to put this material.
+  assuranceLine:
+    "Founder-led setup · Free standard client import · No setup fee · Cancel anytime",
+  // [VERIFY] RESOLVED — nothing caps clients or appointments.
+  //
+  // Verified as an ABSENCE, which needs saying because a negative is the easiest
+  // thing to assert and the hardest to trust. Searched application code, the
+  // full migration set and the truth register for a plan-level limit on client
+  // or appointment count: there is none, and the register carries no caps row.
+  //
+  // The only matches were a DIFFERENT KIND OF LIMIT and must not be mistaken
+  // for this one: per-IP request rate limiters (abuse protection), Google API
+  // quotas, and waitlist proof attempt ceilings. A rate limit on how fast
+  // requests arrive is not a cap on how many records a studio may hold.
+  noCapsLine:
+    "Every plan includes the full treatment workflow. No client caps. No appointment caps.",
+  // PAYMENTS ARE NAMED HERE, SO THE QUALIFIER IS NOT OPTIONAL.
+  //
+  // The truth register's payment rule: card on file and owner-run session
+  // payments "may be described WITH the qualifier 'Payments are enabled during
+  // guided onboarding.' Never imply self-service live-payment activation." Card
+  // on file is LIVE_WITH_GUIDED_SETUP, not LIVE_FOR_ALL_ONBOARDED.
+  //
+  // This list therefore carries a rendering obligation that no constant can
+  // enforce on its own: any surface rendering `everyPlanIncludes` must render
+  // `PAYMENT_QUALIFIER` with it. `tests/lib/marketing/content-v22.test.ts`
+  // asserts the pairing obligation so it cannot be silently dropped.
+  //
+  // Every other item is register-backed: intake (LIVE_FOR_ALL_ONBOARDED),
+  // consent, photos (MARKET), follow-up, client portal (passwordless
+  // magic-link, LIVE_FOR_ALL_ONBOARDED/MARKET) and CSV export.
+  everyPlanIncludes:
+    "Treatment memory, charting, intake, consent, photos, follow-up, payments, a client portal and CSV export. On every plan.",
+  pricingHeading: "Simple plans, in Canadian dollars.",
+  recordsHeading: "Your client records should stay yours.",
+  walkthroughHeading: "See it with a returning client.",
+  // The film's end card, reused as the walkthrough CTA eyebrow and as the
+  // closing line of the treatment-memory page.
+  filmClosingLine: "Pick up where you left off.",
+  // ALREADY BURNED INTO THE FILM, so it is carried verbatim rather than
+  // restyled. The deck standardises on this exact wording — not a middle-dot
+  // variant — precisely so no recut is needed and every screenshot matches.
+  demoDataLabel: "Demo data. Actual Hone application.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -76,9 +161,32 @@ export const WALKTHROUGH = {
   href: "/demo",
   // Header/nav (tight space), still "Request", never "Book".
   primaryLabelShort: "Request a walkthrough",
-  // Hero, pricing, section CTAs.
-  primaryLabel: "Request a 15-minute walkthrough",
-  secondaryLabel: "See how Hone works",
+  // THE DURATION IS GONE, AND THAT IS A DELIBERATE READING OF v2.2.
+  //
+  // This named a fifteen-minute meeting and rendered on ten surfaces
+  // across eight pages. v2.2 does not state a duration ANYWHERE — the string
+  // "15-minute" appears zero times in the deck — while §1 gives `ctaPrimary` as
+  // "Request a walkthrough" and both the hero (§3) and the walkthrough CTA (§9)
+  // spec that exact button label.
+  //
+  // So the duration is not a line the deck retires by name; it is a claim the
+  // deck no longer supports. Kept, it would promise a 15-minute meeting on every
+  // marketing page on no current authority. The deck's own rule is that an
+  // unverifiable line is cut rather than softened, so it is cut.
+  //
+  // `primaryLabelShort` now holds the same text. It is KEPT rather than removed
+  // because three components read it, and collapsing two keys into one is a
+  // refactor of the header, nav and pricing surfaces that buys nothing here.
+  primaryLabel: "Request a walkthrough",
+  // §1 `ctaSecondary`, new: the label AND the destination change together.
+  //
+  // It read "See how Hone works" and pointed at the on-page anchor
+  // `#how-hone-works`. The deck routes this to /features/treatment-memory, and
+  // the two must move as one: a control may only promise what its destination
+  // delivers, and "See how treatment memory works" jumping to a generic
+  // homepage section is exactly that promise broken.
+  secondaryLabel: "See how treatment memory works",
+  secondaryHref: "/features/treatment-memory",
   // Demo page, heading, submit control, and success state all describe the
   // same lead-capture reality (founder replies to schedule).
   demoHeading: "Request a 15-minute Hone walkthrough.",
@@ -281,51 +389,51 @@ export type MarketingPage = {
 export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
   {
     path: "/",
-    title: "Electrolysis Practice Software That Remembers Every Treatment | Hone",
+    title: "Hone | Electrolysis practice software with treatment memory",
     description:
-      "Hone is electrolysis practice software that remembers every treatment, booking, intake, consent, charting, photos, records, and next-visit prep in one calm workflow built for electrologists.",
+      "Electrolysis practice software that keeps a separate history for every treated area. Last time's settings, probe lot and response come forward before the next appointment.",
     indexable: true,
   },
   {
     path: "/electrolysis-software",
-    title: "Electrolysis Software for Booking, Charting & Client Records | Hone",
+    title: "Electrolysis software built around the treatment record | Hone",
     description:
-      "Electrolysis practice software for booking, intake and consent, treatment charting, client records, and returning-client treatment memory, built for electrologists, not generic salon tools.",
+      "Practice software for electrologists. Modality, settings, probe and lot recorded per treated area, with booking, intake and consent connected to the same record.",
     indexable: true,
   },
   {
     path: "/pricing",
-    title: "Hone Pricing | Electrolysis Practice Software",
+    title: "Pricing | Hone",
     description:
-      "Simple CAD pricing for Hone electrolysis practice software: Founding Solo, Solo, and Studio plans with founder-led setup, free standard import, and no setup fee. Cancel anytime.",
+      "Simple plans in Canadian dollars. Every plan includes the full treatment workflow. No client caps, no appointment caps, no setup fee.",
     indexable: true,
   },
   {
     path: "/features/treatment-memory",
-    title: "Treatment Memory Software for Electrologists | Hone",
+    title: "Treatment memory for electrologists | Hone",
     description:
-      "Before a returning client sits down, Hone shows the last treatment's areas, settings, probe lot, and how the client responded, assembled automatically from what you already charted.",
+      "Every treated area keeps its own history. Before a returning client sits down, Hone assembles last time's settings, probe lot, response and cautions into one view.",
     indexable: true,
   },
   {
     path: "/features/booking-calendar",
-    title: "Electrolysis Booking and Calendar Software | Hone",
+    title: "Booking and calendar, connected to the record | Hone",
     description:
       "Give clients an online booking page with real open times and double-booking protection, and run your day on a calendar built for an electrolysis practice.",
     indexable: true,
   },
   {
     path: "/features/charting-records",
-    title: "Electrolysis Charting and Treatment Records | Hone",
+    title: "Electrolysis charting and records | Hone",
     description:
-      "Chart electrolysis and laser sessions at the point of care, machine settings, probe lot, treatment areas, and observations, and keep clean, print-ready procedure records.",
+      "Charting built around treatments, not generic notes: mode, modality, energy, frequency, pulses, probe and lot, laterality, tolerance and skin response, per area.",
     indexable: true,
   },
   {
     path: "/demo",
-    title: "Request a Hone Walkthrough | Electrolysis Practice Software",
+    title: "Request a walkthrough | Hone",
     description:
-      "Request a 15-minute founder-led walkthrough of Hone. We'll show booking, intake, charting, treatment memory, and records using your real workflow, then decide together whether Hone fits.",
+      "A founder-led walkthrough: open a returning client and watch the Before Today briefing assemble from their history.",
     indexable: true,
   },
   {

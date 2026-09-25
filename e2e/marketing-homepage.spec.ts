@@ -26,7 +26,7 @@ test.describe("marketing homepage (desktop)", () => {
     await page.goto("/");
     await expect(
       page.getByRole("heading", {
-        name: "Electrolysis practice software that remembers every treatment.",
+        name: "Start the next treatment where the last one ended.",
         level: 1,
       }),
     ).toBeVisible();
@@ -43,7 +43,7 @@ test.describe("marketing homepage (desktop)", () => {
       page.getByRole("heading", { name: "Most tools stop at the appointment." }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "The part other tools forget." }),
+      page.getByRole("heading", { name: "Every area keeps its own history" }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "See if Hone fits your studio." }),
@@ -76,7 +76,7 @@ test.describe("marketing homepage (desktop)", () => {
     expect(await signIn.getAttribute("href")).toBe("/login");
 
     // The hero CTA navigates to the walkthrough page.
-    await page.getByRole("link", { name: "Request a 15-minute walkthrough" }).first().click();
+    await page.getByRole("link", { name: "Request a walkthrough" }).first().click();
     await page.waitForURL(/\/demo/);
   });
 });
@@ -88,7 +88,7 @@ test.describe("marketing homepage (mobile)", () => {
     await page.goto("/");
     await expect(
       page.getByRole("heading", {
-        name: "Electrolysis practice software that remembers every treatment.",
+        name: "Start the next treatment where the last one ended.",
         level: 1,
       }),
     ).toBeVisible();

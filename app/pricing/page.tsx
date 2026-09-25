@@ -170,24 +170,25 @@ export default function PricingPage() {
               Simple plans, in Canadian dollars.
             </Display>
             {/* DECK v2.2 ALSO SPECIFIED "No client caps. No appointment caps."
-                THOSE TWO SENTENCES ARE DELIBERATELY NOT RENDERED.
+                THOSE TWO SENTENCES ARE STILL NOT RENDERED HERE — but the reason
+                has changed, and only half of it survives.
 
-                They are true of the product today — no tier/plan cap mechanism
-                exists anywhere in the codebase; the only quota code is per-IP
-                request limiting and the Google API's own limits. But this lane
-                renders only claims the truth register verifies, and the
-                register makes no caps statement of any kind. A claim that is
-                true and unsourced is still unsourced, and "no caps" is a
-                forward promise about packaging, not just a fact about today.
+                WHEN THIS LANE OPENED the claim was true of the product and
+                absent from the truth register, so it was unsourced. #762 closed
+                that: the register now carries it as a VERIFIED ABSENCE row,
+                checked against production `a5f3aa27` by the same search this
+                lane ran, and `POSITIONING.noCapsLine` exists for a surface to
+                use. #762 also already publishes the claim in page metadata.
 
-                `tests/app/marketing-pricing.test.ts` independently forbids the
-                wording. Narrowing that guard so the sentence fits would be
-                patching the rule at the spelling to admit the copy, which is
-                the move this repository keeps finding in its own history.
+                WHAT REMAINS is `tests/app/marketing-pricing.test.ts`, which
+                #762 did not touch and which still forbids the wording on THIS
+                page. So production currently proves the claim, publishes it in
+                metadata, and forbids it on the pricing page — an inconsistency
+                inside production rather than a gap in this branch.
 
-                To publish it: record the claim in the truth register, then
-                narrow the guard to forbid affirmative cap claims rather than
-                the noun. Both are decisions for whoever owns the register. */}
+                Held back here on explicit instruction, pending that decision.
+                Publishing is now one narrowing of that guard plus rendering
+                `POSITIONING.noCapsLine` in place of the sentence below. */}
             <Lede className="mt-6 max-w-2xl">
               Every plan includes the full treatment workflow.
             </Lede>
