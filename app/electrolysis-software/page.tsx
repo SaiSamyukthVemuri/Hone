@@ -18,7 +18,7 @@ import { Reveal } from "../_components/marketing/Reveal";
 import { Breadcrumbs } from "../_components/marketing/JsonLd";
 import { TreatmentMemoryPanel } from "../_components/marketing/visuals/TreatmentMemoryPanel";
 import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../_components/marketing/sections";
-import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
+import { WALKTHROUGH, ANALYTICS_EVENTS, POSITIONING } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
 // Pillar: /electrolysis-software. Intent: commercial electrolysis-software
@@ -118,12 +118,16 @@ export default function ElectrolysisSoftwarePage() {
               <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
                 {WALKTHROUGH.primaryLabel}
               </CTAButton>
+              {/* Label AND destination from the constants, deliberately together:
+                  #762 pairs `secondaryLabel` with `secondaryHref` because a
+                  control may only promise what its destination delivers. Spelled
+                  by hand here, the two could drift apart in a later edit. */}
               <CTAButton
-                href="/features/treatment-memory"
+                href={WALKTHROUGH.secondaryHref}
                 variant="secondary"
                 event={ANALYTICS_EVENTS.secondaryCtaClick}
               >
-                See how treatment memory works
+                {WALKTHROUGH.secondaryLabel}
               </CTAButton>
             </div>
           </Reveal>
@@ -250,11 +254,8 @@ export default function ElectrolysisSoftwarePage() {
           <Container size="prose">
             <Reveal>
               <Eyebrow>Plans</Eyebrow>
-              <Title className="mt-4">Simple plans, in Canadian dollars.</Title>
-              <Lede className="mt-5">
-                Every plan includes the full treatment workflow. No client caps. No appointment
-                caps.
-              </Lede>
+              <Title className="mt-4">{POSITIONING.pricingHeading}</Title>
+              <Lede className="mt-5">{POSITIONING.noCapsLine}</Lede>
               <p className="mt-6">
                 <Link
                   href="/pricing"
@@ -289,7 +290,7 @@ export default function ElectrolysisSoftwarePage() {
         />
 
         <WalkthroughCTA
-          title="See it on a returning client."
+          title={POSITIONING.walkthroughHeading}
           body="A short, founder-led walkthrough of the real app. We reply within one business day."
         />
       </main>

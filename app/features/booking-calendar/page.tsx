@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { Metadata } from "next";
 import { SafeAnalytics } from "../../_components/SafeAnalytics";
 import { SiteHeader } from "../../_components/marketing/SiteHeader";
@@ -17,7 +18,7 @@ import { Reveal } from "../../_components/marketing/Reveal";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
 import { CalendarPreview } from "../../_components/marketing/visuals/CalendarPreview";
 import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../../_components/marketing/sections";
-import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
+import { WALKTHROUGH, ANALYTICS_EVENTS, POSITIONING } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
 // Feature: /features/booking-calendar. Intent: electrolysis booking / calendar
@@ -96,10 +97,23 @@ export default function BookingCalendarPage() {
           <Reveal immediate>
             <Eyebrow>Booking and calendar</Eyebrow>
             <Display className="mt-4">Booking connected to the treatment record</Display>
+            {/* #762 OWNS THESE WORDS, THIS PAGE OWNS ONLY THE LINE BREAK. Deck §6
+                sets the sub as two lines, and it is the same sentence pair #762
+                declares as POSITIONING.differentiationLine. Spelled by hand it
+                would drift the first time that constant is edited, so the break
+                is applied to the constant instead of the words being retyped.
+                Split on sentence ends rather than on a known fragment, so a
+                different sentence count still renders. */}
             <Lede className="mt-6 max-w-xl">
-              Your calendar remembers the appointment.
-              <br />
-              Hone helps you remember the treatment.
+              {POSITIONING.differentiationLine
+                .split(/(?<=\.)\s+/)
+                .filter(Boolean)
+                .map((line, i) => (
+                  <Fragment key={line}>
+                    {i > 0 ? <br /> : null}
+                    {line}
+                  </Fragment>
+                ))}
             </Lede>
             <div className="mt-8">
               <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
