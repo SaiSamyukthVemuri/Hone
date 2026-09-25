@@ -285,3 +285,65 @@ describe("the session-record figure is a crop, and stays one", () => {
     ).toBeLessThan(0.02);
   });
 });
+
+describe("alt text describes only what is in the frame", () => {
+  // WHY THIS IS ITS OWN CLASS. A screen-reader user cannot check the picture.
+  // Alt text naming content the capture does not contain tells them evidence
+  // exists that no sighted visitor can see — a worse failure than saying too
+  // little, and one no rendering test catches because the attribute is present
+  // and non-empty either way.
+  //
+  // TWO REAL INSTANCES, both shipped on this page and both removed:
+  //   * before-today ended at the "FOR NEXT VISIT" heading with no note text,
+  //     while the alt promised "the notes left for this visit";
+  //   * client-profile ended at the legacy skin notes, while the alt promised
+  //     "treatment history".
+  //
+  // LITERAL, NOT SEMANTIC. Nothing here can decide in general whether alt text
+  // is truthful — that needs a human looking at the image. It pins the phrases
+  // that were actually wrong, so re-adding one is red rather than silent.
+  const RETIRED = [
+    "notes left for this visit",
+    "skin type and treatment history",
+    "and treatment history",
+    "with its own response and tolerance",
+    "tolerated less than the lip",
+  ];
+
+  /** Every alt attribute on the page. */
+  const alts = () =>
+    [...read(PAGE).matchAll(/alt="([^"]+)"/g)].map((m) => m[1]);
+
+  it("there are alts to check — otherwise this is vacuous", () => {
+    const a = alts();
+    expect(a.length, "no alt attributes found").toBeGreaterThanOrEqual(3);
+    for (const t of a) {
+      expect(t.length, `an alt is too short to describe anything: "${t}"`).toBeGreaterThan(60);
+    }
+  });
+
+  it("no alt names content proven absent from its capture", () => {
+    const offenders: string[] = [];
+    for (const t of alts()) {
+      for (const phrase of RETIRED) {
+        if (t.toLowerCase().includes(phrase)) offenders.push(`${phrase} -> "${t.slice(0, 60)}…"`);
+      }
+    }
+    expect(
+      offenders,
+      "alt text promises content the capture does not contain",
+    ).toEqual([]);
+  });
+
+  it("the two corrected alts say where their capture stops", () => {
+    // Positive half: the honest version names the cut-off rather than trailing
+    // off, so a reader knows the panel heading is the end of the evidence.
+    const joined = alts().join(" | ");
+    expect(joined, "before-today alt no longer names its cut-off").toContain(
+      "headed For next visit, where the capture ends",
+    );
+    expect(joined, "client-profile alt no longer names its cut-off").toContain(
+      "legacy skin notes, where the capture ends",
+    );
+  });
+});

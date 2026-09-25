@@ -164,7 +164,7 @@ export default function TreatmentMemoryPage() {
             <ScreenFigure
               base="client-profile"
               priority
-              alt="A client profile in Hone. A pinned note reads that the client is sensitive along the jawline and that the area should be worked last, with a check-in before increasing energy. Below it are an allergies panel and the client's skin type and treatment history."
+              alt="A client profile in Hone. A pinned note, marked visible on every appointment, reads that the client is sensitive along the jawline and that the area should be worked last with a check-in before increasing energy. Below it an allergies panel reads none reported, and a skin panel records a practitioner-confirmed Fitzpatrick type above the legacy skin notes, where the capture ends."
               caption="A returning client's profile. The caution is pinned to the top of the file, not buried in a note from four visits ago."
             />
           </Container>
@@ -273,7 +273,7 @@ export default function TreatmentMemoryPage() {
             </div>
             <ScreenFigure
               base="before-today"
-              alt="An appointment in Hone before it begins. A pinned caution and allergies sit at the top, followed by the client's details and a last-treatment panel giving the date, the areas treated and the notes left for this visit."
+              alt="An appointment in Hone before it begins. A pinned caution and an allergies panel sit above the client's details, followed by a last-treatment panel giving the date, the service, the duration and the areas treated: midline upper lip and bilateral chin. Below it a last-session-notes section is headed For next visit, where the capture ends."
               caption="The same appointment a generic booking tool would show as a name and a time."
             />
           </Container>
