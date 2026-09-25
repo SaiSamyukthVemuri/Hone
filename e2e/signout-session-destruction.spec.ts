@@ -34,13 +34,37 @@ const APP_SHELL_NAV = "Open account menu";
 
 type ActionPost = { url: string; via: string; actionId: string };
 
-type ConsoleError = { text: string; url: string };
+/**
+ * WHEN a message was logged, relative to the logout's own hard navigation.
+ * `before` is an ordinary page; `teardown` is the window that opens when Sign
+ * out is activated and closes the moment the navigation settles; `after` is
+ * everything from there on, including FACT 6's direct /dashboard probe.
+ */
+type Phase = "before" | "teardown" | "after";
+
+type ConsoleError = { text: string; url: string; phase: Phase };
 
 type SignOutTraffic = {
   actionPosts: ActionPost[];
   consoleErrors: ConsoleError[];
   consoleWarnings: string[];
   pageErrors: string[];
+  /** Advanced by the observer; every console error is stamped with it. */
+  phase: Phase;
+  /** Whether the logout's hard navigation actually happened. No cause, no exception. */
+  logoutNavigated: boolean;
+  /** Opens the teardown window, taking the boundary snapshot of in-flight requests. */
+  openTeardownWindow: () => void;
+  /** Closes it. Nothing started after this is ever owned by the navigation. */
+  closeTeardownWindow: () => void;
+  /**
+   * Requests the logout navigation OWNS: those already in flight when Sign out
+   * was activated, plus any started before the navigation settled. Recorded
+   * from this harness's own bookkeeping of request/response events — NOT from
+   * whether the browser happened to report an abort, which is where four
+   * earlier attempts came unstuck. Its membership is deterministic.
+   */
+  teardownOwned: Set<string>;
 };
 
 // Console noise this LOCAL lane emits no matter what the app does. It arrives
@@ -72,71 +96,149 @@ const TELEMETRY_EMITTER = [
   /^Refused to execute script from '[^']*\/_vercel\/[^']*'/,
 ];
 
-// 3. TEARDOWN OF THE LOGOUT'S OWN NAVIGATION, which this spec causes on purpose.
+// 3. THE LOGOUT'S OWN HARD NAVIGATION, which this spec causes on purpose.
 //
-// SIGNOUT-02c had to give the in-flight hold to the action's promise, which
-// means the form's action is a client function — and Next then stops routing
-// the action's redirect, so reaching /login is a HARD browser navigation
-// rather than a soft RSC one. That is a real change, recorded in
-// app/(app)/signout-flight.ts, and it has a visible consequence here: a hard
-// navigation tears the document down, so any prefetch still in flight for the
-// menu's destinations fails, and Chrome makes its HTTPS-First attempt on the
-// fresh document.
+// SIGNOUT-02c gives the in-flight hold to the action's promise, so the form's
+// action is a client function — and Next then stops routing the action's
+// redirect, making /login a HARD browser navigation. That tears the document
+// down, so prefetches still running for the menu's destinations die with it,
+// and Chrome makes its HTTPS-First attempt on the fresh document. Neither is
+// the application reporting a fault.
 //
-// Neither is the application reporting a fault. The logout itself is measured
-// separately and completely — the Server Action dispatched, auth.sessions and
-// auth.refresh_tokens are empty, the cookie is gone, /dashboard is no longer
-// served — and every one of those facts was true in the runs that reddened on
-// this assertion alone.
+// THIS IS NOT A MESSAGE-PREFIX FILTER. A rule that forgave
+// "Failed to fetch RSC payload for …" by its wording would forgive it before
+// the logout, and during FACT 6's direct /dashboard probe afterwards — which
+// is exactly how a real defect would ride out of this spec unnoticed.
 //
-// Both patterns are ANCHORED and narrow, in keeping with the rule above: a
-// message must BEGIN with the browser's own prefix, and the SSL one must also
-// be attributed to an https:// URL, which this HTTP-only lane never serves. A
-// genuine application error cannot acquire either property by accident. And
-// like everything else here, they are PRINTED in the observation line.
-const NAVIGATION_TEARDOWN = [
-  // An RSC prefetch for a menu destination, cancelled by the navigation.
-  /^Failed to fetch RSC payload for /,
-];
+// THE EXCEPTION IS SCOPED BY REQUEST OWNERSHIP. When Sign out is activated the
+// observer snapshots every request still in flight; anything started before
+// the navigation settles joins them. Those, and only those, are the requests
+// the navigation kills, and only a message naming one of them is forgiven.
+//
+// FOUR EARLIER ATTEMPTS FAILED, and each failed the same way: they asked the
+// BROWSER which requests it had aborted. That answer is not deterministic —
+// across identical runs the abort set held six of eight cancelled prefetches,
+// then a different six, and messages arrived on both sides of every boundary
+// tried (the URL change, the load event, the next deliberate request). Failure
+// counts across those four scopings were 5, 1, 4 and 3 on unchanged code. The
+// variance was the browser's reporting, not the rule.
+//
+// Ownership is recorded HERE instead, from this harness's own request
+// bookkeeping, so membership does not depend on what the browser chose to
+// report or when. A forgiven message is still PRINTED in the observation line.
+export function isLogoutTeardownNoise(
+  e: ConsoleError,
+  evidence: { logoutNavigated: boolean; teardownOwned: ReadonlySet<string> },
+): boolean {
+  // Nothing logged before the logout is ever forgiven — first, because it is
+  // the one gate ownership cannot supply on its own: the filter runs once at
+  // the end, so a request that failed BEFORE the logout and was later owned by
+  // it would otherwise be excused retrospectively.
+  if (e.phase === "before") return false;
 
-function isNavigationTeardown(e: ConsoleError): boolean {
-  if (NAVIGATION_TEARDOWN.some((pattern) => pattern.test(e.text))) return true;
-  // Chrome's HTTPS-First upgrade attempt on the freshly loaded document. The
-  // lane is served over http, so an https:// attribution is by construction
-  // the browser and not the app.
-  return (
-    e.text.startsWith("Failed to load resource: net::ERR_SSL_PROTOCOL_ERROR") &&
-    e.url.startsWith("https://")
-  );
+  // And there must be a cause. A logout that never dispatched tears nothing
+  // down, and must not get a quieter console than one that did.
+  if (!evidence.logoutNavigated) return false;
+
+  const rsc = /^Failed to fetch RSC payload for (\S+?)\. Falling back/.exec(e.text);
+  if (rsc) return evidence.teardownOwned.has(withoutQuery(rsc[1]!));
+
+  // Chrome's HTTPS-First upgrade attempt on the document the logout navigated
+  // TO. This lane is served over http, so an https:// attribution is by
+  // construction the browser and not the app, and it must name the logout's
+  // own destination.
+  if (!e.text.startsWith("Failed to load resource: net::ERR_SSL_PROTOCOL_ERROR")) {
+    return false;
+  }
+  try {
+    const u = new URL(e.url);
+    return u.protocol === "https:" && u.pathname === "/login";
+  } catch {
+    return false;
+  }
 }
 
-function isTelemetryNoise(e: ConsoleError): boolean {
+/** origin + path: the identity a request and the message about it share. */
+function withoutQuery(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+function isTelemetryNoise(e: ConsoleError, traffic?: SignOutTraffic): boolean {
   return (
     TELEMETRY_ORIGIN.test(e.url) ||
     TELEMETRY_EMITTER.some((pattern) => pattern.test(e.text)) ||
-    isNavigationTeardown(e)
+    (traffic !== undefined && isLogoutTeardownNoise(e, traffic))
   );
 }
 
 function render(e: ConsoleError): string {
-  return `${e.text} @ ${e.url || "(no origin)"}`;
+  // The PHASE is part of the evidence: whether a message is teardown noise or
+  // a defect depends on when it was logged relative to the logout's own
+  // navigation, and a reader of a failure needs that without re-running.
+  return `[${e.phase}] ${e.text} @ ${e.url || "(no origin)"}`;
 }
 
-function applicationConsoleErrors(errors: ConsoleError[]): string[] {
-  return errors.filter((e) => !isTelemetryNoise(e)).map(render);
+function applicationConsoleErrors(
+  errors: ConsoleError[],
+  traffic?: SignOutTraffic,
+): string[] {
+  return errors.filter((e) => !isTelemetryNoise(e, traffic)).map(render);
 }
 
-function suppressedTelemetryErrors(errors: ConsoleError[]): string[] {
-  return errors.filter(isTelemetryNoise).map(render);
+function suppressedTelemetryErrors(
+  errors: ConsoleError[],
+  traffic?: SignOutTraffic,
+): string[] {
+  return errors.filter((e) => isTelemetryNoise(e, traffic)).map(render);
 }
 
 function recordSignOutTraffic(page: Page): SignOutTraffic {
+  // LIVE IN-FLIGHT BOOKKEEPING, private to this recorder. It is the whole
+  // basis of the teardown exception: what was already running when the logout
+  // was activated, and what started before the navigation settled. Counted,
+  // because the same route can legitimately be in flight more than once.
+  const inFlight = new Map<string, number>();
+
   const traffic: SignOutTraffic = {
     actionPosts: [],
     consoleErrors: [],
     consoleWarnings: [],
     pageErrors: [],
+    phase: "before",
+    logoutNavigated: false,
+    teardownOwned: new Set<string>(),
+    openTeardownWindow() {
+      // THE BOUNDARY SNAPSHOT. Everything in flight at this instant is about
+      // to be killed by the navigation the press is starting.
+      for (const url of inFlight.keys()) traffic.teardownOwned.add(url);
+      traffic.phase = "teardown";
+    },
+    closeTeardownWindow() {
+      traffic.phase = "after";
+    },
   };
+
+  const bump = (url: string, by: number) => {
+    const key = withoutQuery(url);
+    const next = (inFlight.get(key) ?? 0) + by;
+    if (next > 0) inFlight.set(key, next);
+    else inFlight.delete(key);
+  };
+  page.on("request", (request) => {
+    bump(request.url(), 1);
+    // A request that STARTS inside the window is owned by the navigation about
+    // to replace the document, exactly as one already running is.
+    if (traffic.phase === "teardown") {
+      traffic.teardownOwned.add(withoutQuery(request.url()));
+    }
+  });
+  page.on("requestfinished", (request) => bump(request.url(), -1));
+  page.on("requestfailed", (request) => bump(request.url(), -1));
 
   page.on("request", (request) => {
     if (request.method() !== "POST") return;
@@ -172,6 +274,7 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
       traffic.consoleErrors.push({
         text: message.text(),
         url: message.location()?.url ?? "",
+        phase: traffic.phase,
       });
     }
     if (type === "warning") traffic.consoleWarnings.push(message.text());
@@ -272,6 +375,9 @@ async function observeSignOut(
     "Sign out is reachable in the open menu",
   ).toBeVisible();
 
+  // THE WINDOW OPENS HERE, on the press that starts the navigation — and the
+  // boundary snapshot is taken at the same instant.
+  traffic.openTeardownWindow();
   const activatedVia = await activate(panel);
 
   // FACT 2, sampled IMMEDIATELY: React flushes a discrete click update
@@ -281,7 +387,15 @@ async function observeSignOut(
 
   // Bounded, non-throwing: a logout that never dispatched simply never
   // navigates, and that is a measurement, not an error.
-  await page.waitForURL(/\/login/, { timeout: 15_000 }).catch(() => {});
+  traffic.logoutNavigated = await page
+    .waitForURL(/\/login/, { timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false);
+
+  // AND IT CLOSES THE MOMENT THE NAVIGATION SETTLES. Nothing started after
+  // this line is ever owned by it — which is what keeps FACT 6's direct
+  // /dashboard probe below judged with no exception at all.
+  traffic.closeTeardownWindow();
 
   const urlAfter = page.url();
   const sessionsAfter = await settle(
@@ -335,10 +449,10 @@ function describeObservation(o: SignOutObservation): string {
     `authenticated shell served afterwards: ${o.shellPresentAfterwards}`,
     `console warnings: ${JSON.stringify(o.traffic.consoleWarnings)}`,
     `application console errors: ${JSON.stringify(
-      applicationConsoleErrors(o.traffic.consoleErrors),
+      applicationConsoleErrors(o.traffic.consoleErrors, o.traffic),
     )}`,
     `suppressed third-party telemetry: ${JSON.stringify(
-      suppressedTelemetryErrors(o.traffic.consoleErrors),
+      suppressedTelemetryErrors(o.traffic.consoleErrors, o.traffic),
     )}`,
     `page errors: ${JSON.stringify(o.traffic.pageErrors)}`,
   ].join(" | ");
@@ -395,7 +509,7 @@ function assertRealLogout(o: SignOutObservation, surface: string) {
   ).toEqual([]);
 
   expect(
-    applicationConsoleErrors(o.traffic.consoleErrors),
+    applicationConsoleErrors(o.traffic.consoleErrors, o.traffic),
     claim("ordinary logout logs no console error from the application"),
   ).toEqual([]);
 }
@@ -605,5 +719,128 @@ test.describe("SIGNOUT-01 · after logout", () => {
     await page.waitForURL(/\/login/, { timeout: 20_000 });
     await page.goto("/settings/profile");
     await page.waitForURL(/\/login/, { timeout: 20_000 });
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// WHAT THE TEARDOWN EXCEPTION FORGIVES, AND WHAT IT MUST NOT.
+//
+// The exception exists because the logout's hard navigation kills requests
+// that were running when it began. It is scoped by OWNERSHIP of those
+// requests, never by the wording of a message — a prefix filter would forgive
+// an RSC failure before the logout and during FACT 6's direct /dashboard
+// probe, which is exactly how a real defect would ride out of this spec.
+//
+// These cases pin each direction against synthetic records, so they cannot
+// drift with timing or with what the browser chose to report on the day.
+test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", () => {
+  const RSC = (url: string) =>
+    `Failed to fetch RSC payload for ${url}. Falling back to browser navigation. TypeError: Failed to fetch`;
+  const OWNED = "http://localhost:3111/settings/profile";
+  const NOT_OWNED = "http://localhost:3111/dashboard";
+  const evidence = {
+    logoutNavigated: true,
+    teardownOwned: new Set<string>([OWNED]),
+  };
+
+  test("1. an RSC failure BEFORE the logout is real", () => {
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "before" }, evidence),
+      "a failure before the logout was forgiven",
+    ).toBe(false);
+  });
+
+  test("2. a teardown-OWNED cancellation during the logout is forgiven", () => {
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "teardown" }, evidence),
+    ).toBe(true);
+  });
+
+  test("3. an UNRELATED RSC failure during the flow is real", () => {
+    // Same window, same wording, a request the navigation never owned. This is
+    // what separates "the navigation killed it" from "it looks alike".
+    expect(
+      isLogoutTeardownNoise(
+        { text: RSC(NOT_OWNED), url: NOT_OWNED, phase: "teardown" },
+        evidence,
+      ),
+      "a message was forgiven for a request the navigation never owned",
+    ).toBe(false);
+  });
+
+  test("4. an RSC failure on the dashboard probe is real", () => {
+    // FACT 6 lives here, and this is the property that protects it: the window
+    // is shut before the probe runs, so NOTHING the probe requests can join
+    // `teardownOwned`. Its failures are always real.
+    expect(
+      isLogoutTeardownNoise(
+        { text: RSC(NOT_OWNED), url: NOT_OWNED, phase: "after" },
+        evidence,
+      ),
+      "a dashboard-probe failure inherited the teardown exception",
+    ).toBe(false);
+  });
+
+  test("late reporting of an OWNED request is still the same teardown", () => {
+    // A hard navigation keeps reporting on the way down, and some of it lands
+    // after the window has shut. That is the same request the navigation
+    // killed, arriving late — the ownership record says so, and the clock
+    // cannot. Closing the exception on arrival time instead reddened five real
+    // cases whose logouts were provably perfect.
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "after" }, evidence),
+    ).toBe(true);
+  });
+
+  test("5. an ordinary console error is real, wherever it lands", () => {
+    for (const phase of ["before", "teardown", "after"] as const) {
+      for (const text of [
+        "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+        "Uncaught TypeError: cannot read properties of null",
+        "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      ]) {
+        expect(
+          isLogoutTeardownNoise({ text, url: NOT_OWNED, phase }, evidence),
+          `forgiven in ${phase}: ${text}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  test("with NO logout navigation, the window forgives nothing", () => {
+    // A logout that never dispatched tears nothing down, so it must not get a
+    // quieter console than one that did.
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "teardown" }, {
+        logoutNavigated: false,
+        teardownOwned: new Set<string>([OWNED]),
+      }),
+      "noise was forgiven for a logout that never navigated",
+    ).toBe(false);
+  });
+
+  test("the HTTPS-First attempt is forgiven only for the logout's destination", () => {
+    const ssl = "Failed to load resource: net::ERR_SSL_PROTOCOL_ERROR";
+    expect(
+      isLogoutTeardownNoise(
+        { text: ssl, url: "https://localhost:3111/login", phase: "teardown" },
+        evidence,
+      ),
+    ).toBe(true);
+    expect(
+      isLogoutTeardownNoise(
+        { text: ssl, url: "https://localhost:3111/dashboard", phase: "teardown" },
+        evidence,
+      ),
+      "forgiven for a document the logout never navigated to",
+    ).toBe(false);
+    expect(
+      isLogoutTeardownNoise(
+        { text: ssl, url: "http://localhost:3111/login", phase: "teardown" },
+        evidence,
+      ),
+      "forgiven for a plain http URL this lane really does serve",
+    ).toBe(false);
   });
 });
