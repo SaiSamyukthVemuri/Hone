@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // MKT-02C: the media this page serves, and the one boundary it had to move.
@@ -111,66 +111,92 @@ describe("every media path the page references actually exists", () => {
   });
 
   it("every literal /marketing asset URL resolves to a file", () => {
+    // Still literal-checked even though the page currently builds every
+    // screenshot URL from a stem: a hand-written path is exactly the kind of
+    // thing that gets added later and 404s silently.
     const urls = [...read(PAGE).matchAll(/"(\/marketing\/[^"]+)"/g)].map((m) => m[1]);
-    expect(urls.length, "no literal media URLs found — vacuous").toBeGreaterThanOrEqual(2);
     const missing = urls.filter((u) => !existsSync(path.join(ROOT, "public", u)));
     expect(missing, "the page references a missing public asset").toEqual([]);
   });
 
-  it("the film is referenced, and is the only video shipped for this page", () => {
-    // Guards the reverse direction: a 3.5MB binary left in the repo that no
-    // page requests is dead weight nothing else would notice.
-    const film = "public/marketing/hone-product-overview-v3-1.mp4";
-    expect(existsSync(path.join(ROOT, film)), `${film} missing`).toBe(true);
-    expect(read(PAGE)).toContain("/marketing/hone-product-overview-v3-1.mp4");
-    // A film that quietly grows past a few megabytes stops being appropriate
-    // for a marketing page; this is a ceiling, not a measurement.
-    const mb = statSync(path.join(ROOT, film)).size / 1024 / 1024;
-    expect(mb, `the film is ${mb.toFixed(1)}MB`).toBeLessThan(6);
+  it("uses the CANONICAL film rather than shipping a second copy", () => {
+    // This page once carried its own 3.5MB copy of the film and its own
+    // <video>. MKT-02B (#764) had already published the identical bytes at
+    // /film/hone-treatment-memory-v3-1.mp4 behind a shared facade player, so
+    // the duplicate was deleted. Two copies of one asset is two things to keep
+    // in step; two players for it is two places to get preload, muting and
+    // focus wrong.
+    const page = read(PAGE);
+    expect(page, "the page no longer renders the shared player").toContain(
+      'import { ProductFilm } from "../../_components/marketing/ProductFilm"',
+    );
+    expect(
+      existsSync(path.join(ROOT, "public/film/hone-treatment-memory-v3-1.mp4")),
+      "the canonical film is missing from public/film",
+    ).toBe(true);
+    expect(page, "this page declares its own film source again").not.toMatch(
+      /src="\/marketing\/[^"]*\.mp4"/,
+    );
+  });
+
+  it("ships no video of its own under public/marketing", () => {
+    // The reverse direction: a duplicate re-added under this page's own
+    // directory would not be caught by anything above.
+    const dir = path.join(ROOT, "public/marketing");
+    const stray: string[] = [];
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const full = path.join(d, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/\.(mp4|webm|mov|m4v)$/i.test(e.name)) stray.push(full.slice(ROOT.length + 1));
+      }
+    };
+    walk(dir);
+    expect(stray, "a second copy of a film is shipped under public/marketing").toEqual([]);
   });
 });
 
-describe("the film is reachable by the anonymous visitors it exists for", () => {
+describe("the film is public by EXACT PATH, and nothing else is", () => {
   const entry = matcherEntry();
   const runsMiddleware = (p: string) => new RegExp(`^${entry}$`).test(p);
+  const FILM = "/film/hone-treatment-memory-v3-1.mp4";
 
-  it("static media served from public/ does NOT run the auth middleware", () => {
+  it("the canonical film bypasses the session check", () => {
+    expect(
+      runsMiddleware(FILM),
+      `${FILM} runs updateSession, so an anonymous visitor is answered 307 -> /login`,
+    ).toBe(false);
+  });
+
+  it("the page's screenshots bypass it too, by extension", () => {
+    expect(runsMiddleware("/marketing/treatment-memory/client-profile-1600.webp")).toBe(false);
+  });
+
+  it("NO other mp4 is exempt — the extension is not a free pass", () => {
+    // THIS IS THE POINT OF THE EXACT PATH, and it is why this branch's earlier
+    // `.mp4` extension exemption was dropped in favour of production's policy.
+    // Hone stores clinical media. An extension-wide bypass would serve a
+    // private treatment video added later under an authenticated path to
+    // anyone, and nothing would announce it.
     for (const p of [
+      "/film/another-cut.mp4",
+      "/clients/abc/treatment-video.mp4",
       "/marketing/hone-product-overview-v3-1.mp4",
-      "/marketing/treatment-memory/client-profile-1600.webp",
+      "/mp4",
     ]) {
-      expect(
-        runsMiddleware(p),
-        `${p} runs updateSession, so an anonymous visitor is answered 307 -> /login`,
-      ).toBe(false);
+      expect(runsMiddleware(p), `${p} MUST still run through the auth middleware`).toBe(true);
     }
   });
 
-  it("the exemption is extension-anchored, not a /marketing prefix", () => {
-    // THE HOLE THIS REFUSES. Exempting the `marketing/` prefix would be the
-    // same defect the `fonts/` prefix was: Next route groups do not appear in
-    // the URL, so a grouped route could serve a real authenticated page under
-    // that prefix with nothing named `app/marketing/...` to give it away.
-    // Only the trailing `$` on a literal extension keeps this narrow.
-    for (const p of [
-      "/marketing/anything",
-      "/marketing/treatment-memory",
-      // A path containing .mp4 that does not END in it must stay guarded.
-      "/clients/x.mp4/edit",
-      // A route merely named for the extension is not an asset.
-      "/mp4",
-    ]) {
-      expect(runsMiddleware(p), `${p} MUST still run through the auth middleware`).toBe(
-        true,
-      );
+  it("a suffix cannot ride the exact path, and /film is not a prefix", () => {
+    for (const p of [`${FILM}/extra`, "/film", "/film/private", "/filmx/dashboard"]) {
+      expect(runsMiddleware(p), `${p} MUST still run through the auth middleware`).toBe(true);
     }
   });
 
   it("the page itself, and the authenticated app, still run it", () => {
     for (const p of ["/features/treatment-memory", "/dashboard", "/settings/data"]) {
-      expect(runsMiddleware(p), `${p} MUST still run through the auth middleware`).toBe(
-        true,
-      );
+      expect(runsMiddleware(p), `${p} MUST still run through the auth middleware`).toBe(true);
     }
   });
 });

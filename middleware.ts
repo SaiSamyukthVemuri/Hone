@@ -5,7 +5,7 @@ export async function middleware(request: NextRequest) {
   return await updateSession(request);
 }
 
-// THREE EXACT PATHS are excluded, never a `fonts/` prefix.
+// FOUR EXACT PATHS are excluded, never a directory prefix.
 //
 // The exclusion exists because OFL 1.1 clause 2 requires the licence to
 // accompany the copies of the font a browser receives, and `next/font/local`
@@ -23,29 +23,36 @@ export async function middleware(request: NextRequest) {
 // The .woff2 assets need nothing here: Next emits them under
 // /_next/static/media, already covered by the `_next/static` exclusion.
 //
+// THE PRODUCT FILM (MKT-02B) is the third, and it is here for exactly the same
+// reason the licences are. `public/film/...mp4` is a PUBLIC marketing asset on
+// the anonymous homepage, and without an exclusion updateSession answered it
+// 307 -> /login: the browser received an HTML login page where it expected
+// video bytes and reported MEDIA_ERR_SRC_NOT_SUPPORTED. The film simply did not
+// play for a logged-out visitor, which is every visitor it is aimed at. Caught
+// by e2e/marketing-homepage-film.spec.ts, which is why that proof asserts
+// frames actually decode rather than that a <video> element exists.
+//
+// IT IS THE EXACT FILE, NOT `.mp4`, and that is deliberate. Adding mp4 to the
+// extension alternation above would have been one character cheaper and would
+// exempt EVERY future .mp4 on every route from the session check. This
+// application stores clinical media; a private treatment video added later
+// under an authenticated path would be served to anyone, and nothing would
+// announce it. The image extensions are a pre-existing decision with its own
+// history; this lane does not widen that class.
+//
 // The trailing `$` on each alternative is load-bearing - it is what makes this
-// an exact-path exclusion rather than a prefix one, so `/fonts/private` and
-// `/fonts/LICENSE-Inter.txt/extra` both still run the middleware.
+// an exact-path exclusion rather than a prefix one, so `/fonts/private`,
+// `/fonts/LICENSE-Inter.txt/extra` and `/film/anything` all still run the
+// middleware.
 // A THIRD was added when the marketing surface moved to Instrument Sans: its
 // notice needs serving on exactly the same terms, and adding it as another
 // alternative rather than widening to a prefix is the whole point of the model.
 //
 // tests/source-guards/self-hosted-fonts-guards.test.ts parses this matcher and
-// pins both directions. See FONTS.md.
-// MKT-02C added `mp4` to the static-extension alternation. The product film on
-// /features/treatment-memory is served from public/, and every extension NOT in
-// this list runs updateSession: an anonymous visitor requesting the film got
-// 307 -> /login, so the video on a PUBLIC marketing page would not play for the
-// exact audience it exists for. Identical in shape to the font-licence defect
-// above, and fixed in the same place rather than by allowlisting an asset in
-// `isPublicRoute`, which enumerates public ROUTES, not files.
-//
-// Extension-scoped rather than path-scoped, and that is safe here for the
-// reason the `fonts/` prefix was not: this alternative requires a literal dot
-// and a trailing `$`, and no Next route resolves to a URL ending in `.mp4` -
-// unlike `/fonts/private`, which a grouped route really does serve.
+// pins both directions for the licences; tests/app/marketing-homepage-film.test.ts
+// does the same for the film. See FONTS.md.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|fonts/LICENSE-Inter\\.txt$|fonts/LICENSE-Fraunces\\.txt$|fonts/LICENSE-InstrumentSans\\.txt$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|fonts/LICENSE-Inter\\.txt$|fonts/LICENSE-Fraunces\\.txt$|fonts/LICENSE-InstrumentSans\\.txt$|film/hone-treatment-memory-v3-1\\.mp4$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

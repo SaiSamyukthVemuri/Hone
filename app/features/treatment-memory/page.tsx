@@ -16,7 +16,8 @@ import {
   CTAButton,
 } from "../../_components/marketing/primitives";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
-import { ProductFilm, ScreenFigure } from "../../_components/marketing/media";
+import { ProductFilm } from "../../_components/marketing/ProductFilm";
+import { ScreenFigure } from "../../_components/marketing/media";
 import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
@@ -124,23 +125,30 @@ export default function TreatmentMemoryPage() {
             </div>
           </div>
 
-          <div className="mx-auto mt-14 max-w-5xl">
-            <ProductFilm
-              src="/marketing/hone-product-overview-v3-1.mp4"
-              poster="/marketing/treatment-memory/film-poster-1920.webp"
-              label="Hone product overview: a returning client's history carried from one appointment into the next"
-              caption={
-                <>
-                  A short walkthrough of the real application: opening a returning
-                  client, reading what the last visit left behind, and charting
-                  today&rsquo;s session, setup by setup. Recorded against a
-                  demonstration practice with invented clients. No client data
-                  appears in it.
-                </>
-              }
-            />
-          </div>
         </Container>
+
+        {/* THE CANONICAL FILM, NOT A SECOND ONE. This page originally shipped
+            its own copy of the asset and its own <video>. MKT-02B (#764) had
+            already published the identical file — byte-for-byte, same sha256 —
+            at /film/hone-treatment-memory-v3-1.mp4 behind a shared player, so
+            the duplicate was deleted and this route now uses theirs.
+
+            That component is a FACADE: it fetches zero media bytes until
+            someone presses play, carries the film's transcript in the
+            accessibility tree, moves focus to the video it replaces, and has no
+            autoplay path at all. Reimplementing any of that here would be a
+            second player authority for one asset.
+
+            ON A BAND, deliberately. `ProductFilm` renders its caption in
+            `--color-onband-muted`, which is a light sage: legible on the dark
+            band it was designed for, and far too low-contrast on this page's
+            paper. Matching the surface it expects is the fix; forking the
+            component to recolour a caption is not. */}
+        <Section tone="band" className="!py-[clamp(3rem,5vw,4.5rem)]">
+          <Container>
+            <ProductFilm />
+          </Container>
+        </Section>
 
         {/* 1. The premise. */}
         <Section tone="paper">

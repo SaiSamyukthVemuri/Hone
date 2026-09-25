@@ -34,10 +34,12 @@ tests/lib/email/studio-identity.test.ts diff
 lib/billing/fonts/*.ttf binary
 lib/billing/fonts/LICENSE.txt -whitespace
 
-# MKT-02C: the product film and the synthetic-twin captures served on
-# /features/treatment-memory. Marked binary for the same reason as the vendored
-# faces above - no future core.autocrlf or diff setting may rewrite a byte - and
-# so a diff reports "binary files differ" rather than emitting megabytes of
-# mojibake into every review of this directory.
-public/marketing/**/*.mp4 binary
-public/marketing/**/*.webp binary
+# The product film (public/film) is the marketing asset itself, not source. A
+# single rewritten byte corrupts a video silently - it still "plays" until it
+# doesn't - so mark it binary explicitly for the same reason as the fonts above.
+*.mp4 binary
+*.png binary
+# MKT-02C serves its synthetic-twin captures as WebP. Same reasoning, and the
+# rule is added to production's list rather than kept as a second, narrower
+# block scoped to one directory - one place decides what is binary.
+*.webp binary

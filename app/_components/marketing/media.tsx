@@ -1,17 +1,24 @@
 import type { ReactNode } from "react";
 
-// Marketing media: the product film and the synthetic-twin screen figures.
+// Marketing media: the synthetic-twin screen figures.
 //
-// WHY THESE ARE SHARED COMPONENTS AND NOT INLINE MARKUP. Both carry rules that
-// are easy to get right once and easy to drop on the second call site: an
-// explicit intrinsic size (so nothing reflows when the asset arrives), a
-// responsive `srcSet` so a phone is not sent a desktop-sized file, and a
-// caption that is a real `<figcaption>` rather than a paragraph that merely
-// sits underneath.
+// THE FILM IS NOT HERE, AND THAT IS THE POINT. This module briefly exported a
+// `ProductFilm` of its own — a plain `<video controls preload="none">`. MKT-02B
+// (#764) had already published the same asset behind
+// `app/_components/marketing/ProductFilm.tsx`, a facade that fetches zero media
+// bytes until someone presses play, carries the transcript in the
+// accessibility tree and has no autoplay path at all. Two players for one file
+// is two places to get muting, focus and preload wrong, so this one was
+// deleted rather than merged alongside it.
 //
-// SERVER COMPONENTS, DELIBERATELY. A native `<video controls>` needs no client
-// JavaScript, so the film costs the page nothing but the bytes a viewer asks
-// for. Nothing here is interactive beyond what the browser already provides.
+// WHAT REMAINS IS THE STILL FIGURE, which has no equivalent upstream. It
+// carries the rules that are easy to get right once and easy to drop on the
+// second call site: an explicit intrinsic size (so nothing reflows when the
+// asset arrives), a responsive `srcSet` so a phone is not sent a desktop-sized
+// file, and a caption that is a real `<figcaption>` rather than a paragraph
+// that merely sits underneath.
+//
+// A SERVER COMPONENT, DELIBERATELY: a still needs no client JavaScript.
 
 /**
  * The default intrinsic size: a full-viewport capture, 8:5.
@@ -91,52 +98,6 @@ export function ScreenFigure({
           loading={priority ? "eager" : "lazy"}
           decoding="async"
         />
-      </div>
-      <figcaption className="mt-3 text-[0.875rem] leading-[1.55] text-muted">
-        {caption}
-      </figcaption>
-    </figure>
-  );
-}
-
-export function ProductFilm({
-  src,
-  poster,
-  label,
-  caption,
-}: {
-  src: string;
-  poster: string;
-  /** The film's accessible name. */
-  label: string;
-  caption: ReactNode;
-}) {
-  return (
-    <figure>
-      <div className="overflow-hidden rounded-[16px] border border-[color:var(--color-hairline-strong)] bg-band">
-        <video
-          // SILENT FILM, PROVED RATHER THAN ASSUMED: the file carries a `vide`
-          // handler and no `soun` track. WCAG 1.2.2 (captions) governs audio,
-          // so there is no audio to caption; what a silent informational video
-          // owes is a TEXT ALTERNATIVE, which is the caption below plus the
-          // still figures and prose that follow — every claim the film makes
-          // visually is also made in text on this page.
-          controls
-          // `preload="none"` keeps 3.5MB off the initial load. The poster is a
-          // 30KB WebP, so the section looks finished before anything is
-          // fetched, and the film costs bytes only once someone asks for it.
-          preload="none"
-          poster={poster}
-          playsInline
-          aria-label={label}
-          width={1920}
-          height={1080}
-          className="block h-auto w-full"
-        >
-          <source src={src} type="video/mp4" />
-          Your browser cannot play this video. The same walkthrough is described
-          in the sections below.
-        </video>
       </div>
       <figcaption className="mt-3 text-[0.875rem] leading-[1.55] text-muted">
         {caption}
