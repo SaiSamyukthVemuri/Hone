@@ -82,7 +82,13 @@ const WORKFLOW_STEPS: { n: string; title: string; body: string }[] = [
 const RECORD_LINES: string[] = [
   "Probe lots recorded on the treatment and linked to your inventory.",
   "Sterile-item and disinfectant expiry logged.",
-  "Edits kept as history, not written over.",
+  // NARROWED. This read "Edits kept as history, not written over", which
+  // promised append-only behaviour for every edit. Treatment and session values
+  // are editable IN PLACE — the register is explicit that records "stay
+  // editable" and forbids implying immutability. What is genuinely append-only
+  // is the clinical note: a correction is a new row (`supersedes_note_id`), and
+  // the register lists that among the claims still marketable as written.
+  "Clinical note corrections are kept as revisions, not written over.",
   "Record gaps flagged: a missing probe lot, aftercare not marked, a completed appointment not yet charted.",
 ];
 
@@ -126,8 +132,12 @@ const OWNERSHIP: { title: string; body: string }[] = [
     // documented route for obtaining the rest, so naming one here would be a
     // second overclaim stacked on the first. The line now bounds itself to the
     // list above and promises nothing beyond it.
-    title: "No contract. Cancel anytime.",
-    body: "No setup fee and no minimum term. What you can take with you is the export named above — nothing here promises more than that list.",
+    // "No contract" and "no minimum term" are both gone: the pricing truth work
+    // retired the contract claim, and neither is verifiable from anything in
+    // this repository. What remains are the two terms the operator actually
+    // publishes. The bounded export wording below is unchanged.
+    title: "No setup fee. Cancel anytime.",
+    body: "What you can take with you is the export named above — nothing here promises more than that list.",
   },
 ];
 
@@ -208,10 +218,17 @@ export default function HomePage() {
               <p className="mt-6 max-w-[38ch] text-[1.25rem] leading-[1.4] text-ink">
                 Upper lip, chin, neck and brows don&apos;t share one note.
               </p>
+              {/* THE PRODUCT MODEL, NOT A SIMPLIFICATION OF IT. This claimed a
+                  four-area appointment is recorded as four separate treatments.
+                  It is not: Hone records several areas under ONE machine-settings
+                  block when the same setup applies (register: "Multi-area under
+                  one settings block + per-area laterality", 0128/0129). The
+                  per-area promise that IS true is findability — memory is kept
+                  per treatment area — so that is what this says now. */}
               <Lede className="mt-5 max-w-[46ch]">
-                A four-area appointment is recorded as four treatments, each attached to its
-                area. Come back for the chin and you see the chin: last settings, last
-                response, last note.
+                Treat several areas at the same settings and Hone records those areas under
+                one settings block. Each area still remains findable in its own history.
+                When the setup changes, a new block preserves the difference.
               </Lede>
             </div>
             <TreatmentMemoryPanel />
@@ -234,10 +251,10 @@ export default function HomePage() {
                   &ldquo;Upper lip treated, tolerated well.&rdquo;
                 </p>
                 <Lede className="mt-8 max-w-[42ch]">
-                  Hone records the treatment as fields, not a paragraph: area, settings, probe
-                  and lot, tolerance, response and what to remember next time. Because
-                  they&apos;re fields, each area&apos;s history stays separate, comes forward
-                  on its own, and Hone can tell you when one is missing.
+                  Hone records the treatment as fields, not a paragraph: the areas treated,
+                  the machine settings, probe and lot, how each area was tolerated, and what
+                  to remember next time. Because they&apos;re fields rather than prose, each
+                  area stays findable on its own and Hone can tell you when one is missing.
                 </Lede>
                 <Link
                   href="/features/charting-records"

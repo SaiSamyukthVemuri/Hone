@@ -97,8 +97,18 @@ export const POSITIONING = {
   proofLine:
     "Built for electrolysis records · History by treated area · Probe lots tied to treatments · CSV export on every plan",
   // Rendered directly under the Before Today block (deck §3 section 2).
+  //
+  // THE FOURTH ITEM IS NOT A SUPPORT PROMISE, AND THAT IS DELIBERATE.
+  // It read as a commitment that one specific person answers support. That is a
+  // personal obligation, not a property of the product: it has no truth-register
+  // row, nothing in the repository can verify it, and it binds the business to
+  // one individual's availability on a public page. It is replaced by a
+  // commercial term the operator actually sets and already publishes in
+  // `assuranceLine` — no invented substitute, and deliberately NOT "24/7
+  // support" or "the Hone team", which would trade an unsupported promise for a
+  // larger one.
   trustStrip:
-    "Records isolated by studio · Imported history stays marked as imported · CSV export on every plan · The person who built Hone answers support",
+    "Records isolated by studio · Imported history stays marked as imported · CSV export on every plan · No setup fee",
   // Under the pricing cards and in the CTA block — deliberately NOT under the
   // hero, which is where the retired proof line used to put this material.
   assuranceLine:

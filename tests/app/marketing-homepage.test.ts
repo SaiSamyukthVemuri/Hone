@@ -193,6 +193,80 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
     expect(PAGE).toMatch(/does and does not yet include/);
   });
 
+  it("makes no personal support promise", () => {
+    // The trust strip's fourth item promised that one specific person answers
+    // support. That is a personal obligation rather than a property of the
+    // product: no truth-register row, nothing in the repo can verify it, and it
+    // binds the business to one individual's availability on a public page.
+    // Forbidden together with the larger substitutes it would be tempting to
+    // reach for.
+    const rendered = stripComments(PAGE);
+    const scanned = `${rendered}\n${POSITIONING.trustStrip}`;
+    for (const promise of [
+      /the person who built hone/i,
+      /\bfounder\b[^.]{0,30}\b(answers|handles|replies)/i,
+      /\b24\s*\/\s*7\b/i,
+      /round.the.clock/i,
+      /(hone|our) team (answers|handles|replies|is here)/i,
+      /dedicated (support|account) (manager|rep)/i,
+    ]) {
+      expect(scanned, `homepage makes an unsupported support promise: ${promise}`)
+        .not.toMatch(promise);
+    }
+    // And the strip still renders four items.
+    expect(POSITIONING.trustStrip.split(" · ")).toHaveLength(4);
+  });
+
+  it("describes the real multi-area model, not one treatment per area", () => {
+    // Hone records several areas under ONE machine-settings block when the same
+    // setup applies (register: "Multi-area under one settings block + per-area
+    // laterality", 0128/0129). The page claimed a four-area appointment becomes
+    // four separate treatments, and it does not.
+    const rendered = stripComments(PAGE);
+    for (const wrong of [
+      /recorded as (four|three|two|separate) treatments/i,
+      /each area is (its own|a separate) (treatment|session|record)/i,
+      /one treatment per area/i,
+      /(a )?\d+-area appointment is recorded as \d+/i,
+    ]) {
+      expect(rendered, `homepage decomposes a multi-area session wrongly: ${wrong}`)
+        .not.toMatch(wrong);
+    }
+    // The true per-area promise — findability — must still be made.
+    expect(rendered).toMatch(/findable in its own history/i);
+    expect(rendered).toMatch(/one settings block/i);
+  });
+
+  it("keeps the append-only claim narrow to what is actually append-only", () => {
+    // Treatment and session values are editable IN PLACE; the register is
+    // explicit that records "stay editable" and forbids implying immutability.
+    // Only the clinical note is append-only (a correction is a new row via
+    // supersedes_note_id), alongside the record-keeping audit trail.
+    const rendered = stripComments(PAGE);
+    for (const overbroad of [
+      /\bedits kept as history\b/i,
+      /(nothing|no record|no edit) is (ever )?(written over|overwritten)/i,
+      /(treatment|session)s? (records? )?(are|is) (never|not) (edited|overwritten|changed)/i,
+      /tamper.proof|immutable (record|chart)|locked (chart|record)/i,
+    ]) {
+      expect(rendered, `homepage over-promises append-only behaviour: ${overbroad}`)
+        .not.toMatch(overbroad);
+    }
+    expect(rendered).toMatch(/clinical note corrections are kept as revisions/i);
+  });
+
+  it("makes no contract or minimum-term claim", () => {
+    // Retired by the pricing truth work and unverifiable from this repository.
+    const rendered = stripComments(PAGE);
+    for (const claim of [/no contract/i, /minimum term/i, /\block.?in\b/i]) {
+      expect(rendered, `homepage makes an unsupported commercial claim: ${claim}`)
+        .not.toMatch(claim);
+    }
+    // The two terms the operator does publish are still there.
+    expect(rendered).toMatch(/no setup fee/i);
+    expect(rendered).toMatch(/cancel anytime/i);
+  });
+
   it("keeps the payment qualifier and the policy link", () => {
     expect(PAGE).toMatch(/PAYMENT_QUALIFIER/);
     expect(PAGE).toMatch(/href="\/privacy"/);
