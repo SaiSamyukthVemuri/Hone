@@ -98,7 +98,7 @@ describe("SIGNOUT-02 · SIGNOUT-01 is not weakened", () => {
       // the `$ACTION_ID_` field from the server's HTML, so a press before
       // hydration dispatches nothing. Proved against the served markup in
       // e2e/signout-session-destruction.spec.ts.
-      expect(code, f).toMatch(/<form action=\{signOut\} id="signout-/);
+      expect(code, f).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}[\s\S]{0,200}?id="signout-/);
       expect(code, f).toContain("<SignOutFlightReporter />");
       expect(code, f).not.toContain("trackSignOut");
       // And the control reaches it from inside the panel.
@@ -171,10 +171,21 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     // cannot take down.
     const reporter = codeOnly(read("app/(app)/SignOutFlightReporter.tsx"));
     expect(reporter).toContain("useFormStatus");
-    expect(reporter).toContain("setSignOutInFlight(pending);");
-    // Only transitions: the store counts, so a mount-time `false` would
-    // decrement a hold this form never placed.
-    expect(reporter).toContain("if (pending === published.current) return;");
+    // IT RELEASES; IT DOES NOT ACQUIRE. The visible control sits OUTSIDE this
+    // hidden form, so its own `useFormStatus()` never fires — it is disabled
+    // only by `busy` from the shared store. Acquiring here, in a passive
+    // effect, left the control enabled between the press and the effect. The
+    // form's `onSubmit` takes the hold synchronously instead.
+    expect(reporter).toContain("setSignOutInFlight(false);");
+    expect(reporter).not.toContain("setSignOutInFlight(true)");
+    // Only a reporter that actually saw the submission may release it, or a
+    // mount-time `false` would decrement a hold this form never placed.
+    expect(reporter).toContain("if (!sawPending.current) return;");
+    for (const f of shells) {
+      expect(codeOnly(read(f)), f).toContain(
+        "onSubmit={() => setSignOutInFlight(true)}",
+      );
+    }
     // It observes; it does not submit, and it renders nothing.
     expect(reporter).toContain("return null;");
     expect(reporter).not.toMatch(/<form[\s>]/);

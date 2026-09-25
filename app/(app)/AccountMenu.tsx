@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
-import { useSignOutInFlight } from "./signout-flight";
+import { setSignOutInFlight, useSignOutInFlight } from "./signout-flight";
 import { SignOutFlightReporter } from "./SignOutFlightReporter";
 
 // PR #231: desktop account dropdown (LinkedIn-style "Me" menu). The
@@ -122,7 +122,27 @@ export function AccountMenu({
           perfect. SIGNOUT-01's own rule stands untouched here: no onClick, and
           nothing unmounts this form during the press — it is no longer even
           adjacent to the thing that opens and closes. */}
-      <form action={signOut} id="signout-account" className="hidden">
+      <form
+        action={signOut}
+        id="signout-account"
+        className="hidden"
+        // THE HOLD IS TAKEN SYNCHRONOUSLY, during the submit event.
+        //
+        // The visible control is in the panel, OUTSIDE this form, so its own
+        // `useFormStatus()` never fires — it is disabled only by `busy`
+        // arriving from the shared store. Publishing that from the reporter's
+        // passive effect left the control enabled for the whole gap between
+        // the press and the effect, and a fast double-press queued a second
+        // logout through it. `onSubmit` runs before any effect gets a turn.
+        //
+        // It does NOT preventDefault and does NOT unmount anything, so the
+        // native submission proceeds untouched — SIGNOUT-01's rule is about a
+        // handler that detaches the form mid-click, which this is not. And it
+        // is a hydrated-only handler, so a press before hydration still posts
+        // natively; it simply gets no acknowledgement, which is the honest
+        // outcome when no JavaScript has run.
+        onSubmit={() => setSignOutInFlight(true)}
+      >
         <SignOutFlightReporter />
       </form>
       <button

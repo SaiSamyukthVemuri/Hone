@@ -101,7 +101,7 @@ describe("app shell: responsive navigation", () => {
     // Notifications moved to the header bell (PR #229).
     expect(MENU).not.toContain('"/notifications"');
     expect(MENU).toMatch(/Sign out/);
-    expect(MENU).toMatch(/form action=\{signOut\}/);
+    expect(MENU).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}/);
     // PR #229: every link tap closes the menu; Escape closes too.
     expect(MENU).toMatch(/onClick=\{close\}/);
     expect(MENU).toMatch(/e\.key === "Escape"/);
@@ -164,7 +164,7 @@ describe("desktop account dropdown (PR #231)", () => {
   it("contains the account destinations, the profile block, and Sign out", () => {
     expect(ACCOUNT).toContain('"/settings/profile"');
     expect(ACCOUNT).toContain('"/getting-started"');
-    expect(ACCOUNT).toMatch(/form action=\{signOut\}/);
+    expect(ACCOUNT).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}/);
     expect(ACCOUNT).toMatch(/Sign out/);
     expect(ACCOUNT).toMatch(/\{studioName\} · \{roleLabel\}/);
   });
@@ -221,7 +221,7 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
     // because wrapping it in a client function removed the POST target and the
     // `$ACTION_ID_` field from the SERVER'S HTML, so a press before hydration
     // dispatched nothing at all.
-    const open = code.search(/<form action=\{signOut\} id="signout-/);
+    const open = code.search(/<form\b[\s\S]{0,200}?action=\{signOut\}[\s\S]{0,200}?id="signout-/);
     expect(open, `${name}: the Sign out form exists`).toBeGreaterThan(-1);
     // The form is SELF-CLOSING now: it holds nothing. The submit control lives
     // in the panel and reaches it by `form=`, which is what lets the form sit
@@ -240,7 +240,7 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
     it(`${name}: the comment stripper keeps code and drops prose`, () => {
       const code = codeOnly(source);
       expect(code, `${name}: the Sign out form survives`).toMatch(
-        /<form action=\{signOut\} id="signout-/,
+        /<form\b[\s\S]{0,200}?action=\{signOut\}[\s\S]{0,200}?id="signout-/,
       );
       expect(code, `${name}: real links survive`).toMatch(/<Link\b/);
       // This token exists ONLY inside a comment in both shells.
@@ -260,7 +260,7 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
       expect(
         codeOnly(source),
         `${name}: the form's action is the server action itself`,
-      ).toMatch(/<form action=\{signOut\} id="signout-/);
+      ).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}[\s\S]{0,200}?id="signout-/);
       expect(
         codeOnly(source),
         `${name}: the panel's control submits the hoisted form`,
@@ -273,7 +273,7 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
       expect(
         codeOnly(source),
         `${name}: the sign-out form is hoisted out of the {open && ...} panel`,
-      ).toMatch(/<form action=\{signOut\} id="signout-/);
+      ).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}[\s\S]{0,200}?id="signout-/);
       // No hand-rolled control left behind in the form.
       expect(form, `${name}: no control sits in the hoisted form`).not.toMatch(
         /<button/,

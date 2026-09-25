@@ -329,6 +329,60 @@ for (const surface of SURFACES) {
       await gate.unroute();
     });
 
+    test("a double-press with no pause dispatches exactly one logout", async ({
+      page,
+    }) => {
+      // THE GAP THIS CLOSES, and the reason the wire test above could not see
+      // it: that test waits for `[data-signout-pending]` before pressing
+      // again, so by then the control is already disabled. A practitioner
+      // double-tapping does not wait.
+      //
+      // The visible control lives in the panel, OUTSIDE the hidden sign-out
+      // form, so its own `useFormStatus()` never fires — it is disabled only
+      // by `busy` arriving from the shared store. While that was published
+      // from a passive effect, the control stayed enabled for the whole gap
+      // between the press and the effect running, and a second press in that
+      // gap queued another logout. The hold is now taken in the form's
+      // `onSubmit`, before any effect gets a turn.
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+
+      const gate = await holdActions(page, { onRelease: "continue" });
+      const panel = await surface.open(page);
+      const control = panel.getByRole("button", { name: "Sign out" });
+      const box = (await control.boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+
+      // NO WAIT BETWEEN THEM. Two presses as fast as the driver can deliver
+      // them, which is faster than a passive effect can run.
+      await page.mouse.click(x, y);
+      await page.mouse.click(x, y);
+      await page.mouse.click(x, y);
+
+      await expect(panel.locator("[data-signout-pending]")).toBeVisible({
+        timeout: 5_000,
+      });
+      expect(
+        gate.state.held,
+        "a press that landed before the acknowledgement queued a second logout",
+      ).toBe(1);
+
+      // And still exactly one through the drain.
+      gate.release();
+      await page.waitForURL(/\/login/, { timeout: 20_000 });
+      await Promise.race([
+        gate.duplicateSeen,
+        new Promise((r) => setTimeout(r, 3_000)),
+      ]);
+      expect(
+        gate.state.held,
+        "more than one logout reached the wire after a double-press",
+      ).toBe(1);
+
+      await gate.unroute();
+    });
+
     test("the panel cannot be dismissed out from under a logout", async ({ page }) => {
       // THE DEFECT THIS CLOSES, which the earlier tests could not see because
       // they never touched the panel. `useFormStatus` reports only for the form
