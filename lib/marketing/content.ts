@@ -285,7 +285,11 @@ export type PricingPlan = {
   /** Display price, e.g. "CAD $29". Null when the plan is "Talk to us". */
   priceLabel: string | null;
   cadence: string | null;
-  badge: string | null;
+  // NO BADGE FIELD. A recommended/most-popular marker is not merely unset —
+  // it is unsayable, so re-adding one is a typed change a reviewer sees
+  // rather than a data edit that slips through. Hone has no adoption data to
+  // support recommending a tier, and the badge also drove a border/shadow
+  // emphasis on two surfaces, so the visual recommendation goes with it.
   bestFor: string;
   /** Truthful transition/continuity sentence, when the plan has one. */
   transition?: string;
@@ -299,8 +303,8 @@ export const PRICING_PLANS: ReadonlyArray<PricingPlan> = [
     name: "Founding Solo",
     priceLabel: "CAD $29",
     cadence: "/month",
-    badge: null,
     bestFor: "Early solo electrologists joining Hone.",
+    seats: "1 practitioner",
     transition:
       "CAD $29/month for the first 12 months, then CAD $39/month while continuously subscribed.",
   },
@@ -309,27 +313,35 @@ export const PRICING_PLANS: ReadonlyArray<PricingPlan> = [
     name: "Solo",
     priceLabel: "CAD $49",
     cadence: "/month",
-    badge: "Most popular",
     bestFor: "Established solo electrologists.",
+    seats: "1 practitioner",
   },
   {
     id: "studio",
     name: "Studio",
     priceLabel: STUDIO_PRICE_PUBLISHED ? "CAD $99" : null,
     cadence: STUDIO_PRICE_PUBLISHED ? "/month" : null,
-    badge: null,
     bestFor: "Small studios with up to three practitioners.",
-    seats: "up to three practitioners",
+    seats: "up to 3 practitioners",
   },
 ] as const;
 
-// Assurances, each is evidence-backed in the truth register (§23). No setup
-// fee / no contract / cancel anytime / free standard import / founder-led setup.
+// Assurances: founder-led setup / free standard client import / no setup fee /
+// cancel anytime.
+//
+// THE LIST ABOVE IS THE WHOLE SET. It previously also named "no contract" and
+// described every entry as evidence-backed in the truth register — while the
+// register records no contract claim at all. This module documents the
+// evidence gate for marketing copy, so a header contradicting the constant
+// beneath it is the likeliest way the unsupported assurance comes back.
 export const PRICING_ASSURANCES: ReadonlyArray<string> = [
   "Founder-led setup",
   "Free standard client import",
   "No setup fee",
-  "No contract, cancel anytime",
+  // NARROWED from "No contract, cancel anytime". The contract claim is not
+  // traceable to the truth register, and the cancellation half is the part
+  // the deck asks for; dropping the rest removes an unsourced assurance.
+  "Cancel anytime",
 ] as const;
 
 // Payment qualifier, used wherever payments are mentioned. Never imply

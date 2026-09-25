@@ -70,8 +70,20 @@ test.describe("marketing homepage (desktop)", () => {
     await expect(page.getByText("CAD $49")).toBeVisible();
     await expect(page.getByText("$19")).toHaveCount(0);
 
+    // MKT-02D: NO TIER IS RECOMMENDED. This asserted "Most popular" was
+    // VISIBLE. The badge is gone — along with the border, shadow and primary
+    // CTA it drove — so the assertion is inverted rather than deleted: a
+    // removed check would let the badge return without any browser-level
+    // notice, which is the same gap that made this a required-suite failure in
+    // the first place. #764 rebuilt this section and kept it badge-free; the
+    // assertion still earns its place because nothing else would notice.
+    await expect(page.getByText("Most popular")).toHaveCount(0);
+    await expect(page.getByText(/recommended/i)).toHaveCount(0);
+
     // Ownership: evidence-backed claims + policy link. The export line names
     // its subset rather than claiming "full studio history" (TRUTH-01A).
+    // #764's wording supersedes the old "Studio data stays isolated" line that
+    // stood here; the claim moved, the check moves with it.
     await expect(page.getByText("Each studio's records are isolated")).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Export your records as CSV, on every plan" }),
