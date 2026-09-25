@@ -265,6 +265,41 @@ charting/calendar-collaboration story, not a per-practitioner booking story.
 
 ---
 
+## No client or appointment caps (copy deck v2.2 `noCapsLine`)
+
+**Claim published:** "Every plan includes the full treatment workflow. No client caps.
+No appointment caps."
+
+**Class: verified ABSENCE.** This row exists because the claim is the only kind the rest
+of this register cannot express: every other row records that a capability IS present,
+and this one records that a LIMIT is not. An absence has no code to point at, so the
+method is recorded instead of a line number.
+
+**How it was verified (MKT-02A, against production `a5f3aa27`):** searched the
+application source and the full `supabase/migrations` set for a plan-level ceiling on
+client or appointment count — `max_clients`, `client_limit`, `appointment_limit`, quota
+columns, and `CHECK`/trigger constraints counting rows per studio. There is none, and no
+row of this register grants one. Pricing tiers differ only by who the plan is for and how
+many practitioners it covers.
+
+**WHAT THE SEARCH DID FIND, AND WHY IT IS A DIFFERENT THING.** Three kinds of limit exist
+in the codebase and none of them is a cap on how much a studio may hold:
+
+- per-IP **request rate limiters** on public booking and invitation routes (abuse
+  protection: how FAST requests may arrive, not how many records may exist);
+- **Google API quotas**, which belong to Google and are not a Hone plan term;
+- a **proof-attempt ceiling** on waitlist invitations (a security control on one token).
+
+Mistaking any of these for a plan cap would make this row read as contradicted when it is
+not. Equally, if a future change adds a real per-studio ceiling, this claim becomes false
+and must be retired before that change ships — a rate limiter being tightened does NOT
+trigger that, and a new `CHECK` on a per-studio count does.
+
+**Not claimed:** the word "unlimited". Absence of a plan cap is not a promise of infinite
+capacity, and the published line deliberately says only the former.
+
+---
+
 ## Stale/false claims on the CURRENT site that must change
 
 Captured from the baseline (see `baseline-audit.md`) so the rebuild removes each:
@@ -284,3 +319,10 @@ Captured from the baseline (see `baseline-audit.md`) so the rebuild removes each
    claim.
 6. Eyebrow == H1 duplication ("Treatment memory for electrologists" used as both) →
    new hero per §5; keep the phrase in supporting copy/metadata/footer only.
+   **RESOLVED by MKT-02A** at copy deck v2.2: the eyebrow carries the category and the
+   H1 makes the promise, so the two can no longer be the same string.
+   `tests/lib/marketing/content-v22.test.ts` pins both and additionally asserts the H1
+   does not reintroduce the category phrase by other wording. The retired hero, category
+   ambition and proof line are deleted from `lib/marketing/content.ts` rather than left
+   exported, and that file is asserted to contain no fragment of them — comments
+   included, because a retired line parked in a comment is a line an edit can paste back.
