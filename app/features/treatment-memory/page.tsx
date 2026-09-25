@@ -196,10 +196,21 @@ export default function TreatmentMemoryPage() {
                 was ever charted on its own.
               </Lede>
             </div>
+            {/* A CROP OF THE SAME CAPTURE, not a new one. The full-viewport
+                frame carried the blue WATCH TODAY panel, which
+                `point-of-care-memory.ts` builds from
+                `session_blocks.caution_note` — an input PR #199 retired — so
+                the figure advertised a workflow no practitioner can start.
+                Cropping to the setup band removes it while keeping the evidence
+                this section actually needs. Nothing was repainted, removed or
+                composited; the only change is the frame. 30:7, hence the
+                explicit intrinsic size. */}
             <ScreenFigure
               base="session-record"
-              alt="A session record in Hone showing two setup blocks. The midline upper lip and the bilateral chin were worked at different energy levels and for different lengths of time, so each has its own block listing frequency, probe, mode, energy level, timing, intensity and minutes, with its own response and tolerance."
-              caption="Two blocks here because the settings differed: the chin tolerated less than the lip and was worked down accordingly. Had both been treated at the same setup, they would share one block and still each keep their own history."
+              width={2400}
+              height={560}
+              alt="The setup panel of a session record in Hone, listing two blocks. Midline Upper lip: 27.12 MHz, a Sterex Gold two-piece F3 Short probe with a confirmed lot number, Blend, energy level 3, 3 seconds, 40 percent, 1 pulse, 18 minutes, numbing used. Bilateral Chin: the same frequency, probe and lot, Blend, energy level 2, 3 seconds, 40 percent, 1 pulse, 12 minutes, numbing used."
+              caption="Two blocks, because the settings differed: the chin was worked at a lower energy and for less time than the lip. Had both been treated at the same setup they would share one block, and each area would still keep its own history."
             />
           </Container>
         </Section>

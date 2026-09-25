@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import sharp from "sharp";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -171,5 +172,116 @@ describe("the film is reachable by the anonymous visitors it exists for", () => 
         true,
       );
     }
+  });
+});
+
+describe("the session-record figure is a crop, and stays one", () => {
+  // WHY A PIXEL CHECK AND NOT A COMMENT. The full-viewport capture of this
+  // screen carries a blue WATCH TODAY panel, which `point-of-care-memory.ts`
+  // builds from `session_blocks.caution_note` — an input PR #199 retired. A
+  // marketing figure showing it advertises a workflow no practitioner can
+  // start, and no assertion over the PAGE can see that: the defect lives in
+  // the image bytes. Re-exporting this figure from the uncropped frame is a
+  // one-line mistake that every other test here would wave through.
+  const DIR = "public/marketing/treatment-memory";
+  const WIDTHS = [800, 1600, 2400];
+
+  /** Mean (blue - red) per row. The panel's tint is ~16; plain paper is ~0. */
+  async function maxRowBlueTint(rel: string): Promise<number> {
+    const { data, info } = await sharp(path.join(ROOT, rel))
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const { width, height, channels } = info;
+    let worst = -Infinity;
+    for (let y = 0; y < height; y++) {
+      let r = 0;
+      let b = 0;
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * channels;
+        r += data[i];
+        b += data[i + 2];
+      }
+      worst = Math.max(worst, (b - r) / width);
+    }
+    return worst;
+  }
+
+  for (const w of WIDTHS) {
+    it(`session-record-${w}.webp shows no caution panel`, async () => {
+      const tint = await maxRowBlueTint(`${DIR}/session-record-${w}.webp`);
+      // Threshold 4 sits far below the panel's measured ~16 and far above the
+      // ~0.1 of an untinted row, so it separates the two without being tuned
+      // to one encoder's rounding.
+      expect(
+        tint,
+        `session-record-${w}.webp contains a blue-tinted band: the retired ` +
+          `WATCH TODAY panel is back in frame`,
+      ).toBeLessThan(4);
+    });
+  }
+
+  it("the detector is real: the UNCROPPED source still trips it", async () => {
+    // ANTI-VACUITY, and the only honest way to run this one. A threshold test
+    // that has never seen a positive is a test that might be measuring
+    // nothing. The original capture is checked in nowhere, so the control is
+    // built here: paint one band of the panel's own colour onto a copy of the
+    // cropped image and confirm the detector fires.
+    const rel = `${DIR}/session-record-1600.webp`;
+    const meta = await sharp(path.join(ROOT, rel)).metadata();
+    const w = meta.width!;
+    const band = await sharp({
+      create: { width: w, height: 40, channels: 3, background: { r: 239, g: 246, b: 255 } },
+    })
+      .png()
+      .toBuffer();
+    const spoiled = await sharp(path.join(ROOT, rel))
+      .composite([{ input: band, top: 10, left: 0 }])
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const { data, info } = spoiled;
+    let worst = -Infinity;
+    for (let y = 0; y < info.height; y++) {
+      let r = 0;
+      let b = 0;
+      for (let x = 0; x < info.width; x++) {
+        const i = (y * info.width + x) * info.channels;
+        r += data[i];
+        b += data[i + 2];
+      }
+      worst = Math.max(worst, (b - r) / info.width);
+    }
+    expect(worst, "the detector cannot see a panel-coloured band").toBeGreaterThan(4);
+  });
+
+  it("every variant keeps the SAME crop geometry", async () => {
+    // A per-width crop drift would show different content at different
+    // viewports — including, potentially, the panel at one size only.
+    const ratios: number[] = [];
+    for (const w of WIDTHS) {
+      const m = await sharp(path.join(ROOT, `${DIR}/session-record-${w}.webp`)).metadata();
+      expect(m.width, `session-record-${w}.webp is not ${w} wide`).toBe(w);
+      ratios.push(m.width! / m.height!);
+    }
+    const spread = Math.max(...ratios) - Math.min(...ratios);
+    expect(spread, `aspect ratios diverge across widths: ${ratios.join(", ")}`).toBeLessThan(0.02);
+  });
+
+  it("the page declares THIS figure's real aspect, not the default", async () => {
+    // The declared box is what prevents reflow. An 8:5 declaration over a 30:7
+    // crop reserves the wrong height and the prose jumps when the image lands.
+    const page = read(PAGE);
+    const block = page.slice(page.indexOf('base="session-record"'));
+    const width = Number(block.match(/width=\{(\d+)\}/)?.[1]);
+    const height = Number(block.match(/height=\{(\d+)\}/)?.[1]);
+    expect(width, "no explicit width on the session-record figure").toBeGreaterThan(0);
+    expect(height, "no explicit height on the session-record figure").toBeGreaterThan(0);
+    const m = await sharp(path.join(ROOT, `${DIR}/session-record-2400.webp`)).metadata();
+    const declared = width / height;
+    const actual = m.width! / m.height!;
+    expect(
+      Math.abs(declared - actual),
+      `declared ${width}x${height} (${declared.toFixed(3)}) does not match the file ` +
+        `${m.width}x${m.height} (${actual.toFixed(3)})`,
+    ).toBeLessThan(0.02);
   });
 });

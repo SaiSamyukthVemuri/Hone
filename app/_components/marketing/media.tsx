@@ -13,7 +13,15 @@ import type { ReactNode } from "react";
 // JavaScript, so the film costs the page nothing but the bytes a viewer asks
 // for. Nothing here is interactive beyond what the browser already provides.
 
-/** The screen captures are 8:5; these two only fix the aspect ratio. */
+/**
+ * The default intrinsic size: a full-viewport capture, 8:5.
+ *
+ * PER-FIGURE OVERRIDABLE, because not every figure is a whole viewport. The
+ * session-record figure is a CROP — the band below the retired WATCH TODAY
+ * panel — and is 30:7. Declaring 8:5 for it would reserve the wrong box and
+ * reintroduce exactly the layout shift these attributes exist to prevent, so
+ * the size travels with the figure that needs it.
+ */
 const SHOT_W = 1600;
 const SHOT_H = 1000;
 
@@ -43,6 +51,8 @@ export function ScreenFigure({
   caption,
   sizes = FIGURE_SIZES,
   priority = false,
+  width = SHOT_W,
+  height = SHOT_H,
 }: {
   /** Path stem under /marketing/treatment-memory, without the width suffix. */
   base: string;
@@ -50,6 +60,9 @@ export function ScreenFigure({
   caption: ReactNode;
   sizes?: string;
   priority?: boolean;
+  /** Intrinsic size of THIS figure's source. Defaults to a full 8:5 capture. */
+  width?: number;
+  height?: number;
 }) {
   const src = `/marketing/treatment-memory/${base}`;
   return (
@@ -69,8 +82,8 @@ export function ScreenFigure({
           srcSet={WIDTHS.map((w) => `${src}-${w}.webp ${w}w`).join(", ")}
           sizes={sizes}
           alt={alt}
-          width={SHOT_W}
-          height={SHOT_H}
+          width={width}
+          height={height}
           // WIDTH AND HEIGHT ARE NOT DECORATION. Without them the browser has
           // no aspect ratio until the bytes land and the text below jumps when
           // they do, which is the layout shift this page is judged on.
