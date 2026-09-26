@@ -252,7 +252,7 @@ export default function HomePage() {
                 </p>
                 <Lede className="mt-8 max-w-[42ch]">
                   Hone records the treatment as fields, not a paragraph: the areas treated,
-                  the machine settings, probe and lot, how each area was tolerated, and what
+                  the machine settings, probe and lot, how the treatment was tolerated, and what
                   to remember next time. Because they&apos;re fields rather than prose, each
                   area stays findable on its own and Hone can tell you when one is missing.
                 </Lede>

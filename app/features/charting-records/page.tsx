@@ -150,7 +150,7 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Observations and response",
-    body: "Tag what you saw with quick observation chips, and capture how each area was tolerated and any reaction, as structured, factual records alongside free-text notes.",
+    body: "Tag what you saw with quick observation chips, and capture tolerance and any reaction on the settings block those areas were charted under, as structured, factual records alongside free-text notes.",
   },
   {
     title: "Procedure records and print views",

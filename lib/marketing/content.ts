@@ -197,7 +197,7 @@ export const FILM = {
   transcript: [
     "Monday, Sep 14. Your next client has a history. — the studio calendar, week view.",
     "Hone. Treatment memory for electrologists. — title card.",
-    "Treatment memory: see what happened last time. Areas treated, how she responded, and the note left for this visit. — the Last Treatment card: areas treated, response and tolerance per area, a Watch Today caution, setup used per area, consultation and skin/hair.",
+    "Treatment memory: see what happened last time. Areas treated, how she responded, and the note left for this visit. — the Last Treatment card: areas treated, response and tolerance for each settings block, a Watch Today caution, the setup used, consultation and skin/hair.",
     "Treatment memory: the exact setup you used. — the Setup Used card: two areas, each with frequency, probe and lot, modality, level, timing, percentage, pulses, duration and a numbing note.",
     "Charting: record today's treatment. — the appointment page: confirmed session, pinned notes, allergies, client summary.",
     "One client record: appointments, records, and treatment history together. — the client profile with its tabs and pinned notes marked visible on every appointment.",
@@ -491,7 +491,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/features/charting-records",
     title: "Electrolysis charting and records | Hone",
     description:
-      "Charting built around treatments, not generic notes: mode, modality, energy, frequency, pulses, probe and lot, laterality, tolerance and skin response, per area.",
+      "Charting built around treatments, not generic notes: mode, modality, energy, frequency, pulses, probe and lot, with tolerance and skin response recorded on the settings block, and laterality kept for every area it covers.",
     indexable: true,
   },
   {
