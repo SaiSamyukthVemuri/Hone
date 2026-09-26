@@ -198,10 +198,11 @@ export default function TreatmentMemoryPage() {
                 survives.
               </Lede>
               <Lede className="mt-4">
-                History is then read the other way round. Every block that covered an
-                area feeds that area&rsquo;s history, so the chin accumulates its own
-                record of what was used on it and how it responded, whether or not it
-                was ever charted on its own.
+                History is then read the other way round. The area summary is built
+                from a client&rsquo;s most recent 200 sessions, and inside that window
+                every block that covered an area feeds that area, so the chin
+                accumulates its own record of what was used on it and how it
+                responded, whether or not it was ever charted on its own.
               </Lede>
             </div>
             {/* A CROP OF THE SAME CAPTURE, not a new one. The full-viewport

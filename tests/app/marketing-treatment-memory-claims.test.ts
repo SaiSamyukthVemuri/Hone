@@ -373,3 +373,87 @@ describe("imported history is described as the product actually shows it", () =>
     );
   });
 });
+
+describe("the area summary is described within the window that builds it", () => {
+  // THE CLAIM THAT WAS WRONG. The page said "Every block that covered an area
+  // feeds that area's history" without qualification. `app/(app)/clients/[id]/
+  // page.tsx` reads intelligence blocks for `sessions.slice(0, 200)` only - its
+  // own comment calls that "the intelligence window" - so blocks living solely
+  // in older sessions never reach the area cards, the totals, or the
+  // first-treated date. The sentence was true INSIDE the window and false about
+  // a client with a longer history.
+  //
+  // THE BINDING IS THE GUARD. Rather than pattern-match hedging language, the
+  // copy must name the same number the product actually uses, read from the
+  // product. Change the limit and the copy goes stale here; change the copy and
+  // it stops matching the limit. Neither side can move alone, which is the
+  // property asked for.
+
+  /**
+   * The intelligence window, read from its one unambiguous use.
+   *
+   * Anchored on `.map((sess) => sess.id)` because this file ALSO slices
+   * `sessions.slice(0, 25)` for `recentSessions`; a bare `sessions.slice(0, N)`
+   * match would pick up whichever came first and silently bind the copy to the
+   * wrong number.
+   */
+  const windowSize = (() => {
+    const src = read(CLIENT_PAGE);
+    const all = [...src.matchAll(/sessions\.slice\(0,\s*(\d+)\)\.map\(\(sess\) => sess\.id\)/g)];
+    expect(
+      all.length,
+      `${CLIENT_PAGE}: expected exactly one intelligence-window slice, found ${all.length}`,
+    ).toBe(1);
+    return Number(all[0][1]);
+  })();
+
+  it("premise: the product really does bound the intelligence read", () => {
+    expect(windowSize, "the window is not a finite positive number").toBeGreaterThan(0);
+    // And it really is the read that feeds the area cards: the same query
+    // selects the per-area clinical columns the summary is built from.
+    const src = read(CLIENT_PAGE);
+    const at = src.indexOf("sessions.slice(0, " + windowSize + ").map((sess) => sess.id)");
+    const query = src.slice(Math.max(0, at - 1200), at);
+    for (const col of ["primary_area", "tolerance_rating", "minutes_performed"]) {
+      expect(
+        query,
+        `the ${windowSize}-session slice no longer feeds the per-area intelligence read (${col} absent)`,
+      ).toContain(col);
+    }
+  });
+
+  it("the page names that exact window", () => {
+    const c = copy();
+    expect(
+      c,
+      `copy must state the ${windowSize}-session window the area summary is built from`,
+    ).toContain(String(windowSize));
+    // Named as a RECENCY bound, not as some other number that happens to match.
+    expect(c, "the window is not described as the most recent sessions").toMatch(
+      new RegExp(`most recent ${windowSize} sessions`, "i"),
+    );
+  });
+
+  it("and still says the true part: inside the window, a block feeds every area it covered", () => {
+    // Bounding the claim must not delete it. The multi-area contribution is
+    // real and is the point of the section.
+    expect(copy(), "the in-window per-area contribution is no longer stated").toMatch(
+      /inside that window every block that covered an area feeds that area/i,
+    );
+  });
+
+  it("no copy claims lifetime coverage of the area summary", () => {
+    // The open class, so a reworded promise is caught too.
+    const LIFETIME =
+      /\b(lifetime|all[-\s]time|entire history|complete history|every session|all sessions|from the (very )?first (visit|session)|since the beginning)\b/i;
+    const sentences = copy()
+      .split(/(?<=[.!?])\s+/)
+      .filter((t) => /\b(area|history|summary|totals?)\b/i.test(t));
+    expect(sentences.length, "no area/history sentences found — vacuous").toBeGreaterThanOrEqual(3);
+    const offenders = sentences.filter((t) => LIFETIME.test(t));
+    expect(
+      offenders,
+      `copy claims lifetime coverage, but the summary reads only ${windowSize} sessions`,
+    ).toEqual([]);
+  });
+});
