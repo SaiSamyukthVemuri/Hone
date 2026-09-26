@@ -114,7 +114,23 @@ const OUT_OF_CLASS: Readonly<Record<string, string>> = {
 // `each TREATED area` walked straight past a literal `(treatment\\s+)?`, which is
 // how app/features/treatment-memory kept its claim through the first fix.
 // `laterality` is deliberately absent: it IS per area.
+// TWO TIERS, because the two halves of the model fail differently.
+//
+// TIER 1 — the RESPONSE words. Proximity alone is enough: a sentence putting
+// "each area" near "tolerated" makes the claim whatever else it says.
+//
+// TIER 2 — the SETTINGS nouns. These appear constantly in copy that is TRUE
+// ("those settings are recorded once, for that group"; "select every area
+// treated using this settings setup"), so proximity would condemn the clearest
+// explanations of the model in the repo. They are flagged only when an
+// OWNERSHIP verb attaches them to the area — "recorded per treated area", which
+// is exactly how the published SEO description put it.
+//
+// `laterality` is in neither tier: it is the one thing session_block_areas
+// really does own per area.
 const RESPONSE_WORD = "tolerat|toleran|reaction|respond|response|settings used|setup used";
+const SETTINGS_NOUN = "settings|setup|modality|machine frequency|probe|lot";
+const OWNERSHIP_VERB = "recorded|kept|stored|captured|logged|tracked";
 const PATTERNS: Array<[string, RegExp]> = [
   [
     "per-area quantifier followed by a response word",
@@ -123,6 +139,20 @@ const PATTERNS: Array<[string, RegExp]> = [
   [
     "response word followed by a per-area quantifier",
     new RegExp(`(${RESPONSE_WORD})[^.|]{0,40}?\\b(per|each|every)\\s+(\\w+\\s+)?area\\b`, "i"),
+  ],
+  [
+    "block-owned settings said to be recorded per area",
+    new RegExp(
+      `(${SETTINGS_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b`,
+      "i",
+    ),
+  ],
+  [
+    "an area said to own block-level settings",
+    new RegExp(
+      `\\b(each|every|per)\\s+(\\w+\\s+)?area\\b[^.|]{0,25}?\\bown\\s+(\\w+\\s+){0,2}(${SETTINGS_NOUN})`,
+      "i",
+    ),
   ],
 ];
 
@@ -172,10 +202,14 @@ function ownerNamedAt(text: string, index: number, matchLength: number): boolean
 function offendersIn(rel: string, copy: string): string[] {
   const found: string[] = [];
   for (const [label, re] of PATTERNS) {
-    const hit = re.exec(copy);
-    if (!hit) continue;
-    if (ownerNamedAt(copy, hit.index, hit[0].length)) continue;
-    found.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
+    // EVERY match, not just the first. `re.exec` returned one hit per pattern,
+    // so a truthful rescued sentence early in a file hid every later unscoped
+    // claim behind it — the file passed on the strength of its best sentence.
+    for (const hit of copy.matchAll(new RegExp(re.source, re.flags + "g"))) {
+      if (hit.index === undefined) continue;
+      if (ownerNamedAt(copy, hit.index, hit[0].length)) continue;
+      found.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
+    }
   }
   return found;
 }
@@ -299,6 +333,17 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     ).toBe(true);
     // FALSE: owner named in a NEIGHBOURING sentence only.
     expect(fires("Each area keeps its own tolerance. Settings live on the block.")).toBe(true);
+  });
+
+  it("settings nouns are flagged only when OWNED by the area", () => {
+    const fires = (x: string) => offendersIn("synthetic", x).length > 0;
+    // REJECT — the published SEO description's exact shape.
+    expect(fires("Modality, settings, probe and lot recorded per treated area, with booking.")).toBe(true);
+    expect(fires("Each treated area has its own machine settings.")).toBe(true);
+    // ALLOW — the clearest true statements of block ownership in the repo.
+    expect(fires("Treat several areas at the same settings and those settings are recorded once, for that group, and every area in it carries the treatment into its own history.")).toBe(false);
+    expect(fires("Select every area treated using this settings setup.")).toBe(false);
+    expect(fires("It keeps a separate history for every treated area and brings last time's settings forward.")).toBe(false);
   });
 
   it("a comment quoting the old wording does not trip the guard", () => {

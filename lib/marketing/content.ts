@@ -463,7 +463,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/electrolysis-software",
     title: "Electrolysis software built around the treatment record | Hone",
     description:
-      "Practice software for electrologists. Modality, settings, probe and lot recorded per treated area, with booking, intake and consent connected to the same record.",
+      "Practice software for electrologists. Modality, settings, probe and lot recorded with each treatment block, with booking, intake and consent connected to the same record.",
     indexable: true,
   },
   {
