@@ -112,6 +112,29 @@ describe("SIGNOUT-02 · SIGNOUT-01 is not weakened", () => {
     const actions = read("app/(app)/dashboard/actions.ts");
     expect(actions).toMatch(/await supabase\.auth\.signOut\(\)/);
     expect(actions).toMatch(/redirect\("\/login"\)/);
+
+    // AND THE REDIRECT IS UNCONDITIONAL, which is what makes a SECOND logout
+    // harmless rather than harmless by accident.
+    //
+    // The hold is owned by the shell that can observe the settlement, so a
+    // shell that returns mid-logout — reachable only through browser history —
+    // starts clear and its Sign out works again. That is the deliberate half
+    // of the trade: the alternative, a hold that survives into a shell with no
+    // observer, disables every menu destination for the life of the document
+    // AND leaves "Signing out…" showing with nothing able to retract it.
+    //
+    // It is only a safe trade while a duplicate lands the practitioner on
+    // /login anyway. `signOut()` does not branch on the Supabase result, so a
+    // logout with no session still redirects. Making that conditional would
+    // turn a returned shell's second press into an error boundary.
+    expect(
+      actions,
+      "the /login redirect is nested — a duplicate logout can now fail instead of landing on /login",
+    ).toMatch(/^  redirect\("\/login"\);$/m);
+    expect(
+      actions,
+      "the sign-out action grew a branch; a logout with no session may no longer redirect",
+    ).not.toMatch(/\bif\s*\(/);
   });
 });
 
