@@ -259,13 +259,22 @@ function ownerNamedAt(text: string, index: number, matchLength: number): boolean
  * while the sweep reported nothing. Sharing one function means the synthetic
  * cases below exercise the exact code the sweep runs.
  */
-function offendersIn(rel: string, copy: string): string[] {
+/**
+ * `gated` separates two different questions that were tangled together:
+ *   - does the detector RECOGNISE this wording?            (gated: false)
+ *   - is the ban currently IN FORCE for that family?        (gated: true)
+ *
+ * The sweep needs both. The synthetic controls need only the first — gating
+ * them meant a correct, complete migration made them fail, which would have
+ * blocked exactly the model change the design says should retire the ban.
+ */
+function offendersIn(rel: string, copy: string, gated = true): string[] {
   const found: string[] = [];
   const guidance = rel in GUIDANCE_ROUTES;
   for (const [label, re, family] of PATTERNS) {
     // Each family's ban runs only while THAT family is block-owned.
-    if (family === "response" && !responseIsBlockOwned()) continue;
-    if (family === "settings" && !settingsAreBlockOwned()) continue;
+    if (gated && family === "response" && !responseIsBlockOwned()) continue;
+    if (gated && family === "settings" && !settingsAreBlockOwned()) continue;
     for (const hit of copy.matchAll(new RegExp(re.source, re.flags + "g"))) {
       if (hit.index === undefined) continue;
       if (ownerNamedAt(copy, hit.index, hit[0].length)) continue;
@@ -276,7 +285,7 @@ function offendersIn(rel: string, copy: string): string[] {
   }
   // A universal-capture promise is false on any page whose own content carries
   // per-area response guidance — whichever half you read first.
-  if (responseIsBlockOwned() && UNIVERSAL_CAPTURE.test(copy)) {
+  if ((!gated || responseIsBlockOwned()) && UNIVERSAL_CAPTURE.test(copy)) {
     const perAreaResponse = PATTERNS.filter(([, , f]) => f === "response").some(
       ([, re]) => re.test(copy),
     );
@@ -400,7 +409,7 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
   });
 
   it("naming the block RIGHT THERE is what rescues a per-area sentence", () => {
-    const fires = (t: string) => offendersIn("synthetic", t).length > 0;
+    const fires = (t: string) => offendersIn("synthetic", t, false).length > 0;
     // TRUE: owner named immediately after the claim.
     expect(fires("Every treated area stays findable, carrying the response from the block it was charted under.")).toBe(false);
     expect(fires("Tolerance and skin response are recorded on the settings block that covers them.")).toBe(false);
@@ -426,13 +435,13 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     const text =
       "Every treated area carries the response from the block it was charted under. " +
       "Each area has its own tolerance and reaction.";
-    const found = offendersIn("synthetic", text);
+    const found = offendersIn("synthetic", text, false);
     expect(found.length).toBe(1);
     expect(found[0]).toMatch(/own toleran/);
   });
 
   it("settings nouns are flagged only when OWNED by the area", () => {
-    const fires = (x: string) => offendersIn("synthetic", x).length > 0;
+    const fires = (x: string) => offendersIn("synthetic", x, false).length > 0;
     // REJECT — the published SEO description's exact shape.
     expect(fires("Modality, settings, probe and lot recorded per treated area, with booking.")).toBe(true);
     expect(fires("Each treated area has its own machine settings.")).toBe(true);
@@ -449,13 +458,13 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     const rel = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
     expect(Object.keys(GUIDANCE_ROUTES)).toContain(rel);
     // guidance alone — allowed
-    expect(offendersIn(rel, '"Tolerance for each area", "Any skin reaction"')).toEqual([]);
+    expect(offendersIn(rel, '"Tolerance for each area", "Any skin reaction"', false)).toEqual([]);
     // the same words in a HONE sentence — rejected
     expect(
-      offendersIn(rel, "Hone records tolerance for each area as a structured field").length,
+      offendersIn(rel, "Hone records tolerance for each area as a structured field", false).length,
     ).toBeGreaterThan(0);
     // and on a NON-guidance route the guidance form is still a claim
-    expect(offendersIn("app/page.tsx", "Tolerance for each area").length).toBeGreaterThan(0);
+    expect(offendersIn("app/page.tsx", "Tolerance for each area", false).length).toBeGreaterThan(0);
   });
 
   it("a universal-capture promise fails on a page whose guidance is per-area", () => {
@@ -463,16 +472,16 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     const rel = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
     const guidanceOnly = '"Tolerance for each area", "Minutes performed per area"';
     const promiseOnly = "See how Hone captures every item on this page as structured data";
-    expect(offendersIn(rel, guidanceOnly)).toEqual([]);
+    expect(offendersIn(rel, guidanceOnly, false)).toEqual([]);
     const both = `${guidanceOnly} ... ${promiseOnly}`;
-    const hits = offendersIn(rel, both);
+    const hits = offendersIn(rel, both, false);
     expect(hits.length).toBeGreaterThan(0);
     expect(hits.join(" ")).toMatch(/universal capture promise/);
   });
 
   it("the live checklist route makes no universal-capture promise", () => {
     const rel = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
-    expect(offendersIn(rel, copyOnly(read(rel)))).toEqual([]);
+    expect(offendersIn(rel, copyOnly(read(rel)), false)).toEqual([]);
     // the guidance itself is still there — not deleted to satisfy the guard
     const src = read(rel);
     expect(src).toContain('"Tolerance for each area"');
