@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { loginAsOwner } from "./helpers/flows";
 import { seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
@@ -34,13 +37,44 @@ const APP_SHELL_NAV = "Open account menu";
 
 type ActionPost = { url: string; via: string; actionId: string };
 
-type ConsoleError = { text: string; url: string };
+/**
+ * WHEN a message was logged, relative to the logout's own hard navigation.
+ * `before` is an ordinary page; `teardown` is the window that opens when Sign
+ * out is activated and closes the moment the navigation settles; `after` is
+ * everything from there on, including FACT 6's direct /dashboard probe.
+ */
+type Phase = "before" | "teardown" | "after";
+
+type ConsoleError = { text: string; url: string; phase: Phase };
 
 type SignOutTraffic = {
   actionPosts: ActionPost[];
   consoleErrors: ConsoleError[];
   consoleWarnings: string[];
   pageErrors: string[];
+  /** Advanced by the observer; every console error is stamped with it. */
+  phase: Phase;
+  /** Whether the logout's hard navigation actually happened. No cause, no exception. */
+  logoutNavigated: boolean;
+  /** Opens the teardown window, taking the boundary snapshot of in-flight requests. */
+  openTeardownWindow: () => void;
+  /** Closes it. Nothing started after this is ever owned by the navigation. */
+  closeTeardownWindow: () => void;
+  /**
+   * Requests the logout navigation OWNS: those already in flight when Sign out
+   * was activated, plus any started before the navigation settled. Recorded
+   * from this harness's own bookkeeping of request/response events — NOT from
+   * whether the browser happened to report an abort, which is where four
+   * earlier attempts came unstuck. Its membership is deterministic.
+   */
+  teardownOwned: Set<string>;
+  /**
+   * Owned requests that turned out NOT to be cancelled: they came back with a
+   * response, or failed for a reason of their own. Ownership proves only that
+   * a request was running when the navigation began — a 500 or a refused
+   * connection on one of them is a real failure and must stay RED.
+   */
+  settledIndependently: Set<string>;
 };
 
 // Console noise this LOCAL lane emits no matter what the app does. It arrives
@@ -72,32 +106,242 @@ const TELEMETRY_EMITTER = [
   /^Refused to execute script from '[^']*\/_vercel\/[^']*'/,
 ];
 
-function isTelemetryNoise(e: ConsoleError): boolean {
+// 3. THE LOGOUT'S OWN HARD NAVIGATION, which this spec causes on purpose.
+//
+// SIGNOUT-02c gives the in-flight hold to the action's promise, so the form's
+// action is a client function — and Next then stops routing the action's
+// redirect, making /login a HARD browser navigation. That tears the document
+// down, so prefetches still running for the menu's destinations die with it,
+// and Chrome makes its HTTPS-First attempt on the fresh document. Neither is
+// the application reporting a fault.
+//
+// THIS IS NOT A MESSAGE-PREFIX FILTER. A rule that forgave
+// "Failed to fetch RSC payload for …" by its wording would forgive it before
+// the logout, and during FACT 6's direct /dashboard probe afterwards — which
+// is exactly how a real defect would ride out of this spec unnoticed.
+//
+// THE EXCEPTION IS SCOPED BY REQUEST OWNERSHIP. When Sign out is activated the
+// observer snapshots every request still in flight; anything started before
+// the navigation settles joins them. Those, and only those, are the requests
+// the navigation kills, and only a message naming one of them is forgiven.
+//
+// FOUR EARLIER ATTEMPTS FAILED, and each failed the same way: they asked the
+// BROWSER which requests it had aborted. That answer is not deterministic —
+// across identical runs the abort set held six of eight cancelled prefetches,
+// then a different six, and messages arrived on both sides of every boundary
+// tried (the URL change, the load event, the next deliberate request). Failure
+// counts across those four scopings were 5, 1, 4 and 3 on unchanged code. The
+// variance was the browser's reporting, not the rule.
+//
+// Ownership is recorded HERE instead, from this harness's own request
+// bookkeeping, so membership does not depend on what the browser chose to
+// report or when. A forgiven message is still PRINTED in the observation line.
+export function isLogoutTeardownNoise(
+  e: ConsoleError,
+  evidence: {
+    logoutNavigated: boolean;
+    teardownOwned: ReadonlySet<string>;
+    settledIndependently: ReadonlySet<string>;
+  },
+): boolean {
+  // Nothing logged before the logout is ever forgiven — first, because it is
+  // the one gate ownership cannot supply on its own: the filter runs once at
+  // the end, so a request that failed BEFORE the logout and was later owned by
+  // it would otherwise be excused retrospectively.
+  if (e.phase === "before") return false;
+
+  // And there must be a cause. A logout that never dispatched tears nothing
+  // down, and must not get a quieter console than one that did.
+  if (!evidence.logoutNavigated) return false;
+
+  const rsc = /^Failed to fetch RSC payload for (\S+?)\. Falling back/.exec(e.text);
+  if (rsc) {
+    const named = withoutQuery(rsc[1]!);
+    // OWNERSHIP IS NECESSARY BUT NOT SUFFICIENT. It proves the request was
+    // running when the navigation began — not that the navigation is what
+    // ended it. A prefetch that was in flight at the boundary and then failed
+    // on its own account (a 500, a refused connection) would otherwise be
+    // forgiven for a regression it was actually reporting.
+    return (
+      evidence.teardownOwned.has(named) && !evidence.settledIndependently.has(named)
+    );
+  }
+
+  // Chrome's HTTPS-First upgrade attempt on the document the logout navigated
+  // TO. This lane is served over http, so an https:// attribution is by
+  // construction the browser and not the app, and it must name the logout's
+  // own destination.
+  if (!e.text.startsWith("Failed to load resource: net::ERR_SSL_PROTOCOL_ERROR")) {
+    return false;
+  }
+  try {
+    const u = new URL(e.url);
+    return u.protocol === "https:" && u.pathname === "/login";
+  } catch {
+    return false;
+  }
+}
+
+/** origin + path: the identity a request and the message about it share. */
+function withoutQuery(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+function isTelemetryNoise(e: ConsoleError, traffic?: SignOutTraffic): boolean {
   return (
     TELEMETRY_ORIGIN.test(e.url) ||
-    TELEMETRY_EMITTER.some((pattern) => pattern.test(e.text))
+    TELEMETRY_EMITTER.some((pattern) => pattern.test(e.text)) ||
+    (traffic !== undefined && isLogoutTeardownNoise(e, traffic))
   );
 }
 
 function render(e: ConsoleError): string {
-  return `${e.text} @ ${e.url || "(no origin)"}`;
+  // The PHASE is part of the evidence: whether a message is teardown noise or
+  // a defect depends on when it was logged relative to the logout's own
+  // navigation, and a reader of a failure needs that without re-running.
+  return `[${e.phase}] ${e.text} @ ${e.url || "(no origin)"}`;
 }
 
-function applicationConsoleErrors(errors: ConsoleError[]): string[] {
-  return errors.filter((e) => !isTelemetryNoise(e)).map(render);
+function applicationConsoleErrors(
+  errors: ConsoleError[],
+  traffic?: SignOutTraffic,
+): string[] {
+  return errors.filter((e) => !isTelemetryNoise(e, traffic)).map(render);
 }
 
-function suppressedTelemetryErrors(errors: ConsoleError[]): string[] {
-  return errors.filter(isTelemetryNoise).map(render);
+function suppressedTelemetryErrors(
+  errors: ConsoleError[],
+  traffic?: SignOutTraffic,
+): string[] {
+  return errors.filter((e) => isTelemetryNoise(e, traffic)).map(render);
 }
 
 function recordSignOutTraffic(page: Page): SignOutTraffic {
+  // LIVE IN-FLIGHT BOOKKEEPING, private to this recorder. It is the whole
+  // basis of the teardown exception: what was already running when the logout
+  // was activated, and what started before the navigation settled. Counted,
+  // because the same route can legitimately be in flight more than once.
+  const inFlight = new Map<string, number>();
+
   const traffic: SignOutTraffic = {
     actionPosts: [],
     consoleErrors: [],
     consoleWarnings: [],
     pageErrors: [],
+    phase: "before",
+    logoutNavigated: false,
+    teardownOwned: new Set<string>(),
+    settledIndependently: new Set<string>(),
+    openTeardownWindow() {
+      // THE BOUNDARY SNAPSHOT. Everything in flight at this instant is about
+      // to be killed by the navigation the press is starting.
+      for (const url of inFlight.keys()) traffic.teardownOwned.add(url);
+      traffic.phase = "teardown";
+    },
+    closeTeardownWindow() {
+      traffic.phase = "after";
+    },
   };
+
+  const bump = (url: string, by: number) => {
+    const key = withoutQuery(url);
+    const next = (inFlight.get(key) ?? 0) + by;
+    if (next > 0) inFlight.set(key, next);
+    else inFlight.delete(key);
+  };
+  page.on("request", (request) => {
+    bump(request.url(), 1);
+    // A request that STARTS inside the window is owned by the navigation about
+    // to replace the document, exactly as one already running is.
+    if (traffic.phase === "teardown") {
+      traffic.teardownOwned.add(withoutQuery(request.url()));
+    }
+  });
+  page.on("requestfinished", (request) => {
+    bump(request.url(), -1);
+    // COMPLETION IS THE THIRD KIND OF SETTLEMENT EVIDENCE, and the only one
+    // that can see a 200 whose payload is worthless.
+    //
+    // A prefetch can return 200, transfer normally, and still be undecodable —
+    // Next logs `Failed to fetch RSC payload for …`. There is no error status
+    // and no `requestfailed`, so status alone leaves that URL owned with no
+    // settlement evidence and the rule forgives a real decoding regression.
+    //
+    // WHAT MAKES THIS A DISTINCTION RATHER THAN A BLANKET. It is keyed on the
+    // request COMPLETING, not on a `response` event: headers arriving proves
+    // only that a server answered, while `requestfinished` is Playwright
+    // reporting the whole transaction done. A request the logout navigation
+    // terminates does not get here — it fails, and the abort branch below
+    // deliberately does not record it, which is what keeps genuine teardown
+    // noise suppressible.
+    //
+    // REDIRECTS ARE EXCLUDED because a 3xx delivers no body, so it cannot
+    // evidence an independent delivery of content. It also matters WHICH
+    // redirect: measured on a real logout, the owned 303/307 to /dashboard is
+    // the logout's OWN redirect, so counting it would mark the URL most likely
+    // to carry teardown noise as independently settled.
+    //
+    // Honest about the strength of that: dropping this exclusion does NOT red
+    // the real logout tests, because they log no RSC error for /dashboard. It
+    // is pinned by its own control instead — "an owned REDIRECT is not recorded
+    // as an independent settlement" below — so the exclusion is a proved
+    // property rather than a claim about runs that happen not to exercise it.
+    const key = withoutQuery(request.url());
+    if (!traffic.teardownOwned.has(key)) return;
+    void (async () => {
+      try {
+        const response = await request.response();
+        if (!response) return;
+        const status = response.status();
+        // >= 400 is the response handler's job; 3xx delivered no body.
+        if (status >= 300) return;
+        traffic.settledIndependently.add(key);
+      } catch {
+        // The page can be tearing down as this resolves. No evidence is not
+        // the same as evidence of independence, so record nothing.
+      }
+    })();
+  });
+
+  // A REAL ERROR STATUS is the request failing on its own account, and is the
+  // server-regression half of what ownership alone cannot see.
+  //
+  // The `requestfinished` EVENT alone was tried as this evidence and measured
+  // wrong: four real cases went red, with their logouts provably perfect,
+  // because every owned lifecycle event counted — the logout's own 3xx
+  // included. The completion check above is narrower: 2xx only, redirects
+  // excluded, and never a bare `response`.
+  page.on("response", (response) => {
+    // NOT PHASE-GATED, deliberately. The rule accepts LATE messages about
+    // owned requests — a hard navigation keeps reporting after the window
+    // shuts — so settlement has to be recorded just as late, or an owned
+    // prefetch that 500s a moment after `waitForURL` resolves would leave no
+    // record and have its genuine regression forgiven. Ownership is already
+    // the bound here: `teardownOwned` only ever gains entries between the
+    // activation snapshot and the navigation settling.
+    const key = withoutQuery(response.url());
+    if (traffic.teardownOwned.has(key) && response.status() >= 400) {
+      traffic.settledIndependently.add(key);
+    }
+  });
+  page.on("requestfailed", (request) => {
+    bump(request.url(), -1);
+    // Same reasoning as the response handler: bounded by ownership, not by
+    // the phase Playwright happened to report the failure in.
+    if (!traffic.teardownOwned.has(withoutQuery(request.url()))) return;
+    const reason = request.failure()?.errorText ?? "";
+    // An ABORT is the navigation doing its work. Anything else — a refused
+    // connection, a DNS failure, a reset — is the request failing on its own
+    // account, and stays RED.
+    if (!/ERR_ABORTED|NS_BINDING_ABORTED/.test(reason)) {
+      traffic.settledIndependently.add(withoutQuery(request.url()));
+    }
+  });
 
   page.on("request", (request) => {
     if (request.method() !== "POST") return;
@@ -133,6 +377,7 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
       traffic.consoleErrors.push({
         text: message.text(),
         url: message.location()?.url ?? "",
+        phase: traffic.phase,
       });
     }
     if (type === "warning") traffic.consoleWarnings.push(message.text());
@@ -233,6 +478,9 @@ async function observeSignOut(
     "Sign out is reachable in the open menu",
   ).toBeVisible();
 
+  // THE WINDOW OPENS HERE, on the press that starts the navigation — and the
+  // boundary snapshot is taken at the same instant.
+  traffic.openTeardownWindow();
   const activatedVia = await activate(panel);
 
   // FACT 2, sampled IMMEDIATELY: React flushes a discrete click update
@@ -242,7 +490,15 @@ async function observeSignOut(
 
   // Bounded, non-throwing: a logout that never dispatched simply never
   // navigates, and that is a measurement, not an error.
-  await page.waitForURL(/\/login/, { timeout: 15_000 }).catch(() => {});
+  traffic.logoutNavigated = await page
+    .waitForURL(/\/login/, { timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false);
+
+  // AND IT CLOSES THE MOMENT THE NAVIGATION SETTLES. Nothing started after
+  // this line is ever owned by it — which is what keeps FACT 6's direct
+  // /dashboard probe below judged with no exception at all.
+  traffic.closeTeardownWindow();
 
   const urlAfter = page.url();
   const sessionsAfter = await settle(
@@ -295,11 +551,13 @@ function describeObservation(o: SignOutObservation): string {
     `url after a direct /dashboard navigation: ${o.dashboardUrlAfterwards}`,
     `authenticated shell served afterwards: ${o.shellPresentAfterwards}`,
     `console warnings: ${JSON.stringify(o.traffic.consoleWarnings)}`,
+    `teardown-owned: ${JSON.stringify([...o.traffic.teardownOwned])}`,
+    `settled independently: ${JSON.stringify([...o.traffic.settledIndependently])}`,
     `application console errors: ${JSON.stringify(
-      applicationConsoleErrors(o.traffic.consoleErrors),
+      applicationConsoleErrors(o.traffic.consoleErrors, o.traffic),
     )}`,
     `suppressed third-party telemetry: ${JSON.stringify(
-      suppressedTelemetryErrors(o.traffic.consoleErrors),
+      suppressedTelemetryErrors(o.traffic.consoleErrors, o.traffic),
     )}`,
     `page errors: ${JSON.stringify(o.traffic.pageErrors)}`,
   ].join(" | ");
@@ -356,7 +614,7 @@ function assertRealLogout(o: SignOutObservation, surface: string) {
   ).toEqual([]);
 
   expect(
-    applicationConsoleErrors(o.traffic.consoleErrors),
+    applicationConsoleErrors(o.traffic.consoleErrors, o.traffic),
     claim("ordinary logout logs no console error from the application"),
   ).toEqual([]);
 }
@@ -566,5 +824,605 @@ test.describe("SIGNOUT-01 · after logout", () => {
     await page.waitForURL(/\/login/, { timeout: 20_000 });
     await page.goto("/settings/profile");
     await page.waitForURL(/\/login/, { timeout: 20_000 });
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// WHAT THE TEARDOWN EXCEPTION FORGIVES, AND WHAT IT MUST NOT.
+//
+// The exception exists because the logout's hard navigation kills requests
+// that were running when it began. It is scoped by OWNERSHIP of those
+// requests, never by the wording of a message — a prefix filter would forgive
+// an RSC failure before the logout and during FACT 6's direct /dashboard
+// probe, which is exactly how a real defect would ride out of this spec.
+//
+// These cases pin each direction against synthetic records, so they cannot
+// drift with timing or with what the browser chose to report on the day.
+// ---------------------------------------------------------------------------
+// THE NATIVE SUBMISSION CONTRACT.
+//
+// READ FROM THE SERVER'S HTML, not from the live DOM, and that distinction is
+// the whole test. After hydration React replaces a server action's form
+// attribute with `action="javascript:throw new Error('React form unexpectedly
+// submitted.')"` — a guard, on a form that is working perfectly. Asserting
+// against the hydrated DOM therefore fails on correct code and would have sent
+// me chasing a defect that was not there. What a press before hydration
+// depends on is what the SERVER sent, so that is what this fetches.
+//
+// WHAT IT PROVES: the markup the browser receives can be submitted by the
+// browser alone — a POST target and the Server Action's own id, which is the
+// pair `recordSignOutTraffic`'s "progressive-enhancement form body" path reads.
+//
+// WHAT IT DOES NOT PROVE, said plainly rather than dressed up: an end-to-end
+// logout with scripting disabled. The menu holding the Sign out control is
+// opened by a client component, so with JS off a practitioner cannot reach the
+// control at all. That is a limitation of the MENU, not of the form, and
+// driving a hydrated click would prove neither.
+//
+// THE REGRESSION IT CATCHES, measured on this branch: giving the form a client
+// function as its action removed the endpoint and the action id from the
+// server's HTML entirely, so a pre-hydration press dispatched nothing.
+test.describe("SIGNOUT-01 · the form the server sends can be submitted without JavaScript", () => {
+  for (const shell of [
+    { name: "desktop AccountMenu", id: "signout-account" },
+    { name: "phone-width MobileMenu", id: "signout-mobile" },
+  ] as const) {
+    test(`${shell.name}: the served markup carries a POST target and the action id`, async ({
+      page,
+      context,
+    }) => {
+      await loginFresh(page);
+      await page.goto("/dashboard");
+
+      // The document as the SERVER wrote it. No scripts run against this.
+      const response = await context.request.get(
+        new URL("/dashboard", page.url()).toString(),
+      );
+      expect(response.status()).toBe(200);
+      const html = await response.text();
+
+      const at = html.indexOf(`id="${shell.id}"`);
+      expect(at, `${shell.name}: the sign-out form is in the served HTML`).toBeGreaterThan(
+        -1,
+      );
+      // The form element, from its own `<form` to the closing `>` of the tag,
+      // plus what it contains.
+      const open = html.lastIndexOf("<form", at);
+      const close = html.indexOf("</form>", at);
+      expect(close, `${shell.name}: the form is closed`).toBeGreaterThan(open);
+      const form = html.slice(open, close);
+
+      // A SUBMITTABLE TARGET. `action=""` is legitimate and means "post to
+      // this URL"; a `javascript:` action is what the client-function
+      // regression produced, and the browser cannot submit it.
+      expect(
+        /\bmethod="POST"/i.test(form),
+        `${shell.name}: the served form does not POST: ${form.slice(0, 200)}`,
+      ).toBe(true);
+      expect(
+        /action="javascript:/.test(form),
+        `${shell.name}: the action is a javascript: URL, so a browser cannot submit it`,
+      ).toBe(false);
+
+      // THE ACTION'S OWN ID, which is what tells the server which Server
+      // Action a native post is for. Without it the submission arrives with
+      // nothing to dispatch.
+      expect(
+        /name="\$ACTION_ID_[0-9a-f]+"/.test(form),
+        `${shell.name}: no $ACTION_ID_ field; a native submission has nothing to dispatch: ${form.slice(0, 240)}`,
+      ).toBe(true);
+    });
+  }
+
+  test("the control in the panel submits that form by id, not one of its own", () => {
+    // The form is hoisted to the shell's persistent root so its observer
+    // cannot be unmounted with the panel; the control therefore reaches it
+    // with `form=`. If the control ever grew its own <form> again, the served
+    // markup above would be proved about a form nothing submits.
+    const source = readFileSync(
+      join(process.cwd(), "app/(app)/SignOutMenuItem.tsx"),
+      "utf8",
+    );
+    // COMMENTS STRIPPED FIRST. That file discusses the `<form>` SIGNOUT-01
+    // was about, by name, in a load-bearing comment — matched against raw
+    // source the absence assertion below fails on prose rather than on code.
+    // Line comments before block comments, so a `//` line containing `/*`
+    // cannot leave the block stripper eating real code.
+    const leaf = source
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .split("\n")
+      .filter((line) => !/^\s*\/\//.test(line))
+      .join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+    expect(leaf, "the stripper kept real code").toContain("form={formId}");
+    expect(leaf).toContain('type="submit"');
+    expect(leaf).not.toMatch(/<form[\s>]/);
+  });
+});
+
+test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", () => {
+  const RSC = (url: string) =>
+    `Failed to fetch RSC payload for ${url}. Falling back to browser navigation. TypeError: Failed to fetch`;
+  const OWNED = "http://localhost:3111/settings/profile";
+  const NOT_OWNED = "http://localhost:3111/dashboard";
+  const evidence = {
+    logoutNavigated: true,
+    teardownOwned: new Set<string>([OWNED]),
+    settledIndependently: new Set<string>(),
+  };
+
+  test("1. an RSC failure BEFORE the logout is real", () => {
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "before" }, evidence),
+      "a failure before the logout was forgiven",
+    ).toBe(false);
+  });
+
+  test("2. a teardown-OWNED cancellation during the logout is forgiven", () => {
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "teardown" }, evidence),
+    ).toBe(true);
+  });
+
+  test("3. an UNRELATED RSC failure during the flow is real", () => {
+    // Same window, same wording, a request the navigation never owned. This is
+    // what separates "the navigation killed it" from "it looks alike".
+    expect(
+      isLogoutTeardownNoise(
+        { text: RSC(NOT_OWNED), url: NOT_OWNED, phase: "teardown" },
+        evidence,
+      ),
+      "a message was forgiven for a request the navigation never owned",
+    ).toBe(false);
+  });
+
+  test("4. an RSC failure on the dashboard probe is real", () => {
+    // FACT 6 lives here, and this is the property that protects it: the window
+    // is shut before the probe runs, so NOTHING the probe requests can join
+    // `teardownOwned`. Its failures are always real.
+    expect(
+      isLogoutTeardownNoise(
+        { text: RSC(NOT_OWNED), url: NOT_OWNED, phase: "after" },
+        evidence,
+      ),
+      "a dashboard-probe failure inherited the teardown exception",
+    ).toBe(false);
+  });
+
+  test("late reporting of an OWNED request is still the same teardown", () => {
+    // A hard navigation keeps reporting on the way down, and some of it lands
+    // after the window has shut. That is the same request the navigation
+    // killed, arriving late — the ownership record says so, and the clock
+    // cannot. Closing the exception on arrival time instead reddened five real
+    // cases whose logouts were provably perfect.
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "after" }, evidence),
+    ).toBe(true);
+  });
+
+  test("an OWNED request that failed on its own account is real", () => {
+    // Codex P2. Ownership proves only that a request was in flight when the
+    // navigation began. A prefetch that was running at that boundary and then
+    // came back 500, or was refused, is reporting a REGRESSION — and would
+    // otherwise be forgiven for it. Anything the browser saw settle by itself
+    // is excluded from the exception.
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "teardown" }, {
+        logoutNavigated: true,
+        teardownOwned: new Set<string>([OWNED]),
+        settledIndependently: new Set<string>([OWNED]),
+      }),
+      "a request that failed independently was forgiven as teardown",
+    ).toBe(false);
+  });
+
+  test("the RULE (given the record) rejects a late independent failure", () => {
+    // SYNTHETIC, and only about the rule. It hands the set in by hand, so it
+    // cannot see the recorders at all and must never be read as proof of them.
+    // The recorder tests below drive the real listeners — one each — and are
+    // what fails if late settlement stops being recorded.
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "after" }, {
+        logoutNavigated: true,
+        teardownOwned: new Set<string>([OWNED]),
+        settledIndependently: new Set<string>([OWNED]),
+      }),
+      "a late-reported independent failure was forgiven as teardown",
+    ).toBe(false);
+  });
+
+  test("the RESPONSE recorder captures an owned 500 that arrives after the window shuts", async ({
+    page,
+  }) => {
+    // Codex P2, and the vacuity it names is real: every other case here hands
+    // `isLogoutTeardownNoise` a set built by hand, so restoring a
+    // `phase !== "teardown"` guard to the response/requestfailed handlers
+    // would leave them all green while the suppression quietly came back.
+    //
+    // This one drives `recordSignOutTraffic` itself. A request is started
+    // INSIDE the teardown window — so it is owned — and its 500 is delivered
+    // only after `closeTeardownWindow()`. If settlement recording is ever
+    // phase-gated again, nothing is recorded and this fails.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_owned_probe", async (route) => {
+      await held;
+      await route.fulfill({ status: 500, contentType: "text/plain", body: "boom" });
+    });
+
+    const key = new URL("/__late_owned_probe", page.url()).origin + "/__late_owned_probe";
+
+    traffic.openTeardownWindow();
+    const started = page.evaluate(() =>
+      fetch("/__late_owned_probe").catch(() => undefined),
+    );
+    // WAIT FOR THIS REQUEST SPECIFICALLY, not merely for the set to be
+    // non-empty. A busier page — CI, with analytics and prefetches still
+    // moving — satisfies "size > 0" with something else entirely, and the
+    // window then shuts before the probe is registered as owned. That made
+    // this test pass locally and fail in CI, which is the wrong way round for
+    // a control.
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), {
+        timeout: 15_000,
+        message: "the probe request was never recorded as teardown-owned",
+      })
+      .toBe(true);
+
+    traffic.closeTeardownWindow();
+    expect(traffic.phase, "precondition: the window is shut before the 500 lands").toBe(
+      "after",
+    );
+
+    deliver();
+    await started;
+
+    await expect
+      .poll(() => traffic.settledIndependently.has(key), {
+        timeout: 10_000,
+        message:
+          "an owned request's 500 was not recorded because it arrived after the window shut",
+      })
+      .toBe(true);
+
+    // And the rule consumes that record: the failure stays real.
+    expect(
+      isLogoutTeardownNoise(
+        { text: RSC(key), url: key, phase: "after" },
+        traffic,
+      ),
+      "the recorded independent failure was still forgiven",
+    ).toBe(false);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  test("5. an ordinary console error is real, wherever it lands", () => {
+    for (const phase of ["before", "teardown", "after"] as const) {
+      for (const text of [
+        "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+        "Uncaught TypeError: cannot read properties of null",
+        "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      ]) {
+        expect(
+          isLogoutTeardownNoise({ text, url: NOT_OWNED, phase }, evidence),
+          `forgiven in ${phase}: ${text}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  test("with NO logout navigation, the window forgives nothing", () => {
+    // A logout that never dispatched tears nothing down, so it must not get a
+    // quieter console than one that did.
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "teardown" }, {
+        logoutNavigated: false,
+        teardownOwned: new Set<string>([OWNED]),
+        settledIndependently: new Set<string>(),
+      }),
+      "noise was forgiven for a logout that never navigated",
+    ).toBe(false);
+  });
+
+  test("the HTTPS-First attempt is forgiven only for the logout's destination", () => {
+    const ssl = "Failed to load resource: net::ERR_SSL_PROTOCOL_ERROR";
+    expect(
+      isLogoutTeardownNoise(
+        { text: ssl, url: "https://localhost:3111/login", phase: "teardown" },
+        evidence,
+      ),
+    ).toBe(true);
+    expect(
+      isLogoutTeardownNoise(
+        { text: ssl, url: "https://localhost:3111/dashboard", phase: "teardown" },
+        evidence,
+      ),
+      "forgiven for a document the logout never navigated to",
+    ).toBe(false);
+    expect(
+      isLogoutTeardownNoise(
+        { text: ssl, url: "http://localhost:3111/login", phase: "teardown" },
+        evidence,
+      ),
+      "forgiven for a plain http URL this lane really does serve",
+    ).toBe(false);
+  });
+
+  test("the REQUESTFAILED recorder captures an owned non-abort failure that arrives late", async ({
+    page,
+  }) => {
+    // The other listener, proved on its own. The 500 case above exercises the
+    // `response` handler; a request that never gets a response at all goes
+    // through `requestfailed`, which has its own phase-independence to keep.
+    // Re-gating that handler on the phase would leave the 500 test green while
+    // this one reds.
+    //
+    // NON-ABORT is the point of the case. An ERR_ABORTED is the navigation
+    // doing its work and must NOT count as an independent settlement; a
+    // refused connection is the request failing on its own account and must.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_failed_probe", async (route) => {
+      await held;
+      // Surfaces as net::ERR_CONNECTION_REFUSED — the request's own failure,
+      // not an abort.
+      await route.abort("connectionrefused");
+    });
+
+    const key =
+      new URL("/__late_failed_probe", page.url()).origin + "/__late_failed_probe";
+
+    traffic.openTeardownWindow();
+    const started = page.evaluate(() =>
+      fetch("/__late_failed_probe").catch(() => undefined),
+    );
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), {
+        timeout: 15_000,
+        message: "the probe request was never recorded as teardown-owned",
+      })
+      .toBe(true);
+
+    traffic.closeTeardownWindow();
+    expect(
+      traffic.phase,
+      "precondition: the window is shut before the failure lands",
+    ).toBe("after");
+
+    deliver();
+    await started;
+
+    await expect
+      .poll(() => traffic.settledIndependently.has(key), {
+        timeout: 15_000,
+        message:
+          "an owned request's non-abort failure was not recorded because it arrived after the window shut",
+      })
+      .toBe(true);
+
+    // And the rule consumes that record: the failure stays real.
+    //
+    // `logoutNavigated` is set by hand because this probe never logs anyone
+    // out. WITHOUT it the rule forgives nothing regardless — so the assertion
+    // below would pass for the wrong reason, proving the cause-gate rather
+    // than the settlement record it is about.
+    traffic.logoutNavigated = true;
+    expect(
+      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "after" }, traffic),
+      "the recorded non-abort failure was still forgiven",
+    ).toBe(false);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  test("an ABORTED owned request is NOT recorded as an independent settlement", async ({
+    page,
+  }) => {
+    // The other side of that listener, and the reason it inspects `errorText`
+    // instead of treating every failure alike. An abort IS the navigation
+    // tearing the document down — the exact thing the exception forgives — so
+    // it must not land in `settledIndependently`, or the exception would
+    // forgive nothing at all.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_aborted_probe", async (route) => {
+      await held;
+      await route.abort("aborted");
+    });
+
+    const key =
+      new URL("/__late_aborted_probe", page.url()).origin + "/__late_aborted_probe";
+
+    traffic.openTeardownWindow();
+    const started = page.evaluate(() =>
+      fetch("/__late_aborted_probe").catch(() => undefined),
+    );
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), { timeout: 15_000 })
+      .toBe(true);
+
+    deliver();
+    await started;
+    // The same chance the case above gets.
+    await page.waitForTimeout(500);
+
+    expect(
+      traffic.settledIndependently.has(key),
+      "an aborted request counted as settling independently, which would make the teardown exception forgive nothing",
+    ).toBe(false);
+    // So the rule still forgives it — with the cause supplied by hand, since
+    // this probe never logs anyone out.
+    traffic.logoutNavigated = true;
+    expect(
+      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "teardown" }, traffic),
+      "an aborted, owned request was not forgiven as teardown",
+    ).toBe(true);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  test("a COMPLETED owned 200 whose RSC payload is unusable stays RED", async ({
+    page,
+  }) => {
+    // CASE 4, and the false negative it closes.
+    //
+    // A prefetch can return HTTP 200, complete its transfer normally, and still
+    // be unusable: Next logs `Failed to fetch RSC payload for …` when the body
+    // is not a payload it can decode. Playwright reports that as an ordinary
+    // `response` + `requestfinished` — there is no error status and no
+    // `requestfailed` — so a recorder that only counts >=400 leaves the URL
+    // teardown-owned with NO settlement evidence, and the rule then forgives a
+    // genuine decoding regression as logout noise.
+    //
+    // The distinction this relies on is COMPLETION, not status. A request the
+    // logout navigation terminates never completes its body, so it is not
+    // recorded and its noise stays suppressible (proved by the abort case
+    // above). One that completed answered on its own account, whatever its
+    // payload then turned out to be worth.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_badrsc_probe", async (route) => {
+      await held;
+      // 200, a COMPLETE body, and content that is not a decodable RSC payload.
+      // This is the shape the finding names: the transport succeeded and the
+      // payload is still unusable.
+      await route.fulfill({
+        status: 200,
+        contentType: "text/x-component",
+        body: "<!doctype html><p>not a flight payload</p>",
+      });
+    });
+
+    const key =
+      new URL("/__late_badrsc_probe", page.url()).origin + "/__late_badrsc_probe";
+
+    traffic.openTeardownWindow();
+    const started = page.evaluate(() =>
+      fetch("/__late_badrsc_probe").then(
+        (r) => r.text(),
+        () => undefined,
+      ),
+    );
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), {
+        timeout: 15_000,
+        message: "the probe request was never recorded as teardown-owned",
+      })
+      .toBe(true);
+
+    traffic.closeTeardownWindow();
+    expect(
+      traffic.phase,
+      "precondition: the window is shut before the response completes",
+    ).toBe("after");
+
+    deliver();
+    await started;
+
+    // THE EVIDENCE THE FINDING ASKED FOR: a completed 2xx is an independent
+    // settlement, even though nothing about it is an error at the HTTP layer.
+    await expect
+      .poll(() => traffic.settledIndependently.has(key), {
+        timeout: 15_000,
+        message:
+          "an owned request that COMPLETED with 200 was not recorded as settling independently, so its RSC decoding failure is suppressible",
+      })
+      .toBe(true);
+
+    // And the rule consumes that record: the decoding failure stays real.
+    traffic.logoutNavigated = true;
+    expect(
+      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "after" }, traffic),
+      "a completed 200 with an unusable RSC payload was forgiven as logout teardown noise",
+    ).toBe(false);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  test("an owned REDIRECT is not recorded as an independent settlement", async ({
+    page,
+  }) => {
+    // THE OTHER EDGE OF THE COMPLETION RULE, and the control that keeps the
+    // redirect exclusion honest.
+    //
+    // A 3xx completes — it emits `requestfinished` like any other request — but
+    // it delivers no body, so it settles nothing independently. It also is not
+    // a hypothetical: on a real logout the owned 303/307 to /dashboard is the
+    // logout's own redirect, and /dashboard is exactly the URL teardown RSC
+    // noise names. Counting it would leave the exception forgiving nothing on
+    // the one URL it exists for.
+    //
+    // THE REDIRECT IS FOLLOWED, DELIBERATELY. The first version of this test
+    // used `redirect: "manual"` and passed with the exclusion REMOVED — it was
+    // vacuous. Measured why: an unfollowed redirect emits no `requestfinished`
+    // at all, so the completion handler never ran and nothing was under test.
+    // Followed, the 303 leg does emit `requestfinished` with
+    // `response().status() === 303`, which is the only arrangement where the
+    // exclusion is the thing deciding the outcome. Do not "simplify" this back.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_redirect_probe", async (route) => {
+      await held;
+      await route.fulfill({
+        status: 303,
+        headers: { location: "/__late_redirect_target" },
+        body: "",
+      });
+    });
+    await page.route("**/__late_redirect_target", async (route) => {
+      await route.fulfill({ status: 200, contentType: "text/plain", body: "ok" });
+    });
+
+    const key =
+      new URL("/__late_redirect_probe", page.url()).origin + "/__late_redirect_probe";
+
+    traffic.openTeardownWindow();
+    // `manual` so the 303 itself is the response under test rather than
+    // whatever it points at.
+    const started = page.evaluate(() =>
+      fetch("/__late_redirect_probe").then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), { timeout: 15_000 })
+      .toBe(true);
+
+    deliver();
+    await started;
+    // The same chance to be recorded that the completed-200 case gets.
+    await page.waitForTimeout(500);
+
+    expect(
+      traffic.settledIndependently.has(key),
+      "an owned redirect counted as settling independently — the exception now forgives nothing on the logout's own destination",
+    ).toBe(false);
+    // So its noise stays forgivable.
+    traffic.logoutNavigated = true;
+    expect(
+      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "teardown" }, traffic),
+      "an owned redirect's teardown noise was not forgiven",
+    ).toBe(true);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 });

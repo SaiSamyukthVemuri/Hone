@@ -13,6 +13,8 @@ function read(rel: string): string {
 const LAYOUT = read("app/(app)/layout.tsx");
 const MENU = read("app/(app)/MobileMenu.tsx");
 const ACCOUNT = read("app/(app)/AccountMenu.tsx");
+// SIGNOUT-02: the submit control both shells now delegate to.
+const SIGNOUT_LEAF = read("app/(app)/SignOutMenuItem.tsx");
 const DAY_COLUMN = read("app/(app)/calendar/DayColumn.tsx");
 const CALENDAR_PAGE = read("app/(app)/calendar/page.tsx");
 const GLOBALS = read("app/globals.css");
@@ -99,7 +101,7 @@ describe("app shell: responsive navigation", () => {
     // Notifications moved to the header bell (PR #229).
     expect(MENU).not.toContain('"/notifications"');
     expect(MENU).toMatch(/Sign out/);
-    expect(MENU).toMatch(/form action=\{signOut\}/);
+    expect(MENU).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}/);
     // PR #229: every link tap closes the menu; Escape closes too.
     expect(MENU).toMatch(/onClick=\{close\}/);
     expect(MENU).toMatch(/e\.key === "Escape"/);
@@ -162,7 +164,7 @@ describe("desktop account dropdown (PR #231)", () => {
   it("contains the account destinations, the profile block, and Sign out", () => {
     expect(ACCOUNT).toContain('"/settings/profile"');
     expect(ACCOUNT).toContain('"/getting-started"');
-    expect(ACCOUNT).toMatch(/form action=\{signOut\}/);
+    expect(ACCOUNT).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}/);
     expect(ACCOUNT).toMatch(/Sign out/);
     expect(ACCOUNT).toMatch(/\{studioName\} · \{roleLabel\}/);
   });
@@ -212,11 +214,21 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
 
   function signOutForm(name: string, source: string): string {
     const code = codeOnly(source);
-    const open = code.indexOf("<form action={signOut}>");
+    // SIGNOUT-02c. The form MOVED but its action did not. It is hoisted out
+    // of the dismissible panel onto the shell's persistent root, so nothing
+    // about a press can unmount it — strictly stronger than the property
+    // SIGNOUT-01 originally needed. Its action is still `signOut` itself,
+    // because wrapping it in a client function removed the POST target and the
+    // `$ACTION_ID_` field from the SERVER'S HTML, so a press before hydration
+    // dispatched nothing at all.
+    const open = code.search(/<form\b[\s\S]{0,200}?action=\{signOut\}[\s\S]{0,200}?id="signout-/);
     expect(open, `${name}: the Sign out form exists`).toBeGreaterThan(-1);
-    const close = code.indexOf("</form>", open);
-    expect(close, `${name}: the Sign out form is closed`).toBeGreaterThan(open);
-    return code.slice(open, close);
+    // The form is SELF-CLOSING now: it holds nothing. The submit control lives
+    // in the panel and reaches it by `form=`, which is what lets the form sit
+    // on the persistent root where no dismissal can touch it.
+    const close = code.indexOf("/>", open);
+    expect(close, `${name}: the Sign out form tag is closed`).toBeGreaterThan(open);
+    return code.slice(open, close + 2);
   }
 
   for (const [name, source] of [
@@ -227,8 +239,8 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
     // reason. Prove it keeps real code and drops real prose.
     it(`${name}: the comment stripper keeps code and drops prose`, () => {
       const code = codeOnly(source);
-      expect(code, `${name}: the Sign out form survives`).toContain(
-        "<form action={signOut}>",
+      expect(code, `${name}: the Sign out form survives`).toMatch(
+        /<form\b[\s\S]{0,200}?action=\{signOut\}[\s\S]{0,200}?id="signout-/,
       );
       expect(code, `${name}: real links survive`).toMatch(/<Link\b/);
       // This token exists ONLY inside a comment in both shells.
@@ -237,16 +249,50 @@ describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () 
       );
     });
 
-    it(`${name}: the Sign out button carries no click handler of its own`, () => {
+    it(`${name}: the Sign out submit path carries no click handler of its own`, () => {
       const form = signOutForm(name, source);
-      expect(form).toContain("Sign out");
-      expect(form).toContain('type="submit"');
-      // THE DEFECT, in one assertion. Any onClick on this submit path closes
-      // the menu during the click, detaches the form before its activation
-      // behaviour runs, and the logout never dispatches.
+
+      // SIGNOUT-02 moved the control itself into a leaf, because
+      // `useFormStatus` reports nothing unless it runs INSIDE the form it
+      // reads. The property this test exists for did not move, so the
+      // assertion follows it into the leaf rather than being relaxed to fit
+      // the new shape. Both halves are checked: the call site, and the control.
+      expect(
+        codeOnly(source),
+        `${name}: the form's action is the server action itself`,
+      ).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}[\s\S]{0,200}?id="signout-/);
+      expect(
+        codeOnly(source),
+        `${name}: the panel's control submits the hoisted form`,
+      ).toMatch(/<SignOutMenuItem\s+formId="signout-/);
+
+      // THE FORM IS OUTSIDE THE PANEL. That is what makes its status
+      // observer survive a dismissal, and it also means this form can no
+      // longer be unmounted by the press — strictly stronger than the
+      // property SIGNOUT-01 originally needed.
+      expect(
+        codeOnly(source),
+        `${name}: the sign-out form is hoisted out of the {open && ...} panel`,
+      ).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}[\s\S]{0,200}?id="signout-/);
+      // No hand-rolled control left behind in the form.
+      expect(form, `${name}: no control sits in the hoisted form`).not.toMatch(
+        /<button/,
+      );
+
+      // THE DEFECT, in one assertion, now applied to BOTH files. Any onClick on
+      // this submit path closes the menu during the click, detaches the form
+      // before its activation behaviour runs, and the logout never dispatches.
       expect(
         form,
         "a click handler here unmounts the form mid-click and cancels the submission",
+      ).not.toMatch(/onClick/);
+
+      const leaf = codeOnly(SIGNOUT_LEAF);
+      expect(leaf, "the leaf is a real submit control").toContain('type="submit"');
+      expect(leaf, "the leaf still renders the label").toContain("Sign out");
+      expect(
+        leaf,
+        "a click handler in the leaf detaches the form exactly as one in the menu did",
       ).not.toMatch(/onClick/);
     });
 

@@ -5,6 +5,7 @@ import {
 import { PrimaryNavLink } from "./PrimaryNavLink";
 import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
+import { SignOutFlightProvider } from "./signout-flight";
 import { GlobalSearch } from "./GlobalSearch";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -79,6 +80,13 @@ export default async function AppLayout({
           Solid background plus a higher z-index than every in-page
           element (calendar slot z-10, TimePicker dropdown z-20, etc.)
           guarantees the header sits visually above everything. */}
+      {/* SIGNOUT-02c · the logout-in-flight hold, owned here so BOTH
+          responsive menus below share one answer and neither can be left
+          holding a flag the other released. It is created per mount: the
+          only component that can report a settlement lives inside these
+          menus, so an authority outliving them could never be cleared.
+          See ./signout-flight. */}
+      <SignOutFlightProvider>
       <header className="sticky top-0 z-30 border-b border-neutral-200 bg-white print:hidden dark:border-neutral-800 dark:bg-neutral-950">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 md:px-8">
           <div className="flex items-center gap-6">
@@ -237,6 +245,7 @@ export default async function AppLayout({
           </div>
         </div>
       </header>
+      </SignOutFlightProvider>
       <main className="mx-auto max-w-5xl px-5 py-8 md:px-8 md:py-10">
         {children}
       </main>
