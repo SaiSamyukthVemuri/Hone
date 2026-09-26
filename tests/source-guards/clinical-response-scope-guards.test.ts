@@ -64,8 +64,57 @@ const RESPONSE_FIELDS = ["tolerance_rating", "reaction_type", "reaction_notes"];
 // each complete, so a PARTIAL migration inside either is a split and fails
 // loudly rather than silently retiring anything.
 //
-// "settings", "setup", "modality", "energy", "machine frequency":
+// "settings", "setup", "modality", "energy", "machine frequency".
+//
+// SessionBlock is NOT the only multi-area owner. `ElectrolysisEntry` carries
+// machine parameters too, and migration 0017 gave it `areas: string[]` —
+// literally "multiple areas treated with the same settings". A guard that read
+// SessionBlock alone would retire the settings ban the moment those columns
+// moved onto the area, while every entry-owned parameter still described
+// several areas at once, and the claim would still be false.
 const MACHINE_FIELDS = ["mode", "apilus_modality", "energy_level", "machine_frequency"];
+
+// The entry-side machine vocabulary, mapped to the marketed classes:
+//   mode / modality        -> mode, apilus_modality
+//   energy / intensity     -> energy_level, intensity
+//   duration / timing      -> duration_seconds
+//   pulse count / delay    -> pulse_count, pulse_delay_seconds
+//   frequency              -> machine_frequency
+//   thermolysis readings   -> thermolysis_intensity_percent, thermolysis_duration_seconds
+//   galvanic readings      -> galvanic_ma, galvanic_intensity_percent,
+//                             galvanic_duration_seconds, units_of_lye
+//
+// DELIBERATELY EXCLUDED: hairs_treated and minutes_performed (counts and time,
+// not machine settings — minutes is its own claim), comments and
+// observation_chips (notes and response), probe_* (the probe family), and
+// area / areas / block_id (identity).
+const ENTRY_MACHINE_FIELDS = [
+  "mode",
+  "apilus_modality",
+  "energy_level",
+  "intensity",
+  "duration_seconds",
+  "pulse_count",
+  "pulse_delay_seconds",
+  "machine_frequency",
+  "thermolysis_intensity_percent",
+  "thermolysis_duration_seconds",
+  "galvanic_ma",
+  "galvanic_intensity_percent",
+  "galvanic_duration_seconds",
+  "units_of_lye",
+];
+const ENTRY_PROBE_FIELDS = ["probe_type", "probe_size", "probe_lot_id"];
+
+// MINUTES. Its own family, its own vocabulary: `minutes_performed` sits on
+// SessionBlock AND ElectrolysisEntry and on neither area table, so a block or
+// entry covering several areas records ONE figure for the group. The truth
+// register marketed "Record minutes per area" on that model; the row is
+// corrected, and this keeps the promise from returning while the model stands.
+const MINUTES_FIELDS = ["minutes_performed"];
+const ENTRY_MINUTES_FIELDS = ["minutes_performed"];
+/** The column that makes an entry cover several areas at once (migration 0017). */
+const ENTRY_MULTI_AREA_FIELD = "areas";
 // "probe", "lot" — every column the probe/lot claim rests on:
 const PROBE_FIELDS = [
   "probe_type",
@@ -124,11 +173,33 @@ function ownership(fields: string[]): {
 function responseIsBlockOwned(): boolean {
   return ownership(RESPONSE_FIELDS).blockOwned;
 }
+/**
+ * Is ANY model that carries this family still attached to a multi-area
+ * container?
+ *
+ * The prohibition rests on that, not on SessionBlock alone. It lapses only for
+ * a genuinely complete area-owned model: the block columns gone AND either the
+ * entry columns gone or the entry no longer covering several areas.
+ */
+function familyIsMultiAreaOwned(
+  blockFields: string[],
+  entryFields: string[],
+): boolean {
+  const onBlock = blockFields.some((f) => has(block("SessionBlock"), f));
+  const entry = block("ElectrolysisEntry");
+  const onEntry = entryFields.some((f) => has(entry, f));
+  const entryCoversManyAreas = has(entry, ENTRY_MULTI_AREA_FIELD);
+  return onBlock || (onEntry && entryCoversManyAreas);
+}
+
 function machineSettingsAreBlockOwned(): boolean {
-  return ownership(MACHINE_FIELDS).blockOwned;
+  return familyIsMultiAreaOwned(MACHINE_FIELDS, ENTRY_MACHINE_FIELDS);
 }
 function probeIsBlockOwned(): boolean {
-  return ownership(PROBE_FIELDS).blockOwned;
+  return familyIsMultiAreaOwned(PROBE_FIELDS, ENTRY_PROBE_FIELDS);
+}
+function minutesAreBlockOwned(): boolean {
+  return familyIsMultiAreaOwned(MINUTES_FIELDS, ENTRY_MINUTES_FIELDS);
 }
 
 /** Every guarded family, so nothing can be added without an ownership premise. */
@@ -136,6 +207,14 @@ const FAMILIES = [
   ["response", RESPONSE_FIELDS],
   ["machine", MACHINE_FIELDS],
   ["probe", PROBE_FIELDS],
+  ["minutes", MINUTES_FIELDS],
+] as const;
+
+/** Entry-side families, checked for the same wholly-one-table coherence. */
+const ENTRY_FAMILIES = [
+  ["entry machine", ENTRY_MACHINE_FIELDS],
+  ["entry probe", ENTRY_PROBE_FIELDS],
+  ["entry minutes", ENTRY_MINUTES_FIELDS],
 ] as const;
 
 // Comments are where a correction records what it corrected, so quoting the old
@@ -255,10 +334,15 @@ const UNIVERSAL_CAPTURE =
 // really does own per area.
 const RESPONSE_WORD = "tolerat|toleran|reaction|respond|response|settings used|setup used";
 const MACHINE_NOUN = "settings|setup|modality|machine frequency|energy";
+const MINUTES_NOUN = "minutes|treatment time";
 const PROBE_NOUN = "probe|lot";
 const SETTINGS_NOUN = `${MACHINE_NOUN}|${PROBE_NOUN}`;
-const OWNERSHIP_VERB = "recorded|kept|stored|captured|logged|tracked";
-type Family = "response" | "machine" | "probe";
+// STEMS, not past tense only. "Record minutes per area" — the truth register's
+// own wording — slipped past a list of -ed forms, which is how the minutes
+// promise survived the first sweep for it.
+const OWNERSHIP_VERB =
+  "record\\w*|keep\\w*|kept|stor\\w*|captur\\w*|logs?|logged|track\\w*";
+type Family = "response" | "machine" | "probe" | "minutes";
 const PATTERNS: Array<[string, RegExp, Family]> = [
   [
     "per-area quantifier followed by a response word",
@@ -285,6 +369,22 @@ const PATTERNS: Array<[string, RegExp, Family]> = [
       "i",
     ),
     "machine",
+  ],
+  [
+    "block-owned minutes said to be recorded per area",
+    new RegExp(
+      `(${MINUTES_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b|\\b(${OWNERSHIP_VERB})\\s+(${MINUTES_NOUN})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b`,
+      "i",
+    ),
+    "minutes",
+  ],
+  [
+    "an area said to own its own minutes",
+    new RegExp(
+      `\\b(each|every|per)\\s+(\\w+\\s+)?area\\b[^.|]{0,25}?\\bown\\s+(\\w+\\s+){0,2}(${MINUTES_NOUN})`,
+      "i",
+    ),
+    "minutes",
   ],
   [
     "block-owned probe/lot said to be recorded per area",
@@ -367,12 +467,18 @@ function ownerNamedAt(text: string, index: number, matchLength: number): boolean
  * five gating behaviours be exercised directly, against a detector that cannot
  * know it is being tested.
  */
-type Regime = { response: boolean; machine: boolean; probe: boolean };
+type Regime = {
+  response: boolean;
+  machine: boolean;
+  probe: boolean;
+  minutes: boolean;
+};
 function currentRegime(): Regime {
   return {
     response: responseIsBlockOwned(),
     machine: machineSettingsAreBlockOwned(),
     probe: probeIsBlockOwned(),
+    minutes: minutesAreBlockOwned(),
   };
 }
 
@@ -644,20 +750,28 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
   const RESPONSE_CLAIM = "Capture how each area was tolerated and any reaction.";
   const MACHINE_CLAIM = "Modality and settings recorded per treated area.";
   const PROBE_CLAIM = "Probe and lot recorded per treated area.";
+  const MINUTES_CLAIM = "Record minutes per area for treatment-time tracking.";
   const hits = (copy: string, gated: boolean, regime: Regime) =>
     offendersIn("app/page.tsx", copy, gated, regime);
 
-  const ALL_BLOCK: Regime = { response: true, machine: true, probe: true };
-  const RESPONSE_MOVED: Regime = { response: false, machine: true, probe: true };
-  const MACHINE_MOVED: Regime = { response: true, machine: false, probe: true };
-  const PROBE_MOVED: Regime = { response: true, machine: true, probe: false };
-  const ALL_MOVED: Regime = { response: false, machine: false, probe: false };
+  const ALL_BLOCK: Regime = { response: true, machine: true, probe: true, minutes: true };
+  const RESPONSE_MOVED: Regime = { ...ALL_BLOCK, response: false };
+  const MACHINE_MOVED: Regime = { ...ALL_BLOCK, machine: false };
+  const PROBE_MOVED: Regime = { ...ALL_BLOCK, probe: false };
+  const MINUTES_MOVED: Regime = { ...ALL_BLOCK, minutes: false };
+  const ALL_MOVED: Regime = {
+    response: false,
+    machine: false,
+    probe: false,
+    minutes: false,
+  };
 
   it("the detector recognises every claim regardless of regime (gated=false)", () => {
-    for (const regime of [ALL_BLOCK, RESPONSE_MOVED, MACHINE_MOVED, PROBE_MOVED, ALL_MOVED]) {
+    for (const regime of [ALL_BLOCK, RESPONSE_MOVED, MACHINE_MOVED, PROBE_MOVED, MINUTES_MOVED, ALL_MOVED]) {
       expect(hits(RESPONSE_CLAIM, false, regime).length, "response").toBeGreaterThan(0);
       expect(hits(MACHINE_CLAIM, false, regime).length, "machine").toBeGreaterThan(0);
       expect(hits(PROBE_CLAIM, false, regime).length, "probe").toBeGreaterThan(0);
+      expect(hits(MINUTES_CLAIM, false, regime).length, "minutes").toBeGreaterThan(0);
     }
   });
 
@@ -665,6 +779,14 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     expect(hits(RESPONSE_CLAIM, true, ALL_BLOCK).length).toBeGreaterThan(0);
     expect(hits(MACHINE_CLAIM, true, ALL_BLOCK).length).toBeGreaterThan(0);
     expect(hits(PROBE_CLAIM, true, ALL_BLOCK).length).toBeGreaterThan(0);
+    expect(hits(MINUTES_CLAIM, true, ALL_BLOCK).length).toBeGreaterThan(0);
+  });
+
+  it("gated: minutes moving lapses ONLY the minutes prohibition", () => {
+    expect(hits(MINUTES_CLAIM, true, MINUTES_MOVED)).toEqual([]);
+    expect(hits(RESPONSE_CLAIM, true, MINUTES_MOVED).length).toBeGreaterThan(0);
+    expect(hits(MACHINE_CLAIM, true, MINUTES_MOVED).length).toBeGreaterThan(0);
+    expect(hits(PROBE_CLAIM, true, MINUTES_MOVED).length).toBeGreaterThan(0);
   });
 
   it("gated: response moving lapses ONLY the response prohibition", () => {
@@ -688,7 +810,7 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
   });
 
   it("gated: everything moved lapses everything; nothing moved applies everything", () => {
-    for (const claim of [RESPONSE_CLAIM, MACHINE_CLAIM, PROBE_CLAIM]) {
+    for (const claim of [RESPONSE_CLAIM, MACHINE_CLAIM, PROBE_CLAIM, MINUTES_CLAIM]) {
       expect(hits(claim, true, ALL_MOVED)).toEqual([]);
       expect(hits(claim, true, ALL_BLOCK).length).toBeGreaterThan(0);
     }
@@ -699,6 +821,7 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
       [RESPONSE_CLAIM, "response"],
       [MACHINE_CLAIM, "machine"],
       [PROBE_CLAIM, "probe"],
+      [MINUTES_CLAIM, "minutes"],
     ] as const) {
       expect(hits(claim, true, ALL_BLOCK).length, `${name} must fire`).toBeGreaterThan(0);
     }
@@ -711,11 +834,28 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
       response: responseIsBlockOwned(),
       machine: machineSettingsAreBlockOwned(),
       probe: probeIsBlockOwned(),
+      minutes: minutesAreBlockOwned(),
     });
     // and with the default omitted the detector behaves as the live regime says
     const viaDefault = offendersIn("app/page.tsx", RESPONSE_CLAIM, true);
     const viaExplicit = offendersIn("app/page.tsx", RESPONSE_CLAIM, true, live);
     expect(viaDefault).toEqual(viaExplicit);
+  });
+
+  it("the FILM transcript carries no per-area claim", () => {
+    // The transcript is the film's text alternative, so it must say exactly what
+    // the frames show. The Setup Used card renders ONE row per settings block
+    // (lib/sessions/point-of-care-memory.ts: `ordered.map(buildArea)`, and a
+    // multi-area block's label joins its areas), so describing those rows as
+    // "two areas, each with ..." made the alternative claim something the UI
+    // does not. It now describes blocks.
+    const src = read("lib/marketing/content.ts");
+    const start = src.indexOf("transcript: [");
+    expect(start).toBeGreaterThan(-1);
+    const transcript = src.slice(start, src.indexOf("],", start));
+    expect(offendersIn("lib/marketing/content.ts", transcript, false)).toEqual([]);
+    // and it still describes the Setup Used card at block scope
+    expect(transcript).toMatch(/two settings blocks/);
   });
 
   it("a comment quoting the old wording does not trip the guard", () => {

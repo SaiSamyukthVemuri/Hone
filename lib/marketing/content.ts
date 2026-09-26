@@ -198,7 +198,7 @@ export const FILM = {
     "Monday, Sep 14. Your next client has a history. — the studio calendar, week view.",
     "Hone. Treatment memory for electrologists. — title card.",
     "Treatment memory: see what happened last time. Areas treated, how she responded, and the note left for this visit. — the Last Treatment card: areas treated, response and tolerance for each settings block, a Watch Today caution, the setup used, consultation and skin/hair.",
-    "Treatment memory: the exact setup you used. — the Setup Used card: two areas, each with frequency, probe and lot, modality, level, timing, percentage, pulses, duration and a numbing note.",
+    "Treatment memory: the exact setup you used. — the Setup Used card: two settings blocks, each covering a single treated area, with frequency, probe and lot, modality, level, timing, percentage, pulses, duration and a numbing note.",
     "Charting: record today's treatment. — the appointment page: confirmed session, pinned notes, allergies, client summary.",
     "One client record: appointments, records, and treatment history together. — the client profile with its tabs and pinned notes marked visible on every appointment.",
     "Hone. Pick up where you left off. hone.care — end card.",
