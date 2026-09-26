@@ -45,20 +45,49 @@ function block(typeName: string): string {
   return DB_TYPES.slice(start, DB_TYPES.indexOf("\n};", start));
 }
 
+// TWO INDEPENDENT OWNERSHIP FAMILIES.
+//
+// Response and settings can move separately, and gating both on one predicate
+// meant a migration of EITHER retired BOTH bans — so moving tolerance onto the
+// area would also have licensed "settings recorded per treated area", which
+// would still be false. Each family now carries its own predicate and gates
+// only its own checks.
 const RESPONSE_FIELDS = ["tolerance_rating", "reaction_type", "reaction_notes"];
+const SETTINGS_FIELDS = ["machine_frequency", "probe_key", "probe_lot_number"];
 
-/** The precondition the ban rests on, read from the model itself. */
-function responseIsBlockOwned(): boolean {
+function has(src: string, f: string): boolean {
+  return new RegExp(`^\\s*${f}\\??:`, "m").test(src);
+}
+
+/** Where a family currently lives. */
+function ownership(fields: string[]): {
+  onBlock: string[];
+  onArea: string[];
+  blockOwned: boolean;
+  areaOwned: boolean;
+  split: boolean;
+} {
   const sb = block("SessionBlock");
   const sba = block("SessionBlockArea");
-  if (!sb || !sba) return false;
-  const ownedByBlock = RESPONSE_FIELDS.every((f) =>
-    new RegExp(`^\\s*${f}\\??:`, "m").test(sb),
-  );
-  const absentFromArea = RESPONSE_FIELDS.every(
-    (f) => !new RegExp(`^\\s*${f}\\??:`, "m").test(sba),
-  );
-  return ownedByBlock && absentFromArea;
+  const onBlock = fields.filter((f) => has(sb, f));
+  const onArea = fields.filter((f) => has(sba, f));
+  return {
+    onBlock,
+    onArea,
+    blockOwned: onBlock.length === fields.length && onArea.length === 0,
+    areaOwned: onArea.length === fields.length && onBlock.length === 0,
+    // Neither wholly one nor wholly the other: nothing can be trusted.
+    split:
+      !(onBlock.length === fields.length && onArea.length === 0) &&
+      !(onArea.length === fields.length && onBlock.length === 0),
+  };
+}
+
+function responseIsBlockOwned(): boolean {
+  return ownership(RESPONSE_FIELDS).blockOwned;
+}
+function settingsAreBlockOwned(): boolean {
+  return ownership(SETTINGS_FIELDS).blockOwned;
 }
 
 // Comments are where a correction records what it corrected, so quoting the old
@@ -104,10 +133,36 @@ function marketingSurfaces(): string[] {
  * asserted to exist so a rename cannot turn an exemption into a silent
  * wildcard.
  */
-const OUT_OF_CLASS: Readonly<Record<string, string>> = {
+/**
+ * Routes that carry BOTH profession-level guidance and Hone product promises.
+ *
+ * A whole-file exemption was too broad. The checklist legitimately lists
+ * "Tolerance for each area" as something a thorough practitioner record may
+ * contain — that is a statement about the profession, not about Hone — but the
+ * same page also sold a Hone capability, and exempting the file let the product
+ * claim through with the guidance.
+ *
+ * So the exemption is SENTENCE-scoped: on these routes the per-area patterns
+ * run only on sentences that speak about Hone. Guidance survives; Hone-specific
+ * claims on the same route stay checked. The universal-capture rule below
+ * applies to these routes regardless.
+ */
+const GUIDANCE_ROUTES: Readonly<Record<string, string>> = {
   "app/resources/electrolysis-treatment-record-checklist/page.tsx":
-    "A best-practice checklist of what an electrolysis treatment RECORD should contain. It is guidance for the practitioner's own record-keeping, not a statement about what Hone stores or how it scopes response, so correcting it would misrepresent the profession's standard rather than Hone.",
+    "Profession-level checklist of what a thorough treatment RECORD may contain. The list items describe the standard, not Hone's storage model; Hone-specific sentences on the page are still checked.",
 };
+
+/**
+ * A promise to capture EVERYTHING on a page whose own guidance includes
+ * per-area response.
+ *
+ * This is the shape the defect actually took: the checklist lists "Tolerance
+ * for each area", and the page then said Hone "captures every item on this
+ * checklist". Neither half is wrong alone. Together they assert per-area
+ * response storage that does not exist, so the pair is what fails.
+ */
+const UNIVERSAL_CAPTURE =
+  /\b(captur\w*|record\w*|structur\w*|keep\w*)\b[^.]{0,40}?\b(every|all)\s+(item|field|thing|one)\b|\b(every|all)\s+(item|field|thing)\b[^.]{0,40}?\b(is|are)\s+(captur\w*|record\w*|structur\w*)/i;
 
 // A per-area quantifier sitting near a response/settings word, in either order.
 // ONE adjective is allowed between quantifier and noun: mutation testing showed
@@ -131,14 +186,17 @@ const OUT_OF_CLASS: Readonly<Record<string, string>> = {
 const RESPONSE_WORD = "tolerat|toleran|reaction|respond|response|settings used|setup used";
 const SETTINGS_NOUN = "settings|setup|modality|machine frequency|probe|lot";
 const OWNERSHIP_VERB = "recorded|kept|stored|captured|logged|tracked";
-const PATTERNS: Array<[string, RegExp]> = [
+type Family = "response" | "settings";
+const PATTERNS: Array<[string, RegExp, Family]> = [
   [
     "per-area quantifier followed by a response word",
     new RegExp(`\\b(each|per|every)\\s+(\\w+\\s+)?area\\b[^.|]{0,80}?(${RESPONSE_WORD})`, "i"),
+    "response",
   ],
   [
     "response word followed by a per-area quantifier",
     new RegExp(`(${RESPONSE_WORD})[^.|]{0,40}?\\b(per|each|every)\\s+(\\w+\\s+)?area\\b`, "i"),
+    "response",
   ],
   [
     "block-owned settings said to be recorded per area",
@@ -146,6 +204,7 @@ const PATTERNS: Array<[string, RegExp]> = [
       `(${SETTINGS_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b`,
       "i",
     ),
+    "settings",
   ],
   [
     "an area said to own block-level settings",
@@ -153,6 +212,7 @@ const PATTERNS: Array<[string, RegExp]> = [
       `\\b(each|every|per)\\s+(\\w+\\s+)?area\\b[^.|]{0,25}?\\bown\\s+(\\w+\\s+){0,2}(${SETTINGS_NOUN})`,
       "i",
     ),
+    "settings",
   ],
 ];
 
@@ -201,17 +261,40 @@ function ownerNamedAt(text: string, index: number, matchLength: number): boolean
  */
 function offendersIn(rel: string, copy: string): string[] {
   const found: string[] = [];
-  for (const [label, re] of PATTERNS) {
-    // EVERY match, not just the first. `re.exec` returned one hit per pattern,
-    // so a truthful rescued sentence early in a file hid every later unscoped
-    // claim behind it — the file passed on the strength of its best sentence.
+  const guidance = rel in GUIDANCE_ROUTES;
+  for (const [label, re, family] of PATTERNS) {
+    // Each family's ban runs only while THAT family is block-owned.
+    if (family === "response" && !responseIsBlockOwned()) continue;
+    if (family === "settings" && !settingsAreBlockOwned()) continue;
     for (const hit of copy.matchAll(new RegExp(re.source, re.flags + "g"))) {
       if (hit.index === undefined) continue;
       if (ownerNamedAt(copy, hit.index, hit[0].length)) continue;
+      // On a guidance route, only sentences that speak about Hone are claims.
+      if (guidance && !/\bHone\b/i.test(sentenceAt(copy, hit.index))) continue;
       found.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
     }
   }
+  // A universal-capture promise is false on any page whose own content carries
+  // per-area response guidance — whichever half you read first.
+  if (responseIsBlockOwned() && UNIVERSAL_CAPTURE.test(copy)) {
+    const perAreaResponse = PATTERNS.filter(([, , f]) => f === "response").some(
+      ([, re]) => re.test(copy),
+    );
+    if (perAreaResponse) {
+      const m = UNIVERSAL_CAPTURE.exec(copy);
+      found.push(
+        `${rel}: universal capture promise on a page whose own guidance includes per-area response: "${(m?.[0] ?? "").replace(/\s+/g, " ").slice(0, 90)}"`,
+      );
+    }
+  }
   return found;
+}
+
+/** The sentence an index falls in. */
+function sentenceAt(text: string, index: number): string {
+  const start = text.lastIndexOf(".", index) + 1;
+  const end = text.indexOf(".", index);
+  return text.slice(start, end === -1 ? text.length : end);
 }
 
 describe("marketing may not claim per-area tolerance / reaction / settings", () => {
@@ -246,17 +329,17 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     expect(typeof responseIsBlockOwned()).toBe("boolean");
   });
 
-  it("every exempted surface still exists", () => {
-    for (const rel of Object.keys(OUT_OF_CLASS)) {
-      expect(() => read(rel), `${rel} is exempted but missing`).not.toThrow();
+  it("every guidance-scoped surface is still swept", () => {
+    for (const rel of Object.keys(GUIDANCE_ROUTES)) {
+      expect(() => read(rel), `${rel} is scoped but missing`).not.toThrow();
+      // and it must still be SWEPT, not skipped
+      expect(marketingSurfaces(), `${rel} must remain in the sweep`).toContain(rel);
     }
   });
 
   it("no public marketing surface claims per-area response", () => {
-    if (!responseIsBlockOwned()) return; // model moved; the ban lapses by design
     const offenders: string[] = [];
     for (const rel of marketingSurfaces()) {
-      if (rel in OUT_OF_CLASS) continue;
       offenders.push(...offendersIn(rel, copyOnly(read(rel))));
     }
     expect(
@@ -357,6 +440,70 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     expect(fires("Treat several areas at the same settings and those settings are recorded once, for that group, and every area in it carries the treatment into its own history.")).toBe(false);
     expect(fires("Select every area treated using this settings setup.")).toBe(false);
     expect(fires("It keeps a separate history for every treated area and brings last time's settings forward.")).toBe(false);
+  });
+
+  it("guidance may stand; a Hone claim on the same route may not", () => {
+    // P2-1. The checklist legitimately lists per-area response as something a
+    // thorough RECORD may contain. That is a statement about the profession.
+    // A Hone sentence on the same page is a product claim and stays checked.
+    const rel = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
+    expect(Object.keys(GUIDANCE_ROUTES)).toContain(rel);
+    // guidance alone — allowed
+    expect(offendersIn(rel, '"Tolerance for each area", "Any skin reaction"')).toEqual([]);
+    // the same words in a HONE sentence — rejected
+    expect(
+      offendersIn(rel, "Hone records tolerance for each area as a structured field").length,
+    ).toBeGreaterThan(0);
+    // and on a NON-guidance route the guidance form is still a claim
+    expect(offendersIn("app/page.tsx", "Tolerance for each area").length).toBeGreaterThan(0);
+  });
+
+  it("a universal-capture promise fails on a page whose guidance is per-area", () => {
+    // P2-1's actual shape: neither half is wrong alone, the pair is.
+    const rel = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
+    const guidanceOnly = '"Tolerance for each area", "Minutes performed per area"';
+    const promiseOnly = "See how Hone captures every item on this page as structured data";
+    expect(offendersIn(rel, guidanceOnly)).toEqual([]);
+    const both = `${guidanceOnly} ... ${promiseOnly}`;
+    const hits = offendersIn(rel, both);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.join(" ")).toMatch(/universal capture promise/);
+  });
+
+  it("the live checklist route makes no universal-capture promise", () => {
+    const rel = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
+    expect(offendersIn(rel, copyOnly(read(rel)))).toEqual([]);
+    // the guidance itself is still there — not deleted to satisfy the guard
+    const src = read(rel);
+    expect(src).toContain('"Tolerance for each area"');
+    expect(src).toContain('"Any skin or client reaction, and whether it settled"');
+  });
+
+  it("each ownership family is coherent on its own", () => {
+    // P2-2 / state D: a family split across both tables is the state where
+    // nothing can be trusted, and it fails loudly in EITHER direction.
+    for (const [name, fields] of [
+      ["response", RESPONSE_FIELDS],
+      ["settings", SETTINGS_FIELDS],
+    ] as const) {
+      const o = ownership(fields as string[]);
+      expect(
+        o.split,
+        `${name} fields must sit wholly on one table; block: [${o.onBlock}], area: [${o.onArea}]`,
+      ).toBe(false);
+    }
+  });
+
+  it("the two families gate independently", () => {
+    // The shape of states A and B: each family's checks consult only its own
+    // predicate, so a migration of one cannot license the other's false claim.
+    const responsePatterns = PATTERNS.filter(([, , f]) => f === "response");
+    const settingsPatterns = PATTERNS.filter(([, , f]) => f === "settings");
+    expect(responsePatterns.length).toBeGreaterThan(0);
+    expect(settingsPatterns.length).toBeGreaterThan(0);
+    const src = read("tests/source-guards/clinical-response-scope-guards.test.ts");
+    expect(src).toContain('if (family === "response" && !responseIsBlockOwned()) continue;');
+    expect(src).toContain('if (family === "settings" && !settingsAreBlockOwned()) continue;');
   });
 
   it("a comment quoting the old wording does not trip the guard", () => {
