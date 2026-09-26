@@ -335,6 +335,19 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     expect(fires("Each area keeps its own tolerance. Settings live on the block.")).toBe(true);
   });
 
+  it("a rescued sentence does not hide a LATER claim in the same file", () => {
+    // The multi-match case. With `re.exec` only the first hit per pattern was
+    // examined, so a file whose opening sentence was truthful and rescued kept
+    // every later unscoped claim invisible — it passed on the strength of its
+    // best sentence.
+    const text =
+      "Every treated area carries the response from the block it was charted under. " +
+      "Each area has its own tolerance and reaction.";
+    const found = offendersIn("synthetic", text);
+    expect(found.length).toBe(1);
+    expect(found[0]).toMatch(/own toleran/);
+  });
+
   it("settings nouns are flagged only when OWNED by the area", () => {
     const fires = (x: string) => offendersIn("synthetic", x).length > 0;
     // REJECT — the published SEO description's exact shape.
