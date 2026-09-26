@@ -59,6 +59,39 @@ import {
 // surface whose controls it was holding, and the next request on a destroyed
 // session redirects to /login regardless.
 //
+// ===========================================================================
+// ACCEPTED BOUNDED LIMITATION — owner ruling, 2026-09-26, PR #750.
+//
+// THE RESIDUAL, STATED RATHER THAN HIDDEN. If browser history destroys the
+// current `(app)` shell while a logout request is still in flight, the newly
+// mounted shell begins with a fresh hold and will therefore permit ANOTHER
+// logout submission. This is NOT fixed. It is accepted, with the reasoning on
+// the record:
+//
+//   * THE ALTERNATIVE IS WORSE AND UNRECOVERABLE. Preserving the hold past its
+//     only settlement observer strands the replacement shell with every menu
+//     destination disabled AND "Signing out…" showing, for the life of the
+//     document, with nothing able to retract either. The per-mount failure is
+//     self-correcting; that one is not.
+//   * THE DUPLICATE IS IDEMPOTENT. `app/(app)/dashboard/actions.ts` does not
+//     branch on the Supabase result and redirects to /login unconditionally, so
+//     a second logout — session already destroyed or not — still lands the
+//     practitioner where they asked to go. Pinned, so it stays a property
+//     rather than an accident.
+//   * NO THIRD OPTION EXISTS AT THIS SCOPE. Settlement is observable only
+//     through `useFormStatus`, which reports for the form its caller runs
+//     inside, so the observer is necessarily a component in the shell. Owning
+//     the request directly needs the action's promise, which needs a client
+//     function as the form `action` — measured to render
+//     `action="javascript:throw …"` with no endpoint, destroying the native
+//     submission. Once the shell is gone there is no observer left.
+//
+// Eliminating it would require a root-layout / cross-route-group /
+// cross-document logout coordinator. That is deliberately OUT OF SCOPE here:
+// it is a larger authority surface than this slice, and the owner ruled the
+// bounded behaviour preferable to building it for this edge case.
+// ===========================================================================
+//
 // STILL ONE ANSWER FOR BOTH SHELLS. The provider wraps the header, above both
 // menus, so a press in either one holds the other — the original defect — and
 // both are released together.
