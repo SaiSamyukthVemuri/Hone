@@ -140,11 +140,44 @@ const PATTERNS: Array<[string, RegExp]> = [
  */
 const BLOCK_SCOPED = /\b(on|from|under|to|against)\s+(the\s+)?(settings[\s-]|machine[\s-]settings[\s-])?block\b/i;
 
-/** The sentence a match sits in, so the qualifier has to be local to it. */
-function sentenceAround(text: string, index: number): string {
-  const start = text.lastIndexOf(".", index) + 1;
-  const end = text.indexOf(".", index);
-  return text.slice(start, end === -1 ? text.length : end);
+/**
+ * The owner must be named RIGHT THERE, not merely somewhere in the sentence.
+ *
+ * A sentence-wide search was too generous: a truth-register ROW is one long
+ * sentence, so reverting the capability label still left "recorded on the
+ * settings block" further along the row and the revert went unnoticed. The
+ * window is therefore the match itself plus a short tail — the phrasing that
+ * actually attributes it ("... and response FROM THE BLOCK it was charted
+ * under") sits immediately after.
+ */
+const OWNER_WINDOW = 48;
+function ownerNamedAt(text: string, index: number, matchLength: number): boolean {
+  const tail = text.slice(index, index + matchLength + OWNER_WINDOW);
+  // The window stops at the end of the sentence. Without this it ran straight
+  // past the full stop and let the NEXT sentence supply the owner, so
+  // "Each area keeps its own tolerance. Settings live on the block." rescued
+  // itself with a sentence that says nothing about those areas.
+  const stop = tail.indexOf(".", matchLength);
+  return BLOCK_SCOPED.test(stop === -1 ? tail : tail.slice(0, stop));
+}
+
+/**
+ * The single detector, used BOTH for the real sweep and for synthetic controls.
+ *
+ * Mutation testing found the first shape untestable: the rescue lived inline in
+ * the file loop, so turning it into a blanket `continue` passed every control
+ * while the sweep reported nothing. Sharing one function means the synthetic
+ * cases below exercise the exact code the sweep runs.
+ */
+function offendersIn(rel: string, copy: string): string[] {
+  const found: string[] = [];
+  for (const [label, re] of PATTERNS) {
+    const hit = re.exec(copy);
+    if (!hit) continue;
+    if (ownerNamedAt(copy, hit.index, hit[0].length)) continue;
+    found.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
+  }
+  return found;
 }
 
 describe("marketing may not claim per-area tolerance / reaction / settings", () => {
@@ -190,14 +223,7 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     const offenders: string[] = [];
     for (const rel of marketingSurfaces()) {
       if (rel in OUT_OF_CLASS) continue;
-      const copy = copyOnly(read(rel));
-      for (const [label, re] of PATTERNS) {
-        const hit = re.exec(copy);
-        if (!hit) continue;
-        // Truthful when the same sentence names the block as the owner.
-        if (BLOCK_SCOPED.test(sentenceAround(copy, hit.index))) continue;
-        offenders.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
-      }
+      offenders.push(...offendersIn(rel, copyOnly(read(rel))));
     }
     expect(
       offenders,
@@ -256,19 +282,22 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     }
   });
 
-  it("naming the block is what rescues a per-area sentence, not the word 'block'", () => {
-    const fires = (t: string) =>
-      PATTERNS.some(([, re]) => {
-        const m = re.exec(t);
-        return !!m && !BLOCK_SCOPED.test(sentenceAround(t, m.index));
-      });
-    // TRUE: the owner is named in the same sentence.
+  it("naming the block RIGHT THERE is what rescues a per-area sentence", () => {
+    const fires = (t: string) => offendersIn("synthetic", t).length > 0;
+    // TRUE: owner named immediately after the claim.
     expect(fires("Every treated area stays findable, carrying the response from the block it was charted under.")).toBe(false);
     expect(fires("Tolerance and skin response are recorded on the settings block that covers them.")).toBe(false);
-    // FALSE: no owner named — still rejected.
+    // FALSE: no owner named at all.
     expect(fires("Each treated area keeps its own tolerance and response.")).toBe(true);
     expect(fires("Capture how each area was tolerated and any reaction.")).toBe(true);
-    // FALSE: the word appears, but in a different sentence, so it cannot rescue this one.
+    // FALSE: the owner is named, but far away — a long row must not rescue a
+    // claim made at its start. This is the case that let two reverts through.
+    expect(
+      fires(
+        "Client tolerance + skin/reaction per area (with numbing record) and a great many further words of unrelated register prose padding this row out well past the window, recorded on the settings block",
+      ),
+    ).toBe(true);
+    // FALSE: owner named in a NEIGHBOURING sentence only.
     expect(fires("Each area keeps its own tolerance. Settings live on the block.")).toBe(true);
   });
 
