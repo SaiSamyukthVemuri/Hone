@@ -110,18 +110,42 @@ const OUT_OF_CLASS: Readonly<Record<string, string>> = {
 };
 
 // A per-area quantifier sitting near a response/settings word, in either order.
+// ONE adjective is allowed between quantifier and noun: mutation testing showed
+// `each TREATED area` walked straight past a literal `(treatment\\s+)?`, which is
+// how app/features/treatment-memory kept its claim through the first fix.
 // `laterality` is deliberately absent: it IS per area.
 const RESPONSE_WORD = "tolerat|toleran|reaction|respond|response|settings used|setup used";
 const PATTERNS: Array<[string, RegExp]> = [
   [
     "per-area quantifier followed by a response word",
-    new RegExp(`\\b(each|per|every)\\s+(treatment\\s+)?area\\b[^.|]{0,60}?(${RESPONSE_WORD})`, "i"),
+    new RegExp(`\\b(each|per|every)\\s+(\\w+\\s+)?area\\b[^.|]{0,80}?(${RESPONSE_WORD})`, "i"),
   ],
   [
     "response word followed by a per-area quantifier",
-    new RegExp(`(${RESPONSE_WORD})[^.|]{0,40}?\\b(per|each|every)\\s+(treatment\\s+)?area\\b`, "i"),
+    new RegExp(`(${RESPONSE_WORD})[^.|]{0,40}?\\b(per|each|every)\\s+(\\w+\\s+)?area\\b`, "i"),
   ],
 ];
+
+/**
+ * The one phrasing that makes a per-area sentence TRUE.
+ *
+ * The patterns cannot parse English attachment, so they fire on the correct
+ * copy as readily as the wrong copy: "every treated area stays findable,
+ * carrying the response FROM THE BLOCK it was charted under" is exactly what
+ * the product does, and names the block as the owner while doing it.
+ *
+ * This is not a loophole. To qualify, the sentence must explicitly attribute
+ * the data to the block — which IS the fact being enforced. A sentence that
+ * merely mentions areas and response, with no owner named, still fails.
+ */
+const BLOCK_SCOPED = /\b(on|from|under|to|against)\s+(the\s+)?(settings[\s-]|machine[\s-]settings[\s-])?block\b/i;
+
+/** The sentence a match sits in, so the qualifier has to be local to it. */
+function sentenceAround(text: string, index: number): string {
+  const start = text.lastIndexOf(".", index) + 1;
+  const end = text.indexOf(".", index);
+  return text.slice(start, end === -1 ? text.length : end);
+}
 
 describe("marketing may not claim per-area tolerance / reaction / settings", () => {
   it("the response-ownership regime is COHERENT (either owner, never half)", () => {
@@ -169,7 +193,10 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
       const copy = copyOnly(read(rel));
       for (const [label, re] of PATTERNS) {
         const hit = re.exec(copy);
-        if (hit) offenders.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
+        if (!hit) continue;
+        // Truthful when the same sentence names the block as the owner.
+        if (BLOCK_SCOPED.test(sentenceAround(copy, hit.index))) continue;
+        offenders.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
       }
     }
     expect(
@@ -227,6 +254,22 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
         `guard must reject: ${s}`,
       ).toBe(true);
     }
+  });
+
+  it("naming the block is what rescues a per-area sentence, not the word 'block'", () => {
+    const fires = (t: string) =>
+      PATTERNS.some(([, re]) => {
+        const m = re.exec(t);
+        return !!m && !BLOCK_SCOPED.test(sentenceAround(t, m.index));
+      });
+    // TRUE: the owner is named in the same sentence.
+    expect(fires("Every treated area stays findable, carrying the response from the block it was charted under.")).toBe(false);
+    expect(fires("Tolerance and skin response are recorded on the settings block that covers them.")).toBe(false);
+    // FALSE: no owner named — still rejected.
+    expect(fires("Each treated area keeps its own tolerance and response.")).toBe(true);
+    expect(fires("Capture how each area was tolerated and any reaction.")).toBe(true);
+    // FALSE: the word appears, but in a different sentence, so it cannot rescue this one.
+    expect(fires("Each area keeps its own tolerance. Settings live on the block.")).toBe(true);
   });
 
   it("a comment quoting the old wording does not trip the guard", () => {
