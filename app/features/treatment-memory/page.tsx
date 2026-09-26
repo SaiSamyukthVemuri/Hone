@@ -363,9 +363,10 @@ export default function TreatmentMemoryPage() {
                   using now.
                 </Lede>
                 <Lede className="mt-4">
-                  Imported history is labelled as imported wherever it appears. It
-                  shows up in the briefing and does its job, and it is never quietly
-                  mixed in with what you charted in Hone.
+                  Imported history is labelled as imported wherever it appears, and it
+                  is never quietly mixed in with what you charted in Hone. The briefing
+                  leads with the most recent imported entries and tells you how many
+                  more are on file behind them.
                 </Lede>
               </div>
               <div className="lg:pt-2">
@@ -378,11 +379,11 @@ export default function TreatmentMemoryPage() {
                     ],
                     [
                       "From a spreadsheet",
-                      "Brought across row by row into that same imported record, with the founder doing the mapping rather than handing you an importer.",
+                      "Brought across row by row into that same imported record and kept there, with the founder doing the mapping rather than handing you an importer.",
                     ],
                     [
-                      "Always labelled",
-                      "Imported entries are marked as imported in the briefing and the record, permanently and visibly.",
+                      "Labelled, and counted",
+                      "Imported entries are marked as imported wherever they surface. Before Today leads with the most recent of them and names the total held, so the count tells you there is more history behind the ones on screen.",
                     ],
                   ].map(([t, b]) => (
                     <div key={t} className="py-5">

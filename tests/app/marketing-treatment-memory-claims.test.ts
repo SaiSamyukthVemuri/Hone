@@ -28,6 +28,8 @@ const MIGRATION = "supabase/migrations/0128_session_block_areas.sql";
 const INTELLIGENCE = "lib/sessions/treatment-intelligence.ts";
 const BLOCK_FORM =
   "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx";
+const CLIENT_PAGE = "app/(app)/clients/[id]/page.tsx";
+const BEFORE_TODAY_CARD = "components/before-today-card.tsx";
 
 // LINE comments are stripped BEFORE block comments. This page's comments
 // EXPLAIN the retired overclaim by quoting it, so a stripper that ran in the
@@ -277,5 +279,97 @@ describe("the carry-forward section shows no capture of the retired panel", () =
   it("and the page still shows captures elsewhere, so this is not a blanket removal", () => {
     const stems = [...read(PAGE).matchAll(/base="([a-z0-9-]+)"/g)].map((m) => m[1]);
     expect(stems.length, "the page lost all its captures").toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("imported history is described as the product actually shows it", () => {
+  // THE CLAIM THAT WAS WRONG. The page promised imported entries were marked
+  // "in the briefing and the record, permanently and visibly". The product caps
+  // what Before Today renders at BEFORE_TODAY_IMPORTED_CAP and prints
+  // "Showing the latest N of M imported records" when there are more. The rows
+  // beyond the cap are STORED and reachable by no practitioner-facing surface
+  // in the app, so "permanently and visibly" described something that does not
+  // exist.
+  //
+  // NOT A PHRASE BLOCKLIST. Banning that exact sentence would be satisfied by
+  // "every imported entry stays on screen", which is the same promise. What is
+  // checked instead is the SHAPE of the promise: in any sentence about imports,
+  // a totality quantifier must not co-occur with a visibility verb. The copy
+  // may say imports are kept, labelled, or surfaced — it may not say all of
+  // them are seen.
+
+  /** Rendered prose only: comments and module imports removed. */
+  const prose = () =>
+    codeOnly(read(PAGE))
+      .split("\n")
+      .filter((l) => !/^\s*import\s/.test(l))
+      .join(" ")
+      .replace(/\s+/g, " ");
+
+  /** Sentences that talk about importing. */
+  const importSentences = () =>
+    prose()
+      .split(/(?<=[.!?])\s+/)
+      .filter((t) => /\bimport/i.test(t));
+
+  it("premise: the product really does cap what the briefing renders", () => {
+    // Read from the product. If the cap is ever removed, this fails and the
+    // bounded wording becomes re-arguable — which is the correct direction for
+    // a guard over a claim that is only true while the cap exists.
+    const m = read(CLIENT_PAGE).match(/BEFORE_TODAY_IMPORTED_CAP\s*=\s*(\d+)/);
+    expect(m, `${CLIENT_PAGE}: no BEFORE_TODAY_IMPORTED_CAP to read`).not.toBeNull();
+    const cap = Number(m![1]);
+    expect(cap, "the cap is not a finite positive number").toBeGreaterThan(0);
+    expect(read(CLIENT_PAGE), "the cap is declared but not applied as a limit").toMatch(
+      /limit:\s*BEFORE_TODAY_IMPORTED_CAP/,
+    );
+    // And the card admits the truncation in its own words.
+    expect(
+      read(BEFORE_TODAY_CARD),
+      "the card no longer tells the practitioner how many were omitted",
+    ).toContain("Showing the latest");
+  });
+
+  it("there is import copy to check — otherwise this is vacuous", () => {
+    const sentences = importSentences();
+    expect(sentences.length, "no sentences mention importing").toBeGreaterThanOrEqual(3);
+  });
+
+  it("no sentence promises that ALL imported history is visible", () => {
+    // Two open classes, intersected. Either alone is fine and appears in
+    // legitimate copy ("every area keeps its own history"; "wherever they
+    // surface"); together, in a sentence about imports, they are the promise
+    // the product cannot keep.
+    const TOTALITY = /\b(all|every|each|always|permanent(ly)?|entire|complete(ly)?|nothing is (lost|hidden)|never (lost|hidden))\b/i;
+    const VISIBILITY =
+      /\b(visible|visibly|shown|shows|showing|surfaced|surfaces|appears?|displayed|on screen|in view|see|seen|readable|accessible)\b/i;
+    const offenders = importSentences().filter(
+      (t) => TOTALITY.test(t) && VISIBILITY.test(t),
+    );
+    expect(
+      offenders,
+      "import copy promises total visibility, but the briefing renders only the " +
+        "latest BEFORE_TODAY_IMPORTED_CAP entries and no other surface shows the rest",
+    ).toEqual([]);
+  });
+
+  it("and the copy says what IS true: recency, and a count", () => {
+    // The honest version has to be present, not merely the dishonest one
+    // absent — copy that fell silent about imports would pass the ban above
+    // while telling a prospect less than the product does.
+    const joined = importSentences().join(" ");
+    expect(joined, "import copy no longer says the briefing leads with the most recent").toMatch(
+      /\b(most recent|latest|newest)\b/i,
+    );
+    expect(joined, "import copy no longer mentions the count of what is held").toMatch(
+      /\b(how many|count|total)\b/i,
+    );
+    // And the migration capability is still described.
+    expect(joined, "the import capability itself is no longer described").toMatch(
+      /\b(paper|spreadsheet)\b/i,
+    );
+    expect(joined, "copy no longer says imported history is kept").toMatch(
+      /\bkept\b/i,
+    );
   });
 });
