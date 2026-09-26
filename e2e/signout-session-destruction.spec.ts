@@ -262,16 +262,60 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
       traffic.teardownOwned.add(withoutQuery(request.url()));
     }
   });
-  page.on("requestfinished", (request) => bump(request.url(), -1));
+  page.on("requestfinished", (request) => {
+    bump(request.url(), -1);
+    // COMPLETION IS THE THIRD KIND OF SETTLEMENT EVIDENCE, and the only one
+    // that can see a 200 whose payload is worthless.
+    //
+    // A prefetch can return 200, transfer normally, and still be undecodable —
+    // Next logs `Failed to fetch RSC payload for …`. There is no error status
+    // and no `requestfailed`, so status alone leaves that URL owned with no
+    // settlement evidence and the rule forgives a real decoding regression.
+    //
+    // WHAT MAKES THIS A DISTINCTION RATHER THAN A BLANKET. It is keyed on the
+    // request COMPLETING, not on a `response` event: headers arriving proves
+    // only that a server answered, while `requestfinished` is Playwright
+    // reporting the whole transaction done. A request the logout navigation
+    // terminates does not get here — it fails, and the abort branch below
+    // deliberately does not record it, which is what keeps genuine teardown
+    // noise suppressible.
+    //
+    // REDIRECTS ARE EXCLUDED because a 3xx delivers no body, so it cannot
+    // evidence an independent delivery of content. It also matters WHICH
+    // redirect: measured on a real logout, the owned 303/307 to /dashboard is
+    // the logout's OWN redirect, so counting it would mark the URL most likely
+    // to carry teardown noise as independently settled.
+    //
+    // Honest about the strength of that: dropping this exclusion does NOT red
+    // the real logout tests, because they log no RSC error for /dashboard. It
+    // is pinned by its own control instead — "an owned REDIRECT is not recorded
+    // as an independent settlement" below — so the exclusion is a proved
+    // property rather than a claim about runs that happen not to exercise it.
+    const key = withoutQuery(request.url());
+    if (!traffic.teardownOwned.has(key)) return;
+    void (async () => {
+      try {
+        const response = await request.response();
+        if (!response) return;
+        const status = response.status();
+        // >= 400 is the response handler's job; 3xx delivered no body.
+        if (status >= 300) return;
+        traffic.settledIndependently.add(key);
+      } catch {
+        // The page can be tearing down as this resolves. No evidence is not
+        // the same as evidence of independence, so record nothing.
+      }
+    })();
+  });
 
   // A REAL ERROR STATUS is the request failing on its own account, and is the
   // server-regression half of what ownership alone cannot see.
   //
-  // `requestfinished` deliberately is NOT used for this. A streaming RSC
-  // response that the navigation cuts mid-body still reports as finished with
-  // status 200, so treating "finished" as "settled independently" excluded the
-  // very requests the exception exists for — measured: four real cases went
-  // red that way, with their logouts provably perfect.
+  // The `requestfinished` EVENT alone was tried as this evidence and measured
+  // wrong: four real cases went red, with their logouts provably perfect,
+  // because every owned lifecycle event counted — the logout's own 3xx
+  // included. The completion check above is narrower: 2xx only, redirects
+  // excluded, and never a bare `response`.
   page.on("response", (response) => {
     // NOT PHASE-GATED, deliberately. The rule accepts LATE messages about
     // owned requests — a hard navigation keeps reporting after the window
@@ -1224,6 +1268,159 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     expect(
       isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "teardown" }, traffic),
       "an aborted, owned request was not forgiven as teardown",
+    ).toBe(true);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  test("a COMPLETED owned 200 whose RSC payload is unusable stays RED", async ({
+    page,
+  }) => {
+    // CASE 4, and the false negative it closes.
+    //
+    // A prefetch can return HTTP 200, complete its transfer normally, and still
+    // be unusable: Next logs `Failed to fetch RSC payload for …` when the body
+    // is not a payload it can decode. Playwright reports that as an ordinary
+    // `response` + `requestfinished` — there is no error status and no
+    // `requestfailed` — so a recorder that only counts >=400 leaves the URL
+    // teardown-owned with NO settlement evidence, and the rule then forgives a
+    // genuine decoding regression as logout noise.
+    //
+    // The distinction this relies on is COMPLETION, not status. A request the
+    // logout navigation terminates never completes its body, so it is not
+    // recorded and its noise stays suppressible (proved by the abort case
+    // above). One that completed answered on its own account, whatever its
+    // payload then turned out to be worth.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_badrsc_probe", async (route) => {
+      await held;
+      // 200, a COMPLETE body, and content that is not a decodable RSC payload.
+      // This is the shape the finding names: the transport succeeded and the
+      // payload is still unusable.
+      await route.fulfill({
+        status: 200,
+        contentType: "text/x-component",
+        body: "<!doctype html><p>not a flight payload</p>",
+      });
+    });
+
+    const key =
+      new URL("/__late_badrsc_probe", page.url()).origin + "/__late_badrsc_probe";
+
+    traffic.openTeardownWindow();
+    const started = page.evaluate(() =>
+      fetch("/__late_badrsc_probe").then(
+        (r) => r.text(),
+        () => undefined,
+      ),
+    );
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), {
+        timeout: 15_000,
+        message: "the probe request was never recorded as teardown-owned",
+      })
+      .toBe(true);
+
+    traffic.closeTeardownWindow();
+    expect(
+      traffic.phase,
+      "precondition: the window is shut before the response completes",
+    ).toBe("after");
+
+    deliver();
+    await started;
+
+    // THE EVIDENCE THE FINDING ASKED FOR: a completed 2xx is an independent
+    // settlement, even though nothing about it is an error at the HTTP layer.
+    await expect
+      .poll(() => traffic.settledIndependently.has(key), {
+        timeout: 15_000,
+        message:
+          "an owned request that COMPLETED with 200 was not recorded as settling independently, so its RSC decoding failure is suppressible",
+      })
+      .toBe(true);
+
+    // And the rule consumes that record: the decoding failure stays real.
+    traffic.logoutNavigated = true;
+    expect(
+      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "after" }, traffic),
+      "a completed 200 with an unusable RSC payload was forgiven as logout teardown noise",
+    ).toBe(false);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  test("an owned REDIRECT is not recorded as an independent settlement", async ({
+    page,
+  }) => {
+    // THE OTHER EDGE OF THE COMPLETION RULE, and the control that keeps the
+    // redirect exclusion honest.
+    //
+    // A 3xx completes — it emits `requestfinished` like any other request — but
+    // it delivers no body, so it settles nothing independently. It also is not
+    // a hypothetical: on a real logout the owned 303/307 to /dashboard is the
+    // logout's own redirect, and /dashboard is exactly the URL teardown RSC
+    // noise names. Counting it would leave the exception forgiving nothing on
+    // the one URL it exists for.
+    //
+    // THE REDIRECT IS FOLLOWED, DELIBERATELY. The first version of this test
+    // used `redirect: "manual"` and passed with the exclusion REMOVED — it was
+    // vacuous. Measured why: an unfollowed redirect emits no `requestfinished`
+    // at all, so the completion handler never ran and nothing was under test.
+    // Followed, the 303 leg does emit `requestfinished` with
+    // `response().status() === 303`, which is the only arrangement where the
+    // exclusion is the thing deciding the outcome. Do not "simplify" this back.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_redirect_probe", async (route) => {
+      await held;
+      await route.fulfill({
+        status: 303,
+        headers: { location: "/__late_redirect_target" },
+        body: "",
+      });
+    });
+    await page.route("**/__late_redirect_target", async (route) => {
+      await route.fulfill({ status: 200, contentType: "text/plain", body: "ok" });
+    });
+
+    const key =
+      new URL("/__late_redirect_probe", page.url()).origin + "/__late_redirect_probe";
+
+    traffic.openTeardownWindow();
+    // `manual` so the 303 itself is the response under test rather than
+    // whatever it points at.
+    const started = page.evaluate(() =>
+      fetch("/__late_redirect_probe").then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), { timeout: 15_000 })
+      .toBe(true);
+
+    deliver();
+    await started;
+    // The same chance to be recorded that the completed-200 case gets.
+    await page.waitForTimeout(500);
+
+    expect(
+      traffic.settledIndependently.has(key),
+      "an owned redirect counted as settling independently — the exception now forgives nothing on the logout's own destination",
+    ).toBe(false);
+    // So its noise stays forgivable.
+    traffic.logoutNavigated = true;
+    expect(
+      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "teardown" }, traffic),
+      "an owned redirect's teardown noise was not forgiven",
     ).toBe(true);
 
     await page.unrouteAll({ behavior: "ignoreErrors" });
