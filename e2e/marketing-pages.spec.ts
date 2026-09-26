@@ -7,18 +7,20 @@ import { test, expect, type Page } from "@playwright/test";
 // never scroll horizontally on phone, tablet, or desktop.
 
 const ROUTES: { path: string; h1: string }[] = [
-  // Home H1 is #762's (MKT-02A); pricing H1 is this branch's (MKT-02D). Each
-  // side changed a different row and the conflict is only positional.
+  // ONE ROW PER OWNING LANE, which is what made the merge conflict resolvable
+  // without choosing a side: / is MKT-02A's (#762), /pricing is MKT-02D's (#761),
+  // and /electrolysis-software, the two /features pages and /demo are MKT-02E's.
+  // Each lane changed only its own rows; the conflict was purely positional.
   { path: "/", h1: "Start the next treatment where the last one ended." },
   { path: "/pricing", h1: "Simple plans, in Canadian dollars." },
-  { path: "/electrolysis-software", h1: "Software built for an electrolysis practice, not a generic salon." },
+  { path: "/electrolysis-software", h1: "Electrolysis software built around how electrolysis is charted" },
   { path: "/features/treatment-memory", h1: "Remember every treatment, before the client sits down." },
-  { path: "/features/booking-calendar", h1: "Online booking and a calendar for the treatment room." },
-  { path: "/features/charting-records", h1: "Chart the treatment while it's fresh, keep clean records." },
+  { path: "/features/booking-calendar", h1: "Booking connected to the treatment record" },
+  { path: "/features/charting-records", h1: "Electrolysis charting built around treatments, not generic notes" },
   { path: "/resources", h1: "Practical guides for running an electrolysis practice." },
   { path: "/resources/electrolysis-treatment-record-checklist", h1: "What to record in an electrolysis treatment record" },
   { path: "/resources/moving-an-electrolysis-practice-from-paper-records", h1: "Moving an electrolysis practice from paper records" },
-  { path: "/demo", h1: "Request a 15-minute Hone walkthrough." },
+  { path: "/demo", h1: "See it with a returning client" },
 ];
 
 async function noOverflow(page: Page, label: string) {
@@ -72,5 +74,62 @@ test.describe("reduced motion", () => {
     await expect(page.getByText("Before today").first()).toBeVisible();
     await expect(page.getByText(/Increase spacing/).first()).toBeVisible();
     await ctx.close();
+  });
+});
+
+// THE SAME PLAYER ON A SECOND PAGE, WHICH IS WHY THIS IS NOT A DUPLICATE OF
+// e2e/marketing-homepage-film.spec.ts. That spec is the deep proof of #764's
+// ProductFilm and it runs on `/`. MKT-02E put the same component on /demo inside
+// a band section with no props, so what is unproven is the CALL SITE: that the
+// adaptation did not cost the facade behaviour or the focus transfer on this
+// page. Both properties are asserted here against /demo specifically, by the
+// same methods that spec uses -- request counting and keyboard drive -- rather
+// than by re-checking attributes on a component whose source is already guarded.
+const FILM_URL = /\/film\/hone-treatment-memory-v3-1\.mp4/;
+
+test.describe("the product film on /demo", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("/demo — nothing is fetched, and no video exists, until someone asks", async ({ page }) => {
+    // "Video lazy" as ZERO REQUESTS, not as `preload="none"`: the attribute is a
+    // hint a browser may ignore, and the 3.6 MB is spent on a visitor who came
+    // to fill in a form either way.
+    const hits: string[] = [];
+    page.on("request", (r) => {
+      if (FILM_URL.test(r.url())) hits.push(r.url());
+    });
+
+    await page.goto("/demo");
+    await expect(page.getByRole("button", { name: /^Play:/ })).toBeVisible();
+    await expect(page.locator("video")).toHaveCount(0);
+    await page.waitForLoadState("networkidle");
+    expect(
+      hits,
+      `the film was fetched on /demo before anyone pressed play: ${hits.join(", ")}`,
+    ).toHaveLength(0);
+  });
+
+  // Pressing play REPLACES the poster button with a <video>. The button holding
+  // focus is unmounted, and focus on a removed element falls to <body> — the
+  // visitor who just asked for the film is silently returned to the top of the
+  // document, with the controls they asked for reachable only by tabbing the
+  // whole page again. Driven by keyboard, because that is who it happens to.
+  test("/demo — keyboard play moves focus onto the film, not to the body", async ({ page }) => {
+    await page.goto("/demo");
+
+    const play = page.getByRole("button", { name: /^Play:/ });
+    await expect(play).toBeVisible();
+    await play.focus();
+    await page.keyboard.press("Enter");
+
+    const video = page.locator("video");
+    await expect(video).toBeVisible();
+    await expect(video).toBeFocused();
+    expect(
+      await page.evaluate(() => document.activeElement?.tagName ?? ""),
+      "focus fell out of the film when the poster was swapped for the video",
+    ).toBe("VIDEO");
+    // The controls the transfer exists to hand over are actually there.
+    await expect(video).toHaveAttribute("controls", "");
   });
 });
