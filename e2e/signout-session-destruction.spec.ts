@@ -974,11 +974,11 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     ).toBe(false);
   });
 
-  test("the RULE rejects a late-reported independent failure", () => {
-    // Half of the property. The other half — that such a failure is actually
-    // RECORDED when it arrives late — is driven against the real recorder in
-    // the test below, because this one pre-populates the set and so cannot
-    // see the recorder at all.
+  test("the RULE (given the record) rejects a late independent failure", () => {
+    // SYNTHETIC, and only about the rule. It hands the set in by hand, so it
+    // cannot see the recorders at all and must never be read as proof of them.
+    // The recorder tests below drive the real listeners — one each — and are
+    // what fails if late settlement stops being recorded.
     expect(
       isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "after" }, {
         logoutNavigated: true,
@@ -989,7 +989,7 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     ).toBe(false);
   });
 
-  test("the RECORDER captures an owned failure that arrives after the window shuts", async ({
+  test("the RESPONSE recorder captures an owned 500 that arrives after the window shuts", async ({
     page,
   }) => {
     // Codex P2, and the vacuity it names is real: every other case here hands
@@ -1108,5 +1108,124 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
       ),
       "forgiven for a plain http URL this lane really does serve",
     ).toBe(false);
+  });
+
+  test("the REQUESTFAILED recorder captures an owned non-abort failure that arrives late", async ({
+    page,
+  }) => {
+    // The other listener, proved on its own. The 500 case above exercises the
+    // `response` handler; a request that never gets a response at all goes
+    // through `requestfailed`, which has its own phase-independence to keep.
+    // Re-gating that handler on the phase would leave the 500 test green while
+    // this one reds.
+    //
+    // NON-ABORT is the point of the case. An ERR_ABORTED is the navigation
+    // doing its work and must NOT count as an independent settlement; a
+    // refused connection is the request failing on its own account and must.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_failed_probe", async (route) => {
+      await held;
+      // Surfaces as net::ERR_CONNECTION_REFUSED — the request's own failure,
+      // not an abort.
+      await route.abort("connectionrefused");
+    });
+
+    const key =
+      new URL("/__late_failed_probe", page.url()).origin + "/__late_failed_probe";
+
+    traffic.openTeardownWindow();
+    const started = page.evaluate(() =>
+      fetch("/__late_failed_probe").catch(() => undefined),
+    );
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), {
+        timeout: 15_000,
+        message: "the probe request was never recorded as teardown-owned",
+      })
+      .toBe(true);
+
+    traffic.closeTeardownWindow();
+    expect(
+      traffic.phase,
+      "precondition: the window is shut before the failure lands",
+    ).toBe("after");
+
+    deliver();
+    await started;
+
+    await expect
+      .poll(() => traffic.settledIndependently.has(key), {
+        timeout: 15_000,
+        message:
+          "an owned request's non-abort failure was not recorded because it arrived after the window shut",
+      })
+      .toBe(true);
+
+    // And the rule consumes that record: the failure stays real.
+    //
+    // `logoutNavigated` is set by hand because this probe never logs anyone
+    // out. WITHOUT it the rule forgives nothing regardless — so the assertion
+    // below would pass for the wrong reason, proving the cause-gate rather
+    // than the settlement record it is about.
+    traffic.logoutNavigated = true;
+    expect(
+      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "after" }, traffic),
+      "the recorded non-abort failure was still forgiven",
+    ).toBe(false);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  test("an ABORTED owned request is NOT recorded as an independent settlement", async ({
+    page,
+  }) => {
+    // The other side of that listener, and the reason it inspects `errorText`
+    // instead of treating every failure alike. An abort IS the navigation
+    // tearing the document down — the exact thing the exception forgives — so
+    // it must not land in `settledIndependently`, or the exception would
+    // forgive nothing at all.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliver!: () => void;
+    const held = new Promise<void>((resolve) => (deliver = resolve));
+    await page.route("**/__late_aborted_probe", async (route) => {
+      await held;
+      await route.abort("aborted");
+    });
+
+    const key =
+      new URL("/__late_aborted_probe", page.url()).origin + "/__late_aborted_probe";
+
+    traffic.openTeardownWindow();
+    const started = page.evaluate(() =>
+      fetch("/__late_aborted_probe").catch(() => undefined),
+    );
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), { timeout: 15_000 })
+      .toBe(true);
+
+    deliver();
+    await started;
+    // The same chance the case above gets.
+    await page.waitForTimeout(500);
+
+    expect(
+      traffic.settledIndependently.has(key),
+      "an aborted request counted as settling independently, which would make the teardown exception forgive nothing",
+    ).toBe(false);
+    // So the rule still forgives it — with the cause supplied by hand, since
+    // this probe never logs anyone out.
+    traffic.logoutNavigated = true;
+    expect(
+      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "teardown" }, traffic),
+      "an aborted, owned request was not forgiven as teardown",
+    ).toBe(true);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 });

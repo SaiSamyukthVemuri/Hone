@@ -126,6 +126,8 @@ async function holdActions(
     }
     await route.continue();
   });
+  let releasedContinued = false;
+
   return {
     state,
     duplicateSeen,
@@ -137,9 +139,43 @@ async function holdActions(
      * settles. Tearing the route down here would let exactly that request
      * reach the backend uncounted.
      */
-    release: () => release(),
-    /** Stop counting. Only after any queued work has had its chance to arrive. */
+    release: () => {
+      if (onRelease === "continue") releasedContinued = true;
+      release();
+    },
+    /**
+     * Stop counting — and REFUSE to do it while a real logout is still in
+     * flight.
+     *
+     * `signOut()` is a GLOBAL Supabase logout. A test that releases a
+     * CONTINUED action and returns without waiting leaves that request racing
+     * the next test, which has already seeded and logged in a fresh session of
+     * the same owner; the late logout then revokes it and the failure surfaces
+     * in a test that did nothing wrong. Aborted actions never reach the server
+     * and need no wait, which is why the default is `abort`.
+     *
+     * This is enforced here rather than remembered at each call site, so a
+     * test that forgets fails loudly instead of poisoning its neighbour.
+     */
     unroute: async () => {
+      if (releasedContinued) {
+        await Promise.race([
+          firstSettled,
+          new Promise<void>((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "holdActions: tearing down with a released real logout still in flight. " +
+                      "Wait for /login or for gate.firstSettled before unroute(), or use the " +
+                      "default onRelease: 'abort' where completion is irrelevant.",
+                  ),
+                ),
+              15_000,
+            ),
+          ),
+        ]);
+      }
       await page.unrouteAll({ behavior: "ignoreErrors" });
     },
   };
@@ -333,38 +369,87 @@ for (const surface of SURFACES) {
       await gate.unroute();
     });
 
-    test("a rapid double-press dispatches exactly one logout", async ({ page }) => {
-      // THE CASE THE WIRE TEST BELOW STRUCTURALLY CANNOT SEE: it waits for
-      // `[data-signout-pending]` before pressing again, so by then the control
-      // is already disabled. A practitioner double-tapping does not wait.
+    test("three presses inside ONE browser task dispatch exactly one logout", async ({
+      page,
+    }) => {
+      // DELIVERED AS A SINGLE BROWSER INTERACTION, which is the only way to be
+      // inside the window this test names.
       //
-      // The presses here are real input events, delivered as fast as the
-      // driver can, with nothing awaited in between beyond the protocol round
-      // trip each one needs.
+      // Separately-awaited `mouse.click()` calls do NOT prove it: each is its
+      // own protocol round trip, so between them the browser finishes the input
+      // task and React commits, and the control is already disabled by the
+      // second press. A version of this test that did that stayed green with
+      // the guard removed — it was never in the window at all.
       //
-      // WHAT MEASUREMENT ESTABLISHED ABOUT THE WINDOW, because it is easy to
-      // assert the wrong thing here and two earlier versions of this test did.
-      //
-      // The visible control sits OUTSIDE the hidden sign-out form, so its own
-      // `useFormStatus()` never fires; it is disabled only by `busy` arriving
-      // from the shared store. There is therefore a window between the press
-      // and that arriving. Measured:
-      //
-      //   * three real presses, separate input tasks -> ONE logout on the
-      //     wire, whether the hold is taken in the form's `onSubmit` or in the
-      //     reporter's passive effect. Between two real input events the
-      //     browser finishes the task and React commits, so input never enters
-      //     the window;
-      //   * three `element.click()` calls inside ONE `evaluate` -> THREE
-      //     logouts, and the control reads `disabled === false` after the
-      //     first, because React does not re-render synchronously inside a
-      //     single task. No acquisition timing changes that — the guard simply
-      //     is not up yet — so the window is real but is reachable only by
-      //     script, in the same way `form.requestSubmit()` was.
-      //
-      // This test therefore asserts the property a practitioner can actually
-      // obtain. The scripted case is recorded above rather than asserted,
-      // because asserting one logout there would be asserting something false.
+      // Three `element.click()` calls inside one `evaluate` cannot be
+      // interleaved with a render or a passive effect. Measured before the
+      // guard existed: three logouts on the wire, with the control still
+      // reading `disabled === false` after the first press, because React does
+      // not render inside a single task. `disabled` therefore cannot be what
+      // stops this; the form cancelling its own duplicate submissions is.
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+
+      const gate = await holdActions(page, { onRelease: "continue" });
+      const panel = await surface.open(page);
+      await expect(panel.getByRole("button", { name: "Sign out" })).toBeVisible();
+
+      const pressed = await page.evaluate((formId) => {
+        const button = document.querySelector<HTMLButtonElement>(
+          `button[form="${formId}"]`,
+        );
+        if (!button) return { found: false, disabledAfterFirst: null as boolean | null };
+        button.click();
+        // Read inside the SAME task, so this is the state the second press saw.
+        const disabledAfterFirst = button.disabled;
+        button.click();
+        button.click();
+        return { found: true, disabledAfterFirst };
+      }, surface.formId);
+
+      expect(pressed.found, "the sign-out control was not found by its form id").toBe(
+        true,
+      );
+      // THE MECHANICAL PROOF that the later presses landed BEFORE the passive
+      // effect: had React rendered between them, the control would read
+      // disabled here. It does not — so presses two and three were inside the
+      // window, and the single dispatch below is the form's own guard working,
+      // not the React render beating them.
+      expect(
+        pressed.disabledAfterFirst,
+        "the control was already disabled inside the task, so this test was not in the pre-effect window",
+      ).toBe(false);
+
+      await expect(panel.locator("[data-signout-pending]")).toBeVisible({
+        timeout: 5_000,
+      });
+      expect(
+        gate.state.held,
+        "presses inside the pre-effect window queued extra logouts",
+      ).toBe(1);
+
+      // And still exactly one through the drain.
+      gate.release();
+      await page.waitForURL(/\/login/, { timeout: 20_000 });
+      await Promise.race([
+        gate.duplicateSeen,
+        new Promise((r) => setTimeout(r, 3_000)),
+      ]);
+      expect(
+        gate.state.held,
+        "more than one logout reached the wire after a same-task triple press",
+      ).toBe(1);
+
+      await gate.unroute();
+    });
+
+    test("a rapid double-press with real input dispatches exactly one logout", async ({
+      page,
+    }) => {
+      // The ordinary case, kept alongside the same-task one: real input events,
+      // as fast as the driver delivers them. This is what a practitioner
+      // double-tapping actually produces, and between two real presses the
+      // browser finishes the task and React commits.
       await loginAsOwner(page, seed);
       await page.goto("/dashboard");
 
@@ -382,12 +467,8 @@ for (const surface of SURFACES) {
       await expect(panel.locator("[data-signout-pending]")).toBeVisible({
         timeout: 5_000,
       });
-      expect(
-        gate.state.held,
-        "a rapid double-press queued a second logout",
-      ).toBe(1);
+      expect(gate.state.held, "a rapid double-press queued a second logout").toBe(1);
 
-      // And still exactly one through the drain.
       gate.release();
       await page.waitForURL(/\/login/, { timeout: 20_000 });
       await Promise.race([
@@ -771,4 +852,60 @@ test.describe("SIGNOUT-02 · the press is confirmed before any JS", () => {
       ).not.toBe(hovered);
     });
   }
+});
+
+test.describe("SIGNOUT-02 · the harness does not poison the next test", () => {
+  test("unroute() BLOCKS until a released real logout has settled", async ({ page }) => {
+    // A SELF-TEST OF THE HARNESS, and the reason the wait lives in `unroute()`
+    // rather than in each test's prose.
+    //
+    // `signOut()` is a GLOBAL Supabase logout for this owner. A test that
+    // releases a CONTINUED action and returns while it is still on the wire
+    // leaves it racing the NEXT test, which by then has logged in a fresh
+    // session of the same owner — and the late logout revokes it. The failure
+    // then surfaces in a test that did nothing wrong, which is the worst
+    // possible place for it.
+    //
+    // Relying on every call site to remember the wait is how that recurs, so
+    // `unroute()` refuses to tear down while a released logout is in flight.
+    // This test proves that refusal is LIVE: it deliberately forgets the wait
+    // — no `waitForURL`, no `firstSettled` — and measures that `unroute()`
+    // supplied it anyway.
+    await page.setViewportSize(DESKTOP);
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+
+    const gate = await holdActions(page, { onRelease: "continue" });
+    let settled = false;
+    void gate.firstSettled.then(() => {
+      settled = true;
+    });
+
+    await page.getByRole("button", { name: DESKTOP_SHELL.trigger }).click();
+    await page
+      .getByRole("navigation", { name: DESKTOP_SHELL.nav })
+      .getByRole("button", { name: "Sign out" })
+      .click({ noWaitAfter: true });
+    await expect(page.locator("[data-signout-pending]")).toBeVisible({ timeout: 5_000 });
+
+    gate.release();
+    // READ SYNCHRONOUSLY, with no await in between: this is the in-run control
+    // that makes the assertion after `unroute()` mean something. `release()`
+    // only resolves a promise — the route handler resumes on a later microtask
+    // and the round trip takes milliseconds — so the logout cannot have
+    // settled yet. If it somehow had, the assertion below would be trivially
+    // true and would prove nothing.
+    expect(
+      settled,
+      "the logout had already settled at release, so this test cannot prove unroute() waits",
+    ).toBe(false);
+
+    // Then tear down WITHOUT waiting, exactly as a forgetful test would.
+    await gate.unroute();
+
+    expect(
+      settled,
+      "unroute() returned while a released real logout was still in flight — the next test's session is now racing it",
+    ).toBe(true);
+  });
 });

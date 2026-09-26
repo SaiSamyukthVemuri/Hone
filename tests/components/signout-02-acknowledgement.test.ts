@@ -181,20 +181,34 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     // Only a reporter that actually saw the submission may release it, or a
     // mount-time `false` would decrement a hold this form never placed.
     expect(reporter).toContain("if (!sawPending.current) return;");
+    // THE HOLD IS TAKEN IN THE SUBMIT EVENT, synchronously, and a DUPLICATE
+    // submission is cancelled there too. React does not render inside a single
+    // task, so three presses delivered in one task all find the control
+    // enabled however early the hold is taken — measured: three logouts on the
+    // wire. `preventDefault` only ever fires for a submission this form
+    // instance has already made, so the first one, and the no-JS path where
+    // this handler never runs at all, are untouched.
     for (const f of shells) {
-      expect(codeOnly(read(f)), f).toContain(
-        "onSubmit={() => setSignOutInFlight(true)}",
-      );
+      const code = codeOnly(read(f));
+      expect(code, f).toContain("onSubmit={(event) => {");
+      expect(code, f).toContain("if (submitted.current) {");
+      expect(code, f).toContain("event.preventDefault();");
+      expect(code, f).toContain("submitted.current = true;");
+      expect(code, f).toContain("setSignOutInFlight(true);");
+      // Per-instance, so a stranded hold cannot cancel a later logout.
+      expect(code, f).toContain("const submitted = useRef(false);");
     }
     // It observes; it does not submit, and it renders nothing.
     expect(reporter).toContain("return null;");
     expect(reporter).not.toMatch(/<form[\s>]/);
     // AND IT NEVER RELEASES ON UNMOUNT. A component going away is not
     // evidence that the request ended; releasing there previously let a
-    // second logout be submitted while the first was still running.
+    // second logout be submitted while the first was still running. Nor does
+    // it need to: the hold belongs to the shell this reporter lives in (see
+    // the per-mount pin below), so it cannot outlast this observer.
     expect(reporter).not.toMatch(/return \(\) =>/);
 
-    const store = codeOnly(read("app/(app)/signout-flight.ts"));
+    const store = codeOnly(read("app/(app)/signout-flight.tsx"));
     expect(store).toContain("useSyncExternalStore");
     expect(store).toContain("function getServerSnapshot(): boolean {");
     // Counted and floored, so overlapping publishers cannot release each other.
@@ -204,7 +218,38 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     expect(store).not.toContain("adopt");
     expect(store).not.toContain("setTimeout");
     expect(store).not.toContain("trackSignOut");
-    // No provider, no layout surgery: the shell layout stays a server component.
+
+    // AND THE HOLD IS PER-MOUNT, NOT MODULE STATE — the one thing the
+    // reporter's lifetime genuinely does bound. Only a reporter inside a
+    // mounted form can observe a settlement, so a hold held at module scope
+    // OUTLIVED every component able to release it: unmount the `(app)` group
+    // mid-logout, return in the same document, and the fresh shell read a hold
+    // nothing left alive could clear — menus disabled for the document's life.
+    // Pinned as the absence of module-scoped mutable state; the arithmetic and
+    // the isolation are proved in signout-flight-store.test.ts.
+    expect(store).toContain("export function createSignOutFlight()");
+    expect(store).toContain("const store = useRef<SignOutFlight | null>(null);");
+    expect(
+      store,
+      "the hold is module state again, so it can outlive the only observer that could release it",
+    ).not.toMatch(/^let /m);
+
+    // ONE provider ABOVE BOTH MENUS, or the two shells would hold separate
+    // flags — which is the breakpoint defect this slice opened on.
+    const layout = codeOnly(read("app/(app)/layout.tsx"));
+    const opened = layout.indexOf("<SignOutFlightProvider>");
+    const closed = layout.indexOf("</SignOutFlightProvider>");
+    expect(opened, "the shell has no sign-out hold provider").toBeGreaterThan(-1);
+    for (const menu of ["<AccountMenu", "<MobileMenu"]) {
+      const at = layout.indexOf(menu);
+      expect(at, `${menu} is missing from the shell layout`).toBeGreaterThan(-1);
+      expect(
+        at > opened && at < closed,
+        `${menu} is outside the sign-out hold provider, so it holds a private flag`,
+      ).toBe(true);
+    }
+    // The layout itself stays a SERVER component; the provider is the only
+    // client boundary this adds.
     expect(read("app/(app)/layout.tsx")).not.toContain('"use client"');
   });
 

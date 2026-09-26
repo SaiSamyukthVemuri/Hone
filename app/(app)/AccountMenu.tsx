@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
-import { setSignOutInFlight, useSignOutInFlight } from "./signout-flight";
+import { useSetSignOutInFlight, useSignOutInFlight } from "./signout-flight";
 import { SignOutFlightReporter } from "./SignOutFlightReporter";
 
 // PR #231: desktop account dropdown (LinkedIn-style "Me" menu). The
@@ -34,6 +34,7 @@ export function AccountMenu({
   // mid-logout revealed the other menu with its own flag still false, and a
   // fresh enabled Sign out with it. One authority, read by both.
   const signingOut = useSignOutInFlight();
+  const setSignOutInFlight = useSetSignOutInFlight();
   const rootRef = useRef<HTMLDivElement>(null);
 
   // SIGNOUT-02b · ONE dismissal rule, and it is deferred rather than dropped.
@@ -44,6 +45,32 @@ export function AccountMenu({
   // stays mounted, which is what keeps `useFormStatus` alive to report the
   // settlement; the dismissal the practitioner asked for is REMEMBERED and
   // applied the moment the flag clears, so the menu is never left stuck open.
+  // SIGNOUT-02c · the SAME-TASK duplicate guard, and why `disabled` cannot be it.
+  //
+  // The visible control lives in the panel, OUTSIDE this form, so its own
+  // `useFormStatus()` never fires — it is disabled only by `busy` arriving from
+  // the shared store, which needs a React render. React does not render inside
+  // a single task, so three presses delivered in one task all find the control
+  // enabled however early the hold is taken. Measured: three
+  // `element.click()` calls in one `evaluate` put THREE logouts on the wire.
+  //
+  // The form refuses them instead, which needs no render: the first submission
+  // marks this form instance, and any further submission while that mark
+  // stands is cancelled. `preventDefault` here only ever cancels a DUPLICATE,
+  // never the first submission, so the native path is untouched — and without
+  // JavaScript this handler does not run at all, so a no-script press still
+  // posts.
+  //
+  // PER-INSTANCE, deliberately, not read from the shared store. A stranded
+  // shared hold would otherwise cancel every future logout in the document;
+  // this mark dies with the form that made it.
+  const submitted = useRef(false);
+  useEffect(() => {
+    // Released — by this form settling, or by the other shell's — so a failed
+    // logout leaves the practitioner able to try again.
+    if (!signingOut) submitted.current = false;
+  }, [signingOut]);
+
   const deferredClose = useRef(false);
   const close = useCallback(() => {
     if (signingOut) {
@@ -141,7 +168,14 @@ export function AccountMenu({
         // is a hydrated-only handler, so a press before hydration still posts
         // natively; it simply gets no acknowledgement, which is the honest
         // outcome when no JavaScript has run.
-        onSubmit={() => setSignOutInFlight(true)}
+        onSubmit={(event) => {
+          if (submitted.current) {
+            event.preventDefault();
+            return;
+          }
+          submitted.current = true;
+          setSignOutInFlight(true);
+        }}
       >
         <SignOutFlightReporter />
       </form>

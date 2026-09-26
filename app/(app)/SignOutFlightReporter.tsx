@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useFormStatus } from "react-dom";
 
-import { setSignOutInFlight } from "./signout-flight";
+import { useSetSignOutInFlight } from "./signout-flight";
 
 /**
  * SIGNOUT-02c · watches one sign-out form and RELEASES the shared hold when it
@@ -30,11 +30,14 @@ import { setSignOutInFlight } from "./signout-flight";
  *
  * NO UNMOUNT CLEANUP, deliberately. A component going away is not evidence
  * that the request ended; releasing there previously let a second logout be
- * submitted while the first was still running. The residual that leaves is
- * recorded in ./signout-flight.
+ * submitted while the first was still running. Nor does the hold need one: it
+ * belongs to the shell this reporter lives in and is gone when that shell is,
+ * so it can never outlast the observer able to release it. See
+ * ./signout-flight.
  */
 export function SignOutFlightReporter() {
   const { pending } = useFormStatus();
+  const setSignOutInFlight = useSetSignOutInFlight();
   // Only a reporter that actually SAW the submission may release it.
   const sawPending = useRef(false);
 
@@ -46,7 +49,7 @@ export function SignOutFlightReporter() {
     if (!sawPending.current) return;
     sawPending.current = false;
     setSignOutInFlight(false);
-  }, [pending]);
+  }, [pending, setSignOutInFlight]);
 
   return null;
 }
