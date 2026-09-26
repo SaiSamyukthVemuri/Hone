@@ -53,7 +53,45 @@ function block(typeName: string): string {
 // would still be false. Each family now carries its own predicate and gates
 // only its own checks.
 const RESPONSE_FIELDS = ["tolerance_rating", "reaction_type", "reaction_notes"];
-const SETTINGS_FIELDS = ["machine_frequency", "probe_key", "probe_lot_number"];
+
+// THE SETTINGS FAMILY WAS INCOMPLETE. Three fields stood in for every
+// "settings / setup / modality / probe / lot" claim, so migrating just those
+// three would have retired the whole settings ban while the rest of the
+// machine and probe columns stayed on the block — the claim would still be
+// false and the guard would have stopped saying so.
+//
+// Split into the two families the marketing vocabulary actually distinguishes,
+// each complete, so a PARTIAL migration inside either is a split and fails
+// loudly rather than silently retiring anything.
+//
+// "settings", "setup", "modality", "energy", "machine frequency":
+const MACHINE_FIELDS = ["mode", "apilus_modality", "energy_level", "machine_frequency"];
+// "probe", "lot" — every column the probe/lot claim rests on:
+const PROBE_FIELDS = [
+  "probe_type",
+  "probe_size",
+  "probe_key",
+  "probe_brand",
+  "probe_material",
+  "probe_piece_type",
+  "probe_shank",
+  "probe_size_value",
+  "probe_length",
+  "probe_label",
+  "probe_lot_number",
+  "probe_lot_confirmed",
+];
+//
+// DELIBERATELY EXCLUDED, not overlooked:
+//   primary_area / side / custom_area_detail  — area identity, not settings
+//   caution_for_next_session / caution_note   — the Watch band, not settings
+//   numbing_status / numbing_notes            — recorded with response, and no
+//                                               guarded noun refers to it
+//   probe_inventory_item_id                   — an inventory FK, never marketed
+//   minutes_performed                         — "minutes per area" is its own
+//                                               claim with its own vocabulary;
+//                                               folding it in here would widen
+//                                               this guard past its defect class
 
 function has(src: string, f: string): boolean {
   return new RegExp(`^\\s*${f}\\??:`, "m").test(src);
@@ -86,9 +124,19 @@ function ownership(fields: string[]): {
 function responseIsBlockOwned(): boolean {
   return ownership(RESPONSE_FIELDS).blockOwned;
 }
-function settingsAreBlockOwned(): boolean {
-  return ownership(SETTINGS_FIELDS).blockOwned;
+function machineSettingsAreBlockOwned(): boolean {
+  return ownership(MACHINE_FIELDS).blockOwned;
 }
+function probeIsBlockOwned(): boolean {
+  return ownership(PROBE_FIELDS).blockOwned;
+}
+
+/** Every guarded family, so nothing can be added without an ownership premise. */
+const FAMILIES = [
+  ["response", RESPONSE_FIELDS],
+  ["machine", MACHINE_FIELDS],
+  ["probe", PROBE_FIELDS],
+] as const;
 
 // Comments are where a correction records what it corrected, so quoting the old
 // wording in a comment must not trip the guard. The guard is about what the
@@ -147,10 +195,32 @@ function marketingSurfaces(): string[] {
  * claims on the same route stay checked. The universal-capture rule below
  * applies to these routes regardless.
  */
-const GUIDANCE_ROUTES: Readonly<Record<string, string>> = {
-  "app/resources/electrolysis-treatment-record-checklist/page.tsx":
-    "Profession-level checklist of what a thorough treatment RECORD may contain. The list items describe the standard, not Hone's storage model; Hone-specific sentences on the page are still checked.",
+const GUIDANCE_ROUTES: Readonly<
+  Record<string, { reason: string; from: string; to: string }>
+> = {
+  "app/resources/electrolysis-treatment-record-checklist/page.tsx": {
+    reason:
+      "Profession-level checklist of what a thorough treatment RECORD may contain. The SECTIONS data describes the standard, not Hone's storage model.",
+    // A STRUCTURAL region, not a word test. The previous rule exempted any
+    // sentence that did not literally say "Hone", which is far too broad: a CTA
+    // reading "We record tolerance for each area" names no subject and is still
+    // plainly a product claim. Adding "we"/"our" would only move the heuristic.
+    // The guidance IS the SECTIONS array; everything outside it is marketing
+    // copy and is swept normally, whatever subject it names or omits.
+    from: "const SECTIONS",
+    to: "\n];",
+  },
 };
+
+/** [start, end) of a route's guidance region within the text being scanned. */
+function guidanceRegion(rel: string, copy: string): [number, number] | null {
+  const spec = GUIDANCE_ROUTES[rel];
+  if (!spec) return null;
+  const start = copy.indexOf(spec.from);
+  if (start < 0) return null;
+  const end = copy.indexOf(spec.to, start);
+  return end < 0 ? null : [start, end + spec.to.length];
+}
 
 /**
  * A promise to capture EVERYTHING on a page whose own guidance includes
@@ -184,9 +254,11 @@ const UNIVERSAL_CAPTURE =
 // `laterality` is in neither tier: it is the one thing session_block_areas
 // really does own per area.
 const RESPONSE_WORD = "tolerat|toleran|reaction|respond|response|settings used|setup used";
-const SETTINGS_NOUN = "settings|setup|modality|machine frequency|probe|lot";
+const MACHINE_NOUN = "settings|setup|modality|machine frequency|energy";
+const PROBE_NOUN = "probe|lot";
+const SETTINGS_NOUN = `${MACHINE_NOUN}|${PROBE_NOUN}`;
 const OWNERSHIP_VERB = "recorded|kept|stored|captured|logged|tracked";
-type Family = "response" | "settings";
+type Family = "response" | "machine" | "probe";
 const PATTERNS: Array<[string, RegExp, Family]> = [
   [
     "per-area quantifier followed by a response word",
@@ -199,21 +271,38 @@ const PATTERNS: Array<[string, RegExp, Family]> = [
     "response",
   ],
   [
-    "block-owned settings said to be recorded per area",
+    "block-owned machine settings said to be recorded per area",
     new RegExp(
-      `(${SETTINGS_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b`,
+      `(${MACHINE_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b`,
       "i",
     ),
-    "settings",
+    "machine",
   ],
   [
-    "an area said to own block-level settings",
+    "an area said to own block-level machine settings",
     new RegExp(
-      `\\b(each|every|per)\\s+(\\w+\\s+)?area\\b[^.|]{0,25}?\\bown\\s+(\\w+\\s+){0,2}(${SETTINGS_NOUN})`,
+      `\\b(each|every|per)\\s+(\\w+\\s+)?area\\b[^.|]{0,25}?\\bown\\s+(\\w+\\s+){0,2}(${MACHINE_NOUN})`,
       "i",
     ),
-    "settings",
+    "machine",
   ],
+  [
+    "block-owned probe/lot said to be recorded per area",
+    new RegExp(
+      `(${PROBE_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b`,
+      "i",
+    ),
+    "probe",
+  ],
+  [
+    "an area said to own block-level probe/lot",
+    new RegExp(
+      `\\b(each|every|per)\\s+(\\w+\\s+)?area\\b[^.|]{0,25}?\\bown\\s+(\\w+\\s+){0,2}(${PROBE_NOUN})`,
+      "i",
+    ),
+    "probe",
+  ],
+
 ];
 
 /**
@@ -278,9 +367,13 @@ function ownerNamedAt(text: string, index: number, matchLength: number): boolean
  * five gating behaviours be exercised directly, against a detector that cannot
  * know it is being tested.
  */
-type Regime = { response: boolean; settings: boolean };
+type Regime = { response: boolean; machine: boolean; probe: boolean };
 function currentRegime(): Regime {
-  return { response: responseIsBlockOwned(), settings: settingsAreBlockOwned() };
+  return {
+    response: responseIsBlockOwned(),
+    machine: machineSettingsAreBlockOwned(),
+    probe: probeIsBlockOwned(),
+  };
 }
 
 function offendersIn(
@@ -290,16 +383,15 @@ function offendersIn(
   regime: Regime = currentRegime(),
 ): string[] {
   const found: string[] = [];
-  const guidance = rel in GUIDANCE_ROUTES;
+  const region = guidanceRegion(rel, copy);
   for (const [label, re, family] of PATTERNS) {
     // Each family's ban runs only while THAT family is block-owned.
-    if (gated && family === "response" && !regime.response) continue;
-    if (gated && family === "settings" && !regime.settings) continue;
+    if (gated && !regime[family]) continue;
     for (const hit of copy.matchAll(new RegExp(re.source, re.flags + "g"))) {
       if (hit.index === undefined) continue;
       if (ownerNamedAt(copy, hit.index, hit[0].length)) continue;
-      // On a guidance route, only sentences that speak about Hone are claims.
-      if (guidance && !/\bHone\b/i.test(sentenceAt(copy, hit.index))) continue;
+      // Exempt ONLY hits that fall inside the structural guidance region.
+      if (region && hit.index >= region[0] && hit.index < region[1]) continue;
       found.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
     }
   }
@@ -471,32 +563,59 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     expect(fires("It keeps a separate history for every treated area and brings last time's settings forward.")).toBe(false);
   });
 
-  it("guidance may stand; a Hone claim on the same route may not", () => {
-    // P2-1. The checklist legitimately lists per-area response as something a
-    // thorough RECORD may contain. That is a statement about the profession.
-    // A Hone sentence on the same page is a product claim and stays checked.
-    const rel = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
-    expect(Object.keys(GUIDANCE_ROUTES)).toContain(rel);
-    // guidance alone — allowed
-    expect(offendersIn(rel, '"Tolerance for each area", "Any skin reaction"', false)).toEqual([]);
-    // the same words in a HONE sentence — rejected
-    expect(
-      offendersIn(rel, "Hone records tolerance for each area as a structured field", false).length,
-    ).toBeGreaterThan(0);
-    // and on a NON-guidance route the guidance form is still a claim
+  const CHECKLIST = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
+
+  // A synthetic page shaped like the real one: a SECTIONS array of profession
+  // guidance, then marketing copy after it.
+  const page = (after: string) =>
+    [
+      'const SECTIONS = [',
+      '  { h: "6. Client response", items: [',
+      '    "Tolerance for each area",',
+      '    "Any skin or client reaction, and whether it settled",',
+      '  ] },',
+      '];',
+      after,
+    ].join("\n");
+
+  it("guidance inside the SECTIONS region stands", () => {
+    expect(offendersIn(CHECKLIST, page(""), false)).toEqual([]);
+  });
+
+  it("a product sentence OUTSIDE the region is swept, whatever subject it names", () => {
+    // P2-1's control. None of these says "Hone"; every one is a product claim.
+    for (const claim of [
+      "We record tolerance for each area.",
+      "Our software records tolerance for each area.",
+      "This software records tolerance for each area.",
+      "Tolerance for each area is recorded automatically.",
+      "Hone records tolerance for each area.",
+    ]) {
+      const found = offendersIn(CHECKLIST, page(claim), false);
+      expect(found.length, `must be swept: ${claim}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("the boundary is structural, not a word test", () => {
+    // The SAME sentence is guidance inside the region and a claim outside it.
+    const inside = [
+      'const SECTIONS = [',
+      '  { items: ["Tolerance for each area"] },',
+      '];',
+    ].join("\n");
+    const outside = ["const SECTIONS = [", "  { items: [] },", "];", '"Tolerance for each area"'].join("\n");
+    expect(offendersIn(CHECKLIST, inside, false)).toEqual([]);
+    expect(offendersIn(CHECKLIST, outside, false).length).toBeGreaterThan(0);
+    // and on a route with no guidance region at all, it is always a claim
     expect(offendersIn("app/page.tsx", "Tolerance for each area", false).length).toBeGreaterThan(0);
   });
 
-  it("a universal-capture promise fails on a page whose guidance is per-area", () => {
-    // P2-1's actual shape: neither half is wrong alone, the pair is.
-    const rel = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
-    const guidanceOnly = '"Tolerance for each area", "Minutes performed per area"';
-    const promiseOnly = "See how Hone captures every item on this page as structured data";
-    expect(offendersIn(rel, guidanceOnly, false)).toEqual([]);
-    const both = `${guidanceOnly} ... ${promiseOnly}`;
-    const hits = offendersIn(rel, both, false);
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits.join(" ")).toMatch(/universal capture promise/);
+  it("a universal-capture promise outside the region still fails", () => {
+    const promise = "See how we capture every item on this checklist as structured data.";
+    const found = offendersIn(CHECKLIST, page(promise), false);
+    expect(found.join(" ")).toMatch(/universal capture promise/);
+    // guidance alone, with no promise, stays clean
+    expect(offendersIn(CHECKLIST, page(""), false)).toEqual([]);
   });
 
   it("the live checklist route makes no universal-capture promise", () => {
@@ -511,10 +630,7 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
   it("each ownership family is coherent on its own", () => {
     // P2-2 / state D: a family split across both tables is the state where
     // nothing can be trusted, and it fails loudly in EITHER direction.
-    for (const [name, fields] of [
-      ["response", RESPONSE_FIELDS],
-      ["settings", SETTINGS_FIELDS],
-    ] as const) {
+    for (const [name, fields] of FAMILIES) {
       const o = ownership(fields as string[]);
       expect(
         o.split,
@@ -526,94 +642,66 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
   // Wording that only the named family can object to, so each assertion below
   // isolates one gate.
   const RESPONSE_CLAIM = "Capture how each area was tolerated and any reaction.";
-  const SETTINGS_CLAIM = "Modality, settings, probe and lot recorded per treated area.";
+  const MACHINE_CLAIM = "Modality and settings recorded per treated area.";
+  const PROBE_CLAIM = "Probe and lot recorded per treated area.";
   const hits = (copy: string, gated: boolean, regime: Regime) =>
     offendersIn("app/page.tsx", copy, gated, regime);
 
-  const BOTH_BLOCK: Regime = { response: true, settings: true };
-  const RESPONSE_MOVED: Regime = { response: false, settings: true };
-  const SETTINGS_MOVED: Regime = { response: true, settings: false };
-  const BOTH_MOVED: Regime = { response: false, settings: false };
+  const ALL_BLOCK: Regime = { response: true, machine: true, probe: true };
+  const RESPONSE_MOVED: Regime = { response: false, machine: true, probe: true };
+  const MACHINE_MOVED: Regime = { response: true, machine: false, probe: true };
+  const PROBE_MOVED: Regime = { response: true, machine: true, probe: false };
+  const ALL_MOVED: Regime = { response: false, machine: false, probe: false };
 
-  it("the detector recognises each claim regardless of regime (gated=false)", () => {
-    // gated=false is the controls' contract: pattern behaviour only, no gate.
-    for (const regime of [BOTH_BLOCK, RESPONSE_MOVED, SETTINGS_MOVED, BOTH_MOVED]) {
-      expect(hits(RESPONSE_CLAIM, false, regime).length, "response claim").toBeGreaterThan(0);
-      expect(hits(SETTINGS_CLAIM, false, regime).length, "settings claim").toBeGreaterThan(0);
+  it("the detector recognises every claim regardless of regime (gated=false)", () => {
+    for (const regime of [ALL_BLOCK, RESPONSE_MOVED, MACHINE_MOVED, PROBE_MOVED, ALL_MOVED]) {
+      expect(hits(RESPONSE_CLAIM, false, regime).length, "response").toBeGreaterThan(0);
+      expect(hits(MACHINE_CLAIM, false, regime).length, "machine").toBeGreaterThan(0);
+      expect(hits(PROBE_CLAIM, false, regime).length, "probe").toBeGreaterThan(0);
     }
   });
 
-  it("gated: response block-owned APPLIES the response prohibition", () => {
-    expect(hits(RESPONSE_CLAIM, true, BOTH_BLOCK).length).toBeGreaterThan(0);
-    expect(hits(RESPONSE_CLAIM, true, SETTINGS_MOVED).length).toBeGreaterThan(0);
+  it("gated: a block-owned family APPLIES its prohibition", () => {
+    expect(hits(RESPONSE_CLAIM, true, ALL_BLOCK).length).toBeGreaterThan(0);
+    expect(hits(MACHINE_CLAIM, true, ALL_BLOCK).length).toBeGreaterThan(0);
+    expect(hits(PROBE_CLAIM, true, ALL_BLOCK).length).toBeGreaterThan(0);
   });
 
-  it("gated: response area-owned lapses ONLY the response prohibition", () => {
+  it("gated: response moving lapses ONLY the response prohibition", () => {
     expect(hits(RESPONSE_CLAIM, true, RESPONSE_MOVED)).toEqual([]);
-    // the settings ban is untouched by that migration
-    expect(hits(SETTINGS_CLAIM, true, RESPONSE_MOVED).length).toBeGreaterThan(0);
+    expect(hits(MACHINE_CLAIM, true, RESPONSE_MOVED).length).toBeGreaterThan(0);
+    expect(hits(PROBE_CLAIM, true, RESPONSE_MOVED).length).toBeGreaterThan(0);
   });
 
-  it("gated: settings block-owned APPLIES the settings prohibition", () => {
-    expect(hits(SETTINGS_CLAIM, true, BOTH_BLOCK).length).toBeGreaterThan(0);
-    expect(hits(SETTINGS_CLAIM, true, RESPONSE_MOVED).length).toBeGreaterThan(0);
+  it("gated: machine settings moving lapses ONLY the machine prohibition", () => {
+    // The property P2-2 asks for: probe claims must not ride on machine
+    // ownership, nor response on either.
+    expect(hits(MACHINE_CLAIM, true, MACHINE_MOVED)).toEqual([]);
+    expect(hits(PROBE_CLAIM, true, MACHINE_MOVED).length).toBeGreaterThan(0);
+    expect(hits(RESPONSE_CLAIM, true, MACHINE_MOVED).length).toBeGreaterThan(0);
   });
 
-  it("gated: settings area-owned lapses ONLY the settings prohibition", () => {
-    expect(hits(SETTINGS_CLAIM, true, SETTINGS_MOVED)).toEqual([]);
-    // the response ban is untouched by that migration
-    expect(hits(RESPONSE_CLAIM, true, SETTINGS_MOVED).length).toBeGreaterThan(0);
+  it("gated: probe moving lapses ONLY the probe prohibition", () => {
+    expect(hits(PROBE_CLAIM, true, PROBE_MOVED)).toEqual([]);
+    expect(hits(MACHINE_CLAIM, true, PROBE_MOVED).length).toBeGreaterThan(0);
+    expect(hits(RESPONSE_CLAIM, true, PROBE_MOVED).length).toBeGreaterThan(0);
   });
 
-  it("gated: both moved lapses both; neither moved applies both", () => {
-    expect(hits(RESPONSE_CLAIM, true, BOTH_MOVED)).toEqual([]);
-    expect(hits(SETTINGS_CLAIM, true, BOTH_MOVED)).toEqual([]);
-    expect(hits(RESPONSE_CLAIM, true, BOTH_BLOCK).length).toBeGreaterThan(0);
-    expect(hits(SETTINGS_CLAIM, true, BOTH_BLOCK).length).toBeGreaterThan(0);
+  it("gated: everything moved lapses everything; nothing moved applies everything", () => {
+    for (const claim of [RESPONSE_CLAIM, MACHINE_CLAIM, PROBE_CLAIM]) {
+      expect(hits(claim, true, ALL_MOVED)).toEqual([]);
+      expect(hits(claim, true, ALL_BLOCK).length).toBeGreaterThan(0);
+    }
   });
 
   it("no family is blanket-skipped: each fires under its own regime", () => {
-    // A `continue` that skipped a family outright would pass every lapse test
-    // above and fail here.
-    for (const [claim, regime, name] of [
-      [RESPONSE_CLAIM, BOTH_BLOCK, "response"],
-      [SETTINGS_CLAIM, BOTH_BLOCK, "settings"],
+    for (const [claim, name] of [
+      [RESPONSE_CLAIM, "response"],
+      [MACHINE_CLAIM, "machine"],
+      [PROBE_CLAIM, "probe"],
     ] as const) {
-      expect(hits(claim, true, regime).length, `${name} family must fire`).toBeGreaterThan(0);
+      expect(hits(claim, true, ALL_BLOCK).length, `${name} must fire`).toBeGreaterThan(0);
     }
-  });
-
-  /**
-   * The ONLY structural assertion left, and it reads just the function body.
-   *
-   * A default of `{ response: true, settings: true }` is behaviourally
-   * identical to `currentRegime()` while both families are block-owned — the
-   * two diverge only AFTER a migration, so no behavioural test at today's
-   * regime can separate them, and that mutation escaped every behavioural
-   * check. Rather than leave the hole, the default is pinned structurally
-   * against the EXTRACTED body of `offendersIn`. The expectation's own text
-   * sits in this `it` block, outside the extracted region, so it cannot
-   * satisfy itself the way the old whole-file grep did.
-   *
-   * Behaviour and mutation remain the authority for every other rule here.
-   */
-  const offendersInSource = (): string => {
-    const src = read("tests/source-guards/clinical-response-scope-guards.test.ts");
-    const start = src.indexOf("function offendersIn(");
-    expect(start, "offendersIn must exist").toBeGreaterThan(-1);
-    const end = src.indexOf("\n}\n", start);
-    expect(end, "offendersIn must be closed").toBeGreaterThan(start);
-    return src.slice(start, end);
-  };
-
-  it("the default regime is the LIVE model, not a constant", () => {
-    const body = offendersInSource();
-    // the extracted region really is the function, not the whole file
-    expect(body).toContain("const found: string[] = [];");
-    expect(body).not.toContain("it(");
-    expect(body).toMatch(/regime:\s*Regime\s*=\s*currentRegime\(\)/);
-    // and no literal regime is hard-coded as the default
-    expect(body).not.toMatch(/regime:\s*Regime\s*=\s*\{/);
   });
 
   it("the live regime is the default, so the sweep is not silently ungated", () => {
@@ -621,7 +709,8 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     const live = currentRegime();
     expect(live).toEqual({
       response: responseIsBlockOwned(),
-      settings: settingsAreBlockOwned(),
+      machine: machineSettingsAreBlockOwned(),
+      probe: probeIsBlockOwned(),
     });
     // and with the default omitted the detector behaves as the live regime says
     const viaDefault = offendersIn("app/page.tsx", RESPONSE_CLAIM, true);
