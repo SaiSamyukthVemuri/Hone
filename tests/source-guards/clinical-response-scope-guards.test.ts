@@ -268,13 +268,33 @@ function ownerNamedAt(text: string, index: number, matchLength: number): boolean
  * them meant a correct, complete migration made them fail, which would have
  * blocked exactly the model change the design says should retire the ban.
  */
-function offendersIn(rel: string, copy: string, gated = true): string[] {
+/**
+ * Which families are currently block-owned.
+ *
+ * INJECTABLE ON PURPOSE. The previous version of the independence test read
+ * this file and asserted it CONTAINED the two gating lines — and the literals
+ * it searched for were the assertion's own arguments, so the check satisfied
+ * itself and proved nothing about `offendersIn`. Passing the regime in lets the
+ * five gating behaviours be exercised directly, against a detector that cannot
+ * know it is being tested.
+ */
+type Regime = { response: boolean; settings: boolean };
+function currentRegime(): Regime {
+  return { response: responseIsBlockOwned(), settings: settingsAreBlockOwned() };
+}
+
+function offendersIn(
+  rel: string,
+  copy: string,
+  gated = true,
+  regime: Regime = currentRegime(),
+): string[] {
   const found: string[] = [];
   const guidance = rel in GUIDANCE_ROUTES;
   for (const [label, re, family] of PATTERNS) {
     // Each family's ban runs only while THAT family is block-owned.
-    if (gated && family === "response" && !responseIsBlockOwned()) continue;
-    if (gated && family === "settings" && !settingsAreBlockOwned()) continue;
+    if (gated && family === "response" && !regime.response) continue;
+    if (gated && family === "settings" && !regime.settings) continue;
     for (const hit of copy.matchAll(new RegExp(re.source, re.flags + "g"))) {
       if (hit.index === undefined) continue;
       if (ownerNamedAt(copy, hit.index, hit[0].length)) continue;
@@ -285,7 +305,7 @@ function offendersIn(rel: string, copy: string, gated = true): string[] {
   }
   // A universal-capture promise is false on any page whose own content carries
   // per-area response guidance — whichever half you read first.
-  if ((!gated || responseIsBlockOwned()) && UNIVERSAL_CAPTURE.test(copy)) {
+  if ((!gated || regime.response) && UNIVERSAL_CAPTURE.test(copy)) {
     const perAreaResponse = PATTERNS.filter(([, , f]) => f === "response").some(
       ([, re]) => re.test(copy),
     );
@@ -503,16 +523,110 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     }
   });
 
-  it("the two families gate independently", () => {
-    // The shape of states A and B: each family's checks consult only its own
-    // predicate, so a migration of one cannot license the other's false claim.
-    const responsePatterns = PATTERNS.filter(([, , f]) => f === "response");
-    const settingsPatterns = PATTERNS.filter(([, , f]) => f === "settings");
-    expect(responsePatterns.length).toBeGreaterThan(0);
-    expect(settingsPatterns.length).toBeGreaterThan(0);
+  // Wording that only the named family can object to, so each assertion below
+  // isolates one gate.
+  const RESPONSE_CLAIM = "Capture how each area was tolerated and any reaction.";
+  const SETTINGS_CLAIM = "Modality, settings, probe and lot recorded per treated area.";
+  const hits = (copy: string, gated: boolean, regime: Regime) =>
+    offendersIn("app/page.tsx", copy, gated, regime);
+
+  const BOTH_BLOCK: Regime = { response: true, settings: true };
+  const RESPONSE_MOVED: Regime = { response: false, settings: true };
+  const SETTINGS_MOVED: Regime = { response: true, settings: false };
+  const BOTH_MOVED: Regime = { response: false, settings: false };
+
+  it("the detector recognises each claim regardless of regime (gated=false)", () => {
+    // gated=false is the controls' contract: pattern behaviour only, no gate.
+    for (const regime of [BOTH_BLOCK, RESPONSE_MOVED, SETTINGS_MOVED, BOTH_MOVED]) {
+      expect(hits(RESPONSE_CLAIM, false, regime).length, "response claim").toBeGreaterThan(0);
+      expect(hits(SETTINGS_CLAIM, false, regime).length, "settings claim").toBeGreaterThan(0);
+    }
+  });
+
+  it("gated: response block-owned APPLIES the response prohibition", () => {
+    expect(hits(RESPONSE_CLAIM, true, BOTH_BLOCK).length).toBeGreaterThan(0);
+    expect(hits(RESPONSE_CLAIM, true, SETTINGS_MOVED).length).toBeGreaterThan(0);
+  });
+
+  it("gated: response area-owned lapses ONLY the response prohibition", () => {
+    expect(hits(RESPONSE_CLAIM, true, RESPONSE_MOVED)).toEqual([]);
+    // the settings ban is untouched by that migration
+    expect(hits(SETTINGS_CLAIM, true, RESPONSE_MOVED).length).toBeGreaterThan(0);
+  });
+
+  it("gated: settings block-owned APPLIES the settings prohibition", () => {
+    expect(hits(SETTINGS_CLAIM, true, BOTH_BLOCK).length).toBeGreaterThan(0);
+    expect(hits(SETTINGS_CLAIM, true, RESPONSE_MOVED).length).toBeGreaterThan(0);
+  });
+
+  it("gated: settings area-owned lapses ONLY the settings prohibition", () => {
+    expect(hits(SETTINGS_CLAIM, true, SETTINGS_MOVED)).toEqual([]);
+    // the response ban is untouched by that migration
+    expect(hits(RESPONSE_CLAIM, true, SETTINGS_MOVED).length).toBeGreaterThan(0);
+  });
+
+  it("gated: both moved lapses both; neither moved applies both", () => {
+    expect(hits(RESPONSE_CLAIM, true, BOTH_MOVED)).toEqual([]);
+    expect(hits(SETTINGS_CLAIM, true, BOTH_MOVED)).toEqual([]);
+    expect(hits(RESPONSE_CLAIM, true, BOTH_BLOCK).length).toBeGreaterThan(0);
+    expect(hits(SETTINGS_CLAIM, true, BOTH_BLOCK).length).toBeGreaterThan(0);
+  });
+
+  it("no family is blanket-skipped: each fires under its own regime", () => {
+    // A `continue` that skipped a family outright would pass every lapse test
+    // above and fail here.
+    for (const [claim, regime, name] of [
+      [RESPONSE_CLAIM, BOTH_BLOCK, "response"],
+      [SETTINGS_CLAIM, BOTH_BLOCK, "settings"],
+    ] as const) {
+      expect(hits(claim, true, regime).length, `${name} family must fire`).toBeGreaterThan(0);
+    }
+  });
+
+  /**
+   * The ONLY structural assertion left, and it reads just the function body.
+   *
+   * A default of `{ response: true, settings: true }` is behaviourally
+   * identical to `currentRegime()` while both families are block-owned — the
+   * two diverge only AFTER a migration, so no behavioural test at today's
+   * regime can separate them, and that mutation escaped every behavioural
+   * check. Rather than leave the hole, the default is pinned structurally
+   * against the EXTRACTED body of `offendersIn`. The expectation's own text
+   * sits in this `it` block, outside the extracted region, so it cannot
+   * satisfy itself the way the old whole-file grep did.
+   *
+   * Behaviour and mutation remain the authority for every other rule here.
+   */
+  const offendersInSource = (): string => {
     const src = read("tests/source-guards/clinical-response-scope-guards.test.ts");
-    expect(src).toContain('if (family === "response" && !responseIsBlockOwned()) continue;');
-    expect(src).toContain('if (family === "settings" && !settingsAreBlockOwned()) continue;');
+    const start = src.indexOf("function offendersIn(");
+    expect(start, "offendersIn must exist").toBeGreaterThan(-1);
+    const end = src.indexOf("\n}\n", start);
+    expect(end, "offendersIn must be closed").toBeGreaterThan(start);
+    return src.slice(start, end);
+  };
+
+  it("the default regime is the LIVE model, not a constant", () => {
+    const body = offendersInSource();
+    // the extracted region really is the function, not the whole file
+    expect(body).toContain("const found: string[] = [];");
+    expect(body).not.toContain("it(");
+    expect(body).toMatch(/regime:\s*Regime\s*=\s*currentRegime\(\)/);
+    // and no literal regime is hard-coded as the default
+    expect(body).not.toMatch(/regime:\s*Regime\s*=\s*\{/);
+  });
+
+  it("the live regime is the default, so the sweep is not silently ungated", () => {
+    // offendersIn's default argument must be the REAL model, not a constant.
+    const live = currentRegime();
+    expect(live).toEqual({
+      response: responseIsBlockOwned(),
+      settings: settingsAreBlockOwned(),
+    });
+    // and with the default omitted the detector behaves as the live regime says
+    const viaDefault = offendersIn("app/page.tsx", RESPONSE_CLAIM, true);
+    const viaExplicit = offendersIn("app/page.tsx", RESPONSE_CLAIM, true, live);
+    expect(viaDefault).toEqual(viaExplicit);
   });
 
   it("a comment quoting the old wording does not trip the guard", () => {
