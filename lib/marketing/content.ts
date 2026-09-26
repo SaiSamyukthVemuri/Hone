@@ -491,7 +491,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/features/charting-records",
     title: "Electrolysis charting and records | Hone",
     description:
-      "Charting built around treatments, not generic notes: mode, modality, energy, frequency, pulses, probe and lot, with tolerance and skin response recorded on the settings block, and laterality kept for every area it covers.",
+      "Charting built around treatments, not generic notes: mode, modality, energy, frequency, pulses, probe and lot, per-area laterality, and tolerance and skin response recorded on the settings block that covers them.",
     indexable: true,
   },
   {

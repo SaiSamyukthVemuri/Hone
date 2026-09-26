@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { readdirSync } from "node:fs";
 
 const ROOT = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
@@ -70,12 +71,43 @@ function copyOnly(src: string): string {
     .join("\n");
 }
 
-const SURFACES = [
-  "app/page.tsx",
-  "app/features/charting-records/page.tsx",
-  "lib/marketing/content.ts",
-  "docs/marketing/product-truth-register.md",
-];
+// DERIVED, NOT HAND-LISTED. The first version of this guard named four files
+// and missed app/electrolysis-software/page.tsx, which went on publishing the
+// claim while the guard passed — a hand list can only ever confirm what its
+// author already knew about. Walking the public marketing tree means a NEW
+// route is covered the day it is added.
+//
+// `app/(app)/**` and `app/api/**` are excluded: those are the authenticated
+// product and its endpoints, not marketing claims.
+function marketingSurfaces(): string[] {
+  const out: string[] = [];
+  const walk = (rel: string) => {
+    for (const e of readdirSync(path.join(ROOT, rel), { withFileTypes: true })) {
+      const child = `${rel}/${e.name}`;
+      if (e.isDirectory()) {
+        if (e.name === "(app)" || e.name === "api" || e.name === "node_modules") continue;
+        walk(child);
+      } else if (/\.(tsx?|md)$/.test(e.name)) {
+        out.push(child);
+      }
+    }
+  };
+  for (const root of ["app", "lib/marketing", "docs/marketing", "components"]) walk(root);
+  return out.sort();
+}
+
+/**
+ * Surfaces deliberately OUT of this defect class, each with the reason.
+ *
+ * Not an escape hatch for copy that is merely inconvenient: the entry must
+ * describe why the text is not a claim about what Hone stores. The file is
+ * asserted to exist so a rename cannot turn an exemption into a silent
+ * wildcard.
+ */
+const OUT_OF_CLASS: Readonly<Record<string, string>> = {
+  "app/resources/electrolysis-treatment-record-checklist/page.tsx":
+    "A best-practice checklist of what an electrolysis treatment RECORD should contain. It is guidance for the practitioner's own record-keeping, not a statement about what Hone stores or how it scopes response, so correcting it would misrepresent the profession's standard rather than Hone.",
+};
 
 // A per-area quantifier sitting near a response/settings word, in either order.
 // `laterality` is deliberately absent: it IS per area.
@@ -92,29 +124,73 @@ const PATTERNS: Array<[string, RegExp]> = [
 ];
 
 describe("marketing may not claim per-area tolerance / reaction / settings", () => {
-  it("the precondition holds: response is owned by the BLOCK, not the area", () => {
-    // If this ever fails, the model changed and the ban below rightly lapses.
-    expect(responseIsBlockOwned()).toBe(true);
-    // stated explicitly so the failure message is legible
-    for (const f of RESPONSE_FIELDS) {
-      expect(block("SessionBlock"), `${f} must be on session_blocks`).toMatch(
-        new RegExp(`^\\s*${f}\\??:`, "m"),
-      );
-      expect(block("SessionBlockArea"), `${f} must NOT be on session_block_areas`).not.toMatch(
-        new RegExp(`^\\s*${f}\\??:`, "m"),
-      );
+  it("the response-ownership regime is COHERENT (either owner, never half)", () => {
+    // Deliberately NOT `expect(responseIsBlockOwned()).toBe(true)`. That form
+    // would fail the moment a migration moved these fields onto the area —
+    // blocking exactly the change this guard's own comments say should retire
+    // the ban. A guard that has to be deleted by the change that earns it is a
+    // guard nobody will trust.
+    //
+    // What IS enduring: one owner, not both and not neither. A half-migrated
+    // model is the state where neither the ban nor the claim can be trusted,
+    // and that is worth failing on in either regime.
+    const has = (src: string, f: string) => new RegExp(`^\\s*${f}\\??:`, "m").test(src);
+    const onBlock = RESPONSE_FIELDS.filter((f) => has(block("SessionBlock"), f));
+    const onArea = RESPONSE_FIELDS.filter((f) => has(block("SessionBlockArea"), f));
+
+    expect(
+      onBlock.length === RESPONSE_FIELDS.length ||
+        onArea.length === RESPONSE_FIELDS.length,
+      `response fields must sit wholly on one table; on block: [${onBlock}], on area: [${onArea}]`,
+    ).toBe(true);
+    expect(
+      onBlock.length > 0 && onArea.length > 0,
+      `response fields must not be split across both tables; on block: [${onBlock}], on area: [${onArea}]`,
+    ).toBe(false);
+  });
+
+  it("records which regime is in force, without demanding either", () => {
+    // Informational: makes the current ownership visible in the run, and makes
+    // a future flip legible rather than silent.
+    expect(typeof responseIsBlockOwned()).toBe("boolean");
+  });
+
+  it("every exempted surface still exists", () => {
+    for (const rel of Object.keys(OUT_OF_CLASS)) {
+      expect(() => read(rel), `${rel} is exempted but missing`).not.toThrow();
     }
   });
 
-  it.each(SURFACES)("%s makes no per-area response claim", (rel) => {
-    if (!responseIsBlockOwned()) return; // model changed; ban lapses
-    const copy = copyOnly(read(rel));
-    for (const [label, re] of PATTERNS) {
-      const hit = re.exec(copy);
-      expect(
-        hit?.[0] ?? null,
-        `${rel}: ${label} — response belongs to the settings block, which may cover several areas`,
-      ).toBeNull();
+  it("no public marketing surface claims per-area response", () => {
+    if (!responseIsBlockOwned()) return; // model moved; the ban lapses by design
+    const offenders: string[] = [];
+    for (const rel of marketingSurfaces()) {
+      if (rel in OUT_OF_CLASS) continue;
+      const copy = copyOnly(read(rel));
+      for (const [label, re] of PATTERNS) {
+        const hit = re.exec(copy);
+        if (hit) offenders.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
+      }
+    }
+    expect(
+      offenders,
+      "response belongs to the settings block, which may cover several areas",
+    ).toEqual([]);
+  });
+
+  it("the sweep actually reaches the routes that shipped the defect", () => {
+    // A derived list that silently walked nothing would pass the test above.
+    const found = marketingSurfaces();
+    expect(found.length).toBeGreaterThan(20);
+    for (const rel of [
+      "app/page.tsx",
+      "app/electrolysis-software/page.tsx",
+      "app/features/treatment-memory/page.tsx",
+      "app/features/charting-records/page.tsx",
+      "lib/marketing/content.ts",
+      "docs/marketing/product-truth-register.md",
+    ]) {
+      expect(found, `${rel} must be swept`).toContain(rel);
     }
   });
 

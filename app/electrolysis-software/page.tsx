@@ -261,8 +261,9 @@ export default function ElectrolysisSoftwarePage() {
               <Title className="mt-4">Built around returning-client memory.</Title>
               <Lede className="mt-5">
                 Generic scheduling tools record that an appointment happened. Electrolysis is a
-                course of treatment, so what matters next time is what was done to each area
-                and how it responded. Hone keeps that, per area, and brings it forward.
+                course of treatment, so what matters next time is what was done and how it was
+                tolerated. Hone keeps every treated area findable, carrying the settings and
+                response from the block it was charted under, and brings it forward.
               </Lede>
             </Reveal>
             <Reveal delay={80}>
