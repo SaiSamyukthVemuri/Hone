@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-21, post-0202 apply; `0202` APPLIED)
+## Current state (verified 2026-09-21, post-0202 apply; `0202` APPLIED, `0203` AUTHORED AND PENDING)
 
 > **ADDITIVE SCHEMA ONLY, ON A 31-ROW TABLE. NO DATA WAS WRITTEN.** This apply
 > added **9 nullable columns** to `public.new_client_waitlist_entries`
@@ -64,10 +64,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0202** (`0202_waitlist_profile_and_sms_consent_authority.sql`) |
-| **Repo migration max** | **0202** — at PARITY with hosted, nothing pending. |
+| **Repo migration max** | **0203** — `0203_waitlist_mobile_verification_authority.sql` (WAIT B2b mobile verification authority), derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **AUTHORED, NOT APPLIED.** The chain has left parity and is back at **MIGRATION-FIRST PENDING**, which is the ordinary pre-apply position of a migration-bearing branch, not drift. This row states the BRANCH-derived position; the hosted row above carries the production claim, and the Pending row below states how the two stand. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none.** Verified live: `max(version)` in `supabase_migrations.schema_migrations` is **`0202`** with **201** rows total. |
-| **Next free migration** | Next free number is **0203**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** — availability is not allocation, and nothing may assume it. **`0202` IS NO LONGER FREE** — it is applied and FROZEN. |
+| **Pending migrations** | **`0203`** — `0203_waitlist_mobile_verification_authority.sql`, authored on the WAIT B2b verified-mobile branch and **NOT applied**; apply is a separate gate. So `repo > hosted` by exactly one. **THE PRODUCTION READING BELOW IS DATED AND UNCHANGED BY THIS**: verified live at the 0202 apply, `max(version)` in `supabase_migrations.schema_migrations` was **`0202`** with **201** rows total. `0203` adds nothing to production until it is applied. |
+| **Next free migration** | Next free number is **0204**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0203` IS NO LONGER FREE** — it is allocated to WAIT B2b, authored on that branch and **NOT applied**. **`0202` IS NO LONGER FREE** — it is applied and FROZEN. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
 | **Reviewed release head** | `b8fc30a60a11f643897bd3389261970f0d8a6259` (PR #753) — the exact authorized head: tree clean, current production incorporated (0 behind), exact-head CI GREEN, Vercel GREEN, exact-head Codex `COMPLETE_CLEAN` with 0 fresh findings. |
 | **Production application SHA at apply time** | `27a4c9603f1170b5e84edc1da86fe740117eb3f7` (post-#751). **Unchanged by this apply: no application code was deployed.** |

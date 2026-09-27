@@ -64,9 +64,13 @@ const COMMANDS: ReadonlyArray<[string, string]> = [
 ];
 
 describe("0202 takes the number it derived", () => {
-  it("is the repository maximum and nothing sits above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0203 is", () => {
+    // Handed to 0203 per CLAUDE.md: only the CURRENT max asserts this, and
+    // tests/migrations/0203-waitlist-mobile-verification-authority.test.ts
+    // carries it now. AUTHORING 0203 is what flips this, not applying it --
+    // `isRepoMax` is derived from the migrations directory.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0203"]);
   });
 
   it("claims its version exactly once", () => {
@@ -86,13 +90,22 @@ describe("0202 takes the number it derived", () => {
     // the claim travels rather than being restated in every file.
     //
     // EQUALITY IS A CURRENT CLAIM, so exactly one file may hold it, and this is
-    // now that file. WHOEVER APPLIES 0203 MOVES THIS BLOCK: narrow 0202 to a floor
-    // the way 0201, 0200, 0199 and 0198 were narrowed, and let the new head take
-    // the equality.
+    // STILL that file. WHOEVER APPLIES 0203 MOVES THIS BLOCK: narrow 0202 to a
+    // floor the way 0201, 0200, 0199 and 0198 were narrowed, and let the new head
+    // take the equality.
+    //
+    // THE CHAIN IS BACK AT MIGRATION-FIRST PENDING. WAIT B2b authors `0203` on
+    // its own branch and has NOT applied it, so 0202 KEEPS the hosted head while
+    // the repository maximum has moved one above it. NOTE THE ASYMMETRY, WHICH IS
+    // CORRECT: 0203 takes the REPO max above, and this block keeps the HOSTED
+    // head, because 0203 is authored and NOT applied. Two different claims, and
+    // only the first has moved.
     const state = migrationState();
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.pending_migrations).toEqual([]);
+    expect(state.repo_migration_max).toBe("0203");
+    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.pending_migrations).toEqual(["0203"]);
+    expect(state.next_free_migration).toBe("0204");
   });
 
   it("the applied bytes are the authorized bytes", () => {
