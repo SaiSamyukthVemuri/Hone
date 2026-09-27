@@ -358,4 +358,29 @@ grant execute on function public.mark_waitlist_mobile_verified(uuid, text) to se
 comment on function public.mark_waitlist_mobile_verified(uuid, text) is
   'Promotes new_client_waitlist_entries.mobile_verified_at from NULL to the database clock, only when p_expected_phone matches the stored mobile EXACTLY (compare-and-set; phone equivalence is decided by the application''s single normalizer and never re-derived here). The only writer of that column. Never replaces the stored mobile, never touches consent, opt-out or queue position.';
 
+-- ---------------------------------------------------------------------------
+-- 4. THE COLUMN COMMENTS 0202 LEFT BEHIND
+-- ---------------------------------------------------------------------------
+--
+-- A COMMENT IS PERSISTED STATE, NOT A SOURCE COMMENT. 0202's text for these two
+-- columns lives in `pg_description` and survives this migration untouched unless
+-- it is replaced here. It says `mobile_verified_at` has NO WRITER, is NULL for
+-- every row, and that the guard refuses every change to it. All three were true
+-- of 0202 and this migration makes all three false, so schema introspection,
+-- `\d+`, and every generated document would contradict the authority the same
+-- file just installed.
+--
+-- 0202 IS APPLIED AND FROZEN, so its bytes are not edited; the correction is a
+-- forward one, which is what a migration is for.
+--
+-- 0202's own text asked for this: it says "The verification slice amends that
+-- guard clause, which is a change a reviewer sees." This IS that slice, and
+-- amending the clause without amending the sentence describing it is how the
+-- database ends up asserting something the database no longer does.
+comment on column public.new_client_waitlist_entries.mobile_verified_at is
+  'When `phone` was PROVEN to reach this person, or NULL. Separate from the number itself because "we hold a string" and "texts sent there arrive with the right person" are different facts and only the second may authorise a send. EXACTLY ONE WRITER EXISTS: public.mark_waitlist_mobile_verified, which sets a row-scoped transaction-local permit immediately before its own UPDATE; the transition guard refuses every other change, refuses any attempt to move or clear a value once proved, and a permit for one entry authorises nothing over another. A PostgREST caller cannot compose set_config with a write in one transaction, so no browser-reachable role can hold both halves. A non-NULL value therefore means a possession proof was accepted by the verification provider, never that an operator asserted it.';
+
+comment on column public.new_client_waitlist_entries.phone is
+  'The single durable contact number for this prospect, and a CANDIDATE in every case: the public join form, a practitioner-entered enquiry, a legacy import and a bearer completion link all record a number somebody typed, and none of them proves it reaches this person. Reachability is `mobile_verified_at`, a separate fact with a separate proof, written by exactly one command and bound to this column by an exact-string compare-and-set. The product vocabulary calls this "mobile" and the adapter renames it at its boundary; THERE IS DELIBERATELY NO SECOND COLUMN, because a `mobile` beside this one would read as ABSENT for every legacy row that already holds a number here, letting a completion link write a number for someone the studio already has one for.';
+
 commit;

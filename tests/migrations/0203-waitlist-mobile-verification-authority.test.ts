@@ -321,6 +321,73 @@ describe("the carried guard is 0202's, changed in exactly one place", () => {
   });
 });
 
+describe("the PERSISTED comments agree with the new authority", () => {
+  // A `comment on` IS PERSISTED STATE. 0202's text for these columns lives in
+  // pg_description and survives this migration unless replaced, so after the
+  // apply `\d+` and every generated document would still say mobile_verified_at
+  // has no writer, is NULL for every row, and that the guard refuses every change
+  // to it -- while this same file installs the writer and amends the guard.
+  //
+  // A review found this because it was the one surface in the slice with no guard
+  // on it, after four earlier findings of the same class in source comments and
+  // the PR description. So it is guarded now.
+
+  const SQL_0202 = readFileSync(
+    path.join(ROOT, "supabase/migrations", fileForVersion("0202")),
+    "utf8",
+  );
+
+  // NOTE: these read SQL, the RAW file. `CODE` above is comment-stripped by
+  // construction -- which is right for every other assertion in this file and
+  // exactly wrong here, since the persisted comments ARE the subject.
+  /** The text 0203 installs for a column, or null when it installs none. */
+  const commentFor = (sql: string, column: string): string | null => {
+    const re = new RegExp(
+      `comment on column public\\.new_client_waitlist_entries\\.${column} is\\s*'([\\s\\S]*?)';`,
+      "i",
+    );
+    return sql.match(re)?.[1] ?? null;
+  };
+
+  // The claims that were true of 0202 and are false once 0203 is applied.
+  const FALSIFIED: ReadonlyArray<readonly [string, RegExp]> = [
+    ["no writer exists", /no writer (exists|at all)/i],
+    ["NULL for every row", /NULL for every row/i],
+    ["the guard refuses ANY change", /refuses any change/i],
+  ];
+
+  for (const column of ["mobile_verified_at", "phone"] as const) {
+    it(`re-comments ${column}, because 0202's text becomes false`, () => {
+      const before = commentFor(SQL_0202, column);
+      expect(before, `0202 must comment ${column}`).toBeTruthy();
+      const after = commentFor(SQL, column);
+      expect(
+        after,
+        `0202 comments ${column} and 0203 changes what that comment asserts, so 0203 must replace it`,
+      ).toBeTruthy();
+      expect(after).not.toBe(before);
+    });
+
+    it(`${column}'s new comment asserts nothing 0203 falsifies`, () => {
+      const after = commentFor(SQL, column) ?? "";
+      for (const [label, re] of FALSIFIED) {
+        expect(after, `${column}'s comment still claims: ${label}`).not.toMatch(re);
+      }
+    });
+  }
+
+  it("mobile_verified_at's comment names the one writer, so the text is checkable", () => {
+    const after = commentFor(SQL, "mobile_verified_at") ?? "";
+    expect(after).toMatch(/mark_waitlist_mobile_verified/);
+    expect(after).toMatch(/one writer/i);
+  });
+
+  it("NO applied migration's comment is edited in place", () => {
+    // The correction is FORWARD. 0202 is applied and frozen.
+    expect(SQL_0202).toMatch(/no writer (exists|at all)/i);
+  });
+});
+
 describe("applied history is frozen", () => {
   it("0203 does not edit 0202 or any earlier file", () => {
     // The only migration file this change may add is its own; asserted here
