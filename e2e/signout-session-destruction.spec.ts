@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Request,
+} from "@playwright/test";
 import { loginAsOwner } from "./helpers/flows";
 import { seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
 
@@ -75,6 +81,17 @@ type SignOutTraffic = {
    * connection on one of them is a real failure and must stay RED.
    */
   settledIndependently: Set<string>;
+  /**
+   * Owned requests the browser EXPLICITLY reported as aborted. This is the
+   * only thing that buys forgiveness now: suppression requires positive
+   * evidence that the navigation cancelled the request, never the mere
+   * absence of evidence that it succeeded.
+   */
+  cancelledByNavigation: Set<string>;
+  /** RSC / Next prefetch requests currently outstanding, by origin + path. */
+  rscOutstanding: () => string[];
+  /** Milliseconds since the last RSC request started or settled. */
+  rscIdleMs: () => number;
 };
 
 // Console noise this LOCAL lane emits no matter what the app does. It arrives
@@ -95,7 +112,26 @@ type SignOutTraffic = {
 //
 // And the suppressed messages are PRINTED in the observation line either way,
 // so nothing this filter drops can hide from the evidence.
-const TELEMETRY_ORIGIN = /\/_vercel\/|\/ingest(\/|$|\?)|posthog\.com/i;
+// `/monitoring` is Sentry's SAME-ORIGIN TUNNEL, not a product route:
+// `next.config.ts` sets `tunnelRoute: "/monitoring"`, so browser telemetry is
+// rewritten through this app's own origin and its failures are attributed to
+// localhost like application traffic. Locally the tunnel answers 429 once the
+// lane has emitted enough events, which is the SDK being rate-limited, not the
+// application faulting.
+//
+// It surfaced when the quiescent boundary was introduced: waiting for a still
+// network before the press gives the tunnel time to emit one more event, so a
+// pre-existing lane artefact started landing inside the teardown phase.
+//
+// PINNED against `next.config.ts` below, because this is only sound while
+// `/monitoring` really is the tunnel — if the route moves, or the app ever
+// serves something real there, the pin fails rather than this quietly
+// suppressing it.
+const SENTRY_TUNNEL_ROUTE = "/monitoring";
+const TELEMETRY_ORIGIN = new RegExp(
+  `\\/_vercel\\/|\\/ingest(\\/|$|\\?)|posthog\\.com|${SENTRY_TUNNEL_ROUTE}(\\/|$|\\?)`,
+  "i",
+);
 
 const TELEMETRY_EMITTER = [
   // posthog-js logs this from the application bundle when no token is set.
@@ -142,6 +178,7 @@ export function isLogoutTeardownNoise(
     logoutNavigated: boolean;
     teardownOwned: ReadonlySet<string>;
     settledIndependently: ReadonlySet<string>;
+    cancelledByNavigation: ReadonlySet<string>;
   },
 ): boolean {
   // Nothing logged before the logout is ever forgiven — first, because it is
@@ -157,14 +194,33 @@ export function isLogoutTeardownNoise(
   const rsc = /^Failed to fetch RSC payload for (\S+?)\. Falling back/.exec(e.text);
   if (rsc) {
     const named = withoutQuery(rsc[1]!);
-    // OWNERSHIP IS NECESSARY BUT NOT SUFFICIENT. It proves the request was
-    // running when the navigation began — not that the navigation is what
-    // ended it. A prefetch that was in flight at the boundary and then failed
-    // on its own account (a 500, a refused connection) would otherwise be
-    // forgiven for a regression it was actually reporting.
-    return (
-      evidence.teardownOwned.has(named) && !evidence.settledIndependently.has(named)
-    );
+    // AN EXPLICIT INDEPENDENT FAILURE ALWAYS WINS. A 500 or a refused
+    // connection is the request reporting a regression, whatever else is known
+    // about it.
+    if (evidence.settledIndependently.has(named)) return false;
+    // SUPPRESSION NOW REQUIRES POSITIVE EVIDENCE OF CANCELLATION, and that is
+    // the whole redesign.
+    //
+    // Ownership used to be enough: a URL in flight at the boundary was
+    // forgiven unless something proved it had settled by itself. That inverted
+    // the burden of proof onto "did this succeed independently?", a question
+    // the network layer cannot answer — a completed 200 whose payload is
+    // undecodable and a completed 200 discarded mid-teardown are the same
+    // request. Four consecutive review findings landed on that one root cause,
+    // each a finer heuristic over the same insufficient evidence.
+    //
+    // The burden is now the other way round: an RSC failure is REAL unless the
+    // browser explicitly reported that request aborted. Absence of evidence
+    // forgives nothing.
+    //
+    // WHAT MAKES THAT AFFORDABLE is the quiescent boundary. Abort reporting is
+    // measurably non-deterministic — across identical runs the abort set held
+    // six of eight cancelled prefetches, then a different six — which is why
+    // earlier attempts abandoned it. `awaitRscQuiescence` removes the
+    // dependency: the logout is not activated until no RSC request is
+    // outstanding, so in an ordinary logout there is nothing to cancel, and
+    // the non-determinism has nothing to act on.
+    return evidence.cancelledByNavigation.has(named);
   }
 
   // Chrome's HTTPS-First upgrade attempt on the document the logout navigated
@@ -221,12 +277,102 @@ function suppressedTelemetryErrors(
   return errors.filter((e) => isTelemetryNoise(e, traffic)).map(render);
 }
 
+/**
+ * Is this the router fetching a payload, rather than any other request?
+ *
+ * Next marks them two ways and either is sufficient: the `_rsc` cache-busting
+ * query parameter, and the `RSC` / `Next-Router-Prefetch` request headers a
+ * prefetch carries. Matching on both means a change to one convention cannot
+ * silently empty the tracked set — which would make the precondition below
+ * pass by seeing nothing at all.
+ */
+function isRscRequest(request: Request): boolean {
+  if (/[?&]_rsc=/.test(request.url())) return true;
+  const headers = request.headers();
+  return headers["rsc"] === "1" || headers["next-router-prefetch"] === "1";
+}
+
+/**
+ * THE QUIESCENT BOUNDARY. Blocks until no RSC request is outstanding and none
+ * has started or settled for `stableFor`, so the logout is activated against a
+ * still network.
+ *
+ * WHY THE SPEC NEEDS THIS AT ALL. The teardown exception exists because a
+ * logout kills prefetches that are still running, and their console noise is
+ * not a fault. Four attempts tried to tell that noise apart from a real
+ * failure after the fact, each with a finer network heuristic, and each drew a
+ * review finding — because the evidence does not exist at that layer: a
+ * payload cut mid-stream and a payload that arrived whole but will not decode
+ * are indistinguishable from the request's lifecycle alone.
+ *
+ * Establishing the boundary instead dissolves the question. With nothing in
+ * flight there is nothing for the navigation to cancel, so an RSC failure
+ * during an ordinary logout is a real failure, and the rule can demand
+ * positive cancellation evidence without depending on the browser's
+ * non-deterministic abort reporting.
+ *
+ * NOT A SLEEP, and not a product change. The condition is driven by request
+ * events — every start and settle moves `rscIdleMs` — so the wait ends as soon
+ * as the traffic the page is genuinely making has stopped. Application
+ * prefetching is untouched; this is a precondition of the measurement.
+ *
+ * FAILS DIAGNOSTICALLY, distinguishing the two reasons it can time out: work
+ * still outstanding, or a stream of new requests that keeps resetting the idle
+ * window. They call for different answers, so the error says which.
+ *
+ * HOW STRONG THIS IS, measured rather than assumed. Removing the wait from
+ * `observeSignOut` does NOT red the real logout tests: by the time those open
+ * the menu and assert Sign out is visible, the menu's own prefetches have
+ * already settled, so the boundary they get is quiescent anyway. So this is a
+ * GUARANTEE, not the repair of a currently-failing case — it stops the rule
+ * depending on that timing holding by luck. The mechanism is pinned by case 7
+ * below: blinding `isRscRequest`, or making this function return early, both
+ * turn it red.
+ */
+async function awaitRscQuiescence(
+  traffic: SignOutTraffic,
+  { timeout = 20_000, stableFor = 750 }: { timeout?: number; stableFor?: number } = {},
+): Promise<void> {
+  try {
+    await expect
+      .poll(
+        () => traffic.rscOutstanding().length === 0 && traffic.rscIdleMs() >= stableFor,
+        { timeout, intervals: [50, 100, 250] },
+      )
+      .toBe(true);
+  } catch {
+    const outstanding = traffic.rscOutstanding();
+    throw new Error(
+      outstanding.length > 0
+        ? `RSC traffic never quiesced within ${timeout}ms: ${outstanding.length} request(s) still outstanding — ${outstanding.join(", ")}. The logout boundary was not opened.`
+        : `RSC traffic never quiesced within ${timeout}ms: nothing was outstanding, but new RSC requests kept arriving and reset the ${stableFor}ms idle window. The page generates continuous RSC traffic, so a quiescent boundary cannot be established this way.`,
+    );
+  }
+}
+
 function recordSignOutTraffic(page: Page): SignOutTraffic {
   // LIVE IN-FLIGHT BOOKKEEPING, private to this recorder. It is the whole
   // basis of the teardown exception: what was already running when the logout
   // was activated, and what started before the navigation settled. Counted,
   // because the same route can legitimately be in flight more than once.
   const inFlight = new Map<string, number>();
+
+  // RSC / PREFETCH BOOKKEEPING, which is what the quiescent boundary is built
+  // on. Tracked separately from `inFlight` because the precondition is about
+  // one specific kind of traffic: the router's payload fetches, which are the
+  // only requests whose cancellation produces the console noise in question.
+  const rscInFlight = new Map<string, number>();
+  let rscLastActivityAt = Date.now();
+
+  const rscBump = (url: string, by: number) => {
+    const key = withoutQuery(url);
+    const next = (rscInFlight.get(key) ?? 0) + by;
+    if (next > 0) rscInFlight.set(key, next);
+    else rscInFlight.delete(key);
+    // EVENT-DRIVEN: every start and every settle moves this, so a stable-zero
+    // window is a real observation rather than a timer someone chose.
+    rscLastActivityAt = Date.now();
+  };
 
   const traffic: SignOutTraffic = {
     actionPosts: [],
@@ -237,6 +383,9 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
     logoutNavigated: false,
     teardownOwned: new Set<string>(),
     settledIndependently: new Set<string>(),
+    cancelledByNavigation: new Set<string>(),
+    rscOutstanding: () => [...rscInFlight.keys()],
+    rscIdleMs: () => Date.now() - rscLastActivityAt,
     openTeardownWindow() {
       // THE BOUNDARY SNAPSHOT. Everything in flight at this instant is about
       // to be killed by the navigation the press is starting.
@@ -256,6 +405,7 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
   };
   page.on("request", (request) => {
     bump(request.url(), 1);
+    if (isRscRequest(request)) rscBump(request.url(), 1);
     // A request that STARTS inside the window is owned by the navigation about
     // to replace the document, exactly as one already running is.
     if (traffic.phase === "teardown") {
@@ -264,58 +414,18 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
   });
   page.on("requestfinished", (request) => {
     bump(request.url(), -1);
-    // COMPLETION IS THE THIRD KIND OF SETTLEMENT EVIDENCE, and the only one
-    // that can see a 200 whose payload is worthless.
-    //
-    // A prefetch can return 200, transfer normally, and still be undecodable —
-    // Next logs `Failed to fetch RSC payload for …`. There is no error status
-    // and no `requestfailed`, so status alone leaves that URL owned with no
-    // settlement evidence and the rule forgives a real decoding regression.
-    //
-    // WHAT MAKES THIS A DISTINCTION RATHER THAN A BLANKET. It is keyed on the
-    // request COMPLETING, not on a `response` event: headers arriving proves
-    // only that a server answered, while `requestfinished` is Playwright
-    // reporting the whole transaction done. A request the logout navigation
-    // terminates does not get here — it fails, and the abort branch below
-    // deliberately does not record it, which is what keeps genuine teardown
-    // noise suppressible.
-    //
-    // REDIRECTS ARE EXCLUDED because a 3xx delivers no body, so it cannot
-    // evidence an independent delivery of content. It also matters WHICH
-    // redirect: measured on a real logout, the owned 303/307 to /dashboard is
-    // the logout's OWN redirect, so counting it would mark the URL most likely
-    // to carry teardown noise as independently settled.
-    //
-    // Honest about the strength of that: dropping this exclusion does NOT red
-    // the real logout tests, because they log no RSC error for /dashboard. It
-    // is pinned by its own control instead — "an owned REDIRECT is not recorded
-    // as an independent settlement" below — so the exclusion is a proved
-    // property rather than a claim about runs that happen not to exercise it.
-    const key = withoutQuery(request.url());
-    if (!traffic.teardownOwned.has(key)) return;
-    void (async () => {
-      try {
-        const response = await request.response();
-        if (!response) return;
-        const status = response.status();
-        // >= 400 is the response handler's job; 3xx delivered no body.
-        if (status >= 300) return;
-        traffic.settledIndependently.add(key);
-      } catch {
-        // The page can be tearing down as this resolves. No evidence is not
-        // the same as evidence of independence, so record nothing.
-      }
-    })();
+    if (isRscRequest(request)) rscBump(request.url(), -1);
   });
 
-  // A REAL ERROR STATUS is the request failing on its own account, and is the
-  // server-regression half of what ownership alone cannot see.
+  // A REAL ERROR STATUS is the request failing on its own account.
   //
-  // The `requestfinished` EVENT alone was tried as this evidence and measured
-  // wrong: four real cases went red, with their logouts provably perfect,
-  // because every owned lifecycle event counted — the logout's own 3xx
-  // included. The completion check above is narrower: 2xx only, redirects
-  // excluded, and never a bare `response`.
+  // COMPLETION IS DELIBERATELY NOT RECORDED HERE ANY MORE. Treating a finished
+  // owned 2xx as "settled independently" was the fourth heuristic over the
+  // same insufficient evidence, and it is unsound in both directions: a
+  // streaming payload the navigation cuts can still report finished with 200,
+  // and a completed 200 can still be undecodable. The rule no longer asks
+  // whether a request succeeded on its own — it asks whether the browser
+  // explicitly said the navigation cancelled it, and forgives only then.
   page.on("response", (response) => {
     // NOT PHASE-GATED, deliberately. The rule accepts LATE messages about
     // owned requests — a hard navigation keeps reporting after the window
@@ -331,14 +441,19 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
   });
   page.on("requestfailed", (request) => {
     bump(request.url(), -1);
+    if (isRscRequest(request)) rscBump(request.url(), -1);
     // Same reasoning as the response handler: bounded by ownership, not by
     // the phase Playwright happened to report the failure in.
     if (!traffic.teardownOwned.has(withoutQuery(request.url()))) return;
     const reason = request.failure()?.errorText ?? "";
-    // An ABORT is the navigation doing its work. Anything else — a refused
-    // connection, a DNS failure, a reset — is the request failing on its own
-    // account, and stays RED.
-    if (!/ERR_ABORTED|NS_BINDING_ABORTED/.test(reason)) {
+    // An ABORT is the navigation doing its work, and is now the ONLY thing
+    // that earns forgiveness — recorded positively rather than inferred from
+    // the absence of a contrary signal. Anything else — a refused connection,
+    // a DNS failure, a reset — is the request failing on its own account, and
+    // stays RED.
+    if (/ERR_ABORTED|NS_BINDING_ABORTED/.test(reason)) {
+      traffic.cancelledByNavigation.add(withoutQuery(request.url()));
+    } else {
       traffic.settledIndependently.add(withoutQuery(request.url()));
     }
   });
@@ -477,6 +592,17 @@ async function observeSignOut(
     panel.getByRole("button", { name: "Sign out" }),
     "Sign out is reachable in the open menu",
   ).toBeVisible();
+
+  // THE PRECONDITION, before any of it. Opening the menu prefetches its own
+  // destinations, so the press would otherwise land while the router is still
+  // fetching and every one of those would be cancelled by the navigation.
+  // Waiting for a still network is what lets the rule below demand explicit
+  // cancellation evidence instead of guessing from a request's lifecycle.
+  await awaitRscQuiescence(traffic);
+  expect(
+    traffic.rscOutstanding(),
+    "precondition: no RSC request is outstanding when the logout is activated",
+  ).toEqual([]);
 
   // THE WINDOW OPENS HERE, on the press that starts the navigation — and the
   // boundary snapshot is taken at the same instant.
@@ -947,10 +1073,14 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     `Failed to fetch RSC payload for ${url}. Falling back to browser navigation. TypeError: Failed to fetch`;
   const OWNED = "http://localhost:3111/settings/profile";
   const NOT_OWNED = "http://localhost:3111/dashboard";
+  // The OWNED request here is one the browser explicitly reported as aborted —
+  // which, under the redesigned rule, is the only thing that earns
+  // forgiveness. Ownership alone no longer does.
   const evidence = {
     logoutNavigated: true,
     teardownOwned: new Set<string>([OWNED]),
     settledIndependently: new Set<string>(),
+    cancelledByNavigation: new Set<string>([OWNED]),
   };
 
   test("1. an RSC failure BEFORE the logout is real", () => {
@@ -960,10 +1090,25 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     ).toBe(false);
   });
 
-  test("2. a teardown-OWNED cancellation during the logout is forgiven", () => {
+  test("2. an EXPLICITLY CANCELLED owned request during the logout is forgiven", () => {
     expect(
       isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "teardown" }, evidence),
     ).toBe(true);
+  });
+
+  test("OWNERSHIP ALONE NO LONGER FORGIVES ANYTHING", () => {
+    // THE REDESIGN, as a single assertion. A request in flight at the boundary
+    // and never explicitly cancelled is a REAL failure now — which is exactly
+    // the case the old rule forgave and the reason four findings landed on it.
+    expect(
+      isLogoutTeardownNoise({ text: RSC(OWNED), url: OWNED, phase: "teardown" }, {
+        logoutNavigated: true,
+        teardownOwned: new Set<string>([OWNED]),
+        settledIndependently: new Set<string>(),
+        cancelledByNavigation: new Set<string>(),
+      }),
+      "a message was forgiven on ownership alone, with no evidence the navigation cancelled anything",
+    ).toBe(false);
   });
 
   test("3. an UNRELATED RSC failure during the flow is real", () => {
@@ -1013,6 +1158,9 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
         logoutNavigated: true,
         teardownOwned: new Set<string>([OWNED]),
         settledIndependently: new Set<string>([OWNED]),
+        // Cancelled AND independently failed: the independent failure wins, or
+        // a request that 500s while the page is going down would be excused.
+        cancelledByNavigation: new Set<string>([OWNED]),
       }),
       "a request that failed independently was forgiven as teardown",
     ).toBe(false);
@@ -1028,6 +1176,7 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
         logoutNavigated: true,
         teardownOwned: new Set<string>([OWNED]),
         settledIndependently: new Set<string>([OWNED]),
+        cancelledByNavigation: new Set<string>([OWNED]),
       }),
       "a late-reported independent failure was forgiven as teardown",
     ).toBe(false);
@@ -1125,6 +1274,9 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
         logoutNavigated: false,
         teardownOwned: new Set<string>([OWNED]),
         settledIndependently: new Set<string>(),
+        // Cancellation evidence present and still not forgiven: no cause, no
+        // exception, whatever else is known.
+        cancelledByNavigation: new Set<string>([OWNED]),
       }),
       "noise was forgiven for a logout that never navigated",
     ).toBe(false);
@@ -1262,6 +1414,12 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
       traffic.settledIndependently.has(key),
       "an aborted request counted as settling independently, which would make the teardown exception forgive nothing",
     ).toBe(false);
+    // AND IT IS RECORDED POSITIVELY. Forgiveness is no longer the default for
+    // an owned request, so without this record the abort would read as real.
+    expect(
+      traffic.cancelledByNavigation.has(key),
+      "an explicit abort was not recorded as cancelled by the navigation, so genuine teardown noise would now read as a failure",
+    ).toBe(true);
     // So the rule still forgives it — with the cause supplied by hand, since
     // this probe never logs anyone out.
     traffic.logoutNavigated = true;
@@ -1276,21 +1434,19 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
   test("a COMPLETED owned 200 whose RSC payload is unusable stays RED", async ({
     page,
   }) => {
-    // CASE 4, and the false negative it closes.
+    // CASE 6 of the redesign, and the finding that started it.
     //
     // A prefetch can return HTTP 200, complete its transfer normally, and still
     // be unusable: Next logs `Failed to fetch RSC payload for …` when the body
-    // is not a payload it can decode. Playwright reports that as an ordinary
-    // `response` + `requestfinished` — there is no error status and no
-    // `requestfailed` — so a recorder that only counts >=400 leaves the URL
-    // teardown-owned with NO settlement evidence, and the rule then forgives a
-    // genuine decoding regression as logout noise.
+    // is not a payload it can decode. There is no error status and no
+    // `requestfailed`, so no amount of lifecycle inspection separates it from a
+    // payload the navigation discarded.
     //
-    // The distinction this relies on is COMPLETION, not status. A request the
-    // logout navigation terminates never completes its body, so it is not
-    // recorded and its noise stays suppressible (proved by the abort case
-    // above). One that completed answered on its own account, whatever its
-    // payload then turned out to be worth.
+    // It no longer has to. The request was never explicitly cancelled, so
+    // under the redesigned rule it is REAL by default — no completion
+    // heuristic, no status special case. This is the case that made three
+    // successive heuristics unsound, and it is now closed by the absence of
+    // one.
     await page.goto("/login");
     const traffic = recordSignOutTraffic(page);
 
@@ -1334,17 +1490,17 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     deliver();
     await started;
 
-    // THE EVIDENCE THE FINDING ASKED FOR: a completed 2xx is an independent
-    // settlement, even though nothing about it is an error at the HTTP layer.
-    await expect
-      .poll(() => traffic.settledIndependently.has(key), {
-        timeout: 15_000,
-        message:
-          "an owned request that COMPLETED with 200 was not recorded as settling independently, so its RSC decoding failure is suppressible",
-      })
-      .toBe(true);
+    // NOTHING CANCELLED IT, and that is the whole evidence needed.
+    expect(
+      traffic.cancelledByNavigation.has(key),
+      "a request nobody aborted was recorded as cancelled by the navigation",
+    ).toBe(false);
+    expect(
+      traffic.teardownOwned.has(key),
+      "precondition: the request IS owned, so this proves ownership does not forgive",
+    ).toBe(true);
 
-    // And the rule consumes that record: the decoding failure stays real.
+    // Owned, not cancelled — therefore real.
     traffic.logoutNavigated = true;
     expect(
       isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "after" }, traffic),
@@ -1354,75 +1510,100 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
-  test("an owned REDIRECT is not recorded as an independent settlement", async ({
+});
+
+test.describe("SIGNOUT-01 · the logout boundary is quiescent by construction", () => {
+  test("7. the boundary WAITS for an outstanding RSC request, then proceeds", async ({
     page,
   }) => {
-    // THE OTHER EDGE OF THE COMPLETION RULE, and the control that keeps the
-    // redirect exclusion honest.
+    // THE PRECONDITION ITSELF, proved in both directions — that it blocks
+    // while router traffic is outstanding, and that it stops blocking once
+    // that traffic settles. A precondition only ever asserted in the passing
+    // direction would be satisfied by a function that returns immediately.
     //
-    // A 3xx completes — it emits `requestfinished` like any other request — but
-    // it delivers no body, so it settles nothing independently. It also is not
-    // a hypothetical: on a real logout the owned 303/307 to /dashboard is the
-    // logout's own redirect, and /dashboard is exactly the URL teardown RSC
-    // noise names. Counting it would leave the exception forgiving nothing on
-    // the one URL it exists for.
-    //
-    // THE REDIRECT IS FOLLOWED, DELIBERATELY. The first version of this test
-    // used `redirect: "manual"` and passed with the exclusion REMOVED — it was
-    // vacuous. Measured why: an unfollowed redirect emits no `requestfinished`
-    // at all, so the completion handler never ran and nothing was under test.
-    // Followed, the 303 leg does emit `requestfinished` with
-    // `response().status() === 303`, which is the only arrangement where the
-    // exclusion is the thing deciding the outcome. Do not "simplify" this back.
+    // This is what lets the rule demand explicit cancellation evidence. With
+    // nothing outstanding at the press, an ordinary logout cancels nothing, so
+    // the browser's non-deterministic abort reporting — six of eight
+    // cancelled prefetches on one run, a different six on the next — has
+    // nothing to be non-deterministic about.
     await page.goto("/login");
     const traffic = recordSignOutTraffic(page);
 
     let deliver!: () => void;
     const held = new Promise<void>((resolve) => (deliver = resolve));
-    await page.route("**/__late_redirect_probe", async (route) => {
+    await page.route("**/__rsc_quiescence_probe*", async (route) => {
       await held;
-      await route.fulfill({
-        status: 303,
-        headers: { location: "/__late_redirect_target" },
-        body: "",
-      });
-    });
-    await page.route("**/__late_redirect_target", async (route) => {
-      await route.fulfill({ status: 200, contentType: "text/plain", body: "ok" });
+      await route.fulfill({ status: 200, contentType: "text/x-component", body: "0:null\n" });
     });
 
     const key =
-      new URL("/__late_redirect_probe", page.url()).origin + "/__late_redirect_probe";
+      new URL("/__rsc_quiescence_probe", page.url()).origin +
+      "/__rsc_quiescence_probe";
 
-    traffic.openTeardownWindow();
-    // `manual` so the 303 itself is the response under test rather than
-    // whatever it points at.
+    // A request the tracker must recognise as router traffic: it carries the
+    // `_rsc` parameter AND the prefetch headers, the two marks Next uses.
     const started = page.evaluate(() =>
-      fetch("/__late_redirect_probe").then(
-        () => undefined,
+      fetch("/__rsc_quiescence_probe?_rsc=probe", {
+        headers: { RSC: "1", "Next-Router-Prefetch": "1" },
+      }).then(
+        (r) => r.text(),
         () => undefined,
       ),
     );
+
     await expect
-      .poll(() => traffic.teardownOwned.has(key), { timeout: 15_000 })
+      .poll(() => traffic.rscOutstanding().includes(key), {
+        timeout: 15_000,
+        message: "the RSC probe was never tracked as outstanding",
+      })
       .toBe(true);
 
+    // IT BLOCKS. Bounded low so the negative half is cheap, and the diagnostic
+    // has to name the outstanding request rather than failing blankly.
+    let blocked: Error | null = null;
+    await awaitRscQuiescence(traffic, { timeout: 2_000, stableFor: 250 }).catch(
+      (e: Error) => {
+        blocked = e;
+      },
+    );
+    expect(
+      blocked,
+      "quiescence was declared while an RSC request was still outstanding — the logout boundary would open mid-prefetch",
+    ).not.toBeNull();
+    expect(
+      String(blocked),
+      "the diagnostic does not name the outstanding request",
+    ).toContain("__rsc_quiescence_probe");
+    expect(
+      String(blocked),
+      "the diagnostic does not distinguish outstanding work from a resetting idle window",
+    ).toContain("still outstanding");
+
+    // AND IT PROCEEDS once the request settles.
     deliver();
     await started;
-    // The same chance to be recorded that the completed-200 case gets.
-    await page.waitForTimeout(500);
-
+    await awaitRscQuiescence(traffic, { timeout: 15_000, stableFor: 250 });
     expect(
-      traffic.settledIndependently.has(key),
-      "an owned redirect counted as settling independently — the exception now forgives nothing on the logout's own destination",
-    ).toBe(false);
-    // So its noise stays forgivable.
-    traffic.logoutNavigated = true;
-    expect(
-      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "teardown" }, traffic),
-      "an owned redirect's teardown noise was not forgiven",
-    ).toBe(true);
+      traffic.rscOutstanding(),
+      "quiescence returned with RSC work still outstanding",
+    ).toEqual([]);
 
     await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+});
+test.describe("SIGNOUT-01 · the telemetry exception names a real tunnel", () => {
+  test("the Sentry tunnel route this spec forgives is the one the app configures", () => {
+    // The `/monitoring` suppression above is sound ONLY because that path is
+    // Sentry's tunnel rather than a product route. Derived from the config
+    // rather than assumed: if `tunnelRoute` moves, this fails loudly instead
+    // of leaving the spec forgiving a path the application has taken back.
+    const config = readFileSync(
+      join(process.cwd(), "next.config.ts"),
+      "utf8",
+    );
+    expect(
+      config,
+      `next.config.ts no longer routes Sentry through ${SENTRY_TUNNEL_ROUTE}, so forgiving that path is no longer justified`,
+    ).toContain(`tunnelRoute: "${SENTRY_TUNNEL_ROUTE}"`);
   });
 });
