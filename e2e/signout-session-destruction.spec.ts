@@ -88,10 +88,30 @@ type SignOutTraffic = {
    * absence of evidence that it succeeded.
    */
   cancelledByNavigation: Set<string>;
+  /**
+   * Paths the navigation owned MORE THAN ONE request for.
+   *
+   * A console message names a path, not a request, and `_rsc` makes several
+   * distinct requests share one. Where that happened, a single abort cannot be
+   * attributed to the request the message is about, so nothing on that path is
+   * forgiven.
+   */
+  ambiguousOwnership: Set<string>;
   /** RSC / Next prefetch requests currently outstanding, by origin + path. */
   rscOutstanding: () => string[];
   /** Milliseconds since the last RSC request started or settled. */
   rscIdleMs: () => number;
+  /**
+   * DOCUMENT navigations this recorder has observed.
+   *
+   * The discriminator for "was this recorder installed before the page it is
+   * judging?". A plain request count is not: a recorder attached after the
+   * dashboard loaded still sees its trailing telemetry and prefetches within
+   * milliseconds — measured, and it let a late-install mutation pass. A
+   * document request happens once, at navigation, so only a recorder that
+   * predates it can have seen one.
+   */
+  documentsSeen: () => number;
 };
 
 // Console noise this LOCAL lane emits no matter what the app does. It arrives
@@ -179,6 +199,7 @@ export function isLogoutTeardownNoise(
     teardownOwned: ReadonlySet<string>;
     settledIndependently: ReadonlySet<string>;
     cancelledByNavigation: ReadonlySet<string>;
+    ambiguousOwnership: ReadonlySet<string>;
   },
 ): boolean {
   // Nothing logged before the logout is ever forgiven — first, because it is
@@ -220,6 +241,13 @@ export function isLogoutTeardownNoise(
     // dependency: the logout is not activated until no RSC request is
     // outstanding, so in an ordinary logout there is nothing to cancel, and
     // the non-determinism has nothing to act on.
+    // AND THE EVIDENCE MUST BE ATTRIBUTABLE. A message names a PATH; `_rsc`
+    // gives several distinct requests the same one. If the navigation owned
+    // more than one request for this path, an abort on one of them says
+    // nothing about the other — and the other may be exactly the completed 200
+    // with an undecodable payload this rule exists to keep red. Ambiguity is
+    // not evidence, so it does not forgive.
+    if (evidence.ambiguousOwnership.has(named)) return false;
     return evidence.cancelledByNavigation.has(named);
   }
 
@@ -363,6 +391,7 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
   // only requests whose cancellation produces the console noise in question.
   const rscInFlight = new Map<string, number>();
   let rscLastActivityAt = Date.now();
+  let documentsSeen = 0;
 
   const rscBump = (url: string, by: number) => {
     const key = withoutQuery(url);
@@ -384,17 +413,34 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
     teardownOwned: new Set<string>(),
     settledIndependently: new Set<string>(),
     cancelledByNavigation: new Set<string>(),
+    ambiguousOwnership: new Set<string>(),
     rscOutstanding: () => [...rscInFlight.keys()],
     rscIdleMs: () => Date.now() - rscLastActivityAt,
+    documentsSeen: () => documentsSeen,
     openTeardownWindow() {
       // THE BOUNDARY SNAPSHOT. Everything in flight at this instant is about
       // to be killed by the navigation the press is starting.
-      for (const url of inFlight.keys()) traffic.teardownOwned.add(url);
+      for (const [url, concurrent] of inFlight.entries()) {
+        traffic.teardownOwned.add(url);
+        // `inFlight` is counted, so one path can already stand for several
+        // live requests.
+        ownRequest(url, concurrent);
+      }
       traffic.phase = "teardown";
     },
     closeTeardownWindow() {
       traffic.phase = "after";
     },
+  };
+
+  // How many requests the navigation owned for each path, and the ambiguity
+  // that follows from more than one.
+  const ownedInstances = new Map<string, number>();
+  const ownRequest = (url: string, by = 1) => {
+    const key = withoutQuery(url);
+    const next = (ownedInstances.get(key) ?? 0) + by;
+    ownedInstances.set(key, next);
+    if (next > 1) traffic.ambiguousOwnership.add(key);
   };
 
   const bump = (url: string, by: number) => {
@@ -404,12 +450,14 @@ function recordSignOutTraffic(page: Page): SignOutTraffic {
     else inFlight.delete(key);
   };
   page.on("request", (request) => {
+    if (request.resourceType() === "document") documentsSeen += 1;
     bump(request.url(), 1);
     if (isRscRequest(request)) rscBump(request.url(), 1);
     // A request that STARTS inside the window is owned by the navigation about
     // to replace the document, exactly as one already running is.
     if (traffic.phase === "teardown") {
       traffic.teardownOwned.add(withoutQuery(request.url()));
+      ownRequest(request.url());
     }
   });
   page.on("requestfinished", (request) => {
@@ -581,10 +629,36 @@ type SignOutObservation = {
 async function observeSignOut(
   page: Page,
   userId: string,
+  traffic: SignOutTraffic,
   openMenu: () => Promise<Locator>,
   activate: (panel: Locator) => Promise<string>,
 ): Promise<SignOutObservation> {
-  const traffic = recordSignOutTraffic(page);
+
+  // THE RECORDER MUST PREDATE THE NAVIGATION IT JUDGES.
+  //
+  // Playwright reports events, not a backlog, so a recorder attached after the
+  // dashboard loaded cannot see a prefetch already in flight — and the
+  // quiescence wait below would then find an empty map, call the network
+  // still, and open the logout boundary on top of a live request. Having
+  // observed traffic already is the cheap proof that it was installed in time.
+  expect(
+    traffic.documentsSeen(),
+    "the recorder saw no document navigation, so it was installed after the page loaded and an RSC request already in flight is invisible to the quiescence wait",
+  ).toBeGreaterThan(0);
+
+  // THE ACTION LOG STARTS HERE, not at the recorder.
+  //
+  // The recorder is installed before the login so it can see RSC requests
+  // already in flight — but the magic-link login is ITSELF a server action, so
+  // its POST would otherwise be counted as a logout submission and every
+  // "exactly one logout" assertion would read 2. Measured, not guessed: that
+  // is what these tests reported the moment the recorder moved earlier.
+  //
+  // Cleared rather than filtered by URL: every Server Action posts to the page
+  // it was invoked from, so the login's POST and the logout's are
+  // indistinguishable by address. What separates them is WHEN, and this is
+  // that boundary.
+  traffic.actionPosts.length = 0;
 
   const panel = await openMenu();
   await expect(panel, "the menu panel is open before the press").toBeVisible();
@@ -753,7 +827,17 @@ test.beforeAll(async () => {
   ownerUserId = await authUserId(seed.ownerEmail);
 });
 
-async function loginFresh(page: Page): Promise<void> {
+async function loginFresh(page: Page): Promise<SignOutTraffic> {
+  // THE RECORDER GOES ON FIRST, before a single navigation.
+  //
+  // Installed after the login instead, it cannot see a request that was
+  // ALREADY in flight — Playwright reports events, not a backlog — so an RSC
+  // prefetch started by the dashboard render would be missing from
+  // `rscInFlight`. The quiescence wait would then see an empty map, declare a
+  // still network, and open the logout boundary on top of a live prefetch; the
+  // cancellation would be missing from the ownership snapshot too, and a
+  // healthy logout would fail on the resulting console error.
+  const traffic = recordSignOutTraffic(page);
   await loginAsOwner(page, seed);
   expect(
     await liveSessionCount(ownerUserId),
@@ -763,6 +847,7 @@ async function loginFresh(page: Page): Promise<void> {
     await authCookieNames(page),
     "precondition: the browser holds a Supabase auth cookie",
   ).not.toEqual([]);
+  return traffic;
 }
 
 test.describe("SIGNOUT-01 · desktop AccountMenu", () => {
@@ -776,10 +861,11 @@ test.describe("SIGNOUT-01 · desktop AccountMenu", () => {
   test("pressing Sign out destroys the session, not just the menu", async ({
     page,
   }) => {
-    await loginFresh(page);
+    const traffic = await loginFresh(page);
     const observation = await observeSignOut(
       page,
       ownerUserId,
+      traffic,
       () => openAccountMenu(page),
       async (panel) => {
         await panel.getByRole("button", { name: "Sign out" }).click();
@@ -790,10 +876,11 @@ test.describe("SIGNOUT-01 · desktop AccountMenu", () => {
   });
 
   test("keyboard activation signs out too", async ({ page }) => {
-    await loginFresh(page);
+    const traffic = await loginFresh(page);
     const observation = await observeSignOut(
       page,
       ownerUserId,
+      traffic,
       () => openAccountMenu(page),
       async (panel) => {
         const button = panel.getByRole("button", { name: "Sign out" });
@@ -851,10 +938,11 @@ test.describe("SIGNOUT-01 · phone-width MobileMenu", () => {
   test("tapping Sign out destroys the session, not just the sheet", async ({
     page,
   }) => {
-    await loginFresh(page);
+    const traffic = await loginFresh(page);
     const observation = await observeSignOut(
       page,
       ownerUserId,
+      traffic,
       () => openMobileMenu(page),
       async (panel) => {
         await panel.getByRole("button", { name: "Sign out" }).click();
@@ -865,10 +953,11 @@ test.describe("SIGNOUT-01 · phone-width MobileMenu", () => {
   });
 
   test("keyboard activation signs out too", async ({ page }) => {
-    await loginFresh(page);
+    const traffic = await loginFresh(page);
     const observation = await observeSignOut(
       page,
       ownerUserId,
+      traffic,
       () => openMobileMenu(page),
       async (panel) => {
         const button = panel.getByRole("button", { name: "Sign out" });
@@ -908,10 +997,11 @@ test.describe("SIGNOUT-01 · after logout", () => {
   test("refresh and back navigation do not resurrect the session", async ({
     page,
   }) => {
-    await loginFresh(page);
+    const traffic = await loginFresh(page);
     const observation = await observeSignOut(
       page,
       ownerUserId,
+      traffic,
       async () => {
         await page.getByRole("button", { name: APP_SHELL_NAV }).click();
         return page.getByRole("navigation", { name: "Account menu" });
@@ -1081,6 +1171,7 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     teardownOwned: new Set<string>([OWNED]),
     settledIndependently: new Set<string>(),
     cancelledByNavigation: new Set<string>([OWNED]),
+    ambiguousOwnership: new Set<string>(),
   };
 
   test("1. an RSC failure BEFORE the logout is real", () => {
@@ -1106,6 +1197,7 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
         teardownOwned: new Set<string>([OWNED]),
         settledIndependently: new Set<string>(),
         cancelledByNavigation: new Set<string>(),
+        ambiguousOwnership: new Set<string>(),
       }),
       "a message was forgiven on ownership alone, with no evidence the navigation cancelled anything",
     ).toBe(false);
@@ -1161,6 +1253,7 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
         // Cancelled AND independently failed: the independent failure wins, or
         // a request that 500s while the page is going down would be excused.
         cancelledByNavigation: new Set<string>([OWNED]),
+        ambiguousOwnership: new Set<string>(),
       }),
       "a request that failed independently was forgiven as teardown",
     ).toBe(false);
@@ -1177,6 +1270,7 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
         teardownOwned: new Set<string>([OWNED]),
         settledIndependently: new Set<string>([OWNED]),
         cancelledByNavigation: new Set<string>([OWNED]),
+        ambiguousOwnership: new Set<string>(),
       }),
       "a late-reported independent failure was forgiven as teardown",
     ).toBe(false);
@@ -1277,6 +1371,7 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
         // Cancellation evidence present and still not forgiven: no cause, no
         // exception, whatever else is known.
         cancelledByNavigation: new Set<string>([OWNED]),
+        ambiguousOwnership: new Set<string>(),
       }),
       "noise was forgiven for a logout that never navigated",
     ).toBe(false);
@@ -1510,6 +1605,88 @@ test.describe("SIGNOUT-01 · the teardown exception is scoped, not a blanket", (
     await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
+
+  test("an abort on ONE _rsc request does not forgive another on the same path", async ({
+    page,
+  }) => {
+    // THE IDENTITY COLLISION, driven end to end.
+    //
+    // A console message names a PATH; `_rsc` gives several distinct requests
+    // the same one. So an abort recorded against `/x` could be read as
+    // evidence about a DIFFERENT request to `/x` — and since a completed 2xx
+    // is deliberately no longer recorded as an independent settlement, the
+    // undecodable-payload case would be suppressed by an abort that had
+    // nothing to do with it. That is precisely the regression the redesign
+    // exists to keep visible.
+    //
+    // Two owned requests to one path, one aborted and one completed with an
+    // unusable payload, must therefore leave the path AMBIGUOUS and forgive
+    // nothing on it.
+    await page.goto("/login");
+    const traffic = recordSignOutTraffic(page);
+
+    let deliverAbort!: () => void;
+    let deliverBody!: () => void;
+    const abortHeld = new Promise<void>((r) => (deliverAbort = r));
+    const bodyHeld = new Promise<void>((r) => (deliverBody = r));
+
+    await page.route("**/__collision_probe*", async (route) => {
+      if (route.request().url().includes("_rsc=doomed")) {
+        await abortHeld;
+        await route.abort("aborted");
+        return;
+      }
+      await bodyHeld;
+      await route.fulfill({
+        status: 200,
+        contentType: "text/x-component",
+        body: "<!doctype html><p>not a flight payload</p>",
+      });
+    });
+
+    const key =
+      new URL("/__collision_probe", page.url()).origin + "/__collision_probe";
+
+    traffic.openTeardownWindow();
+    const both = page.evaluate(() =>
+      Promise.all([
+        fetch("/__collision_probe?_rsc=doomed").catch(() => undefined),
+        fetch("/__collision_probe?_rsc=intact").then(
+          (r) => r.text(),
+          () => undefined,
+        ),
+      ]),
+    );
+
+    await expect
+      .poll(() => traffic.teardownOwned.has(key), { timeout: 15_000 })
+      .toBe(true);
+
+    deliverAbort();
+    deliverBody();
+    await both;
+    await page.waitForTimeout(500);
+
+    // The abort IS recorded — the collision is real, not hypothetical.
+    expect(
+      traffic.cancelledByNavigation.has(key),
+      "precondition: the aborted request was recorded, so without the ambiguity guard it would forgive the other one",
+    ).toBe(true);
+    // And so is the ambiguity.
+    expect(
+      traffic.ambiguousOwnership.has(key),
+      "two owned requests on one path were not marked ambiguous",
+    ).toBe(true);
+
+    // So nothing on that path is forgiven.
+    traffic.logoutNavigated = true;
+    expect(
+      isLogoutTeardownNoise({ text: RSC(key), url: key, phase: "after" }, traffic),
+      "an abort on one _rsc request forgave a decoding failure on another request to the same path",
+    ).toBe(false);
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
 });
 
 test.describe("SIGNOUT-01 · the logout boundary is quiescent by construction", () => {
