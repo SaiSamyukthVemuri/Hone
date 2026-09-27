@@ -170,11 +170,17 @@ describe("what reaches the command", () => {
     expect(h.calls[0].args.p_mobile_candidate).toBe("647-555-1234");
   });
 
-  it("never sends a verification instant — the DATABASE supplies it", async () => {
-    // Retitled: this used to say "0202 has no writer for one", which was true
-    // until 0203 was applied. The durable reason is that the completion command
-    // has no verification parameter at all -- the instant is the database's to
-    // stamp, and only from the one command that may.
+  it("sends NO verification parameter at all", async () => {
+    // RETITLED TWICE. It first said "0202 has no writer for one", true until 0203
+    // was applied. My correction then said "the DATABASE supplies it" -- which
+    // OVERCLAIMS, because this test would still pass if the command stopped
+    // stamping the database clock entirely: it inspects only the profile-completion
+    // RPC arguments for a key matching /verified/i.
+    //
+    // So the title now claims exactly what is asserted: profile completion sends no
+    // verification parameter. Where the instant comes from is a DIFFERENT property,
+    // proved against a real database in
+    // tests/db/waitlist-mobile-verification-authority.db.test.ts.
     await run({ patch: PATCH_CANDIDATE });
     const keys = Object.keys(h.calls[0].args).join(",");
     expect(keys).not.toMatch(/verified/i);
