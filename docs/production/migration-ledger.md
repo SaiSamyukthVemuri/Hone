@@ -16,11 +16,24 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ## Current state (verified 2026-09-27, post-0203 apply; `0203` APPLIED, repo == hosted)
 
-> **AUTHORITY ONLY. NO SCHEMA CHANGE AND NO DATA WRITE.** This apply ran exactly
-> two `create or replace function` statements — a forward redefinition of the live
-> `new_client_waitlist_entries_transition_guard` and the new command
-> `mark_waitlist_mobile_verified(uuid, text)` — plus four `revoke execute` and one
-> `grant execute` to `service_role`. **No table created or dropped, no column added
+> **AUTHORITY AND METADATA ONLY. NO SCHEMA CHANGE AND NO DATA WRITE.** The complete
+> statement inventory is: two `create or replace function` statements — a forward
+> redefinition of the live `new_client_waitlist_entries_transition_guard` and the new
+> command `mark_waitlist_mobile_verified(uuid, text)` — four `revoke execute`, one
+> `grant execute` to `service_role`, and **THREE `COMMENT ON` STATEMENTS**: one on the
+> new function and two on the `mobile_verified_at` and `phone` columns.
+>
+> **THE THREE COMMENTS MUTATE PRODUCTION `pg_description`, AND THAT IS A REAL CHANGE
+> RATHER THAN A NO-OP.** An earlier revision of this record described the apply as
+> two function definitions plus ACL statements, which omitted them; they are named
+> here because they replaced `0202`'s now-false column descriptions — that column
+> text asserted the column had NO writer, was NULL for every row, and that the guard
+> refused every change, all three of which this migration falsified. Verified
+> read-only after the apply: `mobile_verified_at`'s stored description no longer
+> contains the `0202` text and now carries the `0203` text, and `phone`'s description
+> likewise changed. **No other catalog metadata was altered.**
+>
+> **No table created or dropped, no column added
 > or dropped, no index, no constraint, and ZERO migration-level DML**: the only
 > `UPDATE` in the file sits inside the command's own body, verified by eliding both
 > function bodies and finding no top-level `insert`/`update`/`delete`/`truncate`.
@@ -66,7 +79,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. `supabase_migrations.schema_migrations` carries only `(version, statements, name)` — there is no timestamp column — so this limitation recurs by construction. **An operator-observed client-side window IS asserted**: `2026-09-27T20:03:35.176Z` – `2026-09-27T20:04:02.911Z` (~27.7 s), read from the apply host's clock around the single CLI invocation. **That window is NOT a server apply time and must never be copied into `hosted_applied_at`.** |
 | **Pre-apply evidence (read-only)** | hosted max **`0202`** / **201** history rows · `0202` present exactly once · **`0203` ABSENT** · nothing above `0202` · no remote-only migration · `new_client_waitlist_entries` **31** rows with `mobile_verified_at` non-null on **0** · `mark_waitlist_mobile_verified` **did not exist** · guard body md5 `52f65c8d8bcfe72b2b101e1d3f9e5c02` (7377 chars, the `0202` body) · trigger enabled (`tgenabled = 'O'`). |
 | **Post-apply verification (read-only)** | hosted max **`0203`** / **202** history rows (**+1 exactly**) · `0203` present **exactly once** · `0202` still present exactly once and **not re-applied** · **nothing above `0203`** · **31** rows **unchanged** · `mobile_verified_at` non-null still **0** · command **present**, `SECURITY DEFINER`, `search_path` pinned to `pg_catalog, pg_temp` · EXECUTE granted to **`service_role` only** — `anon` **NO**, `authenticated` **NO**, and **PUBLIC absent from `proacl`** (`postgres=X/postgres`, `service_role=X/postgres`) · **no generic table DML introduced**: on `new_client_waitlist_entries`, `anon` holds nothing, `authenticated` holds **SELECT only**, and `service_role` holds **no INSERT/UPDATE/DELETE**, so `0185`'s wall is intact · guard **byte-identical** to the reviewed definition · trigger still enabled. |
-| **How the one-writer rule was verified** | **BY CONSTRUCTION, NOT BY EXERCISE.** No role holds `UPDATE` on the table and the deployed guard admits only the command's own row-scoped, transaction-local permit. The command was deliberately **not** invoked against production data merely to demonstrate it; the behavioural proof lives in `tests/db/waitlist-mobile-verification-authority.db.test.ts`, which runs the candidate inside a rolled-back transaction on a local database. |
+| **How the one-writer rule was verified** | **BY CONSTRUCTION, NOT BY EXERCISE, AND SCOPED TO THE APPLICATION ROLES.** For the roles the application can reach — `anon`, `authenticated`, `service_role` — none holds `UPDATE` on the table (`relacl` = `postgres=arwdDxtm/postgres`, `authenticated=r/postgres`), so no browser- or service-reachable caller can write `mobile_verified_at` outside the command. **THIS IS NOT A UNIVERSAL DATABASE INVARIANT and an earlier revision of this record wrongly stated it as one.** The table owner `postgres` retains `UPDATE` — that is precisely how the `SECURITY DEFINER` command writes — and the guard compares the permit GUC only against `new.id`, so it cannot prove the permit originated *inside* the command. **A privileged owner or admin session can therefore set the same GUC and issue a direct update.** That is an accepted property of superuser access, not a hole the guard closes, and it is recorded rather than implied. The command was deliberately **not** invoked against production data merely to demonstrate any of this; the behavioural proof lives in `tests/db/waitlist-mobile-verification-authority.db.test.ts`, which runs the candidate inside a rolled-back transaction on a local database. |
 
 | Migration | Hosted status | sha256 |
 |---|---|---|

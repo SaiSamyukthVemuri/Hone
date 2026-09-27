@@ -82,7 +82,7 @@ describe("0201 position in the chain", () => {
   });
 
   it("does not claim the next free number for anything", () => {
-    // 0203 is no longer free: WAIT B2b authored it, AUTHORED AND PENDING, so the
+    // 0203 is no longer free: WAIT B2b authored it and it is now APPLIED, so the
     // next free number moved to 0204. This file claims none of it.
     expect(migrationState().next_free_migration).toBe("0204");
   });

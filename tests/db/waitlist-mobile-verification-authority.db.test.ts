@@ -39,10 +39,11 @@ import { adminQuery, adminTx, closePool, seedStudio, type SeededStudio } from ".
 // WHY 0203 IS APPLIED BY THE TEST AND NOT BY THE HARNESS
 // ---------------------------------------------------------------------------
 //
-// 0203 IS A CANDIDATE AND IS NOT APPLIED TO PRODUCTION. In CI the db lane runs
-// `supabase db reset --local`, so the migration is present; on a developer
-// machine the shared local database may still be at 0202, and resetting or
-// migrating it would disturb whatever other worktrees are using it.
+// 0203 IS APPLIED TO PRODUCTION (2026-09-27) AND FROZEN. That changes nothing
+// about how this suite runs, and the reason is worth stating: in CI the db lane
+// runs `supabase db reset --local`, so the migration is present; on a developer
+// machine the shared local database may still be at an older head, and resetting
+// or migrating it would disturb whatever other worktrees are using it.
 //
 // So every test applies 0203's own bytes INSIDE A TRANSACTION AND ROLLS BACK.
 // `create or replace function` is transactional in Postgres, so the previous

@@ -119,9 +119,9 @@ describe("0199 position in the chain", () => {
 
   it("does not claim the next free number for anything", () => {
     // THE NEXT FREE NUMBER KEEPS MOVING and this file keeps claiming none of it.
-    // 0200, 0201 and 0202 are applied; 0203 is authored and PENDING on the WAIT
-    // B2b branch, so the next free number is 0204. Availability is not
-    // allocation, and nothing here allocates.
+    // 0200, 0201, 0202 and 0203 are ALL APPLIED — 0203 landed on 2026-09-27 — so
+    // the repository is at parity with nothing pending and the next free number is
+    // 0204. Availability is not allocation, and nothing here allocates.
     expect(migrationState().next_free_migration).toBe("0204");
   });
 });

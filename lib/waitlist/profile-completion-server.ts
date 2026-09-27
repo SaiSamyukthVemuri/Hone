@@ -57,19 +57,22 @@ export const WAIT_04B_CAPABILITIES: ProfileAdapterCapabilities = {
   // to act on it are different questions, and only the first is answered here.
   recordsSmsConsent: true,
 
-  // FALSE, AND THE REASON HAS NARROWED RATHER THAN GONE AWAY.
+  // FALSE, AND THE REASON HAS NARROWED AGAIN RATHER THAN GONE AWAY.
   //
-  // In production there is still no writer for `mobile_verified_at` at all: 0202
-  // is the hosted head and its guard raises on any attempt to move the column.
+  // PRODUCTION NOW HAS A WRITER. `0203` was applied on 2026-09-27 and is the
+  // hosted head, so `mark_waitlist_mobile_verified` exists in production and the
+  // guard admits it. An earlier revision of this comment said production had no
+  // writer at all; that was true until the apply and false the instant it landed.
   //
-  // WAIT B2b-1 AUTHORS ONE — `0203` plus
-  // `lib/waitlist/mobile-verification-server.ts` — and this flag STAYS FALSE
-  // anyway, deliberately. A writer is not a verification mechanism: `0203` is a
-  // candidate and NOT applied, and the provider the state machine resolves by
+  // THE FLAG STAYS FALSE ANYWAY, and the reason is now the only one left: A WRITER
+  // IS NOT A VERIFICATION MECHANISM. The provider the state machine resolves by
   // default is FAIL-CLOSED — it answers `unavailable` to everything and approves
-  // nothing. The fake is reachable only by explicit injection from a test. No
-  // Twilio Verify Service exists and nothing arms the real adapter, so no
-  // possession proof can actually be obtained today.
+  // nothing — the fake is reachable only by explicit injection from a test, no
+  // Twilio Verify Service exists, and nothing arms the real adapter. So no
+  // possession proof can be obtained today, and nothing may claim one was.
+  //
+  // WHAT WOULD FLIP IT: a live Verify adapter armed against a real service. Not
+  // the migration, which has landed, and not the plumbing, which exists.
   //
   // THIS FLIPS WHEN THE PROVIDER IS REAL, not when the plumbing exists: 0203
   // applied AND a live Verify adapter armed. Flipping it on the strength of the
