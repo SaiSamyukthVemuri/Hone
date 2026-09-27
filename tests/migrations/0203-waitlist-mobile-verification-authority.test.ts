@@ -382,6 +382,42 @@ describe("the PERSISTED comments agree with the new authority", () => {
     expect(after).toMatch(/one writer/i);
   });
 
+  it("the comment claims NO GUARANTEE the database does not make", () => {
+    // THE SIXTH FINDING OF THIS CLASS, and the sharpest, because the overstatement
+    // was written in the commit that fixed the fifth.
+    //
+    // A first version said a non-NULL value MEANS a provider accepted a possession
+    // proof, and never an operator assertion. THE DATABASE CANNOT KNOW THAT. The
+    // command receives no proof -- an entry id and the expected phone -- and any
+    // service_role caller may invoke it directly. Provider-first ordering lives in
+    // lib/waitlist/mobile-verification-server.ts, which is an APPLICATION
+    // contract, and a persisted comment that reads as a database guarantee will be
+    // trusted as one by exactly the introspection tools that cannot check it.
+    const after = commentFor(SQL, "mobile_verified_at") ?? "";
+
+    // It must say, in some form, that the proof ordering is NOT enforced here.
+    expect(after, "the comment must disclaim what it does not enforce").toMatch(
+      /does not enforce|not a database guarantee|application-level contract/i,
+    );
+    expect(after).toMatch(/receives no proof|NO PROOF/i);
+
+    // And it must not make the bare claim. `means ... proof` with no disclaimer is
+    // the exact sentence that was wrong.
+    const bare = /\bmeans\b[^.]{0,90}\bproof was accepted\b[^.]{0,40}\bnever\b/i;
+    expect(after, "the comment states provider approval as a database fact").not.toMatch(bare);
+  });
+
+  it("the FUNCTION comment does not claim proof enforcement either", () => {
+    // Same rule applied to the other persisted claim in this file. The function
+    // comment describes a compare-and-set, which IS what it enforces; it must not
+    // acquire a proof claim later.
+    const fn = SQL.match(
+      /comment on function public\.mark_waitlist_mobile_verified\(uuid, text\) is\s*'([\s\S]*?)';/i,
+    )?.[1];
+    expect(fn, "the command must carry a comment").toBeTruthy();
+    expect(fn ?? "").not.toMatch(/verif(ies|ied) the proof|proves possession|provider approved/i);
+  });
+
   it("NO applied migration's comment is edited in place", () => {
     // The correction is FORWARD. 0202 is applied and frozen.
     expect(SQL_0202).toMatch(/no writer (exists|at all)/i);
