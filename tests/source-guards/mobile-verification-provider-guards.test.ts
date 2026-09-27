@@ -118,39 +118,35 @@ describe("the resolver's default is fail-closed, in code", () => {
 });
 
 /**
- * Is a matched banned phrase excused as a HISTORICAL record rather than a claim?
+ * Is a matched banned phrase excused?
  *
- * A FIRST VERSION SEARCHED THE WHOLE SENTENCE for any of `not`, `was`, `none`...
- * and was satisfiable by the exact class it exists to stop: "The fake is the
- * default when the real adapter was not enabled" is a present-tense claim, and it
- * was discarded because `was` and `not` appeared elsewhere in it. Mixed
- * historical/current sentences are ordinary in these comments.
+ * ONLY BY AN EXPLICIT MARKER ON THE SAME LINE, and deliberately by nothing else.
  *
- * So the excuse must ATTACH TO THE CLAUSE. Either the phrase is directly negated
- * within the words immediately before it, or the sentence carries an explicit
- * past-revision marker -- not a bare common word that happens to be present.
+ * TWO NATURAL-LANGUAGE VERSIONS OF THIS WERE BOTH SATISFIABLE, each defeated by
+ * a sentence a reviewer wrote in one line:
+ *
+ *   v1 searched the whole sentence for a permissive token, so "The fake is the
+ *      default when the real adapter was not enabled" was excused by `was`.
+ *   v2 required a negator within three words in the same punctuated clause, so
+ *      "The real adapter is not configured and fake is the default" was excused
+ *      by a negator belonging to a SIBLING clause with no comma between them.
+ *
+ * Every repair widened the grammar I had to reason about, and the next
+ * counterexample was always one conjunction away. English is not a decidable
+ * language and this guard should not pretend otherwise.
+ *
+ * SO THE ALLOWANCE IS NOT INFERRED, IT IS DECLARED. A comment that legitimately
+ * records what an earlier revision did marks itself `[historical]`, which this
+ * repo already does for exactly this problem -- see the
+ * `canonical-facts:ignore-start reason=...` regions in
+ * tests/docs/canonical-production-facts.test.ts. An author cannot write the
+ * marker by accident, a reviewer sees it in the diff, and no sentence structure
+ * can produce one.
  */
-function excused(sentence: string, re: RegExp): boolean {
-  const m = sentence.match(re);
-  if (!m || m.index === undefined) return false;
-  // DIRECTLY negated, in the SAME CLAUSE and within three words: "is NOT the
-  // default", "was NEVER the default". The window stops at a clause boundary,
-  // because "the adapter was never armed, the fake is the default" is a
-  // present-tense claim whose negation belongs to a different clause entirely --
-  // a wider window excused exactly that sentence.
-  const clause = sentence.slice(0, m.index).split(/[,;:—-]/).pop() ?? "";
-  if (/\b(not|never|no longer)\b(?:\s+\S+){0,2}\s*$/i.test(clause)) return true;
-  // Or the sentence explicitly records a past revision of this code.
-  const HISTORY = [
-    /\ban earlier revision\b/i,
-    /\bthe previous revision\b/i,
-    /\bits first revision\b/i,
-    /\bthis module's first revision\b/i,
-    /\bused to be\b/i,
-    /\bwas the defect\b/i,
-    /\bwas a verification bypass\b/i,
-  ];
-  return HISTORY.some((h) => h.test(sentence));
+const HISTORICAL_MARKER = "[historical]";
+
+function excused(line: string): boolean {
+  return line.includes(HISTORICAL_MARKER);
 }
 
 describe("no file in this boundary CLAIMS the fake is the default", () => {
@@ -165,30 +161,26 @@ describe("no file in this boundary CLAIMS the fake is the default", () => {
     );
   });
 
-  it("NEGATIVE CONTROL: the allowance cannot excuse a present-tense claim", () => {
-    const BANNED_CLAIM = /fake is the default/i;
-    // The reviewer's own counterexample, plus the shapes around it.
+  it("NEGATIVE CONTROL: no sentence structure can excuse a present-tense claim", () => {
+    // Every counterexample a review produced against the two natural-language
+    // versions, plus the shapes around them. None carries the marker, so none is
+    // excused -- and no future conjunction can change that.
     for (const stale of [
       "The fake is the default when the real adapter was not enabled.",
+      "The real adapter is not configured and fake is the default",
+      "An earlier revision used failClosed, but the fake is the default",
       "The fake is the default; none of this was changed.",
       "Because the adapter was never armed, the fake is the default.",
+      "It used to be fail-closed, however the fake is the default now.",
     ]) {
-      expect(excused(stale, BANNED_CLAIM), `wrongly excused: ${stale}`).toBe(false);
+      expect(excused(stale), `wrongly excused: ${stale}`).toBe(false);
     }
-    // And a genuine historical record is still allowed. Judged with the SAME
-    // banned pattern, because an example whose regex swallows the negator proves
-    // nothing about the adjacency rule -- a first version of this control did
-    // exactly that and went red on its own fixtures.
-    for (const historical of [
-      "An earlier revision said the fake is the default, and that was the defect.",
-      "In its first revision the fake is the default, which was a verification bypass.",
-      "It is not the fake is the default any more.",
-    ]) {
-      expect(excused(historical, BANNED_CLAIM), `wrongly flagged: ${historical}`).toBe(true);
-    }
-    // A negated claim does not match the banned pattern at all, so it never
-    // reaches the allowance.
-    expect(BANNED_CLAIM.test("The fake is not the default.")).toBe(false);
+    // And a declared historical record is allowed, by the marker and only by it.
+    expect(excused("[historical] an earlier revision had the fake is the default")).toBe(true);
+    expect(
+      excused("an earlier revision had the fake is the default"),
+      "prose alone must not excuse",
+    ).toBe(false);
   });
   const BANNED: ReadonlyArray<readonly [RegExp, string]> = [
     [/fake is the default/i, "asserts the fake is the default"],
@@ -199,13 +191,18 @@ describe("no file in this boundary CLAIMS the fake is the default", () => {
 
   for (const rel of MODULE_FILES) {
     it(`${rel.split("/").pop()} makes no stale fake-default claim`, () => {
+      // PER LINE, because the marker is per line. Whitespace is flattened first
+      // within each comment line so a phrase cannot hide behind wrapping; a claim
+      // deliberately split across two lines is caught by the sentence pass below.
+      const lines = commentsOf(read(rel)).split("\n").map((l) => l.replace(/\s+/g, " ").trim());
       const sentences = claimSentences(read(rel));
       for (const [re, why] of BANNED) {
-        // A claim about a PAST revision is legal and useful, so a sentence that
-        // also says it was wrong, or names the earlier revision, is allowed
-        // through. Judged per SENTENCE, because the negation routinely sits on a
-        // different LINE from the phrase it negates.
-        const offending = sentences.filter((x) => re.test(x)).filter((x) => !excused(x, re));
+        const offending = [
+          ...lines.filter((x) => re.test(x) && !excused(x)),
+          // A wrapped claim: present in the joined sentence but in no single line,
+          // so it cannot carry a marker and is simply illegal.
+          ...sentences.filter((x) => re.test(x) && !lines.some((l) => re.test(l))),
+        ];
         expect(offending, `${rel} ${why}: ${offending.join(" / ")}`).toEqual([]);
       }
     });
