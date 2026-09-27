@@ -204,7 +204,15 @@ describe("the guard refuses what no command may do", () => {
     );
   });
 
-  it("mobile_verified_at has NO writer in this release", async () => {
+  it("mobile_verified_at is not writable by a direct UPDATE", async () => {
+    // RETITLED, NOT WEAKENED. This used to say "has NO writer in this release",
+    // which was 0202's truth and stopped being true when 0203 was applied on
+    // 2026-09-27: a writer now exists, `mark_waitlist_mobile_verified`. The
+    // ASSERTION is unchanged and still passes, because the reason it passes was
+    // never "nobody may write this" -- it is "this caller is not the one writer".
+    // Under 0202 the guard refused every change; under 0203 it refuses every
+    // change that does not carry the command's own row-scoped permit. Either way a
+    // direct UPDATE raises, which is the durable property this test owns.
     const s = await seedStudio("w04b-verify");
     const out = await joinWithProfile(s.studioId);
     await raises(

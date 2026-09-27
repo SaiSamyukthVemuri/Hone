@@ -96,9 +96,15 @@ describe("the capabilities this binding declares", () => {
 
   it("still refuses to VERIFY a mobile, so sending stays closed", () => {
     // Recording consent honestly and being allowed to act on it are different
-    // questions. This slice answers only the first; `prospectMayReceiveSms`
-    // still requires a verified destination and there is still no writer for
-    // `mobile_verified_at`.
+    // questions, and this slice answers only the first.
+    //
+    // THE REASON HAS MOVED, AND THE BEHAVIOUR HAS NOT. A writer for
+    // `mobile_verified_at` DOES now exist in production -- 0203 was applied on
+    // 2026-09-27 -- so "there is no writer" is no longer why this is false.
+    // `prospectMayReceiveSms` still requires a verified destination, and no
+    // possession proof can be obtained: the provider resolves FAIL-CLOSED by
+    // default, the fake needs explicit injection, and no Verify Service exists.
+    // A DB writer is not a verification mechanism.
     expect(WAIT_04B_CAPABILITIES.verifiesMobile).toBe(false);
   });
 
@@ -164,7 +170,11 @@ describe("what reaches the command", () => {
     expect(h.calls[0].args.p_mobile_candidate).toBe("647-555-1234");
   });
 
-  it("never sends a verification instant — 0202 has no writer for one", async () => {
+  it("never sends a verification instant — the DATABASE supplies it", async () => {
+    // Retitled: this used to say "0202 has no writer for one", which was true
+    // until 0203 was applied. The durable reason is that the completion command
+    // has no verification parameter at all -- the instant is the database's to
+    // stamp, and only from the one command that may.
     await run({ patch: PATCH_CANDIDATE });
     const keys = Object.keys(h.calls[0].args).join(",");
     expect(keys).not.toMatch(/verified/i);

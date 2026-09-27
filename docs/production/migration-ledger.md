@@ -31,7 +31,12 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > refused every change, all three of which this migration falsified. Verified
 > read-only after the apply: `mobile_verified_at`'s stored description no longer
 > contains the `0202` text and now carries the `0203` text, and `phone`'s description
-> likewise changed. **No other catalog metadata was altered.**
+> likewise changed. **NO OTHER `pg_description` ROW CHANGED** — that is the precise
+> claim, and an earlier revision of this block overstated it as "no other catalog
+> metadata was altered", which is plainly false and contradicted the inventory
+> directly above it: both `CREATE OR REPLACE FUNCTION` statements alter `pg_proc`,
+> and the four revokes plus one grant alter the new function's ACL. Those are
+> catalog changes, they are intended, and they are inventoried above.
 >
 > **No table created or dropped, no column added
 > or dropped, no index, no constraint, and ZERO migration-level DML**: the only
