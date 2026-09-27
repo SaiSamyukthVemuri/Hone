@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   FakeMobileVerificationProvider,
   FAKE_VERIFICATION_CODE,
+  resolveMobileVerificationProvider,
   type MobileVerificationProvider,
 } from "@/lib/waitlist/mobile-verification";
 import { prospectMayReceiveSms } from "@/lib/waitlist/prospect-sms-consent";
@@ -223,6 +224,55 @@ describe("an approved proof promotes exactly this row's stored mobile", () => {
     h.error = false;
     h.throws = true;
     expect(await check(FAKE_VERIFICATION_CODE)).toEqual({ ok: false, code: "unavailable" });
+  });
+});
+
+describe("THE DEFAULT PROVIDER PROVES NOTHING — no injection, no verification", () => {
+  // THE GAP THAT LET A REAL DEFECT THROUGH. Every other test in this file injects
+  // a provider explicitly, so nothing ever exercised the default -- and the
+  // default was the FAKE, which reports `started` without sending and approves
+  // the exported constant FAKE_VERIFICATION_CODE. An unconfigured production
+  // deployment calling these helpers with no second argument would have promoted
+  // a number to verified with no possession proof behind it.
+  //
+  // These tests call the real entry points with NO provider argument, which is
+  // exactly how a future route in B2b-2 will call them by default.
+
+  it("start is unavailable, not started", async () => {
+    expect(await startMobileVerification({ entryId: ENTRY, storedPhone: STORED })).toEqual({
+      ok: false,
+      code: "unavailable",
+    });
+  });
+
+  it("the well-known fake code proves NOTHING and writes NOTHING", async () => {
+    expect(
+      await checkMobileVerification({
+        entryId: ENTRY,
+        storedPhone: STORED,
+        code: FAKE_VERIFICATION_CODE,
+      }),
+    ).toEqual({ ok: false, code: "unavailable" });
+    expect(h.calls, "the service-role command was called without a possession proof").toEqual([]);
+  });
+
+  it("NO code reaches an approval by default — swept, not sampled", async () => {
+    for (const code of [FAKE_VERIFICATION_CODE, "000000", "123456", "999999", "0"]) {
+      const out = await checkMobileVerification({ entryId: ENTRY, storedPhone: STORED, code });
+      expect(out, `code ${code} was not refused by default`).toEqual({
+        ok: false,
+        code: "unavailable",
+      });
+    }
+    expect(h.calls).toEqual([]);
+  });
+
+  it("the resolver itself never hands back something that can approve", async () => {
+    // Asserted on the resolver, so a future edit that swaps the default back is
+    // caught here even if no entry point happens to be exercised.
+    const p = resolveMobileVerificationProvider();
+    expect(await p.start({ e164: "+16475551234" })).toBe("unavailable");
+    expect(await p.check({ e164: "+16475551234" }, FAKE_VERIFICATION_CODE)).toBe("unavailable");
   });
 });
 

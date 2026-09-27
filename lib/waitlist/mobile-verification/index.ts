@@ -1,5 +1,6 @@
 import "server-only";
 import { FakeMobileVerificationProvider } from "./fake-provider";
+import { FailClosedMobileVerificationProvider } from "./fail-closed-provider";
 import type { MobileVerificationProvider } from "./types";
 
 // Provider selection for possession proof (WAIT B2b).
@@ -19,11 +20,17 @@ import type { MobileVerificationProvider } from "./types";
 // operations. Not `refused` — that would tell a caller their code was wrong when
 // it was never checked — and certainly not `approved`. `unavailable` is the one
 // outcome that means "ask again later" and writes nothing.
+//
+// THAT SENTENCE WAS TRUE OF THE INTENT AND FALSE OF THE CODE for one revision:
+// the default resolver below returned the FAKE, which approves a fixed exported
+// code. The default is now `FailClosedMobileVerificationProvider`, so the
+// paragraph above describes what actually happens.
 
 const REAL_PROVIDER_FLAG = "HONE_MOBILE_VERIFICATION_LIVE";
 const VERIFY_SERVICE_SID = "TWILIO_VERIFY_SERVICE_SID";
 
 const fake = new FakeMobileVerificationProvider();
+const failClosed = new FailClosedMobileVerificationProvider();
 
 /** The process-wide fake, for tests and inspection. */
 export function fakeMobileVerificationProvider(): FakeMobileVerificationProvider {
@@ -48,19 +55,35 @@ export function liveMobileVerificationArmed(): boolean {
 }
 
 /**
- * The provider this deployment should use.
+ * The provider this deployment should use. **FAIL-CLOSED BY DEFAULT.**
  *
- * B2b-1 SHIPS NO REAL ADAPTER. Until B2b-2 adds one, an armed deployment has
- * nothing to resolve to — so this returns the fake and `liveMobileVerificationArmed`
- * exists to make the armed/unarmed distinction testable and reviewable before
- * the adapter lands. The state machine above is written against the interface,
- * so installing the real adapter changes one line here and nothing else.
+ * B2b-1 SHIPS NO REAL ADAPTER, so there is nothing an armed deployment can
+ * resolve to yet, and the honest answer is a provider that proves nothing:
+ * `unavailable` from both operations, writing nothing and claiming nothing.
+ *
+ * THIS RETURNED THE FAKE IN AN EARLIER REVISION, WHICH WAS A VERIFICATION
+ * BYPASS. Any surface calling the state machine without injecting a provider
+ * would have received one that reports `started` without sending, and returns
+ * `approved` for the exported constant `FAKE_VERIFICATION_CODE` — promoting a
+ * number to verified with no possession proof behind it. Nothing called those
+ * helpers yet, so it was latent; a trap with no victim is still a trap, and the
+ * caller arrives in B2b-2.
+ *
+ * THE FAKE IS REACHED BY EXPLICIT INJECTION ONLY. Tests pass it as the second
+ * argument to `startMobileVerification` / `checkMobileVerification`. That every
+ * test already did so is precisely why the bad default went unexercised.
+ *
+ * WHEN B2b-2 LANDS the real adapter, this becomes
+ * `liveMobileVerificationArmed() ? real : failClosed` — the unarmed branch stays
+ * fail-closed, so an unconfigured or half-configured deployment still cannot
+ * verify anybody.
  */
 export function resolveMobileVerificationProvider(): MobileVerificationProvider {
-  return fake;
+  return failClosed;
 }
 
 export { FakeMobileVerificationProvider, FAKE_VERIFICATION_CODE } from "./fake-provider";
+export { FailClosedMobileVerificationProvider } from "./fail-closed-provider";
 export type {
   MobileVerificationProvider,
   VerificationCheckOutcome,
