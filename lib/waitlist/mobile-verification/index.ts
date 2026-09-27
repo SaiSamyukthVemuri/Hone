@@ -5,9 +5,10 @@ import type { MobileVerificationProvider } from "./types";
 
 // Provider selection for possession proof (WAIT B2b).
 //
-// THE DEFAULT IS FAIL-CLOSED. THE REAL ADAPTER IS OPT-IN. THE FAKE IS REACHED
-// BY EXPLICIT INJECTION ONLY — three separate statements, and none of them
-// collapses into "the fake is the default".
+// THREE SEPARATE STATEMENTS, AND NO TWO OF THEM COLLAPSE INTO ONE:
+//   - the DEFAULT is fail-closed;
+//   - the REAL ADAPTER is opt-in;
+//   - the FAKE is reached by explicit injection only.
 //
 // THE REAL ADAPTER IS OPT-IN for the reason lib/sms/provider/index.ts gives:
 // TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are ALREADY present wherever Hone

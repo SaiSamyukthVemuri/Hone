@@ -257,6 +257,42 @@ describe("the carried guard is 0202's, changed in exactly one place", () => {
     ).toBe(1);
   });
 
+  it("the OUTER CONDITION is untouched — the region cannot swallow its own boundary", () => {
+    // THE HOLE THIS CLOSES, which a review found by naming the mutation:
+    // rewriting the shared boundary line to
+    //   `if false and new.mobile_verified_at is distinct from old.mobile_verified_at then`
+    // disables the ENTIRE one-writer guard, and every other assertion here still
+    // passed. The mutated line stops matching 0202's, joins the adjacent changed
+    // region, and LCS merges the two into ONE -- so the region count, the marker
+    // checks and the survivor equalities were all satisfied by a guard that no
+    // longer guards anything.
+    //
+    // The boundary is therefore pinned as COMMON: it must be a line both bodies
+    // share, which a mutated line by definition is not.
+    const OUTER = "  if new.mobile_verified_at is distinct from old.mobile_verified_at then";
+    expect(BEFORE, "0202 must carry the outer condition verbatim").toContain(OUTER);
+    expect(
+      COMMON,
+      "the mobile_verified_at outer condition was modified, not just its body",
+    ).toContain(OUTER);
+
+    // And the change begins IMMEDIATELY INSIDE it: the line after the outer
+    // condition is the region's first added line, so nothing above the condition
+    // moved. Located by searching for OUTER -- not by searching for a removed
+    // line, which is absent from AFTER by definition, nor by `indexOf` on a line
+    // that recurs.
+    expect(AFTER.filter((l) => l === OUTER), "the outer condition must appear once").toHaveLength(
+      1,
+    );
+    const at = AFTER.indexOf(OUTER);
+    const firstAdded = REGIONS[0][1][0];
+    expect(firstAdded, "the region must add at least one line").toBeTruthy();
+    expect(
+      AFTER[at + 1],
+      "the amended body does not start immediately inside the outer condition",
+    ).toBe(firstAdded);
+  });
+
   it("that one region is the mobile_verified_at clause, and it REPLACES a refusal", () => {
     const [removed, added] = REGIONS[0];
     // What 0202 said: there is no writer. What 0203 says: there is exactly one.

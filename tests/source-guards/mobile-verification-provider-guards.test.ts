@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // ===========================================================================
@@ -31,14 +31,25 @@ const ROOT = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
 const DIR = "lib/waitlist/mobile-verification";
-const MODULE_FILES = [
-  `${DIR}/index.ts`,
-  `${DIR}/types.ts`,
-  `${DIR}/fake-provider.ts`,
-  `${DIR}/fail-closed-provider.ts`,
+
+/**
+ * DERIVED FROM THE DIRECTORY, NEVER ENUMERATED BY HAND.
+ *
+ * A fixed list would not inspect the file B2b-2 adds -- the real adapter, the
+ * single most relevant boundary file there will ever be -- unless its author also
+ * remembered to edit this test. It would then be free to claim the fake is the
+ * default while this suite stayed green.
+ */
+const PROVIDER_DIR_FILES = readdirSync(path.join(ROOT, DIR))
+  .filter((f) => f.endsWith(".ts"))
+  .sort()
+  .map((f) => `${DIR}/${f}`);
+
+const MODULE_FILES: readonly string[] = [
+  ...PROVIDER_DIR_FILES,
   "lib/waitlist/mobile-verification-server.ts",
   "lib/waitlist/profile-completion-server.ts",
-] as const;
+];
 
 /** Comment text only: this guard is about what the files CLAIM. */
 function commentsOf(src: string): string {
@@ -106,8 +117,79 @@ describe("the resolver's default is fail-closed, in code", () => {
   });
 });
 
+/**
+ * Is a matched banned phrase excused as a HISTORICAL record rather than a claim?
+ *
+ * A FIRST VERSION SEARCHED THE WHOLE SENTENCE for any of `not`, `was`, `none`...
+ * and was satisfiable by the exact class it exists to stop: "The fake is the
+ * default when the real adapter was not enabled" is a present-tense claim, and it
+ * was discarded because `was` and `not` appeared elsewhere in it. Mixed
+ * historical/current sentences are ordinary in these comments.
+ *
+ * So the excuse must ATTACH TO THE CLAUSE. Either the phrase is directly negated
+ * within the words immediately before it, or the sentence carries an explicit
+ * past-revision marker -- not a bare common word that happens to be present.
+ */
+function excused(sentence: string, re: RegExp): boolean {
+  const m = sentence.match(re);
+  if (!m || m.index === undefined) return false;
+  // DIRECTLY negated, in the SAME CLAUSE and within three words: "is NOT the
+  // default", "was NEVER the default". The window stops at a clause boundary,
+  // because "the adapter was never armed, the fake is the default" is a
+  // present-tense claim whose negation belongs to a different clause entirely --
+  // a wider window excused exactly that sentence.
+  const clause = sentence.slice(0, m.index).split(/[,;:—-]/).pop() ?? "";
+  if (/\b(not|never|no longer)\b(?:\s+\S+){0,2}\s*$/i.test(clause)) return true;
+  // Or the sentence explicitly records a past revision of this code.
+  const HISTORY = [
+    /\ban earlier revision\b/i,
+    /\bthe previous revision\b/i,
+    /\bits first revision\b/i,
+    /\bthis module's first revision\b/i,
+    /\bused to be\b/i,
+    /\bwas the defect\b/i,
+    /\bwas a verification bypass\b/i,
+  ];
+  return HISTORY.some((h) => h.test(sentence));
+}
+
 describe("no file in this boundary CLAIMS the fake is the default", () => {
   // The third finding, made unrepeatable.
+
+  it("the hand-written list covers every file in the provider directory", () => {
+    for (const f of PROVIDER_DIR_FILES) {
+      expect(MODULE_FILES, `${f} is not scanned`).toContain(f);
+    }
+    expect(PROVIDER_DIR_FILES.length, "the provider directory looks empty").toBeGreaterThanOrEqual(
+      4,
+    );
+  });
+
+  it("NEGATIVE CONTROL: the allowance cannot excuse a present-tense claim", () => {
+    const BANNED_CLAIM = /fake is the default/i;
+    // The reviewer's own counterexample, plus the shapes around it.
+    for (const stale of [
+      "The fake is the default when the real adapter was not enabled.",
+      "The fake is the default; none of this was changed.",
+      "Because the adapter was never armed, the fake is the default.",
+    ]) {
+      expect(excused(stale, BANNED_CLAIM), `wrongly excused: ${stale}`).toBe(false);
+    }
+    // And a genuine historical record is still allowed. Judged with the SAME
+    // banned pattern, because an example whose regex swallows the negator proves
+    // nothing about the adjacency rule -- a first version of this control did
+    // exactly that and went red on its own fixtures.
+    for (const historical of [
+      "An earlier revision said the fake is the default, and that was the defect.",
+      "In its first revision the fake is the default, which was a verification bypass.",
+      "It is not the fake is the default any more.",
+    ]) {
+      expect(excused(historical, BANNED_CLAIM), `wrongly flagged: ${historical}`).toBe(true);
+    }
+    // A negated claim does not match the banned pattern at all, so it never
+    // reaches the allowance.
+    expect(BANNED_CLAIM.test("The fake is not the default.")).toBe(false);
+  });
   const BANNED: ReadonlyArray<readonly [RegExp, string]> = [
     [/fake is the default/i, "asserts the fake is the default"],
     [/\bit is the default\b/i, "asserts the fake is the default ('it is the default')"],
@@ -123,14 +205,7 @@ describe("no file in this boundary CLAIMS the fake is the default", () => {
         // also says it was wrong, or names the earlier revision, is allowed
         // through. Judged per SENTENCE, because the negation routinely sits on a
         // different LINE from the phrase it negates.
-        const offending = sentences
-          .filter((x) => re.test(x))
-          .filter(
-            (x) =>
-              !/\b(not|never|no longer|none|earlier|previous|was|were|revision|defect|bypass|opposite|collapses?)\b/i.test(
-                x,
-              ),
-          );
+        const offending = sentences.filter((x) => re.test(x)).filter((x) => !excused(x, re));
         expect(offending, `${rel} ${why}: ${offending.join(" / ")}`).toEqual([]);
       }
     });
