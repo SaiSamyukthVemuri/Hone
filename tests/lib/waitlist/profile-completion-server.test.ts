@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { ProfileCompletionPatch } from "@/lib/waitlist/join-profile";
 
 // ===========================================================================
@@ -83,11 +85,21 @@ beforeEach(() => {
 });
 
 describe("the capabilities this binding declares", () => {
-  it("records no SMS consent, because no STOP reaches a waitlist entry", () => {
-    // The flag is not a preference. `app/api/twilio/inbound-sms` suppresses
-    // `clients` and never touches `new_client_waitlist_entries`, so the
-    // withdrawal half of consent does not exist for a prospect.
-    expect(WAIT_04B_CAPABILITIES.recordsSmsConsent).toBe(false);
+  it("records SMS consent, because a STOP now reaches a waitlist entry", () => {
+    // FLIPPED BY B2a, AND ONLY BY IT. The flag needs both halves: the six SMS
+    // columns writable (0202) and an inbound STOP reaching the row. The second
+    // arrived when `app/api/twilio/inbound-sms` began scanning
+    // `waitlist_prospect_suppression_candidates()` and stamping through
+    // `suppress_waitlist_prospects`.
+    expect(WAIT_04B_CAPABILITIES.recordsSmsConsent).toBe(true);
+  });
+
+  it("still refuses to VERIFY a mobile, so sending stays closed", () => {
+    // Recording consent honestly and being allowed to act on it are different
+    // questions. This slice answers only the first; `prospectMayReceiveSms`
+    // still requires a verified destination and there is still no writer for
+    // `mobile_verified_at`.
+    expect(WAIT_04B_CAPABILITIES.verifiesMobile).toBe(false);
   });
 
   it("verifies no mobile, so a candidate can never read as a destination", () => {
@@ -101,18 +113,31 @@ describe("the capabilities this binding declares", () => {
 });
 
 describe("consent is forced, not forwarded", () => {
-  it("sends p_sms_consent false even when the payload says true", async () => {
-    // THE LOAD-BEARING ASSERTION OF THIS FILE. The surface already withholds
-    // the question, but the surface is client code. If the guarantee rested
-    // there, a forged post — or one future call site that forgot the prop —
-    // would write consent evidence for an agreement the system cannot honour.
+  it("forwards a true consent now that it can be honoured", async () => {
     await run({ smsOperationalConsent: true });
+    expect(h.calls[0].args.p_sms_consent).toBe(true);
+  });
+
+  it("forwards a false consent as false", async () => {
+    await run({ smsOperationalConsent: false });
     expect(h.calls[0].args.p_sms_consent).toBe(false);
   });
 
-  it("sends false when the payload says false", async () => {
-    await run({ smsOperationalConsent: false });
-    expect(h.calls[0].args.p_sms_consent).toBe(false);
+  it("is still GATED ON THE CAPABILITY, not hardcoded to forward", async () => {
+    // THE LOAD-BEARING ASSERTION OF THIS FILE, AND IT SURVIVES THE FLIP.
+    // While the capability was false this forced the argument false regardless
+    // of payload, because the surface is client code and a consent rule must
+    // not rest there. Now that it is true the same expression forwards — but
+    // the expression must still BE a gate. Replacing it with a bare
+    // `input.smsOperationalConsent` would pass every behavioural test above and
+    // silently remove the protection the day the capability goes false again.
+    const src = readFileSync(
+      path.join(__dirname, "../../../lib/waitlist/profile-completion-server.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(
+      /p_sms_consent:\s*WAIT_04B_CAPABILITIES\.recordsSmsConsent\s*\n?\s*\?\s*input\.smsOperationalConsent\s*\n?\s*:\s*false/,
+    );
   });
 });
 
