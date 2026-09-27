@@ -57,9 +57,24 @@ export const WAIT_04B_CAPABILITIES: ProfileAdapterCapabilities = {
   // to act on it are different questions, and only the first is answered here.
   recordsSmsConsent: true,
 
-  // FALSE until a verification mechanism exists. `mobile_verified_at` has no
-  // writer in 0202 at all: the guard raises on any attempt to move it. A
-  // candidate is not a destination, and `prospectMayReceiveSms` therefore
+  // FALSE, AND THE REASON HAS NARROWED RATHER THAN GONE AWAY.
+  //
+  // In production there is still no writer for `mobile_verified_at` at all: 0202
+  // is the hosted head and its guard raises on any attempt to move the column.
+  //
+  // WAIT B2b-1 AUTHORS ONE — `0203` plus
+  // `lib/waitlist/mobile-verification-server.ts` — and this flag STAYS FALSE
+  // anyway, deliberately. A writer is not a verification mechanism: `0203` is a
+  // candidate and NOT applied, and the only provider wired behind the state
+  // machine is the fake. No Twilio Verify Service exists and nothing arms the
+  // real adapter, so no possession proof can actually be obtained today.
+  //
+  // THIS FLIPS WHEN THE PROVIDER IS REAL, not when the plumbing exists: 0203
+  // applied AND a live Verify adapter armed. Flipping it on the strength of the
+  // plumbing would be the flag lying about the system, which is the same mistake
+  // `recordsSmsConsent` above was held back from making.
+  //
+  // A candidate is not a destination, and `prospectMayReceiveSms` therefore
   // refuses every prospect send — the correct standing behaviour, not a gap.
   verifiesMobile: false,
 
