@@ -175,6 +175,74 @@ describe("only the provider's approval writes anything", () => {
   });
 });
 
+describe("an UNRECOGNIZED provider outcome is an outage, never a rejection", () => {
+  // `not_proved` is a statement about the PERSON'S CODE and only `rejected` earns
+  // it. An earlier revision ended `check` with a catch-all `!== "approved"` ->
+  // `not_proved`, which was right for today's four-value union and wrong for the
+  // two cases that will actually occur: a real adapter returning a status this
+  // module does not map (Twilio Verify has more than four), or a fifth
+  // non-approval outcome added later. Both would have told someone their proof was
+  // rejected when nothing evaluated it.
+
+  const withCheck = (value: unknown): MobileVerificationProvider =>
+    ({
+      start: async () => "started",
+      check: async () => value,
+    }) as never;
+
+  it("an unmapped provider status is unavailable, not not_proved", async () => {
+    for (const bogus of ["pending", "canceled", "max_attempts_reached", "APPROVED", "", null]) {
+      const out = await checkMobileVerification(
+        { entryId: ENTRY, storedPhone: STORED, code: "123456" },
+        withCheck(bogus),
+      );
+      expect(out, `outcome ${String(bogus)} was misreported`).toEqual({
+        ok: false,
+        code: "unavailable",
+      });
+    }
+    expect(h.calls, "an unrecognized outcome reached the promoting command").toEqual([]);
+  });
+
+  it("`rejected` is the ONLY outcome that earns not_proved", async () => {
+    expect(
+      await checkMobileVerification(
+        { entryId: ENTRY, storedPhone: STORED, code: "123456" },
+        withCheck("rejected"),
+      ),
+    ).toEqual({ ok: false, code: "not_proved" });
+    expect(h.calls).toEqual([]);
+  });
+
+  it("a near-miss on the approval string cannot promote", async () => {
+    // Guards the one direction that matters: only the exact value writes.
+    for (const near of ["approve", "approved ", " approved", "Approved"]) {
+      const out = await checkMobileVerification(
+        { entryId: ENTRY, storedPhone: STORED, code: "123456" },
+        withCheck(near),
+      );
+      expect(out, `${JSON.stringify(near)} was treated as approval`).toEqual({
+        ok: false,
+        code: "unavailable",
+      });
+    }
+    expect(h.calls).toEqual([]);
+  });
+
+  it("start and check agree about unknown outcomes", async () => {
+    // The rule `start` documented is now the rule both paths follow.
+    const p = withCheck("who_knows");
+    const started = await startMobileVerification({ entryId: ENTRY, storedPhone: STORED }, {
+      start: async () => "who_knows",
+      check: async () => "unavailable",
+    } as never);
+    expect(started).toEqual({ ok: false, code: "unavailable" });
+    expect(
+      await checkMobileVerification({ entryId: ENTRY, storedPhone: STORED, code: "1" }, p),
+    ).toEqual({ ok: false, code: "unavailable" });
+  });
+});
+
 describe("an approved proof promotes exactly this row's stored mobile", () => {
   it("calls the one command with the entry and the value AS STORED", async () => {
     await start();

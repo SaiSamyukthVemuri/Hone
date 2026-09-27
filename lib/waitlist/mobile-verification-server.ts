@@ -141,9 +141,30 @@ export async function checkMobileVerification(
     return { ok: false, code: "unavailable" };
   }
 
-  if (outcome === "rate_limited") return { ok: false, code: "rate_limited" };
-  if (outcome === "unavailable") return { ok: false, code: "unavailable" };
-  if (outcome !== "approved") return { ok: false, code: "not_proved" };
+  // EXHAUSTIVE, LIKE `start` ABOVE, AND FOR THE REASON `start` ALREADY GAVE.
+  //
+  // An earlier revision ended with a catch-all `outcome !== "approved"` ->
+  // `not_proved`. That was correct for today's union, where `rejected` is the only
+  // remaining value, and wrong in the two ways that will actually happen: a real
+  // adapter returning a status this module does not map (Twilio Verify has more
+  // than four), or someone adding a fifth non-approval outcome later. Either way
+  // a person would be told their proof was REJECTED when nothing evaluated it.
+  //
+  // `not_proved` is a statement about the person's code. It is only ever earned by
+  // `rejected`. Everything unrecognized is a contract disagreement between this
+  // module and the provider, which is an outage.
+  switch (outcome) {
+    case "approved":
+      break;
+    case "rejected":
+      return { ok: false, code: "not_proved" };
+    case "rate_limited":
+      return { ok: false, code: "rate_limited" };
+    case "unavailable":
+      return { ok: false, code: "unavailable" };
+    default:
+      return { ok: false, code: "unavailable" };
+  }
 
   // PROVED. The destination the provider approved must still be the row's own
   // number — checked here with the ONE normalizer, and again inside the command
