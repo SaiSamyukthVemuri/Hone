@@ -206,6 +206,7 @@ export async function POST(req: Request): Promise<Response> {
   // never re-stamping or double-auditing already-opted-out clients.
   let matchedClients: Array<{ id: string; studio_id: string }> = [];
   let alreadyOptedOutCount = 0;
+  let clientScanFailed = false;
   try {
     const { data: candidates, error: scanErr } = await admin
       .from("clients")
@@ -224,15 +225,18 @@ export async function POST(req: Request): Promise<Response> {
     matchedClients = selection.targets;
     alreadyOptedOutCount = selection.alreadyOptedOutCount;
   } catch (err) {
+    // RECORDED, NOT RETURNED. This used to return 500 here, which was correct
+    // while clients were the only record type — but it now sits ABOVE the
+    // prospect pass, so a persistent `clients` read failure would stop a
+    // perfectly healthy waitlist prospect from ever being suppressed, on every
+    // retry. That is the opposite of the isolation this route claims between
+    // record types. The 500 still happens; it is just decided once, after both
+    // passes have had their turn.
+    clientScanFailed = true;
     logError("twilio_inbound_client_scan_failed", {
       error: err instanceof Error ? err.message : String(err),
       messageSid,
     });
-    // If we cannot scan, we cannot opt out. Return a 500 so Twilio
-    // retries; the next attempt may succeed. The carrier already
-    // honoured STOP at the network level, so the client will not get
-    // any more SMS from Twilio regardless.
-    return NextResponse.json({ ok: false }, { status: 500 });
   }
 
   const optedAt = new Date().toISOString();
@@ -365,23 +369,6 @@ export async function POST(req: Request): Promise<Response> {
   // The successful subset is already persisted and will not be retried
   // (the scan above skips already-opted-out rows). The next attempt
   // only sees the failed subset and either succeeds or 500s again.
-  // ONE STATUS FOR BOTH RECORD TYPES. A prospect that could not be read or
-  // stamped is exactly as unprotected as a client that could not be, so it
-  // earns the same retry. Reporting 200 here would leave a person who texted
-  // STOP still opted in, with Twilio never asking again.
-  if (optOutErrors > 0 || prospectOptOutErrors > 0 || prospectScanFailed) {
-    logError("twilio_inbound_stop_partial_optout_failed", {
-      matchedCount: matchedClients.length,
-      successfulCount: successfullyOptedOutClients.length,
-      optOutErrors,
-      prospectMatchedCount: matchedProspects.length,
-      prospectSuccessfulCount: successfullyOptedOutProspects.length,
-      prospectOptOutErrors,
-      prospectScanFailed,
-      messageSid,
-    });
-    return NextResponse.json({ ok: false }, { status: 500 });
-  }
 
   // Audit only successfully-opted-out clients. studio_id is required
   // by the audit_logs table; we set it from the matched client's row.
@@ -451,6 +438,35 @@ export async function POST(req: Request): Promise<Response> {
         messageSid,
       });
     }
+  }
+
+  // DECIDED AFTER THE AUDITS, DELIBERATELY. This block used to sit above them,
+  // so a partial failure returned before either audit ran — and because a retry
+  // skips rows already stamped, the audit row for a suppression that DID land
+  // was lost for good. A suppression with no record of it is the one outcome
+  // neither a person nor an operator can reconstruct later.
+  // ONE STATUS FOR BOTH RECORD TYPES. A prospect that could not be read or
+  // stamped is exactly as unprotected as a client that could not be, so it
+  // earns the same retry. Reporting 200 here would leave a person who texted
+  // STOP still opted in, with Twilio never asking again.
+  if (
+    clientScanFailed ||
+    optOutErrors > 0 ||
+    prospectOptOutErrors > 0 ||
+    prospectScanFailed
+  ) {
+    logError("twilio_inbound_stop_partial_optout_failed", {
+      matchedCount: matchedClients.length,
+      successfulCount: successfullyOptedOutClients.length,
+      optOutErrors,
+      clientScanFailed,
+      prospectMatchedCount: matchedProspects.length,
+      prospectSuccessfulCount: successfullyOptedOutProspects.length,
+      prospectOptOutErrors,
+      prospectScanFailed,
+      messageSid,
+    });
+    return NextResponse.json({ ok: false }, { status: 500 });
   }
 
   logEvent("twilio_inbound_stop_processed", {

@@ -30,12 +30,13 @@ const h: {
   suppressCalls: Array<{ ids: string[]; optedAt: string }>;
   audits: Array<{ entity_type: string; entity_id: string; studio_id: string; metadata: Record<string, unknown> }>;
   failClientUpdate: boolean;
+  failClientScan: boolean;
   failProspectScan: boolean;
   failProspectSuppress: boolean;
 } = {
   clients: [], prospects: [], validSignature: true,
   clientUpdates: [], suppressCalls: [], audits: [],
-  failClientUpdate: false, failProspectScan: false, failProspectSuppress: false,
+  failClientUpdate: false, failClientScan: false, failProspectScan: false, failProspectSuppress: false,
 };
 
 vi.mock("@/lib/sms/twilio", async (importOriginal) => {
@@ -58,7 +59,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       // update(...).eq(...).is(...) records the stamp.
       return {
         select: () => ({
-          not: () => Promise.resolve({ data: h.clients, error: null }),
+          not: () =>
+            h.failClientScan
+              ? Promise.resolve({ data: null, error: { message: "client scan boom" } })
+              : Promise.resolve({ data: h.clients, error: null }),
         }),
         update: () => ({
           eq: (_c: string, id: string) => ({
@@ -117,6 +121,7 @@ beforeEach(() => {
   h.suppressCalls = [];
   h.audits = [];
   h.failClientUpdate = false;
+  h.failClientScan = false;
   h.failProspectScan = false;
   h.failProspectSuppress = false;
 });
@@ -275,6 +280,49 @@ describe("an unprotected prospect earns a retry", () => {
     const res = await stop("+16475551234");
     expect(res.status).toBe(500);
     expect(h.suppressCalls[0].ids).toEqual(["e1"]);
+  });
+});
+
+describe("neither record type can be starved by the other's failure", () => {
+  it("a failed CLIENT SCAN still suppresses the prospect", async () => {
+    // Found in review. The clients SELECT catch used to return 500 immediately,
+    // and it sits ABOVE the prospect pass — so a persistent client read failure
+    // would have stopped a healthy prospect from ever being suppressed, on every
+    // retry. The 500 still happens; it is just decided after both passes.
+    h.failClientScan = true;
+    h.prospects = [P("e1", "s1", "+16475551234")];
+    const res = await stop("+16475551234");
+    expect(res.status).toBe(500);
+    expect(h.suppressCalls[0].ids).toEqual(["e1"]);
+    expect(h.audits.map((a) => a.entity_id)).toEqual(["e1"]);
+  });
+});
+
+describe("a suppression that landed is always recorded", () => {
+  it("audits the successful subset BEFORE returning the retryable 500", async () => {
+    // Found in review. The status decision used to run before both audit
+    // blocks, so on a partial failure the audit for a suppression that DID land
+    // was never written — and a retry skips rows already stamped, so it was lost
+    // for good. A suppression with no record of it is the one outcome nobody can
+    // reconstruct afterwards.
+    h.failClientUpdate = true;
+    h.clients = [P("c1", "s1", "+16475551234")];
+    h.prospects = [P("e1", "s1", "+16475551234")];
+    const res = await stop("+16475551234");
+    expect(res.status).toBe(500);
+    expect(h.suppressCalls[0].ids).toEqual(["e1"]);
+    // The prospect stamp succeeded, so its audit row must exist despite the 500.
+    expect(h.audits.map((a) => a.entity_id)).toEqual(["e1"]);
+  });
+
+  it("the audit survives the reverse partial failure too", async () => {
+    h.failProspectSuppress = true;
+    h.clients = [P("c1", "s1", "+16475551234")];
+    h.prospects = [P("e1", "s1", "+16475551234")];
+    const res = await stop("+16475551234");
+    expect(res.status).toBe(500);
+    expect(h.clientUpdates).toEqual([{ id: "c1" }]);
+    expect(h.audits.map((a) => a.entity_id)).toEqual(["c1"]);
   });
 });
 
