@@ -14,7 +14,68 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-21, post-0202 apply; `0202` APPLIED, `0203` AUTHORED AND PENDING)
+## Current state (verified 2026-09-27, post-0203 apply; `0203` APPLIED, repo == hosted)
+
+> **AUTHORITY ONLY. NO SCHEMA CHANGE AND NO DATA WRITE.** This apply ran exactly
+> two `create or replace function` statements — a forward redefinition of the live
+> `new_client_waitlist_entries_transition_guard` and the new command
+> `mark_waitlist_mobile_verified(uuid, text)` — plus four `revoke execute` and one
+> `grant execute` to `service_role`. **No table created or dropped, no column added
+> or dropped, no index, no constraint, and ZERO migration-level DML**: the only
+> `UPDATE` in the file sits inside the command's own body, verified by eliding both
+> function bodies and finding no top-level `insert`/`update`/`delete`/`truncate`.
+>
+> **NO CUSTOMER DATA WAS CREATED, MODIFIED OR DELETED, AND THE COMMAND WAS NOT
+> EXERCISED.** Measured read-only either side of the apply: **31** rows before and
+> **31** after, with `mobile_verified_at` non-null on **0** before and **0** after.
+> Those are dated readings, not a claim about the table today. `mark_waitlist_mobile_verified`
+> was **not invoked**, the permit GUC was not set by hand, **no provider was
+> contacted and no message was sent**. **#768 was not merged at apply time**, no
+> application code was deployed, and `verifiesMobile` therefore remains **false** in
+> the deployed application.
+>
+> **WHY THE GUARD REDEFINITION WAS THE BLAST RADIUS.** `create or replace function`
+> silently drops every rule the new body omits, so the risk here was never a wrong
+> new clause but a quiet loss of an old one. The deployed body is **byte-identical**
+> to the reviewed definition (md5 `fe315eb0f729ba14a71317fe4bf05f99`, 8853 chars)
+> and was confirmed read-only to still carry the one-writer raise,
+> immutable-once-proved, may-not-be-cleared, the row-scoped permit checked against
+> `new.id`, and every rule carried from `0202`.
+>
+> ⚠️ **THE DATABASE DOES NOT PROVE POSSESSION.** The command's identity arguments are
+> exactly `(p_entry_id uuid, p_expected_phone text)` — **it receives no provider
+> proof**. Provider-first ordering is an APPLICATION contract held by
+> `lib/waitlist/mobile-verification-server.ts`, which is unmerged at this apply. A
+> non-NULL `mobile_verified_at` means the command ran; it is evidence of a
+> provider-accepted proof only to the extent that every caller honours that
+> ordering.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0203** (`0203_waitlist_mobile_verification_authority.sql`) |
+| **Repo migration max** | **0203** — at PARITY with hosted, nothing pending. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks, confirmed from the live `migration list --linked` (zero rows present remotely and absent locally). |
+| **Pending migrations** | **none.** Verified live: `max(version)` in `supabase_migrations.schema_migrations` is **`0203`** with **202** rows total. |
+| **Next free migration** | Next free number is **0204**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0203` IS NO LONGER FREE** — it is applied and FROZEN. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. Both were seen side by side in `projects list`: different organisations. |
+| **Reviewed release head** | `1275486e7197d834294f58a85da774f4244aa176` (PR #768) — the exact authorized head: tree clean, PR open and `MERGEABLE`/`CLEAN`, required CI GREEN, Vercel GREEN, exact-head Codex review completed with **zero** new findings, and **0** unresolved review threads. |
+| **Production application SHA at apply time** | `4e8ea7aec8aea3b93ab149fb197f1caf190fc405` (post-B2a). **Unchanged by this apply: no application code was deployed.** |
+| **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. Invoked as `npx --yes supabase@2.102.0`; the ambient CLI on the apply host was 2.118.0 and was deliberately **not** used. |
+| **Command** | `supabase db push --linked`, **without** `--include-all`, preceded by `--dry-run` which listed **`0203` only**. Applied **once**; exit code 0. No retry, no hand-copied SQL. |
+| **`0203` sha256** | `c9453ebb8d9a6c94ff1af534c4f2e9930470f2274d205ecf2ad52ecfadbe340b` — computed from the file immediately before the push and re-checked against the same value at the moment of apply. **An applied migration is FROZEN: never edit it.** |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. `supabase_migrations.schema_migrations` carries only `(version, statements, name)` — there is no timestamp column — so this limitation recurs by construction. **An operator-observed client-side window IS asserted**: `2026-09-27T20:03:35.176Z` – `2026-09-27T20:04:02.911Z` (~27.7 s), read from the apply host's clock around the single CLI invocation. **That window is NOT a server apply time and must never be copied into `hosted_applied_at`.** |
+| **Pre-apply evidence (read-only)** | hosted max **`0202`** / **201** history rows · `0202` present exactly once · **`0203` ABSENT** · nothing above `0202` · no remote-only migration · `new_client_waitlist_entries` **31** rows with `mobile_verified_at` non-null on **0** · `mark_waitlist_mobile_verified` **did not exist** · guard body md5 `52f65c8d8bcfe72b2b101e1d3f9e5c02` (7377 chars, the `0202` body) · trigger enabled (`tgenabled = 'O'`). |
+| **Post-apply verification (read-only)** | hosted max **`0203`** / **202** history rows (**+1 exactly**) · `0203` present **exactly once** · `0202` still present exactly once and **not re-applied** · **nothing above `0203`** · **31** rows **unchanged** · `mobile_verified_at` non-null still **0** · command **present**, `SECURITY DEFINER`, `search_path` pinned to `pg_catalog, pg_temp` · EXECUTE granted to **`service_role` only** — `anon` **NO**, `authenticated` **NO**, and **PUBLIC absent from `proacl`** (`postgres=X/postgres`, `service_role=X/postgres`) · **no generic table DML introduced**: on `new_client_waitlist_entries`, `anon` holds nothing, `authenticated` holds **SELECT only**, and `service_role` holds **no INSERT/UPDATE/DELETE**, so `0185`'s wall is intact · guard **byte-identical** to the reviewed definition · trigger still enabled. |
+| **How the one-writer rule was verified** | **BY CONSTRUCTION, NOT BY EXERCISE.** No role holds `UPDATE` on the table and the deployed guard admits only the command's own row-scoped, transaction-local permit. The command was deliberately **not** invoked against production data merely to demonstrate it; the behavioural proof lives in `tests/db/waitlist-mobile-verification-authority.db.test.ts`, which runs the candidate inside a rolled-back transaction on a local database. |
+
+| Migration | Hosted status | sha256 |
+|---|---|---|
+| `0200_waitlist_redeemed_unbooked_exit.sql` | **APPLIED** | `a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158` |
+| `0201_waitlist_exit_authority_contraction.sql` | **APPLIED** | `1567610577e84cb717c77cf8451d57a97150f8fc169de33df2d48370be5ef82f` |
+| `0202_waitlist_profile_and_sms_consent_authority.sql` | **APPLIED** | `7a95e4e66c7c5fe50dbb2d7e73d54f7155c54f376a504ff2fbac47826dbb4ce1` |
+| `0203_waitlist_mobile_verification_authority.sql` | **APPLIED** | `c9453ebb8d9a6c94ff1af534c4f2e9930470f2274d205ecf2ad52ecfadbe340b` |
+
+## Previous state (verified 2026-09-21, post-0202 apply; `0202` APPLIED, `0203` AUTHORED AND PENDING)
 
 > **ADDITIVE SCHEMA ONLY, ON A 31-ROW TABLE. NO DATA WAS WRITTEN.** This apply
 > added **9 nullable columns** to `public.new_client_waitlist_entries`

@@ -77,7 +77,7 @@ describe("0202 takes the number it derived", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("IS APPLIED to production and is the hosted head, at PARITY", () => {
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
     // THE EQUALITY CLAIM ARRIVED HERE when `0202` was applied on 2026-09-21 under
     // explicit per-change owner authorization, from the reviewed PR #753 head
     // b8fc30a60a11f643897bd3389261970f0d8a6259. The dry run and the apply each
@@ -89,23 +89,22 @@ describe("0202 takes the number it derived", () => {
     // true until the apply and false the instant it landed. That is exactly why
     // the claim travels rather than being restated in every file.
     //
-    // EQUALITY IS A CURRENT CLAIM, so exactly one file may hold it, and this is
-    // STILL that file. WHOEVER APPLIES 0203 MOVES THIS BLOCK: narrow 0202 to a
-    // floor the way 0201, 0200, 0199 and 0198 were narrowed, and let the new head
-    // take the equality.
+    // THE HAND-OFF THIS BLOCK DEMANDED HAS NOW BEEN PERFORMED. Its previous
+    // revision said "WHOEVER APPLIES 0203 MOVES THIS BLOCK: narrow 0202 to a floor
+    // the way 0201, 0200, 0199 and 0198 were narrowed, and let the new head take
+    // the equality." `0203` was applied on 2026-09-27 under explicit per-change
+    // owner authorization, from the reviewed PR #768 head
+    // 1275486e7197d834294f58a85da774f4244aa176, with the dry run and the apply each
+    // naming exactly one file and NO --include-all.
     //
-    // THE CHAIN IS BACK AT MIGRATION-FIRST PENDING. WAIT B2b authors `0203` on
-    // its own branch and has NOT applied it, so 0202 KEEPS the hosted head while
-    // the repository maximum has moved one above it. NOTE THE ASYMMETRY, WHICH IS
-    // CORRECT: 0203 takes the REPO max above, and this block keeps the HOSTED
-    // head, because 0203 is authored and NOT applied. Two different claims, and
-    // only the first has moved.
+    // So this file keeps only a FLOOR -- `hosted >= 0202` -- the durable fact about
+    // an older applied migration, which stays true forever. Re-asserting equality
+    // here would make this file red the moment anything else applies, which is the
+    // mechanical multi-file sweep CLAUDE.md forbids. The equality now lives in
+    // 0203's own file.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe("0203");
-    expect(state.repo_equals_hosted).toBe(false);
-    expect(state.pending_migrations).toEqual(["0203"]);
-    expect(state.next_free_migration).toBe("0204");
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 
   it("the applied bytes are the authorized bytes", () => {

@@ -42,9 +42,31 @@ describe("0203 takes the number it derived", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("sits ABOVE hosted, because it is a candidate and not applied", () => {
+  it("IS APPLIED to production and is the hosted head, at PARITY", () => {
+    // THE EQUALITY CLAIM ARRIVED HERE when `0203` was applied on 2026-09-27 under
+    // explicit per-change owner authorization, from the reviewed PR #768 head
+    // 1275486e7197d834294f58a85da774f4244aa176, sha256
+    // c9453ebb8d9a6c94ff1af534c4f2e9930470f2274d205ecf2ad52ecfadbe340b, against
+    // production application 4e8ea7aec8aea3b93ab149fb197f1caf190fc405. The dry run
+    // and the apply each named exactly one file -- `0203` -- with NO
+    // --include-all, and `0202` was narrowed to a floor in the same change.
+    //
+    // The previous revision of this block asserted the OPPOSITE shape -- `0203`
+    // strictly ABOVE the hosted maximum, i.e. authored and pending -- which was
+    // true until the apply and false the instant it landed. That is exactly why
+    // the claim travels rather than being restated in every file.
+    //
+    // EQUALITY IS A CURRENT CLAIM, so exactly one file may hold it, and this is
+    // now that file. WHOEVER APPLIES 0204 MOVES THIS BLOCK: narrow 0203 to a floor
+    // the way 0202, 0201, 0200, 0199 and 0198 were narrowed, and let the new head
+    // take the equality. Leaving it here would go red on that apply, which is the
+    // whole reason the claim travels.
     const state = migrationState();
-    expect(Number(VERSION)).toBeGreaterThan(Number(state.hosted_migration_max));
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.repo_migration_max).toBe(VERSION);
+    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.next_free_migration).toBe("0204");
   });
 });
 
