@@ -5,12 +5,26 @@ import type { MobileVerificationProvider } from "./types";
 
 // Provider selection for possession proof (WAIT B2b).
 //
-// THE FAKE IS THE DEFAULT AND THE REAL ADAPTER IS OPT-IN. This mirrors
-// lib/sms/provider/index.ts deliberately, for the same reason it was written
-// there: TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are ALREADY present wherever
-// Hone sends SMS, so keying the real adapter off credentials would arm it in
-// production the moment this merges — and arming it means sending real
-// verification messages to real phone numbers.
+// THE DEFAULT IS FAIL-CLOSED. THE REAL ADAPTER IS OPT-IN. THE FAKE IS REACHED
+// BY EXPLICIT INJECTION ONLY — three separate statements, and none of them
+// collapses into "the fake is the default".
+//
+// THE REAL ADAPTER IS OPT-IN for the reason lib/sms/provider/index.ts gives:
+// TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are ALREADY present wherever Hone
+// sends SMS, so keying the adapter off credentials would arm it in production the
+// moment this merges — and arming it means sending real verification messages to
+// real phone numbers.
+//
+// THE DEFAULT IS NOT THE FAKE, AND HERE THIS MODULE DIVERGES FROM
+// lib/sms/provider DELIBERATELY. A fake SEND is inert: it delivers nothing and
+// claims nothing. A fake POSSESSION PROOF is not inert, because it returns
+// `approved` for a fixed exported code, and an approval is the one input that
+// promotes a standing. So the unarmed branch resolves to
+// FailClosedMobileVerificationProvider, never to the fake.
+//
+// IF YOU ARE ADDING THE REAL ADAPTER: the unarmed branch stays `failClosed`. Do
+// not write `armed ? real : fake`. That was this module's first revision and it
+// was a verification bypass.
 //
 // The real adapter therefore needs its OWN flag AND its own Verify Service SID.
 // Nothing sets either today: no Twilio Verify Service exists, and creating one

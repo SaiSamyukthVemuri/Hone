@@ -65,9 +65,11 @@ export const WAIT_04B_CAPABILITIES: ProfileAdapterCapabilities = {
   // WAIT B2b-1 AUTHORS ONE — `0203` plus
   // `lib/waitlist/mobile-verification-server.ts` — and this flag STAYS FALSE
   // anyway, deliberately. A writer is not a verification mechanism: `0203` is a
-  // candidate and NOT applied, and the only provider wired behind the state
-  // machine is the fake. No Twilio Verify Service exists and nothing arms the
-  // real adapter, so no possession proof can actually be obtained today.
+  // candidate and NOT applied, and the provider the state machine resolves by
+  // default is FAIL-CLOSED — it answers `unavailable` to everything and approves
+  // nothing. The fake is reachable only by explicit injection from a test. No
+  // Twilio Verify Service exists and nothing arms the real adapter, so no
+  // possession proof can actually be obtained today.
   //
   // THIS FLIPS WHEN THE PROVIDER IS REAL, not when the plumbing exists: 0203
   // applied AND a live Verify adapter armed. Flipping it on the strength of the

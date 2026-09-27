@@ -7,10 +7,20 @@ import type {
 
 // The in-process fake possession-proof provider.
 //
-// IT IS THE DEFAULT, AND THAT IS THE SAFETY PROPERTY. Nothing in a preview
-// build, a CI job or a local run should be able to send a real verification SMS
-// because a credential happened to be present — see ./index.ts for why
-// credentials alone must not arm the real adapter.
+// IT IS NOT THE DEFAULT, AND THAT IS THE SAFETY PROPERTY. An earlier revision
+// said the opposite in both words and code: this fake was what
+// `resolveMobileVerificationProvider` returned, which made `approved` reachable
+// for a fixed exported code in an unconfigured production deployment. Being the
+// default was never the safety property; it was the defect.
+//
+// IT IS REACHED BY EXPLICIT INJECTION ONLY — passed as the second argument to
+// `startMobileVerification` / `checkMobileVerification` by tests that mean to use
+// it. The default is `FailClosedMobileVerificationProvider`.
+//
+// WHAT IS STILL TRUE is that no credential may arm a real send: nothing in a
+// preview build, a CI job or a local run should contact a provider because a
+// credential happened to be present — see ./index.ts for why credentials alone
+// must not arm the real adapter.
 //
 // IT PROVES NOTHING ABOUT A REAL PHONE, and says so loudly: the accepted code is
 // fixed and known, so a test that "verifies" here has exercised Hone's state
