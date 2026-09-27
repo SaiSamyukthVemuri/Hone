@@ -171,19 +171,31 @@ describe("what reaches the command", () => {
   });
 
   it("sends NO verification parameter at all", async () => {
-    // RETITLED TWICE. It first said "0202 has no writer for one", true until 0203
-    // was applied. My correction then said "the DATABASE supplies it" -- which
-    // OVERCLAIMS, because this test would still pass if the command stopped
-    // stamping the database clock entirely: it inspects only the profile-completion
-    // RPC arguments for a key matching /verified/i.
+    // THE TITLE IS NOW TRUE BECAUSE THE ASSERTION WAS STRENGTHENED, not because it
+    // was narrowed. Three revisions of this one test are worth recording:
     //
-    // So the title now claims exactly what is asserted: profile completion sends no
-    // verification parameter. Where the instant comes from is a DIFFERENT property,
-    // proved against a real database in
-    // tests/db/waitlist-mobile-verification-authority.db.test.ts.
+    //   1. "0202 has no writer for one" -- true until 0203 was applied.
+    //   2. "the DATABASE supplies it" -- overclaimed; the test never checked where
+    //      the instant came from.
+    //   3. "sends NO verification parameter at all" -- STILL overclaimed against a
+    //      `not.toMatch(/verified/i)` denylist, which `p_otp`, `p_proof` or
+    //      `p_verification_code` would all sail through.
+    //
+    // A DENYLIST CANNOT SUPPORT A CLAIM ABOUT ABSENCE. So the argument set is
+    // pinned exactly: any new parameter at all fails this, whatever it is called,
+    // which is the only shape that makes "none" checkable. Where the verified
+    // instant comes from remains a different property, proved against a real
+    // database in tests/db/waitlist-mobile-verification-authority.db.test.ts.
     await run({ patch: PATCH_CANDIDATE });
-    const keys = Object.keys(h.calls[0].args).join(",");
-    expect(keys).not.toMatch(/verified/i);
+    expect(Object.keys(h.calls[0].args).sort()).toEqual([
+      "p_first_name",
+      "p_last_name",
+      "p_mobile_candidate",
+      "p_preference",
+      "p_raw_token",
+      "p_sms_consent",
+      "p_treatment_area_ids",
+    ]);
   });
 });
 
