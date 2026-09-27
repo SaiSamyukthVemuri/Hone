@@ -169,6 +169,122 @@ describe("every rule 0202 enforced is still enforced", () => {
   }
 });
 
+describe("the carried guard is 0202's, changed in exactly one place", () => {
+  // THE STRONGEST RULE IN THIS FILE, and the reason it exists: `create or replace
+  // function` silently drops every rule the new body does not mention, so the
+  // real risk is not a wrong new clause but a QUIET LOSS of an old one. Naming
+  // the carried rules individually (above) only catches the seven someone
+  // thought to name. This compares the whole body against 0202's and allows
+  // exactly ONE changed region -- the clause 0202 itself marked as the one the
+  // verification slice would amend.
+
+  const guardOf = (file: string): string[] => {
+    const sql = readFileSync(path.join(ROOT, "supabase/migrations", file), "utf8");
+    const i = sql.indexOf(
+      "create or replace function public.new_client_waitlist_entries_transition_guard",
+    );
+    expect(i, `${file} must redefine the transition guard`).toBeGreaterThan(-1);
+    const j = sql.indexOf("$$;", i);
+    expect(j, `${file}'s guard must terminate`).toBeGreaterThan(i);
+    // Comment-stripped: prose churn is not a behaviour change and must not be
+    // able to spend the one allowed hunk.
+    return sql
+      .slice(i, j + 3)
+      .split("\n")
+      .filter((l) => !/^\s*--/.test(l))
+      .map((l) => l.trimEnd())
+      .filter((l) => l.trim() !== "");
+  };
+
+  const BEFORE = guardOf("0202_waitlist_profile_and_sms_consent_authority.sql");
+  const AFTER = guardOf(FILE);
+
+  /**
+   * Contiguous regions where the two bodies differ, plus the COMMON subsequence
+   * in order, via a simple LCS.
+   */
+  function diffGuard(
+    a: string[],
+    b: string[],
+  ): { regions: Array<[string[], string[]]>; common: string[] } {
+    const n = a.length;
+    const m = b.length;
+    const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i -= 1) {
+      for (let j = m - 1; j >= 0; j -= 1) {
+        lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      }
+    }
+    const regions: Array<[string[], string[]]> = [];
+    const common: string[] = [];
+    let i = 0;
+    let j = 0;
+    let da: string[] = [];
+    let db: string[] = [];
+    const flush = () => {
+      if (da.length || db.length) regions.push([da, db]);
+      da = [];
+      db = [];
+    };
+    while (i < n && j < m) {
+      if (a[i] === b[j]) {
+        flush();
+        common.push(a[i]);
+        i += 1;
+        j += 1;
+      } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+        da.push(a[i]);
+        i += 1;
+      } else {
+        db.push(b[j]);
+        j += 1;
+      }
+    }
+    da.push(...a.slice(i));
+    db.push(...b.slice(j));
+    flush();
+    return { regions, common };
+  }
+
+  const { regions: REGIONS, common: COMMON } = diffGuard(BEFORE, AFTER);
+
+  it("changes ONE contiguous region of the guard and no other", () => {
+    expect(
+      REGIONS.length,
+      "0203 changed more than one region of 0202's guard. Every other rule in that " +
+        "body is production behaviour and must be carried through byte-identical:\n" +
+        REGIONS.map(([x, y]) => `  - ${x[0] ?? "(insert)"} -> ${y[0] ?? "(delete)"}`).join("\n"),
+    ).toBe(1);
+  });
+
+  it("that one region is the mobile_verified_at clause, and it REPLACES a refusal", () => {
+    const [removed, added] = REGIONS[0];
+    // What 0202 said: there is no writer. What 0203 says: there is exactly one.
+    expect(removed.join("\n")).toContain("mobile_verified_at has no writer in this release");
+    expect(added.join("\n")).toContain("hone.mobile_verified_entry_id");
+    // The clause still RAISES on the paths it must; it did not become permissive.
+    expect(added.join("\n")).toMatch(/raise exception/);
+  });
+
+  it("every other line of 0202's guard survives byte-identical, IN ORDER", () => {
+    const [removed, added] = REGIONS[0];
+    // POSITIONAL, NOT BY VALUE. A first version filtered BEFORE by value and went
+    // red at 128 vs 136, because lines like `end if;` recur and filtering one
+    // occurrence removed them all. These two equalities say it exactly: outside
+    // the single changed region the two bodies are the SAME LINES in the SAME
+    // ORDER, since the common subsequence accounts for every remaining line of
+    // each body with nothing left over.
+    expect(
+      COMMON.length,
+      "a line of 0202's guard was dropped or reordered outside the amended clause",
+    ).toBe(BEFORE.length - removed.length);
+    expect(
+      COMMON.length,
+      "0203 added a line outside the amended clause",
+    ).toBe(AFTER.length - added.length);
+  });
+});
+
 describe("applied history is frozen", () => {
   it("0203 does not edit 0202 or any earlier file", () => {
     // The only migration file this change may add is its own; asserted here
