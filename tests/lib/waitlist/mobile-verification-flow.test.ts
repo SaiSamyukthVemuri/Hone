@@ -165,17 +165,136 @@ describe("MEMBERSHIP-ORACLE RESISTANCE", () => {
     expect(out).not.toContain(CONTEXT.entryId);
   });
 
-  it("a rejected provider outcome and an unauthorized one are BOTH just refusals", async () => {
-    // The surface renders one message either way. What must not exist is a shape
-    // difference a caller could switch on to learn that the capability was good —
-    // which is the same as learning the number is on a waitlist.
+  // ===========================================================================
+  // EXACT VALUE EQUALITY, NOT SHAPE EQUALITY
+  // ===========================================================================
+  //
+  // THE PREVIOUS VERSION OF THESE TWO TESTS COMPARED `Object.keys` AND WAS WORSE
+  // THAN NO TEST. Both outcomes are `{ok, code}`, so the keys always matched while
+  // `code` differed — unauthorized returned `unavailable`, a provider refusal
+  // returned `not_proved`. A caller switches on `code`, which the assertion never
+  // looked at. So it named the membership-oracle property, proved only that both
+  // objects had a `code` field, and supplied false assurance about the one property
+  // this module exists to have. P2 at ef5a9278.
+  //
+  // The refusal for an unresolved context is now `not_proved` (owner decision,
+  // 2026-09-28), which is what makes exact equality achievable rather than just
+  // asserted.
+
+  it("START: unauthorized is VALUE-IDENTICAL to a provider refusal", async () => {
     const unauthorized = await runStartMobileVerification(AUTH, resolvesNothing, H, fake);
     fake.scriptStart("refused");
     const refused = await runStartMobileVerification(AUTH, resolves, H, fake);
-    expect(Object.keys(unauthorized).sort()).toEqual(Object.keys(refused).sort());
-    expect(unauthorized.ok).toBe(false);
-    expect(refused.ok).toBe(false);
     fake.reset();
+
+    // The whole object, deep-equal. Not the keys, not `.ok`, not a subset.
+    expect(unauthorized).toEqual(refused);
+    expect(unauthorized).toEqual({ ok: false, code: "not_proved" });
+    // And spelled out, because this is the assertion that failed before: the
+    // caller-visible discriminant must be the same string.
+    expect((unauthorized as { code: string }).code).toBe((refused as { code: string }).code);
+  });
+
+  it("CHECK: unauthorized is VALUE-IDENTICAL to a rejected code", async () => {
+    const unauthorized = await runCheckMobileVerification(
+      AUTH,
+      FAKE_VERIFICATION_CODE,
+      resolvesNothing,
+      H,
+      fake,
+    );
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    const rejected = await runCheckMobileVerification(AUTH, "999999", resolves, H, fake);
+
+    expect(unauthorized).toEqual(rejected);
+    expect(unauthorized).toEqual({ ok: false, code: "not_proved" });
+    expect((unauthorized as { code: string }).code).toBe((rejected as { code: string }).code);
+  });
+
+  it("NEGATIVE CONTROL: the equality is not vacuous — other refusals still differ", async () => {
+    // If every refusal collapsed to one value the two assertions above would pass
+    // for the wrong reason. The vocabulary must still be able to say other things.
+    const noDestination = await runStartMobileVerification(
+      AUTH,
+      async () => ({ ...CONTEXT, storedPhone: null }),
+      H,
+      fake,
+    );
+    fake.scriptStart("unavailable");
+    const outage = await runStartMobileVerification(AUTH, resolves, H, fake);
+    fake.reset();
+    expect(noDestination).toEqual({ ok: false, code: "no_destination" });
+    expect(outage).toEqual({ ok: false, code: "unavailable" });
+    expect(noDestination).not.toEqual(outage);
+  });
+});
+
+describe("AN UNAUTHORIZED FLOW TOUCHES NOTHING", () => {
+  // Three properties, both operations, asserted together rather than inferred from
+  // the refusal value. A caller whose authorization proves nothing must not be able
+  // to spend a provider call, reach the promotion command, or read back anything it
+  // did not already hold.
+
+  it("never calls the provider, on either operation", async () => {
+    const start = vi.spyOn(fake, "start");
+    const check = vi.spyOn(fake, "check");
+    await runStartMobileVerification(AUTH, resolvesNothing, H, fake);
+    await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolvesNothing, H, fake);
+    expect(start, "an unauthorized start reached the provider").not.toHaveBeenCalled();
+    expect(check, "an unauthorized check reached the provider").not.toHaveBeenCalled();
+    start.mockRestore();
+    check.mockRestore();
+  });
+
+  it("never calls mark_waitlist_mobile_verified", async () => {
+    // The promotion command's ordering contract is application-level -- 0203's own
+    // column comment says so -- so this is the layer that has to hold it.
+    await runStartMobileVerification(AUTH, resolvesNothing, H, fake);
+    await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolvesNothing, H, fake);
+    expect(rpc.calls, "an unauthorized flow reached the promotion command").toEqual([]);
+  });
+
+  it("never exposes the capability, the phone, the entry id or the code", async () => {
+    // Serialised whole, so a field added to FlowOutcome later cannot smuggle one of
+    // these out without failing here.
+    const secrets = {
+      capability: AUTH.capability,
+      phone: STORED,
+      entryId: CONTEXT.entryId,
+      studioId: CONTEXT.studioId,
+      code: "424242",
+    };
+    const outcomes = JSON.stringify([
+      await runStartMobileVerification(AUTH, resolvesNothing, H, fake),
+      await runCheckMobileVerification(AUTH, secrets.code, resolvesNothing, H, fake),
+    ]);
+    for (const [name, value] of Object.entries(secrets)) {
+      expect(outcomes, `an unauthorized refusal carried the ${name}`).not.toContain(value);
+    }
+    // Anti-vacuity: the serialisation is not empty, so the absences mean something.
+    expect(outcomes).toContain("not_proved");
+  });
+
+  it("an unauthorized attempt is indistinguishable from an authorized refusal in TIMING of side effects", async () => {
+    // Not a wall-clock claim -- that is not testable here and would be flaky. The
+    // property is that neither path leaves a trace the other does not: no provider
+    // call, no RPC, on both sides of the comparison.
+    const spy = vi.spyOn(fake, "check");
+    await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolvesNothing, H, fake);
+    const unauthorizedRpc = [...rpc.calls];
+    const unauthorizedProviderCalls = spy.mock.calls.length;
+    rpc.calls = [];
+    spy.mockClear();
+
+    // The authorized-but-rejected path DOES call the provider -- that is the one
+    // asymmetry, and it is invisible to the caller because both return the same
+    // value. What must match is the absence of a WRITE.
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    await runCheckMobileVerification(AUTH, "999999", resolves, H, fake);
+    expect(rpc.calls, "a rejected check wrote something").toEqual([]);
+    expect(unauthorizedRpc).toEqual([]);
+    expect(unauthorizedProviderCalls).toBe(0);
+    spy.mockRestore();
   });
 });
 
@@ -189,13 +308,19 @@ describe("the D1 seam", () => {
     expect(start).not.toMatch(/resolve\s*\?\?/);
   });
 
-  it("an unresolved context is reported as an outage, not as a bad code", async () => {
-    // With no resolver in the tree, an unresolvable context is literally NOT
-    // CONFIGURED, which is what `unavailable` means. Under D1 this mapping is
-    // revisited: once a real resolver exists, null stops meaning "not configured".
+  it("a resolver that DECLINES yields not_proved, on both operations", async () => {
+    // OWNER DECISION, 2026-09-28. A resolver that runs and returns null has decided
+    // this authorization proves nothing — a statement about the authorization, not
+    // about the deployment. `not_proved` is the coarsest existing refusal and names
+    // no step, so it cannot report WHICH check failed.
+    //
+    // It was `unavailable` for two revisions, on the reasoning that Phase 1 has no
+    // resolver so the context is "not configured". True of the tree, irrelevant to
+    // the caller, and it leaked authorization validity — see the value-equality
+    // tests above.
     const out = await runStartMobileVerification(AUTH, resolvesNothing, H, fake);
-    expect(out).toEqual({ ok: false, code: "unavailable" });
+    expect(out).toEqual({ ok: false, code: "not_proved" });
     const checked = await runCheckMobileVerification(AUTH, "123456", resolvesNothing, H, fake);
-    expect(checked).toEqual({ ok: false, code: "unavailable" });
+    expect(checked).toEqual({ ok: false, code: "not_proved" });
   });
 });

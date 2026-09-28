@@ -606,6 +606,41 @@ describe("the promoting command still has exactly one caller", () => {
   });
 });
 
+describe("the adapter states its precedence invariant ONCE, and correctly", () => {
+  const COMMENTS = commentsOf(read(ADAPTER)).replace(/\s+/g, " ");
+
+  it("says the error code outranks the status class", () => {
+    // P2 at ef5a9278: this file stated the invariant twice, in opposite directions.
+    // The stale half described the pre-fix implementation and would have led a
+    // maintainer to restore the 429/60202 shadowing bug.
+    expect(COMMENTS, "the correct precedence is not stated").toMatch(
+      /recognized error code outranks the generic HTTP status class|error code outranks/i,
+    );
+  });
+
+  it("does NOT still say the status class decides first", () => {
+    // The exact stale sentence shape, per line, excusable only by the marker -- the
+    // same contract the other prose guards in this file use.
+    const lines = commentsOf(read(ADAPTER))
+      .split("\n")
+      .map((l) => l.replace(/\s+/g, " ").trim());
+    // NARROW ON PURPOSE, AND THE FIRST VERSION WAS NOT. It also matched
+    // "status class first" anywhere, which caught the line that EXPLAINS why the
+    // code must win ("keying on the status class first makes the outcome depend on
+    // which one Twilio chose") -- prose that rejects the bad approach, not prose
+    // that asserts it. That is the undecidability this file already documents, so
+    // this matches only the ASSERTIVE sentence shape, and a deliberate quotation of
+    // it carries [historical] like every other recorded defect here.
+    const offending = lines.filter(
+      (l) => /(?:every branch|branches?)[^.]{0,40}decides? first on the HTTP status/i.test(l) && !excused(l),
+    );
+    expect(
+      offending,
+      `the adapter still claims the status class decides first: ${offending.join(" / ")}`,
+    ).toEqual([]);
+  });
+});
+
 describe("the authorized flow keeps its seam open and its surface narrow", () => {
   const SRC = read(FLOW);
   const CODE = codeOf(SRC);
@@ -636,10 +671,19 @@ describe("the authorized flow keeps its seam open and its surface narrow", () =>
     expect(CODE).not.toMatch(/console\./);
   });
 
-  it("the unresolved-context refusal has exactly one site", () => {
-    // So D1 has one place to land rather than two that can drift apart.
+  it("the unresolved-context refusal has exactly one site, and is not_proved", () => {
+    // ONE site so the decision has one place to land. `not_proved` because a
+    // resolver that runs and returns null has decided the authorization proves
+    // nothing, and because it is the value a provider refusal already yields -- so a
+    // caller cannot tell the two apart. It was `unavailable`, which leaked
+    // authorization validity (P2 at ef5a9278).
     expect([...CODE.matchAll(/UNRESOLVED_CONTEXT_REFUSAL/g)].length).toBeGreaterThanOrEqual(3);
     expect([...CODE.matchAll(/const UNRESOLVED_CONTEXT_REFUSAL/g)]).toHaveLength(1);
+    expect(CODE).toMatch(/UNRESOLVED_CONTEXT_REFUSAL:\s*VerificationRefusal\s*=\s*"not_proved"/);
+    expect(
+      CODE,
+      "an unresolved context must not report an outage; that distinguishes it from a refusal",
+    ).not.toMatch(/UNRESOLVED_CONTEXT_REFUSAL[^\n]*=\s*"unavailable"/);
   });
 
   it("never calls the promoting RPC itself", () => {

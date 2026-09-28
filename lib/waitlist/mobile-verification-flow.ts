@@ -59,6 +59,12 @@ import type { MobileVerificationProvider } from "@/lib/waitlist/mobile-verificat
 // that looked inert and was not. So the seam is a required argument with no
 // fallback, and a surface cannot reach this flow without naming its authorization.
 //
+// WHAT IS ALREADY DECIDED, THOUGH, IS WHAT A DECLINING RESOLVER REPORTS. A resolver
+// that runs and returns null yields `not_proved` — the same value a provider
+// refusal yields on the same operation — so a caller cannot tell an unauthorized
+// attempt from a refused one. See UNRESOLVED_CONTEXT_REFUSAL below. That answer
+// holds whichever mechanism D1 selects, so it did not have to wait for D1.
+//
 // ---------------------------------------------------------------------------
 // LOGGING
 // ---------------------------------------------------------------------------
@@ -115,27 +121,45 @@ export type FlowOutcome =
   | { ok: false; code: VerificationRefusal };
 
 /**
- * WHAT AN UNRESOLVED CONTEXT REPORTS, AND WHY IT IS `unavailable` **IN PHASE 1
- * SPECIFICALLY**.
+ * WHAT AN UNRESOLVED CONTEXT REPORTS: `not_proved`. **OWNER-DECIDED, 2026-09-28.**
  *
- * B2b-1 defines `unavailable` as "Not configured, network failure, provider
- * error. Retryable." With no concrete resolver in the tree, an unresolvable
- * context is precisely NOT CONFIGURED — the same fact about the deployment that
- * the fail-closed provider reports, and the honest thing to say about a system
- * whose authorization step does not exist yet.
+ * A resolver that RUNS and returns null has decided that this authorization proves
+ * nothing. That is a statement about the authorization, not about the deployment,
+ * and `not_proved` is the coarsest existing refusal — it does not say WHICH
+ * possession or authorization step failed, which is exactly the property wanted.
  *
- * THIS MAPPING IS PART OF DECISION D1 AND MUST BE REVISITED WITH IT. Once a real
- * resolver exists, `null` stops meaning "not configured" and starts meaning "this
- * capability authorizes nothing" — which is NOT retryable, and must be
- * indistinguishable from the coarsest legitimate refusal on the same operation
- * rather than from an outage. Leaving `unavailable` in place after D1 would invite
- * a caller to retry a capability that will never work, and would distinguish an
- * unauthorized start from a provider-refused start by its retry advice.
+ * IT WAS `unavailable` FOR TWO REVISIONS AND THAT LEAKED AUTHORIZATION VALIDITY.
+ * The reasoning was that with no concrete resolver in the tree an unresolvable
+ * context is literally "not configured", which `./mobile-verification/types.ts`
+ * assigns to `unavailable`. True of Phase 1 as a statement about the tree, and
+ * beside the point as a statement about the CALLER: an unauthorized start returned
+ * `unavailable` while a provider-refused start returned `not_proved`, so a caller
+ * could switch on the difference and learn that their capability was GOOD. Learning
+ * a capability resolves to a real entry is learning that entry exists, which is the
+ * membership oracle this whole module is shaped to deny. Raised as a P2 against
+ * ef5a9278 -- against the TEST that claimed the property held while comparing only
+ * object keys, which is how the leak survived being "covered".
  *
- * It is a named constant so that the decision has one place to land, and so that
- * a source guard can assert no second site drifted away from it.
+ * SO THE TWO NOW MATCH, EXACTLY, AT THE CALLER-VISIBLE LEVEL:
+ *
+ *   START  unauthorized -> not_proved   ==  provider `refused`  -> not_proved
+ *   CHECK  unauthorized -> not_proved   ==  provider `rejected` -> not_proved
+ *
+ * Asserted by value, not by shape, in tests/lib/waitlist/mobile-verification-flow.test.ts.
+ *
+ * THIS DOES NOT DECIDE D1. Which authorization mechanism resolves a context --
+ * invitation capability, profile-completion grant, or owner-authenticated -- is
+ * still open. What is decided is what the flow says when a supplied resolver
+ * declines, and that answer is the same whichever mechanism is chosen.
+ *
+ * PHASE 1 STILL SHIPS NO RESOLVER, and that remains enforced structurally rather
+ * than by this constant: `resolve` is a required argument with no default, so no
+ * product surface can reach this flow without naming its authorization.
+ *
+ * One named constant, so the decision has one place to land and a source guard can
+ * assert no second site drifted away from it.
  */
-const UNRESOLVED_CONTEXT_REFUSAL: VerificationRefusal = "unavailable";
+const UNRESOLVED_CONTEXT_REFUSAL: VerificationRefusal = "not_proved";
 
 /**
  * Begin a possession challenge for whichever entry the authorization resolves to.

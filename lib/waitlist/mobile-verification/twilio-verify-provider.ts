@@ -169,10 +169,29 @@ function errorCodeOf(json: unknown): number | null {
 /**
  * Twilio Verify error codes this adapter recognises.
  *
- * THESE ARE REFINEMENTS, NOT THE MAPPING. Every branch below decides first on
- * the HTTP status class, which is the part that cannot be wrong, and consults a
- * code only to move an outcome WITHIN a safe default. So if one of these numbers
- * is ever wrong or retired, the result is a coarser answer — never a promotion,
+ * A RECOGNIZED ERROR CODE OUTRANKS THE GENERIC HTTP STATUS CLASS. That is the
+ * mapping invariant, in both operations, and the code table is consulted first.
+ *
+ * THIS PARAGRAPH SAID THE OPPOSITE FOR ONE REVISION, which is the P2 raised at
+ * ef5a9278. [historical] It read "every branch below decides first on the HTTP status class …
+ * and consults a code only to move an outcome WITHIN a safe default" — an accurate
+ * description of the implementation BEFORE the 60202 fix, left in place after the
+ * fix inverted it. So the adapter stated its own invariant twice, in opposite
+ * directions, and the stale half described exactly the shadowing bug: a maintainer
+ * following it would have put the status branches back on top and made
+ * `429 + 60202` return `rate_limited` again. The implementation was right and the
+ * prose was wrong, so the prose is what changed.
+ *
+ * WHY THE CODE HAS TO WIN. A status class is a coarse fact about a response and an
+ * error code is the specific one. Twilio does not use the two consistently —
+ * 60202 arrives with a 429 and 60212 with a 400 — so keying on the class first
+ * makes the outcome depend on which status Twilio happened to choose rather than
+ * on what the response means.
+ *
+ * AN UNRECOGNIZED CODE IS STILL SAFE, which is what the old paragraph was reaching
+ * for and got backwards. Every code below only MOVES an outcome within what the
+ * status class would already have given, so if one of these numbers is ever wrong
+ * or retired the result is the coarser status-class answer — never a promotion,
  * never a false statement about someone's code, never a retry loop.
  *
  * THE TWO OPERATIONS DO NOT SHARE A SET, AND THEY MUST NOT BE REUNIFIED. One
