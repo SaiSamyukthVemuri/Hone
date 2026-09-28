@@ -371,6 +371,44 @@ describe("the live path is reachable only through the flag", () => {
   });
 });
 
+describe("the rollback the code documents is the rollback that works", () => {
+  // P1 at 442ca286. An earlier revision said reading the flag per call made the
+  // rollback a flag change with no redeploy. On Vercel it does not: unsetting a
+  // hosted variable leaves `process.env` untouched in the deployment already
+  // serving traffic, so an armed deployment keeps sending until it is redeployed.
+  // This repository had already written the correct model down for live payments
+  // ("unset STRIPE_ALLOW_LIVE_MODE + redeploy").
+  //
+  // GUARDED AS A PRESENCE, NOT AS AN ABSENCE. This file's own HISTORICAL_MARKER
+  // machinery exists because banning an English claim is undecidable and every
+  // repair widened the grammar. So rather than trying to ban "no redeploy" in all
+  // its phrasings, this asserts the TRUE statement is present where an operator
+  // would look for it. Deleting the paragraph fails the test; rewording it does not.
+  it("the arming module states that rollback requires a redeploy", () => {
+    const ARMING = commentsOf(read(`${DIR}/arming.ts`)).replace(/\s+/g, " ");
+    expect(ARMING, "the redeploy requirement is not stated").toMatch(/redeploy/i);
+    expect(ARMING, "the hosting model that causes it is not named").toMatch(/Vercel/i);
+  });
+
+  it("no file in the boundary claims a rollback needs no redeploy", () => {
+    // ONE narrow phrase, per line, excusable only by the explicit marker -- the
+    // same contract the fake-default claims use. Not an attempt to parse English:
+    // just the exact sentence shape that was wrong, so reintroducing it verbatim is
+    // caught while an honest rewording is free.
+    for (const rel of MODULE_FILES) {
+      const lines = commentsOf(read(rel))
+        .split("\n")
+        .map((l) => l.replace(/\s+/g, " ").trim());
+      const offending = lines.filter(
+        (l) => /(needs?|requires?|without)\s+no\s+redeploy|no\s+redeploy\s+(is\s+)?(needed|required)/i.test(l) && !excused(l),
+      );
+      expect(offending, `${rel} claims a rollback needs no redeploy: ${offending.join(" / ")}`).toEqual(
+        [],
+      );
+    }
+  });
+});
+
 describe("the adapter cannot leak what it holds", () => {
   const SRC = read(ADAPTER);
   const CODE = codeOf(SRC);

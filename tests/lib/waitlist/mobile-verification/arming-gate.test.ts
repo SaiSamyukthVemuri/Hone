@@ -145,9 +145,13 @@ describe("resolveMobileVerificationProvider", () => {
     expect(fakeMobileVerificationProvider()).toBeInstanceOf(FakeMobileVerificationProvider);
   });
 
-  it("re-reads the environment on every call, so disarming takes effect at once", () => {
-    // Rollback is "unset the flag". If the resolver cached an armed provider, the
-    // rollback would need a redeploy, and the runbook would be wrong.
+  it("re-reads the environment on every call, so nothing caches an armed answer", () => {
+    // WHAT THIS PROVES, STATED NARROWLY. It proves the resolver holds no cached
+    // answer: when `process.env` actually changes, the next call sees it. It does
+    // NOT prove that unsetting a HOSTED variable disarms a running deployment --
+    // on Vercel it does not, and the rollback is "unset plus redeploy" exactly as
+    // this repository already documents for STRIPE_ALLOW_LIVE_MODE. An earlier name
+    // for this test said "disarming takes effect at once", which overstated it.
     set(FULLY_ARMED);
     expect(resolveMobileVerificationProvider()).toBeInstanceOf(TwilioVerifyProvider);
     delete process.env.HONE_MOBILE_VERIFICATION_LIVE;
@@ -200,10 +204,15 @@ describe("THE ADAPTER ENFORCES THE FLAG ITSELF (P1 at b6cecbb0)", () => {
     expect(calls, "an unarmed adapter reached the network").toEqual([]);
   });
 
-  it("an instance HELD ACROSS A DISARM goes inert at once, not at the next deploy", async () => {
-    // This is what makes the activation checklist's rollback step true. If a held
-    // provider kept working, "unset the flag" would need a redeploy to take effect
-    // and the runbook would be wrong at the moment it was most needed.
+  it("an instance HELD ACROSS A process.env CHANGE goes inert on its next call", async () => {
+    // The in-process property, and only that. A held provider must not keep a
+    // decision it made when it was constructed -- otherwise the resolver's gate and
+    // the adapter's gate could disagree inside one deployment, which is the defect
+    // the first P1 was about.
+    //
+    // NOT A CLAIM ABOUT HOSTED ROLLBACK. Unsetting the variable in Vercel does not
+    // reach `process.env` in a running deployment; that needs a redeploy, and the
+    // activation checklist requires one and requires verifying it afterwards.
     set(FULLY_ARMED);
     const held = resolveMobileVerificationProvider();
     expect(held).toBeInstanceOf(TwilioVerifyProvider);

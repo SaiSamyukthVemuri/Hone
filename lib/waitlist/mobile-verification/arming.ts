@@ -40,8 +40,34 @@ const VERIFY_SERVICE_SID = "TWILIO_VERIFY_SERVICE_SID";
  * only input an operator has to add deliberately, which is the whole reason it
  * exists separately.
  *
- * READ PER CALL, never cached. "Unset the flag" is the documented rollback, and a
- * cached answer would make that rollback need a redeploy.
+ * READ PER CALL, NEVER CACHED — AND WHAT THAT DOES AND DOES NOT BUY IS WORTH
+ * BEING EXACT ABOUT, BECAUSE AN EARLIER REVISION OF THIS COMMENT GOT IT BACKWARDS.
+ *
+ * IT DOES buy: no module-level or instance-level state to get stale, so within a
+ * running deployment the resolver and the adapter always agree, and an adapter
+ * instance held across a change in `process.env` goes inert on its next call
+ * rather than at some later lifecycle event. That is what makes the two
+ * enforcement points genuinely independent, and it is the fix for the first P1.
+ *
+ * IT DOES NOT buy a hot rollback, and the earlier comment claimed it did. Hone is
+ * hosted on Vercel (README.md), and unsetting a hosted environment variable does
+ * NOT mutate `process.env` in the deployment already serving traffic. So a
+ * deployment that was armed keeps reading `"true"` until it is REDEPLOYED. Reading
+ * per call cannot change that: there is nothing new to read.
+ *
+ * THE HOUSE MODEL FOR AN ENV-BACKED KILL SWITCH IS "UNSET PLUS REDEPLOY", and this
+ * repository already wrote it down for live payments: `docs/13_BACKLOG_AND_-
+ * DECISIONS.md` gives the STRIPE_ALLOW_LIVE_MODE rollback as "unset … + redeploy".
+ * This gate is the same shape and takes the same rollback. The activation
+ * checklist says so, and says to VERIFY the running deployment afterwards rather
+ * than assume the unset took effect.
+ *
+ * A HOT KILL SWITCH WOULD NEED RUNTIME-MUTABLE STATE — Edge Config, a row, a
+ * cache key — and choosing one is a real decision, not a detail: it adds a
+ * dependency in the path of every verification, and it has to fail CLOSED when
+ * that store is unreachable, which is the opposite of how this codebase's rate
+ * limiter treats its store. That is owner decision D7 and it is deliberately not
+ * taken here.
  */
 export function liveMobileVerificationArmed(): boolean {
   return (

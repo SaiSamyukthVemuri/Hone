@@ -13,9 +13,14 @@ import type {
 // independent points have to be true: `./index.ts` hands this adapter out only
 // when `liveMobileVerificationArmed()` is true, AND `readConfig()` below re-checks
 // the same predicate on every call. So constructing this class directly proves
-// nothing and sends nothing, and an instance held across a disarm goes inert at
-// once rather than at the next deploy. Nothing here arms itself and there is no
-// module-load side effect.
+// nothing and sends nothing, and an instance held across a change in process.env
+// goes inert on its next call rather than at some later lifecycle event. Nothing
+// here arms itself and there is no module-load side effect.
+//
+// THAT IS NOT A HOT KILL SWITCH, and an earlier revision of this header implied it
+// was. On Vercel, unsetting a hosted variable does not mutate `process.env` in the
+// deployment already serving traffic, so an ARMED deployment stays armed until it
+// is redeployed. ./arming.ts carries the full statement and the house precedent.
 //
 // PHILOSOPHY, INHERITED FROM lib/sms/provider/twilio-provider.ts AND NOT
 // RE-LITIGATED HERE:
@@ -89,8 +94,8 @@ type Config = {
  * it into `unavailable` WITHOUT performing a request.
  */
 function readConfig(): Config | null {
-  // FIRST, AND ON EVERY CALL. An instance that outlives a disarm must go inert at
-  // once, which is what makes the rollback a flag change rather than a redeploy.
+  // FIRST, AND ON EVERY CALL, so there is no cached answer for the resolver and
+  // this file to disagree about. Rollback still requires a redeploy; see ./arming.ts.
   if (!liveMobileVerificationArmed()) return null;
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
