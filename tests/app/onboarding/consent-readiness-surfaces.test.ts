@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import { join } from "node:path";
 import {
   buildGettingStarted,
@@ -27,6 +28,155 @@ const DASHBOARD_PAGE = read("app/(app)/dashboard/page.tsx");
 const DASHBOARD_CARD = read("app/(app)/dashboard/BookingSetupCard.tsx");
 const GETTING_STARTED = read("lib/onboarding/getting-started.ts");
 const CANONICAL = read("lib/booking/new-client-readiness.ts");
+
+/**
+ * ===========================================================================
+ * THE BOUNDED AST TRACE: what does `attentionSources` actually depend on?
+ * ===========================================================================
+ *
+ * WHY A NAME LIST WAS NEVER GOING TO BE ENOUGH. Two earlier versions of this
+ * contract were denylists — first a literal `getNewClientReadiness` call inside
+ * the bundle slice, then five identifier spellings. Both close an INSTANCE of
+ * the coupling, and the space of ways to express it is unbounded. A wrapper
+ * declared after the slice defeated both while every assertion stayed green:
+ *
+ *   const gated = Promise.all([attentionSourcesPromise, bookingReadinessPromise])
+ *     .then(([sources]) => sources);
+ *   <SecondaryStack attentionSources={gated} … />
+ *
+ * So this traces the expression instead of guessing its name: start from the JSX
+ * attribute, and walk local `const` declarations transitively, collecting every
+ * identifier the value depends on. A rename cannot evade it, because nothing is
+ * matched by name — the readiness promise is identified by the declaration that
+ * CALLS the canonical authority.
+ *
+ * DELIBERATELY BOUNDED. Local declarations in this one module, nothing else: no
+ * import following, no cross-file resolution, no type checker. It uses
+ * `ts.createSourceFile`, which this repository already relies on in ten test
+ * files (including the fonts guard, which parses the middleware matcher rather
+ * than grepping it), so no parser dependency is added for this.
+ * ===========================================================================
+ */
+function dashboardPageSource(): ts.SourceFile {
+  return ts.createSourceFile(
+    "page.tsx",
+    DASHBOARD_PAGE,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX,
+  );
+}
+
+/** Every `const <name> = <init>` at any depth in the module. */
+function localDeclarations(sf: ts.SourceFile): Map<string, ts.Expression> {
+  const out = new Map<string, ts.Expression>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer
+    ) {
+      out.set(node.name.text, node.initializer);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** The expression a JSX attribute on a given element is given. */
+function jsxAttributeExpression(
+  sf: ts.SourceFile,
+  element: string,
+  attribute: string,
+): ts.Expression | null {
+  let found: ts.Expression | null = null;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    const opening = ts.isJsxSelfClosingElement(node)
+      ? node
+      : ts.isJsxElement(node)
+        ? node.openingElement
+        : null;
+    if (
+      opening &&
+      ts.isIdentifier(opening.tagName) &&
+      opening.tagName.text === element
+    ) {
+      for (const attr of opening.attributes.properties) {
+        if (
+          ts.isJsxAttribute(attr) &&
+          ts.isIdentifier(attr.name) &&
+          attr.name.text === attribute &&
+          attr.initializer &&
+          ts.isJsxExpression(attr.initializer) &&
+          attr.initializer.expression
+        ) {
+          found = attr.initializer.expression;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/**
+ * Every identifier an expression depends on, following local declarations.
+ *
+ * TRANSITIVE, so a chain of renames is not an escape: `a = readinessPromise;
+ * b = Promise.all([bundle, a]); c = b.then(…)` reports `a` and `b` from `c`.
+ * Cycle-guarded by the `seen` set.
+ */
+function dependencyClosure(
+  expr: ts.Expression,
+  decls: Map<string, ts.Expression>,
+): Set<string> {
+  const seen = new Set<string>();
+  const walk = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      const name = node.text;
+      if (!seen.has(name)) {
+        seen.add(name);
+        const init = decls.get(name);
+        if (init) walk(init);
+      }
+      return;
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(expr);
+  return seen;
+}
+
+/**
+ * The local names that ARE the canonical readiness promise, found structurally.
+ *
+ * A declaration qualifies when its initializer calls `getNewClientReadiness`.
+ * Nothing is matched by the name `bookingReadinessPromise`, so renaming it
+ * changes nothing — which is the whole point of tracing rather than listing.
+ */
+function readinessPromiseNames(decls: Map<string, ts.Expression>): Set<string> {
+  const names = new Set<string>();
+  for (const [name, init] of decls) {
+    let calls = false;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "getNewClientReadiness"
+      ) {
+        calls = true;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(init);
+    if (calls) names.add(name);
+  }
+  return names;
+}
 
 const CONSENT_ITEM_KEY = "treatment-consent";
 
@@ -302,69 +452,152 @@ describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
     );
   });
 
-  it("readiness is started BESIDE the bundle, and cannot be smuggled back in", () => {
-    // ONB-03 P2 #2. The first version of this contract rejected only a LITERAL
-    // `getNewClientReadiness` call inside the sliced bundle. That is evadable in
-    // one line: declare `bookingReadinessPromise` first, then list it as a MEMBER
-    // of `attentionSourcesPromise`. The call text is then outside the slice, the
-    // `settleLater(...)` assertion below still passes, and the dependency this
-    // contract exists to forbid is quietly restored.
-    //
-    // BOTH DELIMITERS ARE PROVED BEFORE ANYTHING IS INSPECTED, because a slice
-    // between two indexOf results that did not match is `""` — and every
-    // `not.toContain` against an empty string passes. A reshaped page.tsx would
-    // otherwise satisfy this contract vacuously.
+  it("`attentionSources` does not depend on readiness — traced, not name-matched", () => {
+    // ONB-03 P2, THIRD AND FINAL SHAPE. The property is structural: the value
+    // handed to `attentionSources` must not depend, directly or through any chain
+    // of local aliases or wrappers, on the promise that calls the canonical
+    // authority. Nothing here matches `bookingReadinessPromise` by name, so a
+    // rename is not an escape.
+    const sf = dashboardPageSource();
+    const decls = localDeclarations(sf);
+    const readiness = readinessPromiseNames(decls);
+
+    // THE ANCHOR, PROVED FIRST. If the authority call were renamed away or the
+    // prop disappeared, every assertion below would pass on an empty set.
+    expect(
+      readiness.size,
+      "no local declaration calls getNewClientReadiness — the trace has no anchor",
+    ).toBeGreaterThan(0);
+
+    const attentionExpr = jsxAttributeExpression(sf, "SecondaryStack", "attentionSources");
+    expect(attentionExpr, "SecondaryStack has no attentionSources prop").not.toBeNull();
+
+    const closure = dependencyClosure(attentionExpr!, decls);
+    expect(closure.size, "the dependency closure is empty").toBeGreaterThan(0);
+    // The closure really reaches the bundle, so it is tracing the right thing.
+    expect(closure).toContain("attentionSourcesPromise");
+
+    for (const name of readiness) {
+      expect(
+        closure,
+        `attentionSources depends on ${name}, the canonical readiness promise`,
+      ).not.toContain(name);
+    }
+  });
+
+  it("canonical readiness is still its OWN independent prop", () => {
+    // The other half: decoupled is not enough if it stopped being passed at all.
+    const sf = dashboardPageSource();
+    const decls = localDeclarations(sf);
+    const readiness = readinessPromiseNames(decls);
+    const readinessExpr = jsxAttributeExpression(sf, "SecondaryStack", "bookingReadiness");
+    expect(readinessExpr, "SecondaryStack has no bookingReadiness prop").not.toBeNull();
+    const closure = dependencyClosure(readinessExpr!, decls);
+    // It IS the readiness promise...
+    expect([...readiness].some((n) => closure.has(n))).toBe(true);
+    // ...and it does not drag the bundle in behind it, which would couple them
+    // in the other direction.
+    expect(closure).not.toContain("attentionSourcesPromise");
+    // Still deferred the same way as the page's other reads.
+    expect(PAGE_CODE).toMatch(
+      /bookingReadinessPromise = settleLater\([\s\S]{0,160}getNewClientReadiness\(studio\)/,
+    );
+    // And the stack receives a promise, not a resolved value.
+    expect(STACK_CODE).toMatch(/bookingReadiness: Promise<NewClientReadiness \| null>/);
+  });
+
+  it("the bundle slice delimiters still exist, and the obsolete read is still gone", () => {
+    // Kept from the previous shape: the textual slice is no longer how coupling
+    // is detected, but the delimiters and the vestigial-read absence are separate
+    // facts worth holding, and a missing delimiter must fail loudly rather than
+    // yield an empty slice that satisfies everything.
     const open = PAGE_CODE.indexOf("attentionSourcesPromise");
     expect(open, "the bundle's opening delimiter is missing").toBeGreaterThan(-1);
     const close = PAGE_CODE.indexOf("] as const)", open);
     expect(close, "the bundle's closing delimiter is missing").toBeGreaterThan(open);
     const bundle = PAGE_CODE.slice(open, close);
     expect(bundle.length, "the sliced bundle is empty").toBeGreaterThan(40);
-    // The slice really is the bundle: it contains members we know are in it.
     expect(bundle).toContain("getClientBirthdaysForMonth");
-
-    // NEITHER THE CALL NOR ANY ALIAS OF IT may appear as a member.
-    for (const needle of [
-      "getNewClientReadiness",
-      "bookingReadinessPromise",
-      "bookingReadiness",
-      "NewClientReadiness",
-      "readiness",
-    ]) {
-      expect(bundle, `the bundle must not carry \`${needle}\``).not.toContain(needle);
-    }
-
-    // AND IT IS STILL AN INDEPENDENT SIBLING DEFERRED READ, deferred the same way
-    // as the page's others so a rejection while nothing awaits it cannot become an
-    // unhandled rejection.
-    expect(PAGE_CODE).toMatch(
-      /bookingReadinessPromise = settleLater\([\s\S]{0,160}getNewClientReadiness\(studio\)/,
-    );
-    // Declared OUTSIDE the bundle's span, which is what "sibling" means here.
-    const decl = PAGE_CODE.indexOf("bookingReadinessPromise = settleLater");
-    expect(decl, "the sibling declaration is missing").toBeGreaterThan(-1);
-    expect(decl > close, "the sibling must be declared outside the bundle").toBe(true);
-    // The stack receives a promise, not a resolved value.
-    expect(STACK_CODE).toMatch(/bookingReadiness: Promise<NewClientReadiness \| null>/);
+    // The original P2: a read nothing consumes can still reject the route.
+    expect(PAGE_CODE).not.toContain("getAvailabilityDefaults");
+    expect(STACK_CODE).not.toContain("availabilityDefaults");
   });
 
-  it("ANTI-VACUITY — the alias contract can actually fail", () => {
-    // Every assertion above is a `not.toContain` over a slice. These prove the
-    // slice machinery reports a violation rather than passing silently: the same
-    // needles are run against a bundle that DOES carry an aliased member.
-    const smuggled = `attentionSourcesPromise = settleLater(
-      Promise.all([
-        countIntakesAwaitingReview(supabase, studio.id),
-        getClientBirthdaysForMonth(studio.id, 1),
-        isOwner ? bookingReadinessPromise : Promise.resolve(null),
-      ] as const)`;
-    const open = smuggled.indexOf("attentionSourcesPromise");
-    const close = smuggled.indexOf("] as const)", open);
-    expect(close).toBeGreaterThan(open);
-    const bundle = smuggled.slice(open, close);
-    expect(bundle).toContain("bookingReadinessPromise");
-    // ...which is precisely what the real contract forbids.
-    expect(bundle).toContain("getClientBirthdaysForMonth");
+  it("ANTI-VACUITY — the trace REJECTS every evasion shape", () => {
+    // The five shapes, run through the same tracer against synthetic modules. A
+    // denylist passes these; a trace must not. Without this block the assertions
+    // above are a claim about code that does not exist.
+    const evasions: Array<[string, string]> = [
+      [
+        "direct member",
+        `const r = settleLater(getNewClientReadiness(studio));
+         const bundle = settleLater(Promise.all([countX(), r] as const));
+         const el = <SecondaryStack attentionSources={bundle} bookingReadiness={r} />;`,
+      ],
+      [
+        "one alias",
+        `const r = settleLater(getNewClientReadiness(studio));
+         const a = r;
+         const bundle = settleLater(Promise.all([countX(), a] as const));
+         const el = <SecondaryStack attentionSources={bundle} bookingReadiness={r} />;`,
+      ],
+      [
+        "two aliases",
+        `const r = settleLater(getNewClientReadiness(studio));
+         const a = r;
+         const b = a;
+         const bundle = settleLater(Promise.all([countX(), b] as const));
+         const el = <SecondaryStack attentionSources={bundle} bookingReadiness={r} />;`,
+      ],
+      [
+        "Promise.all wrapper",
+        `const r = settleLater(getNewClientReadiness(studio));
+         const bundle = settleLater(Promise.all([countX()] as const));
+         const gated = Promise.all([bundle, r]).then(([sources]) => sources);
+         const el = <SecondaryStack attentionSources={gated} bookingReadiness={r} />;`,
+      ],
+      [
+        "renamed wrapper through a chain",
+        `const readyThing = settleLater(getNewClientReadiness(studio));
+         const q = readyThing;
+         const bundle = settleLater(Promise.all([countX()] as const));
+         const w = Promise.all([bundle, q]);
+         const z = w.then(([sources]) => sources);
+         const el = <SecondaryStack attentionSources={z} bookingReadiness={readyThing} />;`,
+      ],
+    ];
+
+    for (const [label, code] of evasions) {
+      const sf = ts.createSourceFile(
+        "evasion.tsx",
+        code,
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TSX,
+      );
+      const decls = localDeclarations(sf);
+      const readiness = readinessPromiseNames(decls);
+      expect(readiness.size, `${label}: no anchor found`).toBeGreaterThan(0);
+      const expr = jsxAttributeExpression(sf, "SecondaryStack", "attentionSources");
+      expect(expr, `${label}: no attentionSources prop`).not.toBeNull();
+      const closure = dependencyClosure(expr!, decls);
+      const coupled = [...readiness].some((n) => closure.has(n));
+      expect(coupled, `${label} EVADED the trace`).toBe(true);
+    }
+  });
+
+  it("ANTI-VACUITY — the trace ACCEPTS the decoupled shape", () => {
+    // The positive pole, so the rejections above are not a tracer that reports
+    // coupling for everything.
+    const code = `const r = settleLater(getNewClientReadiness(studio));
+      const bundle = settleLater(Promise.all([countX(), countY()] as const));
+      const el = <SecondaryStack attentionSources={bundle} bookingReadiness={r} />;`;
+    const sf = ts.createSourceFile("clean.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const decls = localDeclarations(sf);
+    const readiness = readinessPromiseNames(decls);
+    const expr = jsxAttributeExpression(sf, "SecondaryStack", "attentionSources");
+    const closure = dependencyClosure(expr!, decls);
+    expect([...readiness].some((n) => closure.has(n))).toBe(false);
   });
 
   it("a non-exhaustive blocker list says so", () => {
