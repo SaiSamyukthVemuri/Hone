@@ -295,9 +295,35 @@ export async function autoSendReceiptAfterCharge(args: {
     return { attempted: false, reason: "charge_not_definitive" };
   }
 
-  // GATE 2 — did THIS invocation commit it? See the header: a replay is a
-  // legitimate `ok: true` that owes no receipt.
-  if (charge.committedNow !== true) {
+  // GATE 2 — is a receipt OWED for a charge this request caused? See the header:
+  // a replay is a legitimate `ok: true` that owes nothing.
+  //
+  // PAY-ZERO-ROW-RACE-01. `committedNow` alone was too narrow and silently lost
+  // receipts. It answers "did I write the ledger row", but the receipt question
+  // is "did a brand-new charge happen that nobody has receipted". Those came
+  // apart in a real incident: the payment_intent.succeeded webhook stamped the
+  // row microseconds before the synchronous write, so `committedNow` was true
+  // ZERO times for a charge that really moved 150.00 CAD. The webhook path sends
+  // no receipts at all, so nothing else would have sent it — in the incident a
+  // human noticed and clicked Send receipt 13 seconds later.
+  //
+  // `concurrentlyReconciled` is that case, and ONLY that case: this invocation
+  // created and confirmed the PaymentIntent, Stripe said succeeded, and an
+  // authoritative re-read proved the row records the IDENTICAL charge. It is
+  // never set for a replay, and never on the reconcile-an-existing-PaymentIntent
+  // path where the charge pre-dates the request.
+  //
+  // AT MOST ONE RECEIPT SURVIVES THIS WIDENING, on two independent grounds:
+  //   1. Only one invocation can reach either state per attempt, because
+  //      `claim_session_payment_charge_attempt` atomically moves ready ->
+  //      pending_stripe and answers `not_ready` to everyone else, so only one
+  //      invocation ever creates a PaymentIntent.
+  //   2. `sendPaymentChargeReceipt` claims `receipt_status` in the database,
+  //      which is what already makes an automatic send and a simultaneous
+  //      manual click safe. That backstop is unchanged.
+  const receiptOwed =
+    charge.committedNow === true || charge.concurrentlyReconciled === true;
+  if (!receiptOwed) {
     return { attempted: false, reason: "replay_not_a_new_charge" };
   }
 

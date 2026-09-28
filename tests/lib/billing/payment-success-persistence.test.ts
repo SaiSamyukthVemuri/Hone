@@ -52,7 +52,12 @@ const count = (s: string, re: RegExp): number => (s.match(re) ?? []).length;
 describe("writeSucceededOutcome reports whether the success was persisted", () => {
   it("declares a SuccessPersistenceResult union (persisted true | false+reason)", () => {
     expect(CHARGE).toMatch(/type SuccessPersistenceResult =/);
-    expect(CHARGE).toMatch(/\{\s*persisted:\s*true\s*\}/);
+    // PAY-ZERO-ROW-RACE-01: `persisted: true` now carries WHICH writer persisted
+    // it, so both arms are pinned by name. A bare `{ persisted: true }` is no
+    // longer the shape, and the union must still distinguish the two writers --
+    // that distinction is what the receipt decision keys off.
+    expect(CHARGE).toMatch(/persisted:\s*true;\s*by:\s*"this_invocation"/);
+    expect(CHARGE).toMatch(/persisted:\s*true;\s*by:\s*"concurrent_writer"/);
     expect(CHARGE).toMatch(
       /persisted:\s*false;\s*reason:\s*"db_error"\s*\|\s*"zero_rows"/,
     );
@@ -69,8 +74,32 @@ describe("writeSucceededOutcome reports whether the success was persisted", () =
     expect(sig).toBe("Promise<SuccessPersistenceResult>");
   });
 
-  it("returns persisted:true only after a proven (non-error, non-zero-row) write", () => {
-    expect(CHARGE).toMatch(/return \{ persisted: true \};/);
+  it("returns persisted:true only after a proven write, and names the writer", () => {
+    // The clean path: our own conditional UPDATE matched a row.
+    expect(CHARGE).toMatch(
+      /return \{ persisted: true, by: "this_invocation" \};/,
+    );
+  });
+
+  it("returns persisted:true by:concurrent_writer ONLY inside a proven-benign recheck", () => {
+    // PAY-ZERO-ROW-RACE-01. This arm reports a correct ledger written by somebody
+    // else, so it may only be reachable from the verified branch. Pinned two ways:
+    // the return exists, and it sits AFTER the classifier call and INSIDE the
+    // `verdict.benign` branch -- never on a bare zero-row path.
+    expect(CHARGE).toMatch(
+      /return \{ persisted: true, by: "concurrent_writer" \};/,
+    );
+    const zeroRowBlock =
+      CHARGE.slice(CHARGE.indexOf("if (!updatedRows || updatedRows.length === 0)"));
+    const classifyAt = zeroRowBlock.indexOf("classifyZeroRowSuccessWrite({");
+    const benignAt = zeroRowBlock.indexOf("if (verdict.benign)");
+    const concurrentAt = zeroRowBlock.indexOf('by: "concurrent_writer"');
+    expect(classifyAt, "the classifier must be called").toBeGreaterThan(-1);
+    expect(benignAt, "the benign branch must exist").toBeGreaterThan(classifyAt);
+    expect(
+      concurrentAt,
+      "the concurrent-writer success must sit inside the proven-benign branch",
+    ).toBeGreaterThan(benignAt);
   });
 
   it("returns persisted:false reason 'db_error' on a DB error", () => {

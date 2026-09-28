@@ -551,11 +551,25 @@ describe("J — a replay is a real success that owes no receipt", () => {
     const code = runner.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
     const succeededReturns = code.match(/outcome: "succeeded",/g) ?? [];
-    const declarations = code.match(/committedNow: (true|false),/g) ?? [];
-    // Every succeeded return declares, and none is missing.
-    expect(declarations).toHaveLength(succeededReturns.length);
-    expect(declarations.filter((d) => d.includes("true"))).toHaveLength(2);
-    expect(declarations.filter((d) => d.includes("false"))).toHaveLength(2);
+    // PAY-ZERO-ROW-RACE-01. The two PERSISTED sites no longer write a literal
+    // `true`: they derive it from which writer actually stamped the row, which is
+    // strictly more precise than the literal it replaced. So the census counts
+    // literals AND derivations, and still requires every succeeded return to
+    // declare exactly one.
+    const literals = code.match(/committedNow: (true|false),/g) ?? [];
+    const derived =
+      code.match(/committedNow: persistence\.by === "this_invocation",/g) ?? [];
+    expect(literals.length + derived.length).toBe(succeededReturns.length);
+    // The two persisted transitions derive it; the two replays declare false.
+    expect(derived).toHaveLength(2);
+    expect(literals.filter((d) => d.includes("false"))).toHaveLength(2);
+    expect(literals.filter((d) => d.includes("true"))).toHaveLength(0);
+    // And exactly ONE site may claim the concurrent-writer case: the fresh
+    // create-and-confirm path. The reconcile path must never claim it, because
+    // its PaymentIntent pre-dates the invocation.
+    expect(
+      code.match(/concurrentlyReconciled: persistence\.by === "concurrent_writer",/g) ?? [],
+    ).toHaveLength(1);
 
     // Each `committedNow: true` is preceded by the persistence gate that makes
     // it exclusive — not merely by a Stripe success.
@@ -574,7 +588,12 @@ describe("J — a replay is a real success that owes no receipt", () => {
     );
     const code = helper.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
-    expect(code).toContain("charge.committedNow !== true");
+    // PAY-ZERO-ROW-RACE-01. The gate now admits two ways a receipt can be owed,
+    // and BOTH are read from the runner's own result -- which is the property this
+    // test exists to protect. The negative assertions below are unchanged.
+    expect(code).toContain("charge.committedNow === true");
+    expect(code).toContain("charge.concurrentlyReconciled === true");
+    expect(code).toContain("if (!receiptOwed)");
     // No process-local memo: it does not survive two serverless instances.
     expect(code).not.toMatch(/\bnew Set\b/);
     expect(code).not.toMatch(/\bnew Map\b/);
