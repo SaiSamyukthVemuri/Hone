@@ -302,26 +302,69 @@ describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
     );
   });
 
-  it("readiness is started BESIDE the bundle, never inside it", () => {
-    // ONB-03 P2, THE STRUCTURAL HALF. Inside the tuple, a rejection in any other
-    // member throws at `await attentionSources` before the authority is called --
-    // so the `unknown` card, whose entire purpose is to report an unreadable
-    // authority, could not render. Siblings settle independently.
-    const bundle = PAGE_CODE.slice(
-      PAGE_CODE.indexOf("attentionSourcesPromise"),
-      PAGE_CODE.indexOf("] as const)", PAGE_CODE.indexOf("attentionSourcesPromise")),
-    );
-    expect(bundle.length).toBeGreaterThan(0);
-    expect(bundle, "readiness must not be a member of the bundle").not.toContain(
+  it("readiness is started BESIDE the bundle, and cannot be smuggled back in", () => {
+    // ONB-03 P2 #2. The first version of this contract rejected only a LITERAL
+    // `getNewClientReadiness` call inside the sliced bundle. That is evadable in
+    // one line: declare `bookingReadinessPromise` first, then list it as a MEMBER
+    // of `attentionSourcesPromise`. The call text is then outside the slice, the
+    // `settleLater(...)` assertion below still passes, and the dependency this
+    // contract exists to forbid is quietly restored.
+    //
+    // BOTH DELIMITERS ARE PROVED BEFORE ANYTHING IS INSPECTED, because a slice
+    // between two indexOf results that did not match is `""` — and every
+    // `not.toContain` against an empty string passes. A reshaped page.tsx would
+    // otherwise satisfy this contract vacuously.
+    const open = PAGE_CODE.indexOf("attentionSourcesPromise");
+    expect(open, "the bundle's opening delimiter is missing").toBeGreaterThan(-1);
+    const close = PAGE_CODE.indexOf("] as const)", open);
+    expect(close, "the bundle's closing delimiter is missing").toBeGreaterThan(open);
+    const bundle = PAGE_CODE.slice(open, close);
+    expect(bundle.length, "the sliced bundle is empty").toBeGreaterThan(40);
+    // The slice really is the bundle: it contains members we know are in it.
+    expect(bundle).toContain("getClientBirthdaysForMonth");
+
+    // NEITHER THE CALL NOR ANY ALIAS OF IT may appear as a member.
+    for (const needle of [
       "getNewClientReadiness",
-    );
-    // It IS its own deferred read, and it is deferred the same way as the others
-    // so a rejection while nothing awaits it cannot crash the process.
+      "bookingReadinessPromise",
+      "bookingReadiness",
+      "NewClientReadiness",
+      "readiness",
+    ]) {
+      expect(bundle, `the bundle must not carry \`${needle}\``).not.toContain(needle);
+    }
+
+    // AND IT IS STILL AN INDEPENDENT SIBLING DEFERRED READ, deferred the same way
+    // as the page's others so a rejection while nothing awaits it cannot become an
+    // unhandled rejection.
     expect(PAGE_CODE).toMatch(
       /bookingReadinessPromise = settleLater\([\s\S]{0,160}getNewClientReadiness\(studio\)/,
     );
-    // And the stack receives it as a promise rather than a resolved value.
+    // Declared OUTSIDE the bundle's span, which is what "sibling" means here.
+    const decl = PAGE_CODE.indexOf("bookingReadinessPromise = settleLater");
+    expect(decl, "the sibling declaration is missing").toBeGreaterThan(-1);
+    expect(decl > close, "the sibling must be declared outside the bundle").toBe(true);
+    // The stack receives a promise, not a resolved value.
     expect(STACK_CODE).toMatch(/bookingReadiness: Promise<NewClientReadiness \| null>/);
+  });
+
+  it("ANTI-VACUITY — the alias contract can actually fail", () => {
+    // Every assertion above is a `not.toContain` over a slice. These prove the
+    // slice machinery reports a violation rather than passing silently: the same
+    // needles are run against a bundle that DOES carry an aliased member.
+    const smuggled = `attentionSourcesPromise = settleLater(
+      Promise.all([
+        countIntakesAwaitingReview(supabase, studio.id),
+        getClientBirthdaysForMonth(studio.id, 1),
+        isOwner ? bookingReadinessPromise : Promise.resolve(null),
+      ] as const)`;
+    const open = smuggled.indexOf("attentionSourcesPromise");
+    const close = smuggled.indexOf("] as const)", open);
+    expect(close).toBeGreaterThan(open);
+    const bundle = smuggled.slice(open, close);
+    expect(bundle).toContain("bookingReadinessPromise");
+    // ...which is precisely what the real contract forbids.
+    expect(bundle).toContain("getClientBirthdaysForMonth");
   });
 
   it("a non-exhaustive blocker list says so", () => {

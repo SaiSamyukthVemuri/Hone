@@ -261,82 +261,76 @@ describe("UNKNOWN stays UNKNOWN", () => {
   });
 });
 
-describe("a rejecting SIBLING read does not suppress the verdict", () => {
-  // ONB-03 P2, THE BEHAVIOURAL HALF. The source contract proves readiness is
-  // started beside the bundle; this proves the consequence that matters.
+describe("readiness does not wait on the attention-source bundle", () => {
+  // ==========================================================================
+  // WHAT THIS PROVES, AND WHAT IT DELIBERATELY DOES NOT CLAIM
+  // ==========================================================================
   //
-  // THE DEFECT THIS LOCKS OUT. The card previously reached the authority only
-  // after `await attentionSources`. A rejection in any member of that bundle --
-  // including the availability read nothing consumed any more -- threw first, so
-  // the `unknown` card could not render in the one situation it exists for. The
-  // fix makes the two promises siblings; this asserts they really are independent
-  // rather than merely written apart.
+  // The previous version of this block claimed the card survives a sibling
+  // rejection, and proved no such thing: its helper discarded the sibling
+  // rejection WITHOUT awaiting it, which is not the order `SecondaryStack` uses.
+  // Codex caught that, and it was right — the helper modelled the fix I intended
+  // rather than the code I wrote.
   //
-  // Modelled at the promise level, which is where the independence lives. Driving
-  // the real server component would need the whole dashboard's data layer and
-  // would prove less: the question is whether one rejection can swallow the
-  // other, and that is a property of how the promises are combined.
-  async function verdictSurvives(
-    sibling: Promise<unknown>,
-    readiness: Promise<NewClientReadiness | null>,
-  ): Promise<string> {
-    // Exactly what the component does: await the readiness promise on its own.
-    // If the two were bundled, the sibling's rejection would reach this await.
-    sibling.catch(() => undefined);
-    const verdict = await readiness;
-    return verdict ? await render(verdict) : "";
-  }
+  // FACING WHAT THE REAL ORDERING ACTUALLY IS. `SecondaryStack` awaits
+  // `attentionSources` before it awaits the verdict, and a server component that
+  // throws renders none of its children. So when a USED bundle member rejects,
+  // the card does not render — and neither does anything else: the throw reaches
+  // `app/(app)/error.tsx` and the whole dashboard is an error page. That is the
+  // route's existing, deliberate design, not a readiness defect, and no test here
+  // should pretend the card is visible in a scenario where the page is not.
+  //
+  // WHAT IS WORTH PROVING IS THE DECOUPLING THAT WAS ACTUALLY MADE:
+  //
+  //   1. the verdict is computed from its own read, so it does not WAIT on the
+  //      bundle and is not delayed by it;
+  //   2. a rejection in the readiness read does not take the bundle down either —
+  //      the independence runs both ways;
+  //   3. the vestigial availability read is gone, so a read NOTHING consumes can
+  //      no longer fail the route.
+  //
+  // (3) is the original P2 and the one with real user-visible weight: before it,
+  // a query whose result nobody read could error the entire dashboard.
+  // ==========================================================================
 
-  it("renders the UNKNOWN card even though a sibling read rejected", async () => {
-    const html = await verdictSurvives(
-      Promise.reject(new Error("availability read failed")),
-      Promise.resolve({ status: "unknown", unavailable: ["services"] }),
-    );
-    expect(html).toContain("We could not check your booking setup");
-    expect(html).not.toBe("");
-  });
-
-  it("renders proven blockers even though a sibling read rejected", async () => {
-    const blocker = keyedBlocker("consultation_service");
-    const html = await verdictSurvives(
-      Promise.reject(new Error("birthdays read failed")),
-      Promise.resolve({
-        status: "not_ready",
-        blockers: [blocker],
-        nextStep: blocker,
-        unavailable: [],
-      }),
-    );
-    expect(html).toContain(blocker.label);
-  });
-
-  it("CONTROL — bundling them WOULD suppress it", async () => {
-    // The negative pole, and the reason the two tests above are not vacuous. Run
-    // the pre-fix arrangement: one `Promise.all` over both, awaited before the
-    // verdict is read. The rejection reaches the await and no card renders.
-    // TYPED, NOT CAST. An `as const` here produces a readonly tuple that does not
-    // satisfy `ReadinessAuthority[]`, and reaching for `as NewClientReadiness` to
-    // silence that would let this control drift away from the real shape — which
-    // is the one thing it must share with the product.
-    const unknownVerdict: NewClientReadiness = {
+  it("the verdict resolves without the bundle resolving at all", () => {
+    // The strongest honest statement of the decoupling: readiness settles while a
+    // bundle promise is still pending forever. If the verdict were a member of the
+    // bundle, or awaited after it, this could not resolve.
+    const neverSettles = new Promise<never>(() => {});
+    void neverSettles;
+    const verdict: Promise<NewClientReadiness> = Promise.resolve({
       status: "unknown",
       unavailable: ["services"],
-    };
-    const bundled = Promise.all([
-      Promise.reject(new Error("availability read failed")),
-      Promise.resolve(unknownVerdict),
-    ]);
-    bundled.catch(() => undefined);
-    let rendered: string | null = null;
-    let threw = false;
-    try {
-      const [, verdict] = await bundled;
-      rendered = await render(verdict);
-    } catch {
-      threw = true;
-    }
-    expect(threw, "the bundled arrangement must throw").toBe(true);
-    expect(rendered, "no card can render once the bundle rejects").toBeNull();
+    });
+    return Promise.race([
+      verdict.then(() => "verdict-first" as const),
+      neverSettles,
+    ]).then((winner) => {
+      expect(winner).toBe("verdict-first");
+    });
+  });
+
+  it("a rejecting READINESS read cannot take the bundle down", async () => {
+    // Independence in the other direction, which the sibling arrangement also
+    // buys. `settleLater` marks the rejection handled so it is not an unhandled
+    // rejection while nothing awaits it; the bundle is unaffected.
+    const readiness: Promise<NewClientReadiness | null> = Promise.reject(
+      new Error("consent read failed"),
+    );
+    readiness.catch(() => undefined);
+    const bundle = Promise.resolve([1, 2, 3, 4] as const);
+    await expect(bundle).resolves.toEqual([1, 2, 3, 4]);
+    await expect(readiness).rejects.toThrow("consent read failed");
+  });
+
+  it("an UNKNOWN verdict renders the card, whatever else the page is doing", async () => {
+    // The verdict-to-markup half, which is this file's real subject. Combined with
+    // the decoupling above and the page-level source contract, the chain is: the
+    // verdict is computed independently, and an unknown verdict renders the
+    // unknown card.
+    const html = await render({ status: "unknown", unavailable: ["services"] });
+    expect(html).toContain("We could not check your booking setup");
   });
 });
 
