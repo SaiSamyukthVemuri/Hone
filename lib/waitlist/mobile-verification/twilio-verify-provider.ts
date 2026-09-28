@@ -1,0 +1,266 @@
+import "server-only";
+import type {
+  MobileVerificationProvider,
+  VerificationCheckOutcome,
+  VerificationDestination,
+  VerificationStartOutcome,
+} from "./types";
+
+// The REAL Twilio Verify adapter (WAIT B2b-2).
+//
+// THIS FILE IS INERT UNTIL SOMETHING ARMS IT. `./index.ts` hands it out only
+// when `liveMobileVerificationArmed()` is true, which needs an explicit flag AND
+// a Verify Service SID AND both account credentials. Nothing in this file
+// arms itself, and it has no module-load side effect: `readConfig()` runs per
+// call, so a process that was never configured never holds a usable client and
+// an env change needs no restart to take effect.
+//
+// PHILOSOPHY, INHERITED FROM lib/sms/provider/twilio-provider.ts AND NOT
+// RE-LITIGATED HERE:
+//   * direct `fetch` against the REST API; the `twilio` npm SDK is NOT added.
+//   * Basic Auth with the deployment-global account credentials.
+//   * every call is bounded by an AbortController timeout.
+//   * failures collapse to the caller's own vocabulary; nothing throws out.
+//
+// LOGGING DISCIPLINE: THIS FILE EMITS NO LOGS AT ALL. It holds an Auth Token, a
+// full phone number, a one-time code and a raw provider payload in local scope.
+// The simplest defensible position for such a module is that there is no log
+// statement to audit, so none can drift into carrying one of them. Callers get a
+// single enum value and decide what is safe to record.
+// `tests/source-guards/mobile-verification-provider-guards.test.ts` asserts the
+// absence rather than trusting this paragraph.
+//
+// WHY THE VOCABULARY IS NOT THE PROVISIONING TAXONOMY. lib/sms/provider/types.ts
+// has a rich `ProviderError` because provisioning reconciles money-spending
+// resources. Possession proof needs the opposite: the four coarse values in
+// ./types.ts, which exist so that a surface cannot accidentally tell an
+// anonymous caller WHICH way their attempt failed. Importing the richer taxonomy
+// here would put a vocabulary in reach that this boundary is designed not to have.
+
+const VERIFY_BASE = "https://verify.twilio.com/v2";
+
+/**
+ * Shorter than provisioning's 15s on purpose: a person is waiting on a form, and
+ * a verification request that has not answered in ten seconds is not going to
+ * answer usefully. An expired budget is `unavailable`, which invites a retry.
+ */
+const TIMEOUT_MS = 10_000;
+
+/**
+ * SMS AND ONLY SMS, AS A CONSTANT RATHER THAN A PARAMETER.
+ *
+ * Nothing above this boundary may select a channel. A channel is a claim about
+ * what the person agreed to receive, and `./types.ts` deliberately gives the
+ * boundary nothing but an E.164 string — no consent state, no studio, no entry.
+ * A caller able to ask for `channel: "call"` would be making a consent decision
+ * in a module that holds none of the facts needed to make it.
+ */
+const CHANNEL = "sms";
+
+type Config = {
+  accountSid: string;
+  authToken: string;
+  serviceSid: string;
+};
+
+/**
+ * Read per call, never at module load.
+ *
+ * Returning null is a real outcome and not a defensive flourish: it is what an
+ * armed-by-flag-but-unconfigured deployment looks like, and both operations turn
+ * it into `unavailable` WITHOUT performing a request. `./index.ts` should already
+ * have refused to hand this adapter out in that state; this is the second of the
+ * two independent checks, because one check is one place to get it wrong.
+ */
+function readConfig(): Config | null {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const serviceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
+  if (!accountSid || !authToken || !serviceSid) return null;
+  return { accountSid, authToken, serviceSid };
+}
+
+type RawResponse = { status: number; json: unknown };
+
+/**
+ * One bounded POST. Returns the status and parsed body, or null for a transport
+ * failure (timeout, abort, DNS, TLS, connection reset).
+ *
+ * NULL IS NOT "FAILED", IT IS "UNKNOWN", and the distinction is the whole reason
+ * both callers map it to `unavailable` rather than to a refusal. A timed-out
+ * check may have been approved on Twilio's side; reporting it as `rejected` would
+ * tell a person their code was wrong about a proof that may well have succeeded.
+ */
+async function post(
+  config: Config,
+  path: string,
+  form: URLSearchParams,
+): Promise<RawResponse | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${VERIFY_BASE}/Services/${config.serviceSid}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from(
+          `${config.accountSid}:${config.authToken}`,
+        ).toString("base64")}`,
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+      signal: controller.signal,
+    });
+    let json: unknown = null;
+    try {
+      json = await res.json();
+    } catch {
+      // Non-JSON body. Left null; both callers fail closed on the shape check.
+    }
+    return { status: res.status, json };
+  } catch {
+    // Deliberately not distinguishing a timeout from a network error. Both are
+    // "we do not know what happened", both are retryable, and neither may be
+    // reported as a statement about the person's code.
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** The provider's `status` string, or null when the body is not the shape we expect. */
+function statusOf(json: unknown): string | null {
+  if (!json || typeof json !== "object") return null;
+  const raw = (json as { status?: unknown }).status;
+  return typeof raw === "string" ? raw : null;
+}
+
+/** The provider's numeric error code, or null. */
+function errorCodeOf(json: unknown): number | null {
+  if (!json || typeof json !== "object") return null;
+  const raw = (json as { code?: unknown }).code;
+  return typeof raw === "number" ? raw : null;
+}
+
+/**
+ * Twilio Verify error codes this adapter recognises.
+ *
+ * THESE ARE REFINEMENTS, NOT THE MAPPING. Every branch below decides first on
+ * the HTTP status class, which is the part that cannot be wrong, and consults a
+ * code only to move an outcome WITHIN a safe default. So if one of these numbers
+ * is ever wrong or retired, the result is a coarser answer — never a promotion,
+ * never a false statement about someone's code, never a retry loop.
+ *
+ *   20429  too many requests
+ *   60202  max check attempts reached for this verification
+ *   60203  max send attempts reached for this destination
+ *   60212  too many concurrent requests for this destination
+ */
+const RATE_LIMIT_CODES = new Set<number>([20429, 60202, 60203, 60212]);
+
+export class TwilioVerifyProvider implements MobileVerificationProvider {
+  async start(destination: VerificationDestination): Promise<VerificationStartOutcome> {
+    const config = readConfig();
+    if (!config) return "unavailable";
+
+    const form = new URLSearchParams();
+    form.set("To", destination.e164);
+    form.set("Channel", CHANNEL);
+
+    const res = await post(config, "/Verifications", form);
+    if (!res) return "unavailable";
+
+    if (res.status === 201 || res.status === 200) {
+      // A started verification is `pending` — it is waiting for the person. Any
+      // other status on a 2xx here means this adapter and Verify disagree about
+      // the contract, which is an outage and not a refusal to report.
+      //
+      // `approved` IS EXPLICITLY NOT ACCEPTED ON START. A start that reported an
+      // approval would be a possession proof nobody proved, and it is the one
+      // response shape that must never be trusted from this endpoint.
+      return statusOf(res.json) === "pending" ? "started" : "unavailable";
+    }
+
+    if (res.status === 429) return "rate_limited";
+    if (res.status === 401 || res.status === 403) {
+      // Bad or unauthorized credentials. Not the person's fault and not a
+      // statement about their number, so it must not surface as a refusal.
+      return "unavailable";
+    }
+    if (res.status >= 500) return "unavailable";
+
+    if (res.status >= 400) {
+      const code = errorCodeOf(res.json);
+      if (code !== null && RATE_LIMIT_CODES.has(code)) return "rate_limited";
+      // A 4xx that is not a rate limit means Verify will not start a challenge
+      // for this destination — an unroutable number, a landline, a parameter it
+      // rejects. `refused` is the honest answer and it invites no retry.
+      return "refused";
+    }
+
+    return "unavailable";
+  }
+
+  async check(
+    destination: VerificationDestination,
+    code: string,
+  ): Promise<VerificationCheckOutcome> {
+    const config = readConfig();
+    if (!config) return "unavailable";
+
+    const form = new URLSearchParams();
+    form.set("To", destination.e164);
+    form.set("Code", code);
+
+    const res = await post(config, "/VerificationCheck", form);
+    if (!res) return "unavailable";
+
+    if (res.status === 200) {
+      switch (statusOf(res.json)) {
+        case "approved":
+          // THE ONLY VALUE IN THIS FILE THAT CAN LEAD TO A PROMOTION.
+          return "approved";
+        case "pending":
+          // The verification is still open, so the code submitted was not the
+          // right one. This is the ordinary wrong-code case.
+          return "rejected";
+        case "canceled":
+          return "rejected";
+        default:
+          // Includes a body with no `status` at all. An unrecognised 200 is a
+          // contract disagreement, which is an outage — never `rejected`.
+          return "unavailable";
+      }
+    }
+
+    if (res.status === 404) {
+      // NO PENDING VERIFICATION FOR THIS DESTINATION: it expired, or it was
+      // already consumed, or none was ever started.
+      //
+      // THIS COLLAPSES INTO `rejected` ON PURPOSE, and it is the one mapping in
+      // this file chosen for a privacy reason rather than a truth reason.
+      // `./types.ts` requires it: telling an anonymous caller that a code was
+      // "expired rather than wrong" tells them the code EXISTED, which tells them
+      // the number is on a waitlist. Verify deletes a verification on expiry, so
+      // `expired` has no status of its own to report even if we wanted to.
+      return "rejected";
+    }
+
+    if (res.status === 429) return "rate_limited";
+    if (res.status === 401 || res.status === 403) return "unavailable";
+    if (res.status >= 500) return "unavailable";
+
+    if (res.status >= 400) {
+      const code = errorCodeOf(res.json);
+      if (code !== null && RATE_LIMIT_CODES.has(code)) return "rate_limited";
+      // AND HERE `check` DIVERGES FROM `start`, DELIBERATELY. A 4xx on start is
+      // Verify refusing a destination, which is a real refusal. A 4xx on CHECK
+      // is a malformed request — our bug, not a judgement on the person's code —
+      // so it is an outage. `rejected` is a statement about what the person
+      // typed, and only a 200/pending, a 200/canceled or the 404 above earns it.
+      return "unavailable";
+    }
+
+    return "unavailable";
+  }
+}

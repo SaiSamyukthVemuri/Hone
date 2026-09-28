@@ -356,6 +356,54 @@ export function proofWindowMinutes(issuedAt: Date, expiresAt: Date): number {
  * old values while this file and its tests agreed on the new ones. That is the
  * two-competing-maps failure CLAUDE.md §3 names outright.
  */
+/**
+ * WAIT B2b-2 — possession-proof attempt budgets.
+ *
+ * TWO DIMENSIONS, AND THE ENTRY DIMENSION IS CHECKED FIRST, for the reason
+ * PROOF_REQUEST_LIMITS below already gives: a single hammered entry must not also
+ * burn through the shared per-IP budget on its way to being refused.
+ *
+ * `check` IS LOOSER THAN `start` ON PURPOSE. A person mistyping a six-digit code
+ * twice is ordinary; asking for a third text in fifteen minutes is not, and each
+ * `start` costs a real SMS to a real handset. So the send budget is the tight one.
+ *
+ * ---------------------------------------------------------------------------
+ * THESE NUMBERS ARE NOT THE BRUTE-FORCE CONTROL. READ THIS BEFORE TUNING THEM.
+ * ---------------------------------------------------------------------------
+ *
+ * `lib/rate-limit/public.ts` FAILS OPEN by explicit contract: when Upstash is
+ * unconfigured or erroring, every request is allowed. A limiter that can be
+ * bypassed by a Redis outage cannot be an authorization control, and this file's
+ * own PROVIDER FAILURE CLASSIFICATION section takes the same position about
+ * delivery. So these budgets are a COST AND ABUSE DAMPENER.
+ *
+ * The actual brute-force control is the Verify service's own per-verification
+ * attempt ceiling, which is exactly why `lib/waitlist/mobile-verification/types.ts`
+ * refuses to let Hone hold an attempt counter: an invented counter would be the
+ * thing that fails open, and the provider's does not.
+ *
+ * THE CEILING IS NOT YET KNOWN, because creating the Verify service is a provider
+ * action B2b-2 is not authorized to take. It is owner decision D3 in the prebuild
+ * packet, and it is an ACTIVATION blocker rather than a code blocker: nothing here
+ * depends on the value, but nobody should arm live verification while the real
+ * ceiling is a guess. When it is set, record it beside these numbers so the two
+ * are never independently invented.
+ */
+export const MOBILE_VERIFICATION_LIMITS = {
+  start: {
+    /** Per waitlist entry. Each one costs a real SMS, so this is the tight budget. */
+    entry: { limit: 3, window: "15 m" },
+    /** Per IP. Bounds a single source starting challenges across entries. */
+    ip: { limit: 10, window: "1 h" },
+  },
+  check: {
+    /** Per waitlist entry. Mistyping is ordinary; this is not the brute-force control. */
+    entry: { limit: 8, window: "15 m" },
+    /** Per IP. */
+    ip: { limit: 30, window: "1 h" },
+  },
+} as const;
+
 export const PROOF_REQUEST_LIMITS = {
   /** Per invitation. The dominant control: it bounds one recipient's mailbox. */
   invitation: { limit: 3, window: "15 m" },

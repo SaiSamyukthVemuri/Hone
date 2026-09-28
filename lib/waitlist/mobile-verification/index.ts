@@ -1,6 +1,7 @@
 import "server-only";
 import { FakeMobileVerificationProvider } from "./fake-provider";
 import { FailClosedMobileVerificationProvider } from "./fail-closed-provider";
+import { TwilioVerifyProvider } from "./twilio-verify-provider";
 import type { MobileVerificationProvider } from "./types";
 
 // Provider selection for possession proof (WAIT B2b).
@@ -23,13 +24,15 @@ import type { MobileVerificationProvider } from "./types";
 // promotes a standing. So the unarmed branch resolves to
 // FailClosedMobileVerificationProvider, never to the fake.
 //
-// IF YOU ARE ADDING THE REAL ADAPTER: the unarmed branch stays `failClosed`. Do
-// not write `armed ? real : fake`. That was this module's first revision and it
-// was a verification bypass.
+// THE REAL ADAPTER IS NOW HERE (B2b-2), AND THE UNARMED BRANCH IS UNCHANGED: it
+// is still `failClosed`, and it is still not the process-wide test double. An
+// unarmed deployment proves nothing rather than proving something inert.
 //
-// The real adapter therefore needs its OWN flag AND its own Verify Service SID.
-// Nothing sets either today: no Twilio Verify Service exists, and creating one
-// is a provider action this slice is not authorized to take.
+// The real adapter needs its OWN flag AND its own Verify Service SID. NOTHING
+// SETS EITHER TODAY: no Twilio Verify Service exists, and creating one is a
+// provider action B2b-2 is not authorized to take. So this module ships arming-
+// capable and unarmed, which is exactly what keeping the flag separate from the
+// credentials is for.
 //
 // WHAT AN UNCONFIGURED DEPLOYMENT DOES: returns `unavailable` from both
 // operations. Not `refused` — that would tell a caller their code was wrong when
@@ -46,6 +49,10 @@ const VERIFY_SERVICE_SID = "TWILIO_VERIFY_SERVICE_SID";
 
 const fake = new FakeMobileVerificationProvider();
 const failClosed = new FailClosedMobileVerificationProvider();
+// STATELESS, AND CONSTRUCTING IT ARMS NOTHING. It reads its configuration per
+// call rather than at construction, so one instance stays correct across an env
+// change and a process that is never armed never holds a usable client.
+const twilioVerify = new TwilioVerifyProvider();
 
 /** The process-wide fake, for tests and inspection. */
 export function fakeMobileVerificationProvider(): FakeMobileVerificationProvider {
@@ -70,11 +77,11 @@ export function liveMobileVerificationArmed(): boolean {
 }
 
 /**
- * The provider this deployment should use. **FAIL-CLOSED BY DEFAULT.**
+ * The provider this deployment should use. **FAIL-CLOSED UNLESS ARMED.**
  *
- * B2b-1 SHIPS NO REAL ADAPTER, so there is nothing an armed deployment can
- * resolve to yet, and the honest answer is a provider that proves nothing:
- * `unavailable` from both operations, writing nothing and claiming nothing.
+ * An unarmed or half-configured deployment resolves to a provider that proves
+ * nothing: `unavailable` from both operations, writing nothing and claiming
+ * nothing. Only all four pieces of configuration reach the real adapter.
  *
  * THIS RETURNED THE FAKE IN AN EARLIER REVISION, WHICH WAS A VERIFICATION
  * BYPASS. Any surface calling the state machine without injecting a provider
@@ -88,17 +95,27 @@ export function liveMobileVerificationArmed(): boolean {
  * argument to `startMobileVerification` / `checkMobileVerification`. That every
  * test already did so is precisely why the bad default went unexercised.
  *
- * WHEN B2b-2 LANDS the real adapter, this becomes
- * `liveMobileVerificationArmed() ? real : failClosed` — the unarmed branch stays
- * fail-closed, so an unconfigured or half-configured deployment still cannot
- * verify anybody.
+ * AN EARLY RETURN, NOT THE TERNARY THIS COMMENT USED TO PRESCRIBE. The previous
+ * revision said this "becomes `liveMobileVerificationArmed() ? real :
+ * failClosed`". That expression is behaviourally right and it FAILS THE SOURCE
+ * GUARD: tests/source-guards/mobile-verification-provider-guards.test.ts requires
+ * this body to match /return\s+failClosed\b/, and in a ternary `failClosed` is
+ * not adjacent to `return`. A regex cannot tell a correct ternary from
+ * `armed ? real : fake`, so it demands the one shape it can verify. The guard is
+ * right to be strict and the prescribing comment was the thing that needed
+ * fixing.
+ *
+ * The unarmed branch is FIRST and unconditional, so a reader meets the
+ * fail-closed path before any provider is named.
  */
 export function resolveMobileVerificationProvider(): MobileVerificationProvider {
-  return failClosed;
+  if (!liveMobileVerificationArmed()) return failClosed;
+  return twilioVerify;
 }
 
 export { FakeMobileVerificationProvider, FAKE_VERIFICATION_CODE } from "./fake-provider";
 export { FailClosedMobileVerificationProvider } from "./fail-closed-provider";
+export { TwilioVerifyProvider } from "./twilio-verify-provider";
 export type {
   MobileVerificationProvider,
   VerificationCheckOutcome,

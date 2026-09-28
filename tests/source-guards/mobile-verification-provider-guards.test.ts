@@ -48,6 +48,7 @@ const PROVIDER_DIR_FILES = readdirSync(path.join(ROOT, DIR))
 const MODULE_FILES: readonly string[] = [
   ...PROVIDER_DIR_FILES,
   "lib/waitlist/mobile-verification-server.ts",
+  "lib/waitlist/mobile-verification-flow.ts",
   "lib/waitlist/profile-completion-server.ts",
 ];
 
@@ -256,5 +257,237 @@ describe("the fake's approving code cannot reach the promotion path", () => {
     expect(code).not.toMatch(/"approved"/);
     expect(code).not.toMatch(/"started"/);
     expect([...code.matchAll(/return\s+"unavailable"/g)]).toHaveLength(2);
+  });
+});
+
+// ===========================================================================
+// WAIT B2b-2 — THE REAL ADAPTER AND THE AUTHORIZED FLOW
+// ===========================================================================
+//
+// B2b-1's guards asserted the SHAPE of a boundary with no real adapter in it.
+// These assert the properties that only matter once one exists: that the live
+// path is unreachable without the flag, that the adapter cannot log a secret, and
+// that the single promoting command still has a single caller.
+
+const ADAPTER = `${DIR}/twilio-verify-provider.ts`;
+const FLOW = "lib/waitlist/mobile-verification-flow.ts";
+
+describe("the live path is reachable only through the flag", () => {
+  const SRC = read(`${DIR}/index.ts`);
+
+  it("the resolver's armed branch is guarded by liveMobileVerificationArmed", () => {
+    const body = SRC.slice(SRC.indexOf("export function resolveMobileVerificationProvider"));
+    const upToBrace = body.slice(0, body.indexOf("\n}"));
+    // The unarmed return must come FIRST and be unconditional, so no edit can
+    // reorder the branches into an armed-by-default resolver without failing here.
+    const guard = upToBrace.indexOf("liveMobileVerificationArmed");
+    const failClosedReturn = upToBrace.indexOf("return failClosed");
+    const realReturn = upToBrace.indexOf("return twilioVerify");
+    expect(guard, "the armed branch is not gated by the arming predicate").toBeGreaterThan(-1);
+    expect(failClosedReturn).toBeGreaterThan(guard);
+    expect(realReturn, "the real adapter is returned before the fail-closed guard").toBeGreaterThan(
+      failClosedReturn,
+    );
+  });
+
+  it("all four configuration inputs are required by the predicate", () => {
+    const body = SRC.slice(SRC.indexOf("export function liveMobileVerificationArmed"));
+    const upToBrace = body.slice(0, body.indexOf("\n}"));
+    for (const needle of [
+      "REAL_PROVIDER_FLAG",
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "VERIFY_SERVICE_SID",
+    ]) {
+      expect(upToBrace, `${needle} is not required to arm`).toContain(needle);
+    }
+    // `&&` throughout: one `||` here would make any single input sufficient.
+    expect(upToBrace).not.toMatch(/\|\|/);
+  });
+
+  it("nothing but the resolver decides which provider to use", () => {
+    // A second `new TwilioVerifyProvider()` anywhere would be a live path that
+    // skips the flag entirely.
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+      for (const entry of readdirSync(path.join(ROOT, dir))) {
+        if (entry === "node_modules" || entry === ".next" || entry.startsWith(".")) continue;
+        const rel = `${dir}/${entry}`;
+        if (statSync(path.join(ROOT, rel)).isDirectory()) {
+          walk(rel);
+          continue;
+        }
+        if (!/\.tsx?$/.test(entry)) continue;
+        if (rel === `${DIR}/index.ts` || rel === ADAPTER) continue;
+        if (/new TwilioVerifyProvider\s*\(/.test(read(rel))) offenders.push(rel);
+      }
+    };
+    for (const top of ["app", "components", "lib"]) walk(top);
+    expect(offenders, "a live provider is constructed outside the resolver").toEqual([]);
+  });
+});
+
+describe("the adapter cannot leak what it holds", () => {
+  const SRC = read(ADAPTER);
+  const CODE = codeOf(SRC);
+
+  it("emits NO logs at all", () => {
+    // It holds an Auth Token, a full phone number, a one-time code and a raw
+    // provider payload in local scope. There is no log statement to audit, so
+    // none can drift into carrying one of them.
+    expect(CODE).not.toMatch(/console\./);
+    expect(CODE).not.toMatch(/\blogger\b/);
+    expect(CODE).not.toMatch(/captureException|Sentry/);
+  });
+
+  it("reads the Auth Token in exactly one place and never interpolates it into a message", () => {
+    // ONE ENV READ. A second would be a second place to get the credential from.
+    expect([...CODE.matchAll(/TWILIO_AUTH_TOKEN/g)]).toHaveLength(1);
+    // AND EXACTLY ONE USE OF THE VALUE: the Basic credential. Counting `authToken`
+    // occurrences was the first version of this and it was a bad assertion -- the
+    // name legitimately appears in the Config type, the read, the null check and
+    // the return, so the count said "5" about correct code. What matters is not how
+    // many times it is NAMED but that it is INTERPOLATED exactly once, into the
+    // Authorization header and nowhere else.
+    const interpolations = [...CODE.matchAll(/\$\{[^}]*authToken[^}]*\}/g)];
+    expect(interpolations, "the token is interpolated somewhere unexpected").toHaveLength(1);
+    const around = CODE.slice(
+      Math.max(0, (interpolations[0].index ?? 0) - 120),
+      (interpolations[0].index ?? 0) + 60,
+    );
+    expect(around, "the token's one interpolation is not the Basic header").toContain("Basic");
+    expect(CODE).not.toMatch(/(Error|message|throw)[^\n]*authToken/);
+  });
+
+  it("never stringifies a provider response", () => {
+    expect(CODE).not.toMatch(/JSON\.stringify\s*\(\s*(json|res|body)/);
+    expect(CODE).not.toMatch(/String\s*\(\s*(json|res\.json)/);
+  });
+
+  it("every request is bounded by a timeout", () => {
+    expect(CODE).toContain("AbortController");
+    expect(CODE).toMatch(/setTimeout\(\s*\(\)\s*=>\s*controller\.abort\(\)/);
+    expect(CODE).toMatch(/signal:\s*controller\.signal/);
+    expect(CODE).toContain("clearTimeout");
+  });
+
+  it("reads its configuration per call, not at module load", () => {
+    // A module-load read would freeze an unarmed process into needing a restart
+    // to disarm, which would make the documented rollback wrong.
+    expect(CODE).not.toMatch(/^const\s+\w+\s*=\s*process\.env/m);
+    expect(CODE).toMatch(/function readConfig/);
+  });
+});
+
+describe("the adapter's approval is the only approval", () => {
+  const CODE = codeOf(read(ADAPTER));
+
+  it("`approved` is returned from exactly one place, in check", () => {
+    const approvals = [...CODE.matchAll(/return\s+"approved"/g)];
+    expect(approvals).toHaveLength(1);
+    const checkAt = CODE.indexOf("async check(");
+    expect(approvals[0].index, "an approval is returned outside check()").toBeGreaterThan(checkAt);
+  });
+
+  it("start has no path to an approval at all", () => {
+    const start = CODE.slice(CODE.indexOf("async start("), CODE.indexOf("async check("));
+    expect(start).not.toContain('"approved"');
+  });
+
+  it("an unrecognised provider status is never a rejection", () => {
+    // `rejected` is a statement about the person's code. A default branch that
+    // said it would tell someone their proof was wrong when nothing judged it.
+    const defaults = [...CODE.matchAll(/default:[\s\S]{0,120}?return\s+"(\w+)"/g)].map(
+      (m) => m[1],
+    );
+    expect(defaults.length).toBeGreaterThanOrEqual(1);
+    for (const d of defaults) expect(d).toBe("unavailable");
+  });
+});
+
+describe("the promoting command still has exactly one caller", () => {
+  it("mark_waitlist_mobile_verified has exactly ONE call site, not one file", () => {
+    // 0203's own column comment says the ordering -- provider first, write only on
+    // approval -- is an APPLICATION contract and not a database guarantee. A
+    // second call site is therefore a second place that contract can be broken,
+    // and it would not fail any behavioural test.
+    //
+    // COUNTED PER CALL SITE, BECAUSE THE FIRST VERSION COUNTED FILES AND A
+    // MUTATION WALKED STRAIGHT THROUGH IT. It asserted the set of files naming the
+    // command equalled one path, so a SECOND invocation added INSIDE
+    // mobile-verification-server.ts -- the likeliest place for one, since it is the
+    // module that legitimately holds the first -- kept the set at one file and the
+    // guard stayed green. The claim was "exactly one caller"; the enforcement was
+    // "exactly one file". Only the mutation told them apart.
+    let callSites = 0;
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+      for (const entry of readdirSync(path.join(ROOT, dir))) {
+        if (entry === "node_modules" || entry === ".next" || entry.startsWith(".")) continue;
+        const rel = `${dir}/${entry}`;
+        if (statSync(path.join(ROOT, rel)).isDirectory()) {
+          walk(rel);
+          continue;
+        }
+        if (!/\.tsx?$/.test(entry)) continue;
+        // A COMMENT MENTION IS NOT A CALL SITE, and the first version of this
+        // guard did not distinguish them -- it reported three files, two of which
+        // only DISCUSS the command (this boundary documents it heavily, on purpose).
+        // What must stay singular is the number of places that INVOKE it.
+        const hits = [
+          ...codeOf(read(rel)).matchAll(/rpc\(\s*["']mark_waitlist_mobile_verified["']/g),
+        ];
+        if (hits.length === 0) continue;
+        callSites += hits.length;
+        offenders.push(rel);
+      }
+    };
+    for (const top of ["app", "components", "lib"]) walk(top);
+    expect(offenders).toEqual(["lib/waitlist/mobile-verification-server.ts"]);
+    expect(callSites, "the promoting command is invoked more than once").toBe(1);
+  });
+});
+
+describe("the authorized flow keeps its seam open and its surface narrow", () => {
+  const SRC = read(FLOW);
+  const CODE = codeOf(SRC);
+
+  it("ships NO default resolver, so a surface must name its authorization", () => {
+    // Which capability resolves a verification context is owner decision D1. A
+    // plausible-looking default would put an identity decision in place that
+    // nobody chose -- the same shape as B2b-1's first resolver, which looked inert
+    // and was not.
+    expect(CODE).not.toMatch(/resolve\s*:\s*VerificationContextResolver\s*=/);
+    expect(CODE).not.toMatch(/resolve\s*=\s*\w/);
+  });
+
+  it("accepts no phone number from a caller, at any entry point", () => {
+    // The property that stops this being a waitlist-membership oracle.
+    expect(CODE).not.toMatch(/e164/);
+    const signatures = [...CODE.matchAll(/export async function \w+\(([\s\S]*?)\)\s*:/g)].map(
+      (m) => m[1],
+    );
+    expect(signatures.length).toBe(2);
+    for (const sig of signatures) {
+      expect(sig, `a flow entry point accepts a phone: ${sig}`).not.toMatch(/phone/i);
+      expect(sig).not.toMatch(/destination/i);
+    }
+  });
+
+  it("emits no logs of its own", () => {
+    expect(CODE).not.toMatch(/console\./);
+  });
+
+  it("the unresolved-context refusal has exactly one site", () => {
+    // So D1 has one place to land rather than two that can drift apart.
+    expect([...CODE.matchAll(/UNRESOLVED_CONTEXT_REFUSAL/g)].length).toBeGreaterThanOrEqual(3);
+    expect([...CODE.matchAll(/const UNRESOLVED_CONTEXT_REFUSAL/g)]).toHaveLength(1);
+  });
+
+  it("never calls the promoting RPC itself", () => {
+    expect(CODE).not.toContain("mark_waitlist_mobile_verified");
+    expect(CODE).not.toContain("createAdminClient");
   });
 });

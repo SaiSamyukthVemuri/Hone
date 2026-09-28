@@ -1,7 +1,10 @@
 import { createHash } from "crypto";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
-import { PROOF_REQUEST_LIMITS } from "@/lib/waitlist/delivery/policy";
+import {
+  MOBILE_VERIFICATION_LIMITS,
+  PROOF_REQUEST_LIMITS,
+} from "@/lib/waitlist/delivery/policy";
 
 // Rate limiter for unauthenticated public surfaces. Covers:
 //   * public booking: fetchPublicSlotsAction + publicBookAppointmentAction
@@ -722,4 +725,107 @@ export async function limitWaitlistProofRequest(args: {
     logBackendUnavailable("waitlist_proof", err);
     return { allowed: true }; // fail open — see the classification above
   }
+}
+
+// ---------------------------------------------------------------------------
+// WAIT B2b-2 — mobile possession proof
+// ---------------------------------------------------------------------------
+//
+// A COST AND ABUSE DAMPENER, NOT THE BRUTE-FORCE CONTROL. This whole file fails
+// open by contract, so a Redis outage allows everything; the attempt ceiling that
+// actually stops guessing lives in the Verify service. MOBILE_VERIFICATION_LIMITS
+// carries the full reasoning and must be read before these numbers are tuned.
+//
+// WHAT IS NEVER A KEY HERE: the phone number, the submitted code, and the
+// capability. The entry id is an opaque server-resolved uuid and the IP is hashed
+// before it touches Redis, so a key cannot be reversed into a person and a log
+// line cannot carry one.
+//
+// THE REFUSAL LEAKS NO MEMBERSHIP. Both functions return the same
+// `RateLimitResult` shape the rest of this file uses, and the caller collapses it
+// into the boundary's single `rate_limited` value — identical wording and shape
+// whether the entry existed, the capability was good, or the provider refused.
+
+const mobileVerificationLimiterCache = new Map<string, Ratelimit | null>();
+function mobileVerificationLimiter(
+  operation: "start" | "check",
+  dimension: "entry" | "ip",
+): Ratelimit | null {
+  const key = `${operation}_${dimension}`;
+  const cached = mobileVerificationLimiterCache.get(key);
+  if (cached !== undefined) return cached;
+  const redis = getRedis();
+  const cfg = MOBILE_VERIFICATION_LIMITS[operation][dimension];
+  const limiter = redis
+    ? new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(cfg.limit, cfg.window),
+        // Own namespace per operation AND per dimension. A shared prefix would
+        // let a cheap `check` budget be spent by an expensive `start`, which is
+        // the opposite of why the two budgets differ.
+        prefix: `rl:waitlist_mobile_verification_${key}`,
+        analytics: false,
+      })
+    : null;
+  mobileVerificationLimiterCache.set(key, limiter);
+  return limiter;
+}
+
+/**
+ * Rate limit one possession-proof operation.
+ *
+ * `entryId` and `studioId` MUST both be server-resolved row ids. A
+ * browser-supplied value makes the scoping meaningless, and for `entryId` it
+ * would let a caller choose which bucket to spend.
+ *
+ * PER-ENTRY IS CHECKED FIRST, deliberately, exactly as limitWaitlistProofRequest
+ * does: it is the control that protects one person, and checking it first means a
+ * single hammered entry cannot also burn the shared per-IP budget on its way to
+ * being refused.
+ */
+async function limitMobileVerification(
+  operation: "start" | "check",
+  args: { headers: Headers; studioId: string; entryId: string },
+): Promise<RateLimitResult> {
+  const entryLimiter = mobileVerificationLimiter(operation, "entry");
+  const ipLimiter = mobileVerificationLimiter(operation, "ip");
+  if (!entryLimiter || !ipLimiter) return { allowed: true }; // disabled
+  const ip = clientIpFromHeaders(args.headers);
+  const routeClass = `waitlist_mobile_verification_${operation}`;
+  try {
+    const entryRes = await entryLimiter.limit(`${args.entryId}:${args.studioId}`);
+    if (!entryRes.success) {
+      const retry = retryAfterSeconds(entryRes.reset);
+      logRateLimitExceeded(routeClass, retry, "entry");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    const ipRes = await ipLimiter.limit(`${hashId(ip)}:${args.studioId}`);
+    if (!ipRes.success) {
+      const retry = retryAfterSeconds(ipRes.reset);
+      logRateLimitExceeded(routeClass, retry, "ip");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    return { allowed: true };
+  } catch (err) {
+    logBackendUnavailable(routeClass, err);
+    return { allowed: true }; // fail open — see the header above
+  }
+}
+
+/** Budget for asking the provider to SEND a challenge. The tight one: real SMS. */
+export async function limitMobileVerificationStart(args: {
+  headers: Headers;
+  studioId: string;
+  entryId: string;
+}): Promise<RateLimitResult> {
+  return limitMobileVerification("start", args);
+}
+
+/** Budget for submitting a code. Looser; the provider owns the attempt ceiling. */
+export async function limitMobileVerificationCheck(args: {
+  headers: Headers;
+  studioId: string;
+  entryId: string;
+}): Promise<RateLimitResult> {
+  return limitMobileVerification("check", args);
 }
