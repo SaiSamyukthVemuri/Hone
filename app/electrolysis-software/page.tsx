@@ -185,7 +185,7 @@ export default function ElectrolysisSoftwarePage() {
                     baked-in provenance label. */}
                 <Image
                   src={posterFrame}
-                  alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing what was recorded for two treated areas &mdash; midline upper lip and bilateral chin &mdash; each with machine frequency, probe and lot number, mode, energy, timing and minutes."
+                  alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing two treated areas &mdash; midline upper lip and bilateral chin &mdash; and, for each, the machine frequency, probe and lot number, mode, energy, timing and minutes carried from the settings block it was charted under."
                   sizes="(min-width: 1024px) 52vw, 92vw"
                   className="block aspect-video w-full object-cover"
                 />

@@ -430,6 +430,35 @@ const PATTERNS: Array<[string, RegExp, Family]> = [
  * the data to the block — which IS the fact being enforced. A sentence that
  * merely mentions areas and response, with no owner named, still fails.
  */
+// THE "N AREAS, EACH WITH ..." CONSTRUCTION.
+//
+// The quantifier comes AFTER the plural noun, so every pattern above — each of
+// which needs `each|per|every` immediately before `area` — walked straight past
+// it. That is the exact shape the original film transcript used ("two areas,
+// each with frequency, probe and lot"), and it survived untouched in the
+// poster-frame ALT TEXT on /electrolysis-software, because correcting that one
+// sentence by hand never taught the guard the shape.
+//
+// One entry per family, so a construction naming machine settings is a machine
+// finding and one naming minutes is a minutes finding.
+for (const [fam, noun, label] of [
+  ["response", RESPONSE_WORD, "response"],
+  ["machine", MACHINE_NOUN, "machine settings"],
+  ["probe", PROBE_NOUN, "probe/lot"],
+  ["minutes", MINUTES_NOUN, "minutes"],
+] as Array<[Family, string, string]>) {
+  PATTERNS.push([
+    `several areas said to be "each with" block-owned ${label}`,
+    // The window must not cross a STRING boundary. `[^.|]` bridged three
+    // separate list items in app/demo/page.tsx — "areas, each with its own
+    // history", "The treatment form, field by field", "Probe" — and reported a
+    // probe claim nobody wrote. The shipped alt text carries HTML entities, not
+    // literal quotes, so excluding `"` costs the real case nothing.
+    new RegExp(`\\bareas\\b[^.|"]{0,70}?\\beach\\s+with\\b[^.|"]{0,90}?(${noun})`, "i"),
+    fam,
+  ]);
+}
+
 // FAMILY-SPECIFIC OWNER EVIDENCE.
 //
 // One generic "…on the block" let ANY family's attribution rescue ANY other
@@ -956,6 +985,41 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     expect(
       offendersIn("app/page.tsx", "probe and lot come from the settings block, and each area was tolerated differently", false).length,
     ).toBeGreaterThan(0);
+  });
+
+  it('the "N areas, EACH WITH ..." construction is caught, in the right family', () => {
+    // NEGATIVE CONTROL against the exact escaped string from the poster-frame
+    // alt text on /electrolysis-software, HTML entities and all.
+    const SHIPPED_ALT =
+      "Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, " +
+      "listing what was recorded for two treated areas &mdash; midline upper lip and " +
+      "bilateral chin &mdash; each with machine frequency, probe and lot number, mode, " +
+      "energy, timing and minutes.";
+    const found = offendersIn("app/electrolysis-software/page.tsx", SHIPPED_ALT, false);
+    expect(found.length, "the shipped alt text must be reported").toBeGreaterThan(0);
+    const families = found.join(" ");
+    expect(families, "machine settings named").toMatch(/machine settings/);
+    expect(families, "probe named").toMatch(/probe/);
+    expect(families, "minutes named").toMatch(/minutes/);
+
+    // The corrected alt text, verbatim from the page, must be clean.
+    const rel = "app/electrolysis-software/page.tsx";
+    expect(offendersIn(rel, copyOnly(read(rel), rel), false)).toEqual([]);
+    expect(read(rel)).toMatch(/carried from the settings block it was charted under/);
+
+    // the construction is caught for response too, without any machine noun
+    expect(
+      offendersIn("app/page.tsx", "two treated areas, each with its own tolerance and reaction", false).length,
+    ).toBeGreaterThan(0);
+
+    // NOT a false positive: laterality really is per area.
+    expect(
+      offendersIn(
+        "app/page.tsx",
+        "Record several treatment areas under one machine-settings block, each with its own laterality",
+        false,
+      ),
+    ).toEqual([]);
   });
 
   it("a comment quoting the old wording does not trip the guard", () => {
