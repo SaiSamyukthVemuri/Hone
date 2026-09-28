@@ -191,6 +191,16 @@ export const FILM = {
   width: 1920,
   height: 1080,
   hasAudioTrack: false,
+  /**
+   * THE BYTES THIS TRANSCRIPT DESCRIBES.
+   *
+   * The transcript is the film's text alternative, so equivalence is a claim
+   * about one specific artefact. Pinning the digest means the alternative
+   * cannot drift from the asset silently: swap the file and the assertion in
+   * tests/app/marketing-homepage-film.test.ts fails, forcing the transcript to
+   * be re-verified against the new frames rather than inherited.
+   */
+  sha256: "a86b7b821769ba8e800dc8e818e0070923469dc04053db8532c08e4c2466023d",
   // Accessible name for the play control and the player. States the running
   // time and that there is no sound, so nobody waits for narration.
   accessibleName: "Hone treatment-memory product film, 25 seconds, silent",

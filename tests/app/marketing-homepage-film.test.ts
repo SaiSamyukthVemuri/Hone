@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import ts from "typescript";
 import { FILM, ANALYTICS_EVENTS } from "@/lib/marketing/content";
@@ -419,5 +420,22 @@ describe("the film is reachable without a session, and nothing else is", () => {
     const images = "/x.png";
     expect(runsMiddleware(images), "image class is pre-existing").toBe(false);
     expect(runsMiddleware("/anywhere/else/video.mp4")).toBe(true);
+  });
+});
+
+describe("the transcript is anchored to THESE bytes", () => {
+  // Equivalence between a film and its text alternative is a claim about ONE
+  // artefact. Pixel inspection is not possible in this environment (no ffmpeg,
+  // no decoder), so the digest is what makes the claim falsifiable: replace the
+  // asset and this fails, which forces the transcript to be re-verified against
+  // the new frames instead of silently inherited.
+  it("the shipped film matches the digest the transcript was written against", () => {
+    const bytes = readFileSync(FILM_PATH);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    expect(digest).toBe(FILM.sha256);
+  });
+
+  it("the digest is a real sha256, not a placeholder", () => {
+    expect(FILM.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });

@@ -147,14 +147,20 @@ function has(src: string, f: string): boolean {
 }
 
 /** Where a family currently lives. */
-function ownership(fields: string[]): {
+function ownership(
+  fields: string[],
+  // WHICH multi-area container owns this family. Entry-side families live on
+  // ElectrolysisEntry, not SessionBlock; checking them against the block made
+  // every one of them look "split" the moment the check was switched on.
+  ownerType: "SessionBlock" | "ElectrolysisEntry" = "SessionBlock",
+): {
   onBlock: string[];
   onArea: string[];
   blockOwned: boolean;
   areaOwned: boolean;
   split: boolean;
 } {
-  const sb = block("SessionBlock");
+  const sb = block(ownerType);
   const sba = block("SessionBlockArea");
   const onBlock = fields.filter((f) => has(sb, f));
   const onArea = fields.filter((f) => has(sba, f));
@@ -220,7 +226,14 @@ const ENTRY_FAMILIES = [
 // Comments are where a correction records what it corrected, so quoting the old
 // wording in a comment must not trip the guard. The guard is about what the
 // SCREEN says. Line comments and block-comment bodies are both dropped.
-function copyOnly(src: string): string {
+function copyOnly(src: string, rel = ""): string {
+  // MARKDOWN HAS NO JS COMMENTS. The line filter below drops any line starting
+  // with `*`, which in Markdown is a bullet or emphasis — real, publishable
+  // content. The truth register has 15 such lines, and every one of them was
+  // invisible to this guard: a false claim written as `**Minutes per area**`
+  // would never have been scanned. In Markdown only an HTML comment is a
+  // comment.
+  if (rel.endsWith(".md")) return src.replace(/<!--[\s\S]*?-->/g, "");
   return src
     .split("\n")
     .filter((line) => !/^\s*(\/\/|\*|\/\*|<!--)/.test(line))
@@ -417,7 +430,30 @@ const PATTERNS: Array<[string, RegExp, Family]> = [
  * the data to the block — which IS the fact being enforced. A sentence that
  * merely mentions areas and response, with no owner named, still fails.
  */
-const BLOCK_SCOPED = /\b(on|from|under|to|against)\s+(the\s+)?(settings[\s-]|machine[\s-]settings[\s-])?block\b/i;
+// FAMILY-SPECIFIC OWNER EVIDENCE.
+//
+// One generic "…on the block" let ANY family's attribution rescue ANY other
+// family's claim: "tolerance is recorded on the settings block, and minutes per
+// area" was rescued by the response attribution while the minutes half stayed
+// false. Each family must now show ITS OWN noun attached to the block.
+const OWNER_EVIDENCE: Record<Family, RegExp> = {
+  response: new RegExp(
+    `(${RESPONSE_WORD})[^.|]{0,40}?\\b(on|from|under|to|against)\\s+(the\\s+|that\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-])?block`,
+    "i",
+  ),
+  machine: new RegExp(
+    `(${MACHINE_NOUN})[^.|]{0,40}?\\b(on|from|under|to|against|with)\\s+(the\\s+|that\\s+|each\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-]|treatment[\\s-])?block`,
+    "i",
+  ),
+  probe: new RegExp(
+    `(${PROBE_NOUN})[^.|]{0,40}?\\b(on|from|under|to|against|with)\\s+(the\\s+|that\\s+|each\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-]|treatment[\\s-])?block`,
+    "i",
+  ),
+  minutes: new RegExp(
+    `(${MINUTES_NOUN})[^.|]{0,40}?\\b(on|from|under|to|against|for)\\s+(the\\s+|that\\s+|each\\s+|its\\s+)?(settings[\\s-]|treatment[\\s-])?block`,
+    "i",
+  ),
+};
 
 /**
  * The owner must be named RIGHT THERE, not merely somewhere in the sentence.
@@ -430,14 +466,19 @@ const BLOCK_SCOPED = /\b(on|from|under|to|against)\s+(the\s+)?(settings[\s-]|mac
  * under") sits immediately after.
  */
 const OWNER_WINDOW = 48;
-function ownerNamedAt(text: string, index: number, matchLength: number): boolean {
+function ownerNamedAt(
+  text: string,
+  index: number,
+  matchLength: number,
+  family: Family,
+): boolean {
   const tail = text.slice(index, index + matchLength + OWNER_WINDOW);
   // The window stops at the end of the sentence. Without this it ran straight
   // past the full stop and let the NEXT sentence supply the owner, so
   // "Each area keeps its own tolerance. Settings live on the block." rescued
   // itself with a sentence that says nothing about those areas.
   const stop = tail.indexOf(".", matchLength);
-  return BLOCK_SCOPED.test(stop === -1 ? tail : tail.slice(0, stop));
+  return OWNER_EVIDENCE[family].test(stop === -1 ? tail : tail.slice(0, stop));
 }
 
 /**
@@ -495,7 +536,7 @@ function offendersIn(
     if (gated && !regime[family]) continue;
     for (const hit of copy.matchAll(new RegExp(re.source, re.flags + "g"))) {
       if (hit.index === undefined) continue;
-      if (ownerNamedAt(copy, hit.index, hit[0].length)) continue;
+      if (ownerNamedAt(copy, hit.index, hit[0].length, family)) continue;
       // Exempt ONLY hits that fall inside the structural guidance region.
       if (region && hit.index >= region[0] && hit.index < region[1]) continue;
       found.push(`${rel}: ${label}: "${hit[0].replace(/\s+/g, " ").slice(0, 90)}"`);
@@ -567,7 +608,7 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
   it("no public marketing surface claims per-area response", () => {
     const offenders: string[] = [];
     for (const rel of marketingSurfaces()) {
-      offenders.push(...offendersIn(rel, copyOnly(read(rel))));
+      offenders.push(...offendersIn(rel, copyOnly(read(rel), rel)));
     }
     expect(
       offenders,
@@ -726,7 +767,7 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
 
   it("the live checklist route makes no universal-capture promise", () => {
     const rel = "app/resources/electrolysis-treatment-record-checklist/page.tsx";
-    expect(offendersIn(rel, copyOnly(read(rel)), false)).toEqual([]);
+    expect(offendersIn(rel, copyOnly(read(rel), rel), false)).toEqual([]);
     // the guidance itself is still there — not deleted to satisfy the guard
     const src = read(rel);
     expect(src).toContain('"Tolerance for each area"');
@@ -737,10 +778,20 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     // P2-2 / state D: a family split across both tables is the state where
     // nothing can be trusted, and it fails loudly in EITHER direction.
     for (const [name, fields] of FAMILIES) {
-      const o = ownership(fields as string[]);
+      const o = ownership(fields as string[], "SessionBlock");
       expect(
         o.split,
         `${name} fields must sit wholly on one table; block: [${o.onBlock}], area: [${o.onArea}]`,
+      ).toBe(false);
+    }
+    // ENTRY-SIDE FAMILIES, against their own owner. These were declared and
+    // never checked; checking them against SessionBlock would have called every
+    // one of them split, because that is not where they live.
+    for (const [name, fields] of ENTRY_FAMILIES) {
+      const o = ownership(fields as string[], "ElectrolysisEntry");
+      expect(
+        o.split,
+        `${name} fields must sit wholly on one table; entry: [${o.onBlock}], area: [${o.onArea}]`,
       ).toBe(false);
     }
   });
@@ -856,6 +907,55 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     expect(offendersIn("lib/marketing/content.ts", transcript, false)).toEqual([]);
     // and it still describes the Setup Used card at block scope
     expect(transcript).toMatch(/two settings blocks/);
+  });
+
+  it("MARKDOWN is stripped as Markdown, so * lines stay scannable", () => {
+    // F3. The JS line filter drops anything starting with `*`. In Markdown that
+    // is a bullet or emphasis — publishable content. The truth register has 15
+    // such lines, every one of them invisible to this guard until now.
+    const md = [
+      "| Capability | Class |",
+      "* Tolerance recorded per treated area.",
+      "**Minutes recorded per treated area.**",
+      "<!-- a real Markdown comment: tolerance per area -->",
+    ].join("\n");
+    const kept = copyOnly(md, "docs/marketing/x.md");
+    expect(kept, "bullet content must survive").toContain("Tolerance recorded per treated area");
+    expect(kept, "emphasis content must survive").toContain("Minutes recorded per treated area");
+    expect(kept, "HTML comments are the only Markdown comment").not.toContain("a real Markdown comment");
+    // and both claims are actually reported
+    expect(offendersIn("docs/marketing/x.md", kept, false).length).toBeGreaterThanOrEqual(2);
+    // the TS path is unchanged: a leading // line is still a comment
+    expect(copyOnly("// tolerance per area\nconst a = 1;", "lib/x.ts")).not.toContain("tolerance");
+  });
+
+  it("the real truth register is scanned as Markdown, not line-filtered", () => {
+    const rel = "docs/marketing/product-truth-register.md";
+    const asMd = copyOnly(read(rel), rel);
+    const asTs = copyOnly(read(rel), "x.ts");
+    // Markdown handling must keep strictly MORE content than the JS filter.
+    expect(asMd.length).toBeGreaterThan(asTs.length);
+    // and the register is clean under the honest reading
+    expect(offendersIn(rel, asMd, false)).toEqual([]);
+  });
+
+  it("owner evidence is FAMILY-SPECIFIC", () => {
+    // F4. A response attribution must not rescue a minutes claim.
+    const mixed =
+      "Tolerance and reaction are recorded on the settings block, and minutes recorded per treated area";
+    const found = offendersIn("app/page.tsx", mixed, false);
+    expect(found.join(" "), "the minutes half must still be reported").toMatch(/minutes/i);
+    // each family rescued only by its OWN noun attached to the block
+    expect(
+      offendersIn("app/page.tsx", "minutes recorded per treated area are kept on the settings block", false),
+    ).toEqual([]);
+    expect(
+      offendersIn("app/page.tsx", "probe and lot recorded per treated area, from the settings block they belong to", false),
+    ).toEqual([]);
+    // a probe attribution does not rescue a response claim
+    expect(
+      offendersIn("app/page.tsx", "probe and lot come from the settings block, and each area was tolerated differently", false).length,
+    ).toBeGreaterThan(0);
   });
 
   it("a comment quoting the old wording does not trip the guard", () => {
