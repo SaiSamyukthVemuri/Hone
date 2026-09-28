@@ -1,7 +1,6 @@
 import Link from "next/link";
 
-import { getAvailabilityDefaults } from "@/lib/booking/queries";
-import { getNewClientReadiness } from "@/lib/booking/new-client-readiness";
+import type { NewClientReadiness } from "@/lib/booking/new-client-readiness";
 import { BookingSetupCard } from "./BookingSetupCard";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import { resolveBirthdayColor } from "@/lib/birthday-colors";
@@ -49,7 +48,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 // streaming does — cannot turn a rejection into an unhandled one. The await
 // below still throws, and still reaches the error boundary.
 
-// The five values the page's `attentionSourcesPromise` resolves to, in order.
+// The FOUR values the page's `attentionSourcesPromise` resolves to, in order.
+//
+// It was five. ONB-03 removed the raw availability read: the canonical authority
+// performs its own, correctly scoped, and a member nothing consumed could still
+// reject and take the whole bundle -- and therefore readiness -- down with it.
 // Each slot is DERIVED from the thing that actually produces or consumes it, so
 // this cannot drift from the page without a type error: the payment slot is
 // spelled as the exact field `buildDashboardTodo` reads, because that is its
@@ -59,12 +62,19 @@ type AttentionSources = readonly [
   number,
   Parameters<typeof buildDashboardTodo>[0]["studio"]["paymentStatus"],
   Awaited<ReturnType<typeof getClientBirthdaysForMonth>>,
-  Awaited<ReturnType<typeof getAvailabilityDefaults>>,
 ];
 
 type Props = {
   /** Started in the page BEFORE the roster query. Never started here. */
   attentionSources: Promise<AttentionSources>;
+  /**
+   * The canonical verdict, as a promise, resolved by the page ALONGSIDE the
+   * bundle above rather than inside it.
+   *
+   * `null` for a non-owner: the card is owner-only and a non-owner should pay for
+   * no readiness read at all.
+   */
+  bookingReadiness: Promise<NewClientReadiness | null>;
   practiceMetrics: Promise<
     Awaited<ReturnType<typeof getPracticeDashboardMetrics>>
   >;
@@ -143,6 +153,7 @@ export function SecondaryStackSkeleton() {
 
 export async function SecondaryStack({
   attentionSources,
+  bookingReadiness,
   practiceMetrics: practiceMetricsPromise,
   clientsNeedingAttention: clientsNeedingAttentionPromise,
   followUpAssistant: followUpAssistantPromise,
@@ -162,32 +173,25 @@ export async function SecondaryStack({
     activeServicesCount,
     paymentStatus,
     birthdaysThisMonth,
-    availabilityDefaults,
   ] = await attentionSources;
 
-  // ONB-03: THE CANONICAL AUTHORITY, NOT A SECOND OPINION.
+  // ONB-03: THE CANONICAL AUTHORITY, AWAITED INDEPENDENTLY.
   //
-  // This called `computeBookingReadiness` with evidence assembled here. That
-  // answers "may this studio publish a booking link" and, per ONB-02's own
-  // module header, "does not ask for a consultation specifically, and it has no
-  // consent input at all" -- so the card could VANISH on a studio that
-  // `publicBookAppointmentAction` would refuse.
+  // This component does not CALL the authority; the page starts it as its own
+  // deferred read and hands the promise down. Two reasons, and the first is
+  // correctness:
   //
-  // WHY `getNewClientReadiness` AND NOT THE PURE `computeNewClientReadiness`
-  // WITH THE EVIDENCE THIS FUNCTION ALREADY HAS. It would save reads and it
-  // would be wrong: `availabilityDefaults` here is every row for the studio,
-  // while the authority reads `getStudioWideDefaultsSafe` --
-  // `practitioner_id IS NULL`, the scope public booking actually reads. ONB-02
-  // records that divergence as a shipped defect: a studio whose only open rows
-  // belonged to a practitioner answered READY while the public page offered
-  // nothing. Hand-assembling evidence here would reintroduce it, and would be a
-  // competing definition wearing the authority's name.
+  //   * A rejection in any sibling read must not prevent the verdict from being
+  //     computed. When this component called the authority after
+  //     `await attentionSources`, a failure in a bundle member -- including one
+  //     nothing consumed -- threw first, so the `unknown` card could never render
+  //     in the very situation it exists for.
+  //   * The authority's three parallel reads no longer wait behind the bundle.
   //
-  // The cost is stated rather than hidden: three reads this page partly
-  // duplicates, issued in parallel inside the authority. Correctness at the
-  // owner's primary surface is worth more than the saved round trips, and a
-  // shared-evidence refactor is its own slice.
-  const bookingReadiness = isOwner ? await getNewClientReadiness(studio) : null;
+  // WHAT DID NOT CHANGE: the verdict is still the canonical one, still
+  // `getNewClientReadiness`, and this file still assembles no evidence of its
+  // own. Moving WHERE it is started is not a change to WHAT decides readiness.
+  const readiness = await bookingReadiness;
 
   // PR #208: read-only practice metrics for the selected period.
   const practiceMetrics = await practiceMetricsPromise;
@@ -319,8 +323,8 @@ export async function SecondaryStack({
           distinct unknown state rather than an empty checklist, and it returns
           null itself for "ready", so the contract holds for any future caller
           and not only for this call site. */}
-      {isOwner && bookingReadiness && bookingReadiness.status !== "ready" && (
-        <BookingSetupCard readiness={bookingReadiness} />
+      {isOwner && readiness && readiness.status !== "ready" && (
+        <BookingSetupCard readiness={readiness} />
       )}
 
       {/* PR #215: setup/readiness checklist entry point. A normal

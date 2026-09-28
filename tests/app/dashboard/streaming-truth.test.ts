@@ -221,7 +221,7 @@ describe("4 — nothing about what renders changed", () => {
     expect(STACK_CODE).toContain("<BirthdaysThisMonth");
     expect(STACK_CODE).toContain("<PracticeSnapshot");
     expect(STACK_CODE).toContain("livemode={inferStripeLivemode()}");
-    expect(STACK_CODE).toContain("<BookingSetupCard readiness={bookingReadiness} />");
+    expect(STACK_CODE).toContain("<BookingSetupCard readiness={readiness} />");
     expect(STACK_CODE).toContain('href="/dashboard/capacity"');
     expect(STACK_CODE).toContain('href="/getting-started"');
   });
@@ -250,9 +250,14 @@ describe("4 — nothing about what renders changed", () => {
     // `createClient` stays forbidden below and that is still honest:
     // `getNewClientReadiness` opens its own client INSIDE the authority, which
     // is the point. This surface still issues no readiness query of its own.
-    expect(STACK_CODE).toContain("getNewClientReadiness(studio)");
+    // ONB-03 P2: the stack no longer CALLS the authority -- the page starts it as
+    // its own deferred read and passes the promise down, so a rejection in a
+    // sibling read cannot stop the verdict being computed. The stack still
+    // consumes nothing else, which is what this test is for.
+    expect(STACK_CODE).toContain("await bookingReadiness");
     expect(STACK_CODE).not.toContain("computeBookingReadiness(");
-    expect(STACK_CODE).toContain('bookingReadiness.status !== "ready"');
+    expect(STACK_CODE).not.toContain("getNewClientReadiness(");
+    expect(STACK_CODE).toContain('readiness.status !== "ready"');
     expect(STACK_CODE).toContain("gettingStarted.autoDone === gettingStarted.autoTotal");
     // No new flag, no new column, no new query.
     expect(STACK_CODE).not.toMatch(/\.from\(/);

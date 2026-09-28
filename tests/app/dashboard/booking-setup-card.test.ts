@@ -261,6 +261,85 @@ describe("UNKNOWN stays UNKNOWN", () => {
   });
 });
 
+describe("a rejecting SIBLING read does not suppress the verdict", () => {
+  // ONB-03 P2, THE BEHAVIOURAL HALF. The source contract proves readiness is
+  // started beside the bundle; this proves the consequence that matters.
+  //
+  // THE DEFECT THIS LOCKS OUT. The card previously reached the authority only
+  // after `await attentionSources`. A rejection in any member of that bundle --
+  // including the availability read nothing consumed any more -- threw first, so
+  // the `unknown` card could not render in the one situation it exists for. The
+  // fix makes the two promises siblings; this asserts they really are independent
+  // rather than merely written apart.
+  //
+  // Modelled at the promise level, which is where the independence lives. Driving
+  // the real server component would need the whole dashboard's data layer and
+  // would prove less: the question is whether one rejection can swallow the
+  // other, and that is a property of how the promises are combined.
+  async function verdictSurvives(
+    sibling: Promise<unknown>,
+    readiness: Promise<NewClientReadiness | null>,
+  ): Promise<string> {
+    // Exactly what the component does: await the readiness promise on its own.
+    // If the two were bundled, the sibling's rejection would reach this await.
+    sibling.catch(() => undefined);
+    const verdict = await readiness;
+    return verdict ? await render(verdict) : "";
+  }
+
+  it("renders the UNKNOWN card even though a sibling read rejected", async () => {
+    const html = await verdictSurvives(
+      Promise.reject(new Error("availability read failed")),
+      Promise.resolve({ status: "unknown", unavailable: ["services"] }),
+    );
+    expect(html).toContain("We could not check your booking setup");
+    expect(html).not.toBe("");
+  });
+
+  it("renders proven blockers even though a sibling read rejected", async () => {
+    const blocker = keyedBlocker("consultation_service");
+    const html = await verdictSurvives(
+      Promise.reject(new Error("birthdays read failed")),
+      Promise.resolve({
+        status: "not_ready",
+        blockers: [blocker],
+        nextStep: blocker,
+        unavailable: [],
+      }),
+    );
+    expect(html).toContain(blocker.label);
+  });
+
+  it("CONTROL — bundling them WOULD suppress it", async () => {
+    // The negative pole, and the reason the two tests above are not vacuous. Run
+    // the pre-fix arrangement: one `Promise.all` over both, awaited before the
+    // verdict is read. The rejection reaches the await and no card renders.
+    // TYPED, NOT CAST. An `as const` here produces a readonly tuple that does not
+    // satisfy `ReadinessAuthority[]`, and reaching for `as NewClientReadiness` to
+    // silence that would let this control drift away from the real shape — which
+    // is the one thing it must share with the product.
+    const unknownVerdict: NewClientReadiness = {
+      status: "unknown",
+      unavailable: ["services"],
+    };
+    const bundled = Promise.all([
+      Promise.reject(new Error("availability read failed")),
+      Promise.resolve(unknownVerdict),
+    ]);
+    bundled.catch(() => undefined);
+    let rendered: string | null = null;
+    let threw = false;
+    try {
+      const [, verdict] = await bundled;
+      rendered = await render(verdict);
+    } catch {
+      threw = true;
+    }
+    expect(threw, "the bundled arrangement must throw").toBe(true);
+    expect(rendered, "no card can render once the bundle rejects").toBeNull();
+  });
+});
+
 describe("the fixture is the authority's, not this file's", () => {
   it("every blocker key this test names is one the authority actually reports", async () => {
     // ANTI-VACUITY for `blockerFor`: if the authority stopped reporting one of

@@ -18,7 +18,6 @@ import {
 } from "@/lib/supabase/queries";
 import {
   getActiveServices,
-  getAvailabilityDefaults,
 } from "@/lib/booking/queries";
 import { getPinnedNotesByClient } from "@/lib/client-pinned-notes/queries";
 import {
@@ -46,6 +45,10 @@ import {
   type TimeFormat,
 } from "@/lib/booking/tz";
 import { FormattedToday } from "@/components/formatted-date-time";
+import {
+  getNewClientReadiness,
+  type NewClientReadiness,
+} from "@/lib/booking/new-client-readiness";
 import {
   SecondaryStack,
   SecondaryStackSkeleton,
@@ -288,16 +291,29 @@ export default async function DashboardPage({
       // clients.date_of_birth. Practitioner-facing only. Never sent as
       // email/SMS or exposed to client/public surfaces.
       getClientBirthdaysForMonth(studio.id, parseInt(todayLocal.slice(5, 7), 10)),
-      // Booking setup readiness (owner-only card). Loaded for everyone since
-      // the studio_availability_default table is RLS-scoped to the studio
-      // and the read is cheap (<=7 rows). The readiness compute + render is
-      // gated on isOwner below.
-      isOwner
-        ? getAvailabilityDefaults(studio.id)
-        : Promise.resolve(
-            [] as Awaited<ReturnType<typeof getAvailabilityDefaults>>,
-          ),
     ] as const),
+  );
+  // BOOKING READINESS IS ITS OWN DEFERRED READ, not a member of the bundle
+  // above, and the distinction is correctness rather than tidiness.
+  //
+  // ONB-03 moved the dashboard onto the canonical authority, which performs its
+  // own reads; the raw `getAvailabilityDefaults` member that fed the old compute
+  // became vestigial in the same change. Left in the tuple it was worse than
+  // dead: `SecondaryStack` awaits the whole bundle before calling the authority,
+  // so a rejection in a read NOTHING consumed would throw before readiness ran --
+  // and the `unknown` card, which exists precisely to say "an authority could not
+  // be read", could not render. Sibling promises cannot do that to each other:
+  // they settle independently.
+  //
+  // It also removes a serial wave. The bundle no longer gates the authority's
+  // three parallel reads on the owner's primary surface.
+  //
+  // OWNER-ONLY, null otherwise, so a non-owner pays for no read at all. The
+  // previous arrangement read availability for everyone and discarded it.
+  const bookingReadinessPromise = settleLater(
+    isOwner
+      ? getNewClientReadiness(studio)
+      : Promise.resolve(null as NewClientReadiness | null),
   );
   const practiceMetricsPromise = settleLater(
     getPracticeDashboardMetrics(studio.id, studio.timezone, period),
@@ -895,6 +911,7 @@ export default async function DashboardPage({
       >
         <SecondaryStack
           attentionSources={attentionSourcesPromise}
+          bookingReadiness={bookingReadinessPromise}
           practiceMetrics={practiceMetricsPromise}
           clientsNeedingAttention={clientsNeedingAttentionPromise}
           followUpAssistant={followUpAssistantPromise}

@@ -23,6 +23,7 @@ function read(rel: string): string {
 
 const LAUNCH = read("app/(app)/settings/launch/page.tsx");
 const DASHBOARD_STACK = read("app/(app)/dashboard/secondary-stack.tsx");
+const DASHBOARD_PAGE = read("app/(app)/dashboard/page.tsx");
 const DASHBOARD_CARD = read("app/(app)/dashboard/BookingSetupCard.tsx");
 const GETTING_STARTED = read("lib/onboarding/getting-started.ts");
 const CANONICAL = read("lib/booking/new-client-readiness.ts");
@@ -205,22 +206,30 @@ describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
   const STACK_CODE = codeOf(DASHBOARD_STACK);
   const CARD_CODE = codeOf(DASHBOARD_CARD);
 
+  const PAGE_CODE = codeOf(DASHBOARD_PAGE);
+
   it("the comment stripper leaves the code it is asked about", () => {
     // Without this, every negative in this describe could pass on an empty string.
-    expect(STACK_CODE).toContain("getNewClientReadiness(studio)");
+    expect(STACK_CODE).toContain("await bookingReadiness");
+    expect(PAGE_CODE).toContain("getNewClientReadiness(studio)");
     expect(CARD_CODE).toContain("readiness.blockers.map");
   });
 
   it("calls the canonical authority and nothing else", () => {
-    expect(DASHBOARD_STACK).toContain("getNewClientReadiness(studio)");
+    // ONB-03 P2 moved the CALL to the page, which starts it as its own deferred
+    // read; the stack awaits the promise. Exactly ONE place calls it.
+    expect(PAGE_CODE).toContain("getNewClientReadiness(studio)");
+    expect(STACK_CODE).not.toContain("getNewClientReadiness(");
     expect(DASHBOARD_STACK).toMatch(
       /from "@\/lib\/booking\/new-client-readiness"/,
     );
     // THE OLD GATE IS GONE FROM THIS SURFACE, which is the whole slice. Left in
     // place it would be a second answer to one question on one page.
     expect(STACK_CODE).not.toContain("computeBookingReadiness");
-    expect(DASHBOARD_STACK).not.toMatch(/from "@\/lib\/booking\/readiness"/);
-    expect(DASHBOARD_CARD).not.toMatch(/from "@\/lib\/booking\/readiness"/);
+    expect(PAGE_CODE).not.toContain("computeBookingReadiness");
+    for (const src of [DASHBOARD_STACK, DASHBOARD_CARD, DASHBOARD_PAGE]) {
+      expect(src).not.toMatch(/from "@\/lib\/booking\/readiness"/);
+    }
   });
 
   it("does not assemble readiness evidence itself", () => {
@@ -231,7 +240,14 @@ describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
     // for the studio. ONB-02 records that exact divergence as a shipped defect.
     // Calling the async authority is what keeps the scope correct.
     expect(STACK_CODE).not.toContain("computeNewClientReadiness");
+    expect(PAGE_CODE).not.toContain("computeNewClientReadiness");
     expect(STACK_CODE).not.toContain("openAvailabilityDaysCount");
+    // ONB-03 P2: THE VESTIGIAL READ IS GONE, not merely unused. A member nothing
+    // consumes can still reject and take the bundle -- and with it the verdict --
+    // down. Asserted on both files so it cannot come back as "harmless".
+    expect(PAGE_CODE).not.toContain("getAvailabilityDefaults");
+    expect(STACK_CODE).not.toContain("getAvailabilityDefaults");
+    expect(STACK_CODE).not.toContain("availabilityDefaults");
   });
 
   it("the two owner surfaces call the SAME entry point", () => {
@@ -240,7 +256,7 @@ describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
     // rather than a coincidence of two similar implementations.
     for (const [name, src] of [
       ["launch", LAUNCH],
-      ["dashboard", DASHBOARD_STACK],
+      ["dashboard page", DASHBOARD_PAGE],
     ] as const) {
       expect(src, `${name} must call getNewClientReadiness`).toContain(
         "getNewClientReadiness(",
@@ -278,12 +294,34 @@ describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
     expect(DASHBOARD_CARD).toContain('readiness.status === "unknown"');
     expect(DASHBOARD_CARD).toContain("We could not check your booking setup");
     // The call-site gate must let unknown through to the card.
-    expect(DASHBOARD_STACK).toContain('bookingReadiness.status !== "ready"');
+    expect(DASHBOARD_STACK).toContain('readiness.status !== "ready"');
     // And ready is still the ONLY state that renders nothing, decided in the
     // component so a caller cannot reintroduce a banner by forgetting a guard.
     expect(DASHBOARD_CARD).toMatch(
       /readiness\.status === "ready"\) return null/,
     );
+  });
+
+  it("readiness is started BESIDE the bundle, never inside it", () => {
+    // ONB-03 P2, THE STRUCTURAL HALF. Inside the tuple, a rejection in any other
+    // member throws at `await attentionSources` before the authority is called --
+    // so the `unknown` card, whose entire purpose is to report an unreadable
+    // authority, could not render. Siblings settle independently.
+    const bundle = PAGE_CODE.slice(
+      PAGE_CODE.indexOf("attentionSourcesPromise"),
+      PAGE_CODE.indexOf("] as const)", PAGE_CODE.indexOf("attentionSourcesPromise")),
+    );
+    expect(bundle.length).toBeGreaterThan(0);
+    expect(bundle, "readiness must not be a member of the bundle").not.toContain(
+      "getNewClientReadiness",
+    );
+    // It IS its own deferred read, and it is deferred the same way as the others
+    // so a rejection while nothing awaits it cannot crash the process.
+    expect(PAGE_CODE).toMatch(
+      /bookingReadinessPromise = settleLater\([\s\S]{0,160}getNewClientReadiness\(studio\)/,
+    );
+    // And the stack receives it as a promise rather than a resolved value.
+    expect(STACK_CODE).toMatch(/bookingReadiness: Promise<NewClientReadiness \| null>/);
   });
 
   it("a non-exhaustive blocker list says so", () => {

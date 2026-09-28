@@ -205,7 +205,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // Chloe saw "Booking page ready / Your public booking page is live" plus a
     // column of ticks, permanently. Complete readiness must render nothing.
     expect(DASH).toMatch(
-      /\{isOwner && bookingReadiness && bookingReadiness\.status !== "ready" && \(/,
+      /\{isOwner && readiness && readiness\.status !== "ready" && \(/,
     );
     // The card itself refuses too, so the contract does not depend on a caller
     // remembering the guard.
@@ -229,8 +229,17 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // readiness." Still the rule. ONB-03 moved WHICH derivation the dashboard
     // reads — from the booking-link gate to the canonical new-client authority —
     // and did not add a flag.
-    expect(DASH).toMatch(/getNewClientReadiness\(/);
+    // ONB-03 P2: the CALL moved to the page (its own deferred read); the stack
+    // awaits the promise. Both halves are pinned so the authority cannot quietly
+    // be re-called here, nor replaced by the old gate anywhere.
+    expect(DASH).toMatch(/await bookingReadiness/);
     expect(DASH).not.toMatch(/computeBookingReadiness\(/);
+    const page = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/page.tsx"),
+      "utf8",
+    );
+    expect(page).toMatch(/getNewClientReadiness\(studio\)/);
+    expect(page).not.toMatch(/computeBookingReadiness\(/);
     expect(DASH).not.toMatch(/booking_setup_complete|bookingSetupComplete|booking_ready\b/);
 
     // NEITHER AUTHORITY IS MODIFIED BY THIS PR, and both are asserted so the
