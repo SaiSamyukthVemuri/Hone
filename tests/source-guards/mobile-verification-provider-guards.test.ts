@@ -487,6 +487,48 @@ describe("the adapter's approval is the only approval", () => {
   });
 });
 
+describe("the two operations keep separate code sets", () => {
+  const CODE = codeOf(read(ADAPTER));
+
+  it("no single shared rate-limit set exists", () => {
+    // P2 at b72d393d. One shared `RATE_LIMIT_CODES` put 60202 -- max CHECK attempts,
+    // which is terminal -- into `rate_limited` on the check path, which both gave
+    // false retry advice AND re-exposed a distinction ./types.ts coarsens on purpose.
+    // Reunifying the sets is the single edit that would bring it back.
+    expect(CODE, "a shared set invites the 60202 defect back").not.toMatch(
+      /const RATE_LIMIT_CODES\b/,
+    );
+    expect(CODE).toMatch(/const START_RATE_LIMIT_CODES\b/);
+    expect(CODE).toMatch(/const CHECK_RATE_LIMIT_CODES\b/);
+  });
+
+  it("the check path consults its TERMINAL codes before its window codes", () => {
+    // Order is the property: a terminal verification must never be reported as a
+    // retryable limit, whichever set a future code is added to.
+    const check = CODE.slice(CODE.indexOf("async check("));
+    const rejectAt = check.indexOf("CHECK_REJECTION_CODES");
+    const limitAt = check.indexOf("CHECK_RATE_LIMIT_CODES");
+    expect(rejectAt, "the check path does not consult terminal codes").toBeGreaterThan(-1);
+    expect(limitAt).toBeGreaterThan(-1);
+    expect(rejectAt, "window codes are consulted before terminal ones").toBeLessThan(limitAt);
+  });
+
+  it("no code appears in both a rejection set and a rate-limit set", () => {
+    // Overlap would make the outcome depend on branch order rather than on meaning.
+    const setOf = (name: string): number[] => {
+      const at = CODE.indexOf(`const ${name}`);
+      if (at === -1) return [];
+      const body = CODE.slice(at, CODE.indexOf("]", at));
+      return [...body.matchAll(/\b(\d{5})\b/g)].map((m) => Number(m[1]));
+    };
+    const reject = new Set(setOf("CHECK_REJECTION_CODES"));
+    for (const c of setOf("CHECK_RATE_LIMIT_CODES")) {
+      expect(reject.has(c), `${c} is in both check sets`).toBe(false);
+    }
+    expect(reject.size, "the terminal set is empty, so the ordering proves nothing").toBeGreaterThan(0);
+  });
+});
+
 describe("the promoting command still has exactly one caller", () => {
   it("mark_waitlist_mobile_verified has exactly ONE call site, not one file", () => {
     // 0203's own column comment says the ordering -- provider first, write only on

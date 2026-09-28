@@ -175,12 +175,35 @@ function errorCodeOf(json: unknown): number | null {
  * is ever wrong or retired, the result is a coarser answer — never a promotion,
  * never a false statement about someone's code, never a retry loop.
  *
- *   20429  too many requests
- *   60202  max check attempts reached for this verification
- *   60203  max send attempts reached for this destination
- *   60212  too many concurrent requests for this destination
+ * THE TWO OPERATIONS DO NOT SHARE A SET, AND THEY MUST NOT BE REUNIFIED. One
+ * shared `RATE_LIMIT_CODES` was this file's first revision and it put 60202 —
+ * "max CHECK attempts reached for this verification" — into `rate_limited` on the
+ * check path. That was wrong twice over, and the second way is the one that
+ * matters:
+ *
+ *   1. IT GAVE FALSE RETRY ADVICE. A verification whose attempts are exhausted is
+ *      terminal; `rate_limited` invites a caller to wait and try the same code
+ *      again, which will never work.
+ *   2. IT REOPENED THE MEMBERSHIP ORACLE. `./types.ts` collapses "wrong, expired,
+ *      already-consumed, too many attempts" into ONE value precisely so a surface
+ *      cannot tell an anonymous caller which happened -- because learning that a
+ *      code EXISTED to be exhausted is learning that the number is on a waitlist.
+ *      A distinct `rate_limited` on the check path handed that distinction back.
+ *
+ * So `rate_limited` on CHECK means only what the contract says it means: too many
+ * checks in the current WINDOW. Exhausting one verification's attempts is
+ * `rejected`, alongside wrong and expired, where the contract puts it.
+ *
+ *   20429  too many requests (a genuine window limit, on either operation)
+ *   60202  max CHECK attempts reached -> the verification is dead -> `rejected`
+ *   60203  max SEND attempts reached for this destination -> `rate_limited` on
+ *          start, which is exactly "too many challenges in the current window"
+ *   60212  too many concurrent requests for this destination -> `rate_limited`
  */
-const RATE_LIMIT_CODES = new Set<number>([20429, 60202, 60203, 60212]);
+const START_RATE_LIMIT_CODES = new Set<number>([20429, 60203, 60212]);
+const CHECK_RATE_LIMIT_CODES = new Set<number>([20429, 60212]);
+/** Terminal for this verification, so it is a statement about the code. */
+const CHECK_REJECTION_CODES = new Set<number>([60202]);
 
 export class TwilioVerifyProvider implements MobileVerificationProvider {
   async start(destination: VerificationDestination): Promise<VerificationStartOutcome> {
@@ -215,7 +238,7 @@ export class TwilioVerifyProvider implements MobileVerificationProvider {
 
     if (res.status >= 400) {
       const code = errorCodeOf(res.json);
-      if (code !== null && RATE_LIMIT_CODES.has(code)) return "rate_limited";
+      if (code !== null && START_RATE_LIMIT_CODES.has(code)) return "rate_limited";
       // A 4xx that is not a rate limit means Verify will not start a challenge
       // for this destination — an unroutable number, a landline, a parameter it
       // rejects. `refused` is the honest answer and it invites no retry.
@@ -276,7 +299,10 @@ export class TwilioVerifyProvider implements MobileVerificationProvider {
 
     if (res.status >= 400) {
       const code = errorCodeOf(res.json);
-      if (code !== null && RATE_LIMIT_CODES.has(code)) return "rate_limited";
+      // ORDER MATTERS: the terminal codes are consulted BEFORE the window ones, so
+      // an exhausted verification can never be reported as a retryable limit.
+      if (code !== null && CHECK_REJECTION_CODES.has(code)) return "rejected";
+      if (code !== null && CHECK_RATE_LIMIT_CODES.has(code)) return "rate_limited";
       // AND HERE `check` DIVERGES FROM `start`, DELIBERATELY. A 4xx on start is
       // Verify refusing a destination, which is a real refusal. A 4xx on CHECK
       // is a malformed request — our bug, not a judgement on the person's code —

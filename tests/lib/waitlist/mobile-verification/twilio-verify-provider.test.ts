@@ -126,7 +126,11 @@ describe("check — mapping", () => {
     ["200 canceled is a rejection", { status: 200, body: { status: "canceled" } }, "rejected"],
     ["404 (expired or consumed) collapses to rejected", { status: 404, body: {} }, "rejected"],
     ["429 is a rate limit", { status: 429, body: {} }, "rate_limited"],
-    ["60202 max check attempts", { status: 400, body: { code: 60202 } }, "rate_limited"],
+    // 60202 IS TERMINAL, SO IT IS `rejected` AND NOT `rate_limited`. P2 at
+    // b72d393d: ./types.ts puts "too many attempts" with wrong and expired, on
+    // purpose, and reserves `rate_limited` for a WINDOW limit.
+    ["60202 max check attempts is a REJECTION, not a window limit", { status: 400, body: { code: 60202 } }, "rejected"],
+    ["60212 too many concurrent IS a window limit", { status: 400, body: { code: 60212 } }, "rate_limited"],
     ["an ordinary 400 is an OUTAGE, not a rejection", { status: 400, body: { code: 60200 } }, "unavailable"],
     ["401 is an outage", { status: 401, body: {} }, "unavailable"],
     ["500 is an outage", { status: 500, body: {} }, "unavailable"],
@@ -245,5 +249,55 @@ describe("LOG_SECRET_NEGATIVE_CONTROL", () => {
       expect(out).not.toContain("authtoken-not-real");
       expect(out).not.toContain("VAtest0000000000000000000000000000");
     }
+  });
+});
+
+describe("the check path cannot re-expose what the contract coarsened", () => {
+  // P2 at b72d393d, and the half that matters more than the retry advice.
+  //
+  // ./types.ts collapses "wrong, expired, already-consumed, too many attempts" into
+  // ONE value because a surface must render one message: learning that a code
+  // EXISTED to be exhausted is learning that the number is on a waitlist. A
+  // distinct `rate_limited` for an exhausted verification handed that distinction
+  // straight back, which is the membership oracle this whole boundary is shaped to
+  // avoid.
+
+  it("every terminal outcome is indistinguishable from a wrong code", async () => {
+    const terminal: Reply[] = [
+      { status: 200, body: { status: "pending" } },   // wrong code
+      { status: 200, body: { status: "canceled" } },  // cancelled
+      { status: 404, body: {} },                     // expired or consumed
+      { status: 400, body: { code: 60202 } },         // attempts exhausted
+    ];
+    const outcomes: string[] = [];
+    for (const reply of terminal) {
+      stubFetch(reply);
+      outcomes.push(await provider().check({ e164: TO }, CODE));
+    }
+    expect(new Set(outcomes), `distinguishable: ${outcomes.join(", ")}`).toEqual(
+      new Set(["rejected"]),
+    );
+  });
+
+  it("rate_limited on check is reachable ONLY from a genuine window limit", async () => {
+    // The counterweight: the value must still exist and still be reachable, or the
+    // assertion above could be satisfied by collapsing everything.
+    for (const reply of [
+      { status: 429, body: {} } as Reply,
+      { status: 400, body: { code: 20429 } } as Reply,
+    ]) {
+      stubFetch(reply);
+      expect(await provider().check({ e164: TO }, CODE)).toBe("rate_limited");
+    }
+  });
+
+  it("start and check do not share a code set", async () => {
+    // 60203 is "max SEND attempts", which IS a window limit on start. It must not
+    // become a check outcome by sharing a set, and 60202 must not become a start
+    // outcome either.
+    stubFetch({ status: 400, body: { code: 60203 } });
+    expect(await provider().start({ e164: TO })).toBe("rate_limited");
+    stubFetch({ status: 400, body: { code: 60202 } });
+    expect(await provider().start({ e164: TO })).toBe("refused");
   });
 });
