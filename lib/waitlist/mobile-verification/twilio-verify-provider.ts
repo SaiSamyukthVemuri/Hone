@@ -1,4 +1,5 @@
 import "server-only";
+import { liveMobileVerificationArmed } from "./arming";
 import type {
   MobileVerificationProvider,
   VerificationCheckOutcome,
@@ -8,12 +9,13 @@ import type {
 
 // The REAL Twilio Verify adapter (WAIT B2b-2).
 //
-// THIS FILE IS INERT UNTIL SOMETHING ARMS IT. `./index.ts` hands it out only
-// when `liveMobileVerificationArmed()` is true, which needs an explicit flag AND
-// a Verify Service SID AND both account credentials. Nothing in this file
-// arms itself, and it has no module-load side effect: `readConfig()` runs per
-// call, so a process that was never configured never holds a usable client and
-// an env change needs no restart to take effect.
+// THIS FILE IS INERT UNTIL SOMETHING ARMS IT, AND IT ENFORCES THAT ITSELF. Two
+// independent points have to be true: `./index.ts` hands this adapter out only
+// when `liveMobileVerificationArmed()` is true, AND `readConfig()` below re-checks
+// the same predicate on every call. So constructing this class directly proves
+// nothing and sends nothing, and an instance held across a disarm goes inert at
+// once rather than at the next deploy. Nothing here arms itself and there is no
+// module-load side effect.
 //
 // PHILOSOPHY, INHERITED FROM lib/sms/provider/twilio-provider.ts AND NOT
 // RE-LITIGATED HERE:
@@ -64,15 +66,32 @@ type Config = {
 };
 
 /**
- * Read per call, never at module load.
+ * Read per call, never at module load, AND GATED ON THE ARMING FLAG.
  *
- * Returning null is a real outcome and not a defensive flourish: it is what an
- * armed-by-flag-but-unconfigured deployment looks like, and both operations turn
- * it into `unavailable` WITHOUT performing a request. `./index.ts` should already
- * have refused to hand this adapter out in that state; this is the second of the
- * two independent checks, because one check is one place to get it wrong.
+ * THE FLAG CHECK HERE IS NOT REDUNDANT WITH THE RESOLVER'S, AND AN EARLIER
+ * REVISION OF THIS COMMENT WAS SIMPLY WRONG ABOUT THAT. It called this "the second
+ * of the two independent checks" while checking only the three Twilio credentials
+ * — a DIFFERENT condition — so the flag had exactly one enforcement point, in
+ * `./index.ts`. Two things followed, both reproduced as failing tests:
+ *
+ *   * `new TwilioVerifyProvider().start(...)` sent a real SMS with the flag unset.
+ *     Not hypothetical: the credentials are already present in every deployment
+ *     that sends SMS, and that revision exported this class.
+ *   * a provider obtained from the resolver BEFORE the flag was unset went on
+ *     working, so "unset the flag" did not disarm a held instance and the
+ *     documented rollback was wrong.
+ *
+ * Now the predicate is `./arming.ts`, one definition read by both, and this is
+ * genuinely the second independent enforcement point: the resolver refuses to hand
+ * the adapter out, and the adapter refuses to act. Either alone is sufficient.
+ *
+ * Returning null is a real outcome, not a defensive flourish: both operations turn
+ * it into `unavailable` WITHOUT performing a request.
  */
 function readConfig(): Config | null {
+  // FIRST, AND ON EVERY CALL. An instance that outlives a disarm must go inert at
+  // once, which is what makes the rollback a flag change rather than a redeploy.
+  if (!liveMobileVerificationArmed()) return null;
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const serviceSid = process.env.TWILIO_VERIFY_SERVICE_SID;

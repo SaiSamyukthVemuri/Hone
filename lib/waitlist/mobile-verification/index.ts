@@ -1,6 +1,7 @@
 import "server-only";
 import { FakeMobileVerificationProvider } from "./fake-provider";
 import { FailClosedMobileVerificationProvider } from "./fail-closed-provider";
+import { liveMobileVerificationArmed } from "./arming";
 import { TwilioVerifyProvider } from "./twilio-verify-provider";
 import type { MobileVerificationProvider } from "./types";
 
@@ -44,9 +45,6 @@ import type { MobileVerificationProvider } from "./types";
 // code. The default is now `FailClosedMobileVerificationProvider`, so the
 // paragraph above describes what actually happens.
 
-const REAL_PROVIDER_FLAG = "HONE_MOBILE_VERIFICATION_LIVE";
-const VERIFY_SERVICE_SID = "TWILIO_VERIFY_SERVICE_SID";
-
 const fake = new FakeMobileVerificationProvider();
 const failClosed = new FailClosedMobileVerificationProvider();
 // STATELESS, AND CONSTRUCTING IT ARMS NOTHING. It reads its configuration per
@@ -63,18 +61,13 @@ export function fakeMobileVerificationProvider(): FakeMobileVerificationProvider
  * True only when the deployment has explicitly armed live verification AND every
  * piece of configuration the real adapter needs is present.
  *
- * All four are required. The flag alone cannot send; credentials alone must not;
- * and a Verify Service SID is not optional because Twilio Verify has no usable
- * default service.
+ * DEFINED IN ./arming.ts AND RE-EXPORTED HERE, so that this module and the adapter
+ * enforce the SAME predicate rather than two that can drift. The adapter cannot
+ * import it from here -- this module imports the adapter -- which is what left the
+ * flag with a single enforcement point in the first revision. ./arming.ts records
+ * what that cost.
  */
-export function liveMobileVerificationArmed(): boolean {
-  return (
-    process.env[REAL_PROVIDER_FLAG] === "true" &&
-    Boolean(process.env.TWILIO_ACCOUNT_SID) &&
-    Boolean(process.env.TWILIO_AUTH_TOKEN) &&
-    Boolean(process.env[VERIFY_SERVICE_SID])
-  );
-}
+export { liveMobileVerificationArmed } from "./arming";
 
 /**
  * The provider this deployment should use. **FAIL-CLOSED UNLESS ARMED.**

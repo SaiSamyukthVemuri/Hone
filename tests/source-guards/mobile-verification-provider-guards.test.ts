@@ -290,8 +290,13 @@ describe("the live path is reachable only through the flag", () => {
     );
   });
 
-  it("all four configuration inputs are required by the predicate", () => {
-    const body = SRC.slice(SRC.indexOf("export function liveMobileVerificationArmed"));
+  it("all four configuration inputs are required by the ONE shared predicate", () => {
+    // READ FROM ./arming.ts, WHICH IS WHERE IT LIVES NOW. It was defined in
+    // index.ts, which the adapter cannot import (index imports the adapter), and
+    // that circularity is exactly why the flag ended up with a single enforcement
+    // point. One definition below both of them removes the choice.
+    const ARMING = read(`${DIR}/arming.ts`);
+    const body = ARMING.slice(ARMING.indexOf("export function liveMobileVerificationArmed"));
     const upToBrace = body.slice(0, body.indexOf("\n}"));
     for (const needle of [
       "REAL_PROVIDER_FLAG",
@@ -303,11 +308,49 @@ describe("the live path is reachable only through the flag", () => {
     }
     // `&&` throughout: one `||` here would make any single input sufficient.
     expect(upToBrace).not.toMatch(/\|\|/);
+    // AND THERE IS ONLY ONE DEFINITION. A second would be two predicates that can
+    // drift, which is the shape of the bypass this file now guards against.
+    const definers: string[] = [];
+    for (const f of PROVIDER_DIR_FILES) {
+      if (/export function liveMobileVerificationArmed/.test(read(f))) definers.push(f);
+    }
+    expect(definers).toEqual([`${DIR}/arming.ts`]);
+  });
+
+  it("THE ADAPTER RE-CHECKS THE PREDICATE ITSELF, on every call", () => {
+    // P1 at b6cecbb0. The resolver's gate was the only enforcement point AND the
+    // adapter class is exported, so `new TwilioVerifyProvider()` sent a real SMS
+    // with the flag unset -- in any deployment that already sends SMS, which is
+    // every production one. A held instance also survived a disarm, making the
+    // documented rollback wrong.
+    const CODE = codeOf(read(ADAPTER));
+    expect(CODE, "the adapter does not consult the arming predicate").toContain(
+      "liveMobileVerificationArmed",
+    );
+    // Inside readConfig, which every operation calls before doing anything.
+    const cfg = CODE.slice(CODE.indexOf("function readConfig"));
+    const body = cfg.slice(0, cfg.indexOf("\n}"));
+    expect(body, "readConfig does not gate on the flag").toMatch(
+      /if\s*\(\s*!liveMobileVerificationArmed\(\)\s*\)\s*return null/,
+    );
+    // FIRST in the body: before any env value is read, so no ordering change can
+    // leave a path that touches configuration without consulting the flag.
+    expect(body.indexOf("liveMobileVerificationArmed")).toBeLessThan(
+      body.indexOf("process.env"),
+    );
   });
 
   it("nothing but the resolver decides which provider to use", () => {
     // A second `new TwilioVerifyProvider()` anywhere would be a live path that
-    // skips the flag entirely.
+    // skips the resolver's gate.
+    //
+    // COMMENT-STRIPPED, AND THAT IS NOT A DETAIL. This boundary documents its own
+    // past bypasses by QUOTING THEM, so the exact expression a guard here looks for
+    // is also the expression the comments contain. Matching raw source made this
+    // fail on arming.ts, whose header quotes `new TwilioVerifyProvider().start(...)`
+    // while explaining why that must not work. Third time in this boundary that a
+    // guard matched prose instead of code -- so every matcher in this file runs over
+    // codeOf(), and a new one that does not is a bug waiting to happen.
     const offenders: string[] = [];
     const walk = (dir: string) => {
       const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
@@ -320,7 +363,7 @@ describe("the live path is reachable only through the flag", () => {
         }
         if (!/\.tsx?$/.test(entry)) continue;
         if (rel === `${DIR}/index.ts` || rel === ADAPTER) continue;
-        if (/new TwilioVerifyProvider\s*\(/.test(read(rel))) offenders.push(rel);
+        if (/new TwilioVerifyProvider\s*\(/.test(codeOf(read(rel)))) offenders.push(rel);
       }
     };
     for (const top of ["app", "components", "lib"]) walk(top);

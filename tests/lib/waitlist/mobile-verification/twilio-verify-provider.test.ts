@@ -16,7 +16,11 @@ import { TwilioVerifyProvider } from "@/lib/waitlist/mobile-verification/twilio-
 // wrong — `pending` on check, and a timeout on check — are asserted twice, once
 // for the value and once for what it must NOT be.
 
+// THE FLAG IS ONE OF THE ADAPTER'S OWN INPUTS, not just the resolver's. It
+// enforces the same four-input predicate, so a test that armed only the three
+// credentials would get `unavailable` from everything and prove nothing.
 const ENV_KEYS = [
+  "HONE_MOBILE_VERIFICATION_LIVE",
   "TWILIO_ACCOUNT_SID",
   "TWILIO_AUTH_TOKEN",
   "TWILIO_VERIFY_SERVICE_SID",
@@ -28,6 +32,7 @@ const CODE = "123456";
 
 /** Fabricated, and shaped like the real thing only so a URL can be built. */
 function configure(): void {
+  process.env.HONE_MOBILE_VERIFICATION_LIVE = "true";
   process.env.TWILIO_ACCOUNT_SID = "ACtest0000000000000000000000000000";
   process.env.TWILIO_AUTH_TOKEN = "authtoken-not-real";
   process.env.TWILIO_VERIFY_SERVICE_SID = "VAtest0000000000000000000000000000";
@@ -198,6 +203,9 @@ describe("the request it actually sends", () => {
 });
 
 describe("configuration is read per call, and its absence performs no request", () => {
+  // ALL FOUR, INCLUDING THE FLAG. That the adapter refuses on its own when the flag
+  // is unset is the fix for the P1 raised at b6cecbb0: the resolver's gate was the
+  // only enforcement point, and this class is exported.
   for (const missing of ENV_KEYS) {
     it(`${missing} absent -> unavailable, with NO request made`, async () => {
       delete process.env[missing];

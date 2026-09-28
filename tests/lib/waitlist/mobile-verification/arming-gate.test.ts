@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FailClosedMobileVerificationProvider,
   FakeMobileVerificationProvider,
@@ -161,5 +161,81 @@ describe("resolveMobileVerificationProvider", () => {
     const p = resolveMobileVerificationProvider();
     expect(await p.start({ e164: "+15555550123" })).toBe("unavailable");
     expect(await p.check({ e164: "+15555550123" }, "000000")).toBe("unavailable");
+  });
+});
+
+describe("THE ADAPTER ENFORCES THE FLAG ITSELF (P1 at b6cecbb0)", () => {
+  // The resolver's gate was the ONLY enforcement point, and the same revision
+  // exported the adapter class. Both of these were live-send bypasses and both are
+  // reproduced here rather than described: they failed before the fix and pass now.
+  //
+  // WHY IT MATTERED IN PRODUCTION SPECIFICALLY: the three Twilio credentials are
+  // already present in every deployment that sends SMS, so the flag is the only
+  // input an operator has to add. Anything that reaches the adapter without
+  // consulting the flag is therefore live in production the day it merges.
+
+  function watchFetch(): string[] {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: string | URL) => {
+        calls.push(String(u));
+        return { status: 201, json: async () => ({ status: "pending" }) } as unknown as Response;
+      }),
+    );
+    return calls;
+  }
+
+  it("a DIRECTLY CONSTRUCTED adapter sends nothing while the flag is unset", async () => {
+    set({
+      TWILIO_ACCOUNT_SID: "ACx",
+      TWILIO_AUTH_TOKEN: "tok",
+      TWILIO_VERIFY_SERVICE_SID: "VAx",
+    });
+    const calls = watchFetch();
+    const provider = new TwilioVerifyProvider();
+    expect(await provider.start({ e164: "+15555550123" })).toBe("unavailable");
+    expect(await provider.check({ e164: "+15555550123" }, "123456")).toBe("unavailable");
+    vi.unstubAllGlobals();
+    expect(calls, "an unarmed adapter reached the network").toEqual([]);
+  });
+
+  it("an instance HELD ACROSS A DISARM goes inert at once, not at the next deploy", async () => {
+    // This is what makes the activation checklist's rollback step true. If a held
+    // provider kept working, "unset the flag" would need a redeploy to take effect
+    // and the runbook would be wrong at the moment it was most needed.
+    set(FULLY_ARMED);
+    const held = resolveMobileVerificationProvider();
+    expect(held).toBeInstanceOf(TwilioVerifyProvider);
+    delete process.env.HONE_MOBILE_VERIFICATION_LIVE;
+    const calls = watchFetch();
+    expect(await held.start({ e164: "+15555550123" })).toBe("unavailable");
+    vi.unstubAllGlobals();
+    expect(calls, "a held provider ignored the rollback").toEqual([]);
+  });
+
+  it("the resolver and the adapter read ONE predicate, so they cannot disagree", async () => {
+    // Each of the four inputs, removed one at a time: the resolver must refuse to
+    // hand out the adapter AND the adapter must refuse to act.
+    for (const missing of [
+      "HONE_MOBILE_VERIFICATION_LIVE",
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "TWILIO_VERIFY_SERVICE_SID",
+    ] as const) {
+      const env: Record<string, string> = { ...FULLY_ARMED };
+      delete env[missing];
+      set(env);
+      expect(resolveMobileVerificationProvider(), `resolver armed without ${missing}`).toBeInstanceOf(
+        FailClosedMobileVerificationProvider,
+      );
+      const calls = watchFetch();
+      expect(
+        await new TwilioVerifyProvider().start({ e164: "+15555550123" }),
+        `adapter acted without ${missing}`,
+      ).toBe("unavailable");
+      vi.unstubAllGlobals();
+      expect(calls, `adapter called out without ${missing}`).toEqual([]);
+    }
   });
 });
