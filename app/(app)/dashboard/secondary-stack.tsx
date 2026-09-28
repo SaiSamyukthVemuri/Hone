@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { getAvailabilityDefaults } from "@/lib/booking/queries";
-import { computeBookingReadiness } from "@/lib/booking/readiness";
+import { getNewClientReadiness } from "@/lib/booking/new-client-readiness";
 import { BookingSetupCard } from "./BookingSetupCard";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import { resolveBirthdayColor } from "@/lib/birthday-colors";
@@ -165,25 +165,29 @@ export async function SecondaryStack({
     availabilityDefaults,
   ] = await attentionSources;
 
-  // Booking readiness for the owner card. Derived only; no schema flag.
-  // The card itself is owner-only (rendered below). Public booking is
-  // soft-gated independently in app/book/[slug]/page.tsx.
-  const openAvailabilityDaysCount = isOwner
-    ? availabilityDefaults.filter(
-        (d: AttentionSources[4][number]) =>
-          d.is_open === true &&
-          typeof d.open_time === "string" &&
-          typeof d.close_time === "string",
-      ).length
-    : 0;
-  const bookingReadiness = isOwner
-    ? computeBookingReadiness({
-        studio,
-        activeServicesCount,
-        openAvailabilityDaysCount,
-        appOrigin: getRequiredAppOrigin(),
-      })
-    : null;
+  // ONB-03: THE CANONICAL AUTHORITY, NOT A SECOND OPINION.
+  //
+  // This called `computeBookingReadiness` with evidence assembled here. That
+  // answers "may this studio publish a booking link" and, per ONB-02's own
+  // module header, "does not ask for a consultation specifically, and it has no
+  // consent input at all" -- so the card could VANISH on a studio that
+  // `publicBookAppointmentAction` would refuse.
+  //
+  // WHY `getNewClientReadiness` AND NOT THE PURE `computeNewClientReadiness`
+  // WITH THE EVIDENCE THIS FUNCTION ALREADY HAS. It would save reads and it
+  // would be wrong: `availabilityDefaults` here is every row for the studio,
+  // while the authority reads `getStudioWideDefaultsSafe` --
+  // `practitioner_id IS NULL`, the scope public booking actually reads. ONB-02
+  // records that divergence as a shipped defect: a studio whose only open rows
+  // belonged to a practitioner answered READY while the public page offered
+  // nothing. Hand-assembling evidence here would reintroduce it, and would be a
+  // competing definition wearing the authority's name.
+  //
+  // The cost is stated rather than hidden: three reads this page partly
+  // duplicates, issued in parallel inside the authority. Correctness at the
+  // owner's primary surface is worth more than the saved round trips, and a
+  // shared-evidence refactor is its own slice.
+  const bookingReadiness = isOwner ? await getNewClientReadiness(studio) : null;
 
   // PR #208: read-only practice metrics for the selected period.
   const practiceMetrics = await practiceMetricsPromise;
@@ -304,12 +308,17 @@ export async function SecondaryStack({
           column of ticks: a congratulation occupying the daily workspace
           forever.
 
-          The gate is `readiness.status`, the EXISTING derived authority
-          (lib/booking/readiness.ts). No new flag, no new column, no new query:
-          `computeBookingReadiness` is already computed above for this card, and
-          "ready" already means "every required item is satisfied". The card
-          itself also returns null in that state, so the contract holds for any
-          future caller and not only for this call site. */}
+          ONB-03: the gate is the CANONICAL authority
+          (lib/booking/new-client-readiness.ts), the same one /settings/launch
+          consumes, so the two owner surfaces cannot disagree. No new flag and
+          no new column.
+
+          `status !== "ready"` INCLUDES "unknown" ON PURPOSE. Unknown means an
+          authority could not be read, so nobody has evidence this studio is
+          ready -- hiding the card would assert exactly that. The card renders a
+          distinct unknown state rather than an empty checklist, and it returns
+          null itself for "ready", so the contract holds for any future caller
+          and not only for this call site. */}
       {isOwner && bookingReadiness && bookingReadiness.status !== "ready" && (
         <BookingSetupCard readiness={bookingReadiness} />
       )}

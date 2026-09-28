@@ -242,7 +242,16 @@ describe("4 — nothing about what renders changed", () => {
   });
 
   it("readiness and setup-completion keep their existing derived authority", () => {
-    expect(STACK_CODE).toContain("computeBookingReadiness({");
+    // ONB-03 REPOINTED THIS, IT DID NOT WEAKEN IT. The intent — "derived, never a
+    // persisted flag, never a new query on this surface" — is unchanged; the
+    // derivation now comes from the CANONICAL authority the launch surface also
+    // consumes, instead of the weaker booking-link gate.
+    //
+    // `createClient` stays forbidden below and that is still honest:
+    // `getNewClientReadiness` opens its own client INSIDE the authority, which
+    // is the point. This surface still issues no readiness query of its own.
+    expect(STACK_CODE).toContain("getNewClientReadiness(studio)");
+    expect(STACK_CODE).not.toContain("computeBookingReadiness(");
     expect(STACK_CODE).toContain('bookingReadiness.status !== "ready"');
     expect(STACK_CODE).toContain("gettingStarted.autoDone === gettingStarted.autoTotal");
     // No new flag, no new column, no new query.

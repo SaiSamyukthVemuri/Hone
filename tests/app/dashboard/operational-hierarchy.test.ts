@@ -226,16 +226,22 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
 
   it("D2: derived readiness stays the ONLY authority — no new completion flag", () => {
     // "Do not create a new completion flag if current state already determines
-    // readiness." The page must keep deriving from computeBookingReadiness and
-    // must not invent a persisted booking-complete signal.
-    expect(DASH).toMatch(/computeBookingReadiness\(/);
+    // readiness." Still the rule. ONB-03 moved WHICH derivation the dashboard
+    // reads — from the booking-link gate to the canonical new-client authority —
+    // and did not add a flag.
+    expect(DASH).toMatch(/getNewClientReadiness\(/);
+    expect(DASH).not.toMatch(/computeBookingReadiness\(/);
     expect(DASH).not.toMatch(/booking_setup_complete|bookingSetupComplete|booking_ready\b/);
-    const readiness = readFileSync(
-      join(process.cwd(), "lib/booking/readiness.ts"),
+
+    // NEITHER AUTHORITY IS MODIFIED BY THIS PR, and both are asserted so the
+    // change is provably a consumer swap rather than a redefinition.
+    const legacy = readFileSync(join(process.cwd(), "lib/booking/readiness.ts"), "utf8");
+    expect(legacy).toMatch(/const allRequiredOk = items\.every\(\(it\) => !it\.required \|\| it\.ok\);/);
+    const canonical = readFileSync(
+      join(process.cwd(), "lib/booking/new-client-readiness.ts"),
       "utf8",
     );
-    // The authority itself is untouched by this PR.
-    expect(readiness).toMatch(/const allRequiredOk = items\.every\(\(it\) => !it\.required \|\| it\.ok\);/);
+    expect(canonical).toMatch(/export async function getNewClientReadiness\(/);
   });
 
   it("D2: the incomplete state and the booking link's real homes all survive", () => {
@@ -244,9 +250,35 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
       join(process.cwd(), "app/(app)/dashboard/BookingSetupCard.tsx"),
       "utf8",
     );
-    expect(card).toMatch(/>\s*Set up your booking page\s*</);
-    expect(card).toMatch(/<Checklist items=\{readiness\.items\}/);
-    expect(card).toMatch(/href=\{item\.href\}/);
+    // ONB-03: the not-ready state still renders every outstanding item with its
+    // own link. What changed is the SOURCE — canonical blockers rather than the
+    // booking-link gate's item list — and with it the heading, because the card
+    // now answers "can this studio take a new client", not "is the link
+    // publishable".
+    // THE HEADING REACHES AN <h2> THROUGH A PROP, so both halves are asserted:
+    // the not-ready state passes this text, and the shell renders whatever it is
+    // given inside the labelled heading. Checking only the literal would pass if
+    // the shell stopped rendering it at all.
+    expect(card).toContain('heading="Before you can take a new client"');
+    expect(card).toMatch(/<h2[^>]*id="booking-setup-heading"[\s\S]{0,80}\{heading\}/);
+    expect(card).toMatch(/readiness\.blockers\.map/);
+    expect(card).toMatch(/href=\{blocker\.href\}/);
+    // AND IT MUST NOT INVENT SATISFIED ITEMS. The authority reports only proven
+    // blockers; ticking whatever is absent from that list would assert something
+    // nobody proved whenever `unavailable` is non-empty.
+    //
+    // MEASURED ON CODE, NOT PROSE. The card's own comment explains why it does
+    // not reconstruct the full key list, and naming the identifier there is
+    // worth keeping — so the assertion strips comments rather than forcing the
+    // documentation to talk around the thing it is documenting. LINE comments
+    // first: a `/*`-first pass lets a `//`-commented block swallow real code.
+    const cardCode = card
+      .replace(/^[ \t]*\/\/.*$/gm, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(cardCode).not.toMatch(/NEW_CLIENT_BLOCKER_KEYS/);
+    expect(cardCode).not.toMatch(/item\.ok/);
+    // ANTI-VACUITY: the stripper must not have emptied the file.
+    expect(cardCode).toContain("readiness.blockers.map");
     // ...and the booking LINK still lives on the pages that own it, so hiding
     // the ready card removed a banner, not a capability.
     for (const f of [
