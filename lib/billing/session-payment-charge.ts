@@ -182,35 +182,20 @@ export type SessionPaymentChargeResult =
        */
       concurrentlyReconciled?: boolean;
       /**
-       * DID THIS INVOCATION WIN THE ORIGINAL `ready -> pending_stripe` CLAIM?
+       * WHY THERE IS NO PROCESS-LEVEL RECEIPT-OWNER FIELD HERE.
        *
-       * The single receipt-ownership fact, computed in exactly ONE place --
-       * `claim.result === "claimed"` -- and threaded from there through this
-       * result into `lib/billing/auto-payment-receipt.ts`. No branch may
-       * re-derive it, and nothing else may be substituted for it.
+       * A `receiptOwnedHere` field lived here for one revision, anchored to
+       * `claim.result === "claimed"`. It gave exclusivity and lost LIVENESS: when
+       * the claim winner died after Stripe succeeded, the invocation that
+       * recovered the charge was forbidden to receipt it and nobody could.
        *
-       * WHY IT EXISTS AS ITS OWN FIELD. Receipt eligibility was previously read
-       * off `committedNow`, i.e. off who won the SUCCEEDED WRITE. Those come
-       * apart, and the gap is a duplicate receipt to a client:
-       *
-       *   claimed invocation writes succeeded    -> committedNow t, owned t
-       *   claimed invocation loses to webhook    -> committedNow f, owned t
-       *   already_pending replay wins the write  -> committedNow t, owned F
-       *   already_pending replay loses the write -> committedNow f, owned f
-       *
-       * Row three is the defect: the `already_pending`-with-no-PaymentIntent
-       * branch deliberately lets several requests through to create-and-confirm
-       * with one idempotency key, so Stripe hands them all the same succeeded
-       * PaymentIntent. Whichever wins the row write looked like the owner, while
-       * the invocation that actually won the claim looked like one too -- two
-       * eligible senders, and `payment-receipt.ts` reopens `receipt_status` on a
-       * retryable failure, so the second can deliver a duplicate.
-       *
-       * ONLY ONE INVOCATION CAN WIN THE CLAIM. That is what makes this fact a
-       * single owner, and it is why ownership is anchored to the claim rather
-       * than to any later observation.
+       * EMAIL OWNERSHIP IS NOT A FACT ABOUT A PROCESS. It is the durable
+       * `receipt_status: null -> sending` claim in
+       * `lib/billing/payment-receipt.ts`, which survives a dead process and
+       * admits exactly one winner. The two fields above say who moved the MONEY;
+       * `lib/billing/auto-payment-receipt.ts` uses them only to decide who may
+       * ATTEMPT a send, and the database decides who actually does.
        */
-      receiptOwnedHere: boolean;
     }
   | {
       ok: false;
@@ -555,15 +540,6 @@ async function writeSucceededOutcome(args: {
    * re-read so a zero-row race cannot be blessed across a different charge kind.
    */
   expectedChargeReason: string | null;
-  /**
-   * Whether this invocation won the original `ready -> pending_stripe` claim.
-   *
-   * USED ONLY FOR ALERT WORDING HERE. It does not affect the money verdict and
-   * it is not returned: the result's `receiptOwnedHere` is set by the caller from
-   * the same single source, so this writer cannot become a second place where
-   * ownership is decided.
-   */
-  receiptOwnedHere: boolean;
 }): Promise<SuccessPersistenceResult> {
   const admin = createAdminClient();
   const latestCharge =
@@ -651,17 +627,22 @@ async function writeSucceededOutcome(args: {
       // signal, but there is nothing for a human to reconcile. Only `critical`
       // pages (lib/ops/alerts.ts), so this stays out of the manual-review queue
       // while remaining visible if the race becomes frequent.
-      // WHEN THIS INVOCATION DOES NOT OWN THE RECEIPT, SAY SO OUT LOUD.
+      // THIS ALERT MAKES NO RECEIPT CLAIM AT ALL, and that is the point.
       //
-      // Before this repair a zero-row write returned needs_manual_review, which
-      // was noisy but VISIBLE. Reporting clean success without owning the receipt
-      // would trade a false critical for a silent gap, and a silently unsent
-      // receipt for real money is the worse of the two. So the alert states the
-      // receipt exposure explicitly and an operator can send it from the session
-      // page, where `receipt_status` makes the manual send idempotent.
+      // It is written here, inside the charge writer, BEFORE the action layer
+      // calls autoSendReceiptAfterCharge -- so it cannot know whether a receipt
+      // was dispatched, let alone delivered. An earlier revision said "dispatched
+      // it automatically"; a later one branched on a process-level owner. Both
+      // asserted more than this point in the code can support.
+      //
+      // Email ownership is the durable `receipt_status: null -> sending` claim in
+      // lib/billing/payment-receipt.ts. This invocation is eligible to ATTEMPT a
+      // send because it holds a succeeded PaymentIntent for this attempt, and the
+      // database decides whether it actually sends. So the alert reports the MONEY
+      // verdict and says explicitly that the receipt outcome is recorded
+      // elsewhere.
       logInternal("session_payment_succeeded_write_concurrent_reconciliation", {
         attemptId: args.attemptId,
-        receiptOwnedHere: args.receiptOwnedHere,
       });
       await recordOpsAlert({
         severity: "warning",
@@ -672,24 +653,8 @@ async function writeSucceededOutcome(args: {
           "charge on this attempt. Verified by authoritative re-read: same attempt, PaymentIntent, " +
           "charge lineage, studio, client, livemode, amount, currency and charge reason. " +
           "The ledger is correct and NO money reconciliation is required. " +
-          // THIS ALERT CANNOT KNOW WHETHER A RECEIPT WAS DELIVERED. It is written
-          // inside the charge writer, BEFORE the action layer calls
-          // autoSendReceiptAfterCharge -- so PDF generation, recipient lookup or
-          // the email provider may still fail, or execution may stop first. An
-          // earlier revision said "dispatched it automatically", which a durable
-          // alert has no standing to claim and which would contradict the real
-          // receipt outcome during incident review. Ownership and PENDING dispatch
-          // are the only receipt facts available at this point.
-          (args.receiptOwnedHere
-            ? "THIS INVOCATION OWNS RECEIPT DISPATCH: it won the ready -> " +
-              "pending_stripe claim. Automatic dispatch is still PENDING at the " +
-              "action layer and its outcome is recorded separately -- this alert " +
-              "asserts no receipt outcome of any kind."
-            : "THIS INVOCATION DOES NOT OWN RECEIPT DISPATCH: it did not win the " +
-              "ready -> pending_stripe claim, so no automatic receipt is sent from " +
-              "here. CHECK WHETHER A RECEIPT IS STILL OWED for this charge and send " +
-              "it from the session page if so; receipt_status makes that send " +
-              "idempotent."),
+          "Automatic receipt dispatch is attempted by the action layer and owned by the durable " +
+          "receipt_status claim; this alert asserts no receipt outcome of any kind.",
         studioId: args.studioId,
         clientId: args.clientId,
         stripePaymentIntentId: args.pi.id,
@@ -698,9 +663,7 @@ async function writeSucceededOutcome(args: {
           attempt_id: args.attemptId,
           attempted_status: "succeeded",
           resolution: "concurrent_writer_already_persisted",
-          receipt_owned_here: args.receiptOwnedHere,
-          receipt_dispatch_pending_at_action_layer: args.receiptOwnedHere,
-          receipt_may_be_owed: !args.receiptOwnedHere,
+          receipt_outcome_recorded_elsewhere: true,
         },
       });
       return { persisted: true, by: "concurrent_writer" };
@@ -932,13 +895,6 @@ async function reconcileExistingPaymentIntent(args: {
   paymentIntentId: string;
   /** Compared against the row on a zero-row recheck. */
   expectedChargeReason: string | null;
-  /**
-   * Whether the CALLER won the original `ready -> pending_stripe` claim. Passed
-   * in, never computed here: this path is reached from `already_pending`, so the
-   * answer is false today, and hard-coding that would put a second copy of the
-   * ownership rule in a second place.
-   */
-  receiptOwnedHere: boolean;
 }): Promise<SessionPaymentChargeResult> {
   const stripe = getSessionPaymentStripe();
   let pi: Stripe.PaymentIntent;
@@ -983,7 +939,6 @@ async function reconcileExistingPaymentIntent(args: {
       clientId: args.clientId,
       pi,
       expectedChargeReason: args.expectedChargeReason,
-      receiptOwnedHere: args.receiptOwnedHere,
     });
     if (!persistence.persisted) {
       // PR #281: Stripe says succeeded but Hone could not persist it
@@ -1010,7 +965,6 @@ async function reconcileExistingPaymentIntent(args: {
       // it is. The last is threaded from the claim, never re-derived here.
       committedNow: persistence.by === "this_invocation",
       concurrentlyReconciled: persistence.by === "concurrent_writer",
-      receiptOwnedHere: args.receiptOwnedHere,
     };
   }
   // PR #320: requires_action is not terminal on Stripe: cancel before failing.
@@ -1128,8 +1082,6 @@ export async function runSessionPaymentCharge(args: {
       outcome: "succeeded",
       stripePaymentIntentId: attemptRow.stripe_payment_intent_id ?? "",
       stripeChargeId: null,
-      // No claim was won, so nothing is owned.
-      receiptOwnedHere: false,
       // Already succeeded BEFORE this call: a replay, not a new charge.
       committedNow: false,
     };
@@ -1295,8 +1247,6 @@ export async function runSessionPaymentCharge(args: {
       outcome: "succeeded",
       stripePaymentIntentId: claim.stripe_payment_intent_id ?? "",
       stripeChargeId: null,
-      // `already_succeeded` is not `claimed`, so nothing is owned.
-      receiptOwnedHere: false,
       // The claim RPC found it already succeeded: a replay, not a charge.
       committedNow: false,
     };
@@ -1363,13 +1313,6 @@ export async function runSessionPaymentCharge(args: {
         stripeAccountId: card.stripe_account_id,
         paymentIntentId: claim.stripe_payment_intent_id,
         expectedChargeReason: attemptRow.charge_reason ?? null,
-        // FALSE, AND THE TYPE SYSTEM PROVES IT IS THE RULE'S VALUE HERE.
-        // This branch is `claim.result === "already_pending"`, so TypeScript
-        // narrows the union and rejects `claim.result === "claimed"` as a
-        // comparison with no overlap. So this is not a second copy of the
-        // ownership rule; it is that rule's statically-proven value on a path
-        // that by construction did not win the claim.
-        receiptOwnedHere: false,
       });
     }
     // No PI id on the row. Check whether the claim is recent enough
@@ -1568,7 +1511,6 @@ export async function runSessionPaymentCharge(args: {
       // Only ONE invocation can win `ready -> pending_stripe`, so only that one
       // may own the receipt. An `already_pending` fallthrough is an idempotent
       // replay of somebody else's charge, whatever Stripe hands it back.
-      receiptOwnedHere: claim.result === "claimed",
     });
     if (!persistence.persisted) {
       return {
@@ -1596,7 +1538,6 @@ export async function runSessionPaymentCharge(args: {
       // no branch here may substitute one for another.
       committedNow: persistence.by === "this_invocation",
       concurrentlyReconciled: persistence.by === "concurrent_writer",
-      receiptOwnedHere: claim.result === "claimed",
     };
   }
 

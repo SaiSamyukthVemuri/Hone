@@ -674,203 +674,6 @@ describe("P1: a refund in flight is NOT benign", () => {
   });
 });
 
-describe("P1: receipt ownership is the DB claim, not the Stripe call", () => {
-  // THE DUPLICATE-RECEIPT PATH THE REVIEW FOUND. The `already_pending`-with-no-PI
-  // branch deliberately lets SEVERAL requests fall through to
-  // paymentIntents.create with the same idempotency key, so Stripe hands the SAME
-  // succeeded PI to all of them. Ownership was hardcoded `true`, so every loser
-  // claimed the receipt — and `payment-receipt.ts` resets receipt_status to null
-  // on a retryable failure, so the DB claim alone can be reopened and a second
-  // sender can deliver a duplicate to a client.
-  it("an already_pending idempotent replay does NOT own the receipt", async () => {
-    h.claimResult = "already_pending";
-    const result = await run();
-    // The money verdict is unchanged: the ledger is right either way.
-    expect(result).toMatchObject({ ok: true, outcome: "succeeded" });
-    // `concurrentlyReconciled` is now a VERIFICATION fact and is legitimately
-    // true here: a concurrent writer did persist the identical charge. What makes
-    // this invocation ineligible is OWNERSHIP, which is the separate fact.
-    expect(result).toMatchObject({
-      concurrentlyReconciled: true,
-      receiptOwnedHere: false,
-    });
-    let sent = 0;
-    await autoSendReceiptAfterCharge({
-      charge: result as never,
-      attemptId: ATTEMPT,
-      studioId: STUDIO,
-      practitionerId: PRACTITIONER,
-      send: async () => {
-        sent += 1;
-        return { ok: true } as never;
-      },
-    } as never);
-    expect(sent, "an idempotent replay must not send a receipt").toBe(0);
-  });
-
-  it("N concurrent idempotent creators produce AT MOST ONE receipt owner", async () => {
-    // The reviewer's scenario, counted. Only the invocation that won the claim
-    // may own the receipt; every other one is a replay however Stripe answered.
-    let owners = 0;
-    for (const claimResult of [
-      "claimed",
-      "already_pending",
-      "already_pending",
-      "already_pending",
-    ]) {
-      h.alerts = [];
-      h.stripeCalls = [];
-      h.claimResult = claimResult;
-      const result = (await run()) as { receiptOwnedHere?: boolean };
-      // OWNERSHIP is what counts a sender, and it is anchored to the claim.
-      if (result.receiptOwnedHere === true) owners += 1;
-    }
-    expect(owners, "exactly one invocation may own the receipt").toBe(1);
-  });
-
-  it("the winner still owns it", async () => {
-    h.claimResult = "claimed";
-    const result = await run();
-    expect(result).toMatchObject({ concurrentlyReconciled: true });
-  });
-});
-
-describe("P1: a benign race that owes a receipt is never SILENT", () => {
-  // Returning clean success without owning the receipt would trade a false
-  // critical for a silent gap, and a silently unsent receipt for real money is
-  // the worse of the two.
-  it("names the receipt exposure when this invocation does not own it", async () => {
-    h.claimResult = "already_pending";
-    await run();
-    const w = warnings();
-    expect(w).toHaveLength(1);
-    expect(w[0].details).toMatchObject({
-      receipt_owned_here: false,
-      receipt_may_be_owed: true,
-    });
-  });
-
-  it("and reports ownership when it DOES own it", async () => {
-    h.claimResult = "claimed";
-    await run();
-    expect(warnings()[0].details).toMatchObject({
-      receipt_owned_here: true,
-      receipt_may_be_owed: false,
-    });
-  });
-});
-
-// ===========================================================================
-// THE FOUR OWNERSHIP CASES — the table that makes this contract checkable
-// ===========================================================================
-//
-// Receipt eligibility is the CONJUNCTION of two independent facts, and the whole
-// point of the structural repair is that neither substitutes for the other:
-//
-//   claim result     wins succeeded write   committedNow  owned  eligible
-//   ---------------  ---------------------  ------------  -----  --------
-//   A claimed        yes                    true          true   YES
-//   B claimed        no (webhook wins)      false         true   YES
-//   C already_pending yes                   true          FALSE  no
-//   D already_pending no                    false         false  no
-//
-// Row C is the defect two review rounds found: it looks exactly like row A on the
-// persistence axis, and only ownership tells them apart.
-
-describe("the four ownership cases", () => {
-  const eligible = async (charge: unknown) => {
-    let sent = 0;
-    await autoSendReceiptAfterCharge({
-      charge: charge as never,
-      attemptId: ATTEMPT,
-      studioId: STUDIO,
-      practitionerId: PRACTITIONER,
-      send: async () => {
-        sent += 1;
-        return { ok: true } as never;
-      },
-      register: (fn: () => unknown) => {
-        void fn();
-      },
-    } as never);
-    return sent === 1;
-  };
-
-  it("A. claimed + wins the succeeded write -> owned, committed, ELIGIBLE", async () => {
-    h.claimResult = "claimed";
-    h.succeededUpdateRows = [{ id: ATTEMPT }];
-    const r = await run();
-    expect(r).toMatchObject({
-      ok: true,
-      committedNow: true,
-      concurrentlyReconciled: false,
-      receiptOwnedHere: true,
-    });
-    expect(await eligible(r)).toBe(true);
-  });
-
-  it("B. claimed + webhook wins the write -> owned, NOT committed, ELIGIBLE", async () => {
-    h.claimResult = "claimed";
-    h.succeededUpdateRows = [];
-    const r = await run();
-    expect(r).toMatchObject({
-      ok: true,
-      committedNow: false,
-      concurrentlyReconciled: true,
-      receiptOwnedHere: true,
-    });
-    expect(await eligible(r)).toBe(true);
-  });
-
-  it("C. already_pending + WINS the write -> committed but NOT owned, ineligible", async () => {
-    // THE DEFECT ROW. Indistinguishable from A on the persistence axis.
-    h.claimResult = "already_pending";
-    h.succeededUpdateRows = [{ id: ATTEMPT }];
-    const r = await run();
-    expect(r).toMatchObject({
-      ok: true,
-      committedNow: true,
-      receiptOwnedHere: false,
-    });
-    expect(
-      await eligible(r),
-      "an idempotent replay that won the write must not send",
-    ).toBe(false);
-  });
-
-  it("D. already_pending + loses the write -> neither, ineligible", async () => {
-    h.claimResult = "already_pending";
-    h.succeededUpdateRows = [];
-    const r = await run();
-    expect(r).toMatchObject({
-      ok: true,
-      committedNow: false,
-      receiptOwnedHere: false,
-    });
-    expect(await eligible(r)).toBe(false);
-  });
-
-  it("across all four, exactly ONE case is eligible per charge", async () => {
-    // A and B are the same invocation under two race outcomes, so exactly one of
-    // the four CLAIM/write combinations that can coexist for one attempt is
-    // eligible: the claim winner. C and D are the losers and send nothing.
-    let owners = 0;
-    for (const [claimResult, rows] of [
-      ["claimed", []],
-      ["already_pending", [{ id: ATTEMPT }]],
-      ["already_pending", []],
-      ["already_pending", []],
-    ] as Array<[string, Array<{ id: string }>]>) {
-      h.alerts = [];
-      h.claimResult = claimResult;
-      h.succeededUpdateRows = rows;
-      const r = (await run()) as { receiptOwnedHere?: boolean };
-      if (r.receiptOwnedHere === true) owners += 1;
-    }
-    expect(owners).toBe(1);
-  });
-});
-
 describe("charge-lineage asymmetry", () => {
   // A missing PROVIDER charge id cannot prove an arbitrary non-null ROW charge is
   // this charge. A missing ROW charge id proves nothing either way and is allowed
@@ -952,7 +755,7 @@ describe("the alert never claims a receipt was delivered", () => {
   // writeSucceededOutcome runs BEFORE the action layer's sender, so it has no
   // standing to assert delivery — PDF generation, recipient lookup or the
   // provider may still fail, or execution may stop first.
-  it("says OWNS and PENDING, never sent/dispatched/delivered", async () => {
+  it("the alert asserts no receipt outcome at all", async () => {
     h.claimResult = "claimed";
     const w = (await run(), warnings());
     expect(w).toHaveLength(1);
@@ -961,8 +764,9 @@ describe("the alert never claims a receipt was delivered", () => {
     );
     void msg;
     expect(w[0].details).toMatchObject({
-      receipt_owned_here: true,
-      receipt_dispatch_pending_at_action_layer: true,
+      // The alert makes NO receipt claim: ownership is the durable
+      // receipt_status transition, recorded elsewhere.
+      receipt_outcome_recorded_elsewhere: true,
     });
   });
 
@@ -988,7 +792,13 @@ describe("the alert never claims a receipt was delivered", () => {
     ]) {
       expect(copy, `alert copy must not claim delivery: ${claim}`).not.toMatch(claim);
     }
-    expect(copy).toMatch(/OWNS RECEIPT DISPATCH|DOES NOT OWN RECEIPT DISPATCH/);
-    expect(copy).toMatch(/PENDING/);
+    // It must say where the receipt outcome lives, and claim nothing itself.
+    // Matched as two phrases because the copy is a concatenation of literals.
+    expect(copy).toMatch(/owned by the durable/);
+    expect(copy).toMatch(/receipt_status claim/);
+    expect(copy).toMatch(/asserts no receipt outcome/);
+    expect(copy, "the writer must not name a process-level owner").not.toMatch(
+      /OWNS RECEIPT DISPATCH|receiptOwnedHere/,
+    );
   });
 });

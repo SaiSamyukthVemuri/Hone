@@ -60,7 +60,6 @@ const SUCCEEDED: SessionPaymentChargeResult = {
   stripePaymentIntentId: "pi_1",
   stripeChargeId: "ch_1",
   committedNow: true,
-  receiptOwnedHere: true,
 };
 
 /**
@@ -74,7 +73,6 @@ const REPLAY: SessionPaymentChargeResult = {
   stripePaymentIntentId: "pi_1",
   stripeChargeId: null,
   committedNow: false,
-  receiptOwnedHere: false,
 };
 
 /** Every non-definitive outcome the runner can return. */
@@ -138,6 +136,9 @@ describe("A — a definitive successful charge sends exactly one receipt", () =>
       attemptId: "att-1",
       studioId: "st-1",
       practitionerId: "pr-1",
+      // AUTOMATIC: the claim admits receipt_status NULL only, so this caller can
+      // never resurrect a `failed` receipt — that is a person's decision.
+      claimPolicy: "automatic",
     });
     expect(outcome).toEqual({ attempted: true, result: sent });
     expect(describeAutoReceipt(outcome)).toBe("sent");
@@ -522,28 +523,27 @@ describe("J — a replay is a real success that owes no receipt", () => {
     expect(describeAutoReceipt(outcome)).toBe("sent");
   });
 
-  it("ANTI-VACUITY: flipping receipt OWNERSHIP alone suppresses the send", () => {
-    // THE SECOND AXIS. There are now two independent inputs, and a gate that read
-    // only one of them would pass every other test here while doing the wrong
-    // thing in production -- which is exactly the defect two review rounds found.
-    // An `already_pending` replay that WINS the succeeded write looks like this:
-    // committedNow true, ownership false. It must not send.
-    const probe: SessionPaymentChargeResult = {
-      ...SUCCEEDED,
-      receiptOwnedHere: false,
+  it("a RECOVERY invocation is eligible even though it never won the claim", () => {
+    // THE ORPHANED-CLAIM CASE, and the reason process-level ownership was
+    // removed. An `already_pending` retry that recovers a charge whose claim
+    // holder died has `concurrentlyReconciled` (or `committedNow`) and no claim
+    // of its own. It MUST be allowed to attempt; the database then decides
+    // whether it actually sends.
+    const recovery: SessionPaymentChargeResult = {
+      ok: true,
+      outcome: "succeeded",
+      stripePaymentIntentId: "pi_1",
+      stripeChargeId: "ch_1",
+      committedNow: true,
     };
     const send = spySender(sent);
     return autoSendReceiptAfterCharge({
-      charge: probe,
+      charge: recovery,
       ...ARGS,
       send,
       register: regSpy().register,
-    }).then((outcome) => {
-      expect(send).not.toHaveBeenCalled();
-      expect(outcome).toEqual({
-        attempted: false,
-        reason: "replay_not_a_new_charge",
-      });
+    }).then(() => {
+      expect(send).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -598,30 +598,17 @@ describe("J — a replay is a real success that owes no receipt", () => {
       code.match(/concurrentlyReconciled: persistence\.by === "concurrent_writer",/g) ?? [];
     expect(concurrentClaims).toHaveLength(2);
 
-    // OWNERSHIP IS THREADED, NEVER DERIVED — the property two review rounds were
-    // spent learning. Every `receiptOwnedHere` in the runner must be either the
-    // single rule, a literal false on a path that provably did not win the claim,
-    // or a pass-through of the caller's fact. It must NEVER be computed from
-    // `persistence`, which is what made ownership and the ledger write the same
-    // question.
-    const ownership = code.match(/receiptOwnedHere: [^,\n]+,/g) ?? [];
-    expect(ownership.length).toBeGreaterThanOrEqual(4);
-    for (const o of ownership) {
-      expect(
-        o,
-        `receipt ownership must not be derived from persistence: ${o}`,
-      ).not.toMatch(/persistence/);
-      expect(o).toMatch(
-        /claim\.result === "claimed"|false|args\.receiptOwnedHere/,
-      );
-    }
-    // The rule itself appears where the fresh-create path needs it — once for the
-    // writer's alert wording and once on the result — and nowhere else. The
-    // per-occurrence check above is what actually forbids a second RULE; this
-    // just pins that the rule is present at all.
+    // NO CHARGE-RESULT FIELD MAY GRANT EMAIL OWNERSHIP.
+    //
+    // Three revisions tried to name the receipt owner from the charge result and
+    // each was wrong in a different way; the last lost LIVENESS when the claim
+    // holder died. So the runner now carries NO receipt-owner field at all, and
+    // this asserts that rather than trusting it: a regex pretending to prove a
+    // process-owner expression is exactly what was removed.
     expect(
-      (code.match(/receiptOwnedHere: claim\.result === "claimed",/g) ?? []).length,
-    ).toBeGreaterThanOrEqual(1);
+      code,
+      "the charge runner must not reintroduce a process-level receipt owner",
+    ).not.toMatch(/receiptOwned|receiptOwner|ownsReceipt|receiptOwed/);
 
     // Each `committedNow: true` is preceded by the persistence gate that makes
     // it exclusive — not merely by a Stripe success.
@@ -645,7 +632,9 @@ describe("J — a replay is a real success that owes no receipt", () => {
     // test exists to protect. The negative assertions below are unchanged.
     expect(code).toContain("charge.committedNow === true");
     expect(code).toContain("charge.concurrentlyReconciled === true");
-    expect(code).toContain("if (!receiptOwed)");
+    // And no process-level owner input, which is the field that was removed.
+    expect(code).not.toMatch(/receiptOwnedHere/);
+    expect(code).toContain("if (!eligibleToAttempt)");
     // No process-local memo: it does not survive two serverless instances.
     expect(code).not.toMatch(/\bnew Set\b/);
     expect(code).not.toMatch(/\bnew Map\b/);
