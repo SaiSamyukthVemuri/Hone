@@ -598,6 +598,60 @@ describe("J — a replay is a real success that owes no receipt", () => {
       code.match(/concurrentlyReconciled: persistence\.by === "concurrent_writer",/g) ?? [];
     expect(concurrentClaims).toHaveLength(2);
 
+    // THE RESULT'S OWN DOCUMENTATION MAY NOT NAME A FIELD THAT DOES NOT EXIST.
+    //
+    // A review found the JSDoc for `committedNow` still directing consumers to
+    // `receiptOwnedHere` one revision after that field was deleted, and warned
+    // that a future consumer following it would restore the liveness bug. The
+    // guard above reads COMMENT-STRIPPED code, so it is structurally blind to
+    // that -- correctly, since it is about behaviour.
+    //
+    // This is the mechanical complement, and deliberately not a phrase list:
+    // every camelCase identifier the result type's own doc comment mentions in
+    // backticks must be a field that type actually declares. No natural-language
+    // judgement, nothing to satisfy with clever wording.
+    const typeBlock = runner.slice(
+      runner.indexOf("export type SessionPaymentChargeResult ="),
+      runner.indexOf("\n// ", runner.indexOf("export type SessionPaymentChargeResult =")),
+    );
+    const declared = new Set(
+      [...typeBlock.matchAll(/^\s{6}(\w+)\??:/gm)].map((m) => m[1]),
+    );
+    expect(declared.size, "the result type must declare fields").toBeGreaterThan(3);
+    const docComments = typeBlock.match(/\/\*\*[\s\S]*?\*\//g) ?? [];
+    // Identifiers that are legitimately about other modules, not this type.
+    const EXTERNAL = new Set([
+      "committedNow",
+      "concurrentlyReconciled",
+      "receipt_status",
+      "autoSendReceiptAfterCharge",
+      "sendPaymentChargeReceipt",
+      "reconcileExistingPaymentIntent",
+      "reconcile_card_payment_succeeded",
+      "claim_session_payment_charge_attempt",
+      "pending_stripe",
+      "already_pending",
+      "already_succeeded",
+      "succeeded",
+      "claimed",
+      "ready",
+      "true",
+      "false",
+      "ok",
+      "FOR",
+      "UPDATE",
+    ]);
+    for (const doc of docComments) {
+      for (const [, ident] of doc.matchAll(/`([a-z][A-Za-z0-9]*)`/g)) {
+        if (EXTERNAL.has(ident) || declared.has(ident)) continue;
+        throw new Error(
+          `SessionPaymentChargeResult's documentation references \`${ident}\`, ` +
+            `which is not a field it declares. A doc that names a removed field ` +
+            `is how a consumer restores a bug the field was deleted to fix.`,
+        );
+      }
+    }
+
     // NO CHARGE-RESULT FIELD MAY GRANT EMAIL OWNERSHIP.
     //
     // Three revisions tried to name the receipt owner from the charge result and

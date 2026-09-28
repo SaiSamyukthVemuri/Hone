@@ -307,11 +307,17 @@ export async function autoSendReceiptAfterCharge(args: {
   // no receipts at all, so nothing else would have sent it — in the incident a
   // human noticed and clicked Send receipt 13 seconds later.
   //
-  // `concurrentlyReconciled` is that case, and ONLY that case: this invocation
-  // created and confirmed the PaymentIntent, Stripe said succeeded, and an
-  // authoritative re-read proved the row records the IDENTICAL charge. It is
-  // never set for a replay, and never on the reconcile-an-existing-PaymentIntent
-  // path where the charge pre-dates the request.
+  // `concurrentlyReconciled` is that case: this invocation held a succeeded
+  // PaymentIntent for the attempt, and an authoritative re-read proved the row
+  // records the IDENTICAL charge written by someone else.
+  //
+  // IT IS SET ON THE RECONCILE PATH TOO, and an earlier draft of this comment
+  // claimed the opposite. An `already_pending` claim carrying a stored
+  // PaymentIntent goes through `reconcileExistingPaymentIntent`, and that is
+  // precisely the ORPHANED-CLAIM RECOVERY this design exists to keep eligible:
+  // saying it is "never set" there would describe the very liveness bug that was
+  // removed. It is still never set for a replay, which holds no succeeded
+  // PaymentIntent from this invocation at all.
   //
   // ===========================================================================
   // ELIGIBILITY TO ATTEMPT, NOT OWNERSHIP
@@ -320,7 +326,8 @@ export async function autoSendReceiptAfterCharge(args: {
   // OWNERSHIP IS NOT A PROCESS FACT AND THIS FILE NO LONGER PRETENDS IT IS.
   // Three revisions tried to name the owner from the charge result -- first
   // `committedNow`, then `committedNow || concurrentlyReconciled`, then a
-  // `receiptOwnedHere` anchored to the claim RPC -- and each one was right about
+  // `receiptOwnedHere` anchored to the claim RPC (SINCE REMOVED -- do not look
+  // for it, and do not add it back) -- and each one was right about
   // exclusivity and wrong about something else. The last was wrong about
   // LIVENESS: if the invocation that won `ready -> pending_stripe` dies after
   // Stripe succeeded, a retry recovers the charge but is forbidden to receipt it,

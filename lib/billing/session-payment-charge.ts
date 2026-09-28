@@ -151,18 +151,25 @@ export type SessionPaymentChargeResult =
        * becomes true ZERO times for a charge that really happened. See
        * `concurrentlyReconciled` below.
        *
-       * IT IS NO LONGER THE RECEIPT INPUT. `committedNow` answers a question
-       * about the LEDGER WRITE, and receipt dispatch turns on a different
-       * question about WHOSE CHARGE IT IS -- see `receiptOwnedHere`. Two review
-       * rounds each found a duplicate-receipt path because those two questions
-       * were being answered by the same field, and each fix closed one branch
-       * while its sibling stayed open.
+       * IT IS NOT A RECEIPT-OWNERSHIP FACT, THOUGH IT IS A RECEIPT INPUT.
+       * Together with `concurrentlyReconciled` it answers only "did a brand-new
+       * charge succeed in THIS invocation", which is what
+       * `lib/billing/auto-payment-receipt.ts` uses to decide who may ATTEMPT a
+       * send. Who actually SENDS is decided by the durable
+       * `receipt_status: null -> sending` claim in
+       * `lib/billing/payment-receipt.ts`.
+       *
+       * DO NOT REINTRODUCE A PROCESS-LEVEL OWNER FIELD HERE. Three revisions
+       * tried; the last anchored ownership to the claim RPC and lost LIVENESS,
+       * because a recovery of an orphaned claim could then never receipt the
+       * charge. See the note below.
        */
       committedNow: boolean;
       /**
        * TRUE only when ALL of these hold:
        *
-       *   1. THIS invocation created and confirmed the PaymentIntent, and
+       *   1. THIS invocation created, confirmed or RECOVERED the PaymentIntent,
+       *      and
        *   2. Stripe reported it `succeeded`, and
        *   3. the ledger row was ALREADY stamped succeeded by a different
        *      legitimate writer before our conditional UPDATE ran, and
@@ -170,22 +177,30 @@ export type SessionPaymentChargeResult =
        *      charge — same attempt, PaymentIntent, charge lineage, studio,
        *      client, livemode, amount, currency and charge reason.
        *
-       * THE MONEY IS SETTLED AND A RECEIPT IS STILL OWED. This is NOT a replay:
-       * a replay short-circuits before any PaymentIntent is created and owes
-       * nothing. Here a brand-new real charge exists that nobody has receipted,
+       * THE MONEY IS SETTLED AND A RECEIPT MAY STILL BE OWED. This is NOT a
+       * replay: a replay short-circuits before any PaymentIntent is created and
+       * owes nothing. Here a real charge exists that may not have been receipted,
        * so `lib/billing/auto-payment-receipt.ts` treats this exactly like
-       * `committedNow` for the receipt decision and differently everywhere else.
+       * `committedNow` when deciding who may ATTEMPT a send.
        *
        * A VERIFICATION FACT, NOT AN OWNERSHIP FACT. It says the ledger is
        * correct and who made it so; it says nothing about whether THIS
-       * invocation may send the receipt. That is `receiptOwnedHere`.
+       * invocation actually sends the receipt. That is settled by the durable
+       * `receipt_status` claim.
+       *
+       * AND IT IS SET ON THE RECONCILE PATH TOO. An `already_pending` claim
+       * carrying a stored PaymentIntent goes through
+       * `reconcileExistingPaymentIntent`, and if its succeeded write loses to a
+       * verified concurrent writer this is true there as well. That is
+       * deliberate: it is exactly the orphaned-claim recovery whose receipt
+       * liveness this design restores.
        */
       concurrentlyReconciled?: boolean;
       /**
        * WHY THERE IS NO PROCESS-LEVEL RECEIPT-OWNER FIELD HERE.
        *
-       * A `receiptOwnedHere` field lived here for one revision, anchored to
-       * `claim.result === "claimed"`. It gave exclusivity and lost LIVENESS: when
+       * A process-level receipt-owner field lived here for one revision, anchored
+       * to the claim RPC result. It gave exclusivity and lost LIVENESS: when
        * the claim winner died after Stripe succeeded, the invocation that
        * recovered the charge was forbidden to receipt it and nobody could.
        *
@@ -1530,12 +1545,11 @@ export async function runSessionPaymentCharge(args: {
       outcome: "succeeded",
       stripePaymentIntentId: pi.id,
       stripeChargeId: latestCharge,
-      // THREE INDEPENDENT FACTS, and keeping them independent is the point of
-      // this revision. `committedNow` = did I write the row.
-      // `concurrentlyReconciled` = did a verified concurrent writer write the
-      // identical charge. `receiptOwnedHere` = did I win the claim. Receipt
-      // eligibility is their conjunction, decided in auto-payment-receipt.ts;
-      // no branch here may substitute one for another.
+      // TWO MONEY FACTS, AND NEITHER IS A RECEIPT OWNER. `committedNow` = did I
+      // write the row. `concurrentlyReconciled` = did a verified concurrent
+      // writer write the identical charge. Their disjunction decides who may
+      // ATTEMPT a receipt, in auto-payment-receipt.ts; who actually sends is the
+      // durable receipt_status claim, which no field here can grant.
       committedNow: persistence.by === "this_invocation",
       concurrentlyReconciled: persistence.by === "concurrent_writer",
     };
