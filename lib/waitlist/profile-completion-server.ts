@@ -34,26 +34,52 @@ export const WAIT_04B_CAPABILITIES: ProfileAdapterCapabilities = {
   // row that 0193 already owned.
   storesProfileFields: true,
 
-  // FALSE, AND THIS IS THE FLAG THE WHOLE SLICE TURNS ON.
+  // TRUE NOW, AND ONLY BECAUSE BOTH HALVES ARE FINALLY TRUE.
   //
-  // The contract requires BOTH halves: the six SMS columns writable AND an
-  // inbound STOP reaching the row. 0202 gives the first. The second does not
-  // exist — `app/api/twilio/inbound-sms/route.ts` selects from and updates
-  // `clients`, and never touches `new_client_waitlist_entries`. 0202 ships
-  // `suppress_waitlist_prospects` for that path to use, and no path uses it
-  // yet.
+  // The contract requires both: the six SMS columns writable AND an inbound
+  // STOP reaching the row. 0202 gave the first and this slice gives the second
+  // — `app/api/twilio/inbound-sms/route.ts` now scans
+  // `waitlist_prospect_suppression_candidates()`, runs the SAME
+  // `selectHoneSuppressionTargets` it runs for clients, and stamps through
+  // `suppress_waitlist_prospects`. One valid STOP reaches a prospect row, in
+  // every studio, whichever sender received it.
   //
-  // A consent we could record but not honour is worse than no consent field at
-  // all, because it produces written evidence of an agreement we would then
-  // break. So the surface does not ask (`collectsSmsConsent`), and
-  // `completeWaitlistProfile` forces the argument false regardless of what the
-  // payload says — belt and braces, because the surface is client code and the
-  // guarantee must not depend on it.
-  recordsSmsConsent: false,
+  // WHY THE ORDER MATTERED. A consent we could record but not honour is worse
+  // than no consent field at all: it produces written evidence of an agreement
+  // the system would then break. So the flag stayed false while only the
+  // recording half existed, the surface did not ask, and the binding forced the
+  // argument false. Flipping it before the STOP path existed would have been
+  // the flag lying about the system rather than describing it.
+  //
+  // WHAT THIS DOES NOT UNLOCK: sending. `prospectMayReceiveSms` still needs a
+  // VERIFIED mobile, and `verifiesMobile` below is still false — so every
+  // prospect send remains refused. Recording consent honestly and being allowed
+  // to act on it are different questions, and only the first is answered here.
+  recordsSmsConsent: true,
 
-  // FALSE until a verification mechanism exists. `mobile_verified_at` has no
-  // writer in 0202 at all: the guard raises on any attempt to move it. A
-  // candidate is not a destination, and `prospectMayReceiveSms` therefore
+  // FALSE, AND THE REASON HAS NARROWED AGAIN RATHER THAN GONE AWAY.
+  //
+  // PRODUCTION NOW HAS A WRITER. `0203` was applied on 2026-09-27 and is the
+  // hosted head, so `mark_waitlist_mobile_verified` exists in production and the
+  // guard admits it. An earlier revision of this comment said production had no
+  // writer at all; that was true until the apply and false the instant it landed.
+  //
+  // THE FLAG STAYS FALSE ANYWAY, and the reason is now the only one left: A WRITER
+  // IS NOT A VERIFICATION MECHANISM. The provider the state machine resolves by
+  // default is FAIL-CLOSED — it answers `unavailable` to everything and approves
+  // nothing — the fake is reachable only by explicit injection from a test, no
+  // Twilio Verify Service exists, and nothing arms the real adapter. So no
+  // possession proof can be obtained today, and nothing may claim one was.
+  //
+  // WHAT WOULD FLIP IT: a live Verify adapter armed against a real service. Not
+  // the migration, which has landed, and not the plumbing, which exists.
+  //
+  // THIS FLIPS WHEN THE PROVIDER IS REAL, not when the plumbing exists: 0203
+  // applied AND a live Verify adapter armed. Flipping it on the strength of the
+  // plumbing would be the flag lying about the system, which is the same mistake
+  // `recordsSmsConsent` above was held back from making.
+  //
+  // A candidate is not a destination, and `prospectMayReceiveSms` therefore
   // refuses every prospect send — the correct standing behaviour, not a gap.
   verifiesMobile: false,
 

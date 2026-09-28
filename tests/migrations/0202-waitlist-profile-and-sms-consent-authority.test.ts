@@ -64,16 +64,20 @@ const COMMANDS: ReadonlyArray<[string, string]> = [
 ];
 
 describe("0202 takes the number it derived", () => {
-  it("is the repository maximum and nothing sits above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0203 is", () => {
+    // Handed to 0203 per CLAUDE.md: only the CURRENT max asserts this, and
+    // tests/migrations/0203-waitlist-mobile-verification-authority.test.ts
+    // carries it now. AUTHORING 0203 is what flips this, not applying it --
+    // `isRepoMax` is derived from the migrations directory.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0203"]);
   });
 
   it("claims its version exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("IS APPLIED to production and is the hosted head, at PARITY", () => {
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
     // THE EQUALITY CLAIM ARRIVED HERE when `0202` was applied on 2026-09-21 under
     // explicit per-change owner authorization, from the reviewed PR #753 head
     // b8fc30a60a11f643897bd3389261970f0d8a6259. The dry run and the apply each
@@ -85,14 +89,22 @@ describe("0202 takes the number it derived", () => {
     // true until the apply and false the instant it landed. That is exactly why
     // the claim travels rather than being restated in every file.
     //
-    // EQUALITY IS A CURRENT CLAIM, so exactly one file may hold it, and this is
-    // now that file. WHOEVER APPLIES 0203 MOVES THIS BLOCK: narrow 0202 to a floor
+    // THE HAND-OFF THIS BLOCK DEMANDED HAS NOW BEEN PERFORMED. Its previous
+    // revision said "WHOEVER APPLIES 0203 MOVES THIS BLOCK: narrow 0202 to a floor
     // the way 0201, 0200, 0199 and 0198 were narrowed, and let the new head take
-    // the equality.
+    // the equality." `0203` was applied on 2026-09-27 under explicit per-change
+    // owner authorization, from the reviewed PR #768 head
+    // 1275486e7197d834294f58a85da774f4244aa176, with the dry run and the apply each
+    // naming exactly one file and NO --include-all.
+    //
+    // So this file keeps only a FLOOR -- `hosted >= 0202` -- the durable fact about
+    // an older applied migration, which stays true forever. Re-asserting equality
+    // here would make this file red the moment anything else applies, which is the
+    // mechanical multi-file sweep CLAUDE.md forbids. The equality now lives in
+    // 0203's own file.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.pending_migrations).toEqual([]);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 
   it("the applied bytes are the authorized bytes", () => {

@@ -240,11 +240,18 @@ describe("v2.2 hero and CTA constants are the deck's, verbatim", () => {
   });
 
   it("STATES NO DURATION, on any surface v2.2 governs", () => {
-    // v2.2 states no walkthrough length anywhere, so no constant this lane owns
-    // may promise one. `demoHeading` is /demo page copy (deck §9) and is NOT in
-    // this lane — it still carries a duration and is reported as an open item
-    // rather than silently rewritten here.
-    for (const key of ["primaryLabel", "primaryLabelShort", "secondaryLabel"] as const) {
+    // v2.2 states no walkthrough length anywhere, so NO walkthrough constant may
+    // promise one. `demoHeading` was the one exception when this guard was
+    // written: it is /demo page copy (deck §9), it was not MKT-02A's to rewrite,
+    // and it was reported as an open item instead. MKT-02E owns /demo and has now
+    // set it to the deck's own H1, so the exception is closed and the key is
+    // covered here like the rest — the duration cannot come back through it.
+    for (const key of [
+      "primaryLabel",
+      "primaryLabelShort",
+      "secondaryLabel",
+      "demoHeading",
+    ] as const) {
       expect(WALKTHROUGH[key], `${key} promises a duration`).not.toMatch(/\d+\s*-?\s*minute/i);
     }
     for (const page of MARKETING_PAGES) {

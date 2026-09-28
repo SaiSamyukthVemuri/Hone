@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { ProfileCompletionPatch } from "@/lib/waitlist/join-profile";
 
 // ===========================================================================
@@ -83,11 +85,27 @@ beforeEach(() => {
 });
 
 describe("the capabilities this binding declares", () => {
-  it("records no SMS consent, because no STOP reaches a waitlist entry", () => {
-    // The flag is not a preference. `app/api/twilio/inbound-sms` suppresses
-    // `clients` and never touches `new_client_waitlist_entries`, so the
-    // withdrawal half of consent does not exist for a prospect.
-    expect(WAIT_04B_CAPABILITIES.recordsSmsConsent).toBe(false);
+  it("records SMS consent, because a STOP now reaches a waitlist entry", () => {
+    // FLIPPED BY B2a, AND ONLY BY IT. The flag needs both halves: the six SMS
+    // columns writable (0202) and an inbound STOP reaching the row. The second
+    // arrived when `app/api/twilio/inbound-sms` began scanning
+    // `waitlist_prospect_suppression_candidates()` and stamping through
+    // `suppress_waitlist_prospects`.
+    expect(WAIT_04B_CAPABILITIES.recordsSmsConsent).toBe(true);
+  });
+
+  it("still refuses to VERIFY a mobile, so sending stays closed", () => {
+    // Recording consent honestly and being allowed to act on it are different
+    // questions, and this slice answers only the first.
+    //
+    // THE REASON HAS MOVED, AND THE BEHAVIOUR HAS NOT. A writer for
+    // `mobile_verified_at` DOES now exist in production -- 0203 was applied on
+    // 2026-09-27 -- so "there is no writer" is no longer why this is false.
+    // `prospectMayReceiveSms` still requires a verified destination, and no
+    // possession proof can be obtained: the provider resolves FAIL-CLOSED by
+    // default, the fake needs explicit injection, and no Verify Service exists.
+    // A DB writer is not a verification mechanism.
+    expect(WAIT_04B_CAPABILITIES.verifiesMobile).toBe(false);
   });
 
   it("verifies no mobile, so a candidate can never read as a destination", () => {
@@ -101,18 +119,31 @@ describe("the capabilities this binding declares", () => {
 });
 
 describe("consent is forced, not forwarded", () => {
-  it("sends p_sms_consent false even when the payload says true", async () => {
-    // THE LOAD-BEARING ASSERTION OF THIS FILE. The surface already withholds
-    // the question, but the surface is client code. If the guarantee rested
-    // there, a forged post — or one future call site that forgot the prop —
-    // would write consent evidence for an agreement the system cannot honour.
+  it("forwards a true consent now that it can be honoured", async () => {
     await run({ smsOperationalConsent: true });
+    expect(h.calls[0].args.p_sms_consent).toBe(true);
+  });
+
+  it("forwards a false consent as false", async () => {
+    await run({ smsOperationalConsent: false });
     expect(h.calls[0].args.p_sms_consent).toBe(false);
   });
 
-  it("sends false when the payload says false", async () => {
-    await run({ smsOperationalConsent: false });
-    expect(h.calls[0].args.p_sms_consent).toBe(false);
+  it("is still GATED ON THE CAPABILITY, not hardcoded to forward", async () => {
+    // THE LOAD-BEARING ASSERTION OF THIS FILE, AND IT SURVIVES THE FLIP.
+    // While the capability was false this forced the argument false regardless
+    // of payload, because the surface is client code and a consent rule must
+    // not rest there. Now that it is true the same expression forwards — but
+    // the expression must still BE a gate. Replacing it with a bare
+    // `input.smsOperationalConsent` would pass every behavioural test above and
+    // silently remove the protection the day the capability goes false again.
+    const src = readFileSync(
+      path.join(__dirname, "../../../lib/waitlist/profile-completion-server.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(
+      /p_sms_consent:\s*WAIT_04B_CAPABILITIES\.recordsSmsConsent\s*\n?\s*\?\s*input\.smsOperationalConsent\s*\n?\s*:\s*false/,
+    );
   });
 });
 
@@ -139,10 +170,32 @@ describe("what reaches the command", () => {
     expect(h.calls[0].args.p_mobile_candidate).toBe("647-555-1234");
   });
 
-  it("never sends a verification instant — 0202 has no writer for one", async () => {
+  it("sends NO verification parameter at all", async () => {
+    // THE TITLE IS NOW TRUE BECAUSE THE ASSERTION WAS STRENGTHENED, not because it
+    // was narrowed. Three revisions of this one test are worth recording:
+    //
+    //   1. "0202 has no writer for one" -- true until 0203 was applied.
+    //   2. "the DATABASE supplies it" -- overclaimed; the test never checked where
+    //      the instant came from.
+    //   3. "sends NO verification parameter at all" -- STILL overclaimed against a
+    //      `not.toMatch(/verified/i)` denylist, which `p_otp`, `p_proof` or
+    //      `p_verification_code` would all sail through.
+    //
+    // A DENYLIST CANNOT SUPPORT A CLAIM ABOUT ABSENCE. So the argument set is
+    // pinned exactly: any new parameter at all fails this, whatever it is called,
+    // which is the only shape that makes "none" checkable. Where the verified
+    // instant comes from remains a different property, proved against a real
+    // database in tests/db/waitlist-mobile-verification-authority.db.test.ts.
     await run({ patch: PATCH_CANDIDATE });
-    const keys = Object.keys(h.calls[0].args).join(",");
-    expect(keys).not.toMatch(/verified/i);
+    expect(Object.keys(h.calls[0].args).sort()).toEqual([
+      "p_first_name",
+      "p_last_name",
+      "p_mobile_candidate",
+      "p_preference",
+      "p_raw_token",
+      "p_sms_consent",
+      "p_treatment_area_ids",
+    ]);
   });
 });
 

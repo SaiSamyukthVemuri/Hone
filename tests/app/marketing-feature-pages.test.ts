@@ -72,6 +72,93 @@ describe("pillar + feature pages", () => {
     });
   }
 
+  // APPEND-ONLY IS A CLAIM ABOUT ONE TABLE, NOT ABOUT THE CHART.
+  //
+  // Three kinds of note live on a treatment record and only one of them retains
+  // anything, so the qualifier in the copy is load-bearing:
+  //
+  //   client_clinical_notes  (0126)      append-only. In-place UPDATE is blocked
+  //                                      by trigger; a correction inserts a new
+  //                                      row via supersedes_note_id.
+  //   sessions.next_session_note         MUTABLE IN PLACE. set_next_session_note
+  //                                      (0167:315-334) is a bare UPDATE, and
+  //                                      "Next-treatment note" is one of the
+  //                                      fields this page lists by name.
+  //   session_blocks.block_notes (0019)  replaced by the block update.
+  //
+  // The page once said "Notes are append-only" over that field list, which read
+  // as a promise about all three. This pins the narrowing so it cannot be
+  // dropped by a later copy edit: every append-only / never-overwritten claim on
+  // the page must be qualified as CLINICAL in the same breath.
+  // Both pages that make the claim, not just the one a review happened to land
+  // on: /electrolysis-software carried a bare "Edit history kept." in a list about
+  // probe lots and sterile items, which reads as chart-wide however it was meant.
+  for (const file of [
+    "app/features/charting-records/page.tsx",
+    "app/electrolysis-software/page.tsx",
+  ]) {
+  describe(`${file}: append-only is scoped, never chart-wide`, () => {
+    // AN ELEMENT BOUNDARY IS A BOUNDARY. The first version of this flattened
+    // every JSX tag to a SPACE, which merged separately rendered text into one
+    // synthetic sentence: an eyebrow reading "Notes are append-only" was rescued
+    // by the word "clinical" in the <Title> next to it, and the guard passed on
+    // exactly the regression it advertises. My own mutation proof missed it
+    // because it changed the eyebrow AND the title together — a compound
+    // mutation cannot test a claim about one of its parts. So tags terminate a
+    // unit here just as `.`, `!` and `?` do, and each unit is judged alone.
+    const UNITS: ReadonlyArray<string> = stripComments(read(file))
+      .replace(/<[^>]*>/g, "\u0000")
+      .split(/[\u0000.!?]+/)
+      .map((u) => u.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    const CLAIM = /append-only|never (?:be )?overwritten|not overwritten/i;
+    const KIND = /clinical|sterile-item|disinfectant/i;
+
+    it("never promises append-only or no-overwrite without saying what KIND", () => {
+      const claiming = UNITS.filter((u) => CLAIM.test(u));
+      for (const unit of claiming) {
+        expect(
+          unit,
+          `an unqualified append-only claim: "${unit}" — it must name clinical notes, or the sterile-item / disinfectant log that also has one, IN THE SAME heading or sentence`,
+        ).toMatch(KIND);
+      }
+      // Anti-vacuity: the assertions above are worthless if the page stopped
+      // making the claim at all. It is the page's whole edit-history section.
+      expect(
+        claiming.length,
+        "the page makes no append-only claim, so nothing was checked",
+      ).toBeGreaterThan(0);
+    });
+
+    it("splits headings apart, so a neighbour cannot qualify them", () => {
+      // The guard above is only as good as this split. Proving the mechanism
+      // directly, rather than trusting that the page happens to be worded well:
+      // two adjacent elements must never land in one unit.
+      const merged = UNITS.filter((u) => /append-only/i.test(u) && /overwritten/i.test(u));
+      expect(
+        merged,
+        `an eyebrow and a title were flattened into one unit (${merged.join(" | ")}), so either could borrow the other's qualifier`,
+      ).toEqual([]);
+    });
+  });
+  }
+
+  describe("charting-records states what is NOT retained", () => {
+    // The counterweight. Narrowing the promise is only honest if the page also
+    // states what is not kept, and the next-treatment note is the specific field
+    // that made the old wording false: it is in the page's own field list AND it
+    // is a bare in-place UPDATE (set_next_session_note, 0167:315-334).
+    const flat = stripComments(read("app/features/charting-records/page.tsx"))
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ");
+
+    it("names the next-treatment note and says the record stays editable", () => {
+      expect(flat).toMatch(/next-treatment note/i);
+      expect(flat).toMatch(/stay editable|stays editable|remain editable/i);
+    });
+  });
+
   it("every H1 is distinct (no cannibalization) and none equals the homepage H1", () => {
     const h1s = PAGES.map((p) => h1Inner(read(p.file)));
     for (const h of h1s) expect(h.length).toBeGreaterThan(0);

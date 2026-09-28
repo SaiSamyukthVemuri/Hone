@@ -26,7 +26,7 @@ const ALL_STRINGS: string[] = [
   ...Object.values(POSITIONING),
   ...Object.values(WALKTHROUGH),
   ...PRICING_PLANS.flatMap((p) =>
-    [p.name, p.priceLabel, p.cadence, p.badge, p.bestFor, p.transition, p.seats].filter(
+    [p.name, p.priceLabel, p.cadence, p.bestFor, p.transition, p.seats].filter(
       (v): v is string => typeof v === "string",
     ),
   ),
@@ -81,9 +81,11 @@ describe("marketing content — CAD pricing (prompt §15)", () => {
     expect(byId["founding-solo"].transition).toContain("CAD $39");
     expect(byId["founding-solo"].transition).toContain("first 12 months");
     expect(byId["solo"].priceLabel).toBe("CAD $49");
-    expect(byId["solo"].badge).toBe("Most popular");
     expect(byId["studio"].priceLabel).toBe("CAD $99");
-    expect(byId["studio"].seats).toBe("up to three practitioners");
+    expect(byId["studio"].seats).toBe("up to 3 practitioners");
+    // Deck v2.2 states a seat line on every tier, not only Studio.
+    expect(byId["founding-solo"].seats).toBe("1 practitioner");
+    expect(byId["solo"].seats).toBe("1 practitioner");
   });
 });
 

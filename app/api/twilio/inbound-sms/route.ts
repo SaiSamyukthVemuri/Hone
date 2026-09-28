@@ -206,6 +206,7 @@ export async function POST(req: Request): Promise<Response> {
   // never re-stamping or double-auditing already-opted-out clients.
   let matchedClients: Array<{ id: string; studio_id: string }> = [];
   let alreadyOptedOutCount = 0;
+  let clientScanFailed = false;
   try {
     const { data: candidates, error: scanErr } = await admin
       .from("clients")
@@ -224,15 +225,18 @@ export async function POST(req: Request): Promise<Response> {
     matchedClients = selection.targets;
     alreadyOptedOutCount = selection.alreadyOptedOutCount;
   } catch (err) {
+    // RECORDED, NOT RETURNED. This used to return 500 here, which was correct
+    // while clients were the only record type — but it now sits ABOVE the
+    // prospect pass, so a persistent `clients` read failure would stop a
+    // perfectly healthy waitlist prospect from ever being suppressed, on every
+    // retry. That is the opposite of the isolation this route claims between
+    // record types. The 500 still happens; it is just decided once, after both
+    // passes have had their turn.
+    clientScanFailed = true;
     logError("twilio_inbound_client_scan_failed", {
       error: err instanceof Error ? err.message : String(err),
       messageSid,
     });
-    // If we cannot scan, we cannot opt out. Return a 500 so Twilio
-    // retries; the next attempt may succeed. The carrier already
-    // honoured STOP at the network level, so the client will not get
-    // any more SMS from Twilio regardless.
-    return NextResponse.json({ ok: false }, { status: 500 });
   }
 
   const optedAt = new Date().toISOString();
@@ -280,19 +284,91 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // WAITLIST PROSPECTS — THE SAME RULE, A SECOND RECORD TYPE
+  // -------------------------------------------------------------------------
+  //
+  // 0202 gave waitlist entries the six SMS columns, which made it possible to
+  // RECORD a prospect's consent while nothing could honour their STOP. That is
+  // the half-promise `ProfileAdapterCapabilities.recordsSmsConsent` exists to
+  // refuse, and closing it is this slice.
+  //
+  // THIS IS NOT A SECOND SUPPRESSION SYSTEM. It calls the same
+  // `selectHoneSuppressionTargets` with the same `from`, for the same reason:
+  // the phone-wide rule is a statement by a PERSON about their PHONE. A client
+  // row and a prospect row that carry the same number are the same human, and
+  // one STOP must reach both.
+  //
+  // `to` is not passed here either. Neither the studio nor the sender the
+  // message arrived on may narrow who is opted out.
+  //
+  // WHY COMMANDS RATHER THAN A TABLE WRITE: 0185 revoked ALL privileges on
+  // new_client_waitlist_entries from every role including service_role, so this
+  // route holds no DML on those rows. 0202's two commands are the only path,
+  // and the stamping one is idempotent (`and e.sms_opted_out_at is null`) and
+  // returns the rows it actually stamped — so retry-dedup is the database's
+  // answer rather than a count this route infers.
+  let matchedProspects: Array<{ id: string; studio_id: string }> = [];
+  let prospectsAlreadyOptedOutCount = 0;
+  let prospectScanFailed = false;
+  try {
+    const { data: prospectCandidates, error: prospectScanErr } = await admin.rpc(
+      "waitlist_prospect_suppression_candidates",
+    );
+    if (prospectScanErr) throw prospectScanErr;
+    const prospectSelection = selectHoneSuppressionTargets({
+      candidates: prospectCandidates ?? [],
+      fromPhone: from,
+    });
+    matchedProspects = prospectSelection.targets;
+    prospectsAlreadyOptedOutCount = prospectSelection.alreadyOptedOutCount;
+  } catch (err) {
+    // Same posture as the client scan: if we cannot read, we cannot suppress,
+    // and a 500 lets Twilio retry. Recorded rather than returned immediately so
+    // the client rows already stamped above are not re-attempted needlessly.
+    prospectScanFailed = true;
+    logError("twilio_inbound_prospect_scan_failed", {
+      error: err instanceof Error ? err.message : String(err),
+      messageSid,
+    });
+  }
+
+  const successfullyOptedOutProspects: Array<{ id: string; studio_id: string }> = [];
+  let prospectOptOutErrors = 0;
+  if (matchedProspects.length > 0) {
+    const { data: stamped, error: suppressErr } = await admin.rpc(
+      "suppress_waitlist_prospects",
+      {
+        p_entry_ids: matchedProspects.map((m) => m.id),
+        p_opted_at: optedAt,
+      },
+    );
+    if (suppressErr) {
+      prospectOptOutErrors += 1;
+      logError("twilio_inbound_prospect_optout_failed", {
+        matchedCount: matchedProspects.length,
+        code: suppressErr.code,
+        message: suppressErr.message,
+        messageSid,
+      });
+    } else {
+      // The command returns only rows it stamped on THIS call, so a retry that
+      // finds everything already opted out produces zero audit rows. studio_id
+      // comes from the scan, which is the only place it is known.
+      const byId = new Map(matchedProspects.map((m) => [m.id, m.studio_id]));
+      for (const row of (stamped ?? []) as Array<{ stamped_id: string }>) {
+        const studioId = byId.get(row.stamped_id);
+        if (studioId) {
+          successfullyOptedOutProspects.push({ id: row.stamped_id, studio_id: studioId });
+        }
+      }
+    }
+  }
+
   // If ANY matched-client update failed, return 500 so Twilio retries.
   // The successful subset is already persisted and will not be retried
   // (the scan above skips already-opted-out rows). The next attempt
   // only sees the failed subset and either succeeds or 500s again.
-  if (optOutErrors > 0) {
-    logError("twilio_inbound_stop_partial_optout_failed", {
-      matchedCount: matchedClients.length,
-      successfulCount: successfullyOptedOutClients.length,
-      optOutErrors,
-      messageSid,
-    });
-    return NextResponse.json({ ok: false }, { status: 500 });
-  }
 
   // Audit only successfully-opted-out clients. studio_id is required
   // by the audit_logs table; we set it from the matched client's row.
@@ -329,11 +405,78 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
+  // Prospect opt-outs are audited on the same terms as client ones: same
+  // action, same phone-wide scope recorded, masked numbers only. The entity
+  // type differs because the row does, and a reader should be able to tell a
+  // suppressed prospect from a suppressed client without joining anything.
+  if (successfullyOptedOutProspects.length > 0) {
+    const prospectAuditRows = successfullyOptedOutProspects.map((m) => ({
+      studio_id: m.studio_id,
+      actor_id: null,
+      action: "sms_opt_out",
+      entity_type: "new_client_waitlist_entry",
+      entity_id: m.id,
+      metadata: {
+        source: "twilio_stop",
+        suppression_scope: HONE_SUPPRESSION_SCOPE,
+        twilio_message_sid: messageSid,
+        from: maskedPhone(from),
+        to: maskedPhone(to),
+      },
+    }));
+    const { error: prospectAuditErr } = await admin
+      .from("audit_logs")
+      .insert(prospectAuditRows);
+    if (prospectAuditErr) {
+      // Same posture as the client audit: the opt-out stands, the audit failure
+      // is logged, and Twilio still gets its TwiML. An audit row is a record of
+      // a suppression that already happened; losing it must not un-suppress.
+      logError("twilio_inbound_prospect_audit_insert_failed", {
+        successfulCount: successfullyOptedOutProspects.length,
+        code: prospectAuditErr.code,
+        message: prospectAuditErr.message,
+        messageSid,
+      });
+    }
+  }
+
+  // DECIDED AFTER THE AUDITS, DELIBERATELY. This block used to sit above them,
+  // so a partial failure returned before either audit ran — and because a retry
+  // skips rows already stamped, the audit row for a suppression that DID land
+  // was lost for good. A suppression with no record of it is the one outcome
+  // neither a person nor an operator can reconstruct later.
+  // ONE STATUS FOR BOTH RECORD TYPES. A prospect that could not be read or
+  // stamped is exactly as unprotected as a client that could not be, so it
+  // earns the same retry. Reporting 200 here would leave a person who texted
+  // STOP still opted in, with Twilio never asking again.
+  if (
+    clientScanFailed ||
+    optOutErrors > 0 ||
+    prospectOptOutErrors > 0 ||
+    prospectScanFailed
+  ) {
+    logError("twilio_inbound_stop_partial_optout_failed", {
+      matchedCount: matchedClients.length,
+      successfulCount: successfullyOptedOutClients.length,
+      optOutErrors,
+      clientScanFailed,
+      prospectMatchedCount: matchedProspects.length,
+      prospectSuccessfulCount: successfullyOptedOutProspects.length,
+      prospectOptOutErrors,
+      prospectScanFailed,
+      messageSid,
+    });
+    return NextResponse.json({ ok: false }, { status: 500 });
+  }
+
   logEvent("twilio_inbound_stop_processed", {
     fromMasked: maskedPhone(from),
     matchedCount: matchedClients.length,
     alreadyOptedOutCount,
     successfulCount: successfullyOptedOutClients.length,
+    prospectMatchedCount: matchedProspects.length,
+    prospectAlreadyOptedOutCount: prospectsAlreadyOptedOutCount,
+    prospectSuccessfulCount: successfullyOptedOutProspects.length,
     messageSid,
   });
 
