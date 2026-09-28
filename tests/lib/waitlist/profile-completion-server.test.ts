@@ -96,9 +96,15 @@ describe("the capabilities this binding declares", () => {
 
   it("still refuses to VERIFY a mobile, so sending stays closed", () => {
     // Recording consent honestly and being allowed to act on it are different
-    // questions. This slice answers only the first; `prospectMayReceiveSms`
-    // still requires a verified destination and there is still no writer for
-    // `mobile_verified_at`.
+    // questions, and this slice answers only the first.
+    //
+    // THE REASON HAS MOVED, AND THE BEHAVIOUR HAS NOT. A writer for
+    // `mobile_verified_at` DOES now exist in production -- 0203 was applied on
+    // 2026-09-27 -- so "there is no writer" is no longer why this is false.
+    // `prospectMayReceiveSms` still requires a verified destination, and no
+    // possession proof can be obtained: the provider resolves FAIL-CLOSED by
+    // default, the fake needs explicit injection, and no Verify Service exists.
+    // A DB writer is not a verification mechanism.
     expect(WAIT_04B_CAPABILITIES.verifiesMobile).toBe(false);
   });
 
@@ -164,10 +170,32 @@ describe("what reaches the command", () => {
     expect(h.calls[0].args.p_mobile_candidate).toBe("647-555-1234");
   });
 
-  it("never sends a verification instant — 0202 has no writer for one", async () => {
+  it("sends NO verification parameter at all", async () => {
+    // THE TITLE IS NOW TRUE BECAUSE THE ASSERTION WAS STRENGTHENED, not because it
+    // was narrowed. Three revisions of this one test are worth recording:
+    //
+    //   1. "0202 has no writer for one" -- true until 0203 was applied.
+    //   2. "the DATABASE supplies it" -- overclaimed; the test never checked where
+    //      the instant came from.
+    //   3. "sends NO verification parameter at all" -- STILL overclaimed against a
+    //      `not.toMatch(/verified/i)` denylist, which `p_otp`, `p_proof` or
+    //      `p_verification_code` would all sail through.
+    //
+    // A DENYLIST CANNOT SUPPORT A CLAIM ABOUT ABSENCE. So the argument set is
+    // pinned exactly: any new parameter at all fails this, whatever it is called,
+    // which is the only shape that makes "none" checkable. Where the verified
+    // instant comes from remains a different property, proved against a real
+    // database in tests/db/waitlist-mobile-verification-authority.db.test.ts.
     await run({ patch: PATCH_CANDIDATE });
-    const keys = Object.keys(h.calls[0].args).join(",");
-    expect(keys).not.toMatch(/verified/i);
+    expect(Object.keys(h.calls[0].args).sort()).toEqual([
+      "p_first_name",
+      "p_last_name",
+      "p_mobile_candidate",
+      "p_preference",
+      "p_raw_token",
+      "p_sms_consent",
+      "p_treatment_area_ids",
+    ]);
   });
 });
 

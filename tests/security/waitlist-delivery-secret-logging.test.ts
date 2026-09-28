@@ -52,6 +52,29 @@ function transportReturning(
 
 const ACCEPTED = { data: { id: "msg_123" }, error: null };
 
+// A DETERMINISTIC, MAILABLE CHALLENGE WINDOW.
+//
+// Four cases below used `issuedAt: new Date()` with
+// `expiresAt: new Date(Date.now() + 20 * 60_000)`, which reads the clock TWICE.
+// `minted` is therefore 20 minutes PLUS the gap between the two reads, and
+// `challengeMailability` refuses `minted > 20 minutes` exactly -- so ONE
+// millisecond of scheduling delay refused the send. It held together on an
+// unloaded machine, where both reads land in the same millisecond, and failed on
+// a loaded CI runner.
+//
+// THE POSITIVE CASE FAILED LOUDLY, which is how this was found: `sentText` stayed
+// "" because the transport was never called. THE THREE NEGATIVE CASES FAILED
+// SILENTLY, and that is the part worth fixing -- they assert the secret code is
+// absent from a log, and a refused send produces no log to find it in, so they
+// passed while proving nothing. That is exactly the vacuous-pass the positive
+// case's own comment was written to guard against.
+//
+// Fixed instants, 19 minutes minted and 1 second after mint, are inside every
+// bound in challengeMailability with room to spare, and race nothing.
+const MINTED_AT = new Date("2026-09-07T12:00:00.000Z");
+const MINTED_EXPIRES = new Date("2026-09-07T12:19:00.000Z");
+const SENT_AT = new Date("2026-09-07T12:00:01.000Z");
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -109,8 +132,9 @@ describe("the proof code never reaches the log", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: SECRET_CODE,
-      issuedAt: new Date(),
-      expiresAt: new Date(Date.now() + 20 * 60_000),
+      issuedAt: MINTED_AT,
+      expiresAt: MINTED_EXPIRES,
+      now: SENT_AT,
       action: "book",
       transport: transportReturning(ACCEPTED),
     });
@@ -128,8 +152,9 @@ describe("the proof code never reaches the log", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: SECRET_CODE,
-      issuedAt: new Date(),
-      expiresAt: new Date(Date.now() + 20 * 60_000),
+      issuedAt: MINTED_AT,
+      expiresAt: MINTED_EXPIRES,
+      now: SENT_AT,
       action: "book",
       transport: transportReturning({
         data: null,
@@ -171,8 +196,9 @@ describe("the proof code never reaches the log", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: SECRET_CODE,
-      issuedAt: new Date(),
-      expiresAt: new Date(Date.now() + 20 * 60_000),
+      issuedAt: MINTED_AT,
+      expiresAt: MINTED_EXPIRES,
+      now: SENT_AT,
       action: "book",
       transport: {
         emails: {
@@ -241,8 +267,9 @@ describe("no console sink receives a secret", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: SECRET_CODE,
-      issuedAt: new Date(),
-      expiresAt: new Date(Date.now() + 20 * 60_000),
+      issuedAt: MINTED_AT,
+      expiresAt: MINTED_EXPIRES,
+      now: SENT_AT,
       action: "decline",
       transport: transportReturning(ACCEPTED),
     });

@@ -57,9 +57,29 @@ export const WAIT_04B_CAPABILITIES: ProfileAdapterCapabilities = {
   // to act on it are different questions, and only the first is answered here.
   recordsSmsConsent: true,
 
-  // FALSE until a verification mechanism exists. `mobile_verified_at` has no
-  // writer in 0202 at all: the guard raises on any attempt to move it. A
-  // candidate is not a destination, and `prospectMayReceiveSms` therefore
+  // FALSE, AND THE REASON HAS NARROWED AGAIN RATHER THAN GONE AWAY.
+  //
+  // PRODUCTION NOW HAS A WRITER. `0203` was applied on 2026-09-27 and is the
+  // hosted head, so `mark_waitlist_mobile_verified` exists in production and the
+  // guard admits it. An earlier revision of this comment said production had no
+  // writer at all; that was true until the apply and false the instant it landed.
+  //
+  // THE FLAG STAYS FALSE ANYWAY, and the reason is now the only one left: A WRITER
+  // IS NOT A VERIFICATION MECHANISM. The provider the state machine resolves by
+  // default is FAIL-CLOSED — it answers `unavailable` to everything and approves
+  // nothing — the fake is reachable only by explicit injection from a test, no
+  // Twilio Verify Service exists, and nothing arms the real adapter. So no
+  // possession proof can be obtained today, and nothing may claim one was.
+  //
+  // WHAT WOULD FLIP IT: a live Verify adapter armed against a real service. Not
+  // the migration, which has landed, and not the plumbing, which exists.
+  //
+  // THIS FLIPS WHEN THE PROVIDER IS REAL, not when the plumbing exists: 0203
+  // applied AND a live Verify adapter armed. Flipping it on the strength of the
+  // plumbing would be the flag lying about the system, which is the same mistake
+  // `recordsSmsConsent` above was held back from making.
+  //
+  // A candidate is not a destination, and `prospectMayReceiveSms` therefore
   // refuses every prospect send — the correct standing behaviour, not a gap.
   verifiesMobile: false,
 

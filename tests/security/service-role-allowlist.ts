@@ -486,6 +486,34 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "resolveInvitation",
   },
   {
+    path: "lib/waitlist/mobile-verification-server.ts",
+    purpose:
+      "WAIT B2b server authority that promotes a waitlist prospect's mobile to " +
+      "verified after a provider-confirmed possession proof.",
+    why:
+      "0203 revokes EXECUTE on mark_waitlist_mobile_verified from public, anon and " +
+      "authenticated BY NAME and grants it to service_role alone, so there is no RLS " +
+      "path to the command and service_role is the only way to call it. The row is " +
+      "unreachable by any other route: 0185 revoked ALL privileges on " +
+      "new_client_waitlist_entries from every role including service_role, and 0203's " +
+      "amended transition guard admits exactly one writer for mobile_verified_at -- a " +
+      "row-scoped, transaction-local permit the command sets immediately before its " +
+      "UPDATE. A permit for one entry authorizes no other, and a REST client cannot " +
+      "compose set_config with a write in one transaction, so only a DEFINER body can " +
+      "hold both. " +
+      "THE WRITE IS NOT REACHABLE BY ASSERTION. It happens only after the provider " +
+      "returns `approved`; every other provider outcome returns before any write " +
+      "exists to make, so a client-submitted code cannot construct verified evidence. " +
+      "The command then re-checks the phone as a compare-and-set on the exact stored " +
+      "string, so a caller that resolved the wrong entry is refused by the database " +
+      "rather than trusted. This module resolves no identity of its own: the entry and " +
+      "its stored phone arrive already resolved, and there is deliberately no " +
+      "phone-only entry point because that would be a waitlist-membership oracle.",
+    // The promotion is the only write, and it cannot name a row the command did
+    // not itself permit.
+    scopeGuard: "p_entry_id: target.entryId",
+  },
+  {
     path: "lib/waitlist/profile-completion-server.ts",
     purpose:
       "WAIT-04B server authority for completing a legacy waitlist profile from a " +
