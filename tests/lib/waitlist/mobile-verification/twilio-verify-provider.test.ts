@@ -129,7 +129,15 @@ describe("check — mapping", () => {
     // 60202 IS TERMINAL, SO IT IS `rejected` AND NOT `rate_limited`. P2 at
     // b72d393d: ./types.ts puts "too many attempts" with wrong and expired, on
     // purpose, and reserves `rate_limited` for a WINDOW limit.
-    ["60202 max check attempts is a REJECTION, not a window limit", { status: 400, body: { code: 60202 } }, "rejected"],
+    //
+    // WITH HTTP 429, WHICH IS THE STATUS TWILIO ACTUALLY SENDS IT WITH. The first
+    // version of this case used 400 -- the status that made the fix look correct
+    // while a `status === 429` branch above still answered first for the real
+    // response. P2 at 7e5f78e1. The 400 variant is kept as well, so the mapping is
+    // pinned as status-INDEPENDENT rather than pinned to whichever status the
+    // fixture happened to pick.
+    ["60202 with its REAL status 429 is a rejection", { status: 429, body: { code: 60202 } }, "rejected"],
+    ["60202 with a 400 is the same rejection", { status: 400, body: { code: 60202 } }, "rejected"],
     ["60212 too many concurrent IS a window limit", { status: 400, body: { code: 60212 } }, "rate_limited"],
     ["an ordinary 400 is an OUTAGE, not a rejection", { status: 400, body: { code: 60200 } }, "unavailable"],
     ["401 is an outage", { status: 401, body: {} }, "unavailable"],
@@ -267,7 +275,11 @@ describe("the check path cannot re-expose what the contract coarsened", () => {
       { status: 200, body: { status: "pending" } },   // wrong code
       { status: 200, body: { status: "canceled" } },  // cancelled
       { status: 404, body: {} },                     // expired or consumed
-      { status: 400, body: { code: 60202 } },         // attempts exhausted
+      // ATTEMPTS EXHAUSTED, AT THE STATUS TWILIO REALLY SENDS (429) and also at a
+      // 400. The first version of this list used only the 400, which is how the
+      // 7e5f78e1 defect survived a test that looked like it covered this exact case.
+      { status: 429, body: { code: 60202 } },
+      { status: 400, body: { code: 60202 } },
     ];
     const outcomes: string[] = [];
     for (const reply of terminal) {
@@ -299,5 +311,48 @@ describe("the check path cannot re-expose what the contract coarsened", () => {
     expect(await provider().start({ e164: TO })).toBe("rate_limited");
     stubFetch({ status: 400, body: { code: 60202 } });
     expect(await provider().start({ e164: TO })).toBe("refused");
+  });
+});
+
+describe("the error code decides before the status class", () => {
+  // P2 at 7e5f78e1. Several Verify limit codes arrive with a 429 and several with a
+  // 400, so a branch keyed on the status class answers first and shadows the code
+  // table. The specific fact about a response must outrank the coarse one.
+
+  it("a terminal code wins over a 429, on the check path", async () => {
+    stubFetch({ status: 429, body: { code: 60202 } });
+    const outcome = await provider().check({ e164: TO }, CODE);
+    expect(outcome).toBe("rejected");
+    expect(outcome, "the generic 429 branch answered first").not.toBe("rate_limited");
+  });
+
+  it("a bare 429 with no code is still a window limit", async () => {
+    // The counterweight: moving the code table earlier must not strand the status
+    // branch it now sits above.
+    stubFetch({ status: 429, body: {} });
+    expect(await provider().check({ e164: TO }, CODE)).toBe("rate_limited");
+    stubFetch({ status: 429, body: { code: 99999 } });
+    expect(await provider().check({ e164: TO }, CODE)).toBe("rate_limited");
+  });
+
+  it("a start limit code wins over its status class too", async () => {
+    // 60203 arrives with a 429 and 60212 with a 400; both are window limits on
+    // start, so the answer must not depend on which status Twilio chose.
+    for (const reply of [
+      { status: 429, body: { code: 60203 } } as Reply,
+      { status: 400, body: { code: 60203 } } as Reply,
+      { status: 429, body: { code: 60212 } } as Reply,
+      { status: 400, body: { code: 60212 } } as Reply,
+    ]) {
+      stubFetch(reply);
+      expect(await provider().start({ e164: TO })).toBe("rate_limited");
+    }
+  });
+
+  it("a 401 still outranks an unrecognised code, because it is not the person's fault", async () => {
+    stubFetch({ status: 401, body: { code: 20003 } });
+    expect(await provider().check({ e164: TO }, CODE)).toBe("unavailable");
+    stubFetch({ status: 401, body: { code: 20003 } });
+    expect(await provider().start({ e164: TO })).toBe("unavailable");
   });
 });

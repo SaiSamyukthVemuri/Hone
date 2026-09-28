@@ -194,8 +194,13 @@ function errorCodeOf(json: unknown): number | null {
  * checks in the current WINDOW. Exhausting one verification's attempts is
  * `rejected`, alongside wrong and expired, where the contract puts it.
  *
+ * THE HTTP STATUS EACH ONE ARRIVES WITH IS NOT UNIFORM, which is why the code is
+ * consulted before the status class. 60202 arrives with a 429, so a branch keyed on
+ * 429 shadows it; that was the P2 at 7e5f78e1.
+ *
  *   20429  too many requests (a genuine window limit, on either operation)
- *   60202  max CHECK attempts reached -> the verification is dead -> `rejected`
+ *   60202  max CHECK attempts reached, WITH HTTP 429 -> the verification is dead,
+ *          so `rejected` -- and the status class must not get to answer first
  *   60203  max SEND attempts reached for this destination -> `rate_limited` on
  *          start, which is exactly "too many challenges in the current window"
  *   60212  too many concurrent requests for this destination -> `rate_limited`
@@ -228,6 +233,12 @@ export class TwilioVerifyProvider implements MobileVerificationProvider {
       return statusOf(res.json) === "pending" ? "started" : "unavailable";
     }
 
+    // Code before status class, for the reason `check` below spells out: several
+    // Verify limit codes arrive with a 429 and several with a 400, so keying on the
+    // status class first makes the outcome depend on which one Twilio chose.
+    const code = errorCodeOf(res.json);
+    if (code !== null && START_RATE_LIMIT_CODES.has(code)) return "rate_limited";
+
     if (res.status === 429) return "rate_limited";
     if (res.status === 401 || res.status === 403) {
       // Bad or unauthorized credentials. Not the person's fault and not a
@@ -237,8 +248,6 @@ export class TwilioVerifyProvider implements MobileVerificationProvider {
     if (res.status >= 500) return "unavailable";
 
     if (res.status >= 400) {
-      const code = errorCodeOf(res.json);
-      if (code !== null && START_RATE_LIMIT_CODES.has(code)) return "rate_limited";
       // A 4xx that is not a rate limit means Verify will not start a challenge
       // for this destination — an unroutable number, a landline, a parameter it
       // rejects. `refused` is the honest answer and it invites no retry.
@@ -293,16 +302,29 @@ export class TwilioVerifyProvider implements MobileVerificationProvider {
       return "rejected";
     }
 
+    // THE ERROR CODE IS CONSULTED BEFORE ANY STATUS CLASS, AND THAT ORDER IS THE
+    // WHOLE FIX. The previous revision put this table inside the `>= 400` arm,
+    // below an `if (res.status === 429) return "rate_limited"` — and Twilio reports
+    // 60202 WITH HTTP 429. So the generic branch answered first and the real
+    // exhausted-attempt response still returned `rate_limited`, which is exactly
+    // the defect that revision set out to remove. It looked fixed only because the
+    // test modelled 60202 as a 400, which is the status that made the fix appear to
+    // work. A status class is a coarse fact about a response; the error code is the
+    // specific one, so the specific fact decides first.
+    // NAMED `errorCode`, NOT `code`: this function's own parameter is the person's
+    // one-time code, and two things called `code` in one body is how the wrong one
+    // gets passed somewhere.
+    const errorCode = errorCodeOf(res.json);
+    // Terminal before window, so an exhausted verification can never be reported as
+    // retryable whichever set a future code lands in.
+    if (errorCode !== null && CHECK_REJECTION_CODES.has(errorCode)) return "rejected";
+    if (errorCode !== null && CHECK_RATE_LIMIT_CODES.has(errorCode)) return "rate_limited";
+
     if (res.status === 429) return "rate_limited";
     if (res.status === 401 || res.status === 403) return "unavailable";
     if (res.status >= 500) return "unavailable";
 
     if (res.status >= 400) {
-      const code = errorCodeOf(res.json);
-      // ORDER MATTERS: the terminal codes are consulted BEFORE the window ones, so
-      // an exhausted verification can never be reported as a retryable limit.
-      if (code !== null && CHECK_REJECTION_CODES.has(code)) return "rejected";
-      if (code !== null && CHECK_RATE_LIMIT_CODES.has(code)) return "rate_limited";
       // AND HERE `check` DIVERGES FROM `start`, DELIBERATELY. A 4xx on start is
       // Verify refusing a destination, which is a real refusal. A 4xx on CHECK
       // is a malformed request — our bug, not a judgement on the person's code —

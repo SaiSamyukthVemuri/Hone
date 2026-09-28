@@ -513,6 +513,39 @@ describe("the two operations keep separate code sets", () => {
     expect(rejectAt, "window codes are consulted before terminal ones").toBeLessThan(limitAt);
   });
 
+  it("THE CODE TABLE OUTRANKS EVERY STATUS-CLASS BRANCH, in both operations", () => {
+    // P2 at 7e5f78e1, AND THE REASON THE ASSERTION ABOVE WAS NOT ENOUGH. That one
+    // compares the two sibling branches to each other, and both sat inside the
+    // `>= 400` arm -- below `if (res.status === 429) return "rate_limited"`. Twilio
+    // sends 60202 WITH a 429, so the generic branch answered first and the guard was
+    // satisfied while the defect was live. Comparing siblings proves nothing about a
+    // branch that shadows them both, so this compares against the status branches.
+    for (const [op, first] of [
+      ["async start(", "START_RATE_LIMIT_CODES"],
+      ["async check(", "CHECK_REJECTION_CODES"],
+    ] as const) {
+      const start = CODE.indexOf(op);
+      const end = CODE.indexOf("\n  }", start);
+      const body = CODE.slice(start, end === -1 ? undefined : end);
+      const codeAt = body.indexOf(first);
+      expect(codeAt, `${op} does not consult ${first}`).toBeGreaterThan(-1);
+      // Every status-class branch AFTER the 2xx and 404 handling must come later.
+      for (const branch of [
+        /res\.status === 429/,
+        /res\.status === 401/,
+        /res\.status >= 500/,
+        /res\.status >= 400/,
+      ]) {
+        const m = body.match(branch);
+        if (!m || m.index === undefined) continue;
+        expect(
+          codeAt,
+          `${op}: ${branch} is tested before the error-code table, so it shadows it`,
+        ).toBeLessThan(m.index);
+      }
+    }
+  });
+
   it("no code appears in both a rejection set and a rate-limit set", () => {
     // Overlap would make the outcome depend on branch order rather than on meaning.
     const setOf = (name: string): number[] => {
