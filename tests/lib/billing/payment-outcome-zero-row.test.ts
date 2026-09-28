@@ -173,8 +173,14 @@ describe("zero-row alerts leak no raw payload or PII", () => {
       expect(end, `event ${ev} must carry a safeDetails object`).toBeGreaterThan(-1);
       const block = after.slice(0, end);
       expect(block, `event ${ev} should log attempt_id`).toMatch(/attempt_id:/);
-      // And no customer PII travels with it.
-      expect(block, `event ${ev} must not log an email`).not.toMatch(/email/i);
+      // And no customer PII travels with it. COMMENT-STRIPPED: this is about what
+      // is LOGGED, and an explanatory comment mentioning the email provider is not
+      // a logged value. The uncommented form failed on prose, which is a guard
+      // testing the wrong thing.
+      const blockCode = block
+        .replace(/\/\*[\s\S]*?\*\//g, " ")
+        .replace(/^\s*\/\/.*$/gm, " ");
+      expect(blockCode, `event ${ev} must not log an email`).not.toMatch(/email/i);
     }
   });
 });

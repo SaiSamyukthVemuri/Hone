@@ -313,16 +313,40 @@ export async function autoSendReceiptAfterCharge(args: {
   // never set for a replay, and never on the reconcile-an-existing-PaymentIntent
   // path where the charge pre-dates the request.
   //
-  // AT MOST ONE RECEIPT SURVIVES THIS WIDENING, on two independent grounds:
-  //   1. Only one invocation can reach either state per attempt, because
-  //      `claim_session_payment_charge_attempt` atomically moves ready ->
-  //      pending_stripe and answers `not_ready` to everyone else, so only one
-  //      invocation ever creates a PaymentIntent.
-  //   2. `sendPaymentChargeReceipt` claims `receipt_status` in the database,
-  //      which is what already makes an automatic send and a simultaneous
-  //      manual click safe. That backstop is unchanged.
+  // OWNERSHIP IS THE GATE, AND `committedNow` IS NOT OWNERSHIP.
+  //
+  // My first version of this reasoning claimed exclusivity from the claim RPC:
+  // "only one invocation ever creates a PaymentIntent". THAT IS FALSE. The
+  // `already_pending`-with-no-PaymentIntent branch deliberately lets several
+  // requests through to create-and-confirm with one deterministic idempotency
+  // key, so Stripe hands them all the SAME succeeded PaymentIntent. Whichever of
+  // them won the succeeded write then had `committedNow: true` and looked like
+  // the owner, while the invocation that actually won the claim looked like one
+  // too. Two eligible senders, and `payment-receipt.ts` reopens `receipt_status`
+  // on a retryable failure, so the second could deliver a DUPLICATE RECEIPT to a
+  // client. Two review rounds found that hole because the fix kept being applied
+  // to one branch and not its sibling.
+  //
+  // So eligibility now needs BOTH, and they answer different questions:
+  //
+  //   receiptOwnedHere  did I win the original ready -> pending_stripe claim?
+  //                     EXACTLY ONE invocation can, which is what makes a single
+  //                     owner, and it is decided once in the charge runner.
+  //   committedNow / concurrentlyReconciled
+  //                     did a brand-new charge actually succeed in this
+  //                     invocation -- either I wrote the ledger, or a verified
+  //                     concurrent writer wrote the identical charge?
+  //
+  // The second half is not redundant: it keeps a receipt tied to a charge that
+  // really happened here, so a future widening of `ok: true` cannot start
+  // sending on state alone.
+  //
+  // `sendPaymentChargeReceipt`'s `receipt_status` claim remains the durable
+  // backstop, but it is no longer load-bearing for exclusivity -- which is the
+  // condition this file's header always required.
   const receiptOwed =
-    charge.committedNow === true || charge.concurrentlyReconciled === true;
+    charge.receiptOwnedHere === true &&
+    (charge.committedNow === true || charge.concurrentlyReconciled === true);
   if (!receiptOwed) {
     return { attempted: false, reason: "replay_not_a_new_charge" };
   }

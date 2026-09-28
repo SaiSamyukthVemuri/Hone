@@ -57,7 +57,7 @@ describe("writeSucceededOutcome reports whether the success was persisted", () =
     // longer the shape, and the union must still distinguish the two writers --
     // that distinction is what the receipt decision keys off.
     expect(CHARGE).toMatch(/persisted:\s*true;\s*by:\s*"this_invocation"/);
-    expect(CHARGE).toMatch(/persisted:\s*true;\s*by:\s*"concurrent_writer"/);
+    expect(CHARGE).toMatch(/persisted:\s*true;\s*by:\s*"concurrent_writer"\s*\}/);
     expect(CHARGE).toMatch(
       /persisted:\s*false;\s*reason:\s*"db_error"\s*\|\s*"zero_rows"/,
     );
@@ -86,9 +86,15 @@ describe("writeSucceededOutcome reports whether the success was persisted", () =
     // else, so it may only be reachable from the verified branch. Pinned two ways:
     // the return exists, and it sits AFTER the classifier call and INSIDE the
     // `verdict.benign` branch -- never on a bare zero-row path.
-    // Multi-line now, because the arm also reports receipt ownership.
+    // Persistence facts ONLY. Ownership deliberately does not travel on this
+    // union any more: keeping it here put the rule inside the writer and left
+    // each call site to combine it with `by`, which is how one branch got the
+    // gate and its sibling did not.
     expect(CHARGE).toMatch(
-      /return \{\s*persisted: true,\s*by: "concurrent_writer",\s*receiptOwed: receiptOwnedHere,\s*\};/,
+      /return \{ persisted: true, by: "concurrent_writer" \};/,
+    );
+    expect(CHARGE, "ownership must not travel on the persistence union").not.toMatch(
+      /persisted: true;\s*by: "concurrent_writer";\s*receiptOwed/,
     );
     const zeroRowBlock =
       CHARGE.slice(CHARGE.indexOf("if (!updatedRows || updatedRows.length === 0)"));

@@ -53,13 +53,14 @@ beforeEach(() => {
 
 const ARGS = { attemptId: "att-1", studioId: "st-1", practitionerId: "pr-1" };
 
-/** THIS invocation committed the charge: a receipt is owed. */
+/** THIS invocation won the claim AND committed the charge: a receipt is owed. */
 const SUCCEEDED: SessionPaymentChargeResult = {
   ok: true,
   outcome: "succeeded",
   stripePaymentIntentId: "pi_1",
   stripeChargeId: "ch_1",
   committedNow: true,
+  receiptOwnedHere: true,
 };
 
 /**
@@ -73,6 +74,7 @@ const REPLAY: SessionPaymentChargeResult = {
   stripePaymentIntentId: "pi_1",
   stripeChargeId: null,
   committedNow: false,
+  receiptOwnedHere: false,
 };
 
 /** Every non-definitive outcome the runner can return. */
@@ -520,7 +522,32 @@ describe("J — a replay is a real success that owes no receipt", () => {
     expect(describeAutoReceipt(outcome)).toBe("sent");
   });
 
-  it("ANTI-VACUITY: the ONLY difference between the two fixtures is committedNow", () => {
+  it("ANTI-VACUITY: flipping receipt OWNERSHIP alone suppresses the send", () => {
+    // THE SECOND AXIS. There are now two independent inputs, and a gate that read
+    // only one of them would pass every other test here while doing the wrong
+    // thing in production -- which is exactly the defect two review rounds found.
+    // An `already_pending` replay that WINS the succeeded write looks like this:
+    // committedNow true, ownership false. It must not send.
+    const probe: SessionPaymentChargeResult = {
+      ...SUCCEEDED,
+      receiptOwnedHere: false,
+    };
+    const send = spySender(sent);
+    return autoSendReceiptAfterCharge({
+      charge: probe,
+      ...ARGS,
+      send,
+      register: regSpy().register,
+    }).then((outcome) => {
+      expect(send).not.toHaveBeenCalled();
+      expect(outcome).toEqual({
+        attempted: false,
+        reason: "replay_not_a_new_charge",
+      });
+    });
+  });
+
+  it("ANTI-VACUITY: flipping committedNow alone also suppresses the send", () => {
     // Without this, a gate keyed on stripeChargeId (or on anything else that
     // happens to differ) would pass every test above while suppressing the
     // wrong invocations in production.
@@ -564,23 +591,37 @@ describe("J — a replay is a real success that owes no receipt", () => {
     expect(derived).toHaveLength(2);
     expect(literals.filter((d) => d.includes("false"))).toHaveLength(2);
     expect(literals.filter((d) => d.includes("true"))).toHaveLength(0);
-    // And exactly ONE site may claim the concurrent-writer case: the fresh
-    // create-and-confirm path. The reconcile path must never claim it, because
-    // its PaymentIntent pre-dates the invocation.
-    //
-    // The claim must ALSO be conditioned on ownership (`receiptOwed`), not on the
-    // writer alone. A review found that exact gap: with `by` as the only input,
-    // every `already_pending` idempotent replay reported itself as the receipt
-    // owner, and the durable receipt claim can be reopened by a retryable-failure
-    // reset — so a loser could deliver a duplicate receipt to a client.
+    // `concurrentlyReconciled` is a VERIFICATION fact and legitimately appears at
+    // BOTH success sites; it is no longer an ownership statement, so it is not
+    // conditioned on anything here.
     const concurrentClaims =
-      code.match(/concurrentlyReconciled:\s*[\s\S]{0,120}?,\n/g) ?? [];
-    expect(concurrentClaims).toHaveLength(1);
-    expect(concurrentClaims[0]).toMatch(/persistence\.by === "concurrent_writer"/);
+      code.match(/concurrentlyReconciled: persistence\.by === "concurrent_writer",/g) ?? [];
+    expect(concurrentClaims).toHaveLength(2);
+
+    // OWNERSHIP IS THREADED, NEVER DERIVED — the property two review rounds were
+    // spent learning. Every `receiptOwnedHere` in the runner must be either the
+    // single rule, a literal false on a path that provably did not win the claim,
+    // or a pass-through of the caller's fact. It must NEVER be computed from
+    // `persistence`, which is what made ownership and the ledger write the same
+    // question.
+    const ownership = code.match(/receiptOwnedHere: [^,\n]+,/g) ?? [];
+    expect(ownership.length).toBeGreaterThanOrEqual(4);
+    for (const o of ownership) {
+      expect(
+        o,
+        `receipt ownership must not be derived from persistence: ${o}`,
+      ).not.toMatch(/persistence/);
+      expect(o).toMatch(
+        /claim\.result === "claimed"|false|args\.receiptOwnedHere/,
+      );
+    }
+    // The rule itself appears where the fresh-create path needs it — once for the
+    // writer's alert wording and once on the result — and nowhere else. The
+    // per-occurrence check above is what actually forbids a second RULE; this
+    // just pins that the rule is present at all.
     expect(
-      concurrentClaims[0],
-      "the concurrent-writer claim must require receipt ownership",
-    ).toMatch(/persistence\.receiptOwed/);
+      (code.match(/receiptOwnedHere: claim\.result === "claimed",/g) ?? []).length,
+    ).toBeGreaterThanOrEqual(1);
 
     // Each `committedNow: true` is preceded by the persistence gate that makes
     // it exclusive — not merely by a Stripe success.
