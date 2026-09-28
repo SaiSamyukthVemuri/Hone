@@ -557,9 +557,26 @@ export async function sendPaymentChargeReceipt(args: {
     .eq("id", attempt.id)
     .eq("studio_id", args.studioId)
     .eq("status", "succeeded");
+  //    THE AUTOMATIC CLAIM ALSO CARRIES THE REFUND PREDICATE, and that is what
+  //    makes eligibility atomic through dispatch.
+  //
+  //    `classifyZeroRowSuccessWrite` already refuses a benign verdict unless
+  //    `refund_status` is NULL -- but it checks that at READ time, and the claim
+  //    below runs later. `refundPaymentChargeAttempt` writes `refund_status`
+  //    on this same row independently, so a refund starting in the gap left the
+  //    charge eligible: the claim filtered only `receipt_status`, matched, and an
+  //    automatic receipt went to the client while their refund was in flight.
+  //    Checking a condition and then acting on it in a separate statement is not
+  //    the same as requiring it, and the row is the only place that difference
+  //    can be settled.
+  //
+  //    MANUAL IS DELIBERATELY NOT GATED THIS WAY. A practitioner sending a
+  //    receipt for a charge that was later refunded is making a decision about a
+  //    real document, and manual recovery owns that decision; the automatic path
+  //    is the one that must never make it on its own.
   const { data: claimedRows, error: claimErr } = await (claimPolicy ===
   "automatic"
-    ? claimQuery.is("receipt_status", null)
+    ? claimQuery.is("receipt_status", null).is("refund_status", null)
     : claimQuery.or("receipt_status.is.null,receipt_status.eq.failed")
   ).select("id");
   if (claimErr) {

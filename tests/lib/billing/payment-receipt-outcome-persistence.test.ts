@@ -644,3 +644,55 @@ describe("the claim POLICY itself, not just its observable outcome", () => {
     expect(f).not.toMatch(/eq\.sent/);
   });
 });
+
+describe("the refund predicate survives to the CLAIM, not just the classifier", () => {
+  // THE TIME-OF-CHECK / TIME-OF-USE GAP. `classifyZeroRowSuccessWrite` refuses a
+  // benign verdict unless `refund_status` is NULL, but it checks that at READ
+  // time and the receipt claim runs later. `refundPaymentChargeAttempt` writes
+  // `refund_status` on the same row independently, so a refund starting in that
+  // gap used to leave the charge eligible: the claim filtered only
+  // `receipt_status`, matched, and an automatic receipt went out while the
+  // client's refund was in flight.
+  //
+  // Checking a condition and then acting on it in a separate statement is not the
+  // same as requiring it. These tests assert the requirement is in the claim.
+
+  const claimFilters = () => {
+    const claim = h.stmts.find(
+      (x) => x.key === "payment_charge_attempts:update:sending",
+    );
+    return (claim?.filters ?? []).map(([c, v]) => `${c}=${String(v)}`);
+  };
+
+  it("AUTOMATIC claims require refund_status IS NULL", async () => {
+    baseline(null);
+    await runAutomatic();
+    expect(
+      claimFilters(),
+      "the automatic claim must carry the refund predicate",
+    ).toContain("refund_status=__is_null__");
+  });
+
+  it("a refund that starts AFTER classification cannot be receipted", async () => {
+    // The row is succeeded with receipt_status NULL — classification-time state —
+    // but a refund has since begun. The claim must match nothing.
+    baseline(null);
+    h.responses["payment_charge_attempts:update:sending"] = { data: [], error: null };
+    h.responses["payment_charge_attempts:reread"] = {
+      data: { receipt_status: null },
+      error: null,
+    };
+    const r = await runAutomatic();
+    expect(r.ok).toBe(false);
+    expect(h.sends, "no receipt for a charge being refunded").toHaveLength(0);
+  });
+
+  it("MANUAL keeps its own decision and is NOT refund-gated", async () => {
+    // A practitioner sending a receipt for a charge later refunded is deciding
+    // about a real document; manual recovery owns that. Only the automatic path
+    // must never make the call on its own.
+    baseline(null);
+    await run();
+    expect(claimFilters()).not.toContain("refund_status=__is_null__");
+  });
+});
