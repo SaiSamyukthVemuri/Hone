@@ -56,11 +56,31 @@ const PRIMITIVE_SOURCE = readFileSync(path.join(REPO_ROOT, PRIMITIVE), "utf8");
  * needed it.
  */
 const CONVERTED: readonly string[] = [
+  // Slice 1 (#746) — Settings > Availability.
   "app/(app)/settings/availability/AvailabilityClient.tsx",
   "app/(app)/settings/availability/RecurringBreaksSection.tsx",
   "app/(app)/settings/availability/ScopeField.tsx",
   "app/(app)/settings/availability/TimedBlocksSection.tsx",
+  // Slice 2 — the rest of Settings, which is what completes the directory.
+  "app/(app)/settings/booking/BookingLinkCard.tsx",
+  "app/(app)/settings/consent/ConsentTemplatesEditor.tsx",
+  "app/(app)/settings/intake/page.tsx",
+  "app/(app)/settings/services/page.tsx",
+  "app/(app)/settings/tracking/TrackingProviderSelector.tsx",
 ];
+
+/**
+ * The directory slice 2 closes.
+ *
+ * A COMPLETED DIRECTORY IS A STRONGER CLAIM THAN A COUNT, which is the whole
+ * reason the slice was drawn here rather than around the largest files. "Seven
+ * more conversions" is bookkeeping that needs maintaining; "no file under
+ * Settings hand-rolls this label" is an invariant a reader can check and a new
+ * file cannot quietly violate — a hand-rolled label added to a NEW Settings
+ * file is caught by test 5 below, where the legacy baseline would not have seen
+ * it at all.
+ */
+const COMPLETED_ROOT = "app/(app)/settings/";
 const ROOTS = ["app", "components"];
 
 /**
@@ -282,11 +302,6 @@ const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
   ["app/(app)/clients/[id]/sessions/new/page.tsx", 1],
   ["app/(app)/dashboard/practice-snapshot.tsx", 2],
   ["app/(app)/records/page.tsx", 2],
-  ["app/(app)/settings/booking/BookingLinkCard.tsx", 1],
-  ["app/(app)/settings/consent/ConsentTemplatesEditor.tsx", 1],
-  ["app/(app)/settings/intake/page.tsx", 1],
-  ["app/(app)/settings/services/page.tsx", 2],
-  ["app/(app)/settings/tracking/TrackingProviderSelector.tsx", 2],
   ["components/appointment/postcare-section.tsx", 1],
   ["components/clinical-notes-section.tsx", 3],
   ["components/consultation-notes-card.tsx", 2],
@@ -354,7 +369,7 @@ const FILES = ROOTS.flatMap((root) => walk(path.join(REPO_ROOT, root))).map((f) 
 );
 const ADOPTED = CONVERTED;
 
-describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
+describe("UX-02: SectionLabel adoption across Settings", () => {
   it("4. the contract is read from the primitive, not restated here", () => {
     for (const c of ["font-medium", "uppercase", "tracking-wider"]) {
       expect(CONTRACT.typography.has(c), `contract lost ${c}`).toBe(true);
@@ -366,7 +381,7 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
   });
 
   it("1. every converted file uses SectionLabel", () => {
-    expect(ADOPTED.length, "the converted set disappeared").toBe(4);
+    expect(ADOPTED.length, "the converted set disappeared").toBe(9);
     for (const file of ADOPTED) {
       expect(FILES, `${file} is no longer in the tree`).toContain(file);
     }
@@ -383,16 +398,54 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
     }
   });
 
-  it("2b. the conversion is complete — 21 sites across the four converted files", () => {
+  it("2b. the conversion is complete — 28 sites across the nine converted files", () => {
     // The slice's own claim, asserted rather than described: counting the
-    // primitive's usages is what makes "21 exact conversions" checkable.
+    // primitive's usages is what makes the conversion total checkable.
+    // 21 from slice 1 (#746) + 7 from slice 2 = 28.
     const total = ADOPTED.reduce(
       (sum, file) =>
         sum +
         (readFileSync(path.join(REPO_ROOT, file), "utf8").match(/<SectionLabel[\s>]/g) ?? []).length,
       0,
     );
-    expect(total, "the converted site count moved").toBe(21);
+    expect(total, "the converted site count moved").toBe(28);
+  });
+
+  it("5. Settings is COMPLETE — and stays complete for files that do not exist yet", () => {
+    // WHAT THIS ADDS, STATED HONESTLY, BECAUSE MOST OF IT IS ALREADY COVERED.
+    //
+    // My first comment here claimed this catches a NEW Settings file that
+    // hand-rolls the label. It does not catch anything 3b would miss: 3b walks
+    // every file in the tree and skips only the primitive and the baseline, so
+    // a new file anywhere — Settings included — is already an offender there.
+    // Leaving that claim in would have been a guard advertising protection it
+    // does not provide.
+    //
+    // Two things are genuinely this test's own:
+    //   * it names the slice's headline claim so it fails BY NAME — "Settings
+    //     is complete" rather than "some file has a duplicate", which is what a
+    //     reader of a red build needs to see;
+    //   * the CONTRADICTION check below, which nothing else makes: a root
+    //     declared complete must have no legacy baseline rows left inside it.
+    //     Without it the two tables can disagree, and the stale row silently
+    //     re-permits the duplicate that COMPLETED_ROOT says cannot exist.
+    const offenders = FILES.filter(
+      (file) => file.startsWith(COMPLETED_ROOT) && duplicates(file).length > 0,
+    ).map((file) => `${file}: ${duplicates(file).length}`);
+    expect(offenders, `${COMPLETED_ROOT} must contain no hand-rolled labels`).toEqual([]);
+
+    // Non-vacuity: the root must actually contain files, or this passes by
+    // scanning nothing — the failure mode a directory rule invites.
+    const scanned = FILES.filter((file) => file.startsWith(COMPLETED_ROOT));
+    expect(scanned.length, `no files found under ${COMPLETED_ROOT}`).toBeGreaterThan(9);
+
+    // And no baseline row may survive inside a root declared complete, which is
+    // how the two rules are kept from disagreeing with each other.
+    const contradictions = LEGACY_BASELINE.filter(([file]) => file.startsWith(COMPLETED_ROOT));
+    expect(
+      contradictions,
+      `${COMPLETED_ROOT} is declared complete but still has legacy baseline rows`,
+    ).toEqual([]);
   });
 
   it("3. legacy occurrence counts never increase from the baseline", () => {

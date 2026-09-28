@@ -7,6 +7,7 @@ import type {
   ConsentTemplateStatus,
 } from "@/lib/types/database";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { SectionLabel } from "@/components/ui/section-label";
 
 const TITLE_MAX = 160;
 const BODY_MAX = 20000;
@@ -163,9 +164,9 @@ export function ConsentTemplatesEditor({
             key={group.label}
             className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800"
           >
-            <h3 className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel as="h3" size="caption">
               {group.label}
-            </h3>
+            </SectionLabel>
             <ul className="flex flex-col gap-3">
               {group.rows.map((t) =>
                 editingId === t.id ? (
