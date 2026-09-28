@@ -728,7 +728,7 @@ export async function limitWaitlistProofRequest(args: {
 }
 
 // ---------------------------------------------------------------------------
-// WAIT B2b-2 — mobile possession proof
+// WAIT B2b-2 — mobile possession proof, TWO STAGES
 // ---------------------------------------------------------------------------
 //
 // A COST AND ABUSE DAMPENER, NOT THE BRUTE-FORCE CONTROL. This whole file fails
@@ -736,15 +736,36 @@ export async function limitWaitlistProofRequest(args: {
 // actually stops guessing lives in the Verify service. MOBILE_VERIFICATION_LIMITS
 // carries the full reasoning and must be read before these numbers are tuned.
 //
-// WHAT IS NEVER A KEY HERE: the phone number, the submitted code, and the
-// capability. The entry id is an opaque server-resolved uuid and the IP is hashed
-// before it touches Redis, so a key cannot be reversed into a person and a log
-// line cannot carry one.
+// WHY TWO SEPARATE GATES RATHER THAN ONE CALL, AND IT IS A SECURITY PROPERTY
+// RATHER THAN A REFACTOR. The first version checked the ENTRY bucket and then the
+// IP bucket, both AFTER the caller's authorization had been resolved. That ordering
+// leaked capability validity: once an IP had exhausted its bucket, an INVALID
+// capability returned before the limiter ran (`not_proved`) while a VALID one
+// reached the limiter and returned `rate_limited`. A caller could exhaust their own
+// bucket on purpose and then read capability validity off which refusal came back —
+// which is the membership oracle the whole boundary is shaped to deny.
 //
-// THE REFUSAL LEAKS NO MEMBERSHIP. Both functions return the same
-// `RateLimitResult` shape the rest of this file uses, and the caller collapses it
-// into the boundary's single `rate_limited` value — identical wording and shape
-// whether the entry existed, the capability was good, or the provider refused.
+//   STAGE 1  limitMobileVerificationIp     BEFORE the resolver runs. Keyed on the
+//            operation and the HASHED CLIENT IP, and on nothing else, so it is the
+//            same bucket whatever the caller claims about itself.
+//   STAGE 2  limitMobileVerificationEntry  AFTER a context is resolved. Keyed on the
+//            SERVER-RESOLVED entry and studio, so it protects one person.
+//
+// ONE REQUEST SPENDS EACH CONCEPTUAL BUDGET ONCE. Stage 2 deliberately does NOT
+// re-check an IP bucket: that would charge a single request twice for the same
+// limit and make the effective IP budget depend on how many requests happened to
+// resolve.
+//
+// WHAT IS NEVER A KEY HERE: the capability, the caller-supplied studio id, the
+// submitted code, the phone number, and the raw IP. The IP is hashed before it
+// touches Redis or a log line; the entry and studio ids are opaque server-resolved
+// uuids.
+//
+// THE CALLER-SUPPLIED studioId IS DELIBERATELY ABSENT FROM STAGE 1. Scoping the
+// pre-auth bucket by it would let an attacker mint a fresh budget by varying one
+// string in the request, which is not an abuse control. The cost is that stage 1 is
+// not studio-scoped, so a shared NAT is damped across studios — acceptable at these
+// budgets for a prospect who verifies once, and the alternative is evadable.
 
 const mobileVerificationLimiterCache = new Map<string, Ratelimit | null>();
 function mobileVerificationLimiter(
@@ -772,60 +793,59 @@ function mobileVerificationLimiter(
 }
 
 /**
- * Rate limit one possession-proof operation.
+ * STAGE 1 — the pre-authorization gate. Runs BEFORE any resolver.
  *
- * `entryId` and `studioId` MUST both be server-resolved row ids. A
- * browser-supplied value makes the scoping meaningless, and for `entryId` it
- * would let a caller choose which bucket to spend.
- *
- * PER-ENTRY IS CHECKED FIRST, deliberately, exactly as limitWaitlistProofRequest
- * does: it is the control that protects one person, and checking it first means a
- * single hammered entry cannot also burn the shared per-IP budget on its way to
- * being refused.
+ * Takes headers and nothing else, which is the point: there is no argument through
+ * which a caller could influence which bucket it spends. A denial must be returned
+ * to the caller as the ordinary `rate_limited` refusal, BEFORE the resolver runs, so
+ * a valid and an invalid capability from an exhausted IP are indistinguishable.
  */
-async function limitMobileVerification(
+export async function limitMobileVerificationIp(
   operation: "start" | "check",
-  args: { headers: Headers; studioId: string; entryId: string },
+  args: { headers: Headers },
 ): Promise<RateLimitResult> {
-  const entryLimiter = mobileVerificationLimiter(operation, "entry");
-  const ipLimiter = mobileVerificationLimiter(operation, "ip");
-  if (!entryLimiter || !ipLimiter) return { allowed: true }; // disabled
-  const ip = clientIpFromHeaders(args.headers);
-  const routeClass = `waitlist_mobile_verification_${operation}`;
+  const limiter = mobileVerificationLimiter(operation, "ip");
+  if (!limiter) return { allowed: true }; // disabled — fail open, by contract
+  const routeClass = `waitlist_mobile_verification_${operation}_ip`;
   try {
-    const entryRes = await entryLimiter.limit(`${args.entryId}:${args.studioId}`);
-    if (!entryRes.success) {
-      const retry = retryAfterSeconds(entryRes.reset);
-      logRateLimitExceeded(routeClass, retry, "entry");
-      return { allowed: false, retryAfterSeconds: retry };
-    }
-    const ipRes = await ipLimiter.limit(`${hashId(ip)}:${args.studioId}`);
-    if (!ipRes.success) {
-      const retry = retryAfterSeconds(ipRes.reset);
+    // HASHED, AND THE ONLY COMPONENT. No studio, no capability, no entry.
+    const res = await limiter.limit(hashId(clientIpFromHeaders(args.headers)));
+    if (!res.success) {
+      const retry = retryAfterSeconds(res.reset);
       logRateLimitExceeded(routeClass, retry, "ip");
       return { allowed: false, retryAfterSeconds: retry };
     }
     return { allowed: true };
   } catch (err) {
     logBackendUnavailable(routeClass, err);
-    return { allowed: true }; // fail open — see the header above
+    return { allowed: true }; // fail open — abuse damping, not authorization
   }
 }
 
-/** Budget for asking the provider to SEND a challenge. The tight one: real SMS. */
-export async function limitMobileVerificationStart(args: {
-  headers: Headers;
-  studioId: string;
-  entryId: string;
-}): Promise<RateLimitResult> {
-  return limitMobileVerification("start", args);
-}
-
-/** Budget for submitting a code. Looser; the provider owns the attempt ceiling. */
-export async function limitMobileVerificationCheck(args: {
-  headers: Headers;
-  studioId: string;
-  entryId: string;
-}): Promise<RateLimitResult> {
-  return limitMobileVerification("check", args);
+/**
+ * STAGE 2 — the per-entry gate. Runs only AFTER a context is resolved.
+ *
+ * `entryId` and `studioId` MUST both be server-resolved row ids. A browser-supplied
+ * value makes the scoping meaningless and would let a caller choose which bucket to
+ * spend — which is exactly why stage 1 takes neither.
+ */
+export async function limitMobileVerificationEntry(
+  operation: "start" | "check",
+  args: { studioId: string; entryId: string },
+): Promise<RateLimitResult> {
+  const limiter = mobileVerificationLimiter(operation, "entry");
+  if (!limiter) return { allowed: true }; // disabled — fail open, by contract
+  const routeClass = `waitlist_mobile_verification_${operation}_entry`;
+  try {
+    const res = await limiter.limit(`${args.entryId}:${args.studioId}`);
+    if (!res.success) {
+      const retry = retryAfterSeconds(res.reset);
+      logRateLimitExceeded(routeClass, retry, "entry");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    return { allowed: true };
+  } catch (err) {
+    logBackendUnavailable(routeClass, err);
+    return { allowed: true }; // fail open
+  }
 }

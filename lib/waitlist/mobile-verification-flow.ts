@@ -1,7 +1,7 @@
 import "server-only";
 import {
-  limitMobileVerificationCheck,
-  limitMobileVerificationStart,
+  limitMobileVerificationEntry,
+  limitMobileVerificationIp,
 } from "@/lib/rate-limit/public";
 import {
   checkMobileVerification,
@@ -164,15 +164,24 @@ const UNRESOLVED_CONTEXT_REFUSAL: VerificationRefusal = "not_proved";
 /**
  * Begin a possession challenge for whichever entry the authorization resolves to.
  *
- * ORDER: authorize, then rate limit, then ask the provider. Authorizing first is
- * what lets the per-entry budget exist at all — the bucket is keyed by the
- * resolved row, so an unauthorized caller cannot choose which bucket to spend, and
- * cannot spend anyone's.
+ * ORDER: IP GATE, then authorize, then the per-entry gate, then the provider.
  *
- * THE COST OF THAT ORDER, STATED RATHER THAN HIDDEN: an unauthorized caller reaches
- * the resolver on every attempt, so the resolver is the surface that must be cheap
- * and constant-ish. That is a property of the D1 implementation, and it is the
- * reason the per-IP bucket exists as well as the per-entry one.
+ * THE IP GATE IS FIRST AND THAT IS THE SECURITY PROPERTY. The previous order was
+ * authorize-then-limit, and it leaked capability validity once a bucket was
+ * exhausted: an INVALID capability returned before the limiter ran (`not_proved`)
+ * while a VALID one reached the limiter and returned `rate_limited`. A caller could
+ * exhaust their own bucket deliberately and then read validity off the difference.
+ * Running the IP gate first makes both cases `rate_limited`, identically, before the
+ * resolver is even called.
+ *
+ * AN EARLIER VERSION OF THIS COMMENT CLAIMED THE MITIGATION IT DID NOT HAVE. It said
+ * the per-IP bucket existed for exactly this exposure — and that bucket never ran
+ * for an unauthorized caller, because it sat after the resolver. The sentence
+ * described a protection the code did not apply.
+ *
+ * A DENIAL AT STAGE 1 ALSO BOUNDS FAILED-RESOLVER TRAFFIC, which the old order left
+ * unbounded: an unauthorized caller reached the resolver on every attempt with no
+ * budget to spend.
  */
 export async function runStartMobileVerification(
   authorization: VerificationAuthorization,
@@ -180,15 +189,20 @@ export async function runStartMobileVerification(
   headers: Headers,
   provider?: MobileVerificationProvider,
 ): Promise<FlowOutcome> {
+  // STAGE 1, before anything is resolved or even looked at.
+  const ipGate = await limitMobileVerificationIp("start", { headers });
+  if (!ipGate.allowed) return { ok: false, code: "rate_limited" };
+
   const context = await resolve(authorization);
   if (!context) return { ok: false, code: UNRESOLVED_CONTEXT_REFUSAL };
 
-  const gate = await limitMobileVerificationStart({
-    headers,
+  // STAGE 2, on server-resolved ids only. No second IP budget is spent: one
+  // request must not be charged twice for the same conceptual limit.
+  const entryGate = await limitMobileVerificationEntry("start", {
     studioId: context.studioId,
     entryId: context.entryId,
   });
-  if (!gate.allowed) return { ok: false, code: "rate_limited" };
+  if (!entryGate.allowed) return { ok: false, code: "rate_limited" };
 
   // The state machine derives the destination from `storedPhone` and refuses when
   // there is not one. No number from the request reaches it.
@@ -220,15 +234,19 @@ export async function runCheckMobileVerification(
   headers: Headers,
   provider?: MobileVerificationProvider,
 ): Promise<FlowOutcome> {
+  // STAGE 1, before the resolver — same reasoning as `start` above.
+  const ipGate = await limitMobileVerificationIp("check", { headers });
+  if (!ipGate.allowed) return { ok: false, code: "rate_limited" };
+
   const context = await resolve(authorization);
   if (!context) return { ok: false, code: UNRESOLVED_CONTEXT_REFUSAL };
 
-  const gate = await limitMobileVerificationCheck({
-    headers,
+  // STAGE 2, on server-resolved ids only.
+  const entryGate = await limitMobileVerificationEntry("check", {
     studioId: context.studioId,
     entryId: context.entryId,
   });
-  if (!gate.allowed) return { ok: false, code: "rate_limited" };
+  if (!entryGate.allowed) return { ok: false, code: "rate_limited" };
 
   const target = {
     entryId: context.entryId,

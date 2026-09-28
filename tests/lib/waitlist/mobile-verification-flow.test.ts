@@ -37,10 +37,40 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 
-// Upstash is not configured in tests, so every limiter is disabled and returns
-// allowed. That is the FAIL-OPEN contract of lib/rate-limit/public.ts, and it is
-// why these tests do not pretend to prove the budgets: what they prove is that a
-// refusal from the gate collapses to one generic value.
+// THE TWO GATES ARE MOCKED SO EXHAUSTION IS REACHABLE. Upstash is unconfigured in
+// tests, so the real limiters are disabled and answer `allowed` — which is the
+// documented fail-open contract, and which is precisely why the previous version of
+// this file could not test the exhausted state at all. That gap is how the
+// capability-validity leak survived: the equality tests proved indistinguishability
+// in the un-exhausted state, and only in that state.
+//
+// `gates.denyIp` / `gates.denyEntry` drive stage 1 and stage 2. `gates.ipCalls` and
+// `gates.entryCalls` record the arguments, because WHAT a gate is keyed on is as
+// much the property as whether it fires.
+const gates: {
+  denyIp: boolean;
+  denyEntry: boolean;
+  ipCalls: { operation: string; args: Record<string, unknown> }[];
+  entryCalls: { operation: string; args: Record<string, unknown> }[];
+} = { denyIp: false, denyEntry: false, ipCalls: [], entryCalls: [] };
+
+vi.mock("@/lib/rate-limit/public", () => ({
+  limitMobileVerificationIp: async (
+    operation: string,
+    args: Record<string, unknown>,
+  ) => {
+    gates.ipCalls.push({ operation, args });
+    return gates.denyIp ? { allowed: false, retryAfterSeconds: 42 } : { allowed: true };
+  },
+  limitMobileVerificationEntry: async (
+    operation: string,
+    args: Record<string, unknown>,
+  ) => {
+    gates.entryCalls.push({ operation, args });
+    return gates.denyEntry ? { allowed: false, retryAfterSeconds: 42 } : { allowed: true };
+  },
+}));
+
 const fake = new FakeMobileVerificationProvider();
 
 const STORED = "+15555550123";
@@ -53,13 +83,25 @@ const CONTEXT: ResolvedVerificationContext = {
 const resolves: VerificationContextResolver = async () => CONTEXT;
 const resolvesNothing: VerificationContextResolver = async () => null;
 
-const AUTH = { capability: "a".repeat(64), studioId: CONTEXT.studioId };
+// THE CLAIMED STUDIO IS DELIBERATELY NOT THE RESOLVED ONE.
+//
+// `authorization.studioId` is caller-supplied and untrusted; `context.studioId` is
+// what the resolver derived. Making them EQUAL in this fixture is how a mutation
+// walked straight through the per-entry assertion: swapping `context.studioId` for
+// `authorization.studioId` produced the same value and the test stayed green. A
+// fixture that cannot tell two sources apart cannot prove which one is used.
+const CLAIMED_STUDIO_ID = "33333333-3333-4333-8333-333333333333";
+const AUTH = { capability: "a".repeat(64), studioId: CLAIMED_STUDIO_ID };
 const H = new Headers();
 
 beforeEach(() => {
   rpc.calls = [];
   rpc.reply = "verified";
   fake.reset();
+  gates.denyIp = false;
+  gates.denyEntry = false;
+  gates.ipCalls = [];
+  gates.entryCalls = [];
 });
 
 describe("an authorization is required, and nothing else identifies the entry", () => {
@@ -322,5 +364,170 @@ describe("the D1 seam", () => {
     expect(out).toEqual({ ok: false, code: "not_proved" });
     const checked = await runCheckMobileVerification(AUTH, "123456", resolvesNothing, H, fake);
     expect(checked).toEqual({ ok: false, code: "not_proved" });
+  });
+});
+
+// ===========================================================================
+// TWO-STAGE LIMITING — THE PRE-AUTH IP GATE
+// ===========================================================================
+//
+// The previous order was authorize-then-limit, and once an IP bucket was exhausted
+// it leaked capability validity: an INVALID capability returned before the limiter
+// ran (`not_proved`) while a VALID one reached the limiter and returned
+// `rate_limited`. A caller could exhaust their own bucket on purpose and read
+// validity off the difference. P2 at 234d1a49.
+
+describe("STAGE 1: an exhausted IP is indistinguishable, valid capability or not", () => {
+  it("exhausted IP + INVALID capability -> rate_limited", async () => {
+    gates.denyIp = true;
+    expect(await runStartMobileVerification(AUTH, resolvesNothing, H, fake)).toEqual({
+      ok: false,
+      code: "rate_limited",
+    });
+    expect(await runCheckMobileVerification(AUTH, "123456", resolvesNothing, H, fake)).toEqual({
+      ok: false,
+      code: "rate_limited",
+    });
+  });
+
+  it("exhausted IP + VALID capability -> IDENTICAL rate_limited", async () => {
+    gates.denyIp = true;
+    const invalidStart = await runStartMobileVerification(AUTH, resolvesNothing, H, fake);
+    const validStart = await runStartMobileVerification(AUTH, resolves, H, fake);
+    const invalidCheck = await runCheckMobileVerification(AUTH, "1", resolvesNothing, H, fake);
+    const validCheck = await runCheckMobileVerification(AUTH, "1", resolves, H, fake);
+
+    // Deep equality, not shape: the caller-visible discriminant must be the same.
+    expect(validStart).toEqual(invalidStart);
+    expect(validCheck).toEqual(invalidCheck);
+    expect(validStart).toEqual({ ok: false, code: "rate_limited" });
+  });
+
+  it("a stage-1 denial does NOT call the resolver", async () => {
+    gates.denyIp = true;
+    let resolverCalls = 0;
+    const counting: VerificationContextResolver = async () => {
+      resolverCalls += 1;
+      return CONTEXT;
+    };
+    await runStartMobileVerification(AUTH, counting, H, fake);
+    await runCheckMobileVerification(AUTH, "123456", counting, H, fake);
+    expect(resolverCalls, "the resolver ran behind an exhausted IP gate").toBe(0);
+  });
+
+  it("a stage-1 denial does NOT call the provider", async () => {
+    gates.denyIp = true;
+    const start = vi.spyOn(fake, "start");
+    const check = vi.spyOn(fake, "check");
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake);
+    expect(start).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+    start.mockRestore();
+    check.mockRestore();
+  });
+
+  it("a stage-1 denial does NOT call the promotion RPC", async () => {
+    gates.denyIp = true;
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake);
+    expect(rpc.calls).toEqual([]);
+  });
+
+  it("a stage-1 denial spends no entry budget", async () => {
+    // Stage 2 must not be reached at all, or an attacker could burn one person's
+    // budget from an already-exhausted IP.
+    gates.denyIp = true;
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    expect(gates.entryCalls).toEqual([]);
+  });
+});
+
+describe("UNDER BUDGET the refusals stay collapsed", () => {
+  it("invalid capability -> not_proved; valid provider refusal -> the same", async () => {
+    const unauthorized = await runStartMobileVerification(AUTH, resolvesNothing, H, fake);
+    fake.scriptStart("refused");
+    const refused = await runStartMobileVerification(AUTH, resolves, H, fake);
+    fake.reset();
+    expect(unauthorized).toEqual(refused);
+    expect(unauthorized).toEqual({ ok: false, code: "not_proved" });
+  });
+
+  it("a resolved context still receives per-entry limiting, and it can deny", async () => {
+    gates.denyEntry = true;
+    expect(await runStartMobileVerification(AUTH, resolves, H, fake)).toEqual({
+      ok: false,
+      code: "rate_limited",
+    });
+    expect(gates.entryCalls).toHaveLength(1);
+    expect(gates.entryCalls[0].operation).toBe("start");
+    expect(gates.entryCalls[0].args).toEqual({
+      studioId: CONTEXT.studioId,
+      entryId: CONTEXT.entryId,
+    });
+    // And explicitly NOT the studio the caller claimed. This is the assertion the
+    // old fixture could not make, because the two ids were the same string.
+    expect(
+      gates.entryCalls[0].args.studioId,
+      "the entry gate was keyed on the caller-supplied studio",
+    ).not.toBe(CLAIMED_STUDIO_ID);
+  });
+
+  it("CHECK's entry gate is keyed on the RESOLVED studio too", async () => {
+    // The start-path assertion above did not cover this one, and a mutation proved
+    // it: swapping `context.studioId` for `authorization.studioId` in the CHECK path
+    // alone stayed green. Both paths need the assertion, not just the first one
+    // anybody happened to write.
+    gates.denyEntry = true;
+    expect(
+      await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake),
+    ).toEqual({ ok: false, code: "rate_limited" });
+    expect(gates.entryCalls).toHaveLength(1);
+    expect(gates.entryCalls[0].operation).toBe("check");
+    expect(gates.entryCalls[0].args).toEqual({
+      studioId: CONTEXT.studioId,
+      entryId: CONTEXT.entryId,
+    });
+    expect(
+      gates.entryCalls[0].args.studioId,
+      "the check entry gate was keyed on the caller-supplied studio",
+    ).not.toBe(CLAIMED_STUDIO_ID);
+  });
+
+  it("one request spends each budget ONCE", async () => {
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    expect(gates.ipCalls, "the IP budget was charged more than once").toHaveLength(1);
+    expect(gates.entryCalls, "the entry budget was charged more than once").toHaveLength(1);
+  });
+});
+
+describe("STAGE 1 IS KEYED ON NOTHING THE CALLER CONTROLS", () => {
+  it("the gate receives headers and nothing else", async () => {
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    expect(gates.ipCalls).toHaveLength(1);
+    expect(Object.keys(gates.ipCalls[0].args)).toEqual(["headers"]);
+    for (const forbidden of ["studioId", "entryId", "capability", "code", "phone"]) {
+      expect(
+        gates.ipCalls[0].args,
+        `stage 1 received ${forbidden}, which a caller controls`,
+      ).not.toHaveProperty(forbidden);
+    }
+  });
+
+  it("a caller-varied studioId cannot produce a different stage-1 call", async () => {
+    await runStartMobileVerification({ ...AUTH, studioId: "studio-a" }, resolves, H, fake);
+    await runStartMobileVerification({ ...AUTH, studioId: "studio-b" }, resolves, H, fake);
+    await runStartMobileVerification({ ...AUTH, capability: "b".repeat(64) }, resolves, H, fake);
+    expect(gates.ipCalls).toHaveLength(3);
+    const [a, b, c] = gates.ipCalls;
+    expect(b).toEqual(a);
+    expect(c).toEqual(a);
+  });
+
+  it("start and check spend SEPARATE budgets", async () => {
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake);
+    expect(gates.ipCalls.map((c) => c.operation)).toEqual(["start", "check"]);
+    expect(gates.entryCalls.map((c) => c.operation)).toEqual(["start", "check"]);
   });
 });
