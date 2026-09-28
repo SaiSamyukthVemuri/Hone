@@ -415,12 +415,14 @@ type SuccessPersistenceResult =
    * writer stamped it first. Still `persisted: true`, so every existing
    * `if (!persistence.persisted)` guard keeps its meaning untouched.
    *
-   * OWNERSHIP IS NOT A PERSISTENCE FACT and is deliberately absent here. An
-   * earlier revision returned `receiptOwed` from this union, which put the
-   * ownership rule inside the writer and left each call site to combine it with
-   * `by` -- so `concurrentlyReconciled` got the gate and `committedNow` did not.
-   * Ownership now lives in ONE place (`claim.result === "claimed"`) and travels
-   * on the RESULT, not on the persistence outcome.
+   * RECEIPT OWNERSHIP IS ABSENT HERE, AND ABSENT FROM THE RESULT TOO. One
+   * revision returned an ownership flag from this union; a later one moved it to
+   * the result and anchored it to the claim RPC. Both were wrong, the second
+   * because it lost LIVENESS -- a recovery of an orphaned claim could then never
+   * receipt the charge.
+   *
+   * Email ownership is the durable `receipt_status: null -> sending` claim in
+   * lib/billing/payment-receipt.ts. Nothing in this file grants it.
    */
   | { persisted: true; by: "concurrent_writer" }
   | { persisted: false; reason: "db_error" | "zero_rows" };
@@ -1502,30 +1504,23 @@ export async function runSessionPaymentCharge(args: {
       clientId: attemptRow.client_id,
       pi,
       expectedChargeReason: attemptRow.charge_reason ?? null,
-      // OWNERSHIP IS THE DATABASE TRANSITION, NOT THE STRIPE CALL.
+      // WHY SEVERAL INVOCATIONS CAN REACH HERE HOLDING THE SAME CHARGE.
       //
-      // This was hardcoded `true` and that was wrong. The `already_pending`
-      // branch above DELIBERATELY lets several requests fall through to the
-      // create-and-confirm call below with the same deterministic idempotency
-      // key, so Stripe returns the SAME succeeded PaymentIntent to all of them.
-      // Every one of them reaches this line having "created" the charge, so every
-      // loser would have become `concurrentlyReconciled` and called the automatic
-      // sender.
+      // The `already_pending` branch above DELIBERATELY lets several requests
+      // fall through to the create-and-confirm call below with the same
+      // deterministic idempotency key, so Stripe returns the SAME succeeded
+      // PaymentIntent to all of them.
       //
       // (The provider method is deliberately not named in prose here: the repo's
       // Stripe call-site inventory guards count that literal to pin exactly one
       // create site, and they count source text rather than parsed calls.)
       //
-      // The database receipt claim only SERIALIZES those senders, it does not
-      // reduce them to one: `payment-receipt.ts` resets `receipt_status` back to
-      // null on a retryable failure, so a second sender could then deliver a
-      // duplicate receipt to a client. That is precisely the hole
-      // `auto-payment-receipt.ts`'s header warned about when it said gate 2 must
-      // not lean on the claim as the ONLY defence.
-      //
-      // Only ONE invocation can win `ready -> pending_stripe`, so only that one
-      // may own the receipt. An `already_pending` fallthrough is an idempotent
-      // replay of somebody else's charge, whatever Stripe hands it back.
+      // THAT IS FINE, because nothing here decides who sends the receipt. Each of
+      // them may ATTEMPT one, and the durable `receipt_status` claim admits
+      // exactly one. An earlier revision tried to settle it here instead, by
+      // giving ownership to the claim winner -- which excluded the invocation
+      // that RECOVERS an orphaned claim, and stranded that receipt with nobody
+      // able to send it.
     });
     if (!persistence.persisted) {
       return {

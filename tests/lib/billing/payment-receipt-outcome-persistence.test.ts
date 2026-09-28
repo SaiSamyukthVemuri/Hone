@@ -123,7 +123,14 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         st.filters.push(["__or__", expr]);
         return q;
       };
-      q.is = () => q;
+      q.is = (col: string, val: unknown) => {
+        // RECORDED, so the claim POLICY can be asserted directly. Without this
+        // the automatic NULL-only claim was untestable: an early return for a
+        // `failed` row short-circuits before the claim query, so widening the
+        // query changed no observable outcome and a mutation of it went unnoticed.
+        st.filters.push([col, val === null ? "__is_null__" : val]);
+        return q;
+      };
       q.order = () => q;
       q.maybeSingle = async () => settle();
       q.then = (resolve: (v: unknown) => unknown) => resolve(settle());
@@ -590,4 +597,50 @@ describe("claim policy", () => {
     expect(h.sends).toHaveLength(0);
   });
 
+});
+
+describe("the claim POLICY itself, not just its observable outcome", () => {
+  // WHY THIS EXISTS. `P1 AUTOMATIC claims NULL only` passes even if the claim
+  // query is widened to admit 'failed', because the early return for a failed row
+  // fires first. A mutation that widened the query therefore went UNCAUGHT. The
+  // policy has to be asserted where it lives: in the filters of the claim UPDATE.
+  const claimFilters = () => {
+    const claim = h.stmts.find(
+      (x) => x.key === "payment_charge_attempts:update:sending",
+    );
+    return (claim?.filters ?? []).map(([c, v]) => `${c}=${String(v)}`);
+  };
+
+  it("AUTOMATIC claims with receipt_status IS NULL and no OR", async () => {
+    baseline(null);
+    await runAutomatic();
+    const f = claimFilters();
+    expect(f, "automatic must claim NULL only").toContain(
+      "receipt_status=__is_null__",
+    );
+    expect(
+      f.some((x) => x.startsWith("__or__")),
+      "automatic must not widen the claim with an OR",
+    ).toBe(false);
+  });
+
+  it("MANUAL claims with the NULL-or-failed OR, preserving recovery", async () => {
+    baseline(null);
+    await run();
+    const f = claimFilters();
+    const or = f.find((x) => x.startsWith("__or__"));
+    expect(or, "manual must keep its OR claim").toBeTruthy();
+    expect(or).toMatch(/receipt_status\.is\.null/);
+    expect(or).toMatch(/receipt_status\.eq\.failed/);
+  });
+
+  it("neither policy claims a row that is already 'sending' or 'sent'", async () => {
+    // Both are excluded by the claim's own status predicate, so the filters must
+    // never mention them as admissible.
+    baseline(null);
+    await runAutomatic();
+    const f = claimFilters().join(" ");
+    expect(f).not.toMatch(/sending/);
+    expect(f).not.toMatch(/eq\.sent/);
+  });
 });

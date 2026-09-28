@@ -619,38 +619,99 @@ describe("J — a replay is a real success that owes no receipt", () => {
     );
     expect(declared.size, "the result type must declare fields").toBeGreaterThan(3);
     const docComments = typeBlock.match(/\/\*\*[\s\S]*?\*\//g) ?? [];
-    // Identifiers that are legitimately about other modules, not this type.
+    // Identifiers that are legitimately about OTHER modules. Deliberately NOT
+    // including this type's own fields: they are already accepted via `declared`,
+    // and listing them here would mean a field deleted while its JSDoc went stale
+    // — the exact regression this guard exists to catch — still passed.
     const EXTERNAL = new Set([
-      "committedNow",
-      "concurrentlyReconciled",
       "receipt_status",
       "autoSendReceiptAfterCharge",
       "sendPaymentChargeReceipt",
       "reconcileExistingPaymentIntent",
       "reconcile_card_payment_succeeded",
       "claim_session_payment_charge_attempt",
+      // Status LITERALS — values, not fields of this type.
       "pending_stripe",
       "already_pending",
       "already_succeeded",
       "succeeded",
       "claimed",
       "ready",
+      "sending",
+      "sent",
+      "failed",
+      "cancelled",
+      "blocked",
       "true",
       "false",
       "ok",
+      "result",
+      "status",
+      "id",
+      "charge",
+      "by",
+      "persisted",
+      "persistence",
       "FOR",
       "UPDATE",
+      "NULL",
+      "null",
+      // PostgREST builder methods named in prose about the conditional UPDATE.
+      "eq",
+      "is",
+      "or",
+      "select",
+      "update",
+      "from",
+    ]);
+    // JavaScript keywords are a CLOSED SET and can never be a field reference.
+    // Listing them is a language fact, not a judgement call — unlike listing this
+    // type's own field names, which would defeat the guard outright.
+    const KEYWORDS = new Set([
+      "if", "else", "return", "const", "let", "var", "function", "async",
+      "await", "new", "this", "typeof", "in", "of", "for", "while", "do",
+      "switch", "case", "break", "continue", "throw", "try", "catch", "finally",
+      "class", "extends", "super", "import", "export", "default", "delete",
+      "void", "yield", "undefined", "string", "number", "boolean", "object",
     ]);
     for (const doc of docComments) {
-      for (const [, ident] of doc.matchAll(/`([a-z][A-Za-z0-9]*)`/g)) {
-        if (EXTERNAL.has(ident) || declared.has(ident)) continue;
-        throw new Error(
-          `SessionPaymentChargeResult's documentation references \`${ident}\`, ` +
-            `which is not a field it declares. A doc that names a removed field ` +
-            `is how a consumer restores a bug the field was deleted to fix.`,
-        );
+      // EXTRACT THE SPAN, THEN THE IDENTIFIERS INSIDE IT. Matching only spans
+      // that are ENTIRELY one camelCase identifier let a stale field hide behind
+      // ordinary formatting — `charge.receiptOwnedHere` or
+      // `receiptOwnedHere === true` both evaded the first version of this guard,
+      // which is a guard defeated by punctuation.
+      for (const [, span] of doc.matchAll(/`([^`]+)`/g)) {
+        // A backticked FILE PATH is not a field reference, and is told apart
+        // structurally rather than by judgement: paths contain `/`. The shapes
+        // this guard must catch — `charge.receiptOwnedHere`,
+        // `receiptOwnedHere === true` — contain none, so nothing is excused.
+        if (span.includes("/")) continue;
+        for (const [, ident] of span.matchAll(/\b([a-z][A-Za-z0-9]*)\b/g)) {
+          if (KEYWORDS.has(ident) || EXTERNAL.has(ident) || declared.has(ident)) continue;
+          throw new Error(
+            `SessionPaymentChargeResult's documentation references \`${ident}\`, ` +
+              `which is not a field it declares. A doc that names a removed field ` +
+              `is how a consumer restores a bug the field was deleted to fix.`,
+          );
+        }
       }
     }
+
+    // NEGATIVE CONTROLS — the guard must reject the shapes that defeated it.
+    const probe = (docBody: string) => {
+      for (const [, span] of docBody.matchAll(/`([^`]+)`/g)) {
+        if (span.includes("/")) continue;
+        for (const [, ident] of span.matchAll(/\b([a-z][A-Za-z0-9]*)\b/g)) {
+          if (KEYWORDS.has(ident) || EXTERNAL.has(ident) || declared.has(ident)) continue;
+          return ident;
+        }
+      }
+      return null;
+    };
+    expect(probe("see `receiptOwnedHere`"), "bare identifier").toBe("receiptOwnedHere");
+    expect(probe("see `charge.receiptOwnedHere`"), "dotted").toBe("receiptOwnedHere");
+    expect(probe("`receiptOwnedHere === true`"), "expression").toBe("receiptOwnedHere");
+    expect(probe("see `committedNow`"), "a real field is accepted").toBeNull();
 
     // NO CHARGE-RESULT FIELD MAY GRANT EMAIL OWNERSHIP.
     //
