@@ -58,7 +58,7 @@ describe("0200 position in the chain", () => {
     // KEEPS the HOSTED-head claim below, because 0201 is authored and NOT
     // applied. Those are two different claims and only the first has moved.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0201", "0202"]);
+    expect(versionsAbove(VERSION)).toEqual(["0201", "0202", "0203"]);
     expect(countVersion(VERSION)).toBe(1);
   });
 

@@ -204,7 +204,24 @@ describe("the guard refuses what no command may do", () => {
     );
   });
 
-  it("mobile_verified_at has NO writer in this release", async () => {
+  it("a bare direct UPDATE without the matching row permit is rejected", async () => {
+    // RETITLED TWICE, AND THE SECOND TIME MATTERS MORE THAN THE FIRST.
+    //
+    // It originally said "has NO writer in this release" -- 0202's truth, false
+    // once 0203 was applied on 2026-09-27, because a writer now exists.
+    //
+    // MY FIRST CORRECTION THEN SAID it passes because "this caller is not the one
+    // writer". THAT WAS ALSO WRONG, and wrong in a way the canonical record
+    // explicitly disclaims: this test runs `adminQuery` as the local `postgres`
+    // OWNER, which is precisely the role that retains UPDATE and CAN set
+    // `hone.mobile_verified_entry_id` before issuing the same statement. The guard
+    // compares the GUC to `new.id` and cannot see where it came from, so nothing
+    // here establishes provenance or excludes this caller.
+    //
+    // WHAT IS ACTUALLY TESTED, and all that is: a direct UPDATE carrying NO
+    // matching row permit is rejected. That is true under 0202 (which refused every
+    // change) and under 0203 (which refuses every change without the permit), and
+    // it is the durable property this test owns. The assertion is unchanged.
     const s = await seedStudio("w04b-verify");
     const out = await joinWithProfile(s.studioId);
     await raises(
