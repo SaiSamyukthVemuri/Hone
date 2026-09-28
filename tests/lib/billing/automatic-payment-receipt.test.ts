@@ -567,9 +567,20 @@ describe("J — a replay is a real success that owes no receipt", () => {
     // And exactly ONE site may claim the concurrent-writer case: the fresh
     // create-and-confirm path. The reconcile path must never claim it, because
     // its PaymentIntent pre-dates the invocation.
+    //
+    // The claim must ALSO be conditioned on ownership (`receiptOwed`), not on the
+    // writer alone. A review found that exact gap: with `by` as the only input,
+    // every `already_pending` idempotent replay reported itself as the receipt
+    // owner, and the durable receipt claim can be reopened by a retryable-failure
+    // reset — so a loser could deliver a duplicate receipt to a client.
+    const concurrentClaims =
+      code.match(/concurrentlyReconciled:\s*[\s\S]{0,120}?,\n/g) ?? [];
+    expect(concurrentClaims).toHaveLength(1);
+    expect(concurrentClaims[0]).toMatch(/persistence\.by === "concurrent_writer"/);
     expect(
-      code.match(/concurrentlyReconciled: persistence\.by === "concurrent_writer",/g) ?? [],
-    ).toHaveLength(1);
+      concurrentClaims[0],
+      "the concurrent-writer claim must require receipt ownership",
+    ).toMatch(/persistence\.receiptOwed/);
 
     // Each `committedNow: true` is preceded by the persistence gate that makes
     // it exclusive — not merely by a Stripe success.

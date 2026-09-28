@@ -86,8 +86,9 @@ describe("writeSucceededOutcome reports whether the success was persisted", () =
     // else, so it may only be reachable from the verified branch. Pinned two ways:
     // the return exists, and it sits AFTER the classifier call and INSIDE the
     // `verdict.benign` branch -- never on a bare zero-row path.
+    // Multi-line now, because the arm also reports receipt ownership.
     expect(CHARGE).toMatch(
-      /return \{ persisted: true, by: "concurrent_writer" \};/,
+      /return \{\s*persisted: true,\s*by: "concurrent_writer",\s*receiptOwed: receiptOwnedHere,\s*\};/,
     );
     const zeroRowBlock =
       CHARGE.slice(CHARGE.indexOf("if (!updatedRows || updatedRows.length === 0)"));

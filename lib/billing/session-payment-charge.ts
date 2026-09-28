@@ -377,8 +377,14 @@ type SuccessPersistenceResult =
    * The row is correct and records THIS charge, but a different legitimate
    * writer stamped it first. Still `persisted: true`, so every existing
    * `if (!persistence.persisted)` guard keeps its meaning untouched.
+   *
+   * `receiptOwed` is the ONE ownership decision, made here and read by the call
+   * sites rather than re-derived by them. An earlier revision let the call site
+   * compute `concurrentlyReconciled` from `by` alone while ownership was tracked
+   * separately, so the two drifted apart immediately: every `already_pending`
+   * idempotent replay reported itself as the receipt owner.
    */
-  | { persisted: true; by: "concurrent_writer" }
+  | { persisted: true; by: "concurrent_writer"; receiptOwed: boolean }
   | { persisted: false; reason: "db_error" | "zero_rows" };
 
 // Snapshots a successful PaymentIntent back onto the attempt row.
@@ -453,9 +459,13 @@ async function classifyZeroRowSuccessWrite(args: {
     ],
     [row.charge_reason === args.expectedChargeReason, "charge_reason_mismatch"],
     [row.cancelled_at === null, "row_cancelled"],
-    // A refunded row is settled money moving the OTHER way; a fresh automatic
-    // receipt for it would be wrong, so it is not the benign case.
-    [row.refund_status !== "succeeded", "already_refunded"],
+    // ANY refund activity at all, not just a COMPLETED one. `!== "succeeded"`
+    // accepted `pending_stripe`, i.e. a refund already in flight with an unknown
+    // Stripe outcome — and then sent the client an automatic receipt for money
+    // that is on its way back. Before this repair every zero-row write stayed
+    // fail-closed, so that was a regression, not a pre-existing gap. NULL is the
+    // only benign value.
+    [row.refund_status === null, "refund_in_progress_or_done"],
     // CHARGE LINEAGE. Null is compatible (the webhook coalesces and may not have
     // had it); a DIFFERENT charge id is not, because that is two charges.
     [
@@ -591,9 +601,19 @@ async function writeSucceededOutcome(args: {
       // signal, but there is nothing for a human to reconcile. Only `critical`
       // pages (lib/ops/alerts.ts), so this stays out of the manual-review queue
       // while remaining visible if the race becomes frequent.
+      // WHEN THIS INVOCATION DOES NOT OWN THE RECEIPT, SAY SO OUT LOUD.
+      //
+      // Before this repair a zero-row write returned needs_manual_review, which
+      // was noisy but VISIBLE. Reporting clean success without owning the receipt
+      // would trade a false critical for a silent gap, and a silently unsent
+      // receipt for real money is the worse of the two. So the alert states the
+      // receipt exposure explicitly and an operator can send it from the session
+      // page, where `receipt_status` makes the manual send idempotent.
+      const receiptOwnedHere = args.chargeCreatedThisInvocation;
       logInternal("session_payment_succeeded_write_concurrent_reconciliation", {
         attemptId: args.attemptId,
-        chargeCreatedThisInvocation: args.chargeCreatedThisInvocation,
+        chargeCreatedThisInvocation: receiptOwnedHere,
+        receiptOwnedHere,
       });
       await recordOpsAlert({
         severity: "warning",
@@ -603,7 +623,14 @@ async function writeSucceededOutcome(args: {
           "(normally the payment_intent.succeeded webhook) had already persisted the IDENTICAL " +
           "charge on this attempt. Verified by authoritative re-read: same attempt, PaymentIntent, " +
           "charge lineage, studio, client, livemode, amount, currency and charge reason. " +
-          "The ledger is correct and NO manual reconciliation is required.",
+          "The ledger is correct and NO money reconciliation is required. " +
+          (args.chargeCreatedThisInvocation
+            ? "This invocation owns the receipt and dispatched it automatically."
+            : "THIS INVOCATION DOES NOT OWN THE RECEIPT: it did not win the " +
+              "ready -> pending_stripe claim, so no automatic receipt was sent from " +
+              "here. CHECK WHETHER A RECEIPT IS STILL OWED for this charge and send " +
+              "it from the session page if so; receipt_status makes that send " +
+              "idempotent."),
         studioId: args.studioId,
         clientId: args.clientId,
         stripePaymentIntentId: args.pi.id,
@@ -613,9 +640,15 @@ async function writeSucceededOutcome(args: {
           attempted_status: "succeeded",
           resolution: "concurrent_writer_already_persisted",
           charge_created_this_invocation: args.chargeCreatedThisInvocation,
+          receipt_owned_here: args.chargeCreatedThisInvocation,
+          receipt_may_be_owed: !args.chargeCreatedThisInvocation,
         },
       });
-      return { persisted: true, by: "concurrent_writer" };
+      return {
+        persisted: true,
+        by: "concurrent_writer",
+        receiptOwed: receiptOwnedHere,
+      };
     }
 
     // NOT PROVABLY BENIGN — unchanged behaviour, and the reason is now named so
@@ -1441,10 +1474,31 @@ export async function runSessionPaymentCharge(args: {
       clientId: attemptRow.client_id,
       pi,
       expectedChargeReason: attemptRow.charge_reason ?? null,
-      // TRUE: this invocation created and confirmed the PaymentIntent, so a
-      // receipt is owed for it exactly once — even if another writer stamped the
-      // row first.
-      chargeCreatedThisInvocation: true,
+      // OWNERSHIP IS THE DATABASE TRANSITION, NOT THE STRIPE CALL.
+      //
+      // This was hardcoded `true` and that was wrong. The `already_pending`
+      // branch above DELIBERATELY lets several requests fall through to the
+      // create-and-confirm call below with the same deterministic idempotency
+      // key, so Stripe returns the SAME succeeded PaymentIntent to all of them.
+      // Every one of them reaches this line having "created" the charge, so every
+      // loser would have become `concurrentlyReconciled` and called the automatic
+      // sender.
+      //
+      // (The provider method is deliberately not named in prose here: the repo's
+      // Stripe call-site inventory guards count that literal to pin exactly one
+      // create site, and they count source text rather than parsed calls.)
+      //
+      // The database receipt claim only SERIALIZES those senders, it does not
+      // reduce them to one: `payment-receipt.ts` resets `receipt_status` back to
+      // null on a retryable failure, so a second sender could then deliver a
+      // duplicate receipt to a client. That is precisely the hole
+      // `auto-payment-receipt.ts`'s header warned about when it said gate 2 must
+      // not lean on the claim as the ONLY defence.
+      //
+      // Only ONE invocation can win `ready -> pending_stripe`, so only that one
+      // may own the receipt. An `already_pending` fallthrough is an idempotent
+      // replay of somebody else's charge, whatever Stripe hands it back.
+      chargeCreatedThisInvocation: claim.result === "claimed",
     });
     if (!persistence.persisted) {
       return {
@@ -1469,7 +1523,11 @@ export async function runSessionPaymentCharge(args: {
       // writer wrote the IDENTICAL charge first. Both mean a brand-new charge
       // exists that owes precisely one receipt.
       committedNow: persistence.by === "this_invocation",
-      concurrentlyReconciled: persistence.by === "concurrent_writer",
+      // READ, NOT RE-DERIVED. Ownership is decided once inside
+      // writeSucceededOutcome; a second copy of the rule here is how the first
+      // attempt at this fix shipped broken.
+      concurrentlyReconciled:
+        persistence.by === "concurrent_writer" && persistence.receiptOwed,
     };
   }
 

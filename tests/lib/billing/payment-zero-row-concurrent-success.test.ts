@@ -45,6 +45,8 @@ const h = vi.hoisted(() => ({
   stripeCalls: [] as string[],
   updates: [] as Array<Record<string, unknown>>,
   rows: {} as Record<string, unknown>,
+  /** Which claim result the RPC reports. Only "claimed" owns the receipt. */
+  claimResult: "claimed" as string,
 }));
 
 const PI_ID = "pi_RACE0000000000000001";
@@ -186,7 +188,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       return {
         data: [
           {
-            result: "claimed",
+            result: h.claimResult,
             attempt_id: ATTEMPT,
             studio_id: STUDIO,
             client_id: CLIENT,
@@ -203,7 +205,13 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             stripe_payment_intent_id: null,
             stripe_idempotency_key: "idem-1",
             status_before_claim: "ready",
-            updated_at: "2026-08-01T00:00:00.000Z",
+            // RECENT, DELIBERATELY. With a stale timestamp an `already_pending`
+            // claim carrying no PaymentIntent id is refused by the
+            // reconciliation-window guard as `stale_pending_no_pi` — which is
+            // correct behaviour, and would have made the duplicate-creator tests
+            // below pass for the wrong reason by never reaching
+            // paymentIntents.create at all.
+            updated_at: new Date().toISOString(),
           },
         ],
         error: null,
@@ -277,6 +285,7 @@ beforeEach(() => {
   h.succeededUpdateRows = []; // the race, by default
   h.recheckRow = { ...WEBHOOK_STAMPED_ROW };
   h.recheckError = null;
+  h.claimResult = "claimed";
   h.alerts = [];
   h.stripeCalls = [];
   h.updates = [];
@@ -551,7 +560,7 @@ describe("MUTATION CONTROLS — every one of these must stay CRITICAL", () => {
   it("ALREADY REFUNDED -> critical, and no fresh receipt", async () => {
     h.recheckRow = { ...WEBHOOK_STAMPED_ROW, refund_status: "succeeded" };
     const d = await expectCritical("already refunded");
-    expect(d.recheck_failed).toBe("already_refunded");
+    expect(d.recheck_failed).toBe("refund_in_progress_or_done");
   });
 
   it("a CANCELLED timestamp alone is enough -> critical", async () => {
@@ -618,5 +627,127 @@ describe("POSITIVE CONTROL — the harness can reach the clean path", () => {
       },
     } as never);
     expect(sent).toBe(1);
+  });
+});
+
+// ===========================================================================
+// P1 REGRESSIONS FROM REVIEW — each of these shipped broken in 5237aaee
+// ===========================================================================
+
+describe("P1: a refund in flight is NOT benign", () => {
+  // The first predicate was `refund_status !== "succeeded"`, which accepted
+  // `pending_stripe` — a refund already on its way with an unknown Stripe
+  // outcome — and then sent the client an automatic receipt for money going
+  // back. Before the repair every zero-row write stayed fail-closed, so this was
+  // a regression introduced BY the fix, not a pre-existing gap.
+  for (const state of ["pending_stripe", "succeeded", "failed", "requested"]) {
+    it(`refund_status='${state}' -> critical, and no receipt`, async () => {
+      h.recheckRow = { ...WEBHOOK_STAMPED_ROW, refund_status: state };
+      const result = await run();
+      expect(result.ok, `refund_status ${state} must not be benign`).toBe(false);
+      expect(critical()).toHaveLength(1);
+      expect(
+        (critical()[0].details as { recheck_failed?: string }).recheck_failed,
+      ).toBe("refund_in_progress_or_done");
+      let sent = 0;
+      await autoSendReceiptAfterCharge({
+        charge: result as never,
+        attemptId: ATTEMPT,
+        studioId: STUDIO,
+        practitionerId: PRACTITIONER,
+        send: async () => {
+          sent += 1;
+          return { ok: true } as never;
+        },
+      } as never);
+      expect(sent, "never receipt a charge that is being refunded").toBe(0);
+    });
+  }
+
+  it("only refund_status = NULL is benign", async () => {
+    h.recheckRow = { ...WEBHOOK_STAMPED_ROW, refund_status: null };
+    const result = await run();
+    expect(result).toMatchObject({ ok: true, concurrentlyReconciled: true });
+    expect(critical()).toEqual([]);
+  });
+});
+
+describe("P1: receipt ownership is the DB claim, not the Stripe call", () => {
+  // THE DUPLICATE-RECEIPT PATH THE REVIEW FOUND. The `already_pending`-with-no-PI
+  // branch deliberately lets SEVERAL requests fall through to
+  // paymentIntents.create with the same idempotency key, so Stripe hands the SAME
+  // succeeded PI to all of them. Ownership was hardcoded `true`, so every loser
+  // claimed the receipt — and `payment-receipt.ts` resets receipt_status to null
+  // on a retryable failure, so the DB claim alone can be reopened and a second
+  // sender can deliver a duplicate to a client.
+  it("an already_pending idempotent replay does NOT own the receipt", async () => {
+    h.claimResult = "already_pending";
+    const result = await run();
+    // The money verdict is unchanged: the ledger is right either way.
+    expect(result).toMatchObject({ ok: true, outcome: "succeeded" });
+    // But this invocation did not win ready -> pending_stripe, so it owns nothing.
+    expect(result).toMatchObject({ concurrentlyReconciled: false });
+    let sent = 0;
+    await autoSendReceiptAfterCharge({
+      charge: result as never,
+      attemptId: ATTEMPT,
+      studioId: STUDIO,
+      practitionerId: PRACTITIONER,
+      send: async () => {
+        sent += 1;
+        return { ok: true } as never;
+      },
+    } as never);
+    expect(sent, "an idempotent replay must not send a receipt").toBe(0);
+  });
+
+  it("N concurrent idempotent creators produce AT MOST ONE receipt owner", async () => {
+    // The reviewer's scenario, counted. Only the invocation that won the claim
+    // may own the receipt; every other one is a replay however Stripe answered.
+    let owners = 0;
+    for (const claimResult of [
+      "claimed",
+      "already_pending",
+      "already_pending",
+      "already_pending",
+    ]) {
+      h.alerts = [];
+      h.stripeCalls = [];
+      h.claimResult = claimResult;
+      const result = (await run()) as { concurrentlyReconciled?: boolean };
+      if (result.concurrentlyReconciled === true) owners += 1;
+    }
+    expect(owners, "exactly one invocation may own the receipt").toBe(1);
+  });
+
+  it("the winner still owns it", async () => {
+    h.claimResult = "claimed";
+    const result = await run();
+    expect(result).toMatchObject({ concurrentlyReconciled: true });
+  });
+});
+
+describe("P1: a benign race that owes a receipt is never SILENT", () => {
+  // Returning clean success without owning the receipt would trade a false
+  // critical for a silent gap, and a silently unsent receipt for real money is
+  // the worse of the two.
+  it("names the receipt exposure when this invocation does not own it", async () => {
+    h.claimResult = "already_pending";
+    await run();
+    const w = warnings();
+    expect(w).toHaveLength(1);
+    expect(w[0].details).toMatchObject({
+      receipt_owned_here: false,
+      receipt_may_be_owed: true,
+    });
+  });
+
+  it("and reports ownership when it DOES own it", async () => {
+    h.claimResult = "claimed";
+    await run();
+    expect(warnings()[0].details).toMatchObject({
+      receipt_owned_here: true,
+      receipt_may_be_owed: false,
+    });
   });
 });
