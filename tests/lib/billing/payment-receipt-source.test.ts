@@ -138,20 +138,59 @@ describe("sendPaymentChargeReceipt: write on success", () => {
 });
 
 describe("sendPaymentChargeReceipt: write on retryable failure (release claim)", () => {
-  it("a retryable failure releases the claim back to null", () => {
+  it("an AMBIGUOUS failure HOLDS the claim and never releases it", () => {
+    // BEHAVIOUR CHANGE, DELIBERATE. This previously asserted
+    // `sendResult.retryable -> receipt_status: null`, i.e. the claim was released
+    // so a later attempt could retry.
+    //
+    // `retryable` covers timeout, network failure, an empty response and 5xx --
+    // every case where the request reached Resend, or may have, so DELIVERY IS
+    // UNKNOWN. Releasing the claim there lets the next caller send a second
+    // receipt for a charge that may already have been receipted, and once several
+    // concurrent charge invocations can reach the sender that stops being
+    // theoretical. The file's own comment named the hazard on the
+    // failure-to-release path while the success path did it anyway.
+    //
+    // The row now stays at 'sending' -- truthful: a send was started and its
+    // outcome is unknown -- and an operator reconciles with the provider.
+    const at = HELPER.search(/if \(sendResult\.retryable\)/);
+    expect(at).toBeGreaterThan(-1);
+    const branch = HELPER.slice(at, HELPER.indexOf("  // Terminal failure", at));
+    expect(
+      branch,
+      "an ambiguous delivery must not release the receipt claim",
+    ).not.toMatch(/receipt_status:\s*null/);
+    expect(branch).toMatch(/claim_released: false/);
+    expect(branch).toMatch(/delivery_unknown: true/);
+  });
+
+  it("a PRE-DISPATCH failure still releases the claim, because nothing was sent", () => {
+    // The asymmetry that makes the above safe rather than merely strict. A PDF
+    // failure never reaches the provider, so delivery is definitively "no" and
+    // the claim is released for a later attempt.
+    const at = HELPER.indexOf("async function releaseAfterPdfFailure");
+    expect(at).toBeGreaterThan(-1);
+    const fn = HELPER.slice(at, at + 1400);
+    expect(fn).toMatch(/receipt_status:\s*null/);
+    expect(fn).toMatch(/deliveryUnknown: false/);
+  });
+
+  it("an ambiguous failure records a CRITICAL ops_alert naming the held claim", () => {
+    // Critical rather than warning, because holding the claim removes the
+    // self-healing that made a released claim a warning: the row cannot proceed
+    // until a person reconciles with the provider.
     expect(HELPER).toMatch(
-      /sendResult\.retryable[\s\S]{0,200}receipt_status:\s*null/,
+      /severity:\s*"critical"[\s\S]{0,600}event:\s*"payment_receipt_send_ambiguous_claim_held"/,
     );
   });
 
-  it("a retryable failure records a warning-severity ops_alert", () => {
-    expect(HELPER).toMatch(
-      /severity:\s*"warning"[\s\S]{0,200}event:\s*"payment_receipt_send_failed_retryable"/,
-    );
-  });
-
-  it("retryable failure returns reason='send_failed_retryable' to the caller", () => {
-    expect(HELPER).toMatch(/reason:\s*"send_failed_retryable"/);
+  it("an ambiguous failure returns the ambiguous reason, not a retryable one", () => {
+    // "try again in a moment" is advice that must not be given when a duplicate
+    // is the risk, so the caller is handed the ambiguous outcome instead.
+    const at = HELPER.search(/if \(sendResult\.retryable\)/);
+    const branch = HELPER.slice(at, HELPER.indexOf("  // Terminal failure", at));
+    expect(branch).toMatch(/reason:\s*"send_ambiguous_state_not_recorded"/);
+    expect(branch).not.toMatch(/reason:\s*"send_failed_retryable"/);
   });
 });
 
