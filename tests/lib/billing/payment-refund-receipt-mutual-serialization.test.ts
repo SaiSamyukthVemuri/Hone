@@ -48,6 +48,12 @@ const db = vi.hoisted(() => ({
   sendResult: { ok: true } as Record<string, unknown>,
   // Lets a test make one side reach its claim after the other.
   delayBeforeClaimMs: 0,
+  // Fires once, immediately before a conditional UPDATE is evaluated. This is
+  // the ONLY way to model a true time-of-check/time-of-use race: the row is one
+  // thing when a caller reads it and another by the time its claim runs. Seeding
+  // the final state up front cannot reach the post-claim code at all, because
+  // the pre-claim guards answer first.
+  beforeClaim: null as null | (() => void),
 }));
 
 vi.mock("@/lib/stripe/server", () => ({
@@ -108,7 +114,17 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       let patch: Record<string, unknown> = {};
 
       const q: Record<string, unknown> = {};
-      q.select = () => q;
+      let selected: string[] | null = null;
+      q.select = (cols?: string) => {
+        // PROJECTION IS MODELLED ON PURPOSE. PostgREST returns only the columns
+        // asked for, so code that forgets one reads `undefined` rather than the
+        // real value. A fake that hands back the whole row hides exactly that
+        // class of bug -- and did, until a mutation control caught it.
+        if (typeof cols === "string" && cols !== "id" && cols.includes(",")) {
+          selected = cols.split(",").map((c) => c.trim());
+        }
+        return q;
+      };
       q.update = (p: Record<string, unknown>) => {
         op = "update";
         patch = p;
@@ -131,15 +147,27 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       // Evaluation and write are one step, which is the whole point -- it is what
       // makes two claims on the same row mutually exclusive.
       const settleUpdate = () => {
+        if (db.beforeClaim) {
+          const hook = db.beforeClaim;
+          db.beforeClaim = null; // once, so the loser's own claim is not re-raced
+          hook();
+        }
         const matched = table === "payment_charge_attempts" && allMatch(db.row, filters);
         if (matched) Object.assign(db.row, patch);
         db.writes.push({ patch, matched });
         return { data: matched ? [{ id: db.row.id }] : [], error: null };
       };
 
+      const project = (row: Record<string, unknown>) => {
+        if (!selected) return { ...row };
+        const out: Record<string, unknown> = {};
+        for (const c of selected) out[c] = row[c];
+        return out;
+      };
+
       q.maybeSingle = async () => {
         if (table === "payment_charge_attempts") {
-          return { data: { ...db.row }, error: null };
+          return { data: project(db.row), error: null };
         }
         return db.aux[table] ?? { data: null, error: null };
       };
@@ -207,6 +235,7 @@ beforeEach(() => {
   db.stripeRefunds = [];
   db.sendResult = { ok: true };
   db.delayBeforeClaimMs = 0;
+  db.beforeClaim = null;
   db.aux = {
     practitioners: { data: { role: "owner" }, error: null },
     clients: {
@@ -453,5 +482,190 @@ describe("M: manual receipt policy is NOT changed by any of this", () => {
 
     expect(res.ok).toBe(true);
     expect(db.emails).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R1. The automatic claim-loser must say WHY it lost.
+//
+// The re-read used to select only the receipt_* columns, so a claim refused by
+// the refund predicate was indistinguishable from one refused because another
+// sender held the row -- and every such loser was reported as `in_flight`. That
+// was false twice: no send was in flight, and none could start, because the
+// automatic claim requires `refund_status IS NULL` and a refund_status does not
+// return to NULL on its own.
+//
+// These run against the shared row, so the reason is derived from real state
+// rather than from a scripted response.
+// ---------------------------------------------------------------------------
+
+describe("R1 — an automatic claim refused by refund activity", () => {
+  for (const refundStatus of ["pending_stripe", "succeeded", "failed"] as const) {
+    it(`R1.${refundStatus} -> blocked_by_refund, and nothing is sent`, async () => {
+      seedRow({ refund_status: refundStatus });
+
+      const res = await receiptAutomatic();
+
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.reason).toBe("blocked_by_refund");
+      expect(db.emails).toHaveLength(0);
+      // The claim was refused, so the row was not taken.
+      expect(db.row.receipt_status).toBeNull();
+    });
+  }
+
+  it("R1.failed — a FAILED refund blocks it too, and does not resume later", async () => {
+    // The policy is about refund ACTIVITY existing, not about how the refund
+    // turned out. A failed refund leaves a charge someone is actively working
+    // on; whether a receipt is still right is a person's call.
+    seedRow({ refund_status: "failed" });
+
+    const first = await receiptAutomatic();
+    expect(first.ok === false && first.reason).toBe("blocked_by_refund");
+
+    // A second automatic attempt reaches the same conclusion. There is no
+    // automatic recovery path out of this state, by design.
+    const second = await receiptAutomatic();
+    expect(second.ok === false && second.reason).toBe("blocked_by_refund");
+    expect(db.emails).toHaveLength(0);
+  });
+
+  it("R1.manual — manual recovery is still available on that same row", async () => {
+    // The whole point of suppressing the automatic path rather than the manual
+    // one: the decision moves to a person, it does not disappear.
+    seedRow({ refund_status: "failed" });
+
+    expect((await receiptAutomatic()).ok).toBe(false);
+    const manual = await receiptManual();
+
+    expect(manual.ok).toBe(true);
+    expect(db.emails).toHaveLength(1);
+  });
+
+  it("R1.message — it does not claim an email is in flight", async () => {
+    seedRow({ refund_status: "pending_stripe" });
+    const res = await receiptAutomatic();
+    const msg = res.ok === false ? res.message : "";
+
+    expect(msg).not.toMatch(/in flight/i);
+    expect(msg).toMatch(/refund activity/i);
+    expect(msg).toMatch(/manually/i);
+  });
+
+  it("R1.4 receipt_status='sending' still reports in_flight", async () => {
+    // The control that keeps the new branch honest: a row genuinely held by
+    // another sender IS in flight, and must not be relabelled.
+    seedRow({ receipt_status: "sending" });
+
+    const res = await receiptAutomatic();
+
+    expect(res.ok === false && res.reason).toBe("in_flight");
+    expect(db.emails).toHaveLength(0);
+  });
+
+  it("R1.4b 'sending' wins even when a refund also exists", async () => {
+    // Both conditions hold. `sending` is the more specific and more urgent
+    // fact -- an email may be in the wild -- so it must not be masked.
+    seedRow({ receipt_status: "sending", refund_status: "pending_stripe" });
+
+    const res = await receiptAutomatic();
+
+    expect(res.ok === false && res.reason).toBe("in_flight");
+  });
+
+  it("R1.5 receipt_status='sent' still reports already_sent", async () => {
+    seedRow({ receipt_status: "sent", receipt_sent_at: "2026-08-14T10:00:05.000Z" });
+
+    const res = await receiptAutomatic();
+
+    expect(res.ok === false && res.reason).toBe("already_sent");
+    expect(db.emails).toHaveLength(0);
+  });
+
+  it("R1.5b 'sent' wins over a refund too", async () => {
+    seedRow({
+      receipt_status: "sent",
+      receipt_sent_at: "2026-08-14T10:00:05.000Z",
+      refund_status: "succeeded",
+    });
+
+    const res = await receiptAutomatic();
+
+    expect(res.ok === false && res.reason).toBe("already_sent");
+  });
+
+  it("R1.manual-unchanged — a MANUAL loser is never told blocked_by_refund", async () => {
+    // Manual is not refund-gated, so a manual claim cannot lose on account of a
+    // refund. Reporting that reason would be a fresh falsehood in place of the
+    // one being removed.
+    seedRow({ receipt_status: "sending", refund_status: "pending_stripe" });
+
+    const res = await receiptManual();
+
+    expect(res.ok === false && res.reason).toBe("in_flight");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R1, the TRUE races. The tests above seed the final state, which the PRE-claim
+// guards answer before the claim ever runs -- so they pin the observable
+// outcome but never reach the post-claim classification. These use beforeClaim
+// to move the row between the caller's read and its claim, which is the only
+// interleaving that exercises that code.
+// ---------------------------------------------------------------------------
+
+describe("R1 — the post-claim classification, reached by a real race", () => {
+  it("a refund that starts between the read and the claim -> blocked_by_refund", async () => {
+    // Row is clean when the automatic sender reads it. A refund claims it in
+    // the gap. The claim then matches zero rows, and the re-read has to explain
+    // why -- which it can only do if it selected refund_status.
+    db.beforeClaim = () => {
+      db.row.refund_status = "pending_stripe";
+    };
+
+    const res = await receiptAutomatic();
+
+    expect(res.ok === false && res.reason).toBe("blocked_by_refund");
+    expect(db.emails).toHaveLength(0);
+    expect(res.ok === false && res.message).not.toMatch(/in flight/i);
+  });
+
+  it("another sender that wins in the same gap -> in_flight, not blocked", async () => {
+    // Both facts are true of the row by the time we re-read it. `sending` is
+    // the more specific and more urgent one: an email may already be in the
+    // wild, and telling an operator "refund activity" would bury that.
+    db.beforeClaim = () => {
+      db.row.receipt_status = "sending";
+      db.row.refund_status = "pending_stripe";
+    };
+
+    const res = await receiptAutomatic();
+
+    expect(res.ok === false && res.reason).toBe("in_flight");
+  });
+
+  it("a sender that COMPLETED in the gap -> already_sent", async () => {
+    db.beforeClaim = () => {
+      db.row.receipt_status = "sent";
+      db.row.receipt_sent_at = "2026-08-14T10:00:05.000Z";
+      db.row.receipt_email_to = "c@example.com";
+      db.row.refund_status = "succeeded";
+    };
+
+    const res = await receiptAutomatic();
+
+    expect(res.ok === false && res.reason).toBe("already_sent");
+    expect(res.ok === false && res.emailTo).toBe("c@example.com");
+  });
+
+  it("MANUAL loses the same race and is still never told blocked_by_refund", async () => {
+    db.beforeClaim = () => {
+      db.row.receipt_status = "sending";
+      db.row.refund_status = "pending_stripe";
+    };
+
+    const res = await receiptManual();
+
+    expect(res.ok === false && res.reason).toBe("in_flight");
   });
 });

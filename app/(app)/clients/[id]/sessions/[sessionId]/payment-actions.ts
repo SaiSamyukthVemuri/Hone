@@ -609,6 +609,13 @@ export type SendPaymentReceiptActionResult =
         // unlike every send_failed_* case the honest advice is simply "try
         // again" -- there is no delivery to reconcile.
         | "receipt_pdf_unavailable"
+        // R1. Only the AUTOMATIC sender produces this: its claim requires
+        // `refund_status IS NULL`, and refund activity on the row refused it.
+        // Nothing was sent and nothing failed. A manual Send from this action
+        // is not refund-gated, so this outcome does not mean the practitioner
+        // is blocked -- it means the automatic path stood down and the decision
+        // is now theirs.
+        | "blocked_by_refund"
         // The send failed AND the write recording that failure also
         // failed, so the row is stranded at receipt_status='sending'
         // and cannot be retried until an operator clears it. Distinct

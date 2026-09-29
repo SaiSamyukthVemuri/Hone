@@ -1182,3 +1182,126 @@ describe("L — a slow alert cannot hold a committed charge", () => {
     expect(code).not.toMatch(/void safeAlert\(/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R1. A refund-blocked automatic receipt is not "in flight", and not silent.
+//
+// The automatic claim requires `refund_status IS NULL`. When refund activity
+// refuses it, nothing was sent and nothing will be sent automatically -- so the
+// two things that must not happen are (a) reporting it as motion that will
+// resolve, and (b) reporting it not at all.
+// ---------------------------------------------------------------------------
+
+const BLOCKED: SendPaymentChargeReceiptResult = {
+  ok: false,
+  reason: "blocked_by_refund",
+  message:
+    "Automatic receipt delivery was skipped because refund activity exists " +
+    "for this charge. Review the payment and refund state before sending a " +
+    "receipt manually.",
+};
+
+describe("R1 — blocked_by_refund is surfaced, never treated as pending", () => {
+  it("R1.6 describeAutoReceipt reports needs_attention, not pending", () => {
+    // `pending` would tell the surface to wait for something that is never
+    // coming. Nothing is in motion: the claim was refused, not taken.
+    expect(describeAutoReceipt({ attempted: true, result: BLOCKED })).toBe(
+      "needs_attention",
+    );
+  });
+
+  it("R1.6b it is not confused with the states that ARE pending", () => {
+    for (const reason of [
+      "in_flight",
+      "send_ambiguous_state_not_recorded",
+      "sent_but_record_update_failed",
+    ] as const) {
+      expect(
+        describeAutoReceipt({
+          attempted: true,
+          result: { ok: false, reason, message: "x" },
+        }),
+      ).toBe("pending");
+    }
+  });
+
+  it("R1.7 a LATE blocked settlement raises an operator warning and no retry", async () => {
+    alertSpy.calls.length = 0;
+    let settle: (r: SendPaymentChargeReceiptResult) => void = () => {};
+    const hang = vi.fn(
+      () => new Promise<SendPaymentChargeReceiptResult>((r) => (settle = r)),
+    ) as unknown as ReceiptSender;
+    const { register, registered } = regSpy();
+
+    await autoSendReceiptAfterCharge({
+      charge: SUCCEEDED,
+      ...ARGS,
+      send: hang,
+      timeoutMs: 10,
+      register,
+    });
+    expect(alertSpy.calls).toHaveLength(0);
+
+    settle(BLOCKED);
+    await registered[0];
+
+    expect(alertSpy.calls).toHaveLength(1);
+    expect(alertSpy.calls[0]).toMatchObject({
+      severity: "warning",
+      event: "auto_payment_receipt_blocked_by_refund",
+      route: "lib/billing/auto-payment-receipt:reportLateSettlement",
+    });
+    // WARNING, not critical. Refund activity existing is an ordinary thing that
+    // happens to a charge; raising a money incident for it would train an
+    // operator to ignore the channel.
+    expect(alertSpy.calls[0].severity).not.toBe("critical");
+    // Exactly one send, ever. The alert is a report, not a trigger.
+    expect(hang).toHaveBeenCalledTimes(1);
+  });
+
+  it("R1.7b the INLINE path raises the same warning", async () => {
+    // The surface reads needs_attention, but a surface is only seen if someone
+    // is looking. This is the unattended path.
+    alertSpy.calls.length = 0;
+    const send = vi.fn(async () => BLOCKED) as unknown as ReceiptSender;
+    const { register } = regSpy();
+
+    const outcome = await autoSendReceiptAfterCharge({
+      charge: SUCCEEDED,
+      ...ARGS,
+      send,
+      register,
+    });
+
+    expect(alertSpy.calls).toHaveLength(1);
+    expect(alertSpy.calls[0]).toMatchObject({
+      severity: "warning",
+      event: "auto_payment_receipt_blocked_by_refund",
+      route: "lib/billing/auto-payment-receipt:autoSendReceiptAfterCharge",
+    });
+    expect(describeAutoReceipt(outcome)).toBe("needs_attention");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("R1.7c the alert carries no client detail and does not claim a refund outcome", async () => {
+    alertSpy.calls.length = 0;
+    const send = vi.fn(async () => BLOCKED) as unknown as ReceiptSender;
+    await autoSendReceiptAfterCharge({
+      charge: SUCCEEDED,
+      ...ARGS,
+      send,
+      register: regSpy().register,
+    });
+
+    const a = alertSpy.calls[0];
+    const text = `${a.message} ${JSON.stringify(a.safeDetails ?? {})}`;
+    // No PII.
+    expect(text).not.toMatch(/@/);
+    // pending_stripe, succeeded and failed all produce this outcome, so the
+    // copy must not assert which one happened.
+    expect(text).not.toMatch(/refund (succeeded|failed|completed)/i);
+    // And it must not promise an automatic retry that will never come.
+    expect(a.message).toMatch(/no automatic retry/i);
+    expect(a.message).toMatch(/manually/i);
+  });
+});

@@ -64,14 +64,21 @@ import {
 //                              receipt_email_to=<client_email>,
 //                              clears the failure detail.
 //
-//      AMBIGUOUS PROVIDER FAILURE (timeout, network, empty or 5xx
-//      response -- the provider was already dispatched to and its
-//      answer never arrived): DELIVERY IS UNKNOWN. The claim is
-//      deliberately HELD: receipt_status STAYS 'sending', nothing is
-//      released, and no automatic retry follows -- a retry could put
-//      a second receipt in front of a client who already has one.
-//      An ops_alert at severity 'critical' asks an operator to
-//      reconcile with the provider before clearing or resending.
+//      AMBIGUOUS PROVIDER RESULT (timeout, network error, empty
+//      response, 429, 5xx, or a shape the classifier does not
+//      recognise -- it fails open to retryable): DELIVERY CANNOT BE
+//      RULED OUT. That is the whole of the claim, and it is weaker
+//      than it looks. We do NOT know the provider was reached: a
+//      network error can fire before the request is accepted. We do
+//      NOT know no answer arrived: a 429 or a 5xx IS an answer. All
+//      that survives is that an email may or may not have gone out.
+//      That is enough, because the risk being managed is a DUPLICATE
+//      receipt, and only certainty that nothing was sent would
+//      justify sending again.
+//      So the claim is deliberately HELD: receipt_status STAYS
+//      'sending', nothing is released, and no automatic retry
+//      follows. An ops_alert at severity 'critical' asks an operator
+//      to reconcile with the provider before clearing or resending.
 //      Returns send_ambiguous_state_not_recorded.
 //
 //      KNOWN PRE-DISPATCH FAILURE: the receipt document or its PDF
@@ -81,9 +88,13 @@ import {
 //      recovery: receipt_status -> null, ops_alert at severity
 //      'warning', returns receipt_pdf_unavailable. This is the ONLY
 //      path in this module that releases the claim.
-//      (A missing or unusable client email is refused EARLIER, before
-//      the claim exists, so there is nothing to release. A recipient
-//      the provider itself refuses is a terminal outcome, below.)
+//      (ONLY AN EMPTY client email is refused before the claim
+//      exists -- the pre-claim check is a presence check, nothing
+//      more. A nonempty but MALFORMED address passes it, wins the
+//      claim, and is then rejected by the sender; a missing provider
+//      configuration is likewise classified after the claim. Both are
+//      non-retryable, so they settle down the terminal path below and
+//      park the row as 'failed'. They do not release it.)
 //
 //      KNOWN TERMINAL NOT-DELIVERED provider outcome: the provider
 //      answered and refused. receipt_status -> 'failed' with
@@ -165,6 +176,25 @@ export type SendPaymentChargeReceiptResult =
         // unknown, it definitively did not happen. The claim is released, so a
         // manual Send can try again.
         | "receipt_pdf_unavailable"
+        // R1. The AUTOMATIC claim lost, and the re-read shows the row is not
+        // held by another sender -- it is refund activity that made the claim
+        // inadmissible. Reporting `in_flight` here was false twice over: no send
+        // is in flight, and none can start, because the automatic claim requires
+        // `refund_status IS NULL` and refund_status is not going back to NULL.
+        //
+        // IT IS NOT A FAILURE. Nothing was attempted and nothing went wrong; an
+        // automatic receipt was deliberately suppressed. It also does not say
+        // the refund succeeded -- `pending_stripe`, `succeeded` and `failed` all
+        // produce it, because the policy is about refund ACTIVITY existing, not
+        // about how the refund turned out.
+        //
+        // NO AUTOMATIC RECOVERY FOLLOWS, including after a FAILED refund. Once a
+        // refund has been started against a charge, whether a receipt is still
+        // the right thing to send is a judgement about a real document, and
+        // manual recovery owns it. Wiring automatic retry to refund failure
+        // would couple two independent operations that have no business
+        // driving each other.
+        | "blocked_by_refund"
         | "database_error";
       message: string;
       emailTo?: string;
@@ -174,6 +204,13 @@ export type SendPaymentChargeReceiptResult =
 const ALREADY_SENT_MESSAGE = "Receipt has already been sent.";
 const IN_FLIGHT_MESSAGE =
   "A receipt send is already in flight for this attempt.";
+// Says what happened and what to do, and asserts nothing about the refund's
+// outcome or about any email. No client detail: this is read by whoever is
+// looking at the charge, and by the ops alert.
+const BLOCKED_BY_REFUND_MESSAGE =
+  "Automatic receipt delivery was skipped because refund activity exists for " +
+  "this charge. Review the payment and refund state before sending a receipt " +
+  "manually.";
 const NOT_SUCCEEDED_MESSAGE =
   "Receipts can only be sent for a succeeded charge.";
 const MISSING_PI_MESSAGE =
@@ -642,13 +679,24 @@ export async function sendPaymentChargeReceipt(args: {
     };
   }
   if (!claimedRows || claimedRows.length === 0) {
-    // The row moved between our SELECT and the UPDATE. Re-check
-    // the current state to surface the right reason.
+    // The row moved between our SELECT and the UPDATE. Re-read to say WHY we
+    // lost, because the losers are not alike and the caller acts on the
+    // difference.
+    //
+    // `refund_status` IS PART OF THE ANSWER and must be selected. The automatic
+    // claim carries `refund_status IS NULL`, so refund activity is one of the
+    // two reasons this UPDATE can match zero rows -- and it was invisible to a
+    // re-read that looked only at the receipt columns. Every such loser was
+    // reported as `in_flight`, which sent the reader looking for a send that
+    // did not exist and would never start.
     const { data: re } = await admin
       .from("payment_charge_attempts")
-      .select("receipt_status, receipt_sent_at, receipt_email_to")
+      .select("receipt_status, receipt_sent_at, receipt_email_to, refund_status")
       .eq("id", attempt.id)
       .maybeSingle();
+
+    // Delivered. True under either policy, and checked first because it is the
+    // only branch that can report an address and a timestamp.
     if (re?.receipt_status === "sent") {
       return {
         ok: false,
@@ -658,6 +706,33 @@ export async function sendPaymentChargeReceipt(args: {
         sentAt: (re.receipt_sent_at as string | null) ?? null,
       };
     }
+
+    // Genuinely held by another sender. `sending` is inadmissible to both
+    // policies, so this is the one loser that really is waiting on an email.
+    if (re?.receipt_status === "sending") {
+      return { ok: false, reason: "in_flight", message: IN_FLIGHT_MESSAGE };
+    }
+
+    // Not held, and not sent -- so under the AUTOMATIC policy the remaining
+    // reason the claim could be refused is its refund predicate.
+    //
+    // MANUAL IS NOT CLASSIFIED THIS WAY, because manual is not refund-gated: a
+    // manual claim never loses on account of a refund, so saying it did would
+    // be a new falsehood in place of the one being removed.
+    // `typeof === "string"`, not `!== null`. If this re-read ever stops
+    // selecting refund_status the value is `undefined`, and `undefined !== null`
+    // is TRUE -- every automatic loser would be reported as refund-blocked. The
+    // narrow check makes a missing column read as "no refund activity known",
+    // which is the harmless direction: the claim already refused, so only the
+    // REASON is at stake here, never whether an email goes out.
+    if (claimPolicy === "automatic" && typeof re?.refund_status === "string") {
+      return {
+        ok: false,
+        reason: "blocked_by_refund",
+        message: BLOCKED_BY_REFUND_MESSAGE,
+      };
+    }
+
     return {
       ok: false,
       reason: "in_flight",

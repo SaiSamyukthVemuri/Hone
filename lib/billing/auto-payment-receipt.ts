@@ -549,6 +549,27 @@ export async function autoSendReceiptAfterCharge(args: {
       return { attempted: true, threw: true, message: raced.message };
     }
 
+    // R1. The INLINE twin of the late-path alert above. The surface already
+    // reads `needs_attention` via describeAutoReceipt, but a surface is seen
+    // only if someone is looking at it, and this is the unattended path.
+    // Out of band for the same reason as the throw alert: a critical charge
+    // response must not wait on an alert insert.
+    if (!raced.result.ok && raced.result.reason === "blocked_by_refund") {
+      const alert = safeAlert({
+        severity: "warning",
+        event: "auto_payment_receipt_blocked_by_refund",
+        message:
+          "Automatic receipt delivery was skipped because refund activity " +
+          "exists for this charge. The charge itself is unaffected. No " +
+          "automatic retry will follow, including if the refund later fails; " +
+          "send the receipt manually if it is still appropriate.",
+        studioId: args.studioId,
+        route: "lib/billing/auto-payment-receipt:autoSendReceiptAfterCharge",
+        safeDetails: { attempt_id: args.attemptId, reason: raced.result.reason },
+      });
+      if (!tryRegister(register, alert)) await alert;
+    }
+
     return { attempted: true, result: raced.result };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -599,6 +620,26 @@ async function reportLateSettlement(
   // Benign: another path owns it, or already delivered it.
   if (r.reason === "already_sent" || r.reason === "in_flight") return;
 
+  // R1. NOT benign, and deliberately not silent. No receipt was sent for a
+  // committed charge and none will be sent automatically, so an operator has to
+  // know it happened. Warning, not critical: refund activity existing is an
+  // ordinary thing that happens to a charge, not a money incident.
+  if (r.reason === "blocked_by_refund") {
+    await safeAlert({
+      severity: "warning",
+      event: "auto_payment_receipt_blocked_by_refund",
+      message:
+        "Automatic receipt delivery was skipped because refund activity exists " +
+        "for this charge. The charge itself is unaffected. No automatic retry " +
+        "will follow, including if the refund later fails; send the receipt " +
+        "manually if it is still appropriate.",
+      studioId: ctx.studioId,
+      route: "lib/billing/auto-payment-receipt:reportLateSettlement",
+      safeDetails: { attempt_id: ctx.attemptId, reason: r.reason },
+    });
+    return;
+  }
+
   // The stuck-at-'sending' family: an operator must reconcile before any
   // resend, because a duplicate receipt is the risk, not a missing one.
   const stateUnknown =
@@ -644,6 +685,15 @@ export function describeAutoReceipt(
     case "send_ambiguous_state_not_recorded":
     case "sent_but_record_update_failed":
       return "pending";
+    // R1. NOT pending: nothing is in motion and nothing will be. The automatic
+    // path is finished with this charge, and if a receipt is still wanted a
+    // person has to decide that and click Send. `pending` would say "wait",
+    // which is advice that never resolves.
+    //
+    // Listed explicitly rather than left to the default below, so that removing
+    // the default could not silently turn it into `pending`.
+    case "blocked_by_refund":
+      return "needs_attention";
     default:
       return "needs_attention";
   }
