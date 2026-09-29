@@ -53,7 +53,7 @@ beforeEach(() => {
 
 const ARGS = { attemptId: "att-1", studioId: "st-1", practitionerId: "pr-1" };
 
-/** THIS invocation committed the charge: a receipt is owed. */
+/** THIS invocation won the claim AND committed the charge: a receipt is owed. */
 const SUCCEEDED: SessionPaymentChargeResult = {
   ok: true,
   outcome: "succeeded",
@@ -136,6 +136,9 @@ describe("A — a definitive successful charge sends exactly one receipt", () =>
       attemptId: "att-1",
       studioId: "st-1",
       practitionerId: "pr-1",
+      // AUTOMATIC: the claim admits receipt_status NULL only, so this caller can
+      // never resurrect a `failed` receipt — that is a person's decision.
+      claimPolicy: "automatic",
     });
     expect(outcome).toEqual({ attempted: true, result: sent });
     expect(describeAutoReceipt(outcome)).toBe("sent");
@@ -520,7 +523,31 @@ describe("J — a replay is a real success that owes no receipt", () => {
     expect(describeAutoReceipt(outcome)).toBe("sent");
   });
 
-  it("ANTI-VACUITY: the ONLY difference between the two fixtures is committedNow", () => {
+  it("a RECOVERY invocation is eligible even though it never won the claim", () => {
+    // THE ORPHANED-CLAIM CASE, and the reason process-level ownership was
+    // removed. An `already_pending` retry that recovers a charge whose claim
+    // holder died has `concurrentlyReconciled` (or `committedNow`) and no claim
+    // of its own. It MUST be allowed to attempt; the database then decides
+    // whether it actually sends.
+    const recovery: SessionPaymentChargeResult = {
+      ok: true,
+      outcome: "succeeded",
+      stripePaymentIntentId: "pi_1",
+      stripeChargeId: "ch_1",
+      committedNow: true,
+    };
+    const send = spySender(sent);
+    return autoSendReceiptAfterCharge({
+      charge: recovery,
+      ...ARGS,
+      send,
+      register: regSpy().register,
+    }).then(() => {
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("ANTI-VACUITY: flipping committedNow alone also suppresses the send", () => {
     // Without this, a gate keyed on stripeChargeId (or on anything else that
     // happens to differ) would pass every test above while suppressing the
     // wrong invocations in production.
@@ -551,11 +578,152 @@ describe("J — a replay is a real success that owes no receipt", () => {
     const code = runner.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
     const succeededReturns = code.match(/outcome: "succeeded",/g) ?? [];
-    const declarations = code.match(/committedNow: (true|false),/g) ?? [];
-    // Every succeeded return declares, and none is missing.
-    expect(declarations).toHaveLength(succeededReturns.length);
-    expect(declarations.filter((d) => d.includes("true"))).toHaveLength(2);
-    expect(declarations.filter((d) => d.includes("false"))).toHaveLength(2);
+    // PAY-ZERO-ROW-RACE-01. The two PERSISTED sites no longer write a literal
+    // `true`: they derive it from which writer actually stamped the row, which is
+    // strictly more precise than the literal it replaced. So the census counts
+    // literals AND derivations, and still requires every succeeded return to
+    // declare exactly one.
+    const literals = code.match(/committedNow: (true|false),/g) ?? [];
+    const derived =
+      code.match(/committedNow: persistence\.by === "this_invocation",/g) ?? [];
+    expect(literals.length + derived.length).toBe(succeededReturns.length);
+    // The two persisted transitions derive it; the two replays declare false.
+    expect(derived).toHaveLength(2);
+    expect(literals.filter((d) => d.includes("false"))).toHaveLength(2);
+    expect(literals.filter((d) => d.includes("true"))).toHaveLength(0);
+    // `concurrentlyReconciled` is a VERIFICATION fact and legitimately appears at
+    // BOTH success sites; it is no longer an ownership statement, so it is not
+    // conditioned on anything here.
+    const concurrentClaims =
+      code.match(/concurrentlyReconciled: persistence\.by === "concurrent_writer",/g) ?? [];
+    expect(concurrentClaims).toHaveLength(2);
+
+    // THE RESULT'S OWN DOCUMENTATION MAY NOT NAME A FIELD THAT DOES NOT EXIST.
+    //
+    // A review found the JSDoc for `committedNow` still directing consumers to
+    // `receiptOwnedHere` one revision after that field was deleted, and warned
+    // that a future consumer following it would restore the liveness bug. The
+    // guard above reads COMMENT-STRIPPED code, so it is structurally blind to
+    // that -- correctly, since it is about behaviour.
+    //
+    // This is the mechanical complement, and deliberately not a phrase list:
+    // every camelCase identifier the result type's own doc comment mentions in
+    // backticks must be a field that type actually declares. No natural-language
+    // judgement, nothing to satisfy with clever wording.
+    const typeBlock = runner.slice(
+      runner.indexOf("export type SessionPaymentChargeResult ="),
+      runner.indexOf("\n// ", runner.indexOf("export type SessionPaymentChargeResult =")),
+    );
+    const declared = new Set(
+      [...typeBlock.matchAll(/^\s{6}(\w+)\??:/gm)].map((m) => m[1]),
+    );
+    expect(declared.size, "the result type must declare fields").toBeGreaterThan(3);
+    const docComments = typeBlock.match(/\/\*\*[\s\S]*?\*\//g) ?? [];
+    // Identifiers that are legitimately about OTHER modules. Deliberately NOT
+    // including this type's own fields: they are already accepted via `declared`,
+    // and listing them here would mean a field deleted while its JSDoc went stale
+    // — the exact regression this guard exists to catch — still passed.
+    const EXTERNAL = new Set([
+      "receipt_status",
+      "autoSendReceiptAfterCharge",
+      "sendPaymentChargeReceipt",
+      "reconcileExistingPaymentIntent",
+      "reconcile_card_payment_succeeded",
+      "claim_session_payment_charge_attempt",
+      // Status LITERALS — values, not fields of this type.
+      "pending_stripe",
+      "already_pending",
+      "already_succeeded",
+      "succeeded",
+      "claimed",
+      "ready",
+      "sending",
+      "sent",
+      "failed",
+      "cancelled",
+      "blocked",
+      "true",
+      "false",
+      "ok",
+      "result",
+      "status",
+      "id",
+      "charge",
+      "by",
+      "persisted",
+      "persistence",
+      "FOR",
+      "UPDATE",
+      "NULL",
+      "null",
+      // PostgREST builder methods named in prose about the conditional UPDATE.
+      "eq",
+      "is",
+      "or",
+      "select",
+      "update",
+      "from",
+    ]);
+    // JavaScript keywords are a CLOSED SET and can never be a field reference.
+    // Listing them is a language fact, not a judgement call — unlike listing this
+    // type's own field names, which would defeat the guard outright.
+    const KEYWORDS = new Set([
+      "if", "else", "return", "const", "let", "var", "function", "async",
+      "await", "new", "this", "typeof", "in", "of", "for", "while", "do",
+      "switch", "case", "break", "continue", "throw", "try", "catch", "finally",
+      "class", "extends", "super", "import", "export", "default", "delete",
+      "void", "yield", "undefined", "string", "number", "boolean", "object",
+    ]);
+    for (const doc of docComments) {
+      // EXTRACT THE SPAN, THEN THE IDENTIFIERS INSIDE IT. Matching only spans
+      // that are ENTIRELY one camelCase identifier let a stale field hide behind
+      // ordinary formatting — `charge.receiptOwnedHere` or
+      // `receiptOwnedHere === true` both evaded the first version of this guard,
+      // which is a guard defeated by punctuation.
+      for (const [, span] of doc.matchAll(/`([^`]+)`/g)) {
+        // A backticked FILE PATH is not a field reference, and is told apart
+        // structurally rather than by judgement: paths contain `/`. The shapes
+        // this guard must catch — `charge.receiptOwnedHere`,
+        // `receiptOwnedHere === true` — contain none, so nothing is excused.
+        if (span.includes("/")) continue;
+        for (const [, ident] of span.matchAll(/\b([a-z][A-Za-z0-9]*)\b/g)) {
+          if (KEYWORDS.has(ident) || EXTERNAL.has(ident) || declared.has(ident)) continue;
+          throw new Error(
+            `SessionPaymentChargeResult's documentation references \`${ident}\`, ` +
+              `which is not a field it declares. A doc that names a removed field ` +
+              `is how a consumer restores a bug the field was deleted to fix.`,
+          );
+        }
+      }
+    }
+
+    // NEGATIVE CONTROLS — the guard must reject the shapes that defeated it.
+    const probe = (docBody: string) => {
+      for (const [, span] of docBody.matchAll(/`([^`]+)`/g)) {
+        if (span.includes("/")) continue;
+        for (const [, ident] of span.matchAll(/\b([a-z][A-Za-z0-9]*)\b/g)) {
+          if (KEYWORDS.has(ident) || EXTERNAL.has(ident) || declared.has(ident)) continue;
+          return ident;
+        }
+      }
+      return null;
+    };
+    expect(probe("see `receiptOwnedHere`"), "bare identifier").toBe("receiptOwnedHere");
+    expect(probe("see `charge.receiptOwnedHere`"), "dotted").toBe("receiptOwnedHere");
+    expect(probe("`receiptOwnedHere === true`"), "expression").toBe("receiptOwnedHere");
+    expect(probe("see `committedNow`"), "a real field is accepted").toBeNull();
+
+    // NO CHARGE-RESULT FIELD MAY GRANT EMAIL OWNERSHIP.
+    //
+    // Three revisions tried to name the receipt owner from the charge result and
+    // each was wrong in a different way; the last lost LIVENESS when the claim
+    // holder died. So the runner now carries NO receipt-owner field at all, and
+    // this asserts that rather than trusting it: a regex pretending to prove a
+    // process-owner expression is exactly what was removed.
+    expect(
+      code,
+      "the charge runner must not reintroduce a process-level receipt owner",
+    ).not.toMatch(/receiptOwned|receiptOwner|ownsReceipt|receiptOwed/);
 
     // Each `committedNow: true` is preceded by the persistence gate that makes
     // it exclusive — not merely by a Stripe success.
@@ -574,7 +742,14 @@ describe("J — a replay is a real success that owes no receipt", () => {
     );
     const code = helper.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
-    expect(code).toContain("charge.committedNow !== true");
+    // PAY-ZERO-ROW-RACE-01. The gate now admits two ways a receipt can be owed,
+    // and BOTH are read from the runner's own result -- which is the property this
+    // test exists to protect. The negative assertions below are unchanged.
+    expect(code).toContain("charge.committedNow === true");
+    expect(code).toContain("charge.concurrentlyReconciled === true");
+    // And no process-level owner input, which is the field that was removed.
+    expect(code).not.toMatch(/receiptOwnedHere/);
+    expect(code).toContain("if (!eligibleToAttempt)");
     // No process-local memo: it does not survive two serverless instances.
     expect(code).not.toMatch(/\bnew Set\b/);
     expect(code).not.toMatch(/\bnew Map\b/);
@@ -1005,5 +1180,128 @@ describe("L — a slow alert cannot hold a committed charge", () => {
     expect(code).toContain("if (!tryRegister(register, alert)) await alert;");
     // No detached promise.
     expect(code).not.toMatch(/void safeAlert\(/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R1. A refund-blocked automatic receipt is not "in flight", and not silent.
+//
+// The automatic claim requires `refund_status IS NULL`. When refund activity
+// refuses it, nothing was sent and nothing will be sent automatically -- so the
+// two things that must not happen are (a) reporting it as motion that will
+// resolve, and (b) reporting it not at all.
+// ---------------------------------------------------------------------------
+
+const BLOCKED: SendPaymentChargeReceiptResult = {
+  ok: false,
+  reason: "blocked_by_refund",
+  message:
+    "Automatic receipt delivery was skipped because refund activity exists " +
+    "for this charge. Review the payment and refund state before sending a " +
+    "receipt manually.",
+};
+
+describe("R1 — blocked_by_refund is surfaced, never treated as pending", () => {
+  it("R1.6 describeAutoReceipt reports needs_attention, not pending", () => {
+    // `pending` would tell the surface to wait for something that is never
+    // coming. Nothing is in motion: the claim was refused, not taken.
+    expect(describeAutoReceipt({ attempted: true, result: BLOCKED })).toBe(
+      "needs_attention",
+    );
+  });
+
+  it("R1.6b it is not confused with the states that ARE pending", () => {
+    for (const reason of [
+      "in_flight",
+      "send_ambiguous_state_not_recorded",
+      "sent_but_record_update_failed",
+    ] as const) {
+      expect(
+        describeAutoReceipt({
+          attempted: true,
+          result: { ok: false, reason, message: "x" },
+        }),
+      ).toBe("pending");
+    }
+  });
+
+  it("R1.7 a LATE blocked settlement raises an operator warning and no retry", async () => {
+    alertSpy.calls.length = 0;
+    let settle: (r: SendPaymentChargeReceiptResult) => void = () => {};
+    const hang = vi.fn(
+      () => new Promise<SendPaymentChargeReceiptResult>((r) => (settle = r)),
+    ) as unknown as ReceiptSender;
+    const { register, registered } = regSpy();
+
+    await autoSendReceiptAfterCharge({
+      charge: SUCCEEDED,
+      ...ARGS,
+      send: hang,
+      timeoutMs: 10,
+      register,
+    });
+    expect(alertSpy.calls).toHaveLength(0);
+
+    settle(BLOCKED);
+    await registered[0];
+
+    expect(alertSpy.calls).toHaveLength(1);
+    expect(alertSpy.calls[0]).toMatchObject({
+      severity: "warning",
+      event: "auto_payment_receipt_blocked_by_refund",
+      route: "lib/billing/auto-payment-receipt:reportLateSettlement",
+    });
+    // WARNING, not critical. Refund activity existing is an ordinary thing that
+    // happens to a charge; raising a money incident for it would train an
+    // operator to ignore the channel.
+    expect(alertSpy.calls[0].severity).not.toBe("critical");
+    // Exactly one send, ever. The alert is a report, not a trigger.
+    expect(hang).toHaveBeenCalledTimes(1);
+  });
+
+  it("R1.7b the INLINE path raises the same warning", async () => {
+    // The surface reads needs_attention, but a surface is only seen if someone
+    // is looking. This is the unattended path.
+    alertSpy.calls.length = 0;
+    const send = vi.fn(async () => BLOCKED) as unknown as ReceiptSender;
+    const { register } = regSpy();
+
+    const outcome = await autoSendReceiptAfterCharge({
+      charge: SUCCEEDED,
+      ...ARGS,
+      send,
+      register,
+    });
+
+    expect(alertSpy.calls).toHaveLength(1);
+    expect(alertSpy.calls[0]).toMatchObject({
+      severity: "warning",
+      event: "auto_payment_receipt_blocked_by_refund",
+      route: "lib/billing/auto-payment-receipt:autoSendReceiptAfterCharge",
+    });
+    expect(describeAutoReceipt(outcome)).toBe("needs_attention");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("R1.7c the alert carries no client detail and does not claim a refund outcome", async () => {
+    alertSpy.calls.length = 0;
+    const send = vi.fn(async () => BLOCKED) as unknown as ReceiptSender;
+    await autoSendReceiptAfterCharge({
+      charge: SUCCEEDED,
+      ...ARGS,
+      send,
+      register: regSpy().register,
+    });
+
+    const a = alertSpy.calls[0];
+    const text = `${a.message} ${JSON.stringify(a.safeDetails ?? {})}`;
+    // No PII.
+    expect(text).not.toMatch(/@/);
+    // pending_stripe, succeeded and failed all produce this outcome, so the
+    // copy must not assert which one happened.
+    expect(text).not.toMatch(/refund (succeeded|failed|completed)/i);
+    // And it must not promise an automatic retry that will never come.
+    expect(a.message).toMatch(/no automatic retry/i);
+    expect(a.message).toMatch(/manually/i);
   });
 });

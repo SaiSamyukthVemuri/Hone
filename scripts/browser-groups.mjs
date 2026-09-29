@@ -354,6 +354,15 @@ export const BROWSER_GROUPS = {
       // Deliberately still not in `smoke`: that group runs on every targeted PR
       // and its size is a pinned cost.
       "signout-session-destruction.spec.ts",
+      // SIGNOUT-02 rides with it, for the same reasons in the same order: it
+      // drives BOTH shells, and the only file it adds — app/(app)/SignOutMenuItem.tsx
+      // — matches no path rule, so a diff touching just the leaf falls through
+      // to EXTENDED and runs this anyway. Same group, so the two specs can
+      // never be selected apart: a change that runs one and skips the other
+      // could ship a control that acknowledges beautifully and no longer signs
+      // anybody out, which is exactly the pair of facts SIGNOUT-01 learned had
+      // to be checked together.
+      "signout-acknowledgement.spec.ts",
     ],
   },
   google: {

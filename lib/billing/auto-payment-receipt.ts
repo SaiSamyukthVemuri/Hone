@@ -31,14 +31,22 @@ import { recordOpsAlert, type OpsAlertInput } from "@/lib/ops/alerts";
 // send — is the one that must never drift.
 //
 // ---------------------------------------------------------------------------
-// THE TRIGGER IS A TRANSITION, NOT A STATE  (Codex P1 4008091139)
+// TWO GATES, THEN A DATABASE CLAIM  (supersedes "the trigger is a transition")
 // ---------------------------------------------------------------------------
 //
-// Two gates, and they are different questions.
+// THIS HEADER USED TO DESCRIBE A DIFFERENT ARCHITECTURE and contradicted the
+// code beneath it on four points: that eligibility was `committedNow` alone,
+// that a concurrent loser necessarily became `needs_manual_review`, that
+// `receipt_status` was merely a backstop, and that a retryable delivery failure
+// reopened the claim. Every one of those is now false, and a maintainer
+// following them would restore the receipt-loss and duplicate-send behaviour
+// this series removed. The current model, in full:
 //
-//   1. IS THE MONEY DEFINITIVELY SETTLED?  `ok === true && outcome ===
-//      "succeeded"`. The runner returns that shape only when Stripe succeeded
-//      AND Hone durably persisted the succeeded outcome locally.
+//   GATE 1 — IS THE MONEY DEFINITIVELY SETTLED?
+//
+//      `ok === true && outcome === "succeeded"`. The runner returns that shape
+//      only when Stripe succeeded AND Hone durably persisted the succeeded
+//      outcome locally.
 //
 //      THE CASE THIS REFUSES: Stripe charged the card but Hone could not
 //      confirm it wrote the ledger. That is `needs_manual_review`, it is
@@ -46,34 +54,83 @@ import { recordOpsAlert, type OpsAlertInput } from "@/lib/ops/alerts";
 //      "here is your receipt" when we cannot prove what we recorded is the one
 //      failure worse than sending nothing.
 //
-//   2. DID *THIS* INVOCATION COMMIT IT?  `committedNow === true`.
+//   GATE 2 — MAY THIS INVOCATION ATTEMPT AUTOMATIC DELIVERY?
 //
-//      `ok: true` is also returned for a REPLAY: a double-submit, a retry
-//      after a retryable error, a second tab. The row was already succeeded
-//      before the call, so the result is `ok: true` — correctly, the money IS
-//      settled — but no new charge happened and no new receipt is owed.
-//      Sending on state rather than transition makes every replay a fresh
-//      automatic send attempt against the client's inbox.
+//      A CURRENT charge or recovery invocation may attempt when EITHER holds:
 //
-//      This is read from the charge runner's OWN result, which is the
-//      authoritative claim outcome. It is NOT inferred from a pre-read of
-//      `receipt_status`, from a browser-supplied flag, from a process-local
-//      Set, or from receipt_status being null — each of those is a second
-//      source of truth that can disagree with the money path, and the
-//      process-local ones do not survive two serverless instances at all.
+//        `committedNow === true`
+//           this invocation persisted pending_stripe -> succeeded;
 //
-//      Exclusivity is the DATABASE's, not ours: the succeeded write is a
-//      conditional UPDATE scoped to `.eq("status","pending_stripe")`, so of
-//      two concurrent invocations exactly one gets rows back and the loser
-//      returns `needs_manual_review`. `committedNow: true` therefore happens
-//      at most once per attempt, and the second concurrent submission is
-//      already stopped by gate 1 before gate 2 is consulted.
+//        `concurrentlyReconciled === true`
+//           another legitimate writer persisted the identical VERIFIED charge
+//           while this invocation held or recovered its succeeded
+//           PaymentIntent.
 //
-// The `receipt_status` claim inside `sendPaymentChargeReceipt` is still the
-// last line of defence and is NOT removed: it is what makes an automatic send
-// and a simultaneous manual click safe. This gate keeps us from leaning on it
-// as the ONLY defence, which is what a retryable-failure reset (payment-
-// receipt.ts sets `receipt_status` back to null) would otherwise let through.
+//      AN OLD REPLAY HAS NEITHER FACT. An invocation beginning against an
+//      attempt that was already succeeded starts no automatic receipt attempt.
+//
+//      BOTH ARE MONEY / RECOVERY FACTS. NEITHER GRANTS EMAIL OWNERSHIP. They
+//      answer "did a real charge just land here", not "who may send".
+//
+// ---------------------------------------------------------------------------
+// DURABLE RECEIPT OWNERSHIP IS THE DATABASE CLAIM
+// ---------------------------------------------------------------------------
+//
+// `sendPaymentChargeReceipt` owns the only durable send claim: a conditional
+// UPDATE of `payment_charge_attempts.receipt_status` from NULL to `sending`.
+//
+// FOR AUTOMATIC DELIVERY THE SAME CLAIM ALSO REQUIRES `refund_status IS NULL`,
+// in the same statement. Checking a refund earlier and acting later is not the
+// same as requiring it: a refund beginning in that gap would otherwise let an
+// automatic receipt go out while the client's money was on its way back.
+//
+// THAT PREDICATE ALONE ONLY CLOSES REFUND-FIRST. `refundPaymentChargeAttempt`
+// carries the reciprocal one -- it will not claim while `receipt_status` is
+// `sending` -- which closes receipt-first. The two claims are conditional UPDATEs
+// on the same row, so the database serializes them and at most one of the pair
+// can be in flight. No lock table, no owner column, no transaction spanning the
+// network calls.
+//
+// SEVERAL ELIGIBLE INVOCATIONS MAY REACH THE HELPER. Exactly one can win the
+// claim; the losers are told `in_flight` or `already_sent` and send nothing.
+// That is why gate 2 does not need to identify a single owner, and why trying
+// to identify one from the charge result was wrong three times over — the last
+// attempt cost LIVENESS, because a recovery of an orphaned claim could then
+// never receipt the charge at all.
+//
+// MANUAL POLICY IS SEPARATE and unchanged: it may claim NULL or `failed`, and
+// it is deliberately not refund-gated, because a practitioner sending a receipt
+// for a later-refunded charge is deciding about a real document.
+//
+// ---------------------------------------------------------------------------
+// AMBIGUOUS DELIVERY DOES NOT REOPEN THE CLAIM
+// ---------------------------------------------------------------------------
+//
+// A timeout, network failure, empty response or 5xx means the request reached
+// the provider, or may have, so DELIVERY IS UNKNOWN. The claim is HELD: the row
+// stays `sending`, no caller can claim it, and an operator reconciles with the
+// provider. Do not restore the old statement that a retryable failure releases
+// it — that release is precisely how a second caller sends a duplicate.
+//
+// A DEFINITIVE PRE-DISPATCH FAILURE IS DIFFERENT AND MAY RELEASE SAFELY. PDF
+// preparation, an unusable recipient or missing configuration never reach the
+// provider, so delivery is definitively "no" rather than "unknown" and nothing
+// can be duplicated by trying again.
+//
+// ---------------------------------------------------------------------------
+// WHAT THIS IS NOT
+// ---------------------------------------------------------------------------
+//
+//   * not exactly-once;
+//   * not at-least-once;
+//   * not a durable outbox;
+//   * not ownership by the process that charged;
+//   * not ownership by whoever wrote `succeeded`.
+//
+// It is BEST-EFFORT, AT-MOST-ONE. If every eligible invocation dies before
+// claiming, no receipt is sent and a person sends it from the session page.
+// Making that at-least-once is a durable-queue project and deliberately not
+// this one.
 //
 // ---------------------------------------------------------------------------
 // A RECEIPT FAILURE MUST NEVER MAKE A SUCCESSFUL CHARGE LOOK FAILED
@@ -295,9 +352,74 @@ export async function autoSendReceiptAfterCharge(args: {
     return { attempted: false, reason: "charge_not_definitive" };
   }
 
-  // GATE 2 — did THIS invocation commit it? See the header: a replay is a
-  // legitimate `ok: true` that owes no receipt.
-  if (charge.committedNow !== true) {
+  // GATE 2 — is a receipt OWED for a charge this request caused? See the header:
+  // a replay is a legitimate `ok: true` that owes nothing.
+  //
+  // PAY-ZERO-ROW-RACE-01. `committedNow` alone was too narrow and silently lost
+  // receipts. It answers "did I write the ledger row", but the receipt question
+  // is "did a brand-new charge happen that nobody has receipted". Those came
+  // apart in a real incident: the payment_intent.succeeded webhook stamped the
+  // row microseconds before the synchronous write, so `committedNow` was true
+  // ZERO times for a charge that really moved 150.00 CAD. The webhook path sends
+  // no receipts at all, so nothing else would have sent it — in the incident a
+  // human noticed and clicked Send receipt 13 seconds later.
+  //
+  // `concurrentlyReconciled` is that case: this invocation held a succeeded
+  // PaymentIntent for the attempt, and an authoritative re-read proved the row
+  // records the IDENTICAL charge written by someone else.
+  //
+  // IT IS SET ON THE RECONCILE PATH TOO, and an earlier draft of this comment
+  // claimed the opposite. An `already_pending` claim carrying a stored
+  // PaymentIntent goes through `reconcileExistingPaymentIntent`, and that is
+  // precisely the ORPHANED-CLAIM RECOVERY this design exists to keep eligible:
+  // saying it is "never set" there would describe the very liveness bug that was
+  // removed. It is still never set for a replay, which holds no succeeded
+  // PaymentIntent from this invocation at all.
+  //
+  // ===========================================================================
+  // ELIGIBILITY TO ATTEMPT, NOT OWNERSHIP
+  // ===========================================================================
+  //
+  // OWNERSHIP IS NOT A PROCESS FACT AND THIS FILE NO LONGER PRETENDS IT IS.
+  // Three revisions tried to name the owner from the charge result -- first
+  // `committedNow`, then `committedNow || concurrentlyReconciled`, then a
+  // `receiptOwnedHere` anchored to the claim RPC (SINCE REMOVED -- do not look
+  // for it, and do not add it back) -- and each one was right about
+  // exclusivity and wrong about something else. The last was wrong about
+  // LIVENESS: if the invocation that won `ready -> pending_stripe` dies after
+  // Stripe succeeded, a retry recovers the charge but is forbidden to receipt it,
+  // and the receipt is stranded with nobody able to send it.
+  //
+  // THE DURABLE OWNER ALREADY EXISTED. `sendPaymentChargeReceipt` atomically
+  // claims `receipt_status: null -> sending`. That transition is in the database,
+  // survives a dead process, and admits exactly one winner. Nothing here needs to
+  // decide who sends; it only decides who may TRY.
+  //
+  // WHO MAY TRY: an invocation that participated in, or recovered, the charge
+  // that just succeeded. Both of these mean exactly that --
+  //
+  //   committedNow            I wrote pending_stripe -> succeeded
+  //   concurrentlyReconciled  a verified concurrent writer wrote the identical
+  //                           proven charge while I held its succeeded PI
+  //
+  // -- so an `already_pending` recovery of an orphaned claim is admitted, which
+  // is what closes the stranded-receipt case. If several invocations qualify they
+  // all reach the sender and the database picks one; the losers are told
+  // `in_flight` or `already_sent` and send nothing.
+  //
+  // WHO MAY NOT: a REPLAY. An invocation that began against an attempt already
+  // terminally succeeded has neither flag, so it never starts a fresh automatic
+  // attempt. The claim is the owner among CURRENT charge and recovery
+  // invocations; it is not permission for an arbitrary historical replay to
+  // resend.
+  //
+  // AND THIS IS BEST-EFFORT, AT-MOST-ONE -- not an outbox. If every eligible
+  // invocation dies before claiming, no receipt is sent and a person sends it
+  // from the session page. Making that at-least-once is a durable-queue project
+  // and deliberately not this one.
+  const eligibleToAttempt =
+    charge.committedNow === true || charge.concurrentlyReconciled === true;
+  if (!eligibleToAttempt) {
     return { attempted: false, reason: "replay_not_a_new_charge" };
   }
 
@@ -313,7 +435,9 @@ export async function autoSendReceiptAfterCharge(args: {
   // THE ONE SEND. There is never a second one, on any path.
   let inFlight: Promise<SendPaymentChargeReceiptResult>;
   try {
-    inFlight = send(ctx);
+    // AUTOMATIC: the claim admits NULL only, so this can never resurrect a
+    // `failed` receipt. That decision belongs to a person.
+    inFlight = send({ ...ctx, claimPolicy: "automatic" });
   } catch (err) {
     // Threw synchronously: no provider call is in flight and no claim was
     // taken, so nothing is stranded — but the receipt did not happen and
@@ -425,6 +549,27 @@ export async function autoSendReceiptAfterCharge(args: {
       return { attempted: true, threw: true, message: raced.message };
     }
 
+    // R1. The INLINE twin of the late-path alert above. The surface already
+    // reads `needs_attention` via describeAutoReceipt, but a surface is seen
+    // only if someone is looking at it, and this is the unattended path.
+    // Out of band for the same reason as the throw alert: a critical charge
+    // response must not wait on an alert insert.
+    if (!raced.result.ok && raced.result.reason === "blocked_by_refund") {
+      const alert = safeAlert({
+        severity: "warning",
+        event: "auto_payment_receipt_blocked_by_refund",
+        message:
+          "Automatic receipt delivery was skipped because refund activity " +
+          "exists for this charge. The charge itself is unaffected. No " +
+          "automatic retry will follow, including if the refund later fails; " +
+          "send the receipt manually if it is still appropriate.",
+        studioId: args.studioId,
+        route: "lib/billing/auto-payment-receipt:autoSendReceiptAfterCharge",
+        safeDetails: { attempt_id: args.attemptId, reason: raced.result.reason },
+      });
+      if (!tryRegister(register, alert)) await alert;
+    }
+
     return { attempted: true, result: raced.result };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -475,6 +620,26 @@ async function reportLateSettlement(
   // Benign: another path owns it, or already delivered it.
   if (r.reason === "already_sent" || r.reason === "in_flight") return;
 
+  // R1. NOT benign, and deliberately not silent. No receipt was sent for a
+  // committed charge and none will be sent automatically, so an operator has to
+  // know it happened. Warning, not critical: refund activity existing is an
+  // ordinary thing that happens to a charge, not a money incident.
+  if (r.reason === "blocked_by_refund") {
+    await safeAlert({
+      severity: "warning",
+      event: "auto_payment_receipt_blocked_by_refund",
+      message:
+        "Automatic receipt delivery was skipped because refund activity exists " +
+        "for this charge. The charge itself is unaffected. No automatic retry " +
+        "will follow, including if the refund later fails; send the receipt " +
+        "manually if it is still appropriate.",
+      studioId: ctx.studioId,
+      route: "lib/billing/auto-payment-receipt:reportLateSettlement",
+      safeDetails: { attempt_id: ctx.attemptId, reason: r.reason },
+    });
+    return;
+  }
+
   // The stuck-at-'sending' family: an operator must reconcile before any
   // resend, because a duplicate receipt is the risk, not a missing one.
   const stateUnknown =
@@ -520,6 +685,15 @@ export function describeAutoReceipt(
     case "send_ambiguous_state_not_recorded":
     case "sent_but_record_update_failed":
       return "pending";
+    // R1. NOT pending: nothing is in motion and nothing will be. The automatic
+    // path is finished with this charge, and if a receipt is still wanted a
+    // person has to decide that and click Send. `pending` would say "wait",
+    // which is advice that never resolves.
+    //
+    // Listed explicitly rather than left to the default below, so that removing
+    // the default could not silently turn it into `pending`.
+    case "blocked_by_refund":
+      return "needs_attention";
     default:
       return "needs_attention";
   }

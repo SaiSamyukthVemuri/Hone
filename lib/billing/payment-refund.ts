@@ -384,6 +384,33 @@ export async function refundPaymentChargeAttempt(args: {
     .eq("status", "succeeded")
     .eq("stripe_livemode", livemode)
     .or("refund_status.is.null,refund_status.eq.failed")
+    // RECIPROCAL WITH THE RECEIPT CLAIM. A refund may not start while a receipt
+    // send holds the row.
+    //
+    // THE ONE-DIRECTION FIX WAS NOT ENOUGH. The automatic receipt claim requires
+    // `refund_status IS NULL`, which closes REFUND-FIRST: a refund in flight makes
+    // the receipt claim match zero rows. RECEIPT-FIRST stayed open, because this
+    // claim filtered refund_status, status and mode but never receipt_status -- so
+    // a receipt claim could win, and this UPDATE could then set
+    // `pending_stripe` while that receipt was still rendering its PDF, and the
+    // client received a receipt for a charge already being refunded.
+    //
+    // AN EXPLICIT ADMISSIBLE SET, NOT `!= 'sending'`. Fail-closed: a state nobody
+    // has thought about yet is refused rather than admitted.
+    //
+    //   NULL    no receipt activity                      -> refund allowed
+    //   sent    receipt completed                        -> refund allowed
+    //   failed  not currently dispatching                -> refund allowed
+    //   sending in flight, or ambiguous and deliberately
+    //           held (see payment-receipt.ts)            -> refund REFUSED
+    //
+    // SAME ROW IS THE WHOLE MECHANISM. Both claims are conditional UPDATEs on this
+    // one row, so Postgres serializes them: whichever transitions first makes the
+    // other re-evaluate against the new state and affect zero rows. No advisory
+    // lock, no owner column, no migration -- and deliberately NOT a long
+    // transaction spanning the Stripe or email network calls, which is not what
+    // serializes anything here.
+    .or("receipt_status.is.null,receipt_status.eq.sent,receipt_status.eq.failed")
     .select("id");
   if (claimErr) {
     logInternal("payment_refund_claim_failed", {
@@ -398,13 +425,20 @@ export async function refundPaymentChargeAttempt(args: {
     };
   }
   if (!claimedRows || claimedRows.length === 0) {
-    // Two concurrent clicks both passed the pre-claim SELECT but
-    // only one wins the UPDATE; the loser sees zero rows.
+    // The loser of the row transition. Two concurrent refund clicks produce this,
+    // and so does a RECEIPT SEND holding the row -- which is why the copy no
+    // longer names a refund as the only possible competitor. Saying "another
+    // refund attempt is in flight" when the competitor is a receipt would send a
+    // practitioner looking for a refund that does not exist.
+    //
+    // It stays deliberately vague about which operation won: the internal state
+    // is not the practitioner's problem, and "refresh and try again" is the same
+    // correct action either way.
     return {
       ok: false,
       outcome: "claim_lost",
       message:
-        "Another refund attempt is already in flight or the charge is no longer eligible. Refresh and try again.",
+        "This payment changed while the refund was starting. Another refund or receipt operation may still be in progress. Refresh and try again.",
     };
   }
 
