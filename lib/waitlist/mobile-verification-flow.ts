@@ -156,6 +156,41 @@ export type FlowOutcome =
  * than by this constant: `resolve` is a required argument with no default, so no
  * product surface can reach this flow without naming its authorization.
  *
+ * IT IS ALSO WHAT A PER-ENTRY DENIAL REPORTS, AND THAT IS THE SECOND OWNER
+ * DECISION THIS CONSTANT CARRIES (2026-09-29).
+ *
+ * The pre-resolution IP gate is safe to report as `rate_limited` because it runs
+ * BEFORE authorization and therefore answers identically for a valid and an invalid
+ * capability. THE PER-ENTRY GATE IS NOT, because it is reachable only once a context
+ * has resolved — so a distinct outcome there is a statement that the capability was
+ * good.
+ *
+ * AND IT WAS CHEAP TO READ, which is what made it a finding rather than a
+ * theoretical concern. From ONE ip, with the shipped budgets:
+ *
+ *   start   entry 3 / 15 min   ip 10 / 1 h   -> the 4th request separates them,
+ *                                               with 6 of the IP budget unspent
+ *   check   entry 8 / 15 min   ip 30 / 1 h   -> the 9th request separates them,
+ *                                               with 21 unspent
+ *
+ * A valid candidate fills its entry bucket and starts answering `rate_limited`; an
+ * invalid one never reaches that gate and goes on answering `not_proved`. The IP gate
+ * cannot mask it, because its threshold is the larger one. So the value equality the
+ * previous fix established held only while the ENTRY bucket was also unexhausted —
+ * the same shape as the IP finding before it. Raised as a P2 against 8110c1fc.
+ *
+ * THE LIMITER IS UNCHANGED AND STILL ENFORCED. It still runs, still stops the
+ * request before any provider call, and still uses only server-resolved ids. What
+ * changed is one return value: the general rule is that a post-resolution state may
+ * not expose an outcome an unresolved candidate can never reach.
+ *
+ * THE COST, STATED RATHER THAN HIDDEN: a legitimate prospect who exhausts their own
+ * per-entry budget is told their attempt proved nothing rather than that they should
+ * wait. That is a worse message for the one case where "try later" is the right
+ * advice, and it is the price of the equality. `rate_limited` remains reachable — and
+ * truthful — from the pre-auth IP gate, which both a valid and an invalid candidate
+ * can reach.
+ *
  * One named constant, so the decision has one place to land and a source guard can
  * assert no second site drifted away from it.
  */
@@ -202,7 +237,12 @@ export async function runStartMobileVerification(
     studioId: context.studioId,
     entryId: context.entryId,
   });
-  if (!entryGate.allowed) return { ok: false, code: "rate_limited" };
+  // ENFORCED INTERNALLY, REPORTED COARSELY. The limiter still runs and still
+  // stops the request; only its PUBLIC VOCABULARY is flattened into the same
+  // refusal an unresolved candidate gets. See the note on
+  // UNRESOLVED_CONTEXT_REFUSAL for why a post-resolution state may not expose an
+  // outcome an unresolved candidate can never reach.
+  if (!entryGate.allowed) return { ok: false, code: UNRESOLVED_CONTEXT_REFUSAL };
 
   // The state machine derives the destination from `storedPhone` and refuses when
   // there is not one. No number from the request reaches it.
@@ -246,7 +286,12 @@ export async function runCheckMobileVerification(
     studioId: context.studioId,
     entryId: context.entryId,
   });
-  if (!entryGate.allowed) return { ok: false, code: "rate_limited" };
+  // ENFORCED INTERNALLY, REPORTED COARSELY. The limiter still runs and still
+  // stops the request; only its PUBLIC VOCABULARY is flattened into the same
+  // refusal an unresolved candidate gets. See the note on
+  // UNRESOLVED_CONTEXT_REFUSAL for why a post-resolution state may not expose an
+  // outcome an unresolved candidate can never reach.
+  if (!entryGate.allowed) return { ok: false, code: UNRESOLVED_CONTEXT_REFUSAL };
 
   const target = {
     entryId: context.entryId,

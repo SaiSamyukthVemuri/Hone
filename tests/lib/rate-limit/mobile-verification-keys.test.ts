@@ -26,6 +26,10 @@ const hashed = createHash("sha256").update(RAW_IP).digest("hex").slice(0, 32);
 
 type Call = { prefix: string; key: string };
 const calls: Call[] = [];
+// Every sliding window the module builds, in construction order, so the THRESHOLDS
+// can be asserted and not just the keys. Coarsening the entry gate's public refusal
+// must not quietly change what it counts.
+const windows: { limit: number; window: string }[] = [];
 let allow = true;
 
 vi.mock("@upstash/redis", () => ({
@@ -40,7 +44,8 @@ vi.mock("@upstash/ratelimit", () => {
     constructor(opts: { prefix: string }) {
       this.prefix = opts.prefix;
     }
-    static slidingWindow(_limit: number, _window: string) {
+    static slidingWindow(limit: number, window: string) {
+      windows.push({ limit, window });
       return { kind: "slidingWindow" };
     }
     async limit(key: string) {
@@ -61,6 +66,7 @@ beforeEach(async () => {
   process.env.UPSTASH_REDIS_REST_URL = "https://example.invalid";
   process.env.UPSTASH_REDIS_REST_TOKEN = "token-not-real";
   calls.length = 0;
+  windows.length = 0;
   allow = true;
   warns = [];
   vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => {
@@ -199,5 +205,53 @@ describe("FAIL OPEN is preserved", () => {
       await limitMobileVerificationEntry("start", { studioId: STUDIO_ID, entryId: ENTRY_ID }),
     ).toEqual({ allowed: true });
     proto.limit = original;
+  });
+});
+
+describe("the per-entry thresholds are unchanged by the coarsening", () => {
+  // Requirement 5. The flow-level suite mocks both gates, so it can prove WHICH gate
+  // denied but never WHAT it counts. Coarsening the entry gate's public refusal
+  // changed one return value; it must not have changed the budget behind it.
+
+  it("start counts 3 per entry per 15m and 10 per IP per 1h", async () => {
+    const { limitMobileVerificationEntry, limitMobileVerificationIp } = await load();
+    await limitMobileVerificationEntry("start", { studioId: STUDIO_ID, entryId: ENTRY_ID });
+    await limitMobileVerificationIp("start", { headers: headers() });
+    expect(windows).toEqual([
+      { limit: 3, window: "15 m" },
+      { limit: 10, window: "1 h" },
+    ]);
+  });
+
+  it("check counts 8 per entry per 15m and 30 per IP per 1h", async () => {
+    const { limitMobileVerificationEntry, limitMobileVerificationIp } = await load();
+    await limitMobileVerificationEntry("check", { studioId: STUDIO_ID, entryId: ENTRY_ID });
+    await limitMobileVerificationIp("check", { headers: headers() });
+    expect(windows).toEqual([
+      { limit: 8, window: "15 m" },
+      { limit: 30, window: "1 h" },
+    ]);
+  });
+
+  it("the thresholds come from MOBILE_VERIFICATION_LIMITS, not from literals here", async () => {
+    // Otherwise this file would pin numbers that had drifted from the policy it is
+    // supposed to be checking.
+    const { MOBILE_VERIFICATION_LIMITS } = await import("@/lib/waitlist/delivery/policy");
+    const { limitMobileVerificationEntry, limitMobileVerificationIp } = await load();
+    await limitMobileVerificationEntry("start", { studioId: STUDIO_ID, entryId: ENTRY_ID });
+    await limitMobileVerificationIp("start", { headers: headers() });
+    expect(windows[0]).toEqual({ ...MOBILE_VERIFICATION_LIMITS.start.entry });
+    expect(windows[1]).toEqual({ ...MOBILE_VERIFICATION_LIMITS.start.ip });
+  });
+
+  it("the ENTRY budget is smaller than the IP budget, which is why the oracle existed", async () => {
+    // Recorded as a test rather than a comment, because it is the arithmetic that
+    // made the P2 cheap to exploit: a candidate can exhaust an entry bucket while the
+    // IP bucket still has room, so the IP gate cannot mask the difference. The
+    // coarsened refusal is what closes it, NOT the relative sizes -- if these ever
+    // invert, the coarsening is still the thing doing the work.
+    const { MOBILE_VERIFICATION_LIMITS: L } = await import("@/lib/waitlist/delivery/policy");
+    expect(L.start.entry.limit).toBeLessThan(L.start.ip.limit);
+    expect(L.check.entry.limit).toBeLessThan(L.check.ip.limit);
   });
 });

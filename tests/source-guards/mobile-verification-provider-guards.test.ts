@@ -686,6 +686,43 @@ describe("the authorized flow keeps its seam open and its surface narrow", () =>
     ).not.toMatch(/UNRESOLVED_CONTEXT_REFUSAL[^\n]*=\s*"unavailable"/);
   });
 
+  it("a POST-RESOLUTION denial never reports rate_limited", () => {
+    // P2 at 8110c1fc. `rate_limited` is safe from the PRE-authorization IP gate,
+    // which answers identically for a valid and an invalid capability. It is not safe
+    // from anything reachable only after a context resolves: a distinct outcome there
+    // is a statement that the capability was good, and the shipped budgets made it
+    // readable in four requests from one IP.
+    //
+    // ASSERTED BY POSITION, not by counting: every `rate_limited` in this module must
+    // appear BEFORE the first `await resolve(` of its function, and every return after
+    // that point must use the coarsened constant.
+    for (const fn of [
+      "export async function runStartMobileVerification",
+      "export async function runCheckMobileVerification",
+    ]) {
+      const at = CODE.indexOf(fn);
+      expect(at, `${fn} is missing`).toBeGreaterThan(-1);
+      const body = CODE.slice(at, CODE.indexOf("\n}", at));
+      const resolveAt = body.indexOf("await resolve(");
+      expect(resolveAt, `${fn} never resolves`).toBeGreaterThan(-1);
+      const after = body.slice(resolveAt);
+      expect(
+        after,
+        `${fn} reports rate_limited after authorization, which reveals capability validity`,
+      ).not.toMatch(/code:\s*"rate_limited"/);
+      // And the pre-auth gate still reports it, so the value has not left the
+      // vocabulary altogether.
+      expect(body.slice(0, resolveAt)).toMatch(/code:\s*"rate_limited"/);
+    }
+  });
+
+  it("the per-entry gate is still consulted in both operations", () => {
+    // The counterweight: coarsening the refusal must not have been achieved by
+    // deleting the gate.
+    expect([...CODE.matchAll(/limitMobileVerificationEntry\(/g)]).toHaveLength(2);
+    expect([...CODE.matchAll(/limitMobileVerificationIp\(/g)]).toHaveLength(2);
+  });
+
   it("never calls the promoting RPC itself", () => {
     expect(CODE).not.toContain("mark_waitlist_mobile_verified");
     expect(CODE).not.toContain("createAdminClient");

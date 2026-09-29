@@ -454,10 +454,14 @@ describe("UNDER BUDGET the refusals stay collapsed", () => {
   });
 
   it("a resolved context still receives per-entry limiting, and it can deny", async () => {
+    // THE DENIAL IS COARSENED, NOT REMOVED. The limiter still runs and still stops
+    // the request; it reports the same refusal an unresolved candidate gets, because
+    // a post-resolution state must not expose an outcome an unresolved candidate can
+    // never reach. Owner decision, 2026-09-29.
     gates.denyEntry = true;
     expect(await runStartMobileVerification(AUTH, resolves, H, fake)).toEqual({
       ok: false,
-      code: "rate_limited",
+      code: "not_proved",
     });
     expect(gates.entryCalls).toHaveLength(1);
     expect(gates.entryCalls[0].operation).toBe("start");
@@ -481,7 +485,7 @@ describe("UNDER BUDGET the refusals stay collapsed", () => {
     gates.denyEntry = true;
     expect(
       await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake),
-    ).toEqual({ ok: false, code: "rate_limited" });
+    ).toEqual({ ok: false, code: "not_proved" });
     expect(gates.entryCalls).toHaveLength(1);
     expect(gates.entryCalls[0].operation).toBe("check");
     expect(gates.entryCalls[0].args).toEqual({
@@ -529,5 +533,119 @@ describe("STAGE 1 IS KEYED ON NOTHING THE CALLER CONTROLS", () => {
     await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake);
     expect(gates.ipCalls.map((c) => c.operation)).toEqual(["start", "check"]);
     expect(gates.entryCalls.map((c) => c.operation)).toEqual(["start", "check"]);
+  });
+});
+
+// ===========================================================================
+// PER-ENTRY EXHAUSTION IS INVISIBLE TO THE CALLER
+// ===========================================================================
+//
+// The pre-resolution IP gate closed the oracle at the IP layer; the per-entry gate
+// reopened it one layer down, and the shipped budgets made it CHEAP to read. From one
+// IP: start is 3 per entry against 10 per IP, so the FOURTH request separates a valid
+// candidate (`rate_limited`, its entry bucket full) from an invalid one
+// (`not_proved`, never reaching that gate) with 6 of the IP budget unspent. Check is
+// 8 against 30, separating on the ninth. P2 at 8110c1fc.
+//
+// The limiter is unchanged. One return value is.
+
+describe("an exhausted ENTRY bucket is indistinguishable from an unresolved capability", () => {
+  it("START: exhausted entry == unresolved, exact deep equality", async () => {
+    // Both at an IP that is still under budget, which is the whole point: the IP gate
+    // is not what is hiding the difference.
+    gates.denyEntry = true;
+    const validExhausted = await runStartMobileVerification(AUTH, resolves, H, fake);
+    const unresolved = await runStartMobileVerification(AUTH, resolvesNothing, H, fake);
+
+    expect(validExhausted).toEqual(unresolved);
+    expect(validExhausted).toEqual({ ok: false, code: "not_proved" });
+    expect((validExhausted as { code: string }).code).toBe((unresolved as { code: string }).code);
+    // And the IP gate really was unexhausted for both, so nothing else explains it.
+    expect(gates.ipCalls).toHaveLength(2);
+    expect(gates.denyIp).toBe(false);
+  });
+
+  it("CHECK: exhausted entry == unresolved, exact deep equality", async () => {
+    gates.denyEntry = true;
+    const validExhausted = await runCheckMobileVerification(
+      AUTH,
+      FAKE_VERIFICATION_CODE,
+      resolves,
+      H,
+      fake,
+    );
+    const unresolved = await runCheckMobileVerification(
+      AUTH,
+      FAKE_VERIFICATION_CODE,
+      resolvesNothing,
+      H,
+      fake,
+    );
+    expect(validExhausted).toEqual(unresolved);
+    expect(validExhausted).toEqual({ ok: false, code: "not_proved" });
+    expect(gates.denyIp).toBe(false);
+  });
+
+  it("an entry denial calls ZERO provider operations", async () => {
+    gates.denyEntry = true;
+    const start = vi.spyOn(fake, "start");
+    const check = vi.spyOn(fake, "check");
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake);
+    expect(start, "a denied entry still reached the provider").not.toHaveBeenCalled();
+    expect(check, "a denied entry still reached the provider").not.toHaveBeenCalled();
+    start.mockRestore();
+    check.mockRestore();
+  });
+
+  it("an entry denial calls ZERO promotion RPCs", async () => {
+    gates.denyEntry = true;
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake);
+    expect(rpc.calls).toEqual([]);
+  });
+
+  it("the entry limiter is still CONSULTED, so coarsening did not disable it", () => {
+    // The counterweight to every assertion above: if the gate had simply been
+    // removed, they would all pass for the wrong reason.
+    return (async () => {
+      gates.denyEntry = true;
+      await runStartMobileVerification(AUTH, resolves, H, fake);
+      expect(gates.entryCalls).toHaveLength(1);
+      expect(gates.entryCalls[0].args).toEqual({
+        studioId: CONTEXT.studioId,
+        entryId: CONTEXT.entryId,
+      });
+      expect(gates.entryCalls[0].args.studioId).not.toBe(CLAIMED_STUDIO_ID);
+    })();
+  });
+
+  it("rate_limited is STILL reachable, and only from the pre-auth IP gate", async () => {
+    // It must not vanish from the vocabulary: the IP gate runs before authorization,
+    // so it answers identically for valid and invalid candidates and is safe to
+    // report truthfully.
+    gates.denyIp = true;
+    const invalid = await runStartMobileVerification(AUTH, resolvesNothing, H, fake);
+    const valid = await runStartMobileVerification(AUTH, resolves, H, fake);
+    const invalidCheck = await runCheckMobileVerification(AUTH, "1", resolvesNothing, H, fake);
+    const validCheck = await runCheckMobileVerification(AUTH, "1", resolves, H, fake);
+    for (const o of [invalid, valid, invalidCheck, validCheck]) {
+      expect(o).toEqual({ ok: false, code: "rate_limited" });
+    }
+    expect(valid).toEqual(invalid);
+    expect(validCheck).toEqual(invalidCheck);
+  });
+
+  it("the two gates report DIFFERENT things, which is the whole design", async () => {
+    // Pre-auth denial -> rate_limited (safe: pre-authorization).
+    // Post-resolution denial -> not_proved (coarsened: post-authorization).
+    gates.denyIp = true;
+    const ipDenied = await runStartMobileVerification(AUTH, resolves, H, fake);
+    gates.denyIp = false;
+    gates.denyEntry = true;
+    const entryDenied = await runStartMobileVerification(AUTH, resolves, H, fake);
+    expect(ipDenied).toEqual({ ok: false, code: "rate_limited" });
+    expect(entryDenied).toEqual({ ok: false, code: "not_proved" });
+    expect(ipDenied).not.toEqual(entryDenied);
   });
 });
