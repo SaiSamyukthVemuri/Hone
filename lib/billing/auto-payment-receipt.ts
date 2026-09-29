@@ -84,6 +84,13 @@ import { recordOpsAlert, type OpsAlertInput } from "@/lib/ops/alerts";
 // same as requiring it: a refund beginning in that gap would otherwise let an
 // automatic receipt go out while the client's money was on its way back.
 //
+// THAT PREDICATE ALONE ONLY CLOSES REFUND-FIRST. `refundPaymentChargeAttempt`
+// carries the reciprocal one -- it will not claim while `receipt_status` is
+// `sending` -- which closes receipt-first. The two claims are conditional UPDATEs
+// on the same row, so the database serializes them and at most one of the pair
+// can be in flight. No lock table, no owner column, no transaction spanning the
+// network calls.
+//
 // SEVERAL ELIGIBLE INVOCATIONS MAY REACH THE HELPER. Exactly one can win the
 // claim; the losers are told `in_flight` or `already_sent` and send nothing.
 // That is why gate 2 does not need to identify a single owner, and why trying

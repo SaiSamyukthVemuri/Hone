@@ -557,8 +557,20 @@ export async function sendPaymentChargeReceipt(args: {
     .eq("id", attempt.id)
     .eq("studio_id", args.studioId)
     .eq("status", "succeeded");
-  //    THE AUTOMATIC CLAIM ALSO CARRIES THE REFUND PREDICATE, and that is what
-  //    makes eligibility atomic through dispatch.
+  //    THE AUTOMATIC CLAIM ALSO CARRIES THE REFUND PREDICATE. On its own that
+  //    closes exactly ONE ordering -- refund-first -- and nothing more. This
+  //    predicate cannot stop a refund that begins AFTER the claim is won, because
+  //    a WHERE clause constrains this statement, not some later statement in
+  //    another request.
+  //
+  //    THE OTHER ORDERING IS CLOSED BY THE RECIPROCAL PREDICATE in
+  //    `refundPaymentChargeAttempt`, which refuses to claim while
+  //    `receipt_status = 'sending'`. Only the PAIR makes the two operations
+  //    mutually exclusive, and it is mutual exclusion of the two CLAIMS on one
+  //    row -- not a transaction held open across the PDF render, the email
+  //    dispatch or the Stripe call, none of which are inside any transaction
+  //    here. What is guaranteed is that a refund cannot start between this claim
+  //    and its settlement, because the row it would have to claim is taken.
   //
   //    `classifyZeroRowSuccessWrite` already refuses a benign verdict unless
   //    `refund_status` is NULL -- but it checks that at READ time, and the claim
