@@ -156,11 +156,31 @@ describe("zero-row alerts leak no raw payload or PII", () => {
       "payment_intent_failed_reconcile_zero_rows",
       "charge_refunded_pending_reconcile_zero_rows",
       "charge_refunded_out_of_band_zero_rows",
+      // PAY-ZERO-ROW-RACE-01: the proven-benign concurrent-writer alert is held
+      // to the same safe-id standard as every alert above it.
+      "session_payment_succeeded_write_concurrent_reconciliation",
     ]) {
       const idx = ALL.indexOf(`event: "${ev}"`);
       expect(idx, `event ${ev} not found`).toBeGreaterThan(-1);
-      const block = ALL.slice(idx, idx + 600);
+      // SCOPED TO THE CALL, NOT TO A CHARACTER COUNT. A fixed 600-char window
+      // silently depended on the message staying short: lengthening one alert's
+      // operator copy pushed `attempt_id` out of range and failed a guard whose
+      // subject had not changed. The block now runs to the end of the
+      // safeDetails object, so the assertion is about the alert rather than
+      // about its prose length.
+      const after = ALL.slice(idx);
+      const end = after.indexOf("});", after.indexOf("safeDetails:"));
+      expect(end, `event ${ev} must carry a safeDetails object`).toBeGreaterThan(-1);
+      const block = after.slice(0, end);
       expect(block, `event ${ev} should log attempt_id`).toMatch(/attempt_id:/);
+      // And no customer PII travels with it. COMMENT-STRIPPED: this is about what
+      // is LOGGED, and an explanatory comment mentioning the email provider is not
+      // a logged value. The uncommented form failed on prose, which is a guard
+      // testing the wrong thing.
+      const blockCode = block
+        .replace(/\/\*[\s\S]*?\*\//g, " ")
+        .replace(/^\s*\/\/.*$/gm, " ");
+      expect(blockCode, `event ${ev} must not log an email`).not.toMatch(/email/i);
     }
   });
 });

@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { signOut } from "./dashboard/actions";
+import { SignOutMenuItem } from "./SignOutMenuItem";
+import { useSetSignOutInFlight, useSignOutInFlight } from "./signout-flight";
+import { SignOutFlightReporter } from "./SignOutFlightReporter";
 
 // PR #231: desktop account dropdown (LinkedIn-style "Me" menu). The
 // always-visible Sign out button and the Settings/Admin nav tabs
@@ -25,39 +28,165 @@ export function AccountMenu({
   canSwitchStudio: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // SIGNOUT-02c. The in-flight flag is NOT owned here any more. Both shells are
+  // rendered on every page and hidden with CSS, so a per-shell `useState` made
+  // this per-shell rather than per-practitioner: crossing the `lg` breakpoint
+  // mid-logout revealed the other menu with its own flag still false, and a
+  // fresh enabled Sign out with it. One authority, read by both.
+  const signingOut = useSignOutInFlight();
+  const setSignOutInFlight = useSetSignOutInFlight();
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // SIGNOUT-02b · ONE dismissal rule, and it is deferred rather than dropped.
+  //
+  // Every caller inherits it — Escape, the outside pointerdown, the trigger and
+  // the panel's own links — because stating it once is what stops the next
+  // editor from having to remember it. While a logout is in flight the panel
+  // stays mounted, which is what keeps `useFormStatus` alive to report the
+  // settlement; the dismissal the practitioner asked for is REMEMBERED and
+  // applied the moment the flag clears, so the menu is never left stuck open.
+  // SIGNOUT-02c · the SAME-TASK duplicate guard, and why `disabled` cannot be it.
+  //
+  // The visible control lives in the panel, OUTSIDE this form, so its own
+  // `useFormStatus()` never fires — it is disabled only by `busy` arriving from
+  // the shared store, which needs a React render. React does not render inside
+  // a single task, so three presses delivered in one task all find the control
+  // enabled however early the hold is taken. Measured: three
+  // `element.click()` calls in one `evaluate` put THREE logouts on the wire.
+  //
+  // The form refuses them instead, which needs no render: the first submission
+  // marks this form instance, and any further submission while that mark
+  // stands is cancelled. `preventDefault` here only ever cancels a DUPLICATE,
+  // never the first submission, so the native path is untouched — and without
+  // JavaScript this handler does not run at all, so a no-script press still
+  // posts.
+  //
+  // PER-INSTANCE, deliberately, not read from the shared store. A stranded
+  // shared hold would otherwise cancel every future logout in the document;
+  // this mark dies with the form that made it.
+  const submitted = useRef(false);
+  useEffect(() => {
+    // Released — by this form settling, or by the other shell's — so a failed
+    // logout leaves the practitioner able to try again.
+    if (!signingOut) submitted.current = false;
+  }, [signingOut]);
+
+  const deferredClose = useRef(false);
+  const close = useCallback(() => {
+    if (signingOut) {
+      deferredClose.current = true;
+      return;
+    }
+    setOpen(false);
+  }, [signingOut]);
+  useEffect(() => {
+    if (signingOut || !deferredClose.current) return;
+    deferredClose.current = false;
+    setOpen(false);
+  }, [signingOut]);
+
+  // WHILE SIGNING OUT, NO MENU DESTINATION IS AN ANCHOR.
+  //
+  // Three versions of this were too narrow, each for a reason worth keeping.
+  // First `aria-disabled` — advisory, and nothing more. Then `preventDefault`
+  // on click — which covers the ordinary click and NOTHING else: a Ctrl/Cmd
+  // click, a middle click and "Open link in new tab" all bypass it. Then a
+  // hold on `/admin` and `/no-access` only, on the reasoning that those are the
+  // links which leave `app/(app)/layout.tsx` and so drop the in-flight flag.
+  // Right about CLIENT navigation, wrong about everything else: route-group
+  // persistence holds only inside the current browsing context, so ANY link
+  // opened into a FRESH DOCUMENT rebuilds the shell with `signingOut === false`
+  // and offers another enabled Sign out while the first request is in flight.
+  //
+  // So the rule is the blunt one: while signing out the menu shows its
+  // destinations and offers none of them. There is no href to middle-click, to
+  // copy, or to open in a tab. It lasts the few hundred milliseconds the logout
+  // takes, and the menu is in a terminal state for all of it.
+  //
+  // WHAT IT STILL DOES NOT CLOSE, said plainly: a practitioner can open a new
+  // tab themselves and sign out there. That path never goes through this menu
+  // and cannot be closed from these files — it needs state shared across
+  // documents, which is a larger change than this repair is scoped for.
+  const isHeld = () => signingOut;
 
   useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") close();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  }, [open, close]);
 
   useEffect(() => {
     if (!open) return;
     function onPointerDown(e: PointerEvent) {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
+        close();
       }
     }
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-
-  const close = () => setOpen(false);
+  }, [open, close]);
   const firstName = displayName.trim().split(/\s+/)[0] || "Account";
   const roleLabel = role === "owner" ? "Owner" : "Practitioner";
 
   return (
     <div ref={rootRef} className="relative">
+      {/* SIGNOUT-02c · THE FORM LIVES OUT HERE, not in the panel.
+          `useFormStatus` reports only for the form it runs inside, so the
+          observer has to be in the form — and a form inside `{open && …}` is
+          taken down by the very dismissals this slice had to survive. Hoisted
+          to the persistent root it cannot be unmounted by closing the panel or
+          crossing the breakpoint, and its status is a faithful account of the
+          action for as long as this shell exists.
+
+          `action={signOut}` is UNCHANGED, deliberately. Wrapping it in a
+          client function to own the promise was tried twice and measured wrong:
+          Next stops routing the action's redirect and the soft navigation to
+          /login becomes a hard browser one, tearing down in-flight prefetches
+          and reddening five SIGNOUT-01 cases whose logouts were otherwise
+          perfect. SIGNOUT-01's own rule stands untouched here: no onClick, and
+          nothing unmounts this form during the press — it is no longer even
+          adjacent to the thing that opens and closes. */}
+      <form
+        action={signOut}
+        id="signout-account"
+        className="hidden"
+        // THE HOLD IS TAKEN SYNCHRONOUSLY, during the submit event.
+        //
+        // The visible control is in the panel, OUTSIDE this form, so its own
+        // `useFormStatus()` never fires — it is disabled only by `busy`
+        // arriving from the shared store. Publishing that from the reporter's
+        // passive effect left the control enabled for the whole gap between
+        // the press and the effect, and a fast double-press queued a second
+        // logout through it. `onSubmit` runs before any effect gets a turn.
+        //
+        // It does NOT preventDefault and does NOT unmount anything, so the
+        // native submission proceeds untouched — SIGNOUT-01's rule is about a
+        // handler that detaches the form mid-click, which this is not. And it
+        // is a hydrated-only handler, so a press before hydration still posts
+        // natively; it simply gets no acknowledgement, which is the honest
+        // outcome when no JavaScript has run.
+        onSubmit={(event) => {
+          if (submitted.current) {
+            event.preventDefault();
+            return;
+          }
+          submitted.current = true;
+          setSignOutInFlight(true);
+        }}
+      >
+        <SignOutFlightReporter />
+      </form>
       <button
         type="button"
         aria-label="Open account menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        // Opens freely; closing goes through the one dismissal rule, which
+        // defers while a logout is in flight. Never refuses to OPEN, or a
+        // stuck flag would leave the menu unreachable.
+        onClick={() => (open ? close() : setOpen(true))}
         className="flex min-h-[40px] items-center gap-1.5 rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
       >
         <span className="max-w-[12ch] truncate font-medium">{firstName}</span>
@@ -93,14 +222,24 @@ export function AccountMenu({
               : []),
             ...(admin ? [{ href: "/admin", label: "Admin" }] : []),
           ].map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={close}
-              className="flex min-h-[40px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-            >
-              {item.label}
-            </Link>
+            isHeld() ? (
+              <span
+                key={item.href}
+                aria-disabled="true"
+                className="flex min-h-[40px] cursor-not-allowed items-center rounded-md px-3 py-2 opacity-50"
+              >
+                {item.label}
+              </span>
+            ) : (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={close}
+                className="flex min-h-[40px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              >
+                {item.label}
+              </Link>
+            )
           ))}
           <div className="mt-0.5 border-t border-neutral-200 pt-1 dark:border-neutral-800">
             {/* SIGNOUT-01. There is deliberately NO onClick={close} on this
@@ -129,14 +268,17 @@ export function AccountMenu({
                 Proved by e2e/signout-session-destruction.spec.ts on both
                 surfaces, pointer and keyboard; pinned in
                 tests/app/mobile-ux.test.ts. */}
-            <form action={signOut}>
-              <button
-                type="submit"
-                className="flex min-h-[40px] w-full items-center rounded-md px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-900"
-              >
-                Sign out
-              </button>
-            </form>
+            {/* SIGNOUT-02. The control now acknowledges the press: a CSS
+                active step that paints before any JS, then `useFormStatus`
+                pending -> disabled + aria-busy + "Signing out…" until the real
+                action settles. The hook only reports for a form it runs
+                INSIDE, which is why this is a leaf and not markup here. No
+                onClick, above or below — see the note above. */}
+              <SignOutMenuItem
+                formId="signout-account"
+                minHeight="min-h-[40px]"
+                busy={signingOut}
+              />
           </div>
         </nav>
       )}
