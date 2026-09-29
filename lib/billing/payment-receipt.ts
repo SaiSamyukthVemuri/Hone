@@ -40,24 +40,62 @@ import {
 //   3. Loads the client + studio rows so the email greeting,
 //      reason label, and contact line resolve correctly.
 //   4. Atomically claims the row via a conditional UPDATE on
-//      receipt_status (null OR 'failed' -> 'sending') so two
-//      concurrent click events cannot both call Resend.
+//      receipt_status, so two concurrent senders cannot both call
+//      Resend. The admissible set depends on the CALLER'S POLICY:
+//        manual    (default): null OR 'failed' -> 'sending'.
+//                  Not refund-gated: a practitioner who clicks Send
+//                  is deciding about a real document.
+//        automatic          : null ONLY, and only while
+//                  refund_status IS NULL, in the same statement.
+//                  It does not resurrect a 'failed' receipt, and it
+//                  will not fire into a charge being refunded.
+//      The refund side carries the reciprocal predicate (it will not
+//      claim while receipt_status='sending'), so the two operations
+//      are mutually exclusive at this one row.
 //   5. Calls sendEmailSafely. The helper itself caps the send at
 //      a 15-second timeout and classifies failures as retryable
 //      or terminal.
-//   6. Writes the result back to the row:
+//   6. Writes the result back to the row. THE DECIDING QUESTION IS
+//      NOT "is this error retryable" BUT "do we know whether an
+//      email reached the client":
+//
 //       ok: true              -> receipt_status='sent',
 //                              receipt_sent_at=now(),
 //                              receipt_email_to=<client_email>,
 //                              clears the failure detail.
-//      ok: false, retryable  -> receipt_status=null (releases
-//                              the claim so a manual retry can
-//                              run later) + ops_alert at
-//                              severity 'warning'.
-//      ok: false, terminal   -> receipt_status='failed',
-//                              receipt_failure_code,
-//                              receipt_failure_message_safe +
-//                              ops_alert at severity 'critical'.
+//
+//      AMBIGUOUS PROVIDER FAILURE (timeout, network, empty or 5xx
+//      response -- the provider was already dispatched to and its
+//      answer never arrived): DELIVERY IS UNKNOWN. The claim is
+//      deliberately HELD: receipt_status STAYS 'sending', nothing is
+//      released, and no automatic retry follows -- a retry could put
+//      a second receipt in front of a client who already has one.
+//      An ops_alert at severity 'critical' asks an operator to
+//      reconcile with the provider before clearing or resending.
+//      Returns send_ambiguous_state_not_recorded.
+//
+//      KNOWN PRE-DISPATCH FAILURE: the receipt document or its PDF
+//      could not be built (including an unsupported character), so
+//      the provider was NEVER dispatched to and delivery definitely
+//      did not happen. The claim is SAFE TO RELEASE for later
+//      recovery: receipt_status -> null, ops_alert at severity
+//      'warning', returns receipt_pdf_unavailable. This is the ONLY
+//      path in this module that releases the claim.
+//      (A missing or unusable client email is refused EARLIER, before
+//      the claim exists, so there is nothing to release. A recipient
+//      the provider itself refuses is a terminal outcome, below.)
+//
+//      KNOWN TERMINAL NOT-DELIVERED provider outcome: the provider
+//      answered and refused. receipt_status -> 'failed' with
+//      receipt_failure_code and receipt_failure_message_safe, plus
+//      an ops_alert at severity 'critical'. The automatic policy
+//      does not resurrect 'failed'; manual or operator recovery
+//      stays explicit.
+//
+//      Each of the three settlement writes can itself fail. When it
+//      does the outcome says so rather than reporting the intended
+//      state -- see sent_but_record_update_failed and
+//      send_failed_state_not_recorded.
 //
 // What this helper does NOT do:
 //   * Does NOT create a Stripe PaymentIntent. Does NOT call any

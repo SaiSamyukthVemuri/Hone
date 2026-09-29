@@ -131,33 +131,42 @@ export type SessionPaymentChargeResult =
        * call.
        *
        * Both are `ok: true` — a replay is a legitimate no-op and the money is
-       * settled either way — but they are NOT the same event, and anything
-       * that must happen ONCE PER CHARGE (notably the automatic receipt in
-       * lib/billing/auto-payment-receipt.ts) keys off the TRANSITION, not the
-       * state.
+       * settled either way — but they are NOT the same event.
        *
-       * Exclusive at the DATABASE, not merely observed here: the succeeded
-       * write is a conditional UPDATE scoped to `.eq("status",
-       * "pending_stripe")`, so of two concurrent invocations exactly one gets
-       * rows back; the loser reports needs_manual_review, never a second
-       * committedNow. Both fresh sites additionally sit behind
-       * `if (!persistence.persisted) return needs_manual_review`.
-       *
-       * PAY-ZERO-ROW-RACE-01: that reasoning considered only a second
-       * SYNCHRONOUS invocation. The `payment_intent.succeeded` webhook is a
-       * THIRD writer (`reconcile_card_payment_succeeded`, 0187) which takes the
-       * appointment advisory key and `FOR UPDATE`, so when IT wins the row this
+       * THIS FIELD ALONE IS NOT THE ONCE-PER-CHARGE KEY. Automatic receipt
+       * eligibility is `committedNow || concurrentlyReconciled` (see that field
+       * below), because a charge can genuinely succeed with `committedNow`
+       * false: the `payment_intent.succeeded` webhook is a THIRD writer
+       * (`reconcile_card_payment_succeeded`, 0187) which takes the appointment
+       * advisory key and `FOR UPDATE`, so when IT wins the row this
        * invocation's conditional UPDATE matches zero rows and `committedNow`
-       * becomes true ZERO times for a charge that really happened. See
-       * `concurrentlyReconciled` below.
+       * becomes true ZERO times for a charge that really happened. Keying
+       * once-per-charge work off this field by itself is what stranded a real
+       * receipt in production.
+       *
+       * EXCLUSIVE AT THE DATABASE, not merely observed here: the succeeded
+       * write is a conditional UPDATE scoped to `.eq("status",
+       * "pending_stripe")`, so of two concurrent writers exactly one gets rows
+       * back and `committedNow` is true for at most one of them.
+       *
+       * THE LOSER IS NOT AUTOMATICALLY needs_manual_review. A zero-row write is
+       * classified, not assumed: a loser that holds the SAME PaymentIntent and
+       * whose row passes the full identity/money/lineage check returns clean
+       * `succeeded` with `concurrentlyReconciled` true. needs_manual_review is
+       * for a zero-row write that canNOT be explained that way. Do not restore
+       * a blanket "loser -> needs_manual_review" reading of this field.
        *
        * IT IS NOT A RECEIPT-OWNERSHIP FACT, THOUGH IT IS A RECEIPT INPUT.
        * Together with `concurrentlyReconciled` it answers only "did a brand-new
        * charge succeed in THIS invocation", which is what
        * `lib/billing/auto-payment-receipt.ts` uses to decide who may ATTEMPT a
-       * send. Who actually SENDS is decided by the durable
-       * `receipt_status: null -> sending` claim in
-       * `lib/billing/payment-receipt.ts`.
+       * send. NEITHER FIELD OWNS EMAIL DELIVERY. Who actually SENDS is decided
+       * by the durable conditional `receipt_status: null -> sending` claim in
+       * `sendPaymentChargeReceipt`.
+       *
+       * A HISTORICAL REPLAY -- an invocation that starts against a row already
+       * succeeded before the call -- has neither fact, and starts no automatic
+       * receipt attempt at all.
        *
        * DO NOT REINTRODUCE A PROCESS-LEVEL OWNER FIELD HERE. Three revisions
        * tried; the last anchored ownership to the claim RPC and lost LIVENESS,
