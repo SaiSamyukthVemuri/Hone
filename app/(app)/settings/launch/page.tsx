@@ -239,6 +239,17 @@ export default async function LaunchChecklistPage() {
         : "Waitlist admission is off, so new clients are not routed to the waitlist.",
       cta: { label: "Open Waitlist settings", href: "/settings/waitlist" },
     },
+    // NEW-CLIENT-MODE-01. A deliberate closure is a state the owner chose, not
+    // a step they failed to finish, so it renders "manual" beside the admission
+    // row rather than "To do".
+    {
+      title: "Not accepting new clients",
+      status: provenBlockers.has("admission_closed") ? "manual" : "ready",
+      detail: provenBlockers.has("admission_closed")
+        ? "New clients cannot book or join a waitlist. Existing clients are unaffected."
+        : "New clients are not blocked from this studio.",
+      cta: { label: "Open booking settings", href: "/settings/booking" },
+    },
     {
       title: "Client confirmation emails",
       status: studio.send_confirmation_emails ? "ready" : "needs_setup",

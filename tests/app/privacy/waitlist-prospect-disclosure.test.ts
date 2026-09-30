@@ -37,6 +37,26 @@ const PRIVACY = read("app/privacy/page.tsx");
 const FORM = read("app/book/[slug]/NewClientWaitlistForm.tsx");
 const GATE = read("scripts/check-production-env-gates.mjs");
 
+// NEW-CLIENT-MODE-01: the admission authority now performs the read these
+// suites used to make via the env predicate. Delegating to the REAL
+// `resolveAdmission` with no stored value routes it through the transition
+// bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(
+      async (studio: { slug: string | null }) =>
+        actual.resolveAdmission({
+          storedMode: null,
+          readFailed: false,
+          studioSlug: studio.slug,
+        }),
+    ),
+  };
+});
+
 vi.mock("@/app/book/[slug]/waitlist-actions", () => ({
   submitNewClientBookingWaitlistAction: async () => ({ ok: true as const }),
 }));
@@ -422,9 +442,10 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     // If there were only one path, the scoping above would be noise. Pin the
     // branch, and that the durable one is opt-in per studio.
     const action = read("app/book/[slug]/waitlist-actions.ts");
-    expect(action).toMatch(
-      /isNewClientWaitlistDurableEnabled\(studio\.slug\)\s*\?\s*submitToDurableWaitlist[\s\S]{0,120}submitViaStudioNotification/,
-    );
+    // NEW-CLIENT-MODE-01: the two-branch commit is GONE. `waitlist` means
+    // durable, so the only assertion left is that no second commit point
+    // survives to drift from the gate.
+    expect(action).not.toMatch(/isNewClientWaitlistDurableEnabled\s*\(/);
     // The legacy path fails the submission when the studio email cannot be
     // sent — i.e. nothing is recorded and the visitor is not told they joined.
     expect(action).toMatch(

@@ -7,7 +7,7 @@ import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { PublicBookForm } from "./PublicBookForm";
-import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
+import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import type { Service } from "@/lib/types/database";
 import {
   isPubliclyBookable,
@@ -71,6 +71,12 @@ export default async function PublicBookingPage({
   // studio (no active services OR no open availability day). Identical
   // wording is intentional, never disclose which piece is missing to
   // a public visitor. The booking actions enforce the same gate.
+  // NEW-CLIENT-MODE-01: the studio-owned mode, resolved server-side. The value
+  // itself never reaches the browser as authority - the booking and waitlist
+  // actions each re-derive it from the server-resolved studio, so a stale tab
+  // or forged post cannot act around it.
+  const publicAdmission = await getNewClientAdmissionMode(studio);
+
   const bookable = isPubliclyBookable({
     activeServicesCount: services.length,
     openAvailabilityDaysCount,
@@ -122,7 +128,9 @@ export default async function PublicBookingPage({
                  and this flag is presentation authority only. The public
                  booking server action re-derives it from the server-resolved
                  studio, so a stale tab or forged post cannot book around it. */
-              newClientWaitlistEnabled={isNewClientWaitlistEnabled(studio.slug)}
+              newClientWaitlistEnabled={
+                publicAdmission.ok && publicAdmission.mode === "waitlist"
+              }
               studioAddress={studio.address ?? null}
               services={services}
               defaultDate={today}

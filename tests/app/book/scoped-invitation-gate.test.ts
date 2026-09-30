@@ -178,6 +178,26 @@ const admin = {
   },
 };
 
+// NEW-CLIENT-MODE-01: the admission authority now performs the read these
+// suites used to make via the env predicate. Delegating to the REAL
+// `resolveAdmission` with no stored value routes it through the transition
+// bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(
+      async (studio: { slug: string | null }) =>
+        actual.resolveAdmission({
+          storedMode: null,
+          readFailed: false,
+          studioSlug: studio.slug,
+        }),
+    ),
+  };
+});
+
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => admin }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));

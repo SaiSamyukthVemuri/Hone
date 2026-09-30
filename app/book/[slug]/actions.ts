@@ -51,7 +51,10 @@ import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
-  isNewClientWaitlistEnabled,
+  getNewClientAdmissionMode,
+  newClientMayBook,
+} from "@/lib/booking/new-client-admission";
+import {
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
   NEW_CLIENT_WAITLIST_REFUSAL_CODE,
 } from "@/lib/booking/new-client-waitlist";
@@ -591,7 +594,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // rather than waved onto the ordinary path — a caller does not get to opt out
   // of invitation handling by omitting the half that identifies the invitation.
   const invitationPresented = Boolean(invitationToken) || Boolean(invitationCapability);
-  const admissionGateApplies = isNewClientWaitlistEnabled(studio.slug);
+  // NEW-CLIENT-MODE-01. `open` is the ONLY mode in which a new client books
+  // normally. `waitlist` and `closed` both refuse, and an UNREADABLE mode
+  // refuses too: a failed read must never reopen a studio whose owner paused or
+  // closed new-client admission. Re-derived here from the server-resolved
+  // studio, so a stale tab cannot book around it.
+  const admission = await getNewClientAdmissionMode(studio);
+  const admissionGateApplies = !newClientMayBook(admission);
 
   if (clientType === "new" && (admissionGateApplies || invitationPresented)) {
     if (invitationToken && invitationCapability) {

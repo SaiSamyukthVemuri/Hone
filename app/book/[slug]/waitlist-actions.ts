@@ -5,8 +5,10 @@ import { after } from "next/server";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
-  isNewClientWaitlistEnabled,
-  isNewClientWaitlistDurableEnabled,
+  getNewClientAdmissionMode,
+  newClientMayJoinWaitlist,
+} from "@/lib/booking/new-client-admission";
+import {
   validateWaitlistSubmission,
   NEW_CLIENT_WAITLIST_SUBMIT_FAILED,
   NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED,
@@ -543,7 +545,12 @@ export async function submitNewClientBookingWaitlistAction(
   //    the row. A browser-claimed "waitlist is on" is not consulted and does not
   //    exist on the wire. Checked BEFORE the limiter so a submission to a studio
   //    that is not in waitlist mode consumes no quota.
-  if (!isNewClientWaitlistEnabled(studio.slug)) {
+  //    NEW-CLIENT-MODE-01: the one admission authority, read from the
+  //    server-resolved studio. `waitlist` is the ONLY mode that admits a join -
+  //    `closed` refuses it as firmly as it refuses a booking, and an unreadable
+  //    mode refuses too rather than guessing the studio is collecting leads.
+  const admission = await getNewClientAdmissionMode(studio);
+  if (!newClientMayJoinWaitlist(admission)) {
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
   }
 
@@ -557,9 +564,16 @@ export async function submitNewClientBookingWaitlistAction(
   });
   if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
-  // 5. COMMIT. Which commit point applies is a SERVER fact derived from the
-  //    server-resolved slug, exactly like the gate above.
-  return isNewClientWaitlistDurableEnabled(studio.slug)
-    ? submitToDurableWaitlist(studio, submission, emailFingerprint)
-    : submitViaStudioNotification(studio, submission, emailFingerprint);
+  // 5. COMMIT. THE DATABASE ROW IS THE COMMITMENT, ALWAYS.
+  //
+  //    WAIT-02 chose between a durable write and an email-only notification
+  //    from a SECOND env list, which could fall out of step with the gate: a
+  //    studio could be admitting joins while its submissions were only ever
+  //    emails, and dropping a slug moved the commit point without moving the
+  //    gate. Nobody could see that from the product.
+  //
+  //    `waitlist` now MEANS durable. There is no second switch to drift, and no
+  //    email-only fallback remains: the notification below happens AFTER a
+  //    durable success, and a failure to send cannot unwrite the row.
+  return submitToDurableWaitlist(studio, submission, emailFingerprint);
 }

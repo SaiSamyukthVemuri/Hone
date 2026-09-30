@@ -98,6 +98,26 @@ function reset() {
   });
 }
 
+// NEW-CLIENT-MODE-01: the admission authority now performs the read these
+// suites used to make via the env predicate. Delegating to the REAL
+// `resolveAdmission` with no stored value routes it through the transition
+// bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(
+      async (studio: { slug: string | null }) =>
+        actual.resolveAdmission({
+          storedMode: null,
+          readFailed: false,
+          studioSlug: studio.slug,
+        }),
+    ),
+  };
+});
+
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 
 // Post-response work is CAPTURED, not run. That is what makes "the action
@@ -665,34 +685,46 @@ describe("the gate still governs everything", () => {
     expect(rpcCalls).toHaveLength(0);
   });
 
-  it("with the DURABLE flag unset, no database command runs at all", async () => {
-    // Stage A of the rollout: migration applied, code deployed, dark.
-    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, undefined);
-    const result = await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls).toHaveLength(0);
-    expect(result).toEqual({ ok: true });
-  });
-
-  it("the durable flag is EXACT-MATCH, not a prefix or substring", async () => {
-    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, `${SLUG}-archive,other-studio`);
-    await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls).toHaveLength(0);
-  });
-
-  it("the durable flag is derived from the SERVER-RESOLVED slug, not the posted one", async () => {
-    // The form claims a slug that IS listed; the resolved studio's slug is not.
-    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, "attacker-chosen-slug");
-    await submitNewClientBookingWaitlistAction(form({ slug: "attacker-chosen-slug" }));
-    expect(rpcCalls).toHaveLength(0);
-  });
-
-  it("a blank or whitespace-only durable list is OFF", async () => {
-    for (const value of ["", "   ", ",, ,"]) {
+  // NEW-CLIENT-MODE-01 RETARGET. These four tests asserted that a SECOND env
+  // list chose between a durable write and an email-only notification, AFTER
+  // the gate had already admitted the join. That switch is gone: `waitlist`
+  // now MEANS durable, so there is nothing left for it to gate and the cases
+  // below assert the contract that replaced it.
+  it("the durable env list no longer gates anything", async () => {
+    for (const value of [undefined, "", "   ", `${SLUG}-archive,other-studio`, "attacker-chosen-slug"]) {
       reset();
       setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, value);
-      await submitNewClientBookingWaitlistAction(form());
-      expect(rpcCalls, `value ${JSON.stringify(value)} must be OFF`).toHaveLength(0);
+      const result = await submitNewClientBookingWaitlistAction(form());
+      expect(
+        rpcCalls.length,
+        `durable list ${JSON.stringify(value)} must not stop the command`,
+      ).toBe(1);
+      expect(result.ok).toBe(true);
     }
+  });
+
+  it("REGRESSION: dropping the durable slug cannot make a join email-only", async () => {
+    // The named regression. With the admission authority active, an env edit
+    // must not move a studio off the durable path - the database row is the
+    // commitment, and an email cannot stand in for it.
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+    await submitNewClientBookingWaitlistAction(form());
+    const withFlag = rpcCalls.length;
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, undefined);
+    await submitNewClientBookingWaitlistAction(form());
+    expect(rpcCalls.length, "the row is written either way").toBe(withFlag);
+    expect(withFlag).toBe(1);
+  });
+
+  it("the action carries no email-only commit branch at all", async () => {
+    // Structural, because the absence is the point: a second commit point that
+    // exists but is unreachable is worse than one that is gone.
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/book/[slug]/waitlist-actions.ts", "utf8");
+    expect(src).not.toMatch(/isNewClientWaitlistDurableEnabled\s*\(/);
+    expect(src).not.toMatch(/\?\s*submitToDurableWaitlist/);
   });
 });
 

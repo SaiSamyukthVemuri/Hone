@@ -4,7 +4,10 @@ import { isBookableByNewClient } from "@/lib/booking/consultation";
 import { createClient } from "@/lib/supabase/server";
 import { getStudioWideDefaultsSafe } from "@/lib/booking/studio-wide-availability";
 import { isValidTimeZone } from "@/lib/studios/new-studio";
-import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
+import {
+  getNewClientAdmissionMode,
+  type NewClientAdmission,
+} from "@/lib/booking/new-client-admission";
 import {
   CONSENT_SETTINGS_HREF,
   getTreatmentConsentReadiness,
@@ -74,7 +77,11 @@ import { getActiveServices } from "@/lib/booking/queries";
 // ===========================================================================
 
 /** An authority that can fail to answer. `studio` is not one: it is a row the caller already holds. */
-export type ReadinessAuthority = "services" | "availability" | "treatment_consent";
+export type ReadinessAuthority =
+  | "services"
+  | "availability"
+  | "treatment_consent"
+  | "admission";
 
 export type NewClientBlockerKey =
   | "studio_name"
@@ -84,7 +91,8 @@ export type NewClientBlockerKey =
   | "availability"
   | "treatment_consent"
   | "bookable_window"
-  | "wait_admission";
+  | "wait_admission"
+  | "admission_closed";
 
 export type NewClientBlocker = {
   key: NewClientBlockerKey;
@@ -123,6 +131,7 @@ const BLOCKER_ORDER: NewClientBlockerKey[] = [
   // structural blockers would send an operator to the waitlist screen when what
   // they actually still need is a consultation service.
   "wait_admission",
+  "admission_closed",
 ];
 
 const BLOCKERS: Record<NewClientBlockerKey, Omit<NewClientBlocker, "key">> = {
@@ -130,6 +139,10 @@ const BLOCKERS: Record<NewClientBlockerKey, Omit<NewClientBlocker, "key">> = {
   // A FACT, NOT A DIAGNOSIS -- the rule every other label follows. It states
   // what is true of admission today; it does not call the studio
   // misconfigured, because it is not.
+  admission_closed: {
+    label: "This studio is not accepting new clients.",
+    href: "/settings/booking",
+  },
   wait_admission: {
     label: "New clients join the waitlist instead of booking directly.",
     href: "/settings/waitlist",
@@ -195,6 +208,7 @@ export const NEW_CLIENT_BLOCKER_AUTHORITIES: Record<
   booking_link: [],
   booking_settings: [],
   wait_admission: [],
+  admission_closed: [],
   consultation_service: ["services"],
   availability: ["availability"],
   // BOTH halves: the pairing cannot be proven or refuted on one of them.
@@ -228,6 +242,7 @@ export const NEW_CLIENT_BLOCKER_PREREQUISITES: Record<
   booking_link: [],
   booking_settings: [],
   wait_admission: [],
+  admission_closed: [],
   consultation_service: [],
   availability: [],
   bookable_window: ["consultation_service", "availability"],
@@ -250,6 +265,11 @@ export type NewClientReadinessEvidence = {
     | { ok: true; days: Pick<StudioAvailabilityDefault, "is_open" | "open_time" | "close_time">[] }
     | { ok: false };
   treatmentConsent: TreatmentConsentReadiness;
+  /**
+   * The studio's NEW-CLIENT admission mode, from the one authority that owns it.
+   * `{ ok: false }` is a failed read, never an assumption of `open`.
+   */
+  admission: NewClientAdmission;
 };
 
 function nonEmpty(s: string | null | undefined): boolean {
@@ -320,6 +340,9 @@ export function computeNewClientReadiness(
   if (!services.ok) unavailable.push("services");
   if (!availability.ok) unavailable.push("availability");
   if (!treatmentConsent.ok) unavailable.push("treatment_consent");
+  // UNKNOWN ADMISSION IS NEVER READY. A studio whose mode could not be read
+  // must not be reported ready and must not be reported closed; it is unknown.
+  if (!evidence.admission.ok) unavailable.push("admission");
 
   // Only PROVEN failures become blockers. An authority that did not answer
   // contributes nothing here — that is the whole no-collapse rule.
@@ -339,7 +362,27 @@ export function computeNewClientReadiness(
   // `isNewClientWaitlistEnabled` the public route already consults, read from
   // the server-resolved slug. Nothing here decides whether WAIT is on -- it
   // only reports it truthfully.
-  if (isNewClientWaitlistEnabled(studio.slug)) proven.push("wait_admission");
+  // ADMISSION IS ASKED FIRST, because it decides which of the questions below
+  // are even meaningful.
+  //
+  //   closed    a deliberate closure is NOT a setup failure. Reporting the
+  //             structural items as blockers would tell an owner to go fix a
+  //             studio they chose to close.
+  //   waitlist  the admission state is reported, and the structural items are
+  //             KEPT. A waitlist studio still needs a consultation service and
+  //             an open window to convert anyone it admits, and an operator who
+  //             lacks one must be sent there rather than to the waitlist screen
+  //             - the ordering ONB-02 already established and proved.
+  //   open      every structural prerequisite applies, unchanged.
+  //   unknown   never ready by assumption - handled with the other unreadable
+  //             authorities below.
+  const admissionMode = evidence.admission.ok ? evidence.admission.mode : null;
+  if (admissionMode === "closed") proven.push("admission_closed");
+  if (admissionMode === "waitlist") proven.push("wait_admission");
+  // Suppressed for CLOSED ONLY. A deliberate closure is not a setup failure,
+  // so telling that owner to go configure booking would be a lie about what
+  // they chose. Every other mode keeps the structural questions.
+  const structuralApplies = admissionMode !== "closed";
 
   if (!nonEmpty(studio.name)) proven.push("studio_name");
   if (!nonEmpty(studio.slug)) proven.push("booking_link");
@@ -353,10 +396,10 @@ export function computeNewClientReadiness(
     proven.push("booking_settings");
   }
   if (services.ok && !services.services.some((s) => isBookableByNewClient(s))) {
-    proven.push("consultation_service");
+    if (structuralApplies) proven.push("consultation_service");
   }
   if (availability.ok && !availability.days.some(isOpenDay)) {
-    proven.push("availability");
+    if (structuralApplies) proven.push("availability");
   }
   // THE PAIRING, which neither fact proves on its own.
   //
@@ -376,7 +419,7 @@ export function computeNewClientReadiness(
       bookable.some((s) => windowFitsDuration(w, s.default_duration_minutes)),
     );
     if (bookable.length > 0 && openWindows.length > 0 && !anyPairFits) {
-      proven.push("bookable_window");
+      if (structuralApplies) proven.push("bookable_window");
     }
   }
   if (treatmentConsent.ok && !treatmentConsent.ready) {
@@ -408,7 +451,7 @@ export function computeNewClientReadiness(
 export async function getNewClientReadiness(
   studio: NewClientReadinessEvidence["studio"] & { id: string },
 ): Promise<NewClientReadiness> {
-  const [services, availability, treatmentConsent] = await Promise.all([
+  const [services, availability, treatmentConsent, admission] = await Promise.all([
     getActiveServices(studio.id).then(
       (s) => ({ ok: true, services: s }) as const,
       () => ({ ok: false }) as const,
@@ -433,6 +476,8 @@ export async function getNewClientReadiness(
     ),
     // Already result-bearing; it never throws and never collapses.
     getTreatmentConsentReadiness(studio.id),
+    // Already result-bearing; it never throws and never collapses to `open`.
+    getNewClientAdmissionMode(studio),
   ]);
 
   return computeNewClientReadiness({
@@ -440,5 +485,6 @@ export async function getNewClientReadiness(
     services,
     availability,
     treatmentConsent,
+    admission,
   });
 }

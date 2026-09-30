@@ -20,6 +20,10 @@ vi.mock("@/lib/booking/queries", () => ({
 vi.mock("@/lib/booking/studio-wide-availability", () => ({
   getStudioWideDefaultsSafe: vi.fn(),
 }));
+vi.mock("@/lib/booking/new-client-admission", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  getNewClientAdmissionMode: vi.fn(async () => ({ ok: true, mode: "open" })),
+}));
 vi.mock("@/lib/consent/launch-readiness", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   getTreatmentConsentReadiness: vi.fn(),
@@ -58,11 +62,18 @@ const CONSULTATION = {
 
 const OPEN_DAY = { is_open: true, open_time: "09:00:00", close_time: "17:00:00" };
 
+const WAITLIST = { ok: true as const, mode: "waitlist" as const };
+const CLOSED = { ok: true as const, mode: "closed" as const };
+const ADMISSION_UNKNOWN = { ok: false as const };
+
 const ALL_GOOD = {
   studio: STUDIO,
   services: { ok: true as const, services: [CONSULTATION] },
   availability: { ok: true as const, days: [OPEN_DAY] },
   treatmentConsent: { ok: true as const, ready: true },
+  // NEW-CLIENT-MODE-01: admission is evidence like any other authority, and
+  // `open` is the state in which every structural prerequisite applies.
+  admission: { ok: true as const, mode: "open" as const },
 };
 
 describe("computeNewClientReadiness — the three states", () => {
@@ -319,8 +330,10 @@ describe("ONB-02: WAIT admission and a real timezone authority", () => {
       // new-client admission is deliberately paused behind the queue, so the
       // canonical question answered READY for a studio that routes new clients
       // to a waitlist instead of a booking.
-      vi.stubEnv(WAIT_ENV, "willow");
-      const r = computeNewClientReadiness(ALL_GOOD);
+      // NEW-CLIENT-MODE-01: the compute reads the studio-owned mode as
+      // EVIDENCE. The env list is now only the loader's transition bridge, so
+      // this states the state directly instead of stubbing a deploy variable.
+      const r = computeNewClientReadiness({ ...ALL_GOOD, admission: WAITLIST });
       expect(r.status).toBe("not_ready");
       if (r.status !== "not_ready") return;
       expect(r.blockers.map((b) => b.key)).toContain("wait_admission");
@@ -329,18 +342,16 @@ describe("ONB-02: WAIT admission and a real timezone authority", () => {
     it("the SAME evidence without the gate is ready — so the gate is what moved it", () => {
       // The control. Without this the assertion above could be passing because
       // ALL_GOOD was never ready in the first place.
-      vi.stubEnv(WAIT_ENV, "");
       expect(computeNewClientReadiness(ALL_GOOD)).toEqual({ status: "ready" });
     });
 
     it("another studio's slug on the list does not pause THIS studio", () => {
-      vi.stubEnv(WAIT_ENV, "some-other-studio");
+      // Another studio's mode is simply not this studio's evidence.
       expect(computeNewClientReadiness(ALL_GOOD)).toEqual({ status: "ready" });
     });
 
     it("it reports admission, never a misconfiguration", () => {
-      vi.stubEnv(WAIT_ENV, "willow");
-      const r = computeNewClientReadiness(ALL_GOOD);
+      const r = computeNewClientReadiness({ ...ALL_GOOD, admission: WAITLIST });
       if (r.status !== "not_ready") throw new Error("expected not_ready");
       const wait = r.blockers.find((b) => b.key === "wait_admission");
       expect(wait?.label).toMatch(/waitlist/i);
@@ -351,9 +362,9 @@ describe("ONB-02: WAIT admission and a real timezone authority", () => {
     it("it is the LAST step offered, behind anything structural", () => {
       // An operator still lacking a consultation service must be sent there,
       // not to the waitlist screen.
-      vi.stubEnv(WAIT_ENV, "willow");
       const r = computeNewClientReadiness({
         ...ALL_GOOD,
+        admission: WAITLIST,
         services: { ok: true, services: [] },
       });
       if (r.status !== "not_ready") throw new Error("expected not_ready");
@@ -403,8 +414,11 @@ describe("ONB-02: WAIT admission and a real timezone authority", () => {
     it("a WAIT pause is a PROVEN blocker, so it legitimately outranks unknown", () => {
       // not_ready here is correct and is not a collapse: admission is proven
       // paused regardless of what the unavailable authority would have said.
-      vi.stubEnv(WAIT_ENV, "willow");
-      const r = computeNewClientReadiness({ ...ALL_GOOD, treatmentConsent: { ok: false } });
+      const r = computeNewClientReadiness({
+        ...ALL_GOOD,
+        admission: WAITLIST,
+        treatmentConsent: { ok: false },
+      });
       expect(r.status).toBe("not_ready");
       if (r.status !== "not_ready") return;
       expect(r.unavailable).toContain("treatment_consent");
@@ -858,5 +872,76 @@ describe("ONB-02: the admission row claims only what a cleared gate proves", () 
       /can book directly/i,
     );
     expect(row).toMatch(/Waitlist admission is off/i);
+  });
+});
+
+describe("NEW-CLIENT-MODE-01: admission is evidence, and UNKNOWN never reopens", () => {
+  it("OPEN keeps every structural prerequisite", () => {
+    expect(computeNewClientReadiness(ALL_GOOD)).toEqual({ status: "ready" });
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      services: { ok: true, services: [] },
+    });
+    if (r.status !== "not_ready") throw new Error("expected not_ready");
+    expect(r.blockers.map((b) => b.key)).toContain("consultation_service");
+  });
+
+  it("WAITLIST reports admission AND keeps the structural items", () => {
+    // A waitlist studio still needs a consultation service to convert anyone it
+    // admits, so the structural questions are not suppressed - only the
+    // deliberate-closure case is.
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      admission: WAITLIST,
+      services: { ok: true, services: [] },
+    });
+    if (r.status !== "not_ready") throw new Error("expected not_ready");
+    const keys = r.blockers.map((b) => b.key);
+    expect(keys).toContain("wait_admission");
+    expect(keys).toContain("consultation_service");
+    // and structural still outranks the admission state
+    expect(r.nextStep?.key).toBe("consultation_service");
+  });
+
+  it("CLOSED is a deliberate state, NOT a pile of setup failures", () => {
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      admission: CLOSED,
+      // every structural prerequisite missing at once
+      services: { ok: true, services: [] },
+      availability: { ok: true, days: [] },
+    });
+    if (r.status !== "not_ready") throw new Error("expected not_ready");
+    const keys = r.blockers.map((b) => b.key);
+    expect(keys).toContain("admission_closed");
+    expect(keys, "closure must not read as misconfiguration").not.toContain(
+      "consultation_service",
+    );
+    expect(keys).not.toContain("availability");
+    expect(keys).not.toContain("bookable_window");
+    const closed = r.blockers.find((b) => b.key === "admission_closed");
+    expect(closed?.label).not.toMatch(/not set|missing|incomplete|invalid/i);
+  });
+
+  it("UNKNOWN admission is never ready, and never silently OPEN", () => {
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      admission: ADMISSION_UNKNOWN,
+    });
+    expect(r.status).toBe("unknown");
+    if (r.status !== "unknown") return;
+    expect(r.unavailable).toContain("admission");
+    // the same evidence WITH a readable mode is ready - so admission moved it
+    expect(computeNewClientReadiness(ALL_GOOD)).toEqual({ status: "ready" });
+  });
+
+  it("an unreadable admission does not masquerade as CLOSED either", () => {
+    const r = computeNewClientReadiness({
+      ...ALL_GOOD,
+      admission: ADMISSION_UNKNOWN,
+    });
+    if (r.status !== "unknown") throw new Error("expected unknown");
+    // `closed` is a decision; unknown is the absence of one.
+    expect(JSON.stringify(r)).not.toMatch(/admission_closed/);
   });
 });
