@@ -6,9 +6,8 @@ import path from "node:path";
 // test exercises only its PURE surface function, so the client is stubbed out.
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
-const { publicNewClientSurface, resolveAdmission } = await import(
-  "@/lib/booking/new-client-admission"
-);
+const { publicNewClientSurface, publicBookFormSurface, resolveAdmission } =
+  await import("@/lib/booking/new-client-admission");
 const { NEW_CLIENT_WAITLIST_SLUGS_ENV } = await import(
   "@/lib/booking/new-client-waitlist"
 );
@@ -138,9 +137,20 @@ describe("existing-client authority is unchanged by this repair", () => {
   });
 
   it("an existing client at an unready studio still gets the readiness copy", () => {
-    expect(FORM).toMatch(
-      /clientType === "existing" && !structurallyBookable/,
-    );
+    // P2-A moved this decision out of an inline condition and into
+    // `publicBookFormSurface`, so the property is now asserted on BEHAVIOUR
+    // rather than on the literal text of a branch — which is strictly stronger
+    // than the source grep this assertion used to be. The branch must still
+    // exist to render it, and the copy must still be imported.
+    expect(
+      publicBookFormSurface({
+        clientType: "existing",
+        newClientAdmission: "open",
+        servicesCount: 3,
+        structurallyBookable: false,
+      }),
+    ).toBe("existing_unavailable");
+    expect(FORM).toContain('surface === "existing_unavailable"');
     expect(FORM).toContain("UNAVAILABLE_PUBLIC_BOOKING_MESSAGE");
   });
 
@@ -210,6 +220,20 @@ describe("presentation never reveals migration state", () => {
       if (ORIGINAL === undefined) delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
       else process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = ORIGINAL;
     }
+  });
+
+  it("the FORM surface function cannot read provenance either", () => {
+    // P2-A added a second presentation function for the component's own
+    // ordering. The same rule binds it: a visitor must not be able to tell a
+    // bridged waitlist from a persisted one, and the zero-service repair gave
+    // that function a new reason to be consulted.
+    const source = read("lib/booking/new-client-admission.ts");
+    const fn = source.slice(source.indexOf("export function publicBookFormSurface"));
+    const body = fn.slice(0, fn.indexOf("\n}"));
+    expect(body).not.toContain("source");
+    expect(body).not.toContain("IsCutOver");
+    expect(body).not.toContain("legacy_bridge");
+    expect(body).not.toContain("persisted");
   });
 
   it("the surface function cannot read provenance at all", () => {
