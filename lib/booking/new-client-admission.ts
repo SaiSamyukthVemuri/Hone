@@ -177,6 +177,38 @@ function isMissingColumn(error: { code?: string; message?: string }): boolean {
  * The single predicate every new-client booking path asks. `unknown` is false
  * here, and deliberately so.
  */
+/**
+ * Refusal for a NEW-client booking under `closed` or an UNREADABLE mode.
+ *
+ * ONE message and ONE code for both, deliberately. `closed` and `unknown`
+ * differ in cause and not in consequence - neither admits a new client - and a
+ * distinct answer for `unknown` would publish the fact that a read failed. It
+ * also must NOT say "join the waitlist": under `closed` there is no waitlist to
+ * join, and under `unknown` we cannot claim there is.
+ *
+ * It is returned whether or not invitation credentials were presented, so it
+ * cannot be used to probe whether an invitation is valid.
+ */
+export const NEW_CLIENT_ADMISSION_REFUSAL_CODE = "new_client_admission_closed" as const;
+export const NEW_CLIENT_ADMISSION_CLOSED_REFUSAL =
+  "This studio is not accepting new-client bookings right now.";
+
+/**
+ * Does admission refuse a NEW client OUTRIGHT - with no invitation exception?
+ *
+ * TRUE for `closed` and for an unreadable mode; FALSE for `open` and
+ * `waitlist`. `waitlist` refuses the ORDINARY path but is the one mode where a
+ * valid scoped invitation may still authorise a booking, which is the WAIT
+ * invitation lifecycle. `closed` and `unknown` admit no one: a previously
+ * issued invitation must not override a studio the owner closed, and a failed
+ * read must not be recoverable by presenting credentials.
+ */
+export function newClientAdmissionRefusesOutright(
+  a: NewClientAdmission,
+): boolean {
+  return !a.ok || a.mode === "closed";
+}
+
 export function newClientMayBook(a: NewClientAdmission): boolean {
   return a.ok && a.mode === "open";
 }

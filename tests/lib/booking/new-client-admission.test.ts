@@ -2,8 +2,13 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
-const { resolveAdmission, newClientMayBook, newClientMayJoinWaitlist, isNewClientAdmissionMode } =
-  await import("@/lib/booking/new-client-admission");
+const {
+  resolveAdmission,
+  newClientMayBook,
+  newClientMayJoinWaitlist,
+  isNewClientAdmissionMode,
+  newClientAdmissionRefusesOutright,
+} = await import("@/lib/booking/new-client-admission");
 const { NEW_CLIENT_WAITLIST_SLUGS_ENV } = await import("@/lib/booking/new-client-waitlist");
 
 // NEW-CLIENT-MODE-01 — the one admission authority.
@@ -198,5 +203,81 @@ describe("P1: the reader actually reads, for an ANON public visitor", () => {
     // The id, never the slug - a slug is what a browser could try to influence.
     expect(calls[0].key).toBe("id");
     expect(calls[0].val).toBe("studio-1");
+  });
+});
+
+// ===========================================================================
+// ANTI-COLLAPSE CONTRACT — exact-head P1 at be6722b7.
+//
+// `app/book/[slug]/actions.ts` gated new-client booking on ONE boolean,
+// `admissionGateApplies = !newClientMayBook(admission)`, which is true for
+// `waitlist`, `closed` AND an unreadable mode alike. The branch it guarded then
+// let any successfully authorized invitation continue, so an invitation issued
+// while a studio was WAITLISTED went on booking after the owner switched to
+// CLOSED, and booked identically when the admission read FAILED.
+//
+// One boolean cannot express this authority. It takes two, and this file is
+// where that is pinned.
+// ===========================================================================
+describe("the four admission states cannot collapse into one boolean", () => {
+  const OPEN = { ok: true, mode: "open" } as const;
+  const WAITLIST = { ok: true, mode: "waitlist" } as const;
+  const CLOSED = { ok: true, mode: "closed" } as const;
+  const UNKNOWN = { ok: false } as const;
+
+  it("newClientMayBook admits ONLY open", () => {
+    expect(newClientMayBook(OPEN)).toBe(true);
+    for (const state of [WAITLIST, CLOSED, UNKNOWN]) {
+      expect(newClientMayBook(state)).toBe(false);
+    }
+  });
+
+  it("newClientAdmissionRefusesOutright separates waitlist from closed/unknown", () => {
+    // THE WHOLE POINT. `mayBook` is false for all three non-ordinary states, so
+    // it cannot tell the one with an invitation exception from the two without.
+    expect(newClientMayBook(WAITLIST)).toBe(newClientMayBook(CLOSED));
+    // The second predicate must, and does.
+    expect(newClientAdmissionRefusesOutright(WAITLIST)).toBe(false);
+    expect(newClientAdmissionRefusesOutright(CLOSED)).toBe(true);
+    expect(newClientAdmissionRefusesOutright(UNKNOWN)).toBe(true);
+    expect(newClientAdmissionRefusesOutright(OPEN)).toBe(false);
+  });
+
+  it("an UNREADABLE mode is refused outright, never treated as open", () => {
+    // The class this PR got wrong three times: absence of proof read as
+    // permission. A failed read must not be recoverable by presenting
+    // credentials.
+    expect(newClientAdmissionRefusesOutright(UNKNOWN)).toBe(true);
+    expect(newClientMayBook(UNKNOWN)).toBe(false);
+    expect(newClientMayJoinWaitlist(UNKNOWN)).toBe(false);
+  });
+
+  it("the public booking action refuses BEFORE it can authorise an invitation", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const code = readFileSync(
+      join(process.cwd(), "app/book/[slug]/actions.ts"),
+      "utf8",
+    );
+
+    // It must consult the two-predicate authority, not a lone boolean.
+    expect(code).toContain("newClientAdmissionRefusesOutright(admission)");
+
+    // ORDER IS THE CONTRACT. The outright refusal must be returned before the
+    // invitation authority can run, or a valid invitation becomes an admission
+    // bypass again and an invitation is consumed on a path that cannot book.
+    const refusal = code.indexOf("newClientAdmissionRefusesOutright(admission)");
+    const authorize = code.indexOf("await authorizeInvitationForBooking(");
+    expect(refusal).toBeGreaterThan(-1);
+    expect(authorize).toBeGreaterThan(-1);
+    expect(
+      refusal,
+      "the closed/unknown refusal must precede invitation authorisation",
+    ).toBeLessThan(authorize);
+
+    // And it must be scoped to NEW clients only — existing clients are outside
+    // this authority entirely.
+    const guard = code.slice(refusal - 200, refusal + 40);
+    expect(guard).toContain('clientType === "new"');
   });
 });

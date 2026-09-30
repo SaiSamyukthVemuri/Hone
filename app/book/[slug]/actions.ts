@@ -52,6 +52,9 @@ import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   getNewClientAdmissionMode,
+  NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,
+  NEW_CLIENT_ADMISSION_REFUSAL_CODE,
+  newClientAdmissionRefusesOutright,
   newClientMayBook,
 } from "@/lib/booking/new-client-admission";
 import {
@@ -428,6 +431,11 @@ export type PublicBookResult =
       code?:
         | "slot_taken"
         | typeof NEW_CLIENT_WAITLIST_REFUSAL_CODE
+        // NEW-CLIENT-MODE-01. `closed` or an UNREADABLE admission mode. Distinct
+        // from the waitlist refusal because there is no waitlist to join, and
+        // returned whether or not credentials were presented so it cannot be
+        // used to probe an invitation.
+        | typeof NEW_CLIENT_ADMISSION_REFUSAL_CODE
         // WAIT-03B B2. A scoped invitation was presented and did not authorise
         // THIS request. Distinct from the plain waitlist refusal so a caller can
         // tell "you need an invitation" from "your invitation doesn't cover this".
@@ -595,13 +603,45 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // of invitation handling by omitting the half that identifies the invitation.
   const invitationPresented = Boolean(invitationToken) || Boolean(invitationCapability);
   // NEW-CLIENT-MODE-01. `open` is the ONLY mode in which a new client books
-  // normally. `waitlist` and `closed` both refuse, and an UNREADABLE mode
-  // refuses too: a failed read must never reopen a studio whose owner paused or
-  // closed new-client admission. Re-derived here from the server-resolved
-  // studio, so a stale tab cannot book around it.
+  // normally. Re-derived here from the server-resolved studio, so a stale tab
+  // cannot book around it.
+  //
+  // THE FOUR STATES ARE NOT ONE BOOLEAN, and collapsing them was a P1. The
+  // three non-ordinary states differ in exactly one respect - whether a valid
+  // scoped invitation may still admit the client:
+  //
+  //   waitlist -> the ORDINARY path refuses, and a valid scoped invitation is
+  //               the ONE exception that may authorise. This is the WAIT
+  //               invitation lifecycle and it is preserved unchanged below.
+  //   closed   -> NOBODY new books. A previously issued invitation must not
+  //               override a studio its owner has closed.
+  //   unknown  -> fail closed. A failed read must not be recoverable by
+  //               presenting credentials.
+  //
+  // `admissionGateApplies` alone could not tell those apart, so an invitation
+  // issued while a studio was WAITLISTED went on booking after the owner
+  // switched to CLOSED, and booked identically when the admission read failed.
   const admission = await getNewClientAdmissionMode(studio);
   const admissionGateApplies = !newClientMayBook(admission);
 
+  // BEFORE any invitation can be authorised. The refusal is returned whether or
+  // not credentials were presented and never consults them, so `closed` and
+  // `unknown` cannot be turned into an oracle for whether an invitation is
+  // valid - and `authorizeInvitationForBooking` is not reached at all, so no
+  // invitation is consumed on a path that cannot produce a booking.
+  //
+  // EXISTING CLIENTS ARE OUTSIDE THIS AUTHORITY: the condition is
+  // clientType === "new", exactly as the ordinary gate below.
+  if (clientType === "new" && newClientAdmissionRefusesOutright(admission)) {
+    return {
+      ok: false,
+      error: NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,
+      code: NEW_CLIENT_ADMISSION_REFUSAL_CODE,
+    };
+  }
+
+  // Reaching here with the gate on means the mode is WAITLIST - the one state
+  // with an invitation exception - so the selector below is unchanged.
   if (clientType === "new" && (admissionGateApplies || invitationPresented)) {
     if (invitationToken && invitationCapability) {
       const requestedStartsAt = new Date(startsAtRaw);
