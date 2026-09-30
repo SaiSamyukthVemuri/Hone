@@ -133,15 +133,27 @@ describe("provider calls live in exactly one place", () => {
     expect(Object.keys(pkg.devDependencies ?? {})).not.toContain("twilio");
   });
 
-  it("nothing outside lib/sms calls a Twilio provisioning endpoint", () => {
-    // The adapter and the existing send helper are the only files allowed to
-    // name a Twilio host. Anything else means a REST call has escaped the
-    // boundary into an action, a component or a route.
+  it("nothing outside an allowlisted adapter names a Twilio host", () => {
+    // Three files may name a Twilio host. Anything else means a REST call has
+    // escaped a boundary into an action, a component or a route.
+    //
+    // `verify` WAS MISSING FROM THIS ALTERNATION AND THAT WAS A REAL HOLE, found
+    // while designing WAIT B2b-2 rather than by this guard. The alternation named
+    // api/messaging/lookups, so `https://verify.twilio.com` was invisible to it:
+    // the Verify adapter would have satisfied this test by accident, and so would
+    // a Verify call that escaped into an action or a route. The most relevant
+    // boundary file in the newest lane was the one file the boundary guard did not
+    // police. A host allowlist that enumerates SUBDOMAINS has this failure mode
+    // every time Twilio grows a product, which is why the fix widens the
+    // alternation AND this comment says what to do next time.
     const allowed = new Set([
       TWILIO_ADAPTER,
       "lib/sms/twilio.ts",
+      // WAIT B2b-2. The possession-proof boundary, whose own guards live in
+      // tests/source-guards/mobile-verification-provider-guards.test.ts.
+      "lib/waitlist/mobile-verification/twilio-verify-provider.ts",
     ]);
-    const hosts = /https:\/\/(api|messaging|lookups)\.twilio\.com/;
+    const hosts = /https:\/\/(api|messaging|lookups|verify)\.twilio\.com/;
 
     // Walk the source tree without shelling out.
     const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
