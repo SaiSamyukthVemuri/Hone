@@ -7,7 +7,10 @@ import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { PublicBookForm } from "./PublicBookForm";
-import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
+import {
+  getNewClientAdmissionMode,
+  publicNewClientSurface,
+} from "@/lib/booking/new-client-admission";
 import type { Service } from "@/lib/types/database";
 import {
   isPubliclyBookable,
@@ -82,6 +85,23 @@ export default async function PublicBookingPage({
     openAvailabilityDaysCount,
   });
 
+  // PRESENTATION ORDER. `bookable` used to gate this whole region, so a studio
+  // that was CLOSED or UNREADABLE *and* structurally unready showed the generic
+  // setup copy instead of its real admission state. Structural readiness is the
+  // right answer only for OPEN: it is the one mode whose surface is the booking
+  // form. The other three each have a truthful surface of their own, and a
+  // waitlist in particular exists FOR a studio that cannot offer slots, so
+  // hiding it behind bookability inverts its purpose.
+  //
+  // Server actions remain the authority. This orders what a visitor is told; it
+  // grants nothing. Every mode is still re-derived server-side on submit.
+  const admissionMode = publicAdmission.ok ? publicAdmission.mode : "unknown";
+  const surface = publicNewClientSurface({
+    mode: admissionMode,
+    structurallyBookable: bookable,
+  });
+  const showAdmissionAwareForm = surface !== "setup_notice";
+
   const today = todayInTz(studio.timezone);
   const horizon = horizonRangeInStudioTz(
     studio.timezone,
@@ -119,18 +139,23 @@ export default async function PublicBookingPage({
             )}
           </div>
 
-          {bookable ? (
+          {showAdmissionAwareForm ? (
             <PublicBookForm
               slug={studio.slug}
               studioName={studio.name}
+              /* ADMISSION OUTRANKS STRUCTURAL READINESS, except for OPEN.
+                 The form owns the truthful CLOSED / UNKNOWN / WAITLIST
+                 surfaces, so it has to render for them even when the studio
+                 has no active service and no open availability day. Passing
+                 readiness down rather than gating on it keeps the existing
+                 client path exactly where it was. */
+              structurallyBookable={bookable}
               /* P0 new-client waitlist. A DERIVED boolean only: the configured
                  slug allowlist is server-only and never reaches the browser,
                  and this flag is presentation authority only. The public
                  booking server action re-derives it from the server-resolved
                  studio, so a stale tab or forged post cannot book around it. */
-              newClientAdmission={
-                publicAdmission.ok ? publicAdmission.mode : "unknown"
-              }
+              newClientAdmission={admissionMode}
               studioAddress={studio.address ?? null}
               services={services}
               defaultDate={today}

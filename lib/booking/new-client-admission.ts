@@ -254,3 +254,50 @@ export async function studioIsInWaitlistMode(
   });
   return a.ok && a.mode === "waitlist";
 }
+
+/**
+ * WHAT A NEW CLIENT IS SHOWN on the public booking page, given the studio's
+ * admission mode and whether the studio is structurally bookable (it has an
+ * active service AND an open availability day).
+ *
+ * THE ORDERING IS THE POINT. Structural readiness used to gate the whole
+ * region, so a CLOSED or UNREADABLE studio that also had no service and no open
+ * day showed the generic setup copy and its real admission state vanished.
+ * Readiness is the right answer for exactly one mode:
+ *
+ *   OPEN      the surface IS the booking form, so readiness decides it.
+ *   WAITLIST  a waitlist exists FOR a studio that cannot offer slots. Gating it
+ *             on bookability inverts its purpose, so it always shows.
+ *   CLOSED    an intentional studio state. It is true whether or not the
+ *             calendar happens to be set up, and saying "still being set up"
+ *             instead would be false.
+ *   UNKNOWN   a real state, not an absence. The honest answer is that we cannot
+ *             tell right now; collapsing it into either READY or a setup notice
+ *             asserts something unproven in both directions.
+ *
+ * PRESENTATION ONLY. Every mode is re-derived server-side by the booking and
+ * waitlist actions on submit, so nothing here grants or withholds authority.
+ * EXISTING-client rights are outside this function entirely.
+ */
+export type PublicNewClientSurface =
+  | "booking_form"
+  | "waitlist_journey"
+  | "closed_notice"
+  | "unknown_notice"
+  | "setup_notice";
+
+export function publicNewClientSurface(input: {
+  mode: NewClientAdmissionMode | "unknown";
+  structurallyBookable: boolean;
+}): PublicNewClientSurface {
+  switch (input.mode) {
+    case "closed":
+      return "closed_notice";
+    case "unknown":
+      return "unknown_notice";
+    case "waitlist":
+      return "waitlist_journey";
+    case "open":
+      return input.structurallyBookable ? "booking_form" : "setup_notice";
+  }
+}

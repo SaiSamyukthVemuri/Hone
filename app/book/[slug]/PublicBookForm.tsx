@@ -6,6 +6,7 @@ import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
+import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
 import { isConsultationService } from "@/lib/booking/consultation";
 import {
   pushAvailabilityHistory,
@@ -62,6 +63,15 @@ type Props = {
    * canonical authority before any mutation; nothing here is trusted to admit.
    */
   newClientAdmission?: "open" | "waitlist" | "closed" | "unknown";
+  /**
+   * Whether the studio has an active service AND an open availability day.
+   *
+   * Defaults TRUE so every pre-existing call site renders exactly as before.
+   * The page now mounts this component for CLOSED / UNKNOWN / WAITLIST even
+   * when readiness is false, because those surfaces live here; this flag is how
+   * the EXISTING-client branch keeps the answer it always gave.
+   */
+  structurallyBookable?: boolean;
 };
 
 // BOOK-01 Tranche 1. The success state carries the appointment's MANAGEMENT URL
@@ -137,6 +147,7 @@ export function PublicBookForm({
   minDate,
   maxDate,
   newClientAdmission = "open",
+  structurallyBookable = true,
 }: Props) {
   // Pre-compute the service buckets each path needs. Done once at
   // mount and re-runs only if `services` actually changes (which
@@ -495,6 +506,20 @@ export function PublicBookForm({
   // form is intentionally unreachable from the rendered surface.
   // Full removal of the unreachable existing-client form fields is
   // deferred to a follow-up cleanup PR.
+  // EXISTING CLIENT AT A STRUCTURALLY UNREADY STUDIO. Their authority is
+  // untouched by the admission repair: with no active service and no open
+  // availability day there is nothing for them to pick, and this is the very
+  // copy they saw before the page began mounting this component for non-OPEN
+  // modes. Placed BEFORE the existing-client branch below, which is the last
+  // point at which `clientType` is still wider than "new".
+  if (clientType === "existing" && !structurallyBookable) {
+    return (
+      <p className="text-sm text-neutral-700">
+        {UNAVAILABLE_PUBLIC_BOOKING_MESSAGE}
+      </p>
+    );
+  }
+
   if (clientType === "existing") {
     return (
       <div className="flex flex-col gap-6">
