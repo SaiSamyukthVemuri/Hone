@@ -1345,14 +1345,19 @@ describe("the Settings tab is server-gated", () => {
     "utf8",
   );
 
-  it("requires the canonical WAITLIST mode for the live path, OR an active queue", () => {
+  it("requires the DURABLE COMMIT PATH for the live path, OR an active queue", () => {
     // NEW-CLIENT-MODE-01: the two rollout flags are replaced by the one mode.
     // WAITLIST-NAV-VIS-01's second path is UNCHANGED and load-bearing: a studio
     // already holding active entries keeps its navigation to them, whatever the
     // mode says - which is also why UNKNOWN cannot strand a real queue.
-    // Behavioural proof lives in waitlist-nav-visibility.test.ts.
+    //
+    // P2-B: the FIRST path is the durable commit decision, not the mode. A
+    // bridged WAITLIST studio whose joins still commit by email has no durable
+    // queue, so the tab would open an empty operator surface. Reusing the
+    // bridge's own decision is what stops the nav and the commit point drifting
+    // apart. Behavioural proof lives in waitlist-nav-visibility.test.ts.
     expect(LAYOUT).toMatch(
-      /const waitlistLive = admission\.ok && admission\.mode === "waitlist";/,
+      /const waitlistLive = newClientWaitlistCommitIsDurable\(admission, studio\.slug\);/,
     );
     expect(LAYOUT).toMatch(
       /const waitlistTabVisible =\s*\n\s*isOwner &&\s*\n\s*\(waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), studio\.id\)\)\);/,

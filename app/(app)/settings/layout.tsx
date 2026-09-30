@@ -1,5 +1,6 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
+import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
 import { createClient } from "@/lib/supabase/server";
 import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
 import { SettingsNav, type SettingsNavItem } from "./SettingsNav";
@@ -49,8 +50,20 @@ export default async function SettingsLayout({
   // studio with a real queue must never lose its navigation to that queue,
   // whatever the mode says. That is also why UNKNOWN cannot hide an active
   // queue: an unreadable mode is not evidence that the queue is gone.
+  //
+  // THE FIRST HALF IS THE DURABLE COMMIT PATH, NOT THE MODE. `waitlist` alone
+  // was wrong: during the migration bridge a studio can be in WAITLIST mode
+  // while its joins still commit through legacy email acceptance, so the tab
+  // would open an operator queue that nothing writes to. The owner would be
+  // shown an empty queue while their prospects sat in an inbox - and a deploy
+  // that is meant to change no behaviour would have added a tab.
+  //
+  // This tab EXISTS to work a durable queue, so the question it must ask is
+  // whether a permitted join lands in one. That is exactly the bridge's
+  // decision, reused rather than restated: persisted WAITLIST always durable,
+  // legacy-inherited WAITLIST only while the legacy durable list says so.
   const admission = await getNewClientAdmissionMode(studio);
-  const waitlistLive = admission.ok && admission.mode === "waitlist";
+  const waitlistLive = newClientWaitlistCommitIsDurable(admission, studio.slug);
   const waitlistTabVisible =
     isOwner &&
     (waitlistLive ||
