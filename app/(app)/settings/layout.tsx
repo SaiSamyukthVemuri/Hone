@@ -1,8 +1,5 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import {
-  isNewClientWaitlistEnabled,
-  isNewClientWaitlistDurableEnabled,
-} from "@/lib/booking/new-client-waitlist";
+import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { createClient } from "@/lib/supabase/server";
 import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
 import { SettingsNav, type SettingsNavItem } from "./SettingsNav";
@@ -47,9 +44,13 @@ export default async function SettingsLayout({
   // already answered, on the RLS-scoped user client, HEAD-only. It fails
   // closed (tab hidden). /settings/waitlist stays reachable by URL for an
   // owner in every shape either way — this governs navigation, not access.
-  const waitlistLive =
-    isNewClientWaitlistEnabled(studio.slug) &&
-    isNewClientWaitlistDurableEnabled(studio.slug);
+  // NEW-CLIENT-MODE-01: the canonical mode replaces the two env predicates.
+  // The second half of the rule below is UNCHANGED and deliberately so - a
+  // studio with a real queue must never lose its navigation to that queue,
+  // whatever the mode says. That is also why UNKNOWN cannot hide an active
+  // queue: an unreadable mode is not evidence that the queue is gone.
+  const admission = await getNewClientAdmissionMode(studio);
+  const waitlistLive = admission.ok && admission.mode === "waitlist";
   const waitlistTabVisible =
     isOwner &&
     (waitlistLive ||

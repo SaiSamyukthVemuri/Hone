@@ -37,6 +37,15 @@ const scenario = {
 const queries: Recorded[] = [];
 let clientsBuilt = 0;
 
+// NEW-CLIENT-MODE-01: the nav now reads the canonical mode. Driving it
+// directly makes each case state the mode it is about, instead of stubbing two
+// deploy variables and hoping the bridge turns them into the intended state.
+const admissionScenario: { value: { ok: boolean; mode?: string } } = {
+  value: { ok: true, mode: "open" },
+};
+vi.mock("@/lib/booking/new-client-admission", () => ({
+  getNewClientAdmissionMode: vi.fn(async () => admissionScenario.value),
+}));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({
     practitioner: { id: "prac-1", role: scenario.role, user_id: "user-1" },
@@ -132,6 +141,7 @@ async function waitlistTabShown(): Promise<boolean> {
 }
 
 beforeEach(() => {
+  admissionScenario.value = { ok: true, mode: "open" };
   savedEnv = envKeys.map((k) => [k, process.env[k]] as const);
   scenario.role = "owner";
   scenario.rows = [];
@@ -150,7 +160,7 @@ afterEach(() => {
 
 describe("Settings → Waitlist tab visibility", () => {
   it("1. owner + active rows + flags OFF → visible", async () => {
-    setFlags(false);
+    admissionScenario.value = { ok: true, mode: "open" };
     scenario.rows = Array.from({ length: 27 }, () => ({
       studio_id: STUDIO_ID,
       status: "waiting",
@@ -161,36 +171,36 @@ describe("Settings → Waitlist tab visibility", () => {
   it.each(["waiting", "claimed", "invited", "expired", "released"])(
     "1b. a single %s entry is enough with flags OFF",
     async (status) => {
-      setFlags(false);
+      admissionScenario.value = { ok: true, mode: "open" };
       scenario.rows = [{ studio_id: STUDIO_ID, status }];
       expect(await waitlistTabShown()).toBe(true);
     },
   );
 
-  it("2. owner + flags ON → visible, without needing the presence read", async () => {
-    setFlags(true);
+  it("2. owner + mode WAITLIST → visible, without needing the presence read", async () => {
+    admissionScenario.value = { ok: true, mode: "waitlist" };
     expect(await waitlistTabShown()).toBe(true);
     expect(queries).toHaveLength(0);
     expect(clientsBuilt).toBe(0);
   });
 
-  it("3. owner + no rows + flags OFF → hidden", async () => {
-    setFlags(false);
+  it("3. owner + no rows + mode OPEN → hidden", async () => {
+    admissionScenario.value = { ok: true, mode: "open" };
     expect(await waitlistTabShown()).toBe(false);
   });
 
-  it("4. member + active rows (flags OFF or ON) → hidden, and nothing is read", async () => {
+  it("4. member + active rows (any mode) → hidden, and nothing is read", async () => {
     scenario.role = "member";
     scenario.rows = [{ studio_id: STUDIO_ID, status: "waiting" }];
-    setFlags(false);
+    admissionScenario.value = { ok: true, mode: "open" };
     expect(await waitlistTabShown()).toBe(false);
-    setFlags(true);
+    admissionScenario.value = { ok: true, mode: "waitlist" };
     expect(await waitlistTabShown()).toBe(false);
     expect(queries).toHaveLength(0);
   });
 
   it("5. removed/converted-only history + flags OFF → hidden", async () => {
-    setFlags(false);
+    admissionScenario.value = { ok: true, mode: "open" };
     scenario.rows = [
       { studio_id: STUDIO_ID, status: "removed" },
       { studio_id: STUDIO_ID, status: "converted" },
@@ -199,7 +209,7 @@ describe("Settings → Waitlist tab visibility", () => {
   });
 
   it("6. the read is studio-scoped, HEAD-only, bounded to active states, on the user client", async () => {
-    setFlags(false);
+    admissionScenario.value = { ok: true, mode: "open" };
     // Another studio's active rows must not light up this studio's tab.
     scenario.rows = [{ studio_id: OTHER_STUDIO_ID, status: "waiting" }];
     expect(await waitlistTabShown()).toBe(false);
@@ -218,7 +228,7 @@ describe("Settings → Waitlist tab visibility", () => {
   });
 
   it("fails closed: a read error hides the tab and does not throw", async () => {
-    setFlags(false);
+    admissionScenario.value = { ok: true, mode: "open" };
     scenario.rows = [{ studio_id: STUDIO_ID, status: "waiting" }];
     scenario.error = { code: "42501" };
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -253,4 +263,65 @@ describe("the presence rule stays navigation-only", () => {
     );
     expect(PAGE).toContain("const SECTION_STATUSES = OPERATOR_QUEUE_STATUSES;");
   });
+});
+
+describe("NEW-CLIENT-MODE-01: the nav follows the canonical mode", () => {
+  // waitlistTabVisible = owner && (mode === WAITLIST || an active queue exists)
+  //
+  // The second half is unchanged and load-bearing: a studio with a real queue
+  // must never lose its navigation to that queue, whatever the mode says. That
+  // is also why UNKNOWN cannot hide an active queue - an unreadable mode is not
+  // evidence that the queue is gone.
+  const ACTIVE = [{ studio_id: STUDIO_ID, status: "waiting" }];
+
+  it("WAITLIST + empty queue -> visible", async () => {
+    admissionScenario.value = { ok: true, mode: "waitlist" };
+    scenario.rows = [];
+    expect(await waitlistTabShown()).toBe(true);
+  });
+
+  it("OPEN + empty queue -> hidden", async () => {
+    admissionScenario.value = { ok: true, mode: "open" };
+    scenario.rows = [];
+    expect(await waitlistTabShown()).toBe(false);
+  });
+
+  it("CLOSED + empty queue -> hidden", async () => {
+    admissionScenario.value = { ok: true, mode: "closed" };
+    scenario.rows = [];
+    expect(await waitlistTabShown()).toBe(false);
+  });
+
+  it.each([["open"], ["closed"]])(
+    "%s + an ACTIVE queue -> visible, because the queue is real",
+    async (mode) => {
+      admissionScenario.value = { ok: true, mode };
+      scenario.rows = ACTIVE;
+      expect(await waitlistTabShown()).toBe(true);
+    },
+  );
+
+  it("UNKNOWN + an ACTIVE queue -> visible", async () => {
+    // Never invent WAITLIST from an unreadable mode - but never strand a real
+    // queue either.
+    admissionScenario.value = { ok: false };
+    scenario.rows = ACTIVE;
+    expect(await waitlistTabShown()).toBe(true);
+  });
+
+  it("UNKNOWN + empty queue -> hidden", async () => {
+    admissionScenario.value = { ok: false };
+    scenario.rows = [];
+    expect(await waitlistTabShown()).toBe(false);
+  });
+
+  it.each([["waitlist"], ["open"], ["closed"]])(
+    "a non-owner never sees it, whatever the mode (%s)",
+    async (mode) => {
+      scenario.role = "member";
+      admissionScenario.value = { ok: true, mode };
+      scenario.rows = ACTIVE;
+      expect(await waitlistTabShown()).toBe(false);
+    },
+  );
 });

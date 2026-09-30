@@ -1,5 +1,6 @@
 "use server";
 
+import { studioIsInWaitlistMode } from "@/lib/booking/new-client-admission";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
@@ -288,7 +289,7 @@ async function assertReschedulableOriginal(
   const embedded = data as unknown as EmbeddedPolicyRow;
   if (
     isFreeConsultWaitlistOnlyReschedule({
-      studioSlug: firstEmbedded(embedded.studio)?.slug ?? null,
+      studioIsWaitlisted: await studioIsInWaitlistMode(firstEmbedded(embedded.studio)),
       service: firstEmbedded(embedded.service),
     })
   ) {

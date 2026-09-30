@@ -17,6 +17,7 @@ import {
 // the cancel page can WARN about a restriction it does not itself impose:
 // nothing about cancellation changes here, only what the visitor is told.
 import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
+import { studioIsInWaitlistMode } from "@/lib/booking/new-client-admission";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before cancelling.";
@@ -562,7 +563,7 @@ export async function fetchAppointmentForCancelAction(
   // sent. The slug is returned ONLY alongside a true verdict, so it cannot be
   // read off this public surface for a studio the policy does not cover.
   const freeConsultationWaitlistOnly = isFreeConsultWaitlistOnlyReschedule({
-    studioSlug: studio?.slug ?? null,
+    studioIsWaitlisted: await studioIsInWaitlistMode(studio),
     service,
   });
 

@@ -128,8 +128,8 @@ export default async function PublicBookingPage({
                  and this flag is presentation authority only. The public
                  booking server action re-derives it from the server-resolved
                  studio, so a stale tab or forged post cannot book around it. */
-              newClientWaitlistEnabled={
-                publicAdmission.ok && publicAdmission.mode === "waitlist"
+              newClientAdmission={
+                publicAdmission.ok ? publicAdmission.mode : "unknown"
               }
               studioAddress={studio.address ?? null}
               services={services}

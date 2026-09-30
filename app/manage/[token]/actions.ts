@@ -11,6 +11,7 @@ import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 // "Reschedule appointment" to someone /reschedule will then refuse is the same
 // dead end, one screen earlier. Same decision, same server-resolved inputs.
 import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
+import { studioIsInWaitlistMode } from "@/lib/booking/new-client-admission";
 
 // Generic public-facing message for the /manage surface. Returned for
 // any non-success outcome so the existence of a real appointment row
@@ -185,7 +186,7 @@ export async function fetchAppointmentForManageAction(
       // policy stays invisible to a probing caller. The slug is consumed here
       // and never returned: this surface has no waitlist CTA to build.
       freeConsultationWaitlistOnly: isFreeConsultWaitlistOnlyReschedule({
-        studioSlug: studio?.slug ?? null,
+        studioIsWaitlisted: await studioIsInWaitlistMode(studio),
         service,
       }),
     },

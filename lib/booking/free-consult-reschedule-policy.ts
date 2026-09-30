@@ -2,7 +2,6 @@ import "server-only";
 
 import type { Service } from "@/lib/types/database";
 import { isConsultationService } from "@/lib/booking/consultation";
-import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
 
 // ===========================================================================
 // EMERG-01 — WAITLIST-ONLY REBOOKING OF A FREE CONSULTATION
@@ -27,7 +26,7 @@ import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
 // WHAT THIS MODULE DELIBERATELY IS NOT.
 //
 //   * NOT A SECOND GATE. Studio scope is answered by
-//     `isNewClientWaitlistEnabled` and nothing else — same server-only env
+//     the studio's canonical admission mode and nothing else - resolved by
 //     allowlist, same exact-match semantics, same DEFAULT OFF, same one-line
 //     kill switch. No new environment variable was added, because the existing
 //     gate already expresses "this studio's new-client intake is closed", which
@@ -123,14 +122,22 @@ export type FreeConsultPolicyService = Pick<
  *   resolvable service is not one, so it keeps its existing behaviour.
  */
 export function isFreeConsultWaitlistOnlyReschedule(input: {
-  studioSlug: string | null | undefined;
+  /**
+   * Whether the studio is in WAITLIST mode, resolved by the caller from the one
+   * admission authority.
+   *
+   * NEW-CLIENT-MODE-01 took the env read out of here. This function is pure and
+   * cannot perform the database read the canonical resolver needs, so the
+   * caller - which has already resolved the studio server-side - supplies the
+   * answer. UNKNOWN maps to `false` at every call site, which is exactly what
+   * the default-off env behaviour did for an unconfigured deployment.
+   */
+  studioIsWaitlisted: boolean;
   service: FreeConsultPolicyService | null | undefined;
 }): boolean {
-  const { studioSlug, service } = input;
-  // Studio scope first: outside a waitlisted studio nothing else is even asked,
-  // and DEFAULT OFF means an unconfigured deployment answers `false` here for
-  // every studio in the world.
-  if (!isNewClientWaitlistEnabled(studioSlug)) return false;
+  const { studioIsWaitlisted, service } = input;
+  // Studio scope first: outside a waitlisted studio nothing else is even asked.
+  if (!studioIsWaitlisted) return false;
   if (!service) return false;
   if (!isConsultationService(service)) return false;
   // STRICT zero. `price_cents` is nullable and null means "no price recorded",

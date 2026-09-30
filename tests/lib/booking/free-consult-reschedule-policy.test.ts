@@ -59,7 +59,7 @@ describe("isFreeConsultWaitlistOnlyReschedule — the positive case", () => {
     enable(WAITLISTED);
     expect(
       isFreeConsultWaitlistOnlyReschedule({
-        studioSlug: WAITLISTED,
+        studioIsWaitlisted: true,
         service: FREE_CONSULT,
       }),
     ).toBe(true);
@@ -72,7 +72,7 @@ describe("isFreeConsultWaitlistOnlyReschedule — the positive case", () => {
     enable(WAITLISTED);
     expect(
       isFreeConsultWaitlistOnlyReschedule({
-        studioSlug: WAITLISTED,
+        studioIsWaitlisted: true,
         service: { modality: null, name: "Free Consultation", price_cents: 0 },
       }),
     ).toBe(true);
@@ -86,7 +86,7 @@ describe("NEGATIVE CONTROL E — a PAID consultation is untouched", () => {
       enable(WAITLISTED);
       expect(
         isFreeConsultWaitlistOnlyReschedule({
-          studioSlug: WAITLISTED,
+          studioIsWaitlisted: true,
           service: { ...FREE_CONSULT, price_cents },
         }),
       ).toBe(false);
@@ -97,7 +97,7 @@ describe("NEGATIVE CONTROL E — a PAID consultation is untouched", () => {
     enable(WAITLISTED);
     expect(
       isFreeConsultWaitlistOnlyReschedule({
-        studioSlug: WAITLISTED,
+        studioIsWaitlisted: true,
         service: { ...FREE_CONSULT, price_cents: null },
       }),
     ).toBe(false);
@@ -114,7 +114,7 @@ describe("NEGATIVE CONTROL F — a $0 NON-consultation treatment is untouched", 
     enable(WAITLISTED);
     expect(
       isFreeConsultWaitlistOnlyReschedule({
-        studioSlug: WAITLISTED,
+        studioIsWaitlisted: true,
         service: { modality, name: name as string, price_cents: 0 },
       }),
     ).toBe(false);
@@ -126,7 +126,7 @@ describe("NEGATIVE CONTROL F — a $0 NON-consultation treatment is untouched", 
     enable(WAITLISTED);
     expect(
       isFreeConsultWaitlistOnlyReschedule({
-        studioSlug: WAITLISTED,
+        studioIsWaitlisted: true,
         service: {
           modality: "electrolysis",
           name: "15 Minutes",
@@ -142,33 +142,19 @@ describe("NEGATIVE CONTROL G — an OPEN studio is untouched", () => {
     enable(WAITLISTED);
     expect(
       isFreeConsultWaitlistOnlyReschedule({
-        studioSlug: OPEN,
+        studioIsWaitlisted: false,
         service: FREE_CONSULT,
       }),
     ).toBe(false);
   });
 
-  it("DEFAULT OFF — an unset gate matches nothing, for any studio", () => {
-    expect(
-      isFreeConsultWaitlistOnlyReschedule({
-        studioSlug: WAITLISTED,
-        service: FREE_CONSULT,
-      }),
-    ).toBe(false);
-  });
+  // NEW-CLIENT-MODE-01. The env-list PARSING cases that stood here - unset,
+  // empty, whitespace, comma-only - tested the gate predicate, not this
+  // function, which no longer reads any environment value. That coverage lives
+  // in tests/lib/booking/new-client-admission.test.ts, where the transition
+  // bridge is exercised directly, and it is stronger there: it also proves the
+  // bridge can only ESCALATE.
 
-  it.each([[""], ["   "], [",,"], [" , , "]])(
-    "an empty/blank gate value (%j) matches nothing",
-    (raw) => {
-      enable(raw);
-      expect(
-        isFreeConsultWaitlistOnlyReschedule({
-          studioSlug: WAITLISTED,
-          service: FREE_CONSULT,
-        }),
-      ).toBe(false);
-    },
-  );
 
   it("EXACT MATCH ONLY — a prefix/suffix neighbour of an enabled slug does not match", () => {
     enable("willow-electrolysis");
@@ -180,7 +166,7 @@ describe("NEGATIVE CONTROL G — an OPEN studio is untouched", () => {
     ]) {
       expect(
         isFreeConsultWaitlistOnlyReschedule({
-          studioSlug: near,
+          studioIsWaitlisted: false,
           service: FREE_CONSULT,
         }),
         near,
@@ -190,24 +176,23 @@ describe("NEGATIVE CONTROL G — an OPEN studio is untouched", () => {
 });
 
 describe("the predicate cannot be satisfied by missing data", () => {
-  it.each([[null], [undefined], [""], ["   "]])(
-    "a %j studio slug never matches",
-    (studioSlug) => {
-      enable(WAITLISTED);
-      expect(
-        isFreeConsultWaitlistOnlyReschedule({
-          studioSlug,
-          service: FREE_CONSULT,
-        }),
-      ).toBe(false);
-    },
-  );
+  it("a studio that is not in waitlist mode never matches", () => {
+    // NEW-CLIENT-MODE-01: the slug no longer reaches this function. The caller
+    // resolves the mode from the one authority and passes the fact; UNKNOWN
+    // arrives here as `false`, which is what the default-off gate did.
+    expect(
+      isFreeConsultWaitlistOnlyReschedule({
+        studioIsWaitlisted: false,
+        service: FREE_CONSULT,
+      }),
+    ).toBe(false);
+  });
 
   it.each([[null], [undefined]])("a %j service never matches", (service) => {
     enable(WAITLISTED);
     expect(
       isFreeConsultWaitlistOnlyReschedule({
-        studioSlug: WAITLISTED,
+        studioIsWaitlisted: true,
         service,
       }),
     ).toBe(false);
@@ -229,18 +214,22 @@ describe("no studio is hardcoded", () => {
     // may consult is the one the gate already owns — and it consults it
     // THROUGH the gate, never by reading process.env itself.
     expect(POLICY_SOURCE).not.toContain("process.env");
-    expect(POLICY_SOURCE).toContain("isNewClientWaitlistEnabled");
+    // Stronger than before: this module now consults NO environment authority,
+    // directly or through a predicate. The caller supplies the resolved state.
+    expect(POLICY_SOURCE).not.toContain("isNewClientWaitlistEnabled");
+    expect(POLICY_SOURCE).toContain("studioIsWaitlisted");
   });
 
-  it("re-reads the gate on every call, so an operator change takes effect at once", () => {
-    enable(WAITLISTED);
+  it("the answer follows the state it is given, call by call", () => {
+    // What "an operator change takes effect at once" means now: the function
+    // holds no cached gate, so consecutive calls with different resolved states
+    // give different answers.
     const on = isFreeConsultWaitlistOnlyReschedule({
-      studioSlug: WAITLISTED,
+      studioIsWaitlisted: true,
       service: FREE_CONSULT,
     });
-    delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
     const off = isFreeConsultWaitlistOnlyReschedule({
-      studioSlug: WAITLISTED,
+      studioIsWaitlisted: false,
       service: FREE_CONSULT,
     });
     expect([on, off]).toEqual([true, false]);

@@ -121,3 +121,82 @@ describe("the predicates say exactly what they mean", () => {
     expect(newClientMayJoinWaitlist({ ok: false })).toBe(false);
   });
 });
+
+describe("P1: the reader actually reads, for an ANON public visitor", () => {
+  // The defect: getNewClientAdmissionMode used the RLS-scoped client. `studios`
+  // RLS is "members read" for authenticated only, so a public visitor got NO
+  // ROW - reported by maybeSingle as { data: null, error: null }, not an error.
+  // storedMode became null, the bridge answered, and a stored WAITLIST or
+  // CLOSED silently went on taking bookings. Silent, because nothing failed.
+  const STUDIO = { id: "studio-1", slug: "willow" };
+
+  const withAdminRow = async (
+    row: unknown,
+    error: { code?: string; message?: string } | null = null,
+  ) => {
+    vi.resetModules();
+    const calls: Array<{ table: string; cols: string; key: string; val: unknown }> = [];
+    vi.doMock("@/lib/supabase/admin-server", () => ({
+      createAdminClient: () => ({
+        from: (table: string) => ({
+          select: (cols: string) => ({
+            eq: (key: string, val: unknown) => {
+              calls.push({ table, cols, key, val });
+              return { maybeSingle: async () => ({ data: row, error }) };
+            },
+          }),
+        }),
+      }),
+    }));
+    const mod = await import("@/lib/booking/new-client-admission");
+    const result = await mod.getNewClientAdmissionMode(STUDIO);
+    return { result, calls };
+  };
+
+  it("honours a stored OPEN on the public path", async () => {
+    const { result } = await withAdminRow({ new_client_admission_mode: "open" });
+    expect(result).toEqual({ ok: true, mode: "open" });
+  });
+
+  it("a stored WAITLIST wins even when the legacy env does NOT list the studio", async () => {
+    // The exact silent failure: absent from the env, stored as waitlist.
+    delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
+    const { result } = await withAdminRow({ new_client_admission_mode: "waitlist" });
+    expect(result).toEqual({ ok: true, mode: "waitlist" });
+  });
+
+  it("a stored CLOSED wins even when the legacy env does NOT list the studio", async () => {
+    delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
+    const { result } = await withAdminRow({ new_client_admission_mode: "closed" });
+    expect(result).toEqual({ ok: true, mode: "closed" });
+  });
+
+  it("a NON-column read failure is UNKNOWN, never a fallback", async () => {
+    const { result } = await withAdminRow(null, {
+      code: "57014",
+      message: "canceling statement due to statement timeout",
+    });
+    expect(result).toEqual({ ok: false });
+  });
+
+  it("a pre-0204 MISSING COLUMN falls through to the bridge, not to unknown", async () => {
+    // Migration-order safety: the deployed app must keep working before 0204.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
+    const { result } = await withAdminRow(null, {
+      code: "42703",
+      message: 'column studios.new_client_admission_mode does not exist',
+    });
+    expect(result).toEqual({ ok: true, mode: "waitlist" });
+  });
+
+  it("reads ONE column, keyed by the SERVER-RESOLVED studio id", async () => {
+    const { calls } = await withAdminRow({ new_client_admission_mode: "open" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].table).toBe("studios");
+    // Not `select("*")`: no other studio column is exposed by this read.
+    expect(calls[0].cols).toBe("new_client_admission_mode");
+    // The id, never the slug - a slug is what a browser could try to influence.
+    expect(calls[0].key).toBe("id");
+    expect(calls[0].val).toBe("studio-1");
+  });
+});

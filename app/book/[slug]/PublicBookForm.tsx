@@ -53,7 +53,15 @@ type Props = {
   // the server resolved this studio's slug against the server-only allowlist.
   // Defaults to FALSE so every pre-existing render path, and any call site that
   // does not pass it, is byte-for-byte the previous behaviour.
-  newClientWaitlistEnabled?: boolean;
+  /**
+   * PRESENTATION STATE ONLY, and the whole closed set.
+   *
+   * A boolean destroyed two of the four answers: `closed` and `unknown` both
+   * collapsed to "not waitlisted", which renders as ordinary booking - the
+   * exact opposite of what either means. Server actions still re-read the
+   * canonical authority before any mutation; nothing here is trusted to admit.
+   */
+  newClientAdmission?: "open" | "waitlist" | "closed" | "unknown";
 };
 
 // BOOK-01 Tranche 1. The success state carries the appointment's MANAGEMENT URL
@@ -128,7 +136,7 @@ export function PublicBookForm({
   defaultDate,
   minDate,
   maxDate,
-  newClientWaitlistEnabled = false,
+  newClientAdmission = "open",
 }: Props) {
   // Pre-compute the service buckets each path needs. Done once at
   // mount and re-runs only if `services` actually changes (which
@@ -150,7 +158,17 @@ export function PublicBookForm({
   // put in waitlist mode. When the flag is off this is always false and every
   // expression below reduces to exactly the previous behaviour. Existing
   // clients are never in this branch: their booking path is untouched.
-  const waitlistNewClient = newClientWaitlistEnabled && clientType === "new";
+  // NEW-CLIENT ONLY, in every state. An EXISTING client's path is untouched
+  // whichever mode the studio is in: none of the branches below can be reached
+  // with clientType === "existing".
+  const isNewClient = clientType === "new";
+  const waitlistNewClient = isNewClient && newClientAdmission === "waitlist";
+  const closedToNewClient = isNewClient && newClientAdmission === "closed";
+  const unknownForNewClient = isNewClient && newClientAdmission === "unknown";
+  // Slots are fetched for a NEW client only when the studio is actually open to
+  // one. Asking for times a visitor may not book is a wasted round trip and a
+  // misleading UI while it resolves.
+  const newClientBlocked = waitlistNewClient || closedToNewClient || unknownForNewClient;
   // The picker's option set is whichever bucket matches the current
   // clientType. Until a type is chosen we still resolve a deterministic
   // first-id so the standard "default to the first service" pattern
@@ -249,7 +267,7 @@ export function PublicBookForm({
   // request-cancellation flag handles the unrelated race where slug,
   // serviceId, or date change while a fetch is in flight.
   useEffect(() => {
-    if (clientType == null || waitlistNewClient || !serviceId || !date) {
+    if (clientType == null || newClientBlocked || !serviceId || !date) {
       setSlots([]);
       setPicked(null);
       setError(null);
@@ -278,7 +296,7 @@ export function PublicBookForm({
     return () => {
       cancelled = true;
     };
-  }, [slug, serviceId, date, clientType, waitlistNewClient]);
+  }, [slug, serviceId, date, clientType, newClientBlocked]);
 
   // Availability is service-specific, so a prior service's "next available"
   // history is meaningless after a service switch: reset it. (Runs on mount
@@ -529,6 +547,50 @@ export function PublicBookForm({
             Use the email {studioName} has on file.
           </p>
         </div>
+      </div>
+    );
+  }
+
+  // CLOSED. No service picker, no date, no slot list, and no waitlist form:
+  // this studio is not taking new clients and there is nothing to join. The
+  // wording says what is true without implying it is temporary or that anything
+  // went wrong, and the existing-client route stays offered beside it.
+  if (closedToNewClient) {
+    return (
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-neutral-700">
+          {studioName} is not accepting new clients right now.
+        </p>
+        <button
+          type="button"
+          onClick={() => setClientType("existing")}
+          className="self-start text-sm underline"
+        >
+          I&rsquo;m already a client
+        </button>
+      </div>
+    );
+  }
+
+  // UNKNOWN. The studio's setting could not be read, so the honest answer is
+  // "we cannot tell right now" - never a booking form, which would present
+  // admission as available on no evidence, and never the waitlist form, which
+  // would collect a stranger's details for a queue that may not exist. No
+  // internal detail is shown.
+  if (unknownForNewClient) {
+    return (
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-neutral-700">
+          We can&rsquo;t check {studioName}&rsquo;s availability for new clients
+          just now. Please try again shortly.
+        </p>
+        <button
+          type="button"
+          onClick={() => setClientType("existing")}
+          className="self-start text-sm underline"
+        >
+          I&rsquo;m already a client
+        </button>
       </div>
     );
   }

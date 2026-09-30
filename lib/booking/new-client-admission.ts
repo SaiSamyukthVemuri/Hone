@@ -1,5 +1,5 @@
 import "server-only";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
 
 // ===========================================================================
@@ -122,8 +122,22 @@ export async function getNewClientAdmissionMode(studio: {
   let storedMode: string | null = null;
   let readFailed = false;
   try {
-    const supabase = await createClient();
-    const { data, error } = await supabase
+    // A SERVER-ONLY PRIVILEGED READ, AND IT HAS TO BE.
+    //
+    // `studios` RLS is "members read" for `authenticated` only, so the
+    // RLS-scoped client returns NO ROW for a public visitor - and `maybeSingle`
+    // reports that as `{ data: null, error: null }`. Read through that client,
+    // a stored WAITLIST or CLOSED became `storedMode = null`, fell through to
+    // the legacy bridge, and a studio the owner had paused or closed silently
+    // went on taking bookings. Silent, because nothing errored.
+    //
+    // The public booking page already reads this row the same way
+    // (`getStudioBySlug` uses the admin client for exactly this reason). The
+    // narrowing that keeps it safe is the projection and the key: ONE column,
+    // by the SERVER-RESOLVED studio id. No policy is added, `studios` is not
+    // made publicly readable, and no other column is exposed.
+    const admin = createAdminClient();
+    const { data, error } = await admin
       .from("studios")
       .select("new_client_admission_mode")
       .eq("id", studio.id)
@@ -174,5 +188,29 @@ export function newClientMayBook(a: NewClientAdmission): boolean {
  * which is the difference between the two refusals.
  */
 export function newClientMayJoinWaitlist(a: NewClientAdmission): boolean {
+  return a.ok && a.mode === "waitlist";
+}
+
+/**
+ * Is this studio in WAITLIST mode?
+ *
+ * For callers that need the fact as a plain boolean - the free-consult
+ * reschedule policy is pure and cannot perform this read itself.
+ *
+ * UNKNOWN maps to `false`, which is deliberate and narrow: these callers are
+ * deciding whether an EXTRA restriction applies to an existing client's
+ * reschedule, so an unreadable mode must not invent one. That is the same
+ * answer the default-off env behaviour gave an unconfigured deployment, and it
+ * is the opposite of the fail-closed rule for NEW-client mutation, where
+ * `unknown` refuses.
+ */
+export async function studioIsInWaitlistMode(
+  studio: { id?: string | null; slug?: string | null } | null | undefined,
+): Promise<boolean> {
+  if (!studio?.id) return false;
+  const a = await getNewClientAdmissionMode({
+    id: studio.id,
+    slug: studio.slug ?? null,
+  });
   return a.ok && a.mode === "waitlist";
 }

@@ -157,6 +157,12 @@ begin
      and p.role = 'owner'
    limit 1;
 
+  -- ARM THE ROW-SCOPED PERMIT. Transaction-local (`is_local => true`), so it
+  -- cannot leak to another statement, another session, or a later request, and
+  -- it names THIS studio so a permit for A can never pass an update to B. This
+  -- is the 0120 / 0203 idiom, unchanged.
+  perform set_config('hone.admission_mode_studio_id', p_studio_id::text, true);
+
   update public.studios s
      set new_client_admission_mode        = v_mode,
          new_client_admission_mode_set_at = v_now,
@@ -179,7 +185,65 @@ comment on function public.set_new_client_admission_mode(uuid, text) is
   'function. Returns ok | not_authorized | studio_not_found | invalid_mode.';
 
 -- ---------------------------------------------------------------------------
--- 4. GRANTS
+-- 4. THE COMMAND IS THE ONLY WRITER
+-- ---------------------------------------------------------------------------
+--
+-- WHY THIS IS NEEDED AT ALL. `studios` has carried a "studios: owners update"
+-- policy since 0001, so an owner already holds table-level UPDATE. Adding three
+-- columns to that table therefore hands every owner a PostgREST PATCH that sets
+-- the mode, backdates the `_set_at` column and names someone else in `_set_by`
+-- - bypassing the command, its owner re-derivation and its audit contract
+-- entirely. The command would be a front door beside an open window.
+--
+-- NARROW ON PURPOSE. This does not touch the existing policy, revoke UPDATE, or
+-- gate any other column: an ordinary studios update - name, timezone, buffer,
+-- any existing toggle - is unaffected and needs no permit. The guard fires ONLY
+-- when one of the three admission fields actually changes.
+--
+-- NOT A BYPASS SWITCH. The permit carries the studio id and is compared against
+-- the row being written, so it authorises exactly one row for the duration of
+-- one transaction. There is no value of it that means "allow anything".
+
+create or replace function public.studios_admission_mode_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_touches_admission boolean :=
+        new.new_client_admission_mode        is distinct from old.new_client_admission_mode
+     or new.new_client_admission_mode_set_at is distinct from old.new_client_admission_mode_set_at
+     or new.new_client_admission_mode_set_by is distinct from old.new_client_admission_mode_set_by;
+begin
+  if not v_touches_admission then
+    return new;
+  end if;
+
+  if coalesce(current_setting('hone.admission_mode_studio_id', true), '')
+     is distinct from new.id::text then
+    raise exception
+      'studios: new-client admission has exactly one writer, and this is not it'
+      using errcode = 'check_violation';
+  end if;
+
+  return new;
+end;
+$$;
+
+comment on function public.studios_admission_mode_guard() is
+  'Refuses any UPDATE that changes new_client_admission_mode or its audit '
+  'columns without a transaction-local permit naming THIS studio. Ordinary '
+  'studios updates are untouched.';
+
+drop trigger if exists studios_admission_mode_guard on public.studios;
+create trigger studios_admission_mode_guard
+  before update on public.studios
+  for each row
+  execute function public.studios_admission_mode_guard();
+
+-- ---------------------------------------------------------------------------
+-- 5. GRANTS
 -- ---------------------------------------------------------------------------
 --
 -- Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon, authenticated AND
