@@ -7,6 +7,7 @@ import {
   groupServicesByModality,
 } from "@/lib/booking/format";
 import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
+import { publicBookFormSurface } from "@/lib/booking/new-client-admission";
 import { isConsultationService } from "@/lib/booking/consultation";
 import {
   pushAvailabilityHistory,
@@ -176,6 +177,16 @@ export function PublicBookForm({
   const waitlistNewClient = isNewClient && newClientAdmission === "waitlist";
   const closedToNewClient = isNewClient && newClientAdmission === "closed";
   const unknownForNewClient = isNewClient && newClientAdmission === "unknown";
+
+  // THE ONE ORDERING DECISION, taken in `lib/booking/new-client-admission.ts`
+  // so the whole cross-product is testable without a renderer (this suite runs
+  // on the `node` environment; there is no jsdom in the repo).
+  const surface = publicBookFormSurface({
+    clientType,
+    newClientAdmission,
+    servicesCount: services.length,
+    structurallyBookable,
+  });
   // Slots are fetched for a NEW client only when the studio is actually open to
   // one. Asking for times a visitor may not book is a wasted round trip and a
   // misleading UI while it resolves.
@@ -471,14 +482,22 @@ export function PublicBookForm({
     );
   }
 
-  if (services.length === 0) {
-    return (
-      <p className="text-sm text-[#6B6B6B]">
-        This studio isn&rsquo;t accepting bookings yet. Please reach out
-        directly.
-      </p>
-    );
-  }
+  // NO GLOBAL ZERO-SERVICES RETURN. It used to sit here, ahead of the chooser
+  // and every admission branch, so a WAITLIST / CLOSED / UNKNOWN studio with no
+  // active service rendered the generic setup copy and its real admission state
+  // was thrown away — the page chose this component precisely to show that
+  // state. Service count is a fact about the BOOKING path, so it is now asked
+  // once a client type exists and only where booking is what the visitor is
+  // being offered. `noServicesNotice` below keeps the wording identical for
+  // every path that still deserves it.
+  // The exact copy the removed global return rendered. Shared rather than
+  // duplicated so the OPEN and existing-client paths cannot drift apart.
+  const noServicesNotice = (
+    <p className="text-sm text-[#6B6B6B]">
+      This studio isn&rsquo;t accepting bookings yet. Please reach out
+      directly.
+    </p>
+  );
 
   // First-step: client-side new/existing choice. Until a type is
   // picked the full booking form (service + date + slots + identity)
@@ -486,7 +505,7 @@ export function PublicBookForm({
   // are triggered. Picking a button does not call the server. The
   // identity-leak surface stays minimal: until submit, we never
   // disclose whether an email exists.
-  if (clientType == null) {
+  if (surface === "chooser") {
     return (
       <ClientTypeChooser
         studioName={studioName}
@@ -512,7 +531,15 @@ export function PublicBookForm({
   // copy they saw before the page began mounting this component for non-OPEN
   // modes. Placed BEFORE the existing-client branch below, which is the last
   // point at which `clientType` is still wider than "new".
-  if (clientType === "existing" && !structurallyBookable) {
+  // EXISTING CLIENT, ZERO SERVICES. Checked before the readiness branch so this
+  // path renders the SAME sentence it rendered when the global return caught it
+  // first. Admission mode is deliberately absent from both conditions: it does
+  // not govern existing-client authority.
+  if (surface === "existing_no_services") {
+    return noServicesNotice;
+  }
+
+  if (surface === "existing_unavailable") {
     return (
       <p className="text-sm text-neutral-700">
         {UNAVAILABLE_PUBLIC_BOOKING_MESSAGE}
@@ -520,7 +547,7 @@ export function PublicBookForm({
     );
   }
 
-  if (clientType === "existing") {
+  if (surface === "existing_portal") {
     return (
       <div className="flex flex-col gap-6">
         <div className="flex items-baseline justify-between gap-3">
@@ -580,7 +607,7 @@ export function PublicBookForm({
   // this studio is not taking new clients and there is nothing to join. The
   // wording says what is true without implying it is temporary or that anything
   // went wrong, and the existing-client route stays offered beside it.
-  if (closedToNewClient) {
+  if (surface === "closed_notice") {
     return (
       <div className="flex flex-col gap-4">
         <p className="text-sm text-neutral-700">
@@ -602,7 +629,7 @@ export function PublicBookForm({
   // admission as available on no evidence, and never the waitlist form, which
   // would collect a stranger's details for a queue that may not exist. No
   // internal detail is shown.
-  if (unknownForNewClient) {
+  if (surface === "unknown_notice") {
     return (
       <div className="flex flex-col gap-4">
         <p className="text-sm text-neutral-700">
@@ -626,7 +653,7 @@ export function PublicBookForm({
   // never walked through a booking flow only to be refused at the end. Placed
   // BEFORE the no-consultation-service branch: a waitlisted studio's service
   // catalogue is irrelevant because nothing here books anything.
-  if (waitlistNewClient) {
+  if (surface === "waitlist_journey") {
     return (
       <NewClientWaitlistForm
         slug={slug}
@@ -643,6 +670,14 @@ export function PublicBookForm({
   // services. The studio name is interpolated only as the page
   // anchor; the message itself does not expose service catalogue
   // state beyond "consultation is not set up".
+  // NEW CLIENT, OPEN, ZERO SERVICES. Reached only when the studio is OPEN: the
+  // CLOSED, UNKNOWN and WAITLIST branches above have already returned their own
+  // surfaces. OPEN's surface IS the booking form, so with nothing to book the
+  // structural answer is the right one and the wording is unchanged.
+  if (surface === "no_services_notice") {
+    return noServicesNotice;
+  }
+
   if (clientType === "new" && consultationServices.length === 0) {
     return (
       <div className="flex flex-col gap-4">

@@ -6,9 +6,8 @@ import path from "node:path";
 // test exercises only its PURE surface function, so the client is stubbed out.
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
-const { publicNewClientSurface, resolveAdmission } = await import(
-  "@/lib/booking/new-client-admission"
-);
+const { publicNewClientSurface, publicBookFormSurface, resolveAdmission } =
+  await import("@/lib/booking/new-client-admission");
 const { NEW_CLIENT_WAITLIST_SLUGS_ENV } = await import(
   "@/lib/booking/new-client-waitlist"
 );
@@ -138,9 +137,20 @@ describe("existing-client authority is unchanged by this repair", () => {
   });
 
   it("an existing client at an unready studio still gets the readiness copy", () => {
-    expect(FORM).toMatch(
-      /clientType === "existing" && !structurallyBookable/,
-    );
+    // P2-A moved this decision out of an inline condition and into
+    // `publicBookFormSurface`, so the property is now asserted on BEHAVIOUR
+    // rather than on the literal text of a branch — which is strictly stronger
+    // than the source grep this assertion used to be. The branch must still
+    // exist to render it, and the copy must still be imported.
+    expect(
+      publicBookFormSurface({
+        clientType: "existing",
+        newClientAdmission: "open",
+        servicesCount: 3,
+        structurallyBookable: false,
+      }),
+    ).toBe("existing_unavailable");
+    expect(FORM).toContain('surface === "existing_unavailable"');
     expect(FORM).toContain("UNAVAILABLE_PUBLIC_BOOKING_MESSAGE");
   });
 
