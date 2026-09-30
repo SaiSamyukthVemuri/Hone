@@ -86,9 +86,33 @@ comment on column public.studios.new_client_admission_mode is
 alter table public.studios
   add column if not exists new_client_admission_mode_set_at timestamptz;
 
+-- NO FOREIGN KEY, AND THAT IS DELIBERATE.
+--
+-- A `references public.practitioners(id)` here would add a SECOND relationship
+-- between `studios` and `practitioners`. PostgREST resolves embeds by
+-- relationship, and the forward one - `practitioners.studio_id -> studios.id`
+-- from 0001 - is already used by fifteen call sites as `studio:studios(*)`.
+-- Adding the reverse makes every one of them ambiguous:
+--
+--   "Could not embed because more than one relationship was found for
+--    'practitioners' and 'studios'"
+--
+-- which is a repository-wide PostgREST change for no product benefit. This
+-- column is audit EVIDENCE, not a relational edge anything traverses.
+--
+-- THE FK WAS NEVER THE AUTHORITY, so dropping it removes no guarantee:
+--   * set_new_client_admission_mode re-derives auth.uid() itself;
+--   * it resolves an ACTIVE OWNER belonging to THIS studio;
+--   * the browser never supplies a practitioner id;
+--   * the admission guard below requires a transaction-local permit naming
+--     THIS studio, so mode, set_at and set_by cannot be PATCHed around it;
+--   * the three fields change atomically, in the command's single statement.
+--
+-- It also makes the audit survive a practitioner's lifecycle: `on delete set
+-- null` would have ERASED the actor when that practitioner was removed, which
+-- is precisely when the record matters most.
 alter table public.studios
-  add column if not exists new_client_admission_mode_set_by uuid
-    references public.practitioners(id) on delete set null;
+  add column if not exists new_client_admission_mode_set_by uuid;
 
 comment on column public.studios.new_client_admission_mode_set_at is
   'When new_client_admission_mode was last set, from the DATABASE clock. NULL '
@@ -96,7 +120,11 @@ comment on column public.studios.new_client_admission_mode_set_at is
   'chosen a mode.';
 comment on column public.studios.new_client_admission_mode_set_by is
   'The practitioner the DATABASE resolved from auth.uid() at the moment the '
-  'mode was set - never an id the browser supplied.';
+  'mode was set - never an id the browser supplied. Deliberately NOT a foreign '
+  'key: a second studios<->practitioners relationship would make the '
+  'established practitioners -> studio:studios(*) PostgREST embed ambiguous. '
+  'Integrity comes from set_new_client_admission_mode plus the scoped permit '
+  'guard, not from a constraint, and the value outlives the practitioner row.';
 
 -- ---------------------------------------------------------------------------
 -- 3. THE ONE COMMAND
@@ -163,11 +191,15 @@ begin
   -- is the 0120 / 0203 idiom, unchanged.
   perform set_config('hone.admission_mode_studio_id', p_studio_id::text, true);
 
+  -- No `updated_at` write: public.studios HAS NO SUCH COLUMN (it carries
+  -- created_at and policy_updated_at only), and a plpgsql body is not
+  -- name-resolved at create time, so an invented column here fails with 42703
+  -- at CALL time - the command would never once succeed. The three admission
+  -- fields are their own audit record; set_at IS the "when".
   update public.studios s
      set new_client_admission_mode        = v_mode,
          new_client_admission_mode_set_at = v_now,
-         new_client_admission_mode_set_by = v_practitioner,
-         updated_at                       = v_now
+         new_client_admission_mode_set_by = v_practitioner
    where s.id = p_studio_id;
 
   if not found then
