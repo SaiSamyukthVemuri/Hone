@@ -227,7 +227,7 @@ describe("presentation never reveals migration state", () => {
     // ordering. The same rule binds it: a visitor must not be able to tell a
     // bridged waitlist from a persisted one, and the zero-service repair gave
     // that function a new reason to be consulted.
-    const source = read("lib/booking/new-client-admission.ts");
+    const source = read("lib/booking/new-client-admission-surface.ts");
     const fn = source.slice(source.indexOf("export function publicBookFormSurface"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     expect(body).not.toContain("source");
@@ -239,7 +239,7 @@ describe("presentation never reveals migration state", () => {
   it("the surface function cannot read provenance at all", () => {
     // Structural, so it holds for every future mode too: the function takes the
     // flattened mode and readiness, and the page passes nothing else.
-    const source = read("lib/booking/new-client-admission.ts");
+    const source = read("lib/booking/new-client-admission-surface.ts");
     const fn = source.slice(
       source.indexOf("export function publicNewClientSurface"),
     );

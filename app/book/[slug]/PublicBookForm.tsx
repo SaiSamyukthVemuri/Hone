@@ -7,7 +7,9 @@ import {
   groupServicesByModality,
 } from "@/lib/booking/format";
 import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
-import { publicBookFormSurface } from "@/lib/booking/new-client-admission";
+// The CLIENT-SAFE module: new-client-admission.ts is `server-only`, and this
+// is a "use client" component. Same function, same canonical decision.
+import { publicBookFormSurface } from "@/lib/booking/new-client-admission-surface";
 import { isConsultationService } from "@/lib/booking/consultation";
 import {
   pushAvailabilityHistory,
