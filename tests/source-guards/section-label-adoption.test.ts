@@ -200,6 +200,30 @@ function hasPrimitiveTypography(literal: string): boolean {
 }
 
 /**
+ * The primitive's full contract — typography, ONE contract size, a muted tone —
+ * carried alongside extra utilities.
+ *
+ * This is `isHandRolledDuplicate` without its "and nothing else" clause, and it
+ * is the class the detector deliberately cannot see. It is NOT "shares the
+ * typography": that looser reading admits an off-scale `text-sm` label, a
+ * `text-[10px]` status pill in emerald, and a size-less label — six such
+ * literals in Settings alone — none of which is a duplicate of the primitive.
+ * A control built on the loose reading stays green after the real duplicates are
+ * converted, which is exactly the way it would lie.
+ */
+function isLayoutDecoratedDuplicate(literal: string): boolean {
+  const classes = [...new Set(literal.split(/\s+/).filter(Boolean))];
+  const set = new Set(classes);
+  if (![...CONTRACT.typography].every((c) => set.has(c))) return false;
+  if (!classes.some((c) => CONTRACT.muted.has(c))) return false;
+  if (classes.filter((c) => CONTRACT.sizes.has(c)).length !== 1) return false;
+  // The ONLY difference from isHandRolledDuplicate: extras are present.
+  return classes.some(
+    (c) => !CONTRACT.typography.has(c) && !CONTRACT.muted.has(c) && !CONTRACT.sizes.has(c),
+  );
+}
+
+/**
  * One class list, judged against the primitive.
  *
  * EXTRACTED SO THE DETECTOR'S LIMIT CAN BE TESTED DIRECTLY rather than inferred
@@ -456,6 +480,20 @@ describe("UX-02: SectionLabel adoption at the selected Settings sites", () => {
       isHandRolledDuplicate(LAYOUT_DECORATED_LABEL),
       "the detector silently ignores a layout-decorated label — say so, do not claim completeness",
     ).toBe(false);
+    // It is a duplicate by the PRECISE reading — full contract plus a layout
+    // utility — not merely something sharing the typography.
+    expect(
+      isLayoutDecoratedDuplicate(LAYOUT_DECORATED_LABEL),
+      "the control must be a real duplicate of the primitive, not a lookalike",
+    ).toBe(true);
+    // A lookalike that shares only the typography must NOT qualify, or the
+    // predicate is back to the loose reading this finding retired.
+    expect(
+      isLayoutDecoratedDuplicate(
+        "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-800",
+      ),
+      "a status pill is not a duplicate of the primitive",
+    ).toBe(false);
 
     // NON-VACUITY: strip only the layout utility and the SAME detector reports
     // it. Without this the assertion above is satisfied by a detector that
@@ -490,13 +528,29 @@ describe("UX-02: SectionLabel adoption at the selected Settings sites", () => {
     expect(settingsFiles.length, "no Settings files found — vacuous").toBeGreaterThan(9);
     const undercounted = settingsFiles.filter((file) =>
       classNameLiterals(readFileSync(path.join(REPO_ROOT, file), "utf8"), file).some(
-        (literal) => hasPrimitiveTypography(literal) && !isHandRolledDuplicate(literal),
+        isLayoutDecoratedDuplicate,
       ),
     );
     expect(
       undercounted.length,
       "Settings still contains labels the detector cannot see — the census is a floor, not a total",
     ).toBeGreaterThan(0);
+
+    // AND THIS IS THE ASSERTION THAT MAKES IT HONEST WHEN THEY ARE CONVERTED.
+    // The predicate matches the primitive's FULL contract plus extras, so it
+    // falls to zero the moment the last layout-decorated duplicate is adopted —
+    // and this test then reds, telling whoever did it that the detector can be
+    // tightened and this control retired. A looser predicate would have stayed
+    // green on status pills forever, still claiming an undercount that no longer
+    // existed.
+    expect(
+      undercounted.every((file) =>
+        classNameLiterals(readFileSync(path.join(REPO_ROOT, file), "utf8"), file).some(
+          (literal) => isLayoutDecoratedDuplicate(literal) && !isHandRolledDuplicate(literal),
+        ),
+      ),
+      "every undercounted file must hold a real layout-decorated duplicate, not a lookalike",
+    ).toBe(true);
   });
 
   it("3. legacy occurrence counts never increase from the baseline", () => {
