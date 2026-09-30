@@ -207,8 +207,13 @@ export const NEW_CLIENT_BLOCKER_AUTHORITIES: Record<
   studio_name: [],
   booking_link: [],
   booking_settings: [],
-  wait_admission: [],
-  admission_closed: [],
+  // NEW-CLIENT-MODE-01: both admission facts now come from a DATABASE read of
+  // studios.new_client_admission_mode, not from a deterministic env list, so
+  // they are FALLIBLE. Declaring the authority is what makes an unreadable mode
+  // render as UNKNOWN: absence of a proven blocker must never be read as OPEN,
+  // and a studio that is actually `closed` must not be shown a green row.
+  wait_admission: ["admission"],
+  admission_closed: ["admission"],
   consultation_service: ["services"],
   availability: ["availability"],
   // BOTH halves: the pairing cannot be proven or refuted on one of them.

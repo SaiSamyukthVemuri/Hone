@@ -531,11 +531,19 @@ describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority",
       // while the row's COPY still read `provenBlockers.has(key)` satisfied it,
       // so a row could display the blocker's text above a green pill.
       //
-      // A setup step takes its status from `owned(key)`; a state the owner
-      // cannot "fix" (WAIT admission) takes it from `provenBlockers` directly.
+      // A setup step takes its status from `owned(key)`. A state the owner
+      // cannot "fix" (admission) takes it from `chosen(key)`, which is `owned`
+      // with the proven case relabelled "manual".
+      //
+      // TAKING STATUS FROM `provenBlockers` DIRECTLY IS NO LONGER ACCEPTED, and
+      // that narrowing is the fix for an exact-head P2: it is the shape that let
+      // a FAILED admission read - which proves no blocker - render a green "new
+      // clients are not blocked" row for a studio that may be `closed`. Only
+      // `owned` and its shell consult the authority list, so only they can
+      // return UNKNOWN.
       expect(
         code.includes(`status: owned("${key}")`) ||
-          code.includes(`status: provenBlockers.has("${key}")`),
+          code.includes(`status: chosen("${key}")`),
         `${key} is owned by the authority but no row takes its STATUS from it`,
       ).toBe(true);
     }
@@ -549,6 +557,34 @@ describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority",
     const code = await launchSource();
     expect(code).not.toMatch(/owned\(\s*"[a-z_]+"\s*,/);
     expect(code).toContain("NEW_CLIENT_BLOCKER_AUTHORITIES[key]");
+  });
+
+  it("an unreadable admission mode renders UNKNOWN, never a green row", async () => {
+    // Exact-head P2 at 70a8cbf5. Both admission rows hand-rolled
+    // `provenBlockers.has(key) ? "manual" : "ready"`, bypassing `owned`. A FAILED
+    // admission read proves NO blocker and adds "admission" to `unavailable`, so
+    // those rows rendered green - "New clients are not blocked from this studio"
+    // - for a studio whose stored mode was never read and may be `closed`.
+    // Absence of a proven blocker is not evidence of an OPEN studio.
+    const code = await launchSource();
+
+    // Neither row may decide its own status from provenBlockers alone.
+    expect(code).not.toMatch(
+      /status: provenBlockers\.has\("(?:wait_admission|admission_closed)"\)/,
+    );
+    for (const key of ["wait_admission", "admission_closed"] as const) {
+      expect(code).toContain(`status: chosen("${key}")`);
+    }
+
+    // `chosen` must be a thin shell over `owned` - the ONE place that consults
+    // the authority list - and must preserve every status except the proven one.
+    expect(code).toMatch(/const chosen[\s\S]{0,400}?owned\(key\)/);
+    expect(code).toMatch(/status === "needs_setup" \? "manual" : status/);
+
+    // Each row must also SAY it is unknown rather than falling through to a
+    // confident sentence written for a successful read.
+    const unknownBranches = code.match(/unavailableAuthorities\.has\("admission"\)/g);
+    expect(unknownBranches?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
   it("every key declares the authorities its truth actually depends on", () => {
@@ -566,8 +602,13 @@ describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority",
     ]);
     expect(NEW_CLIENT_BLOCKER_AUTHORITIES.consultation_service).toEqual(["services"]);
     expect(NEW_CLIENT_BLOCKER_AUTHORITIES.treatment_consent).toEqual(["treatment_consent"]);
-    // wait_admission is deterministic configuration, never a fallible read
-    expect(NEW_CLIENT_BLOCKER_AUTHORITIES.wait_admission).toEqual([]);
+    // Both admission keys were pinned to [] while wait_admission came from a
+    // deterministic env list. NEW-CLIENT-MODE-01 moved that truth to a DATABASE
+    // read, which can fail, and the [] pin is what let the Launch page render a
+    // green "new clients are not blocked" row for a studio whose mode was never
+    // read and may actually be `closed`.
+    expect(NEW_CLIENT_BLOCKER_AUTHORITIES.wait_admission).toEqual(["admission"]);
+    expect(NEW_CLIENT_BLOCKER_AUTHORITIES.admission_closed).toEqual(["admission"]);
   });
 
   it("a row's copy claims ONLY what its own key proves", async () => {
