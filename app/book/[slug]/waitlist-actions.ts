@@ -8,6 +8,7 @@ import {
   getNewClientAdmissionMode,
   newClientMayJoinWaitlist,
 } from "@/lib/booking/new-client-admission";
+import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
 import {
   validateWaitlistSubmission,
   NEW_CLIENT_WAITLIST_SUBMIT_FAILED,
@@ -564,16 +565,27 @@ export async function submitNewClientBookingWaitlistAction(
   });
   if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
-  // 5. COMMIT. THE DATABASE ROW IS THE COMMITMENT, ALWAYS.
+  // 5. COMMIT.
   //
-  //    WAIT-02 chose between a durable write and an email-only notification
-  //    from a SECOND env list, which could fall out of step with the gate: a
-  //    studio could be admitting joins while its submissions were only ever
-  //    emails, and dropping a slug moved the commit point without moving the
-  //    gate. Nobody could see that from the product.
+  //    `waitlist` MEANS durable, and that is the long-term law: a successful
+  //    join writes new_client_waitlist_entries, the notification happens AFTER
+  //    a durable success, and a failure to send cannot unwrite the row. There
+  //    is no permanent email-only waitlist mode.
   //
-  //    `waitlist` now MEANS durable. There is no second switch to drift, and no
-  //    email-only fallback remains: the notification below happens AFTER a
-  //    durable success, and a failure to send cannot unwrite the row.
-  return submitToDurableWaitlist(studio, submission, emailFingerprint);
+  //    DURING THE BOUNDED MIGRATION BRIDGE ONLY, the commit point follows the
+  //    studio's CURRENT configuration rather than the new law, because a code
+  //    deploy must not move a studio's commit point before anyone chose to move
+  //    it. A studio named in NEW_CLIENT_WAITLIST_STUDIO_SLUGS but NOT in the
+  //    DURABLE list commits by email acceptance in production today; it keeps
+  //    doing so until its durable mode is actually persisted.
+  //
+  //    Once it IS persisted, the durable path is unconditional - removing the
+  //    legacy durable slug cannot return a cut-over studio to email-only.
+  //
+  //    The whole decision lives in ONE deletable file. See
+  //    lib/booking/new-client-waitlist-durability-bridge.ts.
+  if (newClientWaitlistCommitIsDurable(admission, studio.slug)) {
+    return submitToDurableWaitlist(studio, submission, emailFingerprint);
+  }
+  return submitViaStudioNotification(studio, submission, emailFingerprint);
 }

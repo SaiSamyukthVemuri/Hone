@@ -71,6 +71,7 @@ const scenario = {
 };
 
 function reset() {
+  storedModeForTest = "waitlist";
   sends.length = 0;
   limiterCalls.length = 0;
   consoleErrors.length = 0;
@@ -92,6 +93,12 @@ function reset() {
 // suites used to make via the env predicate. Delegating to the REAL
 // `resolveAdmission` with no stored value routes it through the transition
 // bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+// A CUT-OVER studio by default: its WAITLIST mode is PERSISTED, so the durable
+// commit properties asserted below hold independently of the migration bridge
+// and stay true when the bridge is deleted. One test needs a studio the new
+// authority has not persisted, and sets this to null.
+let storedModeForTest: string | null = "waitlist";
+
 vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   const actual =
     await orig<typeof import("@/lib/booking/new-client-admission")>();
@@ -100,7 +107,7 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
     getNewClientAdmissionMode: vi.fn(
       async (studio: { slug: string | null }) =>
         actual.resolveAdmission({
-          storedMode: null,
+          storedMode: storedModeForTest,
           readFailed: false,
           studioSlug: studio.slug,
         }),
@@ -340,6 +347,8 @@ describe("NEW-CLIENT-MODE-01: the ROW is the commitment, the email is not", () =
 
 describe("refusals and ordering", () => {
   it("flag OFF -> refused before any send AND before the limiter", async () => {
+    // Nothing persisted, so the GATE decides - and it is off.
+    storedModeForTest = null;
     setEnv(undefined);
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result).toEqual({ ok: false, error: FAILED });
@@ -348,6 +357,8 @@ describe("refusals and ordering", () => {
   });
 
   it("flag ON for a DIFFERENT studio -> refused, nothing sent", async () => {
+    // Nothing persisted, so the GATE decides - and it names another studio.
+    storedModeForTest = null;
     setEnv("some-other-studio");
     expect((await submitNewClientBookingWaitlistAction(form())).ok).toBe(false);
     expect(sends).toEqual([]);

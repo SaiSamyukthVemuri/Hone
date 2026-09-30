@@ -401,7 +401,7 @@ const INVITED = {
 describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => {
   // 1 -------------------------------------------------------------------
   it("OPEN + no invitation: an ordinary new-client booking is permitted", async () => {
-    admissionOverride = { ok: true, mode: "open" };
+    admissionOverride = { ok: true, mode: "open", source: "persisted" };
     const result = await publicBookAppointmentAction(form());
     expect(result.ok === false && result.code).not.toBe(ADMISSION_REFUSAL_CODE);
     expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
@@ -413,7 +413,7 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
 
   // 2 -------------------------------------------------------------------
   it("OPEN + valid invitation: the credentials are still PROCESSED, not bypassed", async () => {
-    admissionOverride = { ok: true, mode: "open" };
+    admissionOverride = { ok: true, mode: "open", source: "persisted" };
     const result = await publicBookAppointmentAction(form({ ...INVITED }));
     // The point of this case: presenting credentials in OPEN must not silently
     // skip the invitation's own authorisation and lifecycle.
@@ -424,7 +424,7 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
 
   // 3 -------------------------------------------------------------------
   it("WAITLIST + no invitation: admission refusal, nothing mutated", async () => {
-    admissionOverride = { ok: true, mode: "waitlist" };
+    admissionOverride = { ok: true, mode: "waitlist", source: "persisted" };
     const result = await publicBookAppointmentAction(form());
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.code).toBe("new_client_waitlist");
@@ -433,7 +433,7 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
 
   // 4 -------------------------------------------------------------------
   it("WAITLIST + valid invitation: the invitation MAY authorise the booking", async () => {
-    admissionOverride = { ok: true, mode: "waitlist" };
+    admissionOverride = { ok: true, mode: "waitlist", source: "persisted" };
     const result = await publicBookAppointmentAction(form({ ...INVITED }));
     // The WAIT invitation lifecycle is preserved: this is the ONE exception.
     expect(authorizeCalls.length).toBe(1);
@@ -444,7 +444,7 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
 
   // 5, 7 ----------------------------------------------------------------
   it.each([
-    ["CLOSED", { ok: true, mode: "closed" } as const],
+    ["CLOSED", { ok: true, mode: "closed", source: "persisted" } as const],
     ["UNKNOWN", { ok: false } as const],
   ])("%s + no invitation: admission refusal, nothing mutated", async (_label, state) => {
     admissionOverride = state;
@@ -457,7 +457,7 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
 
   // 6, 8, 9 -------------------------------------------------------------
   it.each([
-    ["CLOSED", { ok: true, mode: "closed" } as const],
+    ["CLOSED", { ok: true, mode: "closed", source: "persisted" } as const],
     ["UNKNOWN", { ok: false } as const],
   ])(
     "%s + valid invitation: STILL refused, and authorisation is never reached",
@@ -484,7 +484,7 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
     // The SAME answer for a valid and an invalid invitation: the refusal is
     // returned without consulting the credentials at all, so it cannot be used
     // to learn whether a token is real.
-    admissionOverride = { ok: true, mode: "closed" };
+    admissionOverride = { ok: true, mode: "closed", source: "persisted" };
     authorizeResult = "authorized";
     const withValid = await publicBookAppointmentAction(form({ ...INVITED }));
     authorizeResult = "scope_refused";
@@ -496,9 +496,9 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
 
   // 10 ------------------------------------------------------------------
   it.each([
-    ["CLOSED", { ok: true, mode: "closed" } as const],
+    ["CLOSED", { ok: true, mode: "closed", source: "persisted" } as const],
     ["UNKNOWN", { ok: false } as const],
-    ["WAITLIST", { ok: true, mode: "waitlist" } as const],
+    ["WAITLIST", { ok: true, mode: "waitlist", source: "persisted" } as const],
   ])("%s: an EXISTING client is completely outside this authority", async (_l, state) => {
     admissionOverride = state;
     scenario.existingClientOnFile = true;

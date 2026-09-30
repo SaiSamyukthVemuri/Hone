@@ -34,8 +34,31 @@ import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
 // ===========================================================================
 
 export type NewClientAdmissionMode = "open" | "waitlist" | "closed";
+/**
+ * WHERE the effective mode came from. NOT a second mode, and NOT a policy.
+ *
+ * `waitlist` can be reached two ways, and during the migration they are not the
+ * same fact:
+ *
+ *   persisted      the stored `studios.new_client_admission_mode` column
+ *                  decided this. The studio HAS been cut over.
+ *   legacy_bridge  NEW_CLIENT_WAITLIST_STUDIO_SLUGS decided it - either because
+ *                  nothing is stored yet, or because it overrode a stored
+ *                  `open`. The studio has NOT been cut over.
+ *
+ * Collapsing the two would make the transition unprovable: a studio riding the
+ * bridge is indistinguishable from a migrated one, so "did we finish the
+ * migration?" has no answer, and dropping a slug from the legacy DURABLE list
+ * would read as a completed cutover when nothing had been persisted at all.
+ *
+ * MIGRATION-ONLY DISTINCTION. After cutover every studio answers `persisted`,
+ * `legacy_bridge` becomes unreachable, and this field and its one consumer -
+ * lib/booking/new-client-waitlist-durability-bridge.ts - are deleted together.
+ */
+export type NewClientAdmissionSource = "persisted" | "legacy_bridge";
+
 export type NewClientAdmission =
-  | { ok: true; mode: NewClientAdmissionMode }
+  | { ok: true; mode: NewClientAdmissionMode; source: NewClientAdmissionSource }
   | { ok: false };
 
 /** The closed set, as the database defines it. */
@@ -96,16 +119,24 @@ export function resolveAdmission(input: {
   }
 
   // No stored value: the row predates 0204, so the env is all there is.
+  // Nothing stored decides anything: whatever this is, the studio has not been
+  // cut over, and `open` here is a default rather than an owner's choice.
   if (input.storedMode == null) {
-    return { ok: true, mode: envWaitlist ? "waitlist" : "open" };
+    return {
+      ok: true,
+      mode: envWaitlist ? "waitlist" : "open",
+      source: "legacy_bridge",
+    };
   }
 
   // Stored `closed` and `waitlist` are the owner's own decision and stand as
   // written. Only `open` is subject to the one-way bridge above.
+  // The env list OVERRODE a stored `open`, so the waitlist is the bridge's
+  // doing and not this studio's persisted decision.
   if (input.storedMode === "open" && envWaitlist) {
-    return { ok: true, mode: "waitlist" };
+    return { ok: true, mode: "waitlist", source: "legacy_bridge" };
   }
-  return { ok: true, mode: input.storedMode };
+  return { ok: true, mode: input.storedMode, source: "persisted" };
 }
 
 /**
@@ -203,6 +234,23 @@ export const NEW_CLIENT_ADMISSION_CLOSED_REFUSAL =
  * issued invitation must not override a studio the owner closed, and a failed
  * read must not be recoverable by presenting credentials.
  */
+/**
+ * Has this studio's admission actually been CUT OVER to the new authority?
+ *
+ * TRUE only when the stored column decided the mode. It is deliberately a
+ * question about PROVENANCE, not about the mode: a studio on the legacy bridge
+ * answers `false` whether or not it is in either env list, so removing a slug
+ * from the legacy durable list can never be mistaken for a completed
+ * migration. That list is named in exactly one place - see
+ * lib/booking/new-client-waitlist-durability-bridge.ts - and this module
+ * deliberately does not name it.
+ *
+ * MIGRATION-ONLY. Deleted with the bridge.
+ */
+export function newClientAdmissionIsCutOver(a: NewClientAdmission): boolean {
+  return a.ok && a.source === "persisted";
+}
+
 export function newClientAdmissionRefusesOutright(
   a: NewClientAdmission,
 ): boolean {

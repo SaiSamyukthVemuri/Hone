@@ -22,7 +22,7 @@ vi.mock("@/lib/booking/studio-wide-availability", () => ({
 }));
 vi.mock("@/lib/booking/new-client-admission", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  getNewClientAdmissionMode: vi.fn(async () => ({ ok: true, mode: "open" })),
+  getNewClientAdmissionMode: vi.fn(async () => ({ ok: true, mode: "open", source: "persisted" })),
 }));
 vi.mock("@/lib/consent/launch-readiness", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -62,8 +62,16 @@ const CONSULTATION = {
 
 const OPEN_DAY = { is_open: true, open_time: "09:00:00", close_time: "17:00:00" };
 
-const WAITLIST = { ok: true as const, mode: "waitlist" as const };
-const CLOSED = { ok: true as const, mode: "closed" as const };
+const WAITLIST = {
+  ok: true as const,
+  mode: "waitlist" as const,
+  source: "persisted" as const,
+};
+const CLOSED = {
+  ok: true as const,
+  mode: "closed" as const,
+  source: "persisted" as const,
+};
 const ADMISSION_UNKNOWN = { ok: false as const };
 
 const ALL_GOOD = {
@@ -73,7 +81,13 @@ const ALL_GOOD = {
   treatmentConsent: { ok: true as const, ready: true },
   // NEW-CLIENT-MODE-01: admission is evidence like any other authority, and
   // `open` is the state in which every structural prerequisite applies.
-  admission: { ok: true as const, mode: "open" as const },
+  admission: {
+    ok: true as const,
+    mode: "open" as const,
+    // Readiness never reads provenance; it is carried so the fixture is a
+    // real NewClientAdmission rather than a structural near-miss.
+    source: "persisted" as const,
+  },
 };
 
 describe("computeNewClientReadiness — the three states", () => {

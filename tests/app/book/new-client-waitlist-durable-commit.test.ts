@@ -76,6 +76,7 @@ const scenario = {
 };
 
 function reset() {
+  storedModeForTest = "waitlist";
   deferred.length = 0;
   sends.length = 0;
   rpcCalls.length = 0;
@@ -102,15 +103,24 @@ function reset() {
 // suites used to make via the env predicate. Delegating to the REAL
 // `resolveAdmission` with no stored value routes it through the transition
 // bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+// Defaults to a CUT-OVER studio. One test below needs a studio the new
+// authority has NOT persisted, so the gate env can decide instead.
+let storedModeForTest: string | null = "waitlist";
+
 vi.mock("@/lib/booking/new-client-admission", async (orig) => {
   const actual =
     await orig<typeof import("@/lib/booking/new-client-admission")>();
   return {
     ...actual,
+    // A CUT-OVER studio: its WAITLIST mode is PERSISTED, not inherited from the
+    // legacy env list. That is what this suite is about - the durable commit
+    // path and its ordering, refusal and scoping properties - and stating it as
+    // persisted makes every claim below independent of the migration bridge, so
+    // they stay true when the bridge is deleted.
     getNewClientAdmissionMode: vi.fn(
       async (studio: { slug: string | null }) =>
         actual.resolveAdmission({
-          storedMode: null,
+          storedMode: storedModeForTest,
           readFailed: false,
           studioSlug: studio.slug,
         }),
@@ -664,6 +674,9 @@ describe("notification idempotency is scoped to the join", () => {
 
 describe("the gate still governs everything", () => {
   it("a studio NOT in the waitlist gate never reaches the command", async () => {
+    // Nothing persisted, so the GATE is what decides - and it names another
+    // studio, so this one is not admitting joins at all.
+    storedModeForTest = null;
     setEnv(NEW_CLIENT_WAITLIST_SLUGS_ENV, "some-other-studio");
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
       ok: false,
@@ -690,7 +703,7 @@ describe("the gate still governs everything", () => {
   // the gate had already admitted the join. That switch is gone: `waitlist`
   // now MEANS durable, so there is nothing left for it to gate and the cases
   // below assert the contract that replaced it.
-  it("the durable env list no longer gates anything", async () => {
+  it("the durable env list no longer gates a CUT-OVER studio", async () => {
     for (const value of [undefined, "", "   ", `${SLUG}-archive,other-studio`, "attacker-chosen-slug"]) {
       reset();
       setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, value);
@@ -703,10 +716,16 @@ describe("the gate still governs everything", () => {
     }
   });
 
-  it("REGRESSION: dropping the durable slug cannot make a join email-only", async () => {
-    // The named regression. With the admission authority active, an env edit
-    // must not move a studio off the durable path - the database row is the
-    // commitment, and an email cannot stand in for it.
+  it("REGRESSION: dropping the durable slug cannot make a CUT-OVER join email-only", async () => {
+    // The named regression, and its exact scope. Once a studio's WAITLIST mode
+    // has been PERSISTED through the new authority, an edit to the legacy
+    // durable list must not move it off the durable path - the database row is
+    // the commitment and an email cannot stand in for it.
+    //
+    // A studio still on the legacy bridge is the OTHER case and is deliberately
+    // not this test's: it keeps whatever commit point it has in production
+    // today, which is proved in
+    // tests/lib/booking/new-client-waitlist-durability-bridge.test.ts.
     reset();
     setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
     await submitNewClientBookingWaitlistAction(form());
@@ -1036,6 +1055,10 @@ describe("no studio is enabled at merge time", () => {
     expect(filesNamingTheFlag()).toEqual([
       "e2e/helpers/local-env.ts",
       "e2e/new-client-waitlist.spec.ts",
+      // The migration bridge, and the ONLY consumer of this flag. It exists so
+      // the flag has exactly one reader and one deletion point; when it goes,
+      // this entry goes with it. Sorts BEFORE the module below: "-" < ".".
+      "lib/booking/new-client-waitlist-durability-bridge.ts",
       "lib/booking/new-client-waitlist.ts",
       "scripts/check-production-env-gates.mjs",
       "tests/app/book/new-client-waitlist-action.test.ts",

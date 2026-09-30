@@ -38,21 +38,52 @@ moment by whoever holds the credential.**
 
 ## Steps, in order
 
-1. **Merge and deploy the code.** No behaviour changes. Verify by checking that
-   a listed studio still shows the waitlist form and an unlisted one still
-   books.
+1. **Merge and deploy the code.** No behaviour change, and that is now a
+   property of the code rather than an assumption about the env.
+
+   An earlier draft of this document claimed the same thing while the code
+   committed **every** permitted join durably as soon as it deployed. That was
+   false for a supported configuration: a studio named in
+   `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` but **not** in
+   `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` commits by email acceptance
+   today, and the deploy would have moved its commit point before anyone chose
+   to. Nothing here had established that such a studio does not exist, and
+   nothing here can — those are Sensitive values, read only at step 3.
+
+   The commit point now follows the studio's **current** configuration until
+   its durable mode is actually persisted. See
+   `lib/booking/new-client-waitlist-durability-bridge.ts`.
+
+   Verify by checking that a listed studio still shows the waitlist form and an
+   unlisted one still books.
 2. **Apply migration 0204.** Every row gets `open`; the bridge keeps listed
-   studios on `waitlist`. Still no behaviour change.
+   studios on `waitlist`. Still no behaviour change — the column is written but
+   nothing reads it as an owner's decision yet, so every studio is still
+   `source: "legacy_bridge"`.
 3. **Read the live env lists** from Vercel. Record the exact slug set in the
    apply record — this is the only moment the real configuration enters the
-   written record.
+   written record. **Record both lists**, including which listed studios are
+   absent from the durable list: those are the studios whose commit point
+   changes at step 4, and that is the one behaviour change in this plan.
 4. **Write each listed studio's mode** to `waitlist` through
    `set_new_client_admission_mode`, owner-authenticated, one studio at a time.
    Willow is in this set.
+
+   This is the cutover, and for a studio that was NOT in the durable list it
+   moves the commit point from email acceptance to a durable row. Intended, and
+   deliberate per studio — it is why this step is one studio at a time.
 5. **Verify each written studio** still shows the waitlist form and still
    writes a durable row on join. The row, not the email, is the check.
-6. **Only then remove the env vars.** After this the bridge is dead code; delete
-   `envForcesWaitlist`, its call, and the two exported predicates.
+
+   `newClientAdmissionIsCutOver` is the structural check: after step 4 a
+   written studio resolves `source: "persisted"`, and from then on the durable
+   path is unconditional for it — removing its legacy durable slug cannot
+   return it to email-only.
+6. **Only then remove the env vars.** After this the bridge is dead code.
+   Delete, together: `lib/booking/new-client-waitlist-durability-bridge.ts`,
+   `envForcesWaitlist` and its call, the two exported env predicates,
+   `NewClientAdmissionSource`, and `newClientAdmissionIsCutOver`. The durable
+   path then becomes unconditional, which is what `waitlist` means.
 
 Steps 3-6 require production credentials and are **not** in scope for the
 implementation PR.

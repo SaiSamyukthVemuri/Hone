@@ -31,7 +31,7 @@ const R = (storedMode: string | null, readFailed = false, slug = "willow") =>
 
 describe("the stored mode is the authority", () => {
   it.each(["open", "waitlist", "closed"] as const)("%s is returned as itself", (m) => {
-    expect(R(m)).toEqual({ ok: true, mode: m });
+    expect(R(m)).toEqual({ ok: true, mode: m, source: "persisted" });
   });
 
   it("a value outside the closed set is UNKNOWN, never a guess", () => {
@@ -63,30 +63,30 @@ describe("the transition bridge escalates ONLY", () => {
   it("a listed studio with no stored value is WAITLIST", () => {
     // Pre-0204 rows: the env is all there is.
     process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
-    expect(R(null)).toEqual({ ok: true, mode: "waitlist" });
+    expect(R(null)).toEqual({ ok: true, mode: "waitlist", source: "legacy_bridge" });
   });
 
   it("an unlisted studio with no stored value is OPEN", () => {
-    expect(R(null)).toEqual({ ok: true, mode: "open" });
+    expect(R(null)).toEqual({ ok: true, mode: "open", source: "legacy_bridge" });
   });
 
   it("the env escalates a stored OPEN to waitlist", () => {
     // During cutover a studio may still be listed while its row carries the
     // 0204 backfill default. It must stay on the waitlist.
     process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
-    expect(R("open")).toEqual({ ok: true, mode: "waitlist" });
+    expect(R("open")).toEqual({ ok: true, mode: "waitlist", source: "legacy_bridge" });
   });
 
   it("the env can NEVER de-escalate a stored waitlist or closed", () => {
     // The whole safety property. If this were two-way, a deploy that dropped a
     // slug would silently reopen a studio its owner had waitlisted or closed.
-    expect(R("waitlist")).toEqual({ ok: true, mode: "waitlist" });
-    expect(R("closed")).toEqual({ ok: true, mode: "closed" });
+    expect(R("waitlist")).toEqual({ ok: true, mode: "waitlist", source: "persisted" });
+    expect(R("closed")).toEqual({ ok: true, mode: "closed", source: "persisted" });
   });
 
   it("another studio's slug does not move THIS studio", () => {
     process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "some-other-studio";
-    expect(R("open")).toEqual({ ok: true, mode: "open" });
+    expect(R("open")).toEqual({ ok: true, mode: "open", source: "persisted" });
   });
 });
 
@@ -97,9 +97,9 @@ describe("REGRESSION: removing a slug cannot quietly change the commitment", () 
     // the commitment, so this is what keeps submissions from becoming
     // email-only.
     process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
-    expect(R("waitlist")).toEqual({ ok: true, mode: "waitlist" });
+    expect(R("waitlist")).toEqual({ ok: true, mode: "waitlist", source: "persisted" });
     delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
-    expect(R("waitlist")).toEqual({ ok: true, mode: "waitlist" });
+    expect(R("waitlist")).toEqual({ ok: true, mode: "waitlist", source: "persisted" });
   });
 
   it("there is no separate durable flag to fall out of step with the mode", () => {
@@ -113,16 +113,16 @@ describe("REGRESSION: removing a slug cannot quietly change the commitment", () 
 
 describe("the predicates say exactly what they mean", () => {
   it("only OPEN may book", () => {
-    expect(newClientMayBook({ ok: true, mode: "open" })).toBe(true);
-    expect(newClientMayBook({ ok: true, mode: "waitlist" })).toBe(false);
-    expect(newClientMayBook({ ok: true, mode: "closed" })).toBe(false);
+    expect(newClientMayBook({ ok: true, mode: "open", source: "persisted" })).toBe(true);
+    expect(newClientMayBook({ ok: true, mode: "waitlist", source: "persisted" })).toBe(false);
+    expect(newClientMayBook({ ok: true, mode: "closed", source: "persisted" })).toBe(false);
     expect(newClientMayBook({ ok: false })).toBe(false);
   });
 
   it("only WAITLIST may join - CLOSED refuses the join as well as the booking", () => {
-    expect(newClientMayJoinWaitlist({ ok: true, mode: "waitlist" })).toBe(true);
-    expect(newClientMayJoinWaitlist({ ok: true, mode: "open" })).toBe(false);
-    expect(newClientMayJoinWaitlist({ ok: true, mode: "closed" })).toBe(false);
+    expect(newClientMayJoinWaitlist({ ok: true, mode: "waitlist", source: "persisted" })).toBe(true);
+    expect(newClientMayJoinWaitlist({ ok: true, mode: "open", source: "persisted" })).toBe(false);
+    expect(newClientMayJoinWaitlist({ ok: true, mode: "closed", source: "persisted" })).toBe(false);
     expect(newClientMayJoinWaitlist({ ok: false })).toBe(false);
   });
 });
@@ -160,20 +160,20 @@ describe("P1: the reader actually reads, for an ANON public visitor", () => {
 
   it("honours a stored OPEN on the public path", async () => {
     const { result } = await withAdminRow({ new_client_admission_mode: "open" });
-    expect(result).toEqual({ ok: true, mode: "open" });
+    expect(result).toEqual({ ok: true, mode: "open", source: "persisted" });
   });
 
   it("a stored WAITLIST wins even when the legacy env does NOT list the studio", async () => {
     // The exact silent failure: absent from the env, stored as waitlist.
     delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
     const { result } = await withAdminRow({ new_client_admission_mode: "waitlist" });
-    expect(result).toEqual({ ok: true, mode: "waitlist" });
+    expect(result).toEqual({ ok: true, mode: "waitlist", source: "persisted" });
   });
 
   it("a stored CLOSED wins even when the legacy env does NOT list the studio", async () => {
     delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
     const { result } = await withAdminRow({ new_client_admission_mode: "closed" });
-    expect(result).toEqual({ ok: true, mode: "closed" });
+    expect(result).toEqual({ ok: true, mode: "closed", source: "persisted" });
   });
 
   it("a NON-column read failure is UNKNOWN, never a fallback", async () => {
@@ -191,7 +191,7 @@ describe("P1: the reader actually reads, for an ANON public visitor", () => {
       code: "42703",
       message: 'column studios.new_client_admission_mode does not exist',
     });
-    expect(result).toEqual({ ok: true, mode: "waitlist" });
+    expect(result).toEqual({ ok: true, mode: "waitlist", source: "legacy_bridge" });
   });
 
   it("reads ONE column, keyed by the SERVER-RESOLVED studio id", async () => {
@@ -220,9 +220,9 @@ describe("P1: the reader actually reads, for an ANON public visitor", () => {
 // where that is pinned.
 // ===========================================================================
 describe("the four admission states cannot collapse into one boolean", () => {
-  const OPEN = { ok: true, mode: "open" } as const;
-  const WAITLIST = { ok: true, mode: "waitlist" } as const;
-  const CLOSED = { ok: true, mode: "closed" } as const;
+  const OPEN = { ok: true, mode: "open", source: "persisted" } as const;
+  const WAITLIST = { ok: true, mode: "waitlist", source: "persisted" } as const;
+  const CLOSED = { ok: true, mode: "closed", source: "persisted" } as const;
   const UNKNOWN = { ok: false } as const;
 
   it("newClientMayBook admits ONLY open", () => {
