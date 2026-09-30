@@ -329,11 +329,12 @@ describe("anchors keep sibling controls distinct", () => {
     expect(pagesWithMultipleEntries).toBeGreaterThanOrEqual(5);
   });
 
-  it("all eight Booking controls resolve to eight distinct destinations", () => {
+  it("all nine Booking controls resolve to nine distinct destinations", () => {
     const booking = searchable.filter((c) => c.page === "/settings/booking");
-    expect(booking).toHaveLength(8);
+    // 9 since NEW-CLIENT-MODE-01 added the new-client admission control.
+    expect(booking).toHaveLength(9);
     const hrefs = booking.map((c) => ENTRY_BY_ID.get(c.entryId!)!.href);
-    expect(new Set(hrefs).size).toBe(8);
+    expect(new Set(hrefs).size).toBe(9);
     for (const href of hrefs) expect(href).toMatch(/^\/settings\/booking#/);
   });
 });

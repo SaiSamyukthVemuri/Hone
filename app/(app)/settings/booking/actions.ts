@@ -184,3 +184,56 @@ export async function updateStudioBookingPrefsAction(
   }
   redirect("/settings/booking?saved=1");
 }
+
+// ===========================================================================
+// NEW-CLIENT-MODE-01 — THE OWNER'S OWN CONTROL
+// ===========================================================================
+//
+// Its OWN action rather than a field on the preferences form above, because it
+// is the only setting here whose authority is a database command rather than a
+// column update: the browser sends an intent, and membership plus owner role
+// are re-derived inside `set_new_client_admission_mode` from auth.uid(). Folding
+// it into the general save would have meant a studio-wide write path that could
+// change admission as a side effect of editing a buffer.
+//
+// The owner changes this without a deploy, an allowlist, or asking anyone.
+export async function updateNewClientAdmissionModeAction(
+  formData: FormData,
+): Promise<void> {
+  let failureMessage: string | null = null;
+  try {
+    const { studioId } = await assertOwner();
+    // INTENT ONLY. Not validated into a mode here beyond being a string - the
+    // database owns the closed set and answers `invalid_mode` for anything
+    // outside it, so there is exactly one place that decides what is legal.
+    const intent = trimmed(formData.get("new_client_admission_mode"));
+
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc(
+      "set_new_client_admission_mode",
+      { p_studio_id: studioId, p_mode: intent },
+    );
+    if (error) {
+      failureMessage = "Could not save that just now. Please try again.";
+    } else {
+      const row = Array.isArray(data) ? data[0] : data;
+      const outcome = (row as { outcome?: string } | null)?.outcome ?? "unknown";
+      if (outcome === "not_authorized") {
+        failureMessage = "Only the studio owner can change this.";
+      } else if (outcome === "invalid_mode") {
+        failureMessage = "That is not a valid choice.";
+      } else if (outcome !== "ok") {
+        failureMessage = "Could not save that just now. Please try again.";
+      }
+    }
+  } catch {
+    failureMessage = "Could not save that just now. Please try again.";
+  }
+
+  revalidatePath("/settings/booking");
+  redirect(
+    failureMessage
+      ? `/settings/booking?error=${encodeURIComponent(failureMessage)}`
+      : "/settings/booking?saved=1",
+  );
+}
