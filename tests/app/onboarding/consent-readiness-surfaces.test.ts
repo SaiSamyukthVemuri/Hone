@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import ts from "typescript";
 import { join } from "node:path";
 import {
   buildGettingStarted,
@@ -22,8 +23,228 @@ function read(rel: string): string {
 }
 
 const LAUNCH = read("app/(app)/settings/launch/page.tsx");
+const DASHBOARD_STACK = read("app/(app)/dashboard/secondary-stack.tsx");
+const DASHBOARD_PAGE = read("app/(app)/dashboard/page.tsx");
+const DASHBOARD_CARD = read("app/(app)/dashboard/BookingSetupCard.tsx");
 const GETTING_STARTED = read("lib/onboarding/getting-started.ts");
 const CANONICAL = read("lib/booking/new-client-readiness.ts");
+
+/**
+ * ===========================================================================
+ * THE BOUNDED AST TRACE: what does `attentionSources` actually depend on?
+ * ===========================================================================
+ *
+ * WHY A NAME LIST WAS NEVER GOING TO BE ENOUGH. Two earlier versions of this
+ * contract were denylists — first a literal `getNewClientReadiness` call inside
+ * the bundle slice, then five identifier spellings. Both close an INSTANCE of
+ * the coupling, and the space of ways to express it is unbounded. A wrapper
+ * declared after the slice defeated both while every assertion stayed green:
+ *
+ *   const gated = Promise.all([attentionSourcesPromise, bookingReadinessPromise])
+ *     .then(([sources]) => sources);
+ *   <SecondaryStack attentionSources={gated} … />
+ *
+ * So this traces the expression instead of guessing its name: start from the JSX
+ * attribute, and walk local `const` declarations transitively, collecting every
+ * identifier the value depends on. A rename cannot evade it, because nothing is
+ * matched by name — the readiness promise is identified by the declaration that
+ * CALLS the canonical authority.
+ *
+ * DELIBERATELY BOUNDED. Local declarations in this one module, nothing else: no
+ * import following, no cross-file resolution, no type checker. It uses
+ * `ts.createSourceFile`, which this repository already relies on in ten test
+ * files (including the fonts guard, which parses the middleware matcher rather
+ * than grepping it), so no parser dependency is added for this.
+ * ===========================================================================
+ */
+function dashboardPageSource(): ts.SourceFile {
+  return ts.createSourceFile(
+    "page.tsx",
+    DASHBOARD_PAGE,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX,
+  );
+}
+
+/**
+ * Local bindings, with whether each is an immutable `const`.
+ *
+ * MUTABILITY IS RECORDED, NOT RESOLVED. This tracer supports `const` and nothing
+ * else, by owner decision. A `let` whose value is rebuilt after declaration —
+ * `let g = bundle; g = Promise.all([g, readiness]).then(...)` — is invisible to a
+ * collector that reads initializers, and the previous version was exactly that
+ * collector. Rather than model assignment flow, the trace FAILS CLOSED the moment
+ * the closure touches a binding it cannot reason about.
+ *
+ * That is the deliberate end of an escalation: four earlier shapes of this
+ * contract each added a case for the evasion just demonstrated. Refusing a
+ * category is the only version that stops.
+ */
+type Binding = { init: ts.Expression | null; isConst: boolean; kind: string };
+
+function localBindings(sf: ts.SourceFile): Map<string, Binding> {
+  const out = new Map<string, Binding>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const list = node.parent;
+      const isConst =
+        ts.isVariableDeclarationList(list) &&
+        (list.flags & ts.NodeFlags.Const) !== 0;
+      const kind = !ts.isVariableDeclarationList(list)
+        ? "binding"
+        : (list.flags & ts.NodeFlags.Const) !== 0
+          ? "const"
+          : (list.flags & ts.NodeFlags.Let) !== 0
+            ? "let"
+            : "var";
+      out.set(node.name.text, { init: node.initializer ?? null, isConst, kind });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Every name WRITTEN after declaration: `x = …`, `x += …`, `x++`, `--x`.
+ *
+ * A name that is written is not traceable by initializer, whatever it was
+ * declared with. Collected separately so the diagnostic can say WHY a binding
+ * was refused rather than only that it was.
+ */
+function reassignedNames(sf: ts.SourceFile): Set<string> {
+  const out = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      ts.isIdentifier(node.left) &&
+      (node.operatorToken.kind === ts.SyntaxKind.EqualsToken ||
+        (node.operatorToken.kind >= ts.SyntaxKind.FirstCompoundAssignment &&
+          node.operatorToken.kind <= ts.SyntaxKind.LastCompoundAssignment))
+    ) {
+      out.add(node.left.text);
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      ts.isIdentifier(node.operand) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      out.add(node.operand.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** The expression a JSX attribute on a given element is given. */
+function jsxAttributeExpression(
+  sf: ts.SourceFile,
+  element: string,
+  attribute: string,
+): ts.Expression | null {
+  let found: ts.Expression | null = null;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    const opening = ts.isJsxSelfClosingElement(node)
+      ? node
+      : ts.isJsxElement(node)
+        ? node.openingElement
+        : null;
+    if (
+      opening &&
+      ts.isIdentifier(opening.tagName) &&
+      opening.tagName.text === element
+    ) {
+      for (const attr of opening.attributes.properties) {
+        if (
+          ts.isJsxAttribute(attr) &&
+          ts.isIdentifier(attr.name) &&
+          attr.name.text === attribute &&
+          attr.initializer &&
+          ts.isJsxExpression(attr.initializer) &&
+          attr.initializer.expression
+        ) {
+          found = attr.initializer.expression;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/**
+ * Every identifier an expression depends on, following `const` declarations only.
+ *
+ * Returns the closure AND the refusals: any traced name that is a local binding
+ * which is not an immutable `const`, or which is written to anywhere in the
+ * module. A non-empty `refusals` means the trace is INCOMPLETE and the caller
+ * must fail — never treat it as "no coupling found".
+ */
+function dependencyClosure(
+  expr: ts.Expression,
+  bindings: Map<string, Binding>,
+  reassigned: Set<string>,
+): { names: Set<string>; refusals: string[] } {
+  const names = new Set<string>();
+  const refusals: string[] = [];
+  const walk = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      const name = node.text;
+      if (names.has(name)) return;
+      names.add(name);
+      const b = bindings.get(name);
+      if (!b) return; // import, parameter, global: not a local binding to trace
+      if (!b.isConst) {
+        refusals.push(`\`${name}\` is a local \`${b.kind}\`, not a const`);
+        return;
+      }
+      if (reassigned.has(name)) {
+        refusals.push(`\`${name}\` is written to after declaration`);
+        return;
+      }
+      if (b.init) walk(b.init);
+      return;
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(expr);
+  return { names, refusals };
+}
+
+/**
+ * The local names that ARE the canonical readiness promise, found structurally.
+ *
+ * A declaration qualifies when its initializer calls `getNewClientReadiness`.
+ * Nothing is matched by the name `bookingReadinessPromise`, so renaming it
+ * changes nothing — which is the whole point of tracing rather than listing.
+ */
+function readinessPromiseNames(bindings: Map<string, Binding>): Set<string> {
+  const names = new Set<string>();
+  for (const [name, b] of bindings) {
+    const init = b.init;
+    if (!init) continue;
+    let calls = false;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "getNewClientReadiness"
+      ) {
+        calls = true;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(init);
+    if (calls) names.add(name);
+  }
+  return names;
+}
 
 const CONSENT_ITEM_KEY = "treatment-consent";
 
@@ -188,6 +409,306 @@ describe("launch checklist surfaces consent readiness", () => {
   });
 });
 
+describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
+  // The dashboard card builds inside an async server component, so these are
+  // source contracts. The BEHAVIOUR of the three states is proved separately in
+  // tests/app/dashboard/booking-setup-card.test.tsx against the real component.
+
+  // CODE, NOT PROSE, for every negative below. The dashboard's comments name
+  // the authority it stopped using and the pure function it deliberately does
+  // not call — that rationale is the most useful thing in the file and must not
+  // have to talk around itself. LINE comments first: a `/*`-first pass lets a
+  // `//`-commented block swallow real code.
+  const codeOf = (src: string): string =>
+    src.replace(/^[ \t]*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const STACK_CODE = codeOf(DASHBOARD_STACK);
+  const CARD_CODE = codeOf(DASHBOARD_CARD);
+
+  const PAGE_CODE = codeOf(DASHBOARD_PAGE);
+
+  it("the comment stripper leaves the code it is asked about", () => {
+    // Without this, every negative in this describe could pass on an empty string.
+    expect(STACK_CODE).toContain("await bookingReadiness");
+    expect(PAGE_CODE).toContain("getNewClientReadiness(studio)");
+    expect(CARD_CODE).toContain("readiness.blockers.map");
+  });
+
+  it("calls the canonical authority and nothing else", () => {
+    // ONB-03 P2 moved the CALL to the page, which starts it as its own deferred
+    // read; the stack awaits the promise. Exactly ONE place calls it.
+    expect(PAGE_CODE).toContain("getNewClientReadiness(studio)");
+    expect(STACK_CODE).not.toContain("getNewClientReadiness(");
+    expect(DASHBOARD_STACK).toMatch(
+      /from "@\/lib\/booking\/new-client-readiness"/,
+    );
+    // THE OLD GATE IS GONE FROM THIS SURFACE, which is the whole slice. Left in
+    // place it would be a second answer to one question on one page.
+    expect(STACK_CODE).not.toContain("computeBookingReadiness");
+    expect(PAGE_CODE).not.toContain("computeBookingReadiness");
+    for (const src of [DASHBOARD_STACK, DASHBOARD_CARD, DASHBOARD_PAGE]) {
+      expect(src).not.toMatch(/from "@\/lib\/booking\/readiness"/);
+    }
+  });
+
+  it("does not assemble readiness evidence itself", () => {
+    // THE PRECISE HAZARD. `computeNewClientReadiness` is exported and pure, so
+    // this page could pass it the services and availability it already has —
+    // and the availability SCOPE would be wrong. The authority reads
+    // `practitioner_id IS NULL`; this page's `availabilityDefaults` is every row
+    // for the studio. ONB-02 records that exact divergence as a shipped defect.
+    // Calling the async authority is what keeps the scope correct.
+    expect(STACK_CODE).not.toContain("computeNewClientReadiness");
+    expect(PAGE_CODE).not.toContain("computeNewClientReadiness");
+    expect(STACK_CODE).not.toContain("openAvailabilityDaysCount");
+    // ONB-03 P2: THE VESTIGIAL READ IS GONE, not merely unused. A member nothing
+    // consumes can still reject and take the bundle -- and with it the verdict --
+    // down. Asserted on both files so it cannot come back as "harmless".
+    expect(PAGE_CODE).not.toContain("getAvailabilityDefaults");
+    expect(STACK_CODE).not.toContain("getAvailabilityDefaults");
+    expect(STACK_CODE).not.toContain("availabilityDefaults");
+  });
+
+  it("the two owner surfaces call the SAME entry point", () => {
+    // Not "both mention readiness" — the same function. This is what makes
+    // acceptance criterion 3 (identical blocker sets) structurally possible
+    // rather than a coincidence of two similar implementations.
+    for (const [name, src] of [
+      ["launch", LAUNCH],
+      ["dashboard page", DASHBOARD_PAGE],
+    ] as const) {
+      expect(src, `${name} must call getNewClientReadiness`).toContain(
+        "getNewClientReadiness(",
+      );
+    }
+  });
+
+  it("neither dashboard file re-implements a blocker list", () => {
+    // The labels and hrefs live in the authority's BLOCKERS record. A copy here
+    // is how the dashboard and launch would start telling an owner two
+    // different things about the same missing piece.
+    for (const [name, src] of [
+      ["dashboard stack", DASHBOARD_STACK],
+      ["dashboard card", DASHBOARD_CARD],
+    ] as const) {
+      const code = codeOf(src);
+      expect(code, `${name} must not restate a blocker label`).not.toContain(
+        "No active consultation service",
+      );
+      expect(code, `${name} must not restate a blocker href`).not.toContain(
+        "/settings/services",
+      );
+      expect(code, `${name} must not rebuild the key list`).not.toContain(
+        "NEW_CLIENT_BLOCKER_KEYS",
+      );
+    }
+  });
+
+  it("UNKNOWN is rendered, never collapsed into ready or not-ready", () => {
+    // THE STATE THE OLD CARD HAD NO PATH FOR. `computeBookingReadiness` is
+    // two-state, so the card had `ready -> null` and everything else -> the
+    // checklist. Mapping canonical `unknown` onto either would be a lie: null
+    // asserts ready on evidence nobody has, and an empty blocker list reads as
+    // "nothing left to do".
+    expect(DASHBOARD_CARD).toContain('readiness.status === "unknown"');
+    expect(DASHBOARD_CARD).toContain("We could not check your booking setup");
+    // The call-site gate must let unknown through to the card.
+    expect(DASHBOARD_STACK).toContain('readiness.status !== "ready"');
+    // And ready is still the ONLY state that renders nothing, decided in the
+    // component so a caller cannot reintroduce a banner by forgetting a guard.
+    expect(DASHBOARD_CARD).toMatch(
+      /readiness\.status === "ready"\) return null/,
+    );
+  });
+
+  /** Trace one module's `attentionSources` prop. Shared by the real page and the controls. */
+  function traceAttentionSources(code: string, file = "m.tsx") {
+    const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const bindings = localBindings(sf);
+    const reassigned = reassignedNames(sf);
+    const readiness = readinessPromiseNames(bindings);
+    const expr = jsxAttributeExpression(sf, "SecondaryStack", "attentionSources");
+    if (!expr) return { ok: false as const, reason: "no attentionSources prop", readiness };
+    const { names, refusals } = dependencyClosure(expr, bindings, reassigned);
+    return { ok: true as const, names, refusals, readiness };
+  }
+
+  it("`attentionSources` does not depend on readiness — traced, const-only", () => {
+    // ONB-03 P2, FINAL SHAPE. Structural, and fail-closed on anything this tracer
+    // cannot reason about. Nothing is matched by the name
+    // `bookingReadinessPromise`: the readiness promise is identified by the
+    // declaration that CALLS the canonical authority, so a rename is not an escape.
+    const t = traceAttentionSources(DASHBOARD_PAGE, "page.tsx");
+    expect(t.ok, "SecondaryStack has no attentionSources prop").toBe(true);
+    if (!t.ok) return;
+
+    // THE ANCHOR, PROVED FIRST. Empty means every negative below would pass on
+    // nothing.
+    expect(
+      t.readiness.size,
+      "no local declaration calls getNewClientReadiness — the trace has no anchor",
+    ).toBeGreaterThan(0);
+
+    // FAIL CLOSED. An incomplete trace is not evidence of decoupling.
+    expect(
+      t.refusals,
+      `the trace cannot follow: ${t.refusals.join("; ")} — ONB-03's tracer supports ` +
+        "immutable const bindings only, by design, and refuses to guess at " +
+        "assignment flow. Make the binding a const, or re-derive this contract.",
+    ).toEqual([]);
+
+    expect(t.names.size, "the dependency closure is empty").toBeGreaterThan(0);
+    expect(t.names, "the trace is not reaching the bundle").toContain(
+      "attentionSourcesPromise",
+    );
+    for (const name of t.readiness) {
+      expect(
+        t.names,
+        `attentionSources depends on ${name}, the canonical readiness promise`,
+      ).not.toContain(name);
+    }
+  });
+
+  it("CONTROLS — four const shapes are TRACED, four mutable shapes FAIL CLOSED", () => {
+    // The eight shapes, run through the same functions the assertion above uses.
+    // `coupled` means the trace completed and found readiness in the closure;
+    // `refused` means it stopped because it could not reason about a binding.
+    const R = "const r = settleLater(getNewClientReadiness(studio));";
+    const B = "const bundle = settleLater(Promise.all([countX()] as const));";
+    const EL = (expr: string) =>
+      `const el = <SecondaryStack attentionSources={${expr}} bookingReadiness={r} />;`;
+
+    type Expect = "coupled" | "clean" | "refused";
+    const cases: Array<[string, string, Expect]> = [
+      // --- const shapes: the trace must COMPLETE and find the coupling ---------
+      ["direct const alias", `${R} ${B} const a = r; const g = Promise.all([bundle, a]); ${EL("g")}`, "coupled"],
+      ["two-hop const alias", `${R} ${B} const a = r; const b = a; const g = Promise.all([bundle, b]); ${EL("g")}`, "coupled"],
+      ["Promise.all const wrapper", `${R} ${B} const g = Promise.all([bundle, r]).then(([s]) => s); ${EL("g")}`, "coupled"],
+      ["renamed const chain", `${R} ${B} const q = r; const w = Promise.all([bundle, q]); const z = w.then(([s]) => s); ${EL("z")}`, "coupled"],
+      // --- mutable shapes: the trace must REFUSE, not report "clean" -----------
+      ["let + reassignment adding readiness", `${R} ${B} let g = bundle; g = Promise.all([g, r]).then(([s]) => s); ${EL("g")}`, "refused"],
+      ["safe let, reassigned later", `${R} ${B} let g = bundle; g = bundle; ${EL("g")}`, "refused"],
+      ["var", `${R} ${B} var g = bundle; ${EL("g")}`, "refused"],
+      // --- and the production shape must be CLEAN -----------------------------
+      ["production shape", `${R} ${B} ${EL("bundle")}`, "clean"],
+    ];
+
+    for (const [label, code, want] of cases) {
+      const t = traceAttentionSources(code);
+      expect(t.ok, `${label}: no attentionSources prop`).toBe(true);
+      if (!t.ok) continue;
+      expect(t.readiness.size, `${label}: no anchor`).toBeGreaterThan(0);
+      const coupled = [...t.readiness].some((n) => t.names.has(n));
+
+      if (want === "refused") {
+        expect(
+          t.refusals.length,
+          `${label} was NOT refused — the tracer silently followed a mutable binding`,
+        ).toBeGreaterThan(0);
+        // AND the diagnostic must name the binding, so a failure is actionable.
+        expect(t.refusals.join(" ")).toContain("g");
+      } else {
+        expect(t.refusals, `${label} was refused unexpectedly`).toEqual([]);
+        expect(coupled, `${label}: expected ${want}`).toBe(want === "coupled");
+      }
+    }
+  });
+
+  it("the refusal diagnostic distinguishes WHY a binding was refused", () => {
+    // A guard that fails without saying which rule fired sends the next reader
+    // looking in the wrong place.
+    const R = "const r = settleLater(getNewClientReadiness(studio));";
+    const B = "const bundle = settleLater(Promise.all([countX()] as const));";
+    const letCase = traceAttentionSources(
+      `${R} ${B} let g = bundle; const el = <SecondaryStack attentionSources={g} bookingReadiness={r} />;`,
+    );
+    expect(letCase.ok && letCase.refusals.join(" ")).toContain("not a const");
+
+    const writeCase = traceAttentionSources(
+      `${R} ${B} const g = bundle; g = bundle; const el = <SecondaryStack attentionSources={g} bookingReadiness={r} />;`,
+    );
+    expect(writeCase.ok && writeCase.refusals.join(" ")).toContain(
+      "written to after declaration",
+    );
+  });
+
+  it("compound assignment and ++/-- also refuse", () => {
+    const R = "const r = settleLater(getNewClientReadiness(studio));";
+    const EL = "const el = <SecondaryStack attentionSources={n} bookingReadiness={r} />;";
+    for (const [label, mutation] of [
+      ["compound assignment", "n += 1;"],
+      ["postfix increment", "n++;"],
+      ["prefix decrement", "--n;"],
+    ] as const) {
+      const t = traceAttentionSources(`${R} let n = 0; ${mutation} ${EL}`);
+      expect(t.ok && t.refusals.length, `${label} was not refused`).toBeGreaterThan(0);
+    }
+  });
+
+  it("canonical readiness is still its OWN independent prop", () => {
+    const sf = ts.createSourceFile("page.tsx", DASHBOARD_PAGE, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const bindings = localBindings(sf);
+    const reassigned = reassignedNames(sf);
+    const readiness = readinessPromiseNames(bindings);
+    const expr = jsxAttributeExpression(sf, "SecondaryStack", "bookingReadiness");
+    expect(expr, "SecondaryStack has no bookingReadiness prop").not.toBeNull();
+    const { names, refusals } = dependencyClosure(expr!, bindings, reassigned);
+    expect(refusals, `the readiness prop's own trace is incomplete: ${refusals.join("; ")}`).toEqual([]);
+    // It IS the readiness promise, and it does not drag the bundle in behind it.
+    expect([...readiness].some((n) => names.has(n))).toBe(true);
+    expect(names).not.toContain("attentionSourcesPromise");
+    expect(PAGE_CODE).toMatch(
+      /bookingReadinessPromise = settleLater\([\s\S]{0,160}getNewClientReadiness\(studio\)/,
+    );
+    expect(STACK_CODE).toMatch(/bookingReadiness: Promise<NewClientReadiness \| null>/);
+  });
+
+  it("the bundle slice delimiters still exist, and the obsolete read is still gone", () => {
+    const open = PAGE_CODE.indexOf("attentionSourcesPromise");
+    expect(open, "the bundle's opening delimiter is missing").toBeGreaterThan(-1);
+    const close = PAGE_CODE.indexOf("] as const)", open);
+    expect(close, "the bundle's closing delimiter is missing").toBeGreaterThan(open);
+    expect(PAGE_CODE.slice(open, close)).toContain("getClientBirthdaysForMonth");
+    expect(PAGE_CODE).not.toContain("getAvailabilityDefaults");
+    expect(STACK_CODE).not.toContain("availabilityDefaults");
+  });
+
+  it("WHAT ONB-03 DOES AND DOES NOT PROMISE — recorded, by owner decision", () => {
+    // ==========================================================================
+    // THE SCOPE OF THE UNKNOWN GUARANTEE, so no future reader over-reads it.
+    //
+    // ONB-03 PROMISES: when `SecondaryStack` renders, the verdict it renders is
+    // the canonical one, and `unknown` is shown truthfully as unknown — never
+    // collapsed into `ready` (which would assert readiness nobody proved) nor
+    // into an empty blocker list (which reads as "nothing left to do").
+    //
+    // ONB-03 DOES NOT PROMISE that the card survives an exception which prevents
+    // `SecondaryStack` from rendering at all. Route-level error handling remains
+    // the existing architecture: a rejected attention-source read reaches
+    // `app/(app)/error.tsx`, exactly as before this slice. No second Suspense or
+    // error-isolation architecture was introduced, by owner decision.
+    //
+    // What the sibling arrangement DOES buy is narrower and real: readiness is not
+    // a member of the bundle, so it neither waits on it nor is delayed by it, and
+    // the vestigial availability read — which could fail the route for something
+    // nothing on the page consumed — is gone.
+    // ==========================================================================
+    expect(STACK_CODE).toContain("await bookingReadiness");
+    expect(STACK_CODE).toContain('readiness.status !== "ready"');
+    expect(CARD_CODE).toContain('readiness.status === "unknown"');
+    // Exactly ONE Suspense boundary in the page: the existing architecture stands.
+    expect((PAGE_CODE.match(/<Suspense\b/g) ?? []).length).toBe(1);
+    expect(existsSync(join(process.cwd(), "app/(app)/error.tsx"))).toBe(true);
+  });
+
+  it("a non-exhaustive blocker list says so", () => {
+    // `not_ready` can arrive WITH `unavailable`: the blockers shown are proven,
+    // but they are not all of them. Rendering the short list silently would let
+    // an owner fix everything visible and still not be able to take a client.
+    expect(DASHBOARD_CARD).toContain("readiness.unavailable.length > 0");
+    expect(DASHBOARD_CARD).toContain("There may be more to do");
+  });
+});
+
 describe("ONE authority — the rule cannot drift between the two surfaces", () => {
   const CONSUMERS: Array<[string, string]> = [
     ["launch checklist", LAUNCH],
@@ -196,6 +717,15 @@ describe("ONE authority — the rule cannot drift between the two surfaces", () 
     // and is held to the same no-re-derivation bar as the surfaces.
     ["canonical readiness", CANONICAL],
   ];
+
+  // THE DASHBOARD IS DELIBERATELY NOT IN THAT LIST, and the reason is a real
+  // distinction rather than an exemption. Every entry above is a DIRECT consumer
+  // of the consent rule and is asserted to import it. The dashboard reaches the
+  // rule TRANSITIVELY, through the canonical authority — which is the point of
+  // ONB-03 — so requiring it to import `@/lib/consent/launch-readiness` would
+  // demand exactly the second call site this slice removes. Its chain is
+  // asserted end to end in the ONB-03 describe above, and its
+  // no-re-derivation obligations are asserted there too.
 
   it("neither consumer queries consent_form_templates itself", () => {
     for (const [name, src] of CONSUMERS) {
