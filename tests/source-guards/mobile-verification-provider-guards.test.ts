@@ -606,6 +606,58 @@ describe("the promoting command still has exactly one caller", () => {
   });
 });
 
+describe("the canonical limiter-order policy describes the order that ships", () => {
+  // P2 at 322da8a4. MOBILE_VERIFICATION_LIMITS' header said "the entry dimension is
+  // checked first" -- borrowed from PROOF_REQUEST_LIMITS, true of the original
+  // single-call design, and false from the moment the gates were split. It is the
+  // CANONICAL POLICY TEXT a future refactor reads, so it pointed at the vulnerable
+  // ordering.
+  //
+  // A MUTATION FOUND THIS GAP, NOT A REVIEW: I corrected the prose and added no guard,
+  // so reverting it stayed green. Two of the eight findings on this branch were stale
+  // prose; prose that encodes a security ordering needs a guard like anything else.
+  //
+  // SCOPED TO THIS BLOCK ONLY. PROOF_REQUEST_LIMITS below legitimately checks its
+  // invitation dimension first -- it has no pre-authorization stage -- so a
+  // whole-file assertion would be wrong about correct code.
+  const POLICY = read("lib/waitlist/delivery/policy.ts");
+  const BLOCK = (() => {
+    const at = POLICY.indexOf("WAIT B2b-2 — possession-proof attempt budgets");
+    expect(at, "the B2b-2 budget block is gone").toBeGreaterThan(-1);
+    return POLICY.slice(at, POLICY.indexOf("export const PROOF_REQUEST_LIMITS"));
+  })();
+
+  it("states the pre-resolution IP gate FIRST, then resolution, then the entry gate", () => {
+    const flat = BLOCK.replace(/\s+/g, " ");
+    const ip = flat.search(/PRE-RESOLUTION IP GATE/i);
+    const resolution = flat.search(/authorization resolution/i);
+    const entry = flat.search(/POST-RESOLUTION ENTRY GATE/i);
+    for (const [n, i] of [["IP gate", ip], ["resolution", resolution], ["entry gate", entry]] as const) {
+      expect(i, `the policy does not name the ${n}`).toBeGreaterThan(-1);
+    }
+    expect(ip, "the policy puts resolution before the IP gate").toBeLessThan(resolution);
+    expect(resolution, "the policy puts the entry gate before resolution").toBeLessThan(entry);
+  });
+
+  it("does NOT claim the entry dimension is checked first", () => {
+    const offending = BLOCK.split("\n")
+      .map((l) => l.replace(/\s+/g, " ").trim())
+      .filter((l) => /entry dimension is checked first|entry (?:gate|dimension)[^.]{0,30}\bfirst\b/i.test(l) && !excused(l));
+    expect(
+      offending,
+      `the canonical policy claims the entry dimension is checked first: ${offending.join(" / ")}`,
+    ).toEqual([]);
+  });
+
+  it("records the three properties the ordering depends on", () => {
+    const flat = BLOCK.replace(/\s+/g, " ");
+    expect(flat, "one-IP-charge-per-request is not stated").toMatch(/ONE REQUEST SPENDS ONE IP BUDGET/i);
+    expect(flat, "server-resolved keying is not stated").toMatch(/SERVER-RESOLVED/i);
+    expect(flat, "fail-open is not stated").toMatch(/fail-open/i);
+    expect(flat, "the not-authorization caveat is not stated").toMatch(/NOT AUTHORIZATION/i);
+  });
+});
+
 describe("the adapter states its precedence invariant ONCE, and correctly", () => {
   const COMMENTS = commentsOf(read(ADAPTER)).replace(/\s+/g, " ");
 
@@ -677,13 +729,76 @@ describe("the authorized flow keeps its seam open and its surface narrow", () =>
     // nothing, and because it is the value a provider refusal already yields -- so a
     // caller cannot tell the two apart. It was `unavailable`, which leaked
     // authorization validity (P2 at ef5a9278).
-    expect([...CODE.matchAll(/UNRESOLVED_CONTEXT_REFUSAL/g)].length).toBeGreaterThanOrEqual(3);
+    // ONE DECLARATION, AND ONE USE -- IN THE FUNNEL. This asserted "at least three
+    // occurrences" as a proxy for "used on both operations", and the funnel made that
+    // proxy WRONG by centralising it to two: the declaration and the single use.
+    // Counting was never the property. Being declared once and reachable only through
+    // afterResolution() is.
     expect([...CODE.matchAll(/const UNRESOLVED_CONTEXT_REFUSAL/g)]).toHaveLength(1);
+    const funnelAt = CODE.indexOf("function afterResolution");
+    expect(funnelAt).toBeGreaterThan(-1);
+    const funnel = CODE.slice(funnelAt, CODE.indexOf("\n}", funnelAt));
+    expect(funnel, "the funnel does not use the constant").toContain("UNRESOLVED_CONTEXT_REFUSAL");
+    // And nowhere else constructs a refusal from it directly.
+    const uses = [...CODE.matchAll(/code:\s*UNRESOLVED_CONTEXT_REFUSAL/g)];
+    expect(uses, "the coarse refusal is constructed outside the funnel").toHaveLength(1);
     expect(CODE).toMatch(/UNRESOLVED_CONTEXT_REFUSAL:\s*VerificationRefusal\s*=\s*"not_proved"/);
     expect(
       CODE,
       "an unresolved context must not report an outage; that distinguishes it from a refusal",
     ).not.toMatch(/UNRESOLVED_CONTEXT_REFUSAL[^\n]*=\s*"unavailable"/);
+  });
+
+  it("EVERY return at or after resolution goes through the ONE funnel", () => {
+    // THE GENERAL RULE, GUARDED STRUCTURALLY. The previous guard searched for a
+    // literal `code: "rate_limited"` after `await resolve(` -- true of the code it was
+    // written against, and BLIND to an outcome arriving indirectly from a lower layer,
+    // which is exactly how the provider-passthrough leak escaped it. Searching for
+    // one spelling of one bad value cannot express "no detailed outcome may surface".
+    //
+    // So this asserts the shape instead: after resolution the flow may return NOTHING
+    // but `afterResolution(...)`. A future negative outcome added to StartOutcome or
+    // CheckOutcome is then coarsened without anyone editing the flow, because there is
+    // no other way for a post-resolution path to construct a FlowOutcome.
+    for (const fn of [
+      "export async function runStartMobileVerification",
+      "export async function runCheckMobileVerification",
+    ]) {
+      const at = CODE.indexOf(fn);
+      expect(at, `${fn} is missing`).toBeGreaterThan(-1);
+      const body = CODE.slice(at, CODE.indexOf("\n}", at));
+      const resolveAt = body.indexOf("await resolve(");
+      expect(resolveAt, `${fn} never resolves`).toBeGreaterThan(-1);
+      const after = body.slice(resolveAt);
+      const returns = [...after.matchAll(/return\s+[^;]+;/g)].map((m) =>
+        m[0].replace(/\s+/g, " "),
+      );
+      expect(returns.length, `${fn} returns nothing after resolution`).toBeGreaterThan(0);
+      for (const r of returns) {
+        expect(
+          r,
+          `${fn} returns something other than the funnel after resolution: ${r}`,
+        ).toMatch(/^return afterResolution\(/);
+      }
+    }
+  });
+
+  it("the funnel can only produce success or the coarse refusal", () => {
+    const at = CODE.indexOf("function afterResolution");
+    expect(at, "the funnel is gone").toBeGreaterThan(-1);
+    const body = CODE.slice(at, CODE.indexOf("\n}", at));
+    expect(body).toMatch(/\{\s*ok:\s*true\s*\}/);
+    expect(body).toMatch(/code:\s*UNRESOLVED_CONTEXT_REFUSAL/);
+    // No detailed code may be spelled inside it either.
+    for (const leak of ["rate_limited", "unavailable", "no_destination"]) {
+      expect(body, `the funnel can emit ${leak}`).not.toContain(leak);
+    }
+  });
+
+  it("the flow never reads a lower-layer refusal code", () => {
+    // `outcome.code` was read once, and that single expression was the whole
+    // provider-passthrough leak. Nothing at this boundary needs it.
+    expect(CODE, "the flow reads a lower-layer code").not.toMatch(/outcome\.code/);
   });
 
   it("a POST-RESOLUTION denial never reports rate_limited", () => {

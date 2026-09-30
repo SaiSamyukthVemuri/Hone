@@ -197,6 +197,45 @@ export type FlowOutcome =
 const UNRESOLVED_CONTEXT_REFUSAL: VerificationRefusal = "not_proved";
 
 /**
+ * THE POST-RESOLUTION FUNNEL. Every negative outcome reachable after `resolve()` has
+ * succeeded comes back through here, and here is the only place after resolution that
+ * constructs a FlowOutcome.
+ *
+ * THE RULE, OWNER-DECIDED 2026-09-29: before resolution the IP-only abuse gate may
+ * expose `rate_limited`, because it runs before authorization and answers identically
+ * for a valid and an invalid capability. AFTER resolution, no negative outcome may
+ * expose information an unresolved candidate cannot also observe. So the anonymous
+ * caller learns exactly three things: the pre-auth IP bucket is exhausted
+ * (`rate_limited`), the verification succeeded, or `not_proved`.
+ *
+ * WHY A FUNCTION RATHER THAN A RULE WRITTEN DOWN. This defect was found three times,
+ * and each time the previous fix had handled one instance while the class stayed open:
+ * the entry gate's own denial, then the provider outcomes propagated straight through
+ * the tail `return`. The third escape got past a source guard that searched for a
+ * literal `code: "rate_limited"` after `await resolve(` -- true of the code it was
+ * written against, blind to an outcome arriving indirectly from a lower layer.
+ *
+ * A funnel makes the rule structural instead of remembered. A future negative outcome
+ * added to StartOutcome or CheckOutcome is coarsened without anyone editing this file,
+ * because there is no other way for a post-resolution path to return.
+ *
+ * THE LOWER LAYERS STAY TRUTHFUL. `startMobileVerification` and
+ * `checkMobileVerification` still return the full vocabulary -- `no_destination`,
+ * `not_proved`, `rate_limited`, `unavailable` -- which is what an authenticated or
+ * internal caller and the tests need. The coarsening belongs to the ANONYMOUS
+ * boundary, not to the state machine.
+ *
+ * WHAT IS DELIBERATELY NOT OFFERED: a public "service unavailable" signal. Exposing
+ * provider or system availability here would be reachable only with a resolved
+ * context, which makes it a capability oracle however it is worded. If a product needs
+ * one it has to be reachable BEFORE authorization, independently of capability
+ * validity -- and inventing that is not this slice's to do.
+ */
+function afterResolution(succeeded: boolean): FlowOutcome {
+  return succeeded ? { ok: true } : { ok: false, code: UNRESOLVED_CONTEXT_REFUSAL };
+}
+
+/**
  * Begin a possession challenge for whichever entry the authorization resolves to.
  *
  * ORDER: IP GATE, then authorize, then the per-entry gate, then the provider.
@@ -229,7 +268,11 @@ export async function runStartMobileVerification(
   if (!ipGate.allowed) return { ok: false, code: "rate_limited" };
 
   const context = await resolve(authorization);
-  if (!context) return { ok: false, code: UNRESOLVED_CONTEXT_REFUSAL };
+  // Through the funnel as well, so that "every return from here on is
+  // afterResolution(...)" is exactly true and a guard can say so without an
+  // exception. Same value either way: a declining resolver and a post-resolution
+  // refusal are the one answer, which is the entire point of the rule.
+  if (!context) return afterResolution(false);
 
   // STAGE 2, on server-resolved ids only. No second IP budget is spent: one
   // request must not be charged twice for the same conceptual limit.
@@ -237,24 +280,22 @@ export async function runStartMobileVerification(
     studioId: context.studioId,
     entryId: context.entryId,
   });
-  // ENFORCED INTERNALLY, REPORTED COARSELY. The limiter still runs and still
-  // stops the request; only its PUBLIC VOCABULARY is flattened into the same
-  // refusal an unresolved candidate gets. See the note on
-  // UNRESOLVED_CONTEXT_REFUSAL for why a post-resolution state may not expose an
-  // outcome an unresolved candidate can never reach.
-  if (!entryGate.allowed) return { ok: false, code: UNRESOLVED_CONTEXT_REFUSAL };
+  // ENFORCED INTERNALLY, REPORTED COARSELY, like everything else past this point.
+  if (!entryGate.allowed) return afterResolution(false);
 
   // The state machine derives the destination from `storedPhone` and refuses when
   // there is not one. No number from the request reaches it.
-  return provider
-    ? startMobileVerification(
-        { entryId: context.entryId, storedPhone: context.storedPhone },
-        provider,
-      )
-    : startMobileVerification({
-        entryId: context.entryId,
-        storedPhone: context.storedPhone,
-      });
+  //
+  // ITS OUTCOME IS NOT PASSED THROUGH, and it used to be. A bare `return
+  // startMobileVerification(...)` handed the caller the state machine's own
+  // vocabulary, so a valid capability could observe `rate_limited` from a provider
+  // 429, or `unavailable` from an outage, or `no_destination` from a row with no
+  // phone -- none of which an unresolved candidate can reach.
+  const target = { entryId: context.entryId, storedPhone: context.storedPhone };
+  const outcome = provider
+    ? await startMobileVerification(target, provider)
+    : await startMobileVerification(target);
+  return afterResolution(outcome.ok);
 }
 
 /**
@@ -279,19 +320,19 @@ export async function runCheckMobileVerification(
   if (!ipGate.allowed) return { ok: false, code: "rate_limited" };
 
   const context = await resolve(authorization);
-  if (!context) return { ok: false, code: UNRESOLVED_CONTEXT_REFUSAL };
+  // Through the funnel as well, so that "every return from here on is
+  // afterResolution(...)" is exactly true and a guard can say so without an
+  // exception. Same value either way: a declining resolver and a post-resolution
+  // refusal are the one answer, which is the entire point of the rule.
+  if (!context) return afterResolution(false);
 
   // STAGE 2, on server-resolved ids only.
   const entryGate = await limitMobileVerificationEntry("check", {
     studioId: context.studioId,
     entryId: context.entryId,
   });
-  // ENFORCED INTERNALLY, REPORTED COARSELY. The limiter still runs and still
-  // stops the request; only its PUBLIC VOCABULARY is flattened into the same
-  // refusal an unresolved candidate gets. See the note on
-  // UNRESOLVED_CONTEXT_REFUSAL for why a post-resolution state may not expose an
-  // outcome an unresolved candidate can never reach.
-  if (!entryGate.allowed) return { ok: false, code: UNRESOLVED_CONTEXT_REFUSAL };
+  // ENFORCED INTERNALLY, REPORTED COARSELY, like everything else past this point.
+  if (!entryGate.allowed) return afterResolution(false);
 
   const target = {
     entryId: context.entryId,
@@ -302,8 +343,12 @@ export async function runCheckMobileVerification(
     ? await checkMobileVerification(target, provider)
     : await checkMobileVerification(target);
 
-  // Collapsed to the flow's shape. `verified: true` is not re-reported: a surface
-  // that needs to know the standing reads the row, and passing the flag onward
-  // would invite a caller to treat this return value as the evidence.
-  return outcome.ok ? { ok: true } : { ok: false, code: outcome.code };
+  // Through the funnel, so a rejection, a provider rate limit, an outage, a missing
+  // destination and a promotion refusal after an otherwise valid proof are one
+  // answer. `verified: true` is not re-reported either: a surface that needs the
+  // standing reads the row, and passing the flag onward would invite a caller to
+  // treat this return value as the evidence.
+  //
+  // `outcome.code` IS DELIBERATELY NOT READ. It was, and that was the leak.
+  return afterResolution(outcome.ok);
 }

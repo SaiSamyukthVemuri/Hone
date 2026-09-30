@@ -95,6 +95,11 @@ const AUTH = { capability: "a".repeat(64), studioId: CLAIMED_STUDIO_ID };
 const H = new Headers();
 
 beforeEach(() => {
+  // WITHOUT THIS, SPY COUNTS LEAK BETWEEN TESTS. `vi.spyOn` on an already-spied
+  // method stacks, so a per-test `mockRestore()` unwinds one layer and leaves the
+  // rest -- three "the provider was called 3 times" failures that each passed in
+  // isolation. Test pollution reading as a regression is worse than either.
+  vi.restoreAllMocks();
   rpc.calls = [];
   rpc.reply = "verified";
   fake.reset();
@@ -127,9 +132,30 @@ describe("an authorization is required, and nothing else identifies the entry", 
     const check = runCheckMobileVerification.length;
     expect(start).toBe(4); // authorization, resolver, headers, provider
     expect(check).toBe(5); // authorization, code, resolver, headers, provider
-    const src = String(runStartMobileVerification) + String(runCheckMobileVerification);
+    // COMMENT-STRIPPED. The property is about code, and these functions DISCUSS
+    // phones at length -- "a row with no phone", "no number from the request reaches
+    // it". Scanning raw source made this fail on its own explanatory prose, which is
+    // the fourth time a matcher in this boundary has judged a comment instead of a
+    // statement. Every matcher here strips first.
+    const src = (String(runStartMobileVerification) + String(runCheckMobileVerification))
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/\/\/.*$/gm, " ");
     expect(src).not.toMatch(/e164/);
-    expect(src).not.toMatch(/\bphone\b(?!\s*:)/);
+    // THE PROPERTY IS ABOUT THE CALLER, NOT ABOUT THE WORD. An earlier version banned
+    // /\bphone\b/ anywhere in the body, which went red the moment the flow named
+    // `context.storedPhone` -- a SERVER-RESOLVED value the state machine has always
+    // needed. What must not exist is a phone arriving from the request, and the
+    // signatures above are where that is decided.
+    expect(src, "a phone is read from the authorization").not.toMatch(
+      /authorization\.[a-zA-Z]*[Pp]hone/,
+    );
+    expect(src, "a phone is read from the request side").not.toMatch(/args\.[a-zA-Z]*[Pp]hone/);
+    // The only phone in either body comes off the resolved context.
+    for (const m of src.matchAll(/[A-Za-z.]*[Pp]hone/g)) {
+      expect(m[0], `an unexpected phone reference: ${m[0]}`).toMatch(
+        /^(context\.storedPhone|storedPhone)$/,
+      );
+    }
   });
 });
 
@@ -175,7 +201,10 @@ describe("the happy path still runs through the state machine", () => {
       H,
       fake,
     );
-    expect(out).toEqual({ ok: false, code: "no_destination" });
+    // COARSENED AT THIS BOUNDARY. The state machine still answers `no_destination`
+    // internally and its own suite pins that; an anonymous caller must not learn it,
+    // because only a RESOLVED context can reach a row with no phone.
+    expect(out).toEqual({ ok: false, code: "not_proved" });
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });
@@ -253,21 +282,24 @@ describe("MEMBERSHIP-ORACLE RESISTANCE", () => {
     expect((unauthorized as { code: string }).code).toBe((rejected as { code: string }).code);
   });
 
-  it("NEGATIVE CONTROL: the equality is not vacuous — other refusals still differ", async () => {
-    // If every refusal collapsed to one value the two assertions above would pass
-    // for the wrong reason. The vocabulary must still be able to say other things.
-    const noDestination = await runStartMobileVerification(
-      AUTH,
-      async () => ({ ...CONTEXT, storedPhone: null }),
-      H,
-      fake,
-    );
+  it("NEGATIVE CONTROL: the equality is not vacuous — the PRE-AUTH gate still differs", async () => {
+    // If EVERY refusal collapsed to one value the equality assertions above would pass
+    // for the wrong reason. They no longer differ post-resolution, by design -- so the
+    // non-vacuity now lives where a difference is still legitimate: the pre-auth IP
+    // gate, which runs before authorization and therefore reveals nothing.
+    //
+    // An earlier version of this control compared `no_destination` against
+    // `unavailable`. Both are now coarsened, so that comparison would have pinned the
+    // very leak this round closed.
+    gates.denyIp = true;
+    const preAuth = await runStartMobileVerification(AUTH, resolves, H, fake);
+    gates.denyIp = false;
     fake.scriptStart("unavailable");
-    const outage = await runStartMobileVerification(AUTH, resolves, H, fake);
+    const postResolution = await runStartMobileVerification(AUTH, resolves, H, fake);
     fake.reset();
-    expect(noDestination).toEqual({ ok: false, code: "no_destination" });
-    expect(outage).toEqual({ ok: false, code: "unavailable" });
-    expect(noDestination).not.toEqual(outage);
+    expect(preAuth).toEqual({ ok: false, code: "rate_limited" });
+    expect(postResolution).toEqual({ ok: false, code: "not_proved" });
+    expect(preAuth).not.toEqual(postResolution);
   });
 });
 
@@ -647,5 +679,163 @@ describe("an exhausted ENTRY bucket is indistinguishable from an unresolved capa
     expect(ipDenied).toEqual({ ok: false, code: "rate_limited" });
     expect(entryDenied).toEqual({ ok: false, code: "not_proved" });
     expect(ipDenied).not.toEqual(entryDenied);
+  });
+});
+
+// ===========================================================================
+// THE GENERAL POST-RESOLUTION RULE
+// ===========================================================================
+//
+// OWNER DECISION, 2026-09-29. Before resolution the IP-only gate may expose
+// `rate_limited`. After resolution, NO negative outcome may expose information an
+// unresolved candidate cannot also observe -- so every one of them is
+// UNRESOLVED_CONTEXT_REFUSAL at this boundary.
+//
+// THIS IS THE THIRD ROUND ON ONE DEFECT and the matrix is why. Round one coarsened
+// the per-entry denial; round two found the provider outcomes propagating straight
+// through the tail `return`. Each fix handled the instance in front of it. So this
+// enumerates EVERY negative outcome each lower layer can produce and asserts they are
+// one value -- and the flow now funnels them through a single function, so a future
+// negative outcome is covered without anyone editing it.
+//
+// The lower layers stay truthful: their own suites pin `no_destination`,
+// `rate_limited` and `unavailable` as distinct. The coarsening is this boundary's.
+
+/** A provider that throws rather than returning an outcome. */
+const throwingProvider = {
+  async start() {
+    throw new Error("network down");
+  },
+  async check() {
+    throw new Error("network down");
+  },
+};
+
+const COARSE = { ok: false, code: "not_proved" } as const;
+
+describe("EVERY post-resolution negative is one value — START", () => {
+  it("all seven paths deep-equal the unresolved refusal", async () => {
+    const unresolved = await runStartMobileVerification(AUTH, resolvesNothing, H, fake);
+
+    const cases: [string, () => Promise<unknown>][] = [
+      ["per-entry exhausted", async () => {
+        gates.denyEntry = true;
+        const r = await runStartMobileVerification(AUTH, resolves, H, fake);
+        gates.denyEntry = false;
+        return r;
+      }],
+      ["no usable destination", () =>
+        runStartMobileVerification(AUTH, async () => ({ ...CONTEXT, storedPhone: null }), H, fake)],
+      ["provider refused", async () => {
+        fake.scriptStart("refused");
+        const r = await runStartMobileVerification(AUTH, resolves, H, fake);
+        fake.reset();
+        return r;
+      }],
+      ["provider rate_limited", async () => {
+        fake.scriptStart("rate_limited");
+        const r = await runStartMobileVerification(AUTH, resolves, H, fake);
+        fake.reset();
+        return r;
+      }],
+      ["provider unavailable", async () => {
+        fake.scriptStart("unavailable");
+        const r = await runStartMobileVerification(AUTH, resolves, H, fake);
+        fake.reset();
+        return r;
+      }],
+      ["provider throws", () =>
+        runStartMobileVerification(AUTH, resolves, H, throwingProvider)],
+    ];
+
+    for (const [name, run] of cases) {
+      const got = await run();
+      expect(got, `${name} is distinguishable from an unresolved capability`).toEqual(unresolved);
+      expect(got, `${name} is not the coarse refusal`).toEqual(COARSE);
+    }
+    // The IP gate was under budget throughout, so nothing else explains the equality.
+    expect(gates.denyIp).toBe(false);
+  });
+
+  it("a successful start is still a success", async () => {
+    expect(await runStartMobileVerification(AUTH, resolves, H, fake)).toEqual({ ok: true });
+  });
+});
+
+describe("EVERY post-resolution negative is one value — CHECK", () => {
+  it("all seven paths deep-equal the unresolved refusal", async () => {
+    const unresolved = await runCheckMobileVerification(AUTH, "1", resolvesNothing, H, fake);
+
+    const cases: [string, () => Promise<unknown>][] = [
+      ["per-entry exhausted", async () => {
+        gates.denyEntry = true;
+        const r = await runCheckMobileVerification(AUTH, "1", resolves, H, fake);
+        gates.denyEntry = false;
+        return r;
+      }],
+      ["no usable destination", () =>
+        runCheckMobileVerification(AUTH, "1", async () => ({ ...CONTEXT, storedPhone: null }), H, fake)],
+      ["provider rejected (wrong code)", async () => {
+        await runStartMobileVerification(AUTH, resolves, H, fake);
+        return runCheckMobileVerification(AUTH, "999999", resolves, H, fake);
+      }],
+      ["provider rate_limited", async () => {
+        fake.scriptCheck("rate_limited");
+        const r = await runCheckMobileVerification(AUTH, "1", resolves, H, fake);
+        fake.reset();
+        return r;
+      }],
+      ["provider unavailable", async () => {
+        fake.scriptCheck("unavailable");
+        const r = await runCheckMobileVerification(AUTH, "1", resolves, H, fake);
+        fake.reset();
+        return r;
+      }],
+      ["provider throws", () =>
+        runCheckMobileVerification(AUTH, "1", resolves, H, throwingProvider)],
+      ["PROMOTION refused after a valid proof", async () => {
+        // The one case unique to check: the provider APPROVED, and 0203 then refused
+        // the compare-and-set. The person's code was right and they still learn
+        // nothing, because only a resolved context can reach this state at all.
+        rpc.reply = "phone_mismatch";
+        await runStartMobileVerification(AUTH, resolves, H, fake);
+        const r = await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake);
+        rpc.reply = "verified";
+        return r;
+      }],
+    ];
+
+    for (const [name, run] of cases) {
+      const got = await run();
+      expect(got, `${name} is distinguishable from an unresolved capability`).toEqual(unresolved);
+      expect(got, `${name} is not the coarse refusal`).toEqual(COARSE);
+    }
+    expect(gates.denyIp).toBe(false);
+  });
+
+  it("an approved check is still a success, and still promotes exactly once", async () => {
+    await runStartMobileVerification(AUTH, resolves, H, fake);
+    expect(
+      await runCheckMobileVerification(AUTH, FAKE_VERIFICATION_CODE, resolves, H, fake),
+    ).toEqual({ ok: true });
+    expect(rpc.calls).toHaveLength(1);
+    expect(rpc.calls[0].fn).toBe("mark_waitlist_mobile_verified");
+  });
+
+  it("the promotion RPC happens ONLY on provider approval", async () => {
+    // Every negative path above, and none of them may write.
+    for (const script of ["rejected", "rate_limited", "unavailable"] as const) {
+      rpc.calls = [];
+      fake.scriptCheck(script);
+      await runCheckMobileVerification(AUTH, "1", resolves, H, fake);
+      fake.reset();
+      expect(rpc.calls, `${script} reached the promotion command`).toEqual([]);
+    }
+    rpc.calls = [];
+    await runCheckMobileVerification(AUTH, "1", resolvesNothing, H, fake);
+    expect(rpc.calls).toEqual([]);
+    gates.denyEntry = true;
+    await runCheckMobileVerification(AUTH, "1", resolves, H, fake);
+    expect(rpc.calls).toEqual([]);
   });
 });

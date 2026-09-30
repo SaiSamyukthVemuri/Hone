@@ -359,9 +359,37 @@ export function proofWindowMinutes(issuedAt: Date, expiresAt: Date): number {
 /**
  * WAIT B2b-2 — possession-proof attempt budgets.
  *
- * TWO DIMENSIONS, AND THE ENTRY DIMENSION IS CHECKED FIRST, for the reason
- * PROOF_REQUEST_LIMITS below already gives: a single hammered entry must not also
- * burn through the shared per-IP budget on its way to being refused.
+ * TWO GATES, IN THIS ORDER, AND THE ORDER IS A SECURITY CONTRACT:
+ *
+ *   1. PRE-RESOLUTION IP GATE      keyed on the operation and the hashed client IP
+ *                                  only -- nothing the caller supplies
+ *   2. authorization resolution
+ *   3. POST-RESOLUTION ENTRY GATE  keyed on the SERVER-RESOLVED entryId and studioId
+ *   4. the provider
+ *
+ * THIS PARAGRAPH DOCUMENTED THE OPPOSITE ORDER FOR TWO REVISIONS, which is the P2
+ * raised at 322da8a4. [historical] It read "the entry dimension is checked first",
+ * borrowed from PROOF_REQUEST_LIMITS below, and it was true of the original
+ * single-call design. It
+ * became false when the gates were split, and it is the CANONICAL POLICY TEXT a future
+ * refactor would read -- so it pointed straight back at the vulnerable ordering.
+ *
+ * WHY THE IP GATE HAS TO BE FIRST. `entryId` does not exist until resolution, so an
+ * entry-first design necessarily resolves first -- and resolving before any budget is
+ * spent recreates the capability-validity oracle: an invalid candidate returns before
+ * any limiter runs while a valid one reaches the limiter and answers differently.
+ * `lib/waitlist/mobile-verification-flow.ts` carries the full account.
+ *
+ * ONE REQUEST SPENDS ONE IP BUDGET. There is no second IP charge after resolution;
+ * charging twice would make the effective budget depend on how many requests happened
+ * to resolve.
+ *
+ * THE ENTRY GATE IS KEYED ONLY ON SERVER-RESOLVED IDS. A caller-supplied studio id
+ * would let the caller choose which bucket to spend.
+ *
+ * BOTH ARE ABUSE AND COST DAMPENERS, NOT AUTHORIZATION, and the Upstash fail-open
+ * behaviour is unchanged: when the backend is unconfigured or erroring, both gates
+ * allow. That is why neither can be the brute-force control -- see below.
  *
  * `check` IS LOOSER THAN `start` ON PURPOSE. A person mistyping a six-digit code
  * twice is ordinary; asking for a third text in fifteen minutes is not, and each
