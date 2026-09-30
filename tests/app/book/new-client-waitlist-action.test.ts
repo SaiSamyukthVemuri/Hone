@@ -308,7 +308,7 @@ describe("NEW-CLIENT-MODE-01: the ROW is the commitment, the email is not", () =
   // notification, so a send outcome can no longer decide whether someone joined.
 
   it("a provider REFUSAL cannot erase the durable row", async () => {
-    scenario.studioSend = { status: "refused" };
+    scenario.studioOutcome = { status: "rejected", code: "bounce" };
     const result = await submitNewClientBookingWaitlistAction(form());
     // The row was written before the send was attempted, so the join stands.
     expect(dbOps).toContain("rpc:join_new_client_waitlist");
@@ -316,7 +316,7 @@ describe("NEW-CLIENT-MODE-01: the ROW is the commitment, the email is not", () =
   });
 
   it("an AMBIGUOUS send cannot erase the durable row either", async () => {
-    scenario.studioSend = { status: "unconfirmed" };
+    scenario.studioOutcome = { status: "ambiguous", reason: "timeout" };
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(dbOps).toContain("rpc:join_new_client_waitlist");
     expect(result.ok).toBe(true);
