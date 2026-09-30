@@ -56,6 +56,15 @@ moment by whoever holds the credential.**
 
    Verify by checking that a listed studio still shows the waitlist form and an
    unlisted one still books.
+
+   The verification now reads the ADMISSION state rather than the calendar:
+   structural readiness (an active service plus an open availability day) no
+   longer hides the waitlist, closed or unreadable surfaces, so a listed studio
+   shows the waitlist form even if its calendar is not set up. Readiness still
+   decides the OPEN surface, because for `open` the surface IS the booking form.
+   Before this, a listed-but-unready studio showed the generic "still being set
+   up" copy, and this step could have failed for a reason that had nothing to do
+   with admission.
 2. **Apply migration 0204.** Every row gets `open`; the bridge keeps listed
    studios on `waitlist`. Still no behaviour change — the column is written but
    nothing reads it as an owner's decision yet, so every studio is still
