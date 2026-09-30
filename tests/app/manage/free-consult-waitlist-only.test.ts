@@ -79,6 +79,32 @@ function makeQuery(table: string) {
   return chain;
 }
 
+// NEW-CLIENT-MODE-01: admission now comes from the canonical authority.
+// Delegating to the REAL resolver with no stored value routes it through the
+// transition bridge, so the env stubbing below keeps meaning what it meant.
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(async (studio: { slug: string | null }) =>
+      actual.resolveAdmission({
+        storedMode: null,
+        readFailed: false,
+        studioSlug: studio.slug,
+      }),
+    ),
+    studioIsInWaitlistMode: vi.fn(async (studio: { slug?: string | null }) => {
+      const a = actual.resolveAdmission({
+        storedMode: null,
+        readFailed: false,
+        studioSlug: studio?.slug ?? null,
+      });
+      return a.ok && a.mode === "waitlist";
+    }),
+  };
+});
+
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({ from: (t: string) => makeQuery(t) }),
 }));

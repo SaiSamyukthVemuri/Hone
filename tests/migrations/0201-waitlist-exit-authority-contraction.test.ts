@@ -49,7 +49,7 @@ describe("0201 position in the chain", () => {
   });
 
   it("has nothing above it, and owns its number alone", () => {
-    expect(versionsAbove(VERSION)).toEqual(["0202", "0203"]);
+    expect(versionsAbove(VERSION)).toEqual(["0202", "0203", "0204"]);
     expect(countVersion(VERSION)).toBe(1);
   });
 
@@ -84,7 +84,7 @@ describe("0201 position in the chain", () => {
   it("does not claim the next free number for anything", () => {
     // 0203 is no longer free: WAIT B2b authored it and it is now APPLIED, so the
     // next free number moved to 0204. This file claims none of it.
-    expect(migrationState().next_free_migration).toBe("0204");
+    expect(migrationState().next_free_migration).toBe("0205");
   });
 
   it("0200 IS FROZEN — this migration does not edit a single byte of it", () => {

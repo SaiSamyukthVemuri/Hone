@@ -70,7 +70,7 @@ describe("0202 takes the number it derived", () => {
     // carries it now. AUTHORING 0203 is what flips this, not applying it --
     // `isRepoMax` is derived from the migrations directory.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0203"]);
+    expect(versionsAbove(VERSION)).toEqual(["0203", "0204"]);
   });
 
   it("claims its version exactly once", () => {
