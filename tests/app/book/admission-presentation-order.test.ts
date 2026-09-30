@@ -188,11 +188,13 @@ describe("presentation never reveals migration state", () => {
     try {
       const bridged = resolveAdmission({
         storedMode: null,
+        storedSetAt: null,
         readFailed: false,
         studioSlug: SLUG,
       });
       const cutOver = resolveAdmission({
         storedMode: "waitlist",
+        storedSetAt: "2026-09-30T12:00:00.000Z",
         readFailed: false,
         studioSlug: SLUG,
       });

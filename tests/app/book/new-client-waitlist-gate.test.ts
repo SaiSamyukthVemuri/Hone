@@ -147,6 +147,7 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
         admissionOverride ??
         actual.resolveAdmission({
           storedMode: null,
+          storedSetAt: null,
           readFailed: false,
           studioSlug: studio.slug,
         }),

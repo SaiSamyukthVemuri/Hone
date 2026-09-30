@@ -108,6 +108,10 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
       async (studio: { slug: string | null }) =>
         actual.resolveAdmission({
           storedMode: storedModeForTest,
+          // A stored mode in these suites means an OWNER CHOSE it, so it
+          // carries the audit stamp the real command always writes. `null`
+          // means nothing was chosen and the gate env decides.
+          storedSetAt: storedModeForTest == null ? null : "2026-09-30T12:00:00.000Z",
           readFailed: false,
           studioSlug: studio.slug,
         }),

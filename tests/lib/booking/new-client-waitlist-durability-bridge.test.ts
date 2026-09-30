@@ -38,10 +38,23 @@ function env(gate: string | undefined, durable: string | undefined) {
   else process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV] = durable;
 }
 
-/** The admission the product would resolve for SLUG, given a stored value. */
-function admission(storedMode: string | null) {
-  return resolveAdmission({ storedMode, readFailed: false, studioSlug: SLUG });
+/**
+ * The admission the product would resolve for SLUG.
+ *
+ * `setAt` null means 0204's backfill - nobody has chosen - so the legacy bridge
+ * still governs. Non-null means an owner wrote it through the command, which is
+ * persisted authority and outranks the env list.
+ */
+function admission(storedMode: string | null, setAt: string | null = null) {
+  return resolveAdmission({
+    storedMode,
+    storedSetAt: setAt,
+    readFailed: false,
+    studioSlug: SLUG,
+  });
 }
+
+const CHOSEN = "2026-09-30T12:00:00.000Z";
 
 const ORIGINAL_GATE = process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
 const ORIGINAL_DURABLE = process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV];
@@ -86,7 +99,7 @@ describe("persisted authority — what a cutover actually buys", () => {
   it("persisted WAITLIST is durable whatever the legacy durable list says", () => {
     for (const durable of [undefined, "", "   ", "other-studio", SLUG]) {
       env(SLUG, durable);
-      const a = admission("waitlist");
+      const a = admission("waitlist", CHOSEN);
       expect(a).toEqual({ ok: true, mode: "waitlist", source: "persisted" });
       expect(
         newClientWaitlistCommitIsDurable(a, SLUG),
@@ -97,7 +110,7 @@ describe("persisted authority — what a cutover actually buys", () => {
 
   it("persisted CLOSED: no join, and nothing to commit", () => {
     env(SLUG, SLUG);
-    const a = admission("closed");
+    const a = admission("closed", CHOSEN);
     expect(a).toEqual({ ok: true, mode: "closed", source: "persisted" });
     expect(newClientMayJoinWaitlist(a)).toBe(false);
     expect(newClientWaitlistCommitIsDurable(a, SLUG)).toBe(false);
@@ -107,6 +120,7 @@ describe("persisted authority — what a cutover actually buys", () => {
     env(SLUG, SLUG);
     const a = resolveAdmission({
       storedMode: null,
+      storedSetAt: null,
       readFailed: true,
       studioSlug: SLUG,
     });
@@ -146,7 +160,7 @@ describe("the migration cannot be faked by editing env", () => {
     env(SLUG, undefined);
 
     const bridged = admission(null);
-    const cutOver = admission("waitlist");
+    const cutOver = admission("waitlist", CHOSEN);
 
     expect(bridged.ok && bridged.mode).toBe("waitlist");
     expect(cutOver.ok && cutOver.mode).toBe("waitlist");

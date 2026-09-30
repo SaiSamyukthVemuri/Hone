@@ -198,6 +198,7 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
     getNewClientAdmissionMode: vi.fn(async (studio: { slug: string | null }) =>
       actual.resolveAdmission({
         storedMode: null,
+          storedSetAt: null,
         readFailed: false,
         studioSlug: studio.slug,
       }),
@@ -205,6 +206,7 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
     studioIsInWaitlistMode: vi.fn(async (studio: { slug?: string | null }) => {
       const a = actual.resolveAdmission({
         storedMode: null,
+          storedSetAt: null,
         readFailed: false,
         studioSlug: studio?.slug ?? null,
       });

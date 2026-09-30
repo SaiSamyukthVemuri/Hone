@@ -50,6 +50,7 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
       async (studio: { slug: string | null }) =>
         actual.resolveAdmission({
           storedMode: null,
+          storedSetAt: null,
           readFailed: false,
           studioSlug: studio.slug,
         }),

@@ -101,6 +101,19 @@ function envForcesWaitlist(studioSlug: string | null | undefined): boolean {
 export function resolveAdmission(input: {
   /** The stored column, or null when the row predates 0204. */
   storedMode: string | null | undefined;
+  /**
+   * `new_client_admission_mode_set_at`: the audit fact that separates an OWNER'S
+   * CHOICE from 0204's backfilled default.
+   *
+   * 0204 adds the column as `not null default 'open'`, so every pre-existing row
+   * reads `open` the moment it applies - and nobody chose that.
+   * `set_new_client_admission_mode` is the only supported writer and it always
+   * stamps this column, so NON-NULL means "an owner deliberately set this" and
+   * NULL means "nothing has been chosen yet". Without it the two are
+   * indistinguishable, which is how an owner could press "Accept bookings", be
+   * told it saved, and stay waitlisted until operations edited an env var.
+   */
+  storedSetAt: string | null | undefined;
   /** True when the studio row itself could not be read. */
   readFailed: boolean;
   /** Server-resolved slug, never browser-supplied. */
@@ -129,14 +142,29 @@ export function resolveAdmission(input: {
     };
   }
 
-  // Stored `closed` and `waitlist` are the owner's own decision and stand as
-  // written. Only `open` is subject to the one-way bridge above.
-  // The env list OVERRODE a stored `open`, so the waitlist is the bridge's
-  // doing and not this studio's persisted decision.
+  // AN EXPLICIT OWNER WRITE IS AUTHORITATIVE, IMMEDIATELY, INCLUDING `open`.
+  //
+  // The env bridge exists to preserve behaviour for studios that have NOT yet
+  // chosen. The first deliberate write through the command cuts that studio over,
+  // and from then on the legacy list cannot move it - so an owner who selects
+  // "Accept bookings" becomes OPEN even while their slug is still listed, and
+  // `closed` -> `open` really does reopen booking rather than reopening to a
+  // waitlist.
+  //
+  // This is also what makes the save TRUTHFUL: the settings action reports
+  // success on the command's `ok`, and the bridge must not then refuse the choice
+  // it just confirmed.
+  if (input.storedSetAt != null) {
+    return { ok: true, mode: input.storedMode, source: "persisted" };
+  }
+
+  // UNCHOSEN. `set_at` is null, so this is 0204's backfill and not a decision.
+  // The bridge still governs, and it is ONE-WAY: it may escalate an unchosen
+  // `open` to waitlist, and it may never de-escalate anything.
   if (input.storedMode === "open" && envWaitlist) {
     return { ok: true, mode: "waitlist", source: "legacy_bridge" };
   }
-  return { ok: true, mode: input.storedMode, source: "persisted" };
+  return { ok: true, mode: input.storedMode, source: "legacy_bridge" };
 }
 
 /**
@@ -151,6 +179,7 @@ export async function getNewClientAdmissionMode(studio: {
   slug: string | null;
 }): Promise<NewClientAdmission> {
   let storedMode: string | null = null;
+  let storedSetAt: string | null = null;
   let readFailed = false;
   try {
     // A SERVER-ONLY PRIVILEGED READ, AND IT HAS TO BE.
@@ -170,7 +199,11 @@ export async function getNewClientAdmissionMode(studio: {
     const admin = createAdminClient();
     const { data, error } = await admin
       .from("studios")
-      .select("new_client_admission_mode")
+      // TWO columns, and the second is not decoration: `set_at` is the only
+      // thing that separates an owner's deliberate `open` from 0204's
+      // backfilled default, and the legacy bridge may escalate one but not the
+      // other. Still narrowly scoped - no other studio column is read.
+      .select("new_client_admission_mode, new_client_admission_mode_set_at")
       .eq("id", studio.id)
       .maybeSingle();
     if (error) {
@@ -179,18 +212,27 @@ export async function getNewClientAdmissionMode(studio: {
       // it falls through to the env rather than reporting unknown.
       if (isMissingColumn(error)) {
         storedMode = null;
+        storedSetAt = null;
       } else {
         readFailed = true;
       }
     } else {
-      storedMode =
-        (data as { new_client_admission_mode?: string | null } | null)
-          ?.new_client_admission_mode ?? null;
+      const row = data as {
+        new_client_admission_mode?: string | null;
+        new_client_admission_mode_set_at?: string | null;
+      } | null;
+      storedMode = row?.new_client_admission_mode ?? null;
+      storedSetAt = row?.new_client_admission_mode_set_at ?? null;
     }
   } catch {
     readFailed = true;
   }
-  return resolveAdmission({ storedMode, readFailed, studioSlug: studio.slug });
+  return resolveAdmission({
+    storedMode,
+    storedSetAt,
+    readFailed,
+    studioSlug: studio.slug,
+  });
 }
 
 function isMissingColumn(error: { code?: string; message?: string }): boolean {

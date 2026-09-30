@@ -36,6 +36,37 @@ may be waitlisted and simply unvisited.
 **The authoritative source at cutover is the live env value, read at that
 moment by whoever holds the credential.**
 
+## The transition rule
+
+**The env bridge protects only UNMIGRATED / UNCHOSEN rows. The first deliberate
+owner write cuts that studio over to persisted authority.**
+
+0204 adds `new_client_admission_mode` as `not null default 'open'`, so the moment
+it applies every row reads `open` — and nobody chose that. The fact that
+separates a backfill from a decision is `new_client_admission_mode_set_at`, which
+`set_new_client_admission_mode` stamps on every successful write:
+
+| stored mode | `set_at` | legacy slug listed | effective | authority |
+|---|---|---|---|---|
+| `open` | NULL | yes | `waitlist` | `legacy_bridge` |
+| `open` | NULL | no | `open` | `legacy_bridge` |
+| `open` | **non-null** | yes | **`open`** | `persisted` |
+| `waitlist` | non-null | either | `waitlist` | `persisted` |
+| `closed` | non-null | either | `closed` | `persisted` |
+| column absent (pre-0204) | — | either | env decides | `legacy_bridge` |
+| read failed | — | either | `unknown` | refuses |
+
+So an owner who selects **Accept bookings** becomes OPEN immediately, even while
+their slug is still in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`, and `closed` → `open`
+really reopens booking rather than reopening to a waitlist. That is not a
+loophole; it is the point. The alternative — which shipped briefly and was caught
+in review — reported a successful save and then silently refused the choice,
+which is the one thing this control must never do.
+
+The bridge remains ONE-WAY for unchosen rows: it may escalate a stamp-less `open`
+to waitlist, and it may never make a studio less restricted than its own row
+says.
+
 ## Steps, in order
 
 1. **Merge and deploy the code.** No behaviour change, and that is now a
@@ -76,6 +107,12 @@ moment by whoever holds the credential.**
    changes at step 4, and that is the one behaviour change in this plan.
 4. **Write each listed studio's mode** to `waitlist` through
    `set_new_client_admission_mode`, owner-authenticated, one studio at a time.
+
+   This write is also what CUTS THAT STUDIO OVER: it stamps `set_at`, so from
+   then on its stored mode is authoritative and the legacy list no longer moves
+   it. A studio whose owner has already chosen a mode is therefore already cut
+   over and needs no write here — check `set_at` before assuming a studio is
+   still on the bridge.
    Willow is in this set.
 
    This is the cutover, and for a studio that was NOT in the durable list it

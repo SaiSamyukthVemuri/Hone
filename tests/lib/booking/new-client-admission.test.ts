@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
@@ -26,8 +28,19 @@ afterEach(() => {
   else process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = ORIGINAL;
 });
 
-const R = (storedMode: string | null, readFailed = false, slug = "willow") =>
-  resolveAdmission({ storedMode, readFailed, studioSlug: slug });
+// `setAt` is the third axis, and it is what separates an OWNER'S CHOICE from
+// 0204's backfilled default. It defaults to a stamp, because a stored mode in
+// these cases means somebody chose it; `R_UNCHOSEN` is the backfill.
+const R = (
+  storedMode: string | null,
+  readFailed = false,
+  slug = "willow",
+  setAt: string | null = "2026-09-30T12:00:00.000Z",
+) => resolveAdmission({ storedMode, storedSetAt: setAt, readFailed, studioSlug: slug });
+
+/** 0204 backfill: the column says `open` and nobody chose it. */
+const R_UNCHOSEN = (storedMode: string | null, slug = "willow") =>
+  R(storedMode, false, slug, null);
 
 describe("the stored mode is the authority", () => {
   it.each(["open", "waitlist", "closed"] as const)("%s is returned as itself", (m) => {
@@ -74,7 +87,11 @@ describe("the transition bridge escalates ONLY", () => {
     // During cutover a studio may still be listed while its row carries the
     // 0204 backfill default. It must stay on the waitlist.
     process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
-    expect(R("open")).toEqual({ ok: true, mode: "waitlist", source: "legacy_bridge" });
+    expect(R_UNCHOSEN("open")).toEqual({
+      ok: true,
+      mode: "waitlist",
+      source: "legacy_bridge",
+    });
   });
 
   it("the env can NEVER de-escalate a stored waitlist or closed", () => {
@@ -159,20 +176,29 @@ describe("P1: the reader actually reads, for an ANON public visitor", () => {
   };
 
   it("honours a stored OPEN on the public path", async () => {
-    const { result } = await withAdminRow({ new_client_admission_mode: "open" });
+    const { result } = await withAdminRow({
+      new_client_admission_mode: "open",
+      new_client_admission_mode_set_at: "2026-09-30T12:00:00.000Z",
+    });
     expect(result).toEqual({ ok: true, mode: "open", source: "persisted" });
   });
 
   it("a stored WAITLIST wins even when the legacy env does NOT list the studio", async () => {
     // The exact silent failure: absent from the env, stored as waitlist.
     delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
-    const { result } = await withAdminRow({ new_client_admission_mode: "waitlist" });
+    const { result } = await withAdminRow({
+      new_client_admission_mode: "waitlist",
+      new_client_admission_mode_set_at: "2026-09-30T12:00:00.000Z",
+    });
     expect(result).toEqual({ ok: true, mode: "waitlist", source: "persisted" });
   });
 
   it("a stored CLOSED wins even when the legacy env does NOT list the studio", async () => {
     delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
-    const { result } = await withAdminRow({ new_client_admission_mode: "closed" });
+    const { result } = await withAdminRow({
+      new_client_admission_mode: "closed",
+      new_client_admission_mode_set_at: "2026-09-30T12:00:00.000Z",
+    });
     expect(result).toEqual({ ok: true, mode: "closed", source: "persisted" });
   });
 
@@ -195,11 +221,18 @@ describe("P1: the reader actually reads, for an ANON public visitor", () => {
   });
 
   it("reads ONE column, keyed by the SERVER-RESOLVED studio id", async () => {
-    const { calls } = await withAdminRow({ new_client_admission_mode: "open" });
+    const { calls } = await withAdminRow({
+      new_client_admission_mode: "open",
+      new_client_admission_mode_set_at: "2026-09-30T12:00:00.000Z",
+    });
     expect(calls).toHaveLength(1);
     expect(calls[0].table).toBe("studios");
-    // Not `select("*")`: no other studio column is exposed by this read.
-    expect(calls[0].cols).toBe("new_client_admission_mode");
+    // Not `select("*")`: no other studio column is exposed by this read. The
+    // second column is the audit stamp that separates an owner's choice from
+    // 0204's backfilled default - without it the reader cannot tell them apart.
+    expect(calls[0].cols).toBe(
+      "new_client_admission_mode, new_client_admission_mode_set_at",
+    );
     // The id, never the slug - a slug is what a browser could try to influence.
     expect(calls[0].key).toBe("id");
     expect(calls[0].val).toBe("studio-1");
@@ -279,5 +312,182 @@ describe("the four admission states cannot collapse into one boolean", () => {
     // this authority entirely.
     const guard = code.slice(refusal - 200, refusal + 40);
     expect(guard).toContain('clientType === "new"');
+  });
+});
+
+// ===========================================================================
+// EXACT-HEAD P1 at 3c2abe10 — AN EXPLICIT OWNER CHOICE OUTRANKS THE ENV BRIDGE.
+//
+// The reader loaded `new_client_admission_mode` and nothing else, so 0204's
+// backfilled `open` and an owner-selected `open` were INDISTINGUISHABLE. The
+// bridge escalated both. An owner still named in NEW_CLIENT_WAITLIST_STUDIO_SLUGS
+// could press "Accept bookings", be told it saved - the command really did
+// persist `open` and really did return ok - and stay waitlisted on every public
+// surface until operations edited an env var. `closed` -> `open` reopened only to
+// the waitlist.
+//
+// `new_client_admission_mode_set_at` is the fact that separates the two, and the
+// command has always written it. The bridge now protects only UNCHOSEN rows.
+// ===========================================================================
+describe("the audit stamp decides whose choice this is", () => {
+  const CHOSEN = "2026-09-30T12:00:00.000Z";
+  const SLUG = "a-studio";
+  const gate = (on: boolean) => {
+    if (on) process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = SLUG;
+    else delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
+  };
+
+  it("A. open + set_at NULL + env ON -> WAITLIST / legacy_bridge", () => {
+    gate(true);
+    expect(R("open", false, SLUG, null)).toEqual({
+      ok: true,
+      mode: "waitlist",
+      source: "legacy_bridge",
+    });
+  });
+
+  it("B. open + set_at NULL + env OFF -> OPEN / legacy_bridge", () => {
+    gate(false);
+    expect(R("open", false, SLUG, null)).toEqual({
+      ok: true,
+      mode: "open",
+      source: "legacy_bridge",
+    });
+  });
+
+  it("C. open + set_at NON-NULL + env ON -> OPEN / persisted", () => {
+    // THE REPAIR. The owner chose to accept bookings; a stale env slug cannot
+    // undo that, and the save they were shown is now true.
+    gate(true);
+    expect(R("open", false, SLUG, CHOSEN)).toEqual({
+      ok: true,
+      mode: "open",
+      source: "persisted",
+    });
+  });
+
+  it.each([[true], [false]])(
+    "D. waitlist + set_at NON-NULL -> WAITLIST / persisted (env on=%s)",
+    (envOn) => {
+      gate(envOn);
+      expect(R("waitlist", false, SLUG, CHOSEN)).toEqual({
+        ok: true,
+        mode: "waitlist",
+        source: "persisted",
+      });
+    },
+  );
+
+  it.each([[true], [false]])(
+    "E. closed + set_at NON-NULL -> CLOSED / persisted (env on=%s)",
+    (envOn) => {
+      gate(envOn);
+      expect(R("closed", false, SLUG, CHOSEN)).toEqual({
+        ok: true,
+        mode: "closed",
+        source: "persisted",
+      });
+    },
+  );
+
+  it("F. the column is missing before 0204 -> the legacy behaviour, unchanged", () => {
+    gate(true);
+    expect(R(null, false, SLUG, null)).toEqual({
+      ok: true,
+      mode: "waitlist",
+      source: "legacy_bridge",
+    });
+    gate(false);
+    expect(R(null, false, SLUG, null)).toEqual({
+      ok: true,
+      mode: "open",
+      source: "legacy_bridge",
+    });
+  });
+
+  it("the bridge stays ONE-WAY for UNCHOSEN rows too", () => {
+    // Found by mutation: moving the persisted check earlier left this untested.
+    // Making the bridge two-way (`if (envWaitlist)` instead of `open &&
+    // envWaitlist`) passed all 38 other cases, because every de-escalation case
+    // now carries a stamp and exits before the bridge is reached.
+    //
+    // A stamp-less `closed` or `waitlist` should not exist - the command always
+    // stamps - but if one does, the env list is not evidence that a studio is
+    // LESS restricted than its own row says, so the bridge may only ESCALATE.
+    gate(true);
+    expect(R("closed", false, SLUG, null)).toEqual({
+      ok: true,
+      mode: "closed",
+      source: "legacy_bridge",
+    });
+    expect(R("waitlist", false, SLUG, null)).toEqual({
+      ok: true,
+      mode: "waitlist",
+      source: "legacy_bridge",
+    });
+  });
+
+  it("G. a non-migration read failure -> UNKNOWN, whatever the stamp says", () => {
+    gate(true);
+    expect(R("open", true, SLUG, CHOSEN)).toEqual({ ok: false });
+    expect(R("waitlist", true, SLUG, CHOSEN)).toEqual({ ok: false });
+    // Fail-closed is not negotiable by an audit stamp: a read that did not
+    // happen cannot be evidence of a choice.
+    expect(R(null, true, SLUG, null)).toEqual({ ok: false });
+  });
+
+  // -- the four behaviours the ruling is actually about ---------------------
+
+  it("an owner who selects OPEN while still listed BECOMES open", () => {
+    gate(true);
+    const before = R("open", false, SLUG, null);   // backfill, still bridged
+    const after = R("open", false, SLUG, CHOSEN);  // the owner pressed save
+    expect(before).toEqual({ ok: true, mode: "waitlist", source: "legacy_bridge" });
+    expect(after).toEqual({ ok: true, mode: "open", source: "persisted" });
+    // The save is TRUTHFUL: the public path now answers what the banner claimed.
+    expect(newClientMayBook(after)).toBe(true);
+    expect(newClientMayBook(before)).toBe(false);
+  });
+
+  it("CLOSED then OPEN actually reopens booking, not the waitlist", () => {
+    gate(true);
+    const closed = R("closed", false, SLUG, CHOSEN);
+    const reopened = R("open", false, SLUG, CHOSEN);
+    expect(closed.ok && closed.mode).toBe("closed");
+    expect(reopened.ok && reopened.mode).toBe("open");
+    expect(newClientMayBook(reopened)).toBe(true);
+    expect(newClientMayJoinWaitlist(reopened)).toBe(false);
+  });
+
+  it("persisted OPEN is never returned to WAITLIST by a stale env slug", () => {
+    for (const stale of [SLUG, `${SLUG},other`, `other,${SLUG}`]) {
+      process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = stale;
+      const a = R("open", false, SLUG, CHOSEN);
+      expect(a, `stale list ${stale} must not move a chosen OPEN`).toEqual({
+        ok: true,
+        mode: "open",
+        source: "persisted",
+      });
+    }
+  });
+
+  it("the stamp changes NOTHING about existing-client rights", () => {
+    // This authority is new-client only, in every combination. The predicates
+    // below are the whole exported surface that reads a mode, and none of them
+    // is consulted on an existing-client path.
+    gate(true);
+    for (const setAt of [null, CHOSEN]) {
+      for (const mode of ["open", "waitlist", "closed"] as const) {
+        const a = R(mode, false, SLUG, setAt);
+        expect(typeof newClientMayBook(a)).toBe("boolean");
+        expect(typeof newClientMayJoinWaitlist(a)).toBe("boolean");
+      }
+    }
+    const source = readFileSync(
+      join(process.cwd(), "lib/booking/new-client-admission.ts"),
+      "utf8",
+    );
+    expect(source).toContain("NEW-CLIENT ONLY");
+    expect(source).not.toContain("existingClientMay");
   });
 });
