@@ -509,7 +509,7 @@ export async function fetchAppointmentForCancelAction(
       // to the service embed. Both ride the read that already proves the
       // appointment's state, so the warning is derived from the same row the
       // page is about to render and costs no extra round trip.
-      "id, status, starts_at, studio:studios(name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
+      "id, status, starts_at, studio:studios(id, name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -521,6 +521,10 @@ export async function fetchAppointmentForCancelAction(
 
   // The relation shape from Supabase types as array; pick first.
   type JoinedStudio = {
+    // `id` is REQUIRED: studioIsInWaitlistMode resolves the canonical
+    // admission mode by studio id, so a slug-only projection made the
+    // free-consult waitlist gate silently inert.
+    id: string;
     name: string;
     slug: string | null;
     timezone: string;

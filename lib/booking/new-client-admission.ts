@@ -204,8 +204,16 @@ export function newClientMayJoinWaitlist(a: NewClientAdmission): boolean {
  * is the opposite of the fail-closed rule for NEW-client mutation, where
  * `unknown` refuses.
  */
+// `id` is REQUIRED, and the type says so on purpose. It was `id?: string | null`
+// with a silent `return false`, and three token-route projections
+// (/reschedule, /manage, /cancel) embedded the studio as `studios(slug)` only -
+// which was sufficient while the policy took a SLUG. The moment this resolver
+// started reading the canonical mode by id, every one of them handed it
+// `undefined` and got back "not waitlisted", so a free consultation at a
+// WAITLISTED studio was offered, warned about, and permitted. A required `id`
+// makes that a compile error at the call site instead of a quiet permission.
 export async function studioIsInWaitlistMode(
-  studio: { id?: string | null; slug?: string | null } | null | undefined,
+  studio: { id: string; slug?: string | null } | null | undefined,
 ): Promise<boolean> {
   if (!studio?.id) return false;
   const a = await getNewClientAdmissionMode({

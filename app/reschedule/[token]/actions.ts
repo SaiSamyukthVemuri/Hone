@@ -240,7 +240,13 @@ type EmbeddedPolicyRow = {
     | { modality: string | null; name: string; price_cents: number | null }
     | Array<{ modality: string | null; name: string; price_cents: number | null }>
     | null;
-  studio: { slug: string | null } | Array<{ slug: string | null }> | null;
+  // `id` is REQUIRED, not decorative: studioIsInWaitlistMode resolves the
+  // canonical admission mode by studio id. A projection carrying only `slug`
+  // made the free-consult waitlist gate silently inert.
+  studio:
+    | { id: string; slug: string | null }
+    | Array<{ id: string; slug: string | null }>
+    | null;
 };
 
 function firstEmbedded<T>(v: T | T[] | null | undefined): T | null {
@@ -262,7 +268,7 @@ async function assertReschedulableOriginal(
       // EMERG-01 embeds the service and the studio slug in the statement that
       // already proves the appointment's state, so the policy costs no extra
       // round trip and cannot read a different row than the one it gated.
-      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(slug)",
+      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(id, slug)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();

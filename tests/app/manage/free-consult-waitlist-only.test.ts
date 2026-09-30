@@ -45,9 +45,35 @@ const scenario = {
   studioSlug: WAITLISTED_SLUG as string | null,
 };
 
+// THE FAKE HONOURS THE PROJECTION, because a fake that returns columns the
+// route never asked for cannot fail the way the route does. `select()` used to
+// ignore its argument entirely, so this fixture handed back a studio `id` while
+// the real query embedded `studios(slug)` - which is exactly how a P1 shipped
+// past a suite that was green.
+function embeddedColumns(select: string, alias: string): string[] | null {
+  const m = new RegExp(`${alias}:[a-z_]+\\(([^)]*)\\)`).exec(select);
+  return m ? m[1].split(",").map((c) => c.trim()) : null;
+}
+
+function projectEmbed<T extends Record<string, unknown>>(
+  select: string,
+  alias: string,
+  full: T,
+): Partial<T> {
+  const columns = embeddedColumns(select, alias);
+  if (!columns) return full;
+  const out: Record<string, unknown> = {};
+  for (const column of columns) {
+    if (column in full) out[column] = full[column];
+  }
+  return out as Partial<T>;
+}
+
 function makeQuery(table: string) {
+  let projection = "";
   const chain = {
-    select() {
+    select(columns?: string) {
+      projection = columns ?? "";
       return chain;
     },
     eq() {
@@ -61,13 +87,14 @@ function makeQuery(table: string) {
             id: "11111111-1111-4111-8111-111111111111",
             status: scenario.status,
             starts_at: scenario.startsAt,
-            studio: {
+            studio: projectEmbed(projection, "studio", {
+              id: "22222222-2222-4222-8222-222222222222",
               name: "Test Studio",
               slug: scenario.studioSlug,
               timezone: "UTC",
               cancellation_policy_text: null,
               no_show_policy_text: null,
-            },
+            }),
             service: scenario.service,
           },
           error: null,
@@ -94,14 +121,30 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
         studioSlug: studio.slug,
       }),
     ),
-    studioIsInWaitlistMode: vi.fn(async (studio: { slug?: string | null }) => {
-      const a = actual.resolveAdmission({
-        storedMode: null,
-        readFailed: false,
-        studioSlug: studio?.slug ?? null,
-      });
-      return a.ok && a.mode === "waitlist";
-    }),
+    // MIRRORS THE REAL CONTRACT, INCLUDING WHAT IT REQUIRES. The previous mock
+    // resolved from `slug` alone, so it stayed capable after the real resolver
+    // moved to reading the canonical mode by studio ID - and this suite went on
+    // passing while /manage, /cancel and /reschedule all embedded the studio as
+    // `studios(slug)`, handed the resolver `undefined`, and were told "not
+    // waitlisted". A free consultation at a WAITLISTED studio was offered,
+    // unwarned, and reschedulable. A mock more capable than the thing it stands
+    // in for cannot fail the way production does, so this one refuses too.
+    studioIsInWaitlistMode: vi.fn(
+      async (studio: { id?: string | null; slug?: string | null }) => {
+        if (!studio?.id) {
+          throw new Error(
+            "studioIsInWaitlistMode was called without a studio id - the route's " +
+              "studio projection must include `id`",
+          );
+        }
+        const a = actual.resolveAdmission({
+          storedMode: null,
+          readFailed: false,
+          studioSlug: studio?.slug ?? null,
+        });
+        return a.ok && a.mode === "waitlist";
+      },
+    ),
   };
 });
 

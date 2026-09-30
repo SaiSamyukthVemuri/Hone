@@ -243,3 +243,51 @@ describe("the machine code is bounded and stable", () => {
     );
   });
 });
+
+// ===========================================================================
+// Exact-head P1 at 0a207470.
+//
+// NEW-CLIENT-MODE-01 changed this policy's input from a studio SLUG to a
+// boolean resolved by `studioIsInWaitlistMode`, which reads the canonical
+// admission mode BY STUDIO ID. Three token routes embedded the studio as
+// `studios(slug)` - correct for the old signature - so the resolver received
+// `undefined`, returned false, and every free consultation at a WAITLISTED
+// studio became reschedulable: /manage offered the action, /cancel omitted the
+// warning, and the /reschedule mutation permitted it.
+//
+// Only /manage had a route suite, and its fake `select()` ignored the
+// projection, so the P1 was invisible there too. This guard reads the SOURCE,
+// so it covers /cancel and /reschedule without standing up two more harnesses.
+// ===========================================================================
+describe("the token routes project the studio id the resolver requires", () => {
+  const ROUTES = [
+    "app/reschedule/[token]/actions.ts",
+    "app/manage/[token]/actions.ts",
+    "app/cancel/[token]/actions.ts",
+  ] as const;
+
+  const source = (route: string) =>
+    readFileSync(join(process.cwd(), route), "utf8");
+
+  it.each(ROUTES)("%s still resolves admission through the authority", (route) => {
+    // If a route stops consulting the canonical resolver, this file's premise is
+    // gone and the assertion below would pass vacuously.
+    expect(source(route)).toContain("studioIsInWaitlistMode");
+  });
+
+  it.each(ROUTES)("%s embeds the studio id in EVERY studio projection", (route) => {
+    const embeds = source(route).match(/studio:studios\([^)]*\)/g) ?? [];
+    expect(embeds.length).toBeGreaterThan(0);
+    for (const embed of embeds) {
+      const columns = embed
+        .slice(embed.indexOf("(") + 1, -1)
+        .split(",")
+        .map((c) => c.trim());
+      expect(
+        columns.includes("id") || columns.includes("*"),
+        `${route}: ${embed} omits id, so studioIsInWaitlistMode would be handed ` +
+          `undefined and answer "not waitlisted" for a waitlisted studio`,
+      ).toBe(true);
+    }
+  });
+});

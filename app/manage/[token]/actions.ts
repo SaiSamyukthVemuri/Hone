@@ -118,7 +118,7 @@ export async function fetchAppointmentForManageAction(
     .select(
       // EMERG-01 adds the studio slug and the service's modality + price so
       // the policy is derived from the same row this page renders.
-      "id, status, starts_at, studio:studios(name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
+      "id, status, starts_at, studio:studios(id, name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -132,6 +132,10 @@ export async function fetchAppointmentForManageAction(
   if (!data) return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
 
   type JoinedStudio = {
+    // `id` is REQUIRED: studioIsInWaitlistMode resolves the canonical
+    // admission mode by studio id, so a slug-only projection made the
+    // free-consult waitlist gate silently inert.
+    id: string;
     name: string;
     slug: string | null;
     timezone: string;
