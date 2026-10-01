@@ -493,7 +493,7 @@ async function submitViaStudioNotification(
   //
   // TRANSITIONAL. This whole function disappears when the durable bridge is
   // retired at cutover - see docs/production/new-client-admission-activation.md
-  // step 6 - and with it this re-read.
+  // step H - and with it this re-read.
   const admissionAtCommit = await getNewClientAdmissionMode(studio);
   if (!newClientMayJoinWaitlist(admissionAtCommit)) {
     logWaitlistEvent("new_client_waitlist_admission_changed_before_send", {

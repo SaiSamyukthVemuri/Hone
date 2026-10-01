@@ -86,8 +86,15 @@ describe("authority is re-derived, never accepted", () => {
   });
 
   it("the browser's only influence is the mode intent", () => {
-    // Two parameters, and the studio is server-supplied.
-    expect(SQL).toMatch(/set_new_client_admission_mode\(\s*p_studio_id uuid,\s*p_mode text\s*\)/);
+    // THREE parameters now, and the browser supplies exactly one of them. The
+    // studio is server-resolved, and `p_legacy_email_only` is a SERVER-DERIVED
+    // transition fact - the database cannot read the env lists - which is why it
+    // has to be passed rather than looked up. It is retired with the bridge.
+    expect(SQL).toMatch(
+      /set_new_client_admission_mode\(\s*p_studio_id uuid,\s*p_mode text,[\s\S]*?p_legacy_email_only boolean default false\s*\)/,
+    );
+    // The mode intent is the ONLY browser-influenced argument.
+    expect(SQL).toMatch(/v_mode\s+text := lower\(btrim\(coalesce\(p_mode/);
   });
 });
 
@@ -97,9 +104,9 @@ describe("grants follow the 0129 / 0164 lesson", () => {
       expect(
         SQL,
         `must revoke from ${role} by name`,
-      ).toMatch(new RegExp(`revoke all on function public\\.set_new_client_admission_mode\\(uuid, text\\) from ${role};`));
+      ).toMatch(new RegExp(`revoke all on function public\\.set_new_client_admission_mode\\(uuid, text, boolean\\) from ${role};`));
     }
-    expect(SQL).toMatch(/grant execute on function public\.set_new_client_admission_mode\(uuid, text\) to authenticated;/);
+    expect(SQL).toMatch(/grant execute on function public\.set_new_client_admission_mode\(uuid, text, boolean\) to authenticated;/);
   });
 });
 

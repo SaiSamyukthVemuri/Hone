@@ -580,8 +580,8 @@ describe("the activation document matches what the source actually does", () => 
     );
   });
 
-  it("step 6 does not promise to delete authority EMERG-01 still needs", () => {
-    const step6 = DOC.slice(DOC.indexOf("6. **Only then remove"));
+  it("step H does not promise to delete authority EMERG-01 still needs", () => {
+    const step6 = DOC.slice(DOC.indexOf("**H. Retire the bridge machinery"));
     expect(step6).toContain("CANNOT BE DELETED");
     expect(step6).toContain("free-consult-reschedule-policy.ts");
     expect(step6).toContain("bounded follow-up debt");
@@ -589,19 +589,21 @@ describe("the activation document matches what the source actually does", () => 
     expect(POLICY).toContain("isNewClientWaitlistEnabled(studioSlug)");
   });
 
-  it("step 6 DOES retire the durable gate, which the bridge is the only reader of", () => {
+  it("step H DOES retire the durable gate, which the bridge is the only reader of", () => {
     // The mirror of the rule above, and the distinction operators would get
     // wrong: one env list survives step 6 and the other must not. Leaving the
     // durable variable behind would mean maintaining a value that controls
     // nothing; deleting the ADMISSION list would silently restore self-service
     // movement of free consultations.
-    const step6 = DOC.slice(DOC.indexOf("6. **Only then remove"));
+    const step6 = DOC.slice(DOC.indexOf("**H. Retire the bridge machinery"));
     expect(step6).toContain("RETIRE THE DURABLE ENV GATE WITH IT");
     expect(step6).toContain(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV);
     expect(step6).toContain("isNewClientWaitlistDurableEnabled");
     expect(step6).toContain("Deleting the variable is the LAST act");
     // Both halves named in the same step, so they cannot be conflated.
-    expect(step6).toContain("NEW_CLIENT_WAITLIST_STUDIO_SLUGS` stays");
+    // Both lists named in the same step, so they cannot be conflated: the
+    // durable gate goes, the ADMISSION list stays because EMERG-01 reads it.
+    expect(step6).toContain("CANNOT BE DELETED HERE");
 
     // And the premise the retirement rests on is the one the bridge suite pins:
     // exactly one runtime caller.

@@ -148,7 +148,7 @@ export function isFreeConsultWaitlistOnlyReschedule(input: {
    * authority needs its own product decision and its own durable authority
    * before it can be retired. Until that exists it must NOT be deleted with the
    * new-client admission bridge - see
-   * docs/production/new-client-admission-activation.md, step 6.
+   * docs/production/new-client-admission-activation.md, step H.
    */
   studioSlug: string | null | undefined;
   service: FreeConsultPolicyService | null | undefined;

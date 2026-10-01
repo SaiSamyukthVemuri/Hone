@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminQuery,
   adminTx,
+  asUser,
   closePool,
   resolveLocalDbUrl,
 } from "./helpers/harness";
@@ -59,6 +60,7 @@ async function waitUntilBlocked(pid: number, timeoutMs = 8000): Promise<boolean>
 
 type Fixture = {
   studioId: string;
+  userId: string;
   ownerId: string;
   serviceId: string;
   existingClientId: string;
@@ -112,6 +114,7 @@ async function seed(label: string): Promise<Fixture> {
   };
   return {
     studioId,
+    userId,
     ownerId,
     serviceId,
     existingClientId,
@@ -478,6 +481,188 @@ describe("the commit-time authority's shape", () => {
         ).catch(() => null);
         if (has) expect(has.rows[0].ok).toBe(false);
       }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE 23505 RACE IS REAL, BECAUSE NOT EVERY CLIENT WRITER TAKES THIS LOCK.
+//
+// The studios row lock serialises this command against transactions that acquire
+// it. The practitioner "Add Client" surface does not: it inserts straight into
+// `clients`. So it can land between the command's lookup and its insert, and the
+// unique email index raises 23505. An uncaught exception would abort the whole
+// RPC - and on the invitation path the redemption is already committed from an
+// earlier request, leaving an invitation spent with no booking outcome.
+// ---------------------------------------------------------------------------
+describe("a client created WITHOUT the studio lock cannot abort the command", () => {
+  it("returns one valid ACTIVE client, not a raw 23505", async () => {
+    const f = await seed("race-active");
+    await stamp(f.studioId, "open");
+    const email = `race-${randomUUID().slice(0, 8)}@harness.local`;
+
+    // Simulate the unlocked writer winning the index: the row exists by the time
+    // the command inserts. The command's own lookup-then-insert, and its
+    // unique-violation re-read, must both land on this row.
+    const other = randomUUID();
+    await adminQuery(
+      `insert into public.clients (id,studio_id,name,email) values ($1,$2,'Added By Practitioner',$3)`,
+      [other, f.studioId, email],
+    );
+
+    const r = await adminQuery(
+      `select * from public.create_public_appointment_for_new_client(
+         $1, null, 'Booker', $2, '+15550133', null, $3, $4::timestamptz, $5, false, null, null)`,
+      [f.studioId, email, f.serviceId, f.slot, hash64()],
+    );
+    expect(r.rows[0].result).toBe("created");
+    expect(r.rows[0].client_id).toBe(other);
+
+    // ONE client for that email, and the appointment belongs to it.
+    const clients = await adminQuery(
+      `select count(*)::int as n from public.clients where studio_id = $1 and normalized_email = lower($2)`,
+      [f.studioId, email],
+    );
+    expect(clients.rows[0].n).toBe(1);
+    const appt = await adminQuery(
+      `select client_id from public.appointments where id = $1`,
+      [r.rows[0].appointment_id],
+    );
+    expect(appt.rows[0].client_id).toBe(other);
+  });
+
+  it("an ARCHIVED winner is refused generically, and writes nothing", async () => {
+    const f = await seed("race-archived");
+    await stamp(f.studioId, "open");
+    const email = `arch-${randomUUID().slice(0, 8)}@harness.local`;
+    await adminQuery(
+      `insert into public.clients (id,studio_id,name,email,archived_at)
+       values ($1,$2,'Archived',$3, now())`,
+      [randomUUID(), f.studioId, email],
+    );
+    const before = await countsFor(f.studioId);
+
+    const r = await adminQuery(
+      `select * from public.create_public_appointment_for_new_client(
+         $1, null, 'Booker', $2, '+15550134', null, $3, $4::timestamptz, $5, false, null, null)`,
+      [f.studioId, email, f.serviceId, f.slot, hash64()],
+    );
+    expect(r.rows[0].result).toBe("archived_client_collision");
+    expect(r.rows[0].appointment_id).toBeNull();
+    expect(r.rows[0].client_id).toBeNull();
+    expect(await countsFor(f.studioId)).toEqual(before);
+  });
+
+  it("an invited booking answers DEFINITELY on a collision, never by raising", async () => {
+    // The invitation is already redeemed when this runs, so an exception would
+    // leave it spent with no outcome. A defined answer is what lets the caller
+    // tell "spent, not booked" apart from "unknown".
+    const f = await seed("race-invited");
+    await stamp(f.studioId, "waitlist");
+    const entryId = randomUUID();
+    await adminQuery(
+      `insert into public.new_client_waitlist_entries
+         (id,studio_id,name,email,status,claimed_at,claimed_by_practitioner_id,invited_at)
+       values ($1,$2,'Invited',$3,'invited',now(),$4,now())`,
+      [entryId, f.studioId, f.existingClientEmail, f.ownerId],
+    );
+    await adminQuery(
+      `insert into public.new_client_waitlist_invitations
+         (studio_id,entry_id,token_hash,expires_at,issued_by_practitioner_id,redeemed_at)
+       values ($1,$2,$3, now() + interval '7 days', $4, now())`,
+      [f.studioId, entryId, hash64(), f.ownerId],
+    );
+    await adminQuery(
+      `update public.clients set archived_at = now() where id = $1`,
+      [f.existingClientId],
+    );
+
+    const r = await adminQuery(
+      `select * from public.create_public_appointment_for_new_client(
+         $1, null, 'Invited', $2, '+15550135', null, $3, $4::timestamptz, $5, false, null, null, $6)`,
+      [f.studioId, f.existingClientEmail, f.serviceId, f.slot, hash64(), entryId],
+    );
+    // A definite outcome, not an exception - and the entry is NOT converted.
+    expect(["archived_client_collision", "client_not_created"]).toContain(
+      r.rows[0].result,
+    );
+    const entry = await adminQuery(
+      `select converted_at from public.new_client_waitlist_entries where id = $1`,
+      [entryId],
+    );
+    expect(entry.rows[0].converted_at).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE LEGACY EMAIL-ONLY TRANSITION BLOCK.
+//
+// That path commits through an external provider, so no check can make an owner
+// mode change and an in-flight join mutually exclusive. Rather than fake
+// atomicity, the concurrent transition is removed until the studio is durable.
+// ---------------------------------------------------------------------------
+describe("an email-only studio cannot be switched OPEN or CLOSED", () => {
+  // AS THE OWNER, because the command re-derives `auth.uid()` and refuses anyone
+  // who is not an ACTIVE OWNER of this studio - which `adminQuery` is not.
+  const setMode = (f: Fixture, mode: string, legacyEmailOnly: boolean) =>
+    asUser(f.userId, (q) =>
+      q(`select * from public.set_new_client_admission_mode($1, $2, $3)`, [
+        f.studioId,
+        mode,
+        legacyEmailOnly,
+      ]),
+    );
+
+  it.each([["open"], ["closed"]])(
+    "refuses %s while the studio still commits by email",
+    async (mode) => {
+      const f = await seed(`block-${mode}`);
+      const r = await setMode(f, mode, true);
+      expect(r.rows[0].outcome).toBe("legacy_waitlist_cutover_required");
+      expect(r.rows[0].mode).toBeNull();
+      // Nothing was written: the row is still unstamped.
+      const row = await adminQuery(
+        `select new_client_admission_mode as m, new_client_admission_mode_set_at as a
+           from public.studios where id = $1`,
+        [f.studioId],
+      );
+      expect(row.rows[0].a).toBeNull();
+      expect(row.rows[0].m).toBe("open");
+    },
+  );
+
+  it("WAITLIST is still allowed, and it IS the way out", async () => {
+    const f = await seed("block-waitlist");
+    // The cutover write itself, made while the studio is still email-only.
+    const cut = await setMode(f, "waitlist", true);
+    expect(cut.rows[0].outcome).toBe("ok");
+
+    const row = await adminQuery(
+      `select new_client_admission_mode as m, new_client_admission_mode_set_at as a
+         from public.studios where id = $1`,
+      [f.studioId],
+    );
+    expect(row.rows[0].m).toBe("waitlist");
+    expect(row.rows[0].a).not.toBeNull();
+
+    // Now persisted, so its commit is durable and full control is available.
+    const a = await adminQuery(
+      `select public.effective_new_client_admission($1, true) as mode`,
+      [f.studioId],
+    );
+    expect(a.rows[0].mode).toBe("waitlist");
+    for (const mode of ["open", "closed", "waitlist"]) {
+      const r = await setMode(f, mode, false);
+      expect(r.rows[0].outcome, `${mode} must be available after cutover`).toBe("ok");
+    }
+  });
+
+  it("the block does not touch ordinary durable admission authority", async () => {
+    // A durable studio - legacyEmailOnly false - keeps every transition.
+    const f = await seed("block-none");
+    for (const mode of ["waitlist", "closed", "open"]) {
+      const r = await setMode(f, mode, false);
+      expect(r.rows[0].outcome).toBe("ok");
     }
   });
 });

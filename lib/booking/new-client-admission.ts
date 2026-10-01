@@ -318,7 +318,7 @@ export const NEW_CLIENT_ADMISSION_CLOSED_REFUSAL =
  *
  * TEMPORARY. Retired with the bridge at cutover, together with the commands'
  * `p_legacy_bridge_waitlist` argument. See
- * docs/production/new-client-admission-activation.md, step 6.
+ * docs/production/new-client-admission-activation.md, step H.
  */
 export function newClientAdmissionLegacyBridgeWaitlist(
   studioSlug: string | null | undefined,

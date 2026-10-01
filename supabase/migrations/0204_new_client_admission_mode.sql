@@ -142,7 +142,11 @@ comment on column public.studios.new_client_admission_mode_set_by is
 
 create or replace function public.set_new_client_admission_mode(
   p_studio_id uuid,
-  p_mode text
+  p_mode text,
+  -- TRUE while this studio's NEW-client waitlist joins still commit through the
+  -- LEGACY EMAIL-ONLY path. Server-derived, because the database cannot read the
+  -- env lists, and TEMPORARY: retired with the bridge at cutover.
+  p_legacy_email_only boolean default false
 )
 returns table (outcome text, mode text, set_at timestamptz)
 language plpgsql
@@ -171,6 +175,27 @@ begin
   -- itself; nothing the caller passed can influence it.
   if not public.is_studio_owner(p_studio_id) then
     return query select 'not_authorized'::text, null::text, null::timestamptz;
+    return;
+  end if;
+
+  -- WHILE A STUDIO IS STILL ON THE LEGACY EMAIL-ONLY COMMIT PATH, THE
+  -- OPEN/CLOSED TRANSITION IS NOT AVAILABLE.
+  --
+  -- That path commits through an external email provider, so it cannot hold a
+  -- transaction across its commit point, and a check immediately before the send
+  -- only narrows the window - it cannot close it. Rather than fake atomicity
+  -- around a provider, or build an outbox in this PR, the CONCURRENT TRANSITION
+  -- IS REMOVED: no owner change can invalidate an in-flight legacy commit,
+  -- because the owner cannot make one.
+  --
+  -- WAITLIST IS STILL ALLOWED, and it is the way out: writing WAITLIST stamps
+  -- the row, which makes the commit durable, after which normal OPEN / WAITLIST
+  -- / CLOSED control becomes available. Ordinary durable admission authority is
+  -- untouched - this refuses only for a studio whose joins still land in an
+  -- inbox.
+  if coalesce(p_legacy_email_only, false) and v_mode in ('open', 'closed') then
+    return query select 'legacy_waitlist_cutover_required'::text,
+                        null::text, null::timestamptz;
     return;
   end if;
 
@@ -211,10 +236,11 @@ begin
 end;
 $$;
 
-comment on function public.set_new_client_admission_mode(uuid, text) is
+comment on function public.set_new_client_admission_mode(uuid, text, boolean) is
   'Sets a studio''s NEW-CLIENT admission mode. Browser supplies intent only; '
   'membership and owner role are re-derived from auth.uid() inside the '
-  'function. Returns ok | not_authorized | studio_not_found | invalid_mode.';
+  'function. Returns ok | not_authorized | studio_not_found | invalid_mode | '
+  'legacy_waitlist_cutover_required.';
 
 -- ---------------------------------------------------------------------------
 -- 4. THE COMMAND IS THE ONLY WRITER
@@ -285,12 +311,11 @@ create trigger studios_admission_mode_guard
 -- The function is owner-gated internally, but an unauthenticated caller should
 -- not be able to reach it at all.
 
-revoke all on function public.set_new_client_admission_mode(uuid, text) from public;
-revoke all on function public.set_new_client_admission_mode(uuid, text) from public;
-revoke all on function public.set_new_client_admission_mode(uuid, text) from anon;
-revoke all on function public.set_new_client_admission_mode(uuid, text) from authenticated;
-revoke all on function public.set_new_client_admission_mode(uuid, text) from service_role;
-grant execute on function public.set_new_client_admission_mode(uuid, text) to authenticated;
+revoke all on function public.set_new_client_admission_mode(uuid, text, boolean) from public;
+revoke all on function public.set_new_client_admission_mode(uuid, text, boolean) from anon;
+revoke all on function public.set_new_client_admission_mode(uuid, text, boolean) from authenticated;
+revoke all on function public.set_new_client_admission_mode(uuid, text, boolean) from service_role;
+grant execute on function public.set_new_client_admission_mode(uuid, text, boolean) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 5. COMMIT-TIME AUTHORITY
@@ -594,15 +619,60 @@ begin
     end if;
 
     if v_client_id is null then
-      insert into public.clients (
-        studio_id, name, email, phone, sms_consent_at, sms_consent_source
-      )
-      values (
-        p_studio_id, p_client_name, p_client_email, p_client_phone,
-        p_sms_consent_at,
-        case when p_sms_consent_at is null then null else 'public_booking' end
-      )
-      returning id into v_client_id;
+      -- THE RACE IS REAL, BECAUSE NOT EVERY CLIENT WRITER TAKES THIS LOCK.
+      --
+      -- The studios row lock serialises this command against other transactions
+      -- that acquire it - and the practitioner "Add Client" surface
+      -- (app/(app)/clients/new/actions.ts) does not. It inserts straight into
+      -- `clients`, so it can land between the lookup above and the insert below
+      -- and raise 23505 on the unique email index.
+      --
+      -- An uncaught exception here would abort the whole RPC, and on the
+      -- invitation path the redemption is ALREADY COMMITTED from an earlier
+      -- request - leaving an invitation spent with no booking outcome from the
+      -- transaction that owns it. So the collision is caught and answered.
+      begin
+        insert into public.clients (
+          studio_id, name, email, phone, sms_consent_at, sms_consent_source
+        )
+        values (
+          p_studio_id, p_client_name, p_client_email, p_client_phone,
+          p_sms_consent_at,
+          case when p_sms_consent_at is null then null else 'public_booking' end
+        )
+        returning id into v_client_id;
+      exception
+        when unique_violation then
+          -- RE-READ THE WINNER, and distinguish active from archived exactly as
+          -- the application contract did before this moved into the database.
+          select c.id, c.archived_at is not null
+            into v_client_id, v_archived
+            from public.clients c
+           where c.studio_id = p_studio_id
+             and c.normalized_email = case
+                   when p_client_email is null or btrim(p_client_email) = '' then null
+                   else lower(btrim(p_client_email))
+                 end
+           limit 1;
+
+          if coalesce(v_archived, false) then
+            return query select 'archived_client_collision'::text,
+                                null::uuid, null::timestamptz, null::timestamptz,
+                                null::integer, null::uuid, null::timestamptz, null::uuid;
+            return;
+          end if;
+
+          -- The index said a row exists and the re-read cannot see it, so the
+          -- collision was on something this command does not own. Answer
+          -- definitely rather than raising: the caller must be able to tell a
+          -- spent invitation apart from an unknown failure.
+          if v_client_id is null then
+            return query select 'client_not_created'::text,
+                                null::uuid, null::timestamptz, null::timestamptz,
+                                null::integer, null::uuid, null::timestamptz, null::uuid;
+            return;
+          end if;
+      end;
     end if;
   end if;
 

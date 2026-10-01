@@ -31,7 +31,7 @@ only when someone deliberately writes it.
 
   That is deliberate: a code deploy must not move a studio's commit point before
   anyone chose to. `newClientWaitlistCommitIsDurable` is the decision, a stamped
-  studio is always durable regardless of that list, and step 6 retires the second
+  studio is always durable regardless of that list, and step H retires the second
   switch. Until then this document must not claim there is only one.
 
 ## What must NOT be inferred
@@ -79,109 +79,120 @@ says.
 
 ## Steps, in order
 
-1. **Merge and deploy the code.** No behaviour change, and that is now a
-   property of the code rather than an assumption about the env.
+**MIGRATION FIRST. The application is deployed AFTER 0204 is applied and
+verified, not before.**
 
-   An earlier draft of this document claimed the same thing while the code
-   committed **every** permitted join durably as soon as it deployed. That was
-   false for a supported configuration: a studio named in
-   `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` but **not** in
-   `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` commits by email acceptance
-   today, and the deploy would have moved its commit point before anyone chose
-   to. Nothing here had established that such a studio does not exist, and
-   nothing here can — those are Sensitive values, read only at step 3.
+An earlier version of this plan deployed the code at step 1 and applied 0204 at
+step 2. That order became wrong the moment new-client booking started calling
+`create_public_appointment_for_new_client`: between those two steps the function
+does not exist, so every ordinary new-client booking would have failed. The fix
+is the order, not a permanent missing-RPC fallback in the booking path.
 
-   The commit point now follows the studio's **current** configuration until
-   its durable mode is actually persisted. See
-   `lib/booking/new-client-waitlist-durability-bridge.ts`.
+The order is safe in the other direction, and that is why it is the clean one:
 
-   Verify by checking that a listed studio still shows the waitlist form and an
-   unlisted one still books.
+- the production application does not call the new 0204 RPCs, so adding the
+  columns, functions and grants is **inert** to every path it does run;
+- it never writes the new admission fields, so every row stays unstamped and
+  `set_at IS NULL`;
+- the legacy env behaviour therefore remains authoritative until the new
+  application is deployed.
 
-   The verification now reads the ADMISSION state rather than the calendar:
-   structural readiness (an active service plus an open availability day) no
-   longer hides the waitlist, closed or unreadable surfaces, so a listed studio
-   shows the waitlist form even if its calendar is not set up. Readiness still
-   decides the OPEN surface, because for `open` the surface IS the booking form.
-   Before this, a listed-but-unready studio showed the generic "still being set
-   up" copy, and this step could have failed for a reason that had nothing to do
-   with admission.
-2. **Apply migration 0204.** Every row gets `open`; the bridge keeps listed
-   studios on `waitlist`. Still no behaviour change — the column is written but
-   nothing reads it as an owner's decision yet, so every studio is still
-   `source: "legacy_bridge"`.
-3. **Read the live env lists** from Vercel. Record the exact slug set in the
-   apply record — this is the only moment the real configuration enters the
-   written record. **Record both lists**, including which listed studios are
-   absent from the durable list: those are the studios whose commit point
-   changes at step 4, and that is the one behaviour change in this plan.
-4. **Write each listed studio's mode** to `waitlist` through
-   `set_new_client_admission_mode`, owner-authenticated, one studio at a time.
+**A. Verify the production migration baseline.** `npm run migration:state --
+--json` for the repository view, and `docs/production/migration-state.json` for
+what production has actually applied. Confirm 0204 is the next free number and
+that nothing else has claimed it.
 
-   This write is also what CUTS THAT STUDIO OVER: it stamps `set_at`, so from
-   then on its stored mode is authoritative and the legacy list no longer moves
-   it. A studio whose owner has already chosen a mode is therefore already cut
-   over and needs no write here — check `set_at` before assuming a studio is
-   still on the bridge.
-   Willow is in this set.
+**B. Apply 0204.** One migration, its own transaction, its own
+`lock_timeout`. Record the apply in `docs/production/migration-ledger.md` and
+update `docs/production/migration-state.json` in the same change.
 
-   This is the cutover, and for a studio that was NOT in the durable list it
-   moves the commit point from email acceptance to a durable row. Intended, and
-   deliberate per studio — it is why this step is one studio at a time.
-5. **Verify each written studio** still shows the waitlist form and still
-   writes a durable row on join. The row, not the email, is the check.
+**C. Verify 0204 is hosted, and that its functions and grants are right.**
+Read-only, `supabase db query --linked`, never `db execute`. Confirm:
 
-   `newClientAdmissionIsCutOver` is the structural check: after step 4 a
-   written studio resolves `source: "persisted"`, and from then on the durable
-   path is unconditional for it — removing its legacy durable slug cannot
-   return it to email-only.
-6. **Only then remove the NEW-CLIENT ADMISSION bridge.** After every waitlisted
-   studio is stamped, delete, together:
-   `lib/booking/new-client-waitlist-durability-bridge.ts`, `envForcesWaitlist`
-   and its call, `NewClientAdmissionSource`, and
-   `newClientAdmissionIsCutOver`. The durable path then becomes unconditional,
-   which is what `waitlist` means.
+- the three `studios` columns exist, and `new_client_admission_mode_set_at` is
+  NULL on every row — nothing has been stamped yet;
+- exactly ONE foreign key still relates `studios` and `practitioners`
+  (`practitioners_studio_id_fkey`), so the `studio:studios(*)` embeds are intact;
+- `set_new_client_admission_mode` is executable by `authenticated` and by
+  NOBODY else — not `anon`, not `service_role`, and **not `PUBLIC`**;
+- `effective_new_client_admission` and `assert_new_client_admission` are
+  executable by **nobody**;
+- the three composed commands are executable by `service_role` only.
 
-   **AND RETIRE THE DURABLE ENV GATE WITH IT, because deleting the bridge is
-   what makes it dead.** The bridge is the only runtime consumer of
-   `isNewClientWaitlistDurableEnabled` — pinned by a call-site guard in
-   `tests/lib/booking/new-client-waitlist-durability-bridge.test.ts`, which
-   asserts exactly that — so once it goes, these control nothing and must not be
-   left for operators to maintain:
+**D. Deploy the #773 application.** Only now does anything call the new RPCs.
+Behaviour is unchanged at this point: every row is unstamped, so the legacy
+bridge still decides, and the durable list still decides each studio's commit
+point. Verify a listed studio still shows the waitlist form and an unlisted one
+still books.
 
-   - the `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` Vercel variable;
-   - `NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV` and
-     `isNewClientWaitlistDurableEnabled` in `lib/booking/new-client-waitlist.ts`;
-   - its row in the deploy-time env report (`scripts/check-production-env-gates.mjs`)
-     and that script's test;
-   - its row in `docs/10_DEPLOYMENT_AND_ENV.md`;
-   - the containment guard that keeps the list of files naming it closed.
+**E. Read the live bridge configuration.** Read both env lists from Vercel and
+record the exact slug sets in the apply record — this is the only moment the
+real configuration enters the written record. **Record which listed studios are
+absent from the durable list:** those are the studios whose commit point moves at
+step F, and that is the one behaviour change in this plan.
 
-   This is not a new decision: `waitlist` MEANS durable, and the second list was
-   accepted only as migration/rollback compatibility with a clean deletion point.
-   This is that point. **Deleting the variable is the LAST act**, after the code
-   that reads it is gone, so no deploy can land a build that expects a value
-   nobody is setting.
+**F. Cut each listed studio over, one at a time**, by writing `waitlist`
+through `set_new_client_admission_mode`, owner-authenticated. This write is the
+cutover: it stamps `set_at`, so from then on the stored mode is authoritative,
+the legacy list no longer moves that studio, and its joins commit durably.
 
-   **Do not confuse it with the OTHER env list.**
-   `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` stays — EMERG-01 still reads it, per the
-   paragraph below.
+A studio whose owner has already chosen a mode is already cut over and needs no
+write here — check `set_at` before assuming otherwise.
 
-   **`NEW_CLIENT_WAITLIST_STUDIO_SLUGS` CANNOT BE DELETED AT THIS STEP, AND
-   NEITHER CAN `isNewClientWaitlistEnabled`.** A second, separate policy still
-   depends on them: EMERG-01's free-consult reschedule restriction
-   (`lib/booking/free-consult-reschedule-policy.ts`) reads that env list as its
-   own authority, deliberately, so that an owner changing new-client admission
-   cannot move the rights of an appointment that is already confirmed.
+Note the order this forces, and it is deliberate: **until a studio is cut over,
+its owner cannot switch to OPEN or CLOSED.** The command answers
+`legacy_waitlist_cutover_required`, because the legacy email-only path commits
+through an external provider and no check can make an owner transition and an
+in-flight join mutually exclusive. Writing `waitlist` is the way out.
 
-   That policy is **bounded follow-up debt**. Retiring or replacing its legacy
-   mechanism needs its own product decision and its own durable authority, and
-   until that decision exists this step removes the admission bridge only. Doing
-   otherwise would silently restore self-service movement of free consultations
-   at every studio EMERG-01 currently covers.
+**G. Leave Willow in WAITLIST, and verify a DURABLE join.** Willow is in the
+listed set and must remain WAITLIST through and after cutover. After its step-F
+write, confirm the public form still offers the waitlist AND that a join writes a
+`new_client_waitlist_entries` row — the row, not the email, is the check. Its
+owner mode control is fully available only once that is true.
 
-Steps 3-6 require production credentials and are **not** in scope for the
-implementation PR.
+**H. Retire the bridge machinery only after acceptance.** After every listed
+studio is stamped and verified, delete together:
+`lib/booking/new-client-waitlist-durability-bridge.ts`, `envForcesWaitlist` and
+its call, `NewClientAdmissionSource`, `newClientAdmissionIsCutOver`, the
+`p_legacy_bridge_waitlist` and `p_legacy_email_only` command arguments, and the
+legacy email-only submission path.
+
+**AND RETIRE THE DURABLE ENV GATE WITH IT, because deleting the bridge is what
+makes it dead.** The bridge is the only runtime consumer of
+`isNewClientWaitlistDurableEnabled` — pinned by a call-site guard in
+`tests/lib/booking/new-client-waitlist-durability-bridge.test.ts` — so once it
+goes, these control nothing and must not be left for operators to maintain:
+
+- the `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` Vercel variable;
+- `NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV` and
+  `isNewClientWaitlistDurableEnabled` in `lib/booking/new-client-waitlist.ts`;
+- its row in the deploy-time env report (`scripts/check-production-env-gates.mjs`)
+  and that script's test;
+- its row in `docs/10_DEPLOYMENT_AND_ENV.md`;
+- the containment guard that keeps the list of files naming it closed.
+
+This is not a new decision: `waitlist` MEANS durable, and the second list was
+accepted only as migration/rollback compatibility with a clean deletion point.
+This is that point. **Deleting the variable is the LAST act**, after the code
+that reads it is gone, so no deploy can land a build expecting a value nobody is
+setting.
+
+**`NEW_CLIENT_WAITLIST_STUDIO_SLUGS` CANNOT BE DELETED HERE, AND NEITHER CAN
+`isNewClientWaitlistEnabled`.** A second, separate policy still depends on them:
+EMERG-01's free-consult reschedule restriction
+(`lib/booking/free-consult-reschedule-policy.ts`) reads that env list as its own
+authority, deliberately, so that an owner changing new-client admission cannot
+move the rights of an appointment that is already confirmed.
+
+That policy is **bounded follow-up debt**. Retiring or replacing its legacy
+mechanism needs its own product decision and its own durable authority, and
+until that decision exists this step removes the admission bridge only. Doing
+otherwise would silently restore self-service movement of free consultations at
+every studio EMERG-01 currently covers.
+
+Steps A-C and E-G require production credentials and are **not** in scope for
+the implementation PR.
 
 ## Rollback
 
@@ -191,6 +202,7 @@ are on.** `new_client_admission_mode_set_at` is the test.
 | studio state | how to roll back |
 |---|---|
 | **unstamped** (`set_at` NULL, still on the legacy bridge) | restoring its slug to `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` restores its previous waitlist behaviour, for as long as the bridge remains |
+| **0204 applied, application not yet deployed** (between steps B and D) | nothing to roll back at the data layer: the deployed application calls none of the new RPCs and writes none of the new fields, so the migration is inert. Roll back by not deploying. |
 | **stamped** (`set_at` non-null, an owner has chosen) | an explicit `set_new_client_admission_mode(<studio>, 'waitlist')` command. **The env list cannot do it.** |
 
 **Never claim that restoring an env slug overrides an explicit owner choice.** It
@@ -198,8 +210,8 @@ does not, by design: `resolveAdmission` returns a stamped mode before it consult
 the bridge at all, so for a studio whose persisted choice is `open`, restoring
 its slug changes nothing while the operator believes the rollback succeeded.
 
-This matters precisely because step 4 lets an already-stamped studio be skipped:
-a studio can be stamped without anyone running step 4 for it, simply because its
+This matters precisely because step F lets an already-stamped studio be skipped:
+a studio can be stamped without anyone running step F for it, simply because its
 owner used the Settings control first. Check `set_at` before choosing a rollback
 route, not the step number.
 
@@ -212,4 +224,11 @@ route, not the step number.
   routed EMERG-01's free-consult reschedule policy through the new admission
   mode, so an owner flipping OPEN / WAITLIST / CLOSED moved the rights of
   already-confirmed appointments. That policy now keeps its own authority.
-- It does not retire EMERG-01's env authority. See step 6.
+- It does not retire EMERG-01's env authority. See step H.
+- It does not deploy application code before the migration it depends on. The
+  order is A-H above, and the migration comes first because the new RPCs do not
+  exist until it lands.
+- It does not pretend the legacy email-only path can be made atomic with an
+  owner mode change. While a studio is still on that path its owner simply
+  cannot switch to OPEN or CLOSED; the command answers
+  `legacy_waitlist_cutover_required` and the way out is the cutover write.
