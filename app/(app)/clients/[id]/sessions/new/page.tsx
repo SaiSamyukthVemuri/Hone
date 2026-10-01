@@ -19,6 +19,7 @@ import {
   FromLastVisitForToday,
 } from "@/components/last-session-summary";
 import { ModalityPicker } from "./ModalityPicker";
+import { SectionLabel } from "@/components/ui/section-label";
 
 // PR #156 (migration 0068). Sanity match for ?appointment_id=. Empty,
 // missing, or malformed values fall through to "no appointment in
@@ -135,9 +136,9 @@ export default async function NewSessionPage({
 
       {previousSummary && previousMeta && (
         <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900/50">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel as="h2">
             Previous session context
-          </h2>
+          </SectionLabel>
           <p>
             <Link
               href={`/clients/${id}/sessions/${previousMeta.sessionId}`}
