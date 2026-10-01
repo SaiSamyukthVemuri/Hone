@@ -81,6 +81,7 @@ import {
   FAST_CHART_PARAM,
   resolveAutoEditBlockId,
 } from "@/lib/sessions/fast-chart-start";
+import { SectionLabel } from "@/components/ui/section-label";
 
 export default async function SessionDetailPage({
   params,
@@ -850,9 +851,9 @@ export default async function SessionDetailPage({
             chart, and silently introducing a clinical lock here would be a new
             restriction nobody asked for. */}
         <div className="flex flex-col gap-1 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Treatment chart
-          </span>
+          </SectionLabel>
           <span
             data-testid="finish-charting-status"
             className={
@@ -869,9 +870,9 @@ export default async function SessionDetailPage({
             the postcare email. "Explained" means she discussed it; "sent" means
             an email was handed to the provider. Never auto-stamped. */}
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Risks &amp; aftercare explained
-          </span>
+          </SectionLabel>
           <span
             data-testid="finish-aftercare-status"
             className="text-sm text-neutral-700 dark:text-neutral-300"
@@ -899,9 +900,9 @@ export default async function SessionDetailPage({
             same ones the calendar surface has always used. No-show is
             deliberately absent. It stays gated on ends_at. */}
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Appointment completed
-          </span>
+          </SectionLabel>
           <span
             data-testid="finish-completion-status"
             className={
@@ -941,9 +942,9 @@ export default async function SessionDetailPage({
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
           {finishState.postcare.kind === "unlinked" ? (
             <>
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              <SectionLabel>
                 Postcare email
-              </span>
+              </SectionLabel>
               <span
                 data-testid="finish-postcare-status"
                 className="text-sm text-neutral-700 dark:text-neutral-300"
