@@ -282,7 +282,7 @@ describe("buildBeforeToday", () => {
     // Each lot sits in the group under the label naming its own source, so the
     // last-treatment lot must appear BEFORE the setup label and the setup lot
     // AFTER it.
-    const lastLot = CARD.indexOf("{last.probeLot && last.probeLot !== setup?.probeLot &&");
+    const lastLot = CARD.indexOf("{last.probeLot && <Chip>Lot {last.probeLot}</Chip>}");
     const setupLabel = CARD.indexOf("Latest recorded setup: ${setup.areaName}");
     const setupLot = CARD.indexOf("{setup.probeLot && <Chip>Lot {setup.probeLot}</Chip>}");
     expect(lastLot, "the last-treatment lot is not rendered").toBeGreaterThan(-1);
@@ -296,11 +296,14 @@ describe("buildBeforeToday", () => {
       setupLot > setupLabel,
       "the setup's lot must sit in the setup group, under the setup label",
     ).toBe(true);
-    // One treatment, one lot: no duplicate chip when the two sources agree.
+    // AND THE TREATMENT'S LOT IS NEVER SUPPRESSED BY MATCHING THE SETUP'S.
+    // Equal lot NUMBERS are not provenance — the newest treatment can reuse the
+    // lot the older area recorded — so a value-equality condition here would
+    // hide that the newest treatment recorded one at all.
     expect(
       CARD,
-      "an identical lot must not render twice",
-    ).toMatch(/last\.probeLot !== setup\?\.probeLot/);
+      "the treatment's lot must not be suppressed by equality with the setup's",
+    ).not.toMatch(/last\.probeLot !== setup\?\.probeLot/);
   });
 
   it("record reminders mirror the completeness rules", () => {

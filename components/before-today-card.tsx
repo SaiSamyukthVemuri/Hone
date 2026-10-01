@@ -164,11 +164,17 @@ export function BeforeTodayCard({
                 <Chip>
                   <span className="capitalize">{last.modality}</span>
                 </Chip>
-                {/* Suppressed when the setup owns the same lot: one treatment,
-                    one lot, shown once below under the area that recorded it. */}
-                {last.probeLot && last.probeLot !== setup?.probeLot && (
-                  <Chip>Lot {last.probeLot}</Chip>
-                )}
+                {/* ALWAYS RENDERED WHEN RECORDED, never suppressed by matching
+                    the setup's lot. Equal lot NUMBERS are not provenance: the
+                    newest treatment can reuse the lot the older named-area setup
+                    recorded, and suppressing this chip then left the only lot
+                    under the older area's label — hiding that the newest
+                    treatment recorded one at all. Deduplicating needs proof that
+                    both values came from the same treatment, which these inputs
+                    cannot give without widening the briefing contract, so both
+                    are kept. Each sits under the label naming its own source, so
+                    repeating a number is redundant but never ambiguous. */}
+                {last.probeLot && <Chip>Lot {last.probeLot}</Chip>}
                 {last.minutes != null && <Chip>{last.minutes} min</Chip>}
               </div>
               {setup && (
