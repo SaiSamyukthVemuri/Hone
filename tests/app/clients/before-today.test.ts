@@ -273,19 +273,20 @@ describe("buildBeforeToday", () => {
       "the setup summary borrowed the newer treatment's lot",
     ).toBe("Lot TEST-LOT-1063");
 
-    // AND THE CARD RENDERS THE SETUP-OWNED ONE. Only source can reach this: the
-    // chip sits in the row labelled "Latest recorded setup".
+    // AND THE CARD RENDERS THE SETUP-OWNED LOT ON ITS OWN MERIT. Only source can
+    // reach this.
     expect(
       CARD,
-      "the setup row must render the setup's own lot",
+      "the setup's own lot must be rendered, so it is never omitted",
     ).toMatch(/\{setup\?\.probeLot && <Chip>Lot \{setup\.probeLot\}<\/Chip>\}/);
+    // The treatment's lot is NOT replaced by it — a recorded lot is a record
+    // display whether or not it was confirmed, which is a different question
+    // from whether a lot counts as recorded SETUP. Dropping it removed
+    // unconfirmed lots from the card and reddened two browser journeys.
     expect(
       CARD,
-      "the setup row must not render the newest treatment's lot",
-    ).not.toMatch(/\{last\.probeLot && <Chip>/);
-    // The empty state no longer hinges on a lot this row does not render, so a
-    // card with no setup fact still says so.
-    expect(CARD).toMatch(/\{!setup && last\.minutes == null &&/);
+      "the treatment's own recorded lot must still be displayed",
+    ).toMatch(/\{last\.probeLot && last\.probeLot !== setup\?\.probeLot &&/);
   });
 
   it("record reminders mirror the completeness rules", () => {

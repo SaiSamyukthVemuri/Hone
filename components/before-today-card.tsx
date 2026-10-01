@@ -164,26 +164,34 @@ export function BeforeTodayCard({
                 </Chip>
                 {setup?.frequency && <Chip>{setup.frequency}</Chip>}
                 {setup?.probe && <Chip>{setup.probe}</Chip>}
-                {/* THE SETUP'S OWN LOT, not the newest treatment's. `setup`
-                    comes from the most recently treated AREA and `last` from the
-                    most recent TREATMENT; when the newest treatment has no named
-                    area those are different treatments, and this row is labelled
-                    "Latest recorded setup" above. Reading `last.probeLot` here
-                    showed the newer treatment's lot under the older area's
-                    label, and omitted the older area's own lot even when it was
-                    its only recorded setup fact. */}
+                {/* TWO LOTS, TWO FACTS, and they are not interchangeable.
+                    `setup` comes from the most recently treated AREA, `last`
+                    from the most recent TREATMENT; when the newest treatment has
+                    no named area those are different treatments.
+
+                    The setup's own lot is rendered on its own merit, so it is
+                    never omitted when it is that setup's only recorded fact
+                    (#774 P2). The treatment's lot stays too, and only when it
+                    DIFFERS — a recorded lot is a record display, shown whether
+                    or not it was confirmed, which is a separate question from
+                    whether a lot counts as recorded SETUP. Replacing one with
+                    the other removed unconfirmed lots from the card entirely and
+                    reddened two browser journeys (the Willow contract and the
+                    core memory loop). */}
                 {setup?.probeLot && <Chip>Lot {setup.probeLot}</Chip>}
+                {last.probeLot && last.probeLot !== setup?.probeLot && (
+                  <Chip>Lot {last.probeLot}</Chip>
+                )}
                 {setup?.modeLabel && <Chip>{setup.modeLabel}</Chip>}
                 {setup?.energyLevel != null && (
                   <Chip>EL {setup.energyLevel}</Chip>
                 )}
                 {last.minutes != null && <Chip>{last.minutes} min</Chip>}
               </div>
-              {/* `!setup` already covers the lot: a confirmed lot makes `setup`
-                  non-null. The old `!last.probeLot` term suppressed this line
-                  for a lot this row no longer renders, which would leave the
-                  row silent AND unexplained. */}
-              {!setup && last.minutes == null && (
+              {/* Both lot sources are back in the row, so both gate this line:
+                  it must say "not recorded" only when the row really shows no
+                  setup and no lot. */}
+              {!setup && !last.probeLot && last.minutes == null && (
                 <p className="mt-1 text-sm text-neutral-400">
                   Setup not recorded
                 </p>
