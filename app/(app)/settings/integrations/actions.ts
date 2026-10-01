@@ -1,6 +1,9 @@
 "use server";
 
-import { resolveProvisioningProvider } from "@/lib/sms/provider";
+import {
+  liveProvisioningArmed,
+  resolveProvisioningProvider,
+} from "@/lib/sms/provider";
 import { searchAvailableSenderNumbers } from "@/lib/sms/provisioning";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 
@@ -31,16 +34,35 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 // symbol in the lifecycle, so the next slice has to add its caller deliberately
 // instead of inheriting one.
 //
-// THE PROVIDER BOUNDARY, AND WHY THIS IS SAFE TO SHIP UNARMED.
+// THE PROVIDER BOUNDARY -- AND WHY THE FENCE ALONE WAS NOT ENOUGH.
 //
 // The provider comes from `resolveProvisioningProvider()`, which returns the
 // FAKE unless `HONE_SMS_PROVISIONING_LIVE === "true"` AND both Twilio
 // credentials are present. The credentials are already set wherever Hone sends
 // SMS, so the flag is the only input an operator must add deliberately -- which
 // is the whole reason it exists. That flag is absent from production, preview and
-// development, so this action is structurally incapable of contacting Twilio or
-// spending money until someone arms it on purpose. Arming is a separate
-// authorized provider operation and is NOT part of this slice.
+// development, so nothing here can contact Twilio or spend money until someone
+// arms it on purpose. Arming is a separate authorized provider operation and is
+// NOT part of this slice.
+//
+// THE DEFECT THAT FENCE DID NOT CLOSE, and it is the reason for the gate below.
+// The first revision of this action reasoned about the fence in terms of MONEY
+// and MUTATION only, and on those it was right. It never asked what the fake
+// RETURNS. `FakeSmsProvisioningProvider.searchAvailableNumbers` synthesizes
+// candidates -- `+1${areaCode}555xxxx`, locality "Testville" -- so in every
+// deployed configuration an owner pressing Find numbers was shown INVENTED
+// numbers presented as genuinely available. Nothing was spent and nothing was
+// written, and the surface still lied.
+//
+// So an unarmed deployment REFUSES rather than answering from the fake. The
+// fake remains the right default for the resolver -- the provisioning and
+// adoption suites depend on it -- and the judgement that a test double must
+// never reach a real owner belongs to the caller, which is here.
+//
+// TWO ENFORCEMENT POINTS, ONE PREDICATE, following the lesson
+// `lib/waitlist/mobile-verification/arming.ts` was written to record: this
+// action refuses, AND the page does not render the control at all. Either can
+// fail independently and the owner still never sees a fabricated number.
 //
 // AUTHORIZATION IS PROVED HERE, BECAUSE THE ORCHESTRATION SAYS SO.
 //
@@ -154,6 +176,14 @@ export async function searchSenderNumbersAction(
   // one again for the direct-POST case that never rendered the page at all.
   if (practitioner.role !== "owner") {
     return { ok: false, message: REFUSAL_COPY.not_authorized };
+  }
+
+  // UNARMED MEANS REFUSE, NOT ANSWER-FROM-THE-FAKE. Checked before the inputs
+  // are even read: an unarmed deployment has nothing to say about any country,
+  // so validating the form first would answer a narrower question than the one
+  // being refused.
+  if (!liveProvisioningArmed()) {
+    return { ok: false, message: REFUSAL_COPY.provider_not_configured };
   }
 
   const country = (formData.get("country") ?? "").toString().trim().toUpperCase();

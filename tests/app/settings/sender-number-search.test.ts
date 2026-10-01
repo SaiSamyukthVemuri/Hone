@@ -27,11 +27,13 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 
-// The action resolves its provider through the fence. The fence's own behaviour
-// is pinned elsewhere; here the fake is injected so the seam can be exercised
-// without an environment variable deciding the outcome.
+// The action resolves its provider through the fence, and consults the arming
+// predicate before it does. The fence's own behaviour is pinned elsewhere; here
+// both are injected so the seam can be exercised without an environment
+// variable deciding the outcome.
 vi.mock("@/lib/sms/provider", () => ({
   resolveProvisioningProvider: () => provider,
+  liveProvisioningArmed: () => armed,
 }));
 
 import { FakeSmsProvisioningProvider } from "@/lib/sms/provider/fake-provider";
@@ -43,6 +45,10 @@ import type { ProviderErrorCode } from "@/lib/sms/provider/types";
 const STUDIO = "11111111-1111-1111-1111-111111111111";
 
 let provider: FakeSmsProvisioningProvider;
+// Default ARMED, so the tests below exercise the search rather than the gate.
+// The unarmed path -- which is every deployed configuration today -- has its
+// own block at the end.
+let armed: boolean;
 
 function arrangeProvider(script: { searchFails?: ProviderErrorCode } = {}) {
   provider = new FakeSmsProvisioningProvider(script);
@@ -63,6 +69,7 @@ function form(fields: Record<string, string>): FormData {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  armed = true;
   arrangeProvider();
   arrangeRole("owner");
 });
@@ -223,5 +230,54 @@ describe("provider failures are translated, never echoed", () => {
     const out = await searchSenderNumbersAction(null, form({ country: "CA" }));
     if (out.ok) throw new Error("unreachable");
     expect(out.message).not.toMatch(/try again/i);
+  });
+});
+
+describe("an unarmed deployment refuses instead of answering from the fake", () => {
+  // THE DEFECT THIS BLOCK EXISTS FOR. `FakeSmsProvisioningProvider` SYNTHESIZES
+  // candidates -- `+1${areaCode}555xxxx`, locality "Testville" -- and the
+  // resolver hands out that fake wherever HONE_SMS_PROVISIONING_LIVE is unset,
+  // which is production, preview and development. The first revision of this
+  // action reasoned about the fence in terms of money and mutation only, both
+  // of which were safe, and showed an owner invented numbers as though they
+  // were available.
+
+  it("refuses", async () => {
+    armed = false;
+    const out = await searchSenderNumbersAction(null, form({ country: "CA" }));
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.message).toMatch(/not switched on/i);
+  });
+
+  it("never asks the provider for candidates", async () => {
+    armed = false;
+    await searchSenderNumbersAction(null, form({ country: "CA", areaCode: "416" }));
+    expect(provider.calls.search).toBe(0);
+  });
+
+  it("returns no candidates at all, not an empty list", async () => {
+    // An empty success would read as "we looked and there are none", which is
+    // a different and equally false claim.
+    armed = false;
+    const out = await searchSenderNumbersAction(null, form({ country: "CA" }));
+    expect(out).not.toHaveProperty("candidates");
+  });
+
+  it("refuses before validating the form", async () => {
+    // An unarmed deployment has nothing to say about any country, so answering
+    // `invalid_input` would refuse a narrower question than the real one.
+    armed = false;
+    const out = await searchSenderNumbersAction(null, form({ country: "nonsense" }));
+    if (out.ok) throw new Error("unreachable");
+    expect(out.message).toMatch(/not switched on/i);
+    expect(out.message).not.toMatch(/two-letter country code/i);
+  });
+
+  it("leaks no fabricated number into the refusal", async () => {
+    armed = false;
+    const out = await searchSenderNumbersAction(null, form({ country: "CA", areaCode: "416" }));
+    expect(JSON.stringify(out)).not.toContain("Testville");
+    expect(JSON.stringify(out)).not.toMatch(/\+1416/);
   });
 });

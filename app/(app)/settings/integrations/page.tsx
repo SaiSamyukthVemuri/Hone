@@ -6,6 +6,7 @@ import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 import { SmsSenderStatusCard } from "./SmsSenderStatusCard";
 import { SenderNumberSearch } from "./SenderNumberSearch";
 import { searchSenderNumbersAction } from "./actions";
+import { liveProvisioningArmed } from "@/lib/sms/provider";
 import {
   presentSenderStatus,
   readOwnStudioSmsSender,
@@ -94,15 +95,24 @@ export default async function IntegrationsSettingsPage() {
           offers no control. */}
       <SmsSenderStatusCard view={senderView} />
 
-      {/* Number lookup. Shown only while the studio has no ACTIVE sender: an
-          owner who already has one is not shopping for another, and offering
-          the search anyway would imply they could switch, which no shipped
-          command can do. A read that did not answer leaves `status` null, and
-          null is not "active", so the lookup stays available rather than
-          disappearing on a transient read failure. */}
-      {senderView.status === "active" ? null : (
+      {/* Number lookup. TWO conditions, and the first is the one that matters.
+          
+          UNARMED DEPLOYMENTS RENDER NOTHING. While `HONE_SMS_PROVISIONING_LIVE`
+          is unset the resolver hands out the test fake, whose search INVENTS
+          candidates, so a rendered control could only ever either lie or
+          refuse. The action refuses too -- two enforcement points, one
+          predicate -- but a control that cannot succeed in any deployment is
+          not something to show an owner in the first place. When provisioning
+          is armed, this appears on its own.
+          
+          Then: only while the studio has no ACTIVE sender. An owner who
+          already has one is not shopping for another, and offering the search
+          anyway would imply they could switch, which no shipped command can
+          do. A read that did not answer leaves `status` null, and null is not
+          "active", so a transient read failure does not hide it. */}
+      {liveProvisioningArmed() && senderView.status !== "active" ? (
         <SenderNumberSearch action={searchSenderNumbersAction} />
-      )}
+      ) : null}
     </section>
   );
 }

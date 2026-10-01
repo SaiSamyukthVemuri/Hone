@@ -170,8 +170,10 @@ describe("the page keeps the status card's own boundary intact", () => {
   it("offers the lookup only when there is no active sender", () => {
     // An owner who already has a sender is not shopping for another, and no
     // shipped command can switch one. A read that did not answer leaves status
-    // null, which is not "active", so a transient failure does not hide it.
-    expect(page).toMatch(/senderView\.status === "active" \? null/);
+    // null, which is NOT "active", so a transient failure does not hide it --
+    // which is why this reads `!== "active"` rather than testing for a known
+    // inactive status.
+    expect(page).toMatch(/senderView\.status !== "active"/);
   });
 });
 
@@ -188,10 +190,60 @@ describe("the control states that looking commits to nothing", () => {
     expect(raw).toMatch(/None of these is reserved/i);
   });
 
-  it("carries the anchor its navigation entry points at", () => {
-    // The nav entry href is /settings/integrations#sms-sender-numbers. An
-    // anchor that does not exist scrolls nowhere and the search result looks
-    // broken, so the id and the registration are one change.
+  it("carries an anchor for the slice that advertises it later", () => {
+    // Kept for the slice that arms provisioning and registers the nav entry.
+    // Until then NOTHING points here -- see the registry guard below.
     expect(raw).toContain('id="sms-sender-numbers"');
+  });
+});
+
+describe("nothing advertises a control that no deployment renders", () => {
+  // THE P2 DEFECT, PINNED. The first revision registered a searchable
+  // "Find a number" nav entry. Global-search visibility reads owner role and
+  // the Google Calendar flag, and neither can express either gate the control
+  // actually has (arming, and no active sender), so an owner could receive the
+  // result and follow it to a fragment that is not on the page.
+  it("the navigation registry holds no entry for the lookup", () => {
+    const registry = codeOnly(read("lib/search/navigation-registry.ts"));
+    expect(registry).not.toContain("settings-sms-sender-numbers");
+  });
+
+  it("the census records the control as deliberately excluded", () => {
+    const census = read("tests/lib/search/fixtures/settings-controls.census.ts");
+    const row = census.slice(census.indexOf('label: "Find a number"'));
+    expect(row.slice(0, 400)).toContain('decision: "excluded"');
+    expect(row.slice(0, 400)).toContain("HONE_SMS_PROVISIONING_LIVE");
+  });
+});
+
+describe("an unarmed deployment refuses rather than answering from the fake", () => {
+  // THE P1 DEFECT, PINNED. `FakeSmsProvisioningProvider.searchAvailableNumbers`
+  // SYNTHESIZES candidates -- `+1${areaCode}555xxxx`, locality "Testville" --
+  // and the resolver hands out that fake wherever the flag is unset, which is
+  // everywhere. Reasoning about the fence in terms of money and mutation alone
+  // missed it: nothing was spent, nothing was written, and an owner was still
+  // shown invented numbers presented as available.
+  it("the action consults the arming predicate", () => {
+    const code = codeOnly(read(ACTION));
+    expect(code).toContain("liveProvisioningArmed");
+  });
+
+  it("the action refuses BEFORE resolving a provider", () => {
+    const code = codeOnly(read(ACTION));
+    const gate = code.indexOf("liveProvisioningArmed()");
+    const resolve = code.indexOf("resolveProvisioningProvider()");
+    expect(gate).toBeGreaterThan(-1);
+    expect(resolve).toBeGreaterThan(-1);
+    // Order is the property: a refusal that has already asked the fake for
+    // candidates has already built the thing it is refusing to show.
+    expect(gate).toBeLessThan(resolve);
+  });
+
+  it("the page renders no control while provisioning is unarmed", () => {
+    // Two enforcement points, one predicate — the lesson
+    // lib/waitlist/mobile-verification/arming.ts exists to record.
+    const page = codeOnly(read(PAGE));
+    expect(page).toContain("liveProvisioningArmed()");
+    expect(page).toMatch(/liveProvisioningArmed\(\) && senderView\.status !== "active"/);
   });
 });
