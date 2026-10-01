@@ -515,6 +515,29 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     decision: "searchable",
     entryId: "settings-google-calendar",
   },
+  {
+    page: "/settings/integrations",
+    label: "Find a number",
+    role: "owner",
+    decision: "searchable",
+    entryId: "settings-sms-sender-numbers",
+  },
+  {
+    page: "/settings/integrations",
+    label: "Country",
+    role: "owner",
+    decision: "excluded",
+    reason:
+      "Two-letter input inside the Find a number control, not a stored studio setting -- nothing is persisted and there is no value to return to. Reached via the Find a number entry, whose keywords carry this vocabulary.",
+  },
+  {
+    page: "/settings/integrations",
+    label: "Area code",
+    role: "owner",
+    decision: "excluded",
+    reason:
+      "Optional input inside the Find a number control, scoping one read-only lookup. It configures nothing and persists nothing, so it has no destination of its own to advertise.",
+  },
 
   // --------------------------------------------------------------- tracking
   {

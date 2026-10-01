@@ -460,6 +460,16 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     priority: 430,
   },
   {
+    id: "settings-sms-sender-numbers",
+    title: "Find a number",
+    category: "Settings",
+    href: "/settings/integrations#sms-sender-numbers",
+    description: "Look up phone numbers your studio could use for text messages",
+    keywords: ["sms", "text", "texts", "text message", "text messages", "phone number", "number", "sender", "area code", "find a number", "studio number"],
+    visibility: "owner",
+    priority: 436,
+  },
+  {
     id: "settings-tracking",
     title: "Marketing & analytics",
     category: "Settings",

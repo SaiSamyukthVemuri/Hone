@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { GoogleCalendarCard } from "../profile/GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 import { SmsSenderStatusCard } from "./SmsSenderStatusCard";
+import { SenderNumberSearch } from "./SenderNumberSearch";
+import { searchSenderNumbersAction } from "./actions";
 import {
   presentSenderStatus,
   readOwnStudioSmsSender,
@@ -45,6 +47,8 @@ export default async function IntegrationsSettingsPage() {
       readOwnStudioSmsSender(supabase, studio.id),
     ),
   ]);
+
+  const senderView = presentSenderStatus(smsRead);
 
   return (
     <section className="flex flex-col gap-6">
@@ -88,7 +92,17 @@ export default async function IntegrationsSettingsPage() {
           whether their studio has a sender at all. This card is that view and
           nothing more: it starts no provisioning, constructs no provider, and
           offers no control. */}
-      <SmsSenderStatusCard view={presentSenderStatus(smsRead)} />
+      <SmsSenderStatusCard view={senderView} />
+
+      {/* Number lookup. Shown only while the studio has no ACTIVE sender: an
+          owner who already has one is not shopping for another, and offering
+          the search anyway would imply they could switch, which no shipped
+          command can do. A read that did not answer leaves `status` null, and
+          null is not "active", so the lookup stays available rather than
+          disappearing on a transient read failure. */}
+      {senderView.status === "active" ? null : (
+        <SenderNumberSearch action={searchSenderNumbersAction} />
+      )}
     </section>
   );
 }
