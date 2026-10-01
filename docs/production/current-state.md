@@ -102,17 +102,58 @@ stamps rather than restated as current:**
 A figure with a 2026-08-23 stamp is **evidence of what was true on 2026-08-23**. It is not a
 claim about today, and a later reader must re-measure before treating it as one.
 
+### NEW-CLIENT-MODE-01 release — what actually happened on 2026-10-01
+
+**These are operational facts, not a re-pin.** The reconciliation header above is
+still the **2026-09-21** sync and still pins `410e5039`; this subsection deliberately
+does **not** move it. Re-pinning re-derives every count derived from the pin across
+this document, [release-changelog.md](./release-changelog.md) and
+[capability-register.md](./capability-register.md) — it is a PROD-TRUTH-class re-sync
+and belongs in its own change, as `#756` was. Recording a release while silently
+re-pinning would hide one of those jobs inside the other.
+
+**Production has advanced past this document's pin, and that is stated rather than
+papered over.** At the time of writing the branch pointed at `afb2b509` (**#778**,
+waitlist email branding, merged after the release below). Re-read GitHub before any
+production action.
+
+| Fact | Value |
+|---|---|
+| **Migration `0204` applied** | **2026-10-01.** `supabase db push --linked`, no `--include-all`, pinned CLI `2.102.0`, exit code 0, from the reviewed **#773** head `d8617859`. Hosted max is declared in [`migration-state.json`](./migration-state.json) — **this document still states no migration number.** Full record: [migration-ledger.md](./migration-ledger.md). |
+| **#773 merged and deployed** | Merge commit **`d7e712ef`** at `2026-10-01T20:25:16Z`; production deployment `dpl_AQrWznf5fKqLKPZiH4RNCgDFwxsZ`, `READY`, holding `hone.care`, ready `2026-10-01T20:27:33.821Z`. **The migration was applied BEFORE this deploy**, because the new application calls `create_public_appointment_for_new_client` and that function does not exist until `0204` lands. |
+| **Willow persisted as WAITLIST** | Stored `new_client_admission_mode` = **`waitlist`**, `set_at` **`2026-10-01T21:35:33.139540Z`** (server-generated). Written by **Willow's own owner** through Settings → Booking, which calls `set_new_client_admission_mode`; `set_by` resolves to a `practitioners` row of that studio with `role = 'owner'`. |
+| **Willow's authority source is PERSISTED** | Because the row is stamped, the reader returns `source: "persisted"` before the env bridge is consulted. The legacy list no longer moves Willow. Its *behaviour* did not change — it was already effectively WAITLIST via the one-way bridge — so this moved the authority, not the outcome. |
+| **Step G passed — a real public durable join** | Entry `ff942ef2-a272-4549-a3b9-c5d000b05b69`, `joined_at` `2026-10-01T22:25:36.347700Z`, `status` `waiting`, `source` `public_booking`, `joined_at_provenance` `form`. Willow entries **48 → 49**, globally **51 → 52** — exactly one row created anywhere. **The row, not the email, was the check.** |
+| **Legacy email-only path NOT used** | Proven by the row existing: the email-only path writes no row. The deployed submit path also contains no call to `isNewClientWaitlistDurableEnabled`, so there is no second commit point left to take. |
+| **No appointment, no client record** | Willow appointments **330 → 330**; Willow clients **78 → 78**. Three pre-existing client rows happen to share the synthetic test address (newest created 2026-09-19, none since), and the join did **not** attach or convert to any of them — `converted_at` and `converted_client_id` are NULL. |
+| **No Twilio / SMS / provider mutation** | `sms_consent_at`, `sms_consent_source`, `mobile_verified_at` all NULL. The waitlist surface carries no SMS field and the join path contains zero Twilio references. The only provider traffic was the two emails the join itself sends — a studio notification (provider-**accepted**) and a client acknowledgement (no failure logged). |
+| **Both legacy bridges still intact** | `envForcesWaitlist` in `lib/booking/new-client-admission.ts` and `lib/booking/new-client-waitlist-durability-bridge.ts` are both present in the deployed tree. **No environment variable was deleted.** Activation step H is not merely undone, it is **not yet eligible** — it requires every listed studio stamped, and only one is. |
+| **Studio cutover is 1 of 7** | Six studios remain stored `'open'` and **unstamped**, still governed by the env bridge. Until a studio is stamped its owner **cannot** choose OPEN or CLOSED: the command answers `legacy_waitlist_cutover_required`, and writing `waitlist` is the way out. |
+| **Activation step E was NEVER performed** | The live `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` / `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` values were **not read**, so **no slug set is recorded and none may be inferred** — not from which studios are stamped, not from which hold waitlist rows. |
+| **Outstanding migration debt** | `public.studios_admission_mode_guard()` received no explicit `REVOKE`, so `anon`/`authenticated`/`service_role`/`PUBLIC` hold `EXECUTE`. **Not exploitable** — return type `trigger`, which PostgreSQL refuses to invoke outside a trigger context — but inconsistent with the discipline `0204` applies to its own five other functions. `0204` is **APPLIED and FROZEN**: this needs a **new migration**, never an edit. |
+| **Synthetic step-G entry RETAINED** | `ff942ef2-…` was deliberately **not** removed, pending authorization. It sits in Willow's **Waiting** queue at position **47 of 47** (`joined_at` ASC, `id` ASC, page size 100 — last row on page one, visible without paging) and carries a submitted phone number. **It is synthetic test data in a real operator's live queue** and should be removed before Willow operates that queue for real. |
+
 ### Open pull requests are not production
 
 **No open PR is described as shipped anywhere in this document.** At this reconciliation:
 
 | PR | State | Why it is not production |
 |---|---|---|
-| **#752** — WAIT fixed 48-hour opportunity | **OPEN**, release candidate | Not merged. Nothing in it is deployed, and the fixed/no-expiry-choice policy is therefore **not** in production. |
-| **#754** — MARKETING-UI successor | **OPEN**, release candidate | Not merged, so none of its public-page or accessibility repair is deployed. |
-| **#746** — UX-02 SectionLabel adoption | **OPEN**, and a **DRAFT** | Not merged. UX-02 is authorized by `DESIGN.md`, but authorization is not deployment. |
-| **#750** — SIGNOUT-02 logout acknowledgement | **OPEN**, and a **DRAFT** | Not merged. The logout acknowledgement is **not** live. |
-| **#755** — R1/E2 browser-lane audit | **OPEN**, release candidate | Not merged. It changes no product behaviour. |
+| **#769** — UX-02 slice 2, SectionLabel across Settings | **OPEN**, release candidate | Not merged. It was `MERGEABLE`/`CLEAN` throughout the NEW-CLIENT-MODE-01 release and was deliberately **held** so it could not land ahead of #773. |
+| **#775** — SMS-NUMBER-SEARCH-01 number lookup | **OPEN**, release candidate | Not merged. No owner can reach a number lookup in production. |
+| **#776** — UX-02 slice 3, SectionLabel across session charting | **OPEN**, release candidate | Not merged. |
+| **#777** — waitlist invitation identifies the studio | **OPEN**, release candidate | Not merged, so a production invitation email still does not name the studio before the recipient clicks. |
+| **#774** — BROWSER-FINDING-01 probe-lot provenance | **OPEN**, and a **DRAFT** | Not merged. |
+
+⚠️ **CORRECTION, 2026-10-01 (NEW-CLIENT-MODE-01 release) — FIVE ROWS WERE REMOVED FROM THE TABLE ABOVE.**
+It declared `#752`, `#754`, `#746`, `#750` and `#755` OPEN. **All five had merged** — `1c50bd95`, `c4b0e263`,
+`54ad9cf2`, `d59330d1` and `93381b40` respectively, every one of them contained in this history. They are
+removed rather than reworded, for exactly the reason PROD-TRUTH-01 gave when it removed `#647`: a merged PR
+does not belong in a table about what is *not* production. **This is the same defect recurring, and the
+mechanism is worth naming rather than just fixing** — nobody edited these rows to make them false. Production
+moved and the rows stayed still, which is why the guard checks the converse direction too and why this
+correction will be needed again the next time production advances without this table being re-read. The rows
+now listed are the candidates genuinely open at this reconciliation, re-read from GitHub at this sync.
 
 ⚠️ **CORRECTION, 2026-09-21 (PROD-TRUTH-01) — `#647` WAS REMOVED FROM THE TABLE ABOVE.** It carried two rows
 declaring TRUTH-01B-1 open and `#647` a parked draft. `#647` merged on **2026-08-30** as `1d6d7c48` and is
