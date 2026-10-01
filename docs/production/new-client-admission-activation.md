@@ -132,6 +132,31 @@ says.
    `newClientAdmissionIsCutOver`. The durable path then becomes unconditional,
    which is what `waitlist` means.
 
+   **AND RETIRE THE DURABLE ENV GATE WITH IT, because deleting the bridge is
+   what makes it dead.** The bridge is the only runtime consumer of
+   `isNewClientWaitlistDurableEnabled` — pinned by a call-site guard in
+   `tests/lib/booking/new-client-waitlist-durability-bridge.test.ts`, which
+   asserts exactly that — so once it goes, these control nothing and must not be
+   left for operators to maintain:
+
+   - the `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` Vercel variable;
+   - `NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV` and
+     `isNewClientWaitlistDurableEnabled` in `lib/booking/new-client-waitlist.ts`;
+   - its row in the deploy-time env report (`scripts/check-production-env-gates.mjs`)
+     and that script's test;
+   - its row in `docs/10_DEPLOYMENT_AND_ENV.md`;
+   - the containment guard that keeps the list of files naming it closed.
+
+   This is not a new decision: `waitlist` MEANS durable, and the second list was
+   accepted only as migration/rollback compatibility with a clean deletion point.
+   This is that point. **Deleting the variable is the LAST act**, after the code
+   that reads it is gone, so no deploy can land a build that expects a value
+   nobody is setting.
+
+   **Do not confuse it with the OTHER env list.**
+   `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` stays — EMERG-01 still reads it, per the
+   paragraph below.
+
    **`NEW_CLIENT_WAITLIST_STUDIO_SLUGS` CANNOT BE DELETED AT THIS STEP, AND
    NEITHER CAN `isNewClientWaitlistEnabled`.** A second, separate policy still
    depends on them: EMERG-01's free-consult reschedule restriction

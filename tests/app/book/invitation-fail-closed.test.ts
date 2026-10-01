@@ -44,7 +44,16 @@ function makeChain(table: string) {
       table === "services"
         ? { data: { id: SERVICE_ID, studio_id: STUDIO_ID, name: "Consultation",
                     modality: "consultation", default_duration_minutes: 45, active: true }, error: null }
-        : { data: null, error: null },
+        // The studio EXISTS, as it does in production. A missing row is now
+        // UNKNOWN admission and refuses every new-client mutation, which is
+        // correct and is not what this suite is about: its subject is the
+        // invitation weekday authority. `set_at` is stamped so the mode is a
+        // persisted OPEN and no env list can perturb it.
+        : table === "studios"
+          ? { data: { new_client_admission_mode: "open",
+                      new_client_admission_mode_set_at: "2026-09-30T12:00:00.000Z" },
+              error: null }
+          : { data: null, error: null },
     single: async () =>
       table === "clients" && inserted
         ? { data: { id: CLIENT_ID, name: "Chloe", email: EMAIL, phone: null,

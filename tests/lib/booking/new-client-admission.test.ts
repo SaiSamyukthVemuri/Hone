@@ -11,7 +11,8 @@ const {
   isNewClientAdmissionMode,
   newClientAdmissionRefusesOutright,
 } = await import("@/lib/booking/new-client-admission");
-const { NEW_CLIENT_WAITLIST_SLUGS_ENV } = await import("@/lib/booking/new-client-waitlist");
+const { NEW_CLIENT_WAITLIST_SLUGS_ENV, NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV } =
+  await import("@/lib/booking/new-client-waitlist");
 
 // NEW-CLIENT-MODE-01 — the one admission authority.
 //
@@ -218,6 +219,40 @@ describe("P1: the reader actually reads, for an ANON public visitor", () => {
       message: 'column studios.new_client_admission_mode does not exist',
     });
     expect(result).toEqual({ ok: true, mode: "waitlist", source: "legacy_bridge" });
+  });
+
+  it("NO ROW is unknown, not the bridge's default", async () => {
+    // Exact-head P2 at 096b0b2e, and the original P1's class in a second place.
+    // `maybeSingle()` reports "nothing matched" as { data: null, error: null },
+    // so a studio deleted between the caller's lookup and this read arrives as a
+    // SUCCESS with no row. Optional chaining turned that into the same
+    // `(null, null)` the pre-0204 MISSING COLUMN path uses, and the bridge then
+    // answered `open` - or `waitlist` if the slug happened to be listed - with
+    // full confidence. Nothing had failed, so nothing was reported.
+    delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
+    const { result } = await withAdminRow(null);
+    expect(result).toEqual({ ok: false });
+
+    // And it stays unknown when the slug IS listed: being named in an env list
+    // is not evidence that a studio exists.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
+    const { result: listed } = await withAdminRow(null);
+    expect(listed).toEqual({ ok: false });
+  });
+
+  it("the bridge fallback is reserved for the EXPLICIT missing-column error", async () => {
+    // The distinction the repair turns on: migration skew and a vanished studio
+    // are different facts and must not share a representation.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
+    const { result: skew } = await withAdminRow(null, {
+      code: "42703",
+      message: "column studios.new_client_admission_mode does not exist",
+    });
+    expect(skew).toEqual({
+      ok: true,
+      mode: "waitlist",
+      source: "legacy_bridge",
+    });
   });
 
   it("reads ONE column, keyed by the SERVER-RESOLVED studio id", async () => {
@@ -552,6 +587,29 @@ describe("the activation document matches what the source actually does", () => 
     expect(step6).toContain("bounded follow-up debt");
     // The claim is only true while that policy really does still read it.
     expect(POLICY).toContain("isNewClientWaitlistEnabled(studioSlug)");
+  });
+
+  it("step 6 DOES retire the durable gate, which the bridge is the only reader of", () => {
+    // The mirror of the rule above, and the distinction operators would get
+    // wrong: one env list survives step 6 and the other must not. Leaving the
+    // durable variable behind would mean maintaining a value that controls
+    // nothing; deleting the ADMISSION list would silently restore self-service
+    // movement of free consultations.
+    const step6 = DOC.slice(DOC.indexOf("6. **Only then remove"));
+    expect(step6).toContain("RETIRE THE DURABLE ENV GATE WITH IT");
+    expect(step6).toContain(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV);
+    expect(step6).toContain("isNewClientWaitlistDurableEnabled");
+    expect(step6).toContain("Deleting the variable is the LAST act");
+    // Both halves named in the same step, so they cannot be conflated.
+    expect(step6).toContain("NEW_CLIENT_WAITLIST_STUDIO_SLUGS` stays");
+
+    // And the premise the retirement rests on is the one the bridge suite pins:
+    // exactly one runtime caller.
+    const bridge = readFileSync(
+      join(process.cwd(), "lib/booking/new-client-waitlist-durability-bridge.ts"),
+      "utf8",
+    );
+    expect(bridge).toContain("isNewClientWaitlistDurableEnabled(studioSlug)");
   });
 
   it("records that the new-client control does not move booked rights", () => {

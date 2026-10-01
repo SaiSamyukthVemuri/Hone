@@ -221,8 +221,25 @@ export async function getNewClientAdmissionMode(studio: {
         new_client_admission_mode?: string | null;
         new_client_admission_mode_set_at?: string | null;
       } | null;
-      storedMode = row?.new_client_admission_mode ?? null;
-      storedSetAt = row?.new_client_admission_mode_set_at ?? null;
+      if (row == null) {
+        // NO ROW IS NOT A MODE. `maybeSingle()` reports "nothing matched" as
+        // `{ data: null, error: null }`, so a studio deleted between the
+        // caller's lookup and this read arrives here as a SUCCESS with no row.
+        //
+        // Optional chaining used to turn that into the same `(null, null)` the
+        // pre-0204 MISSING COLUMN path uses, and the bridge then answered with
+        // full confidence - `open`, or `waitlist` if the slug happened to be
+        // listed. That is the same silent-null defect this module was created to
+        // fix, in a second place: migration skew and a vanished studio are not
+        // the same fact and must not share a representation.
+        //
+        // The bridge fallback is now reserved for the EXPLICIT missing-column
+        // error, and everything else fails closed.
+        readFailed = true;
+      } else {
+        storedMode = row.new_client_admission_mode ?? null;
+        storedSetAt = row.new_client_admission_mode_set_at ?? null;
+      }
     }
   } catch {
     readFailed = true;
