@@ -86,15 +86,20 @@ describe("authority is re-derived, never accepted", () => {
   });
 
   it("the browser's only influence is the mode intent", () => {
-    // THREE parameters now, and the browser supplies exactly one of them. The
-    // studio is server-resolved, and `p_legacy_email_only` is a SERVER-DERIVED
-    // transition fact - the database cannot read the env lists - which is why it
-    // has to be passed rather than looked up. It is retired with the bridge.
+    // TWO parameters, and that is deliberate. A version of this command took the
+    // "is this studio still email-only?" fact as a third, defaulted argument
+    // computed by the settings action - which protected the UI and nothing else,
+    // because the command is granted to `authenticated` and an owner could call
+    // it straight through PostgREST and pass `false`. The stamp is read from the
+    // ROW instead, so there is no transition fact a caller can assert.
     expect(SQL).toMatch(
-      /set_new_client_admission_mode\(\s*p_studio_id uuid,\s*p_mode text,[\s\S]*?p_legacy_email_only boolean default false\s*\)/,
+      /set_new_client_admission_mode\(\s*p_studio_id uuid,\s*p_mode text\s*\)/,
     );
+    expect(SQL).not.toMatch(/p_legacy_email_only\s+boolean/);
     // The mode intent is the ONLY browser-influenced argument.
     expect(SQL).toMatch(/v_mode\s+text := lower\(btrim\(coalesce\(p_mode/);
+    // And the block it guards reads the row, under this transaction's own lock.
+    expect(SQL).toMatch(/new_client_admission_mode_set_at is null\s*\n?\s*into v_unstamped/);
   });
 });
 
@@ -104,9 +109,9 @@ describe("grants follow the 0129 / 0164 lesson", () => {
       expect(
         SQL,
         `must revoke from ${role} by name`,
-      ).toMatch(new RegExp(`revoke all on function public\\.set_new_client_admission_mode\\(uuid, text, boolean\\) from ${role};`));
+      ).toMatch(new RegExp(`revoke all on function public\\.set_new_client_admission_mode\\(uuid, text\\) from ${role};`));
     }
-    expect(SQL).toMatch(/grant execute on function public\.set_new_client_admission_mode\(uuid, text, boolean\) to authenticated;/);
+    expect(SQL).toMatch(/grant execute on function public\.set_new_client_admission_mode\(uuid, text\) to authenticated;/);
   });
 });
 

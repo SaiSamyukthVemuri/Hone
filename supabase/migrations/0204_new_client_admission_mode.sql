@@ -142,11 +142,7 @@ comment on column public.studios.new_client_admission_mode_set_by is
 
 create or replace function public.set_new_client_admission_mode(
   p_studio_id uuid,
-  p_mode text,
-  -- TRUE while this studio's NEW-client waitlist joins still commit through the
-  -- LEGACY EMAIL-ONLY path. Server-derived, because the database cannot read the
-  -- env lists, and TEMPORARY: retired with the bridge at cutover.
-  p_legacy_email_only boolean default false
+  p_mode text
 )
 returns table (outcome text, mode text, set_at timestamptz)
 language plpgsql
@@ -157,6 +153,7 @@ as $$
 declare
   v_mode           text := lower(btrim(coalesce(p_mode, '')));
   v_practitioner   uuid;
+  v_unstamped      boolean;
   v_now            timestamptz := now();
 begin
   if p_studio_id is null then
@@ -178,22 +175,37 @@ begin
     return;
   end if;
 
-  -- WHILE A STUDIO IS STILL ON THE LEGACY EMAIL-ONLY COMMIT PATH, THE
-  -- OPEN/CLOSED TRANSITION IS NOT AVAILABLE.
+  -- AN UNSTAMPED STUDIO CANNOT BE SWITCHED TO OPEN OR CLOSED.
   --
-  -- That path commits through an external email provider, so it cannot hold a
-  -- transaction across its commit point, and a check immediately before the send
-  -- only narrows the window - it cannot close it. Rather than fake atomicity
-  -- around a provider, or build an outbox in this PR, the CONCURRENT TRANSITION
-  -- IS REMOVED: no owner change can invalidate an in-flight legacy commit,
-  -- because the owner cannot make one.
+  -- Why the rule is "unstamped" and not "email-only": the legacy email path
+  -- commits through an external provider, so no check can make an owner
+  -- transition and an in-flight join mutually exclusive, and this PR will not
+  -- fake atomicity around a provider or build an outbox. The transition is
+  -- removed instead - but it has to be removed by authority THE CALLER CANNOT
+  -- CHOOSE.
   --
-  -- WAITLIST IS STILL ALLOWED, and it is the way out: writing WAITLIST stamps
-  -- the row, which makes the commit durable, after which normal OPEN / WAITLIST
-  -- / CLOSED control becomes available. Ordinary durable admission authority is
-  -- untouched - this refuses only for a studio whose joins still land in an
-  -- inbox.
-  if coalesce(p_legacy_email_only, false) and v_mode in ('open', 'closed') then
+  -- A first version took the fact as a `p_legacy_email_only` argument computed
+  -- by the settings action. That protected the UI and nothing else: this function
+  -- is granted to `authenticated` and only verifies ownership, so an owner could
+  -- call it straight through PostgREST, omit the argument or pass `false`, and
+  -- restore the very race the block exists to remove.
+  --
+  -- `new_client_admission_mode_set_at IS NULL` is read HERE, from the row, under
+  -- the lock this transaction already holds. Nothing the caller sends can change
+  -- it, and the database needs no knowledge of the env lists to evaluate it.
+  --
+  -- WAITLIST IS ALWAYS ALLOWED, and it is the way out: it stamps the row, which
+  -- both completes the cutover and makes the commit durable, after which normal
+  -- OPEN / WAITLIST / CLOSED control is available. The accepted cost is that a
+  -- studio which never used a waitlist must make that one stamping write before
+  -- it can be CLOSED - a bounded, one-time step, and the price of an authority
+  -- no caller can spoof.
+  select s.new_client_admission_mode_set_at is null
+    into v_unstamped
+    from public.studios s
+   where s.id = p_studio_id;
+
+  if coalesce(v_unstamped, false) and v_mode in ('open', 'closed') then
     return query select 'legacy_waitlist_cutover_required'::text,
                         null::text, null::timestamptz;
     return;
@@ -236,7 +248,7 @@ begin
 end;
 $$;
 
-comment on function public.set_new_client_admission_mode(uuid, text, boolean) is
+comment on function public.set_new_client_admission_mode(uuid, text) is
   'Sets a studio''s NEW-CLIENT admission mode. Browser supplies intent only; '
   'membership and owner role are re-derived from auth.uid() inside the '
   'function. Returns ok | not_authorized | studio_not_found | invalid_mode | '
@@ -311,11 +323,11 @@ create trigger studios_admission_mode_guard
 -- The function is owner-gated internally, but an unauthenticated caller should
 -- not be able to reach it at all.
 
-revoke all on function public.set_new_client_admission_mode(uuid, text, boolean) from public;
-revoke all on function public.set_new_client_admission_mode(uuid, text, boolean) from anon;
-revoke all on function public.set_new_client_admission_mode(uuid, text, boolean) from authenticated;
-revoke all on function public.set_new_client_admission_mode(uuid, text, boolean) from service_role;
-grant execute on function public.set_new_client_admission_mode(uuid, text, boolean) to authenticated;
+revoke all on function public.set_new_client_admission_mode(uuid, text) from public;
+revoke all on function public.set_new_client_admission_mode(uuid, text) from anon;
+revoke all on function public.set_new_client_admission_mode(uuid, text) from authenticated;
+revoke all on function public.set_new_client_admission_mode(uuid, text) from service_role;
+grant execute on function public.set_new_client_admission_mode(uuid, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 5. COMMIT-TIME AUTHORITY
@@ -537,6 +549,11 @@ comment on function public.join_new_client_waitlist_guarded(uuid, text, text, te
 drop function if exists public.create_public_appointment_for_new_client(
   uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text
 );
+-- The RETURN TYPE changed when the winning client's profile was added, and
+-- `create or replace` cannot change a return type - it must be dropped.
+drop function if exists public.create_public_appointment_for_new_client(
+  uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text, uuid
+);
 
 create or replace function public.create_public_appointment_for_new_client(
   p_studio_id               uuid,
@@ -564,7 +581,19 @@ returns table (
   duration_minutes integer,
   practitioner_id  uuid,
   created_at       timestamptz,
-  client_id        uuid
+  client_id        uuid,
+  -- THE WINNING CLIENT'S OWN CONTACT STATE, not the submission's.
+  --
+  -- The id alone was not enough. When another writer created the same-studio
+  -- email first, this command adopts THAT row - and the caller went on using the
+  -- values a visitor had typed, so a post-commit SMS could go to the submitted
+  -- phone under submitted consent while the appointment belonged to a client
+  -- whose stored phone or consent differed. The authoritative profile is
+  -- returned so the caller never has to guess which it is holding.
+  client_name            text,
+  client_phone           text,
+  client_sms_consent_at  timestamptz,
+  client_sms_opted_out_at timestamptz
 )
 language plpgsql
 volatile
@@ -579,13 +608,18 @@ declare
     case when p_entry_id is null then 'book' else 'invited_book' end,
     p_legacy_bridge_waitlist
   );
-  v_client_id uuid := p_client_id;
-  v_archived  boolean;
+  v_client_id     uuid := p_client_id;
+  v_archived      boolean;
+  v_name          text;
+  v_phone         text;
+  v_consent_at    timestamptz;
+  v_opted_out_at  timestamptz;
 begin
   if v_gate <> 'ok' then
     -- BEFORE the insert, so a refused request writes no client row.
     return query select v_gate, null::uuid, null::timestamptz, null::timestamptz,
-                        null::integer, null::uuid, null::timestamptz, null::uuid;
+                        null::integer, null::uuid, null::timestamptz, null::uuid,
+                        null::text, null::text, null::timestamptz, null::timestamptz;
     return;
   end if;
 
@@ -614,7 +648,8 @@ begin
     if coalesce(v_archived, false) then
       return query select 'archived_client_collision'::text,
                           null::uuid, null::timestamptz, null::timestamptz,
-                          null::integer, null::uuid, null::timestamptz, null::uuid;
+                          null::integer, null::uuid, null::timestamptz, null::uuid,
+                          null::text, null::text, null::timestamptz, null::timestamptz;
       return;
     end if;
 
@@ -658,7 +693,8 @@ begin
           if coalesce(v_archived, false) then
             return query select 'archived_client_collision'::text,
                                 null::uuid, null::timestamptz, null::timestamptz,
-                                null::integer, null::uuid, null::timestamptz, null::uuid;
+                                null::integer, null::uuid, null::timestamptz, null::uuid,
+                                null::text, null::text, null::timestamptz, null::timestamptz;
             return;
           end if;
 
@@ -669,17 +705,28 @@ begin
           if v_client_id is null then
             return query select 'client_not_created'::text,
                                 null::uuid, null::timestamptz, null::timestamptz,
-                                null::integer, null::uuid, null::timestamptz, null::uuid;
+                                null::integer, null::uuid, null::timestamptz, null::uuid,
+                                null::text, null::text, null::timestamptz, null::timestamptz;
             return;
           end if;
       end;
     end if;
   end if;
 
+  -- THE AUTHORITATIVE PROFILE of whichever row won, read after the id settles:
+  -- the one the caller resolved, the one the pre-insert lookup found, the one the
+  -- unique-violation re-read adopted, or the one this command created. The caller
+  -- must not keep using the submission's values for a row it did not create.
+  select c.name, c.phone, c.sms_consent_at, c.sms_opted_out_at
+    into v_name, v_phone, v_consent_at, v_opted_out_at
+    from public.clients c
+   where c.id = v_client_id;
+
   if p_entry_id is null then
     return query
       select c.result, c.appointment_id, c.starts_at, c.ends_at,
-             c.duration_minutes, c.practitioner_id, c.created_at, v_client_id
+             c.duration_minutes, c.practitioner_id, c.created_at, v_client_id,
+             v_name, v_phone, v_consent_at, v_opted_out_at
         from public.create_public_appointment(
                p_studio_id, v_client_id, p_service_id, p_starts_at,
                p_cancellation_token_hash, p_notes, p_referral_source
@@ -689,7 +736,8 @@ begin
     -- transaction, so the admission decision above simply precedes it.
     return query
       select c.result, c.appointment_id, c.starts_at, c.ends_at,
-             c.duration_minutes, c.practitioner_id, c.created_at, v_client_id
+             c.duration_minutes, c.practitioner_id, c.created_at, v_client_id,
+             v_name, v_phone, v_consent_at, v_opted_out_at
         from public.create_waitlist_public_appointment(
                p_studio_id, v_client_id, p_service_id, p_starts_at,
                p_cancellation_token_hash, p_entry_id, p_notes, p_referral_source

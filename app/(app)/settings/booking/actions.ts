@@ -4,8 +4,6 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
-import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
 
@@ -204,38 +202,22 @@ export async function updateNewClientAdmissionModeAction(
 ): Promise<void> {
   let failureMessage: string | null = null;
   try {
-    const { studioId, currentSlug } = await assertOwner();
+    const { studioId } = await assertOwner();
     // INTENT ONLY. Not validated into a mode here beyond being a string - the
     // database owns the closed set and answers `invalid_mode` for anything
     // outside it, so there is exactly one place that decides what is legal.
     const intent = trimmed(formData.get("new_client_admission_mode"));
 
-    // IS THIS STUDIO STILL COMMITTING WAITLIST JOINS BY EMAIL?
-    //
-    // Server-derived, because the database cannot read the env lists. While that
-    // is true the OPEN/CLOSED transition is not available: the legacy path
-    // commits through an external provider, so no check can make an owner change
-    // and an in-flight join mutually exclusive. The command refuses, so this is
-    // not the enforcement point - it is the fact the command needs.
-    //
-    // TEMPORARY, and it disappears with the bridge at cutover.
-    const admissionNow = await getNewClientAdmissionMode({
-      id: studioId,
-      slug: currentSlug,
-    });
-    const legacyEmailOnly =
-      admissionNow.ok &&
-      admissionNow.mode === "waitlist" &&
-      !newClientWaitlistCommitIsDurable(admissionNow, currentSlug);
-
+    // NO CALLER-SUPPLIED FACT. An earlier version computed "is this studio still
+    // email-only?" here and passed it in, which protected this screen and
+    // nothing else: the command is granted to `authenticated` and only verifies
+    // ownership, so an owner could call it straight through PostgREST and pass
+    // `false`. The command now reads `new_client_admission_mode_set_at` from the
+    // row itself, under its own lock, so there is nothing here to get wrong.
     const supabase = await createClient();
     const { data, error } = await supabase.rpc(
       "set_new_client_admission_mode",
-      {
-        p_studio_id: studioId,
-        p_mode: intent,
-        p_legacy_email_only: legacyEmailOnly,
-      },
+      { p_studio_id: studioId, p_mode: intent },
     );
     if (error) {
       failureMessage = "Could not save that just now. Please try again.";
@@ -249,10 +231,13 @@ export async function updateNewClientAdmissionModeAction(
       } else if (outcome === "legacy_waitlist_cutover_required") {
         // TRUTHFUL, and it names the thing that has to happen first rather than
         // pretending the setting failed.
+        // TRUTHFUL about what has to happen, and it names the one action that
+        // does it. The rule is "not yet cut over", which is why the copy does
+        // not promise this is only about email.
         failureMessage =
-          "This studio's waitlist still sends joins by email. Complete the " +
-          "waitlist cutover first, then you can open or close new-client " +
-          "booking.";
+          "This studio hasn't completed its new-client admission setup yet. " +
+          "Choose Waitlist once to complete it, then Open and Closed become " +
+          "available.";
       } else if (outcome !== "ok") {
         failureMessage = "Could not save that just now. Please try again.";
       }

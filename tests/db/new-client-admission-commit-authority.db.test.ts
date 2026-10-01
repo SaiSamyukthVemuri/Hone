@@ -198,6 +198,21 @@ describe("1. ordinary new-client booking vs owner -> CLOSED", () => {
        '+15550100', null, '${f.serviceId}'::uuid, '${startsAt}'::timestamptz,
        '${hash64()}', false, null, null)`;
 
+  it("reports the profile of the row it CREATED, when it created one", async () => {
+    const f = await seed("ord-profile");
+    await stamp(f.studioId, "open");
+    const email = `fresh-${randomUUID().slice(0, 8)}@harness.local`;
+    const r = await adminQuery(
+      `select * from public.create_public_appointment_for_new_client(
+         $1, null, 'Fresh Person', $2, '+15550177', now(), $3, $4::timestamptz, $5, false, null, null)`,
+      [f.studioId, email, f.serviceId, f.altSlot, hash64()],
+    );
+    expect(r.rows[0].result).toBe("created");
+    expect(r.rows[0].client_name).toBe("Fresh Person");
+    expect(r.rows[0].client_phone).toBe("+15550177");
+    expect(r.rows[0].client_sms_consent_at).not.toBeNull();
+  });
+
   it("A. mutation first -> it COMMITS under OPEN, then the owner change applies", async () => {
     const f = await seed("ord-a");
     await stamp(f.studioId, "open");
@@ -506,7 +521,8 @@ describe("a client created WITHOUT the studio lock cannot abort the command", ()
     // unique-violation re-read, must both land on this row.
     const other = randomUUID();
     await adminQuery(
-      `insert into public.clients (id,studio_id,name,email) values ($1,$2,'Added By Practitioner',$3)`,
+      `insert into public.clients (id,studio_id,name,email,phone,sms_consent_at)
+       values ($1,$2,'Added By Practitioner',$3,'+15559999',null)`,
       [other, f.studioId, email],
     );
 
@@ -517,6 +533,16 @@ describe("a client created WITHOUT the studio lock cannot abort the command", ()
     );
     expect(r.rows[0].result).toBe("created");
     expect(r.rows[0].client_id).toBe(other);
+
+    // AND ITS OWN CONTACT STATE, not the submission's. The caller sends the
+    // post-commit SMS from these values, so returning the id alone would have
+    // let a management token go to the typed phone under typed consent for an
+    // appointment belonging to a differently-configured client.
+    expect(r.rows[0].client_name).toBe("Added By Practitioner");
+    expect(r.rows[0].client_phone).toBe("+15559999");
+    expect(r.rows[0].client_phone).not.toBe("+15550133");
+    expect(r.rows[0].client_sms_consent_at).toBeNull();
+    expect(r.rows[0].client_sms_opted_out_at).toBeNull();
 
     // ONE client for that email, and the appointment belongs to it.
     const clients = await adminQuery(
@@ -601,23 +627,26 @@ describe("a client created WITHOUT the studio lock cannot abort the command", ()
 // mode change and an in-flight join mutually exclusive. Rather than fake
 // atomicity, the concurrent transition is removed until the studio is durable.
 // ---------------------------------------------------------------------------
-describe("an email-only studio cannot be switched OPEN or CLOSED", () => {
+describe("an UNSTAMPED studio cannot be switched OPEN or CLOSED", () => {
   // AS THE OWNER, because the command re-derives `auth.uid()` and refuses anyone
   // who is not an ACTIVE OWNER of this studio - which `adminQuery` is not.
-  const setMode = (f: Fixture, mode: string, legacyEmailOnly: boolean) =>
+  //
+  // TWO arguments, deliberately: there is no caller-supplied "is this studio
+  // email-only" fact any more. The command reads the stamp from the row, so a
+  // direct authenticated call cannot assert its way past the block.
+  const setMode = (f: Fixture, mode: string) =>
     asUser(f.userId, (q) =>
-      q(`select * from public.set_new_client_admission_mode($1, $2, $3)`, [
+      q(`select * from public.set_new_client_admission_mode($1, $2)`, [
         f.studioId,
         mode,
-        legacyEmailOnly,
       ]),
     );
 
   it.each([["open"], ["closed"]])(
-    "refuses %s while the studio still commits by email",
+    "refuses %s while the studio is still unstamped",
     async (mode) => {
       const f = await seed(`block-${mode}`);
-      const r = await setMode(f, mode, true);
+      const r = await setMode(f, mode);
       expect(r.rows[0].outcome).toBe("legacy_waitlist_cutover_required");
       expect(r.rows[0].mode).toBeNull();
       // Nothing was written: the row is still unstamped.
@@ -634,7 +663,7 @@ describe("an email-only studio cannot be switched OPEN or CLOSED", () => {
   it("WAITLIST is still allowed, and it IS the way out", async () => {
     const f = await seed("block-waitlist");
     // The cutover write itself, made while the studio is still email-only.
-    const cut = await setMode(f, "waitlist", true);
+    const cut = await setMode(f, "waitlist");
     expect(cut.rows[0].outcome).toBe("ok");
 
     const row = await adminQuery(
@@ -652,17 +681,39 @@ describe("an email-only studio cannot be switched OPEN or CLOSED", () => {
     );
     expect(a.rows[0].mode).toBe("waitlist");
     for (const mode of ["open", "closed", "waitlist"]) {
-      const r = await setMode(f, mode, false);
+      const r = await setMode(f, mode);
       expect(r.rows[0].outcome, `${mode} must be available after cutover`).toBe("ok");
     }
   });
 
   it("the block does not touch ordinary durable admission authority", async () => {
-    // A durable studio - legacyEmailOnly false - keeps every transition.
+    // Once stamped, every transition is available - the first write is what
+    // stamps, so `waitlist` leads and the rest follow.
     const f = await seed("block-none");
     for (const mode of ["waitlist", "closed", "open"]) {
-      const r = await setMode(f, mode, false);
-      expect(r.rows[0].outcome).toBe("ok");
+      const r = await setMode(f, mode);
+      expect(r.rows[0].outcome, `${mode} after the stamp`).toBe("ok");
     }
+  });
+
+  it("a DIRECT authenticated call cannot assert its way past the block", async () => {
+    // THE HOLE THIS SHAPE CLOSES. The previous version took the fact as a
+    // defaulted argument, so an owner calling the RPC straight through PostgREST
+    // could omit it or pass `false` and restore the transition. There is no such
+    // argument now: the stamp is read from the row inside the command.
+    const f = await seed("block-direct");
+    await expect(
+      asUser(f.userId, (q) =>
+        q(`select * from public.set_new_client_admission_mode($1, $2, $3)`, [
+          f.studioId,
+          "closed",
+          false,
+        ]),
+      ),
+    ).rejects.toThrow(/does not exist|function/i);
+
+    // And the two-argument call still refuses while unstamped.
+    const r = await setMode(f, "closed");
+    expect(r.rows[0].outcome).toBe("legacy_waitlist_cutover_required");
   });
 });

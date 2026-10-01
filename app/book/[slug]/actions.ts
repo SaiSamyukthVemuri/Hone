@@ -1218,6 +1218,27 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
   const clientId = committedClientId ?? resolvedClientId ?? NO_CLIENT_RESOLVED;
+
+  // THE WINNING CLIENT'S OWN CONTACT STATE WINS over the submission.
+  //
+  // The command may have adopted a row this action never saw - another writer
+  // created the same-studio email first, and the unique-violation re-read took
+  // it. Keeping the typed values would then send the post-commit SMS to the
+  // SUBMITTED phone, under SUBMITTED consent, for an appointment belonging to a
+  // client whose stored phone or consent differs. So whenever the command
+  // reports a profile, it replaces what was typed.
+  if (commandRow?.client_name !== undefined && commandRow?.client_name !== null) {
+    clientName = commandRow.client_name as string;
+  }
+  if (commandRow?.client_phone !== undefined) {
+    clientPhone = (commandRow.client_phone as string | null) ?? null;
+  }
+  if (commandRow?.client_sms_consent_at !== undefined) {
+    clientSmsConsentAt = (commandRow.client_sms_consent_at as string | null) ?? null;
+  }
+  if (commandRow?.client_sms_opted_out_at !== undefined) {
+    clientSmsOptedOutAt = (commandRow.client_sms_opted_out_at as string | null) ?? null;
+  }
   // 0195 speaks a superset: `created_and_converted` for success, and the nested
   // command's own refusal re-emitted under an `appointment:` prefix. Unwrapping
   // it here keeps ONE vocabulary in play rather than two.
