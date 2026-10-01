@@ -20,28 +20,65 @@
 // message would carry the entire authority with it.
 //
 // ===========================================================================
-// V1: A HONE PLATFORM IDENTITY, NOT A STUDIO-BRANDED ONE
+// THE EMAIL IDENTIFIES THE STUDIO BEFORE ANY CLICK
 // ===========================================================================
 //
-// This email carries NO studio name, NO studio Reply-To and NO studio-derived
-// timezone. That is a deliberate launch-scope reduction, and the reason is
-// idempotency rather than taste.
+// P1 CLIENT TRUST. This email previously carried a constant subject ("Your
+// invitation to book"), no studio name in the body, and a line telling the
+// recipient that "opening the link will show you which studio is offering it".
+// A real prospect could not tell who was inviting them until AFTER clicking an
+// unfamiliar link — which is the shape of a phishing message, not an
+// invitation from their own studio. The studio name now appears in the
+// subject, the heading, the first body sentence and the footer.
 //
-// The invitation send keys on the invitation alone, with no payload digest,
-// because the body carries a bearer token. Losing the digest means the payload
-// must be a PURE FUNCTION of the invitation — and every studio field is mutable
-// operator state. A renamed studio, a corrected contact address or an adjusted
-// timezone all move the rendered bytes while the key stays put, and
-// same-key/different-payload is the one case the provider answers with
-// `invalid_idempotent_request` rather than a replay. The retry that still
-// needed delivering then fails outright. Freezing the timezone alone was not
-// enough: the name and the Reply-To are exactly as mutable.
+// WHY THE PREVIOUS "NO STUDIO-DERIVED VALUE" RULE IS RETIRED
+// ----------------------------------------------------------
 //
-// So V1 sends as Hone. The prospect learns whose offer it is when they open the
-// link — the secure invitation page can show current studio identity freely,
-// because a page is rendered fresh on every visit and has no idempotency key to
-// contradict. Studio branding on the email needs the delivery snapshot this
-// lane deliberately does not build.
+// That rule was never about taste; it was an idempotency argument, and it has
+// been re-checked against the sender's CURRENT contract rather than preserved
+// on inertia. The argument ran: this send passes `payloadCarriesSecret`, so
+// the provider key is event-only and carries no payload digest
+// (`waitlistEventOnlyIdempotencyKey(namespace, studioId, invitationId)`);
+// therefore the payload must be a pure function of the invitation, or two
+// attempts under one key render different bytes and the provider answers
+// `invalid_idempotent_request` instead of replaying.
+//
+// The premise that fails is "two attempts". Producing different bytes under
+// one key needs a SECOND INVOCATION carrying the same invitation id, and
+// lib/waitlist/delivery/send.ts forbids exactly that:
+//
+//   * 0193 mints the invitation id and the raw token once, and the token is
+//     never persisted — so nothing in the system can rebuild this email;
+//   * there is no supported "send this invitation again later" operation, and
+//     `sameEventRetryAllowed` is typed as the literal `false` so a future
+//     branch cannot opt out without a compile error;
+//   * an operator's "Resend invitation" is a REISSUE — a new invitation id and
+//     a new token, hence a NEW key;
+//   * the one retry that is permitted never leaves a single invocation: it
+//     reuses the SAME in-memory payload object, so its bytes are identical
+//     whatever they contain.
+//
+// send.ts already draws this conclusion for a strictly larger exposure: "The
+// payload is a pure function of the invitation per BUILD, not across builds: a
+// deployment can change the template, FROM_ADDRESS or URL construction.
+// Same-key/different-bytes would need a SECOND invocation holding the OLD raw
+// token — which the law above forbids." A studio rename is a smaller version
+// of a template change, and is closed by the same law.
+//
+// The corroboration is in the sibling template. The RECIPIENT PROOF email
+// carries the studio name today, under the identical event-only key shape, and
+// send.ts justifies it in these words: "Each challenge is sent once, and a
+// resend MINTS A NEW CHALLENGE and therefore a new id, so two independently
+// rendered payloads never meet under one key." One invitation id is one
+// delivery event in exactly the same way.
+//
+// WHAT IS *NOT* CHANGED HERE. The From header and Reply-To stay Hone's
+// platform identity. That is a different axis — it needs a studio-sender
+// contract review of its own — and this hotfix deliberately does not touch it.
+// The send therefore remains correctly declared in the
+// PLATFORM_IDENTITY_CLIENT_CALLERS list of
+// tests/source-guards/client-facing-email-identity.test.ts, which classifies
+// call sites by `studioIdentity`, not by body copy.
 //
 // ===========================================================================
 // WHAT THIS EMAIL DELIBERATELY OMITS
@@ -50,26 +87,38 @@
 //   * THE RECIPIENT'S NAME. Same reasoning as the portal magic link: an email
 //     that is forwarded, quoted or intercepted should leak no identity. The
 //     waitlist entry holds `name`, so naming them would be easy and is
-//     deliberately declined.
-//   * THE STUDIO'S NAME. See the V1 note above — it is mutable, and the payload
-//     must not be.
+//     deliberately declined. Naming the STUDIO is the opposite trade: it tells
+//     the recipient who is writing to them without revealing who they are.
 //   * THE RECIPIENT'S POSITION IN THE QUEUE. 0185 refuses to store a position
 //     or a cached rank at all; inventing one for email copy would manufacture
 //     a fact the database declines to keep.
 //   * ANY CLINICAL CONTENT. A waitlist prospect is not a client (0185), so
 //     there is nothing clinical to include and no client record to reference.
+//   * THE PROOF CODE, AND ANY DESCRIPTION OF ITS MECHANISM. The security line
+//     states that a verification step exists, in mechanism-neutral words, so
+//     this copy does not have to move when the proof mechanism does.
 //   * A RELATIVE EXPIRY. The email states an absolute instant, because a
 //     duration is only true at one moment and a delayed send makes it false.
 //   * THE EXPIRY AS A HARD-CODED STRING. The invitation TTL is owned by
 //     `issue_new_client_waitlist_invitation` (0189: `p_ttl_hours`, default 72,
 //     clamped 1..168) and stored on `new_client_waitlist_invitations.expires_at`
 //     by a server-owned trigger. The caller passes the phrase derived from that
-//     stored value; this module never guesses it. Pinning a TTL constant here
-//     would create a second owner for a value the database already owns.
+//     stored value; this module never guesses it.
 //
 // Pure module: no I/O, no env reads, no server-only import, no provider.
 
 export type WaitlistInvitationEmailInput = {
+  /**
+   * The studio's display name, server-resolved by the caller from
+   * `studios.name`. Rendered in the subject, the heading, the opening body
+   * sentence and the footer, so the recipient knows who is inviting them
+   * before deciding whether to trust the link.
+   *
+   * Blank is tolerated rather than trusted: a studio with no name is a data
+   * defect, and inventing a placeholder identity would be worse than naming
+   * nobody. An empty value falls back to the previous unidentified copy.
+   */
+  studioName: string;
   /**
    * Absolute invitation URL. RESOLVES the invitation; must not mutate it.
    * Rendered as a link and as paste-through text.
@@ -80,10 +129,8 @@ export type WaitlistInvitationEmailInput = {
    * FIXED zone — e.g. "Thursday, September 10, 2026 at 5:00 PM UTC".
    *
    * NOT a duration. A duration is measured from an origin the email cannot
-   * state: "expires in 3 days" is false the moment delivery is delayed, and a
-   * remaining-time duration drifts between retries and moves the idempotency
-   * key with it. An absolute instant is stable AND stays true however late the
-   * message arrives.
+   * state: "expires in 3 days" is false the moment delivery is delayed. An
+   * absolute instant stays true however late the message arrives.
    */
   expiresAtLabel: string;
 };
@@ -95,21 +142,27 @@ export type WaitlistInvitationEmail = {
 };
 
 /**
- * Subject. A CONSTANT.
- *
- * No studio name, so it cannot move when a studio is renamed. No
- * "[HONE WAITLIST]" prefix either — that marker exists for the STUDIO-facing
- * notification in templates/new-client-waitlist.ts, where operators build inbox
- * rules on it, and it is operational vocabulary that does not belong in a
- * prospect's inbox.
- *
- * Carries no code, no token, no name and no timestamp — matching the rule the
- * magic-link template states for its own subject.
+ * The subject used when no studio name is available. Retained as the explicit
+ * degenerate case, not as the normal one: a prospect who cannot see who is
+ * writing is the defect this template was changed to fix.
  */
-export const WAITLIST_INVITATION_SUBJECT = "Your invitation to book";
+export const WAITLIST_INVITATION_SUBJECT_UNIDENTIFIED = "Your invitation to book";
 
-export function waitlistInvitationSubject(): string {
-  return WAITLIST_INVITATION_SUBJECT;
+/**
+ * Subject. Names the studio, so the recipient can identify the sender from the
+ * inbox list without opening anything.
+ *
+ * No "[HONE WAITLIST]" prefix — that marker exists for the STUDIO-facing
+ * notification in templates/new-client-waitlist.ts, where operators build
+ * inbox rules on it, and it is operational vocabulary that does not belong in
+ * a prospect's inbox. Carries no code, no token and no timestamp, matching the
+ * rule the magic-link template states for its own subject.
+ */
+export function waitlistInvitationSubject(studioName: string): string {
+  const studio = studioName.trim();
+  return studio
+    ? `Your invitation to book an electrolysis consultation with ${studio}`
+    : WAITLIST_INVITATION_SUBJECT_UNIDENTIFIED;
 }
 
 function escapeHtml(s: string): string {
@@ -125,23 +178,46 @@ export function buildWaitlistInvitationEmail(
   input: WaitlistInvitationEmailInput,
 ): WaitlistInvitationEmail {
   const url = input.invitationUrl;
+  const studio = input.studioName.trim();
   const ttl = input.expiresAtLabel.trim() || "the time stated by the studio";
-  const subject = waitlistInvitationSubject();
+  const subject = waitlistInvitationSubject(studio);
+
+  // The identified copy is the normal path. The unidentified fallback is the
+  // previous wording, kept so a studio with no name is no worse off than
+  // before this change rather than being handed an odd half-sentence.
+  const heading = studio
+    ? `${studio} has invited you to book.`
+    : "A spot is available.";
+  const lead = studio
+    ? `A consultation opening is available at ${studio}. Choose a time that works for you.`
+    : "A consultation opening is available, and you can choose a time that suits you. Opening the link will show you which studio is offering it.";
+  const cta = studio ? "Choose a consultation time" : "See the opening";
+  const footer = studio ? `${studio} via Hone` : "Hone";
 
   const text =
-    `A consultation opening is available, and you can choose a time.\n\n` +
+    `${heading}\n\n` +
+    `${lead}\n\n` +
     `${url}\n\n` +
     `This invitation expires ${ttl}.\n\n` +
-    `Opening the link will show you which studio is offering it.\n\n` +
-    `For your security, opening the link is not enough on its own: when you ` +
-    `choose to book or decline, a short confirmation code is emailed to this ` +
-    `address to confirm it is really you.\n\n` +
+    // MECHANISM-NEUTRAL. The previous wording described "a short confirmation
+    // code emailed to this address", which pinned prospect-facing copy to one
+    // implementation of recipient proof. This states that a verification step
+    // exists without describing how, so the proof mechanism can change without
+    // this sentence becoming a lie. It removes nothing from the code: the
+    // proof requirement itself is unchanged.
+    `For your security, opening the link is not enough on its own. When you ` +
+    `choose to book or decline, Hone may ask you to verify this email ` +
+    `address.\n\n` +
     `If you no longer want to hear about openings, reply to this email and ask ` +
     `to be taken off the list.\n\n` +
-    `Hone\n`;
+    `${footer}\n`;
 
   const urlH = escapeHtml(url);
   const ttlH = escapeHtml(ttl);
+  const headingH = escapeHtml(heading);
+  const leadH = escapeHtml(lead);
+  const ctaH = escapeHtml(cta);
+  const footerH = escapeHtml(footer);
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(subject)}</title></head>
 <body style="margin:0; padding:0; background:#FAFAF7; color:#0A0A0A;">
@@ -150,14 +226,14 @@ export function buildWaitlistInvitationEmail(
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
         <tr><td style="padding-bottom:24px; font-family:Georgia, serif; font-weight:700; font-size:18px; letter-spacing:-0.02em;">Hone</td></tr>
         <tr><td style="padding-bottom:16px; font-family:Georgia, serif; font-weight:700; font-size:28px; letter-spacing:-0.02em; line-height:1.15;">
-          A spot is available.
+          ${headingH}
         </td></tr>
         <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
-          A consultation opening is available, and you can choose a time that suits you. Opening the link will show you which studio is offering it.
+          ${leadH}
         </td></tr>
         <tr><td style="padding:0 0 20px 0;">
           <a href="${urlH}" style="display:inline-block; padding:14px 24px; background:#0A0A0A; color:#FFFFFF; font-family:-apple-system, system-ui, sans-serif; font-size:14px; font-weight:500; text-decoration:none; border-radius:6px; letter-spacing:0.02em;">
-            See the opening
+            ${ctaH}
           </a>
         </td></tr>
         <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B; word-break:break-all;">
@@ -168,13 +244,13 @@ export function buildWaitlistInvitationEmail(
           This invitation expires ${ttlH}.
         </td></tr>
         <tr><td style="padding:12px 0 24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.65; color:#6B6B6B;">
-          For your security, opening the link is not enough on its own. When you choose to book or decline, a short confirmation code is emailed to this address so we know it is really you.
+          For your security, opening the link is not enough on its own. When you choose to book or decline, Hone may ask you to verify this email address.
         </td></tr>
         <tr><td style="padding:0 0 24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.65; color:#6B6B6B;">
           If you no longer want to hear about openings, reply to this email and ask to be taken off the list.
         </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
-          Hone
+          ${footerH}
         </td></tr>
       </table>
     </td></tr>
