@@ -36,6 +36,13 @@ export type IntelligenceSessionInput = {
 
 export type IntelligenceBlockInput = {
   session_id: string;
+  // Position WITHIN its session. The session date alone cannot order two blocks
+  // recorded in the same session, and `a.latest` is chosen last-wins — so
+  // without this the database's return order decided which same-area block was
+  // presented as the area's latest recorded setup. OPTIONAL: a caller that does
+  // not select it keeps the previous (input-order) behaviour rather than
+  // silently reordering.
+  sort_order?: number | null;
   primary_area: string | null;
   side?: string | null;
   // Migration 0128: the structured treated areas for this block. When present the
@@ -302,7 +309,15 @@ export function buildTreatmentIntelligence(input: {
   const blocksOldestFirst = [...blocks].sort((a, b) => {
     const da = sessionDate.get(a.session_id) ?? "";
     const db = sessionDate.get(b.session_id) ?? "";
-    return da < db ? -1 : da > db ? 1 : 0;
+    if (da !== db) return da < db ? -1 : 1;
+    // SAME SESSION: order by position within it. Returning 0 here left the
+    // comparison to Array.sort's stability, i.e. to the order the database
+    // happened to return — so two same-area blocks with different lots could
+    // present either one as "latest recorded setup". A missing `sort_order`
+    // sorts last, so a caller that does not select it is unchanged.
+    const sa = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+    const sb = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+    return sa === sb ? 0 : sa < sb ? -1 : 1;
   });
 
   // Overall totals. Hairs come from entries (via blocks) PLUS legacy

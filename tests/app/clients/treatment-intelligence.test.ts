@@ -120,6 +120,62 @@ describe("buildTreatmentIntelligence: overall", () => {
   });
 });
 
+describe("buildTreatmentIntelligence: the latest block is chosen deterministically", () => {
+  // #774 P2. `a.latest` is assigned last-wins over `blocksOldestFirst`, which
+  // compared SESSION DATE only and returned 0 for two blocks in one session. The
+  // Overview intelligence query has no ORDER BY, so the database's return order
+  // decided which same-area block was presented as that area's latest recorded
+  // setup — two blocks with different lots could display either one.
+  //
+  // The fixture pins the opposite of the input order: sort_order 2 is passed
+  // FIRST, so a build that preserved input order would answer with sort_order 1.
+  const SESSIONS = [session("s1", "2026-06-05T10:00:00Z")];
+  const EARLIER = block("s1", {
+    sort_order: 1,
+    probe_lot_number: "TEST-LOT-1063",
+    probe_lot_confirmed: true,
+    energy_level: 11,
+  });
+  const LATER = block("s1", {
+    sort_order: 2,
+    probe_lot_number: "TEST-LOT-2099",
+    probe_lot_confirmed: true,
+    energy_level: 22,
+  });
+
+  it("the HIGHEST sort_order in the session wins, whatever order the rows arrive in", () => {
+    for (const [label, blocks] of [
+      ["later row first", [LATER, EARLIER]],
+      ["earlier row first", [EARLIER, LATER]],
+    ] as const) {
+      const out = buildTreatmentIntelligence({
+        sessionsNewestFirst: SESSIONS,
+        blocks,
+      });
+      const area = out.areas[0]!;
+      expect(
+        area.latestConfirmedProbeLot,
+        `${label}: the database's return order decided the latest lot`,
+      ).toBe("TEST-LOT-2099");
+      expect(area.latestEnergyLevel, `${label}: latest energy`).toBe(22);
+    }
+  });
+
+  it("without sort_order the previous behaviour is kept, not silently reordered", () => {
+    // A caller that does not select the column must not have its blocks
+    // rearranged: absent sorts last, so input order still decides.
+    const noOrder = [
+      block("s1", { probe_lot_number: "A", probe_lot_confirmed: true }),
+      block("s1", { probe_lot_number: "B", probe_lot_confirmed: true }),
+    ];
+    const out = buildTreatmentIntelligence({
+      sessionsNewestFirst: SESSIONS,
+      blocks: noOrder,
+    });
+    expect(out.areas[0]!.latestConfirmedProbeLot).toBe("B");
+  });
+});
+
 describe("buildTreatmentIntelligence: areas", () => {
   it("groups by trimmed case-insensitive name, newest spelling wins", () => {
     const out = buildTreatmentIntelligence({
