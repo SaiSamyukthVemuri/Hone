@@ -113,9 +113,11 @@ and belongs in its own change, as `#756` was. Recording a release while silently
 re-pinning would hide one of those jobs inside the other.
 
 **Production has advanced past this document's pin, and that is stated rather than
-papered over.** At the time of writing the branch pointed at `afb2b509` (**#778**,
-waitlist email branding, merged after the release below). Re-read GitHub before any
-production action.
+papered over.** Production has advanced TWICE since the release recorded below — `afb2b509` (**#778**,
+waitlist email branding) and then `ce3091e9` (**#777**, waitlist invitation identity).
+That is not an aside: it is why re-pinning is its own change rather than a line edit
+here, since each advance re-derives every count derived from the pin. Re-read GitHub
+before any production action; this sentence is itself a dated observation.
 
 | Fact | Value |
 |---|---|
@@ -142,7 +144,6 @@ production action.
 | **#769** — UX-02 slice 2, SectionLabel across Settings | **OPEN**, release candidate | Not merged. It was `MERGEABLE`/`CLEAN` throughout the NEW-CLIENT-MODE-01 release and was deliberately **held** so it could not land ahead of #773. |
 | **#775** — SMS-NUMBER-SEARCH-01 number lookup | **OPEN**, release candidate | Not merged. No owner can reach a number lookup in production. |
 | **#776** — UX-02 slice 3, SectionLabel across session charting | **OPEN**, release candidate | Not merged. |
-| **#777** — waitlist invitation identifies the studio | **OPEN**, release candidate | Not merged, so a production invitation email still does not name the studio before the recipient clicks. |
 | **#774** — BROWSER-FINDING-01 probe-lot provenance | **OPEN**, and a **DRAFT** | Not merged. |
 
 ⚠️ **CORRECTION, 2026-10-01 (NEW-CLIENT-MODE-01 release) — FIVE ROWS WERE REMOVED FROM THE TABLE ABOVE.**
@@ -154,6 +155,12 @@ mechanism is worth naming rather than just fixing** — nobody edited these rows
 moved and the rows stayed still, which is why the guard checks the converse direction too and why this
 correction will be needed again the next time production advances without this table being re-read. The rows
 now listed are the candidates genuinely open at this reconciliation, re-read from GitHub at this sync.
+
+**AND IT RECURRED WHILE THIS VERY CORRECTION WAS BEING WRITTEN.** `#777` was listed as
+OPEN in the first draft of the table above and merged as `ce3091e9` before the change
+landed, so its row was deleted too. That is not an embarrassing footnote, it is the
+measurement: the window in which this table is true is shorter than the time it takes
+to edit it, which is the argument for the guard rather than for more careful authors.
 
 ⚠️ **CORRECTION, 2026-09-21 (PROD-TRUTH-01) — `#647` WAS REMOVED FROM THE TABLE ABOVE.** It carried two rows
 declaring TRUTH-01B-1 open and `#647` a parked draft. `#647` merged on **2026-08-30** as `1d6d7c48` and is
