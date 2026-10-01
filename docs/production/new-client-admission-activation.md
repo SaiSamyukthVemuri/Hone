@@ -232,3 +232,57 @@ route, not the step number.
   owner mode change. While a studio is still on that path its owner simply
   cannot switch to OPEN or CLOSED; the command answers
   `legacy_waitlist_cutover_required` and the way out is the cutover write.
+
+---
+
+## EXECUTION RECORD — 2026-10-01
+
+**This section is a record of what was executed, not an instruction.** The plan
+above is unchanged; nothing in it was rewritten to match the outcome. Steps A–D
+and G are DONE, **E was never performed**, F is **partial by design**, and H is
+**not started**.
+
+Canonical cross-references: the migration apply and the release-level summary live
+in [migration-ledger.md](./migration-ledger.md); hosted migration state lives in
+[migration-state.json](./migration-state.json). Those are authority. This is the
+step-by-step narrative.
+
+| Step | State | What happened |
+|---|---|---|
+| **A** · verify baseline | **DONE** | Hosted max `0203`, 202 history rows, `0204` absent, nothing above `0203`, no remote-only migration, `studios` admission columns 0, all six new functions absent. `0204` confirmed the next free number and the only local-only migration. |
+| **B** · apply `0204` | **DONE** | One `supabase db push --linked`, no `--include-all`, CLI pinned `2.102.0`, exit code 0, no retry. Dry-run named `0204` only and the set was re-asserted programmatically before the push. Recorded in the ledger and in `migration-state.json`; `hosted_migration_max` advanced `0203 → 0204`. |
+| **C** · verify `0204` hosted | **DONE** | Max `0204`, recorded exactly once, nothing above it, 203 rows. Three columns present; `set_at` NULL on **every** row — nothing stamped. Exactly ONE FK between `studios` and `practitioners` (`practitioners_studio_id_fkey`), so the `studio:studios(*)` embeds survived. `set_new_client_admission_mode` executable by `authenticated` and nobody else — not `anon`, not `service_role`, not `PUBLIC`. `effective_new_client_admission` and `assert_new_client_admission` executable by **nobody**. The two composed commands `service_role`-only. **One deviation found and recorded, not fixed:** `studios_admission_mode_guard()` has no explicit revoke, so `anon`/`authenticated`/`service_role`/`PUBLIC` hold EXECUTE. Unexploitable — return type `trigger` — but it needs `0205`, because `0204` is frozen. |
+| **D** · deploy #773 | **DONE** | Merged as `d7e712efa28c4c9ef8d2e224f9250cc68c4e6ae4` (true merge commit, parents `[a5e179f2, d8617859]`) at `2026-10-01T20:25:16Z`; production deployment `dpl_AQrWznf5fKqLKPZiH4RNCgDFwxsZ` READY at `2026-10-01T20:27:33.821Z` holding `hone.care`. Verified afterwards: all **7** studio booking pages HTTP 200 with **zero** UNKNOWN states — which is the proof the admission reader reaches the new column, since a failed read renders UNKNOWN. Two studios resolved WAITLIST, five resolved OPEN and still offered ordinary booking. Zero Vercel runtime errors. |
+| **E** · read the live env lists | **NOT PERFORMED** | ⚠️ **The live `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` and `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` values were never read, so NO SLUG SET IS RECORDED.** The plan requires this step to be the one moment the real configuration enters the written record; that has **not** happened and must still be done by the credential holder. **No slug set may be inferred from any document** — not from which studios are stamped, not from which hold waitlist rows. Consequence: the plan's "record which listed studios are absent from the durable list" is **outstanding**, so the set of studios whose commit point would move at F is **unknown and undocumented**. |
+| **F** · cut each listed studio over | **PARTIAL — ONE studio** | Only **Willow Electrolysis** (`38cb3a8b-f0f1-409e-9ea4-ffa4b95cb4c6`, `willow-electrolysis`). Stored mode `open → waitlist`, `set_at` `2026-10-01T21:35:33.139540Z` (**server-generated**), `set_by` resolving to a `practitioners` row of that studio with `role = 'owner'` — matched on `practitioners.id`, since the command stores the resolved practitioner rather than `auth.uid()`. Written by **the owner through the product UI** (Settings → Booking, anchor `new-client-admission`, option "Use a waitlist"), which calls `set_new_client_admission_mode`. **The release controller could not and did not perform this write:** its connection is `postgres` with `auth.uid()` NULL, and the command re-derives authority through `is_studio_owner`, so it answers `not_authorized`. No column was direct-updated and `service_role` was not used to impersonate the owner. **Nothing about Willow's behaviour changed** — it was already effectively WAITLIST via the one-way bridge, and already on the durable list (48 pre-existing entries prove it), so the write moved only the *authority*, from bridge to row. The remaining **6** studios are still stored `'open'` and **unstamped**. |
+| **G** · verify a durable join | **PASSED** | One synthetic prospect joined through the **public** Willow waitlist form, committing entry `ff942ef2-a272-4549-a3b9-c5d000b05b69` at `2026-10-01T22:25:36.347700Z`: `status` `waiting`, `source` `public_booking`, `joined_at_provenance` `form`, and `removed_at`/`claimed_at`/`invited_at`/`converted_at`/`converted_client_id`/`created_by_practitioner_id` all NULL. Willow entries **48 → 49**, globally **51 → 52** — exactly one new row anywhere. **The row, not the email, was the check.** No appointment (330 → 330) and no client record (78 → 78), including no attach to the three pre-existing clients that happen to share the test address. No SMS: `sms_consent_at`, `sms_consent_source`, `mobile_verified_at` all NULL, and the waitlist surface carries no SMS field. Studio notification **provider-accepted**; client acknowledgement logged no failure. |
+| **H** · retire the bridge machinery | **NOT STARTED** | **Both bridges remain intact** in the deployed tree: `envForcesWaitlist` in `lib/booking/new-client-admission.ts`, and `lib/booking/new-client-waitlist-durability-bridge.ts` with `isNewClientWaitlistDurableEnabled`. **No environment variable was deleted.** H is explicitly gated on every listed studio being stamped and verified, and only one is — so it is not merely undone, it is **not yet eligible**. |
+
+### Two findings from the execution worth carrying forward
+
+**1 · `migration list --linked` is not a safe reconciliation source.** Run from a
+worktree whose branch predates applied migrations, it reports them as *remote-only*.
+During this release's preflight a worktree topping out at `0201` reported `0202` and
+`0203` as remote-only — a branch artefact that reads exactly like a production
+discrepancy. Reconcile by set arithmetic against the live version list in
+`supabase_migrations.schema_migrations` instead, whenever the invoking tree may not be
+the release tree.
+
+**2 · `effective_new_client_admission` takes a row lock.** It is `volatile` and runs
+`perform 1 from public.studios s where s.id = p_studio_id for no key update`. It is a
+commit-time authority, **not** a presentation read, and must not be called casually
+during verification. Effective mode was instead derived behaviourally from the public
+page, so no verification step locked a studio row mid-cutover.
+
+### Outstanding, and owned by whoever resumes this
+
+- **Step E** — read the live env lists and record the exact slug sets, including which
+  listed studios are absent from the durable list. Nothing else in F can be scoped
+  correctly until this exists.
+- **Step F for the remaining 6 studios** — each needs its own owner-authorized write.
+- **`0205`** — close the `studios_admission_mode_guard()` grant deviation.
+- **The step-G synthetic entry is RETAINED.** `ff942ef2-a272-4549-a3b9-c5d000b05b69`
+  sits in Willow's **Waiting** queue at position **47 of 47** (`joined_at` ASC, `id`
+  ASC, `SECTION_PAGE_SIZE` 100 — the last row on page one, visible without paging) and
+  carries a submitted phone number. **It is synthetic test data in a real operator's
+  live queue.** Remove it before Willow operates that queue for real.
