@@ -109,7 +109,10 @@
 //     by a server-owned trigger. The caller passes the phrase derived from that
 //     stored value; this module never guesses it.
 //
-// Pure module: no I/O, no env reads, no server-only import, no provider.
+// Pure module: no I/O, no env reads, no server-only import, no provider. Its
+// one import is lib/email/studio-identity.ts, which is pure on the same terms.
+
+import { sanitizeStudioDisplayName } from "@/lib/email/studio-identity";
 
 export type WaitlistInvitationEmailInput = {
   /**
@@ -118,9 +121,15 @@ export type WaitlistInvitationEmailInput = {
    * sentence and the footer, so the recipient knows who is inviting them
    * before deciding whether to trust the link.
    *
-   * Blank is tolerated rather than trusted: a studio with no name is a data
-   * defect, and inventing a placeholder identity would be worse than naming
-   * nobody. An empty value falls back to the previous unidentified copy.
+   * Passed through the canonical `sanitizeStudioDisplayName` before it reaches
+   * the Subject header or the body, so an operator-supplied name carrying a
+   * CR/LF, a control character or 400 characters cannot split a header or have
+   * the message rejected.
+   *
+   * Blank is tolerated rather than trusted: a studio with no name — or one
+   * that sanitizes to nothing — is a data defect, and inventing a placeholder
+   * identity would be worse than naming nobody. It falls back to the previous
+   * unidentified copy.
    */
   studioName: string;
   /**
@@ -172,7 +181,7 @@ export const WAITLIST_INVITATION_SUBJECT_UNIDENTIFIED = "Your invitation to book
  * rule the magic-link template states for its own subject.
  */
 export function waitlistInvitationSubject(studioName: string): string {
-  const studio = studioName.trim();
+  const studio = sanitizeStudioDisplayName(studioName) ?? "";
   return studio
     ? `Your invitation to book a consultation with ${studio}`
     : WAITLIST_INVITATION_SUBJECT_UNIDENTIFIED;
@@ -191,7 +200,28 @@ export function buildWaitlistInvitationEmail(
   input: WaitlistInvitationEmailInput,
 ): WaitlistInvitationEmail {
   const url = input.invitationUrl;
-  const studio = input.studioName.trim();
+  // THE CANONICAL SANITIZER, NOT A SECOND ONE.
+  //
+  // `studios.name` is operator-supplied and neither the database nor
+  // updateStudioAction constrains it. A bare trim() left an embedded CR/LF
+  // intact and passed it into the Subject header, where it can split the
+  // header or get the message rejected outright; an unbounded name could also
+  // push the header past a sane length.
+  //
+  // lib/email/studio-identity.ts already owns this problem for the From
+  // header: sanitizeStudioDisplayName strips C0/DEL/C1 controls (where CR and
+  // LF live) and the RFC 5322 specials, collapses whitespace, and caps at
+  // MAX_DISPLAY_NAME_LENGTH. Reused verbatim rather than reimplemented — a
+  // second sanitizer is how two definitions of "safe" drift apart.
+  //
+  // It returns null for a name that sanitizes to nothing, which lands on the
+  // same unidentified fallback as a missing name.
+  //
+  // The body is sanitized from the same value, so the Subject and the body can
+  // never disagree about who the studio is. HTML escaping still applies on top
+  // of this: sanitizing is for the header, escaping is for the markup, and
+  // neither substitutes for the other.
+  const studio = sanitizeStudioDisplayName(input.studioName) ?? "";
   const ttl = input.expiresAtLabel.trim() || "the time stated by the studio";
   const subject = waitlistInvitationSubject(studio);
 

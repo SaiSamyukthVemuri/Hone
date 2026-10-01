@@ -9,6 +9,11 @@ import {
   buildWaitlistRecipientProofEmail,
   minutesPhrase,
 } from "@/lib/email/templates/waitlist-recipient-proof";
+import {
+  MAX_DISPLAY_NAME_LENGTH,
+  buildFromHeader,
+  sanitizeStudioDisplayName,
+} from "@/lib/email/studio-identity";
 
 // WAIT DELIVERY-01. These two templates are the visible half of a design whose
 // whole point is that the invitation link and the recipient proof are SEPARATE
@@ -103,28 +108,125 @@ describe("waitlist invitation email", () => {
     expect(withoutLinks).toContain(STUDIO);
   });
 
-  it("ESCAPES a studio name that would otherwise inject markup", () => {
-    const out = buildWaitlistInvitationEmail({
-      studioName: '<script>alert(1)</script><img src=x onerror=y>',
-      invitationUrl: URL,
-      expiresAtLabel: EXPIRY_LABEL,
-    });
+  // =========================================================================
+  // HEADER SAFETY — the canonical sanitizer, reused not reimplemented
+  // =========================================================================
+  //
+  // `studios.name` is operator-supplied and unconstrained by the database or
+  // updateStudioAction. Before this, the Subject took a bare trim() of it.
+  // Sanitizing is for the HEADER; escaping is for the MARKUP; the template
+  // does both and neither substitutes for the other.
+
+  it("leaves an ordinary studio name completely unchanged", () => {
+    // The sanitizer must not be a tax on well-behaved studios.
+    expect(waitlistInvitationSubject(STUDIO)).toBe(
+      "Your invitation to book a consultation with Willow Electrolysis",
+    );
+    const out = build();
+    expect(out.subject).toContain("Willow Electrolysis");
+    expect(out.text).toContain("Willow Electrolysis has invited you to book.");
+    expect(out.html).toContain("Willow Electrolysis via Hone");
+  });
+
+  it("NO CR, LF or control character can reach the Subject", () => {
+    // The header-splitting case. Built from char codes so the payload cannot
+    // be silently normalised by an editor or a formatter.
+    const CR = String.fromCharCode(13);
+    const LF = String.fromCharCode(10);
+    const NUL = String.fromCharCode(0);
+    const hostile = `Willow${CR}${LF}Bcc: attacker@evil.test${NUL}`;
+
+    const subject = waitlistInvitationSubject(hostile);
+    expect(subject).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(subject).toContain("Willow");
+    // The payload cannot FORM a header, which is the actual contract: no line
+    // break to start one and no colon to name one. The words survive as inert
+    // display text ("Bcc attacker evil.test") and that is fine — a display
+    // name is not parsed, it is shown.
+    expect(subject).not.toContain("Bcc:");
+    expect(subject).not.toContain(":");
+
+    const out = build({ studioName: hostile });
+    for (const rendered of [out.subject, out.text, out.html]) {
+      expect(rendered).not.toContain(CR);
+      expect(rendered).not.toContain(NUL);
+    }
+    // The text body is newline-delimited by construction, so assert on the
+    // studio-bearing line rather than the whole document.
+    const headingLine = out.text.split(LF)[0];
+    expect(headingLine).toContain("has invited you to book.");
+    expect(headingLine).not.toContain("Bcc:");
+  });
+
+  it("BOUNDS an overlong studio name at the canonical limit", () => {
+    const subject = waitlistInvitationSubject("W".repeat(400));
+    const rendered = subject.replace(
+      "Your invitation to book a consultation with ",
+      "",
+    );
+    expect(rendered.length).toBe(MAX_DISPLAY_NAME_LENGTH);
+    // The cap is the canonical constant, not a number restated here.
+    expect(subject.length).toBeLessThan(200);
+  });
+
+  it("uses the CANONICAL sanitizer, so the Subject agrees with the From header", () => {
+    // The anti-drift assertion. If this template ever grows its own sanitizer,
+    // the two definitions of "safe" diverge and this fails.
+    const hostile = `Willow${String.fromCharCode(13)}${String.fromCharCode(10)}X   (Downtown)`;
+    const canonical = sanitizeStudioDisplayName(hostile);
+    expect(canonical).not.toBeNull();
+    expect(waitlistInvitationSubject(hostile)).toBe(
+      `Your invitation to book a consultation with ${canonical}`,
+    );
+    expect(buildFromHeader(hostile)).toContain(canonical as string);
+  });
+
+  it("a name that sanitizes to NOTHING lands on the unidentified fallback", () => {
+    // A name made only of control characters and specials is, after
+    // sanitizing, no name at all — and must not render "...consultation with ".
+    const out = build({ studioName: String.fromCharCode(13, 10, 9) + "<>[]" });
+    expect(out.subject).toBe("Your invitation to book");
+    expect(out.text).toContain("A spot is available.");
+  });
+
+  it("the Subject still identifies the studio before any click", () => {
+    // The P1 property, re-asserted after sanitizing: the whole change must not
+    // have cost the thing it was made for.
+    const out = build();
+    expect(out.subject).toContain(STUDIO);
+    expect(out.subject.indexOf(STUDIO)).toBeGreaterThan(-1);
+    // Nothing in the subject is a link, so identity needs no click at all.
+    expect(out.subject).not.toContain("http");
+    expect(out.text.indexOf(STUDIO)).toBeLessThan(out.text.indexOf(URL));
+  });
+
+  it("markup in a studio name is REMOVED before it is ever escaped", () => {
+    // Two layers, and the outer one now fires first. sanitizeStudioDisplayName
+    // deletes the angle brackets and quotes outright, so by the time
+    // escapeHtml runs there is no markup left to escape — a stronger outcome
+    // than escaping it, and the reason this no longer asserts "&lt;script&gt;".
+    const out = build({ studioName: "<script>alert(1)</script><img src=x onerror=y>" });
     expect(out.html).not.toContain("<script>");
-    expect(out.html).not.toContain("<img src=x");
-    expect(out.html).toContain("&lt;script&gt;");
-    // The subject is not HTML and is not escaped; it must still carry no
-    // newline that could split headers.
+    expect(out.html).not.toContain("<img");
+    expect(out.html).not.toContain("onerror=y>");
+    // Nothing angle-bracketed survived from the input at all.
+    expect(out.html).not.toContain("&lt;script&gt;");
+    // And the Subject carries no line break that could split a header.
     expect(out.subject).not.toMatch(/[\r\n]/);
   });
 
-  it("escapes a studio name containing quotes and ampersands", () => {
-    const out = buildWaitlistInvitationEmail({
-      studioName: 'Willow & "Co"',
-      invitationUrl: URL,
-      expiresAtLabel: EXPIRY_LABEL,
-    });
-    expect(out.html).toContain("Willow &amp; &quot;Co&quot;");
-    expect(out.text).toContain('Willow & "Co"');
+  it("HTML ESCAPING IS STILL LIVE for what the sanitizer legitimately keeps", () => {
+    // The control for the test above: if sanitizing removed everything
+    // dangerous, "escaping still happens" could rot unnoticed. An ampersand is
+    // NOT in the sanitizer's removal set — it is a perfectly ordinary
+    // character in a studio name — and it still has to be escaped in HTML.
+    const out = build({ studioName: 'Willow & Co "Downtown"' });
+    expect(out.html).toContain("Willow &amp; Co Downtown");
+    expect(out.html).not.toContain("Willow & Co");
+    // The quotes were removed by the sanitizer, not escaped.
+    expect(out.html).not.toContain("&quot;");
+    // The text body is not HTML, so it carries the bare ampersand.
+    expect(out.text).toContain("Willow & Co Downtown");
   });
 
   it("falls back to the unidentified copy when no studio name is resolved", () => {
@@ -301,7 +403,17 @@ describe("the templates cannot send, so these tests cannot either", () => {
         .split("\n")
         .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
         .join("\n");
-      expect(code, `${rel} must import nothing`).not.toMatch(/^import\s/m);
+      // NOT "imports nothing": the invitation template imports the canonical
+      // sanitizer from lib/email/studio-identity.ts, which is pure on the same
+      // terms. The property that matters is that nothing reachable from here
+      // can send, read the filesystem or read the environment — so the
+      // allowlist is explicit and anything else fails.
+      const imports = [...code.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map(
+        (m) => m[1],
+      );
+      expect(imports, `${rel} may only import pure siblings`).toEqual(
+        imports.filter((i) => i === "@/lib/email/studio-identity"),
+      );
       expect(code, `${rel} must not read env`).not.toMatch(/process\.env/);
       expect(code, `${rel} must not reach a provider`).not.toMatch(
         /resend|Resend|fetch\(|sendEmail|transport/,
