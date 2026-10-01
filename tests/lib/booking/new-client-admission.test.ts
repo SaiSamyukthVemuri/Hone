@@ -612,6 +612,25 @@ describe("the activation document matches what the source actually does", () => 
     expect(bridge).toContain("isNewClientWaitlistDurableEnabled(studioSlug)");
   });
 
+  it("does not claim durability is unconditional during the bridge", () => {
+    // Exact-head P2 at 8703f2db. The summary said "`waitlist` now means durable.
+    // There is no second switch" while the deployed code still routed a
+    // listed-but-not-durable studio through email acceptance - contradicting
+    // both the code and this document's own step 1, in the section that declares
+    // itself the cutover authority.
+    const summary = DOC.slice(0, DOC.indexOf("## The transition rule"));
+    expect(summary).not.toContain("There is no second switch");
+    expect(summary).toContain("but not yet everywhere");
+    expect(summary).toContain(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV);
+    expect(summary).toContain("EMAIL-ACCEPTANCE");
+    // And the code it describes really does still make that distinction.
+    const bridge = readFileSync(
+      join(process.cwd(), "lib/booking/new-client-waitlist-durability-bridge.ts"),
+      "utf8",
+    );
+    expect(bridge).toContain("isNewClientWaitlistDurableEnabled(studioSlug)");
+  });
+
   it("records that the new-client control does not move booked rights", () => {
     expect(DOC).toContain(
       "It does not touch existing-client, portal or rebook behaviour at any step",

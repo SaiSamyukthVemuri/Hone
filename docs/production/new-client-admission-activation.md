@@ -19,10 +19,20 @@ only when someone deliberately writes it.
 - The bridge in `lib/booking/new-client-admission.ts` escalates **one way**: a
   listed studio resolves to `waitlist` even while its row still says `open`. It
   can never move a studio to `open`.
-- Therefore **Willow stays WAITLIST through cutover** without anyone writing a
-  row, because it is on the list today.
-- `waitlist` now *means* durable. There is no second switch, so no cutover step
-  can move a studio's submissions to email-only.
+- Therefore **a listed studio stays WAITLIST through cutover** without anyone
+  writing a row, because it is on the list today — for as long as it remains
+  UNSTAMPED. A deliberate owner write stamps `set_at` and from then on its stored
+  mode wins, including `open`. See *The transition rule* below.
+- `waitlist` MEANS durable as the long-term law, **but not yet everywhere.**
+  During the bridge there is still a SECOND switch,
+  `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`, and a studio listed for waitlist
+  but absent from it commits joins through the legacy EMAIL-ACCEPTANCE path
+  rather than writing `new_client_waitlist_entries`.
+
+  That is deliberate: a code deploy must not move a studio's commit point before
+  anyone chose to. `newClientWaitlistCommitIsDurable` is the decision, a stamped
+  studio is always durable regardless of that list, and step 6 retires the second
+  switch. Until then this document must not claim there is only one.
 
 ## What must NOT be inferred
 
