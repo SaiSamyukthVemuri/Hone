@@ -101,12 +101,58 @@ describe("invitation delivery", () => {
     });
 
     expect(calls).toHaveLength(1);
-    // V1: studio branding is dropped from the EMAIL because every studio field
-    // is mutable and the key carries no payload digest. Hone's existing
-    // platform transactional identity, unchanged and byte-stable.
+    // UNCHANGED BY THE P1 TRUST FIX. The studio is named in the SUBJECT and
+    // BODY now, but the HEADERS stay on Hone's platform identity: sending as
+    // a studio domain Hone does not authenticate, and routing replies to an
+    // address nothing has verified belongs to that studio, is a separate
+    // sender-contract question. This assertion is the pin that keeps the two
+    // decisions apart.
     expect(calls[0].payload.from).toBe("Hone <hello@hone.care>");
     expect(calls[0].payload.replyTo).toBeUndefined();
     expect(calls[0].payload.to).toBe(RECIPIENT);
+  });
+
+  it("P1: the SUBJECT the provider receives names the studio, before any click", async () => {
+    // The wiring proof: `studios.name` reaches the provider payload, not just
+    // the template. A prospect scanning an inbox sees who is writing without
+    // opening anything, which is the defect this fixes.
+    const { transport, calls } = recordingTransport(ACCEPTED);
+    await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+      transport,
+    });
+    expect(calls[0].payload.subject).toBe(
+      "Your invitation to book a consultation with Willow Electrolysis",
+    );
+    // And in the body, ahead of the link, in both renderings.
+    for (const body of [calls[0].payload.text, calls[0].payload.html]) {
+      expect(body).toContain("Willow Electrolysis has invited you to book.");
+      expect(body.indexOf("Willow Electrolysis")).toBeLessThan(body.indexOf(URL));
+    }
+    // The retired copy is gone: identity is no longer deferred to the click.
+    expect(calls[0].payload.text).not.toContain("which studio is offering");
+  });
+
+  it("P1: a studio with no name still sends, on the unidentified copy", async () => {
+    // `DeliveryStudio.name` is optional. A missing name is a data defect, not
+    // a reason to refuse an invitation — and not a reason to render
+    // "...consultation with ".
+    const { transport, calls } = recordingTransport(ACCEPTED);
+    await sendWaitlistInvitationEmail({
+      studio: { ...STUDIO, name: null },
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+      transport,
+    });
+    expect(calls[0].payload.subject).toBe("Your invitation to book");
+    expect(calls[0].payload.text).not.toMatch(/consultation with\s*$/m);
+    expect(calls[0].payload.text).not.toContain("available at .");
   });
 
   it("carries no Reply-To at all in V1", async () => {
@@ -595,48 +641,126 @@ describe("P2-A: a delayed retry keeps ONE identity and a TRUTHFUL expiry", () =>
   });
 });
 
-describe("V1 STABLE PAYLOAD: no mutable studio field reaches the provider", () => {
-  it("payload and key are BYTE-IDENTICAL across studio name/email/timezone mutation", () => {
-    // The negative control this rule exists for. Every studio field is mutable
-    // operator state; the invitation key carries no payload digest, so any of
-    // them moving the bytes turns a retry into invalid_idempotent_request
-    // instead of a replay.
-    return (async () => {
-      const before = recordingTransport(ACCEPTED);
-      const after = recordingTransport(ACCEPTED);
-      const args = {
-        invitationId: INVITATION_ID,
-        recipientEmail: RECIPIENT,
-        invitationUrl: URL,
-        ...INV_BASE,
-      };
-      await sendWaitlistInvitationEmail({
-        ...args,
-        studio: {
-          id: STUDIO.id,
-          name: "Willow Electrolysis",
-          postcare_contact_email: "hello@willow.test",
-          owner_email: "owner@willow.test",
-          timezone: "America/Toronto",
-        } as typeof STUDIO,
-        transport: before.transport,
-      });
-      await sendWaitlistInvitationEmail({
-        ...args,
-        // Renamed, re-addressed, re-zoned — every mutable field moved at once.
-        studio: {
-          id: STUDIO.id,
-          name: "Willow Electrolysis & Skin",
-          postcare_contact_email: "care@willow-skin.test",
-          owner_email: "newowner@willow-skin.test",
-          timezone: "Asia/Tokyo",
-        } as typeof STUDIO,
-        transport: after.transport,
-      });
+describe("STABLE PAYLOAD: what the event-only key actually requires", () => {
+  // ==========================================================================
+  // THE RULE THIS BLOCK REPLACES, AND WHY IT WAS RETIRED
+  // ==========================================================================
+  //
+  // This block previously asserted that the payload was BYTE-IDENTICAL across a
+  // studio rename, and the invitation email therefore carried no studio name at
+  // all. A real prospect could not tell who was inviting them until after
+  // clicking an unfamiliar link, which is the shape of a phishing message. The
+  // P1 ruling is that the studio must be identifiable before any click.
+  //
+  // The retired rule was an idempotency argument, so it was re-checked rather
+  // than overruled. It ran: this send passes `payloadCarriesSecret`, so the key
+  // is event-only and carries no payload digest; therefore the payload must be
+  // a pure function of the invitation, or two attempts under one key render
+  // different bytes and the provider answers `invalid_idempotent_request`.
+  //
+  // The premise that fails is "two attempts". Different bytes under one key
+  // need a SECOND INVOCATION holding the same invitation id, and send.ts
+  // forbids it: the raw token is never persisted, there is no resend
+  // operation, `sameEventRetryAllowed` is the literal `false`, and a reissue
+  // mints a NEW invitation id and therefore a new key. The only permitted
+  // retry stays inside one invocation and reuses the same in-memory payload.
+  //
+  // send.ts already accepts a strictly larger version of the same exposure —
+  // "a deployment can change the template, FROM_ADDRESS or URL construction" —
+  // and closes it with this same law. And the sibling PROOF send already
+  // carries the studio name under the identical event-only key shape.
+  //
+  // So the property that actually has to hold is not "bytes never move when
+  // studio state moves". It is the three below.
 
-      expect(after.calls[0].payload).toEqual(before.calls[0].payload);
-      expect(after.calls[0].idempotencyKey).toBe(before.calls[0].idempotencyKey);
-    })();
+  it("ONE INVOCATION = ONE PAYLOAD: the key is fixed by the invitation, not the bytes", async () => {
+    // Same invitation id, same studio: same key and byte-identical payload.
+    // This is the retry the provider is asked to replay.
+    const a = recordingTransport(ACCEPTED);
+    const b = recordingTransport(ACCEPTED);
+    const args = {
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+    };
+    await sendWaitlistInvitationEmail({ ...args, transport: a.transport });
+    await sendWaitlistInvitationEmail({ ...args, transport: b.transport });
+
+    expect(a.calls[0].payload).toEqual(b.calls[0].payload);
+    expect(a.calls[0].idempotencyKey).toBe(b.calls[0].idempotencyKey);
+    // And it now identifies the studio, which is the whole point of the change.
+    expect(a.calls[0].payload.subject).toContain("Willow Electrolysis");
+  });
+
+  it("THE KEY DOES NOT MOVE WHEN THE STUDIO IS RENAMED — only the body does", async () => {
+    // The precise shape of the residual exposure, asserted rather than
+    // hand-waved. A rename changes the rendered bytes; it does NOT change the
+    // key, because the key is (namespace, studioId, invitationId).
+    //
+    // That combination is only reachable from a second invocation for one
+    // invitation id, which the sender's own law forbids — and the
+    // reachability half is proved at the call site, not here. What this test
+    // pins is that renaming moves nothing the key is derived from, so no
+    // rename can ever split one invitation across two provider requests.
+    const before = recordingTransport(ACCEPTED);
+    const after = recordingTransport(ACCEPTED);
+    const args = {
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+    };
+    await sendWaitlistInvitationEmail({
+      ...args,
+      studio: { ...STUDIO, name: "Willow Electrolysis" },
+      transport: before.transport,
+    });
+    await sendWaitlistInvitationEmail({
+      ...args,
+      studio: {
+        ...STUDIO,
+        name: "Willow Electrolysis & Skin",
+        postcare_contact_email: "care@willow-skin.test",
+        owner_email: "newowner@willow-skin.test",
+      },
+      transport: after.transport,
+    });
+
+    // The key is untouched by every mutable studio field.
+    expect(after.calls[0].idempotencyKey).toBe(before.calls[0].idempotencyKey);
+    // The From header is untouched too: branding stayed out of the headers.
+    expect(after.calls[0].payload.from).toBe(before.calls[0].payload.from);
+    expect(after.calls[0].payload.replyTo).toBeUndefined();
+    expect(before.calls[0].payload.replyTo).toBeUndefined();
+    // The body DID move, and that is the intended behaviour now.
+    expect(after.calls[0].payload.subject).not.toBe(before.calls[0].payload.subject);
+    expect(after.calls[0].payload.subject).toContain("Willow Electrolysis & Skin");
+  });
+
+  it("the timezone is still not read: it cannot move the copy at all", async () => {
+    // The one studio field that stays excluded. The expiry renders in a FIXED
+    // zone, so an operator changing the studio timezone moves nothing.
+    const a = recordingTransport(ACCEPTED);
+    const b = recordingTransport(ACCEPTED);
+    const args = {
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+    };
+    await sendWaitlistInvitationEmail({
+      ...args,
+      studio: { ...STUDIO, timezone: "America/Toronto" } as typeof STUDIO,
+      transport: a.transport,
+    });
+    await sendWaitlistInvitationEmail({
+      ...args,
+      studio: { ...STUDIO, timezone: "Asia/Tokyo" } as typeof STUDIO,
+      transport: b.transport,
+    });
+    expect(a.calls[0].payload).toEqual(b.calls[0].payload);
   });
 
   it("the only tenant-derived value in the key is the immutable studio id", async () => {
