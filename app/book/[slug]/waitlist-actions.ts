@@ -6,6 +6,7 @@ import { getStudioBySlug } from "@/lib/booking/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   getNewClientAdmissionMode,
+  newClientAdmissionLegacyBridgeWaitlist,
   newClientMayJoinWaitlist,
 } from "@/lib/booking/new-client-admission";
 import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
@@ -281,11 +282,17 @@ async function submitToDurableWaitlist(
   // key below, so a rejoin after removal is a distinct provider request.
   let entryId: string | null = null;
   try {
-    const { data, error } = await admin.rpc("join_new_client_waitlist", {
+    // COMMIT-TIME ADMISSION. The read at the top of this action is fast refusal,
+    // not authority: the owner can change the mode before this write lands. The
+    // guarded command re-decides inside its own transaction, under the studios
+    // row lock, so an owner who closes the studio first wins and no entry is
+    // written. `p_legacy_bridge_waitlist` is server-derived and TEMPORARY.
+    const { data, error } = await admin.rpc("join_new_client_waitlist_guarded", {
       p_studio_id: studio.id,
       p_name: submission.name,
       p_email: submission.email,
       p_phone: submission.phone,
+      p_legacy_bridge_waitlist: newClientAdmissionLegacyBridgeWaitlist(studio.slug),
     });
     if (error) {
       const code = typeof error.code === "string" ? error.code : "";

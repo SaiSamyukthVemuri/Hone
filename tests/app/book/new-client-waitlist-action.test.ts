@@ -322,20 +322,20 @@ describe("NEW-CLIENT-MODE-01: the ROW is the commitment, the email is not", () =
     scenario.studioOutcome = { status: "rejected", code: "bounce" };
     const result = await submitNewClientBookingWaitlistAction(form());
     // The row was written before the send was attempted, so the join stands.
-    expect(dbOps).toContain("rpc:join_new_client_waitlist");
+    expect(dbOps).toContain("rpc:join_new_client_waitlist_guarded");
     expect(result.ok, "a failed notification is not a failed join").toBe(true);
   });
 
   it("an AMBIGUOUS send cannot erase the durable row either", async () => {
     scenario.studioOutcome = { status: "ambiguous", reason: "timeout" };
     const result = await submitNewClientBookingWaitlistAction(form());
-    expect(dbOps).toContain("rpc:join_new_client_waitlist");
+    expect(dbOps).toContain("rpc:join_new_client_waitlist_guarded");
     expect(result.ok).toBe(true);
   });
 
   it("the durable command runs BEFORE any send is attempted", async () => {
     await submitNewClientBookingWaitlistAction(form());
-    const rpcAt = dbOps.indexOf("rpc:join_new_client_waitlist");
+    const rpcAt = dbOps.indexOf("rpc:join_new_client_waitlist_guarded");
     expect(rpcAt, "the command must have run").toBeGreaterThan(-1);
     expect(sends.length, "and the notification follows it").toBeGreaterThan(0);
   });
@@ -344,7 +344,7 @@ describe("NEW-CLIENT-MODE-01: the ROW is the commitment, the email is not", () =
     // The entry id is now the idempotency scope: it exists precisely because
     // the row is the commitment, so a resend cannot duplicate a notification.
     await submitNewClientBookingWaitlistAction(form());
-    expect(rpcArgs.map((r) => r.fn)).toContain("join_new_client_waitlist");
+    expect(rpcArgs.map((r) => r.fn)).toContain("join_new_client_waitlist_guarded");
     expect(sends.length).toBeGreaterThan(0);
   });
 });
@@ -426,7 +426,7 @@ describe("exactly one durable write, and no direct table access", () => {
   it("a SUCCESSFUL submission performs the lookup and exactly one command", async () => {
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
     expect(dbOps.filter((o) => o.startsWith("rpc:"))).toEqual([
-      "rpc:join_new_client_waitlist",
+      "rpc:join_new_client_waitlist_guarded",
     ]);
     expect(dbOps).toContain(`select:studios:${SLUG}`);
   });

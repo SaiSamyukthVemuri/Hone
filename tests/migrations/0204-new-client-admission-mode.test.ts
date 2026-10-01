@@ -110,19 +110,44 @@ describe("the migration stays inside its own scope", () => {
     expect(SQL).toMatch(/^commit;/m);
   });
 
-  it("touches no waitlist table and no existing-client surface", () => {
-    // What "does not touch" means precisely: no statement READS or WRITES those
-    // surfaces. The column comment names them in prose to promise exactly this,
-    // so the assertion targets table references rather than the words.
-    expect(STATEMENTS).not.toMatch(
-      /\b(from|join|update|insert into|delete from)\s+(public\.)?(new_client_waitlist_entries|appointments|clients)\b/i,
-    );
-    // Every ALTER TABLE in this migration targets `studios` and nothing else.
+  it("alters only `studios`, whatever else it composes with", () => {
+    // SCOPE GREW BY RULING, and this is the boundary that survived it. The
+    // commit-time authority has to live in the same transaction as the write it
+    // guards, so this migration now composes with the waitlist join command and
+    // creates the client row for an ordinary new-client booking. What it still
+    // may NOT do is change the shape of anything but `studios`.
     const altered = [...STATEMENTS.matchAll(/alter table\s+(?:public\.)?(\w+)/gi)].map(
       (m) => m[1].toLowerCase(),
     );
     expect(altered.length).toBeGreaterThan(0);
     expect([...new Set(altered)]).toEqual(["studios"]);
+  });
+
+  it("never mutates a waitlist table directly - it DELEGATES to the owning command", () => {
+    // The 0185/0188/0195 lifecycle owns those rows. This migration composes with
+    // their commands in one transaction and writes none of them itself, so no
+    // entry can change state by a route those commands do not control.
+    expect(STATEMENTS).not.toMatch(
+      /\b(update|insert into|delete from)\s+(public\.)?new_client_waitlist_\w+/i,
+    );
+    expect(STATEMENTS).toContain("public.join_new_client_waitlist(");
+    expect(STATEMENTS).toContain("public.create_waitlist_public_appointment(");
+  });
+
+  it("touches EXISTING-client booking only by calling the command it already used", () => {
+    // `create_public_appointment` is CALLED, never redefined: existing-client
+    // ordinary booking reaches it exactly as before and consults no admission
+    // authority. The one `clients` write is the NEW-client row, created inside
+    // the locked transaction so a refused request cannot leave an orphan.
+    expect(STATEMENTS).not.toMatch(
+      /create\s+(or replace\s+)?function\s+public\.create_public_appointment\s*\(/i,
+    );
+    expect(STATEMENTS).toContain("public.create_public_appointment(");
+    const clientWrites = [
+      ...STATEMENTS.matchAll(/\b(update|insert into|delete from)\s+(?:public\.)?clients\b/gi),
+    ].map((m) => m[1].toLowerCase());
+    expect(clientWrites).toEqual(["insert into"]);
+    expect(STATEMENTS).not.toMatch(/\bdelete from\s+(public\.)?appointments\b/i);
   });
 
   it("does not weaken the existing studios update policy", () => {

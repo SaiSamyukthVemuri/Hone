@@ -306,6 +306,26 @@ export const NEW_CLIENT_ADMISSION_CLOSED_REFUSAL =
  *
  * MIGRATION-ONLY. Deleted with the bridge.
  */
+/**
+ * The ONE server-derived transition fact a database command may be handed.
+ *
+ * 0204 cannot read Vercel env state, so for an UNSTAMPED row the database cannot
+ * know whether the legacy list escalates it. This supplies that single boolean,
+ * from the SERVER-RESOLVED slug - never anything a browser sent.
+ *
+ * It is consulted inside the locked transaction ONLY when
+ * `new_client_admission_mode_set_at IS NULL`. A stamped row ignores it.
+ *
+ * TEMPORARY. Retired with the bridge at cutover, together with the commands'
+ * `p_legacy_bridge_waitlist` argument. See
+ * docs/production/new-client-admission-activation.md, step 6.
+ */
+export function newClientAdmissionLegacyBridgeWaitlist(
+  studioSlug: string | null | undefined,
+): boolean {
+  return envForcesWaitlist(studioSlug);
+}
+
 export function newClientAdmissionIsCutOver(a: NewClientAdmission): boolean {
   return a.ok && a.source === "persisted";
 }

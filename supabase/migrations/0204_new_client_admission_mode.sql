@@ -286,9 +286,391 @@ create trigger studios_admission_mode_guard
 -- not be able to reach it at all.
 
 revoke all on function public.set_new_client_admission_mode(uuid, text) from public;
+revoke all on function public.set_new_client_admission_mode(uuid, text) from public;
 revoke all on function public.set_new_client_admission_mode(uuid, text) from anon;
 revoke all on function public.set_new_client_admission_mode(uuid, text) from authenticated;
 revoke all on function public.set_new_client_admission_mode(uuid, text) from service_role;
 grant execute on function public.set_new_client_admission_mode(uuid, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 5. COMMIT-TIME AUTHORITY
+--
+-- THE APPLICATION READ IS NOT COMMIT-TIME AUTHORITY. It is presentation, fast
+-- refusal, and work avoidance. Between that read and the write the owner can
+-- change the mode, and the writes travel as SEPARATE PostgREST requests - so a
+-- request that began under `open` could insert a client and create an
+-- appointment after the studio had been closed.
+--
+-- The fix is a serial order, not a second read: every new-client business
+-- mutation resolves admission INSIDE its own transaction, after taking the
+-- studio row lock.
+--
+--   mutation gets the lock first -> it commits under the mode it saw, and the
+--                                   owner's change applies afterwards;
+--   owner gets the lock first    -> the mutation waits, then observes the NEW
+--                                   mode, and refuses if it does not permit it.
+--
+-- `set_new_client_admission_mode` above takes the same row lock implicitly, via
+-- its UPDATE of that row, so the two orders are the only two possible.
+--
+-- `FOR NO KEY UPDATE`, NEVER `FOR UPDATE`. 0193 measured this: FOR UPDATE
+-- conflicts with KEY SHARE, and the 0185/0188 entry writers hold an entry and
+-- then request KEY SHARE on studios through an FK trigger, so a studio-first
+-- FOR UPDATE moves the deadlock cycle rather than closing it.
+--
+-- NEW-CLIENT ONLY. Nothing here is reachable from existing-client ordinary
+-- booking, portal rebooking, management of a confirmed appointment, or EMERG-01
+-- free-consult rescheduling. `create_public_appointment` is UNTOUCHED, so every
+-- existing-client caller behaves exactly as before.
+-- ---------------------------------------------------------------------------
+
+-- THE TRANSITION ARGUMENT, AND WHY IT EXISTS.
+--
+-- 0204 cannot read Vercel env state, so for an UNSTAMPED row the database
+-- cannot know whether the legacy list escalates it. The service-role caller -
+-- never the browser - supplies that one server-derived fact.
+--
+-- It is consulted ONLY when `new_client_admission_mode_set_at IS NULL`. Once an
+-- owner has stamped a choice, persisted authority wins and this argument is
+-- ignored outright, which is what gives the race its required outcome: an owner
+-- who stamps CLOSED before the mutation takes the lock wins even if the request
+-- began under a legacy read.
+--
+-- TEMPORARY. It is retired with the bridge at cutover, together with
+-- lib/booking/new-client-waitlist-durability-bridge.ts and the durable env gate.
+-- See docs/production/new-client-admission-activation.md, step 6.
+--
+-- NULL means "the caller did not supply the transition fact". For an unstamped
+-- row that leaves the effective mode genuinely unknown, and unknown refuses.
+create or replace function public.effective_new_client_admission(
+  p_studio_id               uuid,
+  p_legacy_bridge_waitlist  boolean
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_mode   text;
+  v_set_at timestamptz;
+  v_found  boolean := false;
+begin
+  if p_studio_id is null then
+    return 'unknown';
+  end if;
+
+  -- THE LOCK COMES FIRST, before any read of the mode and before any write by
+  -- any caller. This is the whole mechanism.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+
+  select true, s.new_client_admission_mode, s.new_client_admission_mode_set_at
+    into v_found, v_mode, v_set_at
+    from public.studios s
+   where s.id = p_studio_id;
+
+  -- NO ROW IS NOT A MODE. A studio that does not exist cannot admit anyone.
+  if not coalesce(v_found, false) then
+    return 'unknown';
+  end if;
+  if v_mode is null or v_mode not in ('open', 'waitlist', 'closed') then
+    return 'unknown';
+  end if;
+
+  -- An explicit owner write is authoritative; the transition fact is ignored.
+  if v_set_at is not null then
+    return v_mode;
+  end if;
+
+  -- UNSTAMPED: 0204's backfill, so the bounded transition fact decides. ONE-WAY,
+  -- exactly as the application bridge is: it may escalate an unchosen `open` to
+  -- waitlist and may never make a studio less restricted than its row says.
+  if p_legacy_bridge_waitlist is null then
+    return 'unknown';
+  end if;
+  if v_mode = 'open' and p_legacy_bridge_waitlist then
+    return 'waitlist';
+  end if;
+  return v_mode;
+end;
+$$;
+
+comment on function public.effective_new_client_admission(uuid, boolean) is
+  'Resolves the EFFECTIVE new-client admission mode inside the caller''s '
+  'transaction, after taking the studios row lock FOR NO KEY UPDATE. Returns '
+  'open | waitlist | closed | unknown. A stamped mode wins outright; an '
+  'unstamped row consults the caller-supplied legacy bridge fact, which is '
+  'TEMPORARY and retired with the bridge.';
+
+-- The operation matrix, in one place so no caller can hold a different opinion.
+create or replace function public.assert_new_client_admission(
+  p_studio_id               uuid,
+  p_operation               text,
+  p_legacy_bridge_waitlist  boolean
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_mode text := public.effective_new_client_admission(
+    p_studio_id, p_legacy_bridge_waitlist
+  );
+begin
+  -- ONE refusal code for every refused state. `closed` and `unknown` differ in
+  -- cause, not consequence, and a distinct answer for `unknown` would publish
+  -- that a read failed. It is returned without consulting any credential, so it
+  -- cannot be used to probe whether an invitation is valid.
+  return case p_operation
+    -- Ordinary new-client booking: `open` only.
+    when 'book' then
+      case when v_mode = 'open' then 'ok' else 'new_client_admission_refused' end
+    -- Invitation booking: `waitlist` is the exception the WAIT lifecycle needs,
+    -- and `open` is preserved because the ordinary path already permits a
+    -- credentialed booking there. No new right is invented: `closed` and
+    -- `unknown` refuse even with a valid invitation.
+    when 'invited_book' then
+      case
+        when v_mode in ('open', 'waitlist') then 'ok'
+        else 'new_client_admission_refused'
+      end
+    -- Durable waitlist join: `waitlist` only. `open` has nothing to join.
+    when 'join_waitlist' then
+      case when v_mode = 'waitlist' then 'ok' else 'new_client_admission_refused' end
+    else 'new_client_admission_refused'
+  end;
+end;
+$$;
+
+comment on function public.assert_new_client_admission(uuid, text, boolean) is
+  'Commit-time new-client admission gate. Operations: book | invited_book | '
+  'join_waitlist. Returns ok or new_client_admission_refused - one code for '
+  'every refused state, so it cannot be used to probe a credential.';
+
+-- 5a. DURABLE WAITLIST JOIN
+--
+-- A WRAPPER, not a rewrite: 0185/0188 own `join_new_client_waitlist` and are
+-- applied, so this composes with it in the SAME transaction rather than editing
+-- frozen history - the shape 0195 already established for atomic composition.
+create or replace function public.join_new_client_waitlist_guarded(
+  p_studio_id               uuid,
+  p_name                    text,
+  p_email                   text,
+  p_phone                   text,
+  p_legacy_bridge_waitlist  boolean
+)
+returns table (result text, entry_id uuid)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_gate text := public.assert_new_client_admission(
+    p_studio_id, 'join_waitlist', p_legacy_bridge_waitlist
+  );
+begin
+  if v_gate <> 'ok' then
+    -- Nothing has been written, so the refusal leaves no trace at all.
+    return query select v_gate, null::uuid;
+    return;
+  end if;
+  return query
+    select j.result, j.entry_id
+      from public.join_new_client_waitlist(p_studio_id, p_name, p_email, p_phone) j;
+end;
+$$;
+
+comment on function public.join_new_client_waitlist_guarded(uuid, text, text, text, boolean) is
+  'join_new_client_waitlist with COMMIT-TIME admission: refuses unless the '
+  'effective mode is waitlist, decided under the studios row lock in this '
+  'transaction. Wraps rather than replaces the 0185/0188 command.';
+
+-- 5c. ORDINARY NEW-CLIENT BOOKING
+--
+-- THE CLIENT ROW IS THE FIRST IRREVERSIBLE NEW-CLIENT WRITE, and the application
+-- used to insert it through its own PostgREST request before the appointment
+-- command ran. Guarding only the appointment command would therefore have left
+-- an ORPHAN CLIENT behind for a request that should have been refused, so the
+-- insert moves inside this transaction, after the locked decision.
+--
+-- SCOPE. Only the CREATE half moves. Resolving an already-existing client by
+-- email, and reconciling their SMS consent, stay in the application: that row
+-- already exists, so it is not a new-client business mutation, and porting that
+-- logic would be a rewrite rather than a repair. The caller passes
+-- `p_client_id` when it resolved one and NULL when it did not.
+--
+-- `create_public_appointment` is called, never modified: existing-client
+-- ordinary booking continues to reach it directly and is unaffected.
+-- AN ADDED DEFAULTED PARAMETER CREATES AN OVERLOAD, NOT A REPLACEMENT, and two
+-- overloads make every existing call AMBIGUOUS. Dropping the previous shape
+-- first keeps this migration safely re-appliable; on a fresh chain it is a
+-- no-op, because only the signature below is ever created.
+drop function if exists public.create_public_appointment_for_new_client(
+  uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text
+);
+
+create or replace function public.create_public_appointment_for_new_client(
+  p_studio_id               uuid,
+  p_client_id               uuid,
+  p_client_name             text,
+  p_client_email            text,
+  p_client_phone            text,
+  p_sms_consent_at          timestamptz,
+  p_service_id              uuid,
+  p_starts_at               timestamptz,
+  p_cancellation_token_hash text,
+  p_legacy_bridge_waitlist  boolean,
+  p_notes                   text default null,
+  p_referral_source         text default null,
+  -- SERVER-DERIVED, from the locked redemption that just spent the invitation.
+  -- NULL is the ordinary path; non-null composes 0195's conversion instead, which
+  -- is the same branch the application already made on `redeemedEntryId`.
+  p_entry_id                uuid default null
+)
+returns table (
+  result           text,
+  appointment_id   uuid,
+  starts_at        timestamptz,
+  ends_at          timestamptz,
+  duration_minutes integer,
+  practitioner_id  uuid,
+  created_at       timestamptz,
+  client_id        uuid
+)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  -- The OPERATION, not just the mode: an invitation may admit under `waitlist`,
+  -- an ordinary booking may not, and neither may under `closed` or `unknown`.
+  v_gate      text := public.assert_new_client_admission(
+    p_studio_id,
+    case when p_entry_id is null then 'book' else 'invited_book' end,
+    p_legacy_bridge_waitlist
+  );
+  v_client_id uuid := p_client_id;
+  v_archived  boolean;
+begin
+  if v_gate <> 'ok' then
+    -- BEFORE the insert, so a refused request writes no client row.
+    return query select v_gate, null::uuid, null::timestamptz, null::timestamptz,
+                        null::integer, null::uuid, null::timestamptz, null::uuid;
+    return;
+  end if;
+
+  if v_client_id is null then
+    -- RE-RESOLVE UNDER THE LOCK. The caller's own lookup ran before this
+    -- transaction, so another booking could have created this client since. The
+    -- studios row lock taken above serialises same-studio bookings, which is why
+    -- a plain lookup-then-insert is safe here and the application's 23505
+    -- unique-violation race cannot occur inside this command.
+    --
+    -- `normalized_email` is the generated column the uniqueness is built on, so
+    -- matching on it is matching on exactly what would collide.
+    select c.id, c.archived_at is not null
+      into v_client_id, v_archived
+      from public.clients c
+     where c.studio_id = p_studio_id
+       and c.normalized_email = case
+             when p_client_email is null or btrim(p_client_email) = '' then null
+             else lower(btrim(p_client_email))
+           end
+     limit 1;
+
+    -- An ARCHIVED client is the application's existing refusal, kept verbatim so
+    -- the caller can log it exactly as it does today rather than resurrecting a
+    -- client nobody asked to restore.
+    if coalesce(v_archived, false) then
+      return query select 'archived_client_collision'::text,
+                          null::uuid, null::timestamptz, null::timestamptz,
+                          null::integer, null::uuid, null::timestamptz, null::uuid;
+      return;
+    end if;
+
+    if v_client_id is null then
+      insert into public.clients (
+        studio_id, name, email, phone, sms_consent_at, sms_consent_source
+      )
+      values (
+        p_studio_id, p_client_name, p_client_email, p_client_phone,
+        p_sms_consent_at,
+        case when p_sms_consent_at is null then null else 'public_booking' end
+      )
+      returning id into v_client_id;
+    end if;
+  end if;
+
+  if p_entry_id is null then
+    return query
+      select c.result, c.appointment_id, c.starts_at, c.ends_at,
+             c.duration_minutes, c.practitioner_id, c.created_at, v_client_id
+        from public.create_public_appointment(
+               p_studio_id, v_client_id, p_service_id, p_starts_at,
+               p_cancellation_token_hash, p_notes, p_referral_source
+             ) c;
+  else
+    -- 0195 already takes the studios row lock and converts the entry in the same
+    -- transaction, so the admission decision above simply precedes it.
+    return query
+      select c.result, c.appointment_id, c.starts_at, c.ends_at,
+             c.duration_minutes, c.practitioner_id, c.created_at, v_client_id
+        from public.create_waitlist_public_appointment(
+               p_studio_id, v_client_id, p_service_id, p_starts_at,
+               p_cancellation_token_hash, p_entry_id, p_notes, p_referral_source
+             ) c;
+  end if;
+end;
+$$;
+
+comment on function public.create_public_appointment_for_new_client(uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text, uuid) is
+  'Ordinary NEW-client booking as ONE commit: locked admission decision, then '
+  'the client row if the caller resolved none, then create_public_appointment. '
+  'Guarding only the appointment command would have left an orphan client for a '
+  'refused request. create_public_appointment itself is unchanged, so '
+  'existing-client callers are unaffected.';
+
+-- GRANTS. Supabase grants EXECUTE to anon, authenticated AND service_role at
+-- create time, so each is revoked BY NAME - the 0129 (anon) and 0164
+-- (service_role) lesson. These are service-role commands: the public booking and
+-- waitlist actions reach them with the service key after resolving the studio
+-- server-side.
+--
+-- The two resolver/gate helpers are internal. Nothing outside these commands may
+-- call them, so they are revoked from all three and granted to nobody: the
+-- SECURITY DEFINER commands above execute as owner and reach them regardless.
+-- PUBLIC IS A GRANTEE TOO, AND IT IS THE ONE EASIEST TO MISS. Revoking from
+-- anon, authenticated and service_role by name is not enough: a function's
+-- default ACL also grants EXECUTE to PUBLIC, and `anon` is a member of PUBLIC -
+-- measured on this database, every function below answered
+-- has_function_privilege('anon', ..., 'execute') = true after the three named
+-- revokes alone. This is the 0129 (anon) and 0164 (service_role) lesson with a
+-- fourth grantee, so PUBLIC is revoked FIRST, from every function here.
+revoke all on function public.effective_new_client_admission(uuid, boolean) from public;
+revoke all on function public.effective_new_client_admission(uuid, boolean) from anon;
+revoke all on function public.effective_new_client_admission(uuid, boolean) from authenticated;
+revoke all on function public.effective_new_client_admission(uuid, boolean) from service_role;
+revoke all on function public.assert_new_client_admission(uuid, text, boolean) from public;
+revoke all on function public.assert_new_client_admission(uuid, text, boolean) from anon;
+revoke all on function public.assert_new_client_admission(uuid, text, boolean) from authenticated;
+revoke all on function public.assert_new_client_admission(uuid, text, boolean) from service_role;
+
+revoke all on function public.join_new_client_waitlist_guarded(uuid, text, text, text, boolean) from public;
+revoke all on function public.join_new_client_waitlist_guarded(uuid, text, text, text, boolean) from anon;
+revoke all on function public.join_new_client_waitlist_guarded(uuid, text, text, text, boolean) from authenticated;
+revoke all on function public.join_new_client_waitlist_guarded(uuid, text, text, text, boolean) from service_role;
+grant execute on function public.join_new_client_waitlist_guarded(uuid, text, text, text, boolean) to service_role;
+
+
+revoke all on function public.create_public_appointment_for_new_client(uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text, uuid) from public;
+revoke all on function public.create_public_appointment_for_new_client(uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text, uuid) from anon;
+revoke all on function public.create_public_appointment_for_new_client(uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text, uuid) from authenticated;
+revoke all on function public.create_public_appointment_for_new_client(uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text, uuid) from service_role;
+grant execute on function public.create_public_appointment_for_new_client(uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text, uuid) to service_role;
 
 commit;

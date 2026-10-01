@@ -606,8 +606,8 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     expect(lib).toMatch(/UNCACHED/);
 
     // The durable command carries no handling/mode argument...
-    expect(action).toMatch(/rpc\("join_new_client_waitlist", \{/);
-    const call = action.slice(action.indexOf('rpc("join_new_client_waitlist"'));
+    expect(action).toMatch(/rpc\("join_new_client_waitlist_guarded", \{/);
+    const call = action.slice(action.indexOf('rpc("join_new_client_waitlist_guarded"'));
     const args = call.slice(0, call.indexOf("}"));
     for (const forbidden of ["handling", "mode", "commit_point", "durable"]) {
       expect(args.toLowerCase(), `rpc args must not carry ${forbidden}`).not.toContain(forbidden);

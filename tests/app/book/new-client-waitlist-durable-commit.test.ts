@@ -250,9 +250,9 @@ describe("the database is the commit point", () => {
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result).toEqual({ ok: true });
     // Nothing has been sent yet: the sends are post-response work.
-    expect(trace).toEqual(["rpc:join_new_client_waitlist"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_guarded"]);
     await flushPostResponse();
-    expect(trace).toEqual(["rpc:join_new_client_waitlist", "send:studio", "send:client"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_guarded", "send:studio", "send:client"]);
   });
 
   it("A REFUSED STUDIO NOTIFICATION STILL REPORTS JOINED", async () => {
@@ -298,12 +298,18 @@ describe("the database is the commit point", () => {
   it("passes the SERVER-RESOLVED studio id and the bounded submission, nothing else", async () => {
     await submitNewClientBookingWaitlistAction(form({ slug: "attacker-chosen-slug" }));
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist");
+    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_guarded");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_name: CANARY_NAME,
       p_email: CANARY_EMAIL,
       p_phone: CANARY_PHONE,
+      // The ONE transition fact 0204 cannot read for itself. TRUE here, and that
+      // is the point: this suite lists the studio's REAL slug, while the post
+      // above carries an attacker-chosen one that is NOT listed and would give
+      // false. So the value is proved to come from the server-resolved studio.
+      // Consulted only while the row is unstamped; retired with the bridge.
+      p_legacy_bridge_waitlist: true,
     });
     // No status, no source, no joined_at, no entry id: the command owns all of
     // them, so a forged post cannot propose one.
@@ -315,7 +321,7 @@ describe("the database is the commit point", () => {
   it("performs NO direct table access at all", async () => {
     await submitNewClientBookingWaitlistAction(form());
     expect(tableAccess).toEqual([]);
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_guarded"]);
   });
 });
 
@@ -339,7 +345,7 @@ describe("duplicate submission", () => {
     // it: a duplicate must not manufacture a row or a message.
     scenario.commandResult = "already_waiting";
     await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_guarded"]);
     expect(sends).toHaveLength(0);
     expect(tableAccess).toEqual([]);
   });
@@ -431,7 +437,7 @@ describe("a duplicate is externally indistinguishable from a fresh join", () => 
 
       expect(sends, `${outcome} sent mail before responding`).toHaveLength(0);
       expect(trace, `${outcome} awaited more than the command`).toEqual([
-        "rpc:join_new_client_waitlist",
+        "rpc:join_new_client_waitlist_guarded",
       ]);
     }
   });
@@ -832,7 +838,7 @@ describe("Stage B records what closed, and what is still open", () => {
   it("ANTI-VACUITY: the durable write path is still present", () => {
     // If this stops being true the rest of this block is moot, and that must
     // be a visible decision rather than a silently passing suite.
-    expect(ACTION).toContain('rpc("join_new_client_waitlist"');
+    expect(ACTION).toContain('rpc("join_new_client_waitlist_guarded"');
   });
 
   it("still records it as a studio-scoped personal-data class", () => {
