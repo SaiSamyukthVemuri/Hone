@@ -229,30 +229,29 @@ describe("buildBeforeToday", () => {
     expect(nothing.latestSetupLine).toBeNull();
   });
 
-  it("#774 P2 — the setup summary renders ITS OWN lot, never the newer treatment's", () => {
-    // Codex P2 at lib/sessions/before-today.ts:218. `setup` comes from the most
-    // recently treated AREA; `last` from the most recent TREATMENT. When the
-    // newest treatment has no named area those are DIFFERENT treatments, and the
-    // card labels the row "Latest recorded setup: <older area>".
+  it("#774 P2 — a newer treatment's lot is never attributed to the setup's area", () => {
+    // PROVENANCE, which is what both #774 P2s were about. `last` is the newest
+    // TREATMENT; `setup` is the latest named-area SETUP. They may be DIFFERENT
+    // treatments, and the card used to mix both sources into one chip group
+    // directly under "Latest recorded setup: <area>" — so the newer treatment's
+    // lot read as that area's lot.
     //
-    // The card read `last.probeLot` there, so it showed the newer treatment's lot
-    // under the older area's label and omitted that area's own lot even when the
-    // confirmed lot was its ONLY recorded setup fact — while also suppressing the
-    // "Setup not recorded" fallback.
+    // DISCRIMINATING FIXTURE: the older named area owns a confirmed lot; the
+    // newer treatment has no named area and a DIFFERENT lot. If either source
+    // leaked into the other, these values would swap or collide.
     const diverged = buildBeforeToday(
       input({
-        // Newest treatment: a different, unrelated lot.
         lastTreatment: {
           ...input().lastTreatment!,
           areaNames: [],
-          blockLots: ["NEWER-LOT-9999"],
+          blockLots: ["TEST-LOT-2099"],
         },
-        // The latest AREA's setup: a confirmed lot and nothing else.
         intelligence: {
           ...input().intelligence,
           areas: [
             {
               ...input().intelligence.areas[0]!,
+              name: "neck",
               latestFrequency: null,
               latestProbe: null,
               latestModeLabel: null,
@@ -264,29 +263,44 @@ describe("buildBeforeToday", () => {
       }),
     );
 
-    // The two facts are genuinely different here — the precondition that makes
-    // borrowing visible. Without this the rest could pass by coincidence.
-    expect(diverged.lastTreated?.probeLot).toBe("NEWER-LOT-9999");
+    // The setup's area owns ITS lot, and the newer lot is not it.
+    expect(diverged.setup?.areaName).toBe("neck");
     expect(diverged.setup?.probeLot).toBe("TEST-LOT-1063");
     expect(
       diverged.latestSetupLine,
-      "the setup summary borrowed the newer treatment's lot",
+      "TEST-LOT-2099 must never appear as the neck setup",
     ).toBe("Lot TEST-LOT-1063");
+    // The newer treatment keeps its own lot, as a last-treatment fact.
+    expect(diverged.lastTreated?.probeLot).toBe("TEST-LOT-2099");
+    // Nothing fabricated for the parameters the neck block did not record.
+    expect(diverged.setup?.frequency).toBeNull();
+    expect(diverged.setup?.probe).toBeNull();
+    expect(diverged.setup?.modeLabel).toBeNull();
+    expect(diverged.setup?.energyLevel).toBeNull();
 
-    // AND THE CARD RENDERS THE SETUP-OWNED LOT ON ITS OWN MERIT. Only source can
-    // reach this.
+    // AND THE CARD ATTRIBUTES THEM SEPARATELY. Only source can reach this.
+    // Each lot sits in the group under the label naming its own source, so the
+    // last-treatment lot must appear BEFORE the setup label and the setup lot
+    // AFTER it.
+    const lastLot = CARD.indexOf("{last.probeLot && last.probeLot !== setup?.probeLot &&");
+    const setupLabel = CARD.indexOf("Latest recorded setup: ${setup.areaName}");
+    const setupLot = CARD.indexOf("{setup.probeLot && <Chip>Lot {setup.probeLot}</Chip>}");
+    expect(lastLot, "the last-treatment lot is not rendered").toBeGreaterThan(-1);
+    expect(setupLabel, "the setup label is not rendered").toBeGreaterThan(-1);
+    expect(setupLot, "the setup's own lot is not rendered").toBeGreaterThan(-1);
+    expect(
+      lastLot < setupLabel,
+      "the last-treatment lot must sit in the last-treatment group, before the setup label",
+    ).toBe(true);
+    expect(
+      setupLot > setupLabel,
+      "the setup's lot must sit in the setup group, under the setup label",
+    ).toBe(true);
+    // One treatment, one lot: no duplicate chip when the two sources agree.
     expect(
       CARD,
-      "the setup's own lot must be rendered, so it is never omitted",
-    ).toMatch(/\{setup\?\.probeLot && <Chip>Lot \{setup\.probeLot\}<\/Chip>\}/);
-    // The treatment's lot is NOT replaced by it — a recorded lot is a record
-    // display whether or not it was confirmed, which is a different question
-    // from whether a lot counts as recorded SETUP. Dropping it removed
-    // unconfirmed lots from the card and reddened two browser journeys.
-    expect(
-      CARD,
-      "the treatment's own recorded lot must still be displayed",
-    ).toMatch(/\{last\.probeLot && last\.probeLot !== setup\?\.probeLot &&/);
+      "an identical lot must not render twice",
+    ).toMatch(/last\.probeLot !== setup\?\.probeLot/);
   });
 
   it("record reminders mirror the completeness rules", () => {

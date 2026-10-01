@@ -153,44 +153,43 @@ export function BeforeTodayCard({
                 )}{" "}
                 · <FormattedDateTime iso={last.startedAt} format="date" />
               </p>
-              {setup?.areaName && (
-                <p className="mt-1.5 text-xs text-neutral-500">
-                  Latest recorded setup: {setup.areaName}
-                </p>
-              )}
+              {/* TWO SOURCES, TWO GROUPS — #774 P2 (attribution).
+                  `last` is the newest TREATMENT; `setup` is the latest
+                  named-area SETUP, and those may be different treatments. One
+                  mixed chip group under the setup's label made `last` facts —
+                  above all `last.probeLot` — read as facts of `setup.areaName`,
+                  so a lot could be attributed to the wrong area. Each group now
+                  sits under the label naming its own source. */}
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 <Chip>
                   <span className="capitalize">{last.modality}</span>
                 </Chip>
-                {setup?.frequency && <Chip>{setup.frequency}</Chip>}
-                {setup?.probe && <Chip>{setup.probe}</Chip>}
-                {/* TWO LOTS, TWO FACTS, and they are not interchangeable.
-                    `setup` comes from the most recently treated AREA, `last`
-                    from the most recent TREATMENT; when the newest treatment has
-                    no named area those are different treatments.
-
-                    The setup's own lot is rendered on its own merit, so it is
-                    never omitted when it is that setup's only recorded fact
-                    (#774 P2). The treatment's lot stays too, and only when it
-                    DIFFERS — a recorded lot is a record display, shown whether
-                    or not it was confirmed, which is a separate question from
-                    whether a lot counts as recorded SETUP. Replacing one with
-                    the other removed unconfirmed lots from the card entirely and
-                    reddened two browser journeys (the Willow contract and the
-                    core memory loop). */}
-                {setup?.probeLot && <Chip>Lot {setup.probeLot}</Chip>}
+                {/* Suppressed when the setup owns the same lot: one treatment,
+                    one lot, shown once below under the area that recorded it. */}
                 {last.probeLot && last.probeLot !== setup?.probeLot && (
                   <Chip>Lot {last.probeLot}</Chip>
                 )}
-                {setup?.modeLabel && <Chip>{setup.modeLabel}</Chip>}
-                {setup?.energyLevel != null && (
-                  <Chip>EL {setup.energyLevel}</Chip>
-                )}
                 {last.minutes != null && <Chip>{last.minutes} min</Chip>}
               </div>
-              {/* Both lot sources are back in the row, so both gate this line:
-                  it must say "not recorded" only when the row really shows no
-                  setup and no lot. */}
+              {setup && (
+                <>
+                  <p className="mt-2 text-xs text-neutral-500">
+                    {setup.areaName
+                      ? `Latest recorded setup: ${setup.areaName}`
+                      : "Latest recorded setup"}
+                  </p>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {setup.frequency && <Chip>{setup.frequency}</Chip>}
+                    {setup.probe && <Chip>{setup.probe}</Chip>}
+                    {setup.probeLot && <Chip>Lot {setup.probeLot}</Chip>}
+                    {setup.modeLabel && <Chip>{setup.modeLabel}</Chip>}
+                    {setup.energyLevel != null && (
+                      <Chip>EL {setup.energyLevel}</Chip>
+                    )}
+                  </div>
+                </>
+              )}
+              {/* Only when the card really shows no setup and no lot. */}
               {!setup && !last.probeLot && last.minutes == null && (
                 <p className="mt-1 text-sm text-neutral-400">
                   Setup not recorded
