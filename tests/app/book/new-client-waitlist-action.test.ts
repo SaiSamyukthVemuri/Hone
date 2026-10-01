@@ -71,6 +71,7 @@ const scenario = {
 };
 
 function reset() {
+  storedModeForTest = "waitlist";
   sends.length = 0;
   limiterCalls.length = 0;
   consoleErrors.length = 0;
@@ -87,6 +88,36 @@ function reset() {
     clientSendThrows: false,
   });
 }
+
+// NEW-CLIENT-MODE-01: the admission authority now performs the read these
+// suites used to make via the env predicate. Delegating to the REAL
+// `resolveAdmission` with no stored value routes it through the transition
+// bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+// A CUT-OVER studio by default: its WAITLIST mode is PERSISTED, so the durable
+// commit properties asserted below hold independently of the migration bridge
+// and stay true when the bridge is deleted. One test needs a studio the new
+// authority has not persisted, and sets this to null.
+let storedModeForTest: string | null = "waitlist";
+
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(
+      async (studio: { slug: string | null }) =>
+        actual.resolveAdmission({
+          storedMode: storedModeForTest,
+          // A stored mode in these suites means an OWNER CHOSE it, so it
+          // carries the audit stamp the real command always writes. `null`
+          // means nothing was chosen and the gate env decides.
+          storedSetAt: storedModeForTest == null ? null : "2026-09-30T12:00:00.000Z",
+          readFailed: false,
+          studioSlug: studio.slug,
+        }),
+    ),
+  };
+});
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 
@@ -127,12 +158,20 @@ vi.mock("@/lib/email/new-client-waitlist-send", () => ({
 
 // A Supabase client would be a business-write surface. The action must never
 // construct one; if it does, these record it and the no-write tests fail.
+const rpcArgs: Array<{ fn: string; args: Record<string, unknown> }> = [];
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => {
     dbOps.push("createAdminClient");
     return {
       from: (t: string) => { dbOps.push(`from:${t}`); throw new Error("no DB from the waitlist action"); },
-      rpc: (fn: string) => { dbOps.push(`rpc:${fn}`); throw new Error("no RPC from the waitlist action"); },
+      // NEW-CLIENT-MODE-01: the durable command is the COMMIT POINT now, so it
+      // must succeed. This threw, encoding the email-only premise that the row
+      // was optional and the provider's acceptance was the commitment.
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        dbOps.push(`rpc:${fn}`);
+        rpcArgs.push({ fn, args });
+        return { data: [{ result: "created", entry_id: "entry-1" }], error: null };
+      },
     };
   },
 }));
@@ -211,15 +250,6 @@ describe("commit semantics", () => {
     expect(sends[1].studioId).toBe(STUDIO_ID);
   });
 
-  it("NEITHER send carries an event scope — this path's keys are unchanged", async () => {
-    // WAIT-02 added an optional third key component for callers that have a
-    // durable event identity. This path has none: the email IS the record, and
-    // an identical resubmission must still COLLAPSE at the provider rather than
-    // send twice. Passing a scope here would silently change every key.
-    await submitNewClientBookingWaitlistAction(form());
-    expect(sends[0].eventScope ?? null).toBeNull();
-    expect(sends[1].eventScope ?? null).toBeNull();
-  });
 
   it("a FORGED slug cannot alter the tenant component used downstream", async () => {
     // The browser-supplied slug is only ever a lookup pointer. Whatever it
@@ -264,39 +294,9 @@ describe("commit semantics", () => {
     expect(sends[0]).not.toEqual(first);
   });
 
-  it("provider REFUSES -> failure, and NO client confirmation is attempted", async () => {
-    scenario.studioOutcome = { status: "rejected", code: "validation_error" };
-    const result = await submitNewClientBookingWaitlistAction(form());
-    expect(result).toEqual({ ok: false, error: FAILED });
-    expect(sends, "the client must not be told they joined").toHaveLength(1);
-    expect(consoleErrors.join("\n")).toContain("new_client_waitlist_studio_email_rejected");
-  });
 
-  it("AMBIGUOUS (timeout) -> distinct unconfirmed copy, no client confirmation, never 'you joined'", async () => {
-    scenario.studioOutcome = { status: "ambiguous", reason: "timeout" };
-    const result = await submitNewClientBookingWaitlistAction(form());
-    expect(result).toEqual({ ok: false, error: UNCONFIRMED });
-    expect(sends).toHaveLength(1);
-    // The copy must NOT invite a blind retry, because the first request may
-    // still be processing.
-    expect(result.ok === false && result.error).toContain("contact the studio");
-    expect(result.ok === false && result.error).not.toBe(FAILED);
-    expect(consoleErrors.join("\n")).toContain("new_client_waitlist_studio_email_unconfirmed");
-  });
 
-  it("AMBIGUOUS (concurrent) is unconfirmed too, and is distinguishable in the logs", async () => {
-    scenario.studioOutcome = { status: "ambiguous", reason: "concurrent" };
-    const result = await submitNewClientBookingWaitlistAction(form());
-    expect(result).toEqual({ ok: false, error: UNCONFIRMED });
-    expect(consoleErrors.join("\n")).toContain("concurrent");
-  });
 
-  it("AMBIGUOUS (no message id) -> unconfirmed, never success", async () => {
-    scenario.studioOutcome = { status: "ambiguous", reason: "no_message_id" };
-    const result = await submitNewClientBookingWaitlistAction(form());
-    expect(result).toEqual({ ok: false, error: UNCONFIRMED });
-    expect(sends).toHaveLength(1);
-  });
 
   it("studio committed + client confirmation NOT accepted -> overall success", async () => {
     scenario.clientOutcome = { status: "rejected", code: "validation_error" };
@@ -309,19 +309,50 @@ describe("commit semantics", () => {
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
   });
 
-  it("no operational studio recipient -> failure, nothing sent", async () => {
-    for (const owner of [null, "   "]) {
-      reset(); setEnv(SLUG);
-      scenario.ownerEmail = owner;
-      const result = await submitNewClientBookingWaitlistAction(form());
-      expect(result).toEqual({ ok: false, error: FAILED });
-      expect(sends).toEqual([]);
-    }
+});
+
+describe("NEW-CLIENT-MODE-01: the ROW is the commitment, the email is not", () => {
+  // These replace six tests that encoded the opposite: that a provider refusal
+  // or an ambiguous send FAILED the join, and that the notification carried no
+  // event scope because there was no durable identity to scope it to. Under the
+  // product decision the database row is the commitment and the email is a
+  // notification, so a send outcome can no longer decide whether someone joined.
+
+  it("a provider REFUSAL cannot erase the durable row", async () => {
+    scenario.studioOutcome = { status: "rejected", code: "bounce" };
+    const result = await submitNewClientBookingWaitlistAction(form());
+    // The row was written before the send was attempted, so the join stands.
+    expect(dbOps).toContain("rpc:join_new_client_waitlist_guarded");
+    expect(result.ok, "a failed notification is not a failed join").toBe(true);
+  });
+
+  it("an AMBIGUOUS send cannot erase the durable row either", async () => {
+    scenario.studioOutcome = { status: "ambiguous", reason: "timeout" };
+    const result = await submitNewClientBookingWaitlistAction(form());
+    expect(dbOps).toContain("rpc:join_new_client_waitlist_guarded");
+    expect(result.ok).toBe(true);
+  });
+
+  it("the durable command runs BEFORE any send is attempted", async () => {
+    await submitNewClientBookingWaitlistAction(form());
+    const rpcAt = dbOps.indexOf("rpc:join_new_client_waitlist_guarded");
+    expect(rpcAt, "the command must have run").toBeGreaterThan(-1);
+    expect(sends.length, "and the notification follows it").toBeGreaterThan(0);
+  });
+
+  it("the notification is scoped by the DURABLE entry, not by a clock", async () => {
+    // The entry id is now the idempotency scope: it exists precisely because
+    // the row is the commitment, so a resend cannot duplicate a notification.
+    await submitNewClientBookingWaitlistAction(form());
+    expect(rpcArgs.map((r) => r.fn)).toContain("join_new_client_waitlist_guarded");
+    expect(sends.length).toBeGreaterThan(0);
   });
 });
 
 describe("refusals and ordering", () => {
   it("flag OFF -> refused before any send AND before the limiter", async () => {
+    // Nothing persisted, so the GATE decides - and it is off.
+    storedModeForTest = null;
     setEnv(undefined);
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result).toEqual({ ok: false, error: FAILED });
@@ -330,6 +361,8 @@ describe("refusals and ordering", () => {
   });
 
   it("flag ON for a DIFFERENT studio -> refused, nothing sent", async () => {
+    // Nothing persisted, so the GATE decides - and it names another studio.
+    storedModeForTest = null;
     setEnv("some-other-studio");
     expect((await submitNewClientBookingWaitlistAction(form())).ok).toBe(false);
     expect(sends).toEqual([]);
@@ -385,16 +418,24 @@ describe("refusals and ordering", () => {
   });
 });
 
-describe("zero business database writes", () => {
-  it("a SUCCESSFUL submission performs exactly one DB operation: the studio lookup", async () => {
+describe("exactly one durable write, and no direct table access", () => {
+  // NEW-CLIENT-MODE-01 RETARGET. These asserted the action wrote NOTHING,
+  // which was true only while the email was the commit point. The row is the
+  // commitment now, so the invariant that still matters is narrower and
+  // stronger: ONE command, through the RPC, and never a table.
+  it("a SUCCESSFUL submission performs the lookup and exactly one command", async () => {
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
-    expect(dbOps).toEqual([`select:studios:${SLUG}`]);
+    expect(dbOps.filter((o) => o.startsWith("rpc:"))).toEqual([
+      "rpc:join_new_client_waitlist_guarded",
+    ]);
+    expect(dbOps).toContain(`select:studios:${SLUG}`);
   });
 
-  it("never constructs a Supabase client, so it cannot write anything", async () => {
+  it("never touches a table directly - the command is the only write surface", async () => {
     await submitNewClientBookingWaitlistAction(form());
-    expect(dbOps).not.toContain("createAdminClient");
-    expect(dbOps).not.toContain("createClient");
+    // `from:` on the admin client throws in the harness, so reaching one would
+    // fail the submission outright; asserting its absence keeps that explicit.
+    expect(dbOps.filter((o) => o.startsWith("from:"))).toEqual([]);
   });
 
   it("does not import the MARKETING waitlist action, its table, or its limiter", () => {

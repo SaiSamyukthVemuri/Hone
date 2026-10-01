@@ -239,7 +239,14 @@ type EmbeddedPolicyRow = {
     | { modality: string | null; name: string; price_cents: number | null }
     | Array<{ modality: string | null; name: string; price_cents: number | null }>
     | null;
-  studio: { slug: string | null } | Array<{ slug: string | null }> | null;
+  // `id` is projected alongside `slug` because other reads in this file use it.
+  // The free-consult policy takes the SLUG and consults EMERG-01's own env list:
+  // it deliberately does not resolve the new-client admission mode, so an owner
+  // changing that mode cannot move a confirmed appointment's rights.
+  studio:
+    | { id: string; slug: string | null }
+    | Array<{ id: string; slug: string | null }>
+    | null;
 };
 
 function firstEmbedded<T>(v: T | T[] | null | undefined): T | null {
@@ -261,7 +268,7 @@ async function assertReschedulableOriginal(
       // EMERG-01 embeds the service and the studio slug in the statement that
       // already proves the appointment's state, so the policy costs no extra
       // round trip and cannot read a different row than the one it gated.
-      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(slug)",
+      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(id, slug)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -288,6 +295,9 @@ async function assertReschedulableOriginal(
   const embedded = data as unknown as EmbeddedPolicyRow;
   if (
     isFreeConsultWaitlistOnlyReschedule({
+      // EMERG-01's OWN authority, not the new admission mode: an owner changing
+      // OPEN / WAITLIST / CLOSED must not move the rights of an appointment that
+      // is already confirmed.
       studioSlug: firstEmbedded(embedded.studio)?.slug ?? null,
       service: firstEmbedded(embedded.service),
     })

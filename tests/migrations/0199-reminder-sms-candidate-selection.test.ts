@@ -49,7 +49,7 @@ describe("0199 position in the chain", () => {
     // tests/migrations/0201-waitlist-exit-authority-contraction.test.ts
     // carries it.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0200", "0201", "0202", "0203"]);
+    expect(versionsAbove(VERSION)).toEqual(["0200", "0201", "0202", "0203", "0204"]);
   });
 
   it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
@@ -121,8 +121,8 @@ describe("0199 position in the chain", () => {
     // THE NEXT FREE NUMBER KEEPS MOVING and this file keeps claiming none of it.
     // 0200, 0201, 0202 and 0203 are ALL APPLIED — 0203 landed on 2026-09-27 — so
     // the repository is at parity with nothing pending and the next free number is
-    // 0204. Availability is not allocation, and nothing here allocates.
-    expect(migrationState().next_free_migration).toBe("0204");
+    // 0205, because 0204 is now authored (NEW-CLIENT-MODE-01, pending). Availability is not allocation, and nothing here allocates.
+    expect(migrationState().next_free_migration).toBe("0205");
   });
 });
 

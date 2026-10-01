@@ -33,16 +33,20 @@ const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, "
 const SIG = "public.mark_waitlist_mobile_verified(uuid, text)";
 
 describe("0203 takes the number it derived", () => {
-  it("is the repository maximum with nothing above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0204 is", () => {
+    // HANDED OFF, per CLAUDE.md: only the CURRENT max may assert `isRepoMax`.
+    // It moved from here when NEW-CLIENT-MODE-01 authored 0204. Leaving the
+    // claim here would have made this file red the moment anything landed above
+    // it, which is the failure mode that hand-off exists to prevent.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0204"]);
   });
 
   it("claims its version exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("IS APPLIED to production and is the hosted head, at PARITY", () => {
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
     // THE EQUALITY CLAIM ARRIVED HERE when `0203` was applied on 2026-09-27 under
     // explicit per-change owner authorization, from the reviewed PR #768 head
     // 1275486e7197d834294f58a85da774f4244aa176, sha256
@@ -62,11 +66,15 @@ describe("0203 takes the number it derived", () => {
     // take the equality. Leaving it here would go red on that apply, which is the
     // whole reason the claim travels.
     const state = migrationState();
+    // HOSTED still equals 0203: nothing has been applied since, and this PR
+    // applies nothing. The REPO has moved above it, because NEW-CLIENT-MODE-01
+    // authored 0204 - the authored-and-pending shape this block described as
+    // its own previous revision, now true again for one migration.
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0204");
+    expect(state.repo_migration_max).toBe("0204");
+    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.pending_migrations).toEqual(["0204"]);
+    expect(state.next_free_migration).toBe("0205");
   });
 });
 

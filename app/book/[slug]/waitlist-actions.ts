@@ -5,8 +5,12 @@ import { after } from "next/server";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
-  isNewClientWaitlistEnabled,
-  isNewClientWaitlistDurableEnabled,
+  getNewClientAdmissionMode,
+  newClientAdmissionLegacyBridgeWaitlist,
+  newClientMayJoinWaitlist,
+} from "@/lib/booking/new-client-admission";
+import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
+import {
   validateWaitlistSubmission,
   NEW_CLIENT_WAITLIST_SUBMIT_FAILED,
   NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED,
@@ -278,11 +282,17 @@ async function submitToDurableWaitlist(
   // key below, so a rejoin after removal is a distinct provider request.
   let entryId: string | null = null;
   try {
-    const { data, error } = await admin.rpc("join_new_client_waitlist", {
+    // COMMIT-TIME ADMISSION. The read at the top of this action is fast refusal,
+    // not authority: the owner can change the mode before this write lands. The
+    // guarded command re-decides inside its own transaction, under the studios
+    // row lock, so an owner who closes the studio first wins and no entry is
+    // written. `p_legacy_bridge_waitlist` is server-derived and TEMPORARY.
+    const { data, error } = await admin.rpc("join_new_client_waitlist_guarded", {
       p_studio_id: studio.id,
       p_name: submission.name,
       p_email: submission.email,
       p_phone: submission.phone,
+      p_legacy_bridge_waitlist: newClientAdmissionLegacyBridgeWaitlist(studio.slug),
     });
     if (error) {
       const code = typeof error.code === "string" ? error.code : "";
@@ -469,6 +479,30 @@ async function submitViaStudioNotification(
     email: submission.email,
     phone: submission.phone,
   });
+  // LAST-MOMENT RE-RESOLVE, immediately before the provider commit.
+  //
+  // This transitional path cannot join a database transaction - the commitment
+  // is an external email - so it cannot have the studios row lock the durable
+  // path uses. What it CAN do is refuse to report a successful join using an
+  // admission state that has since changed, and that is what this is: the owner
+  // may have stamped CLOSED (or OPEN) between this action's first read and here.
+  //
+  // A STAMPED state wins over the legacy env list, because
+  // `getNewClientAdmissionMode` resolves the stamp first. Only WAITLIST may
+  // continue; OPEN, CLOSED and UNKNOWN all stop before anything is sent.
+  //
+  // TRANSITIONAL. This whole function disappears when the durable bridge is
+  // retired at cutover - see docs/production/new-client-admission-activation.md
+  // step H - and with it this re-read.
+  const admissionAtCommit = await getNewClientAdmissionMode(studio);
+  if (!newClientMayJoinWaitlist(admissionAtCommit)) {
+    logWaitlistEvent("new_client_waitlist_admission_changed_before_send", {
+      studioId: studio.id,
+      emailFingerprint,
+    });
+    return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
+  }
+
   const studioSend = await sendWaitlistEmailIdempotent({
     namespace: "studio",
     studioId: studio.id,
@@ -543,7 +577,12 @@ export async function submitNewClientBookingWaitlistAction(
   //    the row. A browser-claimed "waitlist is on" is not consulted and does not
   //    exist on the wire. Checked BEFORE the limiter so a submission to a studio
   //    that is not in waitlist mode consumes no quota.
-  if (!isNewClientWaitlistEnabled(studio.slug)) {
+  //    NEW-CLIENT-MODE-01: the one admission authority, read from the
+  //    server-resolved studio. `waitlist` is the ONLY mode that admits a join -
+  //    `closed` refuses it as firmly as it refuses a booking, and an unreadable
+  //    mode refuses too rather than guessing the studio is collecting leads.
+  const admission = await getNewClientAdmissionMode(studio);
+  if (!newClientMayJoinWaitlist(admission)) {
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
   }
 
@@ -557,9 +596,27 @@ export async function submitNewClientBookingWaitlistAction(
   });
   if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
-  // 5. COMMIT. Which commit point applies is a SERVER fact derived from the
-  //    server-resolved slug, exactly like the gate above.
-  return isNewClientWaitlistDurableEnabled(studio.slug)
-    ? submitToDurableWaitlist(studio, submission, emailFingerprint)
-    : submitViaStudioNotification(studio, submission, emailFingerprint);
+  // 5. COMMIT.
+  //
+  //    `waitlist` MEANS durable, and that is the long-term law: a successful
+  //    join writes new_client_waitlist_entries, the notification happens AFTER
+  //    a durable success, and a failure to send cannot unwrite the row. There
+  //    is no permanent email-only waitlist mode.
+  //
+  //    DURING THE BOUNDED MIGRATION BRIDGE ONLY, the commit point follows the
+  //    studio's CURRENT configuration rather than the new law, because a code
+  //    deploy must not move a studio's commit point before anyone chose to move
+  //    it. A studio named in NEW_CLIENT_WAITLIST_STUDIO_SLUGS but NOT in the
+  //    DURABLE list commits by email acceptance in production today; it keeps
+  //    doing so until its durable mode is actually persisted.
+  //
+  //    Once it IS persisted, the durable path is unconditional - removing the
+  //    legacy durable slug cannot return a cut-over studio to email-only.
+  //
+  //    The whole decision lives in ONE deletable file. See
+  //    lib/booking/new-client-waitlist-durability-bridge.ts.
+  if (newClientWaitlistCommitIsDurable(admission, studio.slug)) {
+    return submitToDurableWaitlist(studio, submission, emailFingerprint);
+  }
+  return submitViaStudioNotification(studio, submission, emailFingerprint);
 }

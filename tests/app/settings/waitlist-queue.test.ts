@@ -187,6 +187,34 @@ function reset() {
   });
 }
 
+// NEW-CLIENT-MODE-01: admission now comes from the canonical authority.
+// Delegating to the REAL resolver with no stored value routes it through the
+// transition bridge, so the env stubbing below keeps meaning what it meant.
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(async (studio: { slug: string | null }) =>
+      actual.resolveAdmission({
+        storedMode: null,
+          storedSetAt: null,
+        readFailed: false,
+        studioSlug: studio.slug,
+      }),
+    ),
+    studioIsInWaitlistMode: vi.fn(async (studio: { slug?: string | null }) => {
+      const a = actual.resolveAdmission({
+        storedMode: null,
+          storedSetAt: null,
+        readFailed: false,
+        studioSlug: studio?.slug ?? null,
+      });
+      return a.ok && a.mode === "waitlist";
+    }),
+  };
+});
+
 vi.mock("next/cache", () => ({
   revalidatePath: (p: string) => revalidated.push(p),
 }));
@@ -1319,14 +1347,19 @@ describe("the Settings tab is server-gated", () => {
     "utf8",
   );
 
-  it("requires BOTH rollout flags for the live path, OR an active queue", () => {
-    // Either flag alone describes a studio that is not taking durable waitlist
-    // requests, so the LIVE path still needs both (the durable flag is
-    // SUBORDINATE to the gate). WAITLIST-NAV-VIS-01 adds the second path: a
-    // studio already holding active entries keeps its navigation to them.
-    // Behavioural proof lives in waitlist-nav-visibility.test.ts.
+  it("requires the DURABLE COMMIT PATH for the live path, OR an active queue", () => {
+    // NEW-CLIENT-MODE-01: the two rollout flags are replaced by the one mode.
+    // WAITLIST-NAV-VIS-01's second path is UNCHANGED and load-bearing: a studio
+    // already holding active entries keeps its navigation to them, whatever the
+    // mode says - which is also why UNKNOWN cannot strand a real queue.
+    //
+    // P2-B: the FIRST path is the durable commit decision, not the mode. A
+    // bridged WAITLIST studio whose joins still commit by email has no durable
+    // queue, so the tab would open an empty operator surface. Reusing the
+    // bridge's own decision is what stops the nav and the commit point drifting
+    // apart. Behavioural proof lives in waitlist-nav-visibility.test.ts.
     expect(LAYOUT).toMatch(
-      /const waitlistLive =\s*\n\s*isNewClientWaitlistEnabled\(studio\.slug\) &&\s*\n\s*isNewClientWaitlistDurableEnabled\(studio\.slug\);/,
+      /const waitlistLive = newClientWaitlistCommitIsDurable\(admission, studio\.slug\);/,
     );
     expect(LAYOUT).toMatch(
       /const waitlistTabVisible =\s*\n\s*isOwner &&\s*\n\s*\(waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), studio\.id\)\)\);/,
@@ -1334,9 +1367,14 @@ describe("the Settings tab is server-gated", () => {
     expect(LAYOUT).toContain('{ href: "/settings/waitlist", label: "Waitlist" }');
   });
 
-  it("derives BOTH flags from the SERVER-RESOLVED studio, never a browser value", () => {
-    expect(LAYOUT).toContain("isNewClientWaitlistEnabled(studio.slug)");
-    expect(LAYOUT).toContain("isNewClientWaitlistDurableEnabled(studio.slug)");
+  it("derives the mode from the SERVER-RESOLVED studio, never a browser value", () => {
+    // NEW-CLIENT-MODE-01: the two env predicates are gone from this consumer.
+    // The property that mattered is unchanged and now stronger - the authority
+    // is keyed by the server-resolved studio, and nothing browser-supplied
+    // reaches it.
+    expect(LAYOUT).toContain("getNewClientAdmissionMode(studio)");
+    expect(LAYOUT).not.toContain("isNewClientWaitlistEnabled");
+    expect(LAYOUT).not.toContain("isNewClientWaitlistDurableEnabled");
     expect(LAYOUT).not.toMatch(/searchParams|useSearchParams|props\.slug/);
   });
 

@@ -1,7 +1,11 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
-import { updateStudioBookingPrefsAction } from "./actions";
+import {
+  updateStudioBookingPrefsAction,
+  updateNewClientAdmissionModeAction,
+} from "./actions";
+import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { BookingLinkCard } from "./BookingLinkCard";
 import { SaveButton } from "./SaveButton";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
@@ -66,6 +70,10 @@ export default async function BookingSettingsPage({
   const errorMessage = Array.isArray(errorParam) ? errorParam[0] : errorParam;
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // The studio-owned mode, from the one authority that owns it. UNKNOWN is
+  // rendered as its own state below rather than pre-selecting a choice the
+  // owner did not make.
+  const admission = await getNewClientAdmissionMode(studio);
   const appOrigin = getRequiredAppOrigin();
   if (practitioner.role !== "owner") {
     return (
@@ -98,6 +106,78 @@ export default async function BookingSettingsPage({
           Your booking link
         </label>
         <BookingLinkCard slug={studio.slug} origin={appOrigin} variant="card" />
+      </section>
+
+      {/* NEW-CLIENT-MODE-01. Its own form because it is its own authority: the
+          database command re-derives owner role, so this cannot be a field that
+          rides along with the general preferences save. NEW CLIENTS ONLY -
+          stated in the copy, because an owner choosing "not accepting" needs to
+          know their existing clients keep booking. */}
+      <section className="flex flex-col gap-3">
+        <label
+          id="new-client-admission"
+          className="scroll-mt-24 text-sm font-medium"
+        >
+          New clients
+        </label>
+        {!admission.ok ? (
+          <p className="max-w-2xl text-sm text-neutral-600">
+            We couldn&rsquo;t check this setting just now, so it isn&rsquo;t shown.
+            Reload to try again &mdash; nothing has changed.
+          </p>
+        ) : (
+          <form
+            action={updateNewClientAdmissionModeAction}
+            className="flex max-w-2xl flex-col gap-3"
+          >
+            {(
+              [
+                {
+                  value: "open",
+                  label: "Accept bookings",
+                  consequence:
+                    "New clients book a consultation themselves from your booking page.",
+                },
+                {
+                  value: "waitlist",
+                  label: "Use a waitlist",
+                  consequence:
+                    "New clients can\u2019t book. Your booking page offers a waitlist form instead, and each join is saved so you can invite them when you have room.",
+                },
+                {
+                  value: "closed",
+                  label: "Not accepting new clients",
+                  consequence:
+                    "Your booking page says you aren\u2019t taking new clients. They can\u2019t book and can\u2019t join a waitlist.",
+                },
+              ] as const
+            ).map((opt) => (
+              <label
+                key={opt.value}
+                className="flex cursor-pointer items-start gap-3 rounded-md border border-neutral-200 p-3"
+              >
+                <input
+                  type="radio"
+                  name="new_client_admission_mode"
+                  value={opt.value}
+                  defaultChecked={admission.mode === opt.value}
+                  className="mt-1"
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium">{opt.label}</span>
+                  <span className="text-xs text-neutral-600">
+                    {opt.consequence}
+                  </span>
+                </span>
+              </label>
+            ))}
+            <p className="text-xs text-neutral-500">
+              This affects new clients only. Your existing clients can always
+              book, use the portal and rebook, whichever option you choose.
+            </p>
+            <SaveButton idleLabel="Save new-client setting" />
+          </form>
+        )}
       </section>
 
       <form

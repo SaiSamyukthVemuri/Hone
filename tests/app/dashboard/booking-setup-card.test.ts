@@ -40,6 +40,11 @@ async function blockerFor(
 ): Promise<NewClientBlocker> {
   const mod = await import("@/lib/booking/new-client-readiness");
   const ready = mod.computeNewClientReadiness({
+    // NEW-CLIENT-MODE-01: admission is `open` because that is the mode in which
+    // every STRUCTURAL prerequisite applies. `closed` deliberately suppresses
+    // them - a decision is not a pile of setup failures - so using it here
+    // would hide the very blockers this fixture exists to produce.
+    admission: { ok: true as const, mode: "open" as const },
     // Evidence chosen so EVERY blocker is proven at once: no name, no slug, no
     // services, no open days, consent absent. The authority then reports the
     // full set and we pick the one under test out of it.

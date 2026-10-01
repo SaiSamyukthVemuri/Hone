@@ -76,6 +76,7 @@ const scenario = {
 };
 
 function reset() {
+  storedModeForTest = "waitlist";
   deferred.length = 0;
   sends.length = 0;
   rpcCalls.length = 0;
@@ -97,6 +98,39 @@ function reset() {
     clientSendThrows: false,
   });
 }
+
+// NEW-CLIENT-MODE-01: the admission authority now performs the read these
+// suites used to make via the env predicate. Delegating to the REAL
+// `resolveAdmission` with no stored value routes it through the transition
+// bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+// Defaults to a CUT-OVER studio. One test below needs a studio the new
+// authority has NOT persisted, so the gate env can decide instead.
+let storedModeForTest: string | null = "waitlist";
+
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    // A CUT-OVER studio: its WAITLIST mode is PERSISTED, not inherited from the
+    // legacy env list. That is what this suite is about - the durable commit
+    // path and its ordering, refusal and scoping properties - and stating it as
+    // persisted makes every claim below independent of the migration bridge, so
+    // they stay true when the bridge is deleted.
+    getNewClientAdmissionMode: vi.fn(
+      async (studio: { slug: string | null }) =>
+        actual.resolveAdmission({
+          storedMode: storedModeForTest,
+          // A stored mode in these suites means an OWNER CHOSE it, so it
+          // carries the audit stamp the real command always writes. `null`
+          // means nothing was chosen and the gate env decides.
+          storedSetAt: storedModeForTest == null ? null : "2026-09-30T12:00:00.000Z",
+          readFailed: false,
+          studioSlug: studio.slug,
+        }),
+    ),
+  };
+});
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 
@@ -216,9 +250,9 @@ describe("the database is the commit point", () => {
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result).toEqual({ ok: true });
     // Nothing has been sent yet: the sends are post-response work.
-    expect(trace).toEqual(["rpc:join_new_client_waitlist"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_guarded"]);
     await flushPostResponse();
-    expect(trace).toEqual(["rpc:join_new_client_waitlist", "send:studio", "send:client"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_guarded", "send:studio", "send:client"]);
   });
 
   it("A REFUSED STUDIO NOTIFICATION STILL REPORTS JOINED", async () => {
@@ -264,12 +298,18 @@ describe("the database is the commit point", () => {
   it("passes the SERVER-RESOLVED studio id and the bounded submission, nothing else", async () => {
     await submitNewClientBookingWaitlistAction(form({ slug: "attacker-chosen-slug" }));
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist");
+    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_guarded");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_name: CANARY_NAME,
       p_email: CANARY_EMAIL,
       p_phone: CANARY_PHONE,
+      // The ONE transition fact 0204 cannot read for itself. TRUE here, and that
+      // is the point: this suite lists the studio's REAL slug, while the post
+      // above carries an attacker-chosen one that is NOT listed and would give
+      // false. So the value is proved to come from the server-resolved studio.
+      // Consulted only while the row is unstamped; retired with the bridge.
+      p_legacy_bridge_waitlist: true,
     });
     // No status, no source, no joined_at, no entry id: the command owns all of
     // them, so a forged post cannot propose one.
@@ -281,7 +321,7 @@ describe("the database is the commit point", () => {
   it("performs NO direct table access at all", async () => {
     await submitNewClientBookingWaitlistAction(form());
     expect(tableAccess).toEqual([]);
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_guarded"]);
   });
 });
 
@@ -305,7 +345,7 @@ describe("duplicate submission", () => {
     // it: a duplicate must not manufacture a row or a message.
     scenario.commandResult = "already_waiting";
     await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_guarded"]);
     expect(sends).toHaveLength(0);
     expect(tableAccess).toEqual([]);
   });
@@ -397,7 +437,7 @@ describe("a duplicate is externally indistinguishable from a fresh join", () => 
 
       expect(sends, `${outcome} sent mail before responding`).toHaveLength(0);
       expect(trace, `${outcome} awaited more than the command`).toEqual([
-        "rpc:join_new_client_waitlist",
+        "rpc:join_new_client_waitlist_guarded",
       ]);
     }
   });
@@ -644,6 +684,9 @@ describe("notification idempotency is scoped to the join", () => {
 
 describe("the gate still governs everything", () => {
   it("a studio NOT in the waitlist gate never reaches the command", async () => {
+    // Nothing persisted, so the GATE is what decides - and it names another
+    // studio, so this one is not admitting joins at all.
+    storedModeForTest = null;
     setEnv(NEW_CLIENT_WAITLIST_SLUGS_ENV, "some-other-studio");
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
       ok: false,
@@ -665,34 +708,52 @@ describe("the gate still governs everything", () => {
     expect(rpcCalls).toHaveLength(0);
   });
 
-  it("with the DURABLE flag unset, no database command runs at all", async () => {
-    // Stage A of the rollout: migration applied, code deployed, dark.
-    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, undefined);
-    const result = await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls).toHaveLength(0);
-    expect(result).toEqual({ ok: true });
-  });
-
-  it("the durable flag is EXACT-MATCH, not a prefix or substring", async () => {
-    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, `${SLUG}-archive,other-studio`);
-    await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls).toHaveLength(0);
-  });
-
-  it("the durable flag is derived from the SERVER-RESOLVED slug, not the posted one", async () => {
-    // The form claims a slug that IS listed; the resolved studio's slug is not.
-    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, "attacker-chosen-slug");
-    await submitNewClientBookingWaitlistAction(form({ slug: "attacker-chosen-slug" }));
-    expect(rpcCalls).toHaveLength(0);
-  });
-
-  it("a blank or whitespace-only durable list is OFF", async () => {
-    for (const value of ["", "   ", ",, ,"]) {
+  // NEW-CLIENT-MODE-01 RETARGET. These four tests asserted that a SECOND env
+  // list chose between a durable write and an email-only notification, AFTER
+  // the gate had already admitted the join. That switch is gone: `waitlist`
+  // now MEANS durable, so there is nothing left for it to gate and the cases
+  // below assert the contract that replaced it.
+  it("the durable env list no longer gates a CUT-OVER studio", async () => {
+    for (const value of [undefined, "", "   ", `${SLUG}-archive,other-studio`, "attacker-chosen-slug"]) {
       reset();
       setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, value);
-      await submitNewClientBookingWaitlistAction(form());
-      expect(rpcCalls, `value ${JSON.stringify(value)} must be OFF`).toHaveLength(0);
+      const result = await submitNewClientBookingWaitlistAction(form());
+      expect(
+        rpcCalls.length,
+        `durable list ${JSON.stringify(value)} must not stop the command`,
+      ).toBe(1);
+      expect(result.ok).toBe(true);
     }
+  });
+
+  it("REGRESSION: dropping the durable slug cannot make a CUT-OVER join email-only", async () => {
+    // The named regression, and its exact scope. Once a studio's WAITLIST mode
+    // has been PERSISTED through the new authority, an edit to the legacy
+    // durable list must not move it off the durable path - the database row is
+    // the commitment and an email cannot stand in for it.
+    //
+    // A studio still on the legacy bridge is the OTHER case and is deliberately
+    // not this test's: it keeps whatever commit point it has in production
+    // today, which is proved in
+    // tests/lib/booking/new-client-waitlist-durability-bridge.test.ts.
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+    await submitNewClientBookingWaitlistAction(form());
+    const withFlag = rpcCalls.length;
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, undefined);
+    await submitNewClientBookingWaitlistAction(form());
+    expect(rpcCalls.length, "the row is written either way").toBe(withFlag);
+    expect(withFlag).toBe(1);
+  });
+
+  it("the action carries no email-only commit branch at all", async () => {
+    // Structural, because the absence is the point: a second commit point that
+    // exists but is unreachable is worse than one that is gone.
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/book/[slug]/waitlist-actions.ts", "utf8");
+    expect(src).not.toMatch(/isNewClientWaitlistDurableEnabled\s*\(/);
+    expect(src).not.toMatch(/\?\s*submitToDurableWaitlist/);
   });
 });
 
@@ -777,7 +838,7 @@ describe("Stage B records what closed, and what is still open", () => {
   it("ANTI-VACUITY: the durable write path is still present", () => {
     // If this stops being true the rest of this block is moot, and that must
     // be a visible decision rather than a silently passing suite.
-    expect(ACTION).toContain('rpc("join_new_client_waitlist"');
+    expect(ACTION).toContain('rpc("join_new_client_waitlist_guarded"');
   });
 
   it("still records it as a studio-scoped personal-data class", () => {
@@ -1004,6 +1065,10 @@ describe("no studio is enabled at merge time", () => {
     expect(filesNamingTheFlag()).toEqual([
       "e2e/helpers/local-env.ts",
       "e2e/new-client-waitlist.spec.ts",
+      // The migration bridge, and the ONLY consumer of this flag. It exists so
+      // the flag has exactly one reader and one deletion point; when it goes,
+      // this entry goes with it. Sorts BEFORE the module below: "-" < ".".
+      "lib/booking/new-client-waitlist-durability-bridge.ts",
       "lib/booking/new-client-waitlist.ts",
       "scripts/check-production-env-gates.mjs",
       "tests/app/book/new-client-waitlist-action.test.ts",

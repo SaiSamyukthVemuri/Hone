@@ -125,6 +125,18 @@ export default async function LaunchChecklistPage() {
     return provenBlockers.has(key) ? "needs_setup" : "ready";
   };
 
+  // A deliberate operator state is not a step the owner failed to finish, so a
+  // PROVEN admission blocker renders "manual" rather than "To do". Everything
+  // else - and crucially the UNKNOWN that an unreadable mode produces - comes
+  // straight from `owned`, so these rows cannot drift from the authority list.
+  // Hand-rolling `provenBlockers.has(key) ? "manual" : "ready"` here is exactly
+  // how a failed admission read rendered green while the mode may have been
+  // `closed`.
+  const chosen = (key: NewClientBlockerKey): Row["status"] => {
+    const status = owned(key);
+    return status === "needs_setup" ? "manual" : status;
+  };
+
   const hasAftercare = nonEmpty(studio.postcare_aftercare_text);
   const hasBothPolicies =
     nonEmpty(studio.cancellation_policy_text) &&
@@ -229,15 +241,30 @@ export default async function LaunchChecklistPage() {
     // go fix something.
     {
       title: "New client admission",
-      status: provenBlockers.has("wait_admission") ? "manual" : "ready",
+      status: chosen("wait_admission"),
       // NARROW. A cleared gate proves only that ordinary new clients are not
       // routed through the waitlist. It does NOT prove they can book: services,
       // availability, booking settings and consent each still gate that, and
       // the old copy contradicted the canonical NOT_READY sitting above it.
-      detail: provenBlockers.has("wait_admission")
-        ? "New clients join the waitlist instead of booking directly. Invited clients can still book."
-        : "Waitlist admission is off, so new clients are not routed to the waitlist.",
+      detail: unavailableAuthorities.has("admission")
+        ? "The new-client admission mode could not be read, so whether new clients are routed to the waitlist is unknown."
+        : provenBlockers.has("wait_admission")
+          ? "New clients join the waitlist instead of booking directly. Invited clients can still book."
+          : "Waitlist admission is off, so new clients are not routed to the waitlist.",
       cta: { label: "Open Waitlist settings", href: "/settings/waitlist" },
+    },
+    // NEW-CLIENT-MODE-01. A deliberate closure is a state the owner chose, not
+    // a step they failed to finish, so it renders "manual" beside the admission
+    // row rather than "To do".
+    {
+      title: "Not accepting new clients",
+      status: chosen("admission_closed"),
+      detail: unavailableAuthorities.has("admission")
+        ? "The new-client admission mode could not be read, so whether new clients are blocked is unknown."
+        : provenBlockers.has("admission_closed")
+          ? "New clients cannot book or join a waitlist. Existing clients are unaffected."
+          : "New clients are not blocked from this studio.",
+      cta: { label: "Open booking settings", href: "/settings/booking" },
     },
     {
       title: "Client confirmation emails",

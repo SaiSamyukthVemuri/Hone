@@ -617,6 +617,20 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/booking/new-client-admission.ts",
+    purpose: "Public booking: read the studio's NEW-CLIENT admission mode.",
+    why:
+      "A PUBLIC visitor has no session, and `studios` RLS is members-read for " +
+      "`authenticated` only - so the RLS-scoped client returns NO ROW, which " +
+      "maybeSingle reports as { data: null, error: null } rather than an error. " +
+      "A stored WAITLIST or CLOSED then fell silently back to the legacy env " +
+      "list and the studio went on taking bookings. The narrowing is the " +
+      "projection and the key: ONE column, by the SERVER-RESOLVED studio id " +
+      "(never a slug or anything the browser supplies). The public booking page " +
+      "already reads this same row this way via getStudioBySlug.",
+    scopeGuard: '.eq("id", studio.id)',
+  },
+  {
     path: "lib/booking/queries.ts",
     purpose: "Public booking / portal / token-scoped read.",
     why: "Session-less or portal-session path that cannot satisfy member RLS; the query is explicitly studio/client scoped (see scopeGuard). Service-role reads the tenant-scoped rows.",

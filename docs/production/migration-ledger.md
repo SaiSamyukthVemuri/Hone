@@ -71,10 +71,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0203** (`0203_waitlist_mobile_verification_authority.sql`) |
-| **Repo migration max** | **0203** — at PARITY with hosted, nothing pending. |
+| **Repo migration max** | **0204** — this branch authors `0204_new_client_admission_mode.sql` (NEW-CLIENT-MODE-01): one CHECK-closed column on `studios`, two audit columns, and one owner-authorized command. **AUTHORED, NOT APPLIED** — the repository now sits one above hosted. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks, confirmed from the live `migration list --linked` (zero rows present remotely and absent locally). |
-| **Pending migrations** | **none.** Verified live: `max(version)` in `supabase_migrations.schema_migrations` is **`0203`** with **202** rows total. |
-| **Next free migration** | Next free number is **0204**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0203` IS NO LONGER FREE** — it is applied and FROZEN. |
+| **Pending migrations** | **`0204`** — `0204_new_client_admission_mode.sql`, authored on the NEW-CLIENT-MODE-01 branch and **NOT applied**. Hosted remains at **`0203`**: verified live at the 0203 apply, `max(version)` in `supabase_migrations.schema_migrations` is **`0203`** with **202** rows total. |
+| **Next free migration** | Next free number is **0205**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0203` IS NO LONGER FREE** — it is applied and FROZEN. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. Both were seen side by side in `projects list`: different organisations. |
 | **Reviewed release head** | `1275486e7197d834294f58a85da774f4244aa176` (PR #768) — the exact authorized head: tree clean, PR open and `MERGEABLE`/`CLEAN`, required CI GREEN, Vercel GREEN, exact-head Codex review completed with **zero** new findings, and **0** unresolved review threads. |
 | **Production application SHA at apply time** | `4e8ea7aec8aea3b93ab149fb197f1caf190fc405` (post-B2a). **Unchanged by this apply: no application code was deployed.** |
@@ -1358,7 +1358,7 @@ NEW migration. `0188` is available and **not claimed**.
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0186** (`0186_intake_reminder_24h_2h.sql`) |
-| **Repo migration max** | **0186** — **hosted == repo.** Nothing pending. Next free number is **0187** (available, **not claimed**). |
+| **Repo migration max** | **0186** — **hosted == repo.** One migration pending (`0204`). Next free number is **0187** (available, **not claimed**). |
 | **Total migrations in repo** | **185** (`0001` … `0157`, `0159` … `0186` — **no `0158`**) — derived by `npm run migration:state` |
 | **Apply date/time** | ⚠️ **NOT CAPTURED** — `hosted_applied_at` is `null`. No apply instant, no apply window and no calendar date were captured, and none is invented. |
 | **Verified applied** | **2026-08-24** — when the applied state was read and recorded. |

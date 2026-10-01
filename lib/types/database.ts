@@ -64,6 +64,23 @@ export type Studio = {
   // exactly today's read-only checklist. Optional for rows loaded via `select *`
   // before 0140 is applied; always read as `=== true`.
   onboarding_v2_enabled?: boolean;
+  // Migration 0204: the studio-owned NEW-CLIENT admission mode
+  // ('open' | 'waitlist' | 'closed'), plus the audit evidence for who set it
+  // and when. Typed as a bare `string`, NOT the narrow union, on purpose: a row
+  // arriving through `select *` is untrusted at the type level, and
+  // `isNewClientAdmissionMode` in lib/booking/new-client-admission.ts is the one
+  // narrowing point - declaring the union here would let a caller skip it. The
+  // database CHECK constraint is what actually restricts the stored value.
+  //
+  // `..._set_by` is a bare practitioner id with NO foreign key: a second
+  // studios<->practitioners relationship would make the established
+  // practitioners -> `studio:studios(*)` PostgREST embed ambiguous.
+  //
+  // All three optional for rows loaded before 0204 is applied. An ABSENT or
+  // unrecognised mode must never be read as 'open'; resolveAdmission owns that.
+  new_client_admission_mode?: string;
+  new_client_admission_mode_set_at?: string | null;
+  new_client_admission_mode_set_by?: string | null;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;

@@ -184,3 +184,72 @@ export async function updateStudioBookingPrefsAction(
   }
   redirect("/settings/booking?saved=1");
 }
+
+// ===========================================================================
+// NEW-CLIENT-MODE-01 — THE OWNER'S OWN CONTROL
+// ===========================================================================
+//
+// Its OWN action rather than a field on the preferences form above, because it
+// is the only setting here whose authority is a database command rather than a
+// column update: the browser sends an intent, and membership plus owner role
+// are re-derived inside `set_new_client_admission_mode` from auth.uid(). Folding
+// it into the general save would have meant a studio-wide write path that could
+// change admission as a side effect of editing a buffer.
+//
+// The owner changes this without a deploy, an allowlist, or asking anyone.
+export async function updateNewClientAdmissionModeAction(
+  formData: FormData,
+): Promise<void> {
+  let failureMessage: string | null = null;
+  try {
+    const { studioId } = await assertOwner();
+    // INTENT ONLY. Not validated into a mode here beyond being a string - the
+    // database owns the closed set and answers `invalid_mode` for anything
+    // outside it, so there is exactly one place that decides what is legal.
+    const intent = trimmed(formData.get("new_client_admission_mode"));
+
+    // NO CALLER-SUPPLIED FACT. An earlier version computed "is this studio still
+    // email-only?" here and passed it in, which protected this screen and
+    // nothing else: the command is granted to `authenticated` and only verifies
+    // ownership, so an owner could call it straight through PostgREST and pass
+    // `false`. The command now reads `new_client_admission_mode_set_at` from the
+    // row itself, under its own lock, so there is nothing here to get wrong.
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc(
+      "set_new_client_admission_mode",
+      { p_studio_id: studioId, p_mode: intent },
+    );
+    if (error) {
+      failureMessage = "Could not save that just now. Please try again.";
+    } else {
+      const row = Array.isArray(data) ? data[0] : data;
+      const outcome = (row as { outcome?: string } | null)?.outcome ?? "unknown";
+      if (outcome === "not_authorized") {
+        failureMessage = "Only the studio owner can change this.";
+      } else if (outcome === "invalid_mode") {
+        failureMessage = "That is not a valid choice.";
+      } else if (outcome === "legacy_waitlist_cutover_required") {
+        // TRUTHFUL, and it names the thing that has to happen first rather than
+        // pretending the setting failed.
+        // TRUTHFUL about what has to happen, and it names the one action that
+        // does it. The rule is "not yet cut over", which is why the copy does
+        // not promise this is only about email.
+        failureMessage =
+          "This studio hasn't completed its new-client admission setup yet. " +
+          "Choose Waitlist once to complete it, then Open and Closed become " +
+          "available.";
+      } else if (outcome !== "ok") {
+        failureMessage = "Could not save that just now. Please try again.";
+      }
+    }
+  } catch {
+    failureMessage = "Could not save that just now. Please try again.";
+  }
+
+  revalidatePath("/settings/booking");
+  redirect(
+    failureMessage
+      ? `/settings/booking?error=${encodeURIComponent(failureMessage)}`
+      : "/settings/booking?saved=1",
+  );
+}

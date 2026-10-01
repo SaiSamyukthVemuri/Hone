@@ -126,6 +126,66 @@ const admin = {
   },
 };
 
+// NEW-CLIENT-MODE-01: the admission authority now performs the read these
+// suites used to make via the env predicate. Delegating to the REAL
+// `resolveAdmission` with no stored value routes it through the transition
+// bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+// A test-set admission state, for the cases that must drive the FOUR modes
+// directly rather than through the env bridge. `null` keeps the historical
+// behaviour, so every pre-existing `setEnv` case below is untouched.
+let admissionOverride:
+  | import("@/lib/booking/new-client-admission").NewClientAdmission
+  | null = null;
+
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(
+      async (studio: { slug: string | null }) =>
+        admissionOverride ??
+        actual.resolveAdmission({
+          storedMode: null,
+          storedSetAt: null,
+          readFailed: false,
+          studioSlug: studio.slug,
+        }),
+    ),
+  };
+});
+
+// The invitation authority is mocked so the ORDER can be observed: under
+// `closed` or an unreadable mode the admission refusal must come back WITHOUT
+// this ever being called, which is what makes "refuses before authorisation"
+// a behavioural fact rather than a reading of the source.
+const authorizeCalls: unknown[] = [];
+let authorizeResult: "authorized" | "scope_refused" = "authorized";
+
+vi.mock("@/lib/booking/waitlist-invitation", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/waitlist-invitation")>();
+  return {
+    ...actual,
+    authorizeInvitationForBooking: vi.fn(async (input: unknown) => {
+      authorizeCalls.push(input);
+      if (authorizeResult === "scope_refused") {
+        return { kind: "scope_refused", reason: "service" } as never;
+      }
+      return {
+        kind: "authorized",
+        rawToken: "raw-token",
+        invitation: { invitationId: "inv-1", entryId: "entry-1" },
+      } as never;
+    }),
+    consumeInvitationForBooking: vi.fn(async () => ({
+      kind: "redeemed",
+      studioId: STUDIO_ID,
+      entryId: "entry-1",
+    })),
+  };
+});
+
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => admin }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
@@ -221,6 +281,9 @@ beforeEach(() => {
   resetTripwires();
   scenario.existingClientOnFile = false;
   setEnv(undefined);
+  admissionOverride = null;
+  authorizeCalls.length = 0;
+  authorizeResult = "authorized";
 });
 afterEach(() => setEnv(ORIGINAL));
 
@@ -278,7 +341,12 @@ describe("public booking — new-client waitlist admission gate", () => {
     expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
     // The exact inverse of the negative assertions: the same post DOES create
     // the client row and DOES issue the command when the flag is off.
-    expect(dbWrites).toContainEqual({ table: "clients", op: "insert" });
+    // THE CLIENT ROW IS NO LONGER WRITTEN HERE. It is created inside the
+    // composed command, in the same transaction as the locked admission
+    // decision, so a refused request cannot leave an orphan behind. The
+    // positive control is therefore that the command RAN - the inverse of the
+    // negative assertions above, which require that it did not.
+    expect(rpcCalls).toContain("create_public_appointment_for_new_client");
     expect(rpcCalls.length).toBeGreaterThan(0);
   });
 
@@ -286,7 +354,12 @@ describe("public booking — new-client waitlist admission gate", () => {
     setEnv("some-other-studio,yet-another");
     const result = await publicBookAppointmentAction(form());
     expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
-    expect(dbWrites).toContainEqual({ table: "clients", op: "insert" });
+    // THE CLIENT ROW IS NO LONGER WRITTEN HERE. It is created inside the
+    // composed command, in the same transaction as the locked admission
+    // decision, so a refused request cannot leave an orphan behind. The
+    // positive control is therefore that the command RAN - the inverse of the
+    // negative assertions above, which require that it did not.
+    expect(rpcCalls).toContain("create_public_appointment_for_new_client");
     expect(rpcCalls.length).toBeGreaterThan(0);
   });
 
@@ -312,5 +385,148 @@ describe("public booking — new-client waitlist admission gate", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
+  });
+});
+
+// ===========================================================================
+// Exact-head P1 at be6722b7 — the four admission states must not collapse.
+//
+// `admissionGateApplies = !newClientMayBook(admission)` was ONE boolean over
+// `waitlist`, `closed` and `unknown`, and the branch it guarded let ANY
+// successfully authorized invitation continue. So an invitation issued while a
+// studio was waitlisted still booked after the owner switched to CLOSED, and
+// booked identically when the admission read FAILED.
+//
+// The states differ in exactly one respect: whether a valid scoped invitation
+// may still admit the client. Only `waitlist` says yes.
+// ===========================================================================
+const ADMISSION_REFUSAL_CODE = "new_client_admission_closed";
+const ADMISSION_REFUSAL_TEXT =
+  "This studio is not accepting new-client bookings right now.";
+
+const INVITED = {
+  invitation_token: "tok_live_example",
+  invitation_capability: "cap_live_example",
+} as const;
+
+describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => {
+  // 1 -------------------------------------------------------------------
+  it("OPEN + no invitation: an ordinary new-client booking is permitted", async () => {
+    admissionOverride = { ok: true, mode: "open", source: "persisted" };
+    const result = await publicBookAppointmentAction(form());
+    expect(result.ok === false && result.code).not.toBe(ADMISSION_REFUSAL_CODE);
+    expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
+    // THE CLIENT ROW IS NO LONGER WRITTEN HERE. It is created inside the
+    // composed command, in the same transaction as the locked admission
+    // decision, so a refused request cannot leave an orphan behind. The
+    // positive control is therefore that the command RAN - the inverse of the
+    // negative assertions above, which require that it did not.
+    expect(rpcCalls).toContain("create_public_appointment_for_new_client");
+    expect(rpcCalls.length).toBeGreaterThan(0);
+    // No credentials were presented, so the invitation authority is not consulted.
+    expect(authorizeCalls).toEqual([]);
+  });
+
+  // 2 -------------------------------------------------------------------
+  it("OPEN + valid invitation: the credentials are still PROCESSED, not bypassed", async () => {
+    admissionOverride = { ok: true, mode: "open", source: "persisted" };
+    const result = await publicBookAppointmentAction(form({ ...INVITED }));
+    // The point of this case: presenting credentials in OPEN must not silently
+    // skip the invitation's own authorisation and lifecycle.
+    expect(authorizeCalls.length, "credentials must be processed in OPEN").toBe(1);
+    expect(result.ok === false && result.code).not.toBe(ADMISSION_REFUSAL_CODE);
+    expect(rpcCalls.length).toBeGreaterThan(0);
+  });
+
+  // 3 -------------------------------------------------------------------
+  it("WAITLIST + no invitation: admission refusal, nothing mutated", async () => {
+    admissionOverride = { ok: true, mode: "waitlist", source: "persisted" };
+    const result = await publicBookAppointmentAction(form());
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.code).toBe("new_client_waitlist");
+    expectNothingMutated();
+  });
+
+  // 4 -------------------------------------------------------------------
+  it("WAITLIST + valid invitation: the invitation MAY authorise the booking", async () => {
+    admissionOverride = { ok: true, mode: "waitlist", source: "persisted" };
+    const result = await publicBookAppointmentAction(form({ ...INVITED }));
+    // The WAIT invitation lifecycle is preserved: this is the ONE exception.
+    expect(authorizeCalls.length).toBe(1);
+    expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
+    expect(result.ok === false && result.code).not.toBe(ADMISSION_REFUSAL_CODE);
+    expect(rpcCalls.length, "an invited waitlist booking must run").toBeGreaterThan(0);
+  });
+
+  // 5, 7 ----------------------------------------------------------------
+  it.each([
+    ["CLOSED", { ok: true, mode: "closed", source: "persisted" } as const],
+    ["UNKNOWN", { ok: false } as const],
+  ])("%s + no invitation: admission refusal, nothing mutated", async (_label, state) => {
+    admissionOverride = state;
+    const result = await publicBookAppointmentAction(form());
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.code).toBe(ADMISSION_REFUSAL_CODE);
+    expect(result.ok === false && result.error).toBe(ADMISSION_REFUSAL_TEXT);
+    expectNothingMutated();
+  });
+
+  // 6, 8, 9 -------------------------------------------------------------
+  it.each([
+    ["CLOSED", { ok: true, mode: "closed", source: "persisted" } as const],
+    ["UNKNOWN", { ok: false } as const],
+  ])(
+    "%s + valid invitation: STILL refused, and authorisation is never reached",
+    async (_label, state) => {
+      admissionOverride = state;
+      const result = await publicBookAppointmentAction(form({ ...INVITED }));
+
+      expect(result.ok).toBe(false);
+      expect(result.ok === false && result.code).toBe(ADMISSION_REFUSAL_CODE);
+      // REQUIREMENT 9, behaviourally: the refusal happens BEFORE the invitation
+      // authority runs, so a valid invitation cannot become an admission bypass
+      // and no invitation is consumed on a path that cannot produce a booking.
+      expect(
+        authorizeCalls,
+        "authorizeInvitationForBooking must not run under closed/unknown",
+      ).toEqual([]);
+      expect(dbWrites).toEqual([]);
+      expect(rpcCalls, "no appointment may be created").toEqual([]);
+      expectNothingMutated();
+    },
+  );
+
+  it("CLOSED and UNKNOWN are not an invitation oracle", async () => {
+    // The SAME answer for a valid and an invalid invitation: the refusal is
+    // returned without consulting the credentials at all, so it cannot be used
+    // to learn whether a token is real.
+    admissionOverride = { ok: true, mode: "closed", source: "persisted" };
+    authorizeResult = "authorized";
+    const withValid = await publicBookAppointmentAction(form({ ...INVITED }));
+    authorizeResult = "scope_refused";
+    const withInvalid = await publicBookAppointmentAction(form({ ...INVITED }));
+
+    expect(withValid).toEqual(withInvalid);
+    expect(withValid.ok === false && withValid.code).toBe(ADMISSION_REFUSAL_CODE);
+  });
+
+  // 10 ------------------------------------------------------------------
+  it.each([
+    ["CLOSED", { ok: true, mode: "closed", source: "persisted" } as const],
+    ["UNKNOWN", { ok: false } as const],
+    ["WAITLIST", { ok: true, mode: "waitlist", source: "persisted" } as const],
+  ])("%s: an EXISTING client is completely outside this authority", async (_l, state) => {
+    admissionOverride = state;
+    scenario.existingClientOnFile = true;
+    const result = await publicBookAppointmentAction(
+      form({ client_type: "existing", email: "returning@example.test" }),
+    );
+    expect(result.ok === false && result.code).not.toBe(ADMISSION_REFUSAL_CODE);
+    expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
+    expect(
+      result.ok === false && result.error,
+      "an existing client must never see a new-client admission refusal",
+    ).not.toBe(ADMISSION_REFUSAL_TEXT);
+    expect(rpcCalls.length, "existing-client booking must still run").toBeGreaterThan(0);
   });
 });

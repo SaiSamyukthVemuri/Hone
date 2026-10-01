@@ -490,21 +490,40 @@ describe("it does not reopen the unauthenticated existing-client path", () => {
 describe("L. the public existing-client email-binding path remains unreachable", () => {
   const PUBLIC_FORM = read(PUBLIC_FORM_REL);
 
+  // The inline `if (clientType === "existing")` branch this used to read was
+  // replaced by the `publicBookFormSurface` decision, which routes an existing
+  // client to one of three surfaces. The PROPERTY is unchanged and is what gets
+  // pinned here; only the shape it is written in moved.
+  //
+  // The previous version of the second assertion passed VACUOUSLY once the
+  // literal disappeared: `indexOf` returned -1, and -1 is less than the form's
+  // index, so "the early return comes first" held with no early return at all.
+  // Every index below is asserted to have been FOUND before it is compared.
+  const EXISTING_SURFACES = [
+    "existing_no_services",
+    "existing_unavailable",
+    "existing_portal",
+  ] as const;
+
   it("the existing-client choice still early-returns to the portal", () => {
-    const branch = PUBLIC_FORM.indexOf('if (clientType === "existing") {');
-    expect(branch, "the early return must still exist").toBeGreaterThan(-1);
-    const tail = PUBLIC_FORM.slice(branch, branch + 3000);
+    const portal = PUBLIC_FORM.indexOf('if (surface === "existing_portal") {');
+    expect(portal, "the existing-client portal surface must still exist").toBeGreaterThan(-1);
+    const tail = PUBLIC_FORM.slice(portal, portal + 3000);
     expect(tail).toContain("/portal/login");
   });
 
   it("that early return happens BEFORE the booking form can be rendered", () => {
-    const branch = PUBLIC_FORM.indexOf('if (clientType === "existing") {');
     const bookingForm = PUBLIC_FORM.indexOf("onSubmit={submit}");
-    expect(bookingForm).toBeGreaterThan(-1);
-    expect(
-      branch,
-      "an existing-client visitor must return before the submitting form exists",
-    ).toBeLessThan(bookingForm);
+    expect(bookingForm, "the submitting form must exist to be compared against").toBeGreaterThan(-1);
+
+    for (const surface of EXISTING_SURFACES) {
+      const branch = PUBLIC_FORM.indexOf(`if (surface === "${surface}") {`);
+      expect(branch, `${surface} must still be a rendered surface`).toBeGreaterThan(-1);
+      expect(
+        branch,
+        `an existing-client visitor on ${surface} must return before the submitting form exists`,
+      ).toBeLessThan(bookingForm);
+    }
   });
 
   it("NEGATIVE CONTROL: the ordering check fails when the early return is gone", () => {

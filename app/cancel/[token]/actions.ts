@@ -508,7 +508,7 @@ export async function fetchAppointmentForCancelAction(
       // to the service embed. Both ride the read that already proves the
       // appointment's state, so the warning is derived from the same row the
       // page is about to render and costs no extra round trip.
-      "id, status, starts_at, studio:studios(name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
+      "id, status, starts_at, studio:studios(id, name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -520,6 +520,9 @@ export async function fetchAppointmentForCancelAction(
 
   // The relation shape from Supabase types as array; pick first.
   type JoinedStudio = {
+    // `id` rides along with `slug`; the free-consult policy takes the SLUG and
+    // consults EMERG-01's own env list, never the new-client admission mode.
+    id: string;
     name: string;
     slug: string | null;
     timezone: string;
@@ -562,6 +565,7 @@ export async function fetchAppointmentForCancelAction(
   // sent. The slug is returned ONLY alongside a true verdict, so it cannot be
   // read off this public surface for a studio the policy does not cover.
   const freeConsultationWaitlistOnly = isFreeConsultWaitlistOnlyReschedule({
+    // EMERG-01's OWN authority, not the new admission mode.
     studioSlug: studio?.slug ?? null,
     service,
   });
