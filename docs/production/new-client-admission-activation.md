@@ -125,23 +125,56 @@ says.
    written studio resolves `source: "persisted"`, and from then on the durable
    path is unconditional for it — removing its legacy durable slug cannot
    return it to email-only.
-6. **Only then remove the env vars.** After this the bridge is dead code.
-   Delete, together: `lib/booking/new-client-waitlist-durability-bridge.ts`,
-   `envForcesWaitlist` and its call, the two exported env predicates,
-   `NewClientAdmissionSource`, and `newClientAdmissionIsCutOver`. The durable
-   path then becomes unconditional, which is what `waitlist` means.
+6. **Only then remove the NEW-CLIENT ADMISSION bridge.** After every waitlisted
+   studio is stamped, delete, together:
+   `lib/booking/new-client-waitlist-durability-bridge.ts`, `envForcesWaitlist`
+   and its call, `NewClientAdmissionSource`, and
+   `newClientAdmissionIsCutOver`. The durable path then becomes unconditional,
+   which is what `waitlist` means.
+
+   **`NEW_CLIENT_WAITLIST_STUDIO_SLUGS` CANNOT BE DELETED AT THIS STEP, AND
+   NEITHER CAN `isNewClientWaitlistEnabled`.** A second, separate policy still
+   depends on them: EMERG-01's free-consult reschedule restriction
+   (`lib/booking/free-consult-reschedule-policy.ts`) reads that env list as its
+   own authority, deliberately, so that an owner changing new-client admission
+   cannot move the rights of an appointment that is already confirmed.
+
+   That policy is **bounded follow-up debt**. Retiring or replacing its legacy
+   mechanism needs its own product decision and its own durable authority, and
+   until that decision exists this step removes the admission bridge only. Doing
+   otherwise would silently restore self-service movement of free consultations
+   at every studio EMERG-01 currently covers.
 
 Steps 3-6 require production credentials and are **not** in scope for the
 implementation PR.
 
 ## Rollback
 
-Before step 6 the env list is still authoritative-by-escalation, so restoring a
-slug restores waitlist behaviour immediately. After step 6 rollback is a row
-write through the same command, which an owner can perform themselves.
+**Rollback depends on whether the studio has been STAMPED, not on which step you
+are on.** `new_client_admission_mode_set_at` is the test.
+
+| studio state | how to roll back |
+|---|---|
+| **unstamped** (`set_at` NULL, still on the legacy bridge) | restoring its slug to `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` restores its previous waitlist behaviour, for as long as the bridge remains |
+| **stamped** (`set_at` non-null, an owner has chosen) | an explicit `set_new_client_admission_mode(<studio>, 'waitlist')` command. **The env list cannot do it.** |
+
+**Never claim that restoring an env slug overrides an explicit owner choice.** It
+does not, by design: `resolveAdmission` returns a stamped mode before it consults
+the bridge at all, so for a studio whose persisted choice is `open`, restoring
+its slug changes nothing while the operator believes the rollback succeeded.
+
+This matters precisely because step 4 lets an already-stamped studio be skipped:
+a studio can be stamped without anyone running step 4 for it, simply because its
+owner used the Settings control first. Check `set_at` before choosing a rollback
+route, not the step number.
 
 ## What this plan deliberately does not do
 
 - It does not delete any environment variable as part of the code PR.
 - It does not set any studio's mode from a guess.
 - It does not touch existing-client, portal or rebook behaviour at any step.
+  This is load-bearing and was briefly violated: an earlier version of this PR
+  routed EMERG-01's free-consult reschedule policy through the new admission
+  mode, so an owner flipping OPEN / WAITLIST / CLOSED moved the rights of
+  already-confirmed appointments. That policy now keeps its own authority.
+- It does not retire EMERG-01's env authority. See step 6.

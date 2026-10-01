@@ -1,5 +1,7 @@
 import "server-only";
 
+import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
+
 import type { Service } from "@/lib/types/database";
 import { isConsultationService } from "@/lib/booking/consultation";
 
@@ -123,21 +125,37 @@ export type FreeConsultPolicyService = Pick<
  */
 export function isFreeConsultWaitlistOnlyReschedule(input: {
   /**
-   * Whether the studio is in WAITLIST mode, resolved by the caller from the one
-   * admission authority.
+   * SERVER-RESOLVED `studios.slug` for the appointment's own studio.
    *
-   * NEW-CLIENT-MODE-01 took the env read out of here. This function is pure and
-   * cannot perform the database read the canonical resolver needs, so the
-   * caller - which has already resolved the studio server-side - supplies the
-   * answer. UNKNOWN maps to `false` at every call site, which is exactly what
-   * the default-off env behaviour did for an unconfigured deployment.
+   * THIS POLICY HAS ITS OWN AUTHORITY, AND IT IS DELIBERATELY NOT THE NEW
+   * ADMISSION MODE.
+   *
+   * NEW-CLIENT-MODE-01 briefly routed this through
+   * `studioIsInWaitlistMode(studio)` - the owner-facing canonical mode - and
+   * that was wrong in a way no test caught: `new_client_admission_mode` governs
+   * whether a NEW client may be admitted, while this policy governs whether an
+   * ALREADY-CONFIRMED appointment may be self-service moved. Coupling them let
+   * an owner flipping OPEN -> WAITLIST silently freeze every confirmed future
+   * free consultation, and a persisted OPEN silently unfreeze them - changing
+   * booked clients' rights through a control documented as new-client only.
+   *
+   * So the EMERG-01 authority stays exactly what it was before this PR: the
+   * server-only env list, read here and nowhere else. Deploying
+   * NEW-CLIENT-MODE-01 therefore changes nothing about an appointment that is
+   * already confirmed.
+   *
+   * FOLLOW-UP DEBT, bounded and deliberately not taken here: this legacy env
+   * authority needs its own product decision and its own durable authority
+   * before it can be retired. Until that exists it must NOT be deleted with the
+   * new-client admission bridge - see
+   * docs/production/new-client-admission-activation.md, step 6.
    */
-  studioIsWaitlisted: boolean;
+  studioSlug: string | null | undefined;
   service: FreeConsultPolicyService | null | undefined;
 }): boolean {
-  const { studioIsWaitlisted, service } = input;
+  const { studioSlug, service } = input;
   // Studio scope first: outside a waitlisted studio nothing else is even asked.
-  if (!studioIsWaitlisted) return false;
+  if (!isNewClientWaitlistEnabled(studioSlug)) return false;
   if (!service) return false;
   if (!isConsultationService(service)) return false;
   // STRICT zero. `price_cents` is nullable and null means "no price recorded",

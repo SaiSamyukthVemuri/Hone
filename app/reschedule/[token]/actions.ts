@@ -1,6 +1,5 @@
 "use server";
 
-import { studioIsInWaitlistMode } from "@/lib/booking/new-client-admission";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
@@ -240,9 +239,10 @@ type EmbeddedPolicyRow = {
     | { modality: string | null; name: string; price_cents: number | null }
     | Array<{ modality: string | null; name: string; price_cents: number | null }>
     | null;
-  // `id` is REQUIRED, not decorative: studioIsInWaitlistMode resolves the
-  // canonical admission mode by studio id. A projection carrying only `slug`
-  // made the free-consult waitlist gate silently inert.
+  // `id` is projected alongside `slug` because other reads in this file use it.
+  // The free-consult policy takes the SLUG and consults EMERG-01's own env list:
+  // it deliberately does not resolve the new-client admission mode, so an owner
+  // changing that mode cannot move a confirmed appointment's rights.
   studio:
     | { id: string; slug: string | null }
     | Array<{ id: string; slug: string | null }>
@@ -295,7 +295,10 @@ async function assertReschedulableOriginal(
   const embedded = data as unknown as EmbeddedPolicyRow;
   if (
     isFreeConsultWaitlistOnlyReschedule({
-      studioIsWaitlisted: await studioIsInWaitlistMode(firstEmbedded(embedded.studio)),
+      // EMERG-01's OWN authority, not the new admission mode: an owner changing
+      // OPEN / WAITLIST / CLOSED must not move the rights of an appointment that
+      // is already confirmed.
+      studioSlug: firstEmbedded(embedded.studio)?.slug ?? null,
       service: firstEmbedded(embedded.service),
     })
   ) {

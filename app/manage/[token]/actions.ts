@@ -11,7 +11,6 @@ import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 // "Reschedule appointment" to someone /reschedule will then refuse is the same
 // dead end, one screen earlier. Same decision, same server-resolved inputs.
 import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
-import { studioIsInWaitlistMode } from "@/lib/booking/new-client-admission";
 
 // Generic public-facing message for the /manage surface. Returned for
 // any non-success outcome so the existence of a real appointment row
@@ -132,9 +131,8 @@ export async function fetchAppointmentForManageAction(
   if (!data) return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
 
   type JoinedStudio = {
-    // `id` is REQUIRED: studioIsInWaitlistMode resolves the canonical
-    // admission mode by studio id, so a slug-only projection made the
-    // free-consult waitlist gate silently inert.
+    // `id` rides along with `slug`; the free-consult policy takes the SLUG and
+    // consults EMERG-01's own env list, never the new-client admission mode.
     id: string;
     name: string;
     slug: string | null;
@@ -190,7 +188,8 @@ export async function fetchAppointmentForManageAction(
       // policy stays invisible to a probing caller. The slug is consumed here
       // and never returned: this surface has no waitlist CTA to build.
       freeConsultationWaitlistOnly: isFreeConsultWaitlistOnlyReschedule({
-        studioIsWaitlisted: await studioIsInWaitlistMode(studio),
+        // EMERG-01's OWN authority, not the new admission mode.
+        studioSlug: studio?.slug ?? null,
         service,
       }),
     },

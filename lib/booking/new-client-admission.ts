@@ -313,37 +313,6 @@ export function newClientMayJoinWaitlist(a: NewClientAdmission): boolean {
   return a.ok && a.mode === "waitlist";
 }
 
-/**
- * Is this studio in WAITLIST mode?
- *
- * For callers that need the fact as a plain boolean - the free-consult
- * reschedule policy is pure and cannot perform this read itself.
- *
- * UNKNOWN maps to `false`, which is deliberate and narrow: these callers are
- * deciding whether an EXTRA restriction applies to an existing client's
- * reschedule, so an unreadable mode must not invent one. That is the same
- * answer the default-off env behaviour gave an unconfigured deployment, and it
- * is the opposite of the fail-closed rule for NEW-client mutation, where
- * `unknown` refuses.
- */
-// `id` is REQUIRED, and the type says so on purpose. It was `id?: string | null`
-// with a silent `return false`, and three token-route projections
-// (/reschedule, /manage, /cancel) embedded the studio as `studios(slug)` only -
-// which was sufficient while the policy took a SLUG. The moment this resolver
-// started reading the canonical mode by id, every one of them handed it
-// `undefined` and got back "not waitlisted", so a free consultation at a
-// WAITLISTED studio was offered, warned about, and permitted. A required `id`
-// makes that a compile error at the call site instead of a quiet permission.
-export async function studioIsInWaitlistMode(
-  studio: { id: string; slug?: string | null } | null | undefined,
-): Promise<boolean> {
-  if (!studio?.id) return false;
-  const a = await getNewClientAdmissionMode({
-    id: studio.id,
-    slug: studio.slug ?? null,
-  });
-  return a.ok && a.mode === "waitlist";
-}
 
 // The two PUBLIC SURFACE functions live in a client-safe module, because
 // `app/book/[slug]/PublicBookForm.tsx` is a client component and this module is

@@ -491,3 +491,74 @@ describe("the audit stamp decides whose choice this is", () => {
     expect(source).not.toContain("existingClientMay");
   });
 });
+
+// ===========================================================================
+// THE ACTIVATION DOCUMENT IS AN OPERATIONAL INSTRUCTION, SO IT IS TESTED.
+//
+// Exact-head P1 at d55cbd8e: the rollback section said restoring an env slug
+// restores waitlist behaviour. After the stamp repair that is false for any
+// stamped studio - `resolveAdmission` returns a persisted mode before it
+// consults the bridge - and step 4 explicitly allows an already-stamped studio
+// to be skipped, so an operator could roll back, be told nothing, and leave a
+// studio open. A wrong sentence in a cutover plan is worse than a code bug,
+// because it is followed under pressure.
+// ===========================================================================
+describe("the activation document matches what the source actually does", () => {
+  const DOC = readFileSync(
+    join(process.cwd(), "docs/production/new-client-admission-activation.md"),
+    "utf8",
+  );
+  const POLICY = readFileSync(
+    join(process.cwd(), "lib/booking/free-consult-reschedule-policy.ts"),
+    "utf8",
+  );
+  const LISTED = "a-listed-studio";
+  const STAMP = "2026-09-30T12:00:00.000Z";
+
+  it("rollback for a STAMPED studio requires the command, and the source agrees", () => {
+    expect(DOC).toContain("set_new_client_admission_mode(<studio>, 'waitlist')");
+    expect(DOC).toContain("**The env list cannot do it.**");
+
+    // The behavioural half of the same claim: with the slug listed, a stamped
+    // `open` stays open, so an env-only rollback genuinely cannot restore it.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = LISTED;
+    expect(R("open", false, LISTED, STAMP)).toEqual({
+      ok: true,
+      mode: "open",
+      source: "persisted",
+    });
+    // And the unstamped half, which the document says env CAN still roll back.
+    expect(R("open", false, LISTED, null)).toEqual({
+      ok: true,
+      mode: "waitlist",
+      source: "legacy_bridge",
+    });
+  });
+
+  it("never claims an env slug overrides an explicit owner choice", () => {
+    expect(DOC).toContain(
+      "Never claim that restoring an env slug overrides an explicit owner choice",
+    );
+    // The old sentence, which was the defect, must be gone.
+    expect(DOC).not.toContain(
+      "restoring a\nslug restores waitlist behaviour immediately",
+    );
+  });
+
+  it("step 6 does not promise to delete authority EMERG-01 still needs", () => {
+    const step6 = DOC.slice(DOC.indexOf("6. **Only then remove"));
+    expect(step6).toContain("CANNOT BE DELETED");
+    expect(step6).toContain("free-consult-reschedule-policy.ts");
+    expect(step6).toContain("bounded follow-up debt");
+    // The claim is only true while that policy really does still read it.
+    expect(POLICY).toContain("isNewClientWaitlistEnabled(studioSlug)");
+  });
+
+  it("records that the new-client control does not move booked rights", () => {
+    expect(DOC).toContain(
+      "It does not touch existing-client, portal or rebook behaviour at any step",
+    );
+    // And the policy that would have violated it no longer can: it takes a slug.
+    expect(POLICY).toContain("studioSlug: string | null | undefined;");
+  });
+});

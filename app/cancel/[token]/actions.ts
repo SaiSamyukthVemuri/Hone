@@ -17,7 +17,6 @@ import {
 // the cancel page can WARN about a restriction it does not itself impose:
 // nothing about cancellation changes here, only what the visitor is told.
 import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
-import { studioIsInWaitlistMode } from "@/lib/booking/new-client-admission";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before cancelling.";
@@ -521,9 +520,8 @@ export async function fetchAppointmentForCancelAction(
 
   // The relation shape from Supabase types as array; pick first.
   type JoinedStudio = {
-    // `id` is REQUIRED: studioIsInWaitlistMode resolves the canonical
-    // admission mode by studio id, so a slug-only projection made the
-    // free-consult waitlist gate silently inert.
+    // `id` rides along with `slug`; the free-consult policy takes the SLUG and
+    // consults EMERG-01's own env list, never the new-client admission mode.
     id: string;
     name: string;
     slug: string | null;
@@ -567,7 +565,8 @@ export async function fetchAppointmentForCancelAction(
   // sent. The slug is returned ONLY alongside a true verdict, so it cannot be
   // read off this public surface for a studio the policy does not cover.
   const freeConsultationWaitlistOnly = isFreeConsultWaitlistOnlyReschedule({
-    studioIsWaitlisted: await studioIsInWaitlistMode(studio),
+    // EMERG-01's OWN authority, not the new admission mode.
+    studioSlug: studio?.slug ?? null,
     service,
   });
 
