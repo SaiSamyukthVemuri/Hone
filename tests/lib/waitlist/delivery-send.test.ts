@@ -126,7 +126,7 @@ describe("invitation delivery", () => {
       transport,
     });
     expect(calls[0].payload.subject).toBe(
-      "Your invitation to book an electrolysis consultation with Willow Electrolysis",
+      "Your invitation to book a consultation with Willow Electrolysis",
     );
     // And in the body, ahead of the link, in both renderings.
     for (const body of [calls[0].payload.text, calls[0].payload.html]) {

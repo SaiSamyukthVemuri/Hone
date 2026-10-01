@@ -95,8 +95,12 @@
 //   * ANY CLINICAL CONTENT. A waitlist prospect is not a client (0185), so
 //     there is nothing clinical to include and no client record to reference.
 //   * THE PROOF CODE, AND ANY DESCRIPTION OF ITS MECHANISM. The security line
-//     states that a verification step exists, in mechanism-neutral words, so
-//     this copy does not have to move when the proof mechanism does.
+//     states that verification IS REQUIRED, in mechanism-neutral words, so the
+//     copy does not have to move when the proof mechanism does. It says "you
+//     will need to verify", not "may": both actions hard-gate on a capability
+//     (`declineInvitationAction` and the booking path in
+//     app/invitation/[token]/actions.ts both refuse without one), so "may"
+//     understated a mandatory step and contradicted the sentence before it.
 //   * A RELATIVE EXPIRY. The email states an absolute instant, because a
 //     duration is only true at one moment and a delayed send makes it false.
 //   * THE EXPIRY AS A HARD-CODED STRING. The invitation TTL is owned by
@@ -152,6 +156,15 @@ export const WAITLIST_INVITATION_SUBJECT_UNIDENTIFIED = "Your invitation to book
  * Subject. Names the studio, so the recipient can identify the sender from the
  * inbox list without opening anything.
  *
+ * The consultation type stays GENERIC. A new-client waitlist invitation is
+ * issued for any service `isConsultationService` accepts — that predicate
+ * keys on the `consultation` MODALITY, so a service named "Laser" or
+ * "Skincare" qualifies (tests/db/waitlist-admission-command.db.test.ts pins
+ * exactly that row as eligible). Saying "electrolysis consultation" would
+ * misdescribe the appointment for every studio that is not an electrolysis
+ * studio. Naming the actual service would need it threaded through delivery,
+ * which is a wider change than this hotfix.
+ *
  * No "[HONE WAITLIST]" prefix — that marker exists for the STUDIO-facing
  * notification in templates/new-client-waitlist.ts, where operators build
  * inbox rules on it, and it is operational vocabulary that does not belong in
@@ -161,7 +174,7 @@ export const WAITLIST_INVITATION_SUBJECT_UNIDENTIFIED = "Your invitation to book
 export function waitlistInvitationSubject(studioName: string): string {
   const studio = studioName.trim();
   return studio
-    ? `Your invitation to book an electrolysis consultation with ${studio}`
+    ? `Your invitation to book a consultation with ${studio}`
     : WAITLIST_INVITATION_SUBJECT_UNIDENTIFIED;
 }
 
@@ -199,14 +212,19 @@ export function buildWaitlistInvitationEmail(
     `${lead}\n\n` +
     `${url}\n\n` +
     `This invitation expires ${ttl}.\n\n` +
-    // MECHANISM-NEUTRAL. The previous wording described "a short confirmation
-    // code emailed to this address", which pinned prospect-facing copy to one
-    // implementation of recipient proof. This states that a verification step
-    // exists without describing how, so the proof mechanism can change without
-    // this sentence becoming a lie. It removes nothing from the code: the
-    // proof requirement itself is unchanged.
+    // MECHANISM-NEUTRAL, AND NOT OPTIONAL. The previous wording described "a
+    // short confirmation code emailed to this address", which pinned
+    // prospect-facing copy to one implementation of recipient proof. This
+    // states WHAT must happen without describing HOW, so the proof mechanism
+    // can change without this sentence becoming a lie.
+    //
+    // "will need to", never "may": verification is mandatory on both branches
+    // — declineInvitationAction and the booking path both return the
+    // capability-required state when readCapability yields nothing — so "may"
+    // understated a required step and contradicted the clause before it. This
+    // removes nothing from the code; the proof requirement is untouched.
     `For your security, opening the link is not enough on its own. When you ` +
-    `choose to book or decline, Hone may ask you to verify this email ` +
+    `choose to book or decline, you will need to verify this email ` +
     `address.\n\n` +
     `If you no longer want to hear about openings, reply to this email and ask ` +
     `to be taken off the list.\n\n` +
@@ -244,7 +262,7 @@ export function buildWaitlistInvitationEmail(
           This invitation expires ${ttlH}.
         </td></tr>
         <tr><td style="padding:12px 0 24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.65; color:#6B6B6B;">
-          For your security, opening the link is not enough on its own. When you choose to book or decline, Hone may ask you to verify this email address.
+          For your security, opening the link is not enough on its own. When you choose to book or decline, you will need to verify this email address.
         </td></tr>
         <tr><td style="padding:0 0 24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.65; color:#6B6B6B;">
           If you no longer want to hear about openings, reply to this email and ask to be taken off the list.

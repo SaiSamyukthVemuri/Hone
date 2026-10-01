@@ -57,7 +57,7 @@ describe("waitlist invitation email", () => {
 
   it("NAMES THE STUDIO IN THE SUBJECT, exactly as resolved", () => {
     expect(waitlistInvitationSubject(STUDIO)).toBe(
-      "Your invitation to book an electrolysis consultation with Willow Electrolysis",
+      "Your invitation to book a consultation with Willow Electrolysis",
     );
     expect(build().subject).toContain(STUDIO);
     // Operator inbox-rule vocabulary stays on the studio-facing notification.
@@ -201,20 +201,59 @@ describe("waitlist invitation email", () => {
     expect(out.html).toContain("opening the link is not enough on its own");
   });
 
-  it("states the verification step in MECHANISM-NEUTRAL words", () => {
-    // The previous copy described "a short confirmation code emailed to this
-    // address", pinning prospect-facing text to one implementation of
-    // recipient proof. This hotfix must not depend on, or pre-empt, any change
-    // to that mechanism — so the copy states that verification happens without
-    // describing how. Nothing is removed from the code: the proof requirement
-    // itself is untouched.
+  it("states that verification is REQUIRED, in mechanism-neutral words", () => {
+    // Two properties at once, and the second was a Codex P2 on the first pass.
+    //
+    // MECHANISM-NEUTRAL: the original copy described "a short confirmation
+    // code emailed to this address", pinning prospect-facing text to one
+    // implementation of recipient proof. This hotfix must neither depend on
+    // nor pre-empt a change to that mechanism.
+    //
+    // NOT OPTIONAL: "may ask you to verify" understated a mandatory step and
+    // contradicted the clause immediately before it. Both branches hard-gate
+    // on a capability — declineInvitationAction and the booking path in
+    // app/invitation/[token]/actions.ts each return the capability-required
+    // state when readCapability yields nothing — so the copy says "will need
+    // to". Nothing is removed from the code; the proof requirement is
+    // untouched.
     const out = build();
     for (const rendered of [out.text, out.html]) {
       expect(rendered).toContain(
-        "Hone may ask you to verify this email address",
+        "you will need to verify this email address",
       );
+      expect(rendered).not.toMatch(/\bmay ask\b/);
+      expect(rendered).not.toMatch(/\bmay be asked\b/);
       expect(rendered).not.toContain("confirmation code");
       expect(rendered).not.toContain("short code");
+    }
+  });
+
+  it("keeps the CONSULTATION TYPE generic — never names a modality", () => {
+    // Codex P2 on the first pass. A new-client waitlist invitation is issued
+    // for any service isConsultationService accepts, and that predicate keys
+    // on the `consultation` MODALITY, not on the name: a service called
+    // "Laser" with consultation modality is pinned as eligible in
+    // tests/db/waitlist-admission-command.db.test.ts. "An electrolysis
+    // consultation" therefore misdescribed the appointment for every studio
+    // that is not an electrolysis studio.
+    const out = build();
+    expect(out.subject).toBe(
+      "Your invitation to book a consultation with Willow Electrolysis",
+    );
+    // The studio may legitimately have a modality in its NAME, which is why
+    // this checks the template's own words rather than the whole string.
+    const withoutStudio = [out.subject, out.text, out.html]
+      .map((r) => r.split(STUDIO).join("«studio»"))
+      .join("\n");
+    for (const modality of [
+      "electrolysis",
+      "laser",
+      "skincare",
+      "waxing",
+      "thermolysis",
+      "galvanic",
+    ]) {
+      expect(withoutStudio.toLowerCase()).not.toContain(modality);
     }
   });
 
