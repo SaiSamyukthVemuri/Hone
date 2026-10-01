@@ -19,6 +19,7 @@ const START = new Date("2026-10-07T14:00:00.000Z"); // a WEDNESDAY in Toronto
 const START_ISO = START.toISOString();
 
 const rpcCalls: string[] = [];
+const rpcArgs: Array<{ fn: string; args: Record<string, unknown> }> = [];
 const clientWrites: Array<{ table: string; op: string }> = [];
 const scenario = { weekdays: null as unknown, redeemResult: "redeemed" as string };
 
@@ -66,8 +67,9 @@ function makeChain(table: string) {
 
 const admin = {
   from: (t: string) => makeChain(t),
-  rpc: async (fn: string) => {
+  rpc: async (fn: string, args: Record<string, unknown> = {}) => {
     rpcCalls.push(fn);
+    rpcArgs.push({ fn, args });
     if (fn === "resolve_new_client_waitlist_invitation") {
       return { data: [{ result: "live", invitation_id: "inv-1", studio_id: STUDIO_ID,
         entry_id: "entry-1", scope_service_id: SERVICE_ID, scope_start_date: "2026-10-01",
@@ -77,13 +79,22 @@ const admin = {
     if (fn === "redeem_new_client_waitlist_invitation_verified") {
       return { data: [{ result: scenario.redeemResult, studio_id: STUDIO_ID, entry_id: "entry-1" }], error: null };
     }
-    if (fn === "create_public_appointment") {
-      return { data: [{ result: "created", appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
+    // NEW-client bookings now reach ONE composed command, which owns admission
+    // + client creation + the appointment as a single commit and tells the
+    // ordinary path from the invited one by the SERVER-DERIVED entry id.
+    // `create_public_appointment` stays for EXISTING clients, unchanged.
+    if (
+      fn === "create_public_appointment" ||
+      (fn === "create_public_appointment_for_new_client" && args.p_entry_id == null)
+    ) {
+      return { data: [{ result: "created",
+            client_id: (args.p_client_id as string | null) ?? CLIENT_ID, appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
     }
     // WAIT-03. An INVITATION booking commits through 0195, which answers with
     // its own success word. Nothing else about these journeys changed.
-    if (fn === "create_waitlist_public_appointment") {
-      return { data: [{ result: "created_and_converted", appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
+    if (fn === "create_public_appointment_for_new_client" && args.p_entry_id != null) {
+      return { data: [{ result: "created_and_converted",
+            client_id: (args.p_client_id as string | null) ?? CLIENT_ID, appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
     }
     return { data: null, error: null };
   },
@@ -141,7 +152,7 @@ const clientRowsCreated = () => clientWrites.filter((w) => w.table === "clients"
 
 beforeEach(() => {
   process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = SLUG;
-  rpcCalls.length = 0; clientWrites.length = 0;
+  rpcCalls.length = 0; rpcArgs.length = 0; clientWrites.length = 0;
   scenario.weekdays = null; scenario.redeemResult = "redeemed";
 });
 
@@ -229,10 +240,14 @@ describe("P3-A — a refused consume must leave no newly-created client row", ()
   it("POSITIVE CONTROL: an accepted consume still books and creates its client", async () => {
     const out = await publicBookAppointmentAction(form({ invitation_token: TOKEN, invitation_capability: CAP }));
     expect(out.ok).toBe(true);
-    // NAMED PRECISELY, because "either command booked" would still pass if an
-    // invitation were routed through the ordinary one — and that is exactly the
-    // booked-but-still-invited state 0195 exists to remove.
-    expect(rpcCalls).toContain("create_waitlist_public_appointment");
+    // NAMED PRECISELY, because "it booked somehow" would still pass if an
+    // invitation were routed down the ordinary path - exactly the
+    // booked-but-still-invited state 0195 exists to remove. The composed command
+    // is one name for both, so the ENTRY ID is what distinguishes them now.
+    const invitedCall = rpcArgs.find(
+      (c) => c.fn === "create_public_appointment_for_new_client" && c.args.p_entry_id != null,
+    );
+    expect(invitedCall, "the invited path must carry the entry id").toBeDefined();
     expect(rpcCalls).not.toContain("create_public_appointment");
   });
 
@@ -243,7 +258,7 @@ describe("P3-A — a refused consume must leave no newly-created client row", ()
       const out = await publicBookAppointmentAction(form({ invitation_token: TOKEN, invitation_capability: CAP }));
       expect(out.ok).toBe(false);
       expect(rpcCalls).not.toContain("create_public_appointment");
-      expect(rpcCalls).not.toContain("create_waitlist_public_appointment");
+      expect(rpcCalls).not.toContain("create_public_appointment_for_new_client");
       expect(clientRowsCreated(), "a refused consume must not leave a client row").toBe(0);
     },
   );

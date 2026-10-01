@@ -52,6 +52,7 @@ import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   getNewClientAdmissionMode,
+  newClientAdmissionLegacyBridgeWaitlist,
   NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,
   NEW_CLIENT_ADMISSION_REFUSAL_CODE,
   newClientAdmissionRefusesOutright,
@@ -932,7 +933,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     };
   };
 
-  let clientId: string;
+  // RESOLVED here, or CREATED inside the commit transaction. Creating a client
+  // before the locked admission decision would leave an ORPHAN for a request
+  // the owner had just refused, so the new-client path defers it. The final id
+  // is a `const` bound at the commit, below.
+  let resolvedClientId: string | null = null;
+  // Only ever reached when the TRANSPORT failed, where every path below returns
+  // before using it. Named so it cannot be mistaken for a real id in a log.
+  const NO_CLIENT_RESOLVED = "__transport_failed__";
   let clientName: string;
   let clientPhone: string | null;
   // SMS consent state used by the SMS confirmation attempt at the
@@ -980,7 +988,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // signed magic-link to claim or merge a client identity) is
     // a separate, scoped change that has NOT been made in this
     // branch.
-    clientId = existingClient.id;
+    resolvedClientId = existingClient.id;
     clientName = existingClient.name;
     clientPhone = existingClient.phone;
     clientSmsConsentAt = existingClient.sms_consent_at ?? null;
@@ -1012,7 +1020,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
             sms_consent_at: nowIso,
             sms_consent_source: "public_booking",
           })
-          .eq("id", clientId);
+          .eq("id", resolvedClientId);
         if (consentErr) {
           // Soft fail. The booking and the email path must not break
           // because of a consent-stamp error; future bookings can
@@ -1030,121 +1038,27 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       }
     }
   } else {
-    // New client. If smsConsent is true, stamp consent_at immediately
-    // with source "public_booking" -- there is no prior phone to
-    // protect (this row is being created right now) so the gate is
-    // strictly the checkbox plus a normalizable phone, both of which
-    // were submitted by the same form post. Building the row with a
-    // base + conditional spread keeps Supabase's column-type inference
-    // happy across the two branches.
-    const nowIso = new Date().toISOString();
-    const newClientRow = {
-      studio_id: studio.id,
-      name,
-      email,
-      phone,
-      ...(smsConsent
-        ? {
-            sms_consent_at: nowIso,
-            sms_consent_source: "public_booking" as const,
-          }
-        : {}),
-    };
-    const { data: createdClient, error: clientErr } = await admin
-      .from("clients")
-      .insert(newClientRow)
-      .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
-      .single();
-    if (clientErr || !createdClient) {
-      // Race-safe path: the clients_studio_normalized_email_uniq
-      // partial unique index raises sqlstate 23505 when our INSERT
-      // collides on (studio_id, normalized_email). The winning row is
-      // either:
-      //   (a) an ACTIVE client created by a concurrent booking from
-      //       the same email (the original race-fallback case), or
-      //   (b) an ARCHIVED client (migration 0050) that owns the same
-      //       email. The initial lookup filters archived clients, so
-      //       case (b) falls through to the INSERT, which then trips
-      //       the unique index because the index is on the bare
-      //       normalized_email column (archived rows still occupy
-      //       their slot in the index).
-      //
-      // We re-read the winner WITHOUT the archived filter so we can
-      // distinguish (a) from (b). If the winner is archived, we
-      // refuse the booking with a generic non-revealing error -- we
-      // never attach a public appointment to an archived client,
-      // never auto-unarchive from a public surface, and never reveal
-      // to the booker that the email belongs to an archived row.
-      if (clientErr?.code === "23505") {
-        const { data: winner } = await admin
-          .from("clients")
-          .select(
-            "id, name, phone, sms_consent_at, sms_opted_out_at, archived_at",
-          )
-          .eq("studio_id", studio.id)
-          .eq("normalized_email", normalizedEmail)
-          .maybeSingle();
-        if (winner && winner.archived_at != null) {
-          // Archived-collision case. Log internally so an operator
-          // can see what happened; return a generic message that
-          // does not reveal the archive.
-          // PR #261: never write the raw booker email or the internal
-          // archived client UUID to logs from this unauthenticated
-          // path. The salted email fingerprint preserves operator
-          // correlation; archivedClientCollision flags the case without
-          // re-introducing the archive-enumeration linkage the visitor
-          // message deliberately hides.
-          logInternalBookingError("public_booking_archived_client_collision", {
-            studioId: studio.id,
-            emailFingerprint: hashFingerprint(normalizedEmail),
-            archivedClientCollision: true,
-          });
-          // P3-A: the offer is already spent on this path.
-          if (consumedInvitationId) return invitationConsumedWithoutBooking("client_identity_collision");
-          return {
-            ok: false,
-            error: archivedClientCollisionError(studio.name),
-          };
-        }
-        if (winner) {
-          clientId = winner.id;
-          clientName = winner.name;
-          clientPhone = winner.phone ?? phone;
-          clientSmsConsentAt = winner.sms_consent_at ?? null;
-          clientSmsOptedOutAt = winner.sms_opted_out_at ?? null;
-        } else {
-          // PR #261: keep the sqlstate code (the diagnostic that
-          // matters for an unresolved unique-index race) + studioId +
-          // salted email fingerprint; drop the raw booker email and the
-          // raw DB message.
-          logInternalBookingError("public_booking_unique_race_unresolved", {
-            studioId: studio.id,
-            emailFingerprint: hashFingerprint(normalizedEmail),
-            code: clientErr.code,
-          });
-          // P3-A: the offer is already spent on this path.
-          if (consumedInvitationId) return invitationConsumedWithoutBooking("client_not_created");
-          return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
-        }
-      } else {
-        // PR #261: sqlstate code + studioId + salted email fingerprint;
-        // drop raw DB message.
-        logInternalBookingError("public_booking_client_insert_failed", {
-          code: clientErr?.code,
-          studioId: studio.id,
-          emailFingerprint: hashFingerprint(normalizedEmail),
-        });
-        // P3-A: the offer is already spent on this path.
-        if (consumedInvitationId) return invitationConsumedWithoutBooking("client_not_created");
-        return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
-      }
-    } else {
-      clientId = createdClient.id;
-      clientName = createdClient.name;
-      clientPhone = createdClient.phone;
-      clientSmsConsentAt = createdClient.sms_consent_at ?? null;
-      clientSmsOptedOutAt = createdClient.sms_opted_out_at ?? null;
-    }
+    // DEFERRED TO THE COMMIT TRANSACTION, and that is the whole point.
+    //
+    // This used to insert the client here, through its own PostgREST request,
+    // before the appointment command ran. The admission read at the top of this
+    // action is NOT commit-time authority: the owner can change the mode in
+    // between, so a request that began under `open` could leave a client row
+    // behind for a booking that was then refused. Guarding only the appointment
+    // command could not have helped - the orphan is created before it runs.
+    //
+    // `create_public_appointment_for_new_client` instead takes the studios row
+    // lock, decides admission, and only then resolves-or-creates the client and
+    // creates the appointment, as ONE commit. It returns the id it used.
+    //
+    // The unique-violation race this branch used to handle cannot occur there:
+    // that same row lock serialises same-studio bookings, so the command's
+    // lookup-then-insert is safe. The ARCHIVED-client collision is still a real
+    // answer and comes back as its own outcome below.
+    clientName = name;
+    clientPhone = phone;
+    clientSmsConsentAt = smsConsent ? new Date().toISOString() : null;
+    clientSmsOptedOutAt = null;
   }
 
   // BOOK-01 P2-B. REQUIRED CONFIGURATION IS RESOLVED BEFORE THE DURABILITY
@@ -1207,7 +1121,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // submitted.
   const commitArgs = {
     p_studio_id: studio.id,
-    p_client_id: clientId,
+    p_client_id: resolvedClientId,
     p_service_id: serviceId,
     p_starts_at: start.toISOString(),
     p_cancellation_token_hash: hashAppointmentToken(appointmentToken),
@@ -1218,7 +1132,34 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // `redeemedEntryId` is a `let`, so a const binding is what makes the argument
   // provably non-null without a cast.
   const atomicEntryId = redeemedEntryId;
-  const { data: rpcRows, error: rpcErr } = atomicEntryId
+  // COMMIT-TIME ADMISSION, FOR NEW CLIENTS ONLY.
+  //
+  // Both new-client branches - ordinary and invited - commit through the one
+  // guarded command. It takes the studios row lock, decides admission for the
+  // operation it is actually performing (`book`, or `invited_book` when an entry
+  // id is present), resolves-or-creates the client, and creates the appointment,
+  // all in ONE transaction. So an owner who closes the studio first wins and
+  // nothing is written, and an invitation cannot carry a booking past CLOSED.
+  //
+  // AN EXISTING CLIENT IS UNTOUCHED. `clientType` is the branch, and the
+  // existing-client path reaches the same commands it always did with the same
+  // arguments, consulting no admission authority at any point.
+  const { data: rpcRows, error: rpcErr } = clientType === "new"
+    ? await admin.rpc("create_public_appointment_for_new_client", {
+        ...commitArgs,
+        p_client_name: clientName,
+        p_client_email: email,
+        p_client_phone: clientPhone,
+        // Only when this command is the one creating the row; a resolved client
+        // keeps whatever consent it already had.
+        p_sms_consent_at: resolvedClientId ? null : clientSmsConsentAt,
+        // SERVER-DERIVED and TEMPORARY: the transition fact 0204 cannot read for
+        // itself, consulted only while the row is unstamped.
+        p_legacy_bridge_waitlist: newClientAdmissionLegacyBridgeWaitlist(studio.slug),
+        // NULL is the ordinary path; non-null composes 0195's conversion.
+        p_entry_id: atomicEntryId,
+      })
+    : atomicEntryId
     ? await admin.rpc("create_waitlist_public_appointment", {
         ...commitArgs,
         // SERVER-DERIVED, from the locked redemption that just spent it. Never
@@ -1228,6 +1169,55 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     : await admin.rpc("create_public_appointment", commitArgs);
   const commandRow = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
   const rawCommandResult = (commandRow?.result as string | undefined) ?? null;
+
+  // THE COMMIT-TIME REFUSALS, answered before anything was written.
+  //
+  // Reaching either means the world moved after this action's own reads - the
+  // owner changed the mode, or this email resolved to an archived client under
+  // the lock. Both come back INSTEAD of a booking, so there is nothing to undo.
+  if (rawCommandResult === "new_client_admission_refused") {
+    if (consumedInvitationId) {
+      return invitationConsumedWithoutBooking("admission_refused_at_commit");
+    }
+    return {
+      ok: false,
+      error: NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,
+      code: NEW_CLIENT_ADMISSION_REFUSAL_CODE,
+    };
+  }
+  if (rawCommandResult === "archived_client_collision") {
+    logInternalBookingError("public_booking_archived_client_collision", {
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
+      archivedClientCollision: true,
+    });
+    if (consumedInvitationId) {
+      return invitationConsumedWithoutBooking("client_identity_collision");
+    }
+    return { ok: false, error: archivedClientCollisionError(studio.name) };
+  }
+
+  // The id the COMMAND used - resolved under the lock, or created by it. For an
+  // existing client it is the one this action already resolved.
+  //
+  // NOT a refusal when the TRANSPORT failed. `rpcErr` means the answer was lost,
+  // not that nothing happened: the transaction may have committed, so claiming
+  // "no client" here would report a spent invitation as unbooked. That case is
+  // INDETERMINATE and is handled below, which is why this guard excludes it.
+  const committedClientId =
+    (commandRow?.client_id as string | undefined) ?? resolvedClientId;
+  if (!rpcErr && !committedClientId) {
+    logInternalBookingError("public_booking_client_not_resolved", {
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
+      code: rawCommandResult ?? undefined,
+    });
+    if (consumedInvitationId) {
+      return invitationConsumedWithoutBooking("client_not_created");
+    }
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+  const clientId = committedClientId ?? resolvedClientId ?? NO_CLIENT_RESOLVED;
   // 0195 speaks a superset: `created_and_converted` for success, and the nested
   // command's own refusal re-emitted under an `appointment:` prefix. Unwrapping
   // it here keeps ONE vocabulary in play rather than two.

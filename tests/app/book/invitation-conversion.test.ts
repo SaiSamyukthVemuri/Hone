@@ -261,12 +261,26 @@ const admin = {
         error: null,
       };
     }
-    if (fn === "create_public_appointment") {
+    // THE COMPOSED COMMAND, which both NEW-client branches now reach. 0204 owns
+    // admission + client creation + the appointment as one commit, and tells the
+    // two apart by the SERVER-DERIVED entry id: null is ordinary, non-null
+    // composes 0195's conversion. The fake honours that split, so every
+    // assertion below still distinguishes the two paths.
+    //
+    // `create_public_appointment` is kept below, unchanged: an EXISTING client
+    // still reaches it directly and consults no admission authority.
+    if (
+      fn === "create_public_appointment" ||
+      (fn === "create_public_appointment_for_new_client" && args.p_entry_id == null)
+    ) {
       if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       return {
         data: [
           {
             result: scenario.bookingResult,
+            // RESOLVE-OR-CREATE, as the command does: the caller's id when it
+            // resolved one, otherwise the row the command created.
+            client_id: (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
             appointment_id:
               scenario.bookingResult === "created" && !scenario.suppressAppointmentId
                 ? APPT_ID
@@ -281,9 +295,10 @@ const admin = {
         error: null,
       };
     }
-    if (fn === "create_waitlist_public_appointment") {
+    if (fn === "create_public_appointment_for_new_client" && args.p_entry_id != null) {
       if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       const empty = {
+        client_id: (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
         appointment_id: null,
         created_at: null,
         starts_at: null,
@@ -300,7 +315,14 @@ const admin = {
       }
       // The conversion runs INSIDE the same command, against 0192's own
       // preconditions, so a conversion refusal takes the appointment with it.
-      const conv = recordConversion(args);
+      // INSIDE the command the client already exists: it resolved or created the
+      // row before converting the entry. The fake converts with that same
+      // effective id, because `p_client_id` is NULL on the wire for a brand-new
+      // client - the command, not the caller, supplies it.
+      const conv = recordConversion({
+        ...args,
+        p_client_id: (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
+      });
       if (conv !== "converted") {
         return { data: [{ result: `conversion:${conv}`, ...empty }], error: null };
       }
@@ -308,6 +330,8 @@ const admin = {
         data: [
           {
             result: "created_and_converted",
+            // The composed command returns the client it resolved or created.
+            client_id: (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
             appointment_id: scenario.suppressAppointmentId ? null : APPT_ID,
             created_at: new Date().toISOString(),
             starts_at: START_ISO,
@@ -451,10 +475,30 @@ function form(over: Record<string, string> = {}) {
 const invited = () => form({ invitation_token: TOKEN, invitation_capability: CAP });
 
 const conversions = () => rpcCalls.filter((c) => c.fn === "record_new_client_waitlist_conversion");
-/** Calls to the atomic command 0195 owns. */
-const atomicBookings = () => rpcCalls.filter((c) => c.fn === "create_waitlist_public_appointment");
-/** Calls to the ordinary, non-invitation booking command. */
-const ordinaryBookings = () => rpcCalls.filter((c) => c.fn === "create_public_appointment");
+/**
+ * Calls that compose 0195's conversion — the composed command carrying an entry
+ * id. The application no longer calls `create_waitlist_public_appointment`
+ * directly; 0204's command does, inside the same transaction as the locked
+ * admission decision. The ATOMICITY itself is proved at the database in
+ * tests/db/new-client-admission-commit-authority.db.test.ts; what this file
+ * still owns is that the application reaches the right path, exactly once, with
+ * server-derived arguments.
+ */
+const atomicBookings = () =>
+  rpcCalls.filter(
+    (c) => c.fn === "create_public_appointment_for_new_client" && c.args.p_entry_id != null,
+  );
+/**
+ * Calls to an ordinary, non-invitation booking — a NEW client through the
+ * composed command with no entry id, or an EXISTING client through the command
+ * it has always used.
+ */
+const ordinaryBookings = () =>
+  rpcCalls.filter(
+    (c) =>
+      c.fn === "create_public_appointment" ||
+      (c.fn === "create_public_appointment_for_new_client" && c.args.p_entry_id == null),
+  );
 const indexOfCall = (fn: string) => rpcCalls.findIndex((c) => c.fn === fn);
 
 beforeEach(() => {
@@ -516,7 +560,12 @@ describe("A — a successful invitation booking converts the entry, atomically",
     await publicBookAppointmentAction(invited());
     const call = atomicBookings()[0];
     expect(call.args.p_studio_id).toBe(STUDIO_ID);
-    expect(call.args.p_client_id).toBe(NEW_CLIENT_ID);
+    // NULL, and that is the repair: the application no longer creates the client
+    // before the booking. It passes the identity and the command resolves or
+    // creates the row INSIDE the locked transaction, so a refused request cannot
+    // leave one behind. The identity it passes is still bounded and its own.
+    expect(call.args.p_client_id).toBeNull();
+    expect(call.args.p_client_email).toBe(INVITED_EMAIL);
     expect(call.args.p_service_id).toBe(SERVICE_ID);
     expect(call.args.p_starts_at).toBe(START_ISO);
     // THE REDEMPTION'S ENTRY, not the invitation's and not the client's.
@@ -544,7 +593,7 @@ describe("A — a successful invitation booking converts the entry, atomically",
   it("redeems BEFORE it books, and books once", async () => {
     await publicBookAppointmentAction(invited());
     const redeem = indexOfCall("redeem_new_client_waitlist_invitation_verified");
-    const book = indexOfCall("create_waitlist_public_appointment");
+    const book = indexOfCall("create_public_appointment_for_new_client");
     expect(redeem).toBeGreaterThan(-1);
     expect(book).toBeGreaterThan(redeem);
   });
@@ -685,7 +734,7 @@ describe("the OUTER post-commit guard is still load-bearing", () => {
     const out = await publicBookAppointmentAction(form());
 
     expect(out.ok, "a post-commit throw flipped a durable booking to a failure").toBe(true);
-    expect(indexOfCall("create_public_appointment")).toBeGreaterThanOrEqual(0);
+    expect(indexOfCall("create_public_appointment_for_new_client")).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -700,7 +749,7 @@ describe("D — ordinary public booking is untouched", () => {
     expect(conversions()).toHaveLength(0);
     expect(queue.status).toBe("invited");
     // Non-vacuity: the booking really did happen on this path.
-    expect(indexOfCall("create_public_appointment")).toBeGreaterThanOrEqual(0);
+    expect(indexOfCall("create_public_appointment_for_new_client")).toBeGreaterThanOrEqual(0);
   });
 
   it("an EXISTING client booking without an invitation issues ZERO conversions", async () => {
@@ -791,10 +840,16 @@ describe("G — every client resolution path converts the client it actually boo
   //   * an active row      -> the existing-client branch, reached even though
   //                           the visitor called themselves new;
   //   * a 23505 collision  -> the unique-index race re-read.
+  // THE THIRD PATH IS GONE, and that is the repair, not a loss of coverage. The
+  // 23505 unique-index race was an APPLICATION path only because the application
+  // inserted the client in its own request. The command now does it inside the
+  // transaction that already holds `studios ... FOR NO KEY UPDATE`, which
+  // serialises same-studio bookings, so two concurrent bookings cannot collide
+  // there at all. The serialisation itself is proved against a real database in
+  // tests/db/new-client-admission-commit-authority.db.test.ts.
   it.each([
-    ["a brand new client", "new" as const, NEW_CLIENT_ID],
+    ["a brand new client the command creates", "new" as const, NEW_CLIENT_ID],
     ["an already-active client under the invited address", "existing" as const, EXISTING_CLIENT_ID],
-    ["the unique-index race winner", "unique_race" as const, RACE_WINNER_ID],
   ])("%s", async (_label, path, expectedClientId) => {
     scenario.clientPath = path;
 
@@ -806,16 +861,19 @@ describe("G — every client resolution path converts the client it actually boo
     // what fails.
     // ONE command now carries both, so "the client booked" and "the client
     // converted" cannot diverge — they are the same argument.
-    const booked = rpcCalls.find((c) => c.fn === "create_waitlist_public_appointment");
-    expect(booked?.args.p_client_id).toBe(expectedClientId);
+    const booked = atomicBookings()[0];
+    // The id the COMMAND used: the one the application resolved, or - when it
+    // resolved none - the row the command created. Either way it is the id the
+    // entry is converted against, which is the fact that matters.
     expect(queue.convertedClientId).toBe(expectedClientId);
+    expect(booked?.args.p_client_id).toBe(path === "existing" ? expectedClientId : null);
     expect(conversions()).toHaveLength(0);
   });
 
-  it("the three branches really do resolve to three different clients", () => {
+  it("the two branches really do resolve to different clients", () => {
     // Non-vacuity for the table above: if they collapsed to one id, every row
     // would pass regardless of which branch ran.
-    expect(new Set([NEW_CLIENT_ID, EXISTING_CLIENT_ID, RACE_WINNER_ID]).size).toBe(3);
+    expect(new Set([NEW_CLIENT_ID, EXISTING_CLIENT_ID]).size).toBe(2);
   });
 
   // -------------------------------------------------------------------------

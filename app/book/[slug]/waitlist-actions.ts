@@ -479,6 +479,30 @@ async function submitViaStudioNotification(
     email: submission.email,
     phone: submission.phone,
   });
+  // LAST-MOMENT RE-RESOLVE, immediately before the provider commit.
+  //
+  // This transitional path cannot join a database transaction - the commitment
+  // is an external email - so it cannot have the studios row lock the durable
+  // path uses. What it CAN do is refuse to report a successful join using an
+  // admission state that has since changed, and that is what this is: the owner
+  // may have stamped CLOSED (or OPEN) between this action's first read and here.
+  //
+  // A STAMPED state wins over the legacy env list, because
+  // `getNewClientAdmissionMode` resolves the stamp first. Only WAITLIST may
+  // continue; OPEN, CLOSED and UNKNOWN all stop before anything is sent.
+  //
+  // TRANSITIONAL. This whole function disappears when the durable bridge is
+  // retired at cutover - see docs/production/new-client-admission-activation.md
+  // step 6 - and with it this re-read.
+  const admissionAtCommit = await getNewClientAdmissionMode(studio);
+  if (!newClientMayJoinWaitlist(admissionAtCommit)) {
+    logWaitlistEvent("new_client_waitlist_admission_changed_before_send", {
+      studioId: studio.id,
+      emailFingerprint,
+    });
+    return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
+  }
+
   const studioSend = await sendWaitlistEmailIdempotent({
     namespace: "studio",
     studioId: studio.id,

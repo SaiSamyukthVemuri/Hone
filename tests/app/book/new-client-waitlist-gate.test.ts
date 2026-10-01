@@ -341,7 +341,12 @@ describe("public booking — new-client waitlist admission gate", () => {
     expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
     // The exact inverse of the negative assertions: the same post DOES create
     // the client row and DOES issue the command when the flag is off.
-    expect(dbWrites).toContainEqual({ table: "clients", op: "insert" });
+    // THE CLIENT ROW IS NO LONGER WRITTEN HERE. It is created inside the
+    // composed command, in the same transaction as the locked admission
+    // decision, so a refused request cannot leave an orphan behind. The
+    // positive control is therefore that the command RAN - the inverse of the
+    // negative assertions above, which require that it did not.
+    expect(rpcCalls).toContain("create_public_appointment_for_new_client");
     expect(rpcCalls.length).toBeGreaterThan(0);
   });
 
@@ -349,7 +354,12 @@ describe("public booking — new-client waitlist admission gate", () => {
     setEnv("some-other-studio,yet-another");
     const result = await publicBookAppointmentAction(form());
     expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
-    expect(dbWrites).toContainEqual({ table: "clients", op: "insert" });
+    // THE CLIENT ROW IS NO LONGER WRITTEN HERE. It is created inside the
+    // composed command, in the same transaction as the locked admission
+    // decision, so a refused request cannot leave an orphan behind. The
+    // positive control is therefore that the command RAN - the inverse of the
+    // negative assertions above, which require that it did not.
+    expect(rpcCalls).toContain("create_public_appointment_for_new_client");
     expect(rpcCalls.length).toBeGreaterThan(0);
   });
 
@@ -406,7 +416,12 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
     const result = await publicBookAppointmentAction(form());
     expect(result.ok === false && result.code).not.toBe(ADMISSION_REFUSAL_CODE);
     expect(result.ok === false && result.code).not.toBe("new_client_waitlist");
-    expect(dbWrites).toContainEqual({ table: "clients", op: "insert" });
+    // THE CLIENT ROW IS NO LONGER WRITTEN HERE. It is created inside the
+    // composed command, in the same transaction as the locked admission
+    // decision, so a refused request cannot leave an orphan behind. The
+    // positive control is therefore that the command RAN - the inverse of the
+    // negative assertions above, which require that it did not.
+    expect(rpcCalls).toContain("create_public_appointment_for_new_client");
     expect(rpcCalls.length).toBeGreaterThan(0);
     // No credentials were presented, so the invitation authority is not consulted.
     expect(authorizeCalls).toEqual([]);
