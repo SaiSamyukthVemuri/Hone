@@ -164,14 +164,26 @@ export function BeforeTodayCard({
                 </Chip>
                 {setup?.frequency && <Chip>{setup.frequency}</Chip>}
                 {setup?.probe && <Chip>{setup.probe}</Chip>}
-                {last.probeLot && <Chip>Lot {last.probeLot}</Chip>}
+                {/* THE SETUP'S OWN LOT, not the newest treatment's. `setup`
+                    comes from the most recently treated AREA and `last` from the
+                    most recent TREATMENT; when the newest treatment has no named
+                    area those are different treatments, and this row is labelled
+                    "Latest recorded setup" above. Reading `last.probeLot` here
+                    showed the newer treatment's lot under the older area's
+                    label, and omitted the older area's own lot even when it was
+                    its only recorded setup fact. */}
+                {setup?.probeLot && <Chip>Lot {setup.probeLot}</Chip>}
                 {setup?.modeLabel && <Chip>{setup.modeLabel}</Chip>}
                 {setup?.energyLevel != null && (
                   <Chip>EL {setup.energyLevel}</Chip>
                 )}
                 {last.minutes != null && <Chip>{last.minutes} min</Chip>}
               </div>
-              {!setup && !last.probeLot && last.minutes == null && (
+              {/* `!setup` already covers the lot: a confirmed lot makes `setup`
+                  non-null. The old `!last.probeLot` term suppressed this line
+                  for a lot this row no longer renders, which would leave the
+                  row silent AND unexplained. */}
+              {!setup && last.minutes == null && (
                 <p className="mt-1 text-sm text-neutral-400">
                   Setup not recorded
                 </p>

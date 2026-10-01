@@ -229,6 +229,65 @@ describe("buildBeforeToday", () => {
     expect(nothing.latestSetupLine).toBeNull();
   });
 
+  it("#774 P2 — the setup summary renders ITS OWN lot, never the newer treatment's", () => {
+    // Codex P2 at lib/sessions/before-today.ts:218. `setup` comes from the most
+    // recently treated AREA; `last` from the most recent TREATMENT. When the
+    // newest treatment has no named area those are DIFFERENT treatments, and the
+    // card labels the row "Latest recorded setup: <older area>".
+    //
+    // The card read `last.probeLot` there, so it showed the newer treatment's lot
+    // under the older area's label and omitted that area's own lot even when the
+    // confirmed lot was its ONLY recorded setup fact — while also suppressing the
+    // "Setup not recorded" fallback.
+    const diverged = buildBeforeToday(
+      input({
+        // Newest treatment: a different, unrelated lot.
+        lastTreatment: {
+          ...input().lastTreatment!,
+          areaNames: [],
+          blockLots: ["NEWER-LOT-9999"],
+        },
+        // The latest AREA's setup: a confirmed lot and nothing else.
+        intelligence: {
+          ...input().intelligence,
+          areas: [
+            {
+              ...input().intelligence.areas[0]!,
+              latestFrequency: null,
+              latestProbe: null,
+              latestModeLabel: null,
+              latestEnergyLevel: null,
+              latestConfirmedProbeLot: "TEST-LOT-1063",
+            },
+          ],
+        },
+      }),
+    );
+
+    // The two facts are genuinely different here — the precondition that makes
+    // borrowing visible. Without this the rest could pass by coincidence.
+    expect(diverged.lastTreated?.probeLot).toBe("NEWER-LOT-9999");
+    expect(diverged.setup?.probeLot).toBe("TEST-LOT-1063");
+    expect(
+      diverged.latestSetupLine,
+      "the setup summary borrowed the newer treatment's lot",
+    ).toBe("Lot TEST-LOT-1063");
+
+    // AND THE CARD RENDERS THE SETUP-OWNED ONE. Only source can reach this: the
+    // chip sits in the row labelled "Latest recorded setup".
+    expect(
+      CARD,
+      "the setup row must render the setup's own lot",
+    ).toMatch(/\{setup\?\.probeLot && <Chip>Lot \{setup\.probeLot\}<\/Chip>\}/);
+    expect(
+      CARD,
+      "the setup row must not render the newest treatment's lot",
+    ).not.toMatch(/\{last\.probeLot && <Chip>/);
+    // The empty state no longer hinges on a lot this row does not render, so a
+    // card with no setup fact still says so.
+    expect(CARD).toMatch(/\{!setup && last\.minutes == null &&/);
+  });
+
   it("record reminders mirror the completeness rules", () => {
     const complete = buildBeforeToday(input());
     expect(complete.reminders).toEqual([]);
@@ -326,7 +385,7 @@ describe("placement + card", () => {
 
   it("snapshot and response render as wrapping chips; long notes wrap", () => {
     expect(CARD).toMatch(/flex flex-wrap gap-1\.5/);
-    expect(CARD).toMatch(/Lot \{last\.probeLot\}/);
+    expect(CARD).toMatch(/Lot \{setup\.probeLot\}/);
     expect(CARD).toMatch(/EL \{setup\.energyLevel\}/);
     expect(CARD).toMatch(/\{last\.minutes\} min/);
     expect(CARD).toMatch(/Tolerance \{response\.toleranceRating\}\/5/);
