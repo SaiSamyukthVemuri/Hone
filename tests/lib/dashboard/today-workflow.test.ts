@@ -409,11 +409,11 @@ describe("dashboard wiring", () => {
     expect(code).not.toMatch(/Last recorded:/);
     expect(code).not.toMatch(/For next visit:/);
     expect(code).not.toMatch(/Caution noted:/);
-    // Exactly one rendered Remember, Caution and Latest setup label.
+    // Exactly one rendered Remember, Caution and Latest recorded setup label.
     expect(code.match(/Remember: \{workflow\.remember\}/g) ?? []).toHaveLength(1);
     expect(code.match(/Caution: \{workflow\.caution\}/g) ?? []).toHaveLength(1);
     expect(
-      code.match(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/g) ?? [],
+      code.match(/Latest recorded setup: \{workflow\.setup \?\? "Not recorded"\}/g) ?? [],
     ).toHaveLength(1);
   });
 

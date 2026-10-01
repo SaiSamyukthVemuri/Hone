@@ -52,6 +52,7 @@ function input(over: Partial<BeforeTodayInput> = {}): BeforeTodayInput {
           latestProbe: "Ballet F3",
           latestModeLabel: "Thermolysis",
           latestEnergyLevel: 14,
+          latestConfirmedProbeLot: null,
           commonReactionLabel: "Mild redness",
           latestWatchNote: null,
         },
@@ -156,6 +157,9 @@ describe("buildBeforeToday", () => {
       energyLevel: 14,
       // PR #268: the latest setup is tied to its treatment area.
       areaName: "Chin",
+      // BROWSER-FINDING-01: this fixture confirms no lot, so the lot fact is
+      // absent and the line is unchanged.
+      probeLot: null,
     });
     expect(b.latestSetupLine).toBe("27.12 MHz · Ballet F3 · Thermolysis · EL 14");
     const empty = buildBeforeToday(
@@ -165,6 +169,64 @@ describe("buildBeforeToday", () => {
     );
     expect(empty.setup).toBeNull();
     expect(empty.latestSetupLine).toBeNull();
+  });
+
+  it("BROWSER-FINDING-01 — a CONFIRMED probe lot is recorded setup, not \"Not recorded\"", () => {
+    // Proved on hone-synthetic-twin: a historical block held
+    // probe_lot_number = "TEST-LOT-1063" with probe_lot_confirmed = true and
+    // every other setup field null. The full session rendered
+    // "Lot #TEST-LOT-1063 (confirmed)"; Dashboard / Before Today rendered
+    // "Latest recorded setup: Not recorded".
+    //
+    // ONE canonical derivation now answers this (recordedSetupForArea), so the
+    // Treatment Intelligence card cannot disagree with these two summaries.
+    const lotOnly = (over: Partial<BeforeTodayInput["intelligence"]["areas"][number]>) =>
+      buildBeforeToday(
+        input({
+          intelligence: {
+            ...input().intelligence,
+            areas: [
+              {
+                ...input().intelligence.areas[0]!,
+                latestFrequency: null,
+                latestProbe: null,
+                latestModeLabel: null,
+                latestEnergyLevel: null,
+                ...over,
+              },
+            ],
+          },
+        }),
+      );
+
+    const confirmed = lotOnly({ latestConfirmedProbeLot: "TEST-LOT-1063" });
+    expect(
+      confirmed.setup,
+      "a confirmed probe lot is recorded setup, so setup must not be null",
+    ).not.toBeNull();
+    expect(confirmed.latestSetupLine).toBe("Lot TEST-LOT-1063");
+    expect(confirmed.setup?.probeLot).toBe("TEST-LOT-1063");
+    // NOTHING FABRICATED for the parameters the block did not record.
+    expect(confirmed.setup?.frequency).toBeNull();
+    expect(confirmed.setup?.probe).toBeNull();
+    expect(confirmed.setup?.modeLabel).toBeNull();
+    expect(confirmed.setup?.energyLevel).toBeNull();
+
+    // PARTIAL KNOWN SETUP RENDERS POSITIVELY, and the lot joins it.
+    const partial = lotOnly({
+      latestModeLabel: "Thermolysis",
+      latestConfirmedProbeLot: "TEST-LOT-1063",
+    });
+    expect(partial.latestSetupLine).toBe("Thermolysis · Lot TEST-LOT-1063");
+
+    // "Not recorded" survives ONLY where the authority proves no setup fact:
+    // no confirmed lot and no parameter.
+    const nothing = lotOnly({ latestConfirmedProbeLot: null });
+    expect(
+      nothing.setup,
+      "with no setup fact at all, Not recorded is still correct",
+    ).toBeNull();
+    expect(nothing.latestSetupLine).toBeNull();
   });
 
   it("record reminders mirror the completeness rules", () => {

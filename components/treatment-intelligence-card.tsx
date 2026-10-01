@@ -1,8 +1,9 @@
 import { ClinicalUnavailableNotice } from "@/components/clinical-unavailable-notice";
 import { FormattedDateTime } from "@/components/formatted-date-time";
-import type {
-  AreaIntelligence,
-  TreatmentIntelligence,
+import {
+  recordedSetupForArea,
+  type AreaIntelligence,
+  type TreatmentIntelligence,
 } from "@/lib/sessions/treatment-intelligence";
 
 // PR #210: Client Treatment Intelligence Summary, rendered on the
@@ -45,14 +46,11 @@ function AreaCard({ area }: { area: AreaIntelligence }) {
   ]
     .filter(Boolean)
     .join(" · ");
-  const setupLine = [
-    area.latestFrequency,
-    area.latestProbe,
-    area.latestModeLabel,
-    area.latestEnergyLevel != null ? `EL ${area.latestEnergyLevel}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  // BROWSER-FINDING-01: the ONE canonical derivation, shared with
+  // `buildBeforeToday`. This used to recompute the same question here, which is
+  // how a confirmed probe lot could be recorded setup on the session surface and
+  // "Not recorded" on both summaries.
+  const setupLine = recordedSetupForArea(area).line;
   return (
     <li className="flex flex-col gap-0.5 py-2.5 text-sm">
       <div className="flex flex-wrap items-baseline justify-between gap-2">

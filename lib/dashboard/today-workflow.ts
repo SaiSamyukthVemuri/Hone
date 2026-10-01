@@ -88,7 +88,7 @@ export type TodayWorkflowItem = {
   remember: string | null;
   // The watch line. Rendered once under "Caution", visually distinct.
   caution: string | null;
-  // Rendered once under "Latest setup".
+  // Rendered once under "Latest recorded setup".
   setup: string | null;
   // Specific, shortened, deduplicated missing-record reminders. NEVER
   // accompanied by a generic "Records: N reminders" count.
@@ -152,7 +152,7 @@ function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
   const caution = trimmedOrNull(input.cautionNote);
   const remember = trimmedOrNull(input.nextVisitNote);
 
-  // Setup is shown only when there IS history; "Latest setup" against a client
+  // Setup is shown only when there IS history; "Latest recorded setup" against a client
   // with no charted history is noise, and the no-history state says it already.
   const setup = input.hasHistory ? trimmedOrNull(input.setupLine) : null;
 

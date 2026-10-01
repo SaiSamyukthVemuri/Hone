@@ -484,7 +484,7 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
       // run, and none of its vocabulary appears.
       await expect(tomorrowRow.getByText("Before today", { exact: true })).toHaveCount(0);
       await expect(tomorrowRow.getByText("New client · No charted history yet")).toHaveCount(0);
-      await expect(tomorrowRow.getByText(/^Latest setup:/)).toHaveCount(0);
+      await expect(tomorrowRow.getByText(/^Latest recorded setup:/)).toHaveCount(0);
       await expect(tomorrowRow.getByTestId("missing-record-chip")).toHaveCount(0);
       await expect(page.getByText("History unavailable")).toHaveCount(0);
       await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);

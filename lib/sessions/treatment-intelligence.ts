@@ -50,6 +50,11 @@ export type IntelligenceBlockInput = {
   energy_level: number | null;
   machine_frequency: string | null;
   probe_label: string | null;
+  // Probe traceability. OPTIONAL so a caller that does not read these columns
+  // keeps exactly the behaviour it had; absent is "no confirmed lot", never
+  // "confirmed".
+  probe_lot_number?: string | null;
+  probe_lot_confirmed?: boolean | null;
   minutes_performed: number | null;
   tolerance_rating: number | null;
   reaction_type: string | null;
@@ -76,6 +81,11 @@ export type AreaIntelligence = {
   latestProbe: string | null;
   latestModeLabel: string | null;
   latestEnergyLevel: number | null;
+  // The latest block's probe lot, and ONLY when the practitioner confirmed it.
+  // `probeLotDraftPatch` never marks an autofilled lot confirmed -- confirmation
+  // means someone checked the physical package -- so an unconfirmed number is a
+  // suggestion that may never have been verified.
+  latestConfirmedProbeLot: string | null;
   commonReactionLabel: string | null;
   latestWatchNote: string | null;
 };
@@ -184,6 +194,63 @@ function commonReaction(
     }
   }
   return top;
+}
+
+/**
+ * THE one answer to "what setup was recorded for this area?".
+ *
+ * BROWSER-FINDING-01. This question had TWO derivations: `buildBeforeToday`
+ * computed it for the newest area (feeding Dashboard Today and the Overview
+ * briefing) and `treatment-intelligence-card` recomputed it per area. Same four
+ * fields, same `" · "` join, same `EL n`, same empty-state fallback -- the only
+ * difference was which areas each one asked about, which is iteration scope, not
+ * semantics. Both therefore answered "Not recorded" for a historical block whose
+ * only recorded setup was a confirmed probe lot, while the full session rendered
+ * `Lot #… (confirmed)` correctly.
+ *
+ * `recorded` is derived from the SAME parts the line is built from, so the
+ * predicate and the display can never disagree. That divergence is the defect
+ * class itself: a fact added to one and not the other is exactly how "Not
+ * recorded" outlived the record.
+ *
+ * Reported, never invented: a parameter the block did not record stays null and
+ * contributes nothing. A note or observation is not setup and never appears here.
+ */
+export type RecordedSetup = {
+  frequency: string | null;
+  probe: string | null;
+  modeLabel: string | null;
+  energyLevel: number | null;
+  confirmedProbeLot: string | null;
+  areaName: string | null;
+  /** Display form. "" exactly when nothing was recorded. */
+  line: string;
+  /** True when at least one setup fact exists. The ONLY "Not recorded" gate. */
+  recorded: boolean;
+};
+
+export function recordedSetupForArea(area: AreaIntelligence): RecordedSetup {
+  const confirmedProbeLot = area.latestConfirmedProbeLot?.trim() || null;
+  const parts = [
+    area.latestFrequency,
+    area.latestProbe,
+    area.latestModeLabel,
+    area.latestEnergyLevel != null ? `EL ${area.latestEnergyLevel}` : null,
+    // Same wording the before-today card uses for a lot, so one fact reads one
+    // way wherever it appears.
+    confirmedProbeLot ? `Lot ${confirmedProbeLot}` : null,
+  ].filter((part): part is string => !!part);
+
+  return {
+    frequency: area.latestFrequency,
+    probe: area.latestProbe,
+    modeLabel: area.latestModeLabel,
+    energyLevel: area.latestEnergyLevel,
+    confirmedProbeLot,
+    areaName: area.name?.trim() || null,
+    line: parts.join(" · "),
+    recorded: parts.length > 0,
+  };
 }
 
 export function buildTreatmentIntelligence(input: {
@@ -324,6 +391,10 @@ export function buildTreatmentIntelligence(input: {
         latestProbe: a.latest.probe_label,
         latestModeLabel: modeLabelFor(a.latest),
         latestEnergyLevel: a.latest.energy_level,
+        latestConfirmedProbeLot:
+          a.latest.probe_lot_confirmed === true
+            ? (a.latest.probe_lot_number?.trim() || null)
+            : null,
         commonReactionLabel: commonReaction(a.reactionsOldestFirst),
         latestWatchNote: a.latestWatchNote,
       };
