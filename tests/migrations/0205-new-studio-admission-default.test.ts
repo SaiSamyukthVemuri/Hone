@@ -135,11 +135,31 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     //
     // The bound still has to be asserted, which is what this is: ONE update,
     // against studios, and no other verb at all.
+    // TWO updates now, and they are different in kind. The behavioural guard
+    // probe attempts an admission write it EXPECTS to be refused, and the repair
+    // performs the real one. Both are against `studios` and nothing else.
     const updates = [...CODE.matchAll(/\bupdate\s+public\.(\w+)/gi)].map((m) => m[1]);
-    expect(updates, "0205 writes exactly one table, once").toEqual(["studios"]);
+    expect(updates, "0205 writes only `studios`, and twice: probe then repair").toEqual([
+      "studios",
+      "studios",
+    ]);
     for (const verb of [/\binsert\s+into\b/i, /\bdelete\s+from\b/i, /\btruncate\b/i]) {
       expect(CODE, `0205 may only UPDATE; found ${verb}`).not.toMatch(verb);
     }
+
+    // THE PROBE'S WRITE CANNOT PERSIST, and that is what makes the second UPDATE
+    // acceptable in a migration whose blast radius is documented. It sits in a
+    // plpgsql block with an EXCEPTION handler - a subtransaction - and BOTH exits
+    // are exceptions: the guard's `check_violation`, or the sentinel raise when
+    // nothing refused it. Catching either rolls the attempt back.
+    const probe = /begin\s*\n\s*update public\.studios s\n([\s\S]*?)\n    end;/.exec(CODE);
+    expect(probe, "the guard probe block could not be located").toBeTruthy();
+    expect(probe![1]).toMatch(/raise exception 'HONE_0205_GUARD_NOT_POLICING'/);
+    expect(probe![1]).toMatch(/exception\s*\n\s*when check_violation then/);
+    expect(
+      probe![1],
+      "an unexpected error must propagate, not be swallowed by a probe",
+    ).toMatch(/else\s*\n\s*(--[^\n]*\n\s*)*raise;/);
   });
 
   it("eligibility is CENSUS MEMBERSHIP by id, never a timestamp", () => {
@@ -153,8 +173,12 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     expect(block, "the census set must be declared as uuids").toMatch(
       /k_census constant uuid\[\] := array\[/,
     );
-    // Seven ids, because the census enumerated seven studios.
-    const ids = [...block.matchAll(/'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'::uuid/g)];
+    // Seven ids, because the census enumerated seven studios. COUNTED INSIDE THE
+    // ARRAY LITERAL, not across the block: the guard probe carries sentinel uuids
+    // of its own, and a block-wide count silently became 10 the moment it landed.
+    const arr = /k_census constant uuid\[\] := array\[([\s\S]*?)\];/.exec(block);
+    expect(arr, "the census array literal could not be located").toBeTruthy();
+    const ids = [...arr![1].matchAll(/'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'::uuid/g)];
     expect(ids.length, "the census is seven studios").toBe(7);
     // Selection and both fail-closed queries must all exclude census members.
     expect(
@@ -205,82 +229,52 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     );
   });
 
-  it("requires the named trigger to BE the guard: right function, right event", () => {
-    // A NAME IS NOT A GUARD. Name-plus-firing-mode accepts a trigger recreated
-    // under the same name against another function, or for another event —
-    // measured: a same-named AFTER INSERT trigger on an unrelated function left
-    // the old check passing with tgenabled 'O' while the UPDATE invoked nothing.
+  it("proves the guard BEHAVIOURALLY, and asks pg_trigger only for diagnostics", () => {
+    // FIVE CATALOG CHECKS WERE NARROWED BY REVIEW BEFORE THIS REPLACED THEM:
+    // existence, enabled mode, session role, function identity, event/timing -
+    // and then `tgattr` and `tgqual`, which carry the right tgfoid, the right
+    // tgtype bits and an enabled mode while still never firing for these
+    // columns. Enumerating ways a trigger can fail to fire was not converging,
+    // so the question is asked of the database instead of its catalog.
     const block = REPAIR_BLOCK!;
 
-    // the FUNCTION, by oid rather than by name string
-    expect(block).toMatch(/t\.tgfoid/);
-    expect(block).toMatch(
-      /v_guard_fn <> 'public\.studios_admission_mode_guard\(\)'::regprocedure::oid/,
-    );
+    // The probe: an unpermitted admission write that must be refused.
+    expect(block).toMatch(/v_guard_policed\s*:=\s*false;/);
+    expect(block).toMatch(/update public\.studios s\n\s*set new_client_admission_mode_set_by =/);
+    expect(block).toMatch(/raise exception 'HONE_0205_GUARD_NOT_POLICING'/);
+    expect(block).toMatch(/when check_violation then\n\s*v_guard_policed := true;/);
+    expect(block).toMatch(/if not v_guard_policed then/);
 
-    // the EVENT/TIMING, as a bitmask: 1 ROW, 2 BEFORE, 16 UPDATE
-    expect(block).toMatch(/t\.tgtype/);
-    expect(block).toMatch(/\(v_guard_type & 1\) <> 1/);
-    expect(block).toMatch(/\(v_guard_type & 2\) <> 2/);
-    expect(block).toMatch(/\(v_guard_type & 16\) <> 16/);
-
-    // BITWISE, not `tgtype = 19`. A guard that ALSO fires on insert still
-    // polices every update, so equality would refuse a harmless widening.
-    expect(block, "an equality test would refuse a legitimately wider guard").not.toMatch(
-      /v_guard_type\s*(<>|!=|=)\s*19\b/,
-    );
-
-    // The body is deliberately NOT pinned, and the reason is recorded: this
-    // repository corrects an applied migration by redefining a function
-    // forward, so hashing the body would make 0205 refuse on that improvement.
-    expect(SQL).toMatch(/BODY IS DELIBERATELY NOT PINNED/);
-
-    // And identity is settled before any DML, like the other preconditions.
+    // It must NOT arm the permit - that is the whole point of the attempt.
+    const probeBlock =
+      /begin\s*\n\s*update public\.studios s\n\s*set new_client_admission_mode_set_by[\s\S]*?\n    end;/.exec(
+        block,
+      )![0];
     expect(
-      block.indexOf("v_guard_fn <>"),
-      "identity must be checked BEFORE any DML",
-    ).toBeLessThan(block.indexOf("update public.studios"));
-  });
+      probeBlock,
+      "arming the permit would make the probe prove nothing",
+    ).not.toMatch(/set_config\('hone\.admission_mode_studio_id'/);
 
-  it("requires the guard to FIRE for this session, not merely to exist", () => {
-    // EXISTENCE WAS NOT ENOUGH. A present-but-DISABLED trigger satisfied the
-    // old `if not exists (...)` — measured: `alter table ... disable trigger`
-    // leaves it true with `tgenabled = 'D'` — so the migration declared its
-    // guard prerequisite met and repaired rows nothing was policing.
-    //
-    // The replacement is PostgreSQL's own firing rule, both axes, written as the
-    // general law rather than as the origin-session special case.
-    const block = REPAIR_BLOCK!;
+    // The probed value must genuinely differ, or the guard never fires: it only
+    // reacts when a field `is distinct from` its old value.
+    expect(probeBlock).toMatch(/is distinct from/);
 
-    // The select now reads three columns — mode, function, event — so this pins
-    // the MODE's presence and its binding, not the single-column shape it had
-    // when the firing rule was the only identity check.
-    expect(block, "the mode must be read, not just the row's existence").toMatch(
-      /t\.tgenabled::text/,
-    );
-    expect(block, "and bound to the variable the rule below reads").toMatch(
-      /into v_guard_mode\b/,
-    );
-    expect(block, "absence is still its own refusal").toMatch(/v_guard_mode is null/);
-    expect(block).toMatch(/current_setting\('session_replication_role'\)/);
+    // THE CATALOG IS NOW DIAGNOSTIC ONLY. pg_trigger may be read to tell an
+    // operator WHY the probe failed; it may not be the gate. So any read of it
+    // must sit inside the failure branch, after the behavioural decision.
+    const triggerReads = [...block.matchAll(/pg_trigger/g)].map((m) => m.index!);
+    expect(triggerReads.length, "pg_trigger is still read, for diagnostics").toBeGreaterThan(0);
+    for (const at of triggerReads) {
+      expect(
+        at,
+        "pg_trigger must only be read AFTER the behavioural verdict, as diagnostics",
+      ).toBeGreaterThan(block.indexOf("if not v_guard_policed then"));
+    }
 
-    // ALWAYS fires regardless of role; ORIGIN needs origin/local; REPLICA needs
-    // replica. 'D' qualifies under none of the three, which is how it is refused.
-    expect(block).toMatch(/v_guard_mode = 'A'/);
-    expect(block).toMatch(/v_guard_mode = 'O' and v_session_role in \('origin', 'local'\)/);
-    expect(block).toMatch(/v_guard_mode = 'R' and v_session_role = 'replica'/);
-
-    // NOT a `tgenabled <> 'D'` shortcut, which would wrongly admit a
-    // replica-only trigger under an origin apply.
-    expect(block, "a <> 'D' test is not the firing rule").not.toMatch(
-      /tgenabled\s*(<>|!=)\s*'D'/,
-    );
-
-    // And it must precede the write, like every other precondition here.
-    expect(
-      block.indexOf("v_session_role in ('origin', 'local')"),
-      "the firing check must run BEFORE any DML",
-    ).toBeLessThan(block.indexOf("update public.studios"));
+    // And the retired catalog gates must not creep back as preconditions.
+    expect(block, "tgenabled must no longer gate the repair").not.toMatch(/v_guard_mode/);
+    expect(block, "tgfoid must no longer gate the repair").not.toMatch(/v_guard_fn/);
+    expect(block, "tgtype must no longer gate the repair").not.toMatch(/v_guard_type/);
   });
 
   it("gates on CENSUS LINEAGE before any DML, and aborts rather than guessing", () => {
@@ -332,8 +326,14 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     // overwritten by a second run either. The re-check is the half that survives
     // any change to the lock STRENGTH, which is pinned separately below.
     expect(block).toMatch(/for no key update/);
-    const update = /update public\.studios[\s\S]*?;/.exec(block)![0];
-    expect(update, "the per-row write must re-check the NULL it is replacing").toMatch(
+    // THE REPAIR'S update, identified by what it writes - not the first
+    // `update public.studios` in the block, which is now the guard probe's.
+    const update =
+      /update public\.studios s\n\s*set new_client_admission_mode_set_at = r\.created_at[\s\S]*?;/.exec(
+        block,
+      );
+    expect(update, "the repair's own UPDATE could not be located").toBeTruthy();
+    expect(update![0], "the per-row write must re-check the NULL it is replacing").toMatch(
       /and s\.new_client_admission_mode_set_at is null/,
     );
   });

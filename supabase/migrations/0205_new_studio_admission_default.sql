@@ -239,123 +239,36 @@ declare
     'eb5023c5-45b3-4215-9b02-afa10705a8fa'::uuid
   ];
   r               record;
-  v_guard_mode    text;
-  v_guard_fn      oid;
-  v_guard_type    smallint;
-  v_session_role  text;
+  v_probe_id      uuid;
+  v_guard_policed boolean;
+  v_guard_diag    text;
   v_studios       integer;
   v_census_seen   integer;
   v_anomalous     integer;
   v_repaired      integer := 0;
   v_left          integer;
 begin
-  -- FAIL CLOSED #1: the guard must exist AND MUST ACTUALLY FIRE for this session.
-  --
-  -- EXISTENCE WAS NOT ENOUGH, and an earlier revision checked only that. On a
-  -- restored or staging database the trigger can be present but DISABLED, or set
-  -- replica-only while data was loaded, and the old `if not exists (...)` passed
-  -- happily: measured locally, `alter table ... disable trigger` leaves the
-  -- existence check true with `tgenabled = 'D'`. The migration then declared its
-  -- guard prerequisite satisfied and repaired rows that nothing was policing,
-  -- which is the opposite of the fail-closed precondition it claims to be.
-  --
-  -- SO THE TEST IS SEMANTIC, in PostgreSQL's own terms. `tgenabled` and
-  -- `session_replication_role` together decide whether a trigger fires:
-  --
-  --   'A' ALWAYS   fires under every session_replication_role
-  --   'O' ORIGIN   fires only when the session role is 'origin' or 'local'
-  --   'R' REPLICA  fires only when the session role is 'replica'
-  --   'D' DISABLED never fires
-  --
-  -- An ordinary apply runs as 'origin', so 'O' and 'A' qualify there and 'R' and
-  -- 'D' do not. The condition is written as the general rule rather than as that
-  -- special case, because the rule is what is true: a guard that cannot fire for
-  -- THIS session is not a guard, whatever the session happens to be.
-  select t.tgenabled::text, t.tgfoid, t.tgtype
-    into v_guard_mode, v_guard_fn, v_guard_type
-    from pg_trigger t
-   where t.tgrelid = 'public.studios'::regclass
-     and t.tgname = 'studios_admission_mode_guard'
-     and not t.tgisinternal;
-
-  if v_guard_mode is null then
-    raise exception
-      '0205: studios_admission_mode_guard is absent; refusing to write admission fields';
-  end if;
-
-  -- IDENTITY. A NAME IS NOT A GUARD, and matching one was the third way this
-  -- prerequisite was too weak. On a restored or staging database a trigger can
-  -- be recreated under this exact name against a different function, or for a
-  -- different event, and name-plus-firing-mode accepts it: measured locally, a
-  -- same-named AFTER INSERT trigger on an unrelated function left the check
-  -- passing with tgenabled 'O' while the later UPDATE invoked nothing.
-  --
-  -- So the FUNCTION is checked, and the EVENT/TIMING is checked.
-  if v_guard_fn <> 'public.studios_admission_mode_guard()'::regprocedure::oid then
-    raise exception
-      '0205: a trigger named studios_admission_mode_guard exists on public.studios '
-      'but executes %, not public.studios_admission_mode_guard(); refusing to write '
-      'admission fields.', v_guard_fn::regprocedure;
-  end if;
-
-  -- tgtype is a BITMASK: 1 ROW, 2 BEFORE, 4 INSERT, 8 DELETE, 16 UPDATE.
-  -- The guard must be at least BEFORE UPDATE ... FOR EACH ROW. Tested BITWISE
-  -- rather than as `tgtype = 19`, because a guard that ALSO fires on insert
-  -- (tgtype 23) still polices every update and is not weaker - and equality
-  -- would refuse a legitimate widening for no safety gain.
-  if (v_guard_type & 1) <> 1
-     or (v_guard_type & 2) <> 2
-     or (v_guard_type & 16) <> 16 then
-    raise exception
-      '0205: studios_admission_mode_guard is not a BEFORE UPDATE ... FOR EACH ROW '
-      'trigger (tgtype=%); an UPDATE would not be policed by it, so the repair is '
-      'refused.', v_guard_type;
-  end if;
-
-  -- THE BODY IS DELIBERATELY NOT PINNED. This repository corrects an applied
-  -- migration by redefining a function FORWARD, so a later migration may
-  -- legitimately improve studios_admission_mode_guard()'s body; hashing it here
-  -- would make 0205 refuse on exactly that improvement. What the precondition
-  -- needs is that the right function is wired for the right event, which is what
-  -- the two checks above establish.
-
-  v_session_role := current_setting('session_replication_role');
-
-  if not (
-       v_guard_mode = 'A'
-    or (v_guard_mode = 'O' and v_session_role in ('origin', 'local'))
-    or (v_guard_mode = 'R' and v_session_role = 'replica')
-  ) then
-    raise exception
-      '0205: studios_admission_mode_guard EXISTS but does not fire for this '
-      'session (tgenabled=%, session_replication_role=%); refusing to write '
-      'admission fields with nothing policing them.',
-      v_guard_mode, v_session_role;
-  end if;
-
-  -- FAIL CLOSED #2: THE ENVIRONMENT / LINEAGE GATE, and it runs before ANY DML.
+  -- FAIL CLOSED #1: THE LINEAGE GATE, before any DML.
   --
   -- `k_census` can distinguish production's known rows ONLY on a database
   -- descended from the census that produced it. On any OTHER non-empty database
   -- - Hone Staging, or an older production backup being restored and migrated -
   -- none of those ids exist, so every ordinary open/unstamped row would read as
   -- post-0204 and be stamped, silently losing the legacy cutover. The shape
-  -- check below cannot catch it either: those rows ARE the expected shape.
+  -- check below cannot catch it: those rows ARE the expected shape.
   --
   -- MEASURED, NOT ASSUMED. Simulating three genuine legacy rows on a non-census
-  -- database and running this block stamped all three. That is the defect this
-  -- gate closes.
+  -- database and running this block stamped all three.
   --
   -- THIS IS A LINEAGE ASSERTION, NOT A SECOND ELIGIBILITY HEURISTIC. It answers
   -- one question - "is this the database the census describes?" - and eligibility
   -- is untouched by it.
   --
-  --   EMPTY studios        -> continue. Nothing to repair, and no lineage can be
-  --                           asserted or needed. This is every fresh chain,
-  --                           including `db reset` and CI's db lane.
-  --   NON-EMPTY studios    -> every census id MUST be present. Any one missing
-  --                           means this is not that lineage, and the migration
-  --                           ABORTS rather than repairing on a guess.
+  --   EMPTY studios        -> nothing to repair, no lineage to assert, and no
+  --                           guard to probe. Every fresh chain, including
+  --                           `db reset` and CI's db lane.
+  --   NON-EMPTY studios    -> every census id MUST be present, and the guard MUST
+  --                           be proved live. Any failure ABORTS.
   --
   -- ABORT, NOT SKIP, IS DELIBERATE and it has a cost worth naming: 0205 cannot
   -- be applied to a populated non-census database until that database is dealt
@@ -365,7 +278,8 @@ begin
 
   if v_studios = 0 then
     raise notice
-      '0205: studios is empty; lineage gate not applicable and nothing to repair';
+      '0205: studios is empty; nothing to repair, and neither the lineage gate '
+      'nor the guard probe is applicable';
   else
     select count(*)
       into v_census_seen
@@ -378,6 +292,95 @@ begin
         'studios present across % studios total. Absence from the census set is '
         'therefore not evidence of post-0204 creation, so the repair is refused.',
         v_census_seen, array_length(k_census, 1), v_studios;
+    end if;
+
+    -- FAIL CLOSED #2: PROVE THE GUARD POLICES. BEHAVIOURALLY, NOT FROM pg_trigger.
+    --
+    -- WHY THIS REPLACED FOUR CATALOG CHECKS. Earlier revisions asked pg_trigger
+    -- whether the guard existed, then whether it was enabled, then whether the
+    -- session role let it fire, then whether the named trigger was really that
+    -- function at BEFORE UPDATE ROW. Each was correct and each left an adjacent
+    -- gap, and review found five in a row. The last two were `tgattr` and
+    -- `tgqual`: `BEFORE UPDATE OF name` and `BEFORE UPDATE ... WHEN (false)` both
+    -- carry the right tgfoid, the right tgtype bits and an enabled mode, and
+    -- neither fires for an update of the admission columns. Enumerating the ways
+    -- a trigger can fail to fire was not converging.
+    --
+    -- So the question is asked of the DATABASE instead of its catalog: attempt a
+    -- real admission-field change WITHOUT arming the permit, and require it to be
+    -- refused. That subsumes existence, enablement, session role, function
+    -- identity, event, timing, column list and WHEN clause at once, and it cannot
+    -- be outflanked by a catalog field nobody thought of.
+    --
+    -- THE PROBE NEVER PERSISTS. A plpgsql block with an EXCEPTION handler runs in
+    -- a subtransaction, and catching the exception rolls that subtransaction
+    -- back. If the guard refuses the write we land in `when check_violation` and
+    -- the attempt is undone. If NOTHING refuses it, the sentinel raise below
+    -- fires and the attempt is undone on that path too. There is no path on which
+    -- the probe's write survives.
+    --
+    -- THE VALUE MUST GENUINELY CHANGE. The guard fires only when a field `is
+    -- distinct from` its old value, so a no-op write would prove nothing: the
+    -- CASE below always picks a value the row does not already hold.
+    --
+    -- AND THE REPAIR PROVES THE OTHER HALF. This probe shows an UNPERMITTED write
+    -- is refused; the permit-armed UPDATE in the loop shows a PERMITTED one
+    -- succeeds. Together those are the guard's whole contract, and if some OTHER
+    -- mechanism were refusing admission writes the loop would fail too - which is
+    -- still fail-closed.
+    select s.id into v_probe_id from public.studios s order by s.id limit 1;
+    v_guard_policed := false;
+
+    begin
+      update public.studios s
+         set new_client_admission_mode_set_by =
+               case
+                 when s.new_client_admission_mode_set_by
+                        is distinct from '00000000-0000-0000-0000-000000000000'::uuid
+                   then '00000000-0000-0000-0000-000000000000'::uuid
+                 else '11111111-1111-1111-1111-111111111111'::uuid
+               end
+       where s.id = v_probe_id;
+
+      -- Reached only when nothing refused an unpermitted admission write.
+      raise exception 'HONE_0205_GUARD_NOT_POLICING';
+    exception
+      when check_violation then
+        v_guard_policed := true;
+      when others then
+        if sqlerrm = 'HONE_0205_GUARD_NOT_POLICING' then
+          v_guard_policed := false;
+        else
+          -- Any other failure is real and must not be swallowed by a probe.
+          raise;
+        end if;
+    end;
+
+    if not v_guard_policed then
+      -- pg_trigger is read HERE, and only here: as DIAGNOSTIC context for the
+      -- operator, never as the gate. The gate is the behaviour above.
+      select format(
+               'trigger %s: function=%s tgtype=%s tgenabled=%s columns=%s when_clause=%s',
+               coalesce(t.tgname, '<absent>'),
+               coalesce(t.tgfoid::regprocedure::text, '<none>'),
+               coalesce(t.tgtype::text, '-'),
+               coalesce(t.tgenabled::text, '-'),
+               coalesce(t.tgattr::text, '<all>'),
+               case when t.tgqual is null then 'none' else 'present' end)
+        into v_guard_diag
+        from pg_trigger t
+       where t.tgrelid = 'public.studios'::regclass
+         and t.tgname = 'studios_admission_mode_guard'
+         and not t.tgisinternal;
+
+      raise exception
+        '0205: an UNPERMITTED admission-field write on studio % was NOT refused, '
+        'so new-client admission is not being policed on this database and the '
+        'repair would write unguarded rows. Diagnostic: %. Session '
+        'replication role: %.',
+        v_probe_id,
+        coalesce(v_guard_diag, 'no studios_admission_mode_guard trigger on public.studios'),
+        current_setting('session_replication_role');
     end if;
   end if;
 

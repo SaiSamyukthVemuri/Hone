@@ -401,18 +401,6 @@ async function dropCensusMember(id: string): Promise<void> {
   await adminQuery(`delete from public.studios where id = $1`, [id]);
 }
 
-/** The guard's `tgenabled` mode: 'O' origin, 'A' always, 'R' replica, 'D' disabled. */
-async function guardMode(): Promise<string> {
-  const { rows } = await adminQuery(
-    `select t.tgenabled::text as mode
-       from pg_trigger t
-      where t.tgrelid = 'public.studios'::regclass
-        and t.tgname = 'studios_admission_mode_guard'
-        and not t.tgisinternal`,
-  );
-  return rows[0]?.mode as string;
-}
-
 /** Set the guard's firing mode. ALTER TABLE spellings, not a pg_trigger UPDATE. */
 async function setGuardMode(mode: "O" | "A" | "R" | "D"): Promise<void> {
   const verb = {
@@ -436,18 +424,6 @@ async function guardDef(): Promise<string> {
   return rows[0].def as string;
 }
 
-/** The function the named trigger actually executes, and its event bitmask. */
-async function guardIdentity(): Promise<{ fn: string; tgtype: number }> {
-  const { rows } = await adminQuery(
-    `select t.tgfoid::regproc::text as fn, t.tgtype::int as tgtype
-       from pg_trigger t
-      where t.tgrelid = 'public.studios'::regclass
-        and t.tgname = 'studios_admission_mode_guard'
-        and not t.tgisinternal`,
-  );
-  return rows[0] as { fn: string; tgtype: number };
-}
-
 /**
  * Replace the guard with an IMPOSTER under the same name.
  *
@@ -457,6 +433,7 @@ async function guardIdentity(): Promise<{ fn: string; tgtype: number }> {
 async function installImposterGuard(
   timing: string,
   fn: "imposter" | "real",
+  whenClause = "",
 ): Promise<void> {
   await adminQuery(
     `create or replace function public.__hone_imposter_guard() returns trigger
@@ -467,7 +444,7 @@ async function installImposterGuard(
     fn === "real" ? "public.studios_admission_mode_guard()" : "public.__hone_imposter_guard()";
   await adminQuery(
     `create trigger studios_admission_mode_guard ${timing} on public.studios
-       for each row execute function ${target}`,
+       for each row ${whenClause} execute function ${target}`,
   );
 }
 
@@ -600,97 +577,118 @@ describe("the apply-time repair closes the census-to-apply window", () => {
 // emptied even transactionally — `appointment_audit_studio_fk` refuses.
 // ===========================================================================
 // ===========================================================================
-// FAIL CLOSED #1 — THE GUARD MUST FIRE FOR THIS SESSION, NOT MERELY EXIST.
+// FAIL CLOSED #2 — THE GUARD IS PROVED BEHAVIOURALLY, NOT FROM pg_trigger.
 //
-// An earlier revision asserted existence only, and that passed on a database
-// where the trigger was present but DISABLED, or set replica-only while data was
-// loaded. Measured: `alter table ... disable trigger` leaves the existence check
-// true with `tgenabled = 'D'`. The migration then declared its guard
-// prerequisite satisfied and repaired rows nothing was policing.
+// WHY ONE BLOCK NOW. Earlier revisions asked the catalog four separate
+// questions: does the guard exist, is it enabled, does the session role let it
+// fire, is the named trigger really that function at BEFORE UPDATE ROW. Each
+// was correct and each left an adjacent gap, and review found five in a row.
+// The last two were `tgattr` and `tgqual` — `BEFORE UPDATE OF name` and
+// `BEFORE UPDATE ... WHEN (false)` both carry the right tgfoid, the right
+// tgtype bits and an enabled mode, and neither fires for an update of the
+// admission columns. Enumerating ways a trigger can fail to fire was not
+// converging.
 //
-// PostgreSQL decides firing from `tgenabled` AND `session_replication_role`:
+// The migration now asks the DATABASE: it attempts a real admission-field write
+// WITHOUT arming the permit and requires it to be refused. Every shape below is
+// therefore ONE mechanism's worth of coverage rather than four, and the two that
+// no catalog check caught are in the same list as the ones that were.
 //
-//   'A' ALWAYS   fires under every session role
-//   'O' ORIGIN   fires only when the session role is 'origin' or 'local'
-//   'R' REPLICA  fires only when the session role is 'replica'
-//   'D' DISABLED never fires
-//
-// Both axes are exercised below, and both are restored in `finally` — a leaked
-// trigger mode or session role would red every later repair test in this file.
+// Each case asserts the repair candidate is untouched, so "aborts" is a row and
+// not just a message. Trigger definition and session role are restored in
+// `finally`, and the closing control proves the guard is byte-identical.
 // ===========================================================================
-describe("FAIL CLOSED #1: the guard must FIRE for the current session", () => {
+describe("FAIL CLOSED #2: an unpermitted admission write must be REFUSED", () => {
   let candidate: SeededStudio;
+  let realDef: string;
 
   beforeAll(async () => {
     await installCensusLineage();
-    candidate = await seedStudio("admission-guard-mode");
+    candidate = await seedStudio("admission-guard-probe");
+    realDef = await guardDef();
   });
 
-  // Every case needs a live repair candidate, so the failure cases can assert
-  // that nothing was written and the pass cases have something to write.
   beforeEach(async () => {
     await setGuardMode("O");
     await makeWindowRow(candidate.studioId);
   });
 
-  /** Run the migration's own repair block under an explicit session role. */
   const repairAsRole = (role: "origin" | "replica" | "local") =>
     adminTx(async (q) => {
-      // `set local`, so the role is discarded with the transaction and cannot
-      // leak to another user of the pooled connection.
       await q(`set local session_replication_role = '${role}'`);
       return q(REPAIR_SQL);
     });
 
-  it("ordinary 'O' guard under an ORIGIN session passes, and repairs", async () => {
-    expect(await guardMode()).toBe("O");
-    await expect(repairAsRole("origin")).resolves.toBeDefined();
+  const PROBE_REFUSAL = /was NOT refused|not being policed/i;
+
+  /** Every shape that leaves the guard unable to police the repair's own UPDATE. */
+  const defeated: ReadonlyArray<{
+    name: string;
+    arrange: () => Promise<void>;
+    run: () => Promise<unknown>;
+  }> = [
+    {
+      name: "DISABLED trigger",
+      arrange: () => setGuardMode("D"),
+      run: () => adminQuery(REPAIR_SQL),
+    },
+    {
+      name: "REPLICA-only trigger under an origin session",
+      arrange: () => setGuardMode("R"),
+      run: () => adminQuery(REPAIR_SQL),
+    },
+    {
+      name: "ordinary trigger under a REPLICA session",
+      arrange: async () => undefined,
+      run: () => repairAsRole("replica"),
+    },
+    {
+      name: "same name, DIFFERENT FUNCTION",
+      arrange: () => installImposterGuard("before update", "imposter"),
+      run: () => adminQuery(REPAIR_SQL),
+    },
+    {
+      name: "real function, WRONG EVENT (after insert)",
+      arrange: () => installImposterGuard("after insert", "real"),
+      run: () => adminQuery(REPAIR_SQL),
+    },
+    {
+      // tgattr. Invisible to tgfoid + tgtype + tgenabled, which all match.
+      name: "real function scoped to OTHER COLUMNS (update of name)",
+      arrange: () => installImposterGuard("before update of name", "real"),
+      run: () => adminQuery(REPAIR_SQL),
+    },
+    {
+      // tgqual. Likewise invisible to every catalog check that preceded this.
+      name: "real function with WHEN (false)",
+      arrange: () => installImposterGuard("before update", "real", "when (false)"),
+      run: () => adminQuery(REPAIR_SQL),
+    },
+  ];
+
+  for (const shape of defeated) {
+    it(`aborts and writes nothing: ${shape.name}`, async () => {
+      try {
+        await shape.arrange();
+        await expect(shape.run()).rejects.toThrow(PROBE_REFUSAL);
+        expect(
+          (await admissionRow(candidate.studioId)).set_at,
+          "the repair must write nothing when the guard cannot police it",
+        ).toBeNull();
+      } finally {
+        await restoreGuard(realDef);
+      }
+    });
+  }
+
+  it("the shipped guard PASSES the probe, and the repair proceeds", async () => {
+    await expect(adminQuery(REPAIR_SQL)).resolves.toBeDefined();
     expect((await admissionRow(candidate.studioId)).set_at).not.toBeNull();
   });
 
-  it("DISABLED guard aborts, and the candidate is untouched", async () => {
-    try {
-      await setGuardMode("D");
-      expect(await guardMode()).toBe("D");
-      await expect(repairAsRole("origin")).rejects.toThrow(/does not fire for this/i);
-      expect(
-        (await admissionRow(candidate.studioId)).set_at,
-        "the repair must write nothing when its guard cannot fire",
-      ).toBeNull();
-    } finally {
-      await setGuardMode("O");
-    }
-  });
-
-  it("REPLICA-only 'R' guard under an ORIGIN session aborts, and writes nothing", async () => {
-    try {
-      await setGuardMode("R");
-      expect(await guardMode()).toBe("R");
-      await expect(repairAsRole("origin")).rejects.toThrow(/does not fire for this/i);
-      expect((await admissionRow(candidate.studioId)).set_at).toBeNull();
-    } finally {
-      await setGuardMode("O");
-    }
-  });
-
-  it("ordinary 'O' guard under a REPLICA session aborts, and writes nothing", async () => {
-    // The mirror of the case above: the trigger is perfectly healthy, the SESSION
-    // is what stops it firing. Existence-only could not see either.
-    expect(await guardMode()).toBe("O");
-    await expect(repairAsRole("replica")).rejects.toThrow(/does not fire for this/i);
-    expect((await admissionRow(candidate.studioId)).set_at).toBeNull();
-  });
-
-  it("ALWAYS 'A' guard passes under BOTH origin and replica", async () => {
+  it("an ALWAYS trigger passes even under a replica session", async () => {
     try {
       await setGuardMode("A");
-      expect(await guardMode()).toBe("A");
-
-      await expect(repairAsRole("origin")).resolves.toBeDefined();
-      expect((await admissionRow(candidate.studioId)).set_at).not.toBeNull();
-
-      // And again under replica, where 'O' would have been refused.
-      await makeWindowRow(candidate.studioId);
       await expect(repairAsRole("replica")).resolves.toBeDefined();
       expect((await admissionRow(candidate.studioId)).set_at).not.toBeNull();
     } finally {
@@ -698,97 +696,12 @@ describe("FAIL CLOSED #1: the guard must FIRE for the current session", () => {
     }
   });
 
-  it("the trigger mode is back to 'O' after this block", async () => {
-    // Non-vacuity for the cleanups themselves: a leaked mode would make every
-    // later repair test in this file fail for a reason none of them name.
-    expect(await guardMode()).toBe("O");
-  });
-});
-
-// ===========================================================================
-// FAIL CLOSED #1, THIRD AXIS — A NAME IS NOT A GUARD.
-//
-// Existence was not enough; firing mode was not enough either. On a restored or
-// staging database a trigger can be recreated under this exact name against a
-// DIFFERENT function, or for a DIFFERENT event, and name-plus-mode accepts it.
-// Measured before fixing: a same-named AFTER INSERT trigger on an unrelated
-// function left the check passing with tgenabled 'O' while the later UPDATE
-// invoked nothing at all.
-//
-// So the migration now also checks `tgfoid` and the `tgtype` event bitmask.
-// Both failure shapes are exercised here, and the real guard is restored from
-// its own `pg_get_triggerdef` output so restoration cannot drift from the
-// original.
-// ===========================================================================
-describe("FAIL CLOSED #1: the named trigger must BE the guard", () => {
-  let candidate: SeededStudio;
-  let realDef: string;
-
-  beforeAll(async () => {
-    await installCensusLineage();
-    candidate = await seedStudio("admission-guard-identity");
-    realDef = await guardDef();
-  });
-
-  beforeEach(async () => {
-    await makeWindowRow(candidate.studioId);
-  });
-
-  it("the shipped guard IS the expected function, BEFORE UPDATE FOR EACH ROW", async () => {
-    const { fn, tgtype } = await guardIdentity();
-    expect(fn).toBe("studios_admission_mode_guard");
-    // 1 ROW | 2 BEFORE | 16 UPDATE = 19.
-    expect(tgtype & 1).toBe(1);
-    expect(tgtype & 2).toBe(2);
-    expect(tgtype & 16).toBe(16);
-  });
-
-  it("a same-named trigger on ANOTHER FUNCTION aborts, and writes nothing", async () => {
-    try {
-      await installImposterGuard("before update", "imposter");
-      expect((await guardIdentity()).fn).toBe("__hone_imposter_guard");
-
-      await expect(adminQuery(REPAIR_SQL)).rejects.toThrow(
-        /but executes .*not public\.studios_admission_mode_guard/i,
-      );
-      expect(
-        (await admissionRow(candidate.studioId)).set_at,
-        "nothing may be written when the named trigger is not the guard",
-      ).toBeNull();
-    } finally {
-      await restoreGuard(realDef);
-    }
-    expect((await guardIdentity()).fn).toBe("studios_admission_mode_guard");
-  });
-
-  it("the REAL function wired to the WRONG EVENT aborts, and writes nothing", async () => {
-    // The subtler half: the right function, enabled, but on AFTER INSERT — so an
-    // UPDATE is never policed by it. Checking tgfoid alone would have passed.
-    try {
-      await installImposterGuard("after insert", "real");
-      const { fn, tgtype } = await guardIdentity();
-      expect(fn).toBe("studios_admission_mode_guard");
-      expect(tgtype & 16, "this imposter must NOT carry the UPDATE bit").toBe(0);
-
-      await expect(adminQuery(REPAIR_SQL)).rejects.toThrow(
-        /not a BEFORE UPDATE .* FOR EACH ROW trigger/i,
-      );
-      expect((await admissionRow(candidate.studioId)).set_at).toBeNull();
-    } finally {
-      await restoreGuard(realDef);
-    }
-  });
-
-  it("a WIDER guard that also fires on insert is ACCEPTED, not refused", async () => {
-    // The bitmask is tested bitwise rather than as `tgtype = 19` on purpose: a
-    // guard that also fires on insert still polices every update and is not
-    // weaker, so refusing it would be strictness with no safety behind it.
+  it("a WIDER guard that also fires on insert passes, not refused", async () => {
+    // The probe only asks whether the admission write is policed. A guard that
+    // additionally fires on insert still polices it, so it must be accepted —
+    // strictness with no safety behind it would be a different defect.
     try {
       await installImposterGuard("before insert or update", "real");
-      const { tgtype } = await guardIdentity();
-      expect(tgtype & 4, "this guard should carry the INSERT bit too").toBe(4);
-      expect(tgtype & 16).toBe(16);
-
       await expect(adminQuery(REPAIR_SQL)).resolves.toBeDefined();
       expect((await admissionRow(candidate.studioId)).set_at).not.toBeNull();
     } finally {
@@ -796,12 +709,22 @@ describe("FAIL CLOSED #1: the named trigger must BE the guard", () => {
     }
   });
 
-  it("the guard is byte-identical to its original definition afterwards", async () => {
-    // Non-vacuity for the restores: a drifted guard would silently change what
-    // every later test in this file is measuring.
+  it("the probe leaves NO trace: the guard is byte-identical and no row was written", async () => {
+    // Non-vacuity for every `finally` above, and for the probe's own promise
+    // that its write never persists. The probe changes `set_by` on the
+    // lowest-id studio inside a subtransaction; if that ever survived, this
+    // would catch it.
     expect(await guardDef()).toBe(realDef);
+    const { rows } = await adminQuery(
+      `select count(*)::int as n from public.studios
+        where new_client_admission_mode_set_by in
+              ('00000000-0000-0000-0000-000000000000'::uuid,
+               '11111111-1111-1111-1111-111111111111'::uuid)`,
+    );
+    expect(rows[0].n, "the probe's sentinel actor must never be committed").toBe(0);
   });
 });
+
 
 describe("the lineage gate refuses a database that is not the census's", () => {
   it("2. an EXACT census lineage passes the gate", async () => {
