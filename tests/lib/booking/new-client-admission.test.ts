@@ -610,12 +610,17 @@ describe("the activation document matches what the source actually does", () => 
       if (claims.has(fields[1])) dupes.push(fields[1]);
       claims.set(fields[1], fields[2]);
     }
-    // A MALFORMED DIRECTIVE MUST FAIL, NOT VANISH. A token that does not form a
-    // directive at all would otherwise leave its claim silently unpinned, so the
-    // raw occurrence count is reconciled against what actually parsed.
+    // A MALFORMED DIRECTIVE MUST FAIL, NOT VANISH. A directive opener whose body
+    // does not parse would otherwise leave its claim silently unpinned, so the
+    // count of OPENERS is reconciled against what actually parsed.
+    //
+    // Counting the bare word would be wrong, and was: the contract's own preamble
+    // explains the `claim-status` mechanism in prose, which made three tokens for
+    // two directives. A guard that forbids a document from describing its own
+    // mechanism is a guard people delete.
     expect(
-      (DOC.match(/claim-status/g) ?? []).length,
-      "every claim-status token must form a directive; a malformed one must fail, not disappear",
+      (DOC.match(/<!--\s*claim-status/g) ?? []).length,
+      "every claim-status directive must parse; a malformed one must fail, not disappear",
     ).toBe(markerCount);
     // No shadowing: a second marker for an id would otherwise decide the claim
     // by document order.
@@ -680,61 +685,49 @@ describe("the activation document matches what the source actually does", () => 
       "the retired promise must be quoted exactly once, as history",
     ).toBe(1);
 
-    // ─── THE PLAN IS FROZEN BY BYTES; ONLY THE RECORD APPENDS ───────────────
-    // I froze only the withdrawal PARAGRAPH last round, and argued that active
-    // guidance should stay rewordable. Review disproved the split in one move:
-    // appending a NEW paragraph immediately after the frozen one revived the
-    // retired promise with the digest, the directives and every coupling
-    // assertion untouched, because the hash stopped at the first blank line.
+    // ─── THE CONTRACT FILE IS FROZEN END TO END ─────────────────────────────
+    // Execution history used to live at the end of this file, which made the
+    // document both a frozen contract and an append-only log. Those cannot
+    // coexist under a guard that claims nothing in the document contradicts the
+    // contract: the appendable region is unfrozen by construction, so a
+    // contradiction appended there passed every check. Five rounds of review
+    // walked that surface outwards -- paragraph, section, next heading, preamble,
+    // record -- and the last step has no guard, only a boundary.
     //
-    // The unfrozen half is exactly where a revival lands. "Rewordable" and
-    // "cannot be contradicted" cannot both hold for the same prose, and for this
-    // plan -- which has already shipped two false operator procedures -- the
-    // second property wins. A section terminator alone would not have closed it:
-    // the revival simply lands after the terminator.
+    // So the history moved to new-client-admission-execution-record.md, verbatim,
+    // and THIS file is the contract: frozen whole, with no appendable region at
+    // all. This test asserts the contract and its declared directives; it does
+    // not read the execution log, which is evidence rather than instruction.
     //
-    // AND THE BOUNDARY IS THE APPENDS BOUNDARY, NOT THE NEXT HEADING. I first cut
-    // the span at `## What this plan deliberately does not do`, which is still
-    // INSTRUCTIONAL prose -- review landed a contradictory instruction there with
-    // the digest, the directives and the coupling assertions all unchanged. The
-    // constraint was never "stop at the next heading", it was "do not block the
-    // EXECUTION RECORD appends".
-    //
-    // AND THE START WAS WRONG TOO -- I MOVED ONE END AND ASSERTED BOTH. Having cut
-    // the tail at the appends boundary, I wrote that the span "covers every
-    // instructional section" while it still BEGAN at `## Rollback`, leaving five
-    // instructional sections and the preamble above it. Review put
-    // "Setting the persisted mode to WAITLIST restores the email-only commit
-    // point" immediately before `## Rollback`: 47 passed (47). The assertion
-    // message was making a claim the slice did not support -- the same
-    // overstatement this whole change exists to correct, committed in the act of
-    // correcting it.
-    //
-    // So there is now ONE boundary rather than a judgement about which sections
-    // are instructional: EVERYTHING above the execution records is frozen. That
-    // deliberately includes the preamble, which is not idle caution -- the
-    // preamble has already carried a contradiction that had to be withdrawn once.
-    //
-    // To change the plan deliberately, recompute and update the hash in the same
-    // commit, so the edit arrives with a reviewer looking at it:
-    //   node -e 'const s=require("fs").readFileSync("docs/production/new-client-admission-activation.md","utf8");console.log(require("crypto").createHash("sha256").update(s.slice(0,s.indexOf("## EXECUTION RECORD"))).digest("hex"))'
-    const secEnd = DOC.indexOf("## EXECUTION RECORD");
+    // To change the contract deliberately, recompute and update the hash in the
+    // same commit, so the edit arrives with a reviewer looking at it:
+    //   node -e 'console.log(require("crypto").createHash("sha256").update(require("fs").readFileSync("docs/production/new-client-admission-activation.md")).digest("hex"))'
     expect(
-      secEnd,
-      "the frozen span must terminate at the EXECUTION RECORD heading",
-    ).toBeGreaterThan(0);
-    // THE FREEZE MUST NOT BLOCK THE ROUTINE WORKFLOW. Execution records are
-    // appended to this document after every production step, so the span is
-    // asserted to END before them -- a freeze that reds a normal append is one
-    // people route around.
+      DOC,
+      "execution history belongs in the record file; an appendable region here would unfreeze the contract",
+    ).not.toContain("## EXECUTION RECORD");
     expect(
-      DOC.slice(secEnd),
-      "execution records must sit OUTSIDE the frozen span",
-    ).toContain("## EXECUTION RECORD");
+      createHash("sha256").update(DOC).digest("hex"),
+      "the contract file is frozen END TO END: any edit -- preamble, a step, the rollback table, an appended line anywhere -- must fail here until the hash is updated deliberately",
+    ).toBe("575c8480d7d42774ef3cd2d67e6b1765bee530eabe2f92a945bb4fa804008c0c");
+
+    // The record file is evidence, and it must SAY so. This is a deletion guard
+    // on its precedence header, not an interpretation of anything logged in it.
+    const RECORD = readFileSync(
+      join(
+        process.cwd(),
+        "docs/production/new-client-admission-execution-record.md",
+      ),
+      "utf8",
+    );
     expect(
-      createHash("sha256").update(DOC.slice(0, secEnd)).digest("hex"),
-      "the whole plan above the execution records is frozen: ANY edit to it -- preamble, a step, the rollback table, an appended paragraph anywhere -- must fail here until the hash is updated deliberately",
-    ).toBe("7f3b9a79f9035415d0e721e47410f1ef2268a507e4fbc64c11df6512f7e2a3bc");
+      RECORD,
+      "the record file must declare itself dated historical evidence",
+    ).toContain("**DATED HISTORICAL EVIDENCE. NOT AN OPERATOR CONTRACT.**");
+    expect(
+      RECORD,
+      "and must declare that the contract wins on conflict",
+    ).toContain("**THE CONTRACT WINS ON CONFLICT.**");
     const withdrawnMarker = DOC.indexOf(
       "<!-- claim-status id=commit-point-rollback-via-mode-write",
     );
