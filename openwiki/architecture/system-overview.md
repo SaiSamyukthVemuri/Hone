@@ -3,9 +3,6 @@ type: architecture overview
 title: System overview and write-authority model
 description: Hone's runtime architecture — Next.js App Router surfaces, the request pipeline in middleware, the three Supabase clients, how the acting studio is resolved, and the two database command patterns that own nearly every write.
 tags: [architecture, nextjs, supabase, write-authority, middleware, service-role]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-68534ef1d0ceac2d37e269ce
     resource: repo://app/(app)/layout.tsx
@@ -41,7 +38,10 @@ sources:
     resource: repo://tests/security/service-role-allowlist.ts
   - id: openwiki-source-55831e92f29f8b3e9d43f58b
     resource: repo://vercel.json
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # System overview and write-authority model
@@ -62,8 +62,7 @@ This page explains the shape every subsystem shares. Domain pages
 
 | Surface | Location | Identity | Notes |
 |---|---|---|---|
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-| Practitioner app | `app/(app)/**` (dashboard, calendar, clients, records, financials, settings, getting-started) | Supabase Auth session + active practitioner membership | Shell layout calls `requirePractitionerWithStudio()` before rendering anything ([layout L23-L40](../../app/(app)/layout.tsx#L23-L40)) |
+| Practitioner app | `app/(app)/**` (dashboard, calendar, clients, records, financials, settings, getting-started) | Supabase Auth session + active practitioner membership | Shell layout calls `requirePractitionerWithStudio()` before rendering anything (`app/(app)/layout.tsx` L23-L40) |
 | Auth | `app/(auth)/**` (login, callback, accept-invitation, no-access) | anonymous → session | Magic link via `signInWithOtp`; sign-up only for a pending invitation |
 | Operator admin | `app/admin/**` (**not** inside the `(app)` group) | Supabase session + `ADMIN_EMAILS` allowlist | Layout redirects non-admins ([`app/admin/layout.tsx` L17-L18](../../app/admin/layout.tsx#L17-L18)) |
 | Public booking | `app/book/[slug]` | anonymous; slug is a public identifier | See [public booking](../scheduling/public-booking-reschedule-and-cancellation.md) |
@@ -179,8 +178,7 @@ grant to `authenticated`.
 - Adding a service-role call site: add the allowlist entry with a real scope guard.
 - Supabase's default privileges grant `EXECUTE` on new functions to `anon`, `authenticated`
   **and** `service_role`; a command must revoke from all three by name before re-granting
-<!-- openwiki: broken internal link [../../CLAUDE.md#L284-L288] heading anchor "L284-L288" does not exist in "../../CLAUDE.md". Fix the href or restore the target, then delete this comment. -->
-  ([`CLAUDE.md` L284-L288](../../CLAUDE.md#L284-L288)).
+  ([`CLAUDE.md` § 5. Production safety](../../CLAUDE.md#5-production-safety)).
 
 ## 6. Cross-cutting runtime configuration
 
@@ -201,8 +199,7 @@ grant to `authenticated`.
 [`instrumentation.ts`](../../instrumentation.ts) loads the Node or Edge Sentry config and
 exports `onRequestError` ([L1-L13](../../instrumentation.ts#L1-L13)). The shell layout
 identifies the practitioner to analytics server-side with an opaque id and coarse role only
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([layout L42-L45](../../app/(app)/layout.tsx#L42-L45)).
+(`app/(app)/layout.tsx` L42-L45).
 
 [`vercel.json`](../../vercel.json) registers three Vercel crons — recurring-break
 materialization, calendar reconcile and calendar sync ([L1-L16](../../vercel.json#L1-L16)).
@@ -220,35 +217,36 @@ The production build runs `scripts/check-production-env-gates.mjs` before `next 
 | Identity / tenancy | `supabase/`, `admin.ts`, `portal/session.ts` | [Auth & tenancy](../security/authentication-sessions-and-tenancy.md) |
 | Booking & availability | `booking/` (slots, tz, buffers, horizon, tokens, queries, admission) | [Availability](../scheduling/availability-slots-buffers-and-timezones.md), [Public booking](../scheduling/public-booking-reschedule-and-cancellation.md) |
 | Waitlist (WAIT) | `booking/new-client-*`, `booking/waitlist-*`, `waitlist/` | [Admission mode](../waitlist/new-client-admission-mode.md), [Invitation lifecycle](../waitlist/entries-and-invitation-lifecycle.md), [Recipient journey](../waitlist/recipient-journey-and-booking-conversion.md) |
-| Treatment memory | `sessions/`, `record-keeping/`, `probes.ts`, `observation-chips.ts`, `imported-treatment-memory.ts`, `search/` | [Sessions & entries](../treatment-memory/sessions-blocks-and-entries.md), [Memory reads](../treatment-memory/memory-reads-and-point-of-care.md), [Probes & record keeping](../treatment-memory/probes-settings-and-record-keeping.md) |
+| Treatment memory | `sessions/`, `record-keeping/`, `probes.ts`, `observation-chips.ts`, `imported-treatment-memory.ts`, `search/`, `clinical-notes/`, `client-pinned-notes/`, `notes/`, `treatment-plans/`, `treatment-time/` | [Sessions & entries](../treatment-memory/sessions-blocks-and-entries.md), [Memory reads](../treatment-memory/memory-reads-and-point-of-care.md), [Probes & record keeping](../treatment-memory/probes-settings-and-record-keeping.md), [Clinical & client notes](../treatment-memory/clinical-notes-and-client-notes.md), [Treatment plans & time](../treatment-memory/treatment-plans-and-treatment-time.md) |
+| Clients | `clients/`, `client-tags/`, `budget/` | [Client records](../clients/client-records-and-profile.md) |
 | Messaging | `email/`, `sms/`, `cron/`, `notifications/`, `ops/` | [Email](../communications/email-delivery.md), [SMS](../communications/sms-consent-stop-and-senders.md), [Cron](../communications/cron-reminders-and-idempotency.md) |
-| Payments | `stripe/`, `billing/`, `payments/`, `payment-methods/` | [Payments](../payments/stripe-payments-and-settlement.md) |
+| Payments | `stripe/`, `billing/`, `payments/`, `payment-methods/` | [Payments](../payments/stripe-payments-and-settlement.md), [Card on file & checkout](../payments/card-on-file-checkout-and-payment-proof.md) |
 | Google Calendar | `google-calendar/` | [Google Calendar](../integrations/google-calendar-sync.md) |
-| Portal / intake / consent | `portal/`, `portal-messages/`, `intake/`, `consent/` | [Portal & intake](../portal/client-portal-intake-and-consent.md) |
-| Owner surfaces | `dashboard/`, `finance/`, `treatment-plans/`, `treatment-time/`, `budget/` | [Dashboard & financials](../owner/dashboard-financials-and-capacity.md) |
+| Portal / intake / consent | `portal/`, `portal-messages/`, `intake/`, `consent/` | [Portal & intake](../portal/client-portal-intake-and-consent.md), [Intake forms & review](../portal/intake-forms-review-and-assisted-intake.md) |
+| Owner surfaces | `dashboard/`, `finance/` | [Dashboard & financials](../owner/dashboard-financials-and-capacity.md) |
 | Studio lifecycle / data | `studios/`, `onboarding/`, `export/`, `import/`, `images/` | [Onboarding & data](../studio/onboarding-settings-and-data-portability.md) |
-| Security & telemetry | `security/`, `observability/`, `analytics/`, `rate-limit/`, `conversion/` | [Token routes](../security/public-token-routes-and-privacy.md), [Environment](../operations/environment-flags-and-observability.md) |
+| Security & telemetry | `security/`, `observability/`, `analytics/`, `rate-limit/` | [Token routes](../security/public-token-routes-and-privacy.md), [Environment](../operations/environment-flags-and-observability.md) |
+| Marketing & conversion | `conversion/` (per-studio conversion events), `booking/marketing-consent.ts`; public-site content in `marketing/` | [Conversion tracking](../integrations/marketing-consent-and-conversion-tracking.md) |
 | Generated types | `types/database.ts` | [Migrations](../operations/migrations-and-hosted-state.md) |
+
+Shared React components live outside `lib/`, in `components/` (UI primitives in `components/ui/`, domain
+components beside them). See [UI components and interaction standards](ui-components-and-interaction-standards.md).
 
 ## 8. Contradictions and open questions
 
 1. **`docs/01_ARCHITECTURE.md` describes the middleware as a gate for a list of protected
    paths** ("/dashboard, /calendar, /clients, /settings, /admin, /portal/messages")
-<!-- openwiki: broken internal link [../../docs/01_ARCHITECTURE.md#L78-L79] heading anchor "L78-L79" does not exist in "../../docs/01_ARCHITECTURE.md". Fix the href or restore the target, then delete this comment. -->
-   ([L78-L79](../../docs/01_ARCHITECTURE.md#L78-L79)). The code is the opposite shape:
+   ([§ Folder structure](../../docs/01_ARCHITECTURE.md#folder-structure)). The code is the opposite shape:
    default-deny with an explicit public allowlist
    ([`lib/supabase/middleware.ts` L35-L157](../../lib/supabase/middleware.ts#L35-L157)).
 2. **The same doc places the operator admin shell at `app/(app)/admin/`**
-<!-- openwiki: broken internal link [../../docs/01_ARCHITECTURE.md#L33] heading anchor "L33" does not exist in "../../docs/01_ARCHITECTURE.md". Fix the href or restore the target, then delete this comment. -->
-   ([L33](../../docs/01_ARCHITECTURE.md#L33)); the routes live at `app/admin/**`, outside the
+   ([§ Folder structure](../../docs/01_ARCHITECTURE.md#folder-structure)); the routes live at `app/admin/**`, outside the
    practitioner route group, with their own `isAdmin` layout guard.
 3. **Scheduler ownership is described two ways.** The doc says an external cron service calls
-<!-- openwiki: broken internal link [../../docs/01_ARCHITECTURE.md#L15] heading anchor "L15" does not exist in "../../docs/01_ARCHITECTURE.md". Fix the href or restore the target, then delete this comment. -->
-   `/api/cron/*` with the bearer secret ([L15](../../docs/01_ARCHITECTURE.md#L15)), while
+   `/api/cron/*` with the bearer secret ([§ Runtime stack](../../docs/01_ARCHITECTURE.md#runtime-stack)), while
    `vercel.json` registers three of the cron routes with Vercel Cron. Which scheduler drives the
    reminder and no-show routes is not established by repository code.
 4. **The doc's stated rule for service-role RPCs** ("reserved for atomic claim-then-act and
-<!-- openwiki: broken internal link [../../docs/01_ARCHITECTURE.md#L92-L105] heading anchor "L92-L105" does not exist in "../../docs/01_ARCHITECTURE.md". Fix the href or restore the target, then delete this comment. -->
-   cross-RLS reads", [L92-L105](../../docs/01_ARCHITECTURE.md#L92-L105)) undersells current
+   cross-RLS reads", [§ Server actions vs RPCs vs RLS](../../docs/01_ARCHITECTURE.md#server-actions-vs-rpcs-vs-rls)) undersells current
    practice: most practitioner write commands added since `0142` are service-role-only and
    called through the admin client (Pattern A above).

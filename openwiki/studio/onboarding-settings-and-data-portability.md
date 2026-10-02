@@ -3,9 +3,6 @@ type: product subsystem
 title: Studio onboarding, settings and data portability
 description: How a studio comes into existence and is set up — the operator-only New Studio Wizard, owner invitations and team management, onboarding v2 and the getting-started checklist, the settings surfaces and the operator-controlled studio flags, treatment-image storage hardening, the export resource registry behind the studio data export, Quick Import, and the admin audit trail — with the recorded gaps in export, import atomicity, retention and image lifecycle.
 tags: [onboarding, studio-setup, team, invitations, data-export, quick-import, treatment-images, admin]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-ce3025c5d69ee786a5131976
     resource: repo://app/(app)/settings/data/actions.ts
@@ -41,7 +38,10 @@ sources:
     resource: repo://tests/db/export-resource-registry.db.test.ts
   - id: openwiki-source-fe4a22f4a0e3b3d561d283f4
     resource: repo://tests/db/new-studio-wizard.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Studio onboarding, settings and data portability
@@ -51,8 +51,7 @@ owner becomes a practitioner only by signing in with the invited email and accep
 [Authentication, sessions and tenancy](../security/authentication-sessions-and-tenancy.md)).
 
 Known limitation L8 records this posture: invite-only, operator-provisioned, onboarding v2 enabled only on the
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L178-L187] heading anchor "L178-L187" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-controlled test studio ([`known-limitations.md` L178-L187](../../docs/production/known-limitations.md#L178-L187)).
+controlled test studio ([`known-limitations.md` § L8 — Onboarding and self-service gaps](../../docs/production/known-limitations.md#l8--onboarding-and-self-service-gaps)).
 
 ## 1. Creating a studio (operator only)
 
@@ -90,8 +89,7 @@ The DB test proves two things
 Every team action resolves its context with `getCurrentPractitionerWithStudio()` and requires
 `role === "owner"`.
 
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-**Invitations** ([`app/(app)/settings/team/actions.ts` L81-L176](../../app/(app)/settings/team/actions.ts#L81-L176)):
+**Invitations** (`app/(app)/settings/team/actions.ts` L81-L176):
 
 - The invited role is `owner` or `practitioner`. The action refuses an email that is already an active
   practitioner or already has a pending invitation in the studio.
@@ -104,8 +102,7 @@ Every team action resolves its context with `getCurrentPractitionerWithStudio()`
 - Revoking flips a pending row to `revoked`, scoped by id and studio.
 
 **Removal** calls `set_practitioner_active_locked` through the service-role client
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([L198-L232](../../app/(app)/settings/team/actions.ts#L198-L232)). The call takes the studio row and then the
+(`app/(app)/settings/team/actions.ts` L198-L232). The call takes the studio row and then the
 advisory lock, refuses to deactivate the owner, and preserves the practitioner's appointments. An owner cannot
 remove themselves.
 
@@ -126,8 +123,7 @@ the practitioner-capacity flags (`0134`, `0136`) and the new-client admission mo
 owner RLS ([`lib/onboarding/state.ts` L10-L77](../../lib/onboarding/state.ts#L10-L77)).
 
 **`/getting-started`** is a mostly auto-detected readiness checklist with no manual mark-as-done persistence
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([`page.tsx` L11-L19](../../app/(app)/getting-started/page.tsx#L11-L19)). Studios with v2 off see only this
+(`app/(app)/getting-started/page.tsx` L11-L19). Studios with v2 off see only this
 checklist and the dashboard step counter.
 
 ## 4. Settings surfaces
@@ -180,8 +176,7 @@ Image write commands are covered on [Sessions, blocks and entries](../treatment-
 
 `exportStudioDataAction` is **owner-only**; an inactive practitioner is refused. It reads through the RLS
 client and returns a ZIP of CSVs (JSZip, base64)
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([`app/(app)/settings/data/actions.ts` L70-L83](../../app/(app)/settings/data/actions.ts#L70-L83)). The files come
+(`app/(app)/settings/data/actions.ts` L70-L83). The files come
 from the **export resource registry**
 ([`lib/export/resource-registry.ts` L6-L67](../../lib/export/resource-registry.ts#L6-L67)).
 
@@ -209,8 +204,7 @@ The registry deliberately states no payload size; its entries are the count.
 
 **Recorded status — L29, P2, open:** the export is still partial. Roughly fifty-nine studio-owned resources are
 pending. TRUTH-01A closed the *misrepresentation*, and TRUTH-01B, which changes the payload, has no merged PR
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L570-L582] heading anchor "L570-L582" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-([`known-limitations.md` L570-L582](../../docs/production/known-limitations.md#L570-L582)).
+([`known-limitations.md` § L29](../../docs/production/known-limitations.md#l29--truth-01b-the-studio-data-export-is-still-partial-only-its-incompleteness-is-now-declared)).
 
 ## 7. Quick Import
 
@@ -224,8 +218,7 @@ The pipeline is pure ([`lib/import/quick-import.ts` L1-L26](../../lib/import/qui
 - it never stores the raw pasted text.
 
 Both server actions first require an active **owner who also has platform-operator standing**
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([`settings/import/actions.ts` L92-L119](../../app/(app)/settings/import/actions.ts#L92-L119)).
+(`app/(app)/settings/import/actions.ts` L92-L119).
 
 **Recorded status — L24:** confirmation is three independent writes with no transaction:
 
@@ -233,9 +226,10 @@ Both server actions first require an active **owner who also has platform-operat
 2. the clients;
 3. the memories.
 
-A failure on the third leaves the clients committed. Execution is **mitigated** to operator-assisted runs, not
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L439-L449] heading anchor "L439-L449" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-fixed ([`known-limitations.md` L439-L449](../../docs/production/known-limitations.md#L439-L449)).
+The memory insert is retried once. If it still fails, the clients stay committed (`0087` forbids deleting
+them), the batch is soft-voided, and the action reports the partial result honestly
+(`app/(app)/settings/import/actions.ts` L229-L341). Execution is **mitigated** to operator-assisted runs, not
+fixed ([`known-limitations.md` § L24](../../docs/production/known-limitations.md#l24--quick-import-is-not-atomic-execution-is-mitigated-to-operator-assisted-only-not-fixed)).
 
 ## 8. Admin and ops tooling
 
@@ -258,12 +252,9 @@ Every admin action writes `admin_action_events` (`0113`) through `logAdminAction
 
 | ID | Status as recorded |
 |---|---|
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L531-L555] heading anchor "L531-L555" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L27 | **P2 open** — no automated retention or permanent-deletion lifecycle. The published policy no longer promises timed deletion; sequenced after a complete export ([L531-L555](../../docs/production/known-limitations.md#L531-L555)) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L557-L568] heading anchor "L557-L568" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L28 | **P2 open, partially mitigated** — upload compensates when its metadata insert fails; image archive is soft-only and no storage reconciler exists ([L557-L568](../../docs/production/known-limitations.md#L557-L568)) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L625-L639] heading anchor "L625-L639" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L31 | open, cosmetic — the onboarding celebration state is not scoped to the selected studio for a multi-studio owner ([L625-L639](../../docs/production/known-limitations.md#L625-L639)) |
+| L27 | **P2 open** — no automated retention or permanent-deletion lifecycle. The published policy no longer promises timed deletion; sequenced after a complete export ([§ L27](../../docs/production/known-limitations.md#l27--f-ret-001-no-automated-retention-or-permanent-deletion-lifecycle-exists)) |
+| L28 | **P2 open, partially mitigated** — upload compensates when its metadata insert fails; image archive is soft-only and no storage reconciler exists ([§ L28](../../docs/production/known-limitations.md#l28--treatment-image-archive-is-soft-only-and-no-storage-reconciler-exists)) |
+| L31 | open, cosmetic — the onboarding celebration state is not scoped to the selected studio for a multi-studio owner ([§ L31](../../docs/production/known-limitations.md#l31--the-onboarding-celebrations-client-state-is-not-scoped-to-the-selected-studio)) |
 
 ## 10. Contradictions and open questions
 
@@ -285,8 +276,7 @@ Every admin action writes `admin_action_events` (`0113`) through `logAdminAction
    owner email. The surface is operator-only, but those values land in browser history.
 3. **Team invitation email bypasses the shared send path.** It calls the Resend client directly, with no
    idempotency key and no bounded timeout
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-   ([`team/actions.ts` L48-L79](../../app/(app)/settings/team/actions.ts#L48-L79)), unlike the wrappers on
+   (`app/(app)/settings/team/actions.ts` L48-L79), unlike the wrappers on
    [Email delivery](../communications/email-delivery.md). Whether this is intentional is not recorded.
 4. **The studio row is protected per column, not by a column grant.** An owner may update any `studios` column
    that no guard trigger protects. Whether every operator-only column has a guard is not pinned by a single

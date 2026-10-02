@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:270bc7272d3afa8aaca7438cbad2254dd5a253293924a3c96c828668492fa010",
+  "pageVersion": "sha256:ce26f4619a40ac312a929d0ba66bc73df2352ca9d206c8fd45f5d3e3ca279488",
   "claims": [
     {
       "id": "claim_22559d4f328148a1b1c803e0ae810889",
@@ -119,10 +119,20 @@
           "version": "repo-lines-v1:sha256:263e60aebb568fb0bae67c2bfdbd41b8b5baac010e12650e2e4767f18152b861:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjhhN2E1ZTJhM2M5NzYwYjNjYjYyZjA2ZDcxZTY5OWFmMDkyY2MzMzQ3ZDM5N2YwMWU5ZWRjOTZjMWExM2EwZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTlhMjA3ODU0OWRiZGQ2ZmY5YTRjMWY5M2Q5ODc0MDA1NzUwN2M0MTJiNTBkNTBjYTY4ODlkYWI3YzQwMTEwYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmI2ZTA3OWJhMTk2YmFjYzhjZGVmOWY5YTA0NTVmMTVlYzZmODhkODNjMmRlZTk1YmUxM2Q5OTE4NDY2YmExYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTVlODliODQyYWUzZmJmYjI0NWFlOTJiNzQzYjg0N2FiMTVhODY2MjE2OTZkNjQzNDhiNWE5NWNjOTU2NDM3OCJ9"
         }
       ]
+    },
+    {
+      "id": "claim_5177d4de1a23462eb65da1409057b0fc",
+      "statement": "The practitioner dashboard bulk-loads pinned notes, intake status and card-on-file status only for the selected day's client ids, alongside the practitioner roster, in one read-only Promise.all batch.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/dashboard/page.tsx#L419-L431",
+          "version": "repo-lines-v1:sha256:2bb8f3940faba4090c533478cfdf1ca9d6ea4078417f864d945e679f648ef733:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwMDYwNzFkMDdiOGQ4MzE1ZmMyZDBhNjkxYWUwZTJkMTAxMjUxYWYxZTNiZmJhNTY3YmMxNmQ1NjAyODYwMDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyZWYwOTAwNDA4NTYzYTM0NWEwODIxOGYxMjI0YTZlZjNlZmE5YzUwODNhMjI0NDA3NTkyNDQ1ZDkxOGVlZGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNiMDUwNjk3YThhYTE2NDhjMGY5MjFjNTRjNDQ3ZTgwNTZiMDU2Y2M0N2Y0MjE0OWNjMzZjNmRmYjg0ZjJhZmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM4ODEyNGU4OWRlYTAxY2VkZmUxYTQxOTI0YTk4ZjUwNmMwOGE5YzMwZjQxY2U5MDI1ODBkZThkNTk1MmVmZTUifQ"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T20:08:11.217Z"
+    "at": "2026-10-02T22:34:57.394Z"
   }
 }

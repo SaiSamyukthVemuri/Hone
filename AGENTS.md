@@ -11,6 +11,14 @@ This repository has a generated `openwiki/` evidence index. It is optional just-
 - Treat source code and tests as authoritative. A brief's unknowns and review items are verification gaps, not automatic requirements.
 - Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
 
-The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+OpenWiki is currently updated on demand: an operator or agent runs an OpenWiki `update` (MCP tools or CLI) and commits the result. A scheduled refresh workflow is not installed in this repository yet. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and then running an OpenWiki update.
 
 <!-- OPENWIKI:END -->
+
+<!-- Maintained outside the OpenWiki-managed block above, so OpenWiki preserves it. -->
+**Known OpenWiki 0.6.1 defect.** OpenWiki rewrites everything between the `OPENWIKI:START`/`OPENWIKI:END`
+markers from a static template on every run: `openwiki_begin` (init and update) and every CLI code-mode run.
+That template (`dist/ingestion/code-mode.js`, `createCodeModeAgentsSnippet`) hard-codes the sentence "The
+scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki." That sentence is false here. No
+OpenWiki workflow is installed, and the one OpenWiki generates at init was deliberately not committed. After
+any OpenWiki run, restore the on-demand wording above before committing, until the upstream template is fixed.

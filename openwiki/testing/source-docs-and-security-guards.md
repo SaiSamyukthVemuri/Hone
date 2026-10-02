@@ -3,9 +3,6 @@ type: test infrastructure
 title: Source, docs and security guard tests
 description: The static guard tests that pin Hone's architecture and its written truth — security censuses (direct DML, grants, service-role allowlist, route privacy, secret logging), source guards over boundaries, canonical-production-facts and docs-drift guards, dependency and lint boundaries — with what each family parses, what it pins, how it can pass vacuously, and the anti-vacuity controls that answer that.
 tags: [guards, static-analysis, security-tests, docs-tests, lint, testing]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-eb10efb7264b39a67076cb7b
     resource: repo://docs/09_DATABASE_AND_RLS.md
@@ -49,7 +46,10 @@ sources:
     resource: repo://tests/source-guards/sms-adoption-boundary.test.ts
   - id: openwiki-source-80bc5185d95430a1f19fc11d
     resource: repo://tests/source-guards/supabase-temp-untracked.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Source, docs and security guard tests
@@ -64,8 +64,7 @@ generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
 
 Static tests are **tripwires**: right for "no forbidden writer or symbol exists", wrong as a substitute for
 behaviour that can be tested. An important *absence* claim must also prove the detector works
-<!-- openwiki: broken internal link [../../ENGINEERING_STANDARDS.md#L74-L95] heading anchor "L74-L95" does not exist in "../../ENGINEERING_STANDARDS.md". Fix the href or restore the target, then delete this comment. -->
-([L74-L95](../../ENGINEERING_STANDARDS.md#L74-L95)). Each family below is described by what it reads, what it
+([§ 4. Proof](../../ENGINEERING_STANDARDS.md#4-proof)). Each family below is described by what it reads, what it
 pins and where it can go silent.
 
 All of these run in the ordinary unit lane (`npm test`), so CI runs them in the `validate` job. That job does
@@ -183,12 +182,15 @@ The production-truth vocabulary these guards enforce is on
   ([`eslint.config.mjs` L12-L40](../../eslint.config.mjs#L12-L40)).
 - **ESLint `FIN-01A`.** The finance modules are ESM-only and cannot acquire `require`, `module` or `node:module`.
 
+Component-level source tests (`tests/components/`), which pin the UI primitives, dialogs and the
+native-dialog lint ban, are described on
+[UI components and interaction standards](../architecture/ui-components-and-interaction-standards.md#6-how-the-rules-are-proved).
+
 ## 5. Contradictions and open questions
 
 1. **`docs/09` still describes seven direct appointment writers.** It says seven direct `service_role` UPDATEs
    remain in the calendar actions and postcare auto-send, frozen by the appointment DML guard
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L185-L190] heading anchor "L185-L190" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-   ([`docs/09` L185-L190](../../docs/09_DATABASE_AND_RLS.md#L185-L190)). The guard now asserts **zero**: all seven
+   ([`docs/09` § RLS principles](../../docs/09_DATABASE_AND_RLS.md#rls-principles)). The guard now asserts **zero**: all seven
    were retired by B8 / `0177`
    ([`appointment-direct-dml-guard.test.ts` L533-L578](../../tests/security/appointment-direct-dml-guard.test.ts#L533-L578)).
 2. **The export-copy guard's comment states a stale payload size.** It says "The export carries fifteen files"

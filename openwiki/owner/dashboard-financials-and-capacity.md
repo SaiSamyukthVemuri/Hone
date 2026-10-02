@@ -3,9 +3,6 @@ type: product surface
 title: Dashboard, financials and owner capacity
 description: The practitioner dashboard (today workflow, prep memory, next actions) and the two owner-only business surfaces (/dashboard/capacity and /financials) — what each reads, why their owner gates are application-layer rather than database boundaries, how failed reads are kept distinct from empty results, and their dated production status.
 tags: [dashboard, owner-surfaces, financials, capacity, read-failure-semantics, notifications]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-511b7b2eafa46cc21ac26a71
     resource: repo://app/(app)/dashboard/capacity/page.tsx
@@ -25,7 +22,10 @@ sources:
     resource: repo://lib/notifications/practitioner-notifications.ts
   - id: openwiki-source-588d895653ec97ca3237bc90
     resource: repo://supabase/migrations/0154_practitioner_notifications_dedupe_key.sql
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Dashboard, financials and owner capacity
@@ -36,31 +36,23 @@ read is presented**.
 
 ## 1. The practitioner dashboard (`/dashboard`)
 
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-[`app/(app)/dashboard/page.tsx`](../../app/(app)/dashboard/page.tsx) (≈1,700 lines) composes the
+`app/(app)/dashboard/page.tsx` (≈1,700 lines) composes the
 day: roster and current appointment, before-today treatment previews and prep summary
 (see [Treatment memory reads](../treatment-memory/memory-reads-and-point-of-care.md)), day next
 action, clients needing attention, practice metrics, the missing-records assistant, payment state
-per appointment, and onboarding/getting-started signals
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([imports L36-L111](../../app/(app)/dashboard/page.tsx#L36-L111)). Independent reads run in
+per appointment, pinned notes for the selected day's clients (see
+[Clinical, pinned and personal notes](../treatment-memory/clinical-notes-and-client-notes.md)), and
+onboarding/getting-started signals
+(`app/(app)/dashboard/page.tsx` L36-L111). Independent reads run in
 `Promise.all` batches and part of the page streams behind a `Suspense` boundary
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([L286](../../app/(app)/dashboard/page.tsx#L286-L286), [L908-L926](../../app/(app)/dashboard/page.tsx#L908-L926)).
+(`app/(app)/dashboard/page.tsx` L286, L908-L926).
 
 **Three states, never two.** Card and prep reads distinguish *answered*, *nothing to ask* and
 *unavailable*: a failed read renders a neutral "unavailable" state and never a "no history" or
 "no payment" claim; a payment state defaults to `unavailable`, not to "unpaid"
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([L136-L145](../../app/(app)/dashboard/page.tsx#L136-L145),
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-[L996-L1035](../../app/(app)/dashboard/page.tsx#L996-L1035),
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-[L849](../../app/(app)/dashboard/page.tsx#L849-L849)). The clinical "unavailable" copy is shared
+(`app/(app)/dashboard/page.tsx` L136-L145, L996-L1035, L849). The clinical "unavailable" copy is shared
 with the client profile so the two surfaces cannot drift
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([L1220-L1240](../../app/(app)/dashboard/page.tsx#L1220-L1240)).
+(`app/(app)/dashboard/page.tsx` L1220-L1240).
 
 ## 2. Owner capacity (`/dashboard/capacity`)
 
@@ -68,8 +60,7 @@ Answers one owner question — which active treatment clients have fallen off th
 re-book worklist) — from one snapshot read rooted on current non-archived clients.
 
 - **Owner gate before any read.** The page refuses in place when `practitioner.role !== "owner"`,
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-  before `getOwnerCapacityBriefing` runs ([capacity page L12-L46](../../app/(app)/dashboard/capacity/page.tsx#L12-L46)).
+  before `getOwnerCapacityBriefing` runs (`app/(app)/dashboard/capacity/page.tsx` L12-L46).
 - **Not a database boundary.** RLS on `clients`, `treatment_plans` and `appointments` is
   `is_studio_member`, so any practitioner can already select the underlying rows; the module
   decides only who is *shown* the aggregate ([`owner-capacity.ts` L31-L37](../../lib/dashboard/owner-capacity.ts#L31-L37)).
@@ -84,8 +75,7 @@ Answers: what the calendar held in one studio-local period and how those appoint
 - `loadFinancialsView` refuses on role **before constructing a Supabase client**, so a practitioner
   who types the URL causes no studio-wide query; the route is unadvertised (no nav entry, excluded
   from search) and `force-dynamic` — financial truth is never cached
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-  ([`financials/page.tsx` L10-L60](../../app/(app)/financials/page.tsx#L10-L60)).
+  (`app/(app)/financials/page.tsx` L10-L60).
 - One read projecting `status, starts_at` for the period, bounded by the API page size, and again
   explicitly **not** a database boundary — RLS on `appointments`, `payment_charge_attempts` and
   `appointment_settlements` is `is_studio_member`
@@ -115,10 +105,8 @@ Disinfectant/sterile-item alerts are computed at read time (see
 
 | Surface | Status | Authority |
 |---|---|---|
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L928-L957] heading anchor "L928-L957" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| `/dashboard/capacity` (OWNER-CAP) | implemented · merged · deployed · enabled for owners of every studio; **not production-exercised as a measured fact**; slices 2 and 4 not started | [`current-state.md` L928-L957](../../docs/production/current-state.md#L928-L957) |
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L959-L1016] heading anchor "L959-L1016" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| `/financials` (FIN-01A slice 1) | implemented · merged · deployed · owner-only; **not production-exercised as a measured fact**; no migration, no RPC | [`current-state.md` L959-L1016](../../docs/production/current-state.md#L959-L1016) |
+| `/dashboard/capacity` (OWNER-CAP) | implemented · merged · deployed · enabled for owners of every studio; **not production-exercised as a measured fact**; slices 2 and 4 not started | [`current-state.md` § 10b. Owner business surfaces (OWNER-CAP)](../../docs/production/current-state.md#10b-owner-business-surfaces-owner-cap) |
+| `/financials` (FIN-01A slice 1) | implemented · merged · deployed · owner-only; **not production-exercised as a measured fact**; no migration, no RPC | [`current-state.md` § Owner financial truth surface](../../docs/production/current-state.md#owner-financial-truth-surface--fin-01a-slice-1-pr-646) |
 
 ## 6. Contradictions and open questions
 

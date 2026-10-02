@@ -1,0 +1,176 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:1a41c86fe3731f18c4329f647e0ab89667c8b85a08b85cdf100503f75f3001ae",
+  "claims": [
+    {
+      "id": "claim_5c5643f037514177a79bc53aa8635c31",
+      "statement": "client_clinical_notes rows are consultation or skin_hair_analysis notes with a non-blank body, a clinical occurred_at date and optional area tags, tied to the same studio as their client and authoring practitioner by composite foreign keys.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0126_client_clinical_notes.sql#L26-L63",
+          "version": "repo-lines-v1:sha256:7fe6a75eb2a11772507e500af574ff609c4ec951931aeb35c0160fcad9a7a438:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1MDY0ODg0MjE2NTBjMDFhMDZkNjA1YmEzNGEwZWUwZjdjMjZiYjM5MjFkMjc1NTMzMjYxY2NhOWFkZmQ4YWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5OTY3ZWMxZWQzODM2ZjhlYjE3YWZmMTcyYjViZmVmN2RlNjA0ODVhNDM5YzZjYTExYzU5MWUxNzU1NzM5YWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwYzM1ZWM2M2VhZWIzYmE3MjhmMjNkNzIzODE5YTI0Zjk1ZDFlNWRmOWJlMDg4Y2JkZGI2YmQ4ZDMzY2MzNjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmMjQzMTEwMmEzZTRmZmIzNWQ0M2QwMTQyNDBiZTZhMDVkOTFmZGVkYjE2NTVlOTBiNzMzODYwMzVjN2VjZjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8e3ec54ff8ed4566ac977b819d325aa5",
+      "statement": "A plain BEFORE UPDATE trigger on client_clinical_notes always raises, so no role including service_role can edit a saved note, and authenticated holds no update, delete or truncate privilege while anon holds nothing.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0126_client_clinical_notes.sql#L125-L138",
+          "version": "repo-lines-v1:sha256:3066154f534dd5e8ece32a5209d6a1fbc23f491b1a4fd3dfda6f3a2e47e4f434:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyNmIzMGNkZWUxMWI3NjM5YjY3YTRmMmFmZWYyZWY2M2Q3YjBiM2UwMjMyNzlkYjJhYzZkNzExNmUxZDU5MDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM0MGUxZDM3YjBjYjQ1MWFjZWQ5ZTI1NzU3N2NhODY3MDYyZjM3NDEzYmZlYzBmNWVhYmZhZWZiYmFhMTc2ZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYyZjMxYzg1NjU5YTZiZGRlM2JhZTlhN2QzMWE1Y2QxYTY3ODBkOGZhODNiM2NjYTM0ODI4N2Q2NzZiMTViNGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRhNDM5Yjg1Y2JmMDRkOWE4NjNiYjBiYmRjZTg0M2Q1M2RlZjQ1ZDRkYTRmMDljYzA4MmE3Y2NjZDAxMjlkMTIifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0126_client_clinical_notes.sql#L168-L171",
+          "version": "repo-lines-v1:sha256:f120f4975eab2e43fefb905564de71b5f5c972da8471a7f198abc6aedd6673e9:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmYzMjk2MjdhMmVhODg5MjUwMjU1MTMwYmYyYTU2NjY3M2ViNzUyMTJlM2FmNzBjYTlkZmE5YmIyNzI1NDhkYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTM2ZTBmNTE0ZGU3MTJkNzMyNjAyMWU5MTFjMjY2MDFkZjFlODE2MDk4Y2NkMGQxNWI3ZTNlZTYyZGM2NmFjOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDdmMDg1NWY0YjMwMjJlNmUxNTZlODRlNzM1MjliMmIwNmZjYjBjMGZkMjYzZDkzMTUwMGQyNmY2YTE3NjYxMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://tests/db/client-clinical-notes.db.test.ts#L92-L124",
+          "version": "repo-lines-v1:sha256:9b714a81421c7f995ce230af93b582565acbde7622aae9b049cf1b2d55551ddb:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmY2Q5NWMyMDkyZmM2YzVmMzJhYzM0ODlkOTc3YWRhY2ZlODNiNjk4YWEyNDY0Y2JiZjc2NGM0ODYyZDA1ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQyOGI0MmFhN2EwMTgxMTJkNmUzYTI1MWJlY2ViZGU0MmNlOTNjZTBlYTkzMDg2MDRkNDRhOWJiMjIzYmQ4MjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_edcf93965501466c8c964ce8806db373",
+      "statement": "A clinical note revision is a new row with supersedes_note_id; the insert trigger derives studio_id from the client and requires the superseded note to share client, studio and kind, and a partial unique index allows only one direct successor so a concurrent second revision fails.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0126_client_clinical_notes.sql#L69-L119",
+          "version": "repo-lines-v1:sha256:a39e216adf1a3bfcf01b4928598b2c11406cfa955f08a45e09e6846655b287cb:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4OGVjYTFkZWFhZDRmYzk4NTc4NWM5OGZkOTdkMDdiNDBlYmIxZDBiODU5MzJhNDcxYmZmODljZTA3NTZhY2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwODgxOWNlYzQ2OGEyOGU0MjYxNmMyYTk3MjcyNmU3NzNhN2QwMTI5NzUwOTRiMWE3NmYzOWRjYTg5YjRkY2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI5OThlYjM0MjdjNWQxZWRhZDA1OGExMzhlYzY4MDk1ZjlmMzlkZGMzMzNlMzU4M2NiZDIwZTA2MmIwYjQ2MDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5ZGYzMmM3NzUzNmQwZGY4ZDM1M2RhNTZmMTU0NmEwYWM1NTc5MzgzOTg5NjFlZjBlMDBlZDg0MzljNDJkMmQifQ"
+        },
+        {
+          "resource": "repo://tests/db/client-clinical-notes.db.test.ts#L125-L183",
+          "version": "repo-lines-v1:sha256:e312e529ec3a6b4374977f6218ec1b5a7f9c673de1ed19c16709f4e5f7f53f7f:eyJzZWxlY3RlZExpbmVDb3VudCI6NTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1MjIyMzk5MzU0NjgwMDQxOTAxY2VmNWYzYTY4ZDU3Nzg1MDM0OGYwYTQ4ZWZjZDUxNWFhNmM4YTMxOWFiZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhMGE2NWU5ZWNjNzkwNDlmNDY5MjcwMDMzZTE1NDY0OGJhODA1MzI0OGY4Njc2YTgxYTA3ZDM1NDFmZjJmNjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_23e3bcad9c70440f934053e871c06829",
+      "statement": "The clinical-note insert policy requires the note's practitioner to be the caller's own active practitioner in the note's studio, after 0127 replaced a 0126 subquery whose unqualified studio_id made the same-studio check a tautology.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0127_fix_client_clinical_notes_author_insert_policy.sql#L33-L51",
+          "version": "repo-lines-v1:sha256:ba1e5a2eab301b21db3c3518b2f42cbc2f31318d4d231af97e42a40de502d2ff:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5Mzg4Yzk2ZWNmMDcwMGQ3NzAwYmY2ZDI0NTNlNmRmNjI1ZGY0ZDA1OWYxZjEyYWNiNDBlZTIyMGRhZDZiNDciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1ZWYwMWJjMDhkYmMzYjYzZTRlNzVlYTNkMjZhNWI5NDE4OTE4NzdlMjdhZDg5MTMyOWM4NDExZDdkOGRjNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQxZTg5Yzg3NjRiMTI4OWU4NzUxNGQyYTI3ZGM1YzkyNmE0MTcyZWE4YzRiMmQyYjA1ZWMzNTNhMjQ1MjE0NWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/db/client-clinical-notes.db.test.ts#L318-L390",
+          "version": "repo-lines-v1:sha256:a7f9a5f5ad10a973a3b6458c4d2832392c8296d65007cbea5e05a53aab5893f2:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlNmU3NzE3NmEzYWY2OGZlZjZiNzQzODZkMTQ2MDk3MGIwN2I5MDUyY2YwN2EwOGFmNTYzODRmZDIyNzA2ZjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxZGE3MWUyN2QwYjI3YzQ0YmUyNzFhZTdjN2UzZjUyOTczYjJmZTY5YjI1YzJmNGY2MmY2YmMxNmMzMGFiNDUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0OWFmNGUwNTYxOGRjOGNlZTUzZGE4ZTBlMWYzN2FiYzU0YmVmOWY5OTE2YTRiZDVlMmU0MjQyZmM3MmE5NDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc4ZDIyOGQyOWM4ODc2N2MzNTE4Yjg0MWU2MTkwY2M5MWU5YjgwNWE3ZTA1NWFmZmU5MzFiYjU2NzA1MzdlZWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a57750dfa6e644f49c23427979c009e2",
+      "statement": "Migration 0179 changed the clinical note author foreign key from ON DELETE CASCADE to ON DELETE RESTRICT so deleting a practitioner cannot destroy their notes.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0179_actor_fk_integrity.sql#L496-L520",
+          "version": "repo-lines-v1:sha256:ad3e4e82d8ea98529027f770b93ab9d65d305219d8d475c48426b5d7531b6c68:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljZTQ2YWY0YmJkZGJlMDU4NTA0ODU5ZjU0MWM3ZThiMzVhY2JiMjU2ZjZiOGE0ZmRhY2JjM2VjNDIzMTZjN2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY3Y2FlNTI4ZmFhMmMyZWFkNzhmYzU2ZDM2Njg5OGVkYTA4YmY0OWFmZWU3NWViNTYzYTU3YzU2Y2EwZTJiOTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJjMmQzM2U0NDc2YTVjOTI0Zjg2MDdiMGE3ZGUzYWFmN2NmNTVjNzA2MmU0YTZiOGU3MTgzNGQ0ZTNiYTVmOGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b093b8c0e87b4295800bdb4aac834454",
+      "statement": "The clinical-note server actions run under the RLS-scoped user client, force the author to the signed-in practitioner, confirm the stored row with a separate read-back, and map a supersession unique violation to a stale_revision conflict without retrying.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/clinical-notes-actions.ts#L1-L50",
+          "version": "repo-lines-v1:sha256:aa37c81fa6ff8f08fe22e570e5457ef8ab0fd66464f24247c7ab225d47871bdc:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5ZmRiNmE5NjYxNWI2MDQzZGRhYzA0OWM0YTg3ZGZmMDgyZDIyZmJhNGZkOTkzMTBhMGRkOTJhNGU3Yjk5NjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc3YTgxNDIyYWYxNWE3NmVlZGEzYmE4MzRhNzQ0YTI4ZWI4NTc0MTlkOWFhNDgyODBkNjBmOTk1MTNkNjhiNjAifQ"
+        },
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/clinical-notes-actions.ts#L160-L215",
+          "version": "repo-lines-v1:sha256:01ce731da12cd19502533d43af0e6b38906506c86ba476d5a25340266943f118:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkOWUxMjU0NjQyNTU3NmQzZGVhZThjOWI5ZGJmMTI4ZDVkNmRkYWY1ZDdmZTg1NzkzNDkyN2RlZmZhM2I5ZGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBkNTY2NTQ0NGM2NTUxMGU3MWZiNWQ1N2IxNzAxYzM5MzZiNTcyZGJlZDFkNzdlNzdmNDU3Nzk5YjY1MjJjZGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE0OWM5Y2MxMmM3ZTExMGQ1ZDMzNTQ5YjQzZTNkNzk0ZDMxYWQ5YzVkMmIxMzE1ZjQzYmU2Y2E1NjU4MDBhMzAifQ"
+        },
+        {
+          "resource": "repo://tests/source-guards/clinical-notes-guards.test.ts#L58-L92",
+          "version": "repo-lines-v1:sha256:f4e83f7d975f33c33b67c6a20d1c894139ccdc4d885d80ef886df1457541da36:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxYTkyYmFjNDQyNWQ0ZjBjODhkNDcwMjk1NWQzYjBhZTk4NDJlMzc0MzExNDU0M2Q2MmY3Zjc3N2JhNjE0NTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM2YjVhYmJjMzYyYTNhMzZkYmRkY2U1ZTUwMjJkYTMwMTIzZDY2ODJlZWYxMzI1OTIyOGQ1ZjhiMWUzNzhkZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0MWVhMWIwNWUzOTA1YmQ3MWI0ZDJiODk1MzMxMTZhNzQwYWMzMDY5OTNmMmFkOTJiMDg4YTQ3M2JjOGEzYzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_12bc26f3d7cb4c7eb385f51100a5b97e",
+      "statement": "The current clinical note of a kind is the newest non-superseded row, computed in the server-only RLS-scoped query module.",
+      "evidence": [
+        {
+          "resource": "repo://lib/clinical-notes/queries.ts#L48-L95",
+          "version": "repo-lines-v1:sha256:28397a7d64863f60bfc572abfeb689e1233a896fd85ac9b0841bbdd13b7577e6:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0ZGY4NDQxNWJiMjRmMGUwN2RmYmRmZmM2MzA4ZTBlMTM3ZTQyZWVlOTJlY2ViN2MwM2YzYzJkMWMyZjgyOTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3NTMxYThlMzAxNWE0NjA3YWJjOGNiZWNlZThmMmY0ZWFlYzg2ODAxMzJlM2Q1ZWYxOWM2OTBiOGVhNmMzNzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyM2Q4ZjExYWEzZmQ1MWVhNjZjMGFhODY1NjNiOWI3ODI5MmU0NDBiMTkxOGVjMmZiMDI2NjdkZDUyNDQ0NWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4NzM0ZDQzYmVlYjM1Njg2NThhZWQ5MGE2NWNlOGUzNzgxNGRkZDhlZmJmMWIzNDkwYTc0MzY5Y2YzYmMxNWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_003ce90828d14f94bc109e9be5b11373",
+      "statement": "A source guard audits that email, SMS, Stripe, portal and booking surfaces import no clinical-notes module and that the print view lives under the authenticated app tree.",
+      "evidence": [
+        {
+          "resource": "repo://tests/source-guards/clinical-notes-guards.test.ts#L118-L170",
+          "version": "repo-lines-v1:sha256:40da6f831262d547cb4fb0f7ab4794802ccf759197152f068d9c48abbc35d271:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwMDE2YTFjODQ5NTc5N2ZiYjZjNWQ3YmMwMDA2M2QzOTllNjZmMjQ3Y2UyODkxMDkzNGIyMDY5MjBhNjI4ZWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE0NzkyYTBjMDYwNWY5MDVhNjg4Y2NlYmVlNmQ4MGYzM2FjOTY4MWJiNmRlNTE3YjU4MmQ2YjU5ODEwMDBhNGIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImViMWVhMTVhMGY3YjFkNzc0MWMwOTJkZTgwMmQzOWZkYTQ0MzRlY2YwNWY5NDM1OGM2ZjM2OWNhOTExNmUyMmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM5Y2VmYTBlZjMyOWZiYjYyNDFhODZjNGRiOTYxYjZhZGY1N2E2MWMyZTU2ODQ2NGE2NTVhZjQxYWIxMzJlYmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ba017ab546154d9ea35d7fa2ef869678",
+      "statement": "client_pinned_notes holds notes of at most 200 characters with select, insert and delete policies on the caller's active practitioner studios and no update policy, and its migration header describes changes as remove and re-add.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0022_client_pinned_notes.sql#L1-L57",
+          "version": "repo-lines-v1:sha256:4de77bb5a769ec08d2137b4abf648d253b91107985eca0a4e8509d746d6a9519:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyZmI3ZWIzNDczMGIyMGRlNDYxOTMxOTdkYzRjYjdiZWIxMmUzNThhM2FmN2U2ZTg3N2NhMjFhM2M5MGNlMWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1ZWYwMWJjMDhkYmMzYjYzZTRlNzVlYTNkMjZhNWI5NDE4OTE4NzdlMjdhZDg5MTMyOWM4NDExZDdkOGRjNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e390f86f081a4c408424578c2b15650d",
+      "statement": "Editing a pinned note uses the service-role client with an update scoped to the note id, the session's studio and the client, plus the original text as an optimistic-concurrency guard, and writes only the text column.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/pinned-notes-actions.ts#L54-L106",
+          "version": "repo-lines-v1:sha256:5365a3a8348f807045da8564bc8ac92b4ac0823fab0d196807fa432a51b46397:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3MmIyYTA4ZDQ3YWFjZGY2NTg3MzE1YmNkZGZiY2I5ZjJjODczZGViZTVjMzQ1NjY1YWU4NzI3OTZlZTBkMWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRiMDhmYjIwMTkyODFlZjFiNGQyZjQwNTQ3OTdiNzBjZTk3NmM2NWYwYjBhODQ4ZWM2ZjA3OWU4OTgyYjg1MGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjljMGM4MmZmYjU5MDFkMWEwNzZhMWI4MTZmYzk1ZjJlMzYzYTI5NjcyYjY5ZjNkYTk3NGJjZTBjODRiOGM4MTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0cc8cf893a5a4017ace348d6b4bee0c2",
+      "statement": "client_personal_notes keeps one row per client with personal_notes and private_warnings capped at 20000 characters and a trigger-derived studio_id, and the action upserts both fields under the user client without trimming.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/personal-notes-actions.ts#L25-L60",
+          "version": "repo-lines-v1:sha256:e0b5117248ee72f93680bcfb1c62c33d27d006bf8ed4c43d9f592f0076a2d772:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwNDkxYmViMjQ4ZGIyN2YwYjJjNzAwMDE4YWExZGUyMjg4MWUzMWQzMTA0M2EzMDE1ZjNmMTAyOGVkM2M0MTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwMGIxMzY2MGYzYjk2ZTFmYmVhNGJkODQ0MGIyZDQ4ODg5ODNkYzBhZTBmYzgxN2FmZDM4ODIzMDY1ZWIxNDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMwMjA2YjY0YTk1YTdmN2YzN2U5YjlhMTZlZWFhYmI0MmQ4NjlmOWRmNzkzNWU1MjUxMmNjMzlmZDY2ODNlYjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgxNmEyZWQ5YWYxNmIyNDIzZjFiYWU2MzFlNTkwZDY2OTRiZDRiYjM5ZjA2ZDkxZmJkNGUzNjkwODMxMzIxMjMifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0035_client_personal_notes.sql#L1-L75",
+          "version": "repo-lines-v1:sha256:39cb0bfbeb3e38bcea5d25add390a764bd8993feeda7a66dffb9dc5a927cc30d:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViMjk2ZTlkNDVkZTMzYWI5YzcxNTA0OTg2MmRjN2I3NTQ0M2FhNTRkMzIxNjFkMzg5NWU3NGZlMDZhYjlmOTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlMzY5NjEwMzhjN2NmMWMyNDk5NDY4N2U4OTY5MjhmY2NmNzQwMDYwYzc1OTMxMTE2NWRjMmQ2M2I5ODc1ZjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI2MTVmYjcyYTA0MWY3MTUzMWJiMTZhN2EyNDNjYTA3OTdiM2JlNTI0NmY2MGQ4ZWJlYjMzNjVkZjc3OWMxYWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c7a3561f3be0444b96b3ce6fe51892c7",
+      "statement": "The clinical-notes contract document says service-role hard delete is kept so removing a parent practitioner can cascade notes, which no longer matches 0179's ON DELETE RESTRICT author foreign key.",
+      "evidence": [
+        {
+          "resource": "repo://docs/clinical-notes-append-only-contract.md#L18-L32",
+          "version": "repo-lines-v1:sha256:882a5075fbb823d25bc390acfd6f388fac6becfee6247a9e15f04e9940ba480c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZGYxOTA1YzcyMDc2YmNkMjQxY2M0YzIwZjc0MTkxNDEwOGNmZWExY2NiZjNlZWFmODE5NTZiMTQ5YzgzYTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUwZGNjNzVjNTU2OTQ2MDA5YWM3MjZiZGI5ODM4M2U3OTUwNTk4MDljZDhhN2FkMTZlZTc0ZDFjNWEwNGEzMzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVmNzc1ZmQ4MmExMjMxZjQ5YWViNWM1ZTk2NWUxZjAxZmU5ODY0Mjc1NjIyYjZmYmUwMWE0OTFiODBmZDk4NmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA3ODc3OTNhMGFiZjAyNTliYjFjZTcyZjQxOTY3NmQ3OWNmMzM1MzcwY2NiOWU1MWVjNmU4N2ZhMDlkNTY0YzIifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0179_actor_fk_integrity.sql#L496-L520",
+          "version": "repo-lines-v1:sha256:ad3e4e82d8ea98529027f770b93ab9d65d305219d8d475c48426b5d7531b6c68:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljZTQ2YWY0YmJkZGJlMDU4NTA0ODU5ZjU0MWM3ZThiMzVhY2JiMjU2ZjZiOGE0ZmRhY2JjM2VjNDIzMTZjN2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY3Y2FlNTI4ZmFhMmMyZWFkNzhmYzU2ZDM2Njg5OGVkYTA4YmY0OWFmZWU3NWViNTYzYTU3YzU2Y2EwZTJiOTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJjMmQzM2U0NDc2YTVjOTI0Zjg2MDdiMGE3ZGUzYWFmN2NmNTVjNzA2MmU0YTZiOGU3MTgzNGQ0ZTNiYTVmOGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f302a70cddec452cb6049a93b2ff3073",
+      "statement": "client_clinical_notes grants select and insert to authenticated and revokes only update, delete and truncate, the name-and-revoke pattern that 0184 found left REFERENCES, TRIGGER and MAINTAIN in place on client_budget_context.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0126_client_clinical_notes.sql#L168-L171",
+          "version": "repo-lines-v1:sha256:f120f4975eab2e43fefb905564de71b5f5c972da8471a7f198abc6aedd6673e9:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmYzMjk2MjdhMmVhODg5MjUwMjU1MTMwYmYyYTU2NjY3M2ViNzUyMTJlM2FmNzBjYTlkZmE5YmIyNzI1NDhkYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTM2ZTBmNTE0ZGU3MTJkNzMyNjAyMWU5MTFjMjY2MDFkZjFlODE2MDk4Y2NkMGQxNWI3ZTNlZTYyZGM2NmFjOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDdmMDg1NWY0YjMwMjJlNmUxNTZlODRlNzM1MjliMmIwNmZjYjBjMGZkMjYzZDkzMTUwMGQyNmY2YTE3NjYxMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0184_client_budget_context_least_privilege.sql#L5-L30",
+          "version": "repo-lines-v1:sha256:1ff38a7b1e4c9e475f4c81be9a59b45508a7e9de5e6c960475f0578b12ad7aa3:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZkMDFkMmU4MWMzY2RlZDI0YTRkNmM3Y2RhNDZjOGYwYjM5MGEzM2IwNDA2MjI1NWVlNzNmZDVjYTcwOTA3ZmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJjZTE5MjVjNTZjMzQ0M2Q2ZTJhMmQ5ODhlNjNhYTI0M2UyOGEyMjAxYzk0ODc2MWRmOGUwYTMzYjJjYjQxMDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZkZjIwMDFmYWNjMmUxMzYwNWZhMmNjNzNhZjJhZjEyNmFjNGJkYmJjZGM0NTBiODdlMmZmMGE4MDljNzYwZjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI2YzMwODAzZjI5NGE0OWUwNmQ0YzczYjBiYzc2ZTAyMTIwMzVmZWQ5YWU4ZjU5MDgyMTVkZTkxZTczOGIwMzMifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T22:34:57.394Z"
+  }
+}

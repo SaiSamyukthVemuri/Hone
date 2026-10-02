@@ -3,9 +3,6 @@ type: concurrency contract
 title: Scheduling concurrency and lock order
 description: The single lock order every schedule-mutating command follows (studios row, then the per-studio capacity advisory lock, then source rows), the GiST exclusions that are the final collision authority, the serialization policy for configuration-versus-booking races, the nested order used by waitlist booking conversion, and which races are proven by DB tests versus only argued.
 tags: [concurrency, locks, advisory-lock, exclusion-constraint, races, scheduling, waitlist]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-2a670c1b18c3d3c3da0bf632
     resource: repo://docs/reviews/part4-lock-order-and-race-matrix.md
@@ -39,7 +36,10 @@ sources:
     resource: repo://tests/db/public-reschedule-concurrency.db.test.ts
   - id: openwiki-source-592b6f4d2a956029fd6a6e27
     resource: repo://tests/db/schedule-lock-order.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Scheduling concurrency and lock order
@@ -90,8 +90,7 @@ the server adapter maps it to "slot taken". See
 ## 3. Serialization policy
 
 The shared lock gives **serial order**, not "one must fail"
-<!-- openwiki: broken internal link [../../docs/reviews/part4-lock-order-and-race-matrix.md#L62-L94] heading anchor "L62-L94" does not exist in "../../docs/reviews/part4-lock-order-and-race-matrix.md". Fix the href or restore the target, then delete this comment. -->
-([design: `part4-lock-order-and-race-matrix.md` L62-L94](../../docs/reviews/part4-lock-order-and-race-matrix.md#L62-L94)):
+([design: `part4-lock-order-and-race-matrix.md` § Serialization policy](../../docs/reviews/part4-lock-order-and-race-matrix.md#serialization-policy-the-lock-gives-serial-order-not-one-must-fail)):
 
 - **Configuration first** → the waiting booking/move re-validates against the new configuration and is
   refused (`practitioner_closed`, `outside_availability`, `not_eligible`, `invalid_practitioner`,
@@ -145,10 +144,8 @@ in the files listed above.
 1. **The lock-order review lists functions that no longer exist.** Its tables still include the legacy
    `create_internal_appointment` wrapper and `practitioner_move_appointment`, name `0148` as the latest
    `move_or_reassign_appointment`, and its race #6 refers to a "wrapper time-move"
-<!-- openwiki: broken internal link [../../docs/reviews/part4-lock-order-and-race-matrix.md#L29-L42] heading anchor "L29-L42" does not exist in "../../docs/reviews/part4-lock-order-and-race-matrix.md". Fix the href or restore the target, then delete this comment. -->
-   ([L29-L42](../../docs/reviews/part4-lock-order-and-race-matrix.md#L29-L42),
-<!-- openwiki: broken internal link [../../docs/reviews/part4-lock-order-and-race-matrix.md#L96-L110] heading anchor "L96-L110" does not exist in "../../docs/reviews/part4-lock-order-and-race-matrix.md". Fix the href or restore the target, then delete this comment. -->
-   [L96-L110](../../docs/reviews/part4-lock-order-and-race-matrix.md#L96-L110)); `0175` dropped both legacy
+   ([§ Mutations that follow the order](../../docs/reviews/part4-lock-order-and-race-matrix.md#mutations-that-follow-the-order),
+   [`part4-lock-order-and-race-matrix.md`](../../docs/reviews/part4-lock-order-and-race-matrix.md)); `0175` dropped both legacy
    functions and `0174` holds the latest `move_or_reassign_appointment`. Treat the review as design intent.
 2. **A test title outlived its assertion.** `double-booking-constraint.db.test.ts` calls its buffer case
    "the studio buffer extends the blocked range", but the body now expects the soft `HB001` rather than an

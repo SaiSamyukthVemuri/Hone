@@ -3,9 +3,6 @@ type: test infrastructure
 title: Database and migration test harness
 description: How Hone proves database behaviour — the separate vitest DB lane against a local, fully migrated Supabase Postgres, the localhost-only harness with role and JWT simulation, seeding and synthetic-tenant helpers, lock-wait observation for concurrency tests, reachability closure, migration source-contract tests and frozen-hash pins, the pinned Supabase CLI and one-fresh-reset rule, and what a passing DB test does and does not prove.
 tags: [db-tests, rls, migrations, vitest, supabase, testing, concurrency]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-a2371d6362e5db4bc834ad03
     resource: repo://CLAUDE.md
@@ -33,7 +30,10 @@ sources:
     resource: repo://tests/scripts/db-harness-guardrails.test.ts
   - id: openwiki-source-f312c1d8cbce2135dbecf8e0
     resource: repo://vitest.db.config.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Database and migration test harness
@@ -144,8 +144,7 @@ Those hand-maintained pins once lived in 18 files and went red after each new mi
 ## 4. The pinned CLI and the fresh-reset rule
 
 `CLAUDE.md` sets local testing scope by migration risk class, at most **one fresh reset per migration head**,
-<!-- openwiki: broken internal link [../../CLAUDE.md#L194-L213] heading anchor "L194-L213" does not exist in "../../CLAUDE.md". Fix the href or restore the target, then delete this comment. -->
-using the **pinned** CLI ([L194-L213](../../CLAUDE.md#L194-L213)):
+using the **pinned** CLI ([§ Local testing by migration risk class](../../CLAUDE.md#local-testing-by-migration-risk-class)):
 
 ```bash
 npx --yes supabase@2.102.0 db reset --local
@@ -174,15 +173,11 @@ until the next reset.
 
 1. **`docs/09` gives unpinned reset instructions.** Its harness and types-drift sections say to run
    `supabase db start && supabase db reset --local`, with the CLI "on brew"
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L517-L517] heading anchor "L517-L517" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L529-L529] heading anchor "L529-L529" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-   ([`docs/09` L517](../../docs/09_DATABASE_AND_RLS.md#L517-L517), [L529](../../docs/09_DATABASE_AND_RLS.md#L529-L529)).
+   ([`docs/09` § DB/RLS integration test harness (PR #220)](../../docs/09_DATABASE_AND_RLS.md#dbrls-integration-test-harness-pr-220), [§ Generated types drift check (PR #221)](../../docs/09_DATABASE_AND_RLS.md#generated-types-drift-check-pr-221)).
    `CLAUDE.md` requires the pinned `supabase@2.102.0`, because newer CLIs strip grants
-<!-- openwiki: broken internal link [../../CLAUDE.md#L205-L213] heading anchor "L205-L213" does not exist in "../../CLAUDE.md". Fix the href or restore the target, then delete this comment. -->
-   ([L205-L213](../../CLAUDE.md#L205-L213)).
+   ([§ Local testing by migration risk class](../../CLAUDE.md#local-testing-by-migration-risk-class)).
 2. **`docs/09` quotes a dated browser-spec count.** It cites "54 specs under `e2e/`" in a note dated 2026-07-27
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L519-L519] heading anchor "L519-L519" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-   ([L519](../../docs/09_DATABASE_AND_RLS.md#L519-L519)). The browser group manifest now maps 94 specs.
+   ([§ DB/RLS integration test harness (PR #220)](../../docs/09_DATABASE_AND_RLS.md#dbrls-integration-test-harness-pr-220)). The browser group manifest now maps 94 specs.
 3. **The synthetic fleet is incomplete by its own account.** Its Studio C failure modes are inert labels, and
    richer per-domain seeding is not delivered
    ([`synth-fleet.ts` L26-L38](../../tests/db/helpers/synth-fleet.ts#L26-L38)). Do not cite it as fault-injection

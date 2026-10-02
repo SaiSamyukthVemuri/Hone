@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:e0a39a6dfa4f5ee2ab0c811f508e840f21aa4a9b0f4768b1f25aef64a5d68005",
+  "pageVersion": "sha256:4534c6849c7975643b21b26f4353787a95807435bf31a62e6170d9ba656ba1fe",
   "claims": [
     {
       "id": "claim_2a6f62b59b54472aa9e6b98e63137e83",
@@ -106,8 +106,12 @@
     },
     {
       "id": "claim_28071835bbbe4aee8978e7a44c7e1909",
-      "statement": "public_cancel_appointment_with_token commits the cancellation, audit row and policy acknowledgement atomically, fails closed on stale or missing policy hashes, refuses at-or-after-start and terminal appointments, yields one success for concurrent double submits, and rolls everything back if the acknowledgement fails.",
+      "statement": "public_cancel_appointment_with_token commits the cancellation, audit row and policy acknowledgement atomically (0176 moved the acknowledgement insert inside the command after a route-side insert could fail silently), fails closed on stale or missing policy hashes, refuses at-or-after-start and terminal appointments, yields one success for concurrent submits, and rolls back appointment, audit, reservation and calendar outbox together.",
       "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0176_public_cancellation_atomicity.sql#L1-L40",
+          "version": "repo-lines-v1:sha256:31cecf7a55637bdab4e80e079c632817e82adeee13422a59b6ad233520ec27bf:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0ZTk3MTg4MTY3YjRhMjNmZDFiMzkyNmM2NDI2MDg1MjBlY2Q4OTMzN2ZkNGQ5ZjdmMDBhOGI3OTMzYmE2MWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlODBiNTk4YWEyM2VjZDc4YmMwMTY2YTRjZWMwZmNiOWE0NjllMzJlZWMxNDA2ZWI1ZTA4ZmJhNTk2ZjJkYjQifQ"
+        },
         {
           "resource": "repo://tests/db/public-cancellation-atomicity.db.test.ts#L220-L820",
           "version": "repo-lines-v1:sha256:cf8f1b15817f9c5be76cbcd5086a1c558f1af55c5ad48b623f54dbf0d963b9e4:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2Mzc5YjY0MjE0YzYxOTNjY2QxOGNjYjlhYjIyYzliZGMyNTkwY2M0NTNjYmFjZGI0MzNmM2UyN2M0MWVjYzBjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiODMyNGE1ODk0ZWRiMzMzYTViZmUyYWI4ZDc0OTNmNDg5ZDZhYWRlZGYxMjYyMTlmNDNmODllMGRiNjlmZDkyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0NWViYjI4YzA4NDMzOTIwYzE0MDdkZjVmMWMyNWVjZDY4YzYyYTFjNzRlNmQ0ZDAxYjMxMWJlZjc5YTA4ZGEyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3Mzc4Y2QzYTdiMGQzODEwNGQwN2MxMzk5ZTJlNDVhZDRjMmIzNDk3MDI2NDU5OWViMmY5MzBlZWJjMDgxNTc5In0"
@@ -155,10 +159,34 @@
           "version": "repo-lines-v1:sha256:d53eae6411d390c503f600ca77678e73d8f97b592be5502afe87a05f73d5a59d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwMmI0MmM4ZjMxZDA1MTA2ZTViOTRmNjY1ODI0ZTcxMmU4YWQ4MDg4NDYyZmU0ZjAxYTcyZjA2NjNmZjEwMTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiZDk4OTQ2ZWMzMzE2Y2QyZjlkZWZmNjY4YmJhOWU2N2UyZTVjNzZjOGE2NmE3ZTU3ZWQ4MzVjNWNiODhiOTcifQ"
         }
       ]
+    },
+    {
+      "id": "claim_1446f3b993484e6d826d262a61ec91c5",
+      "statement": "All four public reschedule entry points rate-limit first and pass through assertReschedulableOriginal, which resolves the token by hash, requires a confirmed future original, and only then applies the free-consultation waitlist-only refusal so the policy cannot be enumerated with unknown or stale tokens.",
+      "evidence": [
+        {
+          "resource": "repo://app/reschedule/%5Btoken%5D/actions.ts#L105-L200",
+          "version": "repo-lines-v1:sha256:b002e15bb0da44ec388f3f8bd02771776f53a4b97999c4a9458eff192ac80ac2:eyJzZWxlY3RlZExpbmVDb3VudCI6OTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyNmI0ODFhYzNjOTdkYzAyYTFkYzJjOGI2Y2QzMDkxMWM2YmIzMzk2YzQ3YjdhYTM0M2NkMWNkNmQ1ZWM2ODciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4ODI3NjAzZjNlOTE2M2EzYzk0ZjQ2ZDIxNmNlNDJjYjdmNGI1ZGM0NTY3YzU2NTBkM2Q2Y2UyZTNhZWQ1YTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNlMmJlNDNkZWE5ZWJmZDQyNzFhMTI4ZjE1ZGVjYjU1ZjcwNjkyNGZhYTBhOGZjNTYzMTVmMzkzMjM1MDg5MTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4ZThmMGFkMGMwNWI1M2Q0NWZjNmZmNTU0MzU1YjkwOTE4NmU2ODQ0YTcyYzAwMDVlNGQ4OGIzNjg4NGE5ODQifQ"
+        },
+        {
+          "resource": "repo://app/reschedule/%5Btoken%5D/actions.ts#L429-L440",
+          "version": "repo-lines-v1:sha256:8e6962ff696d76e505c185ec1d8ad4a328d96b419ea19b27a534c4994b9233f6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjMDcwZmVlN2NkZmUwMjg1OWZkYTJmNjJmMmE2YmE4NGNkNGMxOTMwMjNmZTIyZmI2MGIxMzc1NTg2ZWJlYzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiYWFjZGM3OWM0Y2UwMDgyZmYzOWNmZGI2MGMwNjU1OGYxNTEzNGZkNTdlMWZkMjQ5M2I3ZTZkNjQ1ZDk1NjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZiNDI1ZTRiM2IyZGI1ZjExOGFiMzE5YzM1NjRlOWM4YmNjNmNjMmUxZDcyNjE5YTQzNzNhMmZjMzYxNTU5YzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA4OWM0MmIzMjlkOTljYzNhMDNlNjg2YzY3M2U1NjIzNTIwMzBmZDVkY2JiZDIyNDYxM2M5Yjg2ZTEyYzc0NzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_49370eab15d74474b833cd8ef3522d5c",
+      "statement": "The reschedule submit posts back the hash of the policy text the page rendered, and because the command re-derives the current hash from the studio row, a stale or tampered value can only cause a refusal and never record a false acknowledgement.",
+      "evidence": [
+        {
+          "resource": "repo://app/reschedule/%5Btoken%5D/actions.ts#L714-L760",
+          "version": "repo-lines-v1:sha256:5cfbb2e683e4c7727019bed6882b9d80d3844fe79d6133ada1147882bf402b01:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjZGI2ZTU1MmFkMDJjM2FhYjA3YzNkZmNmOTZkMGExYTg4MDhjN2Y1NGYzNTczNjc1MTM2YmY4MGVjNTM0ZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4MGE2YzcxMWQyYTZjYWI0MjUxMjc2NjYyYTI5ZTk1MmM1ODkyMzc4ZGVmMDJiYzQ0ZTg3NGI5NjI1NWMxYzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0NjA3OTFiYWIwNDYzYmEwZDgwMjZlNjhkNjBmZjFkZjg1YzhkY2M1ZTVkN2Q0NDI0YmJlZTdkYWVjNGQ0NjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU2NWFiYjZhZjE0MzBlMzg1NWQxYmEzMjA3MTBiYjZhNDZhNmI4ZjNhOGY1ODg2ZmRlOWY5Yjc2NDJmZTAwODcifQ"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T20:08:11.217Z"
+    "at": "2026-10-02T22:34:57.394Z"
   }
 }

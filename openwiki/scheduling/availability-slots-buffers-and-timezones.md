@@ -3,9 +3,6 @@ type: scheduling mechanics
 title: Availability, slots, buffers and timezones
 description: How Hone decides which times are bookable — UTC storage with studio-local rules, availability precedence (overrides, practitioner windows, blocks, breaks, blockouts), the TypeScript slot generator and its anchors, the database's hard actual-overlap exclusion and soft buffer trigger, exact public slot membership, the booking horizon, and the parity tests that keep the two engines aligned.
 tags: [availability, slots, buffers, timezones, dst, exclusion-constraint, scheduling]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-c367790cf680d78d3d3518d0
     resource: repo://lib/booking/horizon.ts
@@ -17,13 +14,18 @@ sources:
     resource: repo://supabase/migrations/0029_double_booking_constraint.sql
   - id: openwiki-source-bac7b7202f3ee5659b335f23
     resource: repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql
+  - id: openwiki-source-e9162711763ff32ea530713a
+    resource: repo://supabase/migrations/0170_public_appointment_command.sql
   - id: openwiki-source-656bba36338b19b6cc91ee9d
     resource: repo://tests/db/availability-parity.db.test.ts
   - id: openwiki-source-79f4e8e269bca24a020c7032
     resource: repo://tests/db/duration-and-availability-validator.db.test.ts
   - id: openwiki-source-db6eb90088119cc60b2c5fcd
     resource: repo://tests/db/public-booking-slot-parity.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Availability, slots, buffers and timezones
@@ -86,7 +88,7 @@ Rules that matter:
   blocks, breaks and blockouts protect only their raw interval
   ([`protectedIntervals` L260-L306](../../lib/booking/slots.ts#L260-L306)).
 - **The closing edge tests the service end, not the buffered end** — a trailing buffer may spill past
-  closing time, matching `validate_appointment_availability`
+  closing time, matching the capacity-on working-hours check in `validate_appointment_availability`
   ([L150-L165](../../lib/booking/slots.ts#L150-L165), fit filter [L610](../../lib/booking/slots.ts#L610-L610)).
 - **Public surfaces drop past slots** with `filterFutureSlots`; practitioner surfaces deliberately do not
   ([L23-L52](../../lib/booking/slots.ts#L23-L52)).
@@ -106,11 +108,19 @@ Rules that matter:
   it for **every** writer and raises `HB001`, unless the row is `booked_outside_availability`, which only
   the owner-gated internal commands can set
   ([L163-L247](../../supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L163-L247)).
-- **`validate_appointment_availability`** (introduced `0146`, current `0152`, from
-  [L252](../../supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L252-L252)) checks working
-  hours, closed days and blockouts, membership/eligibility and practitioner-specific precedence; the owner
-  outside-availability override bypasses **only the working-hours window**, never a full-day blockout
-  ([`duration-and-availability-validator.db.test.ts` L78-L115](../../tests/db/duration-and-availability-validator.db.test.ts#L78-L115)).
+- **`validate_appointment_availability`** (introduced `0146`; the current definition is in `0152`, from
+  [L252](../../supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L252-L370)). What it checks
+  depends on the studio's `practitioner_capacity_enabled`:
+  - **Capacity ON:** active membership, service eligibility, full-day blockouts and the working-hours
+    window (date override first, then weekly default; a practitioner-specific row wins over a
+    studio-wide one; a booking may not cross midnight). Then the soft buffer check.
+  - **Capacity OFF:** **none of those**. Only the soft buffer check runs, so the database accepts an
+    internal booking at any hour. The DB suite pins this: "Legacy (capacity OFF) is a no-op → ok even
+    outside any window". Public booking is unaffected, because its exact candidate set (below) is
+    computed from the working hours.
+  - **Owner override:** the owner outside-availability override bypasses the working-hours window
+    **and** the soft buffer check, never a full-day blockout
+    ([`duration-and-availability-validator.db.test.ts` L78-L125](../../tests/db/duration-and-availability-validator.db.test.ts#L78-L125)).
 - **Exact public membership.** `create_public_appointment` and `reschedule_appointment_v2` recompute the
   public candidate set in SQL (`public_booking_slot_candidates`, `public_reschedule_slot_candidates`) and
   refuse a start that is not a member (`not_a_public_slot`); internal commands use the broad validator,
@@ -133,7 +143,7 @@ applies the same rule in the studio's local calendar.
 | Property | Test |
 |---|---|
 | SQL candidate set == TypeScript offered set (empty day, around appointments and blocks, blockouts, closed days, overrides, DST) | [`public-booking-slot-parity.db.test.ts` L1-L30](../../tests/db/public-booking-slot-parity.db.test.ts#L1-L30), [L116-L215](../../tests/db/public-booking-slot-parity.db.test.ts#L116-L215) |
-| The internal writer accepts exactly what the reader offers and rejects what it hides | [`availability-parity.db.test.ts` L68-L120](../../tests/db/availability-parity.db.test.ts#L68-L120) |
+| On a capacity-enabled studio, the internal writer accepts exactly what the reader offers and rejects what it hides | [`availability-parity.db.test.ts` L68-L120](../../tests/db/availability-parity.db.test.ts#L68-L120) |
 | Scoped blocks/breaks keying, scope transitions, rollback on conflict | [`scoped-blocks-breaks.db.test.ts` L57-L105](../../tests/db/scoped-blocks-breaks.db.test.ts#L57-L105) |
 | Owner override vs buffer (browser) | `e2e/manual-override-buffer-booking.spec.ts`, `e2e/client-booking-outside-hours.spec.ts` |
 

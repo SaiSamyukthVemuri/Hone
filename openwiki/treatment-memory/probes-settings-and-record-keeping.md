@@ -3,12 +3,11 @@ type: domain model
 title: Probes, treatment settings and record keeping
 description: The electrolysis setup and safety-record model — the code-only probe catalog, machine readings and the pulse-delay range, numbing notes, structured observation chips and the unified reaction contract, inventory-backed probe lots with a same-studio composite FK, expiry versus discard as independent lifecycles, sterile-item and disinfectant logbooks — and, for each rule, whether the database or only the application enforces it.
 tags: [probes, record-keeping, sterile-inventory, observation-chips, charting, validation]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-5ac4bfebd3f01c9163136f75
     resource: repo://app/(app)/clients/%5Bid%5D/sessions/%5BsessionId%5D/actions.ts
+  - id: openwiki-source-deca2eb7e839d1db80ee45e6
+    resource: repo://app/(app)/records/actions.ts
   - id: openwiki-source-0a7f1727d82c9ac5dce569e4
     resource: repo://docs/production/known-limitations.md
   - id: openwiki-source-64b7a8e7b8bb1b76c4a50a33
@@ -23,6 +22,10 @@ sources:
     resource: repo://lib/record-keeping/probe-lot-inventory.ts
   - id: openwiki-source-9b2ae69b46d8883fac67f92b
     resource: repo://lib/sessions/reaction-unified.ts
+  - id: openwiki-source-a05c9f389ffe9e24057fd5ef
+    resource: repo://supabase/migrations/0086_record_keeping_audit_events.sql
+  - id: openwiki-source-9be98b6b5bc9e7f7a617e554
+    resource: repo://supabase/migrations/0088_exposure_incident_owner_access.sql
   - id: openwiki-source-40e847f6c6d50a5a3df0bdab
     resource: repo://supabase/migrations/0102_electrolysis_entry_pulse_delay.sql
   - id: openwiki-source-4c0e5c373811f917d62572ef
@@ -37,7 +40,10 @@ sources:
     resource: repo://tests/db/probe-inventory-linkage.db.test.ts
   - id: openwiki-source-1ee7a7ace5306ea40f92a98e
     resource: repo://tests/db/sterile-item-discard-lifecycle.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Probes, treatment settings and record keeping
@@ -48,8 +54,7 @@ and legacy rows, and puts most vocabulary rules in server-side validation.
 
 Known limitation **L16** records this posture. Treatment-area and probe-lot validation is application-layer only,
 except for the inventory link's real foreign key
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L266-L275] heading anchor "L266-L275" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-([`known-limitations.md` L266-L275](../../docs/production/known-limitations.md#L266-L275)).
+([`known-limitations.md` § L16 — DB-level charting constraints are deferred](../../docs/production/known-limitations.md#l16--db-level-charting-constraints-are-deferred)).
 
 | Rule | Database | Application only |
 |---|---|---|
@@ -179,7 +184,40 @@ proves:
 
 These are computed displays; no reminder is sent.
 
-## 5. Contradictions and open questions
+## 5. The `/records` logbook surface
+
+`/records` (`app/(app)/records/page.tsx`) is the studio's inspection-style logbook. It holds sterile items,
+disinfectant batches and exposure incidents, and lets a practitioner mark a session's aftercare as explained.
+
+**Writes** (`app/(app)/records/actions.ts`):
+
+- **Tenancy.** Every action derives the studio from the session, never from the form, and writes through
+  the user-scoped client, so `is_studio_member` RLS isolates studios end to end.
+- **Operator.** A disinfectant operator chosen from the dropdown is resolved server-side as a same-studio
+  active practitioner. Anything else, including a cross-studio id, falls back to a free-text "Other"
+  operator.
+- **Aftercare.** Marking aftercare explained calls the `set_session_aftercare_explained` command (`0167`).
+
+**Exposure incidents** carry sensitive personal and health details. Since `0088`:
+
+| Action | Who |
+|---|---|
+| File a new incident | any member |
+| Read or edit incidents | owner only |
+| Read exposure-incident audit rows | owner only |
+| Delete | nobody (no policy) |
+
+([`0088` L1-L28](../../supabase/migrations/0088_exposure_incident_owner_access.sql#L1-L28))
+
+**Audit trail.** `record_keeping_audit_events` (`0086`) has a single studio-scoped SELECT policy and no
+insert, update or delete policy for application users. Rows are written only by `SECURITY DEFINER`
+trigger functions, which diff the row that fired them and resolve the actor from `auth.uid()`
+([`0086` L10-L30](../../supabase/migrations/0086_record_keeping_audit_events.sql#L10-L30)).
+
+**Reads.** `/records/print` is a read-only print view over the same query module, and disinfectant
+discard status is computed at read time ([`disinfectant-status.ts`](../../lib/record-keeping/disinfectant-status.ts)).
+
+## 6. Contradictions and open questions
 
 1. **The "dormant" legacy lot id is still writable through a live action.**
    - `0155` and `0156` call `electrolysis_entries.probe_lot_id` and `probe_lots` dormant and untouched

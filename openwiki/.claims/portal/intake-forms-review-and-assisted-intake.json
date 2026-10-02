@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:05dc491cea09bd9090bea5c5dd5604f570f47ba19bab9f14a9f81a2b3e4fa337",
+  "claims": [
+    {
+      "id": "claim_b66ed25512404ef6abb6f3e3e5fc8511",
+      "statement": "Intake links are HMAC-SHA256-signed {intake_id, expires_at} payloads under a dedicated INTAKE_SIGNING_SECRET and are verified with a timing-safe comparison.",
+      "evidence": [
+        {
+          "resource": "repo://lib/intake/tokens.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:c101b4fb8f8313fa6c5b1b45a92058edcdc94eb565cb0a0959c1c54a6b12f3c6:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5MzJlZGI1MmEzNTE5YjljN2UyYzg0NjRlNTE4ZTViNjg3OTFiNTg5OTBhMGY2ZWU3Njk0NDNmMDNjYzkxZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0ZTQyMDhjZDZmZmI4YzRhMzU0N2IyZjU0YWRhMTk5NzhjM2YzNjVlNzhmOTUwMmVmNTE0NWNkZDJhYTg1NDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMwNjYzZTNhMDM4NzdkZThiYTQ1YjFmNzdlOWVjMmYwMzQzMmVkYzBmN2JjZGM0MTU1ZGE0YTE1NTJjYzMwNTAifQ"
+        },
+        {
+          "resource": "repo://lib/intake/tokens.ts#L64-L100",
+          "version": "repo-lines-v1:sha256:51329e553fa057f3960b4cb71c176ff71ae16c8138016b022cffdb422279ad52:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxZTcxMDAzYWZkNjdjOGQyMGQwYmY3ODkwNWY2N2Y0NjUyMzhiZjI0ZDJmMjViMTBiOTk0ZTEzZjU4NTgzOWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzODIxZDRhM2Q0ODc0YzE1MTY3MzI4MTlhNjJhMjk4YjRjOTU1N2JiNjQzNTQxYjQxNzNjODUxNTVkZWY5YmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkMzhkMDUyZDVlYjQzMjZmY2U5M2FmYmRiY2FiYzZiNjJkNTVhZTg0NWUzM2Y4YzM2MmRlNDBlNTRiOTA0ZGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c7cec25a4b2949448f41ebef639bbd26",
+      "statement": "The public intake save and submit actions rate-limit before verifying the token, collapse every token failure into one generic message, and whitelist responses to known question keys plus one bounded consent claim.",
+      "evidence": [
+        {
+          "resource": "repo://app/intake/%5Btoken%5D/actions.ts#L187-L205",
+          "version": "repo-lines-v1:sha256:3d45fdab0e5eb7913197f2c7d87d7d9092f837cb0aa44b7aa2e264c203706f81:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExZGNkZWQ4NTIzMzE4ZGViN2M2NWFkMGM3ZTQyMmJkMDg0NTk3MGY1NmZjMjU2ODdmZDgyODk2NDUyNTg5MTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjllZTlhOGE5NjIwOWJlYWZlY2I1ZGZlNDdhOGMzNGE3NWNiNTNjMzQ4ZGE5MGUxYTI5ZmUxYjMxMWNmNTcyMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE4NmJiMjE3YTNkNGY0NDhkY2FiYTU0NzQ5NTIwMmE5ZDZkOTZkNDkyYjc4MDI5ZTc5YzcxNTAxMmRiMzFjNGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjczOTg2M2UwOGY4Zjk1NWYxZGFlMzdkMDc1NGE3ODlhYWRjYWMzMGU4ZWVjYTgzZDYxZjZkOTk4MjQ4ZGZhMjYifQ"
+        },
+        {
+          "resource": "repo://app/intake/%5Btoken%5D/actions.ts#L38-L104",
+          "version": "repo-lines-v1:sha256:164eaeae92db040b5c1783bd66557335c47d559544f990c9e38d23767f3a65f0:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBkNjA0ODI2NTU4OTRjNzFiZDE0OTI5MTRjNWY5N2FjMGI3OWViMmMzNTFhNTUzYmNlNzJkZWYxMmFkYjc3ZTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1NTJiYTJiNmQxYmYxNjEzNGM1YmE2MTliYWVkOTljMzI5MzQ0N2QxMGM2Y2RiMjkzZWI2MWFhNjAyNzBkYWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY0ZWNiN2M4YmJiYjRkMjY4YTgyZGMxZjVkNGE4MTc3NGQ4ODY3ZDU5MmVkM2VmMTliMDlhMDhjMWQwNDQ3YTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3cdef120bbbc4114bba92bd0422d0805",
+      "statement": "Intake draft consent records are re-derived from the studio's own live template rows, so a stale or forged consent claim is dropped rather than stored, and the save update is conditional on status in_progress.",
+      "evidence": [
+        {
+          "resource": "repo://app/intake/%5Btoken%5D/actions.ts#L129-L186",
+          "version": "repo-lines-v1:sha256:7d908fa40c4b4ce311afb46dfcc30159f3aea1eb21527909c749319c5983b77c:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjZjNmMTczOWM3OGE1NzY3YzM2MzMxZDRhMDdkMDI5ZjQzNjljOWIxMjM0YjQwOTNkNjU3MWRlNDBlMzZmODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczYTQ2YTFjYTVlYjgzMTkxMGQzMjEwMDg3MzNjNDRjNzAzZTg0Y2MwZWQ5OWU3M2YxY2ZhZTFjOGI3MGM4ZGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkNWQyMWU0MmU4Yjc0YTViYzVmMDI0ZTI1MmIxMzlhMjc0MWM0ZjBmMjE3ZTJkMDgxNWVlMWQ2M2ZkODFkYzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a65c05e1dc194f589bdf11967a8009dc",
+      "statement": "Submitting an intake refuses missing required answers and invalid choices, validates live consent responses against a fresh read, moves the row in_progress to submitted in one conditional update, and treats an already-submitted intake or a lost race as success.",
+      "evidence": [
+        {
+          "resource": "repo://app/intake/%5Btoken%5D/actions.ts#L205-L351",
+          "version": "repo-lines-v1:sha256:de141720a2ebdccf9c87fe2cf03851c3ae377240c54984f211ae2ec7fd9b6e83:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5ZWU5YThhOTYyMDliZWFmZWNiNWRmZTQ3YThjMzRhNzVjYjUzYzM0OGRhOTBlMWEyOWZlMWIzMTFjZjU3MjFiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0ODg1YmI3NGZhNzE3MjE5YTZlNzQzYjg3YzdiNGMyNzU3NGQ4MGU5MmMzZmViNzQyY2FmOTg0YjExOGQyNzgwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyMmQzYTBjOGM1NGU5ODY5YjFiMzA0YmYyZmRkZTEzNWE3N2Q4Zjc3ZDM4MWJkMWQwYWIwZmNiZDg5MWY0MWQwIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_2edef01644ed47739e6de04c208e2bea",
+      "statement": "After submission the intake syncs emergency contact, date of birth, pronouns, address and allergy text onto the client only where the client field is empty, and records an intake_submitted practitioner notification.",
+      "evidence": [
+        {
+          "resource": "repo://app/intake/%5Btoken%5D/actions.ts#L358-L392",
+          "version": "repo-lines-v1:sha256:12f19acd05b1aa31b22a4372c3a72e90b941a6ef16db336e160cad1cd0f4f9d8:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkMjY0ODczMmJiYzBlMmE4OGI2YWVjMDNhNjA4ZTRkNTRjODQxZjE3ZDhkZDFiODE4NGZkMTc2Mjc1MGQ5ODgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0N2Q0MjIyM2VmM2JlMGZiYWQxNDA1OGZiOWE5ZWE5OTEwYWE0MTZhYTg1NGFkYmU3OTQ4Y2U1OGIyZDcyNTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNiNjg1MzJhZDcxNWEyNDM0YjM2NmE1Y2RjOTRlOTgyOTIxNzhmNTI1YTA0ODljNDAzYWRmZWQwMjEzMzZkYTUifQ"
+        },
+        {
+          "resource": "repo://app/intake/%5Btoken%5D/actions.ts#L413-L470",
+          "version": "repo-lines-v1:sha256:fc2244804ff67571f0baffd557c921f160f293085ecf05e628325dcb1dd742c8:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4MzA3MzI4MzQwODIzZmVmNDBjZWEzM2YwYzliOWY0OGNlNWYzYjFkYTE5NzFhZTNhNzczMmE0NDhmM2EyNjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE0NDFmMTdkZjJhZDFjOGFkZjRmZTIyZTQwMDQ0MTMzYmNhYmJiZDU0NTkxZTUwZjE4YzE3ZGNiZWJmNDZhZGIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMxZjVlOTgzNTNkYzMzYjU3ZjAxNmFiZmI2MzgxYzA1NjhiYmE4MGFmYjNkNDBjYjJiODk4MWU4ZGQyNzI1ZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ1ZmFlN2Y4ZTc2NDM0OTIxNjYyM2RmMGQ1ZGQzMGFjYTE0ZTMwMzY4OTQ5MzdkNzY4MTQzMWIwNDkxMWVlMDgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_371e4a15bc064a6e9c17c3fc12016c6e",
+      "statement": "The retired electrolysis acknowledgement keys are stripped from incoming intake responses so no new record can be authored from a browser while stored historical records survive the merge.",
+      "evidence": [
+        {
+          "resource": "repo://app/intake/%5Btoken%5D/actions.ts#L59-L81",
+          "version": "repo-lines-v1:sha256:65d0739c3aaeb5a079373933cecddfe3a31800ced93c6860a1b68f340c3b444c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlYThlYmRmODVmYjQ2NDk5OGMwYzk5ZWI1ZWRiNGI5ZDJiYjk2MjAyNGEwM2M4ZTc4MTAwZDMyNDA1YWZmYmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkwODZiMGIzODA0ZmY1ZmFjYWNkYzU1ODM2NjYwOWRkYjI5NWY3MTg2YTg3OWI0MjQxMjJkYjlmYTcwMzQyZmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2NjAxYmJjOWM1NmZhYzNhN2ExY2UwZDkyNDRhZTk1YTJjNTM3YTA5MGRmMTg1MDA4MzZjMWIzMDc5YTI4N2QifQ"
+        },
+        {
+          "resource": "repo://e2e/intake-live-consent-forms.spec.ts#L320-L330",
+          "version": "repo-lines-v1:sha256:f7fc84e00aaa4906e4fe291573c53e70f7c5c0a8ab64ee4d0fc230d99363d902:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3ZDQ1N2U0Mzc5NTI5MzRiOTM1MGIxZjc4M2ZjYjUyNTkxNTgzYTQ1YWQ5NGIxZjkxMmY3YTJiNGY0ZjVkMGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0ZTQyMDhjZDZmZmI4YzRhMzU0N2IyZjU0YWRhMTk5NzhjM2YzNjVlNzhmOTUwMmVmNTE0NWNkZDJhYTg1NDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMzNWY3MGNlNzA0Y2NmODNjZjgzYzVhOWYwNzRlNDQ2ZWRhODFmMjBiNmY1ZjZiNTNhN2ZkZGM4M2NmMGI3NTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMzZDhjMTU3N2NlNTFkYmU0NWE2YjZjMjkyMDhlYzA2ODUyZDMxYzliNGFlMGVmMGM2N2JmMjhkMmQyMTY0ODAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9c89b2f910334b9aae779093661220a9",
+      "statement": "Requesting an intake update always creates a new in_progress intake while preserving earlier submitted and reviewed rows, and emailing it is behind a per-practitioner per-client rate limit.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/intake/actions.ts#L401-L440",
+          "version": "repo-lines-v1:sha256:254ed44b0799d2fe5a636d4d29fc287087130ae7f587a9cbeed00b5d6107b664:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4N2JmYWY0NjRiZjAwMzYyMzhjNWZiYzJjNWJlYTBkNmJmYjNhMGNlMGM0YzE5ZjcyZTZlZGQxMTUyZmExNzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4NDhkNjY0ZDFkNWQ0ZjM4ZjA5YTUyZTYwNTYzMzgxNTM1Y2M4ZTZjZmY0MzhlN2RhNTgxMDZmZmQ3ZDMzMTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBlMWVkNTZjNTlhZjQxYTM2ZmRkODJjYzNkY2ViZTZjMmE0NGFmMTI3OWQzNjg1ZGUyZWU5MTZhOWVkMmVlMTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5cf8aa58d0f64a31830b828f0f69c834",
+      "statement": "Intake link status is a display mirror computed from the 0097 metadata, with the signed token remaining the authoritative expiry and legacy rows using a flagged fallback heuristic.",
+      "evidence": [
+        {
+          "resource": "repo://lib/intake/link-status.ts#L1-L25",
+          "version": "repo-lines-v1:sha256:75e49b785a1241f09cb51858ad6022a2f608250b30622d66cab3ff77d81a7f10:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkNjk0NWU1ZjRlMjlhZDM2Y2RlMmUwMWI1MDdlZTM5Mzg0ZmNiODA0OGRjMDNlNjgyYjQwZjlhNzc2ZWM0ODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkODU3ZWQ3ZGY2OTI3MTViZmU0ZWQ2YzFmNTg3YTQ5NGNmODY4NDEwNjBiMjIwNjU2YmRhZDIxODc4MjU0MzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5MjBhNjAxYzYxMzcwNjVlZjU3YTZiMDdjNmYyZjIyMjRiN2E2YTVlNDliMDQyYmI0OGE1YWNlMzE3OTY0NjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_db4237e686dc42228a7e95c375146e6a",
+      "statement": "markIntakeReviewedAction performs one conditional update to reviewed that requires matching studio and client, not deleted, status submitted and a non-null submitted_at, requires exactly one returned row, and collapses every other outcome into one opaque refusal.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/intake/actions.ts#L144-L230",
+          "version": "repo-lines-v1:sha256:440355f4f5dedf87fbdf318501cee0096a50ddba610bdaac13db30db6744135b:eyJzZWxlY3RlZExpbmVDb3VudCI6ODcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3ZmEzOTFlYmNhMjA2YmZiYzUxOWVkYTI5MDkzYzNiZTI2MjYxMDliYjJhODZmOTg4ZTU3MDllZDIxM2M4NzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3NDdjZmFjMmVhYmYyYjUzMjk2MDUzMzE2MzFkYzA4MDQwMzBlOTExODQwMjJjMDNlNTg4YTA3OWUwOWI1NTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYyZTFhNzEyZTQ5NjExNjU4MzExZjRhNTI3NDg4MjU5MTEzZTZlZWJjNzc5YjM2MWEwMThkNmQwYmI3NWYwOTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzOGM0MDZjOWFlMzMwMDA5YzE2OGQ1MjBjNjgxMDAzY2JkZmY2ZDdkNTJhZmMwY2Y0OWY4MTI1ZmQ3YjQ0YWIifQ"
+        },
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/intake/actions.ts#L32-L67",
+          "version": "repo-lines-v1:sha256:f1187273f6e0345bfbe57e688af4ab215feb48b50102a59f36050ce10a6d2a15:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiMmJlMmJlNWM0MmJlODVjNTM1NjdlY2RiYmUzZWRjMmI5YzhhMzZhNTAwODg0NjFhOGEyMjJkYzdiNmNjMjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzYTJlZDIwMTU0ZGUxNDBhNjM1MDZmZGQxY2RiMDEwOWQwZDUxOGYyNjk2OWIzY2Y5MWFjYjM0MTkzNzM3ZjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZhMWNjZmY3YjRlMDZlNDg4MWY1NDc3ZDYzZTc3NjE2MjE1YzcyY2U4NDQzZmI4NjQxMDg2ZTI5NWRiYzU4MGUifQ"
+        },
+        {
+          "resource": "repo://e2e/intake-review-integrity.spec.ts#L79-L360",
+          "version": "repo-lines-v1:sha256:63d5294e717eeb15ad0a65749f18d0304079da27254bee27c7ec839ff780ee47:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI4MDJiZWU4MjlkNWU1MTQwZGFlNzcwNDAzZDRkZGRkYzQ5ODJkZWJlOWJhMWY5NThiY2UyZjFkNGQ1ZjA1NzBkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0OTlhYTVmMDc5YmJiYWQ5ZWVkYzg2NmZlM2IzMGI2NmZkOGYyOTlmNDZkMTFkZjhlZTMyN2I4MGI5YWZmNjJhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxMzM1NDc1Y2U5NzVhMjZmNWE3ZDU1Njg0NGZhMGU2N2YyN2RjMjViOGI5NzAxNjA4YmY1NTQ5OThlMjg3N2JiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MGRhYjY3ODc4MDgxMzI1MTZlOGY2ZGYwMmFiNGU5ZGIwOWJkYWQzYzQyOTg1OGMzNzRiZTc0NTFlYmI2NmQ2In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_76ef49b4903a45b787df65b15b551bea",
+      "statement": "Assisted intake lets practitioners write only non-acknowledgement steps, refuses any change to client-owned keys (acknowledgement questions plus every checkbox question and their notes), and guards each write with the updated_at value the editor last saw.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/intake/actions.ts#L734-L860",
+          "version": "repo-lines-v1:sha256:7ad5e3a6d955025ff1e5e4203a25e7370a51125b7d5d3473a150b84787e3f895:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhNjA4NWM5M2M1NTYyNGNhMzA1ZTRiODMxMGQxN2JkMWQ4NGMyNDFlODYwMWI5M2EwMmNkYmU2NzMzOTM2ZTRlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5MjA0MGUwOTVhOTRlMmFkYTc0ZTQyMWYzNzE4NzUxYTkxYTgxMGJmZDY2ZjQ4ZjRlOTM5YzdiNzQ4MGViNjcwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3MGJhZjQ1OThlM2QxOWE0NDkxNDIxOTIyOTE0MTg5ZWQ4ZTFlNzE3MzJjZGNlMDdlNDIwM2I5ZGM1ZDZiZjRkIn0"
+        },
+        {
+          "resource": "repo://lib/intake/questions.ts#L980-L1023",
+          "version": "repo-lines-v1:sha256:2892dde107946f508ebdcf219d35844c63f4f218e6099fbfff808d529f32c876:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU3NTFjODlmNjc3ZWIwZTE3MjA3OTEyYjA4MWFkYjRmMGY5N2IwYzFkOGEwMjUxN2FhMmE0YzQxMjhmYmExNTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzMWRkODAyMjFhZDc0YWM3OTI4NGExMDQ0YjFjNTliNjgxYzVjYWU1MjI5NzBmYWZjZmFjNjY2YTZkNmIzODMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI3ZDhiOGExZDA1YTVkYTAxZGMzZjc2YWU1NDU4YWJkMzY4NmYzODg2MzIxYmRlMzczMThmOWNlYjM0NTM1YTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkMmM1Yzk4YWM1MTIzYzg5NWYxMjVkMzY0OWU1ODliNGZmYTAyYWRiMTAwNzBlNjBjZjdlNjIyNmE3NjUwZmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_cac17e456e9f404fa86f9bf68f850a80",
+      "statement": "Assisted intake hand-off stamps provenance only when assisted entry happened, advances to the acknowledgements step and returns a fresh link without submitting, so only the client's own submit reaches submitted.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/intake/actions.ts#L866-L940",
+          "version": "repo-lines-v1:sha256:feeb1d830a60f54084700f1b669c4f2f4525a23bce4a35b5b917ddf192008b41:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlZDYwMzFmODMzZWQ3OGI4YWJlNWEzM2ZlODcxZjQxZmE0MWI5NzNiZDkyMWQ4ZGNhYjUyMjM4ZmU0ODQ2NzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhOTkyMmM5Y2ZjNmE0NjAzMjgwMTk2Y2FhMDljODJlNjk1YjY4ODBiMjI3MGRkYmQwMWJmNWQ0NmNkM2U4MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM4OGVhZWE2MDg0NDAzMTFiMGNjZjI0MjhiNzRhNTI3N2RiZGVkZDY1MWQ2NTk5ZWQzMTljYjk3OTI2MzNlZDYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjZTE3ZWQ2ZGFmMWZkMzMxNWRjNGU1NjMwODAyNDg4YmZiYWM2NzAwNmEwNmRhZjc3NTYwMTBhOGNhOTJhMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bbf28a28d3aa47a9a999da8e7a050499",
+      "statement": "Database tests show a member can write a draft's assisted answers but cannot move an intake to submitted or attach review metadata, frozen intakes cannot be rewritten, and other studios cannot read or write the intake.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/practitioner-assisted-intake.db.test.ts#L103-L305",
+          "version": "repo-lines-v1:sha256:0da6cac47167eb800a926ff7794dc9896cb88c94b1ca9323192e8f452e2d1a07:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3NmE2ZDBjMzQ1MDNhYTYyYWVhOTNmYjNiNzcwNWYwZmUzNWE0OWUxOWU0Nzc4MDllYzQzNzNiMTA4OWU3YzY2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0NWViYjI4YzA4NDMzOTIwYzE0MDdkZjVmMWMyNWVjZDY4YzYyYTFjNzRlNmQ0ZDAxYjMxMWJlZjc5YTA4ZGEyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0NWViYjI4YzA4NDMzOTIwYzE0MDdkZjVmMWMyNWVjZDY4YzYyYTFjNzRlNmQ0ZDAxYjMxMWJlZjc5YTA4ZGEyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_b9f9dc293084455fb752700f3f182844",
+      "statement": "Assisted-intake provenance is not database-enforced: a DB test proves a member can write provenance naming a colleague by direct SQL because the member update policy checks only studio membership.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/practitioner-assisted-intake.db.test.ts#L309-L331",
+          "version": "repo-lines-v1:sha256:f2ba55ea6b03a081b133af42eb52b922352898855161ae2283f02a943c0e72ea:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxNTE4YTA1MzMxYzI5ODQzNWI0NTk1OWRlZGRhYzFmNzNiNGQyNWZkZDAxYzNiYjIyZDU2YTQwNWIzMjU3NmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiZmZmMzUyOTJiYmVlM2E2MmQ0N2U5NTM0YTFlZjk4ODk0MDM2ZWRkMGU2YmU4ZDVhNmRjNWI1ZWMwYTliYjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ1ZWJiMjhjMDg0MzM5MjBjMTQwN2RmNWYxYzI1ZWNkNjhjNjJhMWM3NGU2ZDRkMDFiMzExYmVmNzlhMDhkYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA2ZDQwNWQ1YmNjMmYzZDZmOWZiZTg2YzQ3NTQ4MGRmMTAwMmFiYjRmZWY0MmMwNjkwZDcxNjlhYTJjODhkM2QifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9890b4e93d554d9e85859524e396a1e9",
+      "statement": "The intake review action's header comment still says migration 0162 is not yet applied to production with a hosted maximum of 0161, which predates the current declared hosted state.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/intake/actions.ts#L47-L55",
+          "version": "repo-lines-v1:sha256:e5c581c5eec7782672bc6276c60f05c7ed13de17e28b9c8b5274de8172804aeb:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmVjYWIwNzRkNDM3YmUxYjAwZmIyYzIxODZlZjg3NjExMmEwMzExMDE4MWI2ODA4YmI0MmYyNDY1YmFkMDY5NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDI5ODEzN2I2MWZlZGQzZTU1NTIzZDQ2NTZhYjkzODlkOTFhMGE1OGE4MjdiYzEzYTVhOWQyZTc4YWI2MzRjYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzcyMmIyNGJkODRjOThlMzgwNGI3NjZiMjc5YzczNDNhMzMwMDFjZDIzZTkyNzZjNjg1ODY2MmFmYWU3ZDMzYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTZiMmIwOTVjMWIzNTM5MWQyNDc4ZTQzMTkxMWJlMjAxZGIzNjcxMGZiMjhmNjJiY2ExODVkNWYyZTc1Mzg3MCJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-state.json",
+          "version": "repo-file-v1:sha256:9bde54e5066ca3e21e230577e3d2e0ae51bfe32c4515cf51a673b97ba29e2c19"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T22:34:57.394Z"
+  }
+}

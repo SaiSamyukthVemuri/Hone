@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:2358c863dd7a1a198090b481e915489784ad917e5263b6c9ad068662101db9a8",
+  "pageVersion": "sha256:89b815603b1571d10ed9eeb9c609f66d44f7cfccd35839c1dd498aa494eaa0f5",
   "claims": [
     {
       "id": "claim_a73573fba69a47879cb04b15ce0760c0",
@@ -311,10 +311,54 @@
           "version": "repo-lines-v1:sha256:e43e82037954df70a1ddb0bb52683740a334a271eb4b816945cd3fda059960a2:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmJkYjU0ZjRkMDQ3Yzc5YjhlYzg5ZmRjOTY3ODRjNTA4ZmUxNzc1Y2NhMzViNDgzYzk2ZmRhNWI5NzE1ZDc4ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDhjYTIxZGI2N2E2YzA4YTk4MmU4YmI3MTBmNjc4NjdjMzBkMTBlYzgyOTQ1NjAxNDdhYjI5ZWVmNjc0MjM4NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGQxNTcyM2FmMTFhZmIwZWI4YjFjNGE5NDUyYWJhOTUwZGQxNDQ3MTk1ZWE4ODNkNWUzM2FjZTA2YTQ4NjAzOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDJhNjc1NmIzMmU5ZWY3YzRmNzNlMGExMzMyM2RkZTk4MzcxYWQwM2U1MDZiYzBjNjAzYWI3OGVmMzMxMTQzMSJ9"
         }
       ]
+    },
+    {
+      "id": "claim_3bb90abd57b444549a792626b9c6302e",
+      "statement": "The Google Calendar Playwright lane is isolated in e2e-google with its own fake-Google production-build server that is never reused, the shared schema preflight and teardown, and a single worker, and its fake guard is fail-closed so no real Google request can leave the lane.",
+      "evidence": [
+        {
+          "resource": "repo://playwright.google.config.ts#L1-L50",
+          "version": "repo-lines-v1:sha256:3808af77f6040ec42a2c100e194e25e2afaceb9eccc8a198edbfbe94ecb39377:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVjZjNkYzRhNzY1ZGMxMzI0MWIxYTgyMjBhZWFlZDc5ZjY3MGY0YWJiOTQ4ZDM1ODgzYjE1N2QzZjk2NjkyZmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8d332a9f1b0d4397970fb51da575bc25",
+      "statement": "The e2e-google specs prove the dedicated-calendar flow requests only the app.created scope, creates exactly one calendar idempotently, fails closed on an ambiguous multi-match and adopts a single orphan on retry, and that the existing-calendar flow requests only events.owned behind an owner-only picker.",
+      "evidence": [
+        {
+          "resource": "repo://e2e-google/dedicated-destination.spec.ts#L35-L133",
+          "version": "repo-lines-v1:sha256:0345ed7638ce72800e4f24f90606bccaefdf4c0b646f36eac99bf5cbf2dde49d:eyJzZWxlY3RlZExpbmVDb3VudCI6OTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5MTRkMWU1NzNhN2E0M2EwZjQ2Nzg0NzY2NTk0Y2I0YjUxZGFkZWIyZTFlODhiNmE0YjIxZWUxZTdiNTY0ODciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI5OGY0MTMwOGQzYWE1NjE5MTllMjNlNmFhYzM4YTEzYmEyYTczZmNiNDVkMGZlYWVjZDQ2N2I0OGZkNGQwZjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://e2e-google/existing-owned.spec.ts#L29-L84",
+          "version": "repo-lines-v1:sha256:928a06aeb3761c446cead317a600d00ba7dfbe92f8160fbc093790311ef62bac:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzYmIzZmRjN2YwZTY3ZDM0NzU3MTExYzg1YWM2Yjc1YmRlNDVjYjliNjA4NjI0MDdhMDc2MmYwMDJmNTdmNjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU3MmM1NzEwZGRiYzYwZmQxMjEyYTJkZTczY2NmN2RhODE0YzQzZmRkMjZkNmM3YzZjOWEzMTIyMzUwMjI5ZjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_498eabcc97ac4b52b9dbde38405151a1",
+      "statement": "The e2e-google security specs prove unauthenticated, non-owner and inactive callers are denied, an account switch or partial grant never replaces stored credentials, a tampered OAuth state is rejected, and provisioning-pending and selection-pending states keep the grant.",
+      "evidence": [
+        {
+          "resource": "repo://e2e-google/security-and-pending.spec.ts#L26-L150",
+          "version": "repo-lines-v1:sha256:d8aa9490d803175813554959cfe09c1f4a9bb3f37856931d62cfdee5ca7ecb21:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3NzJjMTkzYjFhNTY1YTMyOGFkM2RmMzFmNzNmNzljZWE5N2YzNjE1ZjE1MmYwZTVjOGRlMmEyYTdlOTFkN2I5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1NzJjNTcxMGRkYmM2MGZkMTIxMmEyZGU3M2NjZjdkYTgxNGM0M2ZkZDI2ZDZjN2M2YzlhMzEyMjM1MDIyOWY4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_8b29e0a667254efe897586727e3a2b0a",
+      "statement": "The mobile lane proves on iPhone dimensions that Mark completed through the accessible dialog leads to in-place checkout with exactly one fake charge and no other providers, that cancelling the dialog sends no request, and that no-show uses its own dialog.",
+      "evidence": [
+        {
+          "resource": "repo://e2e-mobile/mobile-completion.spec.ts#L111-L350",
+          "version": "repo-lines-v1:sha256:856ba995b42d5dccabc1df5abc78a8e1a1bda83c5bb9f1b328731bc2a4da1a28:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjN2RjYjgwNDJiM2ZlZmFhZDNmNDFkMGRiZjNlZjBkYTkzYzMxYjU2YmUxOTQ0MDdlODQyYjUzNTQ4ZjQyYzU2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhY2NmNjg0NWFmZTQ4NzBiMmM2NDNkMjcwZTBlZGVlMjNlY2JjNDZlYjgxMTJkMjNjZTc2MDI1OGU4ZGU0OTM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T20:08:11.217Z"
+    "at": "2026-10-02T22:34:57.394Z"
   }
 }

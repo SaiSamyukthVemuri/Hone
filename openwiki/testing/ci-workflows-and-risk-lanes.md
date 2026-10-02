@@ -3,9 +3,6 @@ type: ci pipeline
 title: CI workflows, risk lanes and browser sharding
 description: How Hone's CI decides what to run — the ci.yml job graph keyed off one changed-path classifier, the deterministic risk tiers T0–T3, browser group selection and sharding, the fail-closed browser aggregator that is the stable required check, the nightly full matrix, job budgets, the least-privilege and SHA-pinning guards that cover every workflow file, and what a green run does and does not prove.
 tags: [ci, github-actions, risk-tiers, classification, supply-chain, testing]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-164e2da859b5277df81c7d94
     resource: repo://.github/workflows/ci.yml
@@ -25,7 +22,10 @@ sources:
     resource: repo://tests/ci/aggregate-fail-closed.test.ts
   - id: openwiki-source-2596c45699032de1ba03ae0c
     resource: repo://tests/ci/ci-config.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # CI workflows, risk lanes and browser sharding
@@ -99,8 +99,7 @@ order:
 
 An empty diff fails safe to T3. The tier is a **floor, not a ceiling**: `ENGINEERING_STANDARDS.md` says automated
 classification is "not semantic proof" and may never be cited to de-escalate a change whose behaviour crosses a
-<!-- openwiki: broken internal link [../../ENGINEERING_STANDARDS.md#L27-L72] heading anchor "L27-L72" does not exist in "../../ENGINEERING_STANDARDS.md". Fix the href or restore the target, then delete this comment. -->
-higher-risk boundary ([L27-L72](../../ENGINEERING_STANDARDS.md#L27-L72)).
+higher-risk boundary ([§ 2. Risk tiers](../../ENGINEERING_STANDARDS.md#2-risk-tiers)).
 
 Local tooling shares the same classifier and group selector:
 
@@ -178,10 +177,8 @@ repository's migrations, using fakes for every provider. It does **not** prove:
 - that a provider integration works for real;
 - that anyone accepted the change.
 
-<!-- openwiki: broken internal link [../../ENGINEERING_STANDARDS.md#L96-L99] heading anchor "L96-L99" does not exist in "../../ENGINEERING_STANDARDS.md". Fix the href or restore the target, then delete this comment. -->
-"Green CI is necessary, not sufficient" ([`ENGINEERING_STANDARDS.md` L96-L99](../../ENGINEERING_STANDARDS.md#L96-L99)),
-<!-- openwiki: broken internal link [../../CLAUDE.md#L231-L231] heading anchor "L231-L231" does not exist in "../../CLAUDE.md". Fix the href or restore the target, then delete this comment. -->
-and "Green CI is not merge authorization" ([`CLAUDE.md` L231](../../CLAUDE.md#L231-L231)). See
+"Green CI is necessary, not sufficient" ([`ENGINEERING_STANDARDS.md` § 4. Proof](../../ENGINEERING_STANDARDS.md#4-proof)),
+and "Green CI is not merge authorization" ([`CLAUDE.md` § 4. CI watchers and delivery ceremony](../../CLAUDE.md#4-ci-watchers-and-delivery-ceremony)). See
 [Delivery and review authority](../operations/delivery-and-review-authority.md).
 
 ## 8. Contradictions and open questions

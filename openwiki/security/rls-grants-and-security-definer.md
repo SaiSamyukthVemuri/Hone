@@ -3,9 +3,6 @@ type: security model
 title: RLS, grants and SECURITY DEFINER commands
 description: Hone's database security model — row-level policies versus table privileges, Supabase's default grants and why every object must revoke by name, the shapes of SECURITY DEFINER commands, which tables are SELECT-only for browser roles, composite same-studio foreign keys, the static guards that pin all of this, dated production ACL verifications, and the open privilege limitations with their recorded status.
 tags: [rls, grants, security-definer, tenancy, privileges, postgres, security, known-limitations]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-eb10efb7264b39a67076cb7b
     resource: repo://docs/09_DATABASE_AND_RLS.md
@@ -37,6 +34,8 @@ sources:
     resource: repo://supabase/migrations/0178_practitioner_identity_boundary.sql
   - id: openwiki-source-211384cfd867882e2309d030
     resource: repo://supabase/migrations/0181_multi_studio_command_authority.sql
+  - id: openwiki-source-d8b9ac1fc0e05cae084a4a6f
+    resource: repo://supabase/migrations/0184_client_budget_context_least_privilege.sql
   - id: openwiki-source-a803385a9cc24ff3f9f2ff15
     resource: repo://tests/db/cross-studio-isolation.db.test.ts
   - id: openwiki-source-49bfbb92a97409e934b134ee
@@ -49,7 +48,10 @@ sources:
     resource: repo://tests/security/service-role-allowlist.test.ts
   - id: openwiki-source-833044c4d4591cb2eabb5a7e
     resource: repo://tests/security/service-role-allowlist.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # RLS, grants and SECURITY DEFINER commands
@@ -67,8 +69,7 @@ dated (§7). The applied migration range is on [Migrations and hosted state](../
 
 Row-level security filters rows for SELECT, INSERT, UPDATE and DELETE. It does **not** govern `TRUNCATE`,
 `REFERENCES`, `TRIGGER` or PostgreSQL 17's `MAINTAIN`. A role holding `TRUNCATE` can empty a table whatever its
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L268-L300] heading anchor "L268-L300" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-policies say ([`docs/09_DATABASE_AND_RLS.md` L268-L300](../../docs/09_DATABASE_AND_RLS.md#L268-L300)).
+policies say ([`docs/09_DATABASE_AND_RLS.md` § RLS is not the same thing as a table privilege](../../docs/09_DATABASE_AND_RLS.md#rls-is-not-the-same-thing-as-a-table-privilege)).
 
 Supabase's `ALTER DEFAULT PRIVILEGES` gives `anon`, `authenticated` and `service_role` the full privilege set
 on new tables, and gives `EXECUTE` on new functions to them and to `PUBLIC`. A posture therefore exists only
@@ -101,8 +102,7 @@ They are defined once and granted to `authenticated`
 
 `docs/09` lists further deliberate exceptions: default-deny outbox and secret tables, append-only ledgers,
 retired immutable evidence tables, and the owner-only waitlist
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L218-L266] heading anchor "L218-L266" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-([L218-L266](../../docs/09_DATABASE_AND_RLS.md#L218-L266)).
+([§ Deliberate exceptions](../../docs/09_DATABASE_AND_RLS.md#deliberate-exceptions--do-not-claim-one-generic-pattern-covers-everything)).
 
 ## 3. Shapes of SECURITY DEFINER code
 
@@ -126,8 +126,7 @@ and the explicit per-signature block in
 `0178` revokes from all four roles, then grants back only what each function needs
 ([L546-L578](../../supabase/migrations/0178_practitioner_identity_boundary.sql#L546-L578)).
 
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L302-L311] heading anchor "L302-L311" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-Other rules for definer functions ([`docs/09` L302-L311](../../docs/09_DATABASE_AND_RLS.md#L302-L311)):
+Other rules for definer functions ([`docs/09` § SECURITY DEFINER RPC rules](../../docs/09_DATABASE_AND_RLS.md#security-definer-rpc-rules)):
 
 - pin `search_path`, either to `pg_catalog, pg_temp` or to `''` with fully qualified names;
 - use typed arguments and results;
@@ -185,49 +184,33 @@ These are records of **read-only verification on a date**, not standing guarante
 
 | Date | Recorded fact | Authority |
 |---|---|---|
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L283-L297] heading anchor "L283-L297" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-| 2026-07-27 | `session_copy_operations`: `authenticated` SELECT only, `anon` nothing | [`docs/09` L283-L297](../../docs/09_DATABASE_AND_RLS.md#L283-L297) |
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L313-L329] heading anchor "L313-L329" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-| 2026-07-27 | 139 `SECURITY DEFINER` functions in `public`, none without a pinned `search_path`; 22 executable by `authenticated`, 7 by `anon` — all RLS predicates or trigger functions | [`docs/09` L313-L329](../../docs/09_DATABASE_AND_RLS.md#L313-L329) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L397-L417] heading anchor "L397-L417" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| 2026-08-03 | after `0169`, `authenticated` clinical write grants went from 12 to 0 across the six clinical tables (L18, closed) | [`known-limitations.md` L397-L417](../../docs/production/known-limitations.md#L397-L417) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L351-L357] heading anchor "L351-L357" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| 2026-08-09 | after `0172`, `anon`/`authenticated` hold SELECT only on both appointment tables | [`known-limitations.md` L351-L357](../../docs/production/known-limitations.md#L351-L357) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L658-L670] heading anchor "L658-L670" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L135-L135] heading anchor "L135-L135" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| 2026-10-01 | `studios_admission_mode_guard()` holds `EXECUTE` for `anon`, `authenticated`, `service_role` and `PUBLIC` (L33) | [`known-limitations.md` L658-L670](../../docs/production/known-limitations.md#L658-L670); [`current-state.md` L135](../../docs/production/current-state.md#L135-L135) |
+| 2026-07-27 | `session_copy_operations`: `authenticated` SELECT only, `anon` nothing | [`docs/09` § RLS is not the same thing as a table privilege](../../docs/09_DATABASE_AND_RLS.md#rls-is-not-the-same-thing-as-a-table-privilege) |
+| 2026-07-27 | 139 `SECURITY DEFINER` functions in `public`, none without a pinned `search_path`; 22 executable by `authenticated`, 7 by `anon` — all RLS predicates or trigger functions | [`docs/09` § SECURITY DEFINER inventory](../../docs/09_DATABASE_AND_RLS.md#security-definer-inventory--verified-in-production-2026-07-27) |
+| 2026-08-03 | after `0169`, `authenticated` clinical write grants went from 12 to 0 across the six clinical tables (L18, closed) | [`known-limitations.md` § L18](../../docs/production/known-limitations.md#l18--authenticated-still-holds-direct-row-dml-on-five-clinical-tables--closed-2026-08-03-migration-0169) |
+| 2026-08-09 | after `0172`, `anon`/`authenticated` hold SELECT only on both appointment tables | [`known-limitations.md` § L19](../../docs/production/known-limitations.md#l19--truncate-is-still-granted-broadly-outside-the-clinical-tables-and-two-session-links-are-not-same-client-validated) |
+| 2026-10-01 | `studios_admission_mode_guard()` holds `EXECUTE` for `anon`, `authenticated`, `service_role` and `PUBLIC` (L33) | [`known-limitations.md` § L33](../../docs/production/known-limitations.md#l33--0204s-admission-guard-trigger-holds-execute-for-every-application-role-including-public); [`current-state.md` § NEW-CLIENT-MODE-01 release](../../docs/production/current-state.md#new-client-mode-01-release--what-actually-happened-on-2026-10-01) |
 
 ## 8. Privilege limitations — status as recorded in `known-limitations.md`
 
 | ID | Subject | Recorded status |
 |---|---|---|
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L277-L286] heading anchor "L277-L286" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L17 | The deep production, security and code audit has not been performed; passing tests are not evidence of security | open; blocks broader launch ([L277-L286](../../docs/production/known-limitations.md#L277-L286)) |
+| L17 | The deep production, security and code audit has not been performed; passing tests are not evidence of security | open; blocks broader launch ([§ L17](../../docs/production/known-limitations.md#l17--the-deep-production--security--code-audit-has-not-been-performed)) |
 | L18 | `authenticated` direct row writes on the clinical tables | **closed 2026-08-03** (`0169`) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L331-L395] heading anchor "L331-L395" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L19 | `TRUNCATE` still granted broadly; two session links not checked for same client | (a) **narrowed, not closed**. `session_audit` and `record_keeping_audit_events` still carry the default grant, and the repo-wide sweep is the stated fix. (b) untouched ([L331-L395](../../docs/production/known-limitations.md#L331-L395)) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L288-L299] heading anchor "L288-L299" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L20 | `service_role` keeps `TRIGGER` on `sessions`, `session_blocks`, `electrolysis_entries` and `laser_entries`, so `0160`'s guards are not tamper-proof against it | **open**; defence in depth, not reachable from the application ([L288-L299](../../docs/production/known-limitations.md#L288-L299)) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L301-L312] heading anchor "L301-L312" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L21 | Hard-deleting a session in the transaction that created a block-attached image fails | **open**; unreachable from the application ([L301-L312](../../docs/production/known-limitations.md#L301-L312)) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L419-L437] heading anchor "L419-L437" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L22 | `F-CLIN-004` intake review UPDATE and INSERT boundaries | heading: **both closed** (`0162`, `0163` applied 2026-08-02). Other cells still describe the INSERT path as open — see §9 ([L419-L437](../../docs/production/known-limitations.md#L419-L437)) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L314-L329] heading anchor "L314-L329" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L23 | Foreign-key referential actions writing `appointments` | **closed 2026-08-09** (`0173`) ([L314-L329](../../docs/production/known-limitations.md#L314-L329)) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L658-L670] heading anchor "L658-L670" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| L33 | `0204`'s admission guard trigger holds `EXECUTE` for every role | **open, P3, not exploitable**; needs a new migration ([L658-L670](../../docs/production/known-limitations.md#L658-L670)) |
+| L19 | `TRUNCATE` still granted broadly; two session links not checked for same client | (a) **narrowed, not closed**. `session_audit` and `record_keeping_audit_events` still carry the default grant, and the repo-wide sweep is the stated fix. (b) untouched ([§ L19](../../docs/production/known-limitations.md#l19--truncate-is-still-granted-broadly-outside-the-clinical-tables-and-two-session-links-are-not-same-client-validated)) |
+| L20 | `service_role` keeps `TRIGGER` on `sessions`, `session_blocks`, `electrolysis_entries` and `laser_entries`, so `0160`'s guards are not tamper-proof against it | **open**; defence in depth, not reachable from the application ([§ L20](../../docs/production/known-limitations.md#l20--service_role-retains-trigger-on-the-clinical-tables-so-0160s-guards-are-not-tamper-proof-against-it)) |
+| L21 | Hard-deleting a session in the transaction that created a block-attached image fails | **open**; unreachable from the application ([§ L21](../../docs/production/known-limitations.md#l21--hard-deleting-a-session-in-the-same-transaction-that-created-a-block-attached-treatment-image-fails)) |
+| L22 | `F-CLIN-004` intake review UPDATE and INSERT boundaries | heading: **both closed** (`0162`, `0163` applied 2026-08-02). Other cells still describe the INSERT path as open — see §9 ([§ L22](../../docs/production/known-limitations.md#l22--f-clin-004-the-intake-review-update-and-insert-boundaries-are-both-closed)) |
+| L23 | Foreign-key referential actions writing `appointments` | **closed 2026-08-09** (`0173`) ([§ L23](../../docs/production/known-limitations.md#l23--foreign-key-referential-actions-still-write-appointments-for-a-caller-holding-no-privilege-on-it--closed-2026-08-09-migration-0173)) |
+| L33 | `0204`'s admission guard trigger holds `EXECUTE` for every role | **open, P3, not exploitable**; needs a new migration ([§ L33](../../docs/production/known-limitations.md#l33--0204s-admission-guard-trigger-holds-execute-for-every-application-role-including-public)) |
 
 ## 9. Contradictions and open questions
 
 1. **`docs/09` still calls L23 open.** It says L23 "remains OPEN in production" and that `0173` GROUP 5 is "NOT
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L210-L213] heading anchor "L210-L213" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-   merged and NOT applied" ([L210-L213](../../docs/09_DATABASE_AND_RLS.md#L210-L213)).
+   merged and NOT applied" ([§ RLS principles](../../docs/09_DATABASE_AND_RLS.md#rls-principles)).
    `known-limitations.md` records L23 closed by `0173`, applied 2026-08-09
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L314-L329] heading anchor "L314-L329" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-   ([L314-L329](../../docs/production/known-limitations.md#L314-L329)).
+   ([§ L23](../../docs/production/known-limitations.md#l23--foreign-key-referential-actions-still-write-appointments-for-a-caller-holding-no-privilege-on-it--closed-2026-08-09-migration-0173)).
 2. **`docs/09` overstates owner-only writes.** It lists "Owner-only ALL" for `studios`, `services`,
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L159-L159] heading anchor "L159-L159" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-   `availability_defaults` and `blockouts` ([L159](../../docs/09_DATABASE_AND_RLS.md#L159-L159)). The migrations
+   `availability_defaults` and `blockouts` ([§ RLS principles](../../docs/09_DATABASE_AND_RLS.md#rls-principles)). The migrations
    say otherwise:
    - `services` allows any active member to INSERT and UPDATE (`0173`);
    - `studio_blockouts` still carries the `0010` member `FOR ALL` policy;
@@ -248,8 +231,7 @@ These are records of **read-only verification on a date**, not standing guarante
    - L33 treats the same condition on `0204`'s trigger as a defect, and its next gate asks to extend that guard
      to trigger functions.
 6. **The `docs/09` rule table shows one shape.** Its rule "revoke from public, anon, authenticated; grant to
-<!-- openwiki: broken internal link [../../docs/09_DATABASE_AND_RLS.md#L308-L308] heading anchor "L308-L308" does not exist in "../../docs/09_DATABASE_AND_RLS.md". Fix the href or restore the target, then delete this comment. -->
-   service_role" ([L308](../../docs/09_DATABASE_AND_RLS.md#L308-L308)) describes only service-role-only
+   service_role" ([§ SECURITY DEFINER RPC rules](../../docs/09_DATABASE_AND_RLS.md#security-definer-rpc-rules)) describes only service-role-only
    commands. The authenticated-callable commands follow the opposite grant, enforced by the grant guard.
 7. **The 2026-07-27 definer inventory is dated.** It predates migrations up to `0204`, and the L33 record
    (2026-10-01) shows at least one later trigger function executable by `anon`. Treat the counts as historical.

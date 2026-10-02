@@ -9,6 +9,7 @@ okf_version: "0.2"
 # Directories
 
 - [architecture](architecture/)
+- [clients](clients/)
 - [communications](communications/)
 - [integrations](integrations/)
 - [operations](operations/)

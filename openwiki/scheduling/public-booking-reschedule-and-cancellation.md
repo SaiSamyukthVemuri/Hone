@@ -3,9 +3,6 @@ type: product workflow
 title: Public booking, reschedule and cancellation flows
 description: The anonymous client surfaces — /book/[slug] and the /cancel, /reschedule and /manage token routes — traced from the server action to the command each one calls, including rate limiting, the new/existing client split and admission gate, hash-only and HMAC appointment tokens, policy-acknowledgement freshness, the post-commit law for confirmations, and the no-enumeration error stance.
 tags: [public-booking, reschedule, cancellation, tokens, policy-acknowledgement, scheduling]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-bf5a2621b9e8be808f7c47ed
     resource: repo://app/book/%5Bslug%5D/actions.ts
@@ -13,6 +10,8 @@ sources:
     resource: repo://app/cancel/%5Btoken%5D/actions.ts
   - id: openwiki-source-d68aea357c28f0ac202cb2f2
     resource: repo://app/manage/%5Btoken%5D/actions.ts
+  - id: openwiki-source-b4c4d101583a7ddbb54aed78
+    resource: repo://app/reschedule/%5Btoken%5D/actions.ts
   - id: openwiki-source-9028e95b2ca986c308731fe7
     resource: repo://docs/01_ARCHITECTURE.md
   - id: openwiki-source-a9a4b60bd7523871136ac947
@@ -23,13 +22,18 @@ sources:
     resource: repo://supabase/migrations/0170_public_appointment_command.sql
   - id: openwiki-source-9e4d094bd8ae363bc8629e0f
     resource: repo://supabase/migrations/0171_public_reschedule_command_v2.sql
+  - id: openwiki-source-374f184c582d8a8360c412c4
+    resource: repo://supabase/migrations/0176_public_cancellation_atomicity.sql
   - id: openwiki-source-8dd4f475b8eb39ebe7e46c57
     resource: repo://tests/db/public-appointment-command.db.test.ts
   - id: openwiki-source-edee6d6e9aea1480d8a92a43
     resource: repo://tests/db/public-cancellation-atomicity.db.test.ts
   - id: openwiki-source-bd57267a953bfcdfbe166446
     resource: repo://tests/db/public-reschedule-command.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Public booking, reschedule and cancellation flows
@@ -100,7 +104,8 @@ link is usable by whoever holds it — an accepted bearer-link property.
 `limitTokenRoute`, validates the optional reason against an allowlist and the note length, and requires a
 **policy acknowledgement** when the studio has policy text
 ([L1-L100](../../app/cancel/[token]/actions.ts#L1-L100), [L120-L245](../../app/cancel/[token]/actions.ts#L120-L245)).
-`public_cancel_appointment_with_token` (`0176`) then commits the status change, the audit row and the
+`public_cancel_appointment_with_token` (`0176`, which moved the acknowledgement inside the command's
+transaction after a route-side insert could fail silently) then commits the status change, the audit row and the
 acknowledgement **together** — with the presented policy hash compared against the live policy so an edit,
 addition or removal after the page rendered fails closed as `policy_changed`, a missing hash is never treated
 as consent, at-or-after-start and terminal appointments cannot be cancelled, concurrent double submits
@@ -118,9 +123,25 @@ and creates the successor in one transaction with full lineage (`rescheduled_fro
 the SQL replacement-slot set (excluding the original's own reservation; no millisecond tolerance; the same
 time is a no-op refusal), enforces policy freshness like cancellation, and returns authoritative state so the
 route needs no post-commit re-read ([`public-reschedule-command.db.test.ts` L187-L580](../../tests/db/public-reschedule-command.db.test.ts#L187-L580)).
-Concurrency is covered on [Scheduling concurrency and lock order](concurrency-and-lock-order.md). A
-free-consultation booking may be restricted to waitlist-only rescheduling; `/cancel` and `/manage` only
-*warn* about that restriction, they do not impose it ([cancel L15-L18](../../app/cancel/[token]/actions.ts#L15-L18)).
+Concurrency is covered on [Scheduling concurrency and lock order](concurrency-and-lock-order.md).
+
+**The route** (`app/reschedule/[token]/actions.ts`). Four public entry points share one gate: load, slot
+list, next-available date and submit. Each rate-limits first (`limitTokenRoute`, fail-open) and then calls
+`assertReschedulableOriginal`:
+
+1. It resolves the token by its SHA-256 hash, with a legacy HMAC path.
+2. It requires the original to be **confirmed and in the future**.
+3. Only then does it apply the free-consultation **waitlist-only** refusal.
+
+That order is the privacy contract: an unknown, stale or past token gets the same generic refusal and can
+never reveal which studios have the policy. Every input is re-derived through the appointment's own
+foreign keys ([L105-L200](../../app/reschedule/[token]/actions.ts#L105-L200)).
+
+The submit posts back the hash of the policy text the page actually rendered. The command re-derives the
+current hash from the studio row, so a stale or tampered value can only cause a refusal, never a false
+acknowledgement ([L714-L760](../../app/reschedule/[token]/actions.ts#L714-L760)). `/cancel` and `/manage`
+only *warn* about the waitlist-only restriction; they do not impose it
+([cancel L15-L18](../../app/cancel/[token]/actions.ts#L15-L18)).
 
 ## 5. `/manage`
 
@@ -140,8 +161,7 @@ fingerprints, never raw database messages.
 1. **The architecture doc's public-booking walkthrough predates the command boundary.** It describes
    generating a "column-based cancellation_token", inserting the appointment and the audit row as separate
    steps, a `fetchPublicAvailableSlotsAction` and a redirect to a thank-you page
-<!-- openwiki: broken internal link [../../docs/01_ARCHITECTURE.md#L107-L124] heading anchor "L107-L124" does not exist in "../../docs/01_ARCHITECTURE.md". Fix the href or restore the target, then delete this comment. -->
-   ([`docs/01_ARCHITECTURE.md` L107-L124](../../docs/01_ARCHITECTURE.md#L107-L124)); the code stores only token
+   ([`docs/01_ARCHITECTURE.md` § End-to-end flow examples](../../docs/01_ARCHITECTURE.md#end-to-end-flow-examples)); the code stores only token
    hashes, commits appointment + audit in one command, exposes `fetchPublicSlotsAction`, and returns a result
    carrying the management link.
 2. **Bearer links have no expiry beyond appointment eligibility for the random token.** The HMAC token carries

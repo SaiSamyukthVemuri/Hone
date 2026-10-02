@@ -1,3 +1,4 @@
 # Files
 
 - [Google Calendar integration](google-calendar-sync.md) - Hone's one-way (Hone → Google) calendar integration — owner OAuth with PKCE and least-privilege destination scopes, encrypted refresh tokens, the appointment-triggered outbox, the lease-based worker gated by a global switch, the reconciliation sweep, and its dated production status (deployed, exercised once, dormant).
+- [Marketing consent and conversion tracking](marketing-consent-and-conversion-tracking.md) - How public booking records an opt-in marketing/analytics consent separately from clinical and payment consent, how a studio owner stores an encrypted per-studio provider token, the four gates and the atomic dedup claim that run before a hashed Meta Conversions API "Schedule" event can leave Hone, what is and is not sent, how failures are recorded, and why production is deployed but inert.

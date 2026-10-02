@@ -3,9 +3,6 @@ type: integration subsystem
 title: Email delivery (Resend)
 description: How Hone sends transactional email through Resend — the shared timeout-bounded transport, the idempotent waitlist transport and its three-way outcome, studio-branded sender identity, the per-family claim/attempt mechanisms, what can still double-send, and the fake transport used in E2E.
 tags: [email, resend, idempotency, sender-identity, waitlist, ops-alerts, e2e-fakes]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-2839b99018288867e9b2b1b6
     resource: repo://app/(app)/calendar/actions.ts
@@ -41,15 +38,17 @@ sources:
     resource: repo://tests/source-guards/client-facing-email-identity.test.ts
   - id: openwiki-source-29bfe99243de7778cb244d6b
     resource: repo://tests/source-guards/studio-email-identity-guards.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Email delivery (Resend)
 
 All outbound email goes through the Resend SDK. There is **no** delivery webhook, bounce or
 complaint tracking, or suppression list: Hone learns only that Resend *accepted* a message
-<!-- openwiki: broken internal link [../../docs/10_DEPLOYMENT_AND_ENV.md#L75-L77] heading anchor "L75-L77" does not exist in "../../docs/10_DEPLOYMENT_AND_ENV.md". Fix the href or restore the target, then delete this comment. -->
-([`docs/10_DEPLOYMENT_AND_ENV.md` L75-L77](../../docs/10_DEPLOYMENT_AND_ENV.md#L75-L77), pinned by
+([`docs/10_DEPLOYMENT_AND_ENV.md` § Resend](../../docs/10_DEPLOYMENT_AND_ENV.md#resend), pinned by
 [`studio-email-identity-guards.test.ts` L107-L111](../../tests/source-guards/studio-email-identity-guards.test.ts#L107-L111)).
 "Sent" anywhere in the product therefore means "provider accepted", never "delivered".
 
@@ -74,8 +73,7 @@ There are five call sites of `emails.send(...)`. Each was built for a different 
 | **`sendEmailSafely`** ([`send-appointment.ts` L82-L195](../../lib/email/send-appointment.ts#L82-L195)) | booking confirmation, practitioner notification, cancellation, reminders, no-show follow-up, postcare, intake requests, portal magic links and messages, receipts, move notifications | none inside the transport; each caller records against a durable row (see §4) | `{ok:true,messageId}` or `{ok:false,error,retryable}` |
 | **`sendWaitlistEmailIdempotent`** ([`new-client-waitlist-send.ts` L330-L452](../../lib/email/new-client-waitlist-send.ts#L330-L452)) | waitlist join notifications, invitation emails, recipient-proof codes | provider `Idempotency-Key` | `accepted` / `rejected` / `ambiguous` |
 | **`deliverWelcomeEmail`** ([`send-welcome.ts` L10-L84](../../lib/email/send-welcome.ts#L10-L84)) | new-studio owner welcome/invitation | attempt-id single-flight state machine | `sent` / `failed` / `not_configured` / `already_in_progress` |
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-| Team invitation ([`settings/team/actions.ts` L50-L79](../../app/(app)/settings/team/actions.ts#L50-L79)) | inviting a practitioner | none; the pending-invitation row and share UI are the record | fire-and-log |
+| Team invitation (`app/(app)/settings/team/actions.ts` L50-L79) | inviting a practitioner | none; the pending-invitation row and share UI are the record | fire-and-log |
 | Critical ops alert ([`lib/ops/alert-email.ts`](../../lib/ops/alert-email.ts#L1-L27)) | operator email for **critical** `ops_alerts` only | none; the `ops_alerts` row is the source of truth | never throws |
 
 ### 2.1 `sendEmailSafely` — the shared transport
@@ -160,8 +158,7 @@ explicitly declared Hone-facing, with identity resolved server-side.
 |---|---|---|
 | ~24h / ~2h reminders | `claim_email_send` → send → `record_email_result` (0080, last redefined 0098); 3 attempts; 5-minute stale claim | crash after acceptance and before the result write; see [Cron jobs and reminders](cron-reminders-and-idempotency.md) |
 | Booking confirmation | one-shot inside the booking request; `record_email_attempt` increments attempts and stamps `confirmation_sent_at` only on success ([`app/book/[slug]/actions.ts` L1707-L1772](../../app/book/[slug]/actions.ts#L1707-L1772)); function is `service_role`-only ([`0033` L111-L114](../../supabase/migrations/0033_pre_stripe_operational_hardening.sql#L111-L114)) | a user retry of the same request; a timeout reported as failure that was accepted |
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-| Postcare | `claim_postcare_send` → provider → `settle_postcare_send`, with SQL owning the completed-only gate, attempts and the stale window ([`calendar/actions.ts` L1000-L1010](../../app/(app)/calendar/actions.ts#L1000-L1010)) | crash window, as above |
+| Postcare | `claim_postcare_send` → provider → `settle_postcare_send`, with SQL owning the completed-only gate, attempts and the stale window (`app/(app)/calendar/actions.ts` L1000-L1010) | crash window, as above |
 | Welcome email | attempt-id state machine (§2.3) | provider accepted but result write failed |
 | Waitlist mail | provider idempotency key (§2.2) | none from Hone retries inside the provider's key-retention window; `ambiguous` is surfaced, not hidden |
 | Team invitation, ops alert email | none | caller retries |

@@ -3,14 +3,19 @@ type: test infrastructure
 title: Browser E2E suites and provider fakes
 description: Hone's four Playwright lanes (core, payment, Google, mobile) — local-only environment and its guards, per-worktree ports and the never-reuse-a-server rule, the shared schema preflight, seeding and real magic-link login, the four fail-closed fakes (Resend, Stripe, Google, route faults) and what stops each one activating in a deployment, time-of-day independence, and how changed paths select browser groups and shards in CI.
 tags: [e2e, playwright, test-fakes, ci, browser-tests, testing]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-164e2da859b5277df81c7d94
     resource: repo://.github/workflows/ci.yml
   - id: openwiki-source-fe71ae3a2f4e98a9f0018b92
     resource: repo://app/(app)/e2e-fault/%5Bcase%5D/page.tsx
+  - id: openwiki-source-4734c23c4dba9e124cd41d11
+    resource: repo://e2e-google/dedicated-destination.spec.ts
+  - id: openwiki-source-a755aeb3c33b87827033663a
+    resource: repo://e2e-google/existing-owned.spec.ts
+  - id: openwiki-source-1328e71f62e0681a45f958f5
+    resource: repo://e2e-google/security-and-pending.spec.ts
+  - id: openwiki-source-a17b8dd2cc919ff5ebb781ef
+    resource: repo://e2e-mobile/mobile-completion.spec.ts
   - id: openwiki-source-77097baab3b84a7b774226c8
     resource: repo://e2e/global-setup.ts
   - id: openwiki-source-705ca3e507078656f251cdba
@@ -41,6 +46,8 @@ sources:
     resource: repo://lib/stripe/session-payment-stripe.ts
   - id: openwiki-source-5e753d9d77984cb67aae1517
     resource: repo://playwright.config.ts
+  - id: openwiki-source-2a65f6b52f36e74ae561cccc
+    resource: repo://playwright.google.config.ts
   - id: openwiki-source-80b153b6c40fcde46b699b5a
     resource: repo://playwright.mobile.config.ts
   - id: openwiki-source-6480634db094b4fd9dc7e537
@@ -55,7 +62,10 @@ sources:
     resource: repo://tests/scripts/e2e-guardrails.test.ts
   - id: openwiki-source-20464c06d457fefcf59afbc0
     resource: repo://tests/scripts/e2e-time-independence.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Browser E2E suites and provider fakes
@@ -75,6 +85,41 @@ them can reach a hosted project, send real mail or SMS, or move money.
 The mobile lane uses Chromium rather than WebKit because a real WebKit context over the plain-http localhost
 harness upgrades subresources to https and drops Secure cookies. A WebKit lane would need an HTTPS harness
 ([`playwright.mobile.config.ts` L14-L35](../../playwright.mobile.config.ts#L14-L35)).
+
+### What the dedicated lanes prove
+
+The payment and Google lanes mirror each other. Each has:
+
+- its own `testDir`, which the ordinary `./e2e` config never matches, so the fake environment can only
+  exist there;
+- its own production-build server carrying the fake markers, with `reuseExistingServer: false`;
+- the shared schema preflight and teardown;
+- a single worker.
+
+What each lane proves:
+
+- **Payment (`e2e-payment/`).** A duplicate click charges once. Two browser contexts produce one effect.
+  A lost response recovers to Paid without a duplicate. Crafted, appended or stale amounts prepare
+  nothing. An owner-authored total is charged exactly. Both checkout surfaces prefill the same reference.
+  Details are on
+  [Card on file, checkout and payment proof](../payments/card-on-file-checkout-and-payment-proof.md#4-the-e2e-payment-proof-lane).
+- **Google (`e2e-google/`).** The fake-Google guard is fail-closed, so no real Google request can leave
+  the lane ([config](../../playwright.google.config.ts)). It covers:
+  - **Flow A, dedicated calendar:** only the `app.created` scope is requested, exactly one calendar is
+    created, re-provisioning is idempotent, an ambiguous multi-match fails closed, and a single orphan
+    from a failed insert is adopted on retry.
+  - **Flow B, existing calendar:** only `events.owned` is requested, behind an owner-only picker.
+  - **Security and pending states:** unauthenticated, non-owner and inactive callers are denied; an
+    account switch or a partial grant is rejected without replacing the stored grant; a tampered OAuth
+    state is rejected at the callback; provisioning-pending and selection-pending states keep the grant
+    and stay retryable.
+
+  See [Google Calendar integration](../integrations/google-calendar-sync.md).
+- **Mobile (`e2e-mobile/`).** At iPhone dimensions:
+  - Mark completed through the accessible dialog leads to in-place checkout and **exactly one** fake
+    charge, with zero other providers contacted.
+  - Cancelling the dialog sends no request.
+  - Mark no-show uses its own dialog copy.
 
 All three `e2e*-server` scripts are `next build && next start`, never the dev watcher. A guardrail pins this
 ([`e2e-guardrails.test.ts` L134-L146](../../tests/scripts/e2e-guardrails.test.ts#L134-L146)).

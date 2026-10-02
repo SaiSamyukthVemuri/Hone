@@ -3,9 +3,6 @@ type: authority and rollout
 title: New-client admission mode (WAIT)
 description: How Hone decides whether a NEW client may book, must join the waitlist, or is refused — the persisted studios.new_client_admission_mode from migration 0204, the exact precedence against the legacy env-list bridges, the commit-time database authority, the owner's setting and its cutover rule, the public join path's durable-versus-email commit point, and the activation plan kept separate from the dated execution record.
 tags: [waitlist, admission-mode, rollout, env-bridge, public-booking, production-truth]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-49c684e8a4483aac1952fc22
     resource: repo://app/(app)/settings/booking/actions.ts
@@ -27,7 +24,10 @@ sources:
     resource: repo://supabase/migrations/0204_new_client_admission_mode.sql
   - id: openwiki-source-b037985cdab5a0d739ca0a36
     resource: repo://tests/migrations/0204-new-client-admission-mode.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # New-client admission mode (WAIT)
@@ -120,8 +120,7 @@ The database side applies the same one-way rule. The service-role caller passes 
 - **Owner setting.** `updateNewClientAdmissionModeAction` resolves the studio on the server, requires the owner
   role, sends only the intent, and maps `legacy_waitlist_cutover_required` to copy that names the one action that
   unlocks Open and Closed
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-  ([`settings/booking/actions.ts` L190-L255](../../app/(app)/settings/booking/actions.ts#L190-L255)).
+  (`app/(app)/settings/booking/actions.ts` L190-L255).
 - **Public join** (`submitNewClientBookingWaitlistAction`)
   ([`book/[slug]/waitlist-actions.ts` L575-L622](../../app/book/[slug]/waitlist-actions.ts#L575-L622)):
   1. resolves the mode from the server-resolved studio; only `waitlist` admits a join, and this check runs
@@ -138,8 +137,7 @@ hosted equals repository at `0204`
 ([`0204-new-client-admission-mode.test.ts` L35-L65](../../tests/migrations/0204-new-client-admission-mode.test.ts#L35-L65)).
 
 **The plan (designed)** is the frozen contract
-<!-- openwiki: broken internal link [../../docs/production/new-client-admission-activation.md#L98-L214] heading anchor "L98-L214" does not exist in "../../docs/production/new-client-admission-activation.md". Fix the href or restore the target, then delete this comment. -->
-([`new-client-admission-activation.md` L98-L214](../../docs/production/new-client-admission-activation.md#L98-L214)).
+([`new-client-admission-activation.md` § Steps, in order](../../docs/production/new-client-admission-activation.md#steps-in-order)).
 It is migration-first:
 
 | Step | Plan |
@@ -155,12 +153,10 @@ It is migration-first:
 
 `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` itself must stay, because the free-consult reschedule policy reads it as its
 own authority. The plan also states that env values are **Vercel secrets** and that no studio's mode may be
-<!-- openwiki: broken internal link [../../docs/production/new-client-admission-activation.md#L55-L65] heading anchor "L55-L65" does not exist in "../../docs/production/new-client-admission-activation.md". Fix the href or restore the target, then delete this comment. -->
-inferred from rows or documents ([L55-L65](../../docs/production/new-client-admission-activation.md#L55-L65)).
+inferred from rows or documents ([§ What must NOT be inferred](../../docs/production/new-client-admission-activation.md#what-must-not-be-inferred)).
 
 **The record (production-exercised, dated 2026-10-01)** is the append-only execution record
-<!-- openwiki: broken internal link [../../docs/production/new-client-admission-execution-record.md#L31-L95] heading anchor "L31-L95" does not exist in "../../docs/production/new-client-admission-execution-record.md". Fix the href or restore the target, then delete this comment. -->
-([`new-client-admission-execution-record.md` L31-L95](../../docs/production/new-client-admission-execution-record.md#L31-L95)):
+([`new-client-admission-execution-record.md` § EXECUTION RECORD — 2026-10-01](../../docs/production/new-client-admission-execution-record.md#execution-record--2026-10-01)):
 
 | Step | Recorded state |
 |---|---|

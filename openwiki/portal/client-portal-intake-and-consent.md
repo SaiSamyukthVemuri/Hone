@@ -3,9 +3,6 @@ type: product surface
 title: Client portal, intake and consent
 description: The client-facing realm — magic-link portal sessions kept separate from practitioner auth, portal rebook through the public appointment command, HMAC-signed intake links with database-enforced review and immutability rules, the single consent-signing ceremony with render-time integrity, and a code-level redirect loop for archived clients.
 tags: [client-portal, magic-link, intake, consent, signatures, clinical-integrity]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-4b52e45d5796f3bdcf32b71a
     resource: repo://app/(app)/clients/%5Bid%5D/actions.ts
@@ -41,7 +38,10 @@ sources:
     resource: repo://tests/db/intake-review-db-boundary.db.test.ts
   - id: openwiki-source-ae09df3b0cc01b9410bed044
     resource: repo://tests/db/portal-rebook-booking.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Client portal, intake and consent
@@ -72,7 +72,8 @@ the service-role client with explicit scoping.
 ## 2. What a client can do in the portal
 
 Messages and replies to the studio (`0053`–`0055`), consent signing, card-on-file setup through a
-Stripe SetupIntent (see [Payments](../payments/stripe-payments-and-settlement.md)), and **rebook**.
+Stripe SetupIntent (see [Card on file, checkout and payment proof](../payments/card-on-file-checkout-and-payment-proof.md)),
+and **rebook**.
 Rebook calls the same locked `create_public_appointment` command as public booking
 ([`rebook-actions.ts` L73](../../app/portal/rebook-actions.ts#L73-L73),
 [L574-L580](../../app/portal/rebook-actions.ts#L574-L580)); the DB suite proves the appointment is
@@ -82,6 +83,11 @@ duration comes from the service row, and cross-studio combinations are refused
 See [Appointment write authority](../scheduling/appointment-write-authority.md).
 
 ## 3. Intake forms
+
+The public `/intake/<token>` flow, the question and answer model, review flags, practitioner-assisted
+intake and link resend/reissue are on
+[Intake forms, review and assisted intake](intake-forms-review-and-assisted-intake.md). The integrity
+boundaries are summarised here:
 
 - **Links** are HMAC-SHA256-signed `{intake_id, expires_at}` payloads under a dedicated
   `INTAKE_SIGNING_SECRET` with **no fallback** to other secrets (the previous fallback to the
@@ -115,15 +121,13 @@ See [Appointment write authority](../scheduling/appointment-write-authority.md).
   read at submit time.
 - **Launch readiness** requires at least one active, live `treatment_consent` form, so a new studio
   cannot read "ready" while intake presents no consent
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L785-L791] heading anchor "L785-L791" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-  ([`current-state.md` L785-L791](../../docs/production/current-state.md#L785-L791)).
+  ([`current-state.md` § 6. Client portal and intake](../../docs/production/current-state.md#6-client-portal-and-intake)).
 
 ## 5. Production status (dated)
 
 Deployed · enabled · in use, with per-studio counts recorded on 2026-08-23 (not restated here);
 consent wording is **draft** and not lawyer-reviewed, and Hone does not claim signatures are legally
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L776-L795] heading anchor "L776-L795" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-binding ([`current-state.md` L776-L795](../../docs/production/current-state.md#L776-L795)).
+binding ([`current-state.md` § 6. Client portal and intake](../../docs/production/current-state.md#6-client-portal-and-intake)).
 
 ## 6. Contradictions and open questions
 
@@ -133,8 +137,7 @@ binding ([`current-state.md` L776-L795](../../docs/production/current-state.md#L
    [`lib/portal/queries.ts` L72-L88](../../lib/portal/queries.ts#L72-L88)); `/portal/login` redirects to
    `/portal` whenever a session exists ([`login/page.tsx` L25-L34](../../app/portal/login/page.tsx#L25-L34));
    and archiving a client does not revoke its portal sessions
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-   ([`archiveClientAction` L290-L320](../../app/(app)/clients/[id]/actions.ts#L290-L320)) — only the
+   (`app/(app)/clients/[id]/actions.ts` L290-L320) — only the
    logout action revokes one ([`session.ts` L160-L175](../../lib/portal/session.ts#L160-L175)). The two
    pages therefore bounce until the 7-day session expires. The tests that reference the portal home
    and login pages (searched under `tests/` and `e2e/`) do not exercise this archived-client path.

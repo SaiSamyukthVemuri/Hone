@@ -3,9 +3,6 @@ type: operational reference
 title: Environment, feature flags and observability
 description: The five layers of runtime configuration in Hone (environment variables, build-time production gates, per-studio flags, singleton database switches and explicit arming flags), how Sentry, PostHog, ops alerts and conversion tracking are wired and scrubbed, and which controls fail open versus closed.
 tags: [environment, feature-flags, production-gates, sentry, posthog, ops-alerts, fail-open]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-742d27f08cbeaa9bde84b50c
     resource: repo://.env.local.example
@@ -37,7 +34,10 @@ sources:
     resource: repo://scripts/check-production-env-gates.mjs
   - id: openwiki-source-479c81b7b82cda7e56624c81
     resource: repo://sentry.server.config.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Environment, feature flags and observability
@@ -140,15 +140,15 @@ decrypting; it never throws and sends only a hashed identity and a generic categ
 ([L1-L30](../../lib/conversion/dispatch.ts#L1-L30)). Per-studio tokens are AES-256-GCM encrypted
 under `TRACKING_TOKEN_ENCRYPTION_KEY` (migration `0107`). The canonical record says it is deployed
 but **inert per studio** — no studio has configured a provider token
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L875-L876] heading anchor "L875-L876" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-([`current-state.md` L875-L876](../../docs/production/current-state.md#L875-L876)).
+([`current-state.md` § 8. Communications](../../docs/production/current-state.md#8-communications)).
+Gates, payload and token handling are detailed in
+[Marketing consent and conversion tracking](../integrations/marketing-consent-and-conversion-tracking.md).
 
 ## 5. Fail-open vs fail-closed
 
 | Control | Posture | Evidence |
 |---|---|---|
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L1102-L1103] heading anchor "L1102-L1103" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| Public rate limiting (runtime) | **fail open** on missing config or backend outage | [`lib/rate-limit/public.ts` L16-L24](../../lib/rate-limit/public.ts#L16-L24), [L213-L261](../../lib/rate-limit/public.ts#L213-L261); [`current-state.md` L1102-L1103](../../docs/production/current-state.md#L1102-L1103) |
+| Public rate limiting (runtime) | **fail open** on missing config or backend outage | [`lib/rate-limit/public.ts` L16-L24](../../lib/rate-limit/public.ts#L16-L24), [L213-L261](../../lib/rate-limit/public.ts#L213-L261); [`current-state.md` § 13. Operations, alerts and observability](../../docs/production/current-state.md#13-operations-alerts-and-observability) |
 | …same, production build | **fail closed** (gate 1) | §2 |
 | Critical alert email | no-op when unset at runtime; build fails in production (gate 2) | §2 |
 | Reminder heartbeat, reconcile observability | fail open | cron / Google pages |
@@ -171,6 +171,5 @@ but **inert per studio** — no studio has configured a provider token
    is subordinate to the admission allowlist) was appended without updating the count.
 3. **Whether Sentry and PostHog are receiving events, and whether the PostHog variables are set in
    Vercel, is recorded as unknown** pending verification
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L1099-L1101] heading anchor "L1099-L1101" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   ([`current-state.md` L1099-L1101](../../docs/production/current-state.md#L1099-L1101)); nothing in
+   ([`current-state.md` § 13. Operations, alerts and observability](../../docs/production/current-state.md#13-operations-alerts-and-observability)); nothing in
    the repository can settle it.

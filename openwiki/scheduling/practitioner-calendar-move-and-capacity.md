@@ -3,9 +3,6 @@ type: product workflow
 title: Practitioner calendar, move/reassign and capacity
 description: The practitioner-side scheduling surfaces — quick-book, move and reassign with the owner-only custom-time override, schedule editing through locked commands — and the practitioner-capacity model (LEGACY / CAPACITY_READY_BOOKING_PAUSED / LIVE), including where working hours are enforced by the database and where only by the application, with dated enablement status.
 tags: [calendar, move-appointment, reassignment, practitioner-capacity, availability-settings, scheduling]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-2839b99018288867e9b2b1b6
     resource: repo://app/(app)/calendar/actions.ts
@@ -31,7 +28,10 @@ sources:
     resource: repo://tests/db/internal-booking-command.db.test.ts
   - id: openwiki-source-66a80acf1cb92fa9a6f351f9
     resource: repo://tests/source-guards/move-appointment-guards.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Practitioner calendar, move/reassign and capacity
@@ -77,34 +77,27 @@ membership check.
 `bookAppointmentForClientAction` builds the slot list with `INTERNAL_SLOT_PACKING` (per practitioner when
 capacity is on), and calls `create_internal_appointment_v2` through the service-role client with
 server-resolved studio and actor; the outside-availability override is **owner-only** and re-checked
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-server-side ([`app/(app)/calendar/actions.ts` L88-L330](../../app/(app)/calendar/actions.ts#L88-L330)).
+server-side (`app/(app)/calendar/actions.ts` L88-L330).
 Drag-to-book and the client-page booking form use the same command.
 
 ## 3. Move and reassign
 
 `app/(app)/calendar/move-appointment-actions.ts` holds the one move workflow for every device
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-([L13-L22](../../app/(app)/calendar/move-appointment-actions.ts#L13-L22)):
+(`app/(app)/calendar/move-appointment-actions.ts` L13-L22):
 
 - **`loadMoveSlotsAction`** — only a `confirmed` appointment that has **not started** can be moved;
   `canUseCustomTime` is derived solely from the live server role (`owner`); reassignment is offered only to
   an owner of a capacity-on studio, listing active, service-eligible practitioners (display names only,
   failing closed on lookup errors); slots exclude the appointment's own reservation
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-  ([L49-L104](../../app/(app)/calendar/move-appointment-actions.ts#L49-L104),
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-  [L106-L218](../../app/(app)/calendar/move-appointment-actions.ts#L106-L218)).
+  (`app/(app)/calendar/move-appointment-actions.ts` L49-L104,
+  L106-L218).
 - **`moveAppointmentAction`** — `custom_time` mode is owner-only and acknowledgement-gated
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-  ([L276-L290](../../app/(app)/calendar/move-appointment-actions.ts#L276-L290)); `available_slot` mode
+  (`app/(app)/calendar/move-appointment-actions.ts` L276-L290); `available_slot` mode
   **regenerates** the slot list server-side and refuses a time that is not offered
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-  ([L329-L350](../../app/(app)/calendar/move-appointment-actions.ts#L329-L350)); the move then goes through
+  (`app/(app)/calendar/move-appointment-actions.ts` L329-L350); the move then goes through
   `move_or_reassign_appointment` with expected start/end for optimistic concurrency, a `NULL` target for a
   time-only move, and `p_allow_outside_availability` only for custom time
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-  ([L360-L380](../../app/(app)/calendar/move-appointment-actions.ts#L360-L380)). Results map to typed
+  (`app/(app)/calendar/move-appointment-actions.ts` L360-L380). Results map to typed
   outcomes (`moved`, `reassigned`, `stale_appointment`, `appointment_not_movable`, `outside_availability`,
   `buffer_conflict`, `booking_paused`, `practitioner_reassignment_required`, …) and a `23P01` maps to safe
   "slot taken" copy.
@@ -128,8 +121,7 @@ recurring-break occurrences are materialized daily (see
 
 ## 5. Production status (dated)
 
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L908-L925] heading anchor "L908-L925" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-From [`current-state.md` L908-L925](../../docs/production/current-state.md#L908-L925), re-verified across all
+From [`current-state.md` § 10. Multi-practitioner and practitioner capacity](../../docs/production/current-state.md#10-multi-practitioner-and-practitioner-capacity), re-verified across all
 tenants on 2026-08-23: `practitioner_capacity_enabled` is **true only on the controlled test studio** and
 false on the real-customer studio; `practitioner_capacity_booking_enabled` is **false on every studio**;
 the per-practitioner availability, scoped blocks/breaks and atomic booking/move/reassign commands
@@ -140,18 +132,15 @@ and explicit authorization.
 
 1. **The booking flag is described as a public-booking kill switch, but it pauses all booking for a
    capacity-on studio.** `current-state.md` calls `practitioner_capacity_booking_enabled` "the
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L919-L920] heading anchor "L919-L920" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   public-booking kill switch" ([L919-L920](../../docs/production/current-state.md#L919-L920)); in code,
+   public-booking kill switch" ([§ 10. Multi-practitioner and practitioner capacity](../../docs/production/current-state.md#10-multi-practitioner-and-practitioner-capacity)); in code,
    capacity on + booking off makes `create_internal_appointment_v2` return `booking_paused`
    ([`0174` L722-L725](../../supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L722-L725)),
    while the public surface ignores capacity altogether. With the recorded flag values, the controlled
    test studio is in CAPACITY_READY_BOOKING_PAUSED, where new internal bookings are refused.
 2. **`docs/07_CALENDAR_AND_AVAILABILITY.md` still names the 0133 RPC** `practitioner_move_appointment` as
-<!-- openwiki: broken internal link [../../docs/07_CALENDAR_AND_AVAILABILITY.md#L52-L95] heading anchor "L52-L95" does not exist in "../../docs/07_CALENDAR_AND_AVAILABILITY.md". Fix the href or restore the target, then delete this comment. -->
-   the atomic move backend ([L52-L95](../../docs/07_CALENDAR_AND_AVAILABILITY.md#L52-L95)), and the move
+   the atomic move backend ([§ Move appointment (practitioner) — migration 0133](../../docs/07_CALENDAR_AND_AVAILABILITY.md#move-appointment-practitioner--migration-0133)), and the move
    action's own header says "via the 0133 RPC"
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-   ([L19](../../app/(app)/calendar/move-appointment-actions.ts#L19-L19)); the action calls
+   (`app/(app)/calendar/move-appointment-actions.ts` L19); the action calls
    `move_or_reassign_appointment`, and `0175` dropped the 0133 function.
 3. **Database-side working-hours enforcement depends on the capacity flag** (§1): for every
    capacity-off studio the database does not reject an internal booking or move outside working hours;

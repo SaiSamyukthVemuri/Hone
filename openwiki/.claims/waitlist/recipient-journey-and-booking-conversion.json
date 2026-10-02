@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:7cf4331cecaa6e631415083263408cae9950000914c8ff1a23e72896b9e083f3",
+  "pageVersion": "sha256:178f4ee2911c5013749ce6a78adc3a4668cf10ce8fc4340f60eb25d6ca018f2a",
   "claims": [
     {
       "id": "claim_6ac78072e9bb4d598ca8d007c04f60e7",
@@ -113,8 +113,8 @@
       "statement": "The inbound Twilio SMS route calls the waitlist prospect suppression commands, so a STOP also suppresses matching waitlist prospects.",
       "evidence": [
         {
-          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L1-L60",
-          "version": "repo-lines-v1:sha256:d5a53370d9221f3b4533d04b7589e14f43793675f6a32d4a48780c705131631d:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ4MzZhNTk0Nzk5MWMxYzc4OTI4MTQxMjZiMGNjNjBjMGNhN2ExYThiYjYwZTI1MmQ2NmNjNTcwYWY2OGEyMzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlMmJjZmIyNTFjNGVhYjNkYTEyOGNiOGNmZmVhNzEzNWNjNzVjNGI1OTcxMGZmZjg0NDliNWE1MDRhYTNmNjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhlNjVkNjNmMWI3Y2RlMzc0YmZkYzI2NDc3MThiMGZmODA1YTVjYTU5M2UwOTQ4Y2M0NmI4ZmI1MDNmOTgyMDYifQ"
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L287-L350",
+          "version": "repo-lines-v1:sha256:71e09d15bb770bdf2357694e749bd6957cddcb274624dfa7db5b71a8ee280c72:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxYjhmYzlkNTBkOTJiOWQzZWU4MGU3MDcwODQ1OTI5YzczNDdiZTQ3YTg1NzFiZTllZjY3YTk3MDc2YTNjYTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1NGIxZjhjYTI1MzkzNDRlMTU1MzZmMGRiODkwOTZhZjU5MzUyNzliZWM4NGQxZGRlMmFhNzkyNGRmY2UwYWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkODkzYTdjNzhiMzU3NTRhYjBiODI4YjQ1NDExMmI3NzU4ZmI1NTlkMjU2MTM5OTc4ODU0ZjE3MmE1M2E5MWEifQ"
         }
       ]
     },
@@ -161,8 +161,8 @@
       "statement": "The frozen 0202 header says the inbound STOP route stamps only clients and that its commands have no callers, which no longer matches the current inbound route.",
       "evidence": [
         {
-          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L1-L60",
-          "version": "repo-lines-v1:sha256:d5a53370d9221f3b4533d04b7589e14f43793675f6a32d4a48780c705131631d:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ4MzZhNTk0Nzk5MWMxYzc4OTI4MTQxMjZiMGNjNjBjMGNhN2ExYThiYjYwZTI1MmQ2NmNjNTcwYWY2OGEyMzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlMmJjZmIyNTFjNGVhYjNkYTEyOGNiOGNmZmVhNzEzNWNjNzVjNGI1OTcxMGZmZjg0NDliNWE1MDRhYTNmNjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhlNjVkNjNmMWI3Y2RlMzc0YmZkYzI2NDc3MThiMGZmODA1YTVjYTU5M2UwOTQ4Y2M0NmI4ZmI1MDNmOTgyMDYifQ"
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L287-L350",
+          "version": "repo-lines-v1:sha256:71e09d15bb770bdf2357694e749bd6957cddcb274624dfa7db5b71a8ee280c72:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxYjhmYzlkNTBkOTJiOWQzZWU4MGU3MDcwODQ1OTI5YzczNDdiZTQ3YTg1NzFiZTllZjY3YTk3MDc2YTNjYTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1NGIxZjhjYTI1MzkzNDRlMTU1MzZmMGRiODkwOTZhZjU5MzUyNzliZWM4NGQxZGRlMmFhNzkyNGRmY2UwYWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkODkzYTdjNzhiMzU3NTRhYjBiODI4YjQ1NDExMmI3NzU4ZmI1NTlkMjU2MTM5OTc4ODU0ZjE3MmE1M2E5MWEifQ"
         },
         {
           "resource": "repo://supabase/migrations/0202_waitlist_profile_and_sms_consent_authority.sql#L11-L16",
@@ -173,6 +173,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T20:08:11.217Z"
+    "at": "2026-10-02T22:34:57.394Z"
   }
 }

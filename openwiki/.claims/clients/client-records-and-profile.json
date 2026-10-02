@@ -1,0 +1,266 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:5aac1e7d3b939e641d0564e483df8fd0433b26f42fad014f80670356c1135e27",
+  "claims": [
+    {
+      "id": "claim_40bde3f8a85e4e089d6f82c5f5477fc8",
+      "statement": "Client create and update are server actions over the user-scoped RLS Supabase client that derive the studio from the session, re-prove an existing client by (id, studio_id) before writing, and filter the write by both columns.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/actions.ts#L182-L238",
+          "version": "repo-lines-v1:sha256:380286dd946423fc2616a39c8f31beb495748052d3ed5d8797f746cce8869dbf:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjYmJmZWRhNTMyYmQ2OGIwMDliMWVhNDk0NDk5NWQzNjU0OWRiYzExMDhkN2QzMDAzZGFhOTFiZDUyMmQ2ZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhY2YyODQyNTkxZmRlZjQ4OTY4MTVjMmFjZjNhY2JmNTE3MThmZWRiNGJmMDM1YzcwNGU0ODBiZDRlOWUyZjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJkYWMzMDRhY2ZhNDk5N2JlNTZhMWUwY2U0NDZjNzQyOGEzZDg5MGNkMGEyNmZiZDU1YThkMmFkYmUxYmEyMTcifQ"
+        },
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/actions.ts#L8-L51",
+          "version": "repo-lines-v1:sha256:e627ceaf816798f0800a08c8f9ad576cc9d48e4969556c9eca7c6bed598640a9:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxOWIzMTQzYTRmYzRmMGJhMjM2NDc2YjlhM2Y2NWRmNzEwMTcxMDNlMzU2MWEzZTk5YzEwYzljMzRkOTc2MjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3MGI1Njg2YTdlOWU2NGJkNmM2MzcwMGE1ZDQxYmJiNDI4ZjQ3YWQ0ZmM1MzQwZmNjYTJiOTE2OTc3YTg1ZWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE3ZTM3MmFlODczZTk5MTA2ODExOWRhOGE5ZDdkNTk2ZDhlOTgzMWYzOGQyYTg0MDU4Zjg2ZTMzOGQ1NjViOTYifQ"
+        },
+        {
+          "resource": "repo://app/(app)/clients/new/actions.ts#L49-L127",
+          "version": "repo-lines-v1:sha256:4f56dab2fe06c2f58ee6d01017330f7ea0af8edfcd260f298d4e1686b6118300:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjNDk2OTk3MmQzNGFhMTcxMjQyY2U4ZmZmMmU5NWEyOGQ1MDQwZWRjMzAzZWUwNzEzMmU4ZmNhNjQxMTAzYmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZmODVkYTg0Nzc4ZTg3ZWNiODg1MTgxYWNkMGQzYjU5ODlhYzQ4ZWI5ZmVkNmEyODI2ZmIxM2UzNDlkNThmNTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI3ZDkxYWY2OTQ3MjBiMThlMTkyOGZlOTVhYWYxYWExYzA5NTMzYTAwOGM0NTgyNDYxNzUyZGViYjgzZGJhZWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f8ca26b907fd4d9fb9533a1513966bd9",
+      "statement": "Migration 0087 replaced the 0001 members FOR ALL policy on clients with explicit select, insert and update policies on is_studio_member and no delete policy, so authenticated members cannot hard-delete clients; it removed delete the same way from client_tags, client_personal_notes and clinical history tables.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0001_init.sql#L253-L257",
+          "version": "repo-lines-v1:sha256:a5d5011c76b4488a32626ba3cbb97a9366c603259bbc175541585ea73da89790:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmJlZmViNzUwNWQzYjJhYzhkYTk1MDQxZDI2MTVlYzFjNzI1ZWFkNzIxN2I5MzNiNmYxMGIzNWFiZmZjMzBmYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2JkZDM0MWI3ODYxMTljMjQyMmJjMDAxNGQyZTI1NjIxMzM1NDI1ZGEyMGYzYjljOWZmMGVlNzk2YzRjNDNlYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2E2NzFhOGNjZjdiYmVhMDY0MDM1MzJiOTQ2Zjc3ZjVmNTRiYWY5NmM2ZGNhZmNmMTc5OWVmYjBjZWMyNjA0NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWM5ZDE5NjRmODE4NzFkZTEwZjFjYjVjMzU5NDdmNjFjYjU0NDA2OTAzY2I2YTRiMDM2ZDkzNzQ5OWVmZDBhMiJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0087_clinical_rls_delete_hardening.sql#L1-L66",
+          "version": "repo-lines-v1:sha256:d60c8870dbff0d9315fa3f33bddb2f16173b8b994bc87dec46cf10354601c5d6:eyJzZWxlY3RlZExpbmVDb3VudCI6NjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVmODk0YjJiOWE2YzlhYWIxYjczYzhhZTMyMjQ3MTUxY2UyMGY1M2U4YzgzZDMxZGM0NTJhZjdhMjY4MWE1NzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiZGQzNDFiNzg2MTE5YzI0MjJiYzAwMTRkMmUyNTYyMTMzNTQyNWRhMjBmM2I5YzlmZjBlZTc5NmM0YzQzZWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ3N2Q2MDQ0OWY2ODliMjhiNjc2OTA3ZGE4MTNkYzlkNWU1YzQzODE3NDc1MWZkODM4MGU5YTFkOGIzMzdlNzQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e729716c2eab42269a197f6c0c7554aa",
+      "statement": "Migration 0032 added a generated normalized_email column and the partial unique index clients_studio_normalized_email_uniq on (studio_id, normalized_email), allowing at most one client per normalized email in a studio while permitting clients without email, to protect payment identity from near-duplicate clients.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0032_stripe_connect_phase_1.sql#L278-L346",
+          "version": "repo-lines-v1:sha256:bf75a3f89c45a0e2bf7b6bba062ae719ff8467a856801b2bed6af56ad0cbc629:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljZmRhZGQ3MjI2YzI3OGQ1ZDE5Y2U2YTBlMjEzNWYzOThhZmVkODZmNjkxMzllZTY0OWIwYzBlZjE0MTJmNzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiNGYxZWJlYWMwZTYyNTU5NjZjZjgyOWE3NmRjODczOTFkYjA5NTcxMDczMDc3MWUyYjA0YmIzOWNmODRmMzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNkZmY0MWMzNTAxYTkyMjQzMzE4NjczNTNhZmYxZDY1YmIyNjkyMzVmZjVlMmY4N2U5ZThjNzVlZDkxMGJiZWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM2NDk0OTRkOWU1YmU5MTdiM2NjODkxM2NlMmIyNTY4N2YzZDZkZmNhZTE1ZWNmZDg2Nzg3ZGNhNWNiYTg3ZDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9d49978356a546e98e130e54574334aa",
+      "statement": "Client create and update pre-check the normalized email to tell the practitioner whether the duplicate is active or archived, and treat a 23505 on the normalized-email index as a lost race that is re-read and returned as curated copy rather than thrown.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/actions.ts#L199-L268",
+          "version": "repo-lines-v1:sha256:72d40e9de7f78bc3f2c3fa5a7e542fd98549f4f837a463a2bb37815567167dd1:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE0MTBjODM2YmM1ZWUzNmJiZTEyODc2YWI4N2U5MGFlMjY0N2M4NzBkMTM5MTZjMGM0NjA3OTZjZWM0YzBjYmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmNTk0NDlkNDNlOTliNGY2YmUxYmY2ZjU0YTRiNzRlOGYxZjliMGYwOTQzZWRkYzNiZjA5NTMyMjU2MmFkZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUxNDE2NDE3OGE0YjM3ZTczZmUzNmZkMDkzMDYyNGUzYzdiNjZiNDQyNjg0NWNkODcxYWNhMjA0ZjYzN2UxMmUifQ"
+        },
+        {
+          "resource": "repo://app/(app)/clients/new/actions.ts#L29-L160",
+          "version": "repo-lines-v1:sha256:107f1bb24b1e2b451abf8b17aef931f0ce72d9948dc85f3c6325065af2a2b159:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2ODg4MGM2NjQ4YTc0YTkyZWJhYmMwYTZkYjE4YmZhZDgwYmZmZTQ1NGViMTRmNzc0YzU4YTVlMjFlODUwNmM0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhZGQ2MTZlNzdiZjg2NDg2ZWI1ODdlYTFlODliYWRlZGZkMGFhZTRiZWM4MWM2ZThhNGI5MmM4MmZiNzdkY2NlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyODg3MzcwN2I0ODM0MmM3NDg5ZWZmNTgyYmZhZjU3N2E3YWM2OTA3NzQzNjU1NTExNmQxODg4NmY2MjJkYTUwIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_000fe172e7654ee48d274b63c9952d6f",
+      "statement": "Client create and update no longer write clients.skin_notes; the legacy column is left untouched and new skin/hair observations are recorded as append-only client_clinical_notes.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/actions.ts#L213-L238",
+          "version": "repo-lines-v1:sha256:e593dc26ed6c0c10d25ade4bdc3f1a230dcc6746b08e50edba111d080148cdd1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjZTBkMGUxZmNiMmFmZDJhNjY3NGE1YzY5MTIxYzliMDJjMTViNzAxYzNjYmYxYTU2ZGY3NmY3NjIzYWMyNzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhY2YyODQyNTkxZmRlZjQ4OTY4MTVjMmFjZjNhY2JmNTE3MThmZWRiNGJmMDM1YzcwNGU0ODBiZDRlOWUyZjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljMzQ2N2FmNjJkZTgwMzA5Y2MxNzQ0NTQ0Yjc3YmViNDgyOGFjMDBiOGU0YzkyMzIxOGVjMTliODVhYjk3NmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJkYWMzMDRhY2ZhNDk5N2JlNTZhMWUwY2U0NDZjNzQyOGEzZDg5MGNkMGEyNmZiZDU1YThkMmFkYmUxYmEyMTcifQ"
+        },
+        {
+          "resource": "repo://app/(app)/clients/new/actions.ts#L100-L125",
+          "version": "repo-lines-v1:sha256:8007aee3e4fb92ab910547c6812c639ee0ae847a2c62ab11aaffd630bc0bb9f6:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkMjFkNzY2ZTU0Njk5ZDIxZjA2YzY0YWE0ZThjZjJlMmVmNzEyODAyMTkzOTJmZmQwMWFhMjJjM2M2NjYyN2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0NzVlOTRhOTA0YWM0OWIzMTU0ZDQ2NzJhNjZlODYyOWI4NmRhYzc0ZTNlMjkzN2JlNjkyN2FlM2RhMTFjNTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ3MWRiNGFhNmIyNmNhMGYzOGY3ZjMzMGZkMWNkMzYxNmM0Y2VhNTZlNmYwMmExMDUzNmU0MDc2NTgzN2NjZjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_91d64bfc18c04317b8329be4e376a738",
+      "statement": "Clients are archived rather than deleted: archive stamps archived_at and archived_by only when unset, unarchive clears them only when set, and each writes an audit_logs row whose failure is logged without undoing the archive.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/actions.ts#L274-L389",
+          "version": "repo-lines-v1:sha256:fd47b8a6f05bedb9597bfda0f9cff8a5c277e5a49268fb77d9cf6e8f0675efe4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmNTUxZWE4MDRkYzAxODVmMGQ1N2E3NGI0NjRmMzY4MjcwZWNiNzBjZGI5MGNlZWFhM2JmZTdlYTljZjE4ZGY5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkODFhMTg2NGJkYTk3NTk5NGE4YTljNmI2YmRiMTg0YThmY2E1YWMzYmIzMWJiZjIwMDYxYjgxZmZiNmU5MzI5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1ZTdjOTM3NzRmNzdkZmQzNDdjMGFjMjhjYWZiN2VlMDAxN2JmMjZmNzEzYzc5MGQ1YjEyMjBlZjljYjc5N2VkIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_56fe4c5736fe44dda901c6a56a424ba3",
+      "statement": "The active client list query excludes archived clients while a separate archived query returns them newest-archived first, and the client detail page intentionally still resolves archived clients.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/page.tsx#L12-L51",
+          "version": "repo-lines-v1:sha256:35f3820325eb0f3f05975cb5a728e8bf8c1d18f86a54aabc5aece7b9825f186e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBmZWRhMDYyZDA5Y2E5ZGRjY2YxNzM2Y2UyYThmNjA5MTY3YzEwMjMxNGM3YzIzNDgwYzY3N2Q0ZWJmMmRlNzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRiMjEzYWI2MzZkNGM3Nzg0ZjYzMmQ5N2M1OGE2ODUwYWM3ZWQzNjg3NThmOTM3NjRiNTQxZTNhZTkxMDIzMWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJkZTIzODQ3YTYyYjhjOTgyOTBmM2ZhZWY1YzkyMjIzYzg4MTA5MWY1YjQ2MDBjMGVmOGFjNjM0Njc3ZmM0ZDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkM2I4Y2QxMzgwZjk3ODVmZjVkYWRmODQ1ZmJmZGFlZGZhNGFhZTk5NTIyMTZlNTJhYjZiYzU3ZDdiYzM3NDgifQ"
+        },
+        {
+          "resource": "repo://lib/supabase/queries.ts#L275-L323",
+          "version": "repo-lines-v1:sha256:0f7148cc607fa797667dcdd0953cd1cfcb1752b295a107a074a626c45e3b9864:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjMTMyYWQyZWUzYmJhMzZiNjNkOTZmNGFkNTI5NjY4NzQzNDE0Nzk3OWY2ODgzZTA2MDNlMDUzNTRhYzQzMDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZkZGI1MzNlNWQyODFmMGM1ODUxMTQ2YjBkMDExNGNjZjg3OTNjZTc3NGE5ZWE3YzY5NDc5ZWE0NDI2MjJjYjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmZDc3M2JiZmM2OGMzNmYyZTUxMDJlZTM0M2MzZWRhYjc0MDg1ZWQ2YzUwM2U2YmRlYTAwMmFmNjZlNGI0ZTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_337ae826e0b44a9a9875937258bbbc3d",
+      "statement": "Client tags are capped at 60 characters and removed by soft delete (deleted_at, deleted_by) rather than row deletion, and the tag table has no unique constraint so a re-added label does not conflict.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/actions.ts#L439-L486",
+          "version": "repo-lines-v1:sha256:5cfc81a551dbd0ed422349794ee8881df02253e5f78108554563447b37b8a875:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgwMGViOGQ5ZjI3MDFiMDlhNGNlYTZlNmI0ZGZhYWM5MjdlNTE3MWVhMWQ1OTc0NjE1ZmRkNzMwZjA2YmJmOWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgzZDhiMDY3ZmZjMThhNTZkYTBmZmI2YTdmNmUyY2ZhMjQ4M2RkZDYwNTljNzlkNTI0YzdkOTQyNGYyOGNmZjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0018_client_tags.sql#L1-L45",
+          "version": "repo-lines-v1:sha256:5dee1f700269c70db09faa24d24659c8c0893d8939da3c6cd01858b7e8d0947e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljZmMyYzQ1OTVjOGY1OGY4NDUxMzg5YjVjZjM4OWQxZDY1NGY4NDEzYzBkODM4ZDgyMmIwNTBmY2I3MWFhZDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiZGQzNDFiNzg2MTE5YzI0MjJiYzAwMTRkMmUyNTYyMTMzNTQyNWRhMjBmM2I5YzlmZjBlZTc5NmM0YzQzZWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e02bd126c27f422a91aedf07077b3034",
+      "statement": "The birthday action stores month and day in clients.date_of_birth using a 1900 sentinel year for new values while preserving an existing real year, and the birthday read skips archived clients.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/birthday-actions.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:63f0e7b8d5b1aba4d26530489d1aedccdd73d89745d520970762a8b92bb22f22:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5ZmRiNmE5NjYxNWI2MDQzZGRhYzA0OWM0YTg3ZGZmMDgyZDIyZmJhNGZkOTkzMTBhMGRkOTJhNGU3Yjk5NjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc5MDNmNDM2MjcwNmRjYjQ0OTYzMjFjNzI1MTE1N2U4ZTA3MzRiN2MyNTNhMjg2MjNiMjY3ODA3OTIxNzFmNzkifQ"
+        },
+        {
+          "resource": "repo://lib/clients/birthday-queries.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:c078bce786e3f3b4948d749344c4d01d3b3ae9cd5aeef28e9cfa29e58da7bcae:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3NzFlNzYwZjhjYTU3N2E0NTc0ZTYyNmUzMGQ2ODc3NDM2ZDk3ZTc1MzExNjhmM2Y5NWMyOGRhZDc5ZmQzZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhZGJkZjU5ZGQ1NjNkMTQ2MmNjYjQ3MmY0YmQyZGQxZjA3NDE5OWI2YzExNzVjMjY4YTAyMTUxYTk0YWIzMGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU3OGI4MWFjMDVkMGQwZDc0MjI1ZDkwODQ4ZTI0ZDFhZjI4YzIxYTk5NzNjYWJhNDMzYzAzMTliOTI1YzNiYzkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_baa7da27310f44f98838fab0c2e2a0a4",
+      "statement": "client_budget_context holds at most one current row per client because client_id is its primary key, with budget_level limited to NULL or three practitioner-selected values and budget_notes capped at 20000 characters independently of the level.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0183_client_budget_context.sql#L1-L155",
+          "version": "repo-lines-v1:sha256:17081965134158f1c502e0d10b54f6ce7adab670d583f44620bc56ee605a4f05:eyJzZWxlY3RlZExpbmVDb3VudCI6MTU1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYjFjMGY4NTJiNDE0Yjk1ZmY4YTQ4ZjhkNGJhYmEzMzkwZDZkYTNjYzZkNzhlYjllNzdkOWI4ZTg2MzhlYTA0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYzc1NmFjYzIwYTYyMjUxZjRjZmJhNDgwYmY0Y2JkYWQ1MzYxZjEwNTU2NmUyNjgyMTQ2NzVmNmIyNTVkYWQ5IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwNWQ4MWZkN2VlOGUxY2QwM2E5OTYzZTNhMzBhNGM0MmU1ZTUzMDNmNGQwNGYxNTEwZGFkZTk1YjRhNDg3NGM2In0"
+        },
+        {
+          "resource": "repo://tests/db/client-budget-context.db.test.ts#L115-L172",
+          "version": "repo-lines-v1:sha256:e24b6903215e476a53c4346d0bc5a193a9764bbd4f7511277ef3f6c3de309578:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0NGIzZGRiZWVjODg5NDM2NjZmNzYyNDIyNzU1MTc1MTEzMTFiZTQ1MGIyNTBiZTE4Y2Q2OTdiNWM5ZjI3NWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVjY2E0N2UyZTAyMDI3YjUwZDVmYWE4NWE1ZWVmOGQ2Mjg2NzNjMmVhY2MzNTRmNWNiOTc5YjY2OGZiNDZmNzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5ZWM5YmMxMzY4ZDQzMzhhYzI1YTEyZmQzNjUxZWIzYzM1NGIxYmM2NWVmYzkyMjYzNTFhYzQxYmI1MmNlNWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2cc55d5ac4ee412ca923219354a7463f",
+      "statement": "Budget context tenancy is enforced by a composite foreign key to clients (id, studio_id) plus a trigger that derives studio_id from the parent client, and a trigger rejects any change of client_id even for service_role.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0183_client_budget_context.sql#L228-L295",
+          "version": "repo-lines-v1:sha256:f0546419e0d873533886392734a347000560f1635ce0b464402ede772e6354c3:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwODUxNDlkZThiMDZhMzRkNzhhY2RiNjBlZWJjYzVhY2Y5YzlhMzQ5NmNjZGNmYTY4MWQ4NTAyZWJkZWVkZmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI3YWVhYWIyMmQxMTMwNjg5YTMyY2Q2M2EzZGQxY2IwODE3MDA4ZmUxYTEwMmRmZDhjNTVhNTM1NWNiM2MzN2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk2ZjllYjMyODZhYjU5YzliN2FhOTVhNzJlZTgwNThmNDFkNjQ4MGFiNmQ5MTIxNWM2NTYxZjc3M2YwN2NlZjEifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0183_client_budget_context.sql#L88-L123",
+          "version": "repo-lines-v1:sha256:b43d5e00654b9b97deff5790ab63120f3b139995a9fce0d7d8b21469d25d2588:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZhZDQyZTM0NGMwZTU5ODg5YjgwNjRlMjkyNTNiOGI4OTc4ZjQ0OWFjYjg1ZTg5MThjYTljZWIyYWRjYTUzZjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5OTY3ZWMxZWQzODM2ZjhlYjE3YWZmMTcyYjViZmVmN2RlNjA0ODVhNDM5YzZjYTExYzU5MWUxNzU1NzM5YWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdjOGNhYjQwYTllOTZkNmU5ZjZjYzU0ZDJmMDI2YzMzODI0MTc4ODRlZGRhZjg5ZjkzY2RkODQ3MWM4MDgxMjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3MjFjY2Q0YjBjODQ0ZDFiZWJiZTgzY2M4MzAwNzU3MTE2NmY0ZjRmNzFjMTNkNWE1NjE1YzYwMTE5ZmExZjYifQ"
+        },
+        {
+          "resource": "repo://tests/db/client-budget-context.db.test.ts#L173-L256",
+          "version": "repo-lines-v1:sha256:44880c9a166aaa88198407f423dd9326640d9b5bbfb133b778ce45a2007c6496:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhOGNmNDNhZjgyNjY0ZjVlZjM4OWI5YjkxYzg3MDY5ZjRmNDRjYTAxNzE3YzU2M2U5N2JlNzUyN2U1NjVmNjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2YjdkZGEwNGVjYjNjYjM2MmUzMzdkNWIwODFlMzA3ZmNkNWM2NmYxM2IzZjM1OGYyMmIzODE2M2JmMzIxZWQifQ"
+        },
+        {
+          "resource": "repo://tests/db/client-budget-context.db.test.ts#L470-L530",
+          "version": "repo-lines-v1:sha256:5cefb29b7806a6022e58f168b4f5b2f2db08d3f4e784ca08b28b06b0ffac31ba:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkOTJhYWFmYjRiYzM3NTM3ZTc3MGQ3MTMxNjdiN2Y3ZjNiYTNiYmI0OGViZDUzYTNlM2ExYWU4YWE2MGUxZjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1NjZjYjliYzgyYjkxODdkMDBkZDA3MGM3NjZlM2Y0YzIyMzRkYzU0M2ExYTQ3MjAyYjRmMjFhNjZiMTZlNTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUyODM3NzQ3NTBkMTFiYWJkMjgwMTZlMjVkY2M1NGZlMzFmYThlNDhlZWZkOTEwZmJmYjkyM2VkMTQ3YWQ4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM4MzYxZGRlMzJiMjcwMzQ0ZjlhZDIyMWFlMzcwMmM5OWUzZDY5ZWYzMmM4YWJjYTM1MDU2ZDM2ZmQ1NWI1ZGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_18e0fe6cd5de4f57a0b409d052dc927e",
+      "statement": "Budget context insert and update policies require updated_by_practitioner_id to be an active practitioner in the row's studio whose user_id is auth.uid(), so members cannot attribute writes to colleagues, other studios or NULL.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0183_client_budget_context.sql#L335-L371",
+          "version": "repo-lines-v1:sha256:0d5cd0f4d308cd7f04f79ef6092b61ca28cce810d988331904206b345ee7555e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3YjlmODdiNWI1N2M0M2E4ZDlkYjIyYzAwZjc0ZjRiYWIyMzRjMDc1NDg5MTY0NTgzN2Y3YTAzNTgzOTIwMDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1ZWYwMWJjMDhkYmMzYjYzZTRlNzVlYTNkMjZhNWI5NDE4OTE4NzdlMjdhZDg5MTMyOWM4NDExZDdkOGRjNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU3OTZmMmEzODNlZWNjMWU0ZGFiOTExMmU2NjE4MDRhZDRhYWFiNmE2YWE5MTcwMzAxZTEwYjk2NDBlZGNmMzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNiMGI2ODg4ODE2YjlmZTU3Nzk4ODFjNzBlMzRkMzhmMjc1Mzg1YzBjYWRhMjU1YWU3Y2M1ZTZmZTFkNWNiMTMifQ"
+        },
+        {
+          "resource": "repo://tests/db/client-budget-context.db.test.ts#L258-L436",
+          "version": "repo-lines-v1:sha256:2d21cd557cf12b918d930565c40175b9750e15e03aa0fce3ed3653a035ab2eb8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTc5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhZGUxMWEwZmMwNGQyMjlmMDI1OGMwODNlYzUyYzkzN2ExMDczNDMwNTMzN2UzYjY3ZDBjZWRmYzdmODNkYTk3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5ZDkwYTgxY2QwYjg1ZGEyZTgzMDUwMzM3YzVhZDgwMTQ0YmU0NWQ4MDIzOTgyMmM5ZjI1OTVhNmY3ZDgwZmQxIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzYTNmYTZlYWE5ZTc4ZWJlMGZiZjUwY2M4N2E1NzkzOGFmNGEzMzIzMDRlZGFjZjg2NGE5MjQ5NzhkNTNlYjVhIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_f4f782c0d1244f57926ad02328c85260",
+      "statement": "Migration 0184 revokes all privileges on client_budget_context from public, anon, authenticated and service_role and grants back only select, insert and update to authenticated, and revokes all privileges on the three budget trigger functions, repairing 0183's incomplete revoke list.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0184_client_budget_context_least_privilege.sql#L1-L112",
+          "version": "repo-lines-v1:sha256:0407550887c69c3af37723e6ba95439a543cc6ee5836cc826ded2fccf04d7283:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYjFjMGY4NTJiNDE0Yjk1ZmY4YTQ4ZjhkNGJhYmEzMzkwZDZkYTNjYzZkNzhlYjllNzdkOWI4ZTg2MzhlYTA0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI5OWNlNjcwMWZkZTlmYjYxOGQxYTgxOTVkN2YxMWZhMmVlZGJhNzNlMDE3Zjc5NmExZTY3YWQ4NzU0MjE1ZmI1IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzZTQ0ZjEwZmRkOWQxNThjNDNjODkwY2JjNjA3YTI5YTc3ZGJlOTdkOWVlOTYzNzEwYjMyYzVlMTFjY2JjYjE2In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_1343f8059b834f7080bb5823ffa36855",
+      "statement": "updateClientBudgetContextAction is the single writer of budget context: it refuses an unrecognised level instead of nulling it, does not trim notes, re-proves the client against the session studio and upserts on client_id, and the treatment-plan editor no longer writes budget_notes.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/budget-context-actions.ts#L1-L116",
+          "version": "repo-lines-v1:sha256:3c308def8c49be4edbed4d2b56e4d3346c38ff7ea9b9bd189b52930a63514e12:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2OWZkYjZhOTY2MTViNjA0M2RkYWMwNDljNGE4N2RmZjA4MmQyMmZiYTRmZDk5MzEwYTBkZDkyYTRlN2I5OTYzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://tests/app/clients/client-budget-context.test.ts#L282-L470",
+          "version": "repo-lines-v1:sha256:c5afb985895c903e4242fe2e6ffe3a9eacc2fa96dc8fed33aae4051b4b27c86a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTg5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiOTIyY2RmYTBkNDBjZDNiMmVkMTMwOWZjYjcxMzJkOGM3NzRiNDc3ZmQyM2Y1MDliOTlhMWZkNTU1NmE4MjZiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJkMzEwMzE2YzM4MWUyMGM0OTAxYjMxNjE4NDBjODE2NGYxNTc5YmFmN2Y3YzZmMjlhOWRhY2NkMTY0NGFjMGRhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNzc5ZDExOGQ2ZTNjYmY0NTA1Mzk3NDhkZWU3YTQzMDdhY2JlNjQ0NmNiYTI5N2YyNzYwZmE1ZDBiYmExYmMyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwZjA1ZDA5MWM3OWY1OTVkZmMyZjg5Zjg5ZjM3MTA3YWZiNWVjMjJhYTI3MDU2OTkwMGZmYzJjMjY4MWVlMjZhIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_c2e5bff0ffb4458e8c810362cadf67d3",
+      "statement": "The client profile has seven deep-linkable tabs and loads gated reads only for the active tab; a development and test-only check throws when a tab renders data whose read was deferred, and it returns immediately in production.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/deferred-reads.ts#L1-L72",
+          "version": "repo-lines-v1:sha256:d9fedcf8be3dc68b2a0b2366ac37ba65217737633411e1d1c6c281b4c9001ea8:eyJzZWxlY3RlZExpbmVDb3VudCI6NzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc4ZmNlODU2OTU1NDM3MzhhZmIwZDk3NWFmMmJmMWNhNjczZDA5ZWE4ZjA4NzBiNmFhNTg5MGI1ZjgzMDZiOGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://components/profile-tab.ts#L1-L41",
+          "version": "repo-lines-v1:sha256:ef5123601afb2c1f332d95a88e7739dc13e0354517174d699b6270f1f05c666f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhZDFhYWRkZmE1ZDZiYjRhMGE3YTJlMDAxMDc1OWE3MTc2OGJkODUwNDIwYjAzNWIyMmFhMThhM2EwMWZiMjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c6e6cefa8d4a4f80a00e4a2e0c3af326",
+      "statement": "Database tests run the real client profile page as a signed-in practitioner against the local stack to prove per-tab queries and visible output, including that no profile query runs when the client does not resolve for the caller.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/client-profile-tab-behaviour.db.test.ts#L158-L394",
+          "version": "repo-lines-v1:sha256:279d22ea386b7e9b20ad8a43c52238f78c9c2822002f5093215bcae7de41a997:eyJzZWxlY3RlZExpbmVDb3VudCI6MjM3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlMGYwZGY3ZjgyZTg1ZmY0YmQyMTkxMjk1NzM0NDg2NjU4ZjUyZWRiYWFiMjQ2YjcyYTFiN2VlMjkxYTMwNDA3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiZmQwY2Q0NGNkYWNiMGVlOThjZTJiNzIxN2IxNjVjNmI4OGY3MGUzNWU4ZjU4M2ZhY2E1ZDI3MDA1ZmNjOGQ3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://tests/db/client-profile-tab-queries.db.test.ts#L1-L20",
+          "version": "repo-lines-v1:sha256:dc2f64e179013cd581254aecd9dbff8006baef969187b9fb19d309d16aedeccd:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4Y2ZjZmRhYzQxNjIwZTJjYWRlNjZmZGU1YWY3MjU2ZjFlMDdmNmMxZGUyNjdkZWY3ZGQ2ZTUyNTA5YzBiNmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4NzljNmY2NDkxN2E4NWIwODEyYTE5ODc0MTAzN2U2MTgwNzlmNTJiNTQ0NWJmZDM4ZDI5ZjEzZjM0NGNhYTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJjM2MyNjhhMGU1MzBmNTE1ODdlMGVhNmU1NmM4MDZmMDFhZWI1OGFlZGIzZDUyY2EyN2M1ZDA2ZGE1ZGQ0N2EifQ"
+        },
+        {
+          "resource": "repo://tests/db/client-profile-tab-queries.db.test.ts#L365-L400",
+          "version": "repo-lines-v1:sha256:d50c1ff16de451c615a6e82e91c65c733140499c328efdfe0ad5b86b3afdfe1b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyNDczZGQwNDBlNDQzNzc3NDgyNWI4MGRiYzc1YmZiOGRmZmEzNjYxYmEzNTI0NTBmMGYzNmJiZjUwYWJkZmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1MmYyY2I4ODk0Zjg2ZjgwNmJkYjQ1ZWVmNTU2OTZiNjljZmIwODJmYjYyMzUxOTlmOTAyOWMzYzlkZjQ0MWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY0NDRkMzAwNDdlMmY3OTlmZGE1MTc2NTZlOWE4ZjkyZjg1NWQyYzA1ZWViZDM4ZmFkMmEwMDhkZTU0NjQyNWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImViOWY3YWE2N2RiZDc4NTM3ZDk0ZTRlNDA3MDNjZjBjMDdhZDQ3ZmE2NjM4OWM5MDc1NjkyODM4MmM3ZTg0NDgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e32feb873fa240b6a963209f6d4be6da",
+      "statement": "The profile overview contains each independent clinical read failure at its own edge so one failure shows an unavailable state without blanking a sibling read, while a failing notes summary still fails the page loudly.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/client-profile-read-failure-containment.db.test.ts#L1-L20",
+          "version": "repo-lines-v1:sha256:24af798878d611ee4678c8a1c4d938c995375583debceb462f94ac3def1e15a5:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4Y2ZjZmRhYzQxNjIwZTJjYWRlNjZmZGU1YWY3MjU2ZjFlMDdmNmMxZGUyNjdkZWY3ZGQ2ZTUyNTA5YzBiNmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwMWVhZDkzNmEyMjgxZDUzZGNjMDY0YjdlMmEyYWIwZDUzYjkyZWYzZWY3YjM0YjY2ODY3MzAwNzg5NWM4NjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRlNzJlYmZiZGU2M2Q4MGNjZjJlMDYyZjJkZWQ4MzZjMWFjYjYyMzgyMzMxNDRjYzM0MDgzZGY1MGU3OTJiOTkifQ"
+        },
+        {
+          "resource": "repo://tests/db/client-profile-read-failure-containment.db.test.ts#L234-L493",
+          "version": "repo-lines-v1:sha256:670d87ee34e5932b29d20e19a204be40f724255b6b1a145b312ec1c304f6ed4a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2OGJlM2Q2MmYwNzhiMWMzZDhmYjg5NmE0MjM4YzZiOTFhYzBjNjM2MDA0MWIyN2ZlMDc1Yjc5OTgzMTNjNzcwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxNjc3NTQzYWNjZTcxMzQ4MzYwMmRkYzlkMzBjYzQxYTVjZDJkMDM2MzNiZDY3YTY0NDlmOWIxNzMzM2Y3ODRjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_a9261d08aec9403c9c44e93095cb86d3",
+      "statement": "updateClientBudgetContextAction returns raw database error messages in its result object, which is the kind of internal text DESIGN.md LAW 7 forbids in user-facing refusals.",
+      "evidence": [
+        {
+          "resource": "repo://DESIGN.md#L76-L79",
+          "version": "repo-lines-v1:sha256:b07b9ff9d659b41c9c0c0470cc9646992b8c223d49da11cdf92d81772fd92eda:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2Y2MTA0NjY2MzZiN2Y3YjFkZDRhM2ZjZGQwZTA2NDhlZjg4N2ZlZWQxYTkxNDNjOTU4ZTc3NjRjYzFmZDJhNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTI1NDVjMDcwMzNlZDc1MDBlOGFjYWEwODIzNzMzZTE4NjUzODRhNmM5Yjc4ZTYwNGVhMzk2NTI5NjUxMDI3OCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGE1OTJiZDc1NzU2YTIyMTkzM2MyOWQ4NjU2MzQwMTA2ZDZlMjA3NDMzNzVkNGU3MWNjZDQzOTMwMzkzY2IwYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjQ0ZTRiMjY2NTRiMmUxMTljNTM1Y2QyY2ZlNzJlNzViZjVkY2U5ZWZiNTU0OGQ1OTQxOTRjMzc5YTljZjM4NyJ9"
+        },
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/budget-context-actions.ts#L88-L112",
+          "version": "repo-lines-v1:sha256:07d276d70207ca58e47903d71ac861137657bda40920612d657801e317b76601:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJmZGMzMzNhOTI3MTNiYjZiNzY2ZDc4OTUyMTgwMDBiOWYxYzNmNzI1MmI4MGNhNTc4YzdhMjVkYTJhMTE3ZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQxNDY3ZWVmN2M2NmJiM2JhNTg2MWNiYTY3NDcyOTQ2MDJhNDBmYTIxODk4MTZkNzQ3MDcyNjk4OGJjYmMzMDYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYwNWYzMjQwZDQxY2QwOWRjYjdjZGNhMDJlYzI1MDkxOTQzNzgwMmJlN2NmNjA0YTFmYjdkYmJjYzY2NjVhMGEifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T23:09:08.246Z"
+  }
+}

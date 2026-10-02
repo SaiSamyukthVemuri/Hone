@@ -3,9 +3,6 @@ type: integration subsystem
 title: Google Calendar integration
 description: Hone's one-way (Hone → Google) calendar integration — owner OAuth with PKCE and least-privilege destination scopes, encrypted refresh tokens, the appointment-triggered outbox, the lease-based worker gated by a global switch, the reconciliation sweep, and its dated production status (deployed, exercised once, dormant).
 tags: [google-calendar, oauth, outbox, worker, reconciliation, token-encryption, dormant]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-59a4101c8233cafbae5f4713
     resource: repo://app/api/cron/calendar-sync/route.ts
@@ -45,7 +42,10 @@ sources:
     resource: repo://supabase/migrations/0132_google_calendar_event_link_transitions.sql
   - id: openwiki-source-55831e92f29f8b3e9d43f58b
     resource: repo://vercel.json
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Google Calendar integration
@@ -59,11 +59,9 @@ deployed and gated by several independent switches, all of which are off for eve
 | Dimension | State | Authority |
 |---|---|---|
 | Migrations (`0121`–`0132`) | **DB applied** | ledger / current-state |
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L878-L906] heading anchor "L878-L906" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| Application | **Deployed** | [`current-state.md` L878-L906](../../docs/production/current-state.md#L878-L906) |
+| Application | **Deployed** | [`current-state.md` § 9. Google Calendar](../../docs/production/current-state.md#9-google-calendar) |
 | Connections | one, on the **controlled test studio only** (connected 2026-07-12); the real-customer studio is **not connected** | same |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L156-L166] heading anchor "L156-L166" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| Production exercised | **exactly once**: one outbound event created 2026-07-18 on the test studio (one `calendar_sync_outbox` row `done`, one `calendar_event_links` row `synced`) | same; [`known-limitations.md` L156-L166](../../docs/production/known-limitations.md#L156-L166) (L6) |
+| Production exercised | **exactly once**: one outbound event created 2026-07-18 on the test studio (one `calendar_sync_outbox` row `done`, one `calendar_event_links` row `synced`) | same; [`known-limitations.md` § L6](../../docs/production/known-limitations.md#l6--google-calendar-is-deployed-and-dormant-exercised-exactly-once) (L6) |
 | Enabled | **No** — every outbound / inbound-busy / two-way studio flag false everywhere (re-verified 2026-08-23); worker switch off | same |
 | Cron | `calendar-reconcile` (`0 9 * * *`) and `calendar-sync` (`30 9 * * *`) **registered and running daily**, finding no eligible studio and no claimable job | same; [`vercel.json` L7-L14](../../vercel.json#L7-L14) |
 
@@ -183,8 +181,7 @@ behaviour.
    ([`calendar-sync/route.ts` L4-L23](../../app/api/cron/calendar-sync/route.ts#L4-L23)); `vercel.json`
    registers it and the canonical record reports one outbox row.
 2. **`docs/integrations/google-calendar-sync.md` carries a "VERIFIED RUNTIME STATUS — 2026-07-27"
-<!-- openwiki: broken internal link [../../docs/integrations/google-calendar-sync.md#L10-L10] heading anchor "L10-L10" does not exist in "../../docs/integrations/google-calendar-sync.md". Fix the href or restore the target, then delete this comment. -->
-   header** ([L10](../../docs/integrations/google-calendar-sync.md#L10-L10)) that is older than the
+   header** ([§ VERIFIED RUNTIME STATUS — 2026-07-27](../../docs/integrations/google-calendar-sync.md#verified-runtime-status--2026-07-27)) that is older than the
    canonical 2026-08-23 re-verification in `current-state.md`; treat it as design intent and history.
 3. **Who may flip `worker_enabled`** is not represented by any product surface; the table grants
    `select, update` to `service_role` only, so enabling the worker is an out-of-band operator

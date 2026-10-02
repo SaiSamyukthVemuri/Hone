@@ -3,9 +3,6 @@ type: integration subsystem
 title: Payments, Stripe and appointment settlement
 description: How Hone moves money — the Stripe key/mode gate, the single server-side amount authority, the claim-then-charge executor with a deterministic idempotency key, mode-matched webhook reconciliation, refunds, the practitioner-attested settlement ledger for non-card outcomes, the source gates that pin every money-moving call site, and dated production status.
 tags: [payments, stripe, idempotency, webhooks, settlement, live-mode, money-safety]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-5505b485d5cc08afda1370bc
     resource: repo://app/api/stripe/webhook/route.ts
@@ -35,7 +32,10 @@ sources:
     resource: repo://scripts/check-stripe-gates.mjs
   - id: openwiki-source-52dc3e5e0c9c4b9c637f3387
     resource: repo://supabase/migrations/0187_appointment_settlement.sql
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Payments, Stripe and appointment settlement
@@ -44,6 +44,10 @@ Hone charges a client's saved card through **Stripe Connect** (direct charges on
 connected account) only when a practitioner clicks to charge; there is **no automatic, background,
 batch or public-triggered charge path**. Non-card outcomes (cash, e-transfer, waived, still owing)
 are recorded in a separate ledger that cannot express "a card was charged".
+
+Card-on-file persistence, the checkout amount decision, quick checkout, manual review and the
+`e2e-payment` browser lane are on
+[Card on file, checkout and payment proof](card-on-file-checkout-and-payment-proof.md).
 
 ## 1. Stripe client and mode gate
 
@@ -144,8 +148,7 @@ in [`tests/db/appointment-settlement.db.test.ts`](../../tests/db/appointment-set
 
 ## 8. Production status (dated, with authority)
 
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L797-L838] heading anchor "L797-L838" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-From [`current-state.md` L797-L838](../../docs/production/current-state.md#L797-L838) (counts dated
+From [`current-state.md` § 7. Payments and Stripe](../../docs/production/current-state.md#7-payments-and-stripe) (counts dated
 2026-08-23; not restated here):
 
 - **Live-capable and production-exercised for two approved studios** (the real-customer pilot studio
@@ -167,14 +170,10 @@ From [`current-state.md` L797-L838](../../docs/production/current-state.md#L797-
    [reconciliation L15-L30](../../lib/billing/payment-webhook-reconciliation.ts#L15-L30)); the code
    now processes events matching the deployment mode
    ([L110-L144](../../lib/billing/payment-webhook-reconciliation.ts#L110-L144)), and the runbook records
-<!-- openwiki: broken internal link [../../docs/11_RUNBOOK.md#L136-L136] heading anchor "L136-L136" does not exist in "../../docs/11_RUNBOOK.md". Fix the href or restore the target, then delete this comment. -->
-   that `0101` dropped that CHECK ([`docs/11_RUNBOOK.md` L136](../../docs/11_RUNBOOK.md#L136-L136)).
+   that `0101` dropped that CHECK ([`docs/11_RUNBOOK.md` § Live payments ARE enabled for approved studios](../../docs/11_RUNBOOK.md#live-payments-are-enabled-for-approved-studios--and-real-money-is-moving)).
 2. **`docs/06_PAYMENTS_AND_STRIPE.md` section headings still say "test mode only"** for the prepare,
-<!-- openwiki: broken internal link [../../docs/06_PAYMENTS_AND_STRIPE.md#L108-L108] heading anchor "L108-L108" does not exist in "../../docs/06_PAYMENTS_AND_STRIPE.md". Fix the href or restore the target, then delete this comment. -->
-   refund and webhook-reconciliation flows ([L108](../../docs/06_PAYMENTS_AND_STRIPE.md#L108-L108),
-<!-- openwiki: broken internal link [../../docs/06_PAYMENTS_AND_STRIPE.md#L223-L223] heading anchor "L223-L223" does not exist in "../../docs/06_PAYMENTS_AND_STRIPE.md". Fix the href or restore the target, then delete this comment. -->
-<!-- openwiki: broken internal link [../../docs/06_PAYMENTS_AND_STRIPE.md#L283-L283] heading anchor "L283-L283" does not exist in "../../docs/06_PAYMENTS_AND_STRIPE.md". Fix the href or restore the target, then delete this comment. -->
-   [L223](../../docs/06_PAYMENTS_AND_STRIPE.md#L223-L223), [L283](../../docs/06_PAYMENTS_AND_STRIPE.md#L283-L283)),
+   refund and webhook-reconciliation flows ([§ 4b. Session payment prepare flow (PR #172, test mode only)](../../docs/06_PAYMENTS_AND_STRIPE.md#4b-session-payment-prepare-flow-pr-172-test-mode-only),
+   [§ 4c. Session payment refund flow (PR #178, test mode only)](../../docs/06_PAYMENTS_AND_STRIPE.md#4c-session-payment-refund-flow-pr-178-test-mode-only), [§ 4d. Webhook reconciliation for payment_charge_attempts (PR #179, test mode only)](../../docs/06_PAYMENTS_AND_STRIPE.md#4d-webhook-reconciliation-for-payment_charge_attempts-pr-179-test-mode-only)),
    while the canonical record says live charges run for two studios.
 3. **The 4 unresolved `ops_alerts`** recorded on 2026-08-23 are the 4 non-succeeded live charge
    attempts (limitation L26); whether they have since been resolved is not recorded.

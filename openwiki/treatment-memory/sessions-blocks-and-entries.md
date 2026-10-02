@@ -3,9 +3,6 @@ type: write authority
 title: "Sessions, blocks and entries: charting write authority"
 description: The charting data model — sessions, settings blocks with multi-area laterality, electrolysis and laser entries, treatment images — and how every clinical write now goes through narrow authenticated SECURITY DEFINER commands after direct browser DML was revoked; immutable lineage, soft delete and audit; and the permanently retired signed/finalized record system and what the database enforces about it.
 tags: [charting, sessions, write-authority, security-definer, lineage, retired-capability, treatment-memory]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-293e361099157076c0158b5d
     resource: repo://docs/decisions/clinical-finalization-retired.md
@@ -13,10 +10,18 @@ sources:
     resource: repo://lib/sessions/block-areas.ts
   - id: openwiki-source-643a4b7c29a04cd5444e6b93
     resource: repo://lib/sessions/session-command-errors.ts
+  - id: openwiki-source-aa8c861bd11932a3bea26091
+    resource: repo://supabase/migrations/0008_session_audit.sql
+  - id: openwiki-source-5bb8e2602fc26e7e6730c8bd
+    resource: repo://supabase/migrations/0111_client_portal_access_events.sql
+  - id: openwiki-source-9105c90f434bdbe6bf56f8f0
+    resource: repo://supabase/migrations/0113_admin_action_events.sql
   - id: openwiki-source-762c97c6c9dc12e43fa89d5c
     resource: repo://supabase/migrations/0128_session_block_areas.sql
   - id: openwiki-source-8b879c6068994f8c93119d0d
     resource: repo://supabase/migrations/0129_atomic_session_block_area_writes.sql
+  - id: openwiki-source-bc3bc1424cb3a62d2723dbf3
+    resource: repo://supabase/migrations/0157_whole_session_copy_setup.sql
   - id: openwiki-source-8c3262662e762dc5ed158150
     resource: repo://supabase/migrations/0159_retire_signed_clinical_records.sql
   - id: openwiki-source-30635851be7bee2a1954485c
@@ -31,7 +36,10 @@ sources:
     resource: repo://tests/db/immutable-clinical-lineage.db.test.ts
   - id: openwiki-source-00dbf77641fc5a104589e4dc
     resource: repo://tests/db/session-write-commands.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Sessions, blocks and entries: charting write authority
@@ -141,8 +149,7 @@ records. That rules out:
 - signed-record corrections and amendments.
 
 This is **terminal**, not deferred. Sessions are ordinary, editable records
-<!-- openwiki: broken internal link [../../docs/decisions/clinical-finalization-retired.md#L1-L35] heading anchor "L1-L35" does not exist in "../../docs/decisions/clinical-finalization-retired.md". Fix the href or restore the target, then delete this comment. -->
-([`docs/decisions/clinical-finalization-retired.md` L1-L35](../../docs/decisions/clinical-finalization-retired.md#L1-L35)).
+([`docs/decisions/clinical-finalization-retired.md`](../../docs/decisions/clinical-finalization-retired.md)).
 
 What `0159` makes the **database** enforce ([`0159` L1-L66](../../supabase/migrations/0159_retire_signed_clinical_records.sql#L1-L66)):
 
@@ -165,8 +172,7 @@ protected by its guards. `record_status` is kept because live features read it: 
 **Retained:** ordinary audit trails, actor attribution, timestamps and treatment-history integrity. The decision
 document lists the active audit tables — `session_audit`, `record_keeping_audit_events`, `session_copy_operations`,
 `admin_action_events` and `client_portal_access_events`. `clinical_audit_events`, despite its name, belongs to the
-<!-- openwiki: broken internal link [../../docs/decisions/clinical-finalization-retired.md#L36-L60] heading anchor "L36-L60" does not exist in "../../docs/decisions/clinical-finalization-retired.md". Fix the href or restore the target, then delete this comment. -->
-retired system ([L36-L60](../../docs/decisions/clinical-finalization-retired.md#L36-L60)).
+retired system ([§ 2. What is explicitly NOT given up](../../docs/decisions/clinical-finalization-retired.md#2-what-is-explicitly-not-given-up)).
 
 ## 5. Contradictions and open questions
 

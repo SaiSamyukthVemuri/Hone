@@ -3,9 +3,6 @@ type: product workflow
 title: Waitlist recipient journey and booking conversion
 description: What an invited prospect experiences on /invitation/[token] and which server authority backs each step — the server-side resolve, recipient proof by emailed code and the signed capability cookie, decline, booking through the public booking action into the atomic create-and-convert command — plus what the bearer token does and does not prove, and the profile, SMS-consent and mobile-verification authorities that exist in the database but are not yet reachable.
 tags: [waitlist, invitations, recipient-proof, booking-conversion, public-routes, sms-consent]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-08abff96c852db46fe5155e9
     resource: repo://app/api/twilio/inbound-sms/route.ts
@@ -34,6 +31,9 @@ sources:
   - id: openwiki-source-23b6ad401cd24a89f9891e63
     resource: repo://tests/db/waitlist-recipient-proof.db.test.ts
 generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Waitlist recipient journey and booking conversion

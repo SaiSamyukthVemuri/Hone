@@ -3,9 +3,6 @@ type: process contract
 title: Migration-first rollout and production safety
 description: The contract for getting a schema change into production — migration-first ordering, the list/dry-run/apply/verify/merge/deploy sequence and its stop conditions, what a ledger apply record must contain, how frozen applied migrations are enforced, the read-only production verifier, and the rollback posture.
 tags: [migrations, rollout, production-safety, ledger, rollback, verification]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-a2371d6362e5db4bc834ad03
     resource: repo://CLAUDE.md
@@ -23,7 +20,10 @@ sources:
     resource: repo://tests/migrations/0199-reminder-sms-candidate-selection.test.ts
   - id: openwiki-source-76ee7f374fa037e5afe07176
     resource: repo://tests/scripts/verify-production.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Migration-first rollout and production safety
@@ -31,8 +31,7 @@ generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
 > **Agent contract.** Nothing on this page authorizes an action. Applying a migration, writing to
 > the production database, or running any linked Supabase command beyond read-only verification
 > requires **explicit, per-change authorization** from the operator
-<!-- openwiki: broken internal link [../../CLAUDE.md#L274-L276] heading anchor "L274-L276" does not exist in "../../CLAUDE.md". Fix the href or restore the target, then delete this comment. -->
-> ([`CLAUDE.md` L274-L276](../../CLAUDE.md#L274-L276)). Reading this page is not that
+> ([`CLAUDE.md` § 5. Production safety](../../CLAUDE.md#5-production-safety)). Reading this page is not that
 > authorization.
 
 ## 1. The principle
@@ -40,23 +39,18 @@ generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
 **The production schema must be a superset of what the deployed code needs.** A migration that
 adds or changes anything deployed code reads or writes — column, table, constraint, RLS policy,
 index or RPC — is applied to production **before** the code that depends on it merges and deploys
-<!-- openwiki: broken internal link [../../docs/runbooks/migration-first-process.md#L7-L20] heading anchor "L7-L20" does not exist in "../../docs/runbooks/migration-first-process.md". Fix the href or restore the target, then delete this comment. -->
-([`docs/runbooks/migration-first-process.md` L7-L20](../../docs/runbooks/migration-first-process.md#L7-L20)).
+([`docs/runbooks/migration-first-process.md` § Principle](../../docs/runbooks/migration-first-process.md#principle)).
 The runbook records why: in the `0108` incident, code that wrote a new column deployed before the
 column existed and production charting writes returned 500 until the apply
-<!-- openwiki: broken internal link [../../docs/runbooks/migration-first-process.md#L82-L92] heading anchor "L82-L92" does not exist in "../../docs/runbooks/migration-first-process.md". Fix the href or restore the target, then delete this comment. -->
-([L82-L92](../../docs/runbooks/migration-first-process.md#L82-L92)). The `0204` release repeated
+([`migration-first-process.md`](../../docs/runbooks/migration-first-process.md)). The `0204` release repeated
 the lesson in the other direction — new booking code calls a function that only `0204` creates, so
 deploying first would have broken every new-client booking; the apply preceded the deploy
-<!-- openwiki: broken internal link [../../docs/production/migration-ledger.md#L31-L37] heading anchor "L31-L37" does not exist in "../../docs/production/migration-ledger.md". Fix the href or restore the target, then delete this comment. -->
-([`migration-ledger.md` L31-L37](../../docs/production/migration-ledger.md#L31-L37)).
+([`migration-ledger.md` § Current state (post-0204 apply)](../../docs/production/migration-ledger.md#current-state-verified-2026-10-01-post-0204-apply-0204-applied-repo--hosted)).
 
 ## 2. The sequence and its stop conditions
 
-<!-- openwiki: broken internal link [../../docs/runbooks/migration-first-process.md#L27-L57] heading anchor "L27-L57" does not exist in "../../docs/runbooks/migration-first-process.md". Fix the href or restore the target, then delete this comment. -->
-From [`migration-first-process.md` L27-L57](../../docs/runbooks/migration-first-process.md#L27-L57),
-<!-- openwiki: broken internal link [../../CLAUDE.md#L274-L288] heading anchor "L274-L288" does not exist in "../../CLAUDE.md". Fix the href or restore the target, then delete this comment. -->
-tightened by the production-safety rules in [`CLAUDE.md` L274-L288](../../CLAUDE.md#L274-L288):
+From [`migration-first-process.md`](../../docs/runbooks/migration-first-process.md),
+tightened by the production-safety rules in [`CLAUDE.md` § 5. Production safety](../../CLAUDE.md#5-production-safety):
 
 1. Confirm the linked project is the intended production project (and that the gitignored
    `supabase/.temp/project-ref` names it) before **every** Supabase command.
@@ -66,16 +60,13 @@ tightened by the production-safety rules in [`CLAUDE.md` L274-L288](../../CLAUDE
 4. **STOP** if the dry run names anything else, the linked project is wrong, the verifier reports a
    FAIL (beyond the documented local-heartbeat INCOMPLETE), or the Stripe gates are not all passing.
 5. Apply with `supabase db push --linked` using the **pinned CLI 2.102.0** (a newer CLI's
-<!-- openwiki: broken internal link [../../CLAUDE.md#L205-L213] heading anchor "L205-L213" does not exist in "../../CLAUDE.md". Fix the href or restore the target, then delete this comment. -->
-   `db reset` strips Data-API grants — [`CLAUDE.md` L205-L213](../../CLAUDE.md#L205-L213)); recent
+   `db reset` strips Data-API grants — [`CLAUDE.md` § Local testing by migration risk class](../../CLAUDE.md#local-testing-by-migration-risk-class)); recent
    applies record "without `--include-all`" explicitly
-<!-- openwiki: broken internal link [../../docs/production/migration-ledger.md#L69-L70] heading anchor "L69-L70" does not exist in "../../docs/production/migration-ledger.md". Fix the href or restore the target, then delete this comment. -->
-   ([ledger L69-L70](../../docs/production/migration-ledger.md#L69-L70)).
+   ([ledger § Current state (post-0204 apply)](../../docs/production/migration-ledger.md#current-state-verified-2026-10-01-post-0204-apply-0204-applied-repo--hosted)).
 6. Verify **read-only**: `supabase migration list --linked`, `supabase db query --linked` against
    catalog views (never insert probe rows into a live table), `node scripts/verify-production.mjs`,
    `node scripts/check-stripe-gates.mjs`, and recent critical ops alerts
-<!-- openwiki: broken internal link [../../docs/runbooks/migration-first-process.md#L59-L68] heading anchor "L59-L68" does not exist in "../../docs/runbooks/migration-first-process.md". Fix the href or restore the target, then delete this comment. -->
-   ([L59-L68](../../docs/runbooks/migration-first-process.md#L59-L68)).
+   ([§ Verifier steps (read-only)](../../docs/runbooks/migration-first-process.md#verifier-steps-read-only)).
 7. Merge only after verification; Vercel deploys the production branch head.
 8. Post-deploy: remote max unchanged, no new critical alerts, feature reads/writes the new schema.
 
@@ -88,12 +79,9 @@ lock_timeout` inside the transaction, revoke default `EXECUTE` from `anon`, `aut
 Every apply appends a new `## Current state` block to
 [`docs/production/migration-ledger.md`](../../docs/production/migration-ledger.md) and demotes the
 previous one to `## Previous state`; `migration-state.json` is updated in the **same** change
-<!-- openwiki: broken internal link [../../CLAUDE.md#L117-L128] heading anchor "L117-L128" does not exist in "../../CLAUDE.md". Fix the href or restore the target, then delete this comment. -->
-([`CLAUDE.md` L117-L128](../../CLAUDE.md#L117-L128)). The current block
-<!-- openwiki: broken internal link [../../docs/production/migration-ledger.md#L17-L86] heading anchor "L17-L86" does not exist in "../../docs/production/migration-ledger.md". Fix the href or restore the target, then delete this comment. -->
-([ledger L17-L86](../../docs/production/migration-ledger.md#L17-L86)) and earlier ones (for example
-<!-- openwiki: broken internal link [../../docs/production/migration-ledger.md#L504-L594] heading anchor "L504-L594" does not exist in "../../docs/production/migration-ledger.md". Fix the href or restore the target, then delete this comment. -->
-`0199`, [L504-L594](../../docs/production/migration-ledger.md#L504-L594)) record, field by field:
+([`CLAUDE.md` § Hosted state is declared, not derived](../../CLAUDE.md#hosted-state-is-declared-not-derived)). The current block
+([ledger § Current state (post-0204 apply)](../../docs/production/migration-ledger.md#current-state-verified-2026-10-01-post-0204-apply-0204-applied-repo--hosted)) and earlier ones (for example
+`0199`, [§ Previous state (post-0199 apply)](../../docs/production/migration-ledger.md#previous-state-verified-2026-09-18-post-0199-apply-0199-applied)) record, field by field:
 
 - hosted and repo maxima, remote-only and pending sets, and the derived next free number;
 - the **reviewed release head** the apply was authorized at and performed from, and the production
@@ -113,14 +101,12 @@ current block agrees with `migration-state.json`.
 ## 4. Applied migrations are frozen — and mechanically so
 
 "An applied migration is **frozen** — never edit it. Write a new one"
-<!-- openwiki: broken internal link [../../CLAUDE.md#L280-L280] heading anchor "L280-L280" does not exist in "../../CLAUDE.md". Fix the href or restore the target, then delete this comment. -->
-([`CLAUDE.md` L280](../../CLAUDE.md#L280-L280)). The repository enforces this for recent applies:
+([`CLAUDE.md` § 5. Production safety](../../CLAUDE.md#5-production-safety)). The repository enforces this for recent applies:
 33 files under `tests/migrations/` recompute the sha256 of their migration's raw bytes and compare
 it with the value gated before the production write; a red result means "restore the file", never
 "update the constant" ([example: `0199` test L81-L100](../../tests/migrations/0199-reminder-sms-candidate-selection.test.ts#L81-L100)).
 Consequently, review findings against an applied migration can only be recorded and fixed by a new
-<!-- openwiki: broken internal link [../../docs/runbooks/migration-first-process.md#L78-L80] heading anchor "L78-L80" does not exist in "../../docs/runbooks/migration-first-process.md". Fix the href or restore the target, then delete this comment. -->
-forward migration (as `0074` corrected `0073`, [runbook L78-L80](../../docs/runbooks/migration-first-process.md#L78-L80)).
+forward migration (as `0074` corrected `0073`, [runbook § Rollback considerations](../../docs/runbooks/migration-first-process.md#rollback-considerations)).
 
 ## 5. The read-only production verifier
 
@@ -144,11 +130,9 @@ authored but not yet applied (the normal migration-first pending state) — run 
 ## 6. Rollback posture
 
 - Prefer additive, idempotent, backward-compatible migrations so the currently deployed code keeps
-<!-- openwiki: broken internal link [../../docs/runbooks/migration-first-process.md#L70-L80] heading anchor "L70-L80" does not exist in "../../docs/runbooks/migration-first-process.md". Fix the href or restore the target, then delete this comment. -->
-  working against the new schema ([runbook L70-L80](../../docs/runbooks/migration-first-process.md#L70-L80)).
+  working against the new schema ([runbook § Rollback considerations](../../docs/runbooks/migration-first-process.md#rollback-considerations)).
 - **Code rollback** = revert the merge on the production branch and let Vercel redeploy; the schema
-<!-- openwiki: broken internal link [../../docs/11_RUNBOOK.md#L289-L300] heading anchor "L289-L300" does not exist in "../../docs/11_RUNBOOK.md". Fix the href or restore the target, then delete this comment. -->
-  stays ([`docs/11_RUNBOOK.md` L289-L300](../../docs/11_RUNBOOK.md#L289-L300)).
+  stays ([`docs/11_RUNBOOK.md` § Rollback](../../docs/11_RUNBOOK.md#rollback)).
 - **Schema rollback** = a new corrective or teardown migration, never a manual down-migration on the
   live database.
 - Feature activations with their own runtime switches (for example the admission-mode cutover) carry
@@ -158,8 +142,7 @@ authored but not yet applied (the normal migration-first pending state) — run 
 
 1. **The runbook's ops-alert check can never match `error`.** It queries
    `severity in ('critical','error')`
-<!-- openwiki: broken internal link [../../docs/runbooks/migration-first-process.md#L67-L68] heading anchor "L67-L68" does not exist in "../../docs/runbooks/migration-first-process.md". Fix the href or restore the target, then delete this comment. -->
-   ([L67-L68](../../docs/runbooks/migration-first-process.md#L67-L68)), but `ops_alerts.severity` is
+   ([§ Verifier steps (read-only)](../../docs/runbooks/migration-first-process.md#verifier-steps-read-only)), but `ops_alerts.severity` is
    constrained to `info`, `warning`, `critical`
    ([`0067` L70-L73](../../supabase/migrations/0067_ops_alerts.sql#L70-L73)); only the `critical`
    half of the filter does anything.
@@ -167,7 +150,6 @@ authored but not yet applied (the normal migration-first pending state) — run 
    constraints are not verified by the script; per-apply verification for them lives only in the
    ledger's hand-run read-only queries.
 3. **The runbook describes itself as the process "actually used for migrations 0108–0112"**
-<!-- openwiki: broken internal link [../../docs/runbooks/migration-first-process.md#L3-L5] heading anchor "L3-L5" does not exist in "../../docs/runbooks/migration-first-process.md". Fix the href or restore the target, then delete this comment. -->
-   ([L3-L5](../../docs/runbooks/migration-first-process.md#L3-L5)) and omits the pinned-CLI and
+   ([`migration-first-process.md`](../../docs/runbooks/migration-first-process.md)) and omits the pinned-CLI and
    sha256-gating steps that later ledger entries record; the ledger, not the runbook, is the fuller
    description of current practice.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:98bc50cdfc5d112b3333406d4a642219f51c680f1e441523b50d7f997b8396e7",
+  "pageVersion": "sha256:4b2a5fc0b0c1748e30981ffe6837d34270343b5a02c0731ee303911a7a2a4cde",
   "claims": [
     {
       "id": "claim_f96ba282f8d94c95bbfb51454ed2ca9b",
@@ -220,8 +220,12 @@
     },
     {
       "id": "claim_499ee4ff8cd5437bba1b90a301b4d619",
-      "statement": "Known limitation L24 records that Quick Import confirmation performs three independent writes without a transaction, so a failure on the memory insert leaves clients committed; execution is mitigated to operator-assisted runs, not fixed.",
+      "statement": "Quick Import confirmation performs three independent writes (the import batch, the clients, then the memories) without a transaction; when the memory insert still fails after one retry the created clients stay committed and the batch is soft-voided, and known limitation L24 records execution as mitigated to operator-assisted runs, not fixed.",
       "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/import/actions.ts#L229-L341",
+          "version": "repo-lines-v1:sha256:f15863ffa304e7229a3c7c965e8eddb4c648027cbc4a1f38f7962dacb6c0e614:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3ZDMwZThjNmU4NjQzMmVhN2Q5NTMzMmFjZjA1NzRhYTljZGFiMzgzNWYzMmE1NTc0NDVjY2MzYzljNGQ3N2M1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzN2M2YTY2NDcwNzVlZmFhZDNjNTcxOTQxNDc3YzI2NWM0NWMwY2ZmZGY5YjMyNWM2OTgwZGVhYWU5YTVlMGExIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiZWVlZmRkNTExM2Q5OTA1NmYxZTE5ZGUxYjdkNWJlZGU2ZTBhMzAxZjllOGY3YmU0ZWFkM2Y4ZjhkYTg2NmM4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5OWExMjI4NjhjZjI0ZGM4OGU0YjcxZjI4YjEyMzk2NmU2NDMxZDZjNmYyZDk2MTNlOWNkZWI3ZWNkMDI1ZTAxIn0"
+        },
         {
           "resource": "repo://docs/production/known-limitations.md#L439-L449",
           "version": "repo-lines-v1:sha256:766823ed98b041c0c085898dd59b6a8f6b5a65ac3441e5296b34a1a5c3a5e301:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyOTk0NjIyYjgyZDBiNDI5ZjcwYTQzZTVkMjA4ZDAwYjBiNTIwNmFlMDBiN2ZhNTc1MjljYTk4MDExMzA4M2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEwODhjZDdjNTQwYWNjM2MxNGE4ZmU3NTUzOTE1YTA4NWI2NzQ5YjMyZDgzYzRlYjgyMGZjYTE1ZTQwZjViMjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1YWJjZDEwMTI0OTgxNTZlYjQ2OTY3Yjg2NGE4NTA5ZTI2ZjVmYjMxNjgzZjBhYjA3MjE5YzcwMGJmY2NmM2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRlY2UyZGIzOTVjODM1M2U2ODE4NTE2N2I5M2MwNjEyMTUxNGY3ZTYxMDI0ZjAyZmU1ZDYyNzA4YzE2MzA1Y2YifQ"
@@ -291,6 +295,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T20:08:11.217Z"
+    "at": "2026-10-02T22:34:57.394Z"
   }
 }

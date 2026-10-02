@@ -5,7 +5,7 @@ description: How Hone keeps designed, implemented, merged, migration-applied, de
 tags: [production-truth, lifecycle-states, migration-state, documentation-guards, release-records]
 verified:
   - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
+    at: 2026-10-02T22:34:57.394Z
 sources:
   - id: openwiki-source-164e2da859b5277df81c7d94
     resource: repo://.github/workflows/ci.yml
@@ -29,7 +29,7 @@ sources:
     resource: repo://tests/docs/helpers/canonical-facts.ts
   - id: openwiki-source-fbadcd8591b65031efaaedce
     resource: repo://vitest.config.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
 ---
 
 # Production truth authorities and lifecycle states
@@ -46,8 +46,7 @@ mechanically checks those files, and where they currently disagree.
 ## 1. The lifecycle vocabulary
 
 The status words are defined once, in
-<!-- openwiki: broken internal link [../../docs/production/capability-register.md#L65-L87] heading anchor "L65-L87" does not exist in "../../docs/production/capability-register.md". Fix the href or restore the target, then delete this comment. -->
-[`docs/production/capability-register.md` § Status vocabulary](../../docs/production/capability-register.md#L65-L87).
+[`docs/production/capability-register.md` § Status vocabulary](../../docs/production/capability-register.md#status-vocabulary).
 They are **independent dimensions**; a capability normally holds several at once.
 
 | Status | Meaning (paraphrased from the register) | Typical evidence |
@@ -67,18 +66,14 @@ Rules that follow from the vocabulary:
 
 - **Never write "live".** The register's bar for *Production exercised* is a row, a log line or
   a recorded operation, not the existence of a code path
-<!-- openwiki: broken internal link [../../docs/production/capability-register.md#L85-L87] heading anchor "L85-L87" does not exist in "../../docs/production/capability-register.md". Fix the href or restore the target, then delete this comment. -->
-  ([register L85-L87](../../docs/production/capability-register.md#L85-L87);
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L10-L14] heading anchor "L10-L14" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-  [current-state L10-L14](../../docs/production/current-state.md#L10-L14)).
+  ([register § Status vocabulary](../../docs/production/capability-register.md#status-vocabulary);
+  [current-state](../../docs/production/current-state.md)).
 - **Usage is not acceptance.** `current-state.md` §15 lists features that are deployed and in
   some cases heavily exercised, yet still lack human acceptance; it explicitly forbids inferring
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L1142-L1163] heading anchor "L1142-L1163" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-  acceptance from usage ([current-state L1142-L1163](../../docs/production/current-state.md#L1142-L1163)).
+  acceptance from usage ([current-state § 15. Human acceptance still pending](../../docs/production/current-state.md#15-human-acceptance-still-pending)).
 - **Merged is not deployed, and green CI is neither.** An open PR is never production; the
   durable test for "shipped" is ancestry of the production head, not a recorded SHA
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L138-L180] heading anchor "L138-L180" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-  ([current-state L138-L180](../../docs/production/current-state.md#L138-L180)).
+  ([current-state § Open pull requests are not production](../../docs/production/current-state.md#open-pull-requests-are-not-production)).
 - **Retired is not dormant.** The signed/finalized clinical-record system is retired and
   database-enforced; nothing can re-enable it (see
   [Sessions, blocks and entries](../treatment-memory/sessions-blocks-and-entries.md)).
@@ -129,8 +124,7 @@ for the apply sequence.
 
 `current-state.md` ends with an explicit re-verification recipe and a **source-of-truth
 order** that puts existing documentation last
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L1191-L1244] heading anchor "L1191-L1244" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-([L1191-L1244](../../docs/production/current-state.md#L1191-L1244)):
+([§ How to re-verify this document](../../docs/production/current-state.md#how-to-re-verify-this-document)):
 
 1. production Git graph (branch head via `gh api …/branches/claude/build-hone-saas-hOex7`);
 2. Vercel deployment record for the exact SHA;
@@ -143,16 +137,14 @@ order** that puts existing documentation last
 8. existing documentation, *as claims to verify, never as evidence*.
 
 Every production count must carry an **as-of stamp and a tenant scope**; a bare number is "a
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L1196-L1211] heading anchor "L1196-L1211" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-fossil" ([L1196-L1211](../../docs/production/current-state.md#L1196-L1211)). Running any of
+fossil" ([§ How to re-verify this document](../../docs/production/current-state.md#how-to-re-verify-this-document)). Running any of
 steps 2–4 is production access and is out of scope for routine agent work unless the operator
 explicitly authorizes it.
 
 ## 4. Tenant classes
 
 `current-state.md` §0 is the canonical classification of every production tenant
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L182-L217] heading anchor "L182-L217" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-([L182-L217](../../docs/production/current-state.md#L182-L217)). Agents should reason in
+([§ 0. Tenant register](../../docs/production/current-state.md#0-tenant-register--real-controlled-test-synthetic)). Agents should reason in
 **classes**, never copy the names or counts:
 
 - **Real customer** — the single live pilot studio. Only its rows are customer activity.
@@ -212,19 +204,16 @@ region; everything outside it is treated as current prose
 
 - **Whole-session copy** is recorded as *DB applied · merged · deployed · enabled ·
   production exercised · human acceptance pending*
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L372-L374] heading anchor "L372-L374" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-  ([current-state L372-L374](../../docs/production/current-state.md#L372-L374)) — every dimension
+  ([current-state § 2. Whole-session copy](../../docs/production/current-state.md#2-whole-session-copy)) — every dimension
   stated separately.
 - **The durable new-client waitlist** is recorded as a *dated activation bound*, not a current
   posture, because persisted rows outlive the env flag that enabled them
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L738] heading anchor "L738" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-  ([current-state L738](../../docs/production/current-state.md#L738);
+  ([current-state § WAIT-02B Stage B1](../../docs/production/current-state.md#wait-02b-stage-b1--disclosure-shipped-and-since-acted-on-shipped--activation-taken);
   [guard L951-L998](../../tests/docs/canonical-production-facts.test.ts#L951-L998)).
 - **NEW-CLIENT-MODE-01 (migration `0204`)** is recorded as *applied before deploy*, one studio
   persisted, the remaining studios unstamped and still governed by the env bridge **at that
   reading**, and several activation steps explicitly UNKNOWN rather than inferred
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L105-L136] heading anchor "L105-L136" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-  ([current-state L105-L136](../../docs/production/current-state.md#L105-L136)). See
+  ([current-state § NEW-CLIENT-MODE-01 release](../../docs/production/current-state.md#new-client-mode-01-release--what-actually-happened-on-2026-10-01)). See
   [New-client admission mode](../waitlist/new-client-admission-mode.md).
 
 ## 7. Contradictions and open questions
@@ -235,11 +224,9 @@ based on the production branch at `a98c0c85`). They are **not** reconciled here.
 1. **`current-state.md`'s runtime pin is behind the production branch, by its own admission.**
    The reconciliation header pins `410e5039` (merge of #745) as both branch head and last
    runtime-bearing head at the 2026-09-21 sync
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L23-L30] heading anchor "L23-L30" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   ([L23-L30](../../docs/production/current-state.md#L23-L30)); the NEW-CLIENT-MODE-01 subsection
+   ([§ Reconciliation header](../../docs/production/current-state.md#reconciliation-header)); the NEW-CLIENT-MODE-01 subsection
    then states production advanced past that pin (#773, #778, #777) and deliberately does not
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L105-L120] heading anchor "L105-L120" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   re-pin ([L105-L120](../../docs/production/current-state.md#L105-L120)).
+   re-pin ([§ NEW-CLIENT-MODE-01 release](../../docs/production/current-state.md#new-client-mode-01-release--what-actually-happened-on-2026-10-01)).
    *Observation from this OpenWiki run (not a repository fact):* `git log --first-parent --merges
    410e5039..a98c0c85` lists 23 merges, and `git diff --name-only 410e5039 HEAD` includes files
    under `app/`, `lib/` and `components/`. Rule A3 asserts that nothing runtime-bearing changed
@@ -248,45 +235,35 @@ based on the production branch at `a98c0c85`). They are **not** reconciled here.
    observe the failure because Rule A skips on shallow checkouts (§5).
 2. **Reconciliation dates differ across the canonical set.** `current-state.md` is a
    2026-09-20/21 sync with a 2026-10-01 release addendum; `capability-register.md` was reconciled
-<!-- openwiki: broken internal link [../../docs/production/capability-register.md#L7] heading anchor "L7" does not exist in "../../docs/production/capability-register.md". Fix the href or restore the target, then delete this comment. -->
-   2026-08-27 ([L7](../../docs/production/capability-register.md#L7)); `known-limitations.md`
+   2026-08-27 ([`capability-register.md`](../../docs/production/capability-register.md)); `known-limitations.md`
    records limitations verified as of 2026-08-27
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L1-L12] heading anchor "L1-L12" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-   ([L1-L12](../../docs/production/known-limitations.md#L1-L12)); the ledger's current block is
+   ([`known-limitations.md`](../../docs/production/known-limitations.md)); the ledger's current block is
    2026-10-01. A status present in the newest record may be absent or older in the register.
 3. **`docs/15_DOCS_MAINTENANCE.md` contradicts the canonical record.** Its "How to avoid false
    claims" list (written 2026-07-27) still bans saying *"Whole-session copy is
    production-exercised"* and states the production migration max as `0157` "today"
-<!-- openwiki: broken internal link [../../docs/15_DOCS_MAINTENANCE.md#L117-L148] heading anchor "L117-L148" does not exist in "../../docs/15_DOCS_MAINTENANCE.md". Fix the href or restore the target, then delete this comment. -->
-   ([L117-L148](../../docs/15_DOCS_MAINTENANCE.md#L117-L148)), while `current-state.md` records
+   ([§ How to avoid false claims](../../docs/15_DOCS_MAINTENANCE.md#how-to-avoid-false-claims)), while `current-state.md` records
    whole-session copy as PRODUCTION EXERCISED with dated counts
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L372-L374] heading anchor "L372-L374" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   ([L372-L374](../../docs/production/current-state.md#L372-L374),
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L1151-L1155] heading anchor "L1151-L1155" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   [L1151-L1155](../../docs/production/current-state.md#L1151-L1155)) and the derived state is far
+   ([§ 2. Whole-session copy](../../docs/production/current-state.md#2-whole-session-copy),
+   [§ 15. Human acceptance still pending](../../docs/production/current-state.md#15-human-acceptance-still-pending)) and the derived state is far
    above `0157`. That file is not among the documents the guard reads
    ([guard L404-L408](../../tests/docs/canonical-production-facts.test.ts#L404-L408),
    [L940-L949](../../tests/docs/canonical-production-facts.test.ts#L940-L949)).
 4. **WAIT activation: "next work" vs "already taken".** `current-state.md` §16 item 5 still lists
    *WAIT-02B Stage B2 (activation)* as next work whose "authorization is not granted"
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L1176-L1178] heading anchor "L1176-L1178" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   ([L1176-L1178](../../docs/production/current-state.md#L1176-L1178)), while L25 records that
+   ([§ 16. Next work](../../docs/production/current-state.md#16-next-work)), while L25 records that
    activation **was taken on or before 2026-08-25** and that the open item is only the missing
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L452-L475] heading anchor "L452-L475" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-   governance record ([known-limitations L452-L475](../../docs/production/known-limitations.md#L452-L475)).
+   governance record ([known-limitations § L25](../../docs/production/known-limitations.md#l25--the-durable-new-client-waitlist-is-deployed-dark-its-table-would-hold-prospect-pii-the-public-privacy-policy-does-not-disclose)).
    The guard's "pre-cutover instruction" rule matches specific enable / cutover /
    "before migration" phrasings
    ([L1191-L1229](../../tests/docs/canonical-production-facts.test.ts#L1191-L1229)), none of
    which item 5 uses, so it stays green.
 5. **Tenant register count is stale.** The header and §0 classify **six** studios from a
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L36] heading anchor "L36" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   2026-08-23 measurement ([L36](../../docs/production/current-state.md#L36)), while the
+   2026-08-23 measurement ([§ Reconciliation header](../../docs/production/current-state.md#reconciliation-header)), while the
    2026-10-01 `0204` apply record counts **seven** studio rows
-<!-- openwiki: broken internal link [../../docs/production/migration-ledger.md#L38] heading anchor "L38" does not exist in "../../docs/production/migration-ledger.md". Fix the href or restore the target, then delete this comment. -->
-   ([ledger L38](../../docs/production/migration-ledger.md#L38)) and `current-state.md` itself
+   ([ledger § Current state](../../docs/production/migration-ledger.md#current-state-verified-2026-10-01-post-0204-apply-0204-applied-repo--hosted)) and `current-state.md` itself
    refers to "the other six" beside the one persisted studio
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L133] heading anchor "L133" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   ([L133](../../docs/production/current-state.md#L133)). One studio row is therefore not
+   ([§ NEW-CLIENT-MODE-01 release](../../docs/production/current-state.md#new-client-mode-01-release--what-actually-happened-on-2026-10-01)). One studio row is therefore not
    classified by the canonical tenant register.
 
 ## 8. Agent checklist

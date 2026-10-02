@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:bb69da787afaf28d77b5f1405349a84be47e38b5b5f55e4d277610b282b1e84d",
+  "pageVersion": "sha256:b207dcdda2aff8bd90cec097b2933d86dc21aab80d2f310be13893386d1ce4f0",
   "claims": [
     {
       "id": "claim_fe78ca7ffbc04fb0861acb38d5cebfd8",
@@ -165,10 +165,54 @@
           "version": "repo-lines-v1:sha256:0b6af93bcb3e44a37e854d9ce971fe57b7eb68d3e85c87cfbe229f91c38e617c:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGI2YWY5M2JjYjNlNDRhMzdlODU0ZDljZTk3MWZlNTdiN2ViNjhkM2U4NWM4N2NmYmUyMjlmOTFjMzhlNjE3YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGI2YWY5M2JjYjNlNDRhMzdlODU0ZDljZTk3MWZlNTdiN2ViNjhkM2U4NWM4N2NmYmUyMjlmOTFjMzhlNjE3YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjgzODRiMDU1ZmMyZjg0NjU2NDJmMGY3NWU2MjA4Y2I0ZjUwOWQ4ZGMzYzg2YWNjNGU1NDMxYzc1MWM5MTg0NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDI4ZDg1OWVjMDA4OTFiYjcxZWMyNjljMTFjMDI3MTk0ZmZkZGE4ODg0ZTg5NmZiNzVkN2UxYjZkZDExNTg4MyJ9"
         }
       ]
+    },
+    {
+      "id": "claim_35e236fe0b70408087760db01339743b",
+      "statement": "Record-keeping server actions resolve the studio from the session, never the form, and write through the user-scoped client so is_studio_member RLS isolates studios; a disinfectant operator is accepted only as a same-studio active practitioner resolved server-side, otherwise a free-text operator.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/records/actions.ts#L1-L79",
+          "version": "repo-lines-v1:sha256:21ff72d1a66f125ca75774c2c6d96484c549562489484323592ed02a26156d61:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5ZmRiNmE5NjYxNWI2MDQzZGRhYzA0OWM0YTg3ZGZmMDgyZDIyZmJhNGZkOTkzMTBhMGRkOTJhNGU3Yjk5NjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzMzM2MGM5ZDMzNmVlOTViZWY5MTNjOTQxMjM4NDg1ODc5MzY5N2Q1MDVlNTk0MTBmYmY5OWZlODdlMjAxOGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2f977bef87ea4a82b71f034e14267d90",
+      "statement": "Marking a session's aftercare as explained from the records surface goes through the set_session_aftercare_explained command.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/records/actions.ts#L218-L256",
+          "version": "repo-lines-v1:sha256:59cbd23451fd271fdc715ddad09aaf45eb88dab95979e41538153fda642f9788:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJhNTMzMmVlYzAzNWQ2MWI5OGI5ZjExZTAyNjY5M2I1ZmU0YzAzMjUwNTYzM2E3OWI2ZTExZmUyYzY2OGNhODgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzYzY0NWZkODQ2MGZiNDIwOTNjNDkzYWRhNTM2OTZlNzVhMzAyNDdmMzc5NTYzZjkyMzkzZjI4NTkyYWQ3NzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgxMGRjMGYxZTRjN2I5MzFjZmE2OTc1OTUwMjk1MGI2MjVlYjgyMWU3NGY4MmQzMjE4YTBmZDNiYTIwNTcwNWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUyZWE1NmU2YWJlNTdiMDhlMzdkMzk4NWQ5ZGYyMTljODZkOTFlYTg1N2ViNTA4MDRlNjkzMDEyY2ZkMGY2M2UifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_de0b2cca873d40f1bba797a96a26eae1",
+      "statement": "Since migration 0088 any studio member may file an exposure incident but only owners may read or update incidents and read exposure-incident audit rows, and there is still no delete policy.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0088_exposure_incident_owner_access.sql#L1-L28",
+          "version": "repo-lines-v1:sha256:cf399b074f3a40d2d3ac528f9cda75fdfa89a2b747be330f7b61dab76c3003ce:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBkNjdjZWRjZDY4MjM1ZGIzNTBhMjYzZjJlYjgxZjhlMjQwYmUzMjMzNjNkNTJmODVlNTJlZDk1ZTJkNWVjNGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExODFiMTA2ZTkzZTA2Nzc1MGI2NjE0YjI3YmE4NWEyMDljNzhjZWIyYjQyYjJkYWZmN2FjN2I2M2ZlZDI3ZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhMTI1YWI3NGY3NjBmYmQ3N2ZjNWRmNGY3YzhlMTRlMmQ2ZDE3NWM4NzA5ZTQxODBmNGVkYjVhMTdhOTQ0ZTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7adf5153b43e42a39697bc67dd57c466",
+      "statement": "record_keeping_audit_events has only a studio-scoped select policy for application users and is written solely by SECURITY DEFINER trigger functions that diff the firing row and resolve the actor from auth.uid().",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0086_record_keeping_audit_events.sql#L10-L30",
+          "version": "repo-lines-v1:sha256:09ecea41c89adf2d59c179216a3aa3c1acb1c7788fe17b4b30da2eb6b8064b24:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ4NzY4OWEyM2VjOGFkOWYzMjJkN2FlMTk4NTZlYjczNTNjZjhiMjUwZGI0YmRjZDIxMmI3YzEyMTc2MzVhNmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2OTQyMTFlMDMxZjE0MmVmMzdhMDcxYjUyMjE4NWM3OTA0OTRiMGU5YmY4NjZjZTdkMzk0NzZiNjE3YzlhYWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFmYzY0MjFiZTE0MDU1MTUyZmM3MjAxZTMzZjgwZGViN2UyZTgyNzdiNDQwMWMxNzE3YmFkYmExOGQxZGNhMGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5MDgwZDg1MTQzYTEzOWI2OGIwNWUxNTE1ZmUwMjAyYmY0ZmNmNGYwMjI2ZDdmMmVhZTAzOWU5OWVmYWFlMjEifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0086_record_keeping_audit_events.sql#L82-L90",
+          "version": "repo-lines-v1:sha256:3a5eed013fd454b6aa0f0129ef69c308d13ffe332d475df742ada7610024db15:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNTM4ZjQ2ZTdiOGY4NmUyMzU0OTQxNDEyNzZjZTRlYjMzZmZjM2IzODU2MzdlZmJmNzNiYjk0YmMxYjQzZDg2ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjVjM2EwMWNiNzMwYmY2OTc2NjFkNjE2MWY5NzMzNWIwMjM5ZDkyZGIzMjMyMGU4NTJjODUyNTgzNmMwM2NiYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTg4N2JhYTI2Yzc4YjBiNDVkYTM2MDNhNDIwNTEyMjc2MTUxZWM2ZTE4MzJiODRkMjAzMzE0MDZiMDM3NjY4ZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWFjZTM5YmIzNzVkOGVhZTE3NjUzMTBiNzljOGU4Zjg3OGEyMWIzNzg0YTE3NWI3Nzc3MWU5ODJmNWJiNDYxZCJ9"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T20:08:11.217Z"
+    "at": "2026-10-02T22:34:57.394Z"
   }
 }

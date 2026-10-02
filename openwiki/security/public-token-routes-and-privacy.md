@@ -3,9 +3,6 @@ type: security boundary
 title: Public token routes and privacy controls
 description: The anonymous, token-addressed routes (cancel, reschedule, manage, intake, invitation, portal verify, calendar feed) — how each token is generated and stored, the canonical token-route registry and the privacy headers, Sentry and PostHog scrubbing it drives, generic error collapsing, and the Upstash rate limiters, with fail-open versus fail-closed behaviour stated for every control.
 tags: [tokens, privacy, security-headers, rate-limiting, sentry, posthog, public-routes, security]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-2cb1f993558f06c74257613f
     resource: repo://app/calendar-feed/%5Btoken%5D/route.ts
@@ -51,7 +48,10 @@ sources:
     resource: repo://tests/lib/security/token-route-parity.test.ts
   - id: openwiki-source-368da29387b3f22f3051f8b5
     resource: repo://tests/security/waitlist-invitation-route-privacy.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Public token routes and privacy controls
@@ -284,9 +284,7 @@ prospect unable to get the code their booking needs ([L640-L662](../../lib/rate-
    - The registry header says "six route families"
      ([`token-routes.ts` L3](../../lib/security/token-routes.ts#L3-L3)).
    - `docs/03_SECURITY_AND_PRIVACY.md` lists six families without `/invitation`
-<!-- openwiki: broken internal link [../../docs/03_SECURITY_AND_PRIVACY.md#L121-L121] heading anchor "L121-L121" does not exist in "../../docs/03_SECURITY_AND_PRIVACY.md". Fix the href or restore the target, then delete this comment. -->
-<!-- openwiki: broken internal link [../../docs/03_SECURITY_AND_PRIVACY.md#L138-L138] heading anchor "L138-L138" does not exist in "../../docs/03_SECURITY_AND_PRIVACY.md". Fix the href or restore the target, then delete this comment. -->
-     ([L121](../../docs/03_SECURITY_AND_PRIVACY.md#L121-L121), [L138](../../docs/03_SECURITY_AND_PRIVACY.md#L138-L138)).
+     ([§ Token paths are canonicalized before Sentry transmission](../../docs/03_SECURITY_AND_PRIVACY.md#token-paths-are-canonicalized-before-sentry-transmission-f-priv-001)).
    - The code registers seven, and the parity test asserts seven.
 3. **The invitation privacy test's header says the route does not exist.** It states "THE ROUTE DOES NOT EXIST
    YET … no prefix is added here"
@@ -294,8 +292,7 @@ prospect unable to get the code their booking needs ([L640-L662](../../lib/rate-
    registered and `app/invitation/[token]` exists.
 4. **Calendar-feed hashing is described as unfinished.**
    - `docs/03` calls hashed feed-token storage "partially resolved" and says the raw column is kept until a phase
-<!-- openwiki: broken internal link [../../docs/03_SECURITY_AND_PRIVACY.md#L247-L247] heading anchor "L247-L247" does not exist in "../../docs/03_SECURITY_AND_PRIVACY.md". Fix the href or restore the target, then delete this comment. -->
-     2 that "is not started" ([L247](../../docs/03_SECURITY_AND_PRIVACY.md#L247-L247)).
+     2 that "is not started" ([§ 8. Known risks and deferred hardening](../../docs/03_SECURITY_AND_PRIVACY.md#8-known-risks-and-deferred-hardening)).
    - `token.ts` still says the settings UI reads and writes the raw token
      ([L21-L26](../../lib/calendar-feed/token.ts#L21-L26)).
    - `0116` dropped the raw column. It sits within the declared hosted migration range, so the feed is hash-only.

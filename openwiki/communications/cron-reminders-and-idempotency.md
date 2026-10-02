@@ -3,9 +3,6 @@ type: operational subsystem
 title: Cron jobs, reminders and idempotency
 description: The five /api/cron routes, how each is scheduled and authenticated, the ~24h/~2h reminder pass and its single-claim-per-window law, retry and exhaustion semantics, the external-scheduler heartbeat, and which production facts about them are proven versus unattested.
 tags: [cron, reminders, idempotency, claims, heartbeat, ops-alerts, scheduling]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-ab4eb7c868fefa4061d9a8bd
     resource: repo://app/admin/page.tsx
@@ -53,7 +50,10 @@ sources:
     resource: repo://tests/lib/cron/reminder-heartbeat.test.ts
   - id: openwiki-source-55831e92f29f8b3e9d43f58b
     resource: repo://vercel.json
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Cron jobs, reminders and idempotency
@@ -242,16 +242,11 @@ branches are **retained as history**, not reused
 
 | Fact | Status | Authority |
 |---|---|---|
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L846-L861] heading anchor "L846-L861" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| Reminder route reached by the external scheduler at a ~15-minute cadence with HTTP 200 | **Production exercised, observed 2026-08-12** (read-only request logs; no authenticated invocation made) | [`current-state.md` L846-L861](../../docs/production/current-state.md#L846-L861) |
-<!-- openwiki: broken internal link [../../docs/08_EMAIL_SMS_AND_CRON.md#L262-L277] heading anchor "L262-L277" does not exist in "../../docs/08_EMAIL_SMS_AND_CRON.md". Fix the href or restore the target, then delete this comment. -->
-| Scheduler account owner, backup owner, single-job confirmation, alert owner, admin card read as Healthy | **Unverified** — "running in production, ownership unattested" | same; register in [`docs/08` L262-L277](../../docs/08_EMAIL_SMS_AND_CRON.md#L262-L277), kept unchecked by [`reminder-cadence-truthfulness.test.ts` L162-L209](../../tests/docs/reminder-cadence-truthfulness.test.ts#L162-L209) |
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L863-L869] heading anchor "L863-L869" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| Intake reminders at ~24h/~2h (`0186`) | **Migration applied and verified 2026-08-24** | [`current-state.md` L863-L869](../../docs/production/current-state.md#L863-L869) |
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L871-L873] heading anchor "L871-L873" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| SMS reminders | **Pilot scale only**, env-gated, per-studio toggle, per-client consent | [`current-state.md` L871-L873](../../docs/production/current-state.md#L871-L873) |
-<!-- openwiki: broken internal link [../../docs/production/migration-ledger.md#L504-L594] heading anchor "L504-L594" does not exist in "../../docs/production/migration-ledger.md". Fix the href or restore the target, then delete this comment. -->
-| Bounded SMS candidate selection (`0199`) | **Migration applied 2026-09-18; application consumer (PR #716) NOT merged** | [`migration-ledger.md` L504-L594](../../docs/production/migration-ledger.md#L504-L594) |
+| Reminder route reached by the external scheduler at a ~15-minute cadence with HTTP 200 | **Production exercised, observed 2026-08-12** (read-only request logs; no authenticated invocation made) | [`current-state.md` § 8. Communications](../../docs/production/current-state.md#8-communications) |
+| Scheduler account owner, backup owner, single-job confirmation, alert owner, admin card read as Healthy | **Unverified** — "running in production, ownership unattested" | same; register in [`docs/08` § Scheduler ownership register](../../docs/08_EMAIL_SMS_AND_CRON.md#scheduler-ownership-register--unverified-fill-in-by-hand), kept unchecked by [`reminder-cadence-truthfulness.test.ts` L162-L209](../../tests/docs/reminder-cadence-truthfulness.test.ts#L162-L209) |
+| Intake reminders at ~24h/~2h (`0186`) | **Migration applied and verified 2026-08-24** | [`current-state.md` § 8. Communications](../../docs/production/current-state.md#8-communications) |
+| SMS reminders | **Pilot scale only**, env-gated, per-studio toggle, per-client consent | [`current-state.md` § 8. Communications](../../docs/production/current-state.md#8-communications) |
+| Bounded SMS candidate selection (`0199`) | **Migration applied 2026-09-18; application consumer (PR #716) NOT merged** | [`migration-ledger.md` § Previous state (post-0199 apply)](../../docs/production/migration-ledger.md#previous-state-verified-2026-09-18-post-0199-apply-0199-applied) |
 
 The `0199` row is the sharpest lifecycle example in this area: `reminder_sms_candidates`,
 `reminder_sms_unroutable_studios` and the `reminder_sms_eligible_appointments` view exist in the

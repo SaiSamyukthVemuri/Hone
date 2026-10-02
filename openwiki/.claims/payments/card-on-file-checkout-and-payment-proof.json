@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:a20176af37b7f4637cec0509bf850cf2a9d3c176dd3d00b17ffa26142eb4cb0f",
+  "claims": [
+    {
+      "id": "claim_ccfd0c1639ae4123974a58ebc0cb96aa",
+      "statement": "Card-on-file collection uses a Stripe SetupIntent on the studio's connected account, serialises Stripe customer creation through the 0032 provisioning RPCs so concurrent clicks cannot create duplicate customers, and never writes client_payment_methods itself.",
+      "evidence": [
+        {
+          "resource": "repo://lib/stripe/setup-intent.ts#L5-L94",
+          "version": "repo-lines-v1:sha256:09689b0606e82d19c1bca5e5645c777f9cd7413666aba325d0f26af72c9d5dad:eyJzZWxlY3RlZExpbmVDb3VudCI6OTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkNzlhZmYzODRkNjZhOTkxZTc3YjZmZDQ4YjFmMWY5ZjlhZDUxMmM1NzE3NTQzN2RmMTJiNTU0ZTRiYTgxMWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhMDY5MzY0ZTZlYzRkZGVlMzVmN2I2ZjY5MmQzMTNlZTY2MzgxZjIxZjEzNmU4NGExYzhjZTk3M2U4YTY0MTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI1OTZiNDFiZTQwNjFmYWVkMjVjYjczMGU4YzlkOTcyNjYwYjBkYzZlMDJiOTk4ZDU4YmVhZTljMDg1ZjNkMzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRkZTViMTAxY2QzMzhlMjg0YjI1MmJiNGZlZDVjZDc2Yjc5OWI4MTZiMTM0MmQwZDIwN2NkM2ZmMzYwNjcyMTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_77b2d88ec9344ea3afe168d69e110ead",
+      "statement": "client_payment_methods rows carry lineage foreign keys to the studio's payment settings and the client's Stripe customer, a status of active or removed coupled to removed_at, and only a studio-member SELECT policy with no authenticated write policy.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0058_client_payment_methods.sql#L192-L204",
+          "version": "repo-lines-v1:sha256:7e4aace1cf36bba910bca55f1aa3621af29129b24e455b9d727b5a9cefcb86f9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUyN2M0NGJjOTU3NWEyNjEzMjkxMmUxMTMwYzFlMDRmNzAwNzA0ZjlmOGUzY2UyZTRjZTdhZWY5NDhmMWQ5YzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5MWEzYWU4NGE5NjI1YTQ5YWI4NzA2NjdjNTY0Y2Y2NGQ0Y2RkYjliNjliMDUyY2IyZDYxY2FjMTExOGRjMzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2OTcxNTRlNTMzOGVmYjA1YmQxZGUwYzY0NmE2NWJiYmJhNGIxNTkxZDA3NGQ3Mjk1MWUxNmJmNDlmNWZlZjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE2ZTMwN2UxZTQ1YzllOTNiMzFlMGQxYzc1ZjI0Yjk2MzAyNTM1MDA4NDczOTJkNTVmMmNjMDRmYTU4NzQzMmIifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0058_client_payment_methods.sql#L57-L138",
+          "version": "repo-lines-v1:sha256:d48d49359fd0006fc74b127877b941510bbae334e1fbe9caf9647874e9ea4cfa:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExMzY0NTAxOWQ5ZGFmMTY4NTg5YmJmZjU3YmFlYzVhYjlkYWVlYWJhYWZkNTk1MjUwNWZlNGVhNTU3NmMyODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1ZWYwMWJjMDhkYmMzYjYzZTRlNzVlYTNkMjZhNWI5NDE4OTE4NzdlMjdhZDg5MTMyOWM4NDExZDdkOGRjNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVkZTNkYTQ2MTM0MTgwZGQxM2ExNDA5MDQ0NzliZTdkZTA2NjRlM2NjYjkxYTJjYWY2YzE1Y2JkZTNmMDUwZDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVlNDI0MGUwN2Q0YWYyNjg2YWQ3NzhiMTY5OTI2MzJkZjJjMGIzZTVmM2ZmNGUxMjMwYTA1MDBjZmIyOTU3MWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b69b4853481b4fa2913bac0410287ba3",
+      "statement": "Migration 0104 rescoped the one-active-card partial unique index to (studio_id, client_id, stripe_livemode) so a client can hold one active test card and one active live card, because the per-pair index would have made a live card insert silently fail as an idempotent 23505.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0104_one_active_card_per_pair_per_mode.sql#L1-L30",
+          "version": "repo-lines-v1:sha256:68a1431adbe8d4a8984ccc4785c0166f1d7ee273ad65954d83defa1bccaf2270:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzZWQzNWIyMWRjZjZlNDE2MTViMzJiOTViOTM1YTIzNGNiZmE0ZjViMjQwOWFmZTgxMjNlNzA4ZDhhYzU3MDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1NjY2MjA0OTM1NDNkM2MwMWI5NTJlYmJjMzRlZWJiMTI3MTlkYmIzMDc3NTIwNDI3OGViMGRiMTVhYmYzOTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExZGZhOTA4ZTAyYzNjNjE3YTFkYzY1NDMxNTNjZGUxYjExNzdkZGM5YzM3M2JjYzUyZTk4MmY0MDEzZWY2YzMifQ"
+        },
+        {
+          "resource": "repo://tests/db/active-card-per-mode.db.test.ts#L69-L87",
+          "version": "repo-lines-v1:sha256:8532a0755adda6d760ea998dfb5502c50a2d551eed8afda1df23add960f285a8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1ODNlMzIwMDIzNjc0OGJkMjUwNDExMjRhODVkYjk1YzdhNTQxZjdlZjhjNTZjZDA3NjhkYWZkYjcxNDEzYjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_108ff08a4fc94f05953facabf5c20081",
+      "statement": "save_client_card_on_file (0180) is a service_role-only SECURITY DEFINER command that takes a per (studio, client, mode) advisory lock, validates customer and signature lineage, and retires the old same-mode card and inserts the new card in one transaction, returning inserted or idempotent and raising otherwise.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0180_card_payment_method_replacement_integrity.sql#L1-L212",
+          "version": "repo-lines-v1:sha256:1c90c31a5906e63eb5cc60552c4db71edb5b9428c72e310a6e0bbe1a627a972e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYjFjMGY4NTJiNDE0Yjk1ZmY4YTQ4ZjhkNGJhYmEzMzkwZDZkYTNjYzZkNzhlYjllNzdkOWI4ZTg2MzhlYTA0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJjMmI3OWFmZWI1OWEyNjA4NmExM2Y5N2UxNzc1ZDA3NzIxNzIyZDFmNjlhNGI5MWRmNTNhNTYwYmNkMjZjYTdhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MiwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI4ODgyZTU3MmYyODNiNzJjMTI2MmJkMTAwNjU2YzdkYTNjYWExMjBjZWRmNjI0NjQyODk1MDUxMjE1N2U4MmRkIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_8516d029faa044fda8b72915992fff98",
+      "statement": "The setup_intent.succeeded webhook persists cards only through save_client_card_on_file and surfaces any raise as a throw so Stripe retries while the previous card remains active.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/stripe/webhook/route.ts#L735-L780",
+          "version": "repo-lines-v1:sha256:386a109271429af083670c9aa41af9b63899cd4485d8416b5d0ff4c5abccd635:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxMmU2MGE0NTI0Nzc3YTFhYzNkNTJkY2E0YTZkMGQ2ZjJhZTNlNDNhMWYyYTU0Y2ZiYmZjZmUxNzFlYWRiZmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY5YzYwOGRlNzRiOGM1MmQ2NzM2YzAzY2ZiZGM1MzQ1ZTFkODQ5MTVmZjBkODFkZjVlMDNlNTI5Yzc3MmJjYTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE0NDZkZTdhOTBmM2M2ODgzY2QzYWM4NzU2MWRkMjE4NThhOTg0OTVlYWQwYWZkNmQ5NDIyMDAyNzg5MzkzMmYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1723aca401754209afbb8a1433c56e6f",
+      "statement": "Database tests prove atomic card replacement, that a failed replacement leaves the previous card active, idempotent duplicate delivery, safe concurrent replacements and lineage refusals, with a negative control showing the pre-0180 two-write sequence lost the card.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/card-replacement-atomicity.db.test.ts#L88-L260",
+          "version": "repo-lines-v1:sha256:7029abd8bac16664e467e86d925e1093fde500974373a5ff1509bc935f623645:eyJzZWxlY3RlZExpbmVDb3VudCI6MTczLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwN2RmMTNmM2E1MmRkNWZlMWVkNjY2ZjIwNDhiMDNhYjQ3NzJhMjE0YjIyOGFlZTk1Yjg1OGVkNjE1MGZiNTA4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhMjQ3NmVkYzdkZDNjMjQxMmMyMGRiZGZjY2YwOGZjMzE0ODk1NDFlYWVmN2Q3NjZlNDVjY2FhOWIyYmM0ZWY3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxZGJiM2Q3NTBhZTkxYzgyMDZjNWM0MzljZDM5Y2I4ZDY2MDYzNjY4ZmU3NGJlOGRkYmViNzMzOTJhNDBhMDliIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5ZjVhZjc4ODU0NzExZjZiY2NkZDRlY2VhNzhmYjM3NGIxMzExNTY4NmMxYmVhOThkOGE2YTU5MjdiYmIyMzhmIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_603274f2413f4c89aca2b746f66c5c18",
+      "statement": "The dashboard card-on-file loader keeps a third unavailable state instead of reporting a failed read as no card, is scoped to the deployment's Stripe mode, and selects only client_id.",
+      "evidence": [
+        {
+          "resource": "repo://lib/payment-methods/card-on-file.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:beceeab0d5e0ef3019be4c89ce9aac942b57c5258436647cd3e6a24b0c865bdd:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwMWVhZDkzNmEyMjgxZDUzZGNjMDY0YjdlMmEyYWIwZDUzYjkyZWYzZWY3YjM0YjY2ODY3MzAwNzg5NWM4NjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg0OTUwNjRkNjZmZGYxYmFkMDAyOWE5OGEzYmFhYWRlNjRiNTNmNmZhMDQzZmQzOWEyYjNlMjZkMDdiNWM1NGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5dc5a0f15c8649279dcfb8baaaf156e7",
+      "statement": "After a fresh card-authorization signature, a helper updates the active card's card_authorization_signature_id to that signature, and migration 0077 backfilled stale pointers.",
+      "evidence": [
+        {
+          "resource": "repo://lib/payment-methods/refresh-card-authorization-pointer.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:2e68e4ec36845c50e98a4b2315973c43eb65fba1da61815c7013f22f4756c753:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0ZGE0YmI2OGRhZDlkY2YzMmU2MzgyMmYxMWE1M2Y4ZDkwYTM4MjcyZDFmYjkzNzAxMzc2NGYxMjY3MDk0NzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2ZDY2NDFhZDMyZTg2OTgzZmM5MDBlNGFmMzkwZGMzNzZkYzk3N2ZhZWMwNzYzMmU4MDc4ODI3ODIwMDQwMDYifQ"
+        },
+        {
+          "resource": "repo://lib/payment-methods/refresh-card-authorization-pointer.ts#L150-L165",
+          "version": "repo-lines-v1:sha256:efc838fe2455374add76769d6a3e51f5dfe748eaef281c7a4d091a6050ed5762:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxMTY5ODYzNWViMmEzNDhkNDNlNzVkYmM1ZDg2ZWRkZDMyN2NjZjMyZTBlMDFiYTllNzUzMWQ3Mzk5MjAyZTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMwNjc4MjQ2ZmRhMGY3ZDNmZmJlNGIzOTVhODAyYjYwMDE5NGMwYmNkNjcwZjhiZDc1NmExYmNlYjc0ZjhhNWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI4NmZmMjIzM2JkMDhhZTkzNjI4NzgzZDIxOGU3ODkwNGY2MzlhODBiZGJmN2RiOTk1Y2VhMzQ3YWQyZWFlOTEifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0077_refresh_card_authorization_signature_pointers.sql#L1-L25",
+          "version": "repo-lines-v1:sha256:80102847da559bf0c5b3ee9110f628a39a9056f85e3cf33747a6820109160344:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU1YjI2MmY3M2ZiZDlhMjBjOTk1ZWRjMGVmZGUxYzA0YTBmYWMzNDA2OGFlYmYwZmM3NzQ0NmNlOTkwNzdmMTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_32316f63996d49018606bada8aae15c4",
+      "statement": "decideCheckoutFinalAmount refuses a stale displayed reference first, parses the final total strictly as CAD within the ceiling, treats $0.00 as no charge required, allows the unchanged reference without owner or reason, and requires the owner role plus a meaningful reason for any other total.",
+      "evidence": [
+        {
+          "resource": "repo://lib/billing/checkout-final-amount.ts#L10-L60",
+          "version": "repo-lines-v1:sha256:a8297aeb76ed334935cdc145c0860e16ef55e26d6fdc4ca53b49f4ec06d48402:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4OTdiOWI1MDZiM2JiN2M5NTJjNzliZDc4M2JjNTJkM2NjYTk5NTNlZGE5ZjgzYWQ2NDE5OGFmM2M3OWE4MTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3YWI3NGIyYjc5YzNmZmJiZTg0NGVmOTcxZDI1MmQ0ZDE1ZTZlNjdmOWI1OTQ2YWIyNDRlZmNhNTgzNDg5NDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ5MmY1ODg4Zjk5NTIwNDk1MjZhMTdjMzk4NjM0YmNmMWYxNjQyZTVlYjk5ZTRhZjIwNDY2NDYxODQ5ZDI5NzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI1M2I0ZDg5Mjg2NzM4OWM2YzU1ZDJhMzM5MTVhMjU1MTQzYzAyYzk3ZjE0MzY1YjRkMmQ5Yzk2NzY2NTYxODEifQ"
+        },
+        {
+          "resource": "repo://lib/billing/checkout-final-amount.ts#L197-L300",
+          "version": "repo-lines-v1:sha256:49dd7e821cdc93bb94d9c1cbf3eb5460c355d0b419e7f32154ab4fab19912084:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2NTQ2OGQ0NjI0MTY5ZTcwMGFmMzM1MGU2MGM2NTA1MTEyZjc3YjdhMTU5MTQyMTA4MjQzYmIzOWU5ZTk5NzY1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJkYWJiZjM2YWIzMzZmNjg3ZGFlZGIzYTIyNWY2YWZkNWI2YjA3YmNkYTUxY2Q0MmUzZmZhNGM3MGJiNzY4NDhiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzNzlkZTlhYTA1ZmIzYmE5ODMxNzQ3MzZlYjJiNzUxMGNjYTc4Yjk1Mjk0MjdmMjE2MGQ1N2Q1MTMxYmFhMTg3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiMzljNzU3NjZlOTQzYjZkYjY5ZTM3YWU2OTJhMDBjYTNlOTc3NzRkYmZiNjU1NWJjNDJlMzM5MjJiZjBlODgxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_5fa2b0abf3294d59b54c72afc352c36b",
+      "statement": "The prepare action derives the owner fact from the authenticated practitioner rather than any form field, and the session payment amount ceiling is 200000 cents.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/sessions/%5BsessionId%5D/payment-actions.ts#L150-L178",
+          "version": "repo-lines-v1:sha256:8c412329cebaa1a1bc6893283cd0129cb5f2f6e041585150b14fc4c3c614e940:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJjMzI0OWY4MGYwMTdiMWI0Njk2NjAyNzhlNTVkM2I4ZTk3ZjExMDQ4MjA3MTQ1ZTg3ZWY3MmY4N2VmM2QzYjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmMzMyOWQzYjkwZTBjYTI5ZGE5ZDdjNjg3ZWRlZTAwZmUwZTI5NTQwZTU0ZDNlNDdlMzVjNDVjZTUxNDU4ZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYzYTVmYjk3NDQwMjJjMDY3ZDgwYzBmOTE5ZjIyOTRjNzNiZDQ1YjA1ZDYwYzg0MTdjYjUxMjZmZTMyNGZmNTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4NDgyOGJlZDFiOTBkZTk0NGMxOTI4OWEyMzVkNjFhYzA1OWUyNzNlNzc4OTg5MjcyZjdjZGZmMWU2MTc0YWYifQ"
+        },
+        {
+          "resource": "repo://lib/billing/session-payment-types.ts#L24-L24",
+          "version": "repo-lines-v1:sha256:f4fbc0004ff590c88d0afefca725faec2c9e78ef5b56518e6a66cf126686e78f:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjRmYmMwMDA0ZmY1OTBjODhkMGFmZWZjYTcyNWZhZWMyYzllNzhlZjViNTY1MThlNmE2NmNmMTI2Njg2ZTc4ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjRmYmMwMDA0ZmY1OTBjODhkMGFmZWZjYTcyNWZhZWMyYzllNzhlZjViNTY1MThlNmE2NmNmMTI2Njg2ZTc4ZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjQzYzkwMTZjMDYzYWZkMGRlYmJhN2FiZDlmNzRhYWQ0N2M0YzQwNTdiNWY1ODk2OWQ3ZTAxNjZjMGZlNTUxOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzBhNWIxOGNlNzE3NmEzNzc3YzNhZjc5MWU0NDYxYmY4ZmVmMWFkZDk3MDk3MTRhYzQ4ZWViZDc3ZGE5MjZjMiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_839f05eac31e4a9d8a82dc248123e732",
+      "statement": "Quick checkout resolves an appointment into the same eligibility and authoritative-amount decision as the session page and never charges or writes itself, while appointment settlement context is resolved separately so recording a non-card settlement does not require a treatment session.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/quick-checkout-actions.ts#L9-L32",
+          "version": "repo-lines-v1:sha256:d2a9534476c22ba339f01cbc6e5e3e49223a5f205324148337a7568e8fdfa396:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyYzE3MjQ5ZDk5MzYxOGE5MzI4M2Q0ZTY0ZmU1MzljNzRhMmM4OTJjZDM5OGI1OGY1MmQ3ZGJjMTBiY2U5YjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ4NzE5YTM1ODQ3NzliMTFmNWFmNDk2N2FjZDNmODNiZmE1N2FkM2E0Y2M3ZWM5YTUyMzdkYjI1MDJjMmVjNTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://lib/billing/quick-checkout.ts#L14-L64",
+          "version": "repo-lines-v1:sha256:968aaaccf03ba967a48b81f5d3ff19c2fc5aac1d56d251fd329a067f58adfa68:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4ZWViMWE5ZGFlMDJkOTEwZDY1MGU5ZDMxYmE1ZmE4NjI0MDllZmM3ZTc1OWJlZDBjNjcwNDQ3NTFhNGZjYzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImExNGMyNDEwZmIyZTY2OTYyZDFjZTQ4YjUwYzlhYWI4ODdhM2I4ZGM2YjFkM2Y4ZjAxOGU0MzE3NjFlNWE0YjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxNDY1MzYyYTc3MmZkZTIzNjY2OGY1YTAyMzNhYzU4Y2RiOGRlMzgwMTY0MWI4ZjY4NzMxMzg3YzBhYmJmOTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f34782627d694ec08f0cfab17537ba92",
+      "statement": "The appointment settlement actions call only the three 0187 commands, issue no Stripe call and do not supply the quoted amount, because the commands re-enforce every rule and derive the amount themselves.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/appointment-settlement-actions.ts#L1-L20",
+          "version": "repo-lines-v1:sha256:09e728573cbdf558a161c3ea1ace49329af9f96b251f34b46012fb93e15bb7f0:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5ZmRiNmE5NjYxNWI2MDQzZGRhYzA0OWM0YTg3ZGZmMDgyZDIyZmJhNGZkOTkzMTBhMGRkOTJhNGU3Yjk5NjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5NmRhYjQzOWVjYzFkYTY5ODE1ZjY0MDZiN2JlOWIyMzZkYzI1MGY4ZjFjNWYyOWEzZDcwYWJmZjE0ZDE2MzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImExMThhNTc1NWZlMGZkYWI5ZDg4Yjc2NTE2Njc2OGU4MmE5ZDA5M2FjOWVhZTJmMTFmYzMwMTlmYTFhNGQ1YWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9ca560f581e349679d7362b59ed05d6e",
+      "statement": "The admin payment manual-review queue is read-only and built from allowlisted view-model fields over unresolved critical payment alerts and pending_stripe rows older than the 60-minute reconcile window, leaving warning-level reconciliation alerts on the ops-alerts page.",
+      "evidence": [
+        {
+          "resource": "repo://lib/billing/payment-manual-review.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:383a4e0c4928e4c57579bc4df8c057e944d283c465f2845325be1c0b9b1d6453:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE1YWFjYTEzNmYwMTU3NjczMTg0NzAzNjQyYjQ4ZTE4YjVlMTNmMjRmYmJjOWVhYjk1MmY2MjZhZTQ1MWMwZjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjZGM3NmQxMmU1MzA0ZDMwNzllZGI1Zjg5MDAwN2VhMDVmMjI2ZTRkOTNiNjk1Njg0NjBjYWZhZjgwMDc0NGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFjODFjYjM4ZjNmZmMyYjFkN2UyODhiZDc3N2RiNWVjZDJmMGZiNTRmYTNmYzVlZWE1NTg1ZjY3MmI3ODhmMmYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8f6dc7a85422460fa33b0a2a68de358a",
+      "statement": "The payment Playwright lane is isolated in e2e-payment with its own fake-Stripe web server that is never reused, runs against a local production build and the local Supabase stack with the shared schema preflight and teardown, and uses a single worker.",
+      "evidence": [
+        {
+          "resource": "repo://e2e-payment/helpers/payment-env.ts#L28-L35",
+          "version": "repo-lines-v1:sha256:225fb4cd52627a9bcca518fa02fe0d560c03d35384ebf50908064fe1d0515151:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWI5N2M5NmFmZTMxZTY3MzQ1ZTE0YWJkNmI0NGQ0YzU3NGMyMjU4NDkwOGQ0NGJmMTE0MWQ2N2ZmMTE2ODJjZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWExZDFhNjMzOTAyMjljNzk4MzQ3ZTgzYTA0MDU0NDFjOTQwMDAzNTI4NGFkMTY4YzFiZjZjZGYxZDcwYTM3MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmFkNjJjYTIxZTlkOGY1YmY0N2ZjNzIwYTEzOTEzZDBiYzYxNzIwMjhlMjllNjMxYzM3NGU4MGM2OGQwYTcyYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://playwright.payment.config.ts#L7-L62",
+          "version": "repo-lines-v1:sha256:9792a607e2cc2bfa6c05c8293d0ca947bb1389a5ec6071f5ed6e73330f7be1f4:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkN2Q1MGI3MzI4MTIwMWMwNDRjMDc2MmNiYjAzYTljNGY0ZTFmYzJlMjQ3ZmU5YjE4NjYyMjQyOTVmMzk4NDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEwOGNjMjAwNTVhYWU3N2UxZGM3MWRkYThlZjY3YjVmZTI2NmQ4ZDUzMjZjY2MwMmRjZDQ2ZGJiNTI2OTJiYzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a4683ae45ca446e5a6b3c87c494bd4ee",
+      "statement": "The e2e-payment specs prove a duplicate click charges once, concurrent contexts produce one effect, a lost response recovers to Paid without a duplicate, crafted or stale amounts prepare nothing, and an owner-authored total is charged exactly.",
+      "evidence": [
+        {
+          "resource": "repo://e2e-payment/ambiguous-response-payment.spec.ts#L84-L87",
+          "version": "repo-lines-v1:sha256:7dcc74bd7fb04218dabd122366237190ee3882d78e61d5a2869696d1b5506650:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGU2MmFlODAyYzE5Y2FiYzEwNTJkNTVlMTIwMmU5ZGY2YTVlZWRlZTBmYjFhODI2NzRiNWI2OGQ2M2NiMjczNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTY1NDUzOTUyMjFlZTY5YzFjZjY1ZjFmMjFlYTBmODgwYWM3Yzc0MmFiYjY3N2NhMWU5NWFjMGI1MzE4MjBiYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWIxZWExNWEwZjdiMWQ3NzQxYzA5MmRlODAyZDM5ZmRhNDQzNGVjZjA1Zjk0MzU4YzZmMzY5Y2E5MTE2ZTIyZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDE4NTM2N2JhNmVkZmQwMTc2ODkxYmIwOTEyNzBmNWZkZmI1MjdlMjg4YjNiZjQ3OTVlMGQxMzY1ZTUwMWI4NiJ9"
+        },
+        {
+          "resource": "repo://e2e-payment/custom-final-amount-payment.spec.ts#L74-L77",
+          "version": "repo-lines-v1:sha256:9c58a07dfe3d6146653195d32cfee1c526094798e856723001f7d87580938156:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTE2OTIyZDM2NGUyNjA3NjExZGQzYTU5NjY0OGEyMTU5NjViY2Y0NTFkNTU0MzVlZjMzZWEzYjNhMDUyZDA3YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTY1NDUzOTUyMjFlZTY5YzFjZjY1ZjFmMjFlYTBmODgwYWM3Yzc0MmFiYjY3N2NhMWU5NWFjMGI1MzE4MjBiYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWIxZWExNWEwZjdiMWQ3NzQxYzA5MmRlODAyZDM5ZmRhNDQzNGVjZjA1Zjk0MzU4YzZmMzY5Y2E5MTE2ZTIyZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDE4NTM2N2JhNmVkZmQwMTc2ODkxYmIwOTEyNzBmNWZkZmI1MjdlMjg4YjNiZjQ3OTVlMGQxMzY1ZTUwMWI4NiJ9"
+        },
+        {
+          "resource": "repo://e2e-payment/duplicate-click-payment.spec.ts#L77-L80",
+          "version": "repo-lines-v1:sha256:c38d7dc5c0d18dc63bc12ddb33a0a5b70da8bbebc6f85550a32cb53a2d2180e5:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWNiNTYwNTk4MzUxMDM5ZTA2NWYzMmU2MTllMzhlMDcxZWU0OTljOWI2YzA0MmU2MjE4N2UzNzMzNTE3MTBiNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTY1NDUzOTUyMjFlZTY5YzFjZjY1ZjFmMjFlYTBmODgwYWM3Yzc0MmFiYjY3N2NhMWU5NWFjMGI1MzE4MjBiYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWIxZWExNWEwZjdiMWQ3NzQxYzA5MmRlODAyZDM5ZmRhNDQzNGVjZjA1Zjk0MzU4YzZmMzY5Y2E5MTE2ZTIyZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDE4NTM2N2JhNmVkZmQwMTc2ODkxYmIwOTEyNzBmNWZkZmI1MjdlMjg4YjNiZjQ3OTVlMGQxMzY1ZTUwMWI4NiJ9"
+        },
+        {
+          "resource": "repo://e2e-payment/server-authoritative-amount.spec.ts#L62-L175",
+          "version": "repo-lines-v1:sha256:e9b75296bf348f2e47a1af86624ec47a711719a047199bb7368ac16dc47b327e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhZDM1YzBlZmVmMmQwZjkyNTQ3MzIzOWY0OTUxYzc5N2FhYjM2YjZkYmQ3MDZkNThiYjZmZmNlZDBiOTU3NDk5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJjYzQ2N2RkY2I5NDE0YWIxNDI4ZmRhYjk2NjYzY2M5MTViYTJlNjZlNjFlMjQzOGU3MmQ4YjgxZTFjYjhkMjI1IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiYTA0ZjNmZGZlMWRlNmM5NjVhMDgzNjRmMGRkMWU4YWUyZDUzZTc0NTJjNGM3OGNjYzIzNWIxMTc1YjhmMjBjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhMTE2NmNiYWMzNTVkYmRiOTgxZDNmOGY0ZDRkZTYwMzFhZDAwYzI0YjUyZDQwOTA3ZDRkZjQyYTkwN2ZkMzQyIn0"
+        },
+        {
+          "resource": "repo://e2e-payment/two-context-concurrency-payment.spec.ts#L77-L80",
+          "version": "repo-lines-v1:sha256:4ed87ca71138d0179abdbcebe219d288d224c93f931142499294fc7534088149:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTQ1YWNiMGEyZTVlYTRiMzk2MjYyN2E2M2U0YjAzOTk2YmMxNzk0YWZjN2Y4NjIyNGQ3OTA5MWY0ZWE1N2M3YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOGQ5MTJkM2YzNTRhZTNlZGVhZjRhYmVmNjg1ZmVhMzNlNjIyYzk2ZTZjYmQ0MjdjMDc1NDUwZTAzY2Y0NzU4MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWIxZWExNWEwZjdiMWQ3NzQxYzA5MmRlODAyZDM5ZmRhNDQzNGVjZjA1Zjk0MzU4YzZmMzY5Y2E5MTE2ZTIyZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWVhN2MyNTBkYjFjYmNmNGM5OGIxNDg0ODRmMTQ4MDkxNGFlNDUyNjNmMDE0Mzk4NGJkMGQyOTZmMzdjZDkzYyJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T22:34:57.394Z"
+  }
+}

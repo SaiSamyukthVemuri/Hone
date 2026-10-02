@@ -3,9 +3,6 @@ type: integration subsystem
 title: SMS delivery, consent, STOP and senders (Twilio)
 description: How Hone sends appointment SMS through Twilio's REST API from one platform sender, how consent is captured and STOP is enforced phone-wide for clients and waitlist prospects, and the per-studio sender lifecycle that exists as tested library code with no product caller yet.
 tags: [sms, twilio, consent, stop, suppression, studio-senders, provisioning]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-0529e4397b0facf213381bdf
     resource: repo://app/(app)/settings/integrations/page.tsx
@@ -45,7 +42,10 @@ sources:
     resource: repo://tests/source-guards/sms-provider-guards.test.ts
   - id: openwiki-source-23bb7784a2907a10cf3f8739
     resource: repo://tests/source-guards/sms-status-readonly-boundary.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # SMS delivery, consent, STOP and senders (Twilio)
@@ -154,8 +154,7 @@ clients.
 | `resolveStudioSmsSender` | fails closed: `no_active_sender`, `ambiguous_active_sender`, `read_failed`; **no env fallback** ([`studio-sender.ts`](../../lib/sms/studio-sender.ts#L1-L133)) | **none** |
 | `provisionStudioSmsSender`, `searchAvailableSenderNumbers` ([`provisioning.ts`](../../lib/sms/provisioning.ts)) | purchase a number and build a sender under a fenced lease | **none** |
 | `adoptExistingStudioSmsSender` ([`adoption.ts`](../../lib/sms/adoption.ts)) | adopt an existing studio-owned number: prove ownership → compare service configuration → send a provider test; never purchases, creates or attaches | **none** |
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-| `readOwnStudioSmsSender` + `SmsSenderStatusCard` | owner-only, read-only status in Settings → Integrations | **yes** ([`settings/integrations/page.tsx` L45-L91](../../app/(app)/settings/integrations/page.tsx#L45-L91)) |
+| `readOwnStudioSmsSender` + `SmsSenderStatusCard` | owner-only, read-only status in Settings → Integrations | **yes** (`app/(app)/settings/integrations/page.tsx` L45-L91) |
 
 Safety rails around the unreachable half:
 
@@ -176,14 +175,10 @@ Safety rails around the unreachable half:
 
 | Fact | Status | Authority |
 |---|---|---|
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L871-L873] heading anchor "L871-L873" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| Appointment SMS | **Pilot scale only**: env-gated, per-studio toggle, per-client consent; broad-SaaS SMS (A2P/10DLC, sender strategy, rate limiting) not built | [`current-state.md` L871-L873](../../docs/production/current-state.md#L871-L873) |
-<!-- openwiki: broken internal link [../../docs/production/migration-ledger.md#L512-L516] heading anchor "L512-L516" does not exist in "../../docs/production/migration-ledger.md". Fix the href or restore the target, then delete this comment. -->
-| Per-studio sender table | **0 rows** when measured 2026-09-18 (no sender provisioned, no provider contacted) | [`migration-ledger.md` L512-L516](../../docs/production/migration-ledger.md#L512-L516) |
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L581] heading anchor "L581" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-| Owner sender visibility (#749) | **Shipped** read-only card; no provisioning, purchase, adoption, release or routing cutover; shared fallback unchanged | [`current-state.md` L581](../../docs/production/current-state.md#L581) |
-<!-- openwiki: broken internal link [../../docs/production/known-limitations.md#L244-L256] heading anchor "L244-L256" does not exist in "../../docs/production/known-limitations.md". Fix the href or restore the target, then delete this comment. -->
-| Studio-sender routing cutover (PR #716) | **Not merged**; WAIT invitations remain email-only; broader SMS rollout blocked | [`known-limitations.md` L244-L256](../../docs/production/known-limitations.md#L244-L256) (L14) |
+| Appointment SMS | **Pilot scale only**: env-gated, per-studio toggle, per-client consent; broad-SaaS SMS (A2P/10DLC, sender strategy, rate limiting) not built | [`current-state.md` § 8. Communications](../../docs/production/current-state.md#8-communications) |
+| Per-studio sender table | **0 rows** when measured 2026-09-18 (no sender provisioned, no provider contacted) | [`migration-ledger.md` § Previous state (post-0199 apply)](../../docs/production/migration-ledger.md#previous-state-verified-2026-09-18-post-0199-apply-0199-applied) |
+| Owner sender visibility (#749) | **Shipped** read-only card; no provisioning, purchase, adoption, release or routing cutover; shared fallback unchanged | [`current-state.md` § 2026-09-20 Level 3 WAIT checkpoint](../../docs/production/current-state.md#2026-09-20-level-3-wait-checkpoint--top-product-priority) |
+| Studio-sender routing cutover (PR #716) | **Not merged**; WAIT invitations remain email-only; broader SMS rollout blocked | [`known-limitations.md` § L14](../../docs/production/known-limitations.md#l14--broad-saas-sms-and-wait-dual-channel-delivery-are-not-complete) |
 
 ## 6. Change checklist
 
@@ -198,8 +193,7 @@ Safety rails around the unreachable half:
 ## 7. Contradictions and open questions
 
 1. **"STOP/HELP handled" vs the code.** The canonical record says SMS has "STOP/HELP handled"
-<!-- openwiki: broken internal link [../../docs/production/current-state.md#L871-L873] heading anchor "L871-L873" does not exist in "../../docs/production/current-state.md". Fix the href or restore the target, then delete this comment. -->
-   ([`current-state.md` L871-L873](../../docs/production/current-state.md#L871-L873)); the
+   ([`current-state.md` § 8. Communications](../../docs/production/current-state.md#8-communications)); the
    application recognises only the six opt-out keywords above and acknowledges every other inbound
    body (including `HELP`) with an empty response
    ([`twilio.ts` L284-L304](../../lib/sms/twilio.ts#L284-L304),

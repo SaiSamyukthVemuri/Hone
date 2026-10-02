@@ -3,9 +3,6 @@ type: security boundary
 title: Authentication, sessions and tenancy
 description: How Hone authenticates practitioners (invite-only magic link or Google OAuth, sign-in-time invitation reconciliation), gates every request in middleware, derives the acting studio and practitioner exactly once per request, and where a studio id supplied by the browser is or is not trusted — plus the separate client-portal session realm and the operator allowlist.
 tags: [authentication, tenancy, multi-studio, invite-only, sessions, client-portal, admin, security]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-29f5d815aa4966f3c92bbe05
     resource: repo://app/(app)/clients/%5Bid%5D/sessions/new/actions.ts
@@ -65,7 +62,10 @@ sources:
     resource: repo://tests/lib/supabase/request-identity-dedupe.test.ts
   - id: openwiki-source-833044c4d4591cb2eabb5a7e
     resource: repo://tests/security/service-role-allowlist.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Authentication, sessions and tenancy
@@ -94,12 +94,10 @@ Row-level policies are covered on [RLS, grants and SECURITY DEFINER commands](rl
 - returns the same generic success either way, folding Supabase's "signups not allowed" into it, so the form
   cannot reveal who has an account.
 
-<!-- openwiki: broken internal link [../../app/(auth] file "../../app/(auth" does not exist. Fix the href or restore the target, then delete this comment. -->
-Evidence: [`app/(auth)/login/actions.ts` L35-L82](../../app/(auth)/login/actions.ts#L35-L82).
+Evidence: `app/(auth)/login/actions.ts` L35-L82.
 
 **Google OAuth.** It starts in the browser and cannot pass `shouldCreateUser`, so it can create an
-<!-- openwiki: broken internal link [../../app/(auth] file "../../app/(auth" does not exist. Fix the href or restore the target, then delete this comment. -->
-`auth.users` row for anyone ([`login/page.tsx` L36-L48](../../app/(auth)/login/page.tsx#L36-L48)).
+`auth.users` row for anyone (`app/(auth)/login/page.tsx` L36-L48).
 Creating that row grants nothing:
 
 - since `0141`, `handle_new_user()` is a **no-op** — it creates no membership and stamps no acceptance
@@ -108,8 +106,7 @@ Creating that row grants nothing:
   ([`0081` L1-L17](../../supabase/migrations/0081_invite_only_handle_new_user.sql#L1-L17)).
 
 **Provisioning happens at sign-in.** Both methods land on `/auth/callback`
-<!-- openwiki: broken internal link [../../app/(auth] file "../../app/(auth" does not exist. Fix the href or restore the target, then delete this comment. -->
-([`route.ts` L9-L76](../../app/(auth)/auth/callback/route.ts#L9-L76)):
+(`app/(auth)/auth/callback/route.ts` L9-L76):
 
 1. It exchanges the code for a session.
 2. It calls `reconcile_my_pending_invitation()`, an authenticated, self-scoped `SECURITY DEFINER` RPC that
@@ -132,8 +129,7 @@ Creating that row grants nothing:
 Any reconciliation failure falls through to the default destination; it never blocks sign-in.
 
 **Explicit acceptance.** `/accept-invitation` is the single authoritative acceptance point
-<!-- openwiki: broken internal link [../../app/(auth] file "../../app/(auth" does not exist. Fix the href or restore the target, then delete this comment. -->
-([`accept-invitation/actions.ts` L10-L60](../../app/(auth)/accept-invitation/actions.ts#L10-L60)). Its server
+(`app/(auth)/accept-invitation/actions.ts` L10-L60). Its server
 action checks the current-policy checkbox, resolves the user from the session, and calls
 `admin_accept_pending_invitation(p_user_id)` with **only** the user id. That command is service-role-only; the
 two self-scoped readers are granted to `authenticated` and never to `anon`
@@ -217,8 +213,7 @@ Two wrappers expose it, and they differ only in how they fail:
 re-read on every wrapper call and honoured only when it matches an active row
 ([`selected-studio.ts` L4-L38](../../lib/supabase/selected-studio.ts#L4-L38)). The only code that sets it is
 `switchStudioAction`, after an RLS-scoped check that the user is an active member of the submitted studio
-<!-- openwiki: broken internal link [../../app/(auth] file "../../app/(auth" does not exist. Fix the href or restore the target, then delete this comment. -->
-([`no-access/actions.ts` L16-L51](../../app/(auth)/no-access/actions.ts#L16-L51)).
+(`app/(auth)/no-access/actions.ts` L16-L51).
 
 Tests:
 
@@ -238,8 +233,7 @@ Tests:
 |---|---|---|
 | Authenticated-client reads and writes | the row's own `studio_id` | RLS predicates `is_studio_member` / `is_studio_owner`: `auth.uid()` must hold an **active** row (owner role for the owner variant) ([`0001` L151-L189](../../supabase/migrations/0001_init.sql#L151-L189)) |
 | Service-role commands (Pattern A) | the server action, from `getCurrentPractitionerWithStudio()` — never a form field | the command re-derives membership and role from `(studio_id, user_id)`. Every `createAdminClient()` call site must appear in an allowlist that requires a scope guard to be present in the file — an inventory and drift gate, not a proof of perfect scoping ([`service-role-allowlist.ts` L1-L42](../../tests/security/service-role-allowlist.ts#L1-L42)) |
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-| Authenticated-callable commands that take a studio (Pattern B) | the server action passes `p_studio_id` from the resolver ([`sessions/new/actions.ts` L203-L223](../../app/(app)/clients/[id]/sessions/new/actions.ts#L203-L223)) | the command maps `auth.uid()` + that studio to an active practitioner row, or refuses (`session_actor_practitioner`, [`0167` L78-L107](../../supabase/migrations/0167_session_write_commands.sql#L78-L107); `own_practitioner_in_studio`, [`0178` L59-L86](../../supabase/migrations/0178_practitioner_identity_boundary.sql#L59-L86)) |
+| Authenticated-callable commands that take a studio (Pattern B) | the server action passes `p_studio_id` from the resolver (`app/(app)/clients/[id]/sessions/new/actions.ts` L203-L223) | the command maps `auth.uid()` + that studio to an active practitioner row, or refuses (`session_actor_practitioner`, [`0167` L78-L107](../../supabase/migrations/0167_session_write_commands.sql#L78-L107); `own_practitioner_in_studio`, [`0178` L59-L86](../../supabase/migrations/0178_practitioner_identity_boundary.sql#L59-L86)) |
 | Studio switch | a form field | an RLS-scoped active-membership check before the cookie is set (§3) |
 | Public slug, appointment and invitation tokens, portal session | the credential's own row | each route — see [Public token routes and privacy](public-token-routes-and-privacy.md) |
 
@@ -331,27 +325,21 @@ Admin pages and actions use the service-role client for cross-studio reads, and 
 1. **Code comments still describe trigger-based provisioning.**
    - The login action's header says that on first login `handle_new_user()` "matches the invite and places
      the practitioner in the inviting studio"
-<!-- openwiki: broken internal link [../../app/(auth] file "../../app/(auth" does not exist. Fix the href or restore the target, then delete this comment. -->
-     ([`login/actions.ts` L17-L19](../../app/(auth)/login/actions.ts#L17-L19)).
+     (`app/(auth)/login/actions.ts` L17-L19).
    - Since `0141` that trigger is a no-op, and provisioning happens only in the sign-in reconciliation (§1).
    - `docs/03_SECURITY_AND_PRIVACY.md` still frames invite-only as the `shouldCreateUser` gate plus the `0081`
      change and does not mention reconciliation
-<!-- openwiki: broken internal link [../../docs/03_SECURITY_AND_PRIVACY.md#L90-L90] heading anchor "L90-L90" does not exist in "../../docs/03_SECURITY_AND_PRIVACY.md". Fix the href or restore the target, then delete this comment. -->
-     ([L90](../../docs/03_SECURITY_AND_PRIVACY.md#L90-L90)).
+     ([§ 2. Public route model](../../docs/03_SECURITY_AND_PRIVACY.md#2-public-route-model)).
    - `docs/20_NEW_STUDIO_SETUP_RUNBOOK.md` carries the corrected account
-<!-- openwiki: broken internal link [../../docs/20_NEW_STUDIO_SETUP_RUNBOOK.md#L100-L114] heading anchor "L100-L114" does not exist in "../../docs/20_NEW_STUDIO_SETUP_RUNBOOK.md". Fix the href or restore the target, then delete this comment. -->
-     ([L100-L114](../../docs/20_NEW_STUDIO_SETUP_RUNBOOK.md#L100-L114)).
+     ([§ 2.2 Create the owner invitation](../../docs/20_NEW_STUDIO_SETUP_RUNBOOK.md#22-create-the-owner-invitation-production-write-show-sql-get-approval-first)).
 2. **Sign-in analytics label every sign-in as a magic link.** The callback sends `user_signed_in` with
    `provider: "magic_link"` for every successful exchange
-<!-- openwiki: broken internal link [../../app/(auth] file "../../app/(auth" does not exist. Fix the href or restore the target, then delete this comment. -->
-   ([`route.ts` L21-L28](../../app/(auth)/auth/callback/route.ts#L21-L28)), including Google OAuth sign-ins,
+   (`app/(auth)/auth/callback/route.ts` L21-L28), including Google OAuth sign-ins,
    which use the same callback.
 3. **The callback accepts an unvalidated `next` parameter.** It reads `next` from the query string (default
    `/dashboard`) and appends it to the request origin without checking that it is a same-origin path
-<!-- openwiki: broken internal link [../../app/(auth] file "../../app/(auth" does not exist. Fix the href or restore the target, then delete this comment. -->
-   ([L12](../../app/(auth)/auth/callback/route.ts#L12-L12),
-<!-- openwiki: broken internal link [../../app/(auth] file "../../app/(auth" does not exist. Fix the href or restore the target, then delete this comment. -->
-   [L67](../../app/(auth)/auth/callback/route.ts#L67-L67)). No caller in the repository sets `next`.
+   (`app/(auth)/auth/callback/route.ts` L12,
+   L67). No caller in the repository sets `next`.
    Restricting it to relative paths is an open hardening question, not a documented decision.
 4. **The four-argument `start_session` still has an application caller.**
    - `0181` says the legacy signature will have no caller once the app binds explicitly, and "may be dropped
@@ -359,8 +347,7 @@ Admin pages and actions use the service-role client for cross-studio reads, and 
      ([`0181` L268-L274](../../supabase/migrations/0181_multi_studio_command_authority.sql#L268-L274)).
    - The session-start action still calls it as a one-retry fallback when PostgREST reports the five-argument
      signature missing (`PGRST202`)
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-     ([`sessions/new/actions.ts` L225-L261](../../app/(app)/clients/[id]/sessions/new/actions.ts#L225-L261)).
+     (`app/(app)/clients/[id]/sessions/new/actions.ts` L225-L261).
    - No later migration drops it.
 5. **The "sole remaining unconstrained resolver" finding is a dated record, not a guard.** `0181`'s header
    reports a live-schema census that found `start_session` was the last `SECURITY DEFINER` function picking

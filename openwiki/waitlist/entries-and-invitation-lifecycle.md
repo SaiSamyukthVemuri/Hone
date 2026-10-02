@@ -3,9 +3,6 @@ type: state machine
 title: Waitlist entries and invitation lifecycle
 description: The durable new-client waitlist as the database defines it — the entry status vocabulary and the exact legal transition matrix, the append-only invitation child row with hashed tokens, a bounded TTL and one terminal outcome, server-clock expiry, owner admission rounds and the one-action admit command, the delivery-outcome record, the consumed-count gateway, the redeemed-but-unbooked exit and its contraction — with the commands' authority and the DB tests behind each rule.
 tags: [waitlist, state-machine, invitations, admission, security-definer, concurrency]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-c20fe11e1b993d9a2a165fbd
     resource: repo://app/(app)/settings/waitlist/invite-actions.ts
@@ -43,7 +40,10 @@ sources:
     resource: repo://tests/db/waitlist-invitation-wall-clock.db.test.ts
   - id: openwiki-source-a54d524a85e2ab28b17aa073
     resource: repo://tests/db/waitlist-redeemed-unbooked-exit.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T22:34:57.394Z
 ---
 
 # Waitlist entries and invitation lifecycle
@@ -74,8 +74,7 @@ Whether new clients reach the waitlist at all is on [New-client admission mode](
   outcomes, never throws across the boundary, and reports a transport failure as **in doubt** rather than a
   refusal ([L1-L15](../../lib/booking/waitlist-invitation.ts#L1-L15)).
 - **The practitioner's invite action** sends intent only: four product fields and the entry id. Studio and actor
-<!-- openwiki: broken internal link [../../app/(app] file "../../app/(app" does not exist. Fix the href or restore the target, then delete this comment. -->
-  come from the server ([`invite-actions.ts` L1-L20](../../app/(app)/settings/waitlist/invite-actions.ts#L1-L20)).
+  come from the server (`app/(app)/settings/waitlist/invite-actions.ts` L1-L20).
 - **Owners only.** Owner role and membership are re-derived inside each command from `(studio_id, user_id)`.
 
 ## 2. The entry state machine

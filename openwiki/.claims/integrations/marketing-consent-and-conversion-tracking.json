@@ -1,0 +1,218 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:bb04394c3af693d9cc8e8e45887a4e18f8225599d6042bf6d022e09e6420c3de",
+  "claims": [
+    {
+      "id": "claim_99db346292ec4d22b45d0b5382a86f88",
+      "statement": "booking_tracking_consents stores only consent bookkeeping (studio, appointment, client, a boolean, a text version and a checked source) and has no anon or authenticated insert policy, so rows are written by the service role while studio members can read them.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0106_studio_marketing_tracking.sql#L145-L186",
+          "version": "repo-lines-v1:sha256:d52247b9f96c02434cbd166bfa8e5c916d94e6caa8554acb7473c91afe072d5e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzNTY2NTk0YzAzZjE0ZGJjNGM4NWIxMjUxYTc0YzA2YmRjNDk0ZDUxZTY5Y2FiZWIzZjg3NmI4NDY3YmM3MGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUzYzZhZDgxZTk4OTZmNTZiNTdiOTRlYjNiM2I2OGJlM2NjYTg3NzcxYWNhOWNkZTY4ZDFiY2UzYzQ3NjNmMzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI4OWU3NTU3ZWI5NDc4MzE1N2M0YzAwYzRmZjI5NjQzODQ1NWIyYjcwODZhZTUyMzhmYTI1NmU4OWI1ZGZmNTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ1MGM2MGE5ZTA1OWJiYWM4OTA2Zjk2ZmU4YzgxNGVkYmQzOGYxYzRkMzhhMWY2OWJlZTdhMGIzNzZhOWVhY2UifQ"
+        },
+        {
+          "resource": "repo://tests/db/booking-marketing-consent.db.test.ts#L72-L106",
+          "version": "repo-lines-v1:sha256:68d8a4bf6e214b48549f18c928f1b86d37baf0662a2819e6f2540270167771c9:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2YzVjZDRhZjAwODhmZTQzM2Y0MjU0OTcwZDljMDdjN2YwOGNiYmE1MjIwY2M3ZmFkNjUzMDQ2YzJjY2QyMjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFjY2Y2ODQ1YWZlNDg3MGIyYzY0M2QyNzBlMGVkZWUyM2VjYmM0NmViODExMmQyM2NlNzYwMjU4ZThkZTQ5MzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5b2d7c078bb9458d915323f60981ed3b",
+      "statement": "conversion_event_deliveries is unique on (studio_id, provider, event_id) with a checked status, readable by studio members and writable only through the service role and the claim function.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0106_studio_marketing_tracking.sql#L100-L142",
+          "version": "repo-lines-v1:sha256:ad642e508d6a30afe1505bc2ae204da0beef94fc76a57f546ad1183fe71eb046:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlYjdjZDU1MmY2Y2EwMGI5OWUzMWFlNTAyZWE5Y2M0MjU1YzQxMjNjOTVjZTdiYjQ4OWM2OWYzYTE1ZGYzZTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0OTBjYTdkNjRjZjk1ODBiMjFmMWM2MDA2NTE0NzlmYjhhOGRlYmRiZmEyNmJiMjY4Y2Y0NWJlODM1NjE3MjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJjOTgwNzVmNzMwMjRmNzYxMjA3MTRlMzEwYjA4YzgzOWNlODYwNzljY2M4NDFmYTg5NzM5ZmFiNzY5NzMyNDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8a0d1380cf064326b364ade9a2499662",
+      "statement": "claim_conversion_delivery is a SECURITY DEFINER function executable only by service_role that inserts a claimed delivery row with on conflict do nothing and returns whether this caller created it, and a DB test shows it returns true once and then false.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0106_studio_marketing_tracking.sql#L188-L218",
+          "version": "repo-lines-v1:sha256:b686d6056464ae1869efae40dfa95cebcc1c53123caaa3efe3577f8100ba6bd0:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzZDdmN2IzMDhiNmNkNzMwZTkzZTIwODZjYjUyMjNmZDk0NDYwOTliNmI5YmEyYmJlM2U5NzI4YjZlNmU2MzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEyMGJhN2M2NmRkODg1NTJkNDI0MDhkOTlkZTQyMTFmNzI1NzcxNDI3MWIwNzFiMTQwYWE2ZGM3NTQyOGY4ZTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/db/studio-marketing-tracking.db.test.ts#L73-L113",
+          "version": "repo-lines-v1:sha256:aeb093ecf195acf3f8831a650033cba4b7fe20ae3dff38163c4b43365fbed94e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyMDViYTgzZGMzOWU3ODVlY2EyZTAwMWE4NGQ1ZDk2MmQ4YTI4MjE0ZTI2MTUzZTkyYjUwZjM2YTQ5NmQxZDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRjNzM2NzNjY2I0MDQ3NDQ0Y2Y3MTExOTE0OWU1YzQzNGUzNjk4MmE5MjI1OTI2MjE0NjNkNWMzNmM0YjJjZTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7f86a59539ba4082850f171eeb188140",
+      "statement": "Migration 0107 adds encrypted token, last4, timestamps and token_status columns to studio_tracking_providers and replaces the member insert and update policies with owner-only policies, while members keep select.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0107_studio_tracking_encrypted_token.sql#L12-L56",
+          "version": "repo-lines-v1:sha256:a4098c0a12e9a9c7c8b9488366f3a74e410a26e4e48931531a2f624261cab4ab:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5YmRiNDQwNDkzZjUwYzhhMDRlYzYwNzVlMzNjZDM0YTYyOTJkZDIwNTlmYjhmOTg4YTQ5OTU2NjJkNTM1MGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY3Y2Y2NjEwNTc5NjZlNmZhYTU3OTQzY2RjNzZiZGI4Mjc5NWFmZjhlNzE3MjdjMmUwODYzNjA3N2Y1MWU2MjgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNiM2ZhN2E5OGUzNmE2YzRhZTlmYjEzZDc5YTQwOTJlOGMwNjUzODI1MTAwMDVjNWNjMWVjMDM5NmM5YTg1MGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/db/tracking-encrypted-token.db.test.ts#L38-L91",
+          "version": "repo-lines-v1:sha256:c1da9922bfab21d83f860bfb035eb887e1081ebabc8e75a696c90af876bd3028:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5ODJjMzliZjVmOGY4MGQwZjQ4OTgxNTMzYjRlNjg1MjhlOTAzYmQ0MGMzYjE1ZDE5NWU3ZDcyNzRmZmZjYjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFjY2Y2ODQ1YWZlNDg3MGIyYzY0M2QyNzBlMGVkZWUyM2VjYmM0NmViODExMmQyM2NlNzYwMjU4ZThkZTQ5MzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4f5834673ddf4c8c9dd1c0d00e331c5e",
+      "statement": "Public-booking marketing consent is opt-in: only an explicit true or on value counts, and the consent row records the fixed text version marketing_analytics_v1 and source public_booking.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/marketing-consent.ts#L1-L44",
+          "version": "repo-lines-v1:sha256:1bec8069dcfe312fe52d97ab54b61b15f63f6d1bece4538983c979c182763d2e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyMDU0ZWYzODc3YTYzZTExYTc4NjRmODMzN2VkOTAxOTViZmQ1ZjFmZDgwNDJiNmZhZDBkZTI5OGYyZjNhNjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_56e4847500f1413c9f52f305f2ff7a3a",
+      "statement": "After a public booking commits, the booking action inserts the consent row and calls dispatchBookingConversion fire-and-forget, passing normalized email, phone, service modality and the event source URL but no client IP or user agent.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L1614-L1666",
+          "version": "repo-lines-v1:sha256:9d5d311090a30c782d161e8dc635bd0a78072df3c6d89fb86c07889e5b40515e:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyYzI1MDAwYWNmZWM4ODEwZGM0N2Q2ZDRkNjFhMDEwYmMzODM5ZWM2MTRmMTViOWFjZWE3M2M5YTAxZmM4YjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAxM2E4NGQ4ZDZjMjU0ZGEzOGM4YTg3NTI0ZThiOGFmY2YwYjU3NGNmOThhNzBlZmExN2RkNTExODM2OTk2MGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZkYzQ0ZDZjYzMwMzFiZDFhZjQzNTUyMTA1YTZhNWNkZGVmNDNiNWYwM2UxOGE0MDExYzI5MTNjNzI5MDkxM2QifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_94743c66cb1140fea9017a2b539e5100",
+      "statement": "dispatchBookingConversion never throws and sends only when consent is granted, the studio has an enabled provider with an adapter, the atomic claim is won for the deterministic event id, and the studio's own token decrypts; a decrypt failure records a skipped delivery.",
+      "evidence": [
+        {
+          "resource": "repo://lib/conversion/dispatch.ts#L56-L164",
+          "version": "repo-lines-v1:sha256:3ecf5fe667f90b488ef464544f503ef66e7628e33f18fb2c867b5174c86c2c50:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwMDhjNGExY2UzYjNjOGUyMmRlMWM3NjY2Y2RmMGVkYWE4NTk0ZjkyMmJlZWMyMjU0OTdjZGEyYWU1N2YwMjMzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3ZGQwZmMwNDcwMWEzZjk5ZjU5YjFjYWI2NzM4NTRlY2E2M2MzNDFkNDUwNmQ0OTY5YzcxOGE5MGQ1ZjEwZjA4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzZjYwOTljOGNjMTM2MzkyMTdlNjMxNDEzZmJlYTQ4NzY1ZGVmZjcyYjIzZjZjOGY1YjZiN2I0YTMxODY2Y2NiIn0"
+        },
+        {
+          "resource": "repo://tests/lib/conversion/dispatch.test.ts#L91-L184",
+          "version": "repo-lines-v1:sha256:0584cc3e9e7b132827d24a6077dde26b3b2abb96bc3f6893119efbebdf4832f3:eyJzZWxlY3RlZExpbmVDb3VudCI6OTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQwYzlhNTgzNDEzZTg3MDg3MjlmY2QwYzIxNzg1ZjI0MzZiMTlkMzEwZjk0ODQ4NjdlZDVmNDRlOGZjYjVmYzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_563e9fbbafc942ac9deab72553e754d4",
+      "statement": "A failed provider send records a failed delivery with a safe error string and raises a warning-severity ops alert, and delivery rows never carry a raw token, email or phone.",
+      "evidence": [
+        {
+          "resource": "repo://lib/conversion/dispatch.ts#L139-L190",
+          "version": "repo-lines-v1:sha256:9e471865fa026b989195dd00f7c0ae2b4701170d2746a739c8dbe2644e1392ac:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0NTYxMjE1ODgyMGQyOGVhZGI5MzkwZDAxODQ0ZDk1OTgwYmJkZTczNDYzZjhkNGYzY2M2NTE3NTFjNmI2Y2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc1MGQyYzcwMDcyNWM2YWNlZjVhYjVhYzhmN2YzZDZiMzMwZjViYjIzNTU5MDFlOTc5MWMzYjc2N2M2MWE3ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/lib/conversion/dispatch.test.ts#L152-L184",
+          "version": "repo-lines-v1:sha256:3009c86169fa16efa91f3cb8fe59b833d9bbe82abf1ec362965ad0bbb197b4c8:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5NjQ5NGZkZDYwNTYwNWEwMTdiMjEzMmNiNmFlZWU2ZDU0MTZkZDU2OGE5ZDQ5NjVlNTQwMDQwMDljY2I4ZjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkwOTYwYTZlZGZkOTg1ODVlMDEzM2IxMzllZjc3MzIxMjg5NWY2NTBiYzdhMzc4ZGM1ZTExNDQ2ZjgyYjJhZTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3f8c4eacd4f64741a94f9d1d4600bdad",
+      "statement": "The Meta adapter sends a Schedule event to the Graph API events endpoint for the configured pixel with the decrypted token, SHA-256 hashing normalized email and phone and reducing the service to an allowlisted generic category.",
+      "evidence": [
+        {
+          "resource": "repo://lib/conversion/adapters/meta.ts#L30-L99",
+          "version": "repo-lines-v1:sha256:1d8334b6776f5c421bac09eaf4be5764b3d5b621d23922cfbf9e473fce940c10:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5MzQ0MDlhNzAyZTQ2NzQ0MDM0OWM2YTZmNzNjNGQ2ZjkwOWJlZThiZTU2NDU5MmYwZGExYjQ0N2MwMmVlYjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExZGY4N2E0NzMxNmM3MDhjNTUwMjA5OGU5YWY2YzQ0NTM0ZWI4MGJlYWRjZjYwNjMwMjhlZmNhODU5MzdhYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU1MjFiYmIzNjNlMTFjN2JjZjlhYjM3MTkwYWNmODgxZmMwZDQ3MjE3ZWFiMjE1OGM3ZDE5ODExOTlmYzc1MzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg2ZTVkNzM5MGRlODFmODZmYTA0YzdiMmRlMjczMjBlYTIwZTMzNGU1NTJlZWQ2YzlkY2Q3NDE4MTQ5NGNmMmMifQ"
+        },
+        {
+          "resource": "repo://lib/conversion/meta-capi.ts#L20-L59",
+          "version": "repo-lines-v1:sha256:7683403dd9d3787b4d08fcbef7bad7188498f79598cbb89c92d7c4317a6bfdd9:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUxYjhjOWY1NGIwNmNlN2FkNGFlZDZmMmJkM2VjMDZmODFmZjNkOWRkMjZlMzAzYmI4MmI3OTZmZDA4ZDE3ODYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVlZGRiOGJkYzQwNjE3MDQ5MGRjYTkyMjc2MGNlOTg5ZjFmNjkzMmE2NDFiN2JmZDgyYjA5NTE0NzY3NDY3N2IifQ"
+        },
+        {
+          "resource": "repo://tests/lib/conversion/meta-capi.test.ts#L18-L50",
+          "version": "repo-lines-v1:sha256:fa5d8b752e48f559d67f540036ca2c71fb0ef50de9081006bd0870c09cb5c016:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmMTVkNGU5ZDdmZmFkY2Y3NGFkOGUyODg1ZmY2MWNlZjZiMmQ5YTBjZWEzNDg3ZDQ0ZWU4MWI4OGRiYWI0YjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZmNzdlYmUwN2E0ZDczM2U1MmM5OWUwNTgxMTM0OTVmZTg3Y2Y5NWQyM2Y1MTE5NWRjMzVhNDE5ZGFkYWYwYmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwYzE1YzBjZjJmOGU0NmU3ZTk4Yzc0Y2U5ZDdmOTg1N2MxMDY1MzM4NDhhNzcwODkxZWI4ZTBlNzI4YjE2ZGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_68e4e14de0ae4e02be06491768697dae",
+      "statement": "Provider tokens are encrypted with AES-256-GCM under a single TRACKING_TOKEN_ENCRYPTION_KEY master key and stored as iv, auth tag and ciphertext plus the last four characters; decryption fails closed with a reason and never returns the raw error.",
+      "evidence": [
+        {
+          "resource": "repo://lib/conversion/token-crypto.ts#L1-L79",
+          "version": "repo-lines-v1:sha256:e2daa6a0ed853ac6593730d9b580f3f433ca6fdd822e64c608ecf51c1c92630d:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2c2c6123c2a3429baaccbfafd22d588c",
+      "statement": "The tracking settings actions require an active studio owner in application code, write provider configuration through the service-role client, refuse to store anything when encryption fails, keep the existing token when the field is blank, and clearing a token sets token_status to absent.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/tracking/actions.ts#L9-L120",
+          "version": "repo-lines-v1:sha256:bc1fc0b3dbd871feb6e06b75a0ec8b4f410297618a27861eeb3e6d5f8a9f908e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlOGU0MmUyZGQ4NDQ4MDFmNGQzNmY2Y2NmNjc1NTVkMjc4OWYwMTc3ZjBkZWM5ZGE5M2Y3N2Y5MGRmZDM4M2EwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5ZmYxYTJhYzM5NzkwNzE4YTA0ZjBhMWU3NDllOThjMjFkMzAzMmJmODA5ODVjNGYxZmIwMTAyM2Y1YWZiOWRhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_109efbb8806348cb8a8038c72959101c",
+      "statement": "The capability register records per-studio conversion tracking (0106/0107) as merged, applied and deployed but inert per studio because no studio has configured a provider token.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/capability-register.md#L196-L196",
+          "version": "repo-lines-v1:sha256:cd7319336d5c10b4ce787a49b1680f505b3ac88b009b6ce158d57f37340f913b:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2Q3MzE5MzM2ZDVjMTBiNGNlNzg3YTQ5YjE2ODBmNTA1YjNhYzg4YjAwOWI2Y2UxNThkNTdmMzczNDBmOTEzYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2Q3MzE5MzM2ZDVjMTBiNGNlNzg3YTQ5YjE2ODBmNTA1YjNhYzg4YjAwOWI2Y2UxNThkNTdmMzczNDBmOTEzYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTQwZDNjN2E0NzJjNGNkNzY2ZWZmNDRiMzNjMWM0NWM2NmZjZmIxNzkzNTAxZmVmZTFmOWZkZmUyOGI4NzllNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWFhMzI2ZTg5YjVlMzljNTU4OWQ1MTc0ZjFmZjZjZmM2NTgxNWZhNDEwMzM5NWM5MzRiMDAyMjRhZGE1YTNhYiJ9"
+        },
+        {
+          "resource": "repo://docs/production/current-state.md#L875-L876",
+          "version": "repo-lines-v1:sha256:396766a8685458494256e82357e96dbed92626be98012eb33fb97f6a53e7e637:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzEyNjgxYmU2ZTFjMWVkMmZlNmM2MmYzZDk1Y2YwMTVjNmU2NWZkMjRiNzRlMjEzNTg4ZTliNWNmNDNiMDU0YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTA5MDgyMjM4NTcxYzEzMTgyMzcxMzRjMDY3MjJmOWNkNTMyN2RjNGFhNWFkMGVjOTA4MDhlY2EzZmY0YzllMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGVhOWU2MmEyZDc2ZGJhMTMwMWQ2ZjMyZmZjZTc1YTMwOGNmYjY5ZWU5NGFmYTQ0NjA4OWEwNWVhODY2M2MyMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWFhMzI2ZTg5YjVlMzljNTU4OWQ1MTc0ZjFmZjZjZmM2NTgxNWZhNDEwMzM5NWM5MzRiMDAyMjRhZGE1YTNhYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_9c1ab83c141d4725a5b1b51135c42cf0",
+      "statement": "The meta-capi module header still says it is not wired into the booking flow, although the public booking action now imports and calls dispatchBookingConversion.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L75-L75",
+          "version": "repo-lines-v1:sha256:a39d2ef0749c488ca0e019d1908627b4160b922a5a90d20d256fad05b8082bd1:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTM5ZDJlZjA3NDljNDg4Y2EwZTAxOWQxOTA4NjI3YjQxNjBiOTIyYTVhOTBkMjBkMjU2ZmFkMDViODA4MmJkMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTM5ZDJlZjA3NDljNDg4Y2EwZTAxOWQxOTA4NjI3YjQxNjBiOTIyYTVhOTBkMjBkMjU2ZmFkMDViODA4MmJkMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYmRlZmZkNzRlNDdjMzUyYzc1MzVkMmNmYTQzMWVjYTc4Y2VjZThmMDMxMTkzNDA1ZmZlZTliNjYxMmE0OGVjOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjgyZGQ3NTVkZjk4M2ZiZTkxMDc2YjEzMTE4MjRmNjJjMmZjZjdiZjI4OGY5NzA0MGIwMjhkMzcxODM4OWFiZSJ9"
+        },
+        {
+          "resource": "repo://lib/conversion/meta-capi.ts#L4-L9",
+          "version": "repo-lines-v1:sha256:13378f9e6185c30503ab9bc720fb5d9d70bf278e1070710b5a6b4397b22be49c:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWE0YTRhYzEzNzJkODg3YmVhMTMyYzljMTA5ZGQ3MTkyMWRkNjFhNTNjNTVjZGIyNmJhYjI2Y2Q1MGY4M2JmNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZThhYzYwODUzYzllMDU0MDU1ZGFjMTk5NGIwYWE4YzIwOWZhY2Y2MmE5ZjRlY2FjMGViMDRiZDRmOTk5NjY4MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDJiYTZiYWIxYmM1YjI0NGVhMDhjNTRiMjIzNTkxNWVlNThjYzFhNjI5Y2I0MmNjY2U4NzIwZTM5YmE2YzFhMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDQ1N2U0ZjhkNWNjZTdiMDhlNjdjZDhmYzE1Y2I4ODBmYjg3NzM4NDc2OWIwZjA1YjVkNmU0ZGI5MTQ3MzUxZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_cdd876b70f464960816d8bec372519e8",
+      "statement": "The 0107 migration header says it is not applied to production in its PR, while the capability register records 0106/0107 as applied.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/capability-register.md#L196-L196",
+          "version": "repo-lines-v1:sha256:cd7319336d5c10b4ce787a49b1680f505b3ac88b009b6ce158d57f37340f913b:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2Q3MzE5MzM2ZDVjMTBiNGNlNzg3YTQ5YjE2ODBmNTA1YjNhYzg4YjAwOWI2Y2UxNThkNTdmMzczNDBmOTEzYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2Q3MzE5MzM2ZDVjMTBiNGNlNzg3YTQ5YjE2ODBmNTA1YjNhYzg4YjAwOWI2Y2UxNThkNTdmMzczNDBmOTEzYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTQwZDNjN2E0NzJjNGNkNzY2ZWZmNDRiMzNjMWM0NWM2NmZjZmIxNzkzNTAxZmVmZTFmOWZkZmUyOGI4NzllNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWFhMzI2ZTg5YjVlMzljNTU4OWQ1MTc0ZjFmZjZjZmM2NTgxNWZhNDEwMzM5NWM5MzRiMDAyMjRhZGE1YTNhYiJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0107_studio_tracking_encrypted_token.sql#L9-L10",
+          "version": "repo-lines-v1:sha256:434a3815b62a817ec4ae3c0d8a912ad9cd5011815267cf9a251d2352d60121e0:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDVlMzFlMDEzMTM5ODcwZTM2YTQyMTQ5OGZmOGVhMWU3NjI0MWQ4NDJhYjMzZjVkOGU4YTkwMjA3NmU1Nzc0ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDAwNWI3MmU0OWQ0OWI0OGJmNWJlMTVmYzc4NjczYzRlYjIzYzg3OGQxMzZhMmYyMmUyZjM4OGU3MGQ4YmEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGQyYjAyMDdjMDIyZWM3NjlmMzMxMjI5MTUzNzkxNzlmODgwZDFiNDRhY2JhYmM0MDQ2NDA5OTI0NzQ4OTM5YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWMyNDg1ODQxZTdjOTBhZGYxZDAyYjdiNmRjZTg1ODdjYjBjZDkyMWU5NzZmNzM0ZDNjNzllZGUxZWU3NjAzZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_f71495dd616143a4b600152d9c4bd61d",
+      "statement": "The studio member select policy on studio_tracking_providers is row-scoped only and no migration restricts its columns, so members can read the encrypted token ciphertext column added by 0107.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0106_studio_marketing_tracking.sql#L73-L80",
+          "version": "repo-lines-v1:sha256:b2659415faec2ccda6ae8f3aefad76ed9b0191a034618bb4a4277b8ee34ae985:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzBmMzZhMDY2NjU0ZmQ2ZmI2M2ZlZTA5NjlmY2Q0NDQxYzYyZTk0YzAzZmUzM2QxM2VmMjE0NzY5MTQ2NWViZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODkxYTNhZTg0YTk2MjVhNDlhYjg3MDY2N2M1NjRjZjY0ZDRjZGRiOWI2OWIwNTJjYjJkNjFjYWMxMTE4ZGMzOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzQ0NWFmNmQ2ZTBiM2MxOTgwNjA4OTEzNTY1OTdlODgwMjRhMDUwYzAzNTM0N2E3MWVmMjUyZmY0ZDM5NDFmYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTE2ZWQ3NDViY2IyZmIxOWEwNjM4MGZiZTQ2ZjY0YTgxOGYwOTc3MDQ1YWNhY2JiNzE4MDMyODhiMjQ2MGM2YyJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0107_studio_tracking_encrypted_token.sql#L12-L17",
+          "version": "repo-lines-v1:sha256:ccead3d29414dde9677c3ad2f58c1c4dd353bec199025701089648ccdeb74d2c:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDliZGI0NDA0OTNmNTBjOGEwNGVjNjA3NWUzM2NkMzRhNjI5MmRkMjA1OWZiOGY5ODhhNDk5NTY2MmQ1MzUwYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODQ0MzFkZDBkOGNjZmI2N2U0MDhlMjkzNTZjNjIzYjcwNzMxYzY0NmY5OWMwODA3NTg3Y2EwZjJlODAyMjAwZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiM2IzZmE3YTk4ZTM2YTZjNGFlOWZiMTNkNzlhNDA5MmU4YzA2NTM4MjUxMDAwNWM1Y2MxZWMwMzk2YzlhODUwZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzBhNGNiMmUxNjgxN2FmOTY1YzY1MDE0ZTdjNWJjNjIzZGMwMjdmZmQ2YjA0NGExYzNlMjY3NzFlYzU5YzM5MCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5f8ec64fb5f640f8aff75740da329819",
+      "statement": "TRACKING_TOKEN_ENCRYPTION_KEY is read by the token encryption module but is not listed in .env.local.example.",
+      "evidence": [
+        {
+          "resource": "repo://.env.local.example",
+          "version": "repo-file-v1:sha256:39f54fced2e1b323ed3022b3ea3576e98496d6d30063a273533931d2122db1a0"
+        },
+        {
+          "resource": "repo://lib/conversion/token-crypto.ts#L18-L30",
+          "version": "repo-lines-v1:sha256:a4d743f31f49818bf9e6f6c7bd4da9486580c8eda49aea50a784c5b5faf2e79c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMwNGVlNzRkZTllNjdmYTMwNGU1ZjVjZDhhNzY1MmVhZGI1YTcxZjE1NTE3NDA4ODA2N2Y0MjUyOWU5NWViMmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ1NzVkMGIyMjI3ZTY1OThiNDdmY2MwYzA3OTlmZjRjNWU1YzZjMzE1M2FmMzE3ZTM1ZjM2OWZhYmU0NzNmZTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU3OWQ2NjZiZDcyNjMyMWNlZDA0NzVhMzFhN2EzOGUxNDZmYWQ0NzRhY2U5ZmFjNDZkMjg3YTg0MzE1MGFiNmQifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T22:34:57.394Z"
+  }
+}
