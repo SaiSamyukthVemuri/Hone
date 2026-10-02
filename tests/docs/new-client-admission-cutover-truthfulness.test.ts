@@ -83,10 +83,19 @@ const WITHDRAWN =
   /earlier revision|withdrawn|NO LONGER TRUE|previously (read|said)|superseded/i;
 
 // ── Class 1 ────────────────────────────────────────────────────────────────────
+// WIDENED after review found the first version too narrow: it matched three literal
+// durable-allowlist phrasings and missed "Clearing the env var is the entire kill
+// switch" entirely, which is the same false instruction in different words. A matcher
+// built from the phrasings I remembered writing is the same mistake as a sweep built
+// that way, so this now keys on the ACTION (clearing/removing/emptying an env var or
+// list) and on the kill-switch framing, not on any one sentence.
 const ROLLBACK_CLAIMS: readonly RegExp[] = [
-  /clearing the (?:durable )?(?:allowlist|variable|list)/gi,
-  /empt(?:y|ying) (?:the )?durable allowlist/gi,
+  /clear(?:ing|s)? (?:the )?(?:durable )?(?:allowlist|variable|env var|list|slug list)/gi,
+  /remov(?:e|ing) (?:the )?(?:studio )?(?:from the )?(?:durable )?(?:allowlist|slug list)/gi,
+  /empt(?:y|ying) (?:the )?(?:durable )?allowlist/gi,
   /An empty durable allowlist/gi,
+  /(?:entire|whole) kill switch/gi,
+  /kill switch is (?:clearing|removing|the env)/gi,
 ];
 
 const CUTOVER_SCOPED =

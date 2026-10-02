@@ -1076,6 +1076,12 @@ describe("no studio is enabled at merge time", () => {
       // Stage B1. Pins that the deploy-time report still names the variable,
       // and that it describes the configured list rather than adjudicating it.
       "tests/app/privacy/waitlist-prospect-disclosure.test.ts",
+      // The cutover truthfulness guard. It names the variable because its whole job
+      // is to catch canonical prose claiming that CLEARING this variable can move an
+      // already-cut-over studio off the durable commit point - which it cannot, since
+      // newClientWaitlistCommitIsDurable answers the cut-over check before it ever
+      // reads this list. A deliberate entry, not a drifted one.
+      "tests/docs/new-client-admission-cutover-truthfulness.test.ts",
       "tests/scripts/check-production-env-gates.test.ts",
     ]);
   });

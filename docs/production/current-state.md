@@ -629,7 +629,7 @@ accepting brand-new consultations, because each new client consumes capacity alr
   *(verified 2026-08-23)*.
 - **The commit point is the studio notification email, not a database row.** Under WAIT-01 a
   waitlist request is delivered; it is not stored.
-- Default OFF, exact-slug match only. Clearing the env var is the entire kill switch.
+- Default OFF, exact-slug match only. Clearing the env var is the entire kill switch. ⚠️ **THAT WAS TRUE WHILE EVERY WAITLISTED STUDIO SAT ON THE LEGACY BRIDGE, AND IS NOT TRUE OF A CUT-OVER STUDIO.** Since 2026-10-01T21:35:33.139540Z Willow's mode is **persisted**, and the admission reader answers a stamped row before the env bridge is consulted — so clearing the env var does **not** switch new-client admission off at a cut-over studio, and `newClientWaitlistCommitIsDurable` likewise returns true at its cut-over check before reading the durable list. **The switch for a cut-over studio is a row write through `set_new_client_admission_mode`, not an env edit.**
 - Release record: [releases/2026-08-19-willow-new-client-waitlist.md](./releases/2026-08-19-willow-new-client-waitlist.md).
 
 ### WAIT-02B Stage A — the durable waitlist. ACTIVATED and collecting at every measured instant (2026-08-25 – 2026-09-15).
