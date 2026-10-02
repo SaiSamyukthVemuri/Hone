@@ -377,10 +377,25 @@ export async function loadPublicSlotsByDate(
 
     const dayStart = utcInstantFromLocal(dateStr, "00:00", tz).getTime();
     const dayEnd = dayStart + 36 * 3600 * 1000;
+    // THE SAME WIDENED BOUND AS THE QUERY, and it has to be stated twice because
+    // this is a SECOND window: the query loads the whole horizon, then each date
+    // re-filters that set down to its own day. Testing the raw `ends_at` here
+    // dropped the previous day's appointment again, buffer and all, however wide
+    // the query had been — so the horizon path kept offering local midnight even
+    // with the read repaired. One helper, both windows.
+    const dayReservationStart = reservationWindowStartUtc(
+      new Date(dayStart),
+      buffer,
+    ).getTime();
     const dayReservations = reservations.filter((r) => {
       const s = Date.parse(r.starts_at);
       const e = Date.parse(r.ends_at);
-      return Number.isFinite(s) && Number.isFinite(e) && s < dayEnd && e > dayStart;
+      return (
+        Number.isFinite(s) &&
+        Number.isFinite(e) &&
+        s < dayEnd &&
+        e > dayReservationStart
+      );
     });
 
     // The same past-time guard the single-date action applies, so the two
