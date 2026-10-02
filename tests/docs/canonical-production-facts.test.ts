@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { currentProse, ignoreMarkers, matchAll } from "./helpers/canonical-facts";
 
@@ -1345,6 +1346,52 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       `current-state must not assert that ${durableFlag}'s VALUE was read. Activation is ` +
         `established from committed rows, not from configuration.`,
     ).not.toMatch(new RegExp(`${durableFlag}[\\s\\S]{0,80}\\bvalue (?:was |is )?read\\b`, "i"));
+  });
+});
+
+const APPLY_HISTORY_ENTRIES = 12;
+const APPLY_HISTORY_DIGEST =
+  "333c14c803941404526653997585dd4e7cca10d99aad875abfb07ed74a495f6b";
+
+describe("canonical production docs: the apply history is append-only", () => {
+  /**
+   * HISTORICAL APPLY RECORDS ARE NOT REWRITTEN -- and until now nothing enforced it.
+   *
+   * CLAUDE.md states the rule, `hosted_note` carries a "PREVIOUS ENTRY, PRESERVED"
+   * boundary by convention, and `$comment` accumulates one dated entry per apply.
+   * No test read any of it. #779 Codex P2 found that out the hard way: I appended an
+   * evidence correction, wrote that the superseded entry "is asserted byte-identical
+   * programmatically", and what I actually had was a one-time check inside the script
+   * that performed the edit. A transient verification described as a standing
+   * guarantee is worse than no guarantee, because it stops anyone looking.
+   *
+   * So the prefix is pinned the same way the execution record is: entries may be
+   * ADDED, never edited or removed. Advance ENTRIES and DIGEST together, and only
+   * when a genuinely new apply record is appended.
+   */
+  const comments = CANONICAL_RECORD["$comment"] as unknown;
+
+  it("$comment is an array of dated entries, not a single blob", () => {
+    expect(Array.isArray(comments)).toBe(true);
+  });
+
+  it("entries may be APPENDED, never removed", () => {
+    expect(
+      (comments as string[]).length,
+      "the apply history may only grow: an entry was removed",
+    ).toBeGreaterThanOrEqual(APPLY_HISTORY_ENTRIES);
+  });
+
+  it("no existing entry may be rewritten", () => {
+    const prefix = (comments as string[]).slice(0, APPLY_HISTORY_ENTRIES);
+    expect(
+      createHash("sha256")
+        .update(JSON.stringify(prefix))
+        .digest("hex"),
+      "a recorded apply entry was edited. Historical records are not rewritten -- " +
+        "append a dated correction entry instead, as entry [9] and entry [11] do, " +
+        "and advance APPLY_HISTORY_ENTRIES with the new DIGEST in the same commit",
+    ).toBe(APPLY_HISTORY_DIGEST);
   });
 });
 
