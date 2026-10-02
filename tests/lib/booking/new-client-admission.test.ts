@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
@@ -560,88 +561,157 @@ describe("the activation document matches what the source actually does", () => 
     // the legacy durable list. So the old wording promised a commit-point rollback
     // that does not exist, and pinning it here kept that promise alive.
     //
-    // What is pinned now is the corrected split: the MODE can be changed by the
-    // command, the COMMIT POINT cannot be restored at all, and the old claim is
-    // named as withdrawn so it cannot quietly return.
-    // BOUND THE SECTION, AND PROVE EACH BOUNDARY WAS FOUND. `indexOf` returning
-    // -1 would make `slice` silently return nearly the whole string, so an
-    // assertion below could pass against prose it was never meant to read.
-    const rollbackStart = DOC.indexOf("## Rollback");
-    const rollbackEnd = DOC.indexOf("## What this plan");
-    expect(rollbackStart, "the Rollback heading must exist").toBeGreaterThan(-1);
-    expect(rollbackEnd, "the section after Rollback must exist").toBeGreaterThan(
-      rollbackStart,
-    );
-    const rollback = DOC.slice(rollbackStart, rollbackEnd);
+    // What is pinned now is the DECLARED STATUS of each claim, not the shape of
+    // the prose around it. See the block below for why that changed.
+    // ─── DECLARED CLAIM STATUS, NOT PARSED PROSE ────────────────────────────
+    //
+    // Three review rounds killed three successive prose pins here, always for
+    // the same reason: a token check cannot establish what a sentence MEANS,
+    // because adjacent prose reverses it. Measured, not assumed -- at the
+    // previous head BOTH of these passed 47/47 while reviving the retired
+    // promise:
+    //
+    //   "That is **withdrawn**. That withdrawal has been rescinded."
+    //   a second historical paragraph quoting the live table row's exact text
+    //
+    // So the document DECLARES each claim's status in a machine-readable marker
+    // -- the same idiom as the `<!-- canonical-facts:ignore-* -->` directives
+    // already used across docs/production -- and this test pins the declared
+    // field. Reviving the promise now requires flipping `value=withdrawn` to
+    // `value=active`: it fails here, and it is legible in the diff. Prose cannot
+    // do it.
+    //
+    // RESIDUAL, stated rather than hidden: a marker could drift from the prose
+    // it governs. The coupling assertions bound that -- one canonical statement,
+    // marker sitting on it -- but nothing here reads meaning, and nothing here
+    // claims to.
+    const CLAIM_RE =
+      /<!--\s*claim-status\s+id=([a-z0-9-]+)\s+value=([a-z-]+)(?:\s[\s\S]*?)?-->/g;
+    const claims = new Map<string, string>();
+    const dupes: string[] = [];
+    for (let m = CLAIM_RE.exec(DOC); m; m = CLAIM_RE.exec(DOC)) {
+      if (claims.has(m[1])) dupes.push(m[1]);
+      claims.set(m[1], m[2]);
+    }
+    // A MALFORMED MARKER MUST FAIL, NOT VANISH. A typo in `value=` would simply
+    // not match the pattern, leaving the claim silently unpinned -- so the raw
+    // occurrence count is reconciled against the parsed count.
+    expect(
+      (DOC.match(/claim-status/g) ?? []).length,
+      "every claim-status marker must parse; a malformed one must fail, not disappear",
+    ).toBe(claims.size + dupes.length);
+    // No shadowing: a second marker for an id would otherwise decide the claim
+    // by document order.
+    expect(dupes, "each claim id must be declared exactly once").toEqual([]);
+    // A closed registry, so a new claim cannot appear unregistered here.
+    expect([...claims.keys()].sort(), "the declared claim registry").toEqual([
+      "commit-point-rollback-supported",
+      "commit-point-rollback-via-mode-write",
+    ]);
+    // A closed value domain, so `value=rescinded` fails rather than being read
+    // as neither active nor withdrawn.
+    for (const [id, value] of claims) {
+      expect(["active", "withdrawn"], `claim ${id} has a known status`).toContain(
+        value,
+      );
+    }
+    // THE TWO CLAIMS THIS CHANGE EXISTS TO HOLD.
+    expect(
+      claims.get("commit-point-rollback-supported"),
+      "the no-mechanism rule is CURRENT guidance",
+    ).toBe("active");
+    expect(
+      claims.get("commit-point-rollback-via-mode-write"),
+      "the mode-write-as-rollback promise is RETIRED",
+    ).toBe("withdrawn");
 
-    // THE WITHDRAWAL PARAGRAPH IS HISTORICAL, SO EXCISE IT BEFORE ASSERTING ON
-    // ACTIVE GUIDANCE. Otherwise a sentence that is explicitly retired can
-    // satisfy a pin whose whole purpose is to prove the guidance is LIVE: delete
-    // the real table row, quote the same phrase inside the withdrawal paragraph,
-    // and a section-wide `toContain` stays green while an operator reading the
-    // section is told the no-mechanism rule was withdrawn.
+    // ─── COUPLING: ONE CANONICAL STATEMENT, MARKER SITTING ON IT ────────────
+    // `exactly once` is what makes a statement canonical, and it defeats both
+    // halves of the previous head's exploit: keep the live row and quote it
+    // elsewhere, the count is 2; delete the live row and quote it elsewhere, the
+    // marker no longer governs anything.
+    const NO_ROW =
+      "| **COMMIT POINT** — returning a studio to WAIT-01 **email-only** intake | " +
+      "**NO — not supported by any existing mechanism for a cut-over studio.** |";
+    expect(
+      DOC.split(NO_ROW).length - 1,
+      "the commit-point verdict must be stated exactly once",
+    ).toBe(1);
+    const activeMarker = DOC.indexOf(
+      "<!-- claim-status id=commit-point-rollback-supported",
+    );
+    expect(activeMarker, "the active marker must exist").toBeGreaterThan(-1);
+    const noRowAt = DOC.indexOf(NO_ROW);
+    expect(noRowAt, "and must precede the row it governs").toBeGreaterThan(
+      activeMarker,
+    );
+    expect(
+      DOC.slice(DOC.indexOf("-->", activeMarker) + 3, noRowAt)
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !l.startsWith("|")),
+      "only the table may separate the marker from the row it governs",
+    ).toEqual([]);
+
+    // The retired promise, likewise stated once, with its marker immediately
+    // above the paragraph that retires it.
     const WITHDRAWAL_ANCHOR =
       "**Do not describe a mode transition as a commit-point rollback.**";
-    const wStart = rollback.indexOf(WITHDRAWAL_ANCHOR);
+    const RETIRED = "set_new_client_admission_mode(<studio>, 'waitlist')";
     expect(
-      wStart,
-      "the Rollback section must carry the prospective warning",
-    ).toBeGreaterThan(-1);
-    const wEnd = rollback.indexOf("\n\n", wStart);
-    expect(wEnd, "the withdrawal paragraph must terminate").toBeGreaterThan(
-      wStart,
-    );
-    const withdrawal = rollback.slice(wStart, wEnd);
-    const active = rollback.slice(0, wStart) + rollback.slice(wEnd);
-    // The excision is itself asserted: if it silently failed, `active` would
-    // still hold the retired prose and every pin below would be worth less than
-    // it looks.
-    expect(
-      active,
-      "the historical paragraph must be excised from the active guidance",
-    ).not.toContain(WITHDRAWAL_ANCHOR);
+      DOC.split(RETIRED).length - 1,
+      "the retired promise must be quoted exactly once, as history",
+    ).toBe(1);
 
-    // ACTIVE GUIDANCE. Each of these must survive with the retired paragraph cut
-    // out, which is what makes it current instruction rather than a record of a
-    // claim that used to be made.
+    // ─── THE WITHDRAWAL PARAGRAPH IS A FROZEN RECORD ────────────────────────
+    // A declared marker stops prose REVERSING the status. It does not stop prose
+    // CONTRADICTING it: at the previous head, appending "That withdrawal has been
+    // rescinded." to this paragraph passed every check while reviving the retired
+    // promise in the text an operator actually reads.
+    //
+    // A withdrawn claim is history, and history in this repo is frozen by bytes --
+    // the same idiom as the ledger's sha256 pins and 0204's APPLIED_SHA256. So the
+    // paragraph is pinned whole. Rewording it fails on purpose: an operator-facing
+    // record of a retracted promise is not something to edit in passing, and a
+    // genuine revision should arrive with a new hash and a reviewer looking at it.
+    const paraStart = DOC.indexOf(WITHDRAWAL_ANCHOR);
+    const paraEnd = DOC.indexOf("\n\n", paraStart);
+    expect(paraEnd, "the withdrawal paragraph must terminate").toBeGreaterThan(
+      paraStart,
+    );
     expect(
-      active,
+      createHash("sha256").update(DOC.slice(paraStart, paraEnd)).digest("hex"),
+      "the withdrawal record is frozen; a reworded or extended paragraph must fail here",
+    ).toBe("725dd684e04bfcf36af21504c24cab979d33b86c65a2ec6c4676281836b3069a");
+    const withdrawnMarker = DOC.indexOf(
+      "<!-- claim-status id=commit-point-rollback-via-mode-write",
+    );
+    expect(withdrawnMarker, "the withdrawal marker must exist").toBeGreaterThan(
+      -1,
+    );
+    const warningAt = DOC.indexOf(WITHDRAWAL_ANCHOR);
+    expect(
+      warningAt,
+      "the prospective warning must follow its marker",
+    ).toBeGreaterThan(withdrawnMarker);
+    expect(
+      DOC.slice(DOC.indexOf("-->", withdrawnMarker) + 3, warningAt).trim(),
+      "the withdrawal marker must sit immediately above the warning it declares",
+    ).toBe("");
+
+    // ─── DELETION GUARDS ONLY ───────────────────────────────────────────────
+    // These prove the prose EXISTS. The markers above are what prove its STATUS.
+    // Labelled, so no future reader mistakes a presence check for a proof of
+    // meaning -- the mistake that cost this test three rounds.
+    expect(
+      DOC,
       "the live table must say the MODE can be changed, and by whom",
     ).toContain(
       "**YES**, through `set_new_client_admission_mode`, by the studio's owner.",
     );
-    expect(
-      active,
-      "the live table must say nothing restores WAIT-01 email-only for a cut-over studio",
-    ).toContain(
-      "**NO — not supported by any existing mechanism for a cut-over studio.**",
-    );
-    expect(active, "and that the env list is not a route to it").toContain(
+    expect(DOC, "and that the env list is not a route to it").toContain(
       "the env list cannot do it",
     );
-    // THE WITHDRAWAL MUST NAME WHAT IT WITHDRAWS, not merely warn prospectively.
-    // An earlier version of this assertion pinned only the general warning, so
-    // deleting the paragraph that identifies the retired promise would have left
-    // this test green while the record of it vanished -- a vacuity introduced in
-    // the act of repairing one. Pin the quoted old claim AND its withdrawal, in
-    // one bounded passage, so neither can be removed without failing here.
-    expect(
-      withdrawal,
-      "and must quote the retired promise it is withdrawing",
-    ).toContain("set_new_client_admission_mode(<studio>, 'waitlist')");
-    // A POSITIVE WITHDRAWAL CLAUSE, NOT THE BARE TOKEN. `/withdrawn/` alone was
-    // satisfied by "That is **not withdrawn**" -- wording that REVIVES the
-    // retired promise while leaving the quoted claim and the warning untouched,
-    // so all three pins stayed green on prose asserting the opposite of what
-    // they exist to assert.
-    expect(
-      withdrawal,
-      "and must mark that quoted claim withdrawn, in the positive",
-    ).toContain("That is **withdrawn**.");
-    expect(
-      withdrawal,
-      "and must not negate the withdrawal it just made",
-    ).not.toMatch(/not\s+(?:\*\*)?withdrawn/i);
 
     // The behavioural half of the same claim: with the slug listed, a stamped
     // `open` stays open, so an env-only rollback genuinely cannot restore it.
