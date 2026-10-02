@@ -134,45 +134,63 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     expect(CODE).not.toMatch(/add column[^;]*new_client_admission_mode_set_at/);
   });
 
-  it("no operator-facing claim is ABSOLUTE about rows keeping set_at NULL", () => {
-    // THE THIRD DOCUMENTATION-ACCURACY FINDING ON THIS FILE, pinned so there is
-    // not a fourth. The no-backfill paragraph said "every pre-fix studio keeps
-    // `set_at` NULL" and that the fix is not "an UPDATE". Both are true of the
-    // DEFAULT and false of the MIGRATION, which stamps a row created between the
-    // census and the apply - the whole purpose of section 3.
+  it("the LIVE backfill claim contains no universal about rows keeping set_at NULL", () => {
+    // THIS ASSERTION HAS NOW BEEN WRONG TWICE, in opposite directions, and the
+    // marker-delimited region is what fixes both at once.
     //
-    // My own sweep missed it because I grepped the phrasings I remembered
-    // writing ("only write", "only DML") rather than the CLAIM. So this asserts
-    // the claim's shape, not a phrase: an unqualified universal about pre-fix or
-    // existing rows keeping NULL must not appear, and the scoped version must.
-    const prose = SQL.split("\n")
-      .filter((l) => l.trimStart().startsWith("--"))
+    //   v1 greped the whole header for the retired wording and FAILED on the
+    //      migration's own sentence QUOTING it. A false failure.
+    //   v2 dropped the negatives and asserted only that the scoped sentences
+    //      were PRESENT - which passes with the universal claim reintroduced
+    //      alongside them. Proved by mutation: all 28 tests passed with
+    //      "every pre-fix studio keeps `set_at` NULL" put back. No failure at
+    //      all, which is worse than a false one.
+    //
+    // The ambiguity was never resolvable by a cleverer regex: a grep cannot tell
+    // a retired claim being quoted from one being asserted. So the migration
+    // delimits its LIVE claim and keeps history outside, and this reads only
+    // what is inside. Now both halves are enforceable on the same text.
+    const region =
+      /-- >>> 0205 BACKFILL CLAIM BEGIN\n([\s\S]*?)-- <<< 0205 BACKFILL CLAIM END/.exec(SQL);
+    expect(region, "the live backfill claim is no longer delimited").toBeTruthy();
+    const live = region![1]
+      .split("\n")
       .map((l) => l.replace(/^\s*--\s?/, ""))
       .join(" ")
       .replace(/\s+/g, " ");
 
-    // ASSERTED POSITIVELY ONLY, and that is the second lesson here rather than
-    // an omission. A first version added negative greps for the retired wording
-    // and failed on the migration's own sentence QUOTING it - "an earlier
-    // revision of this paragraph said ...". A regex cannot tell a quotation from
-    // an assertion, which is exactly how the lock-claim test in this same file
-    // failed earlier. Absence of a phrase is the wrong thing to pin when the
-    // file legitimately records what it used to say.
-    //
-    // So what is pinned is that the SCOPED claim is present, in both directions.
-    // Deleting the paragraph instead of correcting it fails this; restoring the
-    // absolute version without the scope fails it too, because the scope is what
-    // the assertions name.
-    expect(prose, "the scope must name who DOES keep set_at NULL").toMatch(
+    // NEGATIVE, and now safe to assert because quotations live outside.
+    expect(
+      live,
+      'the live claim may not say every pre-fix studio keeps set_at NULL: a window row does not',
+    ).not.toMatch(/every pre-fix studio keeps/i);
+    expect(
+      live,
+      "the live claim may not deny performing an UPDATE - the migration performs two",
+    ).not.toMatch(/or as an UPDATE/i);
+    expect(
+      live,
+      "no universal over ALL existing rows keeping NULL",
+    ).not.toMatch(/(every|all|each) existing (row|studio)s? keeps?/i);
+
+    // POSITIVE, so the region cannot be emptied to satisfy the negatives.
+    expect(live, "the no-backfill claim must be scoped to the DEFAULT").toMatch(
+      /THE DEFAULT ITSELF CANNOT BACKFILL/,
+    );
+    expect(live, "the scope must name who DOES keep set_at NULL").toMatch(
       /Census members and every other pre-0204 legacy row keep it/i,
     );
-    expect(prose, "and must name who does NOT").toMatch(
+    expect(live, "and who does NOT").toMatch(
       /created AFTER the census but BEFORE this apply does\s+NOT/i,
     );
+
+    // And the history must genuinely sit OUTSIDE, or the negatives above are
+    // only passing because the quotation was deleted rather than relocated.
+    const after = SQL.slice(SQL.indexOf("-- <<< 0205 BACKFILL CLAIM END"));
     expect(
-      prose,
-      "and the no-backfill claim must be scoped to the DEFAULT, not the migration",
-    ).toMatch(/THE DEFAULT ITSELF CANNOT BACKFILL/);
+      after,
+      "the retired wording must be preserved as history outside the policed region",
+    ).toMatch(/every pre-fix studio keeps/i);
   });
 
   it("the STATEMENT INVENTORY names both updates, because it has been wrong twice", () => {
