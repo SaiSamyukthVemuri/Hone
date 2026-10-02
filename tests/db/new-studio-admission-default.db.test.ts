@@ -21,9 +21,10 @@ import { adminQuery, asUser, seedStudio, type SeededStudio } from "@/tests/db/he
 // WHY THESE ASSERTIONS LIVE AGAINST A REAL DATABASE. The fix is a column
 // DEFAULT, and a default is only observable on an actual INSERT. The source
 // contract in tests/migrations/0205-new-studio-admission-default.test.ts proves
-// the SHAPE of the migration — one default, two comments, zero DML — and
-// deliberately proves nothing about behaviour, because SQL text is not a
-// running database. This file is the other half.
+// the SHAPE of the migration — one default, two comments, and ONE BOUNDED
+// `update public.studios` — and deliberately proves nothing about behaviour,
+// because SQL text is not a running database. This file is the other half, and
+// it is where the repair's actual effect on rows is established.
 //
 // THE DEFAULT IS EXERCISED, NOT DESCRIBED. `seedStudio` inserts
 // `(id, name, owner_email)` and names no admission field at all, which is
@@ -98,15 +99,21 @@ describe("0205: a studio created now is SYSTEM-INITIALIZED, not legacy", () => {
   });
 });
 
-describe("0205 does NOT backfill, and an explicit NULL still means legacy", () => {
+describe("the DEFAULT cannot backfill, and an explicit NULL still means legacy", () => {
   it("an insert that explicitly names set_at NULL keeps NULL", async () => {
-    // THE MECHANISM THAT PROTECTS EVERY PRE-FIX ROW. A column default applies
-    // only when the INSERT omits the column; it never overrides a value the
-    // insert supplies, and `ALTER COLUMN SET DEFAULT` never rewrites a row that
-    // already exists. This is why the production census could find five
-    // legitimately-NULL legacy studios and this migration could leave all five
-    // alone — including the one deliberately-persisted WAITLIST studio, which
-    // carries its own owner stamp and no DML in this migration can reach.
+    // WHAT THE DEFAULT ALONE CANNOT DO. A column default applies only when the
+    // INSERT omits the column; it never overrides a value the insert supplies,
+    // and `ALTER COLUMN SET DEFAULT` never rewrites a row that already exists.
+    // So the default cannot reach a pre-existing row, which is why the five
+    // legitimately-NULL legacy studios the census found keep their NULL.
+    //
+    // THE DEFAULT IS NOT THE WHOLE MIGRATION ANY MORE, and this comment used to
+    // read as though it were — it claimed "no DML in this migration can reach"
+    // the owner-stamped WAITLIST studio, which stopped being true when the
+    // census-to-apply repair was added. The repair DOES write rows. What keeps
+    // that studio and the five legacy rows out of its way is its PREDICATE and
+    // its BOUNDARY, not an absence of DML, and those are proved by the window
+    // blocks below rather than asserted here.
     const id = randomUUID();
     await adminQuery(
       `insert into public.studios
@@ -260,14 +267,25 @@ describe("D. the legacy transition guard is UNCHANGED for genuinely unstamped ro
 
 describe("G. an owner-stamped WAITLIST studio is untouched by any of this", () => {
   // The production studio deliberately persisted at WAITLIST must remain
-  // byte-for-byte unchanged. Two facts carry that, and neither is a grep:
+  // byte-for-byte unchanged.
   //
-  //   1. 0205 contains ZERO DML — asserted in the migration's source contract,
-  //      so no row anywhere can be rewritten by the apply;
-  //   2. the default cannot reach an existing row at all, and an ordinary
-  //      studios UPDATE still does not disturb the admission fields.
+  // THIS BLOCK USED TO ARGUE THAT 0205 CONTAINS NO DML, WHICH IS NO LONGER
+  // TRUE: the census-to-apply repair performs a bounded UPDATE. The conclusion
+  // survives, but the reason had to be replaced, and the replacement is
+  // stronger because it is specific rather than global. Three facts carry it,
+  // and the apply is excluded by any ONE of them:
   //
-  // This exercises (2) on a local analogue of that studio.
+  //   1. the repair's predicate requires `new_client_admission_mode_set_by IS
+  //      NULL`, and that studio carries an owner stamp, so it is not selected;
+  //   2. its `created_at` is 2026-05-16, far BELOW the census boundary, so it is
+  //      out of the repair's window independently of (1);
+  //   3. the column default cannot reach an existing row at all, and an
+  //      ordinary studios UPDATE does not disturb the admission fields.
+  //
+  // (1) and (2) are each proved directly, on local analogues, by the
+  // out-of-window block above — an owner-stamped row above the boundary is left
+  // byte-for-byte alone, and a row at the boundary keeps its NULL. This block
+  // exercises (3).
   let studio: SeededStudio;
 
   beforeAll(async () => {

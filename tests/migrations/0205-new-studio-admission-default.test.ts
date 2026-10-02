@@ -19,8 +19,13 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 // WHAT THIS FILE PROVES, AND WHAT IT DELIBERATELY DOES NOT.
 //
 // This is the SOURCE CONTRACT: it reads the migration text and asserts the
-// shape of the change — one default, two comments, no DML, no logic edit. It
-// cannot prove behaviour, because SQL text is not a running database. The
+// shape of the change — one default, two comments, ONE BOUNDED `update
+// public.studios` and no other DML, and no logic edit. It cannot prove
+// behaviour, because SQL text is not a running database.
+//
+// An earlier revision of this header said "no DML", which was true until the
+// census-to-apply window repair was added and false afterwards. The claim is a
+// BOUND now, not an absence, and the assertions below enforce it as one. The
 // behavioural claims (a fresh insert is stamped, a fresh owner may choose any
 // mode immediately, a legacy row still cannot) are proved against a real
 // database in tests/db/new-studio-admission-default.db.test.ts, and the
@@ -194,12 +199,32 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     const block = REPAIR_BLOCK!;
     // Selection requires a NULL set_at, which the repair removes; and the write
     // re-checks the NULL under the row lock so a concurrent writer cannot be
-    // overwritten by a second run either.
-    expect(block).toMatch(/for update/);
+    // overwritten by a second run either. The re-check is the half that survives
+    // any change to the lock STRENGTH, which is pinned separately below.
+    expect(block).toMatch(/for no key update/);
     const update = /update public\.studios[\s\S]*?;/.exec(block)![0];
     expect(update, "the per-row write must re-check the NULL it is replacing").toMatch(
       /and s\.new_client_admission_mode_set_at is null/,
     );
+  });
+
+  it("takes FOR NO KEY UPDATE, never the stronger FOR UPDATE", () => {
+    // The write changes `set_at` only — no primary key, and no column any
+    // foreign key references — so the stronger lock buys nothing and costs
+    // something: FOR UPDATE conflicts with FOR KEY SHARE, which ordinary
+    // product traffic takes on `studios` through FKs (the waitlist exit's audit
+    // trigger reaches it on every entry UPDATE). FOR NO KEY UPDATE does not
+    // conflict with it, while still conflicting with FOR UPDATE, with another
+    // FOR NO KEY UPDATE and with a plain UPDATE of the same row — so
+    // serialization against a concurrent admission-mode writer is unchanged.
+    const block = REPAIR_BLOCK!;
+    expect(block).toMatch(/for no key update/);
+    // A bare `for update` must not reappear. Matched on a word boundary so the
+    // substring inside "for no key update" cannot satisfy it either way.
+    expect(
+      /\bfor\s+update\b/.test(block),
+      "the repair must not escalate back to FOR UPDATE",
+    ).toBe(false);
   });
 });
 

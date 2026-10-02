@@ -247,7 +247,26 @@ begin
        and s.new_client_admission_mode = 'open'
        and s.created_at > k_boundary
      order by s.id
-       for update
+       -- FOR NO KEY UPDATE, NOT FOR UPDATE.
+       --
+       -- The write below changes `new_client_admission_mode_set_at` only. It
+       -- touches no primary key and no column any foreign key references, so
+       -- the stronger lock buys nothing and costs something real.
+       --
+       -- WHAT IS PRESERVED. FOR NO KEY UPDATE still conflicts with FOR UPDATE,
+       -- with another FOR NO KEY UPDATE, and with an ordinary UPDATE of the same
+       -- row, so serialization against a concurrent admission-mode writer -- the
+       -- only writer this repair races -- is exactly as strong as before. The
+       -- per-row re-check of `set_at IS NULL` below holds under it unchanged.
+       --
+       -- WHAT IS NO LONGER BLOCKED, and why that matters here. FOR UPDATE
+       -- conflicts with FOR KEY SHARE; FOR NO KEY UPDATE does not. FOR KEY SHARE
+       -- on `studios` is taken by ordinary product traffic through foreign keys:
+       -- the waitlist exit's audit trigger reaches it on every entry UPDATE, and
+       -- tests/db/waitlist-exit-audit-trigger measures that schedule. Holding
+       -- FOR UPDATE across this loop would park that traffic behind a migration
+       -- that is not changing any key it depends on.
+       for no key update
   loop
     perform set_config('hone.admission_mode_studio_id', r.id::text, true);
     -- set_at = created_at, NOT now(): the row's admission authority was
