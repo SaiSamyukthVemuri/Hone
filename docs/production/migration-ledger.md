@@ -110,8 +110,11 @@ release-level summary.
 >   contemporaneous evidence of durable-list membership, and historical rows are not a
 >   substitute for it.
 > - **Step F is INCOMPLETE BY DESIGN.** Only Willow is cut over. The other **6** studios
->   remain stored `'open'` and **unstamped**, and are therefore still governed by the env
->   bridge. Until a studio is stamped its owner **cannot** select OPEN or CLOSED — the
+>   were read as stored `'open'` and **unstamped** on 2026-10-01, and are therefore still
+>   governed by the env bridge. **How many of them step F applies to is UNKNOWN**: it
+>   applies only to studios in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`, step E never read that
+>   list, and **unstamped does not mean listed** — stamping an unlisted studio `waitlist`
+>   would move a currently OPEN studio, which is not what this release set out to do. Until a studio is stamped its owner **cannot** select OPEN or CLOSED — the
 >   command answers `legacy_waitlist_cutover_required`, and writing `waitlist` is the way out.
 > - **Step H was NOT started. BOTH BRIDGES REMAIN INTACT** in the deployed tree:
 >   `envForcesWaitlist` in `lib/booking/new-client-admission.ts`, and
@@ -121,9 +124,11 @@ release-level summary.
 >   the join itself sends. The release touched **no** runtime Twilio/Verify/OTP/SMS code —
 >   the only matching paths in the whole diff are three **test** files.
 > - **The step-G synthetic entry was RETAINED, not removed.** `ff942ef2-…` sits in
->   Willow's **Waiting** queue at position **47 of 47** (ordered `joined_at` ASC, `id` ASC,
->   `SECTION_PAGE_SIZE` 100, so it is the last row on page one and visible without paging).
->   It carries a submitted phone number. **It is synthetic test data in a real operator's
+>   Willow's **Waiting** queue and, measured immediately after step G on **2026-10-01**,
+>   at position **47 of 47** (ordered `joined_at` ASC, `id` ASC, `SECTION_PAGE_SIZE` 100,
+>   so it was then the last row on page one). It carries a submitted phone number.
+>   ⚠️ **The position is a dated reading, not where the row is now** — any later join,
+>   removal or invitation moves it. **Locate it by id.** **It is synthetic test data in a real operator's
 >   queue** and should be removed before Willow operates that queue for real.
 
 ## Previous state (verified 2026-09-27, post-0203 apply; `0203` APPLIED, repo == hosted)
