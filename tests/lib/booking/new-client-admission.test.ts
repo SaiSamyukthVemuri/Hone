@@ -592,6 +592,15 @@ describe("the activation document matches what the source actually does", () => 
       withdrawal,
       "and must mark that quoted claim withdrawn",
     ).toMatch(/withdrawn/);
+    // AND THE ACTIVE GUIDANCE MUST BE IN THE SAME BOUNDED PASSAGE. A whole-document
+    // toContain would let the live statement live anywhere while the rollback
+    // section itself said nothing, which is how an operator reading only this
+    // section would be left without it.
+    const rollbackSection = rollback.slice(0, rollback.indexOf("## What this plan"));
+    expect(
+      rollbackSection,
+      "the Rollback section must state that nothing restores WAIT-01 email-only for a cut-over studio",
+    ).toContain("not supported by any existing mechanism for a cut-over studio");
 
     // The behavioural half of the same claim: with the slug listed, a stamped
     // `open` stays open, so an env-only rollback genuinely cannot restore it.
