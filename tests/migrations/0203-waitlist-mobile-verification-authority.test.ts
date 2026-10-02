@@ -77,26 +77,18 @@ describe("0203 takes the number it derived", () => {
     // take the equality. Leaving it here would go red on that apply, which is the
     // whole reason the claim travels.
     const state = migrationState();
-    // HOSTED still equals 0203: nothing has been applied since, and this PR
-    // applies nothing. The REPO has moved above it, because NEW-CLIENT-MODE-01
-    // authored 0204 - the authored-and-pending shape this block described as
-    // its own previous revision, now true again for one migration.
-    expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(false);
-    // DERIVED FROM HERE DOWN. `repo_migration_max`, the full pending list and
-    // the next free number all move on every allocation, so pinning them made
-    // this file red for migrations it says nothing about. What is durable is the
-    // RELATION: the repo has moved above hosted, 0204 is still pending, and
-    // everything pending is above this applied migration.
-    expect(Number(state.repo_migration_max)).toBeGreaterThan(Number(VERSION));
-    expect(state.pending_migrations, "0204 was authored above 0203").toContain("0204");
-    expect(
-      state.pending_migrations.every((v) => Number(v) > Number(VERSION)),
-      "something at or below an applied migration is listed as pending",
-    ).toBe(true);
-    expect(Number(state.next_free_migration)).toBeGreaterThan(
-      Number(state.repo_migration_max),
-    );
+    // NARROWED TO A FLOOR 2026-10-01, when 0204 was applied. The block above said
+    // equality is a current claim that exactly one file may hold, and that whoever
+    // applied 0204 had to move it; this is that move. 0203 now asserts only that
+    // hosted has not gone BACKWARDS past it -- which is what its own title claims --
+    // and 0204's test carries the equality.
+    //
+    // IT WENT RED BEFORE IT WAS MOVED, and the reason is worth recording: the
+    // docs-only risk classification skips the validate lane, so a migration-state
+    // change made inside a documentation commit was invisible to CI for eight pushes,
+    // until an unrelated new test file flipped the diff to `application`.
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
 

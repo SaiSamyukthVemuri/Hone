@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { migrationState } from "./helpers/migration-state";
+
+const VERSION = "0204";
+
+/** The sha256 of the bytes applied to production on 2026-10-01. */
+const APPLIED_SHA256 =
+  "186fa6cb3154c85d2987f1e75aeee6f7361004f1b535cc44a46a27f96b4db219";
 
 const SQL = readFileSync(
   path.resolve(__dirname, "../../supabase/migrations/0204_new_client_admission_mode.sql"),
@@ -23,6 +31,72 @@ const STATEMENTS = SQL.split("\n")
 // A live-database proof of the guard belongs in tests/db; this file pins the
 // structure that proof would exercise, so a reviewer can see the contract
 // without a database and a silent removal fails here first.
+
+describe("0204 is APPLIED, and holds the HOSTED equality claim", () => {
+  it("hosted equals 0204, and the repo has moved above it (migration-first pending)", () => {
+    // THE HOSTED EQUALITY STAYS HERE, and that is the half this file owns.
+    // Exactly one file may hold it; after the 2026-10-01 apply this is that
+    // file, and 0203 was narrowed to a floor in the same change. Nothing in
+    // this branch applies anything, so hosted is STILL 0204 and this claim is
+    // still exactly true. WHOEVER APPLIES 0205 MOVES IT: narrow 0204 to a floor
+    // and let the new head take the equality.
+    //
+    // WHAT CHANGED IS ONLY THE REPO SIDE. This block also pinned
+    // `repo_migration_max`, `repo_equals_hosted`, the whole pending list and the
+    // next free number to the PARITY shape — and a branch that authors the next
+    // migration is not at parity, it is at MIGRATION-FIRST PENDING, which is the
+    // ordinary pre-apply position rather than drift. Pinning parity made this
+    // file red for a migration it says nothing about, which is the "trip on the
+    // next one" pin CLAUDE.md s2 forbids and the eighteen-file sweep that took
+    // 0163, 0164 and 0165 red after push.
+    //
+    // So the repo side is asserted as the RELATION, which is durable in both
+    // shapes: hosted never exceeds repo, and everything pending sits above
+    // hosted. The exact pending suffix is proved centrally, against the derived
+    // state, by tests/docs/canonical-production-facts.test.ts.
+    const state = migrationState();
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(
+      Number(state.repo_migration_max),
+      "hosted must never exceed the repository: that is a remote-only migration",
+    ).toBeGreaterThanOrEqual(Number(state.hosted_migration_max));
+    expect(
+      state.pending_migrations.every((v) => Number(v) > Number(VERSION)),
+      "something at or below this applied migration is listed as pending",
+    ).toBe(true);
+    expect(
+      Number(state.next_free_migration),
+      "the next free number must sit above the repository maximum",
+    ).toBeGreaterThan(Number(state.repo_migration_max));
+  });
+
+  it("is recorded in the ledger's CURRENT block as APPLIED, under its full sha256", () => {
+    const ledger = readFileSync(
+      path.resolve(__dirname, "../../docs/production/migration-ledger.md"),
+      "utf8",
+    );
+    expect(ledger, "the ledger must carry 0204's COMPLETE sha256").toContain(APPLIED_SHA256);
+    // Section-anchored, exactly as 0198-0203 assert it: the match must sit between
+    // "## Current state" and the first "## Previous state", so a stale record in a
+    // preserved section can never satisfy it.
+    expect(ledger, "the ledger's current block must record 0204 as APPLIED").toMatch(
+      /## Current state(?:(?!## Previous state)[\s\S])*?0204_new_client_admission_mode\.sql`? \| \*\*APPLIED\*\*/,
+    );
+  });
+
+  it("the applied bytes are the authorized bytes", () => {
+    // An applied migration is FROZEN. If this fails, the file was edited after the
+    // apply: restore it and put any correction in a new forward migration.
+    const digest = createHash("sha256")
+      .update(
+        readFileSync(
+          path.resolve(__dirname, "../../supabase/migrations/0204_new_client_admission_mode.sql"),
+        ),
+      )
+      .digest("hex");
+    expect(digest).toBe(APPLIED_SHA256);
+  });
+});
 
 describe("the value set is closed by the DATABASE", () => {
   it("the column exists with a CHECK naming exactly the three modes", () => {
