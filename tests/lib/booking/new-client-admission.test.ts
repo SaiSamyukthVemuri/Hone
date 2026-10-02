@@ -563,44 +563,85 @@ describe("the activation document matches what the source actually does", () => 
     // What is pinned now is the corrected split: the MODE can be changed by the
     // command, the COMMIT POINT cannot be restored at all, and the old claim is
     // named as withdrawn so it cannot quietly return.
-    expect(DOC).toContain(
+    // BOUND THE SECTION, AND PROVE EACH BOUNDARY WAS FOUND. `indexOf` returning
+    // -1 would make `slice` silently return nearly the whole string, so an
+    // assertion below could pass against prose it was never meant to read.
+    const rollbackStart = DOC.indexOf("## Rollback");
+    const rollbackEnd = DOC.indexOf("## What this plan");
+    expect(rollbackStart, "the Rollback heading must exist").toBeGreaterThan(-1);
+    expect(rollbackEnd, "the section after Rollback must exist").toBeGreaterThan(
+      rollbackStart,
+    );
+    const rollback = DOC.slice(rollbackStart, rollbackEnd);
+
+    // THE WITHDRAWAL PARAGRAPH IS HISTORICAL, SO EXCISE IT BEFORE ASSERTING ON
+    // ACTIVE GUIDANCE. Otherwise a sentence that is explicitly retired can
+    // satisfy a pin whose whole purpose is to prove the guidance is LIVE: delete
+    // the real table row, quote the same phrase inside the withdrawal paragraph,
+    // and a section-wide `toContain` stays green while an operator reading the
+    // section is told the no-mechanism rule was withdrawn.
+    const WITHDRAWAL_ANCHOR =
+      "**Do not describe a mode transition as a commit-point rollback.**";
+    const wStart = rollback.indexOf(WITHDRAWAL_ANCHOR);
+    expect(
+      wStart,
+      "the Rollback section must carry the prospective warning",
+    ).toBeGreaterThan(-1);
+    const wEnd = rollback.indexOf("\n\n", wStart);
+    expect(wEnd, "the withdrawal paragraph must terminate").toBeGreaterThan(
+      wStart,
+    );
+    const withdrawal = rollback.slice(wStart, wEnd);
+    const active = rollback.slice(0, wStart) + rollback.slice(wEnd);
+    // The excision is itself asserted: if it silently failed, `active` would
+    // still hold the retired prose and every pin below would be worth less than
+    // it looks.
+    expect(
+      active,
+      "the historical paragraph must be excised from the active guidance",
+    ).not.toContain(WITHDRAWAL_ANCHOR);
+
+    // ACTIVE GUIDANCE. Each of these must survive with the retired paragraph cut
+    // out, which is what makes it current instruction rather than a record of a
+    // claim that used to be made.
+    expect(
+      active,
+      "the live table must say the MODE can be changed, and by whom",
+    ).toContain(
       "**YES**, through `set_new_client_admission_mode`, by the studio's owner.",
     );
-    expect(DOC).toContain(
+    expect(
+      active,
+      "the live table must say nothing restores WAIT-01 email-only for a cut-over studio",
+    ).toContain(
       "**NO — not supported by any existing mechanism for a cut-over studio.**",
     );
-    expect(DOC).toContain("the env list cannot do it");
+    expect(active, "and that the env list is not a route to it").toContain(
+      "the env list cannot do it",
+    );
     // THE WITHDRAWAL MUST NAME WHAT IT WITHDRAWS, not merely warn prospectively.
     // An earlier version of this assertion pinned only the general warning, so
     // deleting the paragraph that identifies the retired promise would have left
     // this test green while the record of it vanished -- a vacuity introduced in
     // the act of repairing one. Pin the quoted old claim AND its withdrawal, in
     // one bounded passage, so neither can be removed without failing here.
-    const rollback = DOC.slice(DOC.indexOf("## Rollback"));
-    const withdrawal = rollback.slice(
-      rollback.indexOf("**Do not describe a mode transition as a commit-point rollback.**"),
-    ).slice(0, 700);
-    expect(
-      withdrawal,
-      "the Rollback section must carry the prospective warning",
-    ).toContain("**Do not describe a mode transition as a commit-point rollback.**");
     expect(
       withdrawal,
       "and must quote the retired promise it is withdrawing",
     ).toContain("set_new_client_admission_mode(<studio>, 'waitlist')");
+    // A POSITIVE WITHDRAWAL CLAUSE, NOT THE BARE TOKEN. `/withdrawn/` alone was
+    // satisfied by "That is **not withdrawn**" -- wording that REVIVES the
+    // retired promise while leaving the quoted claim and the warning untouched,
+    // so all three pins stayed green on prose asserting the opposite of what
+    // they exist to assert.
     expect(
       withdrawal,
-      "and must mark that quoted claim withdrawn",
-    ).toMatch(/withdrawn/);
-    // AND THE ACTIVE GUIDANCE MUST BE IN THE SAME BOUNDED PASSAGE. A whole-document
-    // toContain would let the live statement live anywhere while the rollback
-    // section itself said nothing, which is how an operator reading only this
-    // section would be left without it.
-    const rollbackSection = rollback.slice(0, rollback.indexOf("## What this plan"));
+      "and must mark that quoted claim withdrawn, in the positive",
+    ).toContain("That is **withdrawn**.");
     expect(
-      rollbackSection,
-      "the Rollback section must state that nothing restores WAIT-01 email-only for a cut-over studio",
-    ).toContain("not supported by any existing mechanism for a cut-over studio");
+      withdrawal,
+      "and must not negate the withdrawal it just made",
+    ).not.toMatch(/not\s+(?:\*\*)?withdrawn/i);
 
     // The behavioural half of the same claim: with the slug listed, a stamped
     // `open` stays open, so an env-only rollback genuinely cannot restore it.
