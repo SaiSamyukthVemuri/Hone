@@ -365,13 +365,56 @@ const CENSUS_IDS: string[] = (() => {
   return ids;
 })();
 
-/** Force a studio into the window shape: unstamped, created above the boundary. */
+/**
+ * Install the census lineage: every `k_census` id present in `public.studios`.
+ *
+ * REQUIRED BY EVERY TEST THAT RUNS THE REPAIR. Since the lineage gate was added,
+ * the block ABORTS on a non-empty database that is missing any census id — which
+ * is exactly what a local test database is by default. So the lineage is
+ * installed once, up front, and the gate's own tests remove a member
+ * deliberately and put it back.
+ *
+ * Delete-then-insert, so the file is re-runnable against a database that was not
+ * reset: these are FIXED ids, and a bare INSERT raises `studios_pkey` the second
+ * time. (Learned twice in this file already.) The rows are inserted STAMPED, so
+ * they are census members that the repair must skip on membership grounds rather
+ * than on shape.
+ */
+async function installCensusLineage(): Promise<void> {
+  for (const id of CENSUS_IDS) {
+    await adminQuery(`delete from public.studios where id = $1`, [id]);
+    await adminQuery(
+      `insert into public.studios (id, name, owner_email) values ($1, $2, $3)`,
+      [id, `Census ${id.slice(0, 8)}`, `census-${id.slice(0, 8)}@harness.local`],
+    );
+  }
+}
+
+/** Remove ONE census member, so the lineage is provably incomplete. */
+async function dropCensusMember(id: string): Promise<void> {
+  await adminQuery(`delete from public.studios where id = $1`, [id]);
+}
+
+async function censusPresent(): Promise<number> {
+  const { rows } = await adminQuery(
+    `select count(*)::int as n from public.studios where id = any($1::uuid[])`,
+    [CENSUS_IDS],
+  );
+  return rows[0].n as number;
+}
+
+// The lineage must exist before ANY block below runs the repair.
+beforeAll(installCensusLineage);
+
+/** Force a studio into the repairable shape: unstamped, open, no recorded actor. */
 async function makeWindowRow(studioId: string): Promise<void> {
   // The permit is required for the admission fields and is transaction-local,
   // naming exactly this studio — the same mechanism the supported command uses.
-  // `created_at` needs no permit; the guard polices only the three admission
-  // fields. A seeded studio's created_at is already `now()`, hence above the
-  // boundary, which is precisely the window this simulates.
+  //
+  // What makes a row REPAIRABLE is now membership, not time: a seeded studio has
+  // a random id and is therefore not a census member, so once it is unstamped it
+  // is exactly the post-census shape the repair exists for. `created_at` plays no
+  // part in that and needs no permit.
   await adminQuery(
     `do $$
      begin
@@ -451,6 +494,81 @@ describe("the apply-time repair closes the census-to-apply window", () => {
   });
 });
 
+// ===========================================================================
+// THE ENVIRONMENT / LINEAGE GATE.
+//
+// `k_census` distinguishes production's known rows only on a database descended
+// from the census that produced it. On any other NON-EMPTY database — Hone
+// Staging, or an older production backup being restored and migrated — none of
+// those ids exist, so every ordinary open/unstamped row would read as post-0204
+// and be stamped, silently losing the legacy cutover. The shape check cannot
+// catch it: those rows ARE the expected shape.
+//
+// This was MEASURED before it was fixed. Simulating three genuine legacy rows on
+// a non-census database and running the extracted repair stamped all three.
+//
+// THE EMPTY-DATABASE CASE IS PROVED BY THE APPLY ITSELF, not here: on every
+// fresh chain `studios` is empty when 0205 runs, and the migration emits
+// "studios is empty; lineage gate not applicable and nothing to repair" followed
+// by "stamped 0 studio(s)". That is visible in `supabase db reset` output and in
+// CI's db lane. It cannot be staged in this file, because `studios` cannot be
+// emptied even transactionally — `appointment_audit_studio_fk` refuses.
+// ===========================================================================
+describe("the lineage gate refuses a database that is not the census's", () => {
+  it("2. an EXACT census lineage passes the gate", async () => {
+    expect(await censusPresent()).toBe(CENSUS_IDS.length);
+    await expect(adminQuery(REPAIR_SQL)).resolves.toBeDefined();
+  });
+
+  it("3. a NON-EMPTY database missing even ONE census id fails closed", async () => {
+    const dropped = CENSUS_IDS[CENSUS_IDS.length - 1];
+    try {
+      await dropCensusMember(dropped);
+      expect(await censusPresent()).toBe(CENSUS_IDS.length - 1);
+
+      await expect(adminQuery(REPAIR_SQL)).rejects.toThrow(
+        /NOT the 2026-10-01 census lineage/i,
+      );
+    } finally {
+      // finally, for the reason recorded on the anomaly test below: a half-torn
+      // lineage makes the repair raise for EVERY later caller in this file.
+      await installCensusLineage();
+    }
+    expect(await censusPresent()).toBe(CENSUS_IDS.length);
+  });
+
+  it("4. a staging/backup-like legacy row CANNOT be stamped with the lineage absent", async () => {
+    // The defect itself, as a row rather than as an error message. This is the
+    // shape a genuine pre-0204 studio has on a restored backup: non-census,
+    // unstamped, open, system default — indistinguishable by shape from a real
+    // post-census creation, and distinguishable only by lineage.
+    const legacyish = await seedStudio("admission-staging-legacy");
+    await makeWindowRow(legacyish.studioId);
+    const dropped = CENSUS_IDS[0];
+    try {
+      await dropCensusMember(dropped);
+      await expect(adminQuery(REPAIR_SQL)).rejects.toThrow(/census lineage/i);
+
+      // AND IT WROTE NOTHING. The gate runs before any DML, so the row that
+      // would have been wrongly stamped is untouched.
+      expect(
+        (await admissionRow(legacyish.studioId)).set_at,
+        "a legacy-shaped row must survive an apply attempt on the wrong database",
+      ).toBeNull();
+    } finally {
+      await installCensusLineage();
+    }
+
+    // CONTROL: with the lineage restored, that same row IS repaired — so the
+    // refusal above was about the DATABASE, not about this row.
+    await adminQuery(REPAIR_SQL);
+    expect(
+      (await admissionRow(legacyish.studioId)).set_at,
+      "with a valid lineage the same row must be repaired, or test 4 proves nothing",
+    ).not.toBeNull();
+  });
+});
+
 describe("the repair touches NOTHING outside its window", () => {
   it("a CENSUS studio keeps its NULL and its ceremony — and FORWARD-DATING cannot change that", async () => {
     // THE P2 THIS CLOSES. The predicate used to be `created_at > boundary`, and
@@ -462,24 +580,10 @@ describe("the repair touches NOTHING outside its window", () => {
     // the cutover. Identity is the id now, and this proves the mutation is inert.
     const censusId = CENSUS_IDS[0];
 
-    // RE-RUNNABLE BY CONSTRUCTION. This row uses a FIXED id — that is the whole
-    // point, since membership is the evidence — so a bare INSERT fails with
-    // `studios_pkey` on the second run against a database that was not reset.
-    // CI resets and would never have seen it; a local re-run would. That exact
-    // shape already bit this file once, via a fixture whose cleanup was skipped
-    // on failure, so it is removed here rather than left to the next person.
-    //
-    // DELETE-then-INSERT, not ON CONFLICT DO UPDATE: forcing the admission
-    // fields back to NULL through an UPDATE would trip
-    // `studios_admission_mode_guard` and need a permit, and a fresh INSERT needs
-    // none. This id is created only by this test and has no practitioners or
-    // clients hanging off it, so the delete cannot cascade into another fixture.
-    await adminQuery(`delete from public.studios where id = $1`, [censusId]);
-    await adminQuery(
-      `insert into public.studios (id, name, owner_email, new_client_admission_mode_set_at)
-       values ($1, $2, $3, null)`,
-      [censusId, "Census legacy analogue", `census-${censusId.slice(0, 8)}@harness.local`],
-    );
+    // The lineage installer already created this row. Put it into the UNSTAMPED
+    // legacy shape — the state a real pre-0204 census studio is in — so the only
+    // thing keeping it out of the repair is its MEMBERSHIP, not its shape.
+    await makeWindowRow(censusId);
 
     // Forward-date it hard — far past any plausible boundary, and past now().
     await adminQuery(
@@ -540,7 +644,7 @@ describe("the repair touches NOTHING outside its window", () => {
 });
 
 describe("the repair FAILS CLOSED rather than writing under a wrong model", () => {
-  it("refuses to run when an unstamped row above the boundary is not a plain default", async () => {
+  it("refuses to run when an unstamped NON-CENSUS row is not a plain system default", async () => {
     // mode='waitlist' with a NULL set_at cannot arise through any supported
     // path. If it exists, the model behind the repair is wrong, and writing
     // under a wrong model is exactly what must not happen.
@@ -557,7 +661,7 @@ describe("the repair FAILS CLOSED rather than writing under a wrong model", () =
        end $$;`,
     );
 
-    // try/FINALLY, NOT A TRAILING CLEANUP. An anomalous row above the boundary
+    // try/FINALLY, NOT A TRAILING CLEANUP. An anomalous non-census row
     // makes the repair refuse for EVERY caller, so if an assertion here throws
     // and the cleanup is skipped, this one row reds every other repair test in
     // the file — and on a database that is not reset between runs, it keeps

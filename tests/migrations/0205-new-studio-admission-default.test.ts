@@ -205,13 +205,41 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     );
   });
 
+  it("gates on CENSUS LINEAGE before any DML, and aborts rather than guessing", () => {
+    // `k_census` distinguishes production's known rows only on a database
+    // descended from the census that produced it. On any other non-empty
+    // database — staging, a restored backup — none of those ids exist and every
+    // ordinary open/unstamped row would read as post-0204 and be stamped. The
+    // shape check cannot catch it: those rows ARE the expected shape.
+    const block = REPAIR_BLOCK!;
+
+    // EMPTY is allowed through: nothing to repair, no lineage to assert.
+    expect(block).toMatch(/select count\(\*\) into v_studios from public\.studios/);
+    expect(block).toMatch(/if v_studios = 0 then/);
+
+    // NON-EMPTY requires EVERY census id, compared against the array's own
+    // length rather than a literal 7 — a hard-coded count would drift from the
+    // list it is meant to describe.
+    expect(block).toMatch(/v_census_seen <> array_length\(k_census, 1\)/);
+    expect(block, "the gate must ABORT, not skip").toMatch(
+      /raise exception[\s\S]*?census lineage/i,
+    );
+
+    // AND IT MUST PRECEDE THE WRITE. A gate after the loop protects nothing.
+    const gateAt = block.indexOf("v_census_seen <> array_length");
+    const updateAt = block.indexOf("update public.studios");
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(updateAt).toBeGreaterThan(-1);
+    expect(gateAt, "the lineage gate must run BEFORE any DML").toBeLessThan(updateAt);
+  });
+
   it("FAILS CLOSED three ways: guard present, model intact, post-condition met", () => {
     const block = REPAIR_BLOCK!;
     // 1. the guard must exist before anything is written
     expect(block).toMatch(/studios_admission_mode_guard/);
     expect(block).toMatch(/pg_trigger/);
-    // 2. an unstamped row above the boundary that is not a plain system default
-    //    means the model is wrong, and the repair refuses rather than guessing
+    // 2. a NON-CENSUS unstamped row that is not a plain system default means
+    //    the model is wrong, and the repair refuses rather than guessing
     expect(block).toMatch(/v_anomalous/);
     // 3. nothing in scope may still be NULL afterwards
     expect(block).toMatch(/v_left/);

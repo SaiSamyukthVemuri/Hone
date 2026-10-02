@@ -238,10 +238,12 @@ declare
     '24c7b43a-d78e-4a87-a697-34f6488dc6a0'::uuid,
     'eb5023c5-45b3-4215-9b02-afa10705a8fa'::uuid
   ];
-  r              record;
-  v_anomalous    integer;
-  v_repaired     integer := 0;
-  v_left         integer;
+  r               record;
+  v_studios       integer;
+  v_census_seen   integer;
+  v_anomalous     integer;
+  v_repaired      integer := 0;
+  v_left          integer;
 begin
   -- FAIL CLOSED #1: the guard must be present. If it is absent this migration
   -- would be writing admission fields with nothing policing the write, which is
@@ -257,7 +259,55 @@ begin
       '0205: studios_admission_mode_guard is absent; refusing to write admission fields';
   end if;
 
-  -- FAIL CLOSED #2: every candidate must look the way the model says it looks.
+  -- FAIL CLOSED #2: THE ENVIRONMENT / LINEAGE GATE, and it runs before ANY DML.
+  --
+  -- `k_census` can distinguish production's known rows ONLY on a database
+  -- descended from the census that produced it. On any OTHER non-empty database
+  -- - Hone Staging, or an older production backup being restored and migrated -
+  -- none of those ids exist, so every ordinary open/unstamped row would read as
+  -- post-0204 and be stamped, silently losing the legacy cutover. The shape
+  -- check below cannot catch it either: those rows ARE the expected shape.
+  --
+  -- MEASURED, NOT ASSUMED. Simulating three genuine legacy rows on a non-census
+  -- database and running this block stamped all three. That is the defect this
+  -- gate closes.
+  --
+  -- THIS IS A LINEAGE ASSERTION, NOT A SECOND ELIGIBILITY HEURISTIC. It answers
+  -- one question - "is this the database the census describes?" - and eligibility
+  -- is untouched by it.
+  --
+  --   EMPTY studios        -> continue. Nothing to repair, and no lineage can be
+  --                           asserted or needed. This is every fresh chain,
+  --                           including `db reset` and CI's db lane.
+  --   NON-EMPTY studios    -> every census id MUST be present. Any one missing
+  --                           means this is not that lineage, and the migration
+  --                           ABORTS rather than repairing on a guess.
+  --
+  -- ABORT, NOT SKIP, IS DELIBERATE and it has a cost worth naming: 0205 cannot
+  -- be applied to a populated non-census database until that database is dealt
+  -- with explicitly. A silent skip would have been friendlier and worse - an
+  -- operator would see a successful apply and conclude the repair had run.
+  select count(*) into v_studios from public.studios;
+
+  if v_studios = 0 then
+    raise notice
+      '0205: studios is empty; lineage gate not applicable and nothing to repair';
+  else
+    select count(*)
+      into v_census_seen
+      from public.studios s
+     where s.id = any (k_census);
+
+    if v_census_seen <> array_length(k_census, 1) then
+      raise exception
+        '0205: this database is NOT the 2026-10-01 census lineage - % of % census '
+        'studios present across % studios total. Absence from the census set is '
+        'therefore not evidence of post-0204 creation, so the repair is refused.',
+        v_census_seen, array_length(k_census, 1), v_studios;
+    end if;
+  end if;
+
+  -- FAIL CLOSED #3: every candidate must look the way the model says it looks.
   -- A non-census unstamped row that is NOT a plain system default - a mode other
   -- than open, or an actor already recorded - means the model is wrong, and
   -- writing under a wrong model is the thing being guarded against.
@@ -324,7 +374,7 @@ begin
   -- admission fields without asking.
   perform set_config('hone.admission_mode_studio_id', '', true);
 
-  -- FAIL CLOSED #3: the post-condition. If anything in scope is still NULL the
+  -- FAIL CLOSED #4: the post-condition. If anything in scope is still NULL the
   -- repair did not do what it claims, and the whole migration must abort rather
   -- than commit a half-repair.
   select count(*)
