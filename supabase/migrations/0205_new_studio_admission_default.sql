@@ -76,20 +76,55 @@
 -- PostgreSQL 11+ does populate existing rows) or as an UPDATE. Every pre-fix
 -- studio keeps `set_at` NULL and keeps its legacy semantics.
 --
--- ZERO DML. A read-only census of the canonical production project immediately
--- before authoring found 7 studios, 5 of them carrying mode='open' with
--- set_at NULL, and the NEWEST studio created 2026-09-19 - more than a week
--- BEFORE 0203 was applied (2026-09-27), and 0204 was applied after 0203. So
--- every NULL row demonstrably predates the 0204 apply boundary and is a genuine
--- legacy row that MUST stay NULL. No studio qualified for repair, so this
--- migration repairs nothing: there is no UPDATE here, and therefore no need for
--- the row-scoped admission permit either. The guard is honoured by never being
--- engaged.
+-- THE CENSUS-TO-APPLY GAP, AND WHY THIS MIGRATION CARRIES A REPAIR.
+--
+-- A read-only census of the canonical production project found 7 studios, 5 of
+-- them mode='open' with set_at NULL, and the NEWEST created
+-- 2026-09-19T20:13:50.840921Z. Every one of those predates the 0204 apply, so
+-- all 5 are genuine legacy rows that MUST stay NULL. At census time NO studio
+-- qualified for repair.
+--
+-- BUT A CENSUS IS A POINT IN TIME, AND THE DEFAULT ONLY HELPS FUTURE INSERTS.
+-- 0204 is already applied to production while 0205 is not, so any studio created
+-- in the window BETWEEN the census and this apply is born `open` / NULL - and
+-- after this migration lands it would keep that NULL forever and be read as a
+-- pre-0204 legacy row. Its owner would get the cutover ceremony that 0205
+-- exists to remove. The column default cannot reach it: `SET DEFAULT` applies to
+-- inserts that happen AFTER it, and this row already exists by then.
+--
+-- So section 3 repairs exactly that window, at apply time, and nothing else.
+--
+-- HOW "PROVABLY CREATED AFTER 0204" IS ESTABLISHED, since the database cannot
+-- answer it directly: `supabase_migrations.schema_migrations` carries only
+-- (version, statements, name) and has NO timestamp column, so there is no
+-- server-side 0204 apply instant to compare against.
+--
+-- The census supplies the proof instead. It was taken when
+-- `max(version)` was ALREADY `0204` - so 0204 was applied - and it enumerated
+-- EVERY studio, the newest created 2026-09-19T20:13:50.840921Z. A row with
+-- `created_at` STRICTLY GREATER than that therefore did not exist at a moment
+-- when 0204 was already applied, which means it was created after 0204. The
+-- comparison is strict so the boundary row itself - the real 2026-09-19 legacy
+-- studio - stays NULL.
+--
+-- FAIL-CLOSED IN THE DIRECTION THAT MATTERS. The two errors are not
+-- symmetrical. Leaving a window row NULL reproduces the bug: a spurious
+-- ceremony, annoying and safe. Wrongly stamping a GENUINE legacy row skips a
+-- cutover that exists because the legacy email-only join path cannot be made
+-- atomic - a correctness risk. So the repair writes ONLY what it can prove, and
+-- section 3 refuses to run at all if the data does not match its model.
+--
+-- A BACKDATED `created_at` makes the predicate UNDER-repair, never over-repair:
+-- the row looks older, falls below the boundary, and is left alone. That is the
+-- safe direction, and it is why the boundary is compared against `created_at`
+-- rather than anything the row could have been given later.
 --
 -- STATEMENT INVENTORY, for the apply record: ONE `alter table ... alter column
--- ... set default`, TWO `comment on column`. No table created or dropped, no
--- column added or dropped, no index, no constraint, no function, no trigger, no
--- grant, and no insert/update/delete/truncate anywhere in the file.
+-- ... set default`, TWO `comment on column`, and ONE `do` block whose only
+-- write is a bounded `update public.studios` over the window set defined above.
+-- No table created or dropped, no column added or dropped, no index, no
+-- constraint, no function, no trigger, no grant, and no insert, delete or
+-- truncate anywhere in the file.
 -- ---------------------------------------------------------------------------
 
 begin;
@@ -141,5 +176,115 @@ comment on column public.studios.new_client_admission_mode_set_by is
   'practitioners -> studio:studios(*) PostgREST embed ambiguous. Integrity '
   'comes from set_new_client_admission_mode plus the scoped permit guard, not '
   'from a constraint, and the value outlives the practitioner row.';
+
+-- ---------------------------------------------------------------------------
+-- 3. THE BOUNDED APPLY-TIME REPAIR
+-- ---------------------------------------------------------------------------
+--
+-- Scope: studios PROVABLY created after 0204 (see the header) that are still
+-- unstamped. Everything else is untouched - every row at or below the boundary,
+-- and every row an owner has already stamped.
+--
+-- IDEMPOTENT. A repaired row is no longer `set_at IS NULL`, so a second run
+-- selects nothing. The per-row UPDATE re-checks the NULL under the row lock, so
+-- a concurrent writer cannot be overwritten either.
+--
+-- THE PERMIT IS ARMED PER ROW, NEVER GLOBALLY. `studios_admission_mode_guard`
+-- compares `hone.admission_mode_studio_id` against the row being written, so a
+-- set-based UPDATE cannot pass it - one permit cannot authorise many rows, which
+-- is the guard working as designed. The loop therefore arms the permit for
+-- exactly the row it is about to write, and clears it afterwards so no later
+-- statement inherits an authorisation it did not ask for. There is deliberately
+-- no value of the permit that means "allow anything".
+-- >>> 0205 APPLY-TIME REPAIR BEGIN
+do $repair$
+declare
+  -- The census boundary, with its provenance in the header. Strictly greater:
+  -- the boundary row IS a real legacy studio and must keep its NULL.
+  k_boundary constant timestamptz := '2026-09-19T20:13:50.840921+00';
+  r              record;
+  v_anomalous    integer;
+  v_repaired     integer := 0;
+  v_left         integer;
+begin
+  -- FAIL CLOSED #1: the guard must be present. If it is absent this migration
+  -- would be writing admission fields with nothing policing the write, which is
+  -- precisely the state 0204 created the guard to prevent.
+  if not exists (
+    select 1
+      from pg_trigger t
+     where t.tgrelid = 'public.studios'::regclass
+       and t.tgname = 'studios_admission_mode_guard'
+       and not t.tgisinternal
+  ) then
+    raise exception
+      '0205: studios_admission_mode_guard is absent; refusing to write admission fields';
+  end if;
+
+  -- FAIL CLOSED #2: the window must look the way the model says it looks. An
+  -- unstamped row above the boundary that is NOT a plain system default - a mode
+  -- other than open, or an actor already recorded - means the model is wrong,
+  -- and writing under a wrong model is the thing being guarded against.
+  select count(*)
+    into v_anomalous
+    from public.studios s
+   where s.new_client_admission_mode_set_at is null
+     and s.created_at > k_boundary
+     and (s.new_client_admission_mode <> 'open'
+          or s.new_client_admission_mode_set_by is not null);
+  if v_anomalous <> 0 then
+    raise exception
+      '0205: % unstamped studio(s) above the 0204 boundary do not match the '
+      'system-default shape (mode=open, set_by null); refusing to repair',
+      v_anomalous;
+  end if;
+
+  for r in
+    select s.id, s.created_at
+      from public.studios s
+     where s.new_client_admission_mode_set_at is null
+       and s.new_client_admission_mode_set_by is null
+       and s.new_client_admission_mode = 'open'
+       and s.created_at > k_boundary
+     order by s.id
+       for update
+  loop
+    perform set_config('hone.admission_mode_studio_id', r.id::text, true);
+    -- set_at = created_at, NOT now(): the row's admission authority was
+    -- initialized when the studio was created, which is what 0205's default
+    -- records for every studio created after this. Backfilling `now()` would
+    -- date the initialization to the apply instead.
+    update public.studios s
+       set new_client_admission_mode_set_at = r.created_at
+     where s.id = r.id
+       and s.new_client_admission_mode_set_at is null;
+    v_repaired := v_repaired + 1;
+  end loop;
+
+  -- Clear the permit. Transaction-local anyway, but leaving the last row's id
+  -- armed would let a later statement in this transaction write that one row's
+  -- admission fields without asking.
+  perform set_config('hone.admission_mode_studio_id', '', true);
+
+  -- FAIL CLOSED #3: the post-condition. If anything in scope is still NULL the
+  -- repair did not do what it claims, and the whole migration must abort rather
+  -- than commit a half-repair.
+  select count(*)
+    into v_left
+    from public.studios s
+   where s.new_client_admission_mode_set_at is null
+     and s.new_client_admission_mode_set_by is null
+     and s.new_client_admission_mode = 'open'
+     and s.created_at > k_boundary;
+  if v_left <> 0 then
+    raise exception
+      '0205: % studio(s) created after the 0204 boundary still carry a null '
+      'set_at after the repair', v_left;
+  end if;
+
+  raise notice '0205: apply-time repair stamped % studio(s)', v_repaired;
+end
+$repair$;
+-- <<< 0205 APPLY-TIME REPAIR END
 
 commit;

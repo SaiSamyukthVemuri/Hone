@@ -43,6 +43,25 @@ const CODE = SQL.split("\n")
   .filter((l) => !l.trimStart().startsWith("--"))
   .join("\n");
 
+/**
+ * The apply-time repair block, as CODE.
+ *
+ * Extracted from the RAW file, because the markers are themselves `--` comment
+ * lines and `CODE` has already stripped them — reading the block out of `CODE`
+ * finds nothing. The extracted text is then comment-stripped on its own, so a
+ * claim below cannot be satisfied by the block's prose.
+ */
+const REPAIR_BLOCK = (() => {
+  const m = /-- >>> 0205 APPLY-TIME REPAIR BEGIN\n([\s\S]*?)-- <<< 0205 APPLY-TIME REPAIR END/.exec(
+    SQL,
+  );
+  if (!m) return null;
+  return m[1]
+    .split("\n")
+    .filter((l) => !l.trimStart().startsWith("--"))
+    .join("\n");
+})();
+
 describe("0205 sits correctly in the migration sequence", () => {
   it("is the repository maximum, and nothing sits above it", () => {
     // Only the CURRENT maximum migration's own test may assert this — see
@@ -92,7 +111,7 @@ describe("the fix is ONE default on the column that was missing one", () => {
   });
 });
 
-describe("it CANNOT backfill, and that is the point", () => {
+describe("the DEFAULT cannot backfill, which is why the repair is explicit", () => {
   it("uses ALTER COLUMN SET DEFAULT, which never rewrites an existing row", () => {
     // The distinction is load-bearing. `ADD COLUMN ... DEFAULT` populates
     // existing rows in PostgreSQL 11+; `ALTER COLUMN ... SET DEFAULT` records a
@@ -102,20 +121,85 @@ describe("it CANNOT backfill, and that is the point", () => {
     expect(CODE).not.toMatch(/add column[^;]*new_client_admission_mode_set_at/);
   });
 
-  it("contains ZERO data manipulation of any kind", () => {
-    // The production census found no studio created after the 0204 apply
-    // boundary, so there was nothing to repair. A migration that repairs
-    // nothing must contain no repair.
-    for (const verb of [/\binsert\s+into\b/i, /\bupdate\s+public\./i, /\bdelete\s+from\b/i, /\btruncate\b/i]) {
-      expect(CODE, `0205 must carry no DML; found ${verb}`).not.toMatch(verb);
+  it("its ONLY data manipulation is the bounded window repair", () => {
+    // THE CENSUS WAS A POINT IN TIME. It found nothing to repair, but 0204 is
+    // applied while 0205 is not, so a studio created in the window BETWEEN the
+    // census and this apply is born open/NULL and the default cannot reach it —
+    // `SET DEFAULT` only governs inserts that come after it. Section 3 repairs
+    // that window, so the earlier "zero DML" claim is retired.
+    //
+    // The bound still has to be asserted, which is what this is: ONE update,
+    // against studios, and no other verb at all.
+    const updates = [...CODE.matchAll(/\bupdate\s+public\.(\w+)/gi)].map((m) => m[1]);
+    expect(updates, "0205 writes exactly one table, once").toEqual(["studios"]);
+    for (const verb of [/\binsert\s+into\b/i, /\bdelete\s+from\b/i, /\btruncate\b/i]) {
+      expect(CODE, `0205 may only UPDATE; found ${verb}`).not.toMatch(verb);
     }
   });
 
-  it("arms no admission permit, because it writes no admission field", () => {
-    // The row-scoped permit exists for UPDATEs. With no UPDATE there is nothing
-    // to permit, and setting one would be the global bypass the guard forbids.
-    expect(CODE).not.toMatch(/hone\.admission_mode_studio_id/);
-    expect(CODE).not.toMatch(/set_config/);
+  it("the repair is bounded by the census boundary, strictly", () => {
+    // Strictly greater, so the boundary row itself — the real 2026-09-19
+    // production legacy studio — keeps its NULL. `>=` would stamp it and skip a
+    // cutover that exists because the legacy join path cannot be made atomic.
+    expect(CODE).toMatch(/k_boundary constant timestamptz := '[^']+'/);
+    expect(CODE).toMatch(/created_at > k_boundary/);
+    expect(CODE, "a non-strict boundary would capture the boundary row").not.toMatch(
+      /created_at >= k_boundary/,
+    );
+  });
+
+  it("it repairs ONLY unstamped system-default rows, so owner choices survive", () => {
+    expect(REPAIR_BLOCK, "the repair block markers are gone").toBeTruthy();
+    const block = REPAIR_BLOCK!;
+    // The selection predicate must carry all three narrowing conditions.
+    expect(block).toMatch(/new_client_admission_mode_set_at is null/);
+    expect(block).toMatch(/new_client_admission_mode_set_by is null/);
+    expect(block).toMatch(/new_client_admission_mode = 'open'/);
+    // And it must write set_at from the ROW's creation instant, not the apply.
+    expect(block).toMatch(/new_client_admission_mode_set_at = r\.created_at/);
+    expect(block, "backfilling now() would date initialization to the apply").not.toMatch(
+      /new_client_admission_mode_set_at = now\(\)/,
+    );
+  });
+
+  it("arms the permit PER ROW, and clears it, rather than bypassing the guard", () => {
+    // `studios_admission_mode_guard` compares the permit against the row being
+    // written, so one permit cannot authorise many rows — a set-based UPDATE
+    // could not pass it. The loop is therefore the guard working, not a way
+    // around it, and there is no value of the permit meaning "allow anything".
+    expect(CODE).toMatch(/perform set_config\(\s*'hone\.admission_mode_studio_id',\s*r\.id::text,\s*true\s*\)/);
+    expect(CODE, "the permit must be released, not left armed").toMatch(
+      /perform set_config\('hone\.admission_mode_studio_id',\s*'',\s*true\)/,
+    );
+    expect(CODE, "the repair must not disable the guard").not.toMatch(
+      /alter table[^;]*disable trigger|drop trigger/i,
+    );
+  });
+
+  it("FAILS CLOSED three ways: guard present, model intact, post-condition met", () => {
+    const block = REPAIR_BLOCK!;
+    // 1. the guard must exist before anything is written
+    expect(block).toMatch(/studios_admission_mode_guard/);
+    expect(block).toMatch(/pg_trigger/);
+    // 2. an unstamped row above the boundary that is not a plain system default
+    //    means the model is wrong, and the repair refuses rather than guessing
+    expect(block).toMatch(/v_anomalous/);
+    // 3. nothing in scope may still be NULL afterwards
+    expect(block).toMatch(/v_left/);
+    // All three must ABORT, which inside begin/commit rolls the whole apply back.
+    expect([...block.matchAll(/raise exception/g)].length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("is IDEMPOTENT: a repaired row cannot be selected again", () => {
+    const block = REPAIR_BLOCK!;
+    // Selection requires a NULL set_at, which the repair removes; and the write
+    // re-checks the NULL under the row lock so a concurrent writer cannot be
+    // overwritten by a second run either.
+    expect(block).toMatch(/for update/);
+    const update = /update public\.studios[\s\S]*?;/.exec(block)![0];
+    expect(update, "the per-row write must re-check the NULL it is replacing").toMatch(
+      /and s\.new_client_admission_mode_set_at is null/,
+    );
   });
 });
 

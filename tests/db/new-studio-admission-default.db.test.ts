@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { adminQuery, asUser, seedStudio, type SeededStudio } from "@/tests/db/helpers/harness";
@@ -293,5 +295,260 @@ describe("G. an owner-stamped WAITLIST studio is untouched by any of this", () =
     expect(after.mode).toBe("waitlist");
     expect(after.set_at!.getTime()).toBe(before.set_at!.getTime());
     expect(after.set_by).toBe(before.set_by);
+  });
+});
+
+// ===========================================================================
+// THE CENSUS-TO-APPLY GAP.
+//
+// The column default only helps inserts that happen AFTER it. 0204 is applied
+// to production while 0205 is not, so a studio created in the window BETWEEN
+// the census and this apply is born `open` / NULL and would keep that NULL
+// forever — read as a pre-0204 legacy row, and handed the cutover ceremony 0205
+// exists to remove. Section 3 of the migration repairs exactly that window.
+//
+// THESE TESTS RUN THE MIGRATION'S OWN BYTES. The repair block is extracted from
+// the .sql file between its markers and executed here, rather than being
+// re-written in TypeScript. A re-written copy would be a second implementation
+// that can drift from the one production actually applies — and it would keep
+// passing after the real block was broken, which is the one failure a
+// regression test for an apply-time repair must not have.
+// ===========================================================================
+
+const MIGRATION_SQL = readFileSync(
+  path.join(process.cwd(), "supabase/migrations/0205_new_studio_admission_default.sql"),
+  "utf8",
+);
+
+/** The repair block, verbatim, between the markers the migration declares. */
+const REPAIR_SQL = (() => {
+  const m = /-- >>> 0205 APPLY-TIME REPAIR BEGIN\n([\s\S]*?)-- <<< 0205 APPLY-TIME REPAIR END/.exec(
+    MIGRATION_SQL,
+  );
+  if (!m) throw new Error("0205: the apply-time repair markers are gone from the migration");
+  return m[1];
+})();
+
+/** The boundary, READ FROM THE MIGRATION so the test cannot pin a stale one. */
+const BOUNDARY = (() => {
+  const m = /k_boundary constant timestamptz := '([^']+)'/.exec(MIGRATION_SQL);
+  if (!m) throw new Error("0205: the census boundary is gone from the migration");
+  return m[1];
+})();
+
+/**
+ * The same instant, parseable by `Date`.
+ *
+ * PostgreSQL writes a two-digit UTC offset (`+00`); ECMA-262 requires either
+ * `Z` or `+HH:MM`, so `new Date("...+00")` is silently NaN and every comparison
+ * against it comes out false. Normalising here keeps the migration as the single
+ * source of the value while letting the test do real arithmetic on it.
+ */
+const BOUNDARY_MS = (() => {
+  const iso = BOUNDARY.trim().replace(/([+-]\d{2})$/, "$1:00");
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) throw new Error(`0205: unparseable census boundary ${BOUNDARY}`);
+  return ms;
+})();
+
+/** Force a studio into the window shape: unstamped, created above the boundary. */
+async function makeWindowRow(studioId: string): Promise<void> {
+  // The permit is required for the admission fields and is transaction-local,
+  // naming exactly this studio — the same mechanism the supported command uses.
+  // `created_at` needs no permit; the guard polices only the three admission
+  // fields. A seeded studio's created_at is already `now()`, hence above the
+  // boundary, which is precisely the window this simulates.
+  await adminQuery(
+    `do $$
+     begin
+       perform set_config('hone.admission_mode_studio_id', '${studioId}'::uuid::text, true);
+       update public.studios
+          set new_client_admission_mode        = 'open',
+              new_client_admission_mode_set_at = null,
+              new_client_admission_mode_set_by = null
+        where id = '${studioId}'::uuid;
+     end $$;`,
+  );
+}
+
+describe("the apply-time repair closes the census-to-apply window", () => {
+  let studio: SeededStudio;
+
+  beforeAll(async () => {
+    studio = await seedStudio("admission-window");
+    await makeWindowRow(studio.studioId);
+  });
+
+  const choose = (mode: string) =>
+    asUser(studio.userId, (query) =>
+      query("select * from public.set_new_client_admission_mode($1, $2)", [
+        studio.studioId,
+        mode,
+      ]),
+    );
+
+  it("the boundary is read from the migration, not pinned here", () => {
+    expect(BOUNDARY).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    // And it parses — otherwise every comparison against it is a silent NaN
+    // and the window assertions below would pass for the wrong reason.
+    expect(Number.isNaN(BOUNDARY_MS)).toBe(false);
+  });
+
+  it("RED BEFORE: the window row is misclassified as legacy and refuses Open", async () => {
+    // The defect itself, reproduced. This studio was created long after 0204,
+    // but carries a NULL set_at because 0205 had not landed when it was
+    // inserted — so the command cannot tell it from a 2026-05 studio.
+    const row = await admissionRow(studio.studioId);
+    expect(row.set_at, "setup did not produce the window shape").toBeNull();
+    expect(row.created_at.getTime()).toBeGreaterThan(BOUNDARY_MS);
+
+    const { rows } = await choose("open");
+    expect(rows[0].outcome).toBe("legacy_waitlist_cutover_required");
+  });
+
+  it("GREEN AFTER: the migration's own repair block stamps it, and Open is accepted", async () => {
+    await adminQuery(REPAIR_SQL);
+
+    const row = await admissionRow(studio.studioId);
+    expect(row.set_at, "the repair must stamp the window row").not.toBeNull();
+    expect(
+      row.set_at!.getTime(),
+      "set_at must be the row's creation instant, not the apply instant",
+    ).toBe(row.created_at.getTime());
+    expect(row.set_by, "a system repair records no actor").toBeNull();
+    expect(row.mode).toBe("open");
+
+    const { rows } = await choose("open");
+    expect(rows[0].outcome, "the new owner must now be able to choose Open").toBe("ok");
+  });
+
+  it("IDEMPOTENT: a second run changes nothing it already did", async () => {
+    // The owner has since chosen `open` through the command, so the row now
+    // carries THEIR stamp. Re-running must not reach it at all.
+    const before = await admissionRow(studio.studioId);
+    await adminQuery(REPAIR_SQL);
+    const after = await admissionRow(studio.studioId);
+    expect(after.set_at!.getTime()).toBe(before.set_at!.getTime());
+    expect(after.set_by).toBe(before.set_by);
+    expect(after.mode).toBe(before.mode);
+  });
+});
+
+describe("the repair touches NOTHING outside its window", () => {
+  it("a LEGACY row at or below the boundary keeps its NULL and its ceremony", async () => {
+    const legacy = await seedStudio("admission-below-boundary");
+    await makeWindowRow(legacy.studioId);
+    // Backdate it to the boundary exactly. Strictly-greater means the boundary
+    // row itself is out of scope — and the real 2026-09-19 production studio is
+    // exactly that row.
+    await adminQuery(`update public.studios set created_at = $2 where id = $1`, [
+      legacy.studioId,
+      BOUNDARY,
+    ]);
+
+    // IN-TEST CONTROL, one microsecond above the same boundary. Without it this
+    // test passes whenever the repair does nothing at all — including when the
+    // boundary is wrong — and would be asserting "nothing happened" rather than
+    // "the boundary discriminates".
+    const control = await seedStudio("admission-just-above-boundary");
+    await makeWindowRow(control.studioId);
+    await adminQuery(
+      `update public.studios set created_at = $2::timestamptz + interval '1 microsecond' where id = $1`,
+      [control.studioId, BOUNDARY],
+    );
+
+    await adminQuery(REPAIR_SQL);
+
+    const row = await admissionRow(legacy.studioId);
+    expect(row.set_at, "a row AT the boundary must NOT be repaired").toBeNull();
+    const controlRow = await admissionRow(control.studioId);
+    expect(
+      controlRow.set_at,
+      "a row one microsecond ABOVE the boundary MUST be repaired — otherwise the " +
+        "comparison above proves nothing",
+    ).not.toBeNull();
+
+    // And it still behaves as legacy: the ceremony is intact.
+    const { rows } = await asUser(legacy.userId, (query) =>
+      query("select * from public.set_new_client_admission_mode($1, $2)", [
+        legacy.studioId,
+        "open",
+      ]),
+    );
+    expect(rows[0].outcome).toBe("legacy_waitlist_cutover_required");
+  });
+
+  it("an OWNER-STAMPED row above the boundary is left byte-for-byte alone", async () => {
+    const owned = await seedStudio("admission-owner-stamped");
+    await asUser(owned.userId, (query) =>
+      query("select * from public.set_new_client_admission_mode($1, $2)", [
+        owned.studioId,
+        "waitlist",
+      ]),
+    );
+    const before = await admissionRow(owned.studioId);
+    expect(before.mode).toBe("waitlist");
+    expect(before.set_by).toBe(owned.practitionerId);
+
+    await adminQuery(REPAIR_SQL);
+
+    const after = await admissionRow(owned.studioId);
+    expect(after.mode, "an owner's choice must survive the repair").toBe("waitlist");
+    expect(after.set_at!.getTime()).toBe(before.set_at!.getTime());
+    expect(after.set_by).toBe(before.set_by);
+  });
+});
+
+describe("the repair FAILS CLOSED rather than writing under a wrong model", () => {
+  it("refuses to run when an unstamped row above the boundary is not a plain default", async () => {
+    // mode='waitlist' with a NULL set_at cannot arise through any supported
+    // path. If it exists, the model behind the repair is wrong, and writing
+    // under a wrong model is exactly what must not happen.
+    const odd = await seedStudio("admission-anomalous");
+    await adminQuery(
+      `do $$
+       begin
+         perform set_config('hone.admission_mode_studio_id', '${odd.studioId}'::uuid::text, true);
+         update public.studios
+            set new_client_admission_mode        = 'waitlist',
+                new_client_admission_mode_set_at = null,
+                new_client_admission_mode_set_by = null
+          where id = '${odd.studioId}'::uuid;
+       end $$;`,
+    );
+
+    // try/FINALLY, NOT A TRAILING CLEANUP. An anomalous row above the boundary
+    // makes the repair refuse for EVERY caller, so if an assertion here throws
+    // and the cleanup is skipped, this one row reds every other repair test in
+    // the file — and on a database that is not reset between runs, it keeps
+    // doing so. That is not hypothetical: it happened while developing this
+    // file, and the four failures it caused looked like a broken repair rather
+    // than a leaked fixture.
+    try {
+      await expect(adminQuery(REPAIR_SQL)).rejects.toThrow(
+        /do not match the system-default shape|refusing to repair/i,
+      );
+
+      // And it wrote nothing on the way out.
+      const row = await admissionRow(odd.studioId);
+      expect(row.set_at).toBeNull();
+    } finally {
+      await adminQuery(
+        `do $$
+         begin
+           perform set_config('hone.admission_mode_studio_id', '${odd.studioId}'::uuid::text, true);
+           update public.studios
+              set new_client_admission_mode        = 'open',
+                  new_client_admission_mode_set_at = now()
+            where id = '${odd.studioId}'::uuid;
+         end $$;`,
+      );
+    }
+  });
+
+  it("the repair is available again once the anomaly is gone", async () => {
+    // Proves the refusal above was about the DATA, not a permanently broken
+    // block — and that the cleanup in `finally` actually restored the model.
+    await expect(adminQuery(REPAIR_SQL)).resolves.toBeDefined();
   });
 });
