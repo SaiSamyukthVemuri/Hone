@@ -310,6 +310,9 @@ page, so no verification step locked a studio row mid-cutover.
     OPERATOR-OBSERVED**, not measured here.
   ⚠️ **Its state after 2026-10-02T00:14:55Z is not asserted**, and the expiry is a
   stored value rather than a prediction. **Find it by id**, never by position or status.
-  **It is synthetic test data in a real operator's live queue and now carries a live
-  invitation to a real address.** Removal or release is a **separately authorized
-  cleanup, deliberately NOT performed in this change.**
+  **Origin, which does not change: created by a synthetic acceptance test, not by a
+    real prospect, against a real inbox.** **No cleanup was performed in this
+    change.** **Re-read the entry and its invitation by id before acting**; if either
+    is still outstanding then, removal or release is a **separately authorized**
+    action. This record makes **no claim about whether they are outstanding now** —
+    an earlier revision said it "now carries a live invitation" and is **withdrawn**.

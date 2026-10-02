@@ -150,10 +150,14 @@ release-level summary.
 >   said the row "sits in" Waiting — **withdrawn**: by the time that wording was read it
 >   was already false, which is precisely why a status belongs to an instant.
 >   **Locate it by id**, never by queue position or status.
->   **It is synthetic test data in a real operator's live queue, and it now carries a
->   live invitation to a real address.** Removing the entry or releasing the invitation
->   is a **SEPARATELY AUTHORIZED cleanup and was deliberately NOT performed in this
->   change.**
+>   **ORIGIN, which does not change: this row was created by a synthetic acceptance
+>   test, not by a real prospect, and its address is a real inbox.** **NO CLEANUP WAS
+>   PERFORMED IN THIS CHANGE.** Whoever picks this up must **re-read the entry and its
+>   invitation by id first**; if either is still outstanding at that moment, removing the
+>   entry or releasing the invitation is a **SEPARATELY AUTHORIZED** action. **This
+>   record deliberately makes no claim about whether they are outstanding now** — an
+>   earlier revision said the row "now carries a live invitation", which asserted a
+>   present state three lines below a promise not to, and is **withdrawn**.
 
 ## Previous state (verified 2026-09-27, post-0203 apply; `0203` APPLIED, repo == hosted)
 
