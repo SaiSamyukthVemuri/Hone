@@ -125,3 +125,53 @@ describe("PR #253 invite-only gate stays closed for non-operators", () => {
     expect(existsSync(path.join(ROOT, "app/admin/studios/new/page.tsx"))).toBe(true);
   });
 });
+
+// ===========================================================================
+// 0205 -- THE WIZARD INHERITS THE DATABASE DEFAULT AND IMPLEMENTS NOTHING.
+//
+// A new studio must begin at new-client admission = OPEN with its authority
+// already initialized. 0205 does that with a column default on
+// `studios.new_client_admission_mode_set_at`, deliberately at the DATABASE
+// layer rather than here, so that every future creation path -- a second admin
+// surface, a self-serve signup, a restore, a test fixture -- inherits the same
+// semantics without re-implementing them.
+//
+// THIS BLOCK IS THE "DO NOT DUPLICATE IT" HALF. A second application-only
+// implementation would be the bug class the default exists to remove: two
+// writers of the same invariant, drifting apart, with the database no longer the
+// authority on what a new studio is. The wizard must therefore name NONE of the
+// three admission fields.
+//
+// The default's actual effect on an insert is proved against a real database in
+// tests/db/new-studio-admission-default.db.test.ts; nothing here can prove it,
+// because an absence in source is not a value in a row.
+// ===========================================================================
+describe("new-client admission is initialized by the DATABASE, not by the wizard", () => {
+  it("names none of the three admission fields in its studio insert", () => {
+    for (const field of [
+      "new_client_admission_mode",
+      "new_client_admission_mode_set_at",
+      "new_client_admission_mode_set_by",
+    ]) {
+      expect(
+        ACTION_CODE,
+        `the wizard must inherit ${field} from the 0205 column default, not set it`,
+      ).not.toContain(field);
+    }
+  });
+
+  it("does not call the admission command either", () => {
+    // Calling `set_new_client_admission_mode` at creation would also be a second
+    // implementation -- and it could not work: the command resolves an ACTIVE
+    // OWNER practitioner from auth.uid(), and no owner practitioner exists yet
+    // (the test above pins that the wizard never inserts one; handle_new_user,
+    // migration 0081, creates it on the owner's first sign-in).
+    expect(ACTION_CODE).not.toContain("set_new_client_admission_mode");
+  });
+
+  it("still inserts the studio, so the claim above is about ABSENCE not emptiness", () => {
+    // Non-vacuity. If the insert were ever removed or renamed, every "does not
+    // contain" assertion above would pass for the wrong reason.
+    expect(ACTION_CODE).toMatch(/\.from\("studios"\)\s*\n?\s*\.insert\(/);
+  });
+});

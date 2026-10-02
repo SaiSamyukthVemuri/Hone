@@ -49,7 +49,18 @@ describe("0201 position in the chain", () => {
   });
 
   it("has nothing above it, and owns its number alone", () => {
-    expect(versionsAbove(VERSION)).toEqual(["0202", "0203", "0204"]);
+    // DERIVED, NOT PINNED. A literal list here is exactly the "trip on the next
+    // one" pin CLAUDE.md s2 forbids: it goes red for every later migration,
+    // which is the eighteen-file mechanical sweep that took 0163, 0164 and 0165
+    // red after push. Two facts about an older migration are true forever and
+    // for any future head -- something is above it, and everything above it is
+    // greater. Those are what this asserts.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
     expect(countVersion(VERSION)).toBe(1);
   });
 
@@ -84,7 +95,13 @@ describe("0201 position in the chain", () => {
   it("does not claim the next free number for anything", () => {
     // 0203 is no longer free: WAIT B2b authored it and it is now APPLIED, so the
     // next free number moved to 0204. This file claims none of it.
-    expect(migrationState().next_free_migration).toBe("0205");
+    // DERIVED, NOT PINNED, for the reason recorded against `versionsAbove`
+    // above: a literal next-free number is red on every single allocation. The
+    // durable claim is that the next free number sits ABOVE this applied
+    // migration and is never this migration's own.
+    const nextFree = migrationState().next_free_migration;
+    expect(Number(nextFree)).toBeGreaterThan(Number(VERSION));
+    expect(nextFree, "this file must not claim the next free number").not.toBe(VERSION);
   });
 
   it("0200 IS FROZEN — this migration does not edit a single byte of it", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { join } from "node:path";
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
@@ -29,9 +30,15 @@ afterEach(() => {
   else process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = ORIGINAL;
 });
 
-// `setAt` is the third axis, and it is what separates an OWNER'S CHOICE from
-// 0204's backfilled default. It defaults to a stamp, because a stored mode in
-// these cases means somebody chose it; `R_UNCHOSEN` is the backfill.
+// `setAt` is the third axis, and it separates an INITIALIZED persisted authority
+// from a row that never had one. It defaults to a stamp, because a stored mode
+// in these cases means the authority is initialized; `R_UNCHOSEN` is the
+// pre-0204 row that never was.
+//
+// SINCE 0205 A STAMP NO LONGER IMPLIES AN OWNER CHOSE: the column carries a
+// `now()` default, so a studio is born stamped and system-initialized at `open`.
+// `new_client_admission_mode_set_by` is what tells the two apart, and
+// `resolveAdmission` deliberately does not take it -- see the final block.
 const R = (
   storedMode: string | null,
   readFailed = false,
@@ -639,5 +646,69 @@ describe("the activation document matches what the source actually does", () => 
     );
     // And the policy that would have violated it no longer can: it takes a slug.
     expect(POLICY).toContain("studioSlug: string | null | undefined;");
+  });
+});
+
+// ===========================================================================
+// 0205 -- A STUDIO BORN STAMPED RESOLVES AS PERSISTED, NOT AS LEGACY.
+//
+// 0204 left `set_at` with no default while reading `set_at IS NULL` as the
+// pre-0204 legacy marker, so a studio created after 0204 resolved through the
+// legacy bridge and its owner was told to choose Waitlist before Open or Closed
+// became available. 0205 defaults the column, which puts a new studio on the
+// `persisted` branch from birth.
+//
+// These are UNIT claims about resolution only. That a real INSERT actually
+// produces the stamp is a database fact, proved in
+// tests/db/new-studio-admission-default.db.test.ts.
+// ===========================================================================
+describe("0205: a system-initialized studio is persisted from birth", () => {
+  const STAMP = "2026-10-01T09:00:00.000Z";
+
+  it("open + stamped -> OPEN / persisted, even with the legacy slug listed", () => {
+    // The system-initialized shape: stamped at creation, no owner change yet.
+    // It must resolve exactly like an owner-chosen `open`, because the bridge
+    // governs only rows whose authority was never initialized.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
+    expect(R("open", false, "willow", STAMP)).toEqual({
+      ok: true,
+      mode: "open",
+      source: "persisted",
+    });
+  });
+
+  it("the same row WITHOUT the stamp falls to the bridge -- the before/after pair", () => {
+    // The control that makes the case above non-vacuous: identical inputs, stamp
+    // removed, different answer. If the stamp stopped mattering, this would
+    // agree with the previous test and both would be meaningless.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
+    expect(R_UNCHOSEN("open", "willow")).toEqual({
+      ok: true,
+      mode: "waitlist",
+      source: "legacy_bridge",
+    });
+  });
+
+  it("resolution reads the STAMP only, never who set it", () => {
+    // "Initialized or not" is the only question this resolution asks, and both
+    // initialized states -- system at creation, owner afterwards -- answer it
+    // identically. Keeping `set_by` out of the resolver is what stops provenance
+    // leaking into a booking decision that must not depend on it.
+    //
+    // FIELD NAMES read from the module, not a fixture built here. The block's own
+    // doc comment legitimately discusses `new_client_admission_mode_set_by` --
+    // explaining why the resolver does not take it -- so a substring search would
+    // fail on the very prose that records the decision.
+    const moduleSource = readFileSync(
+      path.join(process.cwd(), "lib/booking/new-client-admission.ts"),
+      "utf8",
+    );
+    const block = /export function resolveAdmission\(input: \{([\s\S]*?)^\}\):/m.exec(
+      moduleSource,
+    );
+    expect(block, "resolveAdmission's input shape could not be read").toBeTruthy();
+    const fields = [...block![1].matchAll(/^\s{2}(\w+)\??:/gm)].map((m) => m[1]);
+    expect(fields).toEqual(["storedMode", "storedSetAt", "readFailed", "studioSlug"]);
+    expect(fields, "the resolver must not take the actor").not.toContain("storedSetBy");
   });
 });

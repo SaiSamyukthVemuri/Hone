@@ -53,8 +53,25 @@ owner write cuts that studio over to persisted authority.**
 
 0204 adds `new_client_admission_mode` as `not null default 'open'`, so the moment
 it applies every row reads `open` — and nobody chose that. The fact that
-separates a backfill from a decision is `new_client_admission_mode_set_at`, which
-`set_new_client_admission_mode` stamps on every successful write:
+separates an INITIALIZED authority from a row that never had one is
+`new_client_admission_mode_set_at`.
+
+**Since 0205, non-null `set_at` does NOT mean "an owner chose".** It means the
+persisted admission authority **has been initialized**, and there are two
+writers that initialize it:
+
+| `set_at` | `set_by` | what the row is |
+|---|---|---|
+| NULL | NULL | never initialized — a **pre-0204 legacy row**. Unstamped transition semantics apply. |
+| non-null | NULL | **system-initialized at studio creation** by 0205's column default. Persisted `open`, no cutover ceremony. |
+| non-null | set | an **owner changed the mode** through `set_new_client_admission_mode`. |
+
+`set_by` is NULL at creation because the owner practitioner does not exist when
+the studio row is inserted — `handle_new_user()` (0081) creates it on the
+owner's first sign-in — so that NULL is structural, not a convention.
+
+Effective-admission resolution asks only "initialized or not", so both
+initialized states resolve identically:
 
 | stored mode | `set_at` | legacy slug listed | effective | authority |
 |---|---|---|---|---|
@@ -65,6 +82,9 @@ separates a backfill from a decision is `new_client_admission_mode_set_at`, whic
 | `closed` | non-null | either | `closed` | `persisted` |
 | column absent (pre-0204) | — | either | env decides | `legacy_bridge` |
 | read failed | — | either | `unknown` | refuses |
+
+A studio created since 0205 therefore lands on the `persisted` / `open` row from
+birth, and its owner can select Open, Waitlist or Closed immediately.
 
 So an owner who selects **Accept bookings** becomes OPEN immediately, even while
 their slug is still in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`, and `closed` → `open`
@@ -197,13 +217,16 @@ the implementation PR.
 ## Rollback
 
 **Rollback depends on whether the studio has been STAMPED, not on which step you
-are on.** `new_client_admission_mode_set_at` is the test.
+are on.** `new_client_admission_mode_set_at` is the test — but read `set_by`
+alongside it, because since 0205 a stamped row may have been initialized by the
+system at creation rather than by an owner.
 
 | studio state | how to roll back |
 |---|---|
 | **unstamped** (`set_at` NULL, still on the legacy bridge) | restoring its slug to `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` restores its previous waitlist behaviour, for as long as the bridge remains |
 | **0204 applied, application not yet deployed** (between steps B and D) | nothing to roll back at the data layer: the deployed application calls none of the new RPCs and writes none of the new fields, so the migration is inert. Roll back by not deploying. |
-| **stamped** (`set_at` non-null, an owner has chosen) | an explicit `set_new_client_admission_mode(<studio>, 'waitlist')` command. **The env list cannot do it.** |
+| **system-initialized** (`set_at` non-null, `set_by` NULL — created since 0205, never owner-changed) | an explicit `set_new_client_admission_mode(<studio>, 'waitlist')` command. The env list cannot do it. There is nothing to "roll back" to: `open` is this studio's intended starting state. |
+| **stamped by an owner** (`set_at` non-null, `set_by` non-null) | an explicit `set_new_client_admission_mode(<studio>, 'waitlist')` command. **The env list cannot do it.** |
 
 **Never claim that restoring an env slug overrides an explicit owner choice.** It
 does not, by design: `resolveAdmission` returns a stamped mode before it consults

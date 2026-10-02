@@ -35,7 +35,18 @@ describe("0198 position in the chain", () => {
     // migration has to be acknowledged in this file — and it is a per-file
     // hand-off, not the eighteen-file sweep CLAUDE.md records.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0199", "0200", "0201", "0202", "0203", "0204"])
+    // DERIVED, NOT PINNED. A literal list here is exactly the "trip on the next
+    // one" pin CLAUDE.md s2 forbids: it goes red for every later migration,
+    // which is the eighteen-file mechanical sweep that took 0163, 0164 and 0165
+    // red after push. Two facts about an older migration are true forever and
+    // for any future head -- something is above it, and everything above it is
+    // greater. Those are what this asserts.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);;
   });
 
   it("IS APPLIED to production, and hosted has not gone backwards past it", () => {

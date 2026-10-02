@@ -39,7 +39,18 @@ describe("0203 takes the number it derived", () => {
     // claim here would have made this file red the moment anything landed above
     // it, which is the failure mode that hand-off exists to prevent.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0204"]);
+    // DERIVED, NOT PINNED. A literal list here is exactly the "trip on the next
+    // one" pin CLAUDE.md s2 forbids: it goes red for every later migration,
+    // which is the eighteen-file mechanical sweep that took 0163, 0164 and 0165
+    // red after push. Two facts about an older migration are true forever and
+    // for any future head -- something is above it, and everything above it is
+    // greater. Those are what this asserts.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("claims its version exactly once", () => {
@@ -71,10 +82,21 @@ describe("0203 takes the number it derived", () => {
     // authored 0204 - the authored-and-pending shape this block described as
     // its own previous revision, now true again for one migration.
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe("0204");
     expect(state.repo_equals_hosted).toBe(false);
-    expect(state.pending_migrations).toEqual(["0204"]);
-    expect(state.next_free_migration).toBe("0205");
+    // DERIVED FROM HERE DOWN. `repo_migration_max`, the full pending list and
+    // the next free number all move on every allocation, so pinning them made
+    // this file red for migrations it says nothing about. What is durable is the
+    // RELATION: the repo has moved above hosted, 0204 is still pending, and
+    // everything pending is above this applied migration.
+    expect(Number(state.repo_migration_max)).toBeGreaterThan(Number(VERSION));
+    expect(state.pending_migrations, "0204 was authored above 0203").toContain("0204");
+    expect(
+      state.pending_migrations.every((v) => Number(v) > Number(VERSION)),
+      "something at or below an applied migration is listed as pending",
+    ).toBe(true);
+    expect(Number(state.next_free_migration)).toBeGreaterThan(
+      Number(state.repo_migration_max),
+    );
   });
 });
 
