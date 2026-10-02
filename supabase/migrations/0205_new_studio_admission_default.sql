@@ -240,6 +240,8 @@ declare
   ];
   r               record;
   v_guard_mode    text;
+  v_guard_fn      oid;
+  v_guard_type    smallint;
   v_session_role  text;
   v_studios       integer;
   v_census_seen   integer;
@@ -269,8 +271,8 @@ begin
   -- 'D' do not. The condition is written as the general rule rather than as that
   -- special case, because the rule is what is true: a guard that cannot fire for
   -- THIS session is not a guard, whatever the session happens to be.
-  select t.tgenabled::text
-    into v_guard_mode
+  select t.tgenabled::text, t.tgfoid, t.tgtype
+    into v_guard_mode, v_guard_fn, v_guard_type
     from pg_trigger t
    where t.tgrelid = 'public.studios'::regclass
      and t.tgname = 'studios_admission_mode_guard'
@@ -280,6 +282,42 @@ begin
     raise exception
       '0205: studios_admission_mode_guard is absent; refusing to write admission fields';
   end if;
+
+  -- IDENTITY. A NAME IS NOT A GUARD, and matching one was the third way this
+  -- prerequisite was too weak. On a restored or staging database a trigger can
+  -- be recreated under this exact name against a different function, or for a
+  -- different event, and name-plus-firing-mode accepts it: measured locally, a
+  -- same-named AFTER INSERT trigger on an unrelated function left the check
+  -- passing with tgenabled 'O' while the later UPDATE invoked nothing.
+  --
+  -- So the FUNCTION is checked, and the EVENT/TIMING is checked.
+  if v_guard_fn <> 'public.studios_admission_mode_guard()'::regprocedure::oid then
+    raise exception
+      '0205: a trigger named studios_admission_mode_guard exists on public.studios '
+      'but executes %, not public.studios_admission_mode_guard(); refusing to write '
+      'admission fields.', v_guard_fn::regprocedure;
+  end if;
+
+  -- tgtype is a BITMASK: 1 ROW, 2 BEFORE, 4 INSERT, 8 DELETE, 16 UPDATE.
+  -- The guard must be at least BEFORE UPDATE ... FOR EACH ROW. Tested BITWISE
+  -- rather than as `tgtype = 19`, because a guard that ALSO fires on insert
+  -- (tgtype 23) still polices every update and is not weaker - and equality
+  -- would refuse a legitimate widening for no safety gain.
+  if (v_guard_type & 1) <> 1
+     or (v_guard_type & 2) <> 2
+     or (v_guard_type & 16) <> 16 then
+    raise exception
+      '0205: studios_admission_mode_guard is not a BEFORE UPDATE ... FOR EACH ROW '
+      'trigger (tgtype=%); an UPDATE would not be policed by it, so the repair is '
+      'refused.', v_guard_type;
+  end if;
+
+  -- THE BODY IS DELIBERATELY NOT PINNED. This repository corrects an applied
+  -- migration by redefining a function FORWARD, so a later migration may
+  -- legitimately improve studios_admission_mode_guard()'s body; hashing it here
+  -- would make 0205 refuse on exactly that improvement. What the precondition
+  -- needs is that the right function is wired for the right event, which is what
+  -- the two checks above establish.
 
   v_session_role := current_setting('session_replication_role');
 

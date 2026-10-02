@@ -205,6 +205,43 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     );
   });
 
+  it("requires the named trigger to BE the guard: right function, right event", () => {
+    // A NAME IS NOT A GUARD. Name-plus-firing-mode accepts a trigger recreated
+    // under the same name against another function, or for another event —
+    // measured: a same-named AFTER INSERT trigger on an unrelated function left
+    // the old check passing with tgenabled 'O' while the UPDATE invoked nothing.
+    const block = REPAIR_BLOCK!;
+
+    // the FUNCTION, by oid rather than by name string
+    expect(block).toMatch(/t\.tgfoid/);
+    expect(block).toMatch(
+      /v_guard_fn <> 'public\.studios_admission_mode_guard\(\)'::regprocedure::oid/,
+    );
+
+    // the EVENT/TIMING, as a bitmask: 1 ROW, 2 BEFORE, 16 UPDATE
+    expect(block).toMatch(/t\.tgtype/);
+    expect(block).toMatch(/\(v_guard_type & 1\) <> 1/);
+    expect(block).toMatch(/\(v_guard_type & 2\) <> 2/);
+    expect(block).toMatch(/\(v_guard_type & 16\) <> 16/);
+
+    // BITWISE, not `tgtype = 19`. A guard that ALSO fires on insert still
+    // polices every update, so equality would refuse a harmless widening.
+    expect(block, "an equality test would refuse a legitimately wider guard").not.toMatch(
+      /v_guard_type\s*(<>|!=|=)\s*19\b/,
+    );
+
+    // The body is deliberately NOT pinned, and the reason is recorded: this
+    // repository corrects an applied migration by redefining a function
+    // forward, so hashing the body would make 0205 refuse on that improvement.
+    expect(SQL).toMatch(/BODY IS DELIBERATELY NOT PINNED/);
+
+    // And identity is settled before any DML, like the other preconditions.
+    expect(
+      block.indexOf("v_guard_fn <>"),
+      "identity must be checked BEFORE any DML",
+    ).toBeLessThan(block.indexOf("update public.studios"));
+  });
+
   it("requires the guard to FIRE for this session, not merely to exist", () => {
     // EXISTENCE WAS NOT ENOUGH. A present-but-DISABLED trigger satisfied the
     // old `if not exists (...)` — measured: `alter table ... disable trigger`
@@ -215,8 +252,14 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     // general law rather than as the origin-session special case.
     const block = REPAIR_BLOCK!;
 
+    // The select now reads three columns — mode, function, event — so this pins
+    // the MODE's presence and its binding, not the single-column shape it had
+    // when the firing rule was the only identity check.
     expect(block, "the mode must be read, not just the row's existence").toMatch(
-      /t\.tgenabled::text\s*\n?\s*into v_guard_mode/,
+      /t\.tgenabled::text/,
+    );
+    expect(block, "and bound to the variable the rule below reads").toMatch(
+      /into v_guard_mode\b/,
     );
     expect(block, "absence is still its own refusal").toMatch(/v_guard_mode is null/);
     expect(block).toMatch(/current_setting\('session_replication_role'\)/);

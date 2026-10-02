@@ -424,6 +424,62 @@ async function setGuardMode(mode: "O" | "A" | "R" | "D"): Promise<void> {
   await adminQuery(`alter table public.studios ${verb} studios_admission_mode_guard`);
 }
 
+/** The guard's exact CREATE TRIGGER statement, for byte-faithful restoration. */
+async function guardDef(): Promise<string> {
+  const { rows } = await adminQuery(
+    `select pg_get_triggerdef(t.oid) as def
+       from pg_trigger t
+      where t.tgrelid = 'public.studios'::regclass
+        and t.tgname = 'studios_admission_mode_guard'
+        and not t.tgisinternal`,
+  );
+  return rows[0].def as string;
+}
+
+/** The function the named trigger actually executes, and its event bitmask. */
+async function guardIdentity(): Promise<{ fn: string; tgtype: number }> {
+  const { rows } = await adminQuery(
+    `select t.tgfoid::regproc::text as fn, t.tgtype::int as tgtype
+       from pg_trigger t
+      where t.tgrelid = 'public.studios'::regclass
+        and t.tgname = 'studios_admission_mode_guard'
+        and not t.tgisinternal`,
+  );
+  return rows[0] as { fn: string; tgtype: number };
+}
+
+/**
+ * Replace the guard with an IMPOSTER under the same name.
+ *
+ * `timing` is the full event clause, so the same helper covers "right name,
+ * wrong function" and "right function, wrong event".
+ */
+async function installImposterGuard(
+  timing: string,
+  fn: "imposter" | "real",
+): Promise<void> {
+  await adminQuery(
+    `create or replace function public.__hone_imposter_guard() returns trigger
+       language plpgsql as $$ begin return new; end $$`,
+  );
+  await adminQuery(`drop trigger studios_admission_mode_guard on public.studios`);
+  const target =
+    fn === "real" ? "public.studios_admission_mode_guard()" : "public.__hone_imposter_guard()";
+  await adminQuery(
+    `create trigger studios_admission_mode_guard ${timing} on public.studios
+       for each row execute function ${target}`,
+  );
+}
+
+/** Put the real guard back from its own captured definition. */
+async function restoreGuard(def: string): Promise<void> {
+  await adminQuery(
+    `drop trigger if exists studios_admission_mode_guard on public.studios`,
+  );
+  await adminQuery(def);
+  await adminQuery(`drop function if exists public.__hone_imposter_guard()`);
+}
+
 async function censusPresent(): Promise<number> {
   const { rows } = await adminQuery(
     `select count(*)::int as n from public.studios where id = any($1::uuid[])`,
@@ -646,6 +702,104 @@ describe("FAIL CLOSED #1: the guard must FIRE for the current session", () => {
     // Non-vacuity for the cleanups themselves: a leaked mode would make every
     // later repair test in this file fail for a reason none of them name.
     expect(await guardMode()).toBe("O");
+  });
+});
+
+// ===========================================================================
+// FAIL CLOSED #1, THIRD AXIS — A NAME IS NOT A GUARD.
+//
+// Existence was not enough; firing mode was not enough either. On a restored or
+// staging database a trigger can be recreated under this exact name against a
+// DIFFERENT function, or for a DIFFERENT event, and name-plus-mode accepts it.
+// Measured before fixing: a same-named AFTER INSERT trigger on an unrelated
+// function left the check passing with tgenabled 'O' while the later UPDATE
+// invoked nothing at all.
+//
+// So the migration now also checks `tgfoid` and the `tgtype` event bitmask.
+// Both failure shapes are exercised here, and the real guard is restored from
+// its own `pg_get_triggerdef` output so restoration cannot drift from the
+// original.
+// ===========================================================================
+describe("FAIL CLOSED #1: the named trigger must BE the guard", () => {
+  let candidate: SeededStudio;
+  let realDef: string;
+
+  beforeAll(async () => {
+    await installCensusLineage();
+    candidate = await seedStudio("admission-guard-identity");
+    realDef = await guardDef();
+  });
+
+  beforeEach(async () => {
+    await makeWindowRow(candidate.studioId);
+  });
+
+  it("the shipped guard IS the expected function, BEFORE UPDATE FOR EACH ROW", async () => {
+    const { fn, tgtype } = await guardIdentity();
+    expect(fn).toBe("studios_admission_mode_guard");
+    // 1 ROW | 2 BEFORE | 16 UPDATE = 19.
+    expect(tgtype & 1).toBe(1);
+    expect(tgtype & 2).toBe(2);
+    expect(tgtype & 16).toBe(16);
+  });
+
+  it("a same-named trigger on ANOTHER FUNCTION aborts, and writes nothing", async () => {
+    try {
+      await installImposterGuard("before update", "imposter");
+      expect((await guardIdentity()).fn).toBe("__hone_imposter_guard");
+
+      await expect(adminQuery(REPAIR_SQL)).rejects.toThrow(
+        /but executes .*not public\.studios_admission_mode_guard/i,
+      );
+      expect(
+        (await admissionRow(candidate.studioId)).set_at,
+        "nothing may be written when the named trigger is not the guard",
+      ).toBeNull();
+    } finally {
+      await restoreGuard(realDef);
+    }
+    expect((await guardIdentity()).fn).toBe("studios_admission_mode_guard");
+  });
+
+  it("the REAL function wired to the WRONG EVENT aborts, and writes nothing", async () => {
+    // The subtler half: the right function, enabled, but on AFTER INSERT — so an
+    // UPDATE is never policed by it. Checking tgfoid alone would have passed.
+    try {
+      await installImposterGuard("after insert", "real");
+      const { fn, tgtype } = await guardIdentity();
+      expect(fn).toBe("studios_admission_mode_guard");
+      expect(tgtype & 16, "this imposter must NOT carry the UPDATE bit").toBe(0);
+
+      await expect(adminQuery(REPAIR_SQL)).rejects.toThrow(
+        /not a BEFORE UPDATE .* FOR EACH ROW trigger/i,
+      );
+      expect((await admissionRow(candidate.studioId)).set_at).toBeNull();
+    } finally {
+      await restoreGuard(realDef);
+    }
+  });
+
+  it("a WIDER guard that also fires on insert is ACCEPTED, not refused", async () => {
+    // The bitmask is tested bitwise rather than as `tgtype = 19` on purpose: a
+    // guard that also fires on insert still polices every update and is not
+    // weaker, so refusing it would be strictness with no safety behind it.
+    try {
+      await installImposterGuard("before insert or update", "real");
+      const { tgtype } = await guardIdentity();
+      expect(tgtype & 4, "this guard should carry the INSERT bit too").toBe(4);
+      expect(tgtype & 16).toBe(16);
+
+      await expect(adminQuery(REPAIR_SQL)).resolves.toBeDefined();
+      expect((await admissionRow(candidate.studioId)).set_at).not.toBeNull();
+    } finally {
+      await restoreGuard(realDef);
+    }
+  });
+
+  it("the guard is byte-identical to its original definition afterwards", async () => {
+    // Non-vacuity for the restores: a drifted guard would silently change what
+    // every later test in this file is measuring.
+    expect(await guardDef()).toBe(realDef);
   });
 });
 
