@@ -124,10 +124,55 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
   it("uses ALTER COLUMN SET DEFAULT, which never rewrites an existing row", () => {
     // The distinction is load-bearing. `ADD COLUMN ... DEFAULT` populates
     // existing rows in PostgreSQL 11+; `ALTER COLUMN ... SET DEFAULT` records a
-    // default for FUTURE inserts only. Pre-fix studios must keep set_at NULL and
-    // keep their legacy semantics.
+    // default for FUTURE inserts only.
+    //
+    // SCOPED TO THE DEFAULT, deliberately. It is census members and other
+    // pre-0204 legacy rows that keep `set_at` NULL - not "every pre-fix studio",
+    // which this comment used to say and which is false for a row created
+    // between the census and this apply: section 3 stamps that one on purpose.
     expect(CODE).toMatch(/alter column new_client_admission_mode_set_at set default/);
     expect(CODE).not.toMatch(/add column[^;]*new_client_admission_mode_set_at/);
+  });
+
+  it("no operator-facing claim is ABSOLUTE about rows keeping set_at NULL", () => {
+    // THE THIRD DOCUMENTATION-ACCURACY FINDING ON THIS FILE, pinned so there is
+    // not a fourth. The no-backfill paragraph said "every pre-fix studio keeps
+    // `set_at` NULL" and that the fix is not "an UPDATE". Both are true of the
+    // DEFAULT and false of the MIGRATION, which stamps a row created between the
+    // census and the apply - the whole purpose of section 3.
+    //
+    // My own sweep missed it because I grepped the phrasings I remembered
+    // writing ("only write", "only DML") rather than the CLAIM. So this asserts
+    // the claim's shape, not a phrase: an unqualified universal about pre-fix or
+    // existing rows keeping NULL must not appear, and the scoped version must.
+    const prose = SQL.split("\n")
+      .filter((l) => l.trimStart().startsWith("--"))
+      .map((l) => l.replace(/^\s*--\s?/, ""))
+      .join(" ")
+      .replace(/\s+/g, " ");
+
+    // ASSERTED POSITIVELY ONLY, and that is the second lesson here rather than
+    // an omission. A first version added negative greps for the retired wording
+    // and failed on the migration's own sentence QUOTING it - "an earlier
+    // revision of this paragraph said ...". A regex cannot tell a quotation from
+    // an assertion, which is exactly how the lock-claim test in this same file
+    // failed earlier. Absence of a phrase is the wrong thing to pin when the
+    // file legitimately records what it used to say.
+    //
+    // So what is pinned is that the SCOPED claim is present, in both directions.
+    // Deleting the paragraph instead of correcting it fails this; restoring the
+    // absolute version without the scope fails it too, because the scope is what
+    // the assertions name.
+    expect(prose, "the scope must name who DOES keep set_at NULL").toMatch(
+      /Census members and every other pre-0204 legacy row keep it/i,
+    );
+    expect(prose, "and must name who does NOT").toMatch(
+      /created AFTER the census but BEFORE this apply does\s+NOT/i,
+    );
+    expect(
+      prose,
+      "and the no-backfill claim must be scoped to the DEFAULT, not the migration",
+    ).toMatch(/THE DEFAULT ITSELF CANNOT BACKFILL/);
   });
 
   it("the STATEMENT INVENTORY names both updates, because it has been wrong twice", () => {
@@ -177,8 +222,8 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     // `SET DEFAULT` only governs inserts that come after it. Section 3 repairs
     // that window, so the earlier "zero DML" claim is retired.
     //
-    // The bound still has to be asserted, which is what this is: ONE update,
-    // against studios, and no other verb at all.
+    // The bound still has to be asserted, and this is it.
+    //
     // TWO updates now, and they are different in kind. The behavioural guard
     // probe attempts an admission write it EXPECTS to be refused, and the repair
     // performs the real one. Both are against `studios` and nothing else.
@@ -468,7 +513,10 @@ describe("it does not touch the legacy transition guard", () => {
 
   it("adds no column, index, constraint or grant", () => {
     for (const verb of [/\badd column\b/i, /create (unique )?index/i, /\badd constraint\b/i, /^\s*grant /im, /^\s*revoke /im]) {
-      expect(CODE, `0205 is a default + comments only; found ${verb}`).not.toMatch(verb);
+      expect(
+        CODE,
+        `0205 is a default, two comments and two bounded updates - nothing else; found ${verb}`,
+      ).not.toMatch(verb);
     }
   });
 });

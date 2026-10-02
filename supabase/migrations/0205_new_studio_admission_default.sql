@@ -69,12 +69,24 @@
 -- comments below are rewritten to say so, because 0204's say the older thing
 -- and 0204 is frozen.
 --
--- THIS MUST NOT BACKFILL, AND CANNOT.
+-- THE DEFAULT ITSELF CANNOT BACKFILL, AND THAT IS A CLAIM ABOUT THE DEFAULT.
 -- `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` records a default for FUTURE
--- inserts only; it never rewrites an existing row. That is the whole reason the
--- fix is spelled this way rather than as `ADD COLUMN ... DEFAULT` (which in
--- PostgreSQL 11+ does populate existing rows) or as an UPDATE. Every pre-fix
--- studio keeps `set_at` NULL and keeps its legacy semantics.
+-- inserts only; it never rewrites an existing row. That is why the default is
+-- spelled this way rather than as `ADD COLUMN ... DEFAULT`, which in
+-- PostgreSQL 11+ DOES populate existing rows and would have stamped every
+-- legacy studio on contact.
+--
+-- WHICH EXISTING ROWS KEEP `set_at` NULL, STATED EXACTLY. Census members and
+-- every other pre-0204 legacy row keep it, because nothing in this migration
+-- selects them. A studio created AFTER the census but BEFORE this apply does
+-- NOT: section 3 deliberately stamps it, which is the entire point of section 3.
+--
+-- An earlier revision of this paragraph said "every pre-fix studio keeps
+-- `set_at` NULL" and that the fix is not "an UPDATE". Both were true of the
+-- default alone and false of the migration, which now performs two UPDATE
+-- statements per candidate - see the STATEMENT INVENTORY below. An absolute
+-- claim in operator-facing prose about a migration that does write rows is the
+-- wrong kind of wrong, so the scope is named instead.
 --
 -- THE CENSUS-TO-APPLY GAP, AND WHY THIS MIGRATION CARRIES A REPAIR.
 --
