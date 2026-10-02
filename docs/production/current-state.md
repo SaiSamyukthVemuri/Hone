@@ -612,8 +612,10 @@ measured instant · its EMAIL COMMIT POINT no longer served any studio.**
 > So for Willow the email was a **notification** and the row the record, at every measured
 > instant. WAIT-01's commit point applies to a waitlisted studio outside the durable allowlist;
 > **no such studio existed at any measured instant, and that is a dated observation, not a
-> statement about route occupancy now.** Clearing the allowlist re-routes Willow through WAIT-01
-> on the very next request, because the configuration is re-read per call.
+> statement about route occupancy now.** ⚠️ **THAT APPLIES ONLY TO A STUDIO THAT IS NOT CUT OVER.** Since 2026-10-01T21:35:33.139540Z Willow's mode is **persisted**, and `newClientWaitlistCommitIsDurable` (`lib/booking/new-client-waitlist-durability-bridge.ts`) returns true at its cut-over check **before** it consults `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`. **Clearing or emptying that list therefore cannot return a cut-over studio to WAIT-01 email-only** — it governs only studios still on the legacy bridge. An operator who clears it expecting a commit-point rollback at Willow would believe the rollback succeeded while durable rows kept being written. Rolling a cut-over studio back is a **row write** through `set_new_client_admission_mode`, not an env edit.
+> An earlier revision said *"clearing the allowlist re-routes Willow through WAIT-01 on the very
+> next request"*; that was true while Willow sat on the legacy bridge and is **withdrawn** now that
+> it does not.
 
 New-client booking at Willow was **refused and routed to a waitlist** at every measured instant.
 This is admission control:
@@ -665,7 +667,9 @@ any row below.
   `isNewClientWaitlistEnabled` and `isNewClientWaitlistDurableEnabled` return true.
 - ⚠️ **THAT IS A BOUND, NOT A CURRENT READING, and the distinction is load-bearing.** A row is
   durable and outlives the flag; `lib/booking/new-client-waitlist.ts` re-reads `process.env` on
-  every call, so clearing the variable returns new submissions to WAIT-01 **immediately** while
+  every call, so for a studio **still on the legacy bridge** clearing the variable returns new
+  submissions to WAIT-01 **immediately** — but **not for a cut-over studio**, whose persisted mode
+  is answered before the list is read (see the cut-over note in §5b) — while
   every row already written stays exactly where it is. **A persisted row can never prove present
   configuration.** This document previously over-read the same evidence in the opposite
   direction — carrying a dated *absence* forward as a standing posture — and asserting a dated
@@ -729,7 +733,7 @@ Gate 4's contract, sentence 9: *"Naming a studio in `NEW_CLIENT_WAITLIST_DURABLE
 activates nothing unless that studio is also named in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`."* The
 durable variable selects the **commit point** for a studio that is *already* on the admission
 waitlist; it cannot by itself put a studio onto one. An empty durable allowlist leaves every
-studio on the non-durable (WAIT-01, email) path.
+**studio still on the legacy bridge** on the non-durable (WAIT-01, email) path. ⚠️ **THAT APPLIES ONLY TO A STUDIO THAT IS NOT CUT OVER.** Since 2026-10-01T21:35:33.139540Z Willow's mode is **persisted**, and `newClientWaitlistCommitIsDurable` (`lib/booking/new-client-waitlist-durability-bridge.ts`) returns true at its cut-over check **before** it consults `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`. **Clearing or emptying that list therefore cannot return a cut-over studio to WAIT-01 email-only** — it governs only studios still on the legacy bridge. An operator who clears it expecting a commit-point rollback at Willow would believe the rollback succeeded while durable rows kept being written. Rolling a cut-over studio back is a **row write** through `set_new_client_admission_mode`, not an env edit.
 
 **Activation bound: one studio WAS activated at every measured instant**, 2026-08-25T22:27Z
 through 2026-09-15. Established from **committed rows**: 28 durable `willow-electrolysis`
@@ -765,7 +769,8 @@ open item — not the activation. Tracked as **L25** in
 > as ACCEPTED.** It was
 > *deployed*, *disclosed*, *was enabled for one studio at every measured instant* and
 > *collecting*. It has **not** been
-> exercised beyond joining on that studio — **zero invitations have ever been issued there** —
+> exercised beyond joining on that studio at the measured instants — **zero invitations had been
+> issued there as of that reading** — ⚠️ **NO LONGER TRUE, AND THE COUNT IS DATED.** One invitation **was** issued at Willow on **2026-10-02T00:14:55.792262Z**, by a practitioner, against the synthetic step-G acceptance entry; its `delivery_disposition` read `accepted`. That was an **acceptance exercise, not ordinary operator use**, and it is a dated observation — nothing is asserted about invitation state after that instant. Treat the zero above as the reading it was, not as a standing fact. —
 > and owner device acceptance has not been given.
 
 ## 6. Client portal and intake
@@ -1121,7 +1126,7 @@ appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no u
 ⚠️ **CORRECTED 2026-09-19 — WAIT-02B Stage B1 HAS LEFT THIS LIST**; it was recorded here as
 having none. One studio was enabled and joining exercised at every measured instant (§5b). It is
 still
-**not accepted**, and no invitation has ever been issued on that studio.
+**not accepted**. No invitation had been issued on that studio as of the 2026-09-19 reading; one **was** issued on **2026-10-02T00:14:55.792262Z** during the step-G acceptance exercise (`delivery_disposition` `accepted`), which is a dated observation and not ordinary operator use.
 
 **Retired by product decision (2026-07-29), enforced by migration 0159:** signed / finalized
 clinical records · signed-record corrections and amendments · practitioner-facing Finalize and
