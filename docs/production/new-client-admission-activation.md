@@ -220,7 +220,11 @@ that *persisted WAITLIST is durable, independent of the legacy durable list*. So
 three modes: `waitlist` keeps the studio **durable** (that is the law, not a bug);
 `open` gives ordinary new-client booking with **no waitlist at all**; `closed` shuts
 new-client intake. **None of them restores email-only intake.** Clearing either env list
-does not either — it governs only a studio still on the legacy bridge.
+does not either — for **new-client commit-point routing** it governs only a studio
+still on the legacy bridge. ⚠️ **That scope is new-client routing only.**
+`NEW_CLIENT_WAITLIST_STUDIO_SLUGS` is read independently by EMERG-01's free-consult
+reschedule restriction, so editing it at a **cut-over** studio still changes whether an
+already-confirmed free consultation can be self-service moved. See the step-H note.
 
 **Do not describe a mode transition as a commit-point rollback.** An earlier revision of
 this section did: it listed `set_new_client_admission_mode(<studio>, 'waitlist')` as the
@@ -238,7 +242,7 @@ are on.** `new_client_admission_mode_set_at` is the test.
 
 | studio state | what can be undone |
 |---|---|
-| **unstamped** (`set_at` NULL, still on the legacy bridge) | restoring its slug to `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` restores its previous waitlist behaviour, for as long as the bridge remains — **this is the only state in which an env edit changes anything** |
+| **unstamped** (`set_at` NULL, still on the legacy bridge) | restoring its slug to `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` restores its previous waitlist behaviour, for as long as the bridge remains — **this is the only state in which an env edit changes NEW-CLIENT ADMISSION OR THE COMMIT POINT** — it is *not* the only state in which an env edit changes anything, because `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` still drives EMERG-01's free-consult reschedule restriction at a stamped studio too (see the step-H note below) |
 | **0204 applied, application not yet deployed** (between steps B and D) | nothing to roll back at the data layer: the deployed application calls none of the new RPCs and writes none of the new fields, so the migration is inert. Roll back by not deploying. |
 | **stamped** (`set_at` non-null, an owner has chosen) | **ADMISSION MODE only**, through an explicit `set_new_client_admission_mode(<studio>, <mode>)` command — the env list cannot do it. ⚠️ **The COMMIT POINT cannot be undone at all**: writing `waitlist` leaves the studio durable, and `open` / `closed` remove the waitlist instead of restoring email-only. See the one-way-door note above. |
 
