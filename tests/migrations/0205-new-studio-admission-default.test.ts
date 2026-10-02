@@ -205,6 +205,41 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     );
   });
 
+  it("requires the guard to FIRE for this session, not merely to exist", () => {
+    // EXISTENCE WAS NOT ENOUGH. A present-but-DISABLED trigger satisfied the
+    // old `if not exists (...)` — measured: `alter table ... disable trigger`
+    // leaves it true with `tgenabled = 'D'` — so the migration declared its
+    // guard prerequisite met and repaired rows nothing was policing.
+    //
+    // The replacement is PostgreSQL's own firing rule, both axes, written as the
+    // general law rather than as the origin-session special case.
+    const block = REPAIR_BLOCK!;
+
+    expect(block, "the mode must be read, not just the row's existence").toMatch(
+      /t\.tgenabled::text\s*\n?\s*into v_guard_mode/,
+    );
+    expect(block, "absence is still its own refusal").toMatch(/v_guard_mode is null/);
+    expect(block).toMatch(/current_setting\('session_replication_role'\)/);
+
+    // ALWAYS fires regardless of role; ORIGIN needs origin/local; REPLICA needs
+    // replica. 'D' qualifies under none of the three, which is how it is refused.
+    expect(block).toMatch(/v_guard_mode = 'A'/);
+    expect(block).toMatch(/v_guard_mode = 'O' and v_session_role in \('origin', 'local'\)/);
+    expect(block).toMatch(/v_guard_mode = 'R' and v_session_role = 'replica'/);
+
+    // NOT a `tgenabled <> 'D'` shortcut, which would wrongly admit a
+    // replica-only trigger under an origin apply.
+    expect(block, "a <> 'D' test is not the firing rule").not.toMatch(
+      /tgenabled\s*(<>|!=)\s*'D'/,
+    );
+
+    // And it must precede the write, like every other precondition here.
+    expect(
+      block.indexOf("v_session_role in ('origin', 'local')"),
+      "the firing check must run BEFORE any DML",
+    ).toBeLessThan(block.indexOf("update public.studios"));
+  });
+
   it("gates on CENSUS LINEAGE before any DML, and aborts rather than guessing", () => {
     // `k_census` distinguishes production's known rows only on a database
     // descended from the census that produced it. On any other non-empty

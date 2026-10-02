@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { adminQuery, asUser, seedStudio, type SeededStudio } from "@/tests/db/helpers/harness";
+import {
+  adminQuery,
+  adminTx,
+  asUser,
+  seedStudio,
+  type SeededStudio,
+} from "@/tests/db/helpers/harness";
 
 // ===========================================================================
 // Migration 0205 — a NEW studio is born with its admission authority already
@@ -395,6 +401,29 @@ async function dropCensusMember(id: string): Promise<void> {
   await adminQuery(`delete from public.studios where id = $1`, [id]);
 }
 
+/** The guard's `tgenabled` mode: 'O' origin, 'A' always, 'R' replica, 'D' disabled. */
+async function guardMode(): Promise<string> {
+  const { rows } = await adminQuery(
+    `select t.tgenabled::text as mode
+       from pg_trigger t
+      where t.tgrelid = 'public.studios'::regclass
+        and t.tgname = 'studios_admission_mode_guard'
+        and not t.tgisinternal`,
+  );
+  return rows[0]?.mode as string;
+}
+
+/** Set the guard's firing mode. ALTER TABLE spellings, not a pg_trigger UPDATE. */
+async function setGuardMode(mode: "O" | "A" | "R" | "D"): Promise<void> {
+  const verb = {
+    O: "enable trigger",
+    A: "enable always trigger",
+    R: "enable replica trigger",
+    D: "disable trigger",
+  }[mode];
+  await adminQuery(`alter table public.studios ${verb} studios_admission_mode_guard`);
+}
+
 async function censusPresent(): Promise<number> {
   const { rows } = await adminQuery(
     `select count(*)::int as n from public.studios where id = any($1::uuid[])`,
@@ -514,6 +543,112 @@ describe("the apply-time repair closes the census-to-apply window", () => {
 // CI's db lane. It cannot be staged in this file, because `studios` cannot be
 // emptied even transactionally — `appointment_audit_studio_fk` refuses.
 // ===========================================================================
+// ===========================================================================
+// FAIL CLOSED #1 — THE GUARD MUST FIRE FOR THIS SESSION, NOT MERELY EXIST.
+//
+// An earlier revision asserted existence only, and that passed on a database
+// where the trigger was present but DISABLED, or set replica-only while data was
+// loaded. Measured: `alter table ... disable trigger` leaves the existence check
+// true with `tgenabled = 'D'`. The migration then declared its guard
+// prerequisite satisfied and repaired rows nothing was policing.
+//
+// PostgreSQL decides firing from `tgenabled` AND `session_replication_role`:
+//
+//   'A' ALWAYS   fires under every session role
+//   'O' ORIGIN   fires only when the session role is 'origin' or 'local'
+//   'R' REPLICA  fires only when the session role is 'replica'
+//   'D' DISABLED never fires
+//
+// Both axes are exercised below, and both are restored in `finally` — a leaked
+// trigger mode or session role would red every later repair test in this file.
+// ===========================================================================
+describe("FAIL CLOSED #1: the guard must FIRE for the current session", () => {
+  let candidate: SeededStudio;
+
+  beforeAll(async () => {
+    await installCensusLineage();
+    candidate = await seedStudio("admission-guard-mode");
+  });
+
+  // Every case needs a live repair candidate, so the failure cases can assert
+  // that nothing was written and the pass cases have something to write.
+  beforeEach(async () => {
+    await setGuardMode("O");
+    await makeWindowRow(candidate.studioId);
+  });
+
+  /** Run the migration's own repair block under an explicit session role. */
+  const repairAsRole = (role: "origin" | "replica" | "local") =>
+    adminTx(async (q) => {
+      // `set local`, so the role is discarded with the transaction and cannot
+      // leak to another user of the pooled connection.
+      await q(`set local session_replication_role = '${role}'`);
+      return q(REPAIR_SQL);
+    });
+
+  it("ordinary 'O' guard under an ORIGIN session passes, and repairs", async () => {
+    expect(await guardMode()).toBe("O");
+    await expect(repairAsRole("origin")).resolves.toBeDefined();
+    expect((await admissionRow(candidate.studioId)).set_at).not.toBeNull();
+  });
+
+  it("DISABLED guard aborts, and the candidate is untouched", async () => {
+    try {
+      await setGuardMode("D");
+      expect(await guardMode()).toBe("D");
+      await expect(repairAsRole("origin")).rejects.toThrow(/does not fire for this/i);
+      expect(
+        (await admissionRow(candidate.studioId)).set_at,
+        "the repair must write nothing when its guard cannot fire",
+      ).toBeNull();
+    } finally {
+      await setGuardMode("O");
+    }
+  });
+
+  it("REPLICA-only 'R' guard under an ORIGIN session aborts, and writes nothing", async () => {
+    try {
+      await setGuardMode("R");
+      expect(await guardMode()).toBe("R");
+      await expect(repairAsRole("origin")).rejects.toThrow(/does not fire for this/i);
+      expect((await admissionRow(candidate.studioId)).set_at).toBeNull();
+    } finally {
+      await setGuardMode("O");
+    }
+  });
+
+  it("ordinary 'O' guard under a REPLICA session aborts, and writes nothing", async () => {
+    // The mirror of the case above: the trigger is perfectly healthy, the SESSION
+    // is what stops it firing. Existence-only could not see either.
+    expect(await guardMode()).toBe("O");
+    await expect(repairAsRole("replica")).rejects.toThrow(/does not fire for this/i);
+    expect((await admissionRow(candidate.studioId)).set_at).toBeNull();
+  });
+
+  it("ALWAYS 'A' guard passes under BOTH origin and replica", async () => {
+    try {
+      await setGuardMode("A");
+      expect(await guardMode()).toBe("A");
+
+      await expect(repairAsRole("origin")).resolves.toBeDefined();
+      expect((await admissionRow(candidate.studioId)).set_at).not.toBeNull();
+
+      // And again under replica, where 'O' would have been refused.
+      await makeWindowRow(candidate.studioId);
+      await expect(repairAsRole("replica")).resolves.toBeDefined();
+      expect((await admissionRow(candidate.studioId)).set_at).not.toBeNull();
+    } finally {
+      await setGuardMode("O");
+    }
+  });
+
+  it("the trigger mode is back to 'O' after this block", async () => {
+    // Non-vacuity for the cleanups themselves: a leaked mode would make every
+    // later repair test in this file fail for a reason none of them name.
+    expect(await guardMode()).toBe("O");
+  });
+});
+
 describe("the lineage gate refuses a database that is not the census's", () => {
   it("2. an EXACT census lineage passes the gate", async () => {
     expect(await censusPresent()).toBe(CENSUS_IDS.length);

@@ -239,24 +239,60 @@ declare
     'eb5023c5-45b3-4215-9b02-afa10705a8fa'::uuid
   ];
   r               record;
+  v_guard_mode    text;
+  v_session_role  text;
   v_studios       integer;
   v_census_seen   integer;
   v_anomalous     integer;
   v_repaired      integer := 0;
   v_left          integer;
 begin
-  -- FAIL CLOSED #1: the guard must be present. If it is absent this migration
-  -- would be writing admission fields with nothing policing the write, which is
-  -- precisely the state 0204 created the guard to prevent.
-  if not exists (
-    select 1
-      from pg_trigger t
-     where t.tgrelid = 'public.studios'::regclass
-       and t.tgname = 'studios_admission_mode_guard'
-       and not t.tgisinternal
-  ) then
+  -- FAIL CLOSED #1: the guard must exist AND MUST ACTUALLY FIRE for this session.
+  --
+  -- EXISTENCE WAS NOT ENOUGH, and an earlier revision checked only that. On a
+  -- restored or staging database the trigger can be present but DISABLED, or set
+  -- replica-only while data was loaded, and the old `if not exists (...)` passed
+  -- happily: measured locally, `alter table ... disable trigger` leaves the
+  -- existence check true with `tgenabled = 'D'`. The migration then declared its
+  -- guard prerequisite satisfied and repaired rows that nothing was policing,
+  -- which is the opposite of the fail-closed precondition it claims to be.
+  --
+  -- SO THE TEST IS SEMANTIC, in PostgreSQL's own terms. `tgenabled` and
+  -- `session_replication_role` together decide whether a trigger fires:
+  --
+  --   'A' ALWAYS   fires under every session_replication_role
+  --   'O' ORIGIN   fires only when the session role is 'origin' or 'local'
+  --   'R' REPLICA  fires only when the session role is 'replica'
+  --   'D' DISABLED never fires
+  --
+  -- An ordinary apply runs as 'origin', so 'O' and 'A' qualify there and 'R' and
+  -- 'D' do not. The condition is written as the general rule rather than as that
+  -- special case, because the rule is what is true: a guard that cannot fire for
+  -- THIS session is not a guard, whatever the session happens to be.
+  select t.tgenabled::text
+    into v_guard_mode
+    from pg_trigger t
+   where t.tgrelid = 'public.studios'::regclass
+     and t.tgname = 'studios_admission_mode_guard'
+     and not t.tgisinternal;
+
+  if v_guard_mode is null then
     raise exception
       '0205: studios_admission_mode_guard is absent; refusing to write admission fields';
+  end if;
+
+  v_session_role := current_setting('session_replication_role');
+
+  if not (
+       v_guard_mode = 'A'
+    or (v_guard_mode = 'O' and v_session_role in ('origin', 'local'))
+    or (v_guard_mode = 'R' and v_session_role = 'replica')
+  ) then
+    raise exception
+      '0205: studios_admission_mode_guard EXISTS but does not fire for this '
+      'session (tgenabled=%, session_replication_role=%); refusing to write '
+      'admission fields with nothing policing them.',
+      v_guard_mode, v_session_role;
   end if;
 
   -- FAIL CLOSED #2: THE ENVIRONMENT / LINEAGE GATE, and it runs before ANY DML.
