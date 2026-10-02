@@ -239,8 +239,15 @@ route, not the step number.
 
 **This section is a record of what was executed, not an instruction.** The plan
 above is unchanged; nothing in it was rewritten to match the outcome. Steps A–D
-and G are DONE, **E was never performed**, F is **partial by design**, and H is
-**not started**.
+and G are DONE and **E was never performed**. **F wrote ONE studio; its
+completeness is UNKNOWN pending step E.** **H is NOT STARTED; its eligibility is
+also UNKNOWN pending step E** — "not started" and "not eligible" are different
+claims and only the first is supported. This summary deliberately carries no
+"partial" verdict for F: because step E never read `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`,
+Willow may have been its only member, in which case **F is already COMPLETE**. An
+earlier revision of this line said F was "partial by design" and is **withdrawn** —
+it contradicted the table below it, and it was the same inference that table exists
+to refuse.
 
 Canonical cross-references: the migration apply and the release-level summary live
 in [migration-ledger.md](./migration-ledger.md); hosted migration state lives in
