@@ -680,7 +680,7 @@ describe("the activation document matches what the source actually does", () => 
       "the retired promise must be quoted exactly once, as history",
     ).toBe(1);
 
-    // ─── EVERY INSTRUCTIONAL SECTION IS FROZEN BY BYTES ─────────────────────
+    // ─── THE PLAN IS FROZEN BY BYTES; ONLY THE RECORD APPENDS ───────────────
     // I froze only the withdrawal PARAGRAPH last round, and argued that active
     // guidance should stay rewordable. Review disproved the split in one move:
     // appending a NEW paragraph immediately after the frozen one revived the
@@ -698,21 +698,31 @@ describe("the activation document matches what the source actually does", () => 
     // INSTRUCTIONAL prose -- review landed a contradictory instruction there with
     // the digest, the directives and the coupling assertions all unchanged. The
     // constraint was never "stop at the next heading", it was "do not block the
-    // EXECUTION RECORD appends", so the span now runs to that heading and covers
-    // every instructional section. Appending a new execution record still passes;
-    // that is asserted below, because a freeze that blocks the routine workflow
-    // gets worked around.
+    // EXECUTION RECORD appends".
     //
-    // To change this section deliberately, recompute and update the hash in the
-    // same commit, so the edit arrives with a reviewer looking at it:
-    //   node -e 'const s=require("fs").readFileSync("docs/production/new-client-admission-activation.md","utf8"),a=s.indexOf("## Rollback"),b=s.indexOf("## EXECUTION RECORD");console.log(require("crypto").createHash("sha256").update(s.slice(a,b)).digest("hex"))'
-    const secStart = DOC.indexOf("## Rollback");
+    // AND THE START WAS WRONG TOO -- I MOVED ONE END AND ASSERTED BOTH. Having cut
+    // the tail at the appends boundary, I wrote that the span "covers every
+    // instructional section" while it still BEGAN at `## Rollback`, leaving five
+    // instructional sections and the preamble above it. Review put
+    // "Setting the persisted mode to WAITLIST restores the email-only commit
+    // point" immediately before `## Rollback`: 47 passed (47). The assertion
+    // message was making a claim the slice did not support -- the same
+    // overstatement this whole change exists to correct, committed in the act of
+    // correcting it.
+    //
+    // So there is now ONE boundary rather than a judgement about which sections
+    // are instructional: EVERYTHING above the execution records is frozen. That
+    // deliberately includes the preamble, which is not idle caution -- the
+    // preamble has already carried a contradiction that had to be withdrawn once.
+    //
+    // To change the plan deliberately, recompute and update the hash in the same
+    // commit, so the edit arrives with a reviewer looking at it:
+    //   node -e 'const s=require("fs").readFileSync("docs/production/new-client-admission-activation.md","utf8");console.log(require("crypto").createHash("sha256").update(s.slice(0,s.indexOf("## EXECUTION RECORD"))).digest("hex"))'
     const secEnd = DOC.indexOf("## EXECUTION RECORD");
-    expect(secStart, "the Rollback section must exist").toBeGreaterThan(-1);
     expect(
       secEnd,
-      "and the frozen span must terminate at the EXECUTION RECORD heading",
-    ).toBeGreaterThan(secStart);
+      "the frozen span must terminate at the EXECUTION RECORD heading",
+    ).toBeGreaterThan(0);
     // THE FREEZE MUST NOT BLOCK THE ROUTINE WORKFLOW. Execution records are
     // appended to this document after every production step, so the span is
     // asserted to END before them -- a freeze that reds a normal append is one
@@ -722,9 +732,9 @@ describe("the activation document matches what the source actually does", () => 
       "execution records must sit OUTSIDE the frozen span",
     ).toContain("## EXECUTION RECORD");
     expect(
-      createHash("sha256").update(DOC.slice(secStart, secEnd)).digest("hex"),
-      "the instructional sections are frozen: any edit, INCLUDING AN APPENDED PARAGRAPH IN A LATER SECTION, must fail here until the hash is updated deliberately",
-    ).toBe("e028fb0f77105c7f09de0198b3434f559622016837cf9ddb5c07d6ce5100be94");
+      createHash("sha256").update(DOC.slice(0, secEnd)).digest("hex"),
+      "the whole plan above the execution records is frozen: ANY edit to it -- preamble, a step, the rollback table, an appended paragraph anywhere -- must fail here until the hash is updated deliberately",
+    ).toBe("7f3b9a79f9035415d0e721e47410f1ef2268a507e4fbc64c11df6512f7e2a3bc");
     const withdrawnMarker = DOC.indexOf(
       "<!-- claim-status id=commit-point-rollback-via-mode-write",
     );
