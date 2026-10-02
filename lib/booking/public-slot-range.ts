@@ -4,6 +4,7 @@ import {
   buildDaySlots,
   filterFutureSlots,
   pickDayWindow,
+  reservationWindowStartUtc,
   type ReservationRow,
   type Slot,
 } from "@/lib/booking/slots";
@@ -328,7 +329,15 @@ export async function loadPublicSlotsByDate(
         .select("starts_at, ends_at, source_kind, source_id")
         .eq("studio_id", ctx.studioId)
         .lt("starts_at", rangeEndUtc.toISOString())
-        .gt("ends_at", rangeStartUtc.toISOString())
+        // Same widened boundary as the day loader — one rule, one helper, so
+        // the two engines cannot disagree about which reservations exist.
+        .gt(
+          "ends_at",
+          reservationWindowStartUtc(
+            rangeStartUtc,
+            ctx.bufferMinutes ?? 0,
+          ).toISOString(),
+        )
         .order("starts_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
