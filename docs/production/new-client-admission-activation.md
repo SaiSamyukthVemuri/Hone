@@ -297,10 +297,19 @@ page, so no verification step locked a studio row mid-cutover.
   membership from row state, which is the same error as inferring durable membership
   from historical rows. **Read the list first; it alone defines the set.**
 - **`0205`** — close the `studios_admission_mode_guard()` grant deviation.
-- **The step-G synthetic entry is RETAINED.** `ff942ef2-a272-4549-a3b9-c5d000b05b69`
-  was in Willow's **Waiting** queue and, measured immediately after step G on
-  **2026-10-01**, at position **47 of 47** (`joined_at` ASC, `id` ASC,
-  `SECTION_PAGE_SIZE` 100 — the last row on page one). It carries a submitted phone
-  number. ⚠️ **That position is dated evidence, not a standing location** — a later
-  join, removal or invitation moves it, so **find it by id**, not by position. **It is synthetic test data in a real operator's
-  live queue.** Remove it before Willow operates that queue for real.
+- **The step-G synthetic entry is RETAINED.** `ff942ef2-a272-4549-a3b9-c5d000b05b69`,
+  recorded as **two dated observations** with nothing claimed after the second:
+  - **2026-10-01T22:25:36Z, at step-G acceptance** — status **`waiting`**, position
+    **47 of 47** (`joined_at` ASC, `id` ASC, `SECTION_PAGE_SIZE` 100 — then the last row
+    on page one), a submitted phone number and no SMS consent.
+  - **2026-10-02T00:14:55Z, controlled invitation-acceptance exercise** — **claimed**
+    then **invited by a practitioner**; status **`invited`**, therefore **out of the
+    Waiting section**. Invitation `delivery_disposition` **`accepted`**, stored
+    `expires_at` **2026-10-04T00:14:55Z**, with `redeemed_at` / `declined_at` /
+    `expired_at` / `released_at` / `closed_at` all NULL. **Inbox receipt was
+    OPERATOR-OBSERVED**, not measured here.
+  ⚠️ **Its state after 2026-10-02T00:14:55Z is not asserted**, and the expiry is a
+  stored value rather than a prediction. **Find it by id**, never by position or status.
+  **It is synthetic test data in a real operator's live queue and now carries a live
+  invitation to a real address.** Removal or release is a **separately authorized
+  cleanup, deliberately NOT performed in this change.**

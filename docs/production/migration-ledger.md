@@ -130,13 +130,30 @@ release-level summary.
 > - **Twilio/Verify was NOT armed** and no provider was contacted beyond the two emails
 >   the join itself sends. The release touched **no** runtime Twilio/Verify/OTP/SMS code —
 >   the only matching paths in the whole diff are three **test** files.
-> - **The step-G synthetic entry was RETAINED, not removed.** `ff942ef2-…` sits in
->   Willow's **Waiting** queue and, measured immediately after step G on **2026-10-01**,
->   at position **47 of 47** (ordered `joined_at` ASC, `id` ASC, `SECTION_PAGE_SIZE` 100,
->   so it was then the last row on page one). It carries a submitted phone number.
->   ⚠️ **The position is a dated reading, not where the row is now** — any later join,
->   removal or invitation moves it. **Locate it by id.** **It is synthetic test data in a real operator's
->   queue** and should be removed before Willow operates that queue for real.
+> - **The step-G synthetic entry was RETAINED, not removed.**
+>   `ff942ef2-a272-4549-a3b9-c5d000b05b69`. **TWO DATED OBSERVATIONS, and no claim
+>   about any instant after the second:**
+>   - **2026-10-01T22:25:36Z (at step-G acceptance)** — status **`waiting`**; position
+>     **47 of 47** of Willow's Waiting section (ordered `joined_at` ASC, `id` ASC,
+>     `SECTION_PAGE_SIZE` 100, so then the last row on page one); a submitted phone
+>     number, no SMS consent.
+>   - **2026-10-02T00:14:55Z (controlled invitation-acceptance exercise)** — the same
+>     entry was **claimed** (`00:14:55.732594Z`) and then **invited by a practitioner**
+>     (`00:14:55.792262Z`); status **`invited`**, so it was **no longer in the Waiting
+>     section at all**. The invitation's `delivery_disposition` read **`accepted`**
+>     (`00:14:56.001805Z`) and its stored `expires_at` is **`2026-10-04T00:14:55Z`**;
+>     `redeemed_at`, `declined_at`, `expired_at`, `released_at` and `closed_at` were all
+>     NULL. **Real inbox receipt was OPERATOR-OBSERVED** — that one is reported, not
+>     measured here; everything else in this bullet is a read-only database reading.
+>   ⚠️ **NOTHING IS ASSERTED ABOUT ITS STATE AFTER 2026-10-02T00:14:55Z.** The expiry
+>   above is a stored value, not a prediction, and an earlier revision of this bullet
+>   said the row "sits in" Waiting — **withdrawn**: by the time that wording was read it
+>   was already false, which is precisely why a status belongs to an instant.
+>   **Locate it by id**, never by queue position or status.
+>   **It is synthetic test data in a real operator's live queue, and it now carries a
+>   live invitation to a real address.** Removing the entry or releasing the invitation
+>   is a **SEPARATELY AUTHORIZED cleanup and was deliberately NOT performed in this
+>   change.**
 
 ## Previous state (verified 2026-09-27, post-0203 apply; `0203` APPLIED, repo == hosted)
 
