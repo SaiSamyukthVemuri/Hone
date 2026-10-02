@@ -585,21 +585,38 @@ describe("the activation document matches what the source actually does", () => 
     // it governs. The coupling assertions bound that -- one canonical statement,
     // marker sitting on it -- but nothing here reads meaning, and nothing here
     // claims to.
-    const CLAIM_RE =
-      /<!--\s*claim-status\s+id=([a-z0-9-]+)\s+value=([a-z-]+)(?:\s[\s\S]*?)?-->/g;
+    // STRICT AND WHOLE. The first version of this parser had a permissive tail
+    // for the human explanation, and `value=withdrawn value=active` walked
+    // straight through it: the first value was captured, the second absorbed as
+    // commentary, and ONE marker declared TWO statuses while the registry, the
+    // domain, the duplicate-id check and the raw count all stayed green.
+    //
+    // So the directive now carries exactly two assignments and no prose -- the
+    // prose lives in an ordinary comment beside it -- and the body is matched
+    // whole and anchored. Any repeated or extra assignment fails to parse.
+    const MARKER_RE = /<!--\s*claim-status\b([\s\S]*?)-->/g;
     const claims = new Map<string, string>();
     const dupes: string[] = [];
-    for (let m = CLAIM_RE.exec(DOC); m; m = CLAIM_RE.exec(DOC)) {
-      if (claims.has(m[1])) dupes.push(m[1]);
-      claims.set(m[1], m[2]);
+    let markerCount = 0;
+    for (let m = MARKER_RE.exec(DOC); m; m = MARKER_RE.exec(DOC)) {
+      markerCount += 1;
+      const fields = /^id=([a-z0-9-]+) value=([a-z-]+)$/.exec(m[1].trim());
+      expect(
+        fields,
+        `claim-status directive ${markerCount} must be exactly "id=<id> value=<status>" ` +
+          `with no second assignment and no prose, got ${JSON.stringify(m[1].trim())}`,
+      ).not.toBeNull();
+      if (!fields) continue;
+      if (claims.has(fields[1])) dupes.push(fields[1]);
+      claims.set(fields[1], fields[2]);
     }
-    // A MALFORMED MARKER MUST FAIL, NOT VANISH. A typo in `value=` would simply
-    // not match the pattern, leaving the claim silently unpinned -- so the raw
-    // occurrence count is reconciled against the parsed count.
+    // A MALFORMED DIRECTIVE MUST FAIL, NOT VANISH. A token that does not form a
+    // directive at all would otherwise leave its claim silently unpinned, so the
+    // raw occurrence count is reconciled against what actually parsed.
     expect(
       (DOC.match(/claim-status/g) ?? []).length,
-      "every claim-status marker must parse; a malformed one must fail, not disappear",
-    ).toBe(claims.size + dupes.length);
+      "every claim-status token must form a directive; a malformed one must fail, not disappear",
+    ).toBe(markerCount);
     // No shadowing: a second marker for an id would otherwise decide the claim
     // by document order.
     expect(dupes, "each claim id must be declared exactly once").toEqual([]);
@@ -663,26 +680,32 @@ describe("the activation document matches what the source actually does", () => 
       "the retired promise must be quoted exactly once, as history",
     ).toBe(1);
 
-    // ─── THE WITHDRAWAL PARAGRAPH IS A FROZEN RECORD ────────────────────────
-    // A declared marker stops prose REVERSING the status. It does not stop prose
-    // CONTRADICTING it: at the previous head, appending "That withdrawal has been
-    // rescinded." to this paragraph passed every check while reviving the retired
-    // promise in the text an operator actually reads.
+    // ─── THE WHOLE ROLLBACK SECTION IS FROZEN BY BYTES ──────────────────────
+    // I froze only the withdrawal PARAGRAPH last round, and argued that active
+    // guidance should stay rewordable. Review disproved the split in one move:
+    // appending a NEW paragraph immediately after the frozen one revived the
+    // retired promise with the digest, the directives and every coupling
+    // assertion untouched, because the hash stopped at the first blank line.
     //
-    // A withdrawn claim is history, and history in this repo is frozen by bytes --
-    // the same idiom as the ledger's sha256 pins and 0204's APPLIED_SHA256. So the
-    // paragraph is pinned whole. Rewording it fails on purpose: an operator-facing
-    // record of a retracted promise is not something to edit in passing, and a
-    // genuine revision should arrive with a new hash and a reviewer looking at it.
-    const paraStart = DOC.indexOf(WITHDRAWAL_ANCHOR);
-    const paraEnd = DOC.indexOf("\n\n", paraStart);
-    expect(paraEnd, "the withdrawal paragraph must terminate").toBeGreaterThan(
-      paraStart,
+    // The unfrozen half is exactly where a revival lands. "Rewordable" and
+    // "cannot be contradicted" cannot both hold for the same prose, and for THIS
+    // section -- which has already shipped two false operator procedures -- the
+    // second property wins. A section terminator alone would not have closed it:
+    // the revival simply lands after the terminator.
+    //
+    // To change this section deliberately, recompute and update the hash in the
+    // same commit, so the edit arrives with a reviewer looking at it:
+    //   node -e 'const s=require("fs").readFileSync("docs/production/new-client-admission-activation.md","utf8"),a=s.indexOf("## Rollback"),b=s.indexOf("## What this plan");console.log(require("crypto").createHash("sha256").update(s.slice(a,b)).digest("hex"))'
+    const secStart = DOC.indexOf("## Rollback");
+    const secEnd = DOC.indexOf("## What this plan");
+    expect(secStart, "the Rollback section must exist").toBeGreaterThan(-1);
+    expect(secEnd, "and must terminate at the next section").toBeGreaterThan(
+      secStart,
     );
     expect(
-      createHash("sha256").update(DOC.slice(paraStart, paraEnd)).digest("hex"),
-      "the withdrawal record is frozen; a reworded or extended paragraph must fail here",
-    ).toBe("725dd684e04bfcf36af21504c24cab979d33b86c65a2ec6c4676281836b3069a");
+      createHash("sha256").update(DOC.slice(secStart, secEnd)).digest("hex"),
+      "the Rollback section is frozen: any edit, INCLUDING AN APPENDED PARAGRAPH, must fail here until the hash is updated deliberately",
+    ).toBe("5d7c0ed2b1b63eded2ed76a312046b07d726eed1b83f63165724a1981c0230ad");
     const withdrawnMarker = DOC.indexOf(
       "<!-- claim-status id=commit-point-rollback-via-mode-write",
     );

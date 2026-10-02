@@ -210,14 +210,23 @@ the implementation PR.
 ⚠️ **READ THIS FIRST: "ROLLBACK" MEANS TWO DIFFERENT THINGS HERE, AND ONLY ONE OF THEM
 EXISTS FOR A CUT-OVER STUDIO.**
 
-<!-- claim-status id=commit-point-rollback-supported value=active
-     DECLARED status, pinned by tests/lib/booking/new-client-admission.test.ts.
-     Same idiom as the canonical-facts:ignore-* directives elsewhere in
-     docs/production.
-     Prose cannot reverse a declared field: retiring this rule means editing
-     value= here, which fails that test and is legible in the diff. The verdict
-     row below must appear EXACTLY ONCE in this document and this marker must sit
-     on it - quoting it again elsewhere fails rather than shadowing it. -->
+<!--
+  DECLARED CLAIM STATUS. The directive on the next line is machine-read and
+  pinned by tests/lib/booking/new-client-admission.test.ts - same idiom as the
+  canonical-facts:ignore-* directives elsewhere in docs/production. It carries
+  exactly two assignments and no prose; this comment is where the prose goes,
+  because a directive that accepts commentary also accepts a second assignment.
+
+  Retiring the rule below means editing that directive, which fails the test and
+  is legible in the diff. Prose cannot reverse it. The verdict row must appear
+  EXACTLY ONCE in this document with the directive sitting on it.
+
+  AND THIS WHOLE ROLLBACK SECTION IS FROZEN by sha256 in that same test, so any
+  edit here - a reworded row, an appended paragraph, a footnote - fails until the
+  hash is updated deliberately. That is the point: this section has already
+  shipped two false operator procedures.
+-->
+<!-- claim-status id=commit-point-rollback-supported value=active -->
 | what you want to undo | is it supported? |
 |---|---|
 | **ADMISSION MODE** — open / waitlist / closed | **YES**, through `set_new_client_admission_mode`, by the studio's owner. |
@@ -234,10 +243,13 @@ still on the legacy bridge. ⚠️ **That scope is new-client routing only.**
 reschedule restriction, so editing it at a **cut-over** studio still changes whether an
 already-confirmed free consultation can be self-service moved. See the step-H note.
 
-<!-- claim-status id=commit-point-rollback-via-mode-write value=withdrawn
-     DECLARED status. The paragraph below is HISTORY: it records a promise this
-     plan used to make and no longer makes. Do not restate it as guidance; to
-     revive it you would have to change value= here, which fails that test. -->
+<!--
+  DECLARED CLAIM STATUS, as above. The paragraph below is HISTORY: it records a
+  promise this plan used to make and no longer makes. Do not restate it as
+  guidance anywhere in this section, and do not append a retraction after it -
+  the section hash covers both.
+-->
+<!-- claim-status id=commit-point-rollback-via-mode-write value=withdrawn -->
 **Do not describe a mode transition as a commit-point rollback.** An earlier revision of
 this section did: it listed `set_new_client_admission_mode(<studio>, 'waitlist')` as the
 rollback for a stamped studio, which changes the mode and leaves the commit point durable.
