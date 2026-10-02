@@ -354,10 +354,18 @@ begin
     -- `set_at`. The probe passed and every candidate would have been written
     -- unguarded. That is a `tgqual` defeat shape the single probe could not see.
     --
-    -- So the probe is now the REPAIR'S OWN MUTATION, on the row about to be
-    -- written: same column, same value, same row, minus the permit. Refusal
-    -- therefore covers exactly the write that follows, and no narrower claim is
-    -- being made about it.
+    -- So the probe is now the REPAIR'S OWN STATEMENT, differing from it in exactly
+    -- one respect: the permit is not armed. Same row, same column, same value,
+    -- SAME WHERE PREDICATE, same session, immediately before the real write.
+    -- Refusal therefore covers exactly the write that follows, and no narrower
+    -- claim is being made about it.
+    --
+    -- The `set_at IS NULL` clause is carried deliberately rather than dropped as
+    -- immaterial. It cannot change which row is matched here - the candidate was
+    -- selected on that very predicate - but leaving it out would make the probe
+    -- a DIFFERENT statement from the one being proved, and "different but surely
+    -- equivalent" is the reasoning that produced every earlier gap in this
+    -- prerequisite.
     --
     -- IT CANNOT PERSIST. Exception-handled block, so a subtransaction; BOTH exits
     -- are exceptions - the guard's `check_violation`, or the sentinel raise when
@@ -371,7 +379,8 @@ begin
     begin
       update public.studios s
          set new_client_admission_mode_set_at = r.created_at
-       where s.id = r.id;
+       where s.id = r.id
+         and s.new_client_admission_mode_set_at is null;
 
       -- Reached only when nothing refused the repair's own unpermitted write.
       raise exception 'HONE_0205_GUARD_NOT_POLICING';

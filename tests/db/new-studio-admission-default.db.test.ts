@@ -735,6 +735,34 @@ describe("FAIL CLOSED #2: an unpermitted admission write must be REFUSED", () =>
     }
   });
 
+  it("ZERO candidates: no probe runs, and nothing is written", async () => {
+    // The probe lives inside the repair loop, so with no candidates it never
+    // executes - and that is correct rather than a gap: the guard needs proving
+    // for the writes this migration makes, and here it makes none.
+    //
+    // Proved by DEFEATING the guard and showing the repair still succeeds. With
+    // a candidate present this exact arrangement aborts (see the shapes above);
+    // with none it must not, because no probe and no write occur.
+    await adminQuery(REPAIR_SQL); // drain any outstanding candidate
+    const { rows: before } = await adminQuery(
+      `select count(*)::int as n from public.studios
+        where new_client_admission_mode_set_at is null
+          and new_client_admission_mode_set_by is null
+          and new_client_admission_mode = 'open'`,
+    );
+    expect(before[0].n, "the suite must be drained for this case to mean anything").toBe(0);
+
+    try {
+      await installImposterGuard("before update", "real", "when (false)");
+      await expect(
+        adminQuery(REPAIR_SQL),
+        "with no candidates there is nothing to probe and nothing to guard",
+      ).resolves.toBeDefined();
+    } finally {
+      await restoreGuard(realDef);
+    }
+  });
+
   it("the probe leaves NO trace: the guard is byte-identical and no row was written", async () => {
     // Non-vacuity for every `finally` above, and for the probe's own promise
     // that its write never persists. The probe changes `set_by` on the
