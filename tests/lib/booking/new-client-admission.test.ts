@@ -551,8 +551,29 @@ describe("the activation document matches what the source actually does", () => 
   const STAMP = "2026-09-30T12:00:00.000Z";
 
   it("rollback for a STAMPED studio requires the command, and the source agrees", () => {
-    expect(DOC).toContain("set_new_client_admission_mode(<studio>, 'waitlist')");
-    expect(DOC).toContain("**The env list cannot do it.**");
+    // UPDATED with the #779 closeout, which corrected a claim this test had been
+    // pinning. The document used to list
+    // `set_new_client_admission_mode(<studio>, 'waitlist')` as THE rollback for a
+    // stamped studio. That conflates two different things: writing `waitlist`
+    // changes the MODE and leaves the COMMIT POINT durable, because
+    // `newClientWaitlistCommitIsDurable` answers the cut-over check before it reads
+    // the legacy durable list. So the old wording promised a commit-point rollback
+    // that does not exist, and pinning it here kept that promise alive.
+    //
+    // What is pinned now is the corrected split: the MODE can be changed by the
+    // command, the COMMIT POINT cannot be restored at all, and the old claim is
+    // named as withdrawn so it cannot quietly return.
+    expect(DOC).toContain(
+      "**YES**, through `set_new_client_admission_mode`, by the studio's owner.",
+    );
+    expect(DOC).toContain(
+      "**NO — not supported by any existing mechanism for a cut-over studio.**",
+    );
+    expect(DOC).toContain("the env list cannot do it");
+    // The withdrawal must be explicit, not merely an absence.
+    expect(DOC).toContain(
+      "**Do not describe a mode transition as a commit-point rollback.**",
+    );
 
     // The behavioural half of the same claim: with the slug listed, a stamped
     // `open` stays open, so an env-only rollback genuinely cannot restore it.
