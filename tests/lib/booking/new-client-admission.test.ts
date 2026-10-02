@@ -680,7 +680,7 @@ describe("the activation document matches what the source actually does", () => 
       "the retired promise must be quoted exactly once, as history",
     ).toBe(1);
 
-    // ─── THE WHOLE ROLLBACK SECTION IS FROZEN BY BYTES ──────────────────────
+    // ─── EVERY INSTRUCTIONAL SECTION IS FROZEN BY BYTES ─────────────────────
     // I froze only the withdrawal PARAGRAPH last round, and argued that active
     // guidance should stay rewordable. Review disproved the split in one move:
     // appending a NEW paragraph immediately after the frozen one revived the
@@ -688,24 +688,43 @@ describe("the activation document matches what the source actually does", () => 
     // assertion untouched, because the hash stopped at the first blank line.
     //
     // The unfrozen half is exactly where a revival lands. "Rewordable" and
-    // "cannot be contradicted" cannot both hold for the same prose, and for THIS
-    // section -- which has already shipped two false operator procedures -- the
+    // "cannot be contradicted" cannot both hold for the same prose, and for this
+    // plan -- which has already shipped two false operator procedures -- the
     // second property wins. A section terminator alone would not have closed it:
     // the revival simply lands after the terminator.
     //
+    // AND THE BOUNDARY IS THE APPENDS BOUNDARY, NOT THE NEXT HEADING. I first cut
+    // the span at `## What this plan deliberately does not do`, which is still
+    // INSTRUCTIONAL prose -- review landed a contradictory instruction there with
+    // the digest, the directives and the coupling assertions all unchanged. The
+    // constraint was never "stop at the next heading", it was "do not block the
+    // EXECUTION RECORD appends", so the span now runs to that heading and covers
+    // every instructional section. Appending a new execution record still passes;
+    // that is asserted below, because a freeze that blocks the routine workflow
+    // gets worked around.
+    //
     // To change this section deliberately, recompute and update the hash in the
     // same commit, so the edit arrives with a reviewer looking at it:
-    //   node -e 'const s=require("fs").readFileSync("docs/production/new-client-admission-activation.md","utf8"),a=s.indexOf("## Rollback"),b=s.indexOf("## What this plan");console.log(require("crypto").createHash("sha256").update(s.slice(a,b)).digest("hex"))'
+    //   node -e 'const s=require("fs").readFileSync("docs/production/new-client-admission-activation.md","utf8"),a=s.indexOf("## Rollback"),b=s.indexOf("## EXECUTION RECORD");console.log(require("crypto").createHash("sha256").update(s.slice(a,b)).digest("hex"))'
     const secStart = DOC.indexOf("## Rollback");
-    const secEnd = DOC.indexOf("## What this plan");
+    const secEnd = DOC.indexOf("## EXECUTION RECORD");
     expect(secStart, "the Rollback section must exist").toBeGreaterThan(-1);
-    expect(secEnd, "and must terminate at the next section").toBeGreaterThan(
-      secStart,
-    );
+    expect(
+      secEnd,
+      "and the frozen span must terminate at the EXECUTION RECORD heading",
+    ).toBeGreaterThan(secStart);
+    // THE FREEZE MUST NOT BLOCK THE ROUTINE WORKFLOW. Execution records are
+    // appended to this document after every production step, so the span is
+    // asserted to END before them -- a freeze that reds a normal append is one
+    // people route around.
+    expect(
+      DOC.slice(secEnd),
+      "execution records must sit OUTSIDE the frozen span",
+    ).toContain("## EXECUTION RECORD");
     expect(
       createHash("sha256").update(DOC.slice(secStart, secEnd)).digest("hex"),
-      "the Rollback section is frozen: any edit, INCLUDING AN APPENDED PARAGRAPH, must fail here until the hash is updated deliberately",
-    ).toBe("5d7c0ed2b1b63eded2ed76a312046b07d726eed1b83f63165724a1981c0230ad");
+      "the instructional sections are frozen: any edit, INCLUDING AN APPENDED PARAGRAPH IN A LATER SECTION, must fail here until the hash is updated deliberately",
+    ).toBe("e028fb0f77105c7f09de0198b3434f559622016837cf9ddb5c07d6ce5100be94");
     const withdrawnMarker = DOC.indexOf(
       "<!-- claim-status id=commit-point-rollback-via-mode-write",
     );
