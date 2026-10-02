@@ -653,3 +653,17 @@ belonging to their own lane.
 | **Owner** | Sam (engineering) |
 | **Next gate** | Chunk the id list inside that one function and merge the results — batch conservatively (~100), issue batches with `Promise.all` so a chunked read does not reintroduce the serial round trips #659 removed, and keep the `studio_id` filter on **every** batch or it becomes a tenancy defect. Whether an area-read failure should be able to fail the whole page, rather than degrading to an explicit unavailable state the way the CLIN-01-B reads do, is a separate design question and should not be folded into the chunking fix. |
 | **Blocks** | **Neither** for the pilot — no pilot client is near the threshold today — but it blocks any studio migrating a long client history. |
+
+## L33 — `0204`'s admission guard trigger holds EXECUTE for every application role, including `PUBLIC`
+
+| Field | Value |
+|---|---|
+| **Severity** | **P3 — OPEN, and NOT exploitable.** A hygiene and consistency defect, not a privilege escalation. |
+| **Impact** | `public.studios_admission_mode_guard()` was created by migration `0204` without an explicit `REVOKE`, so Supabase's `ALTER DEFAULT PRIVILEGES` left `EXECUTE` with `anon`, `authenticated`, `service_role` **and `PUBLIC`**. Every other function `0204` creates is revoked from all four roles by name and then granted narrowly. |
+| **Why it is not exploitable** | Its return type is `trigger`. PostgreSQL refuses to invoke a trigger-returning function outside a trigger context, so no role can call it directly whatever its ACL says. The one-writer rule it enforces is therefore intact: changing `new_client_admission_mode` or its two audit columns still requires the transaction-local permit that only `set_new_client_admission_mode` sets. |
+| **Evidence** | Read-only post-apply verification, 2026-10-01: `has_function_privilege` returned true for `anon`, `authenticated` and `service_role`, and an `aclexplode` check found a `PUBLIC` grant; `pg_get_function_result` returned `trigger`. The grant matrix for the other five `0204` functions was correct at the same reading — `set_new_client_admission_mode` → `authenticated` only, `join_new_client_waitlist_guarded` and `create_public_appointment_for_new_client` → `service_role` only, `effective_new_client_admission` and `assert_new_client_admission` → nobody. |
+| **Why it was not fixed in place** | **`0204` is APPLIED and FROZEN.** An applied migration is never edited. This must be closed by a **new migration**, which is why it is recorded here rather than silently corrected. |
+| **Current mitigation** | None required, and none applied. The guard cannot be reached by any caller, so there is nothing to compensate for. |
+| **Owner** | Sam (engineering) |
+| **Next gate** | A new migration — provisionally `0205` — issuing `revoke all on function public.studios_admission_mode_guard() from public, anon, authenticated, service_role;`. Trigger functions need no grant to fire, so no grant replaces them. Extend `tests/security/clinical-rpc-grant-guard.test.ts` to cover trigger functions, since it did not catch this. |
+| **Blocks** | **Nothing.** It does not block the NEW-CLIENT-MODE-01 release, the remaining activation steps, or operator use of the admission control. |

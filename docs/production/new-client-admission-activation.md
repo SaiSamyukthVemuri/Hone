@@ -1,8 +1,19 @@
 # NEW-CLIENT-MODE-01 — activation plan
 
 **This document is the CUTOVER authority. The PR that adds the code is not.**
-Nothing here has been executed. No production value has been read, written or
-inferred while writing it.
+
+⚠️ **SCOPE OF THIS PREAMBLE: THE PLAN, NOT THE RECORD.** When the plan below was
+written, nothing in it had been executed and no production value had been read,
+written or inferred. **That is no longer true of the document as a whole**, and the
+sentence is kept — scoped — rather than deleted, because it states the condition the
+plan was authored under. **Steps A–D and G HAVE since been executed**, and the
+**EXECUTION RECORD** at the end documents real production reads and writes: migration
+`0204` applied, PR #773 deployed, one studio's mode written by its owner, and a public
+durable join. An earlier revision left this preamble unqualified while the execution
+record was appended below it, so the document asserted both that nothing had been
+executed and that steps had been — **that contradiction is withdrawn.** The plan text
+itself is unchanged, and was never retrofitted to match the outcome, so **read the
+steps as the procedure and the execution record as what happened to it.**
 
 ## The rule this plan exists to honour
 

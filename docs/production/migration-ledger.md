@@ -111,7 +111,10 @@ release-level summary.
 >   substitute for it.
 > - **ONE STUDIO WAS WRITTEN. STEP_F_COMPLETENESS = UNKNOWN.** Willow was stamped and
 >   verified. The other **6** studios were read as stored `'open'` and **unstamped** on
->   2026-10-01, and are therefore still governed by the env bridge. ⚠️ **An earlier
+>   2026-10-01, and **were therefore governed by the env bridge AT THAT READING**. ⚠️ **Whether
+>   they still are is UNKNOWN** — if any of those six owners has since written a mode, the
+>   persisted row took authority over from the bridge for that studio. **Re-read the rows
+>   before asserting any studio's current authority source.** ⚠️ **An earlier
 >   revision called step F "INCOMPLETE BY DESIGN"; that is withdrawn**, because it
 >   presumed the slug list has more members than the one studio written. F applies only to
 >   studios in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`, **step E never read that list**, and
