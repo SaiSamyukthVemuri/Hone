@@ -239,7 +239,6 @@ declare
     'eb5023c5-45b3-4215-9b02-afa10705a8fa'::uuid
   ];
   r               record;
-  v_probe_id      uuid;
   v_guard_policed boolean;
   v_guard_diag    text;
   v_studios       integer;
@@ -294,97 +293,9 @@ begin
         v_census_seen, array_length(k_census, 1), v_studios;
     end if;
 
-    -- FAIL CLOSED #2: PROVE THE GUARD POLICES. BEHAVIOURALLY, NOT FROM pg_trigger.
-    --
-    -- WHY THIS REPLACED FOUR CATALOG CHECKS. Earlier revisions asked pg_trigger
-    -- whether the guard existed, then whether it was enabled, then whether the
-    -- session role let it fire, then whether the named trigger was really that
-    -- function at BEFORE UPDATE ROW. Each was correct and each left an adjacent
-    -- gap, and review found five in a row. The last two were `tgattr` and
-    -- `tgqual`: `BEFORE UPDATE OF name` and `BEFORE UPDATE ... WHEN (false)` both
-    -- carry the right tgfoid, the right tgtype bits and an enabled mode, and
-    -- neither fires for an update of the admission columns. Enumerating the ways
-    -- a trigger can fail to fire was not converging.
-    --
-    -- So the question is asked of the DATABASE instead of its catalog: attempt a
-    -- real admission-field change WITHOUT arming the permit, and require it to be
-    -- refused. That subsumes existence, enablement, session role, function
-    -- identity, event, timing, column list and WHEN clause at once, and it cannot
-    -- be outflanked by a catalog field nobody thought of.
-    --
-    -- THE PROBE NEVER PERSISTS. A plpgsql block with an EXCEPTION handler runs in
-    -- a subtransaction, and catching the exception rolls that subtransaction
-    -- back. If the guard refuses the write we land in `when check_violation` and
-    -- the attempt is undone. If NOTHING refuses it, the sentinel raise below
-    -- fires and the attempt is undone on that path too. There is no path on which
-    -- the probe's write survives.
-    --
-    -- THE VALUE MUST GENUINELY CHANGE. The guard fires only when a field `is
-    -- distinct from` its old value, so a no-op write would prove nothing: the
-    -- CASE below always picks a value the row does not already hold.
-    --
-    -- AND THE REPAIR PROVES THE OTHER HALF. This probe shows an UNPERMITTED write
-    -- is refused; the permit-armed UPDATE in the loop shows a PERMITTED one
-    -- succeeds. Together those are the guard's whole contract, and if some OTHER
-    -- mechanism were refusing admission writes the loop would fail too - which is
-    -- still fail-closed.
-    select s.id into v_probe_id from public.studios s order by s.id limit 1;
-    v_guard_policed := false;
-
-    begin
-      update public.studios s
-         set new_client_admission_mode_set_by =
-               case
-                 when s.new_client_admission_mode_set_by
-                        is distinct from '00000000-0000-0000-0000-000000000000'::uuid
-                   then '00000000-0000-0000-0000-000000000000'::uuid
-                 else '11111111-1111-1111-1111-111111111111'::uuid
-               end
-       where s.id = v_probe_id;
-
-      -- Reached only when nothing refused an unpermitted admission write.
-      raise exception 'HONE_0205_GUARD_NOT_POLICING';
-    exception
-      when check_violation then
-        v_guard_policed := true;
-      when others then
-        if sqlerrm = 'HONE_0205_GUARD_NOT_POLICING' then
-          v_guard_policed := false;
-        else
-          -- Any other failure is real and must not be swallowed by a probe.
-          raise;
-        end if;
-    end;
-
-    if not v_guard_policed then
-      -- pg_trigger is read HERE, and only here: as DIAGNOSTIC context for the
-      -- operator, never as the gate. The gate is the behaviour above.
-      select format(
-               'trigger %s: function=%s tgtype=%s tgenabled=%s columns=%s when_clause=%s',
-               coalesce(t.tgname, '<absent>'),
-               coalesce(t.tgfoid::regprocedure::text, '<none>'),
-               coalesce(t.tgtype::text, '-'),
-               coalesce(t.tgenabled::text, '-'),
-               coalesce(t.tgattr::text, '<all>'),
-               case when t.tgqual is null then 'none' else 'present' end)
-        into v_guard_diag
-        from pg_trigger t
-       where t.tgrelid = 'public.studios'::regclass
-         and t.tgname = 'studios_admission_mode_guard'
-         and not t.tgisinternal;
-
-      raise exception
-        '0205: an UNPERMITTED admission-field write on studio % was NOT refused, '
-        'so new-client admission is not being policed on this database and the '
-        'repair would write unguarded rows. Diagnostic: %. Session '
-        'replication role: %.',
-        v_probe_id,
-        coalesce(v_guard_diag, 'no studios_admission_mode_guard trigger on public.studios'),
-        current_setting('session_replication_role');
-    end if;
   end if;
 
-  -- FAIL CLOSED #3: every candidate must look the way the model says it looks.
+  -- FAIL CLOSED #2: every candidate must look the way the model says it looks.
   -- A non-census unstamped row that is NOT a plain system default - a mode other
   -- than open, or an actor already recorded - means the model is wrong, and
   -- writing under a wrong model is the thing being guarded against.
@@ -431,6 +342,78 @@ begin
        -- operational guarantee about the apply.
        for no key update
   loop
+    -- FAIL CLOSED #3: PROVE THE GUARD POLICES *THIS* WRITE, ON *THIS* ROW.
+    --
+    -- WHY PER-CANDIDATE, AND WHY THE SAME MUTATION. An earlier revision probed
+    -- once, before the loop, by changing `set_by` on the lowest-id studio. That
+    -- proved only that SOME admission write on SOME row was refused, and review
+    -- produced the counterexample: a guard carrying
+    -- `WHEN (new.new_client_admission_mode_set_by IS DISTINCT FROM
+    -- old.new_client_admission_mode_set_by)` invokes the real function and
+    -- refuses that probe, yet never fires for this repair, which changes only
+    -- `set_at`. The probe passed and every candidate would have been written
+    -- unguarded. That is a `tgqual` defeat shape the single probe could not see.
+    --
+    -- So the probe is now the REPAIR'S OWN MUTATION, on the row about to be
+    -- written: same column, same value, same row, minus the permit. Refusal
+    -- therefore covers exactly the write that follows, and no narrower claim is
+    -- being made about it.
+    --
+    -- IT CANNOT PERSIST. Exception-handled block, so a subtransaction; BOTH exits
+    -- are exceptions - the guard's `check_violation`, or the sentinel raise when
+    -- nothing refused it - and catching either rolls the attempt back.
+    --
+    -- NO CANDIDATES MEANS NO PROBE, and that is correct rather than a gap: the
+    -- guard needs proving for writes this migration actually makes, and when
+    -- there are none it makes none.
+    v_guard_policed := false;
+
+    begin
+      update public.studios s
+         set new_client_admission_mode_set_at = r.created_at
+       where s.id = r.id;
+
+      -- Reached only when nothing refused the repair's own unpermitted write.
+      raise exception 'HONE_0205_GUARD_NOT_POLICING';
+    exception
+      when check_violation then
+        v_guard_policed := true;
+      when others then
+        if sqlerrm = 'HONE_0205_GUARD_NOT_POLICING' then
+          v_guard_policed := false;
+        else
+          -- Any other failure is real and must not be swallowed by a probe.
+          raise;
+        end if;
+    end;
+
+    if not v_guard_policed then
+      -- pg_trigger is read HERE, and only here: DIAGNOSTIC context for the
+      -- operator, never the gate. The gate is the behaviour above.
+      select format(
+               'trigger %s: function=%s tgtype=%s tgenabled=%s columns=%s when_clause=%s',
+               coalesce(t.tgname, '<absent>'),
+               coalesce(t.tgfoid::regprocedure::text, '<none>'),
+               coalesce(t.tgtype::text, '-'),
+               coalesce(t.tgenabled::text, '-'),
+               coalesce(t.tgattr::text, '<all>'),
+               case when t.tgqual is null then 'none' else 'present' end)
+        into v_guard_diag
+        from pg_trigger t
+       where t.tgrelid = 'public.studios'::regclass
+         and t.tgname = 'studios_admission_mode_guard'
+         and not t.tgisinternal;
+
+      raise exception
+        '0205: the repair''s own UNPERMITTED write to '
+        'new_client_admission_mode_set_at on studio % was NOT refused, so that '
+        'write is not being policed and the repair would proceed unguarded. '
+        'Diagnostic: %. Session replication role: %.',
+        r.id,
+        coalesce(v_guard_diag, 'no studios_admission_mode_guard trigger on public.studios'),
+        current_setting('session_replication_role');
+    end if;
+
     perform set_config('hone.admission_mode_studio_id', r.id::text, true);
     -- set_at = created_at, NOT now(): the row's admission authority was
     -- initialized when the studio was created, which is what 0205's default

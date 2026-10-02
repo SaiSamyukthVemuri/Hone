@@ -589,10 +589,17 @@ describe("the apply-time repair closes the census-to-apply window", () => {
 // admission columns. Enumerating ways a trigger can fail to fire was not
 // converging.
 //
-// The migration now asks the DATABASE: it attempts a real admission-field write
-// WITHOUT arming the permit and requires it to be refused. Every shape below is
-// therefore ONE mechanism's worth of coverage rather than four, and the two that
-// no catalog check caught are in the same list as the ones that were.
+// The migration now asks the DATABASE: for EACH candidate, it attempts the
+// repair's OWN mutation — same column, same value, same row — without arming the
+// permit, and requires that to be refused. Every shape below is therefore ONE
+// mechanism's worth of coverage rather than four.
+//
+// PER-CANDIDATE, AND THE SAME MUTATION, both for a measured reason. A first
+// version probed once before the loop by changing `set_by` on the lowest-id
+// studio, and review produced the counterexample now last in this list: a guard
+// with `WHEN (new.set_by IS DISTINCT FROM old.set_by)` invokes the real function
+// and refuses THAT probe while never firing for a `set_at` change. The probe
+// passed and every candidate would have been written unguarded.
 //
 // Each case asserts the repair candidate is untouched, so "aborts" is a row and
 // not just a message. Trigger definition and session role are restored in
@@ -664,6 +671,25 @@ describe("FAIL CLOSED #2: an unpermitted admission write must be REFUSED", () =>
       arrange: () => installImposterGuard("before update", "real", "when (false)"),
       run: () => adminQuery(REPAIR_SQL),
     },
+    {
+      // THE SHAPE THAT DEFEATED THE SINGLE PRE-LOOP PROBE, and the reason the
+      // probe is now per-candidate against the repair's own mutation.
+      //
+      // This guard invokes the REAL function and genuinely refuses a change to
+      // `set_by` — so a probe that changed `set_by` on some other row was
+      // refused, concluded the guard was live, and let the repair write `set_at`
+      // on every candidate completely unguarded. Probing the actual mutation on
+      // the actual row is what closes it: this guard never fires for a `set_at`
+      // change, so the repair's own unpermitted write succeeds and is caught.
+      name: "real function firing ONLY on set_by changes (WHEN on the wrong column)",
+      arrange: () =>
+        installImposterGuard(
+          "before update",
+          "real",
+          "when (new.new_client_admission_mode_set_by is distinct from old.new_client_admission_mode_set_by)",
+        ),
+      run: () => adminQuery(REPAIR_SQL),
+    },
   ];
 
   for (const shape of defeated) {
@@ -715,13 +741,24 @@ describe("FAIL CLOSED #2: an unpermitted admission write must be REFUSED", () =>
     // lowest-id studio inside a subtransaction; if that ever survived, this
     // would catch it.
     expect(await guardDef()).toBe(realDef);
-    const { rows } = await adminQuery(
-      `select count(*)::int as n from public.studios
-        where new_client_admission_mode_set_by in
-              ('00000000-0000-0000-0000-000000000000'::uuid,
-               '11111111-1111-1111-1111-111111111111'::uuid)`,
-    );
-    expect(rows[0].n, "the probe's sentinel actor must never be committed").toBe(0);
+
+    // The probe now writes the repair's OWN value, so there is no sentinel to
+    // look for — the observable promise is instead that a REFUSED candidate is
+    // left unstamped, which every defeat case above asserts directly. What is
+    // checked here is that no candidate was stamped WITHOUT an actor by anything
+    // other than the repair: a probe write that escaped its subtransaction would
+    // show up as a stamped row in a run whose repair aborted.
+    await makeWindowRow(candidate.studioId);
+    try {
+      await installImposterGuard("before update", "real", "when (false)");
+      await expect(adminQuery(REPAIR_SQL)).rejects.toThrow(PROBE_REFUSAL);
+    } finally {
+      await restoreGuard(realDef);
+    }
+    expect(
+      (await admissionRow(candidate.studioId)).set_at,
+      "a probe write must not survive the subtransaction that refused the apply",
+    ).toBeNull();
   });
 });
 

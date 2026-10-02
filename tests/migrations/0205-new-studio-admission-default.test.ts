@@ -238,26 +238,37 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     // so the question is asked of the database instead of its catalog.
     const block = REPAIR_BLOCK!;
 
-    // The probe: an unpermitted admission write that must be refused.
+    // The probe: the REPAIR'S OWN unpermitted write, which must be refused.
     expect(block).toMatch(/v_guard_policed\s*:=\s*false;/);
-    expect(block).toMatch(/update public\.studios s\n\s*set new_client_admission_mode_set_by =/);
     expect(block).toMatch(/raise exception 'HONE_0205_GUARD_NOT_POLICING'/);
     expect(block).toMatch(/when check_violation then\n\s*v_guard_policed := true;/);
     expect(block).toMatch(/if not v_guard_policed then/);
 
+    // PER-CANDIDATE, AND THE SAME MUTATION. A single pre-loop probe that changed
+    // `set_by` on one row proved only that SOME admission write on SOME row was
+    // refused: a guard with `WHEN (new.set_by IS DISTINCT FROM old.set_by)`
+    // refuses exactly that and never fires for a `set_at` change, so the repair
+    // ran unguarded. Measured — set_by refused (23514), set_at not refused. The
+    // probe must therefore be the repair's own column, value and row.
+    const probeBlock = /begin\s*\n\s*update public\.studios s[\s\S]*?\n    end;/.exec(block)![0];
+    expect(probeBlock, "the probe must write the column the repair writes").toMatch(
+      /set new_client_admission_mode_set_at = r\.created_at/,
+    );
+    expect(probeBlock, "and target the row the repair is about to write").toMatch(
+      /where s\.id = r\.id/,
+    );
+
     // It must NOT arm the permit - that is the whole point of the attempt.
-    const probeBlock =
-      /begin\s*\n\s*update public\.studios s\n\s*set new_client_admission_mode_set_by[\s\S]*?\n    end;/.exec(
-        block,
-      )![0];
     expect(
       probeBlock,
       "arming the permit would make the probe prove nothing",
     ).not.toMatch(/set_config\('hone\.admission_mode_studio_id'/);
 
-    // The probed value must genuinely differ, or the guard never fires: it only
-    // reacts when a field `is distinct from` its old value.
-    expect(probeBlock).toMatch(/is distinct from/);
+    // And it must come BEFORE the permitted write, not after it.
+    expect(
+      block.indexOf("raise exception 'HONE_0205_GUARD_NOT_POLICING'"),
+      "the probe must precede the permitted write",
+    ).toBeLessThan(block.indexOf("perform set_config('hone.admission_mode_studio_id'"));
 
     // THE CATALOG IS NOW DIAGNOSTIC ONLY. pg_trigger may be read to tell an
     // operator WHY the probe failed; it may not be the gate. So any read of it
@@ -326,13 +337,14 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     // overwritten by a second run either. The re-check is the half that survives
     // any change to the lock STRENGTH, which is pinned separately below.
     expect(block).toMatch(/for no key update/);
-    // THE REPAIR'S update, identified by what it writes - not the first
-    // `update public.studios` in the block, which is now the guard probe's.
-    const update =
-      /update public\.studios s\n\s*set new_client_admission_mode_set_at = r\.created_at[\s\S]*?;/.exec(
-        block,
-      );
-    expect(update, "the repair's own UPDATE could not be located").toBeTruthy();
+    // THE PERMITTED write, located by the permit rather than by what it writes:
+    // the probe now performs the SAME mutation deliberately, so the mutation
+    // text no longer distinguishes them. What does is that only the real write
+    // follows `set_config` of the row-scoped permit.
+    const permitAt = block.indexOf("perform set_config('hone.admission_mode_studio_id'");
+    expect(permitAt, "the row-scoped permit could not be located").toBeGreaterThan(-1);
+    const update = /update public\.studios s[\s\S]*?;/.exec(block.slice(permitAt));
+    expect(update, "the permitted UPDATE could not be located").toBeTruthy();
     expect(update![0], "the per-row write must re-check the NULL it is replacing").toMatch(
       /and s\.new_client_admission_mode_set_at is null/,
     );
