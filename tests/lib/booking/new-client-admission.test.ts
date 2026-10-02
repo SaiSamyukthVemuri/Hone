@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
@@ -551,8 +552,232 @@ describe("the activation document matches what the source actually does", () => 
   const STAMP = "2026-09-30T12:00:00.000Z";
 
   it("rollback for a STAMPED studio requires the command, and the source agrees", () => {
-    expect(DOC).toContain("set_new_client_admission_mode(<studio>, 'waitlist')");
-    expect(DOC).toContain("**The env list cannot do it.**");
+    // UPDATED with the #779 closeout, which corrected a claim this test had been
+    // pinning. The document used to list
+    // `set_new_client_admission_mode(<studio>, 'waitlist')` as THE rollback for a
+    // stamped studio. That conflates two different things: writing `waitlist`
+    // changes the MODE and leaves the COMMIT POINT durable, because
+    // `newClientWaitlistCommitIsDurable` answers the cut-over check before it reads
+    // the legacy durable list. So the old wording promised a commit-point rollback
+    // that does not exist, and pinning it here kept that promise alive.
+    //
+    // What is pinned now is the DECLARED STATUS of each claim, not the shape of
+    // the prose around it. See the block below for why that changed.
+    // ─── DECLARED CLAIM STATUS, NOT PARSED PROSE ────────────────────────────
+    //
+    // Three review rounds killed three successive prose pins here, always for
+    // the same reason: a token check cannot establish what a sentence MEANS,
+    // because adjacent prose reverses it. Measured, not assumed -- at the
+    // previous head BOTH of these passed 47/47 while reviving the retired
+    // promise:
+    //
+    //   "That is **withdrawn**. That withdrawal has been rescinded."
+    //   a second historical paragraph quoting the live table row's exact text
+    //
+    // So the document DECLARES each claim's status in a machine-readable marker
+    // -- the same idiom as the `<!-- canonical-facts:ignore-* -->` directives
+    // already used across docs/production -- and this test pins the declared
+    // field. Reviving the promise now requires flipping `value=withdrawn` to
+    // `value=active`: it fails here, and it is legible in the diff. Prose cannot
+    // do it.
+    //
+    // RESIDUAL, stated rather than hidden: a marker could drift from the prose
+    // it governs. The coupling assertions bound that -- one canonical statement,
+    // marker sitting on it -- but nothing here reads meaning, and nothing here
+    // claims to.
+    // STRICT AND WHOLE. The first version of this parser had a permissive tail
+    // for the human explanation, and `value=withdrawn value=active` walked
+    // straight through it: the first value was captured, the second absorbed as
+    // commentary, and ONE marker declared TWO statuses while the registry, the
+    // domain, the duplicate-id check and the raw count all stayed green.
+    //
+    // So the directive now carries exactly two assignments and no prose -- the
+    // prose lives in an ordinary comment beside it -- and the body is matched
+    // whole and anchored. Any repeated or extra assignment fails to parse.
+    const MARKER_RE = /<!--\s*claim-status\b([\s\S]*?)-->/g;
+    const claims = new Map<string, string>();
+    const dupes: string[] = [];
+    let markerCount = 0;
+    for (let m = MARKER_RE.exec(DOC); m; m = MARKER_RE.exec(DOC)) {
+      markerCount += 1;
+      const fields = /^id=([a-z0-9-]+) value=([a-z-]+)$/.exec(m[1].trim());
+      expect(
+        fields,
+        `claim-status directive ${markerCount} must be exactly "id=<id> value=<status>" ` +
+          `with no second assignment and no prose, got ${JSON.stringify(m[1].trim())}`,
+      ).not.toBeNull();
+      if (!fields) continue;
+      if (claims.has(fields[1])) dupes.push(fields[1]);
+      claims.set(fields[1], fields[2]);
+    }
+    // A MALFORMED DIRECTIVE MUST FAIL, NOT VANISH. A directive opener whose body
+    // does not parse would otherwise leave its claim silently unpinned, so the
+    // count of OPENERS is reconciled against what actually parsed.
+    //
+    // Counting the bare word would be wrong, and was: the contract's own preamble
+    // explains the `claim-status` mechanism in prose, which made three tokens for
+    // two directives. A guard that forbids a document from describing its own
+    // mechanism is a guard people delete.
+    expect(
+      (DOC.match(/<!--\s*claim-status/g) ?? []).length,
+      "every claim-status directive must parse; a malformed one must fail, not disappear",
+    ).toBe(markerCount);
+    // No shadowing: a second marker for an id would otherwise decide the claim
+    // by document order.
+    expect(dupes, "each claim id must be declared exactly once").toEqual([]);
+    // A closed registry, so a new claim cannot appear unregistered here.
+    expect([...claims.keys()].sort(), "the declared claim registry").toEqual([
+      "commit-point-rollback-supported",
+      "commit-point-rollback-via-mode-write",
+    ]);
+    // A closed value domain, so `value=rescinded` fails rather than being read
+    // as neither active nor withdrawn.
+    for (const [id, value] of claims) {
+      expect(["active", "withdrawn"], `claim ${id} has a known status`).toContain(
+        value,
+      );
+    }
+    // THE TWO CLAIMS THIS CHANGE EXISTS TO HOLD.
+    expect(
+      claims.get("commit-point-rollback-supported"),
+      "the no-mechanism rule is CURRENT guidance",
+    ).toBe("active");
+    expect(
+      claims.get("commit-point-rollback-via-mode-write"),
+      "the mode-write-as-rollback promise is RETIRED",
+    ).toBe("withdrawn");
+
+    // ─── COUPLING: ONE CANONICAL STATEMENT, MARKER SITTING ON IT ────────────
+    // `exactly once` is what makes a statement canonical, and it defeats both
+    // halves of the previous head's exploit: keep the live row and quote it
+    // elsewhere, the count is 2; delete the live row and quote it elsewhere, the
+    // marker no longer governs anything.
+    const NO_ROW =
+      "| **COMMIT POINT** — returning a studio to WAIT-01 **email-only** intake | " +
+      "**NO — not supported by any existing mechanism for a cut-over studio.** |";
+    expect(
+      DOC.split(NO_ROW).length - 1,
+      "the commit-point verdict must be stated exactly once",
+    ).toBe(1);
+    const activeMarker = DOC.indexOf(
+      "<!-- claim-status id=commit-point-rollback-supported",
+    );
+    expect(activeMarker, "the active marker must exist").toBeGreaterThan(-1);
+    const noRowAt = DOC.indexOf(NO_ROW);
+    expect(noRowAt, "and must precede the row it governs").toBeGreaterThan(
+      activeMarker,
+    );
+    expect(
+      DOC.slice(DOC.indexOf("-->", activeMarker) + 3, noRowAt)
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !l.startsWith("|")),
+      "only the table may separate the marker from the row it governs",
+    ).toEqual([]);
+
+    // The retired promise, likewise stated once, with its marker immediately
+    // above the paragraph that retires it.
+    const WITHDRAWAL_ANCHOR =
+      "**Do not describe a mode transition as a commit-point rollback.**";
+    const RETIRED = "set_new_client_admission_mode(<studio>, 'waitlist')";
+    expect(
+      DOC.split(RETIRED).length - 1,
+      "the retired promise must be quoted exactly once, as history",
+    ).toBe(1);
+
+    // ─── THE CONTRACT FILE IS FROZEN END TO END ─────────────────────────────
+    // Execution history used to live at the end of this file, which made the
+    // document both a frozen contract and an append-only log. Those cannot
+    // coexist under a guard that claims nothing in the document contradicts the
+    // contract: the appendable region is unfrozen by construction, so a
+    // contradiction appended there passed every check. Five rounds of review
+    // walked that surface outwards -- paragraph, section, next heading, preamble,
+    // record -- and the last step has no guard, only a boundary.
+    //
+    // So the history moved to new-client-admission-execution-record.md, verbatim,
+    // and THIS file is the contract: frozen whole, with no appendable region at
+    // all. This test asserts the contract and its declared directives; it does
+    // not read the execution log, which is evidence rather than instruction.
+    //
+    // To change the contract deliberately, recompute and update the hash in the
+    // same commit, so the edit arrives with a reviewer looking at it:
+    //   node -e 'console.log(require("crypto").createHash("sha256").update(require("fs").readFileSync("docs/production/new-client-admission-activation.md")).digest("hex"))'
+    expect(
+      DOC,
+      "execution history belongs in the record file; an appendable region here would unfreeze the contract",
+    ).not.toContain("## EXECUTION RECORD");
+    expect(
+      createHash("sha256").update(DOC).digest("hex"),
+      "the contract file is frozen END TO END: any edit -- preamble, a step, the rollback table, an appended line anywhere -- must fail here until the hash is updated deliberately",
+    ).toBe("575c8480d7d42774ef3cd2d67e6b1765bee530eabe2f92a945bb4fa804008c0c");
+
+    // The record file is evidence, and it must SAY so. This is a deletion guard
+    // on its precedence header, not an interpretation of anything logged in it.
+    const RECORD = readFileSync(
+      join(
+        process.cwd(),
+        "docs/production/new-client-admission-execution-record.md",
+      ),
+      "utf8",
+    );
+    expect(
+      RECORD,
+      "the record file must declare itself dated historical evidence",
+    ).toContain("**DATED HISTORICAL EVIDENCE. NOT AN OPERATOR CONTRACT.**");
+    expect(
+      RECORD,
+      "and must declare that the contract wins on conflict",
+    ).toContain("**THE CONTRACT WINS ON CONFLICT.**");
+
+    // APPEND-ONLY MEANS THE EXISTING EVIDENCE IS IMMUTABLE, not merely that the
+    // headers survive. Pinning two header literals left every recorded row free to
+    // be rewritten or deleted while the file still passed -- so the file was
+    // appendable but not append-ONLY, which is half of what it claims to be.
+    //
+    // The PREFIX is pinned by length and digest: anything added after that offset
+    // passes untouched, any edit or deletion inside it fails. Advance both numbers
+    // only when the prefix itself legitimately changes, which for recorded
+    // production evidence should be approximately never.
+    const RECORD_PREFIX_BYTES = 13457;
+    expect(
+      Buffer.byteLength(RECORD, "utf8"),
+      "recorded evidence is append-only: the file may GROW, never shrink",
+    ).toBeGreaterThanOrEqual(RECORD_PREFIX_BYTES);
+    expect(
+      createHash("sha256")
+        .update(Buffer.from(RECORD, "utf8").subarray(0, RECORD_PREFIX_BYTES))
+        .digest("hex"),
+      "the existing execution record is frozen: appends pass, edits and deletions inside recorded evidence fail",
+    ).toBe("682a236d277352a5625689c2a45d1e62e6dab800f818e5207ef799d5c0d04893");
+    const withdrawnMarker = DOC.indexOf(
+      "<!-- claim-status id=commit-point-rollback-via-mode-write",
+    );
+    expect(withdrawnMarker, "the withdrawal marker must exist").toBeGreaterThan(
+      -1,
+    );
+    const warningAt = DOC.indexOf(WITHDRAWAL_ANCHOR);
+    expect(
+      warningAt,
+      "the prospective warning must follow its marker",
+    ).toBeGreaterThan(withdrawnMarker);
+    expect(
+      DOC.slice(DOC.indexOf("-->", withdrawnMarker) + 3, warningAt).trim(),
+      "the withdrawal marker must sit immediately above the warning it declares",
+    ).toBe("");
+
+    // ─── DELETION GUARDS ONLY ───────────────────────────────────────────────
+    // These prove the prose EXISTS. The markers above are what prove its STATUS.
+    // Labelled, so no future reader mistakes a presence check for a proof of
+    // meaning -- the mistake that cost this test three rounds.
+    expect(
+      DOC,
+      "the live table must say the MODE can be changed, and by whom",
+    ).toContain(
+      "**YES**, through `set_new_client_admission_mode`, by the studio's owner.",
+    );
+    expect(DOC, "and that the env list is not a route to it").toContain(
+      "the env list cannot do it",
+    );
 
     // The behavioural half of the same claim: with the slug listed, a stamped
     // `open` stays open, so an env-only rollback genuinely cannot restore it.

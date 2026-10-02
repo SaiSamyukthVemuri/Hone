@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { migrationState } from "./helpers/migration-state";
+
+const VERSION = "0204";
+
+/** The sha256 of the bytes applied to production on 2026-10-01. */
+const APPLIED_SHA256 =
+  "186fa6cb3154c85d2987f1e75aeee6f7361004f1b535cc44a46a27f96b4db219";
 
 const SQL = readFileSync(
   path.resolve(__dirname, "../../supabase/migrations/0204_new_client_admission_mode.sql"),
@@ -23,6 +31,50 @@ const STATEMENTS = SQL.split("\n")
 // A live-database proof of the guard belongs in tests/db; this file pins the
 // structure that proof would exercise, so a reviewer can see the contract
 // without a database and a silent removal fails here first.
+
+describe("0204 is APPLIED, and holds the equality claim", () => {
+  it("hosted equals repo at 0204, with nothing pending", () => {
+    // EQUALITY IS A CURRENT CLAIM, so exactly one file may hold it, and after the
+    // 2026-10-01 apply this is that file. 0203 was narrowed to a floor in the same
+    // change, the way 0202, 0201, 0200, 0199 and 0198 were narrowed before it.
+    // WHOEVER APPLIES 0205 MOVES THIS BLOCK: narrow 0204 to a floor and let the new
+    // head take the equality. Leaving it here would go red on that apply, which is
+    // the whole reason the claim travels rather than being restated everywhere.
+    const state = migrationState();
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.repo_migration_max).toBe(VERSION);
+    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.next_free_migration).toBe("0205");
+  });
+
+  it("is recorded in the ledger's CURRENT block as APPLIED, under its full sha256", () => {
+    const ledger = readFileSync(
+      path.resolve(__dirname, "../../docs/production/migration-ledger.md"),
+      "utf8",
+    );
+    expect(ledger, "the ledger must carry 0204's COMPLETE sha256").toContain(APPLIED_SHA256);
+    // Section-anchored, exactly as 0198-0203 assert it: the match must sit between
+    // "## Current state" and the first "## Previous state", so a stale record in a
+    // preserved section can never satisfy it.
+    expect(ledger, "the ledger's current block must record 0204 as APPLIED").toMatch(
+      /## Current state(?:(?!## Previous state)[\s\S])*?0204_new_client_admission_mode\.sql`? \| \*\*APPLIED\*\*/,
+    );
+  });
+
+  it("the applied bytes are the authorized bytes", () => {
+    // An applied migration is FROZEN. If this fails, the file was edited after the
+    // apply: restore it and put any correction in a new forward migration.
+    const digest = createHash("sha256")
+      .update(
+        readFileSync(
+          path.resolve(__dirname, "../../supabase/migrations/0204_new_client_admission_mode.sql"),
+        ),
+      )
+      .digest("hex");
+    expect(digest).toBe(APPLIED_SHA256);
+  });
+});
 
 describe("the value set is closed by the DATABASE", () => {
   it("the column exists with a CHECK naming exactly the three modes", () => {

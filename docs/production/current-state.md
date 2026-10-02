@@ -102,17 +102,65 @@ stamps rather than restated as current:**
 A figure with a 2026-08-23 stamp is **evidence of what was true on 2026-08-23**. It is not a
 claim about today, and a later reader must re-measure before treating it as one.
 
+### NEW-CLIENT-MODE-01 release — what actually happened on 2026-10-01
+
+**These are operational facts, not a re-pin.** The reconciliation header above is
+still the **2026-09-21** sync and still pins `410e5039`; this subsection deliberately
+does **not** move it. Re-pinning re-derives every count derived from the pin across
+this document, [release-changelog.md](./release-changelog.md) and
+[capability-register.md](./capability-register.md) — it is a PROD-TRUTH-class re-sync
+and belongs in its own change, as `#756` was. Recording a release while silently
+re-pinning would hide one of those jobs inside the other.
+
+**Production has advanced past this document's pin, and that is stated rather than
+papered over.** Production has advanced TWICE since the release recorded below — `afb2b509` (**#778**,
+waitlist email branding) and then `ce3091e9` (**#777**, waitlist invitation identity).
+That is not an aside: it is why re-pinning is its own change rather than a line edit
+here, since each advance re-derives every count derived from the pin. Re-read GitHub
+before any production action; this sentence is itself a dated observation.
+
+| Fact | Value |
+|---|---|
+| **Migration `0204` applied** | **2026-10-01.** `supabase db push --linked`, no `--include-all`, pinned CLI `2.102.0`, exit code 0, from the reviewed **#773** head `d8617859`. Hosted max is declared in [`migration-state.json`](./migration-state.json) — **this document still states no migration number.** Full record: [migration-ledger.md](./migration-ledger.md). |
+| **#773 merged and deployed** | Merge commit **`d7e712ef`** at `2026-10-01T20:25:16Z`; production deployment `dpl_AQrWznf5fKqLKPZiH4RNCgDFwxsZ`, `READY`, holding `hone.care`, ready `2026-10-01T20:27:33.821Z`. **The migration was applied BEFORE this deploy**, because the new application calls `create_public_appointment_for_new_client` and that function does not exist until `0204` lands. |
+| **Willow persisted as WAITLIST** | Stored `new_client_admission_mode` = **`waitlist`**, `set_at` **`2026-10-01T21:35:33.139540Z`** (server-generated). Written by **Willow's own owner** through Settings → Booking, which calls `set_new_client_admission_mode`; `set_by` resolves to a `practitioners` row of that studio with `role = 'owner'`. |
+| **Willow's authority source is PERSISTED** | Because the row is stamped, the reader returns `source: "persisted"` before the env bridge is consulted. The legacy list no longer moves Willow. Its effective **admission mode** did not change — measured WAITLIST on the public surface both before and after. ⚠️ **Scope that narrowly:** whether the **commit point** changed at that instant is **UNKNOWN**, because step E never read `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`, and historical waitlist rows cannot establish contemporaneous membership of it. Proven: authority moved. Not proven, and not claimed: that nothing else about the join behaviour moved with it. |
+| **Step G passed — a real public durable join** | Entry `ff942ef2-a272-4549-a3b9-c5d000b05b69`, `joined_at` `2026-10-01T22:25:36.347700Z`, `status` `waiting`, `source` `public_booking`, `joined_at_provenance` `form`. Willow entries **48 → 49**, globally **51 → 52** — exactly one row created anywhere. **The row, not the email, was the check.** |
+| **Legacy email-only path NOT used** | Proven by the row existing: the email-only path writes no row — **and that proof is about THIS stamped studio's request.** ⚠️ **AN EARLIER REVISION OVERSTATED IT** as *"the deployed submit path contains no call to `isNewClientWaitlistDurableEnabled`, so there is no second commit point left to take"*, and that is **withdrawn**. The env-gate test pins only that `waitlist-actions.ts` makes no **direct** call; the call is **transitive** — `waitlist-actions.ts` → `newClientWaitlistCommitIsDurable` → `isNewClientWaitlistDurableEnabled` — and that branch is still reached for any **unstamped** studio. So **the second commit point is still live for unstamped studios**, which is also what the "both bridges intact" row says. With step-F completeness UNKNOWN, do not read this as licence to retire the bridge. |
+| **No appointment, no client record** | Willow appointments **330 → 330**; Willow clients **78 → 78**. Three pre-existing client rows happen to share the synthetic test address (newest created 2026-09-19, none since), and the join did **not** attach or convert to any of them — `converted_at` and `converted_client_id` are NULL. |
+| **No Twilio / SMS / provider mutation** | `sms_consent_at`, `sms_consent_source`, `mobile_verified_at` all NULL. The waitlist surface carries no SMS field and the join path contains zero Twilio references. The only provider traffic was the two emails the join itself sends — a studio notification (provider-**accepted**) and a client acknowledgement (no failure logged). |
+| **Both legacy bridges still intact** | `envForcesWaitlist` in `lib/booking/new-client-admission.ts` and `lib/booking/new-client-waitlist-durability-bridge.ts` are both present in the deployed tree. **No environment variable was deleted.** Activation step H is **NOT STARTED**. ⚠️ **Its ELIGIBILITY is UNKNOWN, not negative.** H is gated on every studio in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` being stamped and verified; one studio was, and because step E never read that list it is unknown whether that was all of it — **if it was, H is already eligible.** An earlier revision said "not yet eligible" and derived it from one stamped row; that is **withdrawn**. |
+| **ONE studio written; step-F completeness UNKNOWN** | Willow was stamped and verified. The other **six** studios were read as stored `'open'` and **unstamped** on 2026-10-01 and **were therefore governed by the env bridge at that reading**. ⚠️ **Whether they still are is UNKNOWN** — if any of those six owners has since written a mode, the persisted row has already taken authority over from the bridge for that studio. **Re-read the rows before asserting any studio's current authority source.** ⚠️ **There is no denominator, and none may be invented.** Earlier revisions of this row said "1 of 7" and then "of an unknown total"; both still implied the remaining six are step-F work. Step F applies only to studios in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`, **step E never read that list**, and **unstamped means neither listed nor unlisted**. **STEP_F_COMPLETENESS = UNKNOWN** — if Willow was the list's only member, F is already COMPLETE. Until a studio is stamped its owner **cannot** choose OPEN or CLOSED: the command answers `legacy_waitlist_cutover_required`, and writing `waitlist` is the way out. |
+| **Activation step E was NEVER performed** | The live `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` / `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` values were **not read**, so **no slug set is recorded and none may be inferred** — not from which studios are stamped, not from which hold waitlist rows. |
+| **Outstanding migration debt** | `public.studios_admission_mode_guard()` received no explicit `REVOKE`, so `anon`/`authenticated`/`service_role`/`PUBLIC` hold `EXECUTE`. **Not exploitable** — return type `trigger`, which PostgreSQL refuses to invoke outside a trigger context — but inconsistent with the discipline `0204` applies to its own five other functions. `0204` is **APPLIED and FROZEN**: this needs a **new migration**, never an edit. |
+| **Synthetic step-G entry RETAINED** | `ff942ef2-…` was deliberately **not** removed, pending authorization. **Two dated observations, and nothing claimed after the second.** **(1) 2026-10-01T22:25:36Z, at step-G acceptance:** status **`waiting`**, position **47 of 47** of Willow's Waiting section (`joined_at` ASC, `id` ASC, page size 100 — then the last row on page one), a submitted phone number, no SMS consent. **(2) 2026-10-02T00:14:55Z, controlled invitation-acceptance exercise:** the same entry was **claimed** and then **invited by a practitioner** — status **`invited`**, so it was **no longer in Waiting**; invitation `delivery_disposition` **`accepted`**, stored `expires_at` **2026-10-04T00:14:55Z**, and `redeemed_at`/`declined_at`/`expired_at`/`released_at`/`closed_at` all NULL. **Real inbox receipt was OPERATOR-OBSERVED**; every other fact here is a read-only database reading. ⚠️ **Its state after that instant is NOT asserted** — the expiry is a stored value, not a prediction. An earlier revision said the entry "sits in" Waiting; **withdrawn**, because it was already false when written. **Re-query by id**, never by position or status. **Origin, which does not change: this row was created by a synthetic acceptance test, not by a real prospect, against a real inbox.** **No cleanup was performed in this change.** Whoever acts on it must **re-read the entry and its invitation by id first**; if either is still outstanding at that moment, removal or release is a **separately authorized** action. **This row makes no claim about whether they are outstanding now** — an earlier revision said it "now carries a live invitation", which asserted a present state immediately after promising not to, and is **withdrawn**. |
+
 ### Open pull requests are not production
 
 **No open PR is described as shipped anywhere in this document.** At this reconciliation:
 
 | PR | State | Why it is not production |
 |---|---|---|
-| **#752** — WAIT fixed 48-hour opportunity | **OPEN**, release candidate | Not merged. Nothing in it is deployed, and the fixed/no-expiry-choice policy is therefore **not** in production. |
-| **#754** — MARKETING-UI successor | **OPEN**, release candidate | Not merged, so none of its public-page or accessibility repair is deployed. |
-| **#746** — UX-02 SectionLabel adoption | **OPEN**, and a **DRAFT** | Not merged. UX-02 is authorized by `DESIGN.md`, but authorization is not deployment. |
-| **#750** — SIGNOUT-02 logout acknowledgement | **OPEN**, and a **DRAFT** | Not merged. The logout acknowledgement is **not** live. |
-| **#755** — R1/E2 browser-lane audit | **OPEN**, release candidate | Not merged. It changes no product behaviour. |
+| **#769** — UX-02 slice 2, SectionLabel across Settings | **OPEN**, release candidate | Not merged. It was `MERGEABLE`/`CLEAN` throughout the NEW-CLIENT-MODE-01 release and was deliberately **held** so it could not land ahead of #773. |
+| **#775** — SMS-NUMBER-SEARCH-01 number lookup | **OPEN**, release candidate | Not merged. No owner can reach a number lookup in production. |
+| **#776** — UX-02 slice 3, SectionLabel across session charting | **OPEN**, release candidate | Not merged. |
+| **#774** — BROWSER-FINDING-01 probe-lot provenance | **OPEN**, and a **DRAFT** | Not merged. |
+
+⚠️ **CORRECTION, 2026-10-01 (NEW-CLIENT-MODE-01 release) — FIVE ROWS WERE REMOVED FROM THE TABLE ABOVE.**
+It declared `#752`, `#754`, `#746`, `#750` and `#755` OPEN. **All five had merged** — `1c50bd95`, `c4b0e263`,
+`54ad9cf2`, `d59330d1` and `93381b40` respectively, every one of them contained in this history. They are
+removed rather than reworded, for exactly the reason PROD-TRUTH-01 gave when it removed `#647`: a merged PR
+does not belong in a table about what is *not* production. **This is the same defect recurring, and the
+mechanism is worth naming rather than just fixing** — nobody edited these rows to make them false. Production
+moved and the rows stayed still, which is why the guard checks the converse direction too and why this
+correction will be needed again the next time production advances without this table being re-read. The rows
+now listed are the candidates genuinely open at this reconciliation, re-read from GitHub at this sync.
+
+**AND IT RECURRED WHILE THIS VERY CORRECTION WAS BEING WRITTEN.** `#777` was listed as
+OPEN in the first draft of the table above and merged as `ce3091e9` before the change
+landed, so its row was deleted too. That is not an embarrassing footnote, it is the
+measurement: the window in which this table is true is shorter than the time it takes
+to edit it, which is the argument for the guard rather than for more careful authors.
 
 ⚠️ **CORRECTION, 2026-09-21 (PROD-TRUTH-01) — `#647` WAS REMOVED FROM THE TABLE ABOVE.** It carried two rows
 declaring TRUTH-01B-1 open and `#647` a parked draft. `#647` merged on **2026-08-30** as `1d6d7c48` and is
@@ -564,8 +612,10 @@ measured instant · its EMAIL COMMIT POINT no longer served any studio.**
 > So for Willow the email was a **notification** and the row the record, at every measured
 > instant. WAIT-01's commit point applies to a waitlisted studio outside the durable allowlist;
 > **no such studio existed at any measured instant, and that is a dated observation, not a
-> statement about route occupancy now.** Clearing the allowlist re-routes Willow through WAIT-01
-> on the very next request, because the configuration is re-read per call.
+> statement about route occupancy now.** ⚠️ **THAT APPLIES ONLY TO A STUDIO THAT IS NOT CUT OVER.** Since 2026-10-01T21:35:33.139540Z Willow's mode is **persisted**, and `newClientWaitlistCommitIsDurable` (`lib/booking/new-client-waitlist-durability-bridge.ts`) returns true at its cut-over check **before** it consults `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`. **Clearing or emptying that list therefore cannot return a cut-over studio to WAIT-01 email-only** — it governs only studios still on the legacy bridge. An operator who clears it expecting a commit-point rollback at Willow would believe the rollback succeeded while durable rows kept being written. **AND THERE IS NO COMMIT-POINT ROLLBACK FOR A CUT-OVER STUDIO AT ALL.** An earlier revision of this note said "rolling a cut-over studio back is a row write through `set_new_client_admission_mode`", which conflated changing its ADMISSION MODE with restoring its COMMIT POINT, and is **withdrawn**. (1) For **NEW-CLIENT ADMISSION AND COMMIT-POINT ROUTING**, clearing or emptying either env list affects **only a studio still on the legacy bridge** — ⚠️ **but that is scoped to new-client routing and is NOT a statement that env edits are inert at a stamped studio.** `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` is read **independently** by EMERG-01's free-consult reschedule restriction (`isFreeConsultWaitlistOnlyReschedule` → `isNewClientWaitlistEnabled`), which never consults `new_client_admission_mode`. Editing that list at a **cut-over** studio therefore still changes whether an **already-confirmed free consultation** can be self-service moved. Deliberately so: an owner changing new-client admission must not move the rights of a confirmed appointment; (2) `set_new_client_admission_mode` is the supported way to change a cut-over studio's **ADMISSION MODE**; (3) ⚠️ **RESTORING A CUT-OVER STUDIO TO WAIT-01 EMAIL-ONLY COMMIT SEMANTICS IS NOT SUPPORTED BY ANY EXISTING MECHANISM** (a consequence of the three-mode set and the bridge's own law, derivable from source rather than measured) — `waitlist` keeps it durable *by law*, `open` / `closed` remove the waitlist rather than making it email-only; (4) **a mode transition is NOT a commit-point rollback** and must never be described as one. Restoring email-only would need a **new, explicitly designed and supported mechanism**, not an operator workaround.
+> An earlier revision said *"clearing the allowlist re-routes Willow through WAIT-01 on the very
+> next request"*; that was true while Willow sat on the legacy bridge and is **withdrawn** now that
+> it does not.
 
 New-client booking at Willow was **refused and routed to a waitlist** at every measured instant.
 This is admission control:
@@ -579,7 +629,7 @@ accepting brand-new consultations, because each new client consumes capacity alr
   *(verified 2026-08-23)*.
 - **The commit point is the studio notification email, not a database row.** Under WAIT-01 a
   waitlist request is delivered; it is not stored.
-- Default OFF, exact-slug match only. Clearing the env var is the entire kill switch.
+- Default OFF, exact-slug match only. Clearing the env var is the entire kill switch **for a studio still on the legacy bridge, and is NOT a kill switch for a cut-over studio**. ⚠️ **THAT WAS TRUE WHILE EVERY WAITLISTED STUDIO SAT ON THE LEGACY BRIDGE, AND IS NOT TRUE OF A CUT-OVER STUDIO.** Since 2026-10-01T21:35:33.139540Z Willow's mode is **persisted**, and the admission reader answers a stamped row before the env bridge is consulted — so clearing the env var does **not** switch new-client admission off at a cut-over studio, and `newClientWaitlistCommitIsDurable` likewise returns true at its cut-over check before reading the durable list. **`set_new_client_admission_mode` changes a cut-over studio's ADMISSION MODE, and that is not the same thing as a commit-point rollback.** **THE CONTRACT, IN FULL, BECAUSE A PARTIAL VERSION IS WHAT WENT WRONG HERE:** (1) for **NEW-CLIENT ADMISSION AND COMMIT-POINT ROUTING**, clearing or emptying either env list affects **only a studio still on the legacy bridge** — ⚠️ **but that is scoped to new-client routing and is NOT a statement that env edits are inert at a stamped studio.** `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` is read **independently** by EMERG-01's free-consult reschedule restriction (`isFreeConsultWaitlistOnlyReschedule` → `isNewClientWaitlistEnabled`), which never consults `new_client_admission_mode`. Editing that list at a **cut-over** studio therefore still changes whether an **already-confirmed free consultation** can be self-service moved. Deliberately so: an owner changing new-client admission must not move the rights of a confirmed appointment; (2) `set_new_client_admission_mode` is the supported way to change a cut-over studio's **ADMISSION MODE**; (3) ⚠️ **RESTORING A CUT-OVER STUDIO TO WAIT-01 EMAIL-ONLY COMMIT SEMANTICS IS NOT SUPPORTED BY ANY EXISTING MECHANISM** (a consequence of the three-mode set and the bridge's own law, derivable from source rather than measured) — `waitlist` keeps it durable *by law*, and `open` / `closed` remove the waitlist rather than making it email-only; (4) **a mode transition is therefore NOT a commit-point rollback**, and must never be described as one. Restoring email-only would need a **new, explicitly designed and supported mechanism**, not an operator workaround.
 - Release record: [releases/2026-08-19-willow-new-client-waitlist.md](./releases/2026-08-19-willow-new-client-waitlist.md).
 
 ### WAIT-02B Stage A — the durable waitlist. ACTIVATED and collecting at every measured instant (2026-08-25 – 2026-09-15).
@@ -617,7 +667,9 @@ any row below.
   `isNewClientWaitlistEnabled` and `isNewClientWaitlistDurableEnabled` return true.
 - ⚠️ **THAT IS A BOUND, NOT A CURRENT READING, and the distinction is load-bearing.** A row is
   durable and outlives the flag; `lib/booking/new-client-waitlist.ts` re-reads `process.env` on
-  every call, so clearing the variable returns new submissions to WAIT-01 **immediately** while
+  every call, so for a studio **still on the legacy bridge** clearing the variable returns new
+  submissions to WAIT-01 **immediately** — but **not for a cut-over studio**, whose persisted mode
+  is answered before the list is read (see the cut-over note in §5b) — while
   every row already written stays exactly where it is. **A persisted row can never prove present
   configuration.** This document previously over-read the same evidence in the opposite
   direction — carrying a dated *absence* forward as a standing posture — and asserting a dated
@@ -681,7 +733,7 @@ Gate 4's contract, sentence 9: *"Naming a studio in `NEW_CLIENT_WAITLIST_DURABLE
 activates nothing unless that studio is also named in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`."* The
 durable variable selects the **commit point** for a studio that is *already* on the admission
 waitlist; it cannot by itself put a studio onto one. An empty durable allowlist leaves every
-studio on the non-durable (WAIT-01, email) path.
+**studio still on the legacy bridge** on the non-durable (WAIT-01, email) path. ⚠️ **THAT APPLIES ONLY TO A STUDIO THAT IS NOT CUT OVER.** Since 2026-10-01T21:35:33.139540Z Willow's mode is **persisted**, and `newClientWaitlistCommitIsDurable` (`lib/booking/new-client-waitlist-durability-bridge.ts`) returns true at its cut-over check **before** it consults `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`. **Clearing or emptying that list therefore cannot return a cut-over studio to WAIT-01 email-only** — it governs only studios still on the legacy bridge. An operator who clears it expecting a commit-point rollback at Willow would believe the rollback succeeded while durable rows kept being written. **AND THERE IS NO COMMIT-POINT ROLLBACK FOR A CUT-OVER STUDIO AT ALL.** An earlier revision of this note said "rolling a cut-over studio back is a row write through `set_new_client_admission_mode`", which conflated changing its ADMISSION MODE with restoring its COMMIT POINT, and is **withdrawn**. (1) For **NEW-CLIENT ADMISSION AND COMMIT-POINT ROUTING**, clearing or emptying either env list affects **only a studio still on the legacy bridge** — ⚠️ **but that is scoped to new-client routing and is NOT a statement that env edits are inert at a stamped studio.** `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` is read **independently** by EMERG-01's free-consult reschedule restriction (`isFreeConsultWaitlistOnlyReschedule` → `isNewClientWaitlistEnabled`), which never consults `new_client_admission_mode`. Editing that list at a **cut-over** studio therefore still changes whether an **already-confirmed free consultation** can be self-service moved. Deliberately so: an owner changing new-client admission must not move the rights of a confirmed appointment; (2) `set_new_client_admission_mode` is the supported way to change a cut-over studio's **ADMISSION MODE**; (3) ⚠️ **RESTORING A CUT-OVER STUDIO TO WAIT-01 EMAIL-ONLY COMMIT SEMANTICS IS NOT SUPPORTED BY ANY EXISTING MECHANISM** (a consequence of the three-mode set and the bridge's own law, derivable from source rather than measured) — `waitlist` keeps it durable *by law*, `open` / `closed` remove the waitlist rather than making it email-only; (4) **a mode transition is NOT a commit-point rollback** and must never be described as one. Restoring email-only would need a **new, explicitly designed and supported mechanism**, not an operator workaround.
 
 **Activation bound: one studio WAS activated at every measured instant**, 2026-08-25T22:27Z
 through 2026-09-15. Established from **committed rows**: 28 durable `willow-electrolysis`
@@ -717,7 +769,8 @@ open item — not the activation. Tracked as **L25** in
 > as ACCEPTED.** It was
 > *deployed*, *disclosed*, *was enabled for one studio at every measured instant* and
 > *collecting*. It has **not** been
-> exercised beyond joining on that studio — **zero invitations have ever been issued there** —
+> exercised beyond joining on that studio at the measured instants — **zero invitations had been
+> issued there as of that reading** — ⚠️ **NO LONGER TRUE, AND THE COUNT IS DATED.** One invitation **was** issued at Willow on **2026-10-02T00:14:55.792262Z**, by a practitioner, against the synthetic step-G acceptance entry; its `delivery_disposition` read `accepted`. That was an **acceptance exercise, not ordinary operator use**, and it is a dated observation — nothing is asserted about invitation state after that instant. Treat the zero above as the reading it was, not as a standing fact. —
 > and owner device acceptance has not been given.
 
 ## 6. Client portal and intake
@@ -1073,7 +1126,7 @@ appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no u
 ⚠️ **CORRECTED 2026-09-19 — WAIT-02B Stage B1 HAS LEFT THIS LIST**; it was recorded here as
 having none. One studio was enabled and joining exercised at every measured instant (§5b). It is
 still
-**not accepted**, and no invitation has ever been issued on that studio.
+**not accepted**. No invitation had been issued on that studio as of the 2026-09-19 reading; one **was** issued on **2026-10-02T00:14:55.792262Z** during the step-G acceptance exercise (`delivery_disposition` `accepted`), which is a dated observation and not ordinary operator use.
 
 **Retired by product decision (2026-07-29), enforced by migration 0159:** signed / finalized
 clinical records · signed-record corrections and amendments · practitioner-facing Finalize and

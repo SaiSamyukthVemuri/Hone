@@ -1,8 +1,26 @@
 # NEW-CLIENT-MODE-01 — activation plan
 
 **This document is the CUTOVER authority. The PR that adds the code is not.**
-Nothing here has been executed. No production value has been read, written or
-inferred while writing it.
+
+⚠️ **SCOPE OF THIS PREAMBLE: THE PLAN, NOT THE RECORD.** When the plan below was
+written, nothing in it had been executed and no production value had been read,
+written or inferred. **That is no longer true of the document as a whole**, and the
+sentence is kept — scoped — rather than deleted, because it states the condition the
+plan was authored under. **Steps A–D and G HAVE since been executed**, and the
+**EXECUTION RECORD** — now a separate file,
+[new-client-admission-execution-record.md](./new-client-admission-execution-record.md)
+— documents real production reads and writes: migration `0204` applied, PR #773
+deployed, one studio's mode written by its owner, and a public durable join. An
+earlier revision left this preamble unqualified while the execution record was
+appended below it, so the document asserted both that nothing had been executed and
+that steps had been — **that contradiction is withdrawn.** The plan text itself is
+unchanged, and was never retrofitted to match the outcome, so **read this file as the
+procedure and the execution record as what happened to it.**
+
+**THIS FILE IS THE CONTRACT; THE RECORD FILE IS EVIDENCE.** This file is frozen by
+sha256 in `tests/lib/booking/new-client-admission.test.ts`, end to end, and holds the
+declared `claim-status` directives. Execution records append to the other file and
+**cannot redefine anything here** — on any apparent conflict, this file wins.
 
 ## The rule this plan exists to honour
 
@@ -196,14 +214,68 @@ the implementation PR.
 
 ## Rollback
 
+⚠️ **READ THIS FIRST: "ROLLBACK" MEANS TWO DIFFERENT THINGS HERE, AND ONLY ONE OF THEM
+EXISTS FOR A CUT-OVER STUDIO.**
+
+<!--
+  DECLARED CLAIM STATUS. The directive on the next line is machine-read and
+  pinned by tests/lib/booking/new-client-admission.test.ts - same idiom as the
+  canonical-facts:ignore-* directives elsewhere in docs/production. It carries
+  exactly two assignments and no prose; this comment is where the prose goes,
+  because a directive that accepts commentary also accepts a second assignment.
+
+  Retiring the rule below means editing that directive, which fails the test and
+  is legible in the diff. Prose cannot reverse it. The verdict row must appear
+  EXACTLY ONCE in this document with the directive sitting on it.
+
+  AND THIS WHOLE ROLLBACK SECTION IS FROZEN by sha256 in that same test, so any
+  edit here - a reworded row, an appended paragraph, a footnote - fails until the
+  hash is updated deliberately. That is the point: this section has already
+  shipped two false operator procedures.
+-->
+<!-- claim-status id=commit-point-rollback-supported value=active -->
+| what you want to undo | is it supported? |
+|---|---|
+| **ADMISSION MODE** — open / waitlist / closed | **YES**, through `set_new_client_admission_mode`, by the studio's owner. |
+| **COMMIT POINT** — returning a studio to WAIT-01 **email-only** intake | **NO — not supported by any existing mechanism for a cut-over studio.** |
+
+**Why the commit point is a one-way door.** `newClientWaitlistCommitIsDurable` is explicit
+that *persisted WAITLIST is durable, independent of the legacy durable list*. So of the
+three modes: `waitlist` keeps the studio **durable** (that is the law, not a bug);
+`open` gives ordinary new-client booking with **no waitlist at all**; `closed` shuts
+new-client intake. **None of them restores email-only intake.** Clearing either env list
+does not either — for **new-client commit-point routing** it governs only a studio
+still on the legacy bridge. ⚠️ **That scope is new-client routing only.**
+`NEW_CLIENT_WAITLIST_STUDIO_SLUGS` is read independently by EMERG-01's free-consult
+reschedule restriction, so editing it at a **cut-over** studio still changes whether an
+already-confirmed free consultation can be self-service moved. See the step-H note.
+
+<!--
+  DECLARED CLAIM STATUS, as above. The paragraph below is HISTORY: it records a
+  promise this plan used to make and no longer makes. Do not restate it as
+  guidance anywhere in this section, and do not append a retraction after it -
+  the section hash covers both.
+-->
+<!-- claim-status id=commit-point-rollback-via-mode-write value=withdrawn -->
+**Do not describe a mode transition as a commit-point rollback.** An earlier revision of
+this section did: it listed `set_new_client_admission_mode(<studio>, 'waitlist')` as the
+rollback for a stamped studio, which changes the mode and leaves the commit point durable.
+That is **withdrawn**. An operator following it would believe a commit-point rollback had
+succeeded while durable rows kept being written — the same failure as the env-edit
+instruction it replaced.
+
+**If legacy email-only intake is ever genuinely required again, it needs a NEW, explicitly
+designed and supported mechanism** — a product decision with its own authority and its own
+proof, not an operator workaround and not a mode write.
+
 **Rollback depends on whether the studio has been STAMPED, not on which step you
 are on.** `new_client_admission_mode_set_at` is the test.
 
-| studio state | how to roll back |
+| studio state | what can be undone |
 |---|---|
-| **unstamped** (`set_at` NULL, still on the legacy bridge) | restoring its slug to `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` restores its previous waitlist behaviour, for as long as the bridge remains |
+| **unstamped** (`set_at` NULL, still on the legacy bridge) | restoring its slug to `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` restores its previous waitlist behaviour, for as long as the bridge remains — **this is the only state in which an env edit changes NEW-CLIENT ADMISSION OR THE COMMIT POINT** — it is *not* the only state in which an env edit changes anything, because `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` still drives EMERG-01's free-consult reschedule restriction at a stamped studio too (see the step-H note below) |
 | **0204 applied, application not yet deployed** (between steps B and D) | nothing to roll back at the data layer: the deployed application calls none of the new RPCs and writes none of the new fields, so the migration is inert. Roll back by not deploying. |
-| **stamped** (`set_at` non-null, an owner has chosen) | an explicit `set_new_client_admission_mode(<studio>, 'waitlist')` command. **The env list cannot do it.** |
+| **stamped** (`set_at` non-null, an owner has chosen) | **ADMISSION MODE only**, through an explicit `set_new_client_admission_mode(<studio>, <mode>)` command — the env list cannot do it. ⚠️ **The COMMIT POINT cannot be undone at all**: writing `waitlist` leaves the studio durable, and `open` / `closed` remove the waitlist instead of restoring email-only. See the one-way-door note above. |
 
 **Never claim that restoring an env slug overrides an explicit owner choice.** It
 does not, by design: `resolveAdmission` returns a stamped mode before it consults
@@ -232,3 +304,12 @@ route, not the step number.
   owner mode change. While a studio is still on that path its owner simply
   cannot switch to OPEN or CLOSED; the command answers
   `legacy_waitlist_cutover_required` and the way out is the cutover write.
+
+---
+
+## Where the execution history lives
+
+Records of what was actually executed are in
+[new-client-admission-execution-record.md](./new-client-admission-execution-record.md),
+append-only and dated. They are evidence, not instruction: **this file is
+authoritative on any conflict.**
