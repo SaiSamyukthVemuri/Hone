@@ -89,7 +89,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 The apply above is **one** of four distinct authorities exercised in this release.
 They are separate on purpose and are recorded separately. The step-by-step execution
 record lives in
-[new-client-admission-activation.md](./new-client-admission-activation.md); this is the
+[new-client-admission-execution-record.md](./new-client-admission-execution-record.md)
+— split out of the activation plan, verbatim, so that plan could be frozen as the
+operator contract; the plan itself is
+[new-client-admission-activation.md](./new-client-admission-activation.md). This is the
 release-level summary.
 
 | Authority | Outcome |
