@@ -94,31 +94,47 @@
 --
 -- So section 3 repairs exactly that window, at apply time, and nothing else.
 --
--- HOW "PROVABLY CREATED AFTER 0204" IS ESTABLISHED, since the database cannot
--- answer it directly: `supabase_migrations.schema_migrations` carries only
+-- HOW "PROVABLY CREATED AFTER 0204" IS ESTABLISHED. The database cannot answer
+-- it directly: `supabase_migrations.schema_migrations` carries only
 -- (version, statements, name) and has NO timestamp column, so there is no
 -- server-side 0204 apply instant to compare against.
 --
--- The census supplies the proof instead. It was taken when
--- `max(version)` was ALREADY `0204` - so 0204 was applied - and it enumerated
--- EVERY studio, the newest created 2026-09-19T20:13:50.840921Z. A row with
--- `created_at` STRICTLY GREATER than that therefore did not exist at a moment
--- when 0204 was already applied, which means it was created after 0204. The
--- comparison is strict so the boundary row itself - the real 2026-09-19 legacy
--- studio - stays NULL.
+-- THE EVIDENCE IS CENSUS MEMBERSHIP, AND IT IS IMMUTABLE. A read-only census of
+-- the canonical production project on 2026-10-01 was taken while `max(version)`
+-- was ALREADY `0204` -- so 0204 was applied -- and it enumerated EVERY studio:
+-- seven rows, whose ids are listed in section 3. A row that is NOT one of those
+-- seven did not exist at a moment when 0204 was already applied, so it was
+-- created after 0204. That is the whole proof, and a row cannot change its own
+-- id.
+--
+-- WHY NOT `created_at`, WHICH AN EARLIER REVISION USED. `studios.created_at` IS
+-- MUTABLE BY THE ROW'S OWN OWNER: RLS policy "studios: owners update" permits an
+-- owner to UPDATE their studio, `authenticated` holds column UPDATE privilege on
+-- `created_at`, and `studios_admission_mode_guard` protects only the three
+-- admission fields. So a genuine pre-0204 legacy studio could be FORWARD-DATED
+-- past a timestamp boundary and would then qualify for this repair, be stamped,
+-- and silently lose the legacy cutover this migration promises to preserve.
+--
+-- That earlier revision reasoned only about BACKDATING -- which makes a
+-- timestamp predicate under-repair, the safe direction -- and then wrote a
+-- conclusion about both directions. Forward-dating is the unsafe one, it is
+-- reachable by an ordinary owner through PostgREST, and the fail-closed shape
+-- check could not see it because such a row looks entirely normal. An id is not
+-- writable by its owner; a timestamp is. So identity is the id.
+--
+-- `created_at` IS STILL USED, FOR EXACTLY ONE THING: it is the VALUE written
+-- into `set_at` for a qualifying row, because the semantic being recorded is
+-- "the system initialized this studio's admission authority when the studio was
+-- created". It carries no part of the eligibility decision. A row with a
+-- nonsense `created_at` therefore gets a nonsense stamp VALUE, which is visible
+-- and correctable, rather than a wrong eligibility VERDICT, which is neither.
 --
 -- FAIL-CLOSED IN THE DIRECTION THAT MATTERS. The two errors are not
 -- symmetrical. Leaving a window row NULL reproduces the bug: a spurious
 -- ceremony, annoying and safe. Wrongly stamping a GENUINE legacy row skips a
 -- cutover that exists because the legacy email-only join path cannot be made
--- atomic - a correctness risk. So the repair writes ONLY what it can prove, and
+-- atomic -- a correctness risk. So the repair writes ONLY what it can prove, and
 -- section 3 refuses to run at all if the data does not match its model.
---
--- A BACKDATED `created_at` makes the predicate UNDER-repair, never over-repair:
--- the row looks older, falls below the boundary, and is left alone. That is the
--- safe direction, and it is why the boundary is compared against `created_at`
--- rather than anything the row could have been given later.
---
 -- STATEMENT INVENTORY, for the apply record: ONE `alter table ... alter column
 -- ... set default`, TWO `comment on column`, and ONE `do` block whose only
 -- write is a bounded `update public.studios` over the window set defined above.
@@ -181,9 +197,14 @@ comment on column public.studios.new_client_admission_mode_set_by is
 -- 3. THE BOUNDED APPLY-TIME REPAIR
 -- ---------------------------------------------------------------------------
 --
--- Scope: studios PROVABLY created after 0204 (see the header) that are still
--- unstamped. Everything else is untouched - every row at or below the boundary,
--- and every row an owner has already stamped.
+-- Scope: studios PROVABLY created after 0204 -- that is, NOT members of the
+-- 2026-10-01 census enumerated below -- that are still unstamped and still
+-- carry the plain system default. Everything else is untouched: every census
+-- member, and every row an owner has already stamped.
+--
+-- Census membership is by ID, not by timestamp, because `created_at` is mutable
+-- by the row's own owner and a forward-dated legacy row would otherwise qualify.
+-- The header records that reasoning in full.
 --
 -- IDEMPOTENT. A repaired row is no longer `set_at IS NULL`, so a second run
 -- selects nothing. The per-row UPDATE re-checks the NULL under the row lock, so
@@ -199,9 +220,24 @@ comment on column public.studios.new_client_admission_mode_set_by is
 -- >>> 0205 APPLY-TIME REPAIR BEGIN
 do $repair$
 declare
-  -- The census boundary, with its provenance in the header. Strictly greater:
-  -- the boundary row IS a real legacy studio and must keep its NULL.
-  k_boundary constant timestamptz := '2026-09-19T20:13:50.840921+00';
+  -- THE 2026-10-01 CENSUS, BY ID. Immutable evidence: taken while hosted
+  -- `max(version)` was already `0204`, enumerating EVERY studio then existing.
+  -- A row outside this set did not exist once 0204 was applied, so it postdates
+  -- 0204. Unlike `created_at`, a row cannot rewrite its own id -- see the header
+  -- for why the timestamp boundary this replaced was not sound.
+  --
+  -- This list is CLOSED. It must never grow: adding an id would protect a studio
+  -- the census never saw, which is exactly the legacy misclassification 0205
+  -- exists to remove.
+  k_census constant uuid[] := array[
+    '38cb3a8b-f0f1-409e-9ea4-ffa4b95cb4c6'::uuid,
+    '6cdef761-07ce-4c3d-b121-69cb1ec834cf'::uuid,
+    '9d37c51a-6237-42ef-b9d3-28a567c2bfa8'::uuid,
+    'f5c6f49f-265f-4bb4-b7ae-70f42d78e807'::uuid,
+    '97f621f5-8044-41c7-9499-030a79b0adeb'::uuid,
+    '24c7b43a-d78e-4a87-a697-34f6488dc6a0'::uuid,
+    'eb5023c5-45b3-4215-9b02-afa10705a8fa'::uuid
+  ];
   r              record;
   v_anomalous    integer;
   v_repaired     integer := 0;
@@ -221,22 +257,21 @@ begin
       '0205: studios_admission_mode_guard is absent; refusing to write admission fields';
   end if;
 
-  -- FAIL CLOSED #2: the window must look the way the model says it looks. An
-  -- unstamped row above the boundary that is NOT a plain system default - a mode
-  -- other than open, or an actor already recorded - means the model is wrong,
-  -- and writing under a wrong model is the thing being guarded against.
+  -- FAIL CLOSED #2: every candidate must look the way the model says it looks.
+  -- A non-census unstamped row that is NOT a plain system default - a mode other
+  -- than open, or an actor already recorded - means the model is wrong, and
+  -- writing under a wrong model is the thing being guarded against.
   select count(*)
     into v_anomalous
     from public.studios s
    where s.new_client_admission_mode_set_at is null
-     and s.created_at > k_boundary
+     and not (s.id = any (k_census))
      and (s.new_client_admission_mode <> 'open'
           or s.new_client_admission_mode_set_by is not null);
   if v_anomalous <> 0 then
     raise exception
-      '0205: % unstamped studio(s) above the 0204 boundary do not match the '
-      'system-default shape (mode=open, set_by null); refusing to repair',
-      v_anomalous;
+      '0205: % unstamped non-census studio(s) do not match the system-default '
+      'shape (mode=open, set_by null); refusing to repair', v_anomalous;
   end if;
 
   for r in
@@ -245,27 +280,28 @@ begin
      where s.new_client_admission_mode_set_at is null
        and s.new_client_admission_mode_set_by is null
        and s.new_client_admission_mode = 'open'
-       and s.created_at > k_boundary
+       and not (s.id = any (k_census))
      order by s.id
-       -- FOR NO KEY UPDATE, NOT FOR UPDATE.
+       -- FOR NO KEY UPDATE, and DELIBERATELY NOT SOLD AS A CONCURRENCY WIN.
        --
-       -- The write below changes `new_client_admission_mode_set_at` only. It
-       -- touches no primary key and no column any foreign key references, so
-       -- the stronger lock buys nothing and costs something real.
+       -- An earlier revision claimed this leaves `FOR KEY SHARE` traffic
+       -- unblocked. THAT CLAIM WAS FALSE for the real apply, and a test pinned
+       -- it. Section 1's `alter table ... set default` takes ACCESS EXCLUSIVE on
+       -- `public.studios` and PostgreSQL holds it until THIS transaction
+       -- commits - verified by reading pg_locks inside such a transaction - so
+       -- for the whole of this loop every access to the table is already
+       -- blocked, FOR KEY SHARE included. No row-level lock choice here can
+       -- change that, and the transaction is NOT restructured to make the claim
+       -- true: serializing the apply is correct.
        --
-       -- WHAT IS PRESERVED. FOR NO KEY UPDATE still conflicts with FOR UPDATE,
-       -- with another FOR NO KEY UPDATE, and with an ordinary UPDATE of the same
-       -- row, so serialization against a concurrent admission-mode writer -- the
-       -- only writer this repair races -- is exactly as strong as before. The
-       -- per-row re-check of `set_at IS NULL` below holds under it unchanged.
-       --
-       -- WHAT IS NO LONGER BLOCKED, and why that matters here. FOR UPDATE
-       -- conflicts with FOR KEY SHARE; FOR NO KEY UPDATE does not. FOR KEY SHARE
-       -- on `studios` is taken by ordinary product traffic through foreign keys:
-       -- the waitlist exit's audit trigger reaches it on every entry UPDATE, and
-       -- tests/db/waitlist-exit-audit-trigger measures that schedule. Holding
-       -- FOR UPDATE across this loop would park that traffic behind a migration
-       -- that is not changing any key it depends on.
+       -- WHY KEEP IT ANYWAY. It is the weakest lock that still does the job, and
+       -- the job is real: it conflicts with FOR UPDATE, with another FOR NO KEY
+       -- UPDATE and with a plain UPDATE of the same row, so a concurrent
+       -- admission-mode writer is serialized against. That matters when this
+       -- block is exercised OUTSIDE the migration - which it is, by
+       -- tests/db/new-studio-admission-default, which extracts and runs it
+       -- without any surrounding DDL lock. Local row-level discipline, not an
+       -- operational guarantee about the apply.
        for no key update
   loop
     perform set_config('hone.admission_mode_studio_id', r.id::text, true);
@@ -273,6 +309,9 @@ begin
     -- initialized when the studio was created, which is what 0205's default
     -- records for every studio created after this. Backfilling `now()` would
     -- date the initialization to the apply instead.
+    --
+    -- This is the ONLY use of created_at, and it is a VALUE not a VERDICT - the
+    -- eligibility decision above reads ids only, because created_at is mutable.
     update public.studios s
        set new_client_admission_mode_set_at = r.created_at
      where s.id = r.id
@@ -294,11 +333,11 @@ begin
    where s.new_client_admission_mode_set_at is null
      and s.new_client_admission_mode_set_by is null
      and s.new_client_admission_mode = 'open'
-     and s.created_at > k_boundary;
+     and not (s.id = any (k_census));
   if v_left <> 0 then
     raise exception
-      '0205: % studio(s) created after the 0204 boundary still carry a null '
-      'set_at after the repair', v_left;
+      '0205: % non-census studio(s) still carry a null set_at after the repair',
+      v_left;
   end if;
 
   raise notice '0205: apply-time repair stamped % studio(s)', v_repaired;

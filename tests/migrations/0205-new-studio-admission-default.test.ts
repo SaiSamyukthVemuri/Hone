@@ -142,15 +142,39 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     }
   });
 
-  it("the repair is bounded by the census boundary, strictly", () => {
-    // Strictly greater, so the boundary row itself — the real 2026-09-19
-    // production legacy studio — keeps its NULL. `>=` would stamp it and skip a
-    // cutover that exists because the legacy join path cannot be made atomic.
-    expect(CODE).toMatch(/k_boundary constant timestamptz := '[^']+'/);
-    expect(CODE).toMatch(/created_at > k_boundary/);
-    expect(CODE, "a non-strict boundary would capture the boundary row").not.toMatch(
-      /created_at >= k_boundary/,
+  it("eligibility is CENSUS MEMBERSHIP by id, never a timestamp", () => {
+    // `studios.created_at` is MUTABLE by the row's own owner — RLS policy
+    // "studios: owners update" plus column UPDATE privilege on created_at, and
+    // the admission guard covers only the three admission fields. A timestamp
+    // boundary could therefore be defeated by FORWARD-dating a genuine legacy
+    // studio past it, which would stamp it and silently drop its cutover. A row
+    // cannot rewrite its own id, so identity is the id.
+    const block = REPAIR_BLOCK!;
+    expect(block, "the census set must be declared as uuids").toMatch(
+      /k_census constant uuid\[\] := array\[/,
     );
+    // Seven ids, because the census enumerated seven studios.
+    const ids = [...block.matchAll(/'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'::uuid/g)];
+    expect(ids.length, "the census is seven studios").toBe(7);
+    // Selection and both fail-closed queries must all exclude census members.
+    expect(
+      [...block.matchAll(/not \(s\.id = any \(k_census\)\)/g)].length,
+      "every query over candidates must exclude the census set",
+    ).toBe(3);
+  });
+
+  it("created_at carries NO part of the eligibility decision", () => {
+    // It survives for exactly one purpose: the VALUE written into set_at, so the
+    // stamp records "initialized when the studio was created". A mutable column
+    // may decide a stamp's value — visible and correctable — but never a verdict.
+    const block = REPAIR_BLOCK!;
+    expect(block, "created_at must not appear in a predicate").not.toMatch(
+      /created_at\s*(>|>=|<|<=)/,
+    );
+    expect(block, "and must still be the written value").toMatch(
+      /new_client_admission_mode_set_at = r\.created_at/,
+    );
+    expect(CODE, "the retired timestamp boundary must be gone").not.toMatch(/k_boundary/);
   });
 
   it("it repairs ONLY unstamped system-default rows, so owner choices survive", () => {
@@ -208,23 +232,53 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     );
   });
 
-  it("takes FOR NO KEY UPDATE, never the stronger FOR UPDATE", () => {
-    // The write changes `set_at` only — no primary key, and no column any
-    // foreign key references — so the stronger lock buys nothing and costs
-    // something: FOR UPDATE conflicts with FOR KEY SHARE, which ordinary
-    // product traffic takes on `studios` through FKs (the waitlist exit's audit
-    // trigger reaches it on every entry UPDATE). FOR NO KEY UPDATE does not
-    // conflict with it, while still conflicting with FOR UPDATE, with another
-    // FOR NO KEY UPDATE and with a plain UPDATE of the same row — so
-    // serialization against a concurrent admission-mode writer is unchanged.
+  it("takes FOR NO KEY UPDATE — the weakest lock that still serializes", () => {
+    // THIS TEST USED TO PIN A FALSE OPERATIONAL GUARANTEE. Its previous revision
+    // claimed FOR NO KEY UPDATE leaves `FOR KEY SHARE` traffic unblocked during
+    // the apply. It does not: section 1's `alter table ... set default` takes
+    // ACCESS EXCLUSIVE on `public.studios` and PostgreSQL holds it until this
+    // transaction commits, so every access to the table is already blocked for
+    // the whole repair — verified by reading pg_locks inside such a
+    // transaction. No row-lock choice can change that, and the transaction is
+    // NOT restructured to rescue the claim: serializing the apply is correct.
+    //
+    // WHAT IS PINNED NOW is the lock itself, on the narrow grounds that survive:
+    // it is the weakest lock that still conflicts with FOR UPDATE, with another
+    // FOR NO KEY UPDATE and with a plain UPDATE of the same row, which is real
+    // discipline when this block is exercised OUTSIDE the migration — as the DB
+    // test does, extracting and running it with no surrounding DDL lock.
     const block = REPAIR_BLOCK!;
     expect(block).toMatch(/for no key update/);
-    // A bare `for update` must not reappear. Matched on a word boundary so the
+    // A bare `for update` must not reappear. Word-boundary matched so the
     // substring inside "for no key update" cannot satisfy it either way.
     expect(
       /\bfor\s+update\b/.test(block),
       "the repair must not escalate back to FOR UPDATE",
     ).toBe(false);
+  });
+
+  it("states what actually serializes the apply, and retracts the false claim", () => {
+    // ASSERTED POSITIVELY, NOT AS A GREP FOR ABSENCE. A first attempt here
+    // searched for the false wording and failed on the migration's own sentence
+    // RETRACTING it — "an earlier revision claimed this leaves FOR KEY SHARE
+    // traffic unblocked". A regex cannot tell a retraction from an assertion, so
+    // the absence of a phrase is the wrong thing to pin. What matters is that the
+    // true mechanism is stated and the false one is explicitly disowned.
+    const lock = /FOR NO KEY UPDATE[\s\S]*?for no key update/.exec(SQL);
+    expect(lock, "the lock rationale block could not be located").toBeTruthy();
+    const why = lock![0];
+
+    // 1. the real mechanism: the section-1 DDL holds ACCESS EXCLUSIVE to COMMIT,
+    //    so the table is already fully blocked for the whole repair.
+    expect(why).toMatch(/ACCESS EXCLUSIVE/);
+    expect(why).toMatch(/until THIS transaction\s*--?\s*\n?\s*--\s*commits|until THIS transaction/i);
+
+    // 2. the false claim is named as false rather than silently dropped, so the
+    //    next reader cannot reintroduce it believing it was never considered.
+    expect(why).toMatch(/CLAIM WAS FALSE/i);
+
+    // 3. and the transaction is NOT restructured to rescue it.
+    expect(why).toMatch(/NOT restructured/i);
   });
 });
 

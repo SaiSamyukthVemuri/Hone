@@ -112,7 +112,7 @@ describe("the DEFAULT cannot backfill, and an explicit NULL still means legacy",
     // the owner-stamped WAITLIST studio, which stopped being true when the
     // census-to-apply repair was added. The repair DOES write rows. What keeps
     // that studio and the five legacy rows out of its way is its PREDICATE and
-    // its BOUNDARY, not an absence of DML, and those are proved by the window
+    // its CENSUS SET, not an absence of DML, and those are proved by the window
     // blocks below rather than asserted here.
     const id = randomUUID();
     await adminQuery(
@@ -277,15 +277,17 @@ describe("G. an owner-stamped WAITLIST studio is untouched by any of this", () =
   //
   //   1. the repair's predicate requires `new_client_admission_mode_set_by IS
   //      NULL`, and that studio carries an owner stamp, so it is not selected;
-  //   2. its `created_at` is 2026-05-16, far BELOW the census boundary, so it is
-  //      out of the repair's window independently of (1);
+  //   2. it is a MEMBER OF THE CENSUS SET, which the predicate excludes by id,
+  //      so it is out of scope independently of (1) — and because the evidence
+  //      is an id rather than a timestamp, no mutation of its own columns can
+  //      move it into scope;
   //   3. the column default cannot reach an existing row at all, and an
   //      ordinary studios UPDATE does not disturb the admission fields.
   //
   // (1) and (2) are each proved directly, on local analogues, by the
-  // out-of-window block above — an owner-stamped row above the boundary is left
-  // byte-for-byte alone, and a row at the boundary keeps its NULL. This block
-  // exercises (3).
+  // out-of-window block above — an owner-stamped non-census row is left
+  // byte-for-byte alone, and a census row stays unstamped even when its
+  // created_at is forward-dated a year. This block exercises (3).
   let studio: SeededStudio;
 
   beforeAll(async () => {
@@ -347,26 +349,20 @@ const REPAIR_SQL = (() => {
   return m[1];
 })();
 
-/** The boundary, READ FROM THE MIGRATION so the test cannot pin a stale one. */
-const BOUNDARY = (() => {
-  const m = /k_boundary constant timestamptz := '([^']+)'/.exec(MIGRATION_SQL);
-  if (!m) throw new Error("0205: the census boundary is gone from the migration");
-  return m[1];
-})();
-
 /**
- * The same instant, parseable by `Date`.
+ * The census set, READ FROM THE MIGRATION so the test cannot pin a stale list.
  *
- * PostgreSQL writes a two-digit UTC offset (`+00`); ECMA-262 requires either
- * `Z` or `+HH:MM`, so `new Date("...+00")` is silently NaN and every comparison
- * against it comes out false. Normalising here keeps the migration as the single
- * source of the value while letting the test do real arithmetic on it.
+ * Membership is the eligibility evidence, and it is by ID on purpose:
+ * `studios.created_at` is mutable by the row's own owner, so a timestamp
+ * boundary could be defeated by forward-dating a genuine legacy studio past it.
+ * An id cannot be rewritten by its owner.
  */
-const BOUNDARY_MS = (() => {
-  const iso = BOUNDARY.trim().replace(/([+-]\d{2})$/, "$1:00");
-  const ms = new Date(iso).getTime();
-  if (Number.isNaN(ms)) throw new Error(`0205: unparseable census boundary ${BOUNDARY}`);
-  return ms;
+const CENSUS_IDS: string[] = (() => {
+  const block = /k_census constant uuid\[\] := array\[([\s\S]*?)\];/.exec(MIGRATION_SQL);
+  if (!block) throw new Error("0205: the census id set is gone from the migration");
+  const ids = [...block[1].matchAll(/'([0-9a-f-]{36})'::uuid/g)].map((m) => m[1]);
+  if (ids.length === 0) throw new Error("0205: the census id set is empty");
+  return ids;
 })();
 
 /** Force a studio into the window shape: unstamped, created above the boundary. */
@@ -405,11 +401,11 @@ describe("the apply-time repair closes the census-to-apply window", () => {
       ]),
     );
 
-  it("the boundary is read from the migration, not pinned here", () => {
-    expect(BOUNDARY).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
-    // And it parses — otherwise every comparison against it is a silent NaN
-    // and the window assertions below would pass for the wrong reason.
-    expect(Number.isNaN(BOUNDARY_MS)).toBe(false);
+  it("the census set is read from the migration, not pinned here", () => {
+    expect(CENSUS_IDS.length, "the census enumerated seven studios").toBe(7);
+    for (const id of CENSUS_IDS) {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    }
   });
 
   it("RED BEFORE: the window row is misclassified as legacy and refuses Open", async () => {
@@ -418,7 +414,10 @@ describe("the apply-time repair closes the census-to-apply window", () => {
     // inserted — so the command cannot tell it from a 2026-05 studio.
     const row = await admissionRow(studio.studioId);
     expect(row.set_at, "setup did not produce the window shape").toBeNull();
-    expect(row.created_at.getTime()).toBeGreaterThan(BOUNDARY_MS);
+    expect(
+      CENSUS_IDS,
+      "a seeded studio must NOT be a census member — that is what makes it eligible",
+    ).not.toContain(studio.studioId);
 
     const { rows } = await choose("open");
     expect(rows[0].outcome).toBe("legacy_waitlist_cutover_required");
@@ -453,50 +452,73 @@ describe("the apply-time repair closes the census-to-apply window", () => {
 });
 
 describe("the repair touches NOTHING outside its window", () => {
-  it("a LEGACY row at or below the boundary keeps its NULL and its ceremony", async () => {
-    const legacy = await seedStudio("admission-below-boundary");
-    await makeWindowRow(legacy.studioId);
-    // Backdate it to the boundary exactly. Strictly-greater means the boundary
-    // row itself is out of scope — and the real 2026-09-19 production studio is
-    // exactly that row.
-    await adminQuery(`update public.studios set created_at = $2 where id = $1`, [
-      legacy.studioId,
-      BOUNDARY,
-    ]);
+  it("a CENSUS studio keeps its NULL and its ceremony — and FORWARD-DATING cannot change that", async () => {
+    // THE P2 THIS CLOSES. The predicate used to be `created_at > boundary`, and
+    // `studios.created_at` is MUTABLE by the row's own owner: RLS policy
+    // "studios: owners update" permits the UPDATE, `authenticated` holds column
+    // privilege on created_at, and the admission guard covers only the three
+    // admission fields. So an owner of a genuine legacy studio could forward-date
+    // past the boundary, qualify for the repair, be stamped, and silently lose
+    // the cutover. Identity is the id now, and this proves the mutation is inert.
+    const censusId = CENSUS_IDS[0];
 
-    // IN-TEST CONTROL, one microsecond above the same boundary. Without it this
-    // test passes whenever the repair does nothing at all — including when the
-    // boundary is wrong — and would be asserting "nothing happened" rather than
-    // "the boundary discriminates".
-    const control = await seedStudio("admission-just-above-boundary");
-    await makeWindowRow(control.studioId);
+    // RE-RUNNABLE BY CONSTRUCTION. This row uses a FIXED id — that is the whole
+    // point, since membership is the evidence — so a bare INSERT fails with
+    // `studios_pkey` on the second run against a database that was not reset.
+    // CI resets and would never have seen it; a local re-run would. That exact
+    // shape already bit this file once, via a fixture whose cleanup was skipped
+    // on failure, so it is removed here rather than left to the next person.
+    //
+    // DELETE-then-INSERT, not ON CONFLICT DO UPDATE: forcing the admission
+    // fields back to NULL through an UPDATE would trip
+    // `studios_admission_mode_guard` and need a permit, and a fresh INSERT needs
+    // none. This id is created only by this test and has no practitioners or
+    // clients hanging off it, so the delete cannot cascade into another fixture.
+    await adminQuery(`delete from public.studios where id = $1`, [censusId]);
     await adminQuery(
-      `update public.studios set created_at = $2::timestamptz + interval '1 microsecond' where id = $1`,
-      [control.studioId, BOUNDARY],
+      `insert into public.studios (id, name, owner_email, new_client_admission_mode_set_at)
+       values ($1, $2, $3, null)`,
+      [censusId, "Census legacy analogue", `census-${censusId.slice(0, 8)}@harness.local`],
+    );
+
+    // Forward-date it hard — far past any plausible boundary, and past now().
+    await adminQuery(
+      `update public.studios set created_at = now() + interval '365 days' where id = $1`,
+      [censusId],
     );
 
     await adminQuery(REPAIR_SQL);
 
-    const row = await admissionRow(legacy.studioId);
-    expect(row.set_at, "a row AT the boundary must NOT be repaired").toBeNull();
-    const controlRow = await admissionRow(control.studioId);
+    const row = await admissionRow(censusId);
     expect(
-      controlRow.set_at,
-      "a row one microsecond ABOVE the boundary MUST be repaired — otherwise the " +
-        "comparison above proves nothing",
+      row.set_at,
+      "a census member must stay unstamped however its created_at is moved",
+    ).toBeNull();
+
+    // IN-TEST CONTROL. Without it this passes whenever the repair does nothing
+    // at all, and would assert "nothing happened" rather than "membership
+    // discriminates". A non-census row of the SAME shape must be repaired.
+    const control = await seedStudio("admission-non-census");
+    await makeWindowRow(control.studioId);
+    expect(CENSUS_IDS).not.toContain(control.studioId);
+    await adminQuery(REPAIR_SQL);
+    expect(
+      (await admissionRow(control.studioId)).set_at,
+      "a NON-census unstamped system-default row MUST be repaired — otherwise the " +
+        "exclusion above proves nothing",
     ).not.toBeNull();
 
-    // And it still behaves as legacy: the ceremony is intact.
-    const { rows } = await asUser(legacy.userId, (query) =>
-      query("select * from public.set_new_client_admission_mode($1, $2)", [
-        legacy.studioId,
-        "open",
-      ]),
+    // And the census row still behaves as legacy: the ceremony is intact.
+    const { rows } = await adminQuery(
+      `select public.effective_new_client_admission($1, true) as mode`,
+      [censusId],
     );
-    expect(rows[0].outcome).toBe("legacy_waitlist_cutover_required");
+    expect(rows[0].mode, "an unstamped census row still answers through the bridge").toBe(
+      "waitlist",
+    );
   });
 
-  it("an OWNER-STAMPED row above the boundary is left byte-for-byte alone", async () => {
+  it("an OWNER-STAMPED non-census row is left byte-for-byte alone", async () => {
     const owned = await seedStudio("admission-owner-stamped");
     await asUser(owned.userId, (query) =>
       query("select * from public.set_new_client_admission_mode($1, $2)", [
