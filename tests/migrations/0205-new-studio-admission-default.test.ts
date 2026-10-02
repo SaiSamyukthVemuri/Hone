@@ -19,13 +19,17 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 // WHAT THIS FILE PROVES, AND WHAT IT DELIBERATELY DOES NOT.
 //
 // This is the SOURCE CONTRACT: it reads the migration text and asserts the
-// shape of the change — one default, two comments, ONE BOUNDED `update
-// public.studios` and no other DML, and no logic edit. It cannot prove
-// behaviour, because SQL text is not a running database.
+// shape of the change — one default, two comments, and TWO `update
+// public.studios` statements per candidate: the guard PROBE (unpermitted,
+// executed to be refused, rolled back on every path) and the bounded REPAIR
+// (permitted, the one that writes). No other DML, and no logic edit. It cannot
+// prove behaviour, because SQL text is not a running database.
 //
-// An earlier revision of this header said "no DML", which was true until the
-// census-to-apply window repair was added and false afterwards. The claim is a
-// BOUND now, not an absence, and the assertions below enforce it as one. The
+// THIS HEADER HAS BEEN WRONG TWICE, both times by understating the writes. It
+// first said "no DML", true until the window repair was added. It then said
+// "ONE BOUNDED update", true until the guard probe became a second executable
+// statement. The claim is a BOUND on two statements of different kinds now, and
+// the assertions below enforce it as one. The
 // behavioural claims (a fresh insert is stamped, a fresh owner may choose any
 // mode immediately, a legacy row still cannot) are proved against a real
 // database in tests/db/new-studio-admission-default.db.test.ts, and the
@@ -126,7 +130,47 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     expect(CODE).not.toMatch(/add column[^;]*new_client_admission_mode_set_at/);
   });
 
-  it("its ONLY data manipulation is the bounded window repair", () => {
+  it("the STATEMENT INVENTORY names both updates, because it has been wrong twice", () => {
+    // THIS IS A REGRESSION TEST FOR A DOCUMENTATION CLAIM, which is unusual and
+    // earned. The migration's own inventory is what an operator reads to know an
+    // apply's blast radius, and it has understated the writes twice: first "no
+    // DML" (true until the window repair landed), then "only write is a bounded
+    // update" (true until the guard probe became a second executable statement).
+    // Both were caught by review rather than by me, and the second was caught
+    // after I had already corrected the LEDGER for the same reason and not the
+    // migration. So the inventory is pinned, not trusted.
+    const inv = /STATEMENT INVENTORY[\s\S]*?\n-- ---/.exec(SQL);
+    expect(inv, "the statement inventory could not be located").toBeTruthy();
+    // NORMALISED to flowing prose first: these claims are about what the
+    // inventory SAYS, not how the comment happens to wrap. A first version
+    // matched the raw block and failed on `TWO\n-- \`update public.studios\``,
+    // which is the right content and the wrong line break.
+    const text = inv![0]
+      .split("\n")
+      .map((l) => l.replace(/^--\s?/, ""))
+      .join(" ")
+      .replace(/\s+/g, " ");
+
+    // It must name BOTH updates and distinguish them in kind.
+    expect(text).toMatch(/TWO\s+`update public\.studios`/);
+    expect(text, "the probe must be named").toMatch(/GUARD PROBE/);
+    expect(text, "the repair must be named").toMatch(/BOUNDED REPAIR/);
+    expect(text, "the probe must be marked non-persisting").toMatch(/CANNOT persist/);
+    // ...and must not hide one behind a singular claim again.
+    expect(
+      text,
+      'the inventory may not say the block has a single "only write"',
+    ).not.toMatch(/whose only write is/);
+    // The zero-candidate case belongs in the inventory too: it is the difference
+    // between "two statements" and "two statements per candidate".
+    expect(text).toMatch(/ZERO candidates/i);
+
+    // And the count must agree with the code: two updates in the repair block.
+    const updates = [...REPAIR_BLOCK!.matchAll(/\bupdate public\.studios\b/g)];
+    expect(updates.length, "the inventory says two; the block must contain two").toBe(2);
+  });
+
+  it("its data manipulation is TWO updates: the refused probe and the bounded repair", () => {
     // THE CENSUS WAS A POINT IN TIME. It found nothing to repair, but 0204 is
     // applied while 0205 is not, so a studio created in the window BETWEEN the
     // census and this apply is born open/NULL and the default cannot reach it —

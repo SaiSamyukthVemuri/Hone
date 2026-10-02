@@ -136,8 +136,21 @@
 -- atomic -- a correctness risk. So the repair writes ONLY what it can prove, and
 -- section 3 refuses to run at all if the data does not match its model.
 -- STATEMENT INVENTORY, for the apply record: ONE `alter table ... alter column
--- ... set default`, TWO `comment on column`, and ONE `do` block whose only
--- write is a bounded `update public.studios` over the window set defined above.
+-- ... set default`, TWO `comment on column`, and ONE `do` block containing TWO
+-- `update public.studios` STATEMENTS PER REPAIR CANDIDATE.
+--
+-- THE TWO ARE DIFFERENT IN KIND, and an operator verifying an apply needs both
+-- named rather than one of them hidden behind "only write":
+--
+--   1. THE GUARD PROBE - the repair's own statement with the permit NOT armed,
+--      executed to be REFUSED. It is executable DML: it fires triggers, takes
+--      the row lock and opens a subtransaction. It is rolled back on every path
+--      and CANNOT persist, but "does not persist" is not "does not run".
+--   2. THE BOUNDED REPAIR - the same statement with the permit armed. This is
+--      the one that writes, over the window set defined above.
+--
+-- With ZERO candidates the block executes NEITHER: no probe, no repair.
+--
 -- No table created or dropped, no column added or dropped, no index, no
 -- constraint, no function, no trigger, no grant, and no insert, delete or
 -- truncate anywhere in the file.

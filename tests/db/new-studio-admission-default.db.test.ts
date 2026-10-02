@@ -27,8 +27,9 @@ import {
 // WHY THESE ASSERTIONS LIVE AGAINST A REAL DATABASE. The fix is a column
 // DEFAULT, and a default is only observable on an actual INSERT. The source
 // contract in tests/migrations/0205-new-studio-admission-default.test.ts proves
-// the SHAPE of the migration — one default, two comments, and ONE BOUNDED
-// `update public.studios` — and deliberately proves nothing about behaviour,
+// the SHAPE of the migration — one default, two comments, and TWO
+// `update public.studios` statements per candidate: the unpermitted guard PROBE
+// and the permitted REPAIR — and deliberately proves nothing about behaviour,
 // because SQL text is not a running database. This file is the other half, and
 // it is where the repair's actual effect on rows is established.
 //
