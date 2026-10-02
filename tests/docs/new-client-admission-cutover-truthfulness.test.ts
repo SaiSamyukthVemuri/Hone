@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { currentProse } from "./helpers/canonical-facts";
 
@@ -67,15 +67,32 @@ import { currentProse } from "./helpers/canonical-facts";
 //   * a DATED count or a dated measurement passes. Only the standing universal is banned;
 //   * `canonical-facts:ignore` blocks are stripped first, as in every sibling guard.
 
+// EVERY doc that can carry this instruction, not only the canonical prose five.
+//
+// The first corpus was the five production prose authorities, and review found the
+// hazard still live in docs/10_DEPLOYMENT_AND_ENV.md — the runbook an operator actually
+// opens to edit that very variable, and therefore the MOST likely place for a false
+// kill-switch instruction to be acted on. A guard scoped to where the truth is recorded
+// rather than to where instructions are read protects the wrong thing.
+//
+// Membership rule, so this list can be re-derived rather than remembered: every
+// repository doc that names NEW_CLIENT_WAITLIST_STUDIO_SLUGS or
+// NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS. `tests/docs/...corpus is complete` below
+// pins that, so a new doc naming either variable fails until it is guarded or excluded
+// on purpose.
 const DOCS = [
-  "current-state.md",
-  "capability-register.md",
-  "known-limitations.md",
-  "migration-ledger.md",
-  "new-client-admission-activation.md",
+  "production/current-state.md",
+  "production/capability-register.md",
+  "production/known-limitations.md",
+  "production/migration-ledger.md",
+  "production/new-client-admission-activation.md",
+  "production/release-changelog.md",
+  "production/releases/2026-08-19-willow-new-client-waitlist.md",
+  "03_SECURITY_AND_PRIVACY.md",
+  "10_DEPLOYMENT_AND_ENV.md",
 ] as const;
 
-const ROOT = path.resolve(__dirname, "../../docs/production");
+const ROOT = path.resolve(__dirname, "../../docs");
 
 function read(name: string): string {
   return currentProse(readFileSync(path.join(ROOT, name), "utf8"));
@@ -97,21 +114,63 @@ export function splitClaims(text: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-/** Claims that an env-list edit controls the commit point or admission. */
-const ROLLBACK_ACTION =
-  /clear(?:ing|s|ed)?\s+(?:the\s+)?(?:durable\s+)?(?:allowlist|variable|env var|list|slug list)|remov(?:e|ing|ed)\s+(?:the\s+)?(?:studio\s+)?(?:slug\s+)?(?:from\s+the\s+)?(?:durable\s+)?(?:allowlist|slug list|list)|empt(?:y|ying|ied)\s+(?:the\s+)?(?:durable\s+)?allowlist|An empty durable allowlist|(?:entire|whole)\s+kill switch/i;
+// KEYED ON THE ASSERTION, NOT ON PHRASINGS. Enumerating spellings failed three times:
+// it missed the kill-switch framing, then the dependency framing, then "clearing THIS
+// variable" and "Unset or empty means". So an offending claim is now a CONJUNCTION — an
+// env-edit verb AND a routing outcome in the same claim — which is what the false
+// instruction actually IS, however it is worded.
+const ENV_EDIT =
+  /\b(?:clear(?:ing|s|ed)?|unset|empt(?:y|ied|ying)|remov(?:e|ing|ed)|delet(?:e|ing|ed)|drop(?:ping|ped)?)\b/i;
 
-/** Claims that current routing DEPENDS on list membership, or is not row-derivable. */
-const DEPENDENCY_CLAIM =
-  /depends? on (?:the )?allowlist membership|depends? on (?:runtime )?(?:allowlist|slug list) membership|not derivable from persisted rows|allowlist membership(?:,| which)? (?:is )?re-read per request/i;
+const ENV_SUBJECT =
+  /\ballowlist\b|\bslug list\b|\bvariable\b|\benv var\b|NEW_CLIENT_WAITLIST_(?:DURABLE_)?STUDIO_SLUGS|\bthe (?:durable )?list\b|\bthe flag\b/i;
+
+const ROUTING_OUTCOME =
+  /WAIT-01|email[- ]only|email path|commit point|kill switch|notification email/i;
+
+/** The kill-switch framing on its own already asserts the outcome. */
+const KILL_SWITCH = /(?:entire|whole)\s+kill switch|kill switch is\b/i;
+
+function assertsEnvControlsRouting(claim: string): boolean {
+  if (KILL_SWITCH.test(claim)) return true;
+  return ENV_EDIT.test(claim) && ENV_SUBJECT.test(claim) && ROUTING_OUTCOME.test(claim);
+}
+
+/**
+ * Claims that a studio's ROUTING depends on list membership, or that its routing is not
+ * derivable from rows.
+ *
+ * THE SUBJECT IS LOAD-BEARING, and leaving it out produced a false positive on a sentence
+ * that is still correct. "present MEMBERSHIP is not derivable from persisted rows" is
+ * true — you cannot read an env list off a row. What became false is "which PATH carries
+ * intake now depends on allowlist membership / is not derivable from persisted rows",
+ * because for a cut-over studio the path IS the row. So the dependency form only offends
+ * when its subject is the route.
+ */
+const ROUTING_SUBJECT =
+  /which (?:of the two )?(?:waitlist )?paths?|which path|\bthe path\b|\broute\b|carries (?:that|the|a) (?:intake|join)|commit point/i;
+
+const DEPENDENCY_PHRASE =
+  /depends? on (?:the |runtime )?(?:allowlist|slug list) membership|not derivable from persisted rows|membership(?:,| which)? (?:is )?re-read per request/i;
+
+function assertsRoutingDependsOnList(claim: string): boolean {
+  return ROUTING_SUBJECT.test(claim) && DEPENDENCY_PHRASE.test(claim);
+}
 
 /** The qualifier that makes either claim true again, required in the SAME claim. */
 const SCOPED =
   /legacy[- ]bridge|still on the legacy bridge|not cut over|NOT CUT OVER|cannot (?:return|re-?route|move) a cut-over|cut-over check|no longer holds for a cut-over|unstamped/i;
 
-/** A claim that is explicitly historical, or explicitly withdrawing itself. */
+/**
+ * A claim that is explicitly historical, or explicitly withdrawing itself.
+ *
+ * NARROWED: a bare ISO date used to be enough, which meant a date on one clause exempted
+ * a false instruction in another — "On 2026-10-02 one invitation was sent, but clearing
+ * the allowlist returns Willow to WAIT-01" passed on the strength of the date alone. An
+ * EXPLICIT historical form is now required, so dating a claim no longer licenses it.
+ */
 const EXEMPT_IN_CLAIM =
-  /earlier revision|withdrawn|NO LONGER TRUE|NO LONGER HOLDS|previously (?:read|said)|superseded|at (?:every|the) measured instant|as of (?:that|the) reading|\b20\d\d-\d\d-\d\d\b/i;
+  /earlier revision|withdrawn|NO LONGER TRUE|NO LONGER HOLDS|previously (?:read|said|asserted)|superseded|at (?:every|the) measured instant|as of (?:that|the|this) reading|\bWAS\b named|had been (?:issued|named)|proven for the instants|dated (?:evidence|observation|reading)|that is a dated|earlier draft|at that time|then named|state observed/i;
 
 const EVER_ISSUED =
   /(?:zero|no) invitations? (?:have|has) ever been issued|invitation has ever been issued/i;
@@ -127,7 +186,7 @@ const COMMAND = /set_new_client_admission_mode/;
 export function unscopedRollbackClaims(text: string): string[] {
   return splitClaims(text).filter(
     (c) =>
-      (ROLLBACK_ACTION.test(c) || DEPENDENCY_CLAIM.test(c)) &&
+      (assertsEnvControlsRouting(c) || assertsRoutingDependsOnList(c)) &&
       !SCOPED.test(c) &&
       !EXEMPT_IN_CLAIM.test(c),
   );
@@ -139,9 +198,22 @@ export function universalInvitationClaims(text: string): string[] {
   );
 }
 
-/** Claims that are rollback guidance AND name the command: the positive procedure. */
+/**
+ * Claims that are ACTIVE rollback guidance AND name the command: the positive procedure.
+ *
+ * The withdrawal/negation filter is the point. Without it,
+ * "An earlier revision said rolling Willow back uses set_new_client_admission_mode; that
+ * is withdrawn." counted as guidance — so deleting the live procedure while leaving an
+ * audit sentence behind would have kept this assertion green while operators had nothing
+ * to follow.
+ */
+const NOT_ACTIVE_GUIDANCE =
+  /earlier revision|withdrawn|NO LONGER TRUE|NO LONGER HOLDS|previously (?:read|said|asserted)|superseded|\bnot\b.{0,20}\bthrough set_new_client_admission_mode|never uses/i;
+
 export function rollbackGuidanceNamingCommand(text: string): string[] {
-  return splitClaims(text).filter((c) => ROLLBACK_GUIDANCE.test(c) && COMMAND.test(c));
+  return splitClaims(text).filter(
+    (c) => ROLLBACK_GUIDANCE.test(c) && COMMAND.test(c) && !NOT_ACTIVE_GUIDANCE.test(c),
+  );
 }
 
 describe("NEW-CLIENT-MODE-01 — the cutover must not leave contradictory canonical prose", () => {
@@ -256,6 +328,45 @@ describe("the detectors resist the three ways the first version was unsound", ()
     ).not.toEqual([]);
   });
 
+  it("d) a date on one clause does not exempt a false instruction in another", () => {
+    // The old exemption accepted ANY ISO date anywhere in the claim, so this passed on
+    // the strength of the date alone while carrying a false current instruction.
+    const text =
+      "On 2026-10-02 one invitation was sent, but clearing the allowlist returns Willow " +
+      "to WAIT-01.";
+    expect(
+      unscopedRollbackClaims(text),
+      "dating one clause must not license a false instruction in the same claim",
+    ).not.toEqual([]);
+  });
+
+  it("e) a withdrawn audit sentence is not accepted as the live rollback procedure", () => {
+    // Without this, deleting the real procedure and leaving the audit trail behind would
+    // have kept the positive assertion green while operators had nothing to follow.
+    const auditOnly =
+      "An earlier revision said rolling Willow back uses set_new_client_admission_mode; " +
+      "that is withdrawn.";
+    expect(
+      rollbackGuidanceNamingCommand(auditOnly),
+      "a withdrawal is a record of guidance, not guidance",
+    ).toEqual([]);
+  });
+
+  it("f) a correct membership-not-row-derivable claim is NOT flagged", () => {
+    // The subject matters. You genuinely cannot read an env list off a row, so this
+    // sentence is still true and must stay writable; the false form names the ROUTE.
+    expect(
+      unscopedRollbackClaims("Present membership is not derivable from persisted rows."),
+      "a claim about reading CONFIGURATION from rows is still correct",
+    ).toEqual([]);
+    expect(
+      unscopedRollbackClaims(
+        "Which path carries that intake now is not derivable from persisted rows.",
+      ),
+      "a claim about reading the ROUTE from rows is what became false",
+    ).not.toEqual([]);
+  });
+
   it("and the scoped, dated and withdrawn forms all still pass", () => {
     const fine = [
       "An empty durable allowlist leaves every studio still on the legacy bridge on the WAIT-01 email path.",
@@ -269,5 +380,37 @@ describe("the detectors resist the three ways the first version was unsound", ()
         `this form must stay writable: ${claim}`,
       ).toEqual([]);
     }
+  });
+});
+
+describe("the guarded corpus is complete", () => {
+  it("every repository doc naming either waitlist env var is in DOCS", () => {
+    // The membership rule, enforced rather than remembered. The first version of this
+    // guard covered the five production prose files and MISSED the deployment runbook —
+    // the document an operator actually opens to edit the variable, and so the most
+    // likely place for a false kill-switch instruction to be acted on. A guard scoped to
+    // where truth is recorded rather than where instructions are read protects the wrong
+    // thing. This test fails when a new doc names either variable, which forces a
+    // decision instead of a silent gap.
+    const VARS = /NEW_CLIENT_WAITLIST_(?:DURABLE_)?STUDIO_SLUGS/;
+    const found: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith(".md") && VARS.test(readFileSync(p, "utf8"))) {
+          found.push(path.relative(ROOT, p));
+        }
+      }
+    };
+    walk(ROOT);
+    const guarded = new Set<string>(DOCS);
+    expect(
+      found.filter((f) => !guarded.has(f)),
+      "a documentation file names NEW_CLIENT_WAITLIST_STUDIO_SLUGS or " +
+        "NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS but is not in this guard's corpus, so it " +
+        "can carry a false rollback instruction unchecked. Add it to DOCS, or exclude it " +
+        "deliberately with a reason.",
+    ).toEqual([]);
   });
 });
