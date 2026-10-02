@@ -3,14 +3,13 @@ type: data model
 title: Treatment plans and treatment time
 description: How a client's treatment plan is modelled and written — plan rows with multi-area and month-timeline fields, the three seeded clinical stages, attaching sessions through the set_session_treatment_plan command, closing a plan with an application-only cross-client guard — plus the per-client treatment-time goal, the electrolysis-only time totals and their multi-area attribution rule, and the non-atomic edges.
 tags: [treatment-memory, treatment-plans, stages, treatment-time, sessions, rls]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
 sources:
   - id: openwiki-source-251a72d0b52c2c5e4a1ece78
     resource: repo://app/(app)/clients/%5Bid%5D/treatment-plans-actions.ts
   - id: openwiki-source-08602a988dda30d0ad04052d
     resource: repo://app/(app)/clients/%5Bid%5D/treatment-time-actions.ts
+  - id: openwiki-source-dc9a1da612097e2d64e46019
+    resource: repo://lib/sessions/treatment-intelligence.ts
   - id: openwiki-source-4c1cfa11c3b6872834bb499a
     resource: repo://lib/treatment-plans/stage-defaults.ts
   - id: openwiki-source-2cf2fd4a7390fd6a728ce089
@@ -29,7 +28,10 @@ sources:
     resource: repo://supabase/migrations/0167_session_write_commands.sql
   - id: openwiki-source-aef347f415985d3f29b05db4
     resource: repo://tests/lib/treatment-time/area-attribution.test.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+generated: { by: "claude-code", at: "2026-10-02T23:26:41.194Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T23:26:41.194Z
 ---
 
 # Treatment plans and treatment time
@@ -126,6 +128,11 @@ Time is never divided, never credited to every area, and never given to the firs
 behaviour was the earlier defect: a block covering two areas dropped the second area from the breakdown
 entirely. The client's global total is unchanged by the rule. It is pinned by
 `tests/lib/treatment-time/area-attribution.test.ts`.
+
+The Overview's [Treatment Intelligence summary](treatment-intelligence-summary.md) answers a different
+question and attributes differently: there, a multi-area block's full minutes appear on **every** area card
+it treated. So per-area minutes on the two cards can differ for the same client, while both count each block
+once in their overall totals.
 
 **Client-facing time is opt-in.** `0026` added `studios.show_treatment_time_to_clients`, off by default.
 The booking and portal rebook paths read it before showing a client their treatment time.

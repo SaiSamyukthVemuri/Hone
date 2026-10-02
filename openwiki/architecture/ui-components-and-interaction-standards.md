@@ -5,7 +5,7 @@ description: How the shared React layer in components/ is built and policed — 
 tags: [ui, components, design-system, accessibility, pending-state, dialogs, eslint, testing]
 verified:
   - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+    at: 2026-10-02T23:26:41.194Z
 sources:
   - id: openwiki-source-9f4bb955ff4b1a8ac130e5cd
     resource: repo://app/globals.css
@@ -39,7 +39,7 @@ sources:
     resource: repo://tests/components/ui-r01-interaction-foundations.test.ts
   - id: openwiki-source-aeabbae4d1e75c4c1594a3d0
     resource: repo://tests/components/ui05-native-confirm-retirement.test.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+generated: { by: "claude-code", at: "2026-10-02T23:26:41.194Z" }
 ---
 
 # UI components and interaction standards
@@ -220,7 +220,8 @@ Several comments say so explicitly. For example, moving `ConfirmDialog`'s focus 
 | Cluster (under `components/`) | Behaviour is documented in |
 |---|---|
 | `log-electrolysis-entry-form.tsx`, `log-laser-entry-form.tsx`, `entry-row.tsx`, `multi-area-*`, `area-picker.tsx`, `body-map-area-picker.tsx`, `chip-selector.tsx`, `selected-observations.tsx`, `probe-picker.tsx`, `probe-lot-select.tsx`, `copy-draft-card.tsx`, `session-timeline.tsx` | [Sessions, blocks and entries](../treatment-memory/sessions-blocks-and-entries.md), [Probes and record keeping](../treatment-memory/probes-settings-and-record-keeping.md) |
-| `last-treatment-memory-card.tsx`, `last-session-summary.tsx`, `last-visit-card.tsx`, `before-today-card.tsx`, `appointment-prep-memory-card.tsx`, `treatment-intelligence-card.tsx`, `clinical-unavailable-notice.tsx` | [Treatment memory reads](../treatment-memory/memory-reads-and-point-of-care.md) |
+| `last-treatment-memory-card.tsx`, `last-session-summary.tsx`, `last-visit-card.tsx`, `before-today-card.tsx`, `appointment-prep-memory-card.tsx`, `clinical-unavailable-notice.tsx` | [Treatment memory reads](../treatment-memory/memory-reads-and-point-of-care.md) |
+| `treatment-intelligence-card.tsx` | [Treatment Intelligence summary](../treatment-memory/treatment-intelligence-summary.md) |
 | `clinical-notes-*.tsx`, `client-pinned-notes-card.tsx`, `pinned-notes-readonly.tsx`, `client-personal-notes-editor.tsx`, `consultation-notes-card.tsx` | [Clinical, pinned and personal notes](../treatment-memory/clinical-notes-and-client-notes.md) |
 | `treatment-plan*.tsx`, `treatment-schedule-editor.tsx`, `treatment-time-card.tsx` | [Treatment plans and treatment time](../treatment-memory/treatment-plans-and-treatment-time.md) |
 | `client-form.tsx`, `client-search.tsx`, `client-tags-card.tsx`, `client-budget-card.tsx`, `client-birthday-card.tsx`, `client-appointment-timeline.tsx`, `profile-tab*.ts(x)` | [Client records and profile](../clients/client-records-and-profile.md) |

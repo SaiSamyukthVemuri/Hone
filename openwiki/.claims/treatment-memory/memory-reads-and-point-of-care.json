@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:138fd208e2395d13a557beae8c9776e61bbc376f421099902d26529ec69c8008",
+  "pageVersion": "sha256:c2b3723e81e9b281b54c540a9b03180dac8712dc6538866a68e24409cbfa8a54",
   "claims": [
     {
       "id": "claim_f72f15748d8c4f0e8d1d39ee57ed6f79",
@@ -189,10 +189,28 @@
           "version": "repo-lines-v1:sha256:d1ff8497caa5b42aa56b29f81858022c32a5efb35a58977f30daf6171a639a4a:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWUyOGE4YzczNDk3ZTViMWRiYjQxMzQyMGNlNTU5NjVkZTI3Y2FhYmJlZjc4ZWQ0NmJkZGI0M2Q3MDFjYjZlYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTFkNWU0ZTYwOTA4ZDI0MzNmMGQzNjU1YTFhZDNiYWI5YWE3NmRlMjI4MmY1NDYxMTdhNTFiYzdhMmFlM2FkMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmVhYWQ3NGNmNzViMzE2NTdjMTAwMGZkOGQ3NzIzYjk2NWIxMGIwNDA1NmVlYzY4NmQ4Y2FhMjVmMmNiMDY3OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2JhMjE2ZGMzNzIwNTc5YmUxMDAwMjZjNmIwMjE5MzQ0MzkyNjYxOTVhYzUwMTUxZTVjNjZmOTgwYWZjZmQ3OSJ9"
         }
       ]
+    },
+    {
+      "id": "claim_90bc325d168a4b5bbea8854af6565535",
+      "statement": "Before Today takes its latest recorded setup from the most recently treated Treatment Intelligence area and its latest tolerance and reaction from the Treatment Intelligence rollup.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/before-today.ts#L198-L212",
+          "version": "repo-lines-v1:sha256:3c78c112cc53ebe8ac51988fa83b56501b06c5454cfd6ed908c53216d226db57:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxN2Y3NWE0ZmIzYWMyNjRmOTdjMTI5MzVhZDBlNzc0OTEzNDRjMTY1MzdhM2M1ODg0NDU5MzEzZjQ4NzRjNmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyYjYwNzVkZGQ5ZmM0YzI3ZTQzYmEzYzQ4NTVjNDEzN2JjODJkY2RiYTMwYTYxYTdjNjUxNTllYmMxYTYyYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI0MmVhYWM4MGFjYjIxMGJlMjhiZDM5NGYxYzhhZGFjMGE0ZDM4Y2EwMmFhMDliNGE2ZWEzMGZhMjM5Y2ZmMWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzZmEwZjNiNDVhZWJmMzYwYWNjM2RjM2RlMDc5OWNhZWQ0OTAwNmZkMGY1YTRjYTJlYWIzYTA4MjA5YzBmOGIifQ"
+        },
+        {
+          "resource": "repo://lib/sessions/before-today.ts#L249-L255",
+          "version": "repo-lines-v1:sha256:886e0d8f6d36127cf95931707f75be5922e2467b2806e1ab2b6f8ad0a48bc0d3:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjk3MWY3OTU4NDUyM2ZjYTkzOWMzYmI2ODZhM2UzZjIxMTU0ZjY1YzU4NDMxNGIwNWY4ZmUzMWM2MTA0OGI0NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGY0NThmMGM5NDEwZTM3YWEyY2VhNGFhZjc0M2M4MmI4ODI3Y2M0MWZhNDRhMzM5MzUwZmQxZjY0YjI5OTA0NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOWM5ZDViMDBlOGFkNjEzYmVjNDFhMDk5YzZiYzY2OWFjMTAxZjkzOTJlOTU3YjRmMWY1NzIxMDgzODY3MWFmMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDI3ODAwOGE3YmRiNGEyNTA2NWJmMTYwODJlNjJhNDBhN2ViYmQ5NTdhY2IwYTVlMTM2MzcxMjAwMzVhYWY4YSJ9"
+        },
+        {
+          "resource": "repo://lib/sessions/before-today.ts#L96-L100",
+          "version": "repo-lines-v1:sha256:a667316b3d705c8f86ca1e10d5e0f72d387eff3e1bf6ea0036809f36268cd6ff:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDkxMTVhMzdhYTk3MmI4YWJhMjg3M2Q2MTQ2ZGMwM2I4ZDE3NTk5YWM5ZTRiZjUzODUyYmZjMWE5ZjRjMTMxYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmUwNzFlODQzM2M3NWY1ZDQ0MDhkYTNjYTJkZjg0M2QwNzRmYzBkOTc2NWUzY2Q0NWE5MGEwNThjNTgxMTI5ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTRmM2VjMDA3OTRhMDcxNzRiMDZmNDg1OTJhOGVlOGU0MDA4OGJiOTU2YmFmMmQwMGFmZmViOTk1YzcyMzBiZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNmYxOGJjNGE1ZWE3NGU3ZGIwMDczOTVhZTBkM2RjMTkwMTMxNTQxYmFkNmUxMjc3OGZjOWJiMTlmYzRjYjllMSJ9"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T20:08:11.217Z"
+    "at": "2026-10-02T23:26:41.194Z"
   }
 }

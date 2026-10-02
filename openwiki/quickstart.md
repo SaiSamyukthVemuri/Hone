@@ -14,10 +14,10 @@ sources:
     resource: repo://scripts/verify-changed.mjs
   - id: openwiki-source-5b4944d20634a35670ad6c22
     resource: repo://scripts/verify-prepush.mjs
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+generated: { by: "claude-code", at: "2026-10-02T23:26:41.194Z" }
 verified:
   - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+    at: 2026-10-02T23:26:41.194Z
 ---
 
 # Hone wiki quickstart
@@ -57,6 +57,7 @@ and client communications. It runs on Next.js App Router with Supabase Postgres 
 | **Waitlist and new-client admission** | [New-client admission mode](waitlist/new-client-admission-mode.md) | [Entries and invitation lifecycle](waitlist/entries-and-invitation-lifecycle.md), [Recipient journey and booking conversion](waitlist/recipient-journey-and-booking-conversion.md) | `lib/booking/new-client-admission.ts`, `lib/booking/waitlist-invitation.ts`, `app/invitation/[token]`, migrations `0185`–`0204` |
 | **Charting, sessions, blocks, entries** | [Sessions, blocks and entries](treatment-memory/sessions-blocks-and-entries.md) | [Probes, settings and record keeping](treatment-memory/probes-settings-and-record-keeping.md) | `app/(app)/clients/[id]/sessions/[sessionId]/*actions.ts`, migrations `0164`–`0169`, `0181` |
 | **Treatment memory, Before Today, prep** | [Memory reads and point-of-care](treatment-memory/memory-reads-and-point-of-care.md) | — | `lib/sessions/last-treatment-loader.ts`, `charted-session.ts`, `before-today.ts` |
+| **Treatment Intelligence (Overview recorded-history summary)** | [Treatment Intelligence summary](treatment-memory/treatment-intelligence-summary.md) | [Memory reads and point-of-care](treatment-memory/memory-reads-and-point-of-care.md) | `lib/sessions/treatment-intelligence.ts`, `components/treatment-intelligence-card.tsx`, `tests/app/clients/treatment-intelligence.test.ts` |
 | **Clinical, pinned or personal notes** | [Clinical, pinned and personal notes](treatment-memory/clinical-notes-and-client-notes.md) | [Client records and profile](clients/client-records-and-profile.md) | `lib/clinical-notes/*`, `lib/client-pinned-notes/*`, `app/(app)/clients/[id]/*notes-actions.ts`, migrations `0022`, `0035`, `0126`, `0127` |
 | **Treatment plans, treatment time** | [Treatment plans and treatment time](treatment-memory/treatment-plans-and-treatment-time.md) | [Sessions, blocks and entries](treatment-memory/sessions-blocks-and-entries.md) | `lib/treatment-plans/*`, `lib/treatment-time/*`, `app/(app)/clients/[id]/treatment-*-actions.ts` |
 | **Client records, archive, tags, budget** | [Client records and profile](clients/client-records-and-profile.md) | [RLS, grants and SECURITY DEFINER](security/rls-grants-and-security-definer.md) | `app/(app)/clients/*`, `lib/clients/*`, `lib/budget/*`, migrations `0050`, `0183`, `0184` |

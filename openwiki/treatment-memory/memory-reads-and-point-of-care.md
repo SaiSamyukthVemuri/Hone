@@ -3,9 +3,6 @@ type: read model
 title: Treatment memory reads and point-of-care memory
 description: How Hone assembles "what happened last time" — the single charted-session authority, the last-treatment loader and its fail-soft versus none-versus-unavailable contracts, point-of-care memory on the charting screen, the appointment-prep narrative, Before Today, imported history, global search recall, and the setup-only whole-session copy — with the rule that a failed clinical read is never presented as "no history".
 tags: [treatment-memory, charting, read-model, before-today, whole-session-copy, clinical-safety]
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T20:08:11.217Z
 sources:
   - id: openwiki-source-04c3958a8a9bb834f8fda65e
     resource: repo://e2e/before-today-imported.spec.ts
@@ -33,7 +30,10 @@ sources:
     resource: repo://tests/db/point-of-care-memory.db.test.ts
   - id: openwiki-source-a9f87fe69bcb9ce0a2bac358
     resource: repo://tests/db/whole-session-copy.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
+generated: { by: "claude-code", at: "2026-10-02T23:26:41.194Z" }
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-02T23:26:41.194Z
 ---
 
 # Treatment memory reads and point-of-care memory
@@ -48,6 +48,12 @@ definition of "the last treatment" and **one** rule about failure.
 | live charting screen | `buildPointOfCareMemory` | the setup to reproduce |
 | calendar appointment detail | `appointment-prep-memory` | full pre-visit read including narrative |
 | client page | `before-today` | pre-treatment briefing |
+| client page Overview | `buildTreatmentIntelligence` | recorded-history rollup of the client's charted sessions |
+
+The Overview rollup has its own page: [Treatment Intelligence summary](treatment-intelligence-summary.md). It
+covers counting rules, per-area grouping and what the summary does not establish. **Before Today**
+takes its latest setup, tolerance and reaction from that rollup, and the dashboard previews run the same
+pipeline.
 
 How sessions, blocks and entries are written is on [Sessions, blocks and entries](sessions-blocks-and-entries.md).
 Probe lots and record keeping are on [Probes, settings and record keeping](probes-settings-and-record-keeping.md).

@@ -1,0 +1,352 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:d4ba84e4cae8d8904bd146bfe4045e1d193fe83243418ef0a7263b600bca6dd6",
+  "claims": [
+    {
+      "id": "claim_17bc700da3ce45d2b6baf7e554f28a13",
+      "statement": "buildTreatmentIntelligence is recorded-history analytics, never advice: it suggests no settings, makes no causal or outcome claims and projects nothing, and missing values stay null to render Not recorded.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L5-L27",
+          "version": "repo-lines-v1:sha256:7eeac1339028c54c3b7fd830743bfef2cc7e46718ca1d3232302e7f674d2c103:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2YzkyNTkxM2I4NGEwMzhmYTJiNTU3NmQ0ZmYxMzY4MWZlNzcxNGE0NWYwYzI5OTlkMTJmYzZhNmVmNmNhZDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0NDE5OTY1OGUyMzVhNTVjY2ViMjg2MTkzMGZlZTVhZTQzMDFhMTk1NmQwYzQzMTA5YjVkOGY3ODhkNzc5NmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk1MWI1NjFhMGE2OWNjNzNiYjA1MmM4ODdhNDRjZjIxMTY2MTJjYmM5YzcwZjY5OGFlYWE3OTMyNzZhM2VlMGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiMDE3OGM0ZTQ4NzBhMGMzMThiMmY3ODg0MDgwOTUwNjhiYWFmM2NkY2JkNWIzMTc4MzIwMmUyNDk0OTFlOGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6d95d598db2a4ad2b8fd8f66caf15f79",
+      "statement": "The Treatment Intelligence card uses recorded-history wording only, carries the helper text that it reflects recorded history only and asks for professional judgment, and renders missing values as Not recorded.",
+      "evidence": [
+        {
+          "resource": "repo://components/treatment-intelligence-card.tsx#L8-L16",
+          "version": "repo-lines-v1:sha256:6341d9cc26b4467ff6602d1bdab0564fd223159d10e43444585b9fe36efd80bb:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODM4OTA4NTFkOTEyMDNhMjYyZTdiMDIzNmIzMDcwMWIzM2I0YzQ4ZWRkZWQ5Mzc5OTQ0NTc0ZWI3ZjQwMjE2MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmE1ZDNhNGRhMGUxYTlkNjFiZWIxNTMyMTZhMzZkNGQ1MTVkNTQ3ZGI0NjRiMmZmZTc2YTcwOWJiMmYzZmVmYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTgzNWNjNzQxOThjZTI1NWZmOWIwMzgxZjRiNGFmYzMzNTA4YWQyMzQxMWM5MTM5YzQ1MDliMzQ5MzE0NTIwMyJ9"
+        },
+        {
+          "resource": "repo://components/treatment-intelligence-card.tsx#L98-L107",
+          "version": "repo-lines-v1:sha256:0897d4a965ea77863d59bdee8ca5878cc0aecbb01366728fe4509bb31841a64c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0MDU0NzEyMjc5MWEwY2NkYzZmMzU0MTllNDZlM2ZmMTdmOGU2MTYyNzEyNjgyMGY5OTRhZTU3MmFkOWNlMjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkMTQ5ZjRhOTEyYTJlOTA2MjJiMDgzODZjNzFjMzc0NTM4N2ZhZTM3ZjQwODQxNDM0ZTk2ZGFiNjQwNDRiMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdlMWJiZGQ0Nzg0MDQwMmQwNDdjMTQzMWY3NmE4NzBkMjY4ZDNiOWQ0NWMwOTNlZjYzN2UwMjFhNGQ1ZmY5NWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM4ZGYyZjkwZGQzZmQ2ZTVkOTU1MjVhMjk1N2Q2NWZkYTU2NGZiNjJjMzk2ZDM5YjViYjg1MDIzNDBiODBmZjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e7061c1727154303b434fdff0864c953",
+      "statement": "A test fails if the card or builder contains overclaiming words such as best, recommend, caused, diagnosis, predicted or success, and asserts the builder imports no Supabase client while the page's block read is a select filtered on deleted_at is null.",
+      "evidence": [
+        {
+          "resource": "repo://tests/app/clients/treatment-intelligence.test.ts#L307-L323",
+          "version": "repo-lines-v1:sha256:44bd49c594c989238d4a750b7e7a4c57d91f793669d02cd24e2f403b7c28d8fc:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyZmM5YWNlNjJlMmM3NDYxZDUxZTZmYjllNjhhZTU2MjIzOWM2YTcxZDIzZWRkNjBiMjFjY2IxMGQwZjgxN2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dcb3117da5b745358c6b4663bcb2dbce",
+      "statement": "A session counts as charted when it has at least one loaded block or any electrolysis or laser entry, and with no charted session the builder returns charted false with every overall figure null.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L205-L231",
+          "version": "repo-lines-v1:sha256:d7e0f1dc7023f38b4e6aa0969d343547cee0e8d6396095c62dd12893731d3873:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4NDAzZDg2NGJmMDA2YTkzMTNmOWI2NDllMWI0MTRhZWIzMTRmZGFjNjBjYTM4YmZmMjMzMGMxMGZjYzI3ZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1NGY4YjFhZTYyYjIyZjRhZTQ4OWU0M2Y3N2I1MGJjMDU0Mzc1Y2Q0MDMyNDJhZTc2ZmI2MjExMTBkYjkxMzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwMjViYmRiNThlYmMzMTNkODhiZGNkYjU1NmI5OTVhNzczMGY3YmMzNDM1YWVkMTlkOTQ0NzM4NzViODdhMDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_130efbf4cf9949d0a5be71b5b74de4a7",
+      "statement": "Overall minutes sum only positive block minutes_performed, and overall hairs sum positive block-entry hairs plus a session's own electrolysis entries only when that session has no loaded blocks, so no pass is counted twice.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L241-L254",
+          "version": "repo-lines-v1:sha256:e3da8e27391142ea41b118f37b72915c564e442bd4c833996fe8e42f096cfe8e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlNjYxYzY2MWI0ODM3YzEzODdiNGRlOWQ1OTBiNzQzODQwY2ZhNzZiNWM3M2MzYzYyYzI2OTdjYTQ4YWE1OWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNlNDJmNTZmMTQwYTkxZTU5ZTlhOTA2MDUyODI2NjE4ZmVmOWU4M2MzZWUyY2QyMjM0MTI0ZGIyZmI1N2UzNjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRmNDkxYzlmNjZmZTllMDY0YWUyZTExNzE0OWI0ODViOTJhZjQzNTgwODQ2YzJjMzE5ZjczMGQzMTg2OWRlMGYifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/treatment-intelligence.test.ts#L101-L120",
+          "version": "repo-lines-v1:sha256:f17661573b4bda97a21cec1c9c8e848ad47492928c8244473546ae496229891d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3M2U4YTM1NzNkZWU1YWQ3NmM5OWMwYjIyNzBhMGMyNzY1NTcyN2JiZTcwMThlOWE0MDliNWQxMThiNzJiZDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljYWIzNDU0ODUwMzY1OTg1YWRlNDBmOWYyODhiNGMxYTBkM2M4ODU0ZGI0MWE1ODlkNjYyZmJmNGViNjg1MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0YjI2MTI4OGQ1MDFmNDU2NWFkNjE3YjhlZDgxMjU0M2EwYjQ0YWExNjhkZjg4ZGZjZDYwMDVhMzI0ZWE1ZjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2b44db77b78c459a8a2e2d3cc1346e78",
+      "statement": "Hairs per minute is computed only when both hairs and minutes are positive and is rounded to one decimal, and zero or negative values never become metrics.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L108-L118",
+          "version": "repo-lines-v1:sha256:bc876bf85a177a49455be4080e5214e6d995d642f4c0443a5a66940bbabea8b8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyNGZhMzVlYjNlYTFmNjg5MDk2NjliYzAxOTU4NzFmODJhMzYzMDhmZjQxOTlmYzI2OTQ0NzI1YWE2ZWMyYjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhkNmZjOTMyZDY1MDNiNTZjMGJiMjUxNmIwNjA0OGU4NjA4MmZhNGE1MDVmZTgxZjc1ZTVkZGMyOGYyMzY5NjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjMjQ2MmQ2YmRmY2U3MmRlOTY4NTYxOTYyZDJhYTEyZDI2NWRjZGJlOGVhMWMxMTNhN2NhN2Y3YTE5Mjg3NDIifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/treatment-intelligence.test.ts#L89-L100",
+          "version": "repo-lines-v1:sha256:5953cdc5ed5023b15522fa4d70de19423f7b6f4e9ea0f3fde71986896c92ecac:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyOGQ3NWIxYmE2MjI5MjA3MDQzNTgyOGUwYjYwMGYwZjRjMjA1MWJkMzc2NTI1MWNkMTEyNzAzYThjZGQ2ODciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFlYWNjOWZjZTFkZWM1YWYwYTIxMjZlZDM1NjA4OGQ5ZDg0MTQ0YzRlOGRlOWQ0ZDdmY2M0MWNkODZlYTQ1NzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM4YjIxNmM4MTg3MzMzNzc4M2FmNDM0NDA1MTJjNzJkYjIyYmY3ZTc0YmVmMjQ1YTBjN2FiZTZjMjFkYmQ3NzUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5345b46e2c4b41bfaf19ce53de9ebdaf",
+      "statement": "The overall treatment-areas-charted figure is the number of loaded blocks, first and last treated come from charted sessions' start times, and totals that sum to zero are reported as null.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L256-L258",
+          "version": "repo-lines-v1:sha256:8bb4cdbd76008eb7b6d3b2fa00f40dbf1ec704944c41132b202fe64ef0d379ed:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDA4YjQ1NWI2NTA3NTRlZjc5MzYxZDNjNzRlZGNjYjhiN2ZiN2YyNWFmYzRmY2EyOTBlZDdiZjEzMzVhZDVmZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjgzYzA2OWI5OWNjODM4ZjA5YTdlOGNkNWMzYjdkN2M3MDQzZjRmMmQwN2NkY2Y2NmU1YWM1OWVlN2Q3ODBkOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWFmNDRhYmNmYWFhYWJkZDkxNGM5MzdmODg1YWMzOWJhYWQ0MTQ1MDI1MTUzODg4MTI3YmVlOTc3M2MwYWNkZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmQwNjBhYzc1MmRjNDk3YzYyZTZjODI5MWZkYzhhNDFlNDllNzc2MDRmNTkzOTNiN2UyNjE0MmQ5YmU3ZjA3OCJ9"
+        },
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L356-L369",
+          "version": "repo-lines-v1:sha256:ba1b653aa3222b9bab8a72161f52687a414203bfa8caf02004b71893c253ae65:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5NWZhMGYxMTE3YjVlYTQwNDM0MTQwZGRlMWEzNDBjNzIwZGRiZjMyNjIxMmUxOTE4MzhkNGIxNTZkMzE2YmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmMGNkYjk3MmE3YmZiN2VkMjQ2ZjlmZjY3MjM4NWU1NWY0OTY4ZmMxMTA0M2RjNWI2ODRkNTFkZmEzMWRiY2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc4NjcwNDEyYTFjYTZkZTE4MjJkNzk3MTU5ODVkMDdiNjAwMzE4NTA0MzJjNzFhOWUxZjNlZGU0YmU0NDRhZDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc3NjRkODRhZDQ2Zjg0MDY2NDdiNGY4YTNiN2RkMzUxOWQ0MWRjZjZhOGFkYTRkMjg3YjA0YzBlYmMzOGZhNTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8c6e171d6374476bacd76d0740919f48",
+      "statement": "Area cards group by trimmed case-insensitive name with the newest spelling as the label; a block with structured areas contributes to every area it treated, legacy blocks fall back to primary_area then block_name, laterality is not part of the key, and blank names form no card while still counting in overall totals.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L120-L143",
+          "version": "repo-lines-v1:sha256:667c761849a12e912488c682abc26e8c0878863db3de56346ec2c01b9cda3c7b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhZmY2MWZmY2IwYjg1Njg5OTI2MzczMTkxYjY1OTVmNWEyM2Q4NDJkNDVkYjgxNDk5ODAwZDk1ODAxY2U2NDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFhYzBkYzllY2VhZWVmNTRlYTY2ZTNhNjhlZjY2NjJhZjM5ZTMxZjIzNTFlMzg4ZWMwODJkZjRiNzhiZjUyMzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJiMGI3MTc4YzcyYzAyOTcwMjVhNDhkODVjYjJjMDM3ZTkyYWRjMGE5MWU3ZDlmMTY1NDE4NTMzY2YwYmExY2UifQ"
+        },
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L260-L306",
+          "version": "repo-lines-v1:sha256:c9d750417b399b001ac9beaefbcc052d91c2eac2f3a7c5b269ca0924f416906e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZlNjQxZDJmNDNjNjQ0MWQwMzUxMGJlMmNmOTM5MjVkZTc3N2Y1MjkyYzBhNGVlZDg5NWZiMDBmY2M1ZDFlMTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyZmJjOTNhNTUzYTMzM2E3ZjJkOTg1ZWMxZDU0NzdmOGViOTQyYjk5MjI3ZjVhZDM4M2RjYzMwNDFkNzRiY2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI1NzMyZjdiMTNhODY2MGU3ZWQ1NGEzMmU0MzhkNDk3NTRmZTFiN2Y5NGE5MjczMmU0NTg2NTI0MmI3MjU2NzYifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/treatment-intelligence.test.ts#L123-L197",
+          "version": "repo-lines-v1:sha256:c07c1d7490a62f8dde5c4d9f2ed3ab90f94c67e354bcca70d1f1a4376ceaa829:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljOWQ0MGYyMTk4ZjQ2NjEyYTE1MDJhNGEyZjVhMjU0ZDg2YTE3MjVjZmE1YzY5ZWE1MGUxODEzYjBjYWUzYTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA4ZmVhYTM2YTQ1MTAyYjhjZThlMmRkOWQ1MjYyNTBlNDc0MWU2M2UzZGQyMjJjNzk2NGVkZjcxMzI2OWRkYmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_80a942448b304d7bb04e3b5ddea99fb7",
+      "statement": "Each area card shows the latest recorded frequency, probe, mode label and energy level from the area's most recent block, with the Apilus modality label taking precedence over the base mode, and area cards are ordered by last treated, newest first.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L145-L151",
+          "version": "repo-lines-v1:sha256:cc876ea9c5f052c9956b33a7fe8d2bed9c64eabe912e78f063423a2cc608adb6:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTI2Mjc0MzgxNjUzMjMyZDUyNTA4Yzk1YzE0Njk2YWFlNGNhODc1ODhmOWMxNDJhZTMxZmIyZTE0ZDdiZWU1NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDI3OWI2ODA1MjBlZDUyNmRjYzRjOGFhMzczNTI3NTkwZTI4MTk1ZTQwZmJlNjEwN2UxZTViNDk1YTQ1NzczNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjU2YTlhZDBhZWEyOGEyYmY1YzI4NjVlMWUzYWVhZDZiYjk4MmFkZjdjNmY4NzVjZjFkYzQ5ZmI0NGMxMmFhNSJ9"
+        },
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L308-L331",
+          "version": "repo-lines-v1:sha256:9b8eacdaeaf3e4fae2600aaa2968d34d1a299ad9c2ed5371b474bb9a0eed2430:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmZjY3NzU5ODEyZmY3YzljN2RmMTI4MmFhOTFkMzA1OGIwZTU4ZmQ5YjY2MGNhMjcxYjliZGQ5OTE4ZDQ4OGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlMTAzMDUxNWZjYzRjYzU3ODA1N2ZiZTlmODE3NmQyNGFkMDg3NmU0ZTViZjc4OGYyMjliZWRlNGNhNzQ4MzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4MjgwMTM0MzAwYTMyZjgwZDFlOTUzZTcwMzc3ZTI4NTcxNjkwYzkxMWJlZGFmMmE2YzczNWU2ZjQyYmQwZWEifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/treatment-intelligence.test.ts#L199-L222",
+          "version": "repo-lines-v1:sha256:fe67bfc2d1afb3a73e84ede0c0b6312563d7560890c8777619764969be5446ad:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkMjY2M2VhMmRlOWJjYTQ2ZThlYjkwYTE5MzNiZWFkZGJkZTQ2NTc0OGY1NDJkYWFiZWFmNzViMTE4ZGE0OGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA3ZDFkMmU4OWM5YjJiYzc5NzYxZGNkODZlN2JjNTBhMmFkODE0YjE0NjY5ZjY3NzQyYjdhN2E0MjliNTY1Y2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyMWMyOGMxN2ZiNTI1MmY0ZWViYjQwNGI1NGYwMDZiNzZiNzc1YjEwMWEzZTdlNTBhNDZjZjFmOTkyY2E3NzQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6e7f7014c61943a9b4f5c1b657af50cd",
+      "statement": "Reaction labels per block are the unified set of the legacy reaction_type label and every clinical-response chip in the block's live entries, deduplicated case-insensitively with every response retained.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/reaction-unified.ts#L51-L75",
+          "version": "repo-lines-v1:sha256:eec1ace5b624eac84fbad38894ccceeb486a936832d176b34d88b741ed0e749e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3M2Y4MTQ1ZDFlMDdlNjFlYWQwMmJkODFlMWEwNWFlNmYzMzc3OTcxNDM3OGM2YzEzMDcyYTJjNzFlNzdjNTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3NmFhOGI5YTM1ZDk1NzU4NjBlZjUyZjYyYTIzMGFkMTUwZTY3MTBmYWQ3ZjZhOGQ1ZGQ2ZDBjNDY3NTUyYWIifQ"
+        },
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L153-L157",
+          "version": "repo-lines-v1:sha256:d96f1f35411cccdc706c33dcfece597ab7962d62e5a266330b8ba73939f23272:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDhhNDNiODQ1N2M2ZjIwODJlY2M5OWJmMWFlZGUzODU4OTQ5M2YzNmYxNjJmMzFkZTIzOTczOWFkMzM0MTIxYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTlmMWJmY2JkZTIzN2ExMjE0MTIwNTI0NGE5Y2E0MDMzYjg4ZWRjMDA1OWY2ZDVjMDMzZTQxNzEyZGFhMTIxYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjRkODBhZDY3NzE1ZjljMmFkYjYzNDc1YzlhNTRlN2E2NDUyOWE1MTc0NjQ0M2FlZTg2YTM3NzU5MzJjNTc5YSJ9"
+        },
+        {
+          "resource": "repo://tests/lib/sessions/reaction-unified.test.ts#L348-L399",
+          "version": "repo-lines-v1:sha256:3b07579453adbd9967562a6949d1eb58260f464306f1227c3a06a6e4a1db40d3:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxMWI4MzgxYjQ1NzQxOGNmNTNhMmU2MzA3MjcxZDhlMWRhZDBmYTMxMTFiZTgxMGFlNDQ5YmJhN2FiYjVmY2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBjODZkMTdjNzUyYzllNmQ3NmRmNGFhNTVmMmQ4MzY5YmM1MGE5MGRlYmY4YjQ3NjA2YWY1NTc4ZjEzZTBkM2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5172210846c14753a8d14271a3837c28",
+      "statement": "The commonly recorded reaction is the most frequent label across blocks with every label of a multi-reaction block counted and ties resolved to the most recent occurrence.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L159-L187",
+          "version": "repo-lines-v1:sha256:266a0e060f826c9460268a5152f6b55cf6d3a059789a0e335741e4d589bb9705:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUyMjkzOGZiYWE0Yzc0OGE2NTZkZTFiZThkMGVlYzQ1NmI2YzRmZDVlYzQ0OGQ2MjI5MGJlMWNiODk4ZGVkNjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIwN2Q3NzRmOGYyY2ZiZmU5NDllZDhiZmU3MzFmOGMwMjczNzYzN2Q2YTgxYWM0M2ZmZGQ3NjA4YmMyNDVhMTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0YTE5ZGYyYWJjY2Q5OWQyMDgwYmI3MmVkZTkxNzk3NmRjZTFhNmYwZDBiMzQ4M2U2YTBmOWU4YThjMjczZmYifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/treatment-intelligence.test.ts#L223-L250",
+          "version": "repo-lines-v1:sha256:e5ed6bd5c021c3e2665aad0ede67958a1a482d634305f1153f785c1757c1ca7e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNmMTk0OGFkZjE3NzI0ZWFlMzczM2M2ODIyNmFlM2M2YTU0OTk2Njg5YWUwN2M2ODg1NDAyMDJkNDc2ZWU5ZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM0MmNkODFhY2U0MzUzYTQwNTMzMzZhZWUyOGZjM2Q5ZjdhNzRhNzc4ZGRkOTNhZGE3MjViZDBiNzc2OTI1OGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0NDE5NzBhOTcyZTMzZTZiNmQxNTdmMjIzYzRlODBmMjY4Njc4YzBhNmY5NDBkM2RkMmUyMjNlNGYyMWEzOWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5658131ee95c41afa7d94a4adf3b8224",
+      "statement": "The latest recorded reaction joins all labels of the most recent block that has any, latest tolerance is the most recent non-null rating, the watch note comes from the most recent caution flag or note with Previously noted as fallback, and the plan is the newest non-empty next-session note.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L333-L354",
+          "version": "repo-lines-v1:sha256:c0a83bcb856f93c206596a4c7d017a032f01e0b4daf716ba854e35b3b77348c1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViMzkwNTI4ZDUzYjQxOTIwZjhlOTMwOTUwMTkzZGIyMWM3NjdhNTc2MGE1OTRhOGI3ZGMzN2RjNGQ4NDI0OTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgyNWZiMjVkYmI3ZTAyYmM4NDc4MDVjNjBiNzI4NjgxYjJkZGQxYTg2ZTFhMjk2NmVhODNjMjIwYzVjOGVhOGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVkZDZiMDY5ZWIwN2U2ODQ1YWI1MmJmZTg0ZWY1NjI5ZGNiM2I3ZGZkYTlkZWE0NGQ3ZjRiZGI0NmNiNTdhOGEifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/treatment-intelligence.test.ts#L251-L270",
+          "version": "repo-lines-v1:sha256:32cafd7f73f89cb967a10337a1916ea340a5f1ffd1997729f580851f9a406356:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAwMWZmMmViMGQ4MTNmMjE0MzlhZjgyNmJkNzM2YTAyM2RjYmNhOGE4MTZhNTg2MjQzMGZmMzY0MjMxNTY1ODMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0NzliYzBlMzdjMGM1YTU0ZDAyNTY2NGU0MGMzZjU4M2M2NTAwMzg4OGJjMTViNzg0YTIyYzEzYjcwOGE0MTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBmODIyMmViN2ZjZDEzOGZkYzhkZjFiNDdmMzcwMGMzNTc1NDg5NjRmNzU5ZmNkYzM2MGMyZjZhZGRkZGJlYTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_566a6ba60f8e41289f73753aa8acac90",
+      "statement": "Per-area minutes and hairs are not additive across area cards because a multi-area block adds its full minutes and hairs to every area it treated while overall totals count it once, unlike the treatment-time card which credits such a block once to a combined bucket.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L241-L250",
+          "version": "repo-lines-v1:sha256:2570ce9450214107112189f7d9c652c5d147c8ca8ed0f015933aa9c52b683149:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlNjYxYzY2MWI0ODM3YzEzODdiNGRlOWQ1OTBiNzQzODQwY2ZhNzZiNWM3M2MzYzYyYzI2OTdjYTQ4YWE1OWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNlNDJmNTZmMTQwYTkxZTU5ZTlhOTA2MDUyODI2NjE4ZmVmOWU4M2MzZWUyY2QyMjM0MTI0ZGIyZmI1N2UzNjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY5NDM0NWMzNDdlY2E0Mzc5YzY5YTZlYTI4ZTc4NGQ1MDk0MTA3NWM4YTNmNDNiY2U0MWUxNWYxMDQ2Y2NjZjUifQ"
+        },
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L274-L306",
+          "version": "repo-lines-v1:sha256:c4d5ff651101af3ec7fb82751091fea57c49c36d7d544e3839189a48cf49de96:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZlOGIwMzBhNGYwYzdlYjlmYzZhNWQ2NmUwMzQyYjQ3MGQyMTUyNDU4NjVmYjI2ZjY4YjRhMDQ5YTc3MDM3MGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVhYTNkMDgxZmEwOGU5NjhhM2I3MzlhYTViY2EwNDMzNTlhYzE2YTJhYWU4YWEzZTYwMzAxNTg4OGExMmQ4MzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI1NzMyZjdiMTNhODY2MGU3ZWQ1NGEzMmU0MzhkNDk3NTRmZTFiN2Y5NGE5MjczMmU0NTg2NTI0MmI3MjU2NzYifQ"
+        },
+        {
+          "resource": "repo://lib/treatment-time/area-bucket.ts#L1-L60",
+          "version": "repo-lines-v1:sha256:6096ca805833185835f30436a87f3e9e65c5bed2152063a717b37be13e5d9d22:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxNGQxMzBjOWZjM2EwZDJiOWMxYTdkMzVmMWYyOWU0ZjgxNGZlYWRlNWIyNDFjZDVlM2U2NzY0ZGVlZDI0ZTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwN2Y2NTFmN2UyZWUwZWFkZjhkMWZkOTBkY2I0NzhjZWE1OWNmZmI2MTViNDFhMDMzODIzYjE3MGMxMGZiNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJiYjU5MTdlY2RjMDlhN2Q3MGYyOTU3MGUzZmZmYjQ0OWY2M2U0MjAyZmI5MmE4YjZiYTRlMDJlZTE0MzgzNzQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ff884337b2d84227ba48cc36eda1c5c0",
+      "statement": "Soft-deleted rows are excluded before the builder runs: the client loader keeps only non-deleted sessions and strips voided entries, the intelligence block read filters deleted blocks, and the page drops voided entries from hair counts and reaction chips.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L639-L673",
+          "version": "repo-lines-v1:sha256:120dc3a3e9b5e5fd2914144f632fc81ffbbd9e5ef87c732c1a42461678096a26:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlOGU5NTBmZDhiZGI0MWQxNWE0N2ZiMGZlNWM1NWUzOTVmNjFlYjg5OTE0M2FiMWIzNDhkODk2MGM4YTkzNzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5OTBlYjZjY2RiMGZlZmNjM2M5YTg4M2M4NzljOTg2NmJlMzM5MzFjYWFhYmYzNjYyZDdhYzRjNDEzZWM4YjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBjMjk3OGU2ZDg5NGU3MThhODJmZmM3NTllZDkxZGZkYzYxNDJiZTVkMmRmMTUxNzI0ODczYjZjNGI2NzMwYjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMwNWIwYzQwMDEyZGYyYTEwMTk1YzU0OTdmNjczYzc1ODllNGJhMDVhM2NiNjNlYmVjZGI1M2M0YzNlN2Q4ZjkifQ"
+        },
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L762-L782",
+          "version": "repo-lines-v1:sha256:512c23e0d4ddaeaf4cb0f6a357b61aaaded71a08f38a2fbab34c20b580ff700d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxYzE2NmUyNjBlNzUzYzViOWExYzkzMGIxMzljYTBhZjJjYmMxNWYxYzgwMTc5MzJiN2RiNmQ1ODlhYjMzZTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJmNGYyNWFiYzFjMzM0MDY2ZmIyNjcyMDBjZWRhYzM0OTdiNWVjOGM1ZDEzMzIyOGJhODY4NGRkMzgwZDAzZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY5YzQ2MTFlMjE5MGNhZGYyMDg5Y2M5MDFjNzViMjljNTBmYjk2ZWJmYzZjMTg3OTQ2NWFjMTc0YzZiNzgzMDgifQ"
+        },
+        {
+          "resource": "repo://lib/supabase/queries.ts#L350-L410",
+          "version": "repo-lines-v1:sha256:9e6b1d277c1a12470acc851da48f1f27786beb31a697e87f6a29154ea690e0a3:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5ZWFhZDI5NTVlYjRkMDgyOWI5ZWE4Zjk4NThiYzY1MGQzMTkwZTNlMTAzMjIxNTcwZjMxZGY3NTRmNTVmZDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ3MWI5MzBlNmJjYjUyYmM2MzhmN2MxYzY0NGRjOGU3ODc2OTA2MTYxODQ1ZmFlNzliMzdiODA5OTk3ZWI3OTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYxMWRiZGY5Y2JhMmI5NDE1ZmU1NDNlMTVhZGYxNDVhMWQxZDNkODIxMzMxMzQ5YTg2ZGJjZjU0NTY5MGY0NWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_64d8c94031b149b093e3702342cdf69e",
+      "statement": "A failed intelligence read, returned or thrown, sets intelligenceUnavailable, the builder runs only on a successful read, and the card checks unavailable before charted so it renders the clinical-unavailable notice instead of an empty-history statement or zeroed stats.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L549-L556",
+          "version": "repo-lines-v1:sha256:144a9f58dbf3e1af66305986ea3eb5f3f78d162f2a94c5a6daa77fc3fed6fe64:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmE2NGE2YTNlODUxYWE1M2Q3NWM5NzRlOTA4ZmExMjA4MTAyYWFmYWJlOWEzMzVmZDA3NGY4Mjk1NWU5NTQ1NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGNmMTVkMTVjMzBjODdhZWM1YWMzMTY3YzZiN2M3YjhhYjFlNTNjMmFlMTFkZjA3M2U2YTFiOGZhNDZmOTFiZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjdhNjcxYjNiODJkODY3ZGFjZGJjNGNmNDJiNGQwZjU4Y2QyOWRjZjcyNTRmZWIzYzNjMzgyYjU0YmNlYTk1OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODVmZTIxNGQ2NWVkZTZkOGI3OTJkZDBhZTM3MmZhMmM4NGUzOWM1NGVjNjBkM2UwZWEzZDc4Yzk1N2I5NTM1NSJ9"
+        },
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L639-L673",
+          "version": "repo-lines-v1:sha256:120dc3a3e9b5e5fd2914144f632fc81ffbbd9e5ef87c732c1a42461678096a26:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlOGU5NTBmZDhiZGI0MWQxNWE0N2ZiMGZlNWM1NWUzOTVmNjFlYjg5OTE0M2FiMWIzNDhkODk2MGM4YTkzNzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5OTBlYjZjY2RiMGZlZmNjM2M5YTg4M2M4NzljOTg2NmJlMzM5MzFjYWFhYmYzNjYyZDdhYzRjNDEzZWM4YjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBjMjk3OGU2ZDg5NGU3MThhODJmZmM3NTllZDkxZGZkYzYxNDJiZTVkMmRmMTUxNzI0ODczYjZjNGI2NzMwYjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMwNWIwYzQwMDEyZGYyYTEwMTk1YzU0OTdmNjczYzc1ODllNGJhMDVhM2NiNjNlYmVjZGI1M2M0YzNlN2Q4ZjkifQ"
+        },
+        {
+          "resource": "repo://components/treatment-intelligence-card.tsx#L87-L114",
+          "version": "repo-lines-v1:sha256:705c849b44d64b933349bbc292dc9c7dd32511b728dd446352c2995cd633dccd:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVmY2NlOGM5ZmViYWEwNmE1NGNiMTMwNzc1NGY0ZTk4OGU0Mzk3ZGI3Y2U0YzUzMzVlMTljYjBlZGMyMzY5ZTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwMDBlZDI5NGVkOGQ1NzI2MWIyZjc0NTczNWJkMWRlODhiYzliN2I0ZTc5NDRlZGExOWYwMDAwYzM0NWM2ZGIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM4ZTQ5YTYwMTU5ODc1ODM5ZDBlNmUwM2FhNmIzNTQ5YThlNzVkNGJlOGQ0OGNkNDgyZTlmOGI5YjBmNmFmMDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZjNGIwYTgyMGMxNmNkNjRlODEzZGZlNDYzZTQzNDFkZjhmNjNmYzU1YmVlZGEzMzhlNWZjZjQ3OTUyYjEyNzEifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/clinical-read-truth.test.ts#L392-L427",
+          "version": "repo-lines-v1:sha256:c42b84dc6db02ad1cdcafe83ddc784ad87475ba5399d2ae5058bd21a998e0ebb:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQzNGFmMTZlNWI0YmQ3ZWVjZjMzMzY3YmUzYTVjMDA5ZTZmNTM0ZDhiYTNlMjc3Y2JlMjQwYWJiODlhNWI4ZWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ1ZWJiMjhjMDg0MzM5MjBjMTQwN2RmNWYxYzI1ZWNkNjhjNjJhMWM3NGU2ZDRkMDFiMzExYmVmNzlhMDhkYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5MjZkOTYyNTlhNzM0YjVlMzJiZWMzZTdjZGIyMDhhZGE0MThhYzhhZjMyNGE3MzU0ODk1MzY0MGI5YjNjY2YifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/clinical-read-truth.test.ts#L483-L499",
+          "version": "repo-lines-v1:sha256:e3b4b576e1b90f0ab251d3803d34f95ea895263d1c8313f9a16c1d5664335a45:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkNmZkYzFkYjlhMzRlOTE0ZGZlNTEyYmJlMTRmOGM3MmJiNTVkNzY4OWM1MTVmYWY4YTRkMzNlNmNiNTIyMzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ZDM5MjQzNjdhMzUxYjU5OGU5NmJiZTZkOGE5NDljYzE2NGZkNmU3NDFiOGI4NDkzZTkzY2EwOWJiZGU5OGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIzNDk1MDFjNGIzZTY3M2UyMjc3NzJkMjNhMThmMDk5YmY3YTY2ZTkzNzk5NGJhYjdmNTA2NzkxOWNkMWI1YzYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d3ac0fee115e428f8e6f6c7b55a57093",
+      "statement": "Rendering tests prove recorded stats appear on a successful read and the No charted treatment history yet. statement appears only for a genuinely empty history.",
+      "evidence": [
+        {
+          "resource": "repo://tests/app/clients/clinical-read-truth.test.ts#L185-L251",
+          "version": "repo-lines-v1:sha256:a934ec8a2ad91c21a72df2ee80faec4ff254184da92d3030d8ca23c7c2e61915:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExMzY4NThmMTdhMzI0ZTBkMjhkNjI5NzVjNmEwOTYxZDg2ZDI3MTcxNDNkOGY1OTg4ZDA2YWM3OGUxNjk1MTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE3ZDZjYWYxMTZkYWIyYzc0YzAyZmFhNTg0OTRmNTQ1MjkzMDk0NWI5NDk5NjI4NzdiZmU1ODcyZWU2ZWQ5OTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdjYjc1ZjE3NGEyODYyYmFkZGMzMTdhYzVjZmYyYWZkYmY2NzFkNWI2NWIwMjVlZjk2ZDhlZTc0ODMxYmVkN2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8c981fd30e6f4efaa9a51dc02bf0f649",
+      "statement": "The Treatment Intelligence card renders only on the client profile Overview tab, after Client info and before Pricing, and a test pins that order and that it is absent from the Record Keeping page.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L1287-L1311",
+          "version": "repo-lines-v1:sha256:b5946e401b0abb5577fcb235f8b0618ad124064a4e6c101ce80d7b3143e9a7f2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhMWVkNzg1ZGE3NTM1ZDJiM2Y2MTc4NTQ3ZjdkZDVhZThjZWI3YmFlNTNkMzBjNzAyMjQxNGI4MThmYWU2MmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiNTkyZTA3YjRjZjUzYTgzODZjNTY4MGNmYjdmM2U0ZTc1NDI5NjljODcyNmFjNWVkMzI3NTNmOGNhOTU5NzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRhNDJhNTA3OTdlNTEyOTljYjJjM2I4M2I1MDRlZTZkODcyYzVhOGExYjhkOTQxZTgxYmUzNDU3MDhjNzMxYWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI5MDI3ZjVlZGVhMDMzNzVlNzRhY2JiYzcyM2U4ZjU1MDIzOTI3YjJhNGU2ZjdjOGI5ZjY5MmY0Mjc5OGMyMjUifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/treatment-intelligence.test.ts#L272-L305",
+          "version": "repo-lines-v1:sha256:68e41394e2d2ac4168cf1361ac1dc958c9c266e595e58a9ab3387e0c59fc8493:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3MzM5ZmEzZTU5OTY3M2ExYzM1NmUwMmMzY2UyYzY1NTZjODExZWY0ZjRmODIxMmU0YjVlNzVmMWI0NjM3YjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIyZmViYTI5NmE2YzA0NmQ1OTY4MzIxMGExNDI5Yzc5ODhlMzM0YjdlODc0NmYxYzFjODgxYWI1Y2FmMGRlZjQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_419634f0c35c4581941b6ddf940ec55c",
+      "statement": "The profile reads session_blocks for only the client's newest 200 sessions while the builder receives every non-deleted session, so older sessions contribute only through their session-row entries and add no minutes or area cards.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L639-L652",
+          "version": "repo-lines-v1:sha256:0ec8ea27d7077b06519277e5a7d28e15e2d8f4bb1df852582c3886b10fb854c8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlOGU5NTBmZDhiZGI0MWQxNWE0N2ZiMGZlNWM1NWUzOTVmNjFlYjg5OTE0M2FiMWIzNDhkODk2MGM4YTkzNzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhMDdiNzk1NmNmMDQwZGRjNWM1ZmY4M2U2MDM3ZWUzZWEzYWMxNDQzZjk3ZjRjZGQ4ODYzYTEyYzc5NzNjYzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBjMjk3OGU2ZDg5NGU3MThhODJmZmM3NTllZDkxZGZkYzYxNDJiZTVkMmRmMTUxNzI0ODczYjZjNGI2NzMwYjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwYmY4YTdlZjNmMmU5YzIzYzgyODI2YTI4MTU5ZWEyOGU0NWI0Y2ViYzRmNzgxMWEzOGYzZTBiNDExZjYzZTAifQ"
+        },
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L762-L768",
+          "version": "repo-lines-v1:sha256:0416c720d5c6f052a7f62a13ae728fb42d13c256492a31d6034e297428ff1907:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDFjMTY2ZTI2MGU3NTNjNWI5YTFjOTMwYjEzOWNhMGFmMmNiYzE1ZjFjODAxNzkzMmI3ZGI2ZDU4OWFiMzNlOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTA4YjZhMjUwMWIyMTViMTA4MmFkMTkyZTE0Mjc2ODc1ODIwNmFkMzFiNDEwZjMzNTdkZTZhMTg4YmI4MjczYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmY0ZjI1YWJjMWMzMzQwNjZmYjI2NzIwMGNlZGFjMzQ5N2I1ZWM4YzVkMTMzMjI4YmE4Njg0ZGQzODBkMDNmMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDE0NGYyODI5Njc5M2E1NzZjNzM0ZTdkODkwODM0ZGNlYWQyYWNjYzNiNDgzY2MxMmQ5Mjk5ZTc0NGE3MDM0YiJ9"
+        },
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L205-L254",
+          "version": "repo-lines-v1:sha256:baa74d398fd0e8dfef5b77f5ac4ef4ba3fb1f20aebf83e16308bd630f052a6a6:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4NDAzZDg2NGJmMDA2YTkzMTNmOWI2NDllMWI0MTRhZWIzMTRmZGFjNjBjYTM4YmZmMjMzMGMxMGZjYzI3ZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1NGY4YjFhZTYyYjIyZjRhZTQ4OWU0M2Y3N2I1MGJjMDU0Mzc1Y2Q0MDMyNDJhZTc2ZmI2MjExMTBkYjkxMzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRmNDkxYzlmNjZmZTllMDY0YWUyZTExNzE0OWI0ODViOTJhZjQzNTgwODQ2YzJjMzE5ZjczMGQzMTg2OWRlMGYifQ"
+        },
+        {
+          "resource": "repo://lib/supabase/queries.ts#L387-L393",
+          "version": "repo-lines-v1:sha256:dcd4b25f596d9323035697d6668ec4ca6da9d24ff3cd5e495e787dde59db5c04:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjkzNzQwZjg5MTlkNTljYWUwNmRiNjVlMDM1YzQ1ZDRiODIwNmI1N2U0Yzk1ZWNhMDZiM2I1NDRlMjc1M2VmYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzIwMWNmZjA2OTNmNDEwYmFhYmRkNmZiODJjMDMzY2ZkMWNmYmY4MTcwOTUyYmM2N2JiYjM1NjIxNmM1MDYxNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDUxNjZhMzc1Yjk3OGFmMGZiMDg1MzkzM2E1YTg2NzcxOGUyN2U2N2Y5MmM2MmUyNzYyZjgxMTE3MWZiYjI1NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGRlNzgxMjYwOWNlMjBjZWVkMjhjNTIwMTdjODAyZGU2M2M4YmRmNDM2NjZiZmMyNjhiMGMxMzg2ZjVmZTJlMSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_c50eadabca52468591a70a8104b7f288",
+      "statement": "Structured treated areas are attached to both the last-treatment and intelligence block reads in a single query.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L679-L699",
+          "version": "repo-lines-v1:sha256:60d403fad2698992eb39cbaf4cc6e742ecf2afe949a76eedda445c5de04da929:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxN2Q1NWFhMjViYjM4YjMzNGU4ZWRlNjljOGI3YzRiMmIwZGRhOWRjNzRiNzBiNjBmNDI4MDNkMDg5YmNmMTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1ZWYwMWJjMDhkYmMzYjYzZTRlNzVlYTNkMjZhNWI5NDE4OTE4NzdlMjdhZDg5MTMyOWM4NDExZDdkOGRjNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA3N2NhOWE2ZDBlYzkwMzlmYjVkMGZhM2I3NjE2ODJmODUyYmI1Yjc1MTNmN2U2OWYzNDQ3YzVhYzc4M2NjNjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg1YzEzODc1ODMxMjIyNGU2YjllMmVmMTExYmUzYWU5ZGJiYWI4ZTFiNDFiZTgyMmM2MjYzZGVjYWE0OThiMGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bf082346f8494b6c8dbf1cd1769685f0",
+      "statement": "Before Today on the client profile consumes the Treatment Intelligence value and treats either clinical block-read failure as making its clinical claims unavailable.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L784-L826",
+          "version": "repo-lines-v1:sha256:1fb808bf6fc97258802fb22969b2fc5518201aa15503e7a309afea2b04fad2aa:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2MzYyOWUwOTQxZWEzMjQ3NjdiMWE2ZWNmNmJhNzgwMGE5ZTQ2M2YwOWFjMTAzMmJlNmJiMWY4ODg3MzlmYmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVlMTJiNjExODk0M2UzMGMwMDY4MzNlNzgxNjMwYTUzYjMyZjQxN2VmNWY5Nzk1YzNmMTJmMzMwODAyNGM1ZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVmM2ExYzYxNWE1ZTE4NjgwMjgzMmY1ZDg1MzlmYTE3MzEwYjljNTAwNmMyMzA1YTE0OWIzMTRlZTgxNTA3NjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_491a22a044d747438019c6e10201b79a",
+      "statement": "Dashboard Before Today previews build Treatment Intelligence through the same pipeline but pass empty entry hairs, so hair figures are not computed there.",
+      "evidence": [
+        {
+          "resource": "repo://lib/dashboard/before-today-previews.ts#L15-L27",
+          "version": "repo-lines-v1:sha256:833ea9b2a18bf95b65f01e70691dc2766ba5af3e83b7e5159c50c9f5fe980646:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4Yjk2ZmZlMmMwOTYzMTlkYzY3ZDVjMmJlMWU1ZTgwNGI1ZGIwNDBiYjZhNTA2MjI2OGIwNDlkYjI0MzJlOGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM1NWFhMDM1YTAxZDk3ZjUwODMzMDJlZGI0Njk3NTRkZTM5MTIyNjBkZTllM2VjMmZjZjM4N2Q4OGQ2Yjc0NzMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJjYzRkN2YzZjYyOGEzOTZmNzhjYzBkMmRkNzQxYzE2OTgyZTRkYTc1ZTI2YmVhMjRiY2RiMzBjOTg1YWY3YTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI5ZDJmZDVkYTU2NDgxYjM2OGIzMTZhN2Q0NGMzNWM2NTE3MTY1NDc1ZDdiYmJmNzIzOGFmZjEwN2RkZWE0NDQifQ"
+        },
+        {
+          "resource": "repo://lib/dashboard/before-today-previews.ts#L372-L384",
+          "version": "repo-lines-v1:sha256:aee389c3c7d157df33d3795f0269d663d43e90fdc26aa182227e41dc38973973:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUyNmYxYTBjMWYwMjg2M2FkMTU4ZGFkN2Y2YzE5YTRlMGZhMjIzMWZkMDAzNmYyOGFiODU2MmZhYWZkZjczMGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRlNjdkZWJjOWMyY2Q2MDMwM2I3NGEzNTk2ODA5YzYyY2YxNDA0MWI2ZDk0ODA3ZmZkMDBmMjExMjUxNzAxOGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgyNzMyYWRlM2VmYzEwNzFkOWFmN2VlZmFhMGY0MGNkZTcwYzQ5YWUxMTIzOGNkNTA2YzA5NTNiMWM0MWFhNGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1678189e90644877a5123490a982db7d",
+      "statement": "Imported treatment memory is not part of Treatment Intelligence: the builder's inputs are sessions and session blocks only, the page passes imported memory only to the Before Today card, and the imported-memory module lists surfacing in Treatment Intelligence as later work.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/page.tsx#L1287-L1292",
+          "version": "repo-lines-v1:sha256:e1f4efdd54816ef20960105b2befa511ddbc0db7411a91806b15c6b772c6a1a1:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWExZWQ3ODVkYTc1MzVkMmIzZjYxNzg1NDdmN2RkNWFlOGNlYjdiYWU1M2QzMGM3MDIyNDE0YjgxOGZhZTYyZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGI1OTJlMDdiNGNmNTNhODM4NmM1NjgwY2ZiN2YzZTRlNzU0Mjk2OWM4NzI2YWM1ZWQzMjc1M2Y4Y2E5NTk3NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGE0MmE1MDc5N2U1MTI5OWNiMmMzYjgzYjUwNGVlNmQ4NzJjNWE4YTFiOGQ5NDFlODFiZTM0NTcwOGM3MzFhYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2I3NTI1NTc2NjU0NjczNDM2ZTkyMGVmY2ZkY2EyOTQzOTcxYzExMDBlMmRhMDUyZjY1YTY0YjBjYTNkNjUzMiJ9"
+        },
+        {
+          "resource": "repo://lib/imported-treatment-memory.ts#L26-L27",
+          "version": "repo-lines-v1:sha256:58535301b1c002b2c073cc664f7854c434a25d5bd23ceca506e732d842e716b7:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWMyMGU3MTg1YjgxNGRmYjZjZDc5NDNjZjlkZWI0NmExMGYxZDFhZDExNTg2MmY1NjBjYWNhMzJkMTVjYTNhMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOGZmN2E3MmIwNzIzZjZjNzk4OTExNmY4YmQ1YTg4ZmM4Y2E5ZDc5ZmRmODdmZWRmYzAzMDNiNWVlOGIwODBlZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGEzN2NmZTdhZGZlMmZjYWUzOGI1MjNmMWY1MmVjYWZkNWE0Y2Q4ODAzNjYxMzI5MGQ3ODJkZjIwNTIyOTA0OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTU3ZjMyMjQ1NThmMDk5ZDNhYTJiZGNjOTA4NWY1ZjczMjQwNDkwYTJmOTIxN2Y2NjFkMWU1YzU5YjIwYmM3NiJ9"
+        },
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L189-L193",
+          "version": "repo-lines-v1:sha256:e590ac6d2173c9260d60b94e97e1b12b7316a58ff6aef0713cbf946bc9db34a3:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDNjYWUyMzc1ZGFkZDhjMTEyMjQ3MjE2MDQ4NjUwOGYzOGZjM2NhMWU4ZThkNDBhN2RmNmU4ODkyZGE5NjM4ZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmVkZjEzYmQ2ZDYxOWFlMzM4NTEzZmIzNTU0YjRhZTI2ZGIyMjViOWY4ODVmM2NmNjUxZmIwMzBmMjk4ZTE4NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmVlOWU3NjE5MWY0Y2U4MjI1YmRlYmRmZTgxOTljYzFlYWU3OTZiNTlhNzViZTZjYjM5N2I2MDk5NDU0MGI5OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNmUyY2JjM2VjYjEyYTRmNDA4ZGY0ZDU1OTI0OTU2MzlhZmE3MjE3ZDZhYjM5NGIwMGI2YWRkYjZkNWMxMzAwMyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_df53746281e64eb9a963a375cd19f38c",
+      "statement": "An empty session left by the contained whole-session copy is not charted and adds no minutes, and the totals change only when a real block is saved.",
+      "evidence": [
+        {
+          "resource": "repo://tests/app/sessions/whole-session-copy-metric-invariant.test.ts#L50-L84",
+          "version": "repo-lines-v1:sha256:f8ef8da831f8654f16190f011fc3ab21f9e6e5270288b2fee02391f5883c7cb4:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5ZTc1MGQ5ZmJhYTYzMTkzNWJmNjgyYjc4MmJlYzJmYmZlMDMxODQ5ZjMxMTUzM2UyYTQ5OThmYTYzZjBmOTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/app/sessions/whole-session-copy-metric-invariant.test.ts#L8-L18",
+          "version": "repo-lines-v1:sha256:f27396440320527506d1fd59fb3c258e4770a4231a568739bdbf20e628c4d67e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViNDhkMDc2ZGFiNDRiNmI3YjNiNzFmN2I3MTY1YzJjNTU0Y2RlZmUyYzA2YTkyOWI2NTViNzg5ZmM3N2VlM2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJkMTA5YWFiYmI2YWI0MDdhMWYzYWI2MmE3NDExNGM3MTA0YjBiNWY1MDkyMzcxMzRmNjE1OTM1OWI3Y2M0NDUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhmOGY3ODEzZGFiOTM1ODM2OTZhMDRmZWQwODM5MjNkYjU4YTYwMjE3YzM2YjdiOTg5NDc3ZTZhNDJkMzdkYWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE2YTViMmNjNmE1ZTJjODM1ODZiNmNmMDQ3ZWRhZjY1MTAwYjdjZjAyNzcwMTIyYzdmNDgwYjkwMTMxMDBkOGYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T23:26:41.194Z"
+  }
+}

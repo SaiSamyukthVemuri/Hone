@@ -16,18 +16,18 @@
       "completedRunId": "b84de172-e4f4-476c-aa7a-e5e0d560342b"
     },
     "/openwiki/architecture/ui-components-and-interaction-standards.md": {
-      "gitHead": "f6101df8ef94f6b471569636bdf2f6fb9538a533",
-      "sourceFingerprint": "sha256:85c80745df91cb01bdac71c4b4d311037be7422b384fd63a325777975aeb030a",
-      "pageVersion": "sha256:d634c6448f5949915291ae444eb5a38c759f6e49802cec1036d0389e47e78a2b",
+      "pageVersion": "sha256:7b8b764775b6b910e3fa2aa8c9057abcf5b1d8d73a20b5b733577a20c07ab551",
       "completedBy": "claude-code",
-      "completedRunId": "b84de172-e4f4-476c-aa7a-e5e0d560342b"
+      "completedRunId": "54fd2b5f-8913-4a03-a90d-fe4f26191e60",
+      "gitHead": "7d9c22e7606086ebdf4ce6f0bed9125da43e64f7",
+      "sourceFingerprint": "sha256:ec0f708c68a900205f84121456803b81fb9fb6fd49b147dd904ef996a32d74a6"
     },
     "/openwiki/clients/client-records-and-profile.md": {
+      "gitHead": "f6101df8ef94f6b471569636bdf2f6fb9538a533",
+      "sourceFingerprint": "sha256:85c80745df91cb01bdac71c4b4d311037be7422b384fd63a325777975aeb030a",
       "pageVersion": "sha256:5aac1e7d3b939e641d0564e483df8fd0433b26f42fad014f80670356c1135e27",
       "completedBy": "claude-code",
-      "completedRunId": "c48900b5-d108-43bb-9d7c-66b7fafe2a28",
-      "gitHead": "f6101df8ef94f6b471569636bdf2f6fb9538a533",
-      "sourceFingerprint": "sha256:85c80745df91cb01bdac71c4b4d311037be7422b384fd63a325777975aeb030a"
+      "completedRunId": "c48900b5-d108-43bb-9d7c-66b7fafe2a28"
     },
     "/openwiki/communications/cron-reminders-and-idempotency.md": {
       "gitHead": "f6101df8ef94f6b471569636bdf2f6fb9538a533",
@@ -128,11 +128,11 @@
       "completedRunId": "b84de172-e4f4-476c-aa7a-e5e0d560342b"
     },
     "/openwiki/quickstart.md": {
-      "gitHead": "f6101df8ef94f6b471569636bdf2f6fb9538a533",
-      "sourceFingerprint": "sha256:85c80745df91cb01bdac71c4b4d311037be7422b384fd63a325777975aeb030a",
-      "pageVersion": "sha256:8aa665f16b74b4ae82aa5d5413e5fa900a97665f8142b92f0a4474e3c0699704",
+      "pageVersion": "sha256:fc1d429142691768701b03d5ce8f516bc43367353ad641e6348d37f76e339911",
       "completedBy": "claude-code",
-      "completedRunId": "b84de172-e4f4-476c-aa7a-e5e0d560342b"
+      "completedRunId": "54fd2b5f-8913-4a03-a90d-fe4f26191e60",
+      "gitHead": "7d9c22e7606086ebdf4ce6f0bed9125da43e64f7",
+      "sourceFingerprint": "sha256:ec0f708c68a900205f84121456803b81fb9fb6fd49b147dd904ef996a32d74a6"
     },
     "/openwiki/scheduling/appointment-write-authority.md": {
       "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
@@ -233,11 +233,11 @@
       "completedRunId": "b84de172-e4f4-476c-aa7a-e5e0d560342b"
     },
     "/openwiki/treatment-memory/memory-reads-and-point-of-care.md": {
-      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
-      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e",
-      "pageVersion": "sha256:138fd208e2395d13a557beae8c9776e61bbc376f421099902d26529ec69c8008",
+      "pageVersion": "sha256:c2b3723e81e9b281b54c540a9b03180dac8712dc6538866a68e24409cbfa8a54",
       "completedBy": "claude-code",
-      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033"
+      "completedRunId": "54fd2b5f-8913-4a03-a90d-fe4f26191e60",
+      "gitHead": "7d9c22e7606086ebdf4ce6f0bed9125da43e64f7",
+      "sourceFingerprint": "sha256:ec0f708c68a900205f84121456803b81fb9fb6fd49b147dd904ef996a32d74a6"
     },
     "/openwiki/treatment-memory/probes-settings-and-record-keeping.md": {
       "gitHead": "f6101df8ef94f6b471569636bdf2f6fb9538a533",
@@ -253,12 +253,19 @@
       "completedBy": "claude-code",
       "completedRunId": "b84de172-e4f4-476c-aa7a-e5e0d560342b"
     },
-    "/openwiki/treatment-memory/treatment-plans-and-treatment-time.md": {
-      "gitHead": "f6101df8ef94f6b471569636bdf2f6fb9538a533",
-      "sourceFingerprint": "sha256:85c80745df91cb01bdac71c4b4d311037be7422b384fd63a325777975aeb030a",
-      "pageVersion": "sha256:fa62df7d6d3be07547e94bceeab9e8392f4c3e63b6e36aee5da068c2af4c0cd1",
+    "/openwiki/treatment-memory/treatment-intelligence-summary.md": {
+      "pageVersion": "sha256:d4ba84e4cae8d8904bd146bfe4045e1d193fe83243418ef0a7263b600bca6dd6",
       "completedBy": "claude-code",
-      "completedRunId": "b84de172-e4f4-476c-aa7a-e5e0d560342b"
+      "completedRunId": "54fd2b5f-8913-4a03-a90d-fe4f26191e60",
+      "gitHead": "7d9c22e7606086ebdf4ce6f0bed9125da43e64f7",
+      "sourceFingerprint": "sha256:ec0f708c68a900205f84121456803b81fb9fb6fd49b147dd904ef996a32d74a6"
+    },
+    "/openwiki/treatment-memory/treatment-plans-and-treatment-time.md": {
+      "pageVersion": "sha256:c096abc612017dcf53a0cd78aff3b4777be1b1f24271fa5a47f1fe68c60f4960",
+      "completedBy": "claude-code",
+      "completedRunId": "54fd2b5f-8913-4a03-a90d-fe4f26191e60",
+      "gitHead": "7d9c22e7606086ebdf4ce6f0bed9125da43e64f7",
+      "sourceFingerprint": "sha256:ec0f708c68a900205f84121456803b81fb9fb6fd49b147dd904ef996a32d74a6"
     },
     "/openwiki/waitlist/entries-and-invitation-lifecycle.md": {
       "gitHead": "f6101df8ef94f6b471569636bdf2f6fb9538a533",
