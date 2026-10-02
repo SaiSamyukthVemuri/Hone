@@ -570,10 +570,28 @@ describe("the activation document matches what the source actually does", () => 
       "**NO — not supported by any existing mechanism for a cut-over studio.**",
     );
     expect(DOC).toContain("the env list cannot do it");
-    // The withdrawal must be explicit, not merely an absence.
-    expect(DOC).toContain(
-      "**Do not describe a mode transition as a commit-point rollback.**",
-    );
+    // THE WITHDRAWAL MUST NAME WHAT IT WITHDRAWS, not merely warn prospectively.
+    // An earlier version of this assertion pinned only the general warning, so
+    // deleting the paragraph that identifies the retired promise would have left
+    // this test green while the record of it vanished -- a vacuity introduced in
+    // the act of repairing one. Pin the quoted old claim AND its withdrawal, in
+    // one bounded passage, so neither can be removed without failing here.
+    const rollback = DOC.slice(DOC.indexOf("## Rollback"));
+    const withdrawal = rollback.slice(
+      rollback.indexOf("**Do not describe a mode transition as a commit-point rollback.**"),
+    ).slice(0, 700);
+    expect(
+      withdrawal,
+      "the Rollback section must carry the prospective warning",
+    ).toContain("**Do not describe a mode transition as a commit-point rollback.**");
+    expect(
+      withdrawal,
+      "and must quote the retired promise it is withdrawing",
+    ).toContain("set_new_client_admission_mode(<studio>, 'waitlist')");
+    expect(
+      withdrawal,
+      "and must mark that quoted claim withdrawn",
+    ).toMatch(/withdrawn/);
 
     // The behavioural half of the same claim: with the slug listed, a stamped
     // `open` stays open, so an env-only rollback genuinely cannot restore it.
