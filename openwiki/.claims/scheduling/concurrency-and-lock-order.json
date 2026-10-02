@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:f6dcb160f4ea8359bdbf734e0c8ded12d7b6506e24086ed07c9ef3fe65c12525",
+  "claims": [
+    {
+      "id": "claim_6f78c333c81c4696b3232e91787985de",
+      "statement": "acquire_studio_capacity_lock takes a transaction-scoped per-studio advisory lock keyed by hashtextextended('studio_capacity:' || studio_id), not a table lock.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0136_practitioner_capacity_booking_flag.sql#L210-L245",
+          "version": "repo-lines-v1:sha256:c0f94c7309a5c371a04efe5e2a4b56dd6b63382ad42dc55869556ba0fa23f09e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2Yzc4NjM3MmJlOWYzMjY1MDQxZmJkZTkwMjgwNjRlZjlmYzJiODZiMWE0N2U2OWZkNTg1YjM5ODY3ODdhNTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE4N2FlNTQzMTE5ODFhOWM0OTAxMGI4M2ZjYmNlNmJhYWM5ZmZkOWM5NzYyZjZmMzIyNDhjNmJkYjUzODc0MTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmMzkxNjMwY2UyYjA3NjlkMWEyOTFiNTQ1NDg4OGIzMmZkNThjYmJkMDJiNDIwMDQ5YjE0M2Q5NDNiMGY5YTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2ee22d929bac45339fb8c5b796bca71e",
+      "statement": "Schedule-mutating commands lock the studios row FOR UPDATE, then take the studio capacity advisory lock, then lock their source rows; create_public_appointment and the repair commands state and implement this order.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0170_public_appointment_command.sql#L675-L688",
+          "version": "repo-lines-v1:sha256:f73318710df89d5e3ccafa32f6db0725ccac5d866d88e13a7c540945d41383eb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyZGQyMjNhZjU0MWRkN2ZkNWRmNDhiZWY3NjU2MDNjNWNhMDcwY2UzYjQyMTU0YmExOTc1YmMyYjc0NTI2MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiM2JiZTdkYzBjNDVkYzViZDYyNTJjZTQxYWNhMjUyM2UyZWI0ZmIwOWYxNmE4MmZkYjg2NmNmMmMxNzMxMjgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZkMjRmMGJiMTdmZjMyNDNjOTQzNDNkNWUzMDhkMTk1ZGJmNTk4ZjkyZjkyODIzZDM5Zjk2MWYzOGM2MWFmMGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJiNTc1OTdmNGVkNGRkZmQwZmI3N2Q5MWNjNGE5ZDNjNGQyMTlhNTg0MzRhOTk1ZDFhZjZmYTM2ZDcxNzJhMDcifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0173_appointment_repair_commands.sql#L52-L62",
+          "version": "repo-lines-v1:sha256:d5a80ffb1e2b68156901c888a628e1efe0c0395dec858b296b7c21b9d7d2427b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzYWFhNDYwNTJiNThmZDk0YTY2ZGUxYjFmZjA1NmRhZDY3NzFmZWMzY2VjMmVhNmYwNTUwZDc4YzVmOTU3MGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5NWY3OTQ3MWFmZDA1MjdlN2RhNDVhYzdhMTJhNDNhNjg3YTNhZmE0MjhiOTYxMzVjZmVjYTgxNTVlZDM0MzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhNDVkYjIzM2YwN2EyODUwYjNlZjU1NTc5YzU0NTY2ZmQxNWUyZTYzMmUxMWQxMzdlNGM3ZGM3OGNkYzMwNzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVmZDA4M2U2NjQ0NjkwN2UxNDJlNTIyMWI1MDkwY2VlNDFjMTU5OGIzZjA3MTdhNGU5OGVjYTZiYTcwODQ5YTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1208d5a496434cd98cd2542499e18823",
+      "statement": "Migration 0150 replaced browser-role single-row availability, override, eligibility and practitioner-active writes with owner-only SECURITY DEFINER commands that take the studios row and advisory lock before writing.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0150_single_row_schedule_writers_locked.sql#L1-L30",
+          "version": "repo-lines-v1:sha256:4a6a0360d147a262b08732d7e1cf85107a1aa9a9208f9d90009f4095860fbf45:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViMWFiY2M3YWUyMmM3M2M1ZjExMDdhZDAzMjVkNWU5N2E4MjE0MTI1ODBhNmRmODhjNjEzNTAwZjVjNTMwZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhMzE3NDg0ZjY0ZTEyNmE3Y2FkYTg3OWQ4ZTdjZDBiZmQwNDg3M2FlNTdhY2Y5OGFiYzQ1MDI2NWUwYmY1MjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c7134e8a23fa44098bf9e543d6d826c1",
+      "statement": "Migration 0138 makes INSERT, UPDATE and DELETE on block, blockout and recurring-break source tables take the studio capacity advisory lock and has materialization lock and then re-read the rule.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0138_scoped_sources_lock_and_dormancy.sql#L1-L22",
+          "version": "repo-lines-v1:sha256:fe0604579f7a2d7e57de63ce97f2839eaf2cc1f49c9897e23fe2cf1e173a5a31:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMyZmQ0ZGU1ZTlmZDE5ZjM3ZDc4YTZkZTRhOTdmYmJlZWRjMGI5NTViYmE3ODZhYmNkOWJhZWIxMDYwN2JjZjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5ODQ1ZDI3ZDcxOGM1MTc4NTE1NTJhYWI0Mjk0YzQ5YmU2OWFjN2IwMjRmZDhkNTJhMzU5N2NiZTcwN2U1YzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_33d7f83a3c3b46fcbda23260da578073",
+      "statement": "Since migration 0145 a NULL target in move_or_reassign_appointment preserves the current practitioner as resolved from the locked appointment row, so a time-only move cannot undo a concurrent reassignment, while an explicit target remains a reassignment.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0145_move_preserve_target_race_fix.sql#L1-L20",
+          "version": "repo-lines-v1:sha256:e4fb2a76c8be63d6d9c2dd3b03d8c3e87d586eae4afd5df6b9d2d7392d101585:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzY2U3NzJjNGE3MmE1MThiZjBiZTE4YjZhNTk0ZDQzYzZjOWZmNDYwYTEwZTZlNjhhNDY3NTNlMDYyMmM5ZmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkMDcyZWI1MDUzZGYzZGRjNDg3MzRhMzY5YTVjM2FmMmYyZTlmNDNjNjE3YTIxYTdiZThmYTVkNjI0ZDU1NDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJlYzcyOTI1NzkyOTgxZDI4YjFiOWJiNDkzY2I2MzU4ZDZiZWE5MmNhOWUxZjU2MjYzYjc3MDQwZWJjM2FhNGMifQ"
+        },
+        {
+          "resource": "repo://tests/db/move-preserve-target-race.db.test.ts#L70-L130",
+          "version": "repo-lines-v1:sha256:69a5cc1ee7aea7b59a04a26163813b4f875052f2171784011f740f0353ab0e44:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyMDA5MjdhYjM5MDhhMTk5MmZlNTliY2I5YjAxNGJlNTNlOGNlZWNiZjQ2NmFiMDc2MWI1ZGFjNzcxOWY0MWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3NjAzMzcxNDkwMjRkM2UwODJmY2M3Yzg1ZmM0MDZjM2JiZWZkYWQwODA0NzkwNjg0ZjQ4M2FjMTAxOWEwYzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg2MmZkODA5MzhjZGM2YmExNTI5ZTA4ZjI3YjhiZWZkY2RmN2ExMTg5YjQ5ZGU2MzYxODFlNGIxMWY4YjY0ZjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ4MTdmYmI3M2M5MmIzNmQ1ZTQ4OTZmZjUxYzFiNThlZWMzMzBiYmU5NjFiYTA1ZmM2MjA1Zjg2N2VhMWJjZjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_273c592072e64e9cb4a2993ecfcd85bd",
+      "statement": "create_waitlist_public_appointment documents a nested lock sequence that takes studios FOR NO KEY UPDATE, the waitlist entry and the bound client before upgrading to studios FOR UPDATE inside create_public_appointment and continuing with the advisory lock, service, appointments and invitation locks.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0195_waitlist_atomic_booking_conversion.sql#L78-L100",
+          "version": "repo-lines-v1:sha256:4dc3de7d0e7c38f7da219ef7b6a76b3d0f567740ce6b5795fe922291d0119d07:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc0NDNjMjVlNmE2ODFmOGE2ZDYwNzE4YTkzYmFiYzZkYWY5ZGY5MWEwNzliNDczNGQ0ZDc5M2E4OTRjMzFhZGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjMDZlYjU4YjkyZWNmOTk0MDg1YjJjZDI3ZmRmODZiZTE5OWUwODJmM2I3ZGY3NWJmNDNiNjc0ZGNiYTE2MjgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMzY2QzYWE5MjgzOTI0YWUyZjJkMTY3YWI3YzFlZjliZjM3N2MzMmM1NTg3NTU4Mzk4MDQzOGFmMjMyOTg2ZDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMyYmIwNWI4ZDYzNGIwOTE5NDljODA3Yzg2ODk5NmU5MmRmNmI0MmE4ZDc2OGQxNmYzMDlhNzM3MGJhN2Q5NjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_13925aae4b614545a973273485734dc6",
+      "statement": "DB tests prove two internal bookings for the same practitioner and slot yield one commit and one 23P01, and that concurrent internal bookings in one studio serialize on the advisory lock.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/internal-booking-command.db.test.ts#L105-L112",
+          "version": "repo-lines-v1:sha256:360b84e258d7c4a86353d99bc9cb5b92eed0057182593412271446e25c44034d:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWViNWI1ZTM4NGI2YmY2OTdiZGQ0M2RjMTYwNWE2YTU4Yjc5MDEzOGNhYjhmZjU3NzkxYTVhNzkyZjRhZWNlNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDdiNTczODgyZDZiYTdkYmYyM2Y4ZDUwMjg0ZmIzM2E5YTdjZmRiMzgwMWM4ZDUxNDNiZTUxMWEwMDk3NjliYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODMxMjc0ZWIxMTIwNTZlYTBjZTJlNDA2MTY0MDBhZmZmODUwOWEyNDNjNTMxZDY3NjkwMzVlYWUzMjc5Y2RkMCJ9"
+        },
+        {
+          "resource": "repo://tests/db/internal-booking-command.db.test.ts#L174-L180",
+          "version": "repo-lines-v1:sha256:d0fa2b72c21bf968835853f70272dcf0f645ccb75e8e1fbca17d9d63407ce894:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODUxYmJhOTFlMGRlYWZlYzFiNGE5MzMyMTk1MTM2MWZlNzM5ZDA1OWM3ZTkzZWI0Y2MyNDVhMGE0NTU3ZTZhMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTFkZjg3YTQ3MzE2YzcwOGM1NTAyMDk4ZTlhZjZjNDQ1MzRlYjgwYmVhZGNmNjA2MzAyOGVmY2E4NTkzN2FiZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDVlYmIyOGMwODQzMzkyMGMxNDA3ZGY1ZjFjMjVlY2Q2OGM2MmExYzc0ZTZkNGQwMWIzMTFiZWY3OWEwOGRhMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTJmZjAxNTUxNjJiNDA3ZTUyZGI0OWMwZWNlZjNkNzZiMjVmMmE2ZDk3YzFjMzRhMzI0YTFiZmQ5OTBiOTgxNyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b7d6abd9ebfa4d74839ec550e5370437",
+      "statement": "A DB test proves a booking and a reassignment into the same target slot produce exactly one winner when they overlap and both commit when disjoint, without deadlock.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/schedule-lock-order.db.test.ts#L1-L5",
+          "version": "repo-lines-v1:sha256:6288696a59accf48f159e5e91691bf377b70642e0d788a316b6b55dbd09f42c4:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTEzNTdjODQ0MTI2ZTFkZDVhMzE3MTA3ZDVkMDkwMWI4MmZhY2NhZTc3NDFjOWU3MjhjN2NmM2QxOTdkZGUyNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOThjZmNmZGFjNDE2MjBlMmNhZGU2NmZkZTVhZjcyNTZmMWUwN2Y2YzFkZTI2N2RlZjdkZDZlNTI1MDljMGI2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWY3YWZlOWI0Y2IwOTJmNjU2NjQwODE1OGJlYWEyYjAzZWU4MGM5YWZmYWNiNzk1ZWE3YmRmNjczMTAwMzZiMCJ9"
+        },
+        {
+          "resource": "repo://tests/db/schedule-lock-order.db.test.ts#L67-L110",
+          "version": "repo-lines-v1:sha256:8eca4624b9034b81d883cbcbcb655f779b51a3698ec24776a6625014106010f2:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5YzcyNTE2MWM2MTlhYWE0ZTIzOGJjYTdmMjVmNGEyZTY4YjQ4MTMwMzkwMDkyMzE4MTNhYWFmZGZmMjFiODIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgxNjdhOTYyZjRlODRjZDliZjdlYTEwMzJiMzViOWZlNmU5NTRkYzYzZmY3YWU0NWE2OTdiYTBiODI5ZjcyMWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZhYzBiMWU3MWZhZWNkMDczYzU0ZjJhNmQzMGVlN2MxZGQ2ZjRhMDZmYThhMTQ4MDcxMjIzYWRhN2JjOTNiYjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyZGY2NjE5NmM1MDQ2OGI5OWM4MTBiNTM2ZmRiMmUxYzJmOWZmNzQ4NjhiYWI4NGY4ZmM2YzFmYTExYjI2YjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1ef07dadbd9e403caddb4a6dab990032",
+      "statement": "Public booking concurrency tests prove serial ordering against a concurrent cancellation of the candidate's source, timed-block inserts and competing row locks, refusing with not_a_public_slot when the cancellation wins.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/public-booking-concurrency.db.test.ts#L131-L290",
+          "version": "repo-lines-v1:sha256:10a4cb7f6066c7911888f4391850d947dfd42f4e1871243ea1af326f61b4f392:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZGFiYTQ2NjEzZTlkNjM5NDk2NGM4ZGFlYjgzYzcwNTEzNTkwN2I3YTRmZjQyZTcyOGY3NzNjOTc2ZjU0NTc0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1MzQwOWMyMTI5Zjc1NDNjNmY5OTE2MGQ1OWNkOWNlMzgzNThiOWUyYjA2NDcyZGZlMzBlNThiYjYxOGNiM2MxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhY2NmNjg0NWFmZTQ4NzBiMmM2NDNkMjcwZTBlZGVlMjNlY2JjNDZlYjgxMTJkMjNjZTc2MDI1OGU4ZGU0OTM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkZGM0MGMwNDhhMDZmMjEzMTgyNzY0NmQzZTY0MzlhNDU5YzQ5MDhlOTliYzQ5ZDYxNzZkMDAzNTIxYmY3NTI3In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_174899eb3eb64c32a6238209d8353bed",
+      "statement": "Public reschedule concurrency tests prove two concurrent reschedules with the same token produce exactly one successor and that a target taken first forces a refusal while the original survives.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/public-reschedule-concurrency.db.test.ts#L133-L300",
+          "version": "repo-lines-v1:sha256:24f2b66bda6747fb512b7774ddfb733122147389e2e78aebd8710451de5b303a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTY4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1MDBkNzdiOGVjODM3YjA3YmI5YWZhZGE4NGUyODBmM2VjMWJkMWRiMjQwN2EzMTJkM2JkYWM4YzA4M2IyMTYyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI2ODExYTQzMWRkNzk4NmVhYTkzYzM0NGY5Y2IxODAyNmYwMWUyMzNiZDgwMjkzYjVmYzk2MjM0OGI0NzQwZjk0IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjNmFiZWUyY2FiNDk4NGFmMmZiZjQ4YzBiYzdiOTZhZGIwYTQyNWIzOWNlZjI4MTJlMWVmOGE3MjdjNTI3YmI4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyNTNjN2I2YWE5YzUzYjMyNjNlZmZkNGEyYTQ1Mjg3MDFiMjRhODZlZTI4MTFmNmE5N2NjMWY1MDdiM2NkYzc5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_f0ef764664734d8091ce78f497985c5d",
+      "statement": "DB tests prove overlapping confirmed appointments fail with 23P01, touching intervals are allowed, a booking inside the studio buffer fails with HB001, and cancelled appointments do not block.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/double-booking-constraint.db.test.ts#L56-L130",
+          "version": "repo-lines-v1:sha256:8baee6e1c531244fb7e46cbaf8729f70e374c425d688cc54eca8fff0662a0427:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE3Zjg5ZjkyNzU2ZDY2MDFhYmY5MTk4ZGI1OGI0OGVhMjM1YTc5NDc2OGEzMmJkMDdlYzQ0YzMxOTA5NTU2OGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhmMGQ3MGU5Y2MyNGE3YWU0NmIxNmMyOGFiZDNkMzg0NDFlNmU5OTczNDU1OGU1Mzg1OTFiY2E3ZDBhMTRjZDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_92b1c0d095544090adf325a80e40ef7c",
+      "statement": "The waitlist concurrency helpers detect blocking by polling pg_stat_activity until a backend is waiting on a lock rather than inferring it from elapsed time.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/helpers/waitlist-concurrency.ts#L1-L35",
+          "version": "repo-lines-v1:sha256:ac7b36c6c575a341bc62bd479a25924554636c9d309681d67b5b662fdc2a1aee:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE0YWFiM2UyODFjMzFlMTFlNGIwNzMwYjgxOGM2MTIwYjQxZGRjYWM0YWZiNzg4YjAyN2VlNjMyYTUzYzIyMmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI0NzI1MThlY2IzYjFmNGEzYjcxN2ExZGQ3Y2MzZmY3N2UxMWNjYTA1OTgwODg4NDdmNGU5NTllMWY2Mjc3YjAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c80044b4e33543a3a7836e776b87becb",
+      "statement": "The lock-order design review still lists the legacy create_internal_appointment and practitioner_move_appointment functions and names 0148 as the latest move_or_reassign_appointment, although 0175 dropped the legacy functions and 0174 holds the latest definition.",
+      "evidence": [
+        {
+          "resource": "repo://docs/reviews/part4-lock-order-and-race-matrix.md#L29-L42",
+          "version": "repo-lines-v1:sha256:b580a360ae100607bcb142254142c31e80c81fe01943eeb32b843b402a51d288:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzNzU0NWFhYjg2MjljMGYwMjlkOWU2ZjUzODVkMjE1MjU4NDdlNzM4MWNiYjA4MTVlMGU4MDhhOGJmYzMyNzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3ZDIwMzc4NTBhZTk3YmEzMTRiMmM0MDM3MDYyMzczOTQ2ZmJkZTYyYmU3OWI0MjI5NGY4MDI5NjZiYjVlZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ4ZWFmYjdiMmQxYWVjOWQxMjdhNDE0YzcxYmViMWVkNWFkM2E2ZWNhNzU4Y2Y0MTRkNzczYWQ5ZGE4ZmVmNWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ2MzFiYTZmMTNkM2NjMmI3MDgxMDI5NmMzNWRhNWExMTJkMzNkYjViMDZkZmVmNmJjZDk0NzQ4MjMwNmVkZjEifQ"
+        },
+        {
+          "resource": "repo://docs/reviews/part4-lock-order-and-race-matrix.md#L96-L110",
+          "version": "repo-lines-v1:sha256:11363e45dd39bffe0242ae09e3108d1420669afb097df84cd24daa1324f15cc9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3ZWM2ZWFjMGZkODcyYzUyNGI5YmZhOTA1MjYxYjQ3ZWJlMmNlNWY3ODFmNWRiNjNlYjI0MmZlNmVkNTQ0MzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2MDhkMmQyZGNkN2Q3NGQzZTczYWM0MzkwYTY1NzU5YmNlODJlYWEyNzAxNmIxY2RhMDI0NmNlZDllYjhiYjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1NGYxZjMzZWFkZDkwMDg2N2MwMzZmZjBhNWY2NDNmMGQzMDU5ZGE2ZDdiNDdkYzg4NDhjZTEzMjZjNDM1MTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0175_appointment_transition_integrity.sql#L236-L250",
+          "version": "repo-lines-v1:sha256:171af988dcb9ab97779c09ea6710a67c4ed97f8334257006afaab8159465ef44:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwNjVkNDE1MWViODc1NTYzOTRmNzc5NTI4NWQ3MjNjMDIwMjUyN2RiNGQ1MzkyY2M1ZTc0YzZkNDgwOTk1NGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiYTAxYTczNGQ3YTUwMzMzNjUyY2FjNDZhN2I5NTQ4ZWE3YWIwZDQxNjY1MzM0Nzg3OGEyOTQwN2NhNjBmNGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhNzRkYjcxYzMyZDRkMDFmOTUzNTVhNGE0MTljZDNjYmZhMjczNjNjYTE3NjNhODJhNzUzOTEyNTcyYzliNmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f1e3f0dfb00c48ee898a867b413b0da8",
+      "statement": "The double-booking test titled 'the studio buffer extends the blocked range' now asserts the soft HB001 buffer rejection rather than an exclusion failure.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/double-booking-constraint.db.test.ts#L94-L120",
+          "version": "repo-lines-v1:sha256:fe400d87ca48b068c91a96bd224d7ba9f674a669ae2d73b0dc020a5de84416eb:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYjE5NTU0ZjJkYWE3OWRjYjU4NTU3NTBiNTg4NzFlNTkyMzlkMjk5OTFkNzU3OTY4YTIwYzBhM2NlNWQ0M2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMyNzQ2NjgxODFmYjMzOWVlNmRiYzlkNmU2MTJiYWE3NjNjYWQ1N2FhNTI2ZDRkMGQ5YzU1NzVkZGZkMzNhNmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkwNTBiNmQ0ZmMxMDFlNTE2Mzk0MWFjMzg0ZmViZDgxYjUzMjUyMmM1ZWQwNjJiNzcwMjlmNjQ1ZTE2YzliYTIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:bf277ab3333e321d1c1374e88bb6a8d75869b662fea58aae94db7cc41fc0c5db",
+  "claims": [
+    {
+      "id": "claim_952c18208d854a3b955c595da3df7f64",
+      "statement": "Migration 0134 adds default-off practitioner capacity in which a studio with practitioner_capacity_enabled false keeps studio-wide single-resource collision behaviour, while an enabled studio keys reservations per practitioner and fans studio-wide blocks out to every practitioner.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0134_practitioner_capacity_foundation.sql#L1-L40",
+          "version": "repo-lines-v1:sha256:8ebfda1d3e536c6ac2d675e160b4b560785c82be14c03708f6c8e5d5ebd5fc80:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyYzVlNzdiOTdlNzY5NTQ2ZDk4ODE1NjBjZmEzMjZlYzIxZGQyYTNkNmUwNjQ0ZTNlNjI5MTc0NjgxZjA3YTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI5OWYxMWViMjRlNTk0OTRmNzEyODhmMGNjMjg2YWNhOWZkZDljMGMxNmNhMjAzNjliYWJkNmNlMTUzYWM2YjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8ea8ff4848cb489bb69061674e165c76",
+      "statement": "Migration 0136 adds practitioner_capacity_booking_enabled, giving three valid states (LEGACY, CAPACITY_READY_BOOKING_PAUSED, LIVE) and rejecting capacity off with booking on.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0136_practitioner_capacity_booking_flag.sql#L1-L30",
+          "version": "repo-lines-v1:sha256:6014564e02608602dba18d38614eec608fd2c5e16cb62f0450a0c4c307594c4e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhMTI1YWI3NGY3NjBmYmQ3N2ZjNWRmNGY3YzhlMTRlMmQ2ZDE3NWM4NzA5ZTQxODBmNGVkYjVhMTdhOTQ0ZTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f2390c6ba3444786a25907316a7780cc",
+      "statement": "create_internal_appointment_v2 returns booking_paused whenever practitioner capacity is enabled and the booking flag is disabled, after taking the studio row and advisory locks.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L706-L726",
+          "version": "repo-lines-v1:sha256:e6027ca66f14cbedde5ceebc60b363cbb1e3a62088933dd8b7115a47d54e107a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQzYjNlMDU5YWRjMWM2MDc5YjIwNWVhZjg0MDhiOGM3MjQwOWVhN2RmM2QyZDM4NWI1YzAyMzUzYzdmZWQxYzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI0ZjUxMmU0MmZiYjYxZWQ2OTJlNjEzNjE2NzlkYmJlZmUzNDQ4ODk0ZDI1ZjRhNDkyYzIyNDY2Yjk2YjNhMzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE5YTZiNzg5OTY5MWVmOWYyOWE2MDY4Nzg5ZTJkMmEwZWJlYjk2MWUwYjFlZmI2NDBhNTQ4NWUxMTk0MzIxN2EifQ"
+        },
+        {
+          "resource": "repo://tests/db/internal-booking-command.db.test.ts#L155-L172",
+          "version": "repo-lines-v1:sha256:e47f830f1aef4a630f7cfda2409cb3aa54daa1b48e3542329cd3c02e7d475784:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYmJiODVhNjY5YTBlZmY4OWFiNmZlNDhkOWRhNzRjN2U3Y2E2OGUwZjc3ZGRhOWU3MmQ4YmU4M2E0Y2JhMDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ1ZWJiMjhjMDg0MzM5MjBjMTQwN2RmNWYxYzI1ZWNkNjhjNjJhMWM3NGU2ZDRkMDFiMzExYmVmNzlhMDhkYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyMGZkYmVlZTdmZjIzYTM5ZTNiZDIwNzdjOWRhMDNjMzUwYjUyNWYyM2QzMTU0MTIwMGEyZWZlZjc1NmU0ODkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9fe4f007018946ec9336ae3bfeed40fb",
+      "statement": "The public booking surface is unconditionally capacity-off: the public slot loader passes no practitioner and create_public_appointment uses its own studio-wide validator.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0170_public_appointment_command.sql#L44-L60",
+          "version": "repo-lines-v1:sha256:640b10b16da9e8610c27baf4a635f81f107d938093f9cca302bc8862d6238dcd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4ZWZmOGE1NmZjNjIzMWZiNjNkZjY4NDYxOWNmOTMwZTA3M2YxMzVmMDg1NTg1OGM5YjhjYjM4ZWYyMWIzNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFiZDk4OTQ2ZWMzMzE2Y2QyZjlkZWZmNjY4YmJhOWU2N2UyZTVjNzZjOGE2NmE3ZTU3ZWQ4MzVjNWNiODhiOTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5ZmZiMDg2NGUzMjQyOTc4YTU4MWJmYzdmMzU2NjAwMGExY2FhYzRlOGEyMTIxMzYzMjg1NjkxNmZjYmJkZjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a1f410f652324e3a9f10b6e0024fd1d7",
+      "statement": "validate_appointment_availability performs practitioner, eligibility, closed-day and working-hours checks only when practitioner capacity is enabled; with capacity disabled it applies only the soft-buffer check.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L290-L366",
+          "version": "repo-lines-v1:sha256:d48809d8cad9774f4351fe58398e97fdae564a5a56a38913c732a4c8be0d127b:eyJzZWxlY3RlZExpbmVDb3VudCI6NzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxNDI3MDhiNzUyYTJjOWQ3OTk3Y2QyY2M3MGMxMzQ4ZGZkYzAxMTBkMDRhYTdjYTg1NjYwYjUxN2UzYzU1YzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhYjU3ZjJjZTgxYWM4ZTFjZTgwOWQxM2I2MGZkYjUxY2VjMGRiMTg3ZDZlOTU4YmMwMGFhZjhmNWE2MDZhZjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVjOGVlZTAzOTFjMDFkN2U5NGEzM2FkYzZhZGIzYmYzZjJkMmY1YTdiYTBlMWU0NGIwYTM1OTFhNmVhOWEzMmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI2MmFlZGUzN2EyNWU0YjExYTMyMzgxOWFiNGRkOTNjYmM2NWNlODc2ZWUzZTVmNWQyZDBlYmEwNWQ3NDFlYmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_48f60f0528e04d90a740e52d66785807",
+      "statement": "Calendar quick-book creates appointments through create_internal_appointment_v2 with server-resolved studio and actor, and the outside-availability override is owner-only and re-checked server-side.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/calendar/actions.ts#L88-L330",
+          "version": "repo-lines-v1:sha256:5004f0cc4f55174752043d0a1847680bebe03a310d9308b9071170f23ab092e3:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyNjcxMjNmZGJkMWM5MTI3NWI5YzdlZmNjNGExNjE4MmY1ZWY2OGI0ZGI1OWQ0N2YyYzI5OGQyNWNlYTNjNzM3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1MTkxYmE3ZWQ0MDdiNjhiMjI0Yzc2ZmRiMjYxYTQzODg5YWJjMzMwNGIyZmZlN2U5YmEyODBiYmMzYmRiZTYzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwOTMwYmVlMTA3MzQwNzhlY2U3OTJmOTU3M2ZiNTFkYmEzZjA4YzNmMGRmZTk3Y2FiNmE1MzQ1NDMzMWYyYWE4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3Y2JmYjQ2ZDRmY2IwNjk2MjNhM2IwZjI3OTZlNGZhNGY1MDYyZGU4ZjZhYmE2MGQ4YjA0MmEwYWRiNTdjYTVhIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_5a0e25ba767b4e41a0c5ea21eb946b56",
+      "statement": "Only a confirmed appointment that has not started can be moved; custom-time moves are owner-only and derived from the server-resolved role; reassignment is offered only to owners of capacity-enabled studios from active, service-eligible practitioners.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/calendar/move-appointment-actions.ts#L106-L218",
+          "version": "repo-lines-v1:sha256:ccbda1f0b0bd7b36c12afcb66bfcceef4e6038797a2f43139356c6269042acb2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyY2E1ZDQ3MDM5NWU0MDkyZmM5YmU0NzJhYjM5YTI3NzdkYzgzYzYzYjUyNDhiYzU2M2UwNDJhOTIzM2E3MjdkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiYzQ1MWQwZGVlNGZiMjNkN2IwZjM3OTJkOGZlZTc1MzBkYjNiZjRmYjBiMGU3YTcxMzAyZTdlZDkxNDhjZWE5IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5MjA0MGUwOTVhOTRlMmFkYTc0ZTQyMWYzNzE4NzUxYTkxYTgxMGJmZDY2ZjQ4ZjRlOTM5YzdiNzQ4MGViNjcwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiNjcyNWViNzVlNmZmNjBjNzBiYzNhYmEzZjYyYjQyYTlmY2QwNWVjODVhMjM5MzY0ODM4ODU1YWRkOTQyZmE0In0"
+        },
+        {
+          "resource": "repo://app/(app)/calendar/move-appointment-actions.ts#L276-L290",
+          "version": "repo-lines-v1:sha256:a5cbf4ca7dd3fc1e79ef9c30d6f1b6fee237e76342bfc6adb730b832aad14a35:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlN2IwYmYwMjVmYTg3N2ExOGMzNTYxZDc0OWJiMGQzZTZmMTViN2Y0NWI3ODU4NDUwOTIzMTFhNjRiMzhlYzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBmOGM2YTM5OGRiZjYwM2JhMDJkZTQ5NmM1M2IyN2QxMjNhNjY3MmQwYTA1YTViMWZmMTUyNTVkNDJkOGVhNzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMzMTQwMGIyNjAxZjk4MjIyMWI1YmI5OGVkNGJiMjQ3YzJiZjgzNjdiZWZmZjBjODQwODE3YzU4NmQ4YmRkOTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmMGU4ODdhNTY2YWZiODY1YmM2YThhMTM2M2YwNGExYTVmMDlkNmQyZmJjNjFiNWJjNWQyMmVlMDg2Yzc3MjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ccc3f6a9f5f145d8acb3c6e292717d9b",
+      "statement": "In available-slot mode the move action regenerates the slot list server-side and refuses a time that is not offered, then calls move_or_reassign_appointment with expected start and end times and allows outside-availability only for custom time.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/calendar/move-appointment-actions.ts#L329-L350",
+          "version": "repo-lines-v1:sha256:b2861dffa36be87d572c4b360d81d271733d85e4eedc502db7bbf7588dc19104:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2MjMwYjlhZGI0ZDVjMmE0MzAzOWM3YTAyNzYyOWEwMjA3YzY5YWNmZDA2YzNlMWZmZjRiMGQ4ODBiNTA3ODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0ZTQyMDhjZDZmZmI4YzRhMzU0N2IyZjU0YWRhMTk5NzhjM2YzNjVlNzhmOTUwMmVmNTE0NWNkZDJhYTg1NDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM0Y2RmODc0YzMxOWM3Y2Q1NDNmZjg1ZmE2M2FiYmFjOWVhOGNkNTJhYzYwYmY2MTA3NTNlZDYyNWRiMjgwM2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0MjMzMjQ1MGIwYzFmYTRmMGNkODU2MTdjNTU1MjIwZmNkOWYyMDE0NWFjMWNhMGNmODkxMjJmMzNjYTIzMjEifQ"
+        },
+        {
+          "resource": "repo://app/(app)/calendar/move-appointment-actions.ts#L360-L380",
+          "version": "repo-lines-v1:sha256:b9dbbf47cc8c03845ff534c2b93236579a158a8fda176ce36ab9376a3de4a746:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1ZDQyMTIxMTdkMWQ0ZTY5NmQ4ZjZkY2U3YzA0YWRhMGUxNmM5YTMwM2QwMzE4NWNlZmU2ZjU0YTc0MGE1MmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhYjMyZTllYjlkZmU3ODVjNzdiMzQ1N2Y5ZWI0YTNkYmE3MzhjMzM0ODgwYzhmNzA0Mzc5YzIyYTc5ZjhkOTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFmNzMyNjQwNzQxNDEyNWQxY2U4MjIyMGQwNWI3NjMxNmQzZjA3Y2Q0ZWRhN2Y2OGJhMTk1OGJiYjBlMmE0NTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_46edc64a2f9e4e18b4283618f6e1b787",
+      "statement": "A source guard requires moves to use only move_or_reassign_appointment, never cancel-and-rebook, use server-resolved tenant identity, map outcomes to closed copy, resolve the app origin before the mutation and notify after commit.",
+      "evidence": [
+        {
+          "resource": "repo://tests/source-guards/move-appointment-guards.test.ts#L36-L100",
+          "version": "repo-lines-v1:sha256:7db2cbd4e22701d9281a3416545df8bd5076bce9026e33eda6919711db20aafc:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA3NmZmYWFmMGYxMTI3NjZlOWViNzVhMDNmN2UzMDk5NDljMzRkNTMyMDQ0OTJiMzIyNjg0NGNlN2I0MzA4YWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgyMmIzYTg5MjA0YWFlOTA5ZTM5YmFmMzNhMGRhNTdlMDBhODA0OTBmNzZhMWI1MmQ4YTVlNmZlNTQ1NDBjMTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVmNmRjN2JkMWQ1MDNiYTQwMjQ0MTI3NzcyYTUzMjUxNTUzYzBjNTcwM2M2Y2RhZGVmMjg1NDYzNTM4YTQwZDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmM2I0NjI3ZDZmMDRiMGQ4MjcyZGRmOTkyMzcwNDEyM2IzNjRiMjUzNTI3ZWMzMzYwMDMwMWFmZWYyNzQ3MTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8ab6df248cd945d58cb4a3df86475085",
+      "statement": "The canonical record, re-verified 2026-08-23, states practitioner_capacity_enabled is true only on the controlled test studio and practitioner_capacity_booking_enabled is false on every studio.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L908-L925",
+          "version": "repo-lines-v1:sha256:a0901b5df770a5a8d89824ec89f42dd2f3a9c04c66ee2b25713f3cd3b9497f6b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmYTMyNGQ3OGY4Y2M0ZjZiMGY1ZmZhY2E3YWJiYjZiMDZmYmQyMzYzYzMxN2VhNTE5MTQzOTVkN2NmZWM5OGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmZGVmZTMwZjU3MGIzMzk2ZmRhODA0NTYwMzRjNjliNDUwOGFjMTA5ZjM2M2I1MzUxMGQxNTg2YTQ0MWY3ZDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdkNWZlNjQ1NjhiMjA4NTJmZDYzNzE3ZTFkMTgyMWI2MTBkMGNhMzY3ZWQ2ZDI3Y2UzMTA3NzkxZjk1ZjY5ZmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ0ZTRjMjM5N2I1OTYzYTk5MmNlZjA2YjZjMGE3YjY4ZGI0M2U3OWZjMGU2NmFhZGRkNDc4MjUyN2UyMDU5N2MifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_03eef9857b3242be83a715626a9b9ae8",
+      "statement": "current-state.md calls practitioner_capacity_booking_enabled the public-booking kill switch, but in code a capacity-enabled studio with the flag off refuses all new internal bookings with booking_paused while the public surface ignores capacity.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L919-L920",
+          "version": "repo-lines-v1:sha256:1c5d6a556fc269f735ab00a7ed71607c89a633245e5ffd2bb99f567374cba08a:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjBlNTE0ZjQyZDc1Mjc2ODQ4MjY5YjFhNDQ5N2UyMWM4NWVhNTA4YmRjODhiNWYwNDdiNGRjZTRiYmMzYTFhMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTFlNGNkY2EyODRmYTMzYjg2NGQwMGNkMTVhNjE4N2JhYjZmZjU3MzcxMjZmNzhjMTIyNDFiYmNhNmIyOTNkYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTFkZTgwZWQ1ZTA5N2U3ZWNkYzBkYjNmZDJkYTdlYjczN2VkYjM0ZGIzZDFjMGU5OTk4OTZhY2RhMzQ5YTlkYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTM2NzNkNzljYWJjYzQ4NmM5YjA4NDUxNjE3Yzk1OTEzOTBmOTZhZTE5NjMyYTA2ZjJmZjVlNTdiMmM1ODNmYyJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L722-L725",
+          "version": "repo-lines-v1:sha256:84c3b64b142d8eaddcb043cdb24c3c520a9c1833cfcedad5027f24cc4501449f:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDVlMTNiMjc2ZWMyMjA0M2M2ZjgwYmM1MTU4MGE2NTRjMjExMzJkYTExNzllYmU4NjlhNjJiMDIxNjdlYzc0MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2FiNTdmMmNlODFhYzhlMWNlODA5ZDEzYjYwZmRiNTFjZWMwZGIxODdkNmU5NThiYzAwYWFmOGY1YTYwNmFmMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzBjYjlmZjZlMmE0MzYwYzFmMDEyNjEyNGM0ZTI0YjIyMWZiYWE3MDdlMjA3YTdiOGI4MGQ5MTk3ZTczZWUzNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTE3Yjg4OWQ5MWFkNGM3NGZmOWU4NDQ0M2ZlYTU0ZGZmYzNlYTlhMTViMTg5M2Y3YTZjMjFhNmRjZmY1NDIzOCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_649b9b19c3754618bda5c1496b2e6083",
+      "statement": "docs/07_CALENDAR_AND_AVAILABILITY.md and the move action's own header still name the 0133 practitioner_move_appointment RPC as the move backend, while the action calls move_or_reassign_appointment and 0175 dropped the 0133 function.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/calendar/move-appointment-actions.ts#L19-L19",
+          "version": "repo-lines-v1:sha256:dda7e06cd93738080e9ed310947d17a1bb2fa82cb877a516812d63e77350f8a6:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGRhN2UwNmNkOTM3MzgwODBlOWVkMzEwOTQ3ZDE3YTFiYjJmYTgyY2I4NzdhNTE2ODEyZDYzZTc3MzUwZjhhNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGRhN2UwNmNkOTM3MzgwODBlOWVkMzEwOTQ3ZDE3YTFiYjJmYTgyY2I4NzdhNTE2ODEyZDYzZTc3MzUwZjhhNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzJlMWY0YmZiNWJiZjMwOWM2MzAyZDc1OTgyZmJiMjBhMDIyNmE5ZGJiMzdhMDQ2NTg4OTZkNTE5YjdmNTg4NCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTMwMTQzZGM1NmU5ZDI3YjA2YjU2ZmZmYmQzN2UzMjU5ZjhiNmU5NjRjMWUyZDcxOTZlZGVmYTkxNDE0ZWFjNCJ9"
+        },
+        {
+          "resource": "repo://docs/07_CALENDAR_AND_AVAILABILITY.md#L52-L95",
+          "version": "repo-lines-v1:sha256:840be2a37544cf3dde8565ad2bfb51c7315e185374ac0ecdd6e636ab5798478b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc5ZTE0ZmVlNWE5NTM5YjAxMTFhYjNiYmM2OGVjZTgyZjZhZDkyZjE3Mjk5NWNiMDQ4MjBkYWU1MTgyYjE4NmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg1N2FkOWE3ZDA3Y2RiMWMzMTcyMzU4MGFlMGMwZTI3ZTdlMjNiMjJmMTJjY2E0MzcxODBkZTNlYjRhNWRkZjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg4M2M3N2YwNjZiY2M2ZjBkNzBhYWI2ZTlmOGVjMzMzYzZjYjY2YmJiNzkzOGIwOGUwNTFiMzhhZThjNjY4NmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzMWI2NDAyOTM0MWY4ODQ0YzdhZGY5NTc0MjVjNjM0YmQ4YTg2MzA5Y2I5OWI3OWFjOGQxZTU1YTc1MGE2NmYifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0175_appointment_transition_integrity.sql#L236-L250",
+          "version": "repo-lines-v1:sha256:171af988dcb9ab97779c09ea6710a67c4ed97f8334257006afaab8159465ef44:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwNjVkNDE1MWViODc1NTYzOTRmNzc5NTI4NWQ3MjNjMDIwMjUyN2RiNGQ1MzkyY2M1ZTc0YzZkNDgwOTk1NGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiYTAxYTczNGQ3YTUwMzMzNjUyY2FjNDZhN2I5NTQ4ZWE3YWIwZDQxNjY1MzM0Nzg3OGEyOTQwN2NhNjBmNGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhNzRkYjcxYzMyZDRkMDFmOTUzNTVhNGE0MTljZDNjYmZhMjczNjNjYTE3NjNhODJhNzUzOTEyNTcyYzliNmIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

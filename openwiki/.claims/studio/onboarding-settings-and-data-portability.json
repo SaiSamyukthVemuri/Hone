@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:98bc50cdfc5d112b3333406d4a642219f51c680f1e441523b50d7f997b8396e7",
+  "claims": [
+    {
+      "id": "claim_f96ba282f8d94c95bbfb51454ed2ca9b",
+      "statement": "Studios are created only by the operator-gated New Studio Wizard action, which re-checks isAdmin, records blocked, started, failed and succeeded admin actions, and uses the service-role client because studios has no INSERT policy and owner invitations are owner-only under RLS.",
+      "evidence": [
+        {
+          "resource": "repo://app/admin/studios/new/actions.ts#L30-L111",
+          "version": "repo-lines-v1:sha256:502d973fc330b17c0ec50ae8d29178c078ef7346fba98065ae09fd7c4681c457:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM0NzRlMmYzYjU4MjYzY2RjM2MwNjYxMmJjZjk3NTVmNmRhNzA0YmY0ZmRjMTJiZmZkNmEwZDIwODZjODI2NTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE0MGM3NTM2YmUyMjc3NmYzMzJmYmQ1MDM0ZjRiZWM2MGM2YTAwYmQ2MmI3MjhhOTdmZDc2NDUxY2I2YWNiNDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFlMGIwMTRmZDk5MWUxNDBiYzkzZjZkMDJlZGJhYjE1NTVhYmFlODJhNDAyMjllYWE3YWVhYzBkNzk1MjExOTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVmY2Y4ZWFjMDU4NDcyZjI4MDViMzYzZDQzYzZjZTc0NzY2NWY4NDVhY2QyZDcyZWU2ODc1NTA2Y2RhODVhODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0442f23e110b40d98409069967bcc6c1",
+      "statement": "The wizard inserts the studio and then the owner invitation as two separate writes, compensating for an invitation failure by deleting the just-created studio and logging the studio id if that cleanup also fails.",
+      "evidence": [
+        {
+          "resource": "repo://app/admin/studios/new/actions.ts#L118-L190",
+          "version": "repo-lines-v1:sha256:4544fd984f789738ba0802cf7bac5a95a92faa858de74130c2afa08b57ab0e09:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjMGM5MGQyMThiMDFiNzg3MTIyNTFhZTA2MWRjYWI2ZDYwNjdlMGI4NmFlMjk5ZjNiY2JlOTAwOTQ0YTUxMDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFkYjNlN2NkMGMzYTYyMzA0NzY2ODE2MWQxMDRlOTlkODYyMDljYTNlNzc1NGEyNWIxMTlhNDkwNzg3ODA0MjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJjZTY2MzZkY2FmZTQ3NTk3ODFhYmFiMDhmNzYzMTk1ODIzM2E0MTgwZGIwMmNkYTYwMzM3ZmViMjlhNzk4YmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4070bcb3faad4d1893141bf2342d5bc1",
+      "statement": "Wizard input validation requires a lowercase alphanumeric-and-hyphen slug of at most 64 characters that is not a reserved route name, and a valid IANA timezone defaulting to America/Toronto.",
+      "evidence": [
+        {
+          "resource": "repo://lib/studios/new-studio.ts#L20-L123",
+          "version": "repo-lines-v1:sha256:5c93be885d2a9e8367e20e652a79e8ee48eaca43215c884b3154791a8601cfd9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjYWVkMWQyNGU2N2I5MmQwODMzYjhkNzA3YzgzMWZjM2U3OTRmMzcxY2I5ZTFjYWY4NjIxN2ZlYzZmMTgxM2M5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ZDFmODQ3YTExZGQxZTJhZTNjNWE1NWE1YTMwZWI4ZjMwMjExYjc4MWIwZjk2NjQ2ZThiOGYzNzllOGI1ZDU0IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzMTE4ZTdkYzY1MzdhYzk3NDlkMGI3YjA0NTIzODIxYzQ1ZTQxZDg4NzgzZmE5ZjNlNTk5MDk0Njc5N2IxYWU5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkYTg4MzEwMjgyNDE3OTU0NTYzYTNjZjAwNDYyMjMwNjBkNmQ1MzE5ZmRjMjc5N2UyOTBiYjEyNjEwZTllNzE1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_998c4d0114fa4c4c8142c6d7b6af69eb",
+      "statement": "The wizard sets onboarding_v2_enabled and sends the welcome invitation email only when the operator opts in, and studio creation does not depend on that email succeeding.",
+      "evidence": [
+        {
+          "resource": "repo://app/admin/studios/new/actions.ts#L213-L226",
+          "version": "repo-lines-v1:sha256:b50b188eab5bacf6584eeb9841e693f879ff58f91eb10dc5f04874ddc1578c3b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM5MTEzMmFkNTQ1ZGZiMjI0OWFkN2MzZGJjYmI4NWM2MDMxZjA4NWQ3MmI4MTM2Y2Y4MzE4YWRhMzRjMDRhNDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUzMWI0NGRmNmFkMjE2M2I5OTNmMmYwOTU1YzlhMjgxYWI1NmRkNTIyYzVjZDg1ZGM3YjM3MTA3Y2UzNjU4ZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRjMmFmYThjYjEyMjEyMzRkOTZkZTIzNDA4NTI1ODgwNzcyMmFkNjg3YWU4ZjM1NzhlYzhkMDYwNzU5MDQ2YmMifQ"
+        },
+        {
+          "resource": "repo://app/admin/studios/new/actions.ts#L65-L69",
+          "version": "repo-lines-v1:sha256:e6f691fc074d5e435c75f5bedd974575a285e5456c793b702383b3127f3c37be:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOGZlODM3NTliOTMyYmEyYmUwZWQyYjQzZDI5ZGUyMjljZjIxZDdlMDcwMDJhMzYwOTM1ZWI0MTMwNGU4ZGQwOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGFmMzQxOGZmOTliMjI5MzllMDUyMjc3NjVlMTRmOGVkNjFkYWI3NjhlMmZlZGM4YTg4MjRkOTE5OGMxZTM2NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTc4NTM2YjE1ZDhkZWYwYjc1NWIwZDhmZGQwYzMyOTZhZWFhNjQzMjAwNzFmOTRkMWEwMjIyZDcxMmQ4NzRlMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjRlNzE5YzE0YTdhNWRmYjkyYzI4NzQ2Zjk2YzkyYmU3MTkxNWVhNzAzNDllYTFlMWRjM2Y2Y2EzMzJjNGZjNyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_56a650b9e4024a88abeabbe14def5de5",
+      "statement": "A DB test proves an ordinary authenticated user cannot insert a studio or an owner invitation, and that the service-role wizard path leaves no practitioner until admin_accept_pending_invitation provisions exactly one active owner with terms and privacy stamped.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/new-studio-wizard.db.test.ts#L31-L156",
+          "version": "repo-lines-v1:sha256:d3a48985b841696fac391a2797a7df4487c09841479e1de70dd49c25f5818b57:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzMTVlZDI0YTE5M2I5MzZkNGUyOTdiMmFiMTdkNWViZDBjYTk3NDNjNTQzZTAzYTg2Mjk2MGQ2YzhmZDU3YTAxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhY2NmNjg0NWFmZTQ4NzBiMmM2NDNkMjcwZTBlZGVlMjNlY2JjNDZlYjgxMTJkMjNjZTc2MDI1OGU4ZGU0OTM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_361433ea65ba40ad96689c89e593daa0",
+      "statement": "Team invitation, revocation and removal actions require the live role owner via getCurrentPractitionerWithStudio; invitations accept only the owner or practitioner role and refuse emails already active or already invited in the studio.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/team/actions.ts#L25-L46",
+          "version": "repo-lines-v1:sha256:ccd5ec6d7cd5063004db48d015b56d3a3713346489e294aa6a902af91ef505b2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc4NDQ0YmQyYmQ4MDQxNWM1MjAzNWMyZDc2OWRmNGFlNGIyNDUxZDliNjNlZDU4ZDMzMGFkZDlkYjY3ZWFkZjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhhMjQzMDAxMDM4NzA2ODU3NDU4ZWMzM2UxMzkzYTY3NTNhZDFjMDZmMjdkYzc1Yzc2MjhiYzQ0MWQ0ZDQ0MzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM2ZWI4MWYyZmM3YTIxNmI2NTkyM2NlZDkzNjRhNTc3MDU1YjE2MzdkYzRlZTNlNjVhMDlmZjI2NWM5YTYzY2EifQ"
+        },
+        {
+          "resource": "repo://app/(app)/settings/team/actions.ts#L81-L144",
+          "version": "repo-lines-v1:sha256:4157b0496848370f5946789d9b00d025d5813fbf6d9eed758f44d93fc24c72ac:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5ZjBlOThmZGFmZGQwMTljOWU1MWU4MzlmZTNlYTMxYjkzZjRiZjNiZTllZjg2ZmJkMzhiYmNkZDFlNmJjMjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiOWQxOTNhOWZmOTZiZjhkYzBmZmFmMzQ0NmVlN2M1OTVmYzVlYWRlY2QwMWRmY2QzNjU3ODc0YTc3OGRlYmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7d29af48f34f472a8a9d238b054066b9",
+      "statement": "Only one pending invitation per email can exist across all studios, enforced by a partial unique index on lower(email) where status is pending.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/team/actions.ts#L146-L163",
+          "version": "repo-lines-v1:sha256:7698eb1f1ca36132d935f758452ac225f3556937eb90ff9830babce75b62e1b8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5M2FjMjJlYmVlZDQ5OTNkMDdmYzdmMzY0YTA0N2EzMWRhODc3NjBmNGMxZjY5ZDI5MzU5ZTE0ODk0MTMyNjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJlZWVmZGQ1MTEzZDk5MDU2ZjFlMTlkZTFiN2Q1YmVkZTZlMGEzMDFmOWU4ZjdiZTRlYWQzZjhmOGRhODY2YzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1MTc2MjQ4MzY0ZjVjZmNiNjA5OGQ5ZGYxOGEzY2MwZWQyNWI0YWUxZDQwNTkzN2Q0NmZkODM3MGYyNDZiNDAifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0007_pending_invitations.sql#L20-L24",
+          "version": "repo-lines-v1:sha256:bf3dfe0c8a60a1e5b29a52a7d371db34b66d2ff74a7d38382f2e9c0820c4cd51:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDU3ZmZkMGY4NGM4MTQzMmNmYWI2MWIwMDBhMjVhZWE0OGE2OTY4NDU0NzczOTkwMzBiNjQwNDQ4OGM4YzBhNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjBiZWU2YjMyNjllYWQ3ODI3NDk2ZTAyMjUxYmVmMjRjMzFlMjUyYWQ4ZDk2NTVmYWIzZTg2MjljMmRlMGJjOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODVjZTgwOTc2MTJmZDA2YWRlZGQ3M2EyNzQ2NDA4ZDk5ZjU4ZTE3N2E1ZDkzMDE2ZDNkNzA1NzBmODMyN2U4ZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_18c031a4f104486c8d98ae9112d73f44",
+      "statement": "Team invitation emails are sent directly through the Resend client without an idempotency key, and a send failure is logged without failing the invitation.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/team/actions.ts#L165-L176",
+          "version": "repo-lines-v1:sha256:272226920e61230c555a07d04ab9b68d060aa7bf5d11d1f5e2b92f3129111be7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzMTk1Yjk4OGU2N2I0NGQyYzBhNWE3NjY5MGU4ZWU0OTI2OWI5ODk0MjM3NjNlOGQ1ZDJiZTQ1ZWQ5YzU2NTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk0NTUyZjY5NmZlMTYzYTQyZTYwYmQ4Y2YwNTQwNDA0ZGZhN2NjOTkxMjM5ZmYzMTQ1MjRmY2ZlYTRmMGVmMTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVmODQxNjhlMDhjZWRlZWRkNTdjNGRkOTExZjFmZjNlOTY0NDBjZGQ2MGE2MjA3ODUyMmY0OTMzZmFkYTNkYWEifQ"
+        },
+        {
+          "resource": "repo://app/(app)/settings/team/actions.ts#L48-L79",
+          "version": "repo-lines-v1:sha256:12a6f4d33a3e510c6495811131104810143c1d933ffeb03c0875e2b21d14472a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxN2I0MThiZmIwYjk1MzJhYjBhZGNmODcyN2VlNjJlY2EyMThlZDMwOTQwMjhjNmVmNzNmMDJmNzY4NTZhOTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZlODFjZTFhYjVhZWI2ZGVmNTIwYWJlNTRkMDg5ZGQ4MWE2MjEzMmRlNjAzMmFmYzhmMTUyODQxNzFiMjQ4OWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e1f725a636144eeeab9aaefadfbabad4",
+      "statement": "Removing a practitioner goes through the service-role set_practitioner_active_locked command, which takes the studio lock order, refuses to deactivate the owner and preserves the practitioner's appointments; owners cannot remove themselves.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/team/actions.ts#L198-L232",
+          "version": "repo-lines-v1:sha256:d91f71120c19bb86406611c4cd9418e7d58b895827d5b9492cf768e7e8cfc2e4:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwNDQxMDU1YTZlNjNmOGI3MGU1NDkzYWZhYjI5N2EzMzZkY2E3OTE4ODhkNTA2M2JkMzE1MjY1ODUwZGNiZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRmYWE3ZGI4NmFmMTM4NTZlNzE1ZDkyOGUwOWQyNjgxZDlhMDM1OTdmMzA2NTg4NWRiNTkyMzc4Mjc0NmQ1NjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f127d332566b4a9c9201e5d32c1376ca",
+      "statement": "Migration 0140 added a default-false studios.onboarding_v2_enabled flag and a per-studio studio_onboarding progress row, with a SECURITY INVOKER guard trigger rejecting flag changes by anon or authenticated because the owners-update policy otherwise lets an owner write any studios column.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0140_studio_onboarding.sql#L1-L70",
+          "version": "repo-lines-v1:sha256:7a4488f3f556b20ab6f74787c467ad6cc6be115be4b77b2216bcbfdc4fa6ef71:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhYjU3ZjJjZTgxYWM4ZTFjZTgwOWQxM2I2MGZkYjUxY2VjMGRiMTg3ZDZlOTU4YmMwMGFhZjhmNWE2MDZhZjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmMDBkNDE4Yjc1ZjQxM2M4NzRlOGEzM2NjY2FkNGUzOGMzN2RjYzljMTczZTYzNWNlM2UxNWU0NDZhMmJlNzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ec6ce13b8d194d25ab47ec87f77c2819",
+      "statement": "The practitioner-capacity flags use the same pattern: a guard trigger on studios rejects any change to either capacity flag by anon or authenticated.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0136_practitioner_capacity_booking_flag.sql#L60-L80",
+          "version": "repo-lines-v1:sha256:d0e02b4b11ce8446bfa449c76fd6e2d3462208d89be52c08f7e6c70b6f35bd75:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg1ODEzZTg4MDU4ZDMyYTI5ODczZjc2ZGU3MzY1Njc0NzI5NTM3YjhjNDhlZGIzNzUzOTIzYzc4NGM2MTlmNzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmNWNmMmZmNGY0MzNkNWIwMGMzNGE1ZmQ2OGJjZmNkODFlZDRkYWQ0YzFjNDMxM2E3ODVmZjFjOGJlNWNmNWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk5NGU0NTE4ZDdlZjlkYmFmYzExOTNmMDAzMGZiY2VlNzBjYjBjZGYwZTM5MjZmYmU1MjMyZDBjMDk0YjFjOTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e00d2f6affd34108896da960068c707a",
+      "statement": "Owners record onboarding progress (step pointer, skipped, completed, dismissed and celebrated stamps) by upserting their own studio_onboarding row through the RLS client under owner-write policy.",
+      "evidence": [
+        {
+          "resource": "repo://lib/onboarding/state.ts#L10-L77",
+          "version": "repo-lines-v1:sha256:a678ecef2b54fca78a1c8f5348a7ca659e65717bdeec8a91188cade3b15de8b3:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwNDVhZjc2Zjk1MWIzMDI2OGRlOGZiODQwMjcxYmI5MTg0ZTdlMTRlZGNhOTI0NDI0NzYyOTJmMWQxMzEyNjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4ZDc5MzI0YTA3ODVjOWQ3YjgzNzE0MTlkMmQwMTUyNzEzMDc1NjdlYzM4Mjc2MzUxZDFlMmU1OGVkOWRkYWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMyMGQxN2VkMTZlODY4YWU4MzQ0Y2EwNzRiYmIwYzMxMjdhOGNlZWUyN2RkY2U5MGYzY2YyOGI2MjkyNzEwNTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5262411132514fdab3ab3232a198bde2",
+      "statement": "Treatment images live in a private bucket with 60-second signed URLs, a 15 MB cap and a JPEG/PNG/WebP allowlist, and their storage path is server-derived as studio/client/uuid.ext and revalidated against the caller's studio and the row's client before any URL is signed.",
+      "evidence": [
+        {
+          "resource": "repo://lib/images/treatment-images.ts#L1-L110",
+          "version": "repo-lines-v1:sha256:0788f5495397bf7c9ea79d967c04f4b1aaddba9652c437795958e3a1ad834931:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmMTk1ZjllMTc1MDAyZDE3YjgyMzhiYjA2MTJkM2ZhMWUwZDg1MWVlMGNhYzI2MzZlNDA4M2I3NzkwNWZiMTVjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJlMjQ3MDljMGNiYjQ1N2IxNjA4NjVkOWY5YWZlYjcyNzRmODgxNDMxYTJiOGM0M2U4YzM5ODkxYmE5MWY4MDE0IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyNzU1ZDJjMmY5OWRkNTI2ZWQ3ZDI3NmRmMmQzYzU3OTNlNmM4YTc1MTFhMWFhOWI2YTYwYzZmOGViMTc5MWIxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_abf4258d10e34ee891ba17ff5bb8a496",
+      "statement": "Migration 0093 made treatment-image objects service-role only, bound bucket and path to the row's studio and client with CHECK constraints, enforced parent consistency and froze identity columns with a trigger, and only raises a notice asking the operator to confirm bucket privacy if it lacks privilege to enforce it.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0093_harden_treatment_image_storage.sql#L1-L43",
+          "version": "repo-lines-v1:sha256:0678360b70e2d9fab882c434b6a3485eceb12acfe9ef37c075c662e6a5da72e6:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZlNDIzMjk4NThkNDdhMTJiMzNkM2ExNGE2YTNjZDM4NzAxNmI1NjBiZmEyMDcwNDZiOTJiNjE3NDlmNmIwZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxZDM3NTA3OThhYjc2MmVkYjkxN2Y1YjBlMWI4ZmEyYzIzMGZkMGU5NjIyYjk3YzVjOTYxZDUyZTZmNTdiMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMzN2RiNTkxYzU4NzcwYjE5ZmI4OTEwYjE3M2E5MWU3NDdlMjU5NWMyNzM3NjkxMTlkMzFkNjcwOTNiZDFjYjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1e229de44a3642fbb933ffb79e3ef8b5",
+      "statement": "The studio data export is an owner-only server action that refuses inactive practitioners, reads through the RLS client and returns a ZIP of CSV files built from the export resource registry.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/data/actions.ts#L1-L83",
+          "version": "repo-lines-v1:sha256:4ae543dd2217de053ec20cce826b9dc52efe133682c8848adfb739d14f64e836:eyJzZWxlY3RlZExpbmVDb3VudCI6ODMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5ZmRiNmE5NjYxNWI2MDQzZGRhYzA0OWM0YTg3ZGZmMDgyZDIyZmJhNGZkOTkzMTBhMGRkOTJhNGU3Yjk5NjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmZjQ4NzI4ZWUyN2Q5N2YwMTcwYjFiNTVjMGI5OTA0NTRjYTE4MzEwYzAzN2YzNTY4MTFmOGZjM2EzYzIxNDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI3YTc4OTdhNWQwZDIyMGQwMDBjMDQ2MWQ4NTRjZWYxMDcyNDM3NWM3ODdkMzJhYjk1MThkYmUxMTIzMDliOGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ab1cfa649b224817a77c81895fcfc5e3",
+      "statement": "The export resource registry assigns every public base table and storage bucket exactly one disposition (exported, excluded or pending), and the declared disposition, executed SELECT, CSV output and manifest counts must agree or tests fail.",
+      "evidence": [
+        {
+          "resource": "repo://lib/export/resource-registry.ts#L6-L90",
+          "version": "repo-lines-v1:sha256:ed951e3ad48244248fb8179acde2895bc49173565073a0678965c4caee420c2d:eyJzZWxlY3RlZExpbmVDb3VudCI6ODUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyYzAyZDgzODA4MGM2NTU1NzQyZjgwM2UwNDQyNmQ5NjNkYjRiOGM5ZTMwZjg2YTczZDE1MWY0MDY2OWVhYTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYwZGM1MzlmZDdmYzBiMThjOWIzNTc1N2FiMWU1YTE3ODg2YWQ1ZWU0NjNmNDEzNTEyOWE0YzY4YTJiMjhhMTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkxZWE1ZDk1YjNhNzIxZTVlYmRjMTM0NDI1Zjc2YmIwMTQ5YTU3YmMxN2Y4YjM5NWE5Nzg3NzA2NzIzMzRkN2IifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0a1e19e4e46b463eba924882cdd25058",
+      "statement": "A DB test introspects the migrated local schema and fails when a live table or bucket lacks a disposition, a registry entry no longer exists, an exported table's included and excluded columns do not exactly equal its live columns, or a credential-bearing table is not permanently excluded.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/export-resource-registry.db.test.ts#L156-L400",
+          "version": "repo-lines-v1:sha256:5247a5259e0186b7663a71d51ecf5463c71fb07f2105a5e20a81f5c830bf1ea1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQ1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjYzBjNjZlNTRlYTFjMmNmMmU5MzNkNTAwOWE2NjZiMDc2ZDhlZjY0YTkzY2FjZjBmMzM2ODkzYTVlYWI2MDQ3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzNmVhODhiZWNjYmYxYjYyZTdiNTBlMzdiMWQyNTAwZjhmMjgwNDlmNTNhOWJiNWZjNTY3NjBjOTNjMGQwNzE0IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhYzIwMGJkZTM0ZTI3OTQ4OGJiMDliYzY5YWY4YzM0YzZmOTMwNTI5N2U3ODY3YjQ0ZDQzYzE2NzhkZDM2NGI2IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJjOTkxMjE1ZWJkNmQ0ZDU4M2ZiNzg5ODFhNGFmN2I2YjI5ZGQwMjAxZTJmYWM2ODVjMzY0MmNlMDYxM2E0NjJhIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_63c14832af8b4fdbaf3dec963a5d25d9",
+      "statement": "Known limitation L29 records the studio export as still partial at P2 open, with roughly fifty-nine studio-owned resources pending and the payload-changing TRUTH-01B slice not yet merged.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L570-L582",
+          "version": "repo-lines-v1:sha256:cf1ad59293cdda5afa6864a6129933ba85c49817206dc7cfe0aa0e6ee25ae67e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlNWVlNWNmZmYwNDYwYzhlODE4Mjc3ODQwOTU3ZWVlYWZkZmM3YjAzODk3OWI3NGMxZDQyYzU4ZWJhYzY1YTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE0ZTYyODUxYWIwMTg2MTI5NTc5NmZjYmU2ODMwNjM5NWZiMGNkMGVhNmIzYzA2ODQ0ZmIwOTQxZDA2M2E1ZmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU3ZTkwY2IzZTNlZWM0NGI0Yzg0MDNkOTJlYzkwNTczZDczMDYxYjE1MjYwZTNlYjEyY2YzNzM2OTJkMDMzNjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJhMmVhNzM5MGQ4NGVlYTQxZDdmZWZlYWQxODJhYWRlNTM3Nzg5ZDgyNjQ2ZDRhOTI1NzQ0YjM4OWY3NTgyNDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1e0f5e26835a416e98108975f11803d8",
+      "statement": "Quick Import is a pure parse, normalize, group and plan pipeline that writes only imported treatment memories, skips duplicate clients rather than merging them, caps imports at 2,000 rows and never stores the raw pasted text.",
+      "evidence": [
+        {
+          "resource": "repo://lib/import/quick-import.ts#L1-L26",
+          "version": "repo-lines-v1:sha256:0c76483a33686cf9b8a75a3ce9056bc7824d6489fa1cf66ae55ab0779b47b128:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwNTdjMzY1OTlkMWI3MjFlZTFiZDM4MDExN2ZkNTZhZTQ5YTFhNTM1MDQxMzFmODY1ZjE4YjRhN2U2MTEwZmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhMTBmNjA1ODkwOGQyYjEzOWU2NTYxOTBkNTkyNDZiZGQ0YjYyNWMzNzYyYzA0MTIyYzNjZmIzNmIyM2YyNGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU4N2M2ZDA0NDEzODNiNjM4ZGQwZGM3OWJkMGVjNjAwOTgyMzkzMzU4MjA4NGFmNGUyZDI3ZmYxNmE4ODE2YjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f855720e0c6c46e580275c1e01fb97c1",
+      "statement": "Both Quick Import server actions require an active owner who also has platform-operator standing before their first statement.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/import/actions.ts#L92-L119",
+          "version": "repo-lines-v1:sha256:dbf90b15c31d02f293c9ae096bc6df1d663489c66a2704b653e1928c0b82f210:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhNmM0MmE5Mjc3MDY5YWJlM2JhODNmZmVlODhkMGZlODk4MGVlNTBhOGNkZDEzNDYxZGY2MzM3ZjQ1YTI5MGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYwN2UwY2JiZTNhYzBjNTJhNGVhNmVmYmFiNDNhODZmNzc0Mjg2NmI0YjZmMGQwYzdkODAxZTBiNjVmYjMzOGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVmMzY4MDE0NDg1MDkzMjVkOGM1ODNkNmNlODQ5MGVlZDlhYjc4ZGIxYjNiOTQwM2E2YTU0MjhmNmU0M2VmMzYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_499ee4ff8cd5437bba1b90a301b4d619",
+      "statement": "Known limitation L24 records that Quick Import confirmation performs three independent writes without a transaction, so a failure on the memory insert leaves clients committed; execution is mitigated to operator-assisted runs, not fixed.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L439-L449",
+          "version": "repo-lines-v1:sha256:766823ed98b041c0c085898dd59b6a8f6b5a65ac3441e5296b34a1a5c3a5e301:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyOTk0NjIyYjgyZDBiNDI5ZjcwYTQzZTVkMjA4ZDAwYjBiNTIwNmFlMDBiN2ZhNTc1MjljYTk4MDExMzA4M2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEwODhjZDdjNTQwYWNjM2MxNGE4ZmU3NTUzOTE1YTA4NWI2NzQ5YjMyZDgzYzRlYjgyMGZjYTE1ZTQwZjViMjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1YWJjZDEwMTI0OTgxNTZlYjQ2OTY3Yjg2NGE4NTA5ZTI2ZjVmYjMxNjgzZjBhYjA3MjE5YzcwMGJmY2NmM2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRlY2UyZGIzOTVjODM1M2U2ODE4NTE2N2I5M2MwNjEyMTUxNGY3ZTYxMDI0ZjAyZmU1ZDYyNzA4YzE2MzA1Y2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f9d555f40ab141d5a970f9a4c08388d8",
+      "statement": "logAdminAction is the only writer and reader of admin_action_events, uses the service-role client after the isAdmin gate, drops credential- or PII-shaped metadata keys, keeps only primitive values and applies the ops-alert redactor.",
+      "evidence": [
+        {
+          "resource": "repo://lib/audit/admin-actions.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:2c3eb0ed37696255c0db103f3291282480cc0c9d5daa72dc00d9a7766dfeb60c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3ZmUyY2JjMzhmOGUwOTI3NTA1MThlZDNhZTgyODMwZDA2NGM2MWVhNTJiYmE2OTMwMDA0YTQyMzdmM2UyMzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAxMDZhNDA5MDcwZTZlN2E4MTk0MGRmZWM2OGY4ZTdjOTE2NjBhZjMyZjg0ZTliZGRjMjYxMTBmMzA4MDdkYjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e4c716753d0c4138a4346fe4d3a8950d",
+      "statement": "Known limitations L27 (no automated retention or permanent deletion) and L28 (soft-only treatment-image archive with no storage reconciler) are recorded open at P2.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L531-L568",
+          "version": "repo-lines-v1:sha256:ef61b267a7f987a18618688d14b251c4275ee855400bba0964ec0fb0670285ac:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0OGU2ZWUyNjAwNGM0ZWYzOTI2NTM1NjRmOWE5MTg4NjJhZTVjYzk1ZDI1MDcyMjQ1ZDYwODk3Y2YzN2YzMjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkMjk1MTAyNWE3NTQwMjVhMjBmMjA4ZmEwZjhkOTBlNzYwMGJmYjZjNDkwNDQ3ODgxYTY3YTRlYzZhMjBiMDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdhMGNkYTUxYzIzZGZlNTg3YmYwNjEyZjczYmExODY2MmQ5M2M3MWY2MWIxYWYxM2M5Mjk2MTc3MzQwMWJjMTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5MWZlOTA4MDUyMzAxNzZkY2I5Mjg3MGJlMDI5MjVhMjE3NTI4MjVmNjVmMjg3ZmI3MDk0NDYyMTkzZmI0N2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_60974dee630f46a98975bc98c6a94f4d",
+      "statement": "The wizard action's comments still say the owner practitioner is created by handle_new_user on first sign-in and that there is no email automation, and the wizard DB test's header and title still credit the trigger, although 0141 made the trigger a no-op and the test body provisions through explicit acceptance.",
+      "evidence": [
+        {
+          "resource": "repo://app/admin/studios/new/actions.ts#L203-L204",
+          "version": "repo-lines-v1:sha256:ee751adc6be830242fa33c11a674f0bff9a4ef74776fbe61e836f489b360c1e3:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDM5ODkwNDA4MjZhODViYjkzODAzZjMyMjAwYWU1NTczNjM4NWRkZTk2OGI5ODNlMjE0NzI1ZTU1NjJjMmE4MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODdiZWRiNDA1ODViZDJhOGNkNDIyOWQxODlhMzAyYWViN2Q1ZGI0YjcyMzlkNTAxNGRkYmRiNDZjYzI4NTQ3OSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDhmODkzZmZhMzI4ZjExZTM5OWE2ZmQzMGNmYmYzNzZiYWJhMjhlZTg5MTFiZWJlNTdlMWY5MmQwZDg5ZTFjMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTAzZmU2MzI5NTg4ODdmZmM0MmI1NTc2Yzk4NWY0MjNkZjlkMjk1OTg5NGFhYjc1ODhkMGQ5YWZkYjdmZmMzOCJ9"
+        },
+        {
+          "resource": "repo://app/admin/studios/new/actions.ts#L22-L29",
+          "version": "repo-lines-v1:sha256:f047f8303f8807c0ded1bdaf591357a32863c32e591bdb04f3629d329ffc468c:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjFjMjVkYzM1MzQ4ZDMxM2U4NWNiN2ZlNTg2MTdmM2RiYzI0ODM5Y2Y4NDE4ZjdmNzZlYzA3YTdhYmU4YWQ2YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjc1YTcyZTQ1YTQwYTZhMjg2Y2FkYWE4YmQyMzFhODY5ZDYwYmYzNTY4MjZlMTJmZTg1MTZmMTcyZmE3M2MxMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTEwNThmNjA4N2IxNmE4OGMwZWM1MWQ3MjM5NWFkZDAzYjI3ZTAwMjRjOTdkY2EzNTI2MGI5YWEyMzU0ZTIxYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmJhYmVhYjZhNjYxY2QzZDgzZjc3ODlmY2JkNzhjMGJhYzc4OTM5YTFmNjMzNGFiZDg5OGViNjdiMzQyYjIxNSJ9"
+        },
+        {
+          "resource": "repo://tests/db/new-studio-wizard.db.test.ts#L63-L64",
+          "version": "repo-lines-v1:sha256:be2544a7ab28c9eb99d7a8de7e6ec88d6d722b19c67fabcead9c22245e348a85:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmM1YjBjMzJlYWUzYTRlMTJkNzFlMDYyMjdlZDBlMjg0NWQzZDBkM2E3N2YzMDk1YmJiZTBlYzY2MjRmY2I0ZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWQwMzY3M2UzMjI0NjJkMWE0MDkwZGQzMjE1MzZiYjY1MGI4NWI0ZGRlNzBlNjdjMjVlYWJiZGViMjdmMGU5MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjc3OWQxMThkNmUzY2JmNDUwNTM5NzQ4ZGVlN2E0MzA3YWNiZTY0NDZjYmEyOTdmMjc2MGZhNWQwYmJhMWJjMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOGMzMGM4N2JlZmZmYjI4ODA1MDNhYTNmODcxYWY1NWIwZjBiNDIzYjNlN2IyNmU0ZmE0OWI0NDE1ZGU4ZDEyMSJ9"
+        },
+        {
+          "resource": "repo://tests/db/new-studio-wizard.db.test.ts#L9-L15",
+          "version": "repo-lines-v1:sha256:f41bf051d355c8e14157a800d24d8edf219ee24928f9db3c430b786bec02b78d:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODg0ZjYwNWI2ZTJmMzA3NzI4YzdkOThkNjM1OWY0N2Q2YzY1YjQ1NjVkNDYzOTJiMTE2NTg5MDgzNTVkMjIzYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDkzOTc1YWM0N2M0ZDQzNjEyMDc2MjhhMTFjOTFhMmNmYjY3ZmU4NjBhNDMwMjVlZTlkZTY1N2E3ODM1N2QzYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTA4ODJmZTVlNmRmMjljMGUwOTlhYjc1MTZmZDYzZDdkZjMzNjJhZmVjODIyNGNhMWRhZmRkODlhNWZmMmY2ZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTEzYzI2ZTQ5MDcxZmQ4Y2U0MzBlYjUwYjgwNzUxOTZiMTdmNWZjODY1NTMzY2FkYWZjYzM1YzI2YjljYzgwYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b89640b1574e4a859ef778650c2cca86",
+      "statement": "Wizard failure paths place raw database error messages, and for a duplicate invitation the owner email, into the redirect URL's error query parameter.",
+      "evidence": [
+        {
+          "resource": "repo://app/admin/studios/new/actions.ts#L149-L149",
+          "version": "repo-lines-v1:sha256:7fd146ed4d1264da1cb7c0557ab9fe9c4d60ca8ffd30bc037134631cdeac49c1:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2ZkMTQ2ZWQ0ZDEyNjRkYTFjYjdjMDU1N2FiOWZlOWM0ZDYwY2E4ZmZkMzBiYzAzNzEzNDYzMWNkZWFjNDljMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiN2ZkMTQ2ZWQ0ZDEyNjRkYTFjYjdjMDU1N2FiOWZlOWM0ZDYwY2E4ZmZkMzBiYzAzNzEzNDYzMWNkZWFjNDljMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjUxMDg4YmY3YjI5ZTdlMjhlOTczYWFjMTlkYjdmNWFhYjg1NzJlMzIwZmE3ZDM0OWIzNDhlOWI5ZGEwOGQwMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjYxZTZlMDI2YTA1NGViNTJjYWRhMzRhODVlYzVhNTUwYjAyMmIxZTU0Y2JhZjAzYWI2NDc3ODAwMGVlY2NkNiJ9"
+        },
+        {
+          "resource": "repo://app/admin/studios/new/actions.ts#L189-L189",
+          "version": "repo-lines-v1:sha256:41ef631e2989980ef11afa8aedc27192b391d6effc3699db9fdf8260c7363b57:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDFlZjYzMWUyOTg5OTgwZWYxMWFmYThhZWRjMjcxOTJiMzkxZDZlZmZjMzY5OWRiOWZkZjgyNjBjNzM2M2I1NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDFlZjYzMWUyOTg5OTgwZWYxMWFmYThhZWRjMjcxOTJiMzkxZDZlZmZjMzY5OWRiOWZkZjgyNjBjNzM2M2I1NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYmY3ZjAyODJiODA0Nzc1ZTFkODRmNTNiNWM0OTg0Y2ZkYTM1NDRlMWViNjc3ZDI5NDg1MjM1OGNhMTU4YmEyNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNmMyNTg2MjhlNDNjN2M0NmQzNjY1MjVmYjkwOGM1NzdmNmRiYTIyZTc2OTM5MTkxOGViNDBhZjczZmJmMDIyZCJ9"
+        },
+        {
+          "resource": "repo://app/admin/studios/new/actions.ts#L97-L116",
+          "version": "repo-lines-v1:sha256:64fea8c08dcc09ccf5ef2fd416dd3479c165ab164f2cc15864ac900a85c193ab:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRlYzlhYTYzOWRjYWQxMDU1MTc5OGRlM2JiNzBiN2FmOWE2MjM0YjViYjI5YmQ1MGE4Nzk5ZjEzMjJlOGQ4ODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU5NDZiMjBmM2I1ZWI3Y2VjYjRiNWYzMjc1YjdiMmU2YmI0OWZlMTU2MGQyMTBmM2E2NGFkMmM2MjQ4ZjExM2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQzMjFlOWNjMTY2ZDI1YWE2ZjYyMTM1Yzc2OTNiNTY5NWQ3NWI3Y2YyMDA0NWJjNWVlM2VmN2NiN2ExODVhZTcifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

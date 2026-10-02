@@ -1,0 +1,5 @@
+# Files
+
+- [Cron jobs, reminders and idempotency](cron-reminders-and-idempotency.md) - The five /api/cron routes, how each is scheduled and authenticated, the ~24h/~2h reminder pass and its single-claim-per-window law, retry and exhaustion semantics, the external-scheduler heartbeat, and which production facts about them are proven versus unattested.
+- [Email delivery (Resend)](email-delivery.md) - How Hone sends transactional email through Resend — the shared timeout-bounded transport, the idempotent waitlist transport and its three-way outcome, studio-branded sender identity, the per-family claim/attempt mechanisms, what can still double-send, and the fake transport used in E2E.
+- [SMS delivery, consent, STOP and senders (Twilio)](sms-consent-stop-and-senders.md) - How Hone sends appointment SMS through Twilio's REST API from one platform sender, how consent is captured and STOP is enforced phone-wide for clients and waitlist prospects, and the per-studio sender lifecycle that exists as tested library code with no product caller yet.

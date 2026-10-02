@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:270bc7272d3afa8aaca7438cbad2254dd5a253293924a3c96c828668492fa010",
+  "claims": [
+    {
+      "id": "claim_22559d4f328148a1b1c803e0ae810889",
+      "statement": "The dashboard renders a failed card or prep read as a neutral 'unavailable' state distinct from empty or negative states, and defaults an appointment's payment state to 'unavailable' when it could not be read.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/dashboard/page.tsx#L136-L145",
+          "version": "repo-lines-v1:sha256:d86e231baadd0dc93dbe9a312746983538db7b30129122ede9216e46c3d4045d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3YWRmZGJkYzAwM2RhNTQxMjhlMDNjOGMzY2EyMGNkM2MxNWZjYzcwZDgxOTQyZDliYTc5M2E5NTRkYTFhZGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg3ZTQ2ZDFlOGE0NzdlMzI5ODE1ODFiNDdhNjkyM2ZjZjQzMjdhYzRlMzg5YTljYmYwZmI2ODM1ZGJiOWEzM2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc2NmEzNDUxYjM3YWJiYTgzZTQxZmFhZWUyODYzYmYwNDhmZGEwMGY0NWVlYzUwY2VhYWFkZTI3ZmJmMDU2ZmUifQ"
+        },
+        {
+          "resource": "repo://app/(app)/dashboard/page.tsx#L849-L849",
+          "version": "repo-lines-v1:sha256:2e33790995220063a4d1b9433b2c259d069e42b6f9b441e49908ac810cb7ad21:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmUzMzc5MDk5NTIyMDA2M2E0ZDFiOTQzM2IyYzI1OWQwNjllNDJiNmY5YjQ0MWU0OTkwOGFjODEwY2I3YWQyMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMmUzMzc5MDk5NTIyMDA2M2E0ZDFiOTQzM2IyYzI1OWQwNjllNDJiNmY5YjQ0MWU0OTkwOGFjODEwY2I3YWQyMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWExMWY0ZDFkNGViM2E1MzQ3ZWU4OWE5ZDM0ZDUzOWM4OGFkYTM0OGJjYWU4ZTk5YjVmYmI1MzgyMmVkYzE2NCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzcyYWQwMWUwN2U1MTdlNWFkMWVkZWVkNGMwODc0ZjJkYTFiYjU1MGEzYjkzMGM5MWQzYTY2Yjc4MWE1NGNiZCJ9"
+        },
+        {
+          "resource": "repo://app/(app)/dashboard/page.tsx#L996-L1035",
+          "version": "repo-lines-v1:sha256:512e4e5b19b86ca2b60b39bb8d8d2989694c5aab5d06fcbe1bae3b7ed5e73cd9:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZhMmNkYjVkZGZlMDFkMjkzMmJkYThiZjJkZGJkODlmYmFmMmMyY2RiNmFmNGJkYzljNDQ4ZDA3YzhiZWI3ZjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3ZjM5MzlmZmY3N2NiYTJiZDk2NTgxZDIzNTZlMjZmNTkzZjYyN2VkMzk4ZDY4NTIxNTg3YWZiNWY4M2VhOGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM2MTk5YjM5MjE4N2ViNmZhMzJiZDAyOGU1ODFkMzRmYjFhYjBhNWQ1ODJmZGFkNmRmNzRlZTI5MzhjYTBiNjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFlZDRkZjQyZmFlZTMzM2I1MGU1YjhmMmFmYTY5M2NjMWVkMzYzMDJkMjdjODMwNDIxNGI4Y2RjZTU1NGNiNWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7c18b41fed6b4cb9aaaac917db545765",
+      "statement": "The owner capacity page refuses non-owners in place before any capacity read is issued.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/dashboard/capacity/page.tsx#L12-L46",
+          "version": "repo-lines-v1:sha256:a048b0e715ac6acd3ee712a9aadcebc2469d0c12fe1776bbf0d0b2c52a71977e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5ZmU0YTQ4NjkyOGIxMDA1ZTNkMmI4NzI1MWQ5ODcyZDMyYTQzOWUxY2MyMzA4ZDlhMWQyNGZmMWRjNjJkYmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1MDBiYjUwYzcwZGI0N2Q5MjQ3NjkyMWRlY2JlODAzMjEzMDM3NTQ2MmZjMTdhN2NiNzg4NDc4ZTIwNWFjZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRjNTI1YjRiYzljYzQyNjdiMGQ3NmJiYzQ1YmM1YzhkOTg0Y2UyMzBjZGQxZDRlODRkMDQyNzUzZDQyNGViYWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY2Y2YzOTljNjk2NmExMzUzNGY0YmRiZmMwNGY5OWRhZDYyZGJlMDA2ZTg2NjE4Mzg1MjU2MDk5MGVjM2QyNGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4fa4b98541ee4d6c8c2e51555e797529",
+      "statement": "The owner capacity gate is an application-layer role check, not a database boundary, because RLS on clients, treatment_plans and appointments admits every studio member.",
+      "evidence": [
+        {
+          "resource": "repo://lib/dashboard/owner-capacity.ts#L31-L37",
+          "version": "repo-lines-v1:sha256:766a08d966e1d92ac5aaf0990417c2a77f99ea61650d00380568c7536f4585b2:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmE4ZTYyZGE0OTk0ZjlkZmJhN2M2ZmI4MDUyZTRkMTMwYTg0MTRhMzc0N2RjNDU4Y2FhNTZlOWJjMjliZTE2NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZWExMjE2NTcwNGUwMjlmOWI2MTJjNzAwZTA0NDBiNjAyN2ZjNzI5Njc1NTgzYjE3MTNmZDRhNmMwYTMwNzNhOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOWY2MDEwNmI3YmI3ZDkyN2ZlNjVmZjhkYjYwZjgxODk1MjlkYmRiZTc0OTA2MTcxYjA0YTI1NGUyMjAyMjRhZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTExMGM5NTZiOTc3NzBhNmVmMTRhZGRmNzVlY2YxMTYwMmEyZDc2MmY5YTg5MGZlYzUzYTUzNzA1NGZhODcxNiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5547a3cda19b4502a264ac74f62654c8",
+      "statement": "The /financials page is force-dynamic and owner-only, with loadFinancialsView refusing on role before constructing a Supabase client, and the route is unadvertised in navigation and search.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/financials/page.tsx#L10-L60",
+          "version": "repo-lines-v1:sha256:e9d51bec27567514065d49b877b6df8bba4256cc939652088f94700625de7fde:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1MGFlYzRmNTY3ZTRmMTJiNDg3OWIyNTZhMTA4YjA0NzkyZjJiM2ExYzllNjFlOTg3MTVjMjFlNDk3MWJmYzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA1N2E2OTA3ZjhlZTllZDZiYjYwMWZmMzA3M2M2MTQzZmFmZjQxNmNhZTVkYmI2NDk1OWM3YmQzYjJjOTI0YTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFkYjNlN2NkMGMzYTYyMzA0NzY2ODE2MWQxMDRlOTlkODYyMDljYTNlNzc1NGEyNWIxMTlhNDkwNzg3ODA0MjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ec00372478f24d03a7829862299111f9",
+      "statement": "The financials loader projects only appointment status and starts_at for one studio-local period, performs no writes, RPCs or Stripe calls, and is explicitly not a database boundary because RLS on appointments, payment_charge_attempts and appointment_settlements admits every studio member.",
+      "evidence": [
+        {
+          "resource": "repo://lib/finance/financial-briefing.ts#L15-L49",
+          "version": "repo-lines-v1:sha256:fc6978139af31000b70f87f72a96c1cc6817dd72bf29dc36cfaedf30f0087a44:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ3MDdjYjE4NDBiMzNiZjMxYTcxNDlkM2RjNzdmMmU5ZGFkYjY5Y2MxMzFmZWZhNWY0MDdkNzBjODIzYTI1YjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4NGY2YjBhZDRmYTc5OWQ2ODQ5ZGRiOGNkNTk5NWVjMTRmYTJhMWM1Mjk1YzI3OTNiYzI3M2NiYTFmOTBkMjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRmNThmODMyN2U4NWZmODVmOTg0YTA0MTEwMDViYTYwMmE3ODZjNmJjNDMxM2ZiNTJmOTIxNTY2Zjc1ZGM0ZDYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d0432a7e51584ad59739f5c3cb0d81aa",
+      "statement": "Financial facts use a closed unknown vocabulary (not_recorded, unavailable, unknowable, not_yet_supported, not_enumerable), and known() is the only way a value, including zero, becomes displayable.",
+      "evidence": [
+        {
+          "resource": "repo://lib/finance/financial-fact.ts#L35-L90",
+          "version": "repo-lines-v1:sha256:41ce1efe4f93b00d99ebe61b41c307224fe4eba7d3b52b35252424e177b6ca61:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVmMTg3MGVmNjc0ZGI3ZjdhMTU4Y2E5YzRmYjgzOGM3NjVhYzFkMWU4ZDY4MjIxMzc0NzRiNmI1MjQzZjcxMGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZlZTZlNTIyZjM4OTU2MGE1YWM5M2YzMDc4MTU5Zjk3MmZjMjAzYzY0YjI0YzIyNDYxMDE4YzEzMTM5NDFmYTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5MmE0ZmVhMzcwZmM5YjEyZjE5YjQwM2U2NzI2ZGJhODJlYTJlNzczYmM2YzY0Yzg0OGJkOTk3ZTc5ODQ4MDMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4bfbeec0f58842729e07c3323946d3af",
+      "statement": "practitioner-notifications.ts is the single writer to practitioner_notifications, writing through the service role with server-derived fields from public event sources, and it never throws into the caller.",
+      "evidence": [
+        {
+          "resource": "repo://lib/notifications/practitioner-notifications.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:bd415c1ab524d80cceee42ee22c7b45d3e3bb52f8cb63747f634cdd419ba9a76:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2Njc5OGQwNDI5ZjJmYmNjNGJhZTI3ZjJmMjAyMmRlNjFiZTk1YTgwNDUxY2JmMGYwNjQ4ODZjYmVlY2YwNjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhY2I5YTUyN2RhOTFmZWRhNzcxYTFkODk0NzQxY2JkZTNlNWNhNzQ2N2JkNWEwYTc3M2VlYTA4MTMzOWMxZmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjViZTIxMzJlMjJjNjMwN2ExNGEzYWViZjQzNWEzYWZjODVmMzExM2MwYzAwNmU2MTMzNmZlZDdmNTk3NzAxYzkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_cfce9153a0f24c54b58b39b6f6069928",
+      "statement": "Migration 0154 adds a nullable dedupe_key to practitioner_notifications with a partial unique index on (studio_id, dedupe_key) so a repeated event inserts once.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0154_practitioner_notifications_dedupe_key.sql#L15-L36",
+          "version": "repo-lines-v1:sha256:93d94158a25424cee3f4c51ad68f949ddb01f031766b5af2a66e778beeea2ea2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4OWNkN2VkMTYzMjcwMjYxNTc0N2ZlNjMyZWI0MGYzOWE5ZWU0NGVkZDU2NzBkMmEzZjVkOWE0ODc0YzNiYmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhZTJhMzZkMWUzYjkwMWNiMzc4NWQzY2U4MThmY2U0ZDUwOWQ2NTkzNTAxNzAyNjMzNWM0ZWFjMDNkZGNiMDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM5MTgyYmY1OWQ2OGUzMWMwNGJiOTU0ZGFlMGRjYmQzM2I3Mjk0NWJkNTU3ZWMwYjZkOGYzY2Y3ZTlmZTgxOWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFlODg0ZGEyZDMxYmM5MzI0ZWEwZDBiMDMxNjdiM2E0ZGJjZGJkNDM0NDI5YWE3NDFkZmZmYmZlOWRlZGM1NWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dbfd98796eac443e8895346249b205f2",
+      "statement": "The canonical record describes the owner capacity surface as implemented, merged, deployed and enabled for owners but not production-exercised as a measured fact, with slices 2 and 4 not started.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L928-L957",
+          "version": "repo-lines-v1:sha256:ca7e0746034847957d8313c267279627329ffd5b853ea716df6bf466ddcea61d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQwZjRjOTA2MmU0YmZhMWQzOWQzZGZiNTRmY2I0MmUzMjY5YTgxOGQwM2UzOTIyNzZjNDhlNjgwOTQ3NzVmZDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyNDlhZTZmODAyODQ3NDJiNDU0ZDI2MDAwNjE2ZjE2M2I2ZDc5YWRlMTNjMjc1NDFjZmZhNDhjNmU4MGQ1ZDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM0M2Q1NGQ2MzgzYTA5MDA3ZDljZDI0NTE3MWIyYmM3YmRmYjYwMWFjNDI2NWMyNDNhNDYyMjFjNWNkMzlhMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhmODY5NTg1OTRkODkwNDRmODA4NWJkMzU1MzM5NGEwYmM0ZjMyZjEzZTZlODkyZWI5N2I1ZWNlMTJlYTEyNTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f8aaf6e39dcd456b892cbd798002ab2a",
+      "statement": "The canonical record describes FIN-01A slice 1 (/financials) as implemented, merged, deployed and owner-only with no migration or RPC, and not production-exercised as a measured fact.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L959-L1016",
+          "version": "repo-lines-v1:sha256:e05e0ecac806d6d1f80de20a36e7c089bcb500e0300f02e785bcefe9acdddac1:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzMzA1NGFlMzRiODQ0NDdjMGEyYzdjNTUxMTQzN2FkNGEzNjZmNmE5M2QxMjkzNGQwYWQwYTg3N2Q1Mjk0NjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI5Zjg1YThkYjlkYWRiMjU0ZmJiNTJmNzdiMjE4YTdlMThiOGQyMzQ2ZTc5YTVlMTcyYjQ5NTljM2E1ZGIzNGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc2MDJkYWU5Zjk4NDJmNDA3OWMwYzk2NGUxZjBiNjYyNmJkYTVjMzRmYTliODZhMWE2ZTFiMzViNDVlMDQ2ZTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b1054aca73cd48db972239bc421f1234",
+      "statement": "The financials loader bounds its read by a 1,000-row API page size documented as coming from supabase/config.toml.",
+      "evidence": [
+        {
+          "resource": "repo://lib/finance/financial-briefing.ts#L50-L51",
+          "version": "repo-lines-v1:sha256:263e60aebb568fb0bae67c2bfdbd41b8b5baac010e12650e2e4767f18152b861:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjhhN2E1ZTJhM2M5NzYwYjNjYjYyZjA2ZDcxZTY5OWFmMDkyY2MzMzQ3ZDM5N2YwMWU5ZWRjOTZjMWExM2EwZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTlhMjA3ODU0OWRiZGQ2ZmY5YTRjMWY5M2Q5ODc0MDA1NzUwN2M0MTJiNTBkNTBjYTY4ODlkYWI3YzQwMTEwYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmI2ZTA3OWJhMTk2YmFjYzhjZGVmOWY5YTA0NTVmMTVlYzZmODhkODNjMmRlZTk1YmUxM2Q5OTE4NDY2YmExYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTVlODliODQyYWUzZmJmYjI0NWFlOTJiNzQzYjg0N2FiMTVhODY2MjE2OTZkNjQzNDhiNWE5NWNjOTU2NDM3OCJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

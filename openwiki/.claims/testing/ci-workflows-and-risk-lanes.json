@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:7a708cde6aa8873565bd9bbbadb26cd175f3e76a88971a69ce1c656387372616",
+  "claims": [
+    {
+      "id": "claim_9b27799567c34495ba01c723c279ddf6",
+      "statement": "The PR CI workflow runs on every pull request and on pushes to the default branch, declares top-level permissions of contents: read, uses no secrets, and cancels superseded runs per pull request.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L1-L60",
+          "version": "repo-lines-v1:sha256:d930931248de14dee29e0a0897251e371f03e5c371a46eccd5ff17097087c3ea:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1NGU3NjFlZjNkZTI3YWVhMTMwNjA4YzBlNDA4NWUxNTIzZTE5ZDBmYTkzYWNkNjA1YjE5NzE3NDJmNmFhNWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0YTc5NmEwMWY4NDU4Yzg5OWQ1YjIyODkwZTVkZjQ0ODAzY2E0ZDgwMTdjMzg3OGQ3Zjg3OTQ0NDkxMjBjOGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYyYjg1MDVhODc5Y2ViY2ZhN2U3Njg3Mzg3OThkMGJlZTU5ODA0MWYxMGU5M2QzZDJjMWYxNGFlMTYwOGYyYmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_89e9e61a3d104e05b8a2793d805ed649",
+      "statement": "The changes job diffs the PR head against the merge base on a full-history checkout without persisted credentials, runs the change classifier and browser-group selector, and every other CI lane keys off its outputs.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L74-L226",
+          "version": "repo-lines-v1:sha256:7af1088f2d51516344de2a75fbb17afdb8de215b8069dcc80e5e4b1520465379:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiZjUzYzI1NTExNjM3NGNlZGZlZGJkMGIxOTIyNWIyYzFmOTUxMDI4OTJlYjRmNGQ4MTRmODQ2ZDkzNjk0ZGMwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkNTE1ZTI4MTI1ODE1MDMyZDAzM2YyNjk3MjMxYmQyYjU1ZGM0OGU1NDY5MzhmNDhhMGU2NWZjYzgzMDZlZGE0IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyYWNiZWI1OTA4ODFlYzcyNGQzMjdkODNkNDhmN2QwZmIyM2M1NzQ0OWMwMWY5ZjkwZmIxYzlhOTNiNmYyNDMzIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_38db53e6354040a5a89c47f151baf30a",
+      "statement": "The validate job is skipped for docs-only diffs and otherwise runs npm ci, typecheck, lint, build, npm test, git diff --check, the Stripe safety gates and the migration extension-qualification check within 15 minutes.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L228-L339",
+          "version": "repo-lines-v1:sha256:7ed238d4dd75f63609cff012bf038b8f76b92db00f5c9a3264ccd91bb11cdb37:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzMmJkZWJmZGMxY2FlZDMxMGZhMTZjNzhjZTQyYmQ3NmUzZDc3YmM0OWYwMTAzMTcxMjc3ODc3MDBkYzhhYzdhIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI2N2E3NGNlMjFlY2E0OGMwMWI1MDlmZjI1YjYzNzVmNmJiYzQ2MGIyNTMzMjA5NmExYzRmMGU5YTM1MjM1YzBkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxNTMwMGRhMTA4ZjM1YWNjYTllZTIzNjE5MGMyY2VjMjkyM2NkYzg0M2EyMGU5ZGIxYjY1MzhmYWQ5ZDY2YmRiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2YjQzYmFjYWE2Nzc1NTQxYWQ3MGJiZWI0NzdjNGQ1ZWEyMGU1Zjg1MTFmNWMzMTcwMDRmZTA0ZTQ4ODYyYmM3In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_0a8005fe42df433e946907e485a85af2",
+      "statement": "The db-integration job runs for database, security or full-matrix diffs and applies the full migration chain to a local Supabase stack with supabase db reset --local before the fresh-managed extension proof, the DB/RLS integration tests and a generated-types drift check.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L341-L472",
+          "version": "repo-lines-v1:sha256:a166311add158a9e0f891e1a132f39beae65f1f2590211a0e7970b0a73b69e1d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyMjhmZjM1MmMwMjA3MmQzMTY5NmZmNzhmMDg4NTg5ZDc0NTZiYWNjNTRmMmIwOWJiNTc5YmZjMzViOWIwOTJhIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNTkzNTJkYjUwMTA4ZmVlZjE1NGZlYmMyNDE5MTY3MjM2YjhkZWY3MjI5OWZhYWJjNjI2OTU3YmY3NTQ5YjA2IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxOWYxMzI3M2Q2ZTFkOWY4ZmMwMmVjMTFhZjEyMjc1ZmNiOTdkODI4YzIyOGFkYjU5MmZjN2JiY2JlOGY3NjBkIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJjODBiOGJhYTRlM2E2MzA1OWMxNmI0NWYzYTU1MjA0YWZhNmEzNjc4NTllZjI4MDBjNDUwMzBiNzRhZTEwZjE2In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_4df3b49c15e8436ab418cd3df5ce886b",
+      "statement": "The change classifier marks a diff docs_only (switching every lane off) when all paths are docs, README, CLAUDE.md, Markdown or GitHub templates, and requires the full matrix for package, tsconfig, framework or test config, middleware, lib/supabase, lib/env, test-helper, CI-workflow or empty diffs.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L18-L58",
+          "version": "repo-lines-v1:sha256:b1b561efeab222ec0db9d0ecb8c7218ffd45b92a67d9deb2b0d661f18a5f31a6:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3MzZlOTg5YTg4ZDhkYWU3ZjRhZTljYjJhMmUzZjM3Mzg0ZGNiYjM0NWZkMDk3MmQyY2E1OGIyNzBiMTM4ZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU1NzJkOWZkZjU2NzQ0OTAwZmY3OTJiZWFkYzJhZGRhOGNhYmYyOTlmMzRhMmZhNzA1MDk1YjVhOWQ4YzU5YjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJkYzcwMzA3ZGY5NTA5NTI0NDEzNTc2M2VlOTE3NGZhMDg5MWJhYjU1YjczMjY5ZDhiZmM2YmJkZTkwNjU5ODkifQ"
+        },
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L219-L278",
+          "version": "repo-lines-v1:sha256:d7cd23b5c93a2e6c64820030bb822d3c979ec6f1dd9f3fdf8d4d21b284bf6c96:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgyMzBiNTRhNTM4Yjg0ZjA4MWI3YzcyOGEyNzBhZWJiYTAxZDdmNTg2MzE0OTZiYTM5ODc1YjgxNjhjZmQzMDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhhMTI2ZmEwYWQzZWVmMjk5MThkMjJmODliMDM2NmNlOWU5MGViYjlkNzI4OTQ5YzIzMTRkZGI2MDkxYzhlMGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiNmEwZWE2ZWMxOGEwZmMwNzRiNjk2ODY1OGUzNjE2OTA1NTJmOTAzZTlmZmQ5YzI3MTNiMWVhMjBiNTBkY2UifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fb201f4822644b3c81a3f2be77977bff",
+      "statement": "The classifier assigns a deterministic baseline risk tier where the highest matching tier wins regardless of rule order, an empty diff fails safe to T3, docs-only is T0, and application code with no higher signal is T1.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L60-L217",
+          "version": "repo-lines-v1:sha256:8f830e7db7dc69ec38bce2200029583a6794046e32152bfef4d28bf0ec7bd802:eyJzZWxlY3RlZExpbmVDb3VudCI6MTU4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2NmJhMmI1OTk2NzMyZTcxMzkwZDNlMGNjNWI5YmZkZmU1OGFlM2Q2ZDM4M2NlYWEzMjc0YjM3NTk2NTVkZWJlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxMTAxMjBiZDBhNjRkYzVjODYyMmM3MGRhZjIwMTA0MTgyMDRiOTZjNDFiZTk1NGJhMzRiNTM3N2RkNzVjNmY4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlNDBjYWI1MGU0YWY5ODE1ZTRmMDhlYjg1MTk3ZDFhODZiYTljYmFhMTAwMDgwYjAyMDNjMGEyMWY4OTFlNDQwIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_d36de84add1947b299ae7f64eb5975b6",
+      "statement": "T3 baseline signals include migrations and DB tests, security paths, payment authority modules and money-moving action files, auth and tenancy paths, public and token routes, and sensitive-data libraries; T2 covers business workflows, integrations and messaging, cron, server actions and APIs, CI and shared configuration.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L77-L176",
+          "version": "repo-lines-v1:sha256:0c207b9c69fcdfc2c53ee11023e7977dc272772f1470b26d9bf242c72f5951ad:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyNGU4Zjc3OGY0MTFlMTI5ZWZmNGIyMjg0Y2E2NGE3ZTI5N2QwMzY4OTNlYzE4NTA2MDUyNTZjMjNhMzYzM2EzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiMDJkMmMwZDZkYzVlNzRkOTJmYTE0YjkxZGJlYTI2NDA5MGJlYjM1ZmRiOTE4OGQ5YjM0MTE4MWRjZTlmNGNlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwMTRjYTY1MWIyN2JkNzUxZTVmMmRhMDNiODk4Y2JhNTY1OGZkNDA1MjQxZmIxMTczNDUxM2NmYzljN2NmZDJhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlZjk0OGZmZjBkNGZlMzAxMDdkMzI3ZjU0YjMwNWFlNmExZTgzY2MyYjVlYThjYzU1OGIzOWJlNzBiNzFkNmVjIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_29df8348fa794578b7a6e9139c974714",
+      "statement": "ENGINEERING_STANDARDS.md defines tiers T0-T3 with validation depth following risk and states that automated path classification is not semantic proof and may never be cited to de-escalate a change that crosses a higher-risk boundary.",
+      "evidence": [
+        {
+          "resource": "repo://ENGINEERING_STANDARDS.md#L27-L72",
+          "version": "repo-lines-v1:sha256:5a5133ae606760b88847b140e8617592c47d6664c6da905ca81926bb11cb63e9:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyNjNmZGU5OWIxNzY5OTA4ZDUyMDAwNDNiZDMyYTNmZDMyOWNmMjFmM2FkYTliOGVmN2RjZTk0ZTk4NzRlZTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxZDdlYTFmYTdkYWM5OTE3ZjdlZWJhYTFjZGQ5YjljMmE2NDBkNThjYWUxYjg3ZjIxZTA0ZDdkOTQxNDQ3ZTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI2OTQ2MWE0NDdjY2I2ZjdiNTFhMTlhMWNmOGIwZDM4YjkwMjJmOGQ3MDg4Yjk4OGY2YzY5ZjZhZmE2MjE0OGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJhMWY4ZWYxOWQ3ZWY2MGYzZWE5ODg3OTgxY2ZmZGM4NzZkNGEyZTZhNWFiNGU3YjFkYzI1YjJjYzNlYjdhMGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f506ed76de594db1bbd069557153c436",
+      "statement": "npm run ci:plan and npm run verify:changed reuse the CI classifier and browser-group selector so local scope matches CI, with verify:changed auto-running only cheap focused checks and printing expensive lanes as suggestions.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/ci-plan.mjs#L1-L40",
+          "version": "repo-lines-v1:sha256:9d9a13da8dbba5dca5290125d2150dd786a6b233ddabe7d8f28aabb78f5a24da:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlNjRkYWU2MzAzZGQ1YTc3YjM3MTUzYjRhMDc1MGQ5ZGIxZjhkMzhkYzllMDdkZTgwOTRhMTY4ZjQzOGIwZjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmN2MzOGE5ODU4ZjM4NTllZjE4MmZkNTZkODQxZTgxZmRjMjVkOGExZjYwZDJlNzViM2NlNWQzYjM3YjJkYjgifQ"
+        },
+        {
+          "resource": "repo://scripts/verify-changed.mjs#L1-L60",
+          "version": "repo-lines-v1:sha256:700a5f7449afb58c8eca726972b0456eef896d0139c69e8a1fc7cd19e5d25e20:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiMjIxZWY4ZTAxNTI2NjAxZDk1OTBjY2ExOTdmNmQ2MTE4NTNlYmI5M2Y2MTNmZjRkZDRjM2U2YzNlMzJmODMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f0224f185df944c3b30ec1e078b1239d",
+      "statement": "Browser shard jobs run with fail-fast disabled and hard timeouts of 15 minutes for targeted and 18 minutes for extended coverage, documented as failure ceilings above a target of under 10 minutes per shard.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L494-L550",
+          "version": "repo-lines-v1:sha256:74a9a933779ba8da83c8882727053a2e3c1723e0192b25f5f1a0df64256d3051:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxYzUwNTA0ZjJkYzY3M2JhNzVhZTM2NzRjNzBiMDJmODUyODg4ZDg2Zjg0ZWZmMzRmNDVkZjBkMzk2MDFjODciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1ODg5ZmU5MGM5MGFlYTA5OTM1MjMzMGVmODM3ZmFmMzEzNDBjMGI1ZDRiNDZkMDJlZDRhZmIwZGJiNGQyYWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEyOTAwNTE5MGYwZjgxNDkwMTNkZGNlNjRjZTlhOTk5NWZhNGM0MmY3MjI1YWUyMjkyYjE5NDQ5ZmUwZjAyNzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1NDhkOWEyMzUxZmYzMmJlZWMzMjZmZGVhNjQwNzMyNjI2YzMyNGI3NDZjM2E4ZmI4YjgwMTVjZGZkNjg1Y2QifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d7e3bee5c94c4ccb8f09ad3dd70b3f35",
+      "statement": "The browser-e2e aggregator is the stable required check and fails closed: it fails if changed-path detection did not succeed, if a required shard result is missing, if shards were cancelled or skipped while coverage was required, or if extended coverage did not run exactly four shards.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L678-L771",
+          "version": "repo-lines-v1:sha256:17d282675e4440fd56d2089014d3c8620687554fdbf8c35b77a44f55c0ee3a82:eyJzZWxlY3RlZExpbmVDb3VudCI6OTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiYmRhYWM0MDcwNmJkNzM2OTg0ZDEyZjQ5OTUxYWVlZjdkODY0MzVmNWRiNjYwMzJhNzU4ZTQzM2YwYmQ3YjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMyMzA3MzdhMjFmYWIzYjUzMjU2OWUxNGJkYTkyMzc0YjQ4NDc4NGNhZWZhOTgyZDIzYjU0ZjRhNjhjNDc4YTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA3NzU5YTdjZDlhYTg0YjAzYzA1ZmNjZDZiMWRkZDhiZWFjMTRjNDE1YmVhZjJjY2NiZThjNjc4M2M1ZWM5ZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE3M2Y4YjIwYjhjMWUyZDU3N2I2MGNhMjE2NmZhYTg3MjdkMjNiNWQxYmM1NTJmZTUwNTk1YWIyMGZiMTIyZTEifQ"
+        },
+        {
+          "resource": "repo://tests/ci/aggregate-fail-closed.test.ts#L149-L297",
+          "version": "repo-lines-v1:sha256:1e8b826b9097aabc1d239fa7b394825746a0490be76755c63213081b49ccaa89:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiZGE5YWY5OGNlZmJiOGRjNTgyNGMwZWI3ZmFkZTNlNGI0MjkzZDIzODgzYzY3YzRhM2ZlNDk4OWQxZWY0YjY2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkMTQzZWNkNDQ3OTgwMGJiMmE1YjkxNWQ1YzQ4NWNiMzNiOTdhZTFlYzM2ZDAyODg0ZTM4NmNkNjA2MzI2Yjk3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_85c94e221a40467b9bf281cedd2d2018",
+      "statement": "The payment, mobile and Google browser lanes run only when the classifier sets their lane flag or the full matrix is required, each on a local Supabase stack with the full migration chain, with timeouts of 18, 10 and 15 minutes.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L781-L1093",
+          "version": "repo-lines-v1:sha256:9ff30f58d04d165c470fefa492238f72b062ec8cf4e5f6d238dc23140a4e5a5a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI4NWE4MGExYzk1MTM4YjQxZTZkM2Y5ZGVkNzhkNzE1NDE5MTcwOTE1ZTZmMzRmYzJlODJmYzg5MDZkZmE0MmU3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI5YmY0NWQyYmMyMTA4OTVlNjdiZDFkMjBkYWFhYzFiNTk4MmE3NjY0MDgyOWZkMWYxYmI0YTY5OTU1MjkyOTQyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmZTk3MTlmZDI4MjVjN2ZiZGM1OWM5MjhkZGM3MzdjNWZhNjNjZDQ5YWNiMTBlZWY0MGVmODIwMzU5Yjg3NjE2IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_976a1880dfda4c12835885d388d41cee",
+      "statement": "The nightly workflow runs daily at 07:00 UTC and on manual dispatch with read-only permissions and fail-fast disabled, covering the unit and safety gates, the full migration chain with DB/RLS tests, the core browser suite in four shards and the payment, mobile and Google lanes.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/nightly.yml#L1-L100",
+          "version": "repo-lines-v1:sha256:5f948fe2064a15727a483cb992e0fa651bac42f26359c8d0f691d1d7e816e675:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2OWU0OGNjNTBkOWJlMDhkZmVlZjE4YTNhMDRkMTgyYzBlMmE1MGQ0OTJjN2JlMzVhOGNkMzZjNThjM2M1MzQwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhZDBiYzYxODdiZjRjZjEzMGI2MDFhNjZiNDE5ODA5MDQ2Y2QxODE3ZmQzMDA2OTMwNjdmZmZmOGExNGNlMTM1IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwYTc4YzU1MTM0N2E0MTdkNzllM2ZjZjE3MGZiNGFkMzMzMmE4MmY2OGY5ZWI0ZmE2NmJiMDYzN2E2ZTY2M2JjIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_3f25cd2751ab4893b6c3fc3dbeff87d8",
+      "statement": "A CI config test reads every file in .github/workflows and requires valid YAML, SHA-pinned actions with version comments, persist-credentials false on checkouts, top-level permissions of exactly contents: read with no write scope anywhere, and a reviewed total of 8 checkouts.",
+      "evidence": [
+        {
+          "resource": "repo://tests/ci/ci-config.test.ts#L1046-L1082",
+          "version": "repo-lines-v1:sha256:045252066c896cc6c7ca5fe81a5b6bb411d07fb7c92188067a66cf36138ef86d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlNmE1MzVlNmNmNDcwMTI5MmY0YTkxY2Y3NTlhZmMzYzJjZjY2Y2YyNzhkNzFmOWIyYzIwMWY4ZGU5ZTk1MjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg5NGQzNGQ3MDMwNDc0NDY1YWRlMTQwODAwMTJiYWVkZTFmZGM5ODZmNzgwMjcxMTM1YzMwODZmYWNlOTc2NTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM3M2QxYzA4NTgyZTEwZjExZjUyYWE4YjJmMDIzNjRmZTIyMjY3OTI1ZDlhMTMyMWYwODNiYjJmMzhlY2FlZWMifQ"
+        },
+        {
+          "resource": "repo://tests/ci/ci-config.test.ts#L1301-L1313",
+          "version": "repo-lines-v1:sha256:1da493c3d8b38683227fe22a38e069e5cfae0ef7f31471f6faab4f8ca04b165a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyNGMzN2YxMjliMjAzNWY5YjA0YzU0ZmI5NmE3NmViZmM4MjAzMGQ3ZGE2MGQwMWFiYzM5YTZiMjVjMDEyYzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NmMzNjgwOWI4ZmVjOGM1MTgxYzYzYWM4OGI3NzY5N2QwMTI4MDMxNWE0OGMzYmZkMzY1ZjFjMTQxNTM3NDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg2YWI0NGYyZWQwOTE0MDQ0MjJjNTVhZmE3OGNhMWYxNzZhNjQ4ZTBlNzdhYTU0M2M0MmVmNmY2MzY2M2UxMTgifQ"
+        },
+        {
+          "resource": "repo://tests/ci/ci-config.test.ts#L904-L955",
+          "version": "repo-lines-v1:sha256:bb8528dc8194796e07cdd0c0f873c9257e017876412fb434d6adc7e9ee912813:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQwOTEyYzVhNDVjNjQwODM5YWVlYzk5OWJhMzYxYWYwMDdmNTU1YTVjNDBjYThmYzgxMzI5ZmYxNWQ2MDllN2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViYTZjYzk0OWZhNjNlMTVlMzEzZWZiZWFhNzZhYzdkY2MzNzNmZmQ5ODhmZGIzZGMyMzlhMmI0ZGE4OTE4Y2MiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4ODMzZjIyZTViYWFlMmQwMjA2MTc1ODU2NGNjNjJkM2RjNmJhYzhlYjhhNzg5ZWVjN2Y2NDNiMWI3ZWNkMTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVmNmMyYjE0NGM3Zjc4MGJhNGY0ZmNmZDQxYjA4MzgxODBiNTk0ZWMyMWVhYWIyMjA2ZGM0MzcwZGEwMzI2NTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_009e9c68fe8f46559777495a11524713",
+      "statement": "The CI config test fails any workflow that uses GITHUB_TOKEN, pushes or tags, calls gh write commands, references the secrets context or passes secrets to a called workflow.",
+      "evidence": [
+        {
+          "resource": "repo://tests/ci/ci-config.test.ts#L1103-L1154",
+          "version": "repo-lines-v1:sha256:96f8423777fc655b5e7ef1a1465c9f7b29794e6fcdc698856be5d5320e85dfd3:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2YmNmMDBiZjc3Y2UxMzFmNGU5Mzk3ODNhN2QzNjFhNTUzNjQxMzViZmYwOGFkZGFjMmE2MDYwMGRhMGNkNmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmOGUyODk1OTc0ODhhNGU4OTE3N2UxZmYwNDdmYzZmMzU4NzU0ZTE0MjE5ZWMwN2EyZWQ2NGZiMzM0NDU2OTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI1NDcwNjVlMjg3MTgwY2M3YTliNDZjZDgwZWE5ZmQxM2I3NDFjYzQyYmY4Mjk4Y2I1ZjkxMTkxNmM1MGVjNTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_829378bd3144471a899857adf5e478e0",
+      "statement": "Green CI is necessary but not sufficient, and is not merge authorization; appropriate T3 work continues through independent review, production preflight and controlled rollout.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L231-L231",
+          "version": "repo-lines-v1:sha256:1b7d0c4078a560e7dc307ea9aae85b6b566520acfc4c613c69dd36eceab16e2c:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWI3ZDBjNDA3OGE1NjBlN2RjMzA3ZWE5YWFlODViNmI1NjY1MjBhY2ZjNGM2MTNjNjlkZDM2ZWNlYWIxNmUyYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWI3ZDBjNDA3OGE1NjBlN2RjMzA3ZWE5YWFlODViNmI1NjY1MjBhY2ZjNGM2MTNjNjlkZDM2ZWNlYWIxNmUyYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjFmMGZmNTU5MTgzZDJkMmYzMWQzMTExNzU4MDlkMDJjOTU4NDUxMWJkMzJhZjBmYjA4MDFmNTJkMDIwYTRkNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWMzMTc4OWU5OTdmYjM4ZTRlZTA4ZjhmOWE0ODNmZjQ3ZGQ5YjQ5NjJlZGNiOTgyZDdmMGVhZThiMzQ4ZGVhYiJ9"
+        },
+        {
+          "resource": "repo://ENGINEERING_STANDARDS.md#L96-L99",
+          "version": "repo-lines-v1:sha256:7e0bddea525d634ce1f0d87f9db12e41c258a27a1ec7c674557967d79f1660b8:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdhYjMzNTllMzIxM2YzNGFhMDVhYWE4MWRkYmQxYmIwNzg3OWZhYWVkOWI5ZWJkODdhY2E4YjNmNGNkNDNkZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjhjMjZiM2ZkNzljYzEwNGYxMWZkODhmNmZkOGYxMTk2YmZmY2JjNmFlOTIzMGQ4MGRkNWIxYTM4ZDE0MDhmZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2Y2YjcwMWM5ZmJlNmMzOWRlZTMzY2Y0Yjc3NTAxMzQ3MzZhZjE1NWRkOTYwYWVmZjBiNTlhZGZkOGQ5ZjQ1YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODk0ZjBmNWI2NWQyZmY4Y2VkNDZjOTg1OTNmOGQxMTkwMTY0Mjk4ZmU0YTFjNDBjZDk1MjE5MjFjYWFlOTBhZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_d0d0b041c55943188cc1f4fb8eb51130",
+      "statement": "The ci.yml header still describes six local gates and the browser lane comment still describes one browser and one core flow, although CI now runs a selected or sharded multi-spec browser suite plus three further browser lanes.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L1-L21",
+          "version": "repo-lines-v1:sha256:a370421598055a6b552bd60796355891cc8ff94ebf1db4decde359a6b9c7207d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1NGU3NjFlZjNkZTI3YWVhMTMwNjA4YzBlNDA4NWUxNTIzZTE5ZDBmYTkzYWNkNjA1YjE5NzE3NDJmNmFhNWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5MGMxNzE2MjYzM2JmYzQ3NzY4YzRkNTZhMzYwMjU4OTc2ZmFiYzkwMzk3NDAxYTQyNWQ1YWI3YjIzZjkwNDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdhMDJmMjc3NmZkYWFkMjQ0MzY0NDQ5OGZiNzQwZjY1ZmIyYjI0MTlhYTJjNjc2NWFlYmU0M2Q3NmU2ZWE2M2QifQ"
+        },
+        {
+          "resource": "repo://.github/workflows/ci.yml#L474-L479",
+          "version": "repo-lines-v1:sha256:e2df548495f75dcf0f738a7c6e173edd70d855f80fdc2619b0cfd1b9dbee8ac0:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzQ2MGNkMTk4ZmViMDBhMzdkYTU1NWU3ZTYxMzYyYjg5MzcwNDc5OGNmODA0ZWFjYmUzYmFiYzYzMzlmM2U2YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODc4NjcyZTlhNmZjNjU0MDAxOGM5NGE2NmZjZGZhZjU4NWUzM2ZjNDAxZjBiZWQ5Y2U0MjdhMWNjZjg5ZWIyMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2EwMTRhNzA0Y2RlYmZiMmJmMDhlMmE2ZDFmZjBkZWRhMzk1NzExMzA1Y2RhMjQ1NGJhZGQ3OTFmYjRjNmNmZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWZkNDBjODBmZmQ2ODc0OTUyMjJkMmM4NjRiZWM4N2Q2NjNmNjdjYTllYzM2MWIxNTg5Yzg3OTkzOWMxYjU3NSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

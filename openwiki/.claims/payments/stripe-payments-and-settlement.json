@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:34a79370066ad17c58ed611b5f3d492728fee0a4132830d510aceeb8c28c4dbb",
+  "claims": [
+    {
+      "id": "claim_65aea6c55d6546088bc66d5b803d1fae",
+      "statement": "The Stripe secret-key gate accepts only sk_test_ or sk_live_ keys, requires STRIPE_ALLOW_LIVE_MODE='true' for a live key, and refuses live keys in Vercel preview and development.",
+      "evidence": [
+        {
+          "resource": "repo://lib/stripe/server.ts#L1-L66",
+          "version": "repo-lines-v1:sha256:9a644e236269c4e569a3d3a8a721e44289138c178f0c7973fad091a5ce2d7034:eyJzZWxlY3RlZExpbmVDb3VudCI6NjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlhNTg0Y2NiZDAxYmZhNmE5N2E5YWZlMjkwNTBlOGQ1ZTVmOWM0YmVkOTk2NWViOTkyZDEzNTYwYjMzZjhlMGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQyNzUxZjdkZTUyYjI4ZGZiNjc4NGQ3OGFmYjA4MDk2NDBiMTYwZTg4YWVhYzU0M2VmNTQ3ZGE1ZjI1OGM0ZDAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d038b0c662c84f8599ebb05b1eccdc2f",
+      "statement": "A session payment's amount is resolved server-side in one loader from current records with enforced lineage (live session in the studio, its linked appointment, same studio and client, same-studio service), and a database read failure is reported as read_failed rather than as an empty pricing set.",
+      "evidence": [
+        {
+          "resource": "repo://lib/billing/authoritative-session-payment.ts#L1-L60",
+          "version": "repo-lines-v1:sha256:7507834c3752bd6e533e49047fc03d81cfe7bb846b11b3e61165a87b47410403:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgzODgxYTNjZGE1ZWNmNzdmMmM0ZjViN2NlMDEyYjExZGNjNWNjMzYxNTJiOGEwY2Y5ZmQ4YTNjMGQ4M2U2NjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0NWRlNmE2ODQ3MzhiYTAxZTViYjVmOGQyODgwNmEwYTk4NzJlNDdlMjJjNzIxOGRmZTU4ZDgxYTgzMDQwYzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8cb73ae05e164b66bbbcece7d8b015d6",
+      "statement": "The charge executor claims the attempt through claim_session_payment_charge_attempt, which moves it from ready to pending_stripe and stamps a deterministic idempotency key hone:<charge_reason>:<attemptId>:v1, and then creates one PaymentIntent with that key.",
+      "evidence": [
+        {
+          "resource": "repo://lib/billing/session-payment-charge.ts#L1-L80",
+          "version": "repo-lines-v1:sha256:165fedd5c1316f144d344f29af093989db7fd5fcf7ed3ef3d01cf2a004d4e890:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmNGQxMDBlNzY3N2NlOTY2YmM1Y2RkOTg1OGQyMWFiODc2YzEzOGRhZDcyM2E0NjI3OTE1N2U4MDJlM2UyMDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgxYzQxNzAwZTg4OTc5MGViOGE3ZmY4YzdjNzIzMTAyZjRkNjk1M2VmYzZkNjY4NWMxY2E0MDNlZTY2MWNkZTEifQ"
+        },
+        {
+          "resource": "repo://lib/billing/session-payment-charge.ts#L1234-L1241",
+          "version": "repo-lines-v1:sha256:a677de9a0d2b27e0ad65d8046246c8b0d8faced091ebcdac69f6003c58abdd82:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmFkMGY2ZmZlOTg5MjIzNDFmMzliMzllZTkyMDMyNmU1YWYwNGU2NjQ5ZjViMTAzMzVlNGExNDEwMTIwNTI1ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWYwY2RiOTcyYTdiZmI3ZWQyNDZmOWZmNjcyMzg1ZTU1ZjQ5NjhmYzExMDQzZGM1YjY4NGQ1MWRmYTMxZGJjYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjI2ZWQxNzc2N2RlOThiZTk1NTNlYmFhOWNjNjU3MzA2ZmEwNjEwMTk2Njg1NjI4ZWE0ZjdkMjg2YTA1NTU5ZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjZmZmYzMDgxZTJlN2I3MWFkYzQ3Y2FmMTFmNTZhNTAwN2M5MDlhOTViNjljZGFiNDVhZjhhOTJmZmU3Y2Q3ZCJ9"
+        },
+        {
+          "resource": "repo://lib/billing/session-payment-charge.ts#L1390-L1414",
+          "version": "repo-lines-v1:sha256:cd597c41e828b762d1767856a7e10c719389a29b1bb028d7cb02fb904746bd57:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0NmEyM2Y5MTdmZWM3OGZlM2I1MjFhYjhlMmVjZmY4ZjUzZjA5ZTliOWQxNzZlMWI2MWYzYjk4N2QxYzQ4ZmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3Yjk5NWVlYzNkNWMzZDJiNWY0N2UxMWU3YmQyZGU1NWMyZGIxYjJmZDQ5ZTUxNDA5ZTVmNWFjNzI2M2E2Y2MiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiMjg2YTA3ODIzMDdkMDM5ODcwMDk5NjYwYzJmOWQ4N2VmNzkwOWNkNDQ1NmE3N2EyMWJjMmU4ZmNlMmQzZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQzYjI0MDJjZTc2NGEyOThlYmI5ZDcwNDAxYTFkYjM0NWFiZDdlYjExYzE5ZDA1ZDA0MDIwODE4MzQ5ZGU1NDkifQ"
+        },
+        {
+          "resource": "repo://lib/billing/session-payment-charge.ts#L83-L92",
+          "version": "repo-lines-v1:sha256:2ab197522f340757c3cb2686a46074140728dd02ca69395c7a89c5e1223de1b8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhYTkzNGQxZmFmMTNlYzJjNWFkYzU5NjgyODk5OTgxNGM4ODk3MDAzMDA0ZDk4OWIyZmE0OTcyNDg4NDlhZTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA0NmE4ZTNlZTM5Y2IzMzkxNTNmNWNiMTk2YzBlMWJkOGIzY2UyMTU0MTY4NTI2Yjk1ZDZjMzY1NWVlMmQzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3MTZhYjBiZjFhZWViYzk1YjA1N2UwOTA1NTAxYTE1ZTk3YWVhYTI3YWQ1YTMwMWE5NGEwNTAxZTUyZmNkZGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b3b8130bb9b648aa8ebb122bc65ec793",
+      "statement": "The latest definition of claim_session_payment_charge_attempt is in migration 0187 as a SECURITY DEFINER function executable only by service_role.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0187_appointment_settlement.sql#L1534-L1560",
+          "version": "repo-lines-v1:sha256:f10d2dc216a51820e80a0571d9db9a06e92003b6609f044563b9b9583fde2d8b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5ZTUzNzQ5ZGNmYzJlNjlkOTI1ZjkwOGFkODcxMzU2ODllZDU3MjI1ZWI0NTdkMzQ4YjcyYTc0Yzk3ODFjNjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiNmJmZGFmOGUyM2YxM2RiN2UxMWIyNzM2ZDkyYTNkNWRhZDEwZDdhNGMzMjY4ZDU2MDczZTIyOWVmOWNlOTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMyOWE4MWY4MzBkYThjOGI4OTAyNzAzZTEwMDE5NDkwYTQxZDg5ZjQ2MDZlM2ZlZDEwZWNjZThkZDAxOTRkMTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQzMTkxYmYwM2RlZmJhYTQ0MDUyMmQzNDE4NjNkMDg3ZTY2NTlhOTg3NjQ2MjFjZjEyMWE1YTBhMmNiM2JjMWQifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0187_appointment_settlement.sql#L1855-L1855",
+          "version": "repo-lines-v1:sha256:237f2e7d4856673af8358431d5d1da2dc61d771bb93006359454601a6d7f45ea:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjM3ZjJlN2Q0ODU2NjczYWY4MzU4NDMxZDVkMWRhMmRjNjFkNzcxYmI5MzAwNjM1OTQ1NDYwMWE2ZDdmNDVlYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjM3ZjJlN2Q0ODU2NjczYWY4MzU4NDMxZDVkMWRhMmRjNjFkNzcxYmI5MzAwNjM1OTQ1NDYwMWE2ZDdmNDVlYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYWVjZDZlNjUzMmEyYmIyZTJjZmEwNmVhOTQyYmFmMTc0OTk5ZmUzN2Q5MTkxNjNmZmIyMDg2NTAzODcxZTcwYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjRlYTdjOTczOTk3ZjMxMGIxODU0NjJiOGY0YmRmMDg1Nzc4NjM5Yjg3OGVmNmU3MzQ0ZWZmMThhYTM0ODU5YiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_9206b7e6370f406aaa10758cb4fa265a",
+      "statement": "In live mode only session_payment charges may be prepared or executed; no-show and late-cancellation fee charging is held by a server-side allowlist, while test mode allows every reason.",
+      "evidence": [
+        {
+          "resource": "repo://lib/billing/live-charge-reason-allowlist.ts#L1-L36",
+          "version": "repo-lines-v1:sha256:3b92c5f344deaef822d8b5e252470492e8e59f5dca174236781eb303c7593e63:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0b400be9c87d4f10a8e480ebd33dbb78",
+      "statement": "The Stripe webhook verifies the raw body with constructEvent, returns a generic 400 on verification failure, and claims each event idempotently through claim_stripe_event before processing.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/stripe/webhook/route.ts#L100-L150",
+          "version": "repo-lines-v1:sha256:9d8b1b54ca2344a1f4dc3b0b9bced78a518b029762c09670abce7f3e30023e71:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzODIxZDRhM2Q0ODc0YzE1MTY3MzI4MTlhNjJhMjk4YjRjOTU1N2JiNjQzNTQxYjQxNzNjODUxNTVkZWY5YmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzNzcwNWVkY2Y5YTQ4ZDM3YmY1ZWI1MzlhZDRjMDA2YmUxYTNmMjI1MGIyM2M4M2NlZTA1NjM2ZGM2MTc0NTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRiNWQyZmFjZTlkY2I3YWZlZDBkYjEwNDY5N2ZjZDY1ODUxZTk5MDEzOGMyZmZlMGNhOWRkMWNhZjRlNjlkZWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNhYmYxODQ4YWY5MDMzNWM1Y2U2ZmQ4NzYzOTVkYzhjMTJlNTkyYWRjZGFhODI5ZWNjMzAwNmViMjc4OWQ4ZTYifQ"
+        },
+        {
+          "resource": "repo://app/api/stripe/webhook/route.ts#L195-L230",
+          "version": "repo-lines-v1:sha256:934615fc1e0e143b282f745a62fa47f08a304ab4465a0a75dc560953f2794d6a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQzZGM3YjI0N2Y2ZDcxN2NlYTYzNjQ1ODc1M2IxMTBiYzhjMzliZDNhYzQ1YjU0NTQxNzY1NmE2NGM1MGUzOTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4NTJkN2ZkYWVjYjZkMWM3YTNmMGQxMzY4MWMzMWIyM2FkN2ZhZDg0MWM4NTFlMmJmNjQ5MGRkMjA5ZTc5OTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImExNDZhZTM0NmE1ZGYzOGU1YjlkN2JhZmM1MmMyNDQ1YjA5NDU3NzQzMGU0NGUyNzM5YTg1MTFlODdkZjRlZDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJlZmI1Yzk2YmRjNTljY2E4NTgyNjBkY2VjNDFmNWMwNTAxY2JmMzhkMGVhOTVlZjM0ZjQ2ZmFjZWY2Yzk4MmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3e5d3f9c90a74cbca34999944d520763",
+      "statement": "The webhook handles account and capability updates, setup_intent.succeeded, payment_intent succeeded/failed reconciliation, full charge refunds, and dispute creation as an alert only.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/stripe/webhook/route.ts#L325-L460",
+          "version": "repo-lines-v1:sha256:e6f20c56b457067be5456abd5c35352ebeac882bcbda1780ec06c9c21c3c2f71:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwODNjNTU0YTJhYjUzYTQxNGM5MDBhOTc4NTM1N2Y5MDFmYTcxODUwODkwZWQxZGQ5ZjI3ODBiNzM2OTIxOTI0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwNDgwNGY5MWE4MmQ2NjI5OGYyNTQyMDQ2Y2ExNzU2MTU5ZjdkZGIzNmM0MTZjZTBlYWQxOTU0ZDZiNTM0MzZmIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3NTI0YTAyYjUwYjI3NThjZmM5YzI0OGQwMmVhNDEyYTgwYTA3Y2I5OGUzMDcxZDQzM2Q3NmMxMDMwMzJjNTUwIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_9c9e081c633a43c6b25855ba0d263fd7",
+      "statement": "Webhook reconciliation processes an event only when its livemode matches the deployment mode, ignores mismatched events with a warning alert, and never mutates a row whose stripe_livemode differs from the deployment mode.",
+      "evidence": [
+        {
+          "resource": "repo://lib/billing/payment-webhook-reconciliation.ts#L110-L144",
+          "version": "repo-lines-v1:sha256:9ff9c17930771084f80ee95b6a0029573748a522789a702ae97dc300a1dcf600:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmNzdiZmIwMTMyODQxN2Q3ODBlYThlMzQwOTE3NDgzOGY1YWRjYTE3ZDE5YTFhNDAzNzU4ZDk3NDA1NDQyMGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkZDgyYjliNjZlZGNkMDQ0NDUxYzY5MDRhMjJlNDk0NGRkNDhjZWFjOGUxOGQ3MWZkZGQyZjFjMzlmMmM4MzciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRmN2Y2ZjlhNGIwOTljODVkZDZiMjY4NzA3YWU5ODM3MmU2OGM5OTIxNWNiNDUyMjVlMzlmNWFlNzkxZWE5OGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJhMmJmNDgwMjU1M2ZmYmU2ZTNjZDlhOTgxYTdkY2Y0MjM2ODE1NzZlNTNlNzY1MDBjMTgxN2U4MmZlZDMzMGUifQ"
+        },
+        {
+          "resource": "repo://lib/billing/payment-webhook-reconciliation.ts#L399-L425",
+          "version": "repo-lines-v1:sha256:48f0bc2e35831e2a2b56181d20bb04fba18e8ff0a943d3ad37996796340d8133:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNiYmY5YjQ5YjRlNDdkNzZhOTAxZDUwZTRjNzJiNzQ3MTY3ZWFiZjUxMmM1M2M0M2RiNzkwZjk4NjU0ZGYxZGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxYWM1YWVhYTYzMTk3OGMwNTdkNDhiNGY1NDlhY2NjMDdhZDg5ZTc2ZDI3OTlmMjczOTAzNzEwMTA4MmEwNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJlZWVmZGQ1MTEzZDk5MDU2ZjFlMTlkZTFiN2Q1YmVkZTZlMGEzMDFmOWU4ZjdiZTRlYWQzZjhmOGRhODY2YzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyY2YwNjBjMjA5YTllMjhlMThmYzZjNzU5YTNiNzIwZTUyZGY2OTA3ZTE0ODJlYzM1YTZhOWRiNWMwMjczOTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_eb787f064e7e411d8ecaa227616a1fd8",
+      "statement": "Refunds are manual, mode-aware, studio-scoped and reason-agnostic over succeeded charge attempts.",
+      "evidence": [
+        {
+          "resource": "repo://lib/billing/payment-refund.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:a9ae78fb6c9793a2c2fa3bcaf02971c3f76580cf797f9a794232c07f60b7abca:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5MjRhMjhiMGQ3ZmI5Nzg4MzdiYTMyNzZiMzZmZWViYWQzNzhkMGUxMmFmMTA3ODNjNTJjZTg1Yjc1ZjQ0MjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM5NDg1MmJmMDlmYzA3NGQ0OGM3NTU3M2M4YzM3Mzk5MzgzNWJmZTRmN2ZhN2U4NmE4M2FiNzYzNjg2ZWI2OTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_90af8dfb4e5f4e99910f8f39f1bb517a",
+      "statement": "appointment_settlements methods are limited to paid_cash, paid_e_transfer, paid_other_external, waived and still_owes, so a card charge cannot be recorded as a settlement.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0187_appointment_settlement.sql#L205-L218",
+          "version": "repo-lines-v1:sha256:6b6571bfe9ef07bdfd4a41f5d225d315b03e1f1129b3d3464155a69d39e8d3b0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjczZTVjMTg0MzA2MGZmNTNjZDJmODdmMjZiODEwMmNiYWE3OWVhMGRlZjNjNGRiMmU1MzJkZmIyMDYwOTRlYjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE4Mzk1OTU4ZTBmMWE2ZGI5NWI5OWZhMzk0NWQwZjYyYmZlNjU4Njg2NzQzYmI5Mjg4OTAxMjFkMzgxNTdhMzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBkOTU1YTQ2NmU2ZDMyYTUzYWYyMDE0ZDQ1ZDQyMGEzNjJjOTRiMDRjOWYxYmQwN2E4ZDM5NDBmMzM5Njk0MDMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6a6a311f63e14fc6a0d29cd09d9d115f",
+      "statement": "appointment_settlements is append-only with a no-delete trigger, practitioner settlement commands are granted to authenticated, and the card reconcile and claim commands are granted to service_role only.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0187_appointment_settlement.sql#L1776-L1855",
+          "version": "repo-lines-v1:sha256:3b2cc435ec74a3401f6a991234a2b67350db4f0ff0f3d90f18176b134a655550:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhmMGFkZGQ0MTMwMzA0NTJlYjRjYmI0MTc0MDRlMjRiYTExYmE1ZTM3MDIxNmFmNjM1MGYwYzJlYzIyZjE4MjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzN2YyZTdkNDg1NjY3M2FmODM1ODQzMWQ1ZDFkYTJkYzYxZDc3MWJiOTMwMDYzNTk0NTQ2MDFhNmQ3ZjQ1ZWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3M2JlYzZiNjJmNWE3MGI0ZjM3MmU4ZDZjMGQ2M2ViN2IzMGIwYWZmMDFjNDYxNWNlNDNlY2FlZjVkZTRhNGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI0ZWE3Yzk3Mzk5N2YzMTBiMTg1NDYyYjhmNGJkZjA4NTc3ODYzOWI4NzhlZjZlNzM0NGVmZjE4YWEzNDg1OWIifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0187_appointment_settlement.sql#L339-L430",
+          "version": "repo-lines-v1:sha256:b9152309a39afa9fc1a5d8b5e5ede37ef6404737a7a60b80c89c38e7071d44c9:eyJzZWxlY3RlZExpbmVDb3VudCI6OTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjMTE1YWE0ZjI1MTkyNzcyNGI0OTE3YWZhNmMxZjU1NjI5YjkxYTk3N2FjMTk5ZWU0MjdhYWNjNjg5ZDQ0ZWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyZGFjMDI0MTU4MGFiMjNjZTVkNjIzZDJjOTY5Njk5MzkzZTFiYWExODNkNjdmMmIwNGM4MmFmNjgyNTk0YTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3OGIyOTAxZmI1ZDE0NmU5ZjZhMDUyYzE1ZWU0M2I0MWI0NTlkYjViNjEyNGU4YTlhNmQ4MzYzYmUyZmU5OTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRiOTQ1YTAzYjY1MDExMGQzNGRlMWNkMzIzNTJiOTE0YTNkZDEyMWRmYThkODQ3MGE1MGU2MjE5NmQ5ZGQ3MjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_cc6688d9c95248ffa918cbd195874983",
+      "statement": "The settlement read side distinguishes a successful empty result from a failed read.",
+      "evidence": [
+        {
+          "resource": "repo://lib/billing/appointment-settlement.ts#L10-L30",
+          "version": "repo-lines-v1:sha256:5a23c8e52107792dfebb2588337625f92aefd1b68541f86652083c0c654f3da9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4NDlmM2UxYzJkNGE5OGNjN2FmYjJhZTgxYjNlYzI2ZDBmZDAwNTU3MmJhMjBhZDdlZWZjZDUxOTY0NTYxMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIxNWZlNzU2YzhiODgzMDUxMzM0M2VkYjE5ZTk0ZmNiZGM2MWUwYzk0MjAyZTkxN2FkODQ4NzkyZWRiNzhjNzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNhMTA4ZDFhMGFhZjFlMWVjMjgzZGQ0ZTFiNzM4MzU5YjA5NmYzY2I4NWQyNDg3NzQzYmNmMDkyZjE3ZmVkMTQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_66822c10ae9f4746b873d2752508b396",
+      "statement": "check-stripe-gates.mjs scans only runtime source and pins money-moving Stripe call sites to allowlisted files.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/check-stripe-gates.mjs#L1-L30",
+          "version": "repo-lines-v1:sha256:6b599823cd23525b822dc5e5f0808e7a61b8c83433e7cb14fcd022d0bfa0cbc6:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5ZjFhNDRhMTE1NjlkMjY1ZmE5ZTVkYmE0ZDY0NWM2YWE0ZDdlMGQ3MTcwY2VmZjQ1N2NmMjEzZGU2MTgwMDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIwOTNiMzI4MDNhNTU1NjczMjViOGI2Mzc0YWQ0MjVlMTlhZDdiNTE1NGM2ZmM3M2Y3YTQ4YjQ5YzQ4MjNjNmYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d2ddba1bb866444a974c9f71b5a159e0",
+      "statement": "The fake Stripe provider requires HONE_E2E_FAKE_STRIPE=1 and a valid run id and refuses deployed runtimes.",
+      "evidence": [
+        {
+          "resource": "repo://lib/stripe/e2e-fake-guard.ts#L30-L55",
+          "version": "repo-lines-v1:sha256:c65069b9946a1cb3008d8074c15ccb8276d8e79163024932d0e0ba6910c42a6c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5ZWU1YTYwYTZkNWZiMmY1MWJmYmM3MzU0ODAxNzRjMzZjYWYyMzI3ZWVhYjFiNzIwYzZkNmRiNzZlYzdmNWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjliNzRjMTdlN2Q3NjdjMzBjYzU2NzQzZTA3OTgzYzMwMTA0ZjdlNGIyN2M3MWUzYzNhNGUzZmZkZTBhOTQ4NWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE5ZmYwMDlmMzkxYzEyMDg0OGIyNTg1ZTAyYWYyNjBkZTk5N2YxNmFhYjk5NjA4MmM4MzliZTM2ZGIwMDA0ZmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3cc1efdfbe1b4f3fb7eeb4cec7cd9faf",
+      "statement": "The canonical record describes payments as live-capable and production-exercised for two approved studios but not broadly ready, with refunds deployed but unexercised, disputes alert-only, live manual fees held, and settlement deployed and enabled but not production-exercised.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L797-L838",
+          "version": "repo-lines-v1:sha256:97ceebb4a3e1f44e9c1097c845f34234508a540b1bc3f6703ca22596a1e91466:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhOTIzYmMyYmRiNDMxMzk5NTZmMzA0ODYyYjlkOTE4NDVlYzcwYjdkZWQxZjE3ODNhYjhlNGVjNjBkYjFlYTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiZjRlMzFkYzA3OTA5ODdlNjQzODU5ZDU0ZjdlYTBmNjVmYWRmZmFhYTAyZjI1YjM3MzdiMjVkNDQyM2M0ZTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE4MDdhOTM3Y2FjZTViZjAwZDZlYjVkZGMyODk5N2M0ZDA4MmNhZjZjYzY3YTZmNGJlYTBkNzIxMjk4MjQzYWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNhZDQ4ZGEwNGM3NmRmNGEzOTc3MzY5ZGU1M2YzNDQ1NDczYjhmYWNjNGJlZTcyY2JiMmVlMmFhOGRmZjQ0ZDAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_98c76ddab30d41fc8fa2e1d763a92877",
+      "statement": "The Stripe webhook route and reconciliation module headers still describe reconciliation as test-mode only with live events ignored, while the implementation processes events that match the deployment mode and the runbook records that 0101 dropped the livemode=false CHECK.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/stripe/webhook/route.ts#L1-L50",
+          "version": "repo-lines-v1:sha256:3a04ed8cf742c30b0d4b8252eb075158f97235431cedbc62ee4b643c15bdf4c1:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyOGVlNmM4NWIzZDllZGI3YjVmODFiY2VjZTE0N2ExYmEzY2RlYWI1NjMxMzg5NTBmNDQ1YjU1NjkzMjJhM2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkODg5YmZiZjYxODk4MjNiODYxMzk1NTQyNGI0ZTgxYzFjMTFkNzA4N2FhNjYwZDU4ODRiNDA2OWZkZmIxNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIzZjI1YjBlZGY0MzdmMzA4ZTE1MjcwYWE0MWRkZTliMDNlZjE5YzQ2NzU3YjU1MzZhZGM1YzM2NGFkNjllM2UifQ"
+        },
+        {
+          "resource": "repo://docs/11_RUNBOOK.md#L136-L136",
+          "version": "repo-lines-v1:sha256:8b0b4dca284fe1786985828705938310004fa00db60f5070defddd919fcc8291:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOGIwYjRkY2EyODRmZTE3ODY5ODU4Mjg3MDU5MzgzMTAwMDRmYTAwZGI2MGY1MDcwZGVmZGRkOTE5ZmNjODI5MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOGIwYjRkY2EyODRmZTE3ODY5ODU4Mjg3MDU5MzgzMTAwMDRmYTAwZGI2MGY1MDcwZGVmZGRkOTE5ZmNjODI5MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTg3MTMyOTU5NTY1YzNhOTVkNWI3NzEwOTkyNzBjZTdmMDZlZDkxNTJlZGRmZTQyNmRhMzYzYzhlNzFlMzFmYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjg4NzYyOTIzMjM4YTIxZTI0OTdkNWI0MjI2ZjNlYzkzMjMxNDZhNzhmYTU3OWUxNzQ5Y2Q5ZTM0NzU0YWQ3OCJ9"
+        },
+        {
+          "resource": "repo://lib/billing/payment-webhook-reconciliation.ts#L110-L144",
+          "version": "repo-lines-v1:sha256:9ff9c17930771084f80ee95b6a0029573748a522789a702ae97dc300a1dcf600:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmNzdiZmIwMTMyODQxN2Q3ODBlYThlMzQwOTE3NDgzOGY1YWRjYTE3ZDE5YTFhNDAzNzU4ZDk3NDA1NDQyMGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkZDgyYjliNjZlZGNkMDQ0NDUxYzY5MDRhMjJlNDk0NGRkNDhjZWFjOGUxOGQ3MWZkZGQyZjFjMzlmMmM4MzciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRmN2Y2ZjlhNGIwOTljODVkZDZiMjY4NzA3YWU5ODM3MmU2OGM5OTIxNWNiNDUyMjVlMzlmNWFlNzkxZWE5OGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJhMmJmNDgwMjU1M2ZmYmU2ZTNjZDlhOTgxYTdkY2Y0MjM2ODE1NzZlNTNlNzY1MDBjMTgxN2U4MmZlZDMzMGUifQ"
+        },
+        {
+          "resource": "repo://lib/billing/payment-webhook-reconciliation.ts#L15-L30",
+          "version": "repo-lines-v1:sha256:9dec15df55753978f8fa46b6d6cb383ea89dafb1991266a6b873feaedaf934b4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5ZGJiOWY0YWZhMjY3Y2YzYWI2MWQ3MjY1OTE3MzdiYWI2NmJhYTJlNjhjNmI3YzM1N2QzYWIxYjZiNzEzZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjM2VkMTcyNzYxODUyZTc5YjNjNDcyOTY3YTU2Yzc4ODVmNjlkZDI2Y2MwN2M0YjFmMDdjMjYxZGYwYjZjODUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFjNTdkYzNmN2MzM2YyMWQzZjgyMzM1MzUwMTYxY2M2YjM2NjFmODQ3MTFhNTdmZGNhZjNiOWQ0MDk5ZjIwYjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY5ZDY1NzBlOWFmZTBlNTU4YTQ1ZmU3MmNlMGNiZThiNmFhMmEyM2RjNWY5ODcxZjRmNTUzYTJjNzRmMjY1N2MifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_64dd8effaa234e75a74fc8d3ad7a1725",
+      "statement": "docs/06_PAYMENTS_AND_STRIPE.md section headings still label the session payment prepare, refund and webhook reconciliation flows as test mode only.",
+      "evidence": [
+        {
+          "resource": "repo://docs/06_PAYMENTS_AND_STRIPE.md#L108-L108",
+          "version": "repo-lines-v1:sha256:e842eacdca74dabe36ee7cc73f8370190c74884093e9e968a17b53b1fc19deca:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTg0MmVhY2RjYTc0ZGFiZTM2ZWU3Y2M3M2Y4MzcwMTkwYzc0ODg0MDkzZTllOTY4YTE3YjUzYjFmYzE5ZGVjYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTg0MmVhY2RjYTc0ZGFiZTM2ZWU3Y2M3M2Y4MzcwMTkwYzc0ODg0MDkzZTllOTY4YTE3YjUzYjFmYzE5ZGVjYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTcyYzQ0NzU5Mzg0MWY4ZDg0Zjg3M2NlYmM0MTRjYWYxYjk1OGQxOTk2ZDJlMjc5OWU1NDhhMDcxNDAzOGIxMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWQ2MTg4NGE0MzM4MWU3MTczYjU5YjNiOTk1MWVhMzI4OGI0NDIyNjBlN2UzYmU5YThjY2UzYmQxNmQxNzQxMyJ9"
+        },
+        {
+          "resource": "repo://docs/06_PAYMENTS_AND_STRIPE.md#L223-L223",
+          "version": "repo-lines-v1:sha256:7f3a190422ed2ca10940e148c07be4328b974aada2a14ebfefba58dbe2401c4d:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2YzYTE5MDQyMmVkMmNhMTA5NDBlMTQ4YzA3YmU0MzI4Yjk3NGFhZGEyYTE0ZWJmZWZiYTU4ZGJlMjQwMWM0ZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiN2YzYTE5MDQyMmVkMmNhMTA5NDBlMTQ4YzA3YmU0MzI4Yjk3NGFhZGEyYTE0ZWJmZWZiYTU4ZGJlMjQwMWM0ZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGFjNzVhZWQ4OThmNTM3YWZjMmYwZWJkNTJmYjRiYzRhYzU1OWEwN2FkZDg4YmY2ODA4ZWFiMGVlMmQwNmJlYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2ZlNTA3MjA4NTQ0OGQzNTJkOTM0ODhkNGY1NWI4YjE5NTJiZDA1ZDI3ZTA5ZDY5Y2IxN2FjZjIyMTEwN2Q1YyJ9"
+        },
+        {
+          "resource": "repo://docs/06_PAYMENTS_AND_STRIPE.md#L283-L283",
+          "version": "repo-lines-v1:sha256:c67bb3c248433645a7e460fe7e22486d3b523cd0855681cafe457ac193644cf9:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzY3YmIzYzI0ODQzMzY0NWE3ZTQ2MGZlN2UyMjQ4NmQzYjUyM2NkMDg1NTY4MWNhZmU0NTdhYzE5MzY0NGNmOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzY3YmIzYzI0ODQzMzY0NWE3ZTQ2MGZlN2UyMjQ4NmQzYjUyM2NkMDg1NTY4MWNhZmU0NTdhYzE5MzY0NGNmOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTk5N2ZkMzE2OWQxZTNkMWQ4YjEyNTgyOWI4ODYwYTU5NjM2MzU0ZWZiODM0N2FhY2I1ODQyZDVlNzRkYTc5OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZGJjNGVlZDRkMzQwOTYxNWU1NDVhNTk0Yzc0NWE2NzBiZTMwODkyNzhjMWM2MjgxMGEyOGM1OWY0MWNlMThhNSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

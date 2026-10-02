@@ -1,0 +1,320 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:2358c863dd7a1a198090b481e915489784ad917e5263b6c9ad068662101db9a8",
+  "claims": [
+    {
+      "id": "claim_a73573fba69a47879cb04b15ce0760c0",
+      "statement": "The core Playwright lane runs e2e specs on one Chromium project with a single worker and no full parallelism against a production build started by npm run e2e:server, with a shared global setup and teardown and one retry in CI.",
+      "evidence": [
+        {
+          "resource": "repo://playwright.config.ts#L17-L58",
+          "version": "repo-lines-v1:sha256:0d44d77f0901c0f33198e7953da34ff3ae6da1b737b1f078e17ef73a041e2a41:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyY2VjYjE0NGE0NmY1ZGNmMTJhNjE2OWZjZWVkNzY5NWU4Mjk0YjA5MGRlNzZmMzY2MWNkZDAyNDkzMDAxNDciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzNjVmOTAyODdhOGQxN2NmZWFhYzU4OTEyYjY4NjY2ZDEwMjM5YzA1YzlhZWE2MjFhZTExOGZjM2M2MGI0MGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3388e47327b84bf6b1fba8766f8fd87c",
+      "statement": "The mobile lane runs the Chromium engine at iPhone 13 dimensions plus a Pixel 5 control rather than WebKit, because a WebKit context over the plain-http localhost harness upgrades subresources to https and drops Secure cookies.",
+      "evidence": [
+        {
+          "resource": "repo://playwright.mobile.config.ts#L14-L35",
+          "version": "repo-lines-v1:sha256:3a2bd099315d8662e932d2e54f896692e99f543255280710a35b2f14b5050e04:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwMjM2OWJiZDdhOTMxZDM0Mjc2OTNlNjM0YWU4N2FlN2JkNmU0MGRmNjdhZTQzMDgxNmNiY2NiYmNhODMyZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlNGRkMTY2NWIwMjcwYzI0OTgzODRlMGZjOGYxOTFhNDBlY2FmZWI0OGQ3ODdlNDc5ZDZjYjZmMjQ1ZjQ5N2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczZjljODkxMDUyOGM1MzE1OTlkY2MwYWUwNTM4NWIzMGM4NjE0ZTI4OTg2NmYyOWVlNjExNDNjYWU3NDMwYjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1NDI4NjE4ZjIwMjMzOTFmZDk1NzRkZGFhNTQzNzRkZjk1YWI4M2EwNGE1YTAwNzU5YmUzN2JlZWJhMTVlMWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1086957e3aa245fb898dd4330f0199d4",
+      "statement": "The E2E environment module refuses to load if Supabase or database URL overrides point off the loopback host or at a hosted pattern, if a live Stripe key is present or if STRIPE_ALLOW_LIVE_MODE is set, and otherwise supplies literal local endpoints, public local demo JWTs and dummy provider values.",
+      "evidence": [
+        {
+          "resource": "repo://e2e/helpers/local-env.ts#L1-L65",
+          "version": "repo-lines-v1:sha256:8742b3e3994de3d969371fb8f27e66d5e1ea62df7643147902ca81a6c6143c94:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3Mzk1OTg0OTA5YWYxMTMzOTFlMTFjYzZkOTJhMWMwMTk5MWRkY2IxNmJmMzhmOTFkYzViYTA0ZWZlOGRiMjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI4NzgyMDZjYjVmMTY1N2ZjZjc0NzhlNDJlZDNkOTc0MmUwYTVhYWFjMjc1ZmE3ZTczNGE5NWMyYjEyNzkzMzUifQ"
+        },
+        {
+          "resource": "repo://e2e/helpers/local-env.ts#L92-L159",
+          "version": "repo-lines-v1:sha256:0a9ae75b29f2e4f3135c48c781996f727d74eaaa76b6703ab8dbe2c4f8302d32:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2NDYwMjY4OGFhNWI5ZmY0Mjk4MjMyYTA5YzNkYjMzY2JkMWE1NjY4MzA2MWM2NTZiN2Y2ZWUyNTljZWU5ZWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhMWQxYTYzMzkwMjI5Yzc5ODM0N2U4M2EwNDA1NDQxYzk0MDAwMzUyODRhZDE2OGMxYmY2Y2RmMWQ3MGEzNzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdjYWE2MzVmMzc3YzQ5NGNlNDNhNDE0YmU1ZjhkZmE5YjUxZmI3OWQ2Njk5NjcwMjExMzdjZDQ3MDA1ZmNjMjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3e3e1c7cd1a24f12b9b3c0eb1778fdf3",
+      "statement": "The new-client waitlist and durable-waitlist flags are enabled in the E2E server only for one reserved slug claimed by a single spec, so every other seeded studio runs with the features off.",
+      "evidence": [
+        {
+          "resource": "repo://e2e/helpers/local-env.ts#L133-L143",
+          "version": "repo-lines-v1:sha256:bbb69ff648f942d2c418c30a9957eaba9afe9415f684e1f9e192860eb9551a84:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUxNTg1Nzc5MzVhODQyYjJkOWU0NWQ3MzFhZjA2OWM5ZDg0ZWYzNWNiYjMzMGQyNjhkMTY5ODZlYWJiMWI1YmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjOGI4MWYyYjViYWJkOTU4ZTE4OTE5NGNhMWNmYzE0NjlmOTY2ZTM3ZjQyOTdmZTEyYTEwMjJhMjI3MzcyMjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg3YTNlYjM2YTVkZjQxZTY4ZDI3YzRkNjU5NTNiNjk5NDBlYjFlYjgyZTI2ZjMzOTFmNjgwZThhZDQxODVlZDYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUzMWVmZDhkNmViNjgyNTU4NTYwYjhiNzUxNmU0YzRkNGM1YTQwNjFhOTIyMzc4MmY0Y2NmZjIzYzk2OGZjNTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1733cab7a9264f299c86b4295b181bf5",
+      "statement": "Each worktree derives a candidate E2E app port in 3200-3999 by hashing its root path, port 3111 is reserved for CI, the host is the literal localhost, and every Playwright config sets reuseExistingServer to false so a collision fails loudly instead of testing another worktree's server.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/worktree-resources.mjs#L1-L80",
+          "version": "repo-lines-v1:sha256:cf3c336b2debeee7d982744e59b91a149335b5a22729fb7a868a3824a69a3649:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2YTI1NTI5OWFjYjRhY2E5Y2IyMWY4ZDQ0NDBjYzhhZDlmYjI4NTVlODM1MWRmZWFjZmJkYTZiNjY0YzkxM2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdhNjE3YjFkY2EyN2YxYmZmZDdhMGQwMmRkZjhkYjVlMGJmYjlmMDgxZmJkNjg4MWViNmJiZmJmNzRlODU1OGQifQ"
+        },
+        {
+          "resource": "repo://tests/scripts/e2e-guardrails.test.ts#L148-L162",
+          "version": "repo-lines-v1:sha256:b4b8fad6838f417a88ca95bb4a2cccb7ed5e4c4bb7d28cb9f34833f256a421fe:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkYzVhNDA2OGI2YjdiMjYxNTNlNzI5NzNkNDFkNmE2NmY0NWJhNDg3NzM1NjJmYTA4MzA5MWQwNjU2OThmZTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQwM2M1ODUyNTVhN2YwYzU0ZDQ5Y2VlY2NhMjE4YzdhYmY2NTg4MWQ1N2Y5MmZkZjNlM2QyODI1OWE5N2Q4YzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_aa70573b902346889d91071009283e73",
+      "statement": "All browser lanes share a global setup that refuses to run any test when the local stack's applied migrations differ from the checkout's, and a global teardown re-checks at the end of the run.",
+      "evidence": [
+        {
+          "resource": "repo://e2e/global-setup.ts#L11-L44",
+          "version": "repo-lines-v1:sha256:1a5117b938176410c3bbbf94e89462fb4980d849e7b701d13d4834e80f52e25b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0Yzc5NDY1NjhkNTI3M2FmN2NiZmFjMmMyMDYzNzNhM2M5YzM3ZGY2MDE3NmNhMmU2ZGRkMjIxY2JkMWMxMWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwYjY5MGU1ZDdlYTUwNDU1MDJlZGNlN2FkNTRkMTk5NTZkY2Q1YzBmNzhkNDhkOGE1Zjg4NTM0ODljNjlmZTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhhZGFhNGRkOGNmOWI2NTU4Y2I0NThmNTY4NmVhY2JiODE3ZTk1MTZjZWVmNWJiMzVhYTgwNmMwZmEyZmQzM2YifQ"
+        },
+        {
+          "resource": "repo://playwright.config.ts#L18-L29",
+          "version": "repo-lines-v1:sha256:fb5f2e507aa630914c0ebd86a93de2e871f5785c2e70ed2a9fe4c031cce689b4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5ZWI3OGY3MDM0OThlODE4MzQ0MjE1NjQ0ZTY5N2M2NjJmNDRlZDQ2NzQ1YjNmMDk4Y2RjNDY2NTE1ODc0YjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxYTc5MmFlNjcxMzhlYzEyODYzZmE2MDM5MTI5MzM5ZjViMWQ0ZjE4ZDViY2RjYWVhNTVmOGU0ZGFkNGI5MjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI1NmY3Y2E1NGRiNjA3NDUyYmJhNjJkMjliNGE2M2FiMGU5ZGQ2M2FhNjQ3ZmNlNzhhZGM4OTQyYzY4ZDYwOTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhmZmRjMmNlYjQ0YzRiMjEzZTQwM2EwY2ViNTE3ZDhiNTU5MWFiODgxZjE1YWJmZWY1MzFmOTA4ZTU2MmNkOTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8642f83aac04405890ebd85d44362e2c",
+      "statement": "Because handle_new_user is a no-op, the E2E seed creates the owner's auth user through the local GoTrue admin API, inserts the practitioner directly with current-version acceptance stamps and marks the invitation accepted; specs then sign in through the real magic-link form.",
+      "evidence": [
+        {
+          "resource": "repo://e2e/helpers/seed.ts#L93-L130",
+          "version": "repo-lines-v1:sha256:207de31e920eb879f11f323bd9b76a4f7ba196b20daa978c6e097b2fe48e4bea:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4NTg1OGRlZmJhYjhmYjY0OTRjZTYzMzU0ZWQyZTU5NDVlOWU3ZTU1ZTVlMTQ3YTZhNzQ2NDgwY2JlZjM1NGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1ZWYwMWJjMDhkYmMzYjYzZTRlNzVlYTNkMjZhNWI5NDE4OTE4NzdlMjdhZDg5MTMyOWM4NDExZDdkOGRjNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljZTE0NTk3M2JkM2E3MThiNmYwNzVjOGEyZGY2ZWM5NzY5YmUxZTkwMWJmOGFkYzAwNmE5OWFhNmIyOTdlN2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5OTkwMmUyN2Y4MmVlYjY0ZDFmYzBjNDlhZGVjZjI0OTJkYTZkZjU0NWY1MzFmZjQ3MzhmMjBkMjVkN2RhZWEifQ"
+        },
+        {
+          "resource": "repo://tests/scripts/e2e-guardrails.test.ts#L73-L81",
+          "version": "repo-lines-v1:sha256:9a02a06b4cc61cfc4ef6e9651bbcfa2e29385cc7abf13f5e6b747f2cc4a3ba53:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYmI3MmE2MWY5OGNhMjcwNjIxMGM2M2MyNzgwMmE2ODJhNGNiZWZhNzVlMzlkZGFhNzczNGZhYzM3OTJjZmQ0ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWUyZDFhMWFlNTQxODljOTUxY2IwNjFkOWI4OTk3YjFmOGM5ZDI5OTEwMjBhMjJjODY2NjY4NjM5MzNiMzFmNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOGQ1ZGViYmZlMzdmOTM3OTBlYTg3OGQ1Y2Q2ZDJiMTZkMjZhNWNkYWE2MDM4MTlmYTM5M2Q3MzA1NWJhYTY2NCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_468d3cab8c2d45cbb59d625d0104ab67",
+      "statement": "The E2E seed gives each studio a fixed-offset Etc/GMT zone whose local clock reads about 09:00 at seed time so the local day keeps bookable slots at any real hour, and a unit test checks every UTC hour.",
+      "evidence": [
+        {
+          "resource": "repo://e2e/helpers/timezone.ts#L1-L22",
+          "version": "repo-lines-v1:sha256:59161b11c09b47ea1ed93f3d385e9912e53912ba45844f465937e5ed99214155:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExNmUyNGM0N2I3ZTgxZmI0YzAxNTQyYjZlZThlZWQ3Y2Q0MWRjOGJjZmU4NzNhODFmZDFiMGNhOWJlOWJjMGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/scripts/e2e-time-independence.test.ts#L29-L59",
+          "version": "repo-lines-v1:sha256:424c616ef49676c18edb806167bb514768900a2d9324110fd6c8cd58e547e8dd:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3NGQ3OGNjODQ5OWVkM2M5NjFlYmI0YTJiMjc3MjY1ZmI1M2JmOTU3MmNmOTA2YWUwYjQ5YmJkYjgwMWUyZjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcwYTA2ZTQzOWRhNDJmNWViZGI4NThkMDg0NTBiMmQ0NzViYWI2NTI3OTRiY2I4MmM0MTI0MWY0NmYxYzYwZWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_64571d4c1dd54bc2afe86d309225c948",
+      "statement": "The fake Resend transport activates only when HONE_E2E_FAKE_RESEND=1 and no Vercel, AWS or Kubernetes signal is present, throws if requested in a deployed runtime, makes no network call, and supports success, reject, throw, failonce and hold modes selected by environment or recipient prefix.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/e2e-fake-resend.ts#L10-L143",
+          "version": "repo-lines-v1:sha256:24c9abcfc656df0879b018112b745d0ce3c37ae1c2b80c3f76fdbcab7b45dc23:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0YmRiYTkyN2JkNDE2MzA4N2U1M2E3ZjM3NzdiYzFhYTE5NDhkMzRiNzE4ZTdiNjYwZGQ5MDhkMjdjY2UyZWM3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjOTUyNWY5ZTI5ZGY1NjgwMmE4NjhmZjFlMjI0N2I3NzQ5ZWZjYjFiN2U2MjM4Mzk4Y2NiZDRhYzAzMDIxOTA2IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_e328177bf72c4d588c9d5c8f9ebe90c9",
+      "statement": "The email client module runs the fake-Resend deployment assertion at load, and getResendTransport returns the fake only when the fake guard passes; the welcome and new-client waitlist email paths use getResendTransport.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/client.ts#L1-L35",
+          "version": "repo-lines-v1:sha256:c64fe67376f46bac22e033571e869bc2ed77e14cfeaedf4836ef474f2eaa9aaa:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3Y2JhMzg0Y2UyZTIzZTQxMjE2NjExZGJlMDBlOWM0NjAzOTcwNzRjYzg0N2FkMzBjMjBjM2UzNGUyNjZmODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjMDczMTIxNWQyNmZjY2U2NmU0MzZhMjM4OWZjMzI2YTI3MmVjYzZkZTJhZDZkZWYzNzI0MTY5NWJlYmNjZTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://lib/email/send-welcome.ts#L45-L55",
+          "version": "repo-lines-v1:sha256:95ed6a8d651d6144d68cf3c0b486d82cbfccd13228d6f70b77d9bfefabfbf9fa:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA3MjMyNDU3NGNhMDU2ZDkwNjM0OTFlYTYwYWFhNTA1ODk1Zjk4MzA4N2YzNDRiMzNjNWRlNGRjMGZjM2M0MGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVmYjk2NzM3OGRmYzNjZmIwMjk2YjM5MzU4MjRmMmI3MDUwMzRmOTFlMjc1MDI4Zjk1YWU4OTZjNDU1NjlmNmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhkYzgxOTQ5NjNhMDRlMmZhMzU1YmRjZDUzZTkwYWY1YmNiOGZlNzgzZDIwMjhkMjZhMjMyMTE1OGZmZjg4ZDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fd4e6966951647a584444bbe145eb636",
+      "statement": "Fake Stripe requires HONE_E2E_FAKE_STRIPE=1 plus a well-formed HONE_E2E_RUN_ID and rejects any Vercel, AWS or Kubernetes runtime; NODE_ENV is deliberately not the gate because the E2E server runs next start in production mode.",
+      "evidence": [
+        {
+          "resource": "repo://lib/stripe/e2e-fake-guard.ts#L1-L87",
+          "version": "repo-lines-v1:sha256:0b9872578fae215528077aae294c1931a53809d6bdd84cf9ab651b80b345ee3b:eyJzZWxlY3RlZExpbmVDb3VudCI6ODcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ccb2f1dcaa6049aaaac88e8c36c71490",
+      "statement": "The fake Stripe client implements only payment-intent create, retrieve and cancel and refund creation with synthetic ids, selects each attempt's outcome from a guarded per-run ledger keyed by idempotency key rather than from the browser, and records idempotent replays as invocations without new effects.",
+      "evidence": [
+        {
+          "resource": "repo://lib/stripe/e2e-fake-stripe.ts#L24-L130",
+          "version": "repo-lines-v1:sha256:62c51b4848e8310fa7f1537d2d5e5fd7915d1d7d326bfa1f74eb352de8fb64f8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjMDk0OGQ5ZGZlNWVhMGNkYjYxYTlmNDljMDA0MzA5ZjU2YjM0NjM5ZWUxYmU1YTA1MDU1YTI5MGVlZmQwZmY0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJjMzI4NmI2MWZmOGIzMzllZTkyOTQ3MTljMjExNjVkNmM5MjkzMjYzYjAxZDU1ZmYwNTZiNTBlYTg1NjQ2ZGJmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1NjA1YTc5ZTM1Y2NhZmVjOWVhZmY1MzY2ZjA0NjRkMjQ1ODY2OTBjNWE2YzU0Y2FiYTI0ZTc1YWIzMTVkMjlmIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2NDQ2ODM4NzMwOGI0NDhhNTI2YzZjOTYzNDdhYzg2N2VmOGE0YWZkNWJlZjgwMTBlM2E0M2YzZDUyMWFlNTExIn0"
+        },
+        {
+          "resource": "repo://lib/stripe/session-payment-stripe.ts#L16-L30",
+          "version": "repo-lines-v1:sha256:9004fd1b7b7ec97cfdb32a1cffb68c603d47aa4b744ef26a935fe002a5e28133:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZlNDRlNDE2ZDhiMzI0MTcyMTQxZWFmM2RkNzNjZTNhZmFlNWMwZTIzNzUwMGMxNjIzNTY0MjdmMjhjNGViN2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzNDA0MmI1NWUzZTNhYmMyZDE3OGIyNzliYTA0YWRmMTUwYzA2NTJkMTlkZDMwZmNiNzk5ODZiNDU2NWM2ZTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJkZjJjM2QyODRmNjJjMjdlNjlhZGUzODY4YTdkMmY0ZDBjNjgzMGVkZGRkNDVmMjAzOTU5MTYzYmI4ZTc0ZTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRkN2M4OTlkMWFiMTdkMGU5MGU3NzYxZjVhMDFlZDFmODFiZDczYzkzZWZkZTIxN2Q3MGJjZDg3Y2JjYTA4ZGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e12b2e8c123a43f89004095523189b09",
+      "statement": "The fake Google provider is reached through googleFetch only when HONE_E2E_FAKE_GOOGLE=1, a valid run id is present and no deployed-runtime signal exists, and it returns synthetic responses for the OAuth and calendar endpoints with scenarios read from a per-run ledger.",
+      "evidence": [
+        {
+          "resource": "repo://lib/google-calendar/e2e/fake-google-guard.ts#L1-L59",
+          "version": "repo-lines-v1:sha256:070b31c8561a158ec46f45281e76adfdb76d52887a793f48870fa626aa2656b0:eyJzZWxlY3RlZExpbmVDb3VudCI6NTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE0OGM0MGI3OWUxMGU4OGIzMWE3YmYxOGJjNTFjYWI3YWMxNjE4Y2RlN2M3Mzc2ZjdhMWQwODUzZWVmYThiYjEifQ"
+        },
+        {
+          "resource": "repo://lib/google-calendar/e2e/fake-google-provider.ts#L17-L40",
+          "version": "repo-lines-v1:sha256:f0aa7f4ac64cf728d5ad0a248b27d3fba49e17c290239c909492c5d80c0ca80c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE2ZjZlNzE2Y2RjYmNiNTM2NDU5ZjYwNjcwMWQ4MmYwZTQ1NWQwYTc1MzM3M2VkMDUxOTQwNjkwYWI1NzVkYjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlNGIwOWYwMDkyZmU1YjczZmE0N2RjZmNlNzA3ZDBkZTczNmVhNGNmM2VlMWM4MjAwZmVhM2IxYTRlMDM5OWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg2YTgwMDBiYTgzODRiMTBiZDYzM2M5YWEyNDdmNTdlYTlkMmY0Mzg4ZDA1YWFkZTUzZjIwOGY3YzI0MzdhYTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU5MjRjNGQzYTRjNDE2YWYyYzY1ZDU1ZTY5OTMwYzgyMWU4N2Q4ZGJjNmJjNDk5MDg4Nzg2Yjc5Yjc5N2M4YTgifQ"
+        },
+        {
+          "resource": "repo://lib/google-calendar/google-transport.ts#L1-L20",
+          "version": "repo-lines-v1:sha256:b49a9279ff8b3b135dab24537bfa706e1abbf0aaf89fd9bca924b81095461e24:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_29947511884a4b89a21688e9ee4a23ff",
+      "statement": "Route fault injection is enabled only by HONE_E2E_ROUTE_FAULT=1 outside any deployed runtime, the fault page sits inside the authenticated route group and calls notFound() when the guard fails, and its cases prove error containment including that a raw database canary string never reaches the DOM.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/e2e-fault/%5Bcase%5D/page.tsx#L11-L45",
+          "version": "repo-lines-v1:sha256:d636b6101583e5263fb4699cce27cf51f81a8adbb1de1c8e423075de3fdc840e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhNGVmZjM5ZjdiNzEyMmM5MjNjY2Y5MDVjMmU1MWZlZDc3NDBlOTliYWQ0ZTQyYWFlMWYyN2U3ZGM5OTUwZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0OGIyMDQwYWEyOGNjYTE0MDM5NDlkMjUwOTgyZDQ3ODY5MDRkYTExZDcwNTI5ZTNkMDA3NjdmMTIxNDE4YzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM1NDAxZmU1Y2Y1Y2ExYTZlZTQwMjBlMDBjMDRkZjkzYzc1ZWYxMzU3ZGVlYTQ1YTRjNTUwZGEwZDVmMDE0MDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQyNDY4ZWUzMWJhYzNkMTVlODY4ZGQzZmMyYTRiNmNkNTY3NTE1MjAzOTU1YmExNGM4MGNmNjFlMTFkMTBlMWMifQ"
+        },
+        {
+          "resource": "repo://lib/reliability/e2e-route-fault.ts#L1-L117",
+          "version": "repo-lines-v1:sha256:0b733d98cb91d4c1b7c8425db6507cdcfca72857f4e57799744e18e3691bcdbf:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwYzBmNDhlMzhmYmRiNmMwZWZlOTg3Yzk4NDUyMWVkMDc0MzI3NTViNmJhYWNjZjQ1ZDk3N2U1N2RiN2NiYWQ0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_ede6db0cf1f24649be2c87ed77603fde",
+      "statement": "Guardrail tests pin that the E2E lane uses local endpoints, refuses hosted overrides and live Stripe, logs in through the real magic-link UI, has no app/api/e2e route, keeps npm run ci browser-free, runs the CI job without secrets or --linked, and serves a production build.",
+      "evidence": [
+        {
+          "resource": "repo://tests/scripts/e2e-guardrails.test.ts#L25-L146",
+          "version": "repo-lines-v1:sha256:489e9a7cf1675ae932997b3b7e235b9d38ede364159383db580ba21529458675:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5N2ZmZWQyZjJhNTc0Zjg5Y2U2NjE2ZjA3NzQ3NTNhN2M5ZTg0NzgxZjFmODI4OTZjMjlkNzdmMDMzYmVjZmJjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkZDBiZTI5YTg3Y2FlNDFjYjJhODliNTI3NjMxYTE0ZjNhNWU5NGM3ODRjN2UwODg1YWYxZWUzMjAwMTYzM2YyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIxMmVkOTc0NmNhN2FlMGFmOWZmNGViZGE5OGZlNTU5NDQxZDBkNzdhMDNkZmRmYTNjYzRiNTU2MmRiOGJmNmYwIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_18688b5502314197af43ad0d1df9549a",
+      "statement": "Browser group selection returns extended coverage for an empty diff, shared infrastructure changes or any app, components, lib or hooks file matching no group pattern, returns no browser lane for docs, migrations and non-browser test changes, and otherwise selects the matched groups plus smoke.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/browser-groups.mjs#L374-L535",
+          "version": "repo-lines-v1:sha256:78d5723f6deab72be0bd2445d1b8373e5a3bf333ec5c5827adfad4dc34792c27:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiYTM4ZWU5Y2M3M2M5ZjFmMmM4ZjhjNTZkMDBiZDAwZGU1YjA3MzY5ZjEyZTA4MGFiYmQ3OWM4YzQzNzU2YzE1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkY2FmZTIwMTFiYzFhNDIyODk5NjVkMDVlMTFmNWM2YmZmYjMzNDNmYjRjNjIxZDQ3NTJlZjE3NjBkNjk5ZDdmIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_badf5937518f487fad861ab3c97f9379",
+      "statement": "CI shards targeted browser selections into at most three shards (never more than the selected spec files) and extended selections, including full-matrix runs with no selected group, into four shards.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L146-L216",
+          "version": "repo-lines-v1:sha256:79efd01c690588347063acdd0c5363516b6a962b2ac7d7b05d83cce13a2582b1:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5MzY5M2RlNmZmNzY3YWZmZDMyNDA2MzZjZjA4NTkzMGNlM2E3NTE4N2UzNTAyOWE4OGRhZjU1ZjdhNjc1NmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmNDU5YzI2YjM1OTFiZTI5NzUyNGViZjBmYmE4NTU4NjBhYmIwYTlmYWEwYjY1ZTI0YWRmODg1ZmIzMTRiYjgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIyNWMzOWRjMmY5ODJjNDAyZjE2ZjY5NWQ3YjdlMGM4MTdkZWVlOGRmM2MwODYwOWM2ZDkyNGVmNDg4ZGQ2YjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFkZGZkNThhY2YyMjEzOThjY2I3ZDI2NTlhNzM2MzBkOWU5ZTBhM2I0NmNkMjQ0YzVkZTFiZDFlYWZlY2UwNGEifQ"
+        },
+        {
+          "resource": "repo://tests/ci/browser-shard-coverage.test.ts#L97-L170",
+          "version": "repo-lines-v1:sha256:39dc894ac5dabca5a5d1e56da9d737fbc02fed33f63d94a2f2ba094513053403:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRhNDllYzYzNmRjYzZiZjRiZWUzZjgxNzM0NTc1NDBlNzZjMjBiNjY0NjQwZjVhYWQ0NmI0MzUyZDJjNzI0N2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyM2FiNDJiZTMxNzgzNGI2Nzk5YjYwNDMzOTkzNDViZjgyNTc3MzQ5ZWY4NzU1YmU1YzQyMGVmMWNjMDFiZTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZiZDVhNGJjYTAzNGJkZDUxMzA2YTdiOTFkN2I0MGY5YTNkN2UxMDJlNTAxYzczNTIwMDY4MWE0ZTA3ZmZmZjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_50aa7e2b868d4d6eb9f11f4b469f2931",
+      "statement": "A CI test requires every e2e spec on disk to be mapped to exactly one browser group, deriving the expected count from the disk, and pins the targeted calendar plus sessions plus smoke selection at 39 specs as a cost limit.",
+      "evidence": [
+        {
+          "resource": "repo://tests/ci/browser-selection.test.ts#L14-L88",
+          "version": "repo-lines-v1:sha256:302c84cf10029238d980575e6242d9c87715687962919d7753f5196e492142f7:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljMzExYzEyNjEzZjRkNzM5MGQ0MTZkOGQ5ZGM4OTc4ZmVmOGIxOThiOGQ1NTA1MWE3MjJlNTdmZmI2NTgwNWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4Y2EyMWRiNjdhNmMwOGE5ODJlOGJiNzEwZjY3ODY3YzMwZDEwZWM4Mjk0NTYwMTQ3YWIyOWVlZjY3NDIzODQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ4MzRiNGU1NmMwNTgyNjJmMTM2Mzk5ZGQwYzNkNzczY2VjMjYzZTgwZDAwNzNkOGRhZDRiZDYxM2U2MjgzMWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQyYTY3NTZiMzJlOWVmN2M0ZjczZTBhMTMzMjNkZGU5ODM3MWFkMDNlNTA2YmMwYzYwM2FiNzhlZjMzMTE0MzEifQ"
+        },
+        {
+          "resource": "repo://tests/ci/browser-selection.test.ts#L142-L142",
+          "version": "repo-lines-v1:sha256:9b0e58a363db148cf9b4b4957eb3e18c59f6832e6e769f5b1cdb740e85740e55:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWIwZTU4YTM2M2RiMTQ4Y2Y5YjRiNDk1N2ViM2UxOGM1OWY2ODMyZTZlNzY5ZjViMWNkYjc0MGU4NTc0MGU1NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWIwZTU4YTM2M2RiMTQ4Y2Y5YjRiNDk1N2ViM2UxOGM1OWY2ODMyZTZlNzY5ZjViMWNkYjc0MGU4NTc0MGU1NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDA0MjFiODQxZmQ2OWI4ZWFkODI4MjFkZmFjMDQ3ZDg0OGJlYWMzZWQwOTkwODYyOGNhMmE3YzU5OWFkMGM1YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzgxYzI0Y2MwZWQxNGJiZTJjMTA1MWE5YmNkMDM5MDM5NzAwNWFkZDgzNjM4YjFmYjU0NjY0N2MwZGMyNTNhYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_11b4e17511684bef8f6703a79d36dbd1",
+      "statement": "The targeted browser cost pin is stated three ways: the assertion uses 39, the test title says 30, and a browser-groups.mjs comment says 36.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/browser-groups.mjs#L289-L292",
+          "version": "repo-lines-v1:sha256:5b2cdf74ddf8add87fadb2983bba3c82567f03056912c536254698d4e6c57cf4:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2NkZWM2Y2JmNmUxYmI4YjU5NDhiMDI3ODUyZmMwZWY2YTVhM2UwYTFmZmUyNzUzNDgzODRiMWExOTNkY2NkYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGFhNDJhODcyYjI3YTFmM2QxMmIwYjNlZGY1YTZiNGYwNmI0OTBkOTY0NWRjMDhhZmMwNTY0YjU1ODkxOTEzNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODhhMmMzMTM0ZWVhZjEzMTM3ZWQ0NTY4NDI5M2I5ODY2ZWRkMzY0OGY5NTFkYjVkNWJmNTE4N2E3ZDM5NmQzOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjQ0M2EyODhhZGY5MGE5NjExZjY3ZTliMTA0YTU3NGQ0NzQ5NWFjNDdkMjkwN2ZiNzhmNTMxNTc4YjY4Yzk1MiJ9"
+        },
+        {
+          "resource": "repo://tests/ci/browser-selection.test.ts#L142-L142",
+          "version": "repo-lines-v1:sha256:9b0e58a363db148cf9b4b4957eb3e18c59f6832e6e769f5b1cdb740e85740e55:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWIwZTU4YTM2M2RiMTQ4Y2Y5YjRiNDk1N2ViM2UxOGM1OWY2ODMyZTZlNzY5ZjViMWNkYjc0MGU4NTc0MGU1NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWIwZTU4YTM2M2RiMTQ4Y2Y5YjRiNDk1N2ViM2UxOGM1OWY2ODMyZTZlNzY5ZjViMWNkYjc0MGU4NTc0MGU1NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDA0MjFiODQxZmQ2OWI4ZWFkODI4MjFkZmFjMDQ3ZDg0OGJlYWMzZWQwOTkwODYyOGNhMmE3YzU5OWFkMGM1YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzgxYzI0Y2MwZWQxNGJiZTJjMTA1MWE5YmNkMDM5MDM5NzAwNWFkZDgzNjM4YjFmYjU0NjY0N2MwZGMyNTNhYiJ9"
+        },
+        {
+          "resource": "repo://tests/ci/browser-selection.test.ts#L64-L64",
+          "version": "repo-lines-v1:sha256:a68299864d05988870b45d251ef36f33b057d0dcb300942cb6909d5f704885e7:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTY4Mjk5ODY0ZDA1OTg4ODcwYjQ1ZDI1MWVmMzZmMzNiMDU3ZDBkY2IzMDA5NDJjYjY5MDlkNWY3MDQ4ODVlNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTY4Mjk5ODY0ZDA1OTg4ODcwYjQ1ZDI1MWVmMzZmMzNiMDU3ZDBkY2IzMDA5NDJjYjY5MDlkNWY3MDQ4ODVlNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmJkYmYyYTU0NzE0MjM1YjU3ZWI2ODZiMjg0OGNhOTQyNTRiOGZmYTVmOGRkMjMyNTBlNzJjMjE5NzRmMTdmMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzY4MWFlYzcwZDNjZTJhZTUwYzgyOTRiNmEyMTU5OGJjZTA3YTFjOGI1YjNmZTI2ODE5MTdmYjM4MWVlM2E0NiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_8f0530f4a1714a1db3c93c6905f3e8b3",
+      "statement": "The E2E guardrail comment claims nothing under app/ or lib/ knows about E2E, but its assertion only checks for an E2E_AUTH_BYPASS variable and an app/api/e2e directory while lib/ contains the test fakes and an authenticated e2e-fault route exists.",
+      "evidence": [
+        {
+          "resource": "repo://lib/reliability/e2e-route-fault.ts#L1-L28",
+          "version": "repo-lines-v1:sha256:840bdc44e8462ceda587b6b786bc9303dfaf8a6ceab688217a2ce362cd1b9bfb:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjIwZWY2YTI5YWVjZmE5MjFmNjcyYTg0MTZjYTE1MGNmMzdkODhkODA5OGI4MjRkNGQzZDI1ODVkMWYyYjJjYzgifQ"
+        },
+        {
+          "resource": "repo://tests/scripts/e2e-guardrails.test.ts#L83-L96",
+          "version": "repo-lines-v1:sha256:b82ac23674174c556ba958d99cb2a8aa68b2d224989888ec296e7306c190ebd0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0NmEyMTI0Yjk4MDc4OTE5ZjA2YzU3NTExMTY3NDIyOWFiNTkwNmM0Y2IyZDc4YmZmZDllNDA0OWUxNTNmYmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmMGE2OWNhMWQ0YzI4NzJjZmM5OTgwNGI0MDI0ZGE4YzhiZDdlZjM2NWRhN2VmYTQ0N2Y3OGM0OTYzYTY5OTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcxYmJhMWIzMmRhZjY3ZjVjMzVkZmY0YTcyODY5Nzk5NWQxY2NmMTdmMTU3MTc4MGI4NzRhMTExOWY0ZTFmNTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c4406cf9faf94630a9dc509999db9478",
+      "statement": "The E2E seed header still describes owner provisioning through the handle_new_user trigger, while the seed code inserts the practitioner directly because the trigger is a no-op.",
+      "evidence": [
+        {
+          "resource": "repo://e2e/helpers/seed.ts#L11-L16",
+          "version": "repo-lines-v1:sha256:c81089572c530a92ad3e6ec709a53f3c29246334b771538d0860d48d2ffc1d44:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjQzZGRkMTFkZmU1NGFhZDQzMzczZTk4ZjIyZGJlMTM1ZjUyYjBjNjBhZWVhNjJhMTg0MjViN2E4MWI3N2NjNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTcwZWM5NjFhZDg4NzNjNzFkOWM3NGIyNjM2ZmYyN2E0MDE1YTI0YmE3YTBmZDdkMTY0ZmNmOGMyZmJmYWU5NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmFmNTI4MzJhYzBjZGE4ZjAwYTE0OWUwMGQ2YjMyMWI5NGJmMzZmOGI1ZTBmODBhNDA2ZjEyNzY1YmMxYWU4MiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTFiMWY3YWJkMmI1YTZjZDQxMjExN2EwYTNmNGRjMjg4NTQ0MTlhM2RiNTAzYTEyNTQyYWY5YTYzNzVkMGQwZSJ9"
+        },
+        {
+          "resource": "repo://e2e/helpers/seed.ts#L93-L97",
+          "version": "repo-lines-v1:sha256:0d78b1f807f91fa08efb922ceff5fe42987124ca5ec81cf0c45c9333a5201083:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTg1ODU4ZGVmYmFiOGZiNjQ5NGNlNjMzNTRlZDJlNTk0NWU5ZTdlNTVlNWUxNDdhNmE3NDY0ODBjYmVmMzU0YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2IyMWM2OGEzNmQ3OWQ1ZTE4MDQ2ZWZiMDk2ZTRlMDNlNjRkYWIxNjEwOTc1ZTkwMzExMzYzZDhlM2YxNTk3MiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOWNlMTQ1OTczYmQzYTcxOGI2ZjA3NWM4YTJkZjZlYzk3NjliZTFlOTAxYmY4YWRjMDA2YTk5YWE2YjI5N2U3YiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2NmNzdhMDVlNjM2Nzk2ZDcyMTVmNjA1NmY2MTQyMjgxNzUzODVjMGFmZDljMjJjNmMxNDBjMmRmNWViMjQxZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_6acfeb0f9d7f437db3486490835a65c5",
+      "statement": "Fake-Stripe comments describe the processor as future and fixed to success, while the fake already selects success, decline or processing per idempotency key from the ledger.",
+      "evidence": [
+        {
+          "resource": "repo://lib/stripe/e2e-fake-guard.ts#L3-L3",
+          "version": "repo-lines-v1:sha256:5e9be4a9bf3cf6aa26cd53800fd68c3f24b4f76f6730041f6d1f293a9664c45d:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWU5YmU0YTliZjNjZjZhYTI2Y2Q1MzgwMGZkNjhjM2YyNGI0Zjc2ZjY3MzAwNDFmNmQxZjI5M2E5NjY0YzQ1ZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWU5YmU0YTliZjNjZjZhYTI2Y2Q1MzgwMGZkNjhjM2YyNGI0Zjc2ZjY3MzAwNDFmNmQxZjI5M2E5NjY0YzQ1ZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjIsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTMxYWZkYmE0MjAxYTkwNTY2NTI1MTUxYmEzYmZkZGNlNmUxOWYyZjdhN2Q3ZDIzYjI3ZWU0Zjk3MWU1ZDU0YSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOGI4ZjhiNDI3MmE1ZWQzYTYyNWY1ZDM5NGM3NWMxNmZiZmY1OTYwOTQ4ZjU1ZTkyYTJhY2E0MjAxMmIzNWNhNyJ9"
+        },
+        {
+          "resource": "repo://lib/stripe/e2e-fake-stripe.ts#L20-L22",
+          "version": "repo-lines-v1:sha256:1f887b3174a67df94352f9437331d3373128cc3c77fc8eace25bda41e35a8803:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjFjOWJmYTIyNGE0ODMxMjI0MjNkZjQ0NjczYmQxYjJhOWQ0MjZkYmEwN2FhMzhiNTkxMzE3NzcyZmRlZjFiOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTlmZDMxODY0Y2I5MWRlNzFlNWQ0NjI3YjA4ODM4OTE0ZTZjNmU1ZjE3NDgwNmMwNTMyNDAxMDBhM2FjNWM2NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjYzOTYzZDU5MmE1YmMxYmU2MmI3OTk5YTczZTQzNTIwYjY1Y2JhYWY3ZGRmNjg3MGIxOGM2ZWMwYmY2M2NkNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2M3ZGM0YWFlNjc5NmE1OTI2Njc0MTk0MTZiZGUyMjY1YmU0NzhkNWFhM2I3YTg5YWMxNGY3MzdhNjBiMzRhZiJ9"
+        },
+        {
+          "resource": "repo://lib/stripe/e2e-fake-stripe.ts#L80-L90",
+          "version": "repo-lines-v1:sha256:e9674ee92a47a245b9aa7d6cd0c2d73d5862a1b113b7c46b5cea463adf528401:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiYjM1M2Y0Nzc0MDE2YjRiM2EyYmQ5ZDk2Yjg3NGM3YmM3YWI4MGRkZDI0ODZhOWY1NDliZjQ4ODkzZmE4OWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExOTAwNjY0NmRmZGE4MGM5MTZjNTM2MzljMTk5MDRiNWQ2MmZhMjI4MTEwYTQ5Zjk1MGUzNDExYTIyZmQ1MjQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_acacc6621db44f96bb1a22754e777d88",
+      "statement": "The core Playwright config header still describes one core treatment-memory flow and the browser-groups header still cites 53 serial specs, while the e2e directory holds 94 mapped specs.",
+      "evidence": [
+        {
+          "resource": "repo://playwright.config.ts#L4-L6",
+          "version": "repo-lines-v1:sha256:faea616c69b058b07a38565174393449c6bde4cb1826718e98bfe906fb3346ca:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzk0NDk2Nzk1NzRkZGU3MTUxNDhhN2EwZTE5ZDE0ODQ2YzIwNTZiOTU1MmExNDA5ZTcyNDQ4NjBlNzI0MzE2NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2I0N2ZhZTAzNzc2ODA3MjBkYTBmMTZiZmM0MTJhODk4MTEyMWIwZDk1MmU1NThkMjRhZDM1YjgyOTY2ZGRhYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjYzYmZhNzA5NTgyMWIyYTgyNDdiNTg4YThiNWM0NDQyMzU0NDJmMGJmOTk3NjhjZWRiMTA5MzIzNDE1OGNhZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWMxZWJjODlkNTRlZDcyNGQ4MTM1YjY5NGZmMjA2ZjdiMTZjNjIwMTZhZDEzYTNkNWI3YTY1Mzg1Zjg2NjRhYyJ9"
+        },
+        {
+          "resource": "repo://scripts/browser-groups.mjs#L11-L12",
+          "version": "repo-lines-v1:sha256:27524d1aa45e25b44bc17212cdedcd6087e670c00ac05c8a27b13c8999f46b80:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTdmZjIxMWNhYTQ3YWQwYWIyYjA3NDExMzI5YWIwYThhZjg0MDI2MTY1MjMzOGVkNGY0NGExNTU5NWZiNjQxMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjY4NjQ5MjM3YWNlNTNlYmMzZDdhNmZmNmIyYjlmMDk2YjNjNmRkYmJlOGUwODBmOGEzMzA3OWU5NGM0ZWU4MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjM5ZWRhY2IyYTVmMzMzYTBkODFhYTI3NzFmMzFiMzI1NjQ0MDAzN2Q1ZmRiMzJmYjIzOTc3NjcyZjViMWEyOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDQyNjRhMDFiNzE5ZGU1ZjdmNDAwNzVlM2MzNTgwODZhM2ZiOGZhOTA3OGZlZmQ2OTA4ODc1MGVmNmM4MjI0NyJ9"
+        },
+        {
+          "resource": "repo://tests/ci/browser-selection.test.ts#L86-L88",
+          "version": "repo-lines-v1:sha256:e43e82037954df70a1ddb0bb52683740a334a271eb4b816945cd3fda059960a2:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmJkYjU0ZjRkMDQ3Yzc5YjhlYzg5ZmRjOTY3ODRjNTA4ZmUxNzc1Y2NhMzViNDgzYzk2ZmRhNWI5NzE1ZDc4ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDhjYTIxZGI2N2E2YzA4YTk4MmU4YmI3MTBmNjc4NjdjMzBkMTBlYzgyOTQ1NjAxNDdhYjI5ZWVmNjc0MjM4NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGQxNTcyM2FmMTFhZmIwZWI4YjFjNGE5NDUyYWJhOTUwZGQxNDQ3MTk1ZWE4ODNkNWUzM2FjZTA2YTQ4NjAzOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDJhNjc1NmIzMmU5ZWY3YzRmNzNlMGExMzMyM2RkZTk4MzcxYWQwM2U1MDZiYzBjNjAzYWI3OGVmMzMxMTQzMSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

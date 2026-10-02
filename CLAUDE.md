@@ -305,3 +305,11 @@ before assuming the diff broke something.**
 - Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**. Do
   not wire it into a workflow: it needs a GitHub API credential, which is exactly
   what the posture above removes.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+@AGENTS.md
+
+<!-- OPENWIKI:END -->

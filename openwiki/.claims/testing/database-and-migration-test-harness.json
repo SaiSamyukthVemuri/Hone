@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:fca9399a7799829da9f657c267aecca37cb57411fb10fd595fb67fad0b75a96f",
+  "claims": [
+    {
+      "id": "claim_2b00637c663840d887c77ed62a9e720c",
+      "statement": "The DB integration lane is a separate vitest config that includes only tests/db/**/*.db.test.ts, runs in forked node processes with file parallelism disabled because suites share one local database, and stubs server-only so server modules can be imported.",
+      "evidence": [
+        {
+          "resource": "repo://vitest.db.config.ts#L1-L45",
+          "version": "repo-lines-v1:sha256:bb1d475532a386dc230493b62198dc7085adfd17b40d46ee94eb876168485368:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgxNzRlOWU5MDAzOGViM2EwZGQzNGQzMTMzZjg4OGZhMmVlNTEzZDIyN2NmOTkzZTM2ZTNjNTc1ZDVlOThkYzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fe11921ff3fe4b65b0d0e588fb60db39",
+      "statement": "The DB harness consults only HONE_LOCAL_DB_URL (defaulting to the local port 54322), refuses any connection string matching hosted-database host patterns, and refuses any host that is not a loopback name before a query runs.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/helpers/harness.ts#L1-L65",
+          "version": "repo-lines-v1:sha256:1ebb7fe890971f72e2bf470507eaf7a65357affd630e13862bd6f171369b34ba:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4Y2ZjZmRhYzQxNjIwZTJjYWRlNjZmZGU1YWY3MjU2ZjFlMDdmNmMxZGUyNjdkZWY3ZGQ2ZTUyNTA5YzBiNmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBkZDlhZTc2YmQ5NTdjYzdlNjE4YWM1MGE2YjQ3YmY2MTBhYTg3NmE1ZTUyZGU0YTRkNDU3MzJkMzdjZTAyNzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6bcf68a77c7c4e9397d6f1621618899c",
+      "statement": "asUser runs statements in a transaction as the authenticated role with request.jwt.claims set to the user's sub, the way PostgREST presents a signed-in user, so auth.uid() and RLS behave as in production, and commits so trigger side effects are observable.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/helpers/harness.ts#L126-L187",
+          "version": "repo-lines-v1:sha256:5332d9d8d2372a3d91e9b6534225dea7a39d3a840b5bae96d2e9255ec666608d:eyJzZWxlY3RlZExpbmVDb3VudCI6NjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2ODU3OTk2ZTAzNWQ3OTRjMzcyZDgzMzU0ZGIwNjc0ODZmZjkxYWNjODlkODFkMjBjOWZhZGRhZDk4NDgzOWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1MDg4NmUyZTUyY2VkZmNkNTFmNzAzZDE4YzIwZWU5N2JmNWM3OTE0MjFmMjhhZTY2OTMwYjFmYWVmYTZjODYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fdbc07d70ad64ab18eab9cc3e2db5b1c",
+      "statement": "asRole runs privilege probes as an allow-listed anon, authenticated or service_role role inside a transaction that is always rolled back, while adminTx groups admin statements in one transaction so they share a single now().",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/helpers/harness.ts#L102-L178",
+          "version": "repo-lines-v1:sha256:c02352ca32730287793aba5a0b3efc123a0196071980a001fc57bd3a8c75c5e9:eyJzZWxlY3RlZExpbmVDb3VudCI6NzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4OWViNTU1MmMyYjE2YjI2MzFiNDM1MTgxZDFmOGU0YTJmMmMyNzIzMjJkNjU0ZDIxZTIzNjVkODA3NTA1MTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2NTEwY2FkMjdjYzc5NjlmMGI4ZmYwOWM5ZjYzNzgyNTRmMjY1NDRkNzQzNDJjMjhlODhhMTNhMzBlNWU0OGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwYzY4ZDE4ZDM4NWU4YjBlZDk5M2VlYWY3MTk0YTgyNmE3NjFhYzQ5N2I0ODZlOWI5ZTg4NmVjY2NmMDgwMDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8198c0d48a674453b26a092d7cbf6cb2",
+      "statement": "Harness seeding inserts fake local auth.users rows with random UUIDs and harness.local emails plus studio, practitioner and client rows, so suites can rerun against the same database as long as assertions scope by the seeded ids.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/helpers/harness.ts#L189-L235",
+          "version": "repo-lines-v1:sha256:4ecd92a983e97e09f6ac0312504d47bca618ca29fd0cfc4a2fda33b0977de33c:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4NTQxODIzNWRjY2RlNzk5NzQ0OTE0Y2ZlOTIxNjE1ZmQyZmZkMDViZTU4MWRhYTMxNzY3ZDViOThjMGNlYjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViOWEyY2QxNGZjZmFhYzJlMTU2YzM5OGRjMzQyNDI4Mzc2NDIyMTIyMjAxMmI5NDA0MTgwZjRiMTkzMWZkMGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBjZmZjNzE0ZGEzNTAyZWQwODVkZGU5OTQyMDU0OGY1NjM4YTRmODllOGQ5NDVlMDM0NmE5NzE5MWVhMTJkNmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMzMjZlOGU2NTM0Mjg2MjViNzU4NjVhMTRlM2ZmZGI3ZTIyMjRmNDI4NDA2ZTI0NTQ1M2Q0MjhkNWQ3Yzk5NzUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6f89b72186ed4b4ea8b816ee52e0c257",
+      "statement": "States that require bypassing a guard trigger, such as a 72-hour-old appointment audit row, are seeded by disabling the trigger as the table owner inside the test rather than through a production-reachable RPC.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/helpers/harness.ts#L296-L312",
+          "version": "repo-lines-v1:sha256:f45d0af4c2ce330ec4f9ef5591e005a8ad8bbf9499b565e174be98717fb60ebd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzODEyNmE0Yzg0OTVjNjc3NGFjNmUxOTliOWJlNmRhNDc4Yjg0MDY3NWY0YzU0NjNhNDUwNTBjNzlhNzFiMmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkzMjBkMGE5NmIwNDRlODQ4MzE1OTNlZjdlNmJhNmJlNmNjOWE2MzAxMDg0MDM5ZmE3ZWViMjNmZjVhMWUyNjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJjZDYxNDQxN2M2NjQ3YWIzMjE2ZGVlODFhMzFjY2YwNWQ5ODQ2OTM4MTVjNmIwOWU5ZmY2MzBiNTcxOWUzOTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYzZDZlMDUzZTE3NTQxNDhiMjg3NGNkZjY0MDEwN2ZlNGI5OTAwOGY0MTBkM2JlNmIyN2M3MTg2MmMyNmViYjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_becf1f2fba2c4a83a95e7747b520daab",
+      "statement": "Concurrency tests observe genuine blocking by polling pg_stat_activity until a backend waits on a lock, rather than inferring it from elapsed time, and report the last observed state when it never blocks.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/helpers/waitlist-concurrency.ts#L5-L60",
+          "version": "repo-lines-v1:sha256:2280bae47043ebf77243bfd27caf6eb57baf8baa76fbc85f3e81a6e6daffbee4:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3ZjFmOWY0NmJiNTdjNDFjYWI3ZGQyM2RlNjAwMmYxZDk3MzU4NDI5Y2NkMzc4YTEyZGUxYWIyMDAwYjg2MmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE3M2MwNDE5ODE3MzkzNDhlY2I1M2YxY2RmZTg4ODliOTE5ZDcxMDAxOGVjMjhlZTkxNTAxZTNhMDdmMTRjZjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5OWRjYTIxMzU5NzBiMmMzODc4NDQxNzkzNGYzN2RkZjdlNjA2NmUwYTZhNzIzMjAxZjk4YWM2ZWMyZjA4YzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5851bdab0d724e74865ca3b94adfed5e",
+      "statement": "The reachability helper computes a closure over function-to-function mentions, function-to-table mentions, table triggers and foreign-key actions, deliberately treating reaching a table as writing it so a resource can be called dead only when no application-reachable path touches it.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/helpers/reachability.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:c3537cc9b6a4aa92623c50d317d274edb1162bb2322014fc862100c95d148a46:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxYzJjZDM0NzRkNjE0ODc0NmE3NDhkM2U4NTkyYzkyZWM4ZDJhOTMyMGUwY2U1MjJmZDA1ZTBkNGU0NmM2NGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRlNmE1M2JhYWViNWI0NzhlYjk0NGI0ZmRiMWM3Mzg5NzRkY2VmZTQ3YWE5MzhlNDJjNWVhNTkxNDhhODQ0ZDkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2ea7cf5bf49b401099246d68c6390d0d",
+      "statement": "The synthetic tenant fleet provides run-unique SYNTH studios A, B and C with cleanup by id, but is only partially delivered: Studio C failure modes are inert labels without executable fault injection.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/helpers/synth-fleet.ts#L4-L38",
+          "version": "repo-lines-v1:sha256:74298adfce0ac93f99a7f73e9262bd6d691bafcbea531cf41ded1e91eddeff10:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkzOWQ5NWJiYjk3MjFjY2JkMDgzZGRhOTRjODE0YTc1ZmQ0MmZjZDBlZmI0MGMzOTM1ZmM3NjNiNzBiMDNiMDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ1OWFiNDcwZGMyZTYwZGRhMTA4NzEyNDNkNTBjMjE1NjQ2NTNmOTQ4NjBmZGRmYTc2NjViMGNkNjI1YzY3NjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMxZTY4YzMzMmQyN2I5MDVhODQ1NzJlMjMwODM3NTA0Y2ZlZDA3NzY5ZTAyOTA2ODllNGE5ODg5MGFhZTI3NWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b3b5601aa52d4c528204aad1af8b35be",
+      "statement": "Migration source-contract tests pin the bytes of earlier applied migrations with SHA-256 hashes, for example the 0127 test pinning 0126.",
+      "evidence": [
+        {
+          "resource": "repo://tests/migrations/0127-fix-author-insert-policy.test.ts#L42-L51",
+          "version": "repo-lines-v1:sha256:4effa80bee5f1d4249d5f03f50c8374397f3a3da8e210ad0f5243694300bbc72:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3ZjgzOTIyMjk0NDEwMDQxYzY0MDI5NTcwZjg2ZjFmYjlkZjBmZGVjMTQ4MTYwYzkwOTgxZjA3MDMzYTQxMmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVlMDg2MzQ5NDJmZWI2NzIyY2RiMzg5NTY3Njg3NGFiYTIyNGIzOTBiZTRmYWFjMjI0MjJjNjc5YjUzZjU0MDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImExNDA5ZDk2MmZmYTQxODVjNDc2MzI5MzliZDZjM2UzODYzNjBhMjAzMGVlNDIzMmRmMTU4ZGZmY2RlZDg3NzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ca41b7e7f04f42dcadaae0e642ff0252",
+      "statement": "Migration tests obtain repository maximum, next free number, skipped versions and declared hosted maximum from a wrapper over scripts/migration-state.mjs instead of hard-coding them, after hand-maintained pins across 18 files repeatedly broke when migrations landed.",
+      "evidence": [
+        {
+          "resource": "repo://tests/migrations/helpers/migration-state.ts#L1-L72",
+          "version": "repo-lines-v1:sha256:bb9a35fa7ccb0fbb44a170795587bb5991b0bf307cb78ef6deff021212053b83:eyJzZWxlY3RlZExpbmVDb3VudCI6NzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkMWYxMjg5YzlhNTIxZjEzZmE3MTVlZDUyMTAxY2JiM2ZlNWRhNTNhNzVlMzhhNDhhNjg1YzFkNmEzYWZiODMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3ZDRmZWE0YmIxNjI5YzlkMWZlMDc1ZWM4NGE4MGZjYzBjMThiZDNhZjNiMjliMmE0NDg1ZTM5NzFmMTdkOGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5cff342f39d04c848d39cd7cac40f0b3",
+      "statement": "A unit-lane guardrail pins that the unit config excludes tests/db, that the DB lane has its own config and script, that the harness allows only localhost and reads no production credentials, and that the CI DB job never uses --linked, a project ref or an access token.",
+      "evidence": [
+        {
+          "resource": "repo://tests/scripts/db-harness-guardrails.test.ts#L22-L97",
+          "version": "repo-lines-v1:sha256:814fbdb61b9b29dc5b3fb734d8a481a448bf995093ab009ca5365fa67f8547e0:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1NTg3YWZiMmZjMzcxZTJkMzg0MTU0YmNjMjM2NGU0OTRkM2VmNzg3ZDcxMGU0ZmVmMGVmMGIxYjlkYTI1NzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0ZTNlM2ZjYTFjNGQ5NmMzNDk3ZGMyMTIwZjZiMTZjZDNjNzJlMjhhODEzZDk0NDU0MzQyNmI3YjM5ZGRjY2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9047894ecfa44fc39286e06bd0984ba3",
+      "statement": "CLAUDE.md limits local DB testing to one fresh reset per migration head using the pinned supabase@2.102.0 CLI, because a newer CLI's db reset strips Data-API grants and makes authenticated queries fail like an application bug.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L194-L213",
+          "version": "repo-lines-v1:sha256:71a946910083f1f140e988ea41b37a7d8f7b47afee3470e71eec818d2dc81f8a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU3YmNhYTQ1MjdkZWE2M2MwZDY5OTY1YjIzOGQ2OTE0OTE1MDIzZGRlOTc0ODkzOGUyYzEyNTkzMjQxMTM4MTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc4YTM5MWZkMTllNWRhYWI1Y2Y2NGFmZjA2M2VhNjIxODViZTg0ZjQ0MGQ0MjRiMGMyZjA4MTliZDhkOTdlM2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyZDlhOWNmNmU0ZDA0NTlhMzM3YTkwMTQ0MjE2ZDY4OTc5NDZkNWFkZTUyM2RkZGM5ZTMzYjk4NjQ2YjhjNjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_68daeebf5d5e4cfdb8c4ddd013839997",
+      "statement": "Suites that touch the globally unique Stripe account id derive every synthetic id from one run-unique namespace, because hard-coded ids passed on a fresh database and failed on a second local run.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/active-card-per-mode.db.test.ts#L15-L21",
+          "version": "repo-lines-v1:sha256:93f45c616ceb83ba251b6810f9a12f9b870ffffe6752293cb9fba831797be3b9:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDliMWQ0M2NhZDc1MDMyMmI2NTE5Yzc0Njk0YTIxYTM0YzJmM2JiZGFhNjNlYTQyNjFlMTA5NzY2MmQ5NDQzMCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzFkZjljN2UzODU4MTU0ZDQ2YWFiMTU0YzM3OTVjZWZmMDU3NjczNWY0NDRlMjdjODc4ZGUwMDAyZWJhNjZhYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTY4YmM4OTcwMWY0ZWZlYjMyY2JlMzJmMjg4MjZlMTkyMmU3MmM3ZmZlN2E5YjQ3YjNmYTJjZDkxYmZjZTU5NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjk2NDRlNjJmYTk4NDhhYWU2YTNmOTQ1N2E3YmExNzI4NDk5ODEyODJjMmE2YTZlMjZhYzRiMzAxMjc4MTExMCJ9"
+        },
+        {
+          "resource": "repo://tests/db/mode-scoped-connect-provisioning.db.test.ts#L29-L45",
+          "version": "repo-lines-v1:sha256:f34bc82fdb0dfcc3188b34dabcbce8f4023f6b33c5e69a3e0fe00e9c6d9f30e0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQyNzRlN2VjZTgzOGM0MmNmNjljN2QwNWU1OTAxZTJiNGRhNDYzZDgwZWMxNTg0YmRlNDI3OTQ2YmJkYzNiNmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0YWJlZTU1ODc2NTJkYjBlMGJiZjhhOWU5MTFiZDQ4YTM5ODVkMTNhZGFjNGFjZDQ2NzY0ZWE1YTJlZGFlZTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZhM2I4ZTgxNDYwNzllN2M4OTQ2YzEzNTg3MTA5NzBhYjhlOTVlZjdjN2RiYWNhNDM1ODBkNDNjMTY4NzA4OTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVlYTgyOGU2MzQ3YzE3YWMxOGYyM2VjNGQ1NTA0ZWJlMzY2NGJlNWVmZjQ3MDY1MjljMDJmNjAxZDdhYTI1OWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ea31c194fe504573adbdc5313c2c7ac8",
+      "statement": "The local Supabase stack used by the DB lane runs Postgres major version 17 with the database on port 54322.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/config.toml#L33-L42",
+          "version": "repo-lines-v1:sha256:4782c8a9d78b2935b12be1c894fa8cffac0db19d9d4022bf80846a0a5e485d9f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0YmMzOGQ4NGRjMjU2NTg5OWU1ZWJhOTExZWMyMWY3ZWY4Zjk4YjYxOGM0N2JiZGQ0NzU4NDMxZmJlM2I1MGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjMTk1NWQzYjE2ODAwMDNiZGE2NzJmYmZjZTJkYjY1MDBlZGE0ZjZlOWFmOGQ0OTQxOThmNzU4YjFiODFmM2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQxYmFmM2IzMTM2NzAxMGZmNWUwZDBiNGI3Mzc5N2MzZjJiOTEzOTM2ZjljOWZiZTQ3Zjc3YTYwMWNkYjlkYzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2MjcyNTMwZmQzZTI1YmQ3YWNjNmVmYmQ2NjFiODc1M2Y3MzE4NjUzZDlkZjBmMmY2NjMwMjI4N2YzYTYyMDgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e6e0ae5f3fd8425da4501b9ae3a916c9",
+      "statement": "docs/09 instructs running supabase db start and supabase db reset --local with an unpinned CLI, while CLAUDE.md requires the pinned 2.102.0 CLI because newer versions strip grants.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L205-L213",
+          "version": "repo-lines-v1:sha256:b024f036cd04c4cbc6eb6866b92e9cb8b65f305e4e44173ec1438ba728c46787:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDJmNjBhNDVmNzRkMThjMDMwMjJkNzZlZDRjYTlmNmQ1ZDgzYjEzMDExMmJhZjE2OTBmYjg2ZDJjYzhkODdjZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzhhMzkxZmQxOWU1ZGFhYjVjZjY0YWZmMDYzZWE2MjE4NWJlODRmNDQwZDQyNGIwYzJmMDgxOWJkOGQ5N2UzZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDY1NDI2ZGE5MThkN2VlZTZiNzBlM2IwMGFlZjM1OWMwZTMzMThlOGQwMzQ4MmU1MjdkY2MzNmExMDQzZTkyMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDAxZjJlYzE3NTkzYzEwNTRlYjQ2MzY3ZDg0NTNlZjI0YTE3M2NlOTZiNzExN2Q5MWY5YTY4ZDQ0ZmVmOGIwMSJ9"
+        },
+        {
+          "resource": "repo://docs/09_DATABASE_AND_RLS.md#L517-L517",
+          "version": "repo-lines-v1:sha256:e9dec01a5acb2cda19c1e91c2a183c9cee36030e021622747d5d41152a3d34cd:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTlkZWMwMWE1YWNiMmNkYTE5YzFlOTFjMmExODNjOWNlZTM2MDMwZTAyMTYyMjc0N2Q1ZDQxMTUyYTNkMzRjZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTlkZWMwMWE1YWNiMmNkYTE5YzFlOTFjMmExODNjOWNlZTM2MDMwZTAyMTYyMjc0N2Q1ZDQxMTUyYTNkMzRjZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjE1YjcxZjAwYzg2NTEwODUzN2M2MjkxMjM2ZTM0ZDZiOTRmMTc4YjYyZWFiZjA5ODkwMWQxZWUwMzc1NzQwYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYWRmNWIzYjNhODcwODc5NDNlMjc1YWIyZmZjZGUxNzMzYzEyNjU2YzZhYTM5YzM3MGJiZDg0YzIzOWE3ZDMwOCJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

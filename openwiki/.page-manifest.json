@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "pages": {
+    "/openwiki/architecture/production-truth-and-lifecycle-states.md": {
+      "pageVersion": "sha256:0a816896efd34112269e080fc8e32ede06532256e981c18dde11b9a4afbea0ad",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/architecture/system-overview.md": {
+      "pageVersion": "sha256:fdc972479c3a0d47a484189994e624db9fb239143997a825f59a8bf5bcb3aeab",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/communications/cron-reminders-and-idempotency.md": {
+      "pageVersion": "sha256:7c7a38b31efee8eae0cb97e3e5ec6c935d6aa13fbf2916f82c9fbdbdc9e05cd1",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/communications/email-delivery.md": {
+      "pageVersion": "sha256:610838d638fb44ad96feb8f5a86a4e3689297a52c2b245d879791c38b3144101",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/communications/sms-consent-stop-and-senders.md": {
+      "pageVersion": "sha256:1993fa2d4725cb07d60518a76ff20054b9a186a7a11141c40ee6aabd32caef55",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/integrations/google-calendar-sync.md": {
+      "pageVersion": "sha256:f6ffbc67e0b94e02b17a50910a5b0d3affcc6bf3de0f2bc66f1c301147015b56",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/operations/delivery-and-review-authority.md": {
+      "pageVersion": "sha256:bade33084905513d5f33c12a8f8275e327b2e6bca2f95a198751acd15b282f83",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/operations/environment-flags-and-observability.md": {
+      "pageVersion": "sha256:c8353bec4438ec0917f44cfd0f8cf6ac74e76dd8233301a61dbbb75666a3fc56",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/operations/migration-first-rollout-and-production-safety.md": {
+      "pageVersion": "sha256:08338db4fc2b55e282e71753ca2ef684f88cecfdeb3a3d0f5328a7f9f1ef1478",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/operations/migrations-and-hosted-state.md": {
+      "pageVersion": "sha256:0ca39c996da84eb278c82b6bf6bdf9183f9191d79331a69379ae0b84f3d3721c",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/owner/dashboard-financials-and-capacity.md": {
+      "pageVersion": "sha256:270bc7272d3afa8aaca7438cbad2254dd5a253293924a3c96c828668492fa010",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/payments/stripe-payments-and-settlement.md": {
+      "pageVersion": "sha256:34a79370066ad17c58ed611b5f3d492728fee0a4132830d510aceeb8c28c4dbb",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/portal/client-portal-intake-and-consent.md": {
+      "pageVersion": "sha256:89c3a04fdacc6430f3c7fdc12500f8663a332325794a2fd66bbee442532c6649",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/quickstart.md": {
+      "pageVersion": "sha256:6b334ec5f8f27c736c64d84f311f6ffff859bda2d367c1cfad9c572736b58a0d",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/scheduling/appointment-write-authority.md": {
+      "pageVersion": "sha256:905b078c00fcd11527e5e95cee4f8c835a0c6d4b7d13f48423deb9ffea43a398",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/scheduling/availability-slots-buffers-and-timezones.md": {
+      "pageVersion": "sha256:cc850572747776094c42678aa4187347197c6212e3321186796f5bb32ead9acb",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/scheduling/concurrency-and-lock-order.md": {
+      "pageVersion": "sha256:f6dcb160f4ea8359bdbf734e0c8ded12d7b6506e24086ed07c9ef3fe65c12525",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/scheduling/practitioner-calendar-move-and-capacity.md": {
+      "pageVersion": "sha256:bf277ab3333e321d1c1374e88bb6a8d75869b662fea58aae94db7cc41fc0c5db",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/scheduling/public-booking-reschedule-and-cancellation.md": {
+      "pageVersion": "sha256:e0a39a6dfa4f5ee2ab0c811f508e840f21aa4a9b0f4768b1f25aef64a5d68005",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/security/authentication-sessions-and-tenancy.md": {
+      "pageVersion": "sha256:1932371448979abb14d767215bb4ab772b00c09e84d5bc7b564fe5a1b3678616",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/security/public-token-routes-and-privacy.md": {
+      "pageVersion": "sha256:53205a45abd0957eb3aa533178c263ce2c9380b9656e3826e5a1e053ea521b22",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/security/rls-grants-and-security-definer.md": {
+      "pageVersion": "sha256:6dc88b2db4438ac96fd05d491b7a54a042a706c8c7daad6872a205d4f6a4557a",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/studio/onboarding-settings-and-data-portability.md": {
+      "pageVersion": "sha256:98bc50cdfc5d112b3333406d4a642219f51c680f1e441523b50d7f997b8396e7",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/testing/browser-e2e-suites-and-fakes.md": {
+      "pageVersion": "sha256:2358c863dd7a1a198090b481e915489784ad917e5263b6c9ad068662101db9a8",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/testing/ci-workflows-and-risk-lanes.md": {
+      "pageVersion": "sha256:7a708cde6aa8873565bd9bbbadb26cd175f3e76a88971a69ce1c656387372616",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/testing/database-and-migration-test-harness.md": {
+      "pageVersion": "sha256:fca9399a7799829da9f657c267aecca37cb57411fb10fd595fb67fad0b75a96f",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/testing/source-docs-and-security-guards.md": {
+      "pageVersion": "sha256:3a4d432a1e2b00b36b7cad3b2af269d9588347123402f2150ef0a87aa672bc2a",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/treatment-memory/memory-reads-and-point-of-care.md": {
+      "pageVersion": "sha256:138fd208e2395d13a557beae8c9776e61bbc376f421099902d26529ec69c8008",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/treatment-memory/probes-settings-and-record-keeping.md": {
+      "pageVersion": "sha256:bb69da787afaf28d77b5f1405349a84be47e38b5b5f55e4d277610b282b1e84d",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/treatment-memory/sessions-blocks-and-entries.md": {
+      "pageVersion": "sha256:05ef36b5d48986c436977429758d8bb3195ddc858bb1738807f1b6d8c7cca2f2",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/waitlist/entries-and-invitation-lifecycle.md": {
+      "pageVersion": "sha256:7bf7d072ec0416241d7cc2edcc6c6c03e4ae204274b217800ab12e18015300a2",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/waitlist/new-client-admission-mode.md": {
+      "pageVersion": "sha256:3b43ea0e51c125b218e59f052c2ee182afbfa23c876d1b48c5c6ab8af9f49ef2",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    },
+    "/openwiki/waitlist/recipient-journey-and-booking-conversion.md": {
+      "pageVersion": "sha256:7cf4331cecaa6e631415083263408cae9950000914c8ff1a23e72896b9e083f3",
+      "completedBy": "claude-code",
+      "completedRunId": "7066729b-0723-4cae-a78f-12f39ffa4033",
+      "gitHead": "b78a35a942e1aeabbc7c32c71f9cbf853546ed20",
+      "sourceFingerprint": "sha256:33b85d04fa1ffa3e20d0af088757e194f569721d024ff14c85ee88951b4d0c2e"
+    }
+  }
+}

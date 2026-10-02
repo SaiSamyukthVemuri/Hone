@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:3b43ea0e51c125b218e59f052c2ee182afbfa23c876d1b48c5c6ab8af9f49ef2",
+  "claims": [
+    {
+      "id": "claim_02d2b20340074392a894046d31e9367d",
+      "statement": "Each studio has one new-client admission mode (open, waitlist or closed) that never governs existing clients' booking, portal access or rebooking, and an unreadable mode is treated as a refusal rather than as open.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/new-client-admission.ts#L5-L34",
+          "version": "repo-lines-v1:sha256:f0cbc2119910708e03e11e7b8b1fb6379ce4db3d8c5a82dd9b70787d9baf64eb:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIyMDA1YTE1YzhlZjFjYzM3ZDJlOThlMzNjMjkwYWRhYTdiNWZkZWQxOGEyMGZmNzI2ZjRiODUwYjA5Y2M1ZTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5NDI3OWRiOTI3Y2JiMDgyZWM1NTJiZjA0Zjg3Zjk4NjdhNDgwMzIwMjYxNzA0NzQ4NDQ0NTQxNzcxYzliMzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6119891d159742de816c3756de316162",
+      "statement": "Migration 0204 adds studios.new_client_admission_mode as a non-null column defaulting to open with a check limiting it to open, waitlist or closed, plus set_at and set_by audit columns that deliberately carry no foreign key to avoid ambiguous PostgREST embeds.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L1-L128",
+          "version": "repo-lines-v1:sha256:d1ad89ed7ee8b96a87d7de8bcd0a777cb61f45f3f2a735ba10dcaa5b0a6aab5a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYjFjMGY4NTJiNDE0Yjk1ZmY4YTQ4ZjhkNGJhYmEzMzkwZDZkYTNjYzZkNzhlYjllNzdkOWI4ZTg2MzhlYTA0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0ODBiN2ZiNjE2NTU0YTdiODdjZWIzMGMxZjJkYzYwZjY5MDdmNGI5YzEzZTRkNWI0ZjJjZmRmNDQwODZkOGU5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_5cc26ac92c6b4998b8c880acc4de226b",
+      "statement": "set_new_client_admission_mode accepts only the mode from the caller, re-derives owner role from auth.uid(), returns ok, not_authorized, studio_not_found, invalid_mode or legacy_waitlist_cutover_required, and refuses to move an unstamped studio to open or closed until waitlist has been chosen once.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L130-L256",
+          "version": "repo-lines-v1:sha256:11cd218a6008817c4ab4ddda97d4c99eb854ea7f6009c4880acc5b39502d2372:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3Zjc4NDlmMDVkYWNhZDFkMDc3NmFlMzQ0NWYzYmJmZTU4NjA0OGMyNDgwZjZkNTA1ZDg2YjIyYjA3NDM2NTI3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiYTY2NGUxOTY5NmM2YzE3ZmE5ZDNkMzI1NWNhMzZjNTc4Zjg1MGQzMzQxMmJlNmU3ZmIwODVlYWRkYjNiZGFhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyNGQzMDg4MThlNWQyMWU1Nzg1Yzc1NmYyZjljZTc0Y2Y4YmZhMmQ3NTcxMzlkOTc5YjdlOTE2NTRjMjA1OWU4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_670c4cdfffe64c73a298912e1b1ce061",
+      "statement": "A BEFORE UPDATE guard trigger rejects changes to the three admission fields unless a transaction-local permit names the studio being written, making set_new_client_admission_mode the only writer.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L258-L313",
+          "version": "repo-lines-v1:sha256:d1b2e8f66562c5d646f99e0d4f9869914a78cc3a1fec0e8ebcbf165d7eab3bef:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwNmUxMjZlYzFjM2ZkZTU1ZTIwYmIyMzYzMjc0YzY2NDdlNWViOTI5MTY5MzQ1NmFjZDY0NzQyYzVkOTVkMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5ZWFkZWQ0ZGYwY2Q2NGZlZDMwNzA5ZTVlZGMwMjQ1YjdlMjczYWY4Y2IwYTVlMGM3MTNhYWJjNWIxZWVkYWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZlYjk4ZTEzZjAxNjA2NzExMGE0ZWFiYTU5MmJkNjMyMzFhOGQzZDlkMjMwYjZkYzA0Yzk4YTkyYzAyOTQ4NzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU5ZDUwZWEyOTIwZjIxYzkyZmE4NDIzYjlhNTk3MDYyNmNiMWJlYzkxMjcwM2YzYjA5NmJhYTk5MDlhMzViOTUifQ"
+        },
+        {
+          "resource": "repo://tests/migrations/0204-new-client-admission-mode.test.ts#L91-L123",
+          "version": "repo-lines-v1:sha256:6cafe05566aa38de01d705699c4bd418396d427ee2550bd113a94490b3786b8e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwMDAxNGRkNmYyODRkYzAxNThkNjVhNGU5Nzc4OWVmNzA3ZWM0NzRjZDc0OTliOWM1ZjZmNGIzYjQwZTI1YjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlmMmQwNjRkNDE0ODI4OTg3NWRlNTU2OTZkZTRlMjg5OTg3MmI1OTIyNDMyM2YxMDZlNDgwZTFjYmNhOTU3YWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bb507538af8d4e119c0585615e49d03f",
+      "statement": "New-client booking and waitlist joins resolve admission inside their own transaction after taking the studio row lock FOR NO KEY UPDATE, so an owner's mode change and a new-client mutation are serially ordered, while create_public_appointment for existing clients is untouched.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L333-L445",
+          "version": "repo-lines-v1:sha256:2d91b2b72be843eeb1e231fc33b93b4a310a01d96e0986219e1f2325158e5ddc:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyOTk2YjI5YTA5YTgyNDdjMTMzYTczMGRjYzE2MWUxODVmZjZhNjMyNTFkYWJlNjkxZGEyMzIyNDVhZDA0MzgwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyNmIwNmY4YjFhZDNhYzc0OTNlMjZlMWI5ZDBkYjNhNDAwZWRiNmUzM2UxZDNiZGEwYWRiOWE1NTliYjZhZTI5IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5M2Q3Mjg2ZDQxYmNmN2NiYjRjMzg4ZWRmY2VjYjFhN2Y2MTQ3NzMyZTdiZDM3ZWVhZDdmMTM2NGNiOGM1MTcwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiZWQ2OGE4Y2VkYTY5OTg1OWE3MWIzNTk3OGFjYjQ5ZTcxMGE0OTdhZTBhMTMwMjlhYmQ0ZTFiYWM0MjRhZjAzIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_d71e795e04b040578c56cde8d7e62e61",
+      "statement": "resolveAdmission returns unknown on a failed read or out-of-set value, uses the legacy env slug list only when nothing is stored, treats any owner-stamped mode (including open) as authoritative, and otherwise lets the env list escalate an unstamped open to waitlist but never relax a mode.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/new-client-admission.ts#L100-L168",
+          "version": "repo-lines-v1:sha256:bb340477042234f6ba7d647850995314c3eea3589636c802b7038eae85e12191:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQyMWM0M2U0Y2ZlYWRhZTFiOTE5Y2JlZWFlN2Q4OGZkOWY2YTU5ZjRjNDEyYTgxMGY2YTQzZGI0MTMxYmRhODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQyMDIwOTI3YjNlY2FhMWQ2YTZhZGIwMDFlZDg0ZjNiODFhYzk4N2YwNzAyMWY5NWQ4YzU5ODY4NDdlMWM3MWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNhMjFlM2MxMWQwNjM3ODlhYWIzYjdjNmMwZjdjNzJiNTY0OWM3Y2EzYTg1YjU1M2MyOWZkOGEyODljMjYzZTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_27ec6b14d98646108954b34e8255f755",
+      "statement": "The application reads the admission columns with the service-role client by the server-resolved studio id because the RLS client returns no studios row to public visitors, falls back to the env bridge only on the explicit missing-column error, and fails closed on a missing row or any other error.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/new-client-admission.ts#L177-L260",
+          "version": "repo-lines-v1:sha256:bcda17f68e54d6749c92ed889e0aab896bff0d0285e1114fd4315e8d007ffe08:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkYzM3YjhjZTkyNmRhYjBiYWU4OTY0NTIzZjlhMDFmOGY1ZGRiNWM5MzdmN2VlYjRmMThjY2FjYjZmNDlkYTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhOWFmN2M2MWI0ODlmY2Q2ZjJhNmY5YjVhOWZmY2U2OGNlY2ZiYmYzYWE1MTMzMjg5ZDZlMzU0Yjc1MTBhZWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBhMjk2MTU5ODAxYjlkZWNjYWY5N2M1ODc0YTRkZGZkNDhhM2Q0OTE1YzI1NDhmYTExZWI4ZGIzODlmZWNhMzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5f940427da014aa090f9004b1bd7ed54",
+      "statement": "A permitted waitlist join commits durably as an entry row whenever the studio's waitlist mode is persisted, and during the migration bridge commits durably only if the studio is also on the durable env list, otherwise through the legacy email-acceptance path.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/new-client-waitlist-durability-bridge.ts#L1-L67",
+          "version": "repo-lines-v1:sha256:50e60dfb6e262b7e78f613c4ecd08d15212bbcf3ece5668c59394619cf153154:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_cc78c73a7080498e8f65564d1c4cfb54",
+      "statement": "The owner's admission setting action resolves the studio server-side, requires the owner role, sends only the mode intent to set_new_client_admission_mode, and explains legacy_waitlist_cutover_required as needing Waitlist chosen once before Open and Closed become available.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/booking/actions.ts#L190-L255",
+          "version": "repo-lines-v1:sha256:8470ed35fc0b9e1fe44f92be845e5c1f93def17d4be08896ef47984731e472a2:eyJzZWxlY3RlZExpbmVDb3VudCI6NjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJiNTAzZGRlNTlkZGQ3NDBkYWE3MmY3MjRmMmI2MTIzNzNjNTMxOGM0ZTAzMTFhYzY5NmJlODkyNWM4NWE4MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ec070fc5096145f48d9df9c1b38b8c6e",
+      "statement": "The public waitlist submission resolves admission from the server-resolved studio and admits a join only in waitlist mode before consuming rate-limit quota, then commits durably or by email according to the durability bridge.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/waitlist-actions.ts#L575-L622",
+          "version": "repo-lines-v1:sha256:2b1eb06359228882b0470b940e5497fbe9a8c05b24be0ecc483971717b80e108:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZkYTMzYzE2YmQ2Y2MyY2Y4NWFjODIzZGI1NTc3YjBkZjVhNzJkYzNhNzZjM2ExNTk3NDMxOWYyNTBiMjQwNzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fdc389cd990140d991d6b4fab6574bde",
+      "statement": "The admission activation plan is migration-first with steps A to H: verify baseline, apply 0204, verify columns and grants, deploy, read both live env lists, cut each listed studio over by an owner waitlist write, verify a durable join, then retire the bridge code and finally the durable env variable.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/new-client-admission-activation.md#L98-L214",
+          "version": "repo-lines-v1:sha256:d7cd5f518a99c099deb9585e06d5c1352aa129578e98b9b248b0f74e50fa334e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiMDMyYWEzNGJjMTlhYTc5NDA0YWI1ZGFlODFkNjVkNmY1ZGQzY2MyMTZmZTY5MDIxNTAwZTM5Y2YzNDFkMzRlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlNzk2NzllYjg3NDdkZTAyNmM4YzM3MTQ4NTZhMTExZjQ2NzFmMzRhYTgwYmQ3NjkwZGFiM2E4ZWFlZGI3Y2EwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1NGIxOGQyYWMyYjg5OTEyNWE1ZTZiZmFjZDZhZWQ3M2Y3MjMyMDUyODM5YjJjN2Q5M2Y0MDVmNzM3MDNiNjkwIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_9f56a6290e7c454a875c1ada6913bad0",
+      "statement": "The activation plan forbids inferring any studio's mode from rows or documents because the production env lists are Vercel secrets readable only by the credential holder at cutover.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/new-client-admission-activation.md#L55-L65",
+          "version": "repo-lines-v1:sha256:39c677ed938ff4dcad04a4aa3fe6f71b7e45f21891920c85cf499657cd7e3bb1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5OGRiM2I3NzgxNDdmY2IyYTc2M2RiODdhMTkwZTY4MzUwZWI3NGNhM2E1NmE0NDdmMzk0YTRiYTgyZWMzYzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkMDFkNTliNzQ2ZTFjNDM2ZGU4YmI4YjBjMTU2Zjk3MDFhNjg0ZTEyNDVhODRiYmViYmIyNTY1YmIxMjdmYTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg3Y2VlOGRiZTJlNmEzYzQ0MWI4NjFhODg3MjVjMGU1MmM0NWU5YjE0NDgwNDE3N2Y2MTgxZmI3NmNmMTY2YWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE5NDRjZjM4NzYzYjE3ZTU4OTE3Yzc2YTYxOWQxYWM1YjUzMzIwNDFlNDM1ODJmNTRmZTI5YWI0NjMyYWFkMjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6b7e7d71d2fc4ac3bcaf549517417337",
+      "statement": "The execution record dated 2026-10-01 records steps A to D done, step E never performed, one studio written in step F with completeness unknown, step G passed with a synthetic durable join, and step H not started with both bridges still deployed.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/new-client-admission-execution-record.md#L31-L95",
+          "version": "repo-lines-v1:sha256:282e928885201c09a1e49e67a2d0c9dba86794e5607d65d2b543f0159d49a530:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmOTc1YjliYzhkNmQ3NTUyYzA5MjQ0MjYwMmZjZjdkZjQwMTBiMzEwN2RhYjA3NzE3NTU2NTZlMzZkYmM3M2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0ZmM5MDIyOGNmZDRkZDJjOTMyYmY1NjEwODZjNzNmYmNlODUwZDZiZDc5NDQzZWIwNTlhMDBmZjljOWU3NzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhmODY3Y2JmNmJiMjk3ZDU5OWZhNjM4YTg3N2E3NjgyNWE0YjUzNmYzMDRhMjRiMDJjZDNhMzUxY2RhNzg5NWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f303e9dd56c9462dbb43e94e1419ed14",
+      "statement": "Migration 0204 is within the declared hosted migration range, and its migration test asserts hosted equals repository at 0204 with nothing pending.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-state.json#L16-L16",
+          "version": "repo-lines-v1:sha256:65899fb4b602cd387153ee4160f59b609ed58a2a0c1c77d7f38d8fd4a2b61c45:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjU4OTlmYjRiNjAyY2QzODcxNTNlZTQxNjBmNTliNjA5ZWQ1OGEyYTBjMWM3N2Q3ZjM4ZDhmZDRhMmI2MWM0NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjU4OTlmYjRiNjAyY2QzODcxNTNlZTQxNjBmNTliNjA5ZWQ1OGEyYTBjMWM3N2Q3ZjM4ZDhmZDRhMmI2MWM0NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTAwNTFhYTIxMDNkNDg3ZWFhNzE4MDMwZjliOGY2NjIzZTA3NDliYzMzYzA5MmFiYzdhYjEyNWEzYWI1NDRhMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZmNmYWI3YjdmMGIzZTJmM2JjMjhkZjI0MjBjMDE1MGM5ZGQwZWNjNTFlNmYzMDI1ODBjNjQyMWY2MjI3YTJhZiJ9"
+        },
+        {
+          "resource": "repo://tests/migrations/0204-new-client-admission-mode.test.ts#L35-L65",
+          "version": "repo-lines-v1:sha256:bde07b9362f1e77541a9c34d8f2bac3c6063d1b6cbe73a36293b260b63c1b283:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUyMGU2MmNmMzNlOTgxNjI0MWRkMDljNjYxZmQ1OGFjYjc5MTExZGE4ZmUzNGUyYmM4ZTI2Yzg0MmQ4OGVkZDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljMjE0Yzg3MWE5NTNjYTBmYTkwYTlhYjU3YWIzMTUwZTcyZTI0NWRiNDQ1NzJlNTg1NDBjNmQyZDQxOWU4NmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM0ZTBhMmI4ZWUyNGM0NTRmZjQ4MjJkMWM0OTJkZjMwNjExNGFjMGYwYjAwYmVmZTlhNWVlMjhmZGQ5MDhjODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE2N2E3NDhhYTI2NjkwZDEyNDg2ZDdiOGQxMTFiMmYzMDE1NzQ3ZTg2NTMzNWFkMDFhYzg2MTkyMzc5YjZiYTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5083f911346c44a88a86a4cdc46c8cd2",
+      "statement": "The frozen 0204 header describes the migration as a candidate that is not applied, which the canonical migration-state record supersedes.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-state.json#L16-L16",
+          "version": "repo-lines-v1:sha256:65899fb4b602cd387153ee4160f59b609ed58a2a0c1c77d7f38d8fd4a2b61c45:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjU4OTlmYjRiNjAyY2QzODcxNTNlZTQxNjBmNTliNjA5ZWQ1OGEyYTBjMWM3N2Q3ZjM4ZDhmZDRhMmI2MWM0NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjU4OTlmYjRiNjAyY2QzODcxNTNlZTQxNjBmNTliNjA5ZWQ1OGEyYTBjMWM3N2Q3ZjM4ZDhmZDRhMmI2MWM0NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTAwNTFhYTIxMDNkNDg3ZWFhNzE4MDMwZjliOGY2NjIzZTA3NDliYzMzYzA5MmFiYzdhYjEyNWEzYWI1NDRhMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZmNmYWI3YjdmMGIzZTJmM2JjMjhkZjI0MjBjMDE1MGM5ZGQwZWNjNTFlNmYzMDI1ODBjNjQyMWY2MjI3YTJhZiJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L5-L7",
+          "version": "repo-lines-v1:sha256:b7e094be525d85883aaf9984aa6fa37ff6ec04309ec749f9a19838884bbaa994:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDJkNmEyZTVhMDk2ODNmYjQ2ZGZiY2IwMjJhOGJjNjAxYWE3OWZmZWRkMDQyNTVjZTI5YTU1ZWQ4ZTg4NzQ2MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDUzYmI3ZGU3YmIwNTZkZWNlNTFjY2UyMTkzODBhN2MzYTY5Y2UzOWNhNjYwNWNiNDY5NzY5NzY2MjQwZjQ5YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmI0ZDdjNzRhYTIxYWJjN2M0NzUyZWVmOTJhOTI1M2RiMTc5OThiYmE0ZmE0ZjZmN2U1NTA2Y2ZjMWJkN2E4YSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDYyNmYwNzIzYjRmOTdjYjMzNjUzM2MwOGVhMTNlODZmNzFkN2NiOGFjNTYzZGQ2MzBkMmExNjYzNGViNTE0OSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_7c5e4e30a1ba4396930e3df95201f037",
+      "statement": "0204's column comment says no role holds direct UPDATE on studios, while 0193 records that default grants and the owners-update policy leave UPDATE on studios for browser roles, so the single-writer rule actually rests on the guard trigger's permit.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0193_waitlist_admission_authority.sql#L28-L43",
+          "version": "repo-lines-v1:sha256:f1832c9016746b3c28416acf7baee272c56839c02865e736c125e4a5c3f32c67:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwYTQzNzc5MjU2YTYxZDg5ZWYzYjZlYTE4ZmM2ZTYyYWRlNWI3NDM1NTQ5Yjk3MDU4ZjE2NzA3ZjNmM2JhODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjNTIwY2I3OTUyZmRlMTY3MzUxNmYxYzA5MTM1YTBjNjgwMTAzZDA1NTFjMjAwMjM2NjY2YzgyNDEzZjY3ZWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNkZTk4ODMyMzRiYTI3MjQ2NTQwMWM5MmY5ZjQwZGE4ZGZmYWYzYzBlZTU3NTk1YWE2NWM3ZmVmM2QzMzRmNzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzMTBkODFjMGRlZjIxMDRmMTU0YWFkNzkyMDdmMGMzZjI0Nzg4MjY3M2MyMzIxMWJhNjBlYTY4YTRiNTY5YzkifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L69-L74",
+          "version": "repo-lines-v1:sha256:90f3c820dd49205550dcf3ebf127e5e4f932141dd5ccac64ced9cacf2f38e6da:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzQ3NDM0NDNiZWNhZmMwNjYxYTM3ZDI1NzFhZTYyOTRiM2VhMmI2ZGE4YTZkNDYwMTA5MGI5N2M4YWVlNjJkYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTc0NTJmZjI5Mzg2ZWE0NTVmMGRhZGM5NzBlY2JhY2M1OTllNjViNDc0NjI2ZWQ5NmQ3Y2QzNmU1ZTkwNDc3NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWFiMDQyNGFkNjJlMmJjZDkyODZiZTY0ODM3MTgwYWZiMWFhZTM1YzJjZWRhNTY0YjE3YjczMDk4ZDNjMmYzYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTUzNWM3NzQ0ZjBjZDA0NTY3MjE3NjcwY2JmOWZmZjY3NmMwNjcwMzBhYmVkNjQ1MGFhYTcyZDE1YjE1MmNkNCJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

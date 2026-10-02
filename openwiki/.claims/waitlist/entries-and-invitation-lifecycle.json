@@ -1,0 +1,246 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:7bf7d072ec0416241d7cc2edcc6c6c03e4ae204274b217800ab12e18015300a2",
+  "claims": [
+    {
+      "id": "claim_4e9d5456196a463891e55465506cd38a",
+      "statement": "Waitlist entries are SELECT-only for authenticated (owner-visible through RLS) and grant nothing to anon or service_role, and their join and removal writers are SECURITY DEFINER commands executable only by service_role.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0185_new_client_waitlist_entries.sql#L556-L575",
+          "version": "repo-lines-v1:sha256:41efac1f4ae4413f11b5488d1ff06c78f64e4ca089551440e83afaa946e16300:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4OWI3N2JkNzBhOGVmNzlmZmQ0MGU0MzU5Nzg5NjFkMGMwMzA3YTQ3M2Y5ZjMxZjY4ZTkyNTE2NGQxZGRkNmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlM2Y1NjVhZmVjOGQ2MGE5ZTc0YmE2NjE5NzJlOWNkMTUyYjU5MjQ5MzI2ZmZhZDE1NzIyYjE1ZGJjNWJlYTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYzMTMwMTA2YWY2MjUyZmFlN2RhYzgwODQ5ZWZhNDhmM2Q5YjlhNjhhNmRlMGJlZDNkM2M3YmIzMDIwN2Q1NDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNjOTNjNzBlNzUyNDgxMmY5MDllOTg0ZTMwYjNhOThiODJiOWNmMzY4YzE3NDQ0NzdkMDZkOWVhMTliMjQwMDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1fe2770ef5e9481690a60728753edd0f",
+      "statement": "Invitations revoke all privileges from public, anon, authenticated and service_role and grant authenticated SELECT only on a column list that excludes the token hash, proof fields and scope fields, with rows visible to studio owners through RLS.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0188_new_client_waitlist_invitations.sql#L1347-L1400",
+          "version": "repo-lines-v1:sha256:1447f2627de2a18bfba2ad197689ddd4130f81ce3dd57c011e129f3f45e477b5:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxYzIxNzNlMjg2YzI4NmY1ZmIxNTNmNzY4ZGI0MmEwODU3ZjI2M2ZiYWFkMWIxYzBmMDU1MTMyMDA1YzFmYTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0YzUyMGY5NDJjMmYwYTkyN2NlMzY1YmJmMjMxY2ViODkxYzJiZmUwNzYwZjkyNDEyNzc4ZjYwYzg4OTUxYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFkMDlkNzk5NDBmN2Y4NjIyZDEwNDc2MmU3Njk2ZjE3YTRjOTQ1OTI2N2UzN2MxM2MyMDY0N2YwMGQ2ZmYxNTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY4M2ZhNTg1YWZkYTE4Mjk0ZmQ2Njk1MDg4NDkyMzAwYTY5MTFhZWZiNmY1OTk3ZmVhNTMxZDJlYmYzYWNmOGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_cc971eb13a204507be3319116757e047",
+      "statement": "The server-side waitlist invitation module calls service-role-only commands, translates closed result codes into typed outcomes, never throws across the boundary, and reports unexpected transport failures as in doubt rather than as refusals.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/waitlist-invitation.ts#L1-L15",
+          "version": "repo-lines-v1:sha256:2b7e64f5b5deacf610bcb69c57f382bd39152a35bd54b5a443e5e6806391f9d8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4NjNlY2UxOGUyYTMzZjc3NmMxYjBlZDY4MWY2NzY4M2JlY2QwYzkxNWY1ODY5ZTdiYzNiMmYzYzI3N2I5OTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkZWE3YmU5OGE2MmUyODMzZmE0ZmE4M2I2Y2M3Mzc4MjhjOTRjMjJjMzhlOWMxNjQ2MmZkM2MxNWVjZmFjNTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM3YWFlNThlMjNjYzc5OTRiZmQ0MmZlYmQ1ZmUxNzZmZTNlZTkzMWFlOWJkMmE2M2YzZTc5NjIyZGJkNWZhMjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_cc5b5bf99e8243f1929fb7f67bde8454",
+      "statement": "Every waitlist lifecycle transition is an explicit authenticated operator command with no timer, sweep or automatic release, and an invitation grants only the opportunity to book through the canonical public booking authority.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0188_new_client_waitlist_invitations.sql#L1-L35",
+          "version": "repo-lines-v1:sha256:ae3827b40564d4f55107de4c08709aaf932fad4383e9334166aff141c5d91c44:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhMTI1YWI3NGY3NjBmYmQ3N2ZjNWRmNGY3YzhlMTRlMmQ2ZDE3NWM4NzA5ZTQxODBmNGVkYjVhMTdhOTQ0ZTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_00d2f449fdff4a29baddfddb460bc010",
+      "statement": "Entry status is one of waiting, claimed, invited, converted, expired, released or removed.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0188_new_client_waitlist_invitations.sql#L67-L81",
+          "version": "repo-lines-v1:sha256:6d6a4134ac3639640224d0dfe1d5ea17a72c39b0fdbdcadd1c2571666b359ed8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkZjA2YWQ3YTg5NzkwMWViOTE5Y2M2Yjk2ZDE5ODExN2M5ZjRiNDI2NGM3MGIzZTljODIyYTg5MmEzZTQ5OGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdhZGE3MTU2ZGZjMWE1NWE4MDhiNGQxMjk2OTJhNjU1ZGE3YWQwNTAwYThjOGQyMjFhMmM0YTFlZDM2MmIxYjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFmYTBmMjg2OGZhN2RkOGFkZTNmNDI5MzAxNjdjMzQzZTI5OGZlYWY1MDViMWZhNWRmODNmY2FkYjU3ODBkMzAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9b865bd74536428dbfbff4ebe1d10624",
+      "statement": "The latest entry transition guard permits only waiting to claimed or removed, claimed to invited or released, invited to converted, expired or released, expired to released, waiting or removed, and released to waiting or removed, so an invited entry cannot be removed directly and each transition may write only the evidence columns it owns.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0203_waitlist_mobile_verification_authority.sql#L130-L170",
+          "version": "repo-lines-v1:sha256:cc24897d055b7d2ed077911ad2df2baa0248f7b6515c81e4b51c9fb698ab5055:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJjM2E4NGVhNTI0YzE2M2JmNmUzOTZlMjhhYmE4MWIzNDE1YTcwMDI3NDFhYmVmMjU5MjcyZDRkMWU1NDgxZWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM1YjM1NGQ1Y2Q2ZjY5ZjY4MTEwMjNjNmRlZGZlODM4OTJmMWRlMzNlYmZhMjlkYjZjMDc2MWM4YzVkYmEyNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE3MDBhZWY0Zjk4MWVkMzNiZmY3OTk2OGMzNjQ5MjQyMTRmYTlkY2MwOGMyOTkxZjE4MmNhMjU4ODVkYzZhZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3ZTRkOGM4M2JjODZmOGRjNTkxZTFlNmM4M2ZjMjEyZTIzMzkzYTVkNWU2ZWMyODk0ZTc4YTFmZGRlZTlkOTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f6ce83c0f46948d8b43748b3c49fa5b7",
+      "statement": "The entry guard keeps id, studio_id, joined_at, source, name and email immutable, forbids replacing a stored mobile, makes an SMS opt-out and its evidence terminal, and allows mobile_verified_at to be set once by its single authorized writer.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0203_waitlist_mobile_verification_authority.sql#L43-L128",
+          "version": "repo-lines-v1:sha256:dfae698419b36e9bbd7e66c881abd7c742e97bab4cf45a2f8393d6a60e5504d9:eyJzZWxlY3RlZExpbmVDb3VudCI6ODYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1YTBhOTIwZTViNDczZWE0Mjg0NGFiZWVjOTRmMDlkNzcxMWRiYzk4OTAzYzcyMWJkNjk0YzA2MjgzMGEwYTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhYjU3ZjJjZTgxYWM4ZTFjZTgwOWQxM2I2MGZkYjUxY2VjMGRiMTg3ZDZlOTU4YmMwMGFhZjhmNWE2MDZhZjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3YjliN2FkZjk2YzRmOWI0Y2RjNmQwYzIwYjBiOTUyMmZhNWQ4ZTkwYjQ2MWViOThhOThmNjIwZDQ4N2E5Y2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkN2MyZjc0YTAyOTU4NjNlOGMwYTAyNzU3NWYxM2EwNzg2YWFmMTg1ODY5ZWQxMDNkNmE5ZmUxZTc3ZWE1NTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_74af3c0703304f389aba81fea5ef728e",
+      "statement": "Invitation rows store only a 64-character lowercase hex SHA-256 of the token, with server-owned issue and expiry times, a check that the expiry is after issue and at most seven days later, and same-studio composite foreign keys to the entry and issuer.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0188_new_client_waitlist_invitations.sql#L187-L256",
+          "version": "repo-lines-v1:sha256:f0d9265486329a95e47016f73cfb449e48a3befd44d64ff93dbd71ea612f5a54:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5NWUzYmUwNWVkY2NkZDM5YjdlNWFkMDMzMTliNjMwZTdlY2NjYTkyMDk5MTkxNGI0MDgwNjcwYTc1MTMwZDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1ZWYwMWJjMDhkYmMzYjYzZTRlNzVlYTNkMjZhNWI5NDE4OTE4NzdlMjdhZDg5MTMyOWM4NDExZDdkOGRjNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE4ZDQzM2RiYzM0OTA0OGFjM2FkNmIwNjA0NmQ1Y2YwMDRmMDFiMTc3ZGU2MjMzYjA5NGY4Nzc5OTQzMTM0YWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImViMjM0ZTk2NjM5MzdmMWY1MWU5MGI0M2JjNzk3MmYwNmY3ZGFjYzI2YmZlOWY1NWUzZTZkNjc3YjgxMzM1NjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_436a82a2330941e980a06bb9e1adaa24",
+      "statement": "Migration 0192 added an all-or-nothing offer scope, a decline outcome and the authorizing admission round to invitations, and constrains each invitation to at most one terminal outcome among redeemed, expired, released and declined.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0192_waitlist_recipient_proof_authority.sql#L164-L264",
+          "version": "repo-lines-v1:sha256:6fea0add149329d9e6d0d6f83c13a95ff1bd79a5c07504589d1b7b8cf0c6a716:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmNTY1ZDE5ZDlhN2U4ZDQzMTg2YjIzYTAwOGFjYmQxZjIwNDRlNzRmNDg5NmFmZGQ5MWJmM2UyNDlhMTUzMzgzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI5NWVmMDFiYzA4ZGJjM2I2M2U0ZTc1ZWEzZDI2YTViOTQxODkxODc3ZTI3YWQ4OTEzMjljODQxMWQ3ZDhkYzRkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5MjZmMzMxNTZhMmQxNmJhZDgzZmI4OTkxY2NjYjhiZmQzM2ZlMjBmNzAyY2JlZjg3NzEzN2RlMWQ2ODNmOWYxIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzZGY0Y2QwN2JhODg5ZDg3MTkwYWYyNTM0Mjk4MTM3NzIyZmVjODdjNDRjODQwYTY4ZjkxMzBkOTcyMWFiZWFkIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_9528c91abf294621865fc4748238c919",
+      "statement": "Waitlist TTL decisions use the post-lock wall clock rather than transaction-start now(), because a redeem that began before the deadline and waited on a lock past it previously succeeded.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0189_waitlist_invitation_wall_clock_expiry.sql#L1-L45",
+          "version": "repo-lines-v1:sha256:77d265125b778fe6ca603bcf57db12dc5771572260de3f0ec6b68965c901ce96:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwYjdkNWU0YmEyZWQ2NjI5N2FjMzQ1MDRlYjhkY2U0YjY5NGRmOWUzMThjOWMyYzAyMTdhOWM2NDA3MzhlMzUifQ"
+        },
+        {
+          "resource": "repo://tests/db/waitlist-invitation-wall-clock.db.test.ts#L253-L541",
+          "version": "repo-lines-v1:sha256:5a50d675077d70c5a4e117139577dc8232d19a9dcb8ed84f77020426a5b06fd4:eyJzZWxlY3RlZExpbmVDb3VudCI6Mjg5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyZGM3Y2U0YmIyNzNkMmI5Y2EzZjQyODI5YTM4ZDE2MTE0YzNmN2FmYTU5YzM2MjE4OTU2MjIwZmQ3Y2ZjOGU3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1N2Y3ODUzZDdmYjcxMTAyMzU1YzljMmFlZmQxZWRkMWNmYTdlZjQ4OGU0M2ExMWRkODE0NThjMTkwMmY5MjMyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3NGFiZmExNzk5MDEyM2IxMDkwYjNjYzIzMTIxODI2Y2UxZmQ3ZjM4YWIxY2VjYzFmNjE2MjlmZDBlMGRkNGJjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlMjQ1YmFjNDRmZjRiNDg0OThmZmUxZWE5ZWJhN2MwNWI4NDc3YzE0OGUyODBhYzM4YjFiZjUyMjRlMDM5NGY5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_43d76bb10a484583b0806c4ef0ae37ff",
+      "statement": "Migration 0190 anchors an invitation's window at issuance instead of transaction start and stops a legal status transition from rewriting evidence the transition does not own.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0190_waitlist_invitation_ttl_anchor.sql#L1-L45",
+          "version": "repo-lines-v1:sha256:f2b63e93f88de0a91d229a3e22c457ad26c1eac75e8b242829ede54767fb4b4e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyNGE5NjBlOGUxOTBlNmYyZjUyZDg5MTdkNmY1MmU3YWExZThjNzFiOGEyMGMwZTVhNzFhNDljYjVmZjcwNzciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZiZjQ2OTE4ZWFjOWRhZDQ3MGRkZDUzNzVlMmNlNTZkZWNiNzVjYzlmYjE3ZWZkYjA3NjY4MjQ3N2FhMDFkNmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_88d7d84cdd804d0397c19471cecc0993",
+      "statement": "A round's consumed count includes every outstanding invitation still inside its window and every redeemed invitation; declined, expired, released or lapsed invitations free their seat, and a redeemed seat is not recycled.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0192_waitlist_recipient_proof_authority.sql#L335-L380",
+          "version": "repo-lines-v1:sha256:ea9d11ba907b00d5dc19f537e110eafcb1620717f8fa9911d64627aa62fd761d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlMzQ2YjNlYzhlNDY1Zjc5MTMzZTQxYjU0NzdhNzRkZGNmNTc3YzE1YjNmNWUzZDczOTRhOTEyZDE5Zjc0ZmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNjYjIzNmZiN2FmOGFhMzY3MDQ5ZDY1MzdjODVmZGFkNTRhZmYwNmM2MDBmMzk0MmQ3NDhiNzIxMGFiNjJjMjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM2ZjZlMjIyNjFjMDczMTdjMTc5ODI1N2VlMmQzNTQ1Y2IxZDNjZjY1YzE0NzBhN2RiNTRhNjg4OWNkY2Y4MzkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_eee8dadbd6d445119a4c8485e2b94f3b",
+      "statement": "Admission policy defaults and bounds live in an owner-only table separate from studios and from prospect preference, because default grants on studios cannot be narrowed per column.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0193_waitlist_admission_authority.sql#L1-L48",
+          "version": "repo-lines-v1:sha256:7f23d3e241c63718723625ac8a97e755ac0b0cbf509a6368317d6c16397ef103:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc0MjE2MzkzODRjZWEyN2UyYTIzYmVkMjY2MjI5YTQ4NDIyNDI0NDNmZDJjMjgyYzY2NTg2OTEwYmY0ZmFiNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVjYTg5YmI2NzY2YTc2ZmUwZmY5NGE1ODg5M2Y0MzI0ZWQ5YjQxZTViMjhkZDkyOGNiYmQ3ODZlYjk0MWQ0NzAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e34151675a154eb7a66e16f0c4cd4d3a",
+      "statement": "admit_new_client_waitlist_entry re-derives owner authority, locks the studio, the open admission round and the entry, then claims and issues a scoped invitation in one transaction, unwinding the claim when the issuer refuses and returning the raw token once with the database-owned issue and expiry instants.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0193_waitlist_admission_authority.sql#L1544-L1660",
+          "version": "repo-lines-v1:sha256:d3396243ce536df05fa9a639263c96399e59512bfbd15356d0cf27c4a52ac5ad:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI4YzkzMmZjN2MyODNhOTdiYjVmMTBkZWJjYTc2YTM3OTZiOGNiNjNmNDhjYmRlNDRhNmE1YmE2NGNkZmZjOGEzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzZjJhMGY4NTBlMjZhYWUwYTQ3NzJkYzA3OGNlNzY3YTAyZjQyNmFjNjI0OWU1ZTdiN2FhZTU1MjU4YmQzYmRmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiZGY0MjgyMmU3NmY3MzJjYjNiMWZhOGU1YWM0MWI3MjliODJjMDk5NTYzZDc4YWM2YjY5YmRhYmIyMGE3NmQ1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhMGI4ZjUwNjdmNTFiYjJkNjA1YjlkNmZiNTlhOTMwYjlhMWRmZWZkMDM1NzNkNGI0NWIwOTc1MDZlMjdkYTc3In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_8e2af475028c406b9d68ee6ce45b00f6",
+      "statement": "DB tests prove admission is one action, leaves no claimed residue on refusal, refuses members, cross-studio entries, exhausted allowances, foreign services and invalid scopes, and yields at most one invitation under concurrent invites.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/waitlist-admission-command.db.test.ts#L1058-L1378",
+          "version": "repo-lines-v1:sha256:90e40f50d4d1d48f11d62ccfa13df09025d68a424c229c81efd5dd80cdce26ab:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxOWQxMTBiOTY3MTU5ODdmZGZjYjA1N2M5NzQ1OTk4ZjYxMWY4NGRkOTUxZDRkNDg5YTdiMDQyNzg5ZGQ0MTYyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNzc5ZDExOGQ2ZTNjYmY0NTA1Mzk3NDhkZWU3YTQzMDdhY2JlNjQ0NmNiYTI5N2YyNzYwZmE1ZDBiYmExYmMyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_11a83776852c4e2ba31b0ad9117c217d",
+      "statement": "Invitation delivery outcomes are stored as an all-or-nothing accepted, refused or unknown disposition with a timestamp, where NULL means never recorded; the first observation wins, a repeat is unchanged, and a contradicting disposition is refused without writing or affecting the invitation.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0196_waitlist_invitation_delivery_outcome.sql#L1-L104",
+          "version": "repo-lines-v1:sha256:7b38aa71e1af0f6ebc0425abce2b88579004a1449c90501242a53a890301a8fb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYjFjMGY4NTJiNDE0Yjk1ZmY4YTQ4ZjhkNGJhYmEzMzkwZDZkYTNjYzZkNzhlYjllNzdkOWI4ZTg2MzhlYTA0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNTY1ZDE5ZDlhN2U4ZDQzMTg2YjIzYTAwOGFjYmQxZjIwNDRlNzRmNDg5NmFmZGQ5MWJmM2UyNDlhMTUzMzgzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlZDllNGVmYjc0ZTM0NzQ0YzhmODg2MGM1MzM0YTQ5ZmVjOGMyNGUyZThkZjdhYmE2MjQyNTFmMjg2OTMxNTUxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_ddc9a4887edb433b9ddbcc5de42467b8",
+      "statement": "Migration 0197 adds a gateway the service role can call to read a round's consumed count, because the canonical count function is SECURITY INVOKER and service_role deliberately lacks SELECT on invitations, which had made capacity appear unknown and withheld sends.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0197_waitlist_consumed_count_gateway.sql#L1-L38",
+          "version": "repo-lines-v1:sha256:605c5e29aea6c8ba4d3d029623d8fdc381f14f1b61e6fe250a332f476f779b52:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzNGFlNGUxNTNjMGRjY2E0YjVmMzAzMGVjOGYxNzQ0OWY2YjFjOTgwNzFjYzlmMzU3ZjM2Yjk2OTgzOTU4ZTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhMTI1YWI3NGY3NjBmYmQ3N2ZjNWRmNGY3YzhlMTRlMmQ2ZDE3NWM4NzA5ZTQxODBmNGVkYjVhMTdhOTQ0ZTcifQ"
+        },
+        {
+          "resource": "repo://tests/db/waitlist-consumed-gateway.db.test.ts#L45-L264",
+          "version": "repo-lines-v1:sha256:9484a6f60d60d6a093500e12938c594b0cae359e6ce525d55ce0e24accdd8331:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2YjAzZTMzZWRhOTZjMTEwNTFiMTgxMWU4ZTA1ZjllYWM3ZjEwZDVlYjgxNzYxZTEzNWI1NWEzNDNmYWIzZDBmIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3MjZlY2U1YzNkOGRmZjVlNWQ3YmQzMTcxNGE1NWU1NjRmNjFjN2ZkZWFiNTZlZTRiYTdmNGU1OGJjZjA5YmI1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_526cb2c6639b445381d24024610c8190",
+      "statement": "Redemption leaves the entry at invited until a recorded conversion, so before 0200 a prospect who redeemed and never booked was immovable because release, expire, remove and requeue all refused and no new invitation could be issued.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0200_waitlist_redeemed_unbooked_exit.sql#L1-L68",
+          "version": "repo-lines-v1:sha256:73ae759d968ba68cb01f40aba777396a389772f8d32b87c5fa8b4b2be1268bc1:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgzOWNhNmFkNzIwNTY2ODQ2MTg1ZDM4Mjg1NWI1Nzc4ODE0NTJmZWZkN2QwMzViZDBkYmQzNmVlNzA3MzExYjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU3ZGYwMTg4OWQ2NTJkM2ViNDBmMjdmODIwN2MyNjRiNDViMjdjMWJjZTE2NmUwZTFjYTIzMGQ3Njg5NjZjZjQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_018caa07bdb640c2aec3c74691122b46",
+      "statement": "The 0200 close command moves a redeemed-but-unbooked entry from invited to released and stamps closed_at as a non-terminal record, keeps the round seat consumed, and requeue is redefined to refuse an entry holding a redeemed invitation so one entry can never carry two redeemed invitations.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0200_waitlist_redeemed_unbooked_exit.sql#L70-L123",
+          "version": "repo-lines-v1:sha256:8a2184e24df0fd4651f1644f816cfa59707bff0fd3dc045854ecc601da9018a5:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE3NGRkZThlODAxNGQxZGE0MGExYTRjNTA4ZDBjYzMyZDYxODU2NDU3NzQzYjcyZjlmZWM5Mjg4ODVkYzM0NzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjIzYmUwZjI4MTVhZGZiMDhjYWY4MjY4MjJiNGNjMTJiZTI5NGIzNzIzZGQ2ODY4ZGRkMTY4ODdiNGFjY2YyZDEifQ"
+        },
+        {
+          "resource": "repo://tests/db/waitlist-redeemed-unbooked-exit.db.test.ts#L192-L869",
+          "version": "repo-lines-v1:sha256:11319c88562d8fbb2bade624c16eda004ab83f27bc4d4d2ddd7e1f9b79ca4d52:eyJzZWxlY3RlZExpbmVDb3VudCI6Njc4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI4OTFmMWU2MGI2ZTU2YWFkNWE1M2ZiNjRkMmY4MmFiNWIyNTcxZmI1YjM1ZDZmNTYzNGNkZmJiNDZmNWIxNjJkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhNmQ2OWNhM2U1YzkzMTFiZGIxNTBkMzljZWM1OGY2OTk0OTRmOWJhYjM2MGMyNGNlZWFkYWU0ZjM5MTdmOGVlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0NjJkMmZhZWZmMTgzNmZjMDk5NjQzZDljMzRiMThhM2I4YzM1NWY2YjU0OTYwYmYxMDhmZTM5OTA2ZmYwOGU4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5OGJhMGQzYTlkOWVkOWM1Zjk3ZWU0OWRjNTZhYjRlMjk5NmMxMDM4ZDkxOWY5MDQwMDI0ODhlYWE4NmQ5NDE3In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_7d3f7090be4c4ca49664b7c72c184cee",
+      "statement": "Migration 0201 removed the close command's scan of appointments, because appointments carry no link to a waitlist cycle and, since 0195, a cycle booking converts the entry in the same transaction, so the scan could only match unrelated bookings and raced appointment writers.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0201_waitlist_exit_authority_contraction.sql#L82-L137",
+          "version": "repo-lines-v1:sha256:7a780b93afd785f4bead219498553cc129df0eb81a8f45306df7d6e38657e857:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwMTYwNDlkNDkzZTU2MjdiNGZmNzJjZDZmYmYwYmQ5Zjk1YjllODE0YWQxNTBjYmFlZmYxOGY0MDYxZTZjZjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNkOWY0YzNkMDA0YTc4ZjgxOTAwMTZmNWE4MjA2MDEyNzE2NDU3ZWMwM2QxMTM2NWJiNmRkMDI1NzM1NTA5YWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0OWUxMWEzYjVjY2NiMWFjYzJmNzg1ZGE2MDY3YjRhNjA2YTg4NTdjOWU3MWFmMjk0MWZhOTEyODZiNjI0ZjkifQ"
+        },
+        {
+          "resource": "repo://tests/db/waitlist-exit-authority-contraction.db.test.ts#L337-L880",
+          "version": "repo-lines-v1:sha256:6dd6007b1b34e08bf4ff5efb1ffa2bccf68c2854ab18cdf68cc5d077e136a654:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQ0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhZjE5NzgxNWEzYWQ0MjEzZGRhNmIxYzdhMDBjMTA2M2FlOTFiOWY4N2QzMDJlNWFjMzdmOThkNWQ1YzMxZjAwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI2ZTM2MDE1OTBmYTljYmE5NjM0Y2QwZDg2YjI5MjUxYzk4Njk0ZjM5Y2Y4ZDE1NmUwN2M5Y2NhNjBhZjM3YTM3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0NjJkMmZhZWZmMTgzNmZjMDk5NjQzZDljMzRiMThhM2I4YzM1NWY2YjU0OTYwYmYxMDhmZTM5OTA2ZmYwOGU4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwOWQwZWJhODFhNDQxOWI0OWY0YzdhZGRiNDc4ZGJmNjUzNWMxYTNhZjliMmM1NzczZDg0NzNjY2NhZGEyMWI4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_58adec9fa32c4a348a771bb397499b20",
+      "statement": "Waitlist conversion records the converted client but not the appointment, and the waitlist booking command does not pass the entry id to create_public_appointment, so which appointment came from an invitation cycle cannot be determined from data.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0201_waitlist_exit_authority_contraction.sql#L86-L94",
+          "version": "repo-lines-v1:sha256:a64886b1e446af0b814fabb066fe7d6dc1cd3da38a68e5758e8cecc31346c5a2:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWRkZjgwYWViNjAxMjI3YjYwNGUzNDAxYjdjMWQ4ZGM2NjhjYTZhOTRkNTQ3MWYyMzM2Y2FlYzNmOTNjN2NjOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjRjMTcxZDQwYTI0MTQxZjRlY2RjN2NmZTNlYWVhNzA1OTUyYzUwOTA2NzkxOWY1ZDVlMzU2NzQyNGE1NzdmZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDRmYWZjNDI0ZmVhMWYwMjRiZTZlZTEwZmMwY2ZlOGJkMGE3YTlhNGNiZWVhZWE3NGFiMjVmMjQ2MmIyY2I0MSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTRjMzlhYTRhYzkwMmYwNGRlZWJlODYxNmIxYTAzYjFmZjA2Mjk5ZjM1MDYyNWE4YTgxZGE1ZGM4MWMzMjIxNSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_a114e02ca680457c89f1e26b0e1c8775",
+      "statement": "The practitioner invite action accepts only the product fields and entry id from the browser and resolves studio and actor on the server.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/waitlist/invite-actions.ts#L1-L20",
+          "version": "repo-lines-v1:sha256:24c99b8873c685c5376b9fd6d724c89896f8103ef5694a8ed9f8721637fa5a66:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5ZmRiNmE5NjYxNWI2MDQzZGRhYzA0OWM0YTg3ZGZmMDgyZDIyZmJhNGZkOTkzMTBhMGRkOTJhNGU3Yjk5NjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI1MzBkNDEzN2JiZDg3NDE4MzIxYzlmZTg3NGQ5N2NiZTc0OTZiM2ZkOWQ0ZTE0OWI2NjE1NGE1MTc0MDY3NzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM3MzQ5MjY1ZGJlYTM1MjJjNTQwODIwNDdlNTFiYjhiNjMyNWVhNzQ4NDgwZDlhMGU1MmRmMDZhZjQ5MWI3ZTYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

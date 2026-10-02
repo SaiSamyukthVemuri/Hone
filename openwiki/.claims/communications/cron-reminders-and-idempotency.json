@@ -1,0 +1,336 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:7c7a38b31efee8eae0cb97e3e5ec6c935d6aa13fbf2916f82c9fbdbdc9e05cd1",
+  "claims": [
+    {
+      "id": "claim_4ca4e90b9f2a45cf969567263440156a",
+      "statement": "vercel.json registers exactly three daily Vercel cron jobs (materialize-recurring-breaks, calendar-reconcile, calendar-sync), and a config test requires appointment-reminders and no-show-check to be absent from it and the calendar crons to be daily with reconcile before sync.",
+      "evidence": [
+        {
+          "resource": "repo://tests/app/cron-config.test.ts#L34-L87",
+          "version": "repo-lines-v1:sha256:77a253f504c7904beab9cfbf69fe33c0f39da9620d2baf08a57ca41f6386f4da:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5M2M0MzFhNGRhY2E5YzM1M2Q1NDI3NDU2NzZjNTYyYjZhMTdlY2YzZjgwZmI2OTJmOTk1ZTJhMmJiODBjMWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFlMGQ5ZmQyNWI1OWZlMzE1ZmQ5ZDc3NzkwYWY1ZGE4NDk0ZjY4ZWZiMmM2NDY2YWM0OTRiMGFjMWE5Y2QwOTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY5NmRiNTkyYjVkMzVkYWQxZjY4Nzk5ZTFmNjFhODdlZTdmNjg3MDUzZTE2YTMwN2I1ZDc4OTE5Y2MwZTRhZDEifQ"
+        },
+        {
+          "resource": "repo://vercel.json#L1-L16",
+          "version": "repo-lines-v1:sha256:717784629d1e9f443f60761ad3f0050da3b49f29f6296f3af96a96e52f806e01:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2ZmIwOGZkYTFhY2I5NTdiNjExNmJkMzc4MTFhMWZlNDFhMDE2MTFjMDYzMWVkYmY3ODZkNjg4OWEyN2E1NWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2e356d5804a84f27894f8d9ac143b027",
+      "statement": "The appointment-reminders route is designed to be fired every 15 minutes by an external scheduler because the Vercel plan caps cron cadence at once per day.",
+      "evidence": [
+        {
+          "resource": "repo://lib/cron/reminder-schedule.ts#L12-L33",
+          "version": "repo-lines-v1:sha256:c9470b55f584a3e2347d9ba9c3d12e5b1bfe6c5b139ff1047570b0278c2dd578:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzZTkxOTIyMzRkMTFjYTQyMDVjNTQ3NjgxODdkODlhNmQyMzYxMzJjOTY4NDhlYTgyNjY1NDRhYmQyODEyYmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhhMGViMTZkNGZkNTY0Mzk2ZGU1ZjQ1NTEzODU1YjYyMGVmZDNjNzYyMTE5ZDYxN2NhYjRkZDI1NjkyYmE5MDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJjODk1ZjkwZGQ5NWUxN2RlYjg3YjBlNmRjM2YwZWQyNmRiNjg4ZjRlMjExMzMyNzQwMjEwOTEzN2E1MmFiZmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1Y2Q1N2UxZTc2NGEyNGY2Y2I5YThmYmI3OTViYzU5OTQ0MzFmYTUxZmNlMzZmNDlkOGUyMDUyYzNhZmNmM2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_eafd1404142a419fa00ef8b5453722c8",
+      "statement": "isAuthorizedCronRequest rejects requests when CRON_SECRET is unset, the Authorization header is missing, or the header does not equal 'Bearer <secret>', comparing with timingSafeEqual after a length check.",
+      "evidence": [
+        {
+          "resource": "repo://lib/cron/auth.ts#L17-L30",
+          "version": "repo-lines-v1:sha256:6e0d16812a09e79d7966eed1a35b91ee4c96030a82058357d93cf5b667f239a1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE0ZDY2YmRhYjc3NDNlNDBlNGEyZmQyZWE1ZjYxYTM5ZTZjMGEwZTIwMmM2Y2FkYzdjMDY3NTExZDlmYzBjZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYxZjRjNTcxNzA3NmJmNzMxOGU3ZTk2MmMyNzYzYTQwNzMyOWYxNTNhMzk1YTNlODEyYTkwM2E5MzRhNGY4MmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_068dd56f877e46688611416ec6c692e1",
+      "statement": "Reminder windows are closed intervals of 1380-1500 minutes (24h pass) and 105-135 minutes (2h pass) from the run time, and the 15-minute cadence covers every appointment minute offset of the 2h window while an hourly cadence would not.",
+      "evidence": [
+        {
+          "resource": "repo://lib/cron/reminder-schedule.ts#L35-L91",
+          "version": "repo-lines-v1:sha256:5c3f8e5d89a048b49035d23ec740ec7050afaf0841c2329c8e509d230f5fa78f:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhMWUzZDRjZTZkMjdmNDhjZTJhZDgwZWJiNGFjN2ZkMGZlZGVjZTYyOTJlZGNmOWQ2NmI3MDY0ZmE1NzA5ZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiNDIxMTNlMTFlNTZjMjY1MjA0MGI4ZDgzM2UwMjU3MGM5OWJkMjk3OWFjMGI5NGNjOWEyOWZhZGI2ZTUyYTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/app/cron-config.test.ts#L89-L99",
+          "version": "repo-lines-v1:sha256:79317dbb654991ddc78d123fc9398a0974a8e0cdfce4c23614e62f2cb1930e01:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmOWMyMWQ2ZDdmMzU5ZjM2ZTNlNzc5ODYyZWNkMzM0ZmRkMGExZTk4ZGM2NzA3NmRjMjNkODg4ODkzZjZhMjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBjYjk3NWEyOGRmMDFkYzM2NjU1MDNmZjAyNzY0MzA3NWQzMWQ2NDJiNDczODBlNDA1NDdmNzdiYzMzZDVmZGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f5133a8013744f5ab459c86a36347d24",
+      "statement": "The reminder route selects confirmed appointments whose sent-at column is null, whose attempt counter is below three and whose start falls in the window, ordered by starts_at and limited to 50 rows per pass.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L33-L34",
+          "version": "repo-lines-v1:sha256:d1285faf2ff9a32a8519f3d8f372d15df073b4713d0e2d83e1799c0890cb6ec4:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWNlYjlmMDdhYTE4NTE4ODA1OTk4YWFiZTY1NWY4ZTFjNWU5NDY4ZWM5YWM2MTQ4ZjU4NGFjNmFkYzNhNjkxNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTIwM2NiNDIyMDc2MDk1MjU1MWRkODA1MWUxM2JiNTgxNGI2NmVhZjM1MjNkNzJjMjZmOTJmYTU1ZWMyZjA3MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWFkNmUzN2VmMjM1YTk5M2Y2NzM5MDBjMmIwYWIyZWMyMjk1NDc5YjUxN2ZkNDllMzUxYjVmODY2YmYzOWU5OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTU3MDFmYjM3MGI3YTUzODgzNTlhMWI5NDk3NDU2ZmEwODc0Y2M3Y2JkNmNlMTc0YzdmZjUxOWIxMTcyOWQ5ZSJ9"
+        },
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L66-L101",
+          "version": "repo-lines-v1:sha256:72aa314be3a87b0167d45213d110a76bcd7a75a9fbe96af8b687c0e2c5547839:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgyMzM0NDRjYTE4NTlmNTM4NmZiNzg4YjZkYTNmZDUzZTI1YTNhYzZiYjJmMDY1YWY2YTI1YzRmNWU4ZmIxNGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZlNmY3NjI2Nzg4NzA5YzYyMGFhMDZmM2ViYzA0NTc0MjY5YTVkNmQwZjg2MGI5ZWM5ZGYzZGQzNzBlMTEwMWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE4NTc0ZDJhMTJkYWM0ZmUxMTJhNjU5ZTViMTRjY2NlOGEzYTFmOGE0NDQzM2E2ODJkM2MxOWRiYWVkZTNmNjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fd952b40374543b49dac81f5d30b41ef",
+      "statement": "Each appointment receives at most one reminder email per window: the appointment reminder and any intake CTA are composed into one email claimed on the reminder_24h or reminder_2h slot according to a six-case law over the reminder toggle, intake toggle and live intake state.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L183-L204",
+          "version": "repo-lines-v1:sha256:3dc7a68dddca8d8b6223df6b0bfe847cdc0d8a7c14ea20f82273e063659c5728:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4YmM1NjZlY2NiZDZjMTI1OGZlZDZhNzRlNGUxNDVmMjQyNzNkMjU3OTc2MjU4ZTVlNDQ2OTdkYThiZGM2ZTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4ZTAxNGE5M2FjOTk4YjA3OGMxOTI4NDcxODU3ZTE0NjdiMWE4ZTJlODFiNjA3YmU4NjFmMGY5NzBiZWRhZDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM5MjVmMGY5YjAxM2IzZjYzOTM4NDNhNDI0NjliY2FlNTZjOTc2M2IyZjMwZmJkMjc2MjFhYWY2ZWMxM2U2ZTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE5ZDg5MzZiN2I2MzUwZThkZWFjMTYxZTA2ZWUzYTk1YWNmZDg0MDZiMGUzYzEyN2ZlYTY0MjRlZjg2MmVkMDAifQ"
+        },
+        {
+          "resource": "repo://tests/db/reminder-window-composition.db.test.ts#L202-L333",
+          "version": "repo-lines-v1:sha256:3b322add7d0ee8837388adf3714a0da5198e5a60cd4d46c326c606bea936f411:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2MjM1NTc0NDVmMDMwMTllZDY1MTI2NGI2OGVkNWI5NDI4ODhhNDNhNGNlZGRjZWU0NzcwN2IzZTVkMzM4MjIxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI5OWE5NTY5YTdjMzY0YTE2NDBiY2I0ZmVkNzQ1NjEwYzBhNjZlOGU4MWU0M2U5MjA3ZGQ5YjUxOWYyNTY3ODE0IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkYWZiZGI1MTlkNDk0YzgyNWYyZTBkYTE5OGQ5NWY5YWNlZGNjNjk3NmMwZGI4YjQwYTg1OTRhMWExOTVjYTdhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmMWIxMDliNzBjZDMxODFlOTU0ODhkYTQ0NTdlZDA0YmFlMjk4ZjM4MTQwYzRiZDU0MDBkZGZiZTkxYzZkMWJlIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_4dc15595213347a2b6d084d5b6716817",
+      "statement": "The email reminder pass claims before sending, re-reads appointment status after the claim, re-reads intake state live before deciding the CTA, and records the result after the send.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L270-L311",
+          "version": "repo-lines-v1:sha256:00b014674694c008a72fcfe79d47779fdbdb0ee9a1c89d1fd613e9a950b32816:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzYWZiM2E5ZWM4ZGFmNzEwNDJhODY3MjllNGU1MGE4ODc2NjllYjczOWZlYzJkODNlYWRjMWMwOGViM2Y5NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA0YjlhMGIxNmI5OTEwYmFhNWQwYTRkY2FmZjhhNjBjNDI5NjMzYmYyYWUzY2JhY2M4MjAyOTA3NTgwZDEwY2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4MjkxZjhmYWI3NGJlZTFhNTBjMWY0NzAzZmMzYTcxOTViMDU0NDE2ZGJlNTI3ODEwNzZlNGMyM2YzNjlhOWMifQ"
+        },
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L409-L438",
+          "version": "repo-lines-v1:sha256:968b648f3afb11b2be054e70df8b4dd48a523b5b337128cc6ae81c4f6c039fe2:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4OWQ5MTA1YWZkNTY0YjJkNjAwZjMwNDFkNDllZjhhZDY2ZjRjMGMwNjgxNDgyZGZmMGE3OTlmMzM3ZDMzZWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMwNjNiZjJlNzlmMDBjMDliZmUwNGExMzVkZmRjNmY4NTk1ZjUyODU2MmIzMWFlNDIzY2ZkN2MxNGI2MDlhNWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhZGY5ZjkwYWI1M2Y0ZGQyODlhZjBmMTg3ZDBmYjI1NDA4MDFhYjI4YjczMTAzZDMzNDI2ZDAzMmYzOWM2YmIifQ"
+        },
+        {
+          "resource": "repo://tests/app/cron-config.test.ts#L101-L119",
+          "version": "repo-lines-v1:sha256:8e739478aa36a56c6a88df5aecd7860f554a678438e547995f31984c529e6b4d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhM2ZiY2ExMGIyZTg4MGMwZDJkOWYzYWY1Y2ViMjY3ZDljZmFiMTYwMDNkOTg5Yjk4ZDRlOWY3YmUwZmE2MjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNiZjBjNTdmMDYxMWQzNjk2OTE1MThkODNhOGUxZDg2Y2NiZmIyNTNjNDA1YjRiYTYzMDBiYzg1YzRiNDZiZDcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b8e12d917ee24b72805a8a62ecd7e75b",
+      "statement": "claim_email_send increments the attempt counter and stamps claimed_at only when the slot is unsent, under three attempts and not claimed within the last five minutes, and record_email_result stamps sent_at on success and clears the claim; both are SECURITY DEFINER and executable only by service_role, with 0098 holding the latest definitions.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0080_email_send_claims.sql#L1-L32",
+          "version": "repo-lines-v1:sha256:a79cff52f490817a6a93bbad75fd3224ec1b6b089af2b5f181f0da219a163da1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkxMDU3OGZkM2MyNWRmNmJlZmI0YWI1NTUzY2Y5ZGI3Y2Q2NDE2NTUwMzc2ZjA4YjhjNWVhZTY2OGM0MmRkNDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhmYzg4ZjZkYzY2ZDdiNDUzZDhiOWNjMDc2MTZmZWNlODhlNTY1OTlkNjJkMzA3Njg5NmUwM2IyNWZkMGJjY2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhhY2IxOWNmZTQ4MjEzODA1MjU3OGIwMGM2ZTUzMTMxZGU0MDMzMmY3MTljYzFlNzk4MGYxZmQwMGJhZDEwYTgifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0098_intake_reminder_columns.sql#L43-L164",
+          "version": "repo-lines-v1:sha256:a4d9d34bbc1dc48dda7f8d409c5aa7bb52ab6ad73b1b65f26379a62b4fc09baa:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxM2Q4ZmVkYTMzNjJiMDU1YzU2ZDY3YzAzMTcyYjgwNTgxNzhmY2U5YmIwYTU4ZmMzNDJkMzBjNmUyN2UxYmRjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiNThhNmUzYjg3ZjUxODZkOWJkN2Y0MTc1ZWU2YzczMDAxNmUzM2FkMDI3YmJhMDllYzYyYjY1NTljZGY1MmViIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI4YzY4OGE2OGQ4MzUxYjcyOWU0NmQ2YjY2YWEyNDk4M2RlMzg0MTdmMGNjOWViYWM5OWQzZmVlNTZiYWE4ZGI3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_4e087f92c5ed4e31b4473b4a2416ef40",
+      "statement": "Reminder sends stop after three attempts, and a failure on the third attempt records a reminder_send_exhausted warning ops alert with non-sensitive details.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L123-L156",
+          "version": "repo-lines-v1:sha256:2786486f07b603ff27c16085c82cbec191c7906d8d35f94c7d356770cdadd561:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI1ZmNiMzg3MmIwOTljZDVkNjI5NmQyMzUxODI1ZWM4YmM3YjBkNjZiMjYwMmJhYTc3YmVlMDYzMzgzNjBhM2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczMjA5MmNlM2Q2OWI3NjEwNWIyODhhYjQ4MGRmMjdmN2JlZmNlZWRmMTA5YzlkNTg1OGYzNmMzZDE3MTJmMzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcxMWVkNTMwNzdmNjFhNDE5YzIyMWRiMzE1MWRlYmZmZGQ2M2VkYjkxNTMyMTE3YWUzMGRlNDc4ODgzYTExNmUifQ"
+        },
+        {
+          "resource": "repo://tests/db/reminder-window-composition.db.test.ts#L335-L380",
+          "version": "repo-lines-v1:sha256:b4cd2479857ff639af2c14e9e15f58cb186038c491d20a548d4bed09d8010781:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhjOWQ0NWI1Y2Q2NmQzODVmMzkxNTc3M2JkMzAyMzJiYTFlNjFhN2ZmNmU3OTRlYWRjMDZjZDdiOGUxNWRmYmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhMjc3MjZkMDY3ODhlMzNjMzFjNWNjNThhOGIwZmRmZDA5YjQwYmY0ZDNjZDNhNDE0YTY0MGQxZTdhMTBkZjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc0ZjIyOTFkYWZiNmI2MzA0YTI1ZGMwMzc0NmQwOTFjY2Q0YTQ0MzZkZmZkYTAzMjE2NmY1NDM3YjFlMmU1YmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNmZjJkNDNmNzYyMjA1YTg2OTE4YjMyNGViMmJiNWI3ZDhiYjFhYjc1NjJhNGMxZmEzMDJmOWZiYmU3ZDI2NzAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b2563485c1b748f8b3b7598cbdbadfda",
+      "statement": "SMS reminder passes use independent sms_reminder_* columns and the SMS claim pair, skip without claiming when the studio SMS toggle is off or the client lacks a phone, lacks consent or has opted out, and compose any intake CTA into the same SMS.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L444-L585",
+          "version": "repo-lines-v1:sha256:9bc8c502324b4fae7d4a151e276e86baf09dd870d13bda419b64cf93f233649f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5MWJhYmYwODQ0ZTRmYWM3OGQ1NmNiMzEyZDk3MGE5NjI4ZDZkZTI5OWE3NmJhZGE4MGE3ZmRjY2UwYmI1ZTU0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmYmUwYjU2ZDVhOWUzZmU2YmUyMDU3Yjg1OWE0MmZiZDExZDViNGZjNTJkYTZhZjEzOGJkODdiOWI1M2MxMjVjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkNmU5N2JhZjczMTdlYzhlYTU2YjJhMzIwZDQ2NzJjNjUyNjMxYjI1MjIwNmQ4M2NlNDA0NzIyYWI2MjYwNTUxIn0"
+        },
+        {
+          "resource": "repo://tests/db/reminder-window-composition.db.test.ts#L461-L519",
+          "version": "repo-lines-v1:sha256:b8c658490603634aaadedc96db3d1bb9a46f0ffb5887218169e7d6da0e93f404:eyJzZWxlY3RlZExpbmVDb3VudCI6NTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhZjZlMjRjMjg3MTE4NDhkNjk2Y2Q4NDEzZWQ5MWIyMDExNzRkYzE1OGUyYmZlOTUzYmE0YjI2ZmVmMjFhNTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVkZGI3NzlkOTc4YzAyMGVlZjg1NDNkMzIxZWRiYWMzNTdjMzRjMzRlNTllYTVmYWQ1NjdjNmMyOTNkMGJkYjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIwNzlkNGNlMmM1MDA1YmZiNDQzMjk4MGE1N2ZiMTA1MzY1NWE1ODkzY2FkNzcyYjQ2MWNiMzlhNGQ5YmIwNTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_512dddceea0343d9a816c37f40c3c3e1",
+      "statement": "The SMS sendOne helper runs the consent gate, takes the SMS claim, posts through sendSmsSafely, and always records the SMS result in a finally block.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/send-appointment.ts#L369-L459",
+          "version": "repo-lines-v1:sha256:e360e499aacd6e6ea144c293a97d5e648fe97e06a1e358460f2c3117feca88eb:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiODU2YjJjZTk3NmEyNDNiNGFhZTEwYWE4ZmUzMjhhMTVjYzEzNGE4MzY0ZWI2ODU5NDg3OWRhMzdlZGVjMDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImExZmY5MzQ1MDU4ODYzN2Q4MzhjZTRiMjk3MWU3ZTA2N2FhZDA5YTUyYzg1MDFmZDA5NDAxM2YzZWQyNzczZGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_957a81dbe975488ea4ee0fee419c5b43",
+      "statement": "A thrown reminder run records a critical cron_route_failed ops alert and returns HTTP 500, and a successful run records the reminder heartbeat only after all four passes complete.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L587-L681",
+          "version": "repo-lines-v1:sha256:7831a79122a77c0e4741c40ae1710991d64a16221be6b597e470746ff1758d03:eyJzZWxlY3RlZExpbmVDb3VudCI6OTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAwYzNiMjk2YzFlMTI3NWZkZDQ0NDlhNGMxNWFlZjljZmM5NjE2NDRmZTI0YTdjYzZkZWEyZGViMzgzNWRhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiZTBiNTZkNWE5ZTNmZTZiZTIwNTdiODU5YTQyZmJkMTFkNWI0ZmM1MmRhNmFmMTM4YmQ4N2I5YjUzYzEyNWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_babace83698b493d855570f43882adcb",
+      "statement": "recordOpsAlert never throws: it writes a structured stderr line, inserts a redacted ops_alerts row through the service-role client, and emails critical alerts through a separate alert-email module.",
+      "evidence": [
+        {
+          "resource": "repo://lib/ops/alerts.ts#L106-L200",
+          "version": "repo-lines-v1:sha256:4909ba6419ae6218ca33cd94581de662d148be5dc5614224cc549e2dd56d8eee:eyJzZWxlY3RlZExpbmVDb3VudCI6OTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRiZGY4OGVlMTRlMmFlNjYzYzgyY2Y1MzgxMjQ0OTJlMmQ5NTc1Yjk5MDc3MzkzMzM0NzRhNDFkMDQxNDg0NzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAyZTZmNzlmZjkxZjc5MjFmMmMyOGUwZmJhZWViZDFmMTliZTRkZTVmMjYzZjIyYzQ4YjgwMzQ0ZDFkNWFlOWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmNzM5YTA2YzFjYmIxMjQ0ZTMzNjNkMzhiY2Y5ZmE1MGNlODRmZWQzOTljMjE5M2EzYzdmMDhkNTk5MThiMmEifQ"
+        },
+        {
+          "resource": "repo://lib/ops/alerts.ts#L9-L46",
+          "version": "repo-lines-v1:sha256:85522f52279fd228d278661005fc0ea70577b36f99197f086b4ad265d84d4951:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjNmU5YmQ0ZTgyMjFjYTc5MjdlM2VkM2YwMjRmYTAyMGIxNTRlZDUzMDRhMjljYWIwYTFlNmVkMzkwODUxZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZhYTMxM2Q4MjI1ZDYzOGE0M2I5YmZmZGVlMjc4MjkxMGI0ZjI3OTgxZDk5NjYwYTAyNjE1NGM5OGI4MWRiYTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlkZGZjNDhjZTY1NWFkMTA1ZjNkYmYxZDA2ZTkxZDBhNDJmMjgyYjQwNDYwOTdjNDcwZjE3M2QyYzYwNWEwYWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_20201fdda6b54651b92d765a4a8bb862",
+      "statement": "The reminder scheduler heartbeat is a single overwritten Upstash key with a 24-hour TTL holding aggregate run counts, and its writes and reads are best-effort and fail-open.",
+      "evidence": [
+        {
+          "resource": "repo://lib/cron/reminder-heartbeat.ts#L7-L42",
+          "version": "repo-lines-v1:sha256:3327fcfae9e8d127b5be1957eceba4691d7074ac326f0d258b4c96f52927c079:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY4YzdkMTZmNzlmMDU5MDkzN2VhZmU1MGU5NTE5YzcxNjc1YmEyNjdiZTljOTJmYzA3N2E5NzMxMGU3ZGJkMmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyYjBkMTRiMGQ3YmI3ZmNhODJlYzA2MjAzODQ0NDIzNWM4NjZmNzU0MzQwYmJhMTllNDkyYTNmNmU2ODQxMzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE5MGQwMjA4MGEyM2MyNzg3NTYxZDM2MmY2ZDQ3NWJmOWNhOWI2Y2YzNzJkOTM2MjhjMDU1MTg1OTZjY2MzYjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ec37b7e1c5c741648e79c516903ea475",
+      "statement": "Reminder scheduler health is degraded beyond twice the cadence (30 minutes), stale beyond three times (45 minutes), and a stored timestamp more than five minutes in the future is not trusted.",
+      "evidence": [
+        {
+          "resource": "repo://lib/cron/reminder-heartbeat.ts#L44-L80",
+          "version": "repo-lines-v1:sha256:0b9cab628e7638f9942267111edbd16fccd2355649423e8fb707675b7c9e768f:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0YTFkNjdjNTFhMWY1MWQ5Mjk4YWVlMjBiYWY2MTNmMzg0ZjgyM2Q5OGViOWI0OWQyZWQyZDczMjk2MTc2NDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA3Y2I0MWFkNzk0ZTVjNjZhODc2MDA4ZTUyZjcwNTNjZmEzNWQxZmJkM2ZmZTA5ZDdlOWI1YzkzMTliZjJlODIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRjYjhkNDBjYmFlN2E1ZGUxODY3NmFlZGIwODZhMGNjODRiMWY1N2UwNWYxMDU3ODU0NzU0NmY1OTg1OGFhNjIifQ"
+        },
+        {
+          "resource": "repo://tests/lib/cron/reminder-heartbeat.test.ts#L36-L54",
+          "version": "repo-lines-v1:sha256:9003a27b867fdcba0bde88c3d30e09e6dd39e195a1edb109e847ff0192cff7c1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlODgxODNmNzVhMTA0MGUwYzdiOGY4MzcyYjdhYTBkNGE2MWVhZjhiMTQ4NTc3MmQ1Y2EyM2UyNzMxYjY3YWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1OTM1ODU5ODQyOTU1NGUxOWE3M2E5OGQ5NDU3Y2ZlZDNjYmQ5ZjQ3MzJlYjU0MzY0NjUyM2VjNjYwMzE5YzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJjNTI4NWEzNzAwOWZhMTA3ZmM2NWNiNTU5MWQ4ZTQ3YjQyMzY2NGU3MDZmNzYwY2E3OTk3MjdiMTdiNjVhYTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a3fecf0e89f54705b721285917a8f184",
+      "statement": "The admin page reads and classifies the reminder heartbeat without writing, while the daily cron routes call recordReminderSchedulerHealthAlert inside a finally block that cannot alter their own response.",
+      "evidence": [
+        {
+          "resource": "repo://app/admin/page.tsx#L233-L240",
+          "version": "repo-lines-v1:sha256:56d8b85d237cd10c1a47d1cbe1d8d3522a37c01f7b1014c338df73948f9a03f9:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYmExNWFlNWYzNWNhNjUwNjExMzBkZDdmYmI2ODIyMGI1OGNmMTk1MDI2MWIxNzdiYWFkMTljNzhhNGNiYzc5YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmViMGY5MTc5YTlhZGFkZGQxZTgzNTRjNmRkNjMyZTM0YTg5MjQzMGZkNGQ4MGY2NGVkNmFlNDczNDNhNzQzZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWI4NmU3ODZiZmY0NWZhMTEwNWJhNzcyMjExNWJmZGIzN2MyMmZlOTE2ODgwZjcwNWNhZGFlNDIzZGJmYWRiYiJ9"
+        },
+        {
+          "resource": "repo://app/api/cron/materialize-recurring-breaks/route.ts#L190-L219",
+          "version": "repo-lines-v1:sha256:00280eaee4fd29f110e17211a9601f4799cb423f70b72c91c9e8947ad276175c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyY2MxZTRmMjJhMGE1OWIwMDljODJjZGQ3MWIyZmVlMWVlNGM4YjNkYzc5Nzk3NzBmZGRiOGEwYjA3MmU1MjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU3NzdmMDJmNjNmZjVlMzUzNjU0NDIzNmY0MzdmYzg5ZTYzYmM2YjEyNjNhNjQ2MTExYmZjMmQyYmE0MjUzMWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmNzM5YTA2YzFjYmIxMjQ0ZTMzNjNkMzhiY2Y5ZmE1MGNlODRmZWQzOTljMjE5M2EzYzdmMDhkNTk5MThiMmEifQ"
+        },
+        {
+          "resource": "repo://tests/app/cron/reminder-heartbeat-wiring.test.ts#L97-L199",
+          "version": "repo-lines-v1:sha256:13eba92a90d94395015a103d81954817d1cb22109df54c1d9bb4c49153d3b84e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzMmIxYTczODQ4ZTI2MTQ5MTE3ZjM1YTBjOTliZmFiOGVkYTkyNmZjNmM4NmFhODljMTMxMTdiNzg3MDhkNDBhIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNzc5ZDExOGQ2ZTNjYmY0NTA1Mzk3NDhkZWU3YTQzMDdhY2JlNjQ0NmNiYTI5N2YyNzYwZmE1ZDBiYmExYmMyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiYTlmNTZkNDgzMTNkZWU4NTg2NjZmODIwZDE2NjI0MmE5ZWY2YWEyZDNjNmRhNTJmZGQ0ZWNmNzhjNTdmZjgyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_510b4a9fd4d047ddb1f11ff737ecd1f8",
+      "statement": "The no-show-check cron route is a disabled, non-mutating stub that only authenticates the request and reports disabled; no-show is a practitioner action.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/no-show-check/route.ts#L1-L55",
+          "version": "repo-lines-v1:sha256:a0b3f46562ddb1a58079cd4fb7d4c4b2ca2923f1e3b4f0c9effeb650a3ff16df:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ4MzZhNTk0Nzk5MWMxYzc4OTI4MTQxMjZiMGNjNjBjMGNhN2ExYThiYjYwZTI1MmQ2NmNjNTcwYWY2OGEyMzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c8c84bb639a148a58216297e9450df71",
+      "statement": "The recurring-break cron materializes every active rule through materialize_recurring_break_rule up to a studio-local horizon of the maximum public booking horizon plus 14 days, treating 23P01 exclusion conflicts as expected conflicts and alerting on failures.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/materialize-recurring-breaks/route.ts#L39-L39",
+          "version": "repo-lines-v1:sha256:b5ae229c9b654847ab07b7fece3f762aa5dec36c8f455b3cba5176d058bb940d:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjVhZTIyOWM5YjY1NDg0N2FiMDdiN2ZlY2UzZjc2MmFhNWRlYzM2YzhmNDU1YjNjYmE1MTc2ZDA1OGJiOTQwZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjVhZTIyOWM5YjY1NDg0N2FiMDdiN2ZlY2UzZjc2MmFhNWRlYzM2YzhmNDU1YjNjYmE1MTc2ZDA1OGJiOTQwZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzJmM2MyNWIzZmFkZWIzZDk2MTYwOTY4NWU0NjYxMzBlMWNiZjYxMTM5NDFhYTk4MmViMWM5NWY1YWVhM2JmMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTIwZGRkYTE3MGNiZGU4OGU4NGY3YWYxZGViMmJkY2IyMTk3MmM0MzQxNjVlMTUxYzRmZmYyMzc2M2E1YjczMCJ9"
+        },
+        {
+          "resource": "repo://app/api/cron/materialize-recurring-breaks/route.ts#L67-L160",
+          "version": "repo-lines-v1:sha256:6d3ad58d607653db42ee16ca333c19ba4349680fe492c7af182c778797694af0:eyJzZWxlY3RlZExpbmVDb3VudCI6OTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAwYzNiMjk2YzFlMTI3NWZkZDQ0NDlhNGMxNWFlZjljZmM5NjE2NDRmZTI0YTdjYzZkZWEyZGViMzgzNWRhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmZTg2NjNhNGI5ZDI0ODY4ZWNlYjg5NWJmMDM3MjM2ZDQ3MmI4N2UxMjJkNjI4ZTgyYjkzNDJkZTI2MzI0MjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAzZGIwNDE0Mjk5YjFhMWViZGFiODZiMDUyYzQ2Yzg5OTgzMDM3MzMyMGU0YmRmODEzNzY3MDFmMzNkNjdiMGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_62221d8e3a484461aab6bf2507105b40",
+      "statement": "Migration 0186 moved intake reminders from the 7d/3d cadence to composition into the ~24h/~2h window email by adding only studios.send_intake_reminders (default true), retaining the 0098 7d/3d columns as history.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0186_intake_reminder_24h_2h.sql#L1-L77",
+          "version": "repo-lines-v1:sha256:4041b38653198976233e5bf1ea41b68b349a587ed2c1fa43c251d9c6c629e66e:eyJzZWxlY3RlZExpbmVDb3VudCI6NzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhNzRkYjcxYzMyZDRkMDFmOTUzNTVhNGE0MTljZDNjYmZhMjczNjNjYTE3NjNhODJhNzUzOTEyNTcyYzliNmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2f19c95bf8c748139c9dbc64b60ea46b",
+      "statement": "The canonical record states appointment reminders were observed running in production on 2026-08-12 at a ~15-minute cadence with HTTP 200 responses, while scheduler ownership facts remain unverified, and intake reminders at 24h/2h (0186) were applied and verified on 2026-08-24.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L846-L869",
+          "version": "repo-lines-v1:sha256:f34f3c61ef0ea5e88c5d1e03ec061bab3b7cf0a267baa5223b6d2d7f6ab2759f:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkY2E0ZmQzNDQ5MmYyYWE3MzRiYmJkZDRlMTRiNjIyZWU2M2Y5NWI4MmEzYTlhMjljZGU4NWRlNjRiY2U4YjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3YzNhOGU5YWYwYWNkYzdlZjQ4MDBiMTE4MThkMzE4ZTczMjQ0ZTAxZDBjZGQ4ZjA1NzUyMjA1NTI2MTRkMTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRkYjgxMGQyZjI0MTg4OWM0MjM5Y2EzNDZmMGU2YjdhMGZhZTM4ZWQyMjRiYTU3OGJiNmVmNDIxZTg0ZmE2MjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM2ZjViMWExYjE2NDdjM2UyNGNiZDVkMzc5Y2I5N2ZjNGU1YTM2NmE0OWRmNzQ4ZTg2ZGZjNWE4YzljMjIzNzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0dcd8b5460ef44218a0306dc11761411",
+      "statement": "A docs guard requires the scheduler ownership register in docs/08 to exist, keep every ownership box unverified, forbid recording secrets, and keep dated runtime evidence separate from human facts.",
+      "evidence": [
+        {
+          "resource": "repo://docs/08_EMAIL_SMS_AND_CRON.md#L262-L277",
+          "version": "repo-lines-v1:sha256:5f21e434f6000cf983aeb20ce32238f8302cd3a77b4c7020d57c111a63e540e3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZjg2M2QyZGQ4YTVjOWNhZmU4NTQ3ODRmOTYxYWVkNWJhZWE5ZTI4NDA1Y2MzY2Q4ZjgyMWNhY2QzZDJkNzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4MGE3Zjk1YzQzOWU2YzExZjkyYzI5NjVkZjExNGQwYzM0MjUzYThkZmQ0Y2Y1OTU4ZmE0NzhmMjQ4ZTE2NjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEwZjg1MGZhNWVkMzRjMDU5NjdmOTM1NjBjOTRlM2E2MTc3Mzk1ODFkNTRmZDAxNTJmYjRiOWZjNWFkOTY4ZWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjllZmI4NGU1YzEwNWNjNWFkYzVmYzRhNjg1YmZiYjY4MjNkMjNkMTg2ZTg3YTVhYjA4NWZmNDQ2ZjFjZTYyMGYifQ"
+        },
+        {
+          "resource": "repo://tests/docs/reminder-cadence-truthfulness.test.ts#L162-L209",
+          "version": "repo-lines-v1:sha256:3ee6304442e13c87a7c8ad144e3b115e979cb2c4932ba80fd31abade505b9855:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxNTFiNWU2MDY4NmRhNzQ2ZWVmODQ1Y2Y2Y2NjM2YwZmQwNDU4OGM2YjRmNGMwNjQyM2Y3MDc5NTJmYTViOGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkZmY3Zjk4NTgyNGQyMmUyYjk2YmZiNTMzM2ViNTM1N2ZmNTRjYTNmZmNiMjQwZjYxNDhmMmNiYjY2OTE1OTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d7d23e822e1b4f459e089f4d99fdf81e",
+      "statement": "Migration 0199 (bounded reminder SMS candidate selection) was applied to production on 2026-09-18 from the unmerged PR #716 head, and its application consumer was not merged or deployed.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L504-L594",
+          "version": "repo-lines-v1:sha256:289fcf14df059757ec024acee1ae937cb0e4fdcbf6e0a571d311197a8d5f1cbb:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4NTQwNTcxNDkzYmIxZWM0Mzg0ODU5MDc2NDIxZDQ5ZDE0Y2ZlMDljYWE1ZTIxOTQwOTkxYjdhNWFmODM0NjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMzA5MjAzMzJlMWMyYWY5OWNjMTA1NTIxNDUyYWMxOWVmYThhMTE5MGUxN2Q3NjRjNDgzZjYxNDlhY2I1ZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjllZDNhM2UwMTJkNzIyZTE4NDgyODhmMTE2ZjNlMTQ2NDUwNWE2MDkwYmJiMWI4YWE4MjZkZWFkMzRlZGIzMjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1de114266d894cb186a1dafcfed4c124",
+      "statement": "The merged SMS reminder pass does not call 0199's candidate-selection functions; it still selects a fixed 50-row page ordered by starts_at through the shared TypeScript query.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L465-L470",
+          "version": "repo-lines-v1:sha256:0b211b1e9b94ad54d14f7d9aa3c6ab272c9621e777ba06862cf8af8f6e70de39:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjg1YjJkNTI0NDdlY2JlZWJjNWUxNTA3MjJkMDI2ODIwMjg0M2RiZmE0YWNlNWFiM2RjYzljZmEzZDEzOGQwZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDJlZGFkMjBlMGYwOTg0MzQwMjcxY2Y5MDQ4NTRkZTNjYTE1NDAwYTgzZTM5MjUxNjQyYTJhMTM2MzRjYzJmZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjJiODQxOTM1NjBiYjlkZDhlODk4YTUxZTYzNjA2M2FkYjk1N2NhNjcxNWZkOTdhZGEwZjA4YjM2NGVmODI2NyJ9"
+        },
+        {
+          "resource": "repo://app/api/cron/appointment-reminders/route.ts#L66-L84",
+          "version": "repo-lines-v1:sha256:7b13f14417f92f54e1b803e4c0fd424ce3e08fae26e3d71b11bf4a0e09f333c6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgyMzM0NDRjYTE4NTlmNTM4NmZiNzg4YjZkYTNmZDUzZTI1YTNhYzZiYjJmMDY1YWY2YTI1YzRmNWU4ZmIxNGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlZWFmNmFlMTRiOWYzYWI5NGFlODZlYjIyMjEwYjBkNmJkOGQ2ZWYyZTM3ODVjZWMzYzY5MzhhMmU4ODQ4MDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZlNmY3NjI2Nzg4NzA5YzYyMGFhMDZmM2ViYzA0NTc0MjY5YTVkNmQwZjg2MGI5ZWM5ZGYzZGQzNzBlMTEwMWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYwYTkwMjVlYjgzYTE2OWUyMzdmNTM5OGE1ZTQ0N2Q0YTE1NmJkMjdkZjI3MDI0ODIxZGVmZmZjYzU5Nzg2ODEifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0199_reminder_sms_candidate_selection.sql#L1-L73",
+          "version": "repo-lines-v1:sha256:424429776d9444d29b1a2ff62b0c5a939c941a73dbcd9aba82e437546d184835:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhMTI1YWI3NGY3NjBmYmQ3N2ZjNWRmNGY3YzhlMTRlMmQ2ZDE3NWM4NzA5ZTQxODBmNGVkYjVhMTdhOTQ0ZTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_707d143d96b944069a7708bfa1428d93",
+      "statement": "Migration 0199's header says every selected appointment passes a sendOne that resolves the active studio SMS sender before claiming, but the merged sendOne claims and sends without resolving a studio sender.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/send-appointment.ts#L369-L459",
+          "version": "repo-lines-v1:sha256:e360e499aacd6e6ea144c293a97d5e648fe97e06a1e358460f2c3117feca88eb:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiODU2YjJjZTk3NmEyNDNiNGFhZTEwYWE4ZmUzMjhhMTVjYzEzNGE4MzY0ZWI2ODU5NDg3OWRhMzdlZGVjMDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImExZmY5MzQ1MDU4ODYzN2Q4MzhjZTRiMjk3MWU3ZTA2N2FhZDA5YTUyYzg1MDFmZDA5NDAxM2YzZWQyNzczZGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0199_reminder_sms_candidate_selection.sql#L47-L66",
+          "version": "repo-lines-v1:sha256:39a5a36608628bb8e16a08408b678dce9f7855e9c6931442285829ce2e8985f8:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjMjVjMTAwNjljNDZiYjI1MDliMTAzYjUwYjYwZTMzNGZmOWFlZTAwYTcxYWJhMzRjMDc1NTMzNWE1MWVjOWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3MTE4MmJkOTkxMWRlOGU4Njc1MDIyNmQ4NzAyMzNjYWI4YjNjZmRlNjFjODIzNTIxNDM5NTBkNzBhN2YzMjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg1ZmFlYzA1MTFjYTA2ZWU2MTFmYjE0MGFkZTc4ZThkODZkNDg3NTM5ZDdlM2MyYWE4MjUwN2M2MmJjZGVlMGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmNzkxNzIzMWNmZThmNjhiN2VlNjllYjFlZTUxNDI3ZGI5MjkzYmJmN2FjMzkzZTAwZWUyYTI2Mzk5OWIyYjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e01257744d0b4a7babde4cb30a60f84b",
+      "statement": "A next.config.ts comment describes the cron jobs as currently dormant, which conflicts with the canonical record that the reminder route was observed running in production.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L846-L861",
+          "version": "repo-lines-v1:sha256:fa659489a070632e36525af78be8b19a59dbacdd49693ff3727a3e74bb1b12e7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkY2E0ZmQzNDQ5MmYyYWE3MzRiYmJkZDRlMTRiNjIyZWU2M2Y5NWI4MmEzYTlhMjljZGU4NWRlNjRiY2U4YjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1ZjNhMWIwYzVlMDk1M2Y0N2Y2YTNlMTg3NjllNjExNDc4Y2NhYmZiYTZmOGZiODA1MGM5NzJmYmM0MmRjOTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRkYjgxMGQyZjI0MTg4OWM0MjM5Y2EzNDZmMGU2YjdhMGZhZTM4ZWQyMjRiYTU3OGJiNmVmNDIxZTg0ZmE2MjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYxZmE5NjgzOWRlZWViMTEwMzUwYmQ3ZDNmOWVmZDc2ZmY5ZmU4M2IyNDIxZGU3YjVhODliN2FhODAwODZmMTAifQ"
+        },
+        {
+          "resource": "repo://next.config.ts#L136-L139",
+          "version": "repo-lines-v1:sha256:bffd59e842c2dc5e8eb637282e18e8b18767374853236e5771c7a0ab1cac9874:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDk2NDE0ZTk4NmU0OTYyOTJlOTBmOGIxYTkxOTliMmE5YmUxNTNhYTNlN2JjMTkwNWJhYThlNTc5NTRjMGMyNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmQwN2U2NjA5M2Y4NDg3YjhlZDA0NGEzYWYxYjdjZDljODI5MzdhMjk3ZDdkNThjNmU0NjBmNzgyYTE1YWY3OSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2I0MmIzZjUxYzEzNTRiYjljNzgxODdiOGE1YmRmMmVkNjQ1YzczNDkwYjhmMjFlYTkwOWYxM2Q0YWVlZmMzZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2QwNDk0YzVkNDRjNGE2OTVlZDM3MGY5NDFjNzJjZWM5MGRkYTg2OWZmNDIyZTU2OWIwNTM2YjI1MDBmOTU1MiJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

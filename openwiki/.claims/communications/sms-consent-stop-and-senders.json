@@ -1,0 +1,294 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:1993fa2d4725cb07d60518a76ff20054b9a186a7a11141c40ee6aabd32caef55",
+  "claims": [
+    {
+      "id": "claim_c371ab8d7592435e9625c95e9908338f",
+      "statement": "Outbound SMS is sent with a direct fetch to Twilio's Messages API using Basic auth, without the Twilio SDK, and a source guard forbids the SDK dependency and Twilio hosts outside allowlisted adapters.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/twilio.ts#L1-L21",
+          "version": "repo-lines-v1:sha256:aa9f620f09cc26748485e128aa36715ae92a429b56fc4d75a20b74a2e6c77a72:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlZWM2NGFkNGU2ZDliYzhmZDRhMmE1M2NlZDFmM2UzOTJlYzQwYmZjN2VkODJmYmM3OTI1ZmYwMGNmMjU1ODUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4MjBmNWQ4YmQ3ZTI4ZTc3MGQ2ZjUzMGIwZWRlYzFjYzk4OTc2NzY0ZjkxODZhNDNlNGYwYWEzZTkyMmZkYzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdlMDRmNDFkODdhZTcxNzFhNzg3MzE0OGY4MWNjODkxODM4M2Y5ZjQzYzU0YmNkMTJkZDVjMTE3M2I0OWY4MjcifQ"
+        },
+        {
+          "resource": "repo://tests/source-guards/sms-provider-guards.test.ts#L126-L198",
+          "version": "repo-lines-v1:sha256:4fedba563931fb39db2acce5650cd2311e9c7daaeddc7d7b24465fa90f79f51d:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1Y2YzNWE3NjRiYmIwMzc1ZmNhZjhkZGE1MjdhMjU3ZjNlYmE2ZDQ5NzYwNTJiYjY1OGE4MmRlYjJlNWFiNjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZiMmYzNzg5YmIzNjEzZmQ1ZTc5OTZiZjYxOWM1NmE5NTdiNDhjYTAxOGYxYzI2ZWFiYzg1YjU5ZWU4OTllYjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhlMDBiYWMyNmEzYjg3ZmRiZDI2YTRiOTM4NWJmNTQwYjdiYzFlOWVhMjkxOWYxYWYyYjlkZjgwMTlkMGE1NWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ff0b1f1d24c34d18989e723923811ccd",
+      "statement": "sendSmsSafely sends from the platform-wide TWILIO_MESSAGING_SERVICE_SID, falling back to TWILIO_FROM_NUMBER, and returns non-retryable failures when account credentials or both senders are missing.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/twilio.ts#L110-L177",
+          "version": "repo-lines-v1:sha256:3ae5ac07aa944479b5ec1e2078a51ca30ee5e35dc3f94b646dbb2da150381344:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQzY2RiZTczMjEwZGU1ZWZkYTVhMWIwOTk1ZDIzNjRkYTVmOWZlOTA4MDdmNDY0NjMzZTZmNDVlODc3MTBkYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhlNzQyYTJkOGIwYWM4OWU5OTQyYzZkM2QwYjRiNGJkZTI2YzcxODZjZjA1MmUxZTk4YWIxYzA0ZjIwZDEyY2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhhMTMxNTBkZTU1MzMxZDM1MThmZGY4MjU2NDE2NzEwZDJkYjI3MTM4MTFjZThmNmMzZjMzNjRjNWYyZjYyZjQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_55ab85d12751422780dd7f98562b8dfb",
+      "statement": "sendSmsSafely aborts the request after 15 seconds, reduces the provider response to a message SID, and never logs the auth token or full phone numbers.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/twilio.ts#L130-L248",
+          "version": "repo-lines-v1:sha256:4c71c80d2056b21383fe3c588762583e6448f4bc2620dca07b8433dab2a52ad1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzNWI1Y2FjZWU2NmEyYmNjMDQwYjUyNjA2NTRiYjhkYmRkZTYxNGZjNmI3NjA2MzIyZTNkZGFhOTEyOGM2Mzc3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1ZGI5ZDcyMDZmNmVjMjE4ZjQ3NWZiYmM3ZjIyZDI3ZjUxYmUxY2IzNjFmYTJjOTFhOTc2YWRiYTE1MjJjMzhmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzOTFmNjMwODRmZjY5Zjc4MjY5N2Y3Mjc2OTgxYTlmYjNkYjFkOTdhOGE3ZmYxN2IwYjRkMDA1OTY1YmIxYzZjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNmMyZWM5ODI0NDhkMDVmOGM5NTVmMDYyNDViNzFmYTk5NGUxYmEzZjFkMjI4ZGRlNjg4MDQxYzc5ZGIwYzkwIn0"
+        },
+        {
+          "resource": "repo://lib/sms/twilio.ts#L316-L326",
+          "version": "repo-lines-v1:sha256:a9cb2bbcc428188816ab74fa0cc6bcebf09a95489e857b28b070e0246a6cadf7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjczNTMxZGVlMTI2YmY1NTQyMGJmNDAwM2Y4N2ZlNTk0NjIwMjM2ZDExOTQxZDYyZTgyNGU2OTY4OGUxODJjN2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0MjhiZTdiMzJlOTQ0OGE0MjNhZmU0OGM5ZGEyMjZiMjY1OTEyOTE4MjdlNmQ2MDI3NWQ3ZGFkMzgwYWIyN2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1466a41fbcad426ca26066843b1c6ec5",
+      "statement": "normalizePhoneForSms accepts '+' with 8-15 digits, promotes 10-digit numbers to +1 and 11-digit numbers beginning with 1 to +1, and returns null otherwise, and normalizePhoneForMatch canonicalizes through it so consent and STOP compare the same digits.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/twilio.ts#L43-L95",
+          "version": "repo-lines-v1:sha256:5dde8b7808c3ab33feb7787583a52bbe912ff7fb0ba12e7ff8db675519e1cae3:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVmZThlNWVjMWQzNWY0Yjc5Y2EwYTZlZjM4YzllZjM4MmNmYjcyYjBhM2UwNjlmNDhjYTViNjQ2NDQ5YjI2ODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3MzczYmJhY2VkNWQ4ZmEyMWYyZmQwNGNmOWJkZWFlM2E1OWRhM2QyNTJhZGZhOTdiYTI4MTZkZWMwYWNlY2EiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImExM2VkZjlmYTQ0ZGY1MGQ3NzU2MzZhMzJjM2QzZTg2YjYyMDU1NzQ5OGM1Nzk0NTBiNjEwNTEwMGMyNWZjMzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhZTE3MjA3ZTRjNjQ2NGRhM2IyNGQzM2QyMjAyYjk4ZDUxYjNlMWEzNmJkNzg4YmE2ZGM5Nzg4YWM2Y2VkNWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c4083621288b4e9d807ed82cdc11198a",
+      "statement": "Appointment SMS passes a consent gate (studio toggle on, client not opted out, client consent present, phone normalizable), then claims the SMS slot, posts to Twilio, and always records the result in a finally block.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/send-appointment.ts#L198-L220",
+          "version": "repo-lines-v1:sha256:1e4585e426c28760e682eae32dccfcae964270c0bf85dbc609556e9827f0bdc1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2ZGJmZTY1ZGQyYTZhM2I2ZGIxNDRhYTVlOTVmMGI1Y2RiMjcxMmViZDlhMWNiOTA5ZDI3MTZjMGY1YTdlNTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY1NmE5M2UzNmJmODg2MDRmM2Y0ODc1ODk4NGFmMzdhN2RjMGRiYzlkMDJkZDA0OGFkYzlhMjBiMTdlMGM1YzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZhNzlmZDQyODZlZmQ2YjNkYjZlODUzYzE0ZjE0ZTYwYTlhM2Y3MWRlMTlkYTRmNjk2ODFlM2VmODVjMTU4YzIifQ"
+        },
+        {
+          "resource": "repo://lib/sms/send-appointment.ts#L369-L459",
+          "version": "repo-lines-v1:sha256:e360e499aacd6e6ea144c293a97d5e648fe97e06a1e358460f2c3117feca88eb:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiODU2YjJjZTk3NmEyNDNiNGFhZTEwYWE4ZmUzMjhhMTVjYzEzNGE4MzY0ZWI2ODU5NDg3OWRhMzdlZGVjMDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImExZmY5MzQ1MDU4ODYzN2Q4MzhjZTRiMjk3MWU3ZTA2N2FhZDA5YTUyYzg1MDFmZDA5NDAxM2YzZWQyNzczZGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ee4a1ffa1cb54176ae44017df1248a68",
+      "statement": "Migration 0049 added per-client SMS consent/opt-out columns, per-studio SMS toggles defaulting to false, and per-message-type SMS sent/attempts/claimed columns on appointments.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0049_sms_foundation.sql#L77-L133",
+          "version": "repo-lines-v1:sha256:bf5ee29097882adbbd442b534695890f3c58d2edd3a4a2c2a6521340f8a3d6a6:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYyMTMyZmIyOTA2Yjk1OWQxNWM5YjliZTc3MjA3MDc4MGJjNGE4ZGM5OTk5OWUzOTJmMzRjMTE0ZDU5NDhiM2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlmNmE4OWQ1OWI5NzQzZWFkNWIzMjI1ZDNiYzlmNDU2Zjk4YWIwZWIzMjQ2ZDM5ZWIwOGY5OWIzNDM5YmRmY2EiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExZTE1MGQ4MzU5YjBmZGM2YThmZTJmYjcyNmYwNmYyOWNlOTAzZDgwMmQ1YTg1MTFhYjI1MDQwYzMxYTYwZDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiMjg4MjI0MjQ4MGZiNWYxYjgyMTIzNTE3ZGVhOGMyOGY5MDViNmZkMzEzYWMyNzE2ZmZkMGRmNjNiZTBmMmUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b7f166600fd047cbacb20ebcd6cef2e1",
+      "statement": "Migration 0062 revoked claim_sms_send and record_sms_result from public, anon and authenticated and granted them to service_role only, superseding 0049's grant to authenticated.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0049_sms_foundation.sql#L261-L266",
+          "version": "repo-lines-v1:sha256:1a7e3f6b39875ad61a30ac96791ca1f6bdc6ba266536b7a60f27416a2e5ffb76:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTM4YWE4ZGFjZWY4NTAxZDY3MjI2OWU5OTg0Yjc2YTNmZWI5NTUzMmRiZDBiMjg5MmUwYzYyYTJlZWFhN2I4NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzczM2I3MWEyNDFjNmM2ZWUzN2RmZjk0Y2I3YTYzNTcxOWMyNDgzNjBhNjFkZmU5ZTE1ZDA4OTQzMjhhNWY3YSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2E5OWJlYjVlMWU5Y2E4YzAzNjAxZmUzMDMzMjQ5ZTYyNTNlNWU5MTAzMTg5Nzg5Yjk5NmM3MTRlMTQ3YzVhNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0062_harden_sms_rpc_grants.sql#L48-L70",
+          "version": "repo-lines-v1:sha256:c9529e22f2139d63f06a992d89dc08c1037807b27f45c7f573ab4182d3357e19:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA3Y2NlOWU5ZTcwYTM0ZGI5MDQ1MGNlYzM1MjEzNGUxODk2ZTg3ZmEyOWE2ZjdjOTVmNDg3MTc5OWFiNDFiNGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzZDdmN2IzMDhiNmNkNzMwZTkzZTIwODZjYjUyMjNmZDk0NDYwOTliNmI5YmEyYmJlM2U5NzI4YjZlNmU2MzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZmNmQxNDYwNTcyZjhlNjkyNWZlNmE5NzQ5M2VhZTQ0YjIzZTBiYWMxODllMDExMWE3MTA4OWZmNDBkMDE3MGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d880c5e3f474494794321aac414b9033",
+      "statement": "On public booking, an existing client's SMS consent is stamped only when the client is not opted out, has no earlier consent, and the submitted phone normalizes to the stored phone, and a stamping failure does not block the booking.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L996-L1030",
+          "version": "repo-lines-v1:sha256:497015c6157426e3dd7e1e5f6a49aa809e4de4445162b29dd2a20bf0b9f46685:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhNDk0ZTA5YzJhNzQyYTMyMTZjYzQ3ZTJkNmYwYzgwY2MzYmNkMGM1Nzg5YTU4YTMyNDk5MTk3Mzc2ODU2OWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljODNlZWRiNjdkZmQ2MjdkMmJjMDBkZTA3NmZhYWQ5YTg1NGY0ZDgzYTZjYmI0MzZhMTFkZjYzYjJlM2MwZjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRhNDE0OTQyYTk1NTFhNTJjZjVmNGM0ZWNiNTRiNzRhMzFlN2Y4N2Q3YWJmMGZkZWJhMzFhOGYxMjJiZTVkMDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7506b1e0a574463e90a6c40d39e3be63",
+      "statement": "The inbound Twilio webhook refuses with 500 when TWILIO_AUTH_TOKEN is unset and with 403 when the signature is missing or invalid, validating HMAC-SHA1 over the canonical URL and sorted form fields before any database access.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L87-L153",
+          "version": "repo-lines-v1:sha256:868269362715135ae62ac86e47fb12e09c53f9f3510a42aded90c090e37b310c:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2MTE3NjhjOWFmMTA2NWYzZmQ1MTEzZDgyYTRkNGUzYTFlYmVmNDk5M2Y0N2UxOTMxMTk2OGIzOWNiMzViYzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZhNWUyZDZjOWNjOGRmMDE5NTc1YzM0YzgyYWY3YjRjMmE4NTdiN2IzOGY1ZjBmZTlkZWFmNzllNGY1NTNkMzAifQ"
+        },
+        {
+          "resource": "repo://lib/sms/twilio.ts#L250-L282",
+          "version": "repo-lines-v1:sha256:1def372fa51df0429469d8711150fce7338408f5b4965a7126afbc6db6529065:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiNzY3MzRiM2ZkYTU2NTM5NGY0NmFjZWNmNzcwNmUzOGJmODBlNWE2OTdlNDVjZDZhYjQyYTM5OWM4MGZjNjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ4MzE3ODBjYzdlMGVhNzgxNzc3NDZjNmJkMDI0MjcwMTE1YjNkN2QxYTI3MDg3ZjljN2IzZmQ5ZTRkMTkzYjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA0ZjFjZmZkNDE3M2MxNjcyYWMyOGMxMjliOWM5OGRhYmIyZmQ3NzcxZjYzODdiMjUzNDRhZTk4ODU4Nzc4YjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5806c8b6a579426da7ef15ca4804ce7a",
+      "statement": "Only whole-body STOP, STOPALL, UNSUBSCRIBE, CANCEL, END or QUIT opt out; any other inbound body receives an empty TwiML response and is neither stored nor logged.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L164-L174",
+          "version": "repo-lines-v1:sha256:42bbfd1486308cb290f66d164af81288280194911157bd467cb5e6a4b4c6e5f2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwZjA3YmZmNWZjNmRjMzU2YTExNzBmYjllZDk1NzFkMjc3YmY4M2NiYjlkYWZhYmRiNWY5ZmI2MzFiNTQ3MWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmZDJkMzVjODFjNjVjOWQyN2VlMjE4NjIzNjM0ZTI3ODM3OGRiZWY2ZThhNzFlMTQ1NWRhNWIxNTgzZWI4NmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJkMzIyY2RmYjdlYTRiODFkMDlkZWRlYTBmOTlkMmM4YzQ3NDgzYzg4NmViNzkwYTU2ODc1OTlhNjBjZTI4OTgifQ"
+        },
+        {
+          "resource": "repo://lib/sms/twilio.ts#L284-L304",
+          "version": "repo-lines-v1:sha256:6102a7aa3588aeb82f1f796937b421d8773e22010bee16501d85754a641f2aec:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3ZTZmY2EwYmE5ZDUyYWI2ZDBmZTMzYzNiNjY5OTM3MTFmNGUzN2NjNWZiOTUxYWYxMWM5MmFlMTc2Y2FjYTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFmM2FhNTY5YzdmZDlhMGQ2MDk0ZGY3NjA5MDg1NWYwMTczMzJjZTc4NjQ0MTg5NWZhZTQ3NWVlYTQzMTNlMTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2OGRmNGUyYzY2NDVhZWQ1YWY4OGM0MjNhZjE2ZmEwNDZjMTUyZjg0ODNjOTZmZGZiNjNlMTFjZDU0YzFiOTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a79527bac95f4b67bf452c6f650bf237",
+      "statement": "A STOP opts out every client row with a matching phone in every studio and every matching waitlist prospect (through waitlist_prospect_suppression_candidates and suppress_waitlist_prospects), independent of the studio or number the message arrived on.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L176-L375",
+          "version": "repo-lines-v1:sha256:6e54573db72eae56b48c77e88f50dc7b1b450d71d74ea30d28466a4eadfaf9de:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhMTg5NTlhNzE4ZDcwM2ZjY2EyYWE1ZmFmN2EzZDFhNzU5NmIxM2Q5ZWE1N2Q3NTY1ZTc0MmJkNDNmZDMwMmJjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIxYzM1MjAzNmEyOTM4ZDM3YjUyYTUwNzU4NjI2MTQ1MzYwMTRhMWRiZmVjYmM2MTFiODlmOTI1N2VjNjg0N2M1IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI4ZDU4ZTE5YWQ2N2JkMmJmOGFjMmZiNmIzMDJjMDkzMWEyYTVlMzMwM2ZhN2EzYjViZmMxMmE1ZDI0ZTQ3Y2VhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmMjc1ZGMxMGU2NWUyZjE4YmFkNzBmYzFiZTM5YzU5MDYxNmMzOGQwOGEzNzY2NThhZDc0M2QxMTY0MjUxZmY3In0"
+        },
+        {
+          "resource": "repo://lib/sms/suppression.ts#L1-L95",
+          "version": "repo-lines-v1:sha256:b1660700dff6f2c24c78883d2d301031be870c52c5b45dd7188b24fe46ff5da4:eyJzZWxlY3RlZExpbmVDb3VudCI6OTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkODliOGFiNDNlMjhlMTAzODdjNWY2M2IzOGM3YWUyZGE5YzExZDg4MDAzMGY0ZTkzOTc1MjgzYzUxYjdiMTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0OTMwYjRmNTY1NTRiMDljMjE4YzY1MzFhNjhiNWY4NmY4ZWU4ZGU2ZmIzMTc0ZGJlZmRkN2UxZWI4MjVlZTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQyZjVmYWUyZjc3ZjhmNWY0ZjBkNWJkZjdmOGJkNDM4MWVjMDU3YjgzZDUwMTUwNmJkYWY5NGFjZjc1ZTE5YTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b4672393ce4c402dbac5cb9a678cdd99",
+      "statement": "The STOP webhook audits each stamped record with masked numbers, never un-suppresses on audit failure, and returns 500 if any scan or stamp failed so Twilio retries, with retries touching only rows not yet opted out.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L378-L483",
+          "version": "repo-lines-v1:sha256:2c95efab1c3c2a6be994e061b64d18777f4f600e2cd6ba6c806d2e279c2531ef:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhMDk1ZGYyZGViNjk4ZTk0OGRlMzA3MGU4YTI1ODk2NGQ1Mjc5ZTQyNjE1OWRkZGEyM2ZkZDJmNWJjNDc4M2U3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzMjI1MmQ2ZWM4OGE5Mjk0Nzg2OTllMmVjM2E4YzEzODgxNmQwNjEzZTA5OTc5NjI0Y2FmZThmYWNhNjdjZWVkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxZGFkYTdmNjBhOTlkODQ3NGVjYTNiOTBmY2MxMGU4ZDI2MWY4OTBlN2YxYzRmZGU4ZTJjZWI5MjFiZjZmOGM4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_3833e90397e94be5b858e960533b030e",
+      "statement": "studio_sms_senders (migration 0191) carries a guarded status machine and lease protocol, at most one live row per studio, and is closed to every role including service_role, writable only through service_role-only lease commands.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0191_studio_sms_sender_provisioning.sql#L106-L376",
+          "version": "repo-lines-v1:sha256:91397bfc1b95cf44f92c55ae09eb3f97ca9b5288e18882e02de5ff85d082e603:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxZDUyM2UzZmJmNWIyMDJiZWRiY2JhZDBjZDVhZTFmYmYxOTY5MWY4MjhmODkwMWFiNjNiOTM5YTg2NzgwNjc0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiMTczNmQyMDdiNmJhNDViY2I5YzMzMmI3NmE4OGEzNzg1ODIzOWMzNGRmMWZjODMyMjViODQ5MDA3ZjZlOGUzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjYTA1YTg4YzVmNGRhY2MyNGZhMjhlN2RlYjMzYzg0YjIxYjVhMWNjNzBhMjRjZWU5MjU1ZTliMmU2NjM3YmQ3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyYWRmNjdmMTdlYjFkYWViMTczYjg0MjQwOTM2OThiYzMwOTM3YjYyMjA1YTcyZjc4MWZiNTI1OGZlN2Y2OTllIn0"
+        },
+        {
+          "resource": "repo://supabase/migrations/0191_studio_sms_sender_provisioning.sql#L1088-L1131",
+          "version": "repo-lines-v1:sha256:6b5e64d52852c91f6bb02e13d981a9f84de7751db59201d6fa22a96e703a6e36:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhmMGY5ZmRlZWVlNGM4ZmM1NWQ4YzRjMDI0NzJjOTA3N2JhMzgyMDk3YWY1MTM5MDg2ZTU3ZDUxNWY1NjczNjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4ZTJiOWZiYzQyNzQ4ZDJjMzQzNjY4ZDg5OWE3YjA2N2ZjNDE5NjNmMDEyNWIxMDg1MGFlYjU5MGNjZGUxZTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ4ZTkxY2I2Y2VlYjQ1MGY1NmI0ZTBhYmY0YTBjYjQ1NDFjMmYzYWMzZmM0OWJlZGM2ODJhNmNjYTA4NDRiNTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhYWRjMzkyZWJlMDBiZmU3NWMxYjY2NjNmNjFkMWFhN2IwYjY0Y2Q4NmY2M2ZjMjJkMDcwYmZiZGFiZjIzZGMifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0191_studio_sms_sender_provisioning.sql#L411-L560",
+          "version": "repo-lines-v1:sha256:e5b982ffed0756789806462057987ea7d2f079ebdca175af667d9bf5a40e5863:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5YTc3MzBhZDY5YmU0NTYwMzQzMTc4ZjcyYmNhYzI1NTMwNjYyMGM5MmFlOWU1M2Y4ZWIyN2FkYmQ4MTQ2NjA5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI2ODY1MWJlYWI4ZTgwYTc3ZDRiNWI5MDRhY2E5NmNhNWYxYzZlY2FlNzU3ZDc2YTdkNjMyNGU0ZDA5ODZlZDRhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjYzlhMzMzZjI0ZTM4ZGZkOTQ4ZjA2MzMyNGI3YzVkNmRjNjkyZmMwNDllYTZkNWY2NWUxYTU4NTQyZjZkODBiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlNWIxZWJjZDc5OGM2YzE1OWQ2NWUxMDIwMzY2OTdiNTFkMzA0ZTM4MTZmYzgwNjM3ZDg2YjhmNDk3NmI1YTdmIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_9a9528c749ea473f84991fc4b27751a6",
+      "statement": "resolve_active_studio_sms_sender (migration 0194) is executable only by service_role and returns the set of active senders' messaging-service ids for a studio.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0194_studio_sms_sender_outbound_lookup.sql#L68-L101",
+          "version": "repo-lines-v1:sha256:f8e0738face196c2764016a5a8db29573a6ba7ca742cfac4f1e16ec9090d8b9a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwNGI4ODcyY2IwOWEzZWUzYmJjYWMyMmI3M2I5N2I4ODM2ZTA5ZGU4ZDc1YmU3ZDEwNzkwYzNlZjJiZjBlMjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhZjFmZWNlNTFhYTQzZWY1N2NlMzRjZjEyNDVlZmNmZjhjOGU1MDdhMmNlZDI3NTI2OTRhNmIyOWYxNDRhYTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI5OTQ5NDBlMDEzMWQ4ZjlhOGM2ZjI5NjBkYWZmMmJhZTNhMDBhNTY0MGRkNTcxODU5MjgyZWU1MDkzNDQwNjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA4NjQ5YzRlZDUzMWNlYTcwODVmNDM1NTRjOWQ5OTg1NWQ5N2Y3MzQ1M2Q5ODQzOGJiMjdhZjY4NmUwMzEzNzYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3e16d43e8b4e46f19745faf0a81ebde8",
+      "statement": "resolveStudioSmsSender fails closed with no_active_sender, ambiguous_active_sender or read_failed and has no environment-sender fallback, and it has no caller in app/ or lib/ outside its own module.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/studio-sender.ts#L1-L133",
+          "version": "repo-lines-v1:sha256:c5bc5c2b5a9075d202c671c135658bc9c4f62b29b96bb8bbdddcb8d8bf6d2ac2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwYzBmNDhlMzhmYmRiNmMwZWZlOTg3Yzk4NDUyMWVkMDc0MzI3NTViNmJhYWNjZjQ1ZDk3N2U1N2RiN2NiYWQ0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_6dcbbe91a9844292b926cf84d81773a2",
+      "statement": "The SMS provisioning provider defaults to a fake and selects the real Twilio provisioning adapter only when HONE_SMS_PROVISIONING_LIVE is 'true' and credentials are present, and a guard asserts the flag is not set anywhere in the repository.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/provider/index.ts#L6-L48",
+          "version": "repo-lines-v1:sha256:ced8d63da04747b5cadd5c4ca5a8859bde08a0ee2032ab0b341b21a2ce271fb0:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5YTBhMDExODU2MTVlMWYyOTUzZmU1NjExMDBkOGYzZDczNjBhZGEwODBjYmRmODUyOWYyYzZjMGJiMjBmNWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEyOTkxZDc2OTkzNDY5OWVlOWEwZTYxNTIzYmJkMjM1YTQ5ZTNlYjRiMzUyYmM3MzkxODQ3NDFiMDM1Yzc1YmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhZTcyN2RlNjUwMDE4MWM5ZGYzMDliNDZhNGM3ZjY3OWVkMjcxYjZiY2UzM2MwYjczODcxNDZhMTRkZjUzN2IifQ"
+        },
+        {
+          "resource": "repo://tests/source-guards/sms-provider-guards.test.ts#L317-L340",
+          "version": "repo-lines-v1:sha256:0e1d2832bc5ad3d1709d78a0a47f3b2b645eba84c8a07adc2d1d470832e983bf:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5ZjM5MjBkOTM1NWJkNDEzYWExNWIwN2U1MzkzMDZmMzQwMDAwMWJjN2JjOTU5ZGQ2Y2U0ODBiOGEzMzg5ZGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NzNjOGVlZjQ3ZmU0NDM0N2JjMjE3ZmUzMTExZGZlNWRlOWY2ZGY3Zjg0NmMzNTQ4ZTkzZWFjYWFhYjFhNjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ4MTdmYmI3M2M5MmIzNmQ1ZTQ4OTZmZjUxYzFiNThlZWMzMzBiYmU5NjFiYTA1ZmM2MjA1Zjg2N2VhMWJjZjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_40a90d6ccbcf46c4b31e529a6002c4a1",
+      "statement": "A source guard forbids the sender adoption module from purchasing numbers, creating or configuring messaging services or attaching numbers, requires the fenced provider wrapper, and requires ownership proof before configuration comparison before a provider test.",
+      "evidence": [
+        {
+          "resource": "repo://tests/source-guards/sms-adoption-boundary.test.ts#L124-L143",
+          "version": "repo-lines-v1:sha256:68f5c42c531e979ba43b9ea6698adda7bd146150135ef96592e25db8b2c3e232:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2Zjc1MDRjOWRkNWIyNmIwNjc2N2E3ZmI4YzYwY2YzMDJlNGQ1ODMwZGY2NTRjNjY1MWZjMTdlMDQwNmVlOWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1ZDE1ZDQzNDhmM2VmZWU4ODVhYTlhMjNkYmRlMDNkOGE2ZGVmMzgzOGI0NTZmMzE5ZmU3YWFlMzJiOTU0ODcifQ"
+        },
+        {
+          "resource": "repo://tests/source-guards/sms-adoption-boundary.test.ts#L30-L66",
+          "version": "repo-lines-v1:sha256:7b5a7c46e378fe1fbbe5ebea2b9b36855566c8e9e5a8742aaa0c48a789fb85a8:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjY2JhZTE4ZTRmYjBmOTY2YWYyMjg4ZDhkNTA5OTQwZjU0ODFhN2U4NDU0YjhiNDIwYTY0MmU5ZDA1ZGJhOTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg0YTBlZjlmYzIxOTBiMGM2MzY0NjA2ZDFhMDg1OGFkNDM5MGMzNTUwY2Y2MDk2YjEyZDFmNjNhYTM1NDA5MjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImExNDc3YjhkMTIxNzAxNTQ1NjBhMTFiMmM4YWRiMWVmMTk3MTVmODdhNjA1NWQwMGViZWU1Nzc0MmQxN2IzNGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a7f7e6a21463440a84ac03dc28d1ce2f",
+      "statement": "The only product surface for studio SMS senders is the owner-only Settings Integrations status card, which reads through the request-scoped session client and is guarded to perform no provider call, RPC, write or interactive control.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/integrations/page.tsx#L45-L91",
+          "version": "repo-lines-v1:sha256:55ff71697942c0dac8a95f951673a4473b051a6acbbe9a9a59aa9d5c4bc04f04:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE5NTA5ZTk3NGU4OTQzMzE1YTY1YjJiNjY3N2ViZDFmZjczN2QwNjM0YmNkZGE1ZjAzY2NmNGViMWFmMWI3OTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2ZWU5Y2NlMGNhNjUyY2I4Yzk4YjAzODQzMGM4YTg2YWJhZDZmZjAyZjFhMDZhMTAwMzBkNTYwZDdlYWM2ZDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5ODkyOGNlYjYzOWQzZmJkMTQ3ZDU2YjFhNGQ2Y2NhYzkzYzA4Nzk2YjU3MDVlNDljMjQ2M2NlYjE4OGY5OTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQyMjY3NGQwOWYxODEzZTQxMTkwZTk3M2M1NmUxODk2MzRmYWQwMjg4YTQ1NmI3M2FkMTNmMjdmZjc4MTZjNDAifQ"
+        },
+        {
+          "resource": "repo://tests/source-guards/sms-status-readonly-boundary.test.ts#L55-L156",
+          "version": "repo-lines-v1:sha256:17c348b844afb76ea87c08c7ae8ae18f01ebca39f5693a4b1a075fb2482ed0db:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjZjM2OGIyNmZhODE5YjcxY2E4ZGIyZTgwYWJlODc3OTE3Y2M1MmMyNmMzODg3NGEzYzI5YWRmM2RhMDUwMTMzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNzc5ZDExOGQ2ZTNjYmY0NTA1Mzk3NDhkZWU3YTQzMDdhY2JlNjQ0NmNiYTI5N2YyNzYwZmE1ZDBiYmExYmMyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_962ed78f0ee3435f8dd8157bf06da214",
+      "statement": "The canonical record describes SMS as pilot scale only (env-gated, per-studio toggle, per-client consent) with broad-SaaS SMS not built, and the ledger recorded studio_sms_senders as empty with no sender provisioned on 2026-09-18.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L871-L873",
+          "version": "repo-lines-v1:sha256:a148b4bf78e3eed1cc6b27514fd1a3ba51272b7e0258e95a0752be4735a7918f:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzIzYzg0NTM4NmJhZjQyNzQxZDIwMWE3Y2M1MTM4ZTExZTAxOWExMTRjM2Y5NWViMjUxODg3MzM5YzNlNTcxNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjk4ZWM3N2Q2ZDIyZmIwYzgzZTFkYmZmYmZhNTk5OWJlMGJhZjFkYjMyYWJhZTA3MjU1MzEwZTVlYWNiYTQxNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGRkNTczOTcyYTllZGI0NjNjOWQwMTU0MDEzZWVmNjE4OTU0Y2Q5YjNmZTY4Y2FhN2U1Zjc2NTJjZjc1MDI4MyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODUzMzkzMWVhZGJjNTBkYzk5ODYwOTUwNTkxNzZmMzc0OTE3MzM3MDRhODUxYmNlNTAyOTNmM2QyNjBkY2I3NCJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L512-L516",
+          "version": "repo-lines-v1:sha256:5543c676a3b1312d786b884df470c72e43181a633d416d57c04d11275d91dde6:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWI1OGFhNzU2ODc5Y2I0Zjc4NmJhNDM2ZTViZTIzZDk5YWE4ZjQwYjY4NzRiZGQ0ZGMyYTMyMjRkNzdiMTRkNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzA0ZmI2OTEwZmFlOTIyZTRhMDI4YTE4M2ZiNTc2NWU2MDVkNDQ1ZDFkMWY0NTE2ZmZhMzRlYjY4NzRiYzgzNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzU3NjE2MGUxMDYwOWY0ZWVlMDgyZGI4MDMyNzYyMTQyMjhhMjZmNWQwMjhjNmYyN2Q1NDE5ODU1ZDcwZWJlZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_302d1c4be8fc42e4857b82a2202253b6",
+      "statement": "Known limitation L14 records that the studio-sender routing cutover (PR #716) is unmerged, WAIT invitations remain email-only, and broader SMS rollout is blocked.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L244-L256",
+          "version": "repo-lines-v1:sha256:d6f09cba4c5da9e8e167321860a254f8499fc4a28a84792b8810ea3e7ae70bd5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhjYTY5NDdhNjc5YWJjNDVhZGMzNGNmOGEzN2NjYTU0NmI3Y2E1ZGQ1MjI1ZTg5YWRmZTRlODAxYWQ0NGNlMWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0MTg4ZmIyNzAxZTU4NjhhZWNhMGY2Nzg3NmY1NjQzOWQ1MzA0MTBjNDc4OGEwN2YyODUxMGM1NDlkNjZhYmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgzZmM4ZTc1NzQ0M2MzMjFkYWJiN2RlZWI4NWNmNWI2YWRhODg0NmJkZDEwNGI0NjBmMWQ5YzMyMWUxYmJlN2QifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e73e027bacb44ac791217feec3abbd2f",
+      "statement": "The canonical record says SMS has STOP/HELP handled, but the application recognises only the six opt-out keywords and answers any other inbound body, including HELP, with an empty response.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L164-L174",
+          "version": "repo-lines-v1:sha256:42bbfd1486308cb290f66d164af81288280194911157bd467cb5e6a4b4c6e5f2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwZjA3YmZmNWZjNmRjMzU2YTExNzBmYjllZDk1NzFkMjc3YmY4M2NiYjlkYWZhYmRiNWY5ZmI2MzFiNTQ3MWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmZDJkMzVjODFjNjVjOWQyN2VlMjE4NjIzNjM0ZTI3ODM3OGRiZWY2ZThhNzFlMTQ1NWRhNWIxNTgzZWI4NmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJkMzIyY2RmYjdlYTRiODFkMDlkZWRlYTBmOTlkMmM4YzQ3NDgzYzg4NmViNzkwYTU2ODc1OTlhNjBjZTI4OTgifQ"
+        },
+        {
+          "resource": "repo://docs/production/current-state.md#L871-L873",
+          "version": "repo-lines-v1:sha256:a148b4bf78e3eed1cc6b27514fd1a3ba51272b7e0258e95a0752be4735a7918f:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzIzYzg0NTM4NmJhZjQyNzQxZDIwMWE3Y2M1MTM4ZTExZTAxOWExMTRjM2Y5NWViMjUxODg3MzM5YzNlNTcxNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjk4ZWM3N2Q2ZDIyZmIwYzgzZTFkYmZmYmZhNTk5OWJlMGJhZjFkYjMyYWJhZTA3MjU1MzEwZTVlYWNiYTQxNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGRkNTczOTcyYTllZGI0NjNjOWQwMTU0MDEzZWVmNjE4OTU0Y2Q5YjNmZTY4Y2FhN2U1Zjc2NTJjZjc1MDI4MyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODUzMzkzMWVhZGJjNTBkYzk5ODYwOTUwNTkxNzZmMzc0OTE3MzM3MDRhODUxYmNlNTAyOTNmM2QyNjBkY2I3NCJ9"
+        },
+        {
+          "resource": "repo://lib/sms/twilio.ts#L284-L304",
+          "version": "repo-lines-v1:sha256:6102a7aa3588aeb82f1f796937b421d8773e22010bee16501d85754a641f2aec:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3ZTZmY2EwYmE5ZDUyYWI2ZDBmZTMzYzNiNjY5OTM3MTFmNGUzN2NjNWZiOTUxYWYxMWM5MmFlMTc2Y2FjYTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFmM2FhNTY5YzdmZDlhMGQ2MDk0ZGY3NjA5MDg1NWYwMTczMzJjZTc4NjQ0MTg5NWZhZTQ3NWVlYTQzMTNlMTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2OGRmNGUyYzY2NDVhZWQ1YWY4OGM0MjNhZjE2ZmEwNDZjMTUyZjg0ODNjOTZmZGZiNjNlMTFjZDU0YzFiOTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_92b720795f774961904967608e2a0d9a",
+      "statement": "The STOP webhook reads all phone-bearing client rows in a single unpaginated PostgREST select and matches in application code, while the local API configuration caps responses at 1,000 rows.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L209-L230",
+          "version": "repo-lines-v1:sha256:3e419e1569c1348861c3944b4d36426789b5f9f415a0806c8fd47abe11f2d819:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJkMDY5ZDkyZmNkNTcwYTA3MmY3N2IzZjhjNDQ3YzU1OWFjOTNlYjlmMDc0NmVjMDQwNDJiMGZhNTg1ZTljMWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY0OGM5YzI5Y2Y1NTgxNTIzM2I1ZTY1NmYxNjk0NWNmYjU5Yzk4MmMyMzI0NDMwM2FkN2ZkYjllMTE4Nzg0NjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEwNjRmNjAzZGZjZDk5MzEyMjM2NmQ2YWI3ZWIyNTk1MTQyZWJjNmI4NzBmN2EwNGU5MjlhNTE5YWI1NmNhOTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRjNTgyNThlOWY3YWJlMzRiMzgyNGM1MjE0ODlkN2VmYjM4YThkNjE5YmU3YmVmMTQ0NDM2NWFkMTM2MGEyZGEifQ"
+        },
+        {
+          "resource": "repo://supabase/config.toml#L7-L18",
+          "version": "repo-lines-v1:sha256:875f9cdc1584f5ff7ba9e247284ba1328eff35314eeaa6b4b6fcc4077bef0bd3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAyZWQxZjczYjczMjgxNjVkZjBkYTMzMDM2OTMwY2MyMjM5Mjc0NzRjMWVjMDQ5NWJmZTg1ZWViMDcxMzk3YWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzMWRlNDFiZWI5NDE3Y2U0NjQ5YmFhNzEyODY0OTMxZDBiZGI4YjEzNDhjYmYwZTRmOTBiN2E5Y2M1NWE4MDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRiYTc2NTA1MWIyYTRjODMwMDU2YzUxNmFlMzk3ZDA0MGQ5MGMyMDlhM2NmZTZhZWUwYzk0NmZkNWVjZmE2OGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNhZTlkYjU1Y2U4MDNkZGQyZWRjYzNlN2IwMDk1NmJmNGM1YTMyODk0ZTE5Nzc0YTYzM2VkNWU2MzRkNTRkMTAifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

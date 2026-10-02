@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:bb69da787afaf28d77b5f1405349a84be47e38b5b5f55e4d277610b282b1e84d",
+  "claims": [
+    {
+      "id": "claim_fe78ca7ffbc04fb0861acb38d5cebfd8",
+      "statement": "Known limitation L16 records that treatment-area and probe-lot validation is application-layer only, with 0155's same-studio foreign key for the inventory-backed probe link as the database-level exception.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L266-L275",
+          "version": "repo-lines-v1:sha256:c1eae284654170f3c16b55ef15788d35de0332e84c61f38ca55c1bf2f0919055:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0YjViYWI5ZDU0MWZkZDNhYWZmNjNlZWY5MzI4MmUxNDZmNzA2ZjJjZjJkMjk3N2ZmNDAxM2RjZDk4NjRhYTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxNDU3ODI2Y2U0NzY0ZGYwMzVkMDU5YTM2NTlkZDE4NmUzYzgwN2UwMzMwMmEwNWZkZDI2NTk0YzFhZTZmZWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczZTVjMTJkNGE4ZWZhZjcwNzI5ZDNmMzNkNjUyNDJkMGIxZjEyYWVjNWUxNDljYjJhMWFmZjcxNmQyOTAyMGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA0MWFiOWY0ODNjYmNhZDFjZjZlOWVmMGI2MDAwNjZmM2M1YjAwMWY0ZGI0ZmFjYWJjNmI1MmM2NTUwYzNjYWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fe891c2e74d6430d95cda2fdcd5aab1c",
+      "statement": "The electrolysis probe catalog is a hard-coded TypeScript list of valid brand, material, piece-type, shank, size and length combinations validated by server actions, with no database enum or check on the probe columns, so adding a brand is a code change.",
+      "evidence": [
+        {
+          "resource": "repo://lib/probes.ts#L1-L25",
+          "version": "repo-lines-v1:sha256:0127a514db41e9028b13ac1a03a1f29ab7f4286d328d3f5c96fd08edcc274b7b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5NzJhYWI4NWIzZjgzZjAzMGRmYTZlYmNhZjVjMTNkNjkyZjdjZGNlZDhmODY2ZjU5MDQ0N2QwNDJkMDU1ZWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyNDhmODc0NjllMjcyYTVjMzU3MjQ1NzM5MWQ2NjlkNWU4YTA0NmE2MTllZjgwMTY4MzIzNDE1ODllZjVlOWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc3MDFkYTcxM2VlN2E0MTllNWRmYzcwNThjMjQ1NmUyY2M5ODUzNWM4OWQ4OTU5YWQ0MGY4ZTExN2VhMTZlOTQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d57823294c4e4adeb8bebfe7ea90eb63",
+      "statement": "electrolysis_entries.pulse_delay_seconds is numeric(4,2) with a database check allowing NULL or 0.03-1.90 seconds, while recording it only when pulse_count exceeds one is an application rule.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0102_electrolysis_entry_pulse_delay.sql#L1-L42",
+          "version": "repo-lines-v1:sha256:9302c37dc8f33d04233ef41ccb5fb5a950c3382dafe40680c6b851492f2c3a91:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5ODI4NWIxMTNjNTg0ZmMyNWM2ZDNkN2U4NjU3MDg0OGU3MjdhYmYxOTNhNzQzNzE2ZTUyNjgzYTYxYWQwMzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxZTFjZDJhNmZhMTcxOGYyYWYyY2EwZWNhYjZhYzY5NWZmNWYwODA0NjFjYTkyOGUyMWVkZDExOTRhNTc2MGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExZGZhOTA4ZTAyYzNjNjE3YTFkYzY1NDMxNTNjZGUxYjExNzdkZGM5YzM3M2JjYzUyZTk4MmY0MDEzZWY2YzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0dfe62b1b0bf4abe8901122ddd4ad30e",
+      "statement": "session_blocks.numbing_notes is a nullable text column with no database check or length cap; the application trims it, stores NULL when blank and keeps it only when numbing was used.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0156_conditional_numbing_notes.sql#L1-L33",
+          "version": "repo-lines-v1:sha256:a3090b7c34def89c4c0dea968834a4645bac5a7dff197d1da1442d51635af828:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxMTQwZTM2OWQ2MjEwYTIzMTlhNWQxYjMzNTUzNzM4MGUxNjMzMzU0OWRhZjlhYzdjOGNlMzUzYzc4MjhiMWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZkNWI1Y2I1OWUyYzNkOTNjNjRkNzJkMjFhOWFjMjQ3ZTcxYjRkOTVjOTliNGM3MWRmYTk3NDQ1NmY5NTBhNjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhOGM1MDgyNzhmZWZiNGRiNDVjZmNhMTAwNDRkM2NlNWM3MWI5MDg4MzY0YWYzYjcwMjBmNGU4ZmY1OWYwMTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d2ba00486e4a4f449054b220220b5a65",
+      "statement": "Observation chips are stored structurally in electrolysis_entries.observation_chips as a jsonb array defaulting to empty with a check that the value is an array, without backfilling chips previously embedded in comment text.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0108_electrolysis_observation_chips.sql#L1-L37",
+          "version": "repo-lines-v1:sha256:68ad913aa49c2ad8f36c4d019e5aac0eb6d5838c73c214529bf5b44d86423664:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyOGVhYTg4NjUyNTM4NjkxYTA1ZDljMjQzNWFhMDllYjFmODRkNjA1ZWIwZTNkNTU5NjhhYWVlMTU1YzNjNDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlmNWUyM2Q5YzdjOTliMmRkNmI5MDllM2ViZTI2Y2NiNDUzNzVlYzM3MzFlNWQ1ZjExNTA4NDkxZDNmMzYyMGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUzNTMzNTk2ZjBkZTNmZjY4MDJlMGRjNjk1NTczMzM3OWNjOWFjMTA2YjQzZjgyZjNlNmExZDViNGE5NGRhMmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9f3e536c0714408a940cc9e657b23ea3",
+      "statement": "Observation presets and legacy reaction labels share one structured multi-select, and a legacy session_blocks.reaction_type is folded into the chip set on load and display rather than lost.",
+      "evidence": [
+        {
+          "resource": "repo://lib/observation-chips.ts#L13-L30",
+          "version": "repo-lines-v1:sha256:4c68fd28b1fc724bac6eb260f0659abc8ec01a364faf640868880698147ba6bd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxMGFmY2ZlYTgwYWNiZGU5NjY1ODIwNWQ3ZmYwMTVkYmRmZmU2OTNjMmRkZDg5MDlhMWVjODM1NmVjMjg3YWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiMDkwMzhmNDE3OWFiNjNkZDU0ZDRiOTUwYjhjNjhlNmU2NzJmZGM1NTNlMWY0MTIxMjQxOTlmZmMyZTM4Y2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNiZTVhYzkzYzlhMzk2YTUzNTk2MDExYjA0NzlhYTQyZjlkZDBjMmFkMjkzNDkxNDQ2MWViYTBiMDNjMmE0NDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg3MGIwNTNmMTdjODY3NTBiMmU1MDlkNTU3YTA3MzQ4ZDY5NDM5MTVmNmRkYTZkYmZjMTM5OGVjMTdiODg2YjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c8b58db2ec1143e79f68cab151720f79",
+      "statement": "The unified reaction contract classifies reactions only by explicit reaction-chip definitions and ranks severity by the existing reaction enum order, with safety-response labels ranked through a declared coded peer.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/reaction-unified.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:1a7125af39fbaf497d2ba0ec1ce43aa778a6f2e5841c49255641482c78b74cc2:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0N2VmNzU2MzMzZmE1NmVhZWQ3MGY0NzA1N2FiNjlhOGMyY2QzNTllNmU5MjE5ZDY3NGM4OTZkMmFmNTkyYjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2M2UwNmM4YjdjNDA5MDA2Yzk3MTZhNTcxMGU0MGQ2MDcyYmVlMmZjOTUwMDhlNWM0NjAxMWI4ZWEyYzI0Y2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM3MGM2Mjk5ZTRjNDI5NDFjMDcxMjgwNGNmYjhjZmU3NGE3Y2M0NTFkYzk5NjYzYzUzMzk5ZTBhMzA0MTM1OGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ada9cf4efb57497085318ff40f1ad8b6",
+      "statement": "Migration 0155 makes record_keeping_sterile_items the canonical probe inventory, adds a length-checked probe_key classification, and links session_blocks.probe_inventory_item_id through a same-studio composite foreign key with ON DELETE SET NULL on the link column only, preserving the block and its lot-number snapshot.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0155_probe_inventory_chart_linkage.sql#L1-L82",
+          "version": "repo-lines-v1:sha256:154ca8b3a5578087ffa442555ef73f55174b869d0c54597061a2238269185cac:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4MWVlYWQxOGYwZmY4YzBmOTY0NmI4N2ZmOTUwZmJjYmVlMGNhNzg3ZmUyOWVhY2QzMmU3ZTNjMWVjZTNjMzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2NWJmZTM1MzE0YjNiMDAxNmMwYWQ1MDJiOWVjNzBiZDlmMTA3MDc3Y2YxYmY1MjVmYmEwZjI4MGMyMTU2MGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0ZDMxZTllYjhlMDMwYmFlNDYxYzIwYjcwZDVlODQ1OWUxYzM0MTdhMDk4MzM1ODhhYzljMzliOGZhMjdkMTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c08bd979118a44328bb2577a07d429e2",
+      "statement": "The 0155 atomic block commands carry probe_inventory_item_id from the block payload while sourcing studio and session from authorized parameters, so a forged cross-studio inventory id fails the composite foreign key and aborts the transaction.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0155_probe_inventory_chart_linkage.sql#L84-L156",
+          "version": "repo-lines-v1:sha256:86b3b6f08c63402461c9a59a978f1db8ebde013a008be117096ecf24aab32c46:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlMzQ2YjNlYzhlNDY1Zjc5MTMzZTQxYjU0NzdhNzRkZGNmNTc3YzE1YjNmNWUzZDczOTRhOTEyZDE5Zjc0ZmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM4NDhkN2QwNzA0MzA1NDQ2MWU5Mzg0OGFjMmU3YzA2N2RkZmRmOGE2ZjgyZGRlYjBhMThjMjJlMWNhNTQyOGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgyY2UwMTc5MTkwNzQ1YTlhODIxMDhlYjQzZjE5ZTA2ODY1ODNlOGYwNTVkODg2ZDY3YmQ5NWZkNWNmMDhkM2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c42faae0260d49178dacc9efa3eed68c",
+      "statement": "Server-side probe inventory resolution trusts no client-supplied inventory id: a new or changed link must exist in the caller's studio, match the selected probe, have a nonblank lot and pass expiry and discard policies, with the lot snapshot derived from the database row, while an unchanged link on edit keeps its frozen snapshot without re-validation.",
+      "evidence": [
+        {
+          "resource": "repo://lib/record-keeping/probe-inventory-validation.ts#L1-L130",
+          "version": "repo-lines-v1:sha256:6ed95e578e6c7bdc7d6036644122119416ec647b4facf6e50a9a46c6a3e1ed7d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwYzBmNDhlMzhmYmRiNmMwZWZlOTg3Yzk4NDUyMWVkMDc0MzI3NTViNmJhYWNjZjQ1ZDk3N2U1N2RiN2NiYWQ0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiMGU5MWE3Y2Q4NDNkZWVmOGI1NjhhMGI5OGJlOTdjYzdkYjZkZmNmNDk3NTYzYmEzOGM2NjFlNDRiNzA4MzhhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0NDkyYzFiODFlMWI0YjNkM2U1ZTFlNjFmMjk4NmQ5NzlmMjUzMDUwODUxNzE0MTAwOGFjMTkyZTNhZmQ1ZDU4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_7ce585ef07f2413ca516802c913ac6b5",
+      "statement": "Probe-lot options are identified by inventory row id rather than lot number, current stock means neither expired nor discarded, and expired or discarded rows remain in the foundational read so historical links still resolve.",
+      "evidence": [
+        {
+          "resource": "repo://lib/record-keeping/probe-lot-inventory.ts#L1-L69",
+          "version": "repo-lines-v1:sha256:d4a9bba2f6fcc980afc901be70b59115529fd95c2848488a4f2cfade2a143f9f:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlYjg2YTc0ZjMyMjJhZjBjNjczOTA5MTg3OTQzNzQ0YjJiODIwZjc0OTgwNjY1MzFjNGQ2MTVlZjY1NjU3MzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZlYTQwY2UyY2NlZWJhMGQ0OTcwOGJmYTljMzAyMTMxMGU2ZWMyYzI0ZDljMjdiNDNiMjM1NjRjNDg4ZjA2MzUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_793676f3cf164cf0b48f64b45e08dc66",
+      "statement": "DB tests prove the probe_key length backstop, same-studio link storage, rejection of cross-studio and forged inventory ids by the foreign key, snapshot immutability when inventory changes, link nulling on inventory deletion, and that old payloads without the new key fabricate no link.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/probe-inventory-linkage.db.test.ts#L69-L316",
+          "version": "repo-lines-v1:sha256:8a83854607e40ed4f331e03816a432437cb6fc9ff37ed43fe1cc3856683abdd3:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQ4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5MTU0N2ZmMzAyNWVmMzkxYjg5Y2U5YjQzZWFlZGI5M2RhOGQwOTNlNzhiNjM0MTBjNThjODA1MTk4N2U2MzM3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhY2NmNjg0NWFmZTQ4NzBiMmM2NDNkMjcwZTBlZGVlMjNlY2JjNDZlYjgxMTJkMjNjZTc2MDI1OGU4ZGU0OTM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_42184a0f5cc7418790e7412bf854ddfa",
+      "statement": "Migration 0182 adds a nullable date_discarded to sterile items, mirroring the disinfectant logbook, infers nothing from note text, hides nothing at the database level, adds no DELETE policy, and relies on the column-generic record-keeping audit trigger to audit discard and un-discard.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0182_sterile_item_discard_lifecycle.sql#L1-L100",
+          "version": "repo-lines-v1:sha256:2db2134ce72d222c8bf3fafefc98edbe02fde0e7fd5e552de4468f3307fa1c77:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYjFjMGY4NTJiNDE0Yjk1ZmY4YTQ4ZjhkNGJhYmEzMzkwZDZkYTNjYzZkNzhlYjllNzdkOWI4ZTg2MzhlYTA0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiNzQ1Njk5MjVmMWQxNzA1ZjI4YjAxYWEwOGZkZWM1Mzk0Y2EzMTYyYjc3NGI5ZDViYWVmZmFlNjY5OTAxODdhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkYjI0OGFkYjY5NWRlMzI3M2RjMWI4MmMyNzEwZmUxMjVkYTk4ZjBhZjQyMzJlM2UwOGZhNTk0NDliMDQxYTRlIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_efd330424a304103b792607f595a7f4a",
+      "statement": "DB tests prove a session linked to a sterile item stays valid and resolvable after the item is discarded, traceability, record lists and export still include discarded items, other studios cannot read or change discard state, and discard and un-discard are audited.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/sterile-item-discard-lifecycle.db.test.ts#L72-L501",
+          "version": "repo-lines-v1:sha256:5d33706dbcb23995585f28bfa0af9b4452b794944388ae2d6523e5e677bc683d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjNDNkNTkzZmY4YWU2NmY2OGM5NmY4YTg3MDI1YTc0ZTExM2JlMmEwMzg2ZmNkOTZiNmRjY2MxN2Q5ZjM2ODZkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0ZWRkMjVhNDVmYWIwY2JlZWM4M2Y3Y2Y4ZmE1MDA5OTA1OWExMTFhMWRhZjg4YTQ5YzIxOTM3NjM0MDcyOWY2IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_ab4c44443684432e8a727689f29e9bd7",
+      "statement": "Sterile supplies count as expiring within 30 days and expired strictly before today, computed from a studio-local date passed in rather than read from the clock, as a display-only state.",
+      "evidence": [
+        {
+          "resource": "repo://lib/record-keeping/expiry.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:bae9e9a06c81d2f4039335d7c015ecc3e2e79d8d2c88bfc8cc44a38d5cf3a4ab:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MjkyYmFkMzk4YmIwMWZkZmYxNDkwNWU3NWUwOTQ5YzQ4YWJkNzM2MzRhOGFmNDNlY2NjZjliZWFiYWFlOTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVjMWNjNjNjZjg2MzJhMWMzYzhmM2MwY2UzMDEyYzYwNzc2ZDJiNGI1YTIyMmJlMGVhYjc0ZmU3ZmFmNDQ2MjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjMThhNmEyMjU2NDFjNTQ5YmVkNGMyMTk4YTc2NDdmYWE1ZmMyMTFkYjc3M2NkZjJiMTc3MWNiYzMyODc2YzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3b355ef336254aac97b287b10f68b065",
+      "statement": "The add-electrolysis-entry action still reads a legacy probe_lot_id field, validates it against the legacy probe_lots table and passes it to add_electrolysis_pass, although 0155 and 0156 describe probe_lots and electrolysis_entries.probe_lot_id as dormant.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/sessions/%5BsessionId%5D/actions.ts#L305-L330",
+          "version": "repo-lines-v1:sha256:c958cee27aefebd7576f175c02f1baf6a40cf31a41943ede2a670cf784e8feaf:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmZjQ4NzI4ZWUyN2Q5N2YwMTcwYjFiNTVjMGI5OTA0NTRjYTE4MzEwYzAzN2YzNTY4MTFmOGZjM2EzYzIxNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgxZDE1OTVkMWE2YWI3ZmY0ZTJhYmM3NWYzZTdjYzA3NTI2NGUwODUxNmY2NzY2ZjAyYTM1NDQ0MGFlMjAzNDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQyYTc2NjhhYjQ4ZmI5YmE2NzkzYmE3OWIzNjU2MzMyMWY4NzdiOGE3ZjhkMmQ4ODY3NzU0ZDdhN2Q5ZWU1MTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk1MTkzODYwZWUzYWEyOGE5ODE4NTEwZWZhOTI1NmQwOWQ3N2U5NmNjNWNlMjA2OGU3NGRmZmU0ZjMwZDE4YWIifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0156_conditional_numbing_notes.sql#L24-L24",
+          "version": "repo-lines-v1:sha256:0b6af93bcb3e44a37e854d9ce971fe57b7eb68d3e85c87cfbe229f91c38e617c:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGI2YWY5M2JjYjNlNDRhMzdlODU0ZDljZTk3MWZlNTdiN2ViNjhkM2U4NWM4N2NmYmUyMjlmOTFjMzhlNjE3YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGI2YWY5M2JjYjNlNDRhMzdlODU0ZDljZTk3MWZlNTdiN2ViNjhkM2U4NWM4N2NmYmUyMjlmOTFjMzhlNjE3YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjgzODRiMDU1ZmMyZjg0NjU2NDJmMGY3NWU2MjA4Y2I0ZjUwOWQ4ZGMzYzg2YWNjNGU1NDMxYzc1MWM5MTg0NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDI4ZDg1OWVjMDA4OTFiYjcxZWMyNjljMTFjMDI3MTk0ZmZkZGE4ODg0ZTg5NmZiNzVkN2UxYjZkZDExNTg4MyJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

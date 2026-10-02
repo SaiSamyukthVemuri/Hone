@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:e0a39a6dfa4f5ee2ab0c811f508e840f21aa4a9b0f4768b1f25aef64a5d68005",
+  "claims": [
+    {
+      "id": "claim_2a6f62b59b54472aa9e6b98e63137e83",
+      "statement": "The public booking action rate-limits by request headers, slug and email before resolving the studio, and creates nothing and sends nothing when limited.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L533-L545",
+          "version": "repo-lines-v1:sha256:75d8a781fabaacf0aa1d030ea84abc0635389736cba31a66b254a0e10b36ff25:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmNzM1YjA5YjhmYzgzZDNkMTNiNzdlNjlhNWM3YzFiNzExNWVhMGJkYTI2ZDYxM2YxNzcwZjY2OGEzNDUwMjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcxMjYxOGJhMzM0NzVlZjRlY2E2N2FmNmZhNjkyMTcxM2E0OWYwNjBiYmMwMWZjM2RiNDQ5NTJmYTVkYmJjZGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNkZGJhODJlOWEwYTdmOGQ4MDc2ZTZjMzA1MjdlYmZjMDZiYmUyOGUzODQwNTFmNDFiN2M5NjJiOGJhNzc5MWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8bfdcfccb336441bb0a0582eebf9eab7",
+      "statement": "For new clients the public booking action applies the studio's new-client admission mode before booking and handles a presented waitlist invitation separately.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L556-L680",
+          "version": "repo-lines-v1:sha256:743f32e0c40109d80b849142094e568311de88fa3024cef2920d77708cb617cf:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5ZGE5MDkzZGY0NTM1MzQwODM0NWM5ODQxMzdmYzA2ODk0OTljMDExNDUwZjJjYThjYTE2ZDQ1MmNjYWIwZTc5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwNDNlMzlhNmEwODA4NDMwMmI0OTQ1MDBmZTlhMjJlOWUyZGEwMTU5YmFkY2NhNzQxZDk1MTljMDQ0NTExMzk4IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmZjlmZWE5ODAyYTA5YWZhZmE3MmQzNjAyZWRiMmVkZmMzOGQ2OWQwMDZiMzM1YmM0OWRhMjIxMjM1ZDdhNDE3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI4ZWRmMDZmYTEwMzg4MDkwOTA4YzNlYzI4N2ZiOTdkNzA2MjU2MTQzN2Y4NTkyZTkzZmUzOGY3MTQzODQ4ZTMzIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_69ad3be021fa45a38b834ce46c3e6035",
+      "statement": "Existing-client booking resolves the client by exact normalized email among non-archived clients and returns the same generic error for unknown and archived emails, without overwriting stored demographics.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L781-L1040",
+          "version": "repo-lines-v1:sha256:907b1f17ad23cf39ddf46f54791922646873781c74066dd2f8aea2a19543fdba:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI4ZTgzYTY2NjU1ZWY1Nzk3NzZiMjkwYTZlYWExYTA4NTNiMDBmNTFkMjczNzFkNWU3YjQ3MWZkNWVmZGVmZTY5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNjlkZTExNmFhMTk0ZWQxNGNmYTcxODhhMGJmMjBhOGVlOWIwNjhjNGZmYzlkNTNjOTBlYWY1NWUyOTUzOTAzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxM2IyY2IzYWEzMGU3MmRkNmRiMGQ2MDljZWEwZTBmMDYwYTQzYTU0ZDlkYmM4ZjA0MzU3ZjY5M2U5MDdkOGYxIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwMDQwYzU1ZTFkNDc4ZmZmZWQ5MjcyMTc0ODFmNWI2NzViMjBkNzhjN2RmMDViZTIzZjViOWFmNTUzZTFmMjI3In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_51e92234577246e3a97c0e34351137ea",
+      "statement": "The public booking action commits through create_public_appointment_for_new_client, create_waitlist_public_appointment or create_public_appointment, and maps not_a_public_slot, 23P01 and HB001 to an unavailable-time response.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L1140-L1170",
+          "version": "repo-lines-v1:sha256:f755c05fe3fd603310290a0a6e55281d69e0ea5e187e34c5d5c1ad5f6fd828d8:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0NDEzZTQyNWM5YTAxMjExMzJhNzY5ZTc4MmU1MWU0MDFlOTU0YjNlMDUyOWYxYzZkMjZmODViYmU3OGY2MTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyNjM5M2E4NTBiZWJkYThmZWU1YzcxY2Q1ODY0YzU5Zjc4ZjNhMjY1MDNiZDU5ZWNhZjMyMDJiZWI0YzY2NDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVmZWM4MGU1MjQyODhhY2I1NDJmZjYwNzllN2YyOWQzMzUyZmZlNWI3OGQyOTUwOGU2YmZmYzA3YjVkZmVjYzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgxYzgwY2JlYzk4ZjA0MWNjNGVkMjU5YzVmZTFiOWExYmRiNmI5MzM2NzQwYjQ1OGNkNjZhMGJiYjhmYjdlZDIifQ"
+        },
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L1310-L1380",
+          "version": "repo-lines-v1:sha256:5029ba58584149a5148954115c2a851c29b8dade79ffb62ef84cd309dd6e608b:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5ZDBiY2MyYzhjZDFmZjY5ZjA0YmYxMTIwYzkwODAyY2U5ZmMwNGZjNGY4ZDZhYWEwMzE4ZDA2MTIxNDgyZTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0NDk4MDAyOGY4NTRkZmZiOWZhNzAyZmZmMzhkY2M0ODNjYmIxNGM1MTc4ZTUzM2MxNjk4OTRmODIyMzk3MmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJiOWNhN2I2NmMxNzE1YzE1MWRkMmMyMThmYmYxNjU2YWNhZjI2MWU3MWY1ODkwNDU5NGVmZjJkZTU0YTQyMjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQxNGVjNzU0OWJiY2I1NTg3Njc1YmUyMGUyZDk3NTk3MWVkNTI3YzQwNWUxN2ZkMmRkYTVmM2U5ZjQ3Mjc3MjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bbf9b08ba1554fc5b256894a93083a82",
+      "statement": "After the booking command returns created, confirmation email, SMS, practitioner notifications, revalidation and analytics run as post-commit secondary effects that cannot turn the committed booking into a failure.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L1405-L1450",
+          "version": "repo-lines-v1:sha256:87fae02b4c86c4a3b9f9bb5ff5d8952e1cc0cfb53a3275c2623f67dcada7c291:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4YWE3OTQ0NmIxMDZhMDQ1ZTMxNDAzZTUwZDFmMDI5ZTM2NjQ2MzcxYTA2MmRiZjE0NGUzMTQ1YzE4YTI5NzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmZTZjNTY1OTk4MGMwZTkxMWExM2Q2MTUxY2MzMzIwMDRmNWEzMDZmMzgzZmE1NjYyMzcyYzRmODdkMWE4ZmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMwYmIxZmJhYTBiMzQ3ZjM2M2RkZjM3OTRlNGJlODFhMGYxMWEwMzZlZGE2N2M1Yjk3MTIzNDgwZDVmZTBjYjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ0NzQwNDYyZjAxODVlYTdkMjEyZjE5OGFkOTAyMjQ5YWUwYjA4NTJkYWNjNDRjMDRlNDUzNjE5MWM1ZWUzNTcifQ"
+        },
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L1600-L1870",
+          "version": "repo-lines-v1:sha256:0f083c79b65fa3206b0d500ca05580bf85da2e81e98bcca944ad674bc8235e5f:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1ZTk2YTY2NTkzNzU0MzNlMzFkMzUxODAyZDg2MjAwNjYzZTk5N2NmYzVkOWFlMWZmYjk5NjdlYWUzZGU4NTMzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0OTkwZWI2Y2NkYjBmZWZjYzNjOWE4ODNjODc5Yzk4NjZiZTMzOTMxY2FhYWJmMzY2MmQ3YWM0YzQxM2VjOGIzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0YWQ1NDk5ODkyYmE2MzY3YzNmMWQwOGZlYTI1M2I0YWZmNjhjZTRmZmYzMDkyMTYxNDI1ZWFmNzhiMGEzMGNjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzMWJhNWIwYWFkMzdmMzdjMjc4NjQ0ODUzYmIwODA1NTA1MjZlYzliODM0NzY5NzcyMjEyOWQ3MDgzOTg1ZWQyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_06a1b81ed0984d01aae2a51ae3875c60",
+      "statement": "DB tests prove the public appointment command derives values server-side, writes exactly one audit row and the shadow reservation, refuses cross-studio and archived inputs without enumeration, and enforces past, horizon, closed-day, override, blockout and timed-block rules with capacity off.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/public-appointment-command.db.test.ts#L111-L300",
+          "version": "repo-lines-v1:sha256:b2352af0561174dee8a100c133801d545b2f07b7a0164fe5e7b22b857e75f262:eyJzZWxlY3RlZExpbmVDb3VudCI6MTkwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzMGM0MzIwZjJmN2RhYzg3MTUxMThmYzY0YTczNDU4MWQ4NWExNTFjZTU0YjI0YzQzYjEwMTQ0MDc5N2RmN2VkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhY2NmNjg0NWFmZTQ4NzBiMmM2NDNkMjcwZTBlZGVlMjNlY2JjNDZlYjgxMTJkMjNjZTc2MDI1OGU4ZGU0OTM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmYTU0ZDk1Yjg4MWI3ZjljNTA4YTM2ODNkMzQzYTExYTcyMWM4MWIxNzEwMmFlZGMyOGFkZGNiMDdiZjcxYTdkIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_314ef18999584f94bf48b9d355347b62",
+      "statement": "Appointment bearer tokens are 24 random bytes whose SHA-256 is the only stored value, and replay after a successful cancel or reschedule is prevented by the appointment state machine rather than a single-use table.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/appointment-token.ts#L1-L47",
+          "version": "repo-lines-v1:sha256:e750c99155614f20215fd39d8ef299d1ec9dee027cad9a3596dfe7f4f2c44f76:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzNGZmYzEzOTJhZDUzYzQ5NDk1YjA2N2YyYmZjOWJiOGNkMTUzYTJhNDJkYjkzMTYzNDAzODA3MmYzYmFiMzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_49e7fa13f4ba443789abb2a55741e697",
+      "statement": "Stateless appointment tokens are HMAC-SHA256-signed {appointment_id, expires_at} payloads under a dedicated APPOINTMENT_SIGNING_SECRET with no fallback to the service-role key.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/tokens.ts#L1-L60",
+          "version": "repo-lines-v1:sha256:8867f4f2e34bcdcc0f35fca548dcf0000b38cb4fc4b42fd5ae68913af1f69042:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5MzJlZGI1MmEzNTE5YjljN2UyYzg0NjRlNTE4ZTViNjg3OTFiNTg5OTBhMGY2ZWU3Njk0NDNmMDNjYzkxZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyYTJjYjI1YTEyMmI0NDIyMWE2MjM0ZWM2NjBhN2I1ZmI3ZjliZGU3YjNiOWUyYjNjNTU5YTBkOTZmYWM3MzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhjMmEyZGYyYWI4MThiYzFhNWRlZWNjZjYwNGVkMjY1NWJiZjJlNjBlODdmOGEyODJhNTZhMjNiNjQzOWYyMjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2ba5a79b84774290b7ec63f38ff6fd48",
+      "statement": "The public cancel action resolves the token by hash lookup then HMAC verification, rate-limits the token route, validates the reason allowlist and note length, and requires policy acknowledgement when policy text exists.",
+      "evidence": [
+        {
+          "resource": "repo://app/cancel/%5Btoken%5D/actions.ts#L1-L100",
+          "version": "repo-lines-v1:sha256:a306776e018c49eb6f6440b932081082928a56ac6a5e0c77aea6e14a6edb8640:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2OWZkYjZhOTY2MTViNjA0M2RkYWMwNDljNGE4N2RmZjA4MmQyMmZiYTRmZDk5MzEwYTBkZDkyYTRlN2I5OTYzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4OGFjYTMzNzA3YTU3NjU2ZGM1ZTFkMDg5YmI5OWNhNjliYTI4OTNhM2QwOTAxMGJhMjM2OTk1MGJmZmQ5YzAyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3M2YzYjRjMzJiYjdkMjhhYWQ0NTEyN2YwZjQ2OTY3Y2E1OWRlNTU5MGY3MWQ5MGE5MmQyZWYzOGMwOTkyNjkwIn0"
+        },
+        {
+          "resource": "repo://app/cancel/%5Btoken%5D/actions.ts#L120-L245",
+          "version": "repo-lines-v1:sha256:17d1147706dfe0c8c15f2ce56819f27434156d34130ce016b662bdb305eafb11:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwM2E5M2RjYzU1NGY4NmMxNDY5ZTljOGZjM2M5Yjc3N2VjNGZiYTBkODcyOGNmNWY5MmE5ZjdkYjYzNWMwYTVjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhMmRhYWM5NjQ5ZTI0MGYzYTdlZDkxM2ZiM2YyNDEyY2VhMjg1MmVmZDZhMjdmNGVhYWFjMzUyNDM5ZGRkOTM2IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0ZmEzNDEyNGM2OTZkYjNmN2Q2ZjI0NmEwYzU2NDY3ZWFiOGNlZDhlZjA4MWVkMjFiMmQyMzczNTQzMDc5Mzg4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI4OWI1MzQyZDZiYTgyZjcwZDUzZjBmNjA3NTU4ZGFmOGJiYmQyYWY1MmFhOTUwMzRmYzk1YmNmNGIyYjk0Nzc5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_28071835bbbe4aee8978e7a44c7e1909",
+      "statement": "public_cancel_appointment_with_token commits the cancellation, audit row and policy acknowledgement atomically, fails closed on stale or missing policy hashes, refuses at-or-after-start and terminal appointments, yields one success for concurrent double submits, and rolls everything back if the acknowledgement fails.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/public-cancellation-atomicity.db.test.ts#L220-L820",
+          "version": "repo-lines-v1:sha256:cf8f1b15817f9c5be76cbcd5086a1c558f1af55c5ad48b623f54dbf0d963b9e4:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2Mzc5YjY0MjE0YzYxOTNjY2QxOGNjYjlhYjIyYzliZGMyNTkwY2M0NTNjYmFjZGI0MzNmM2UyN2M0MWVjYzBjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiODMyNGE1ODk0ZWRiMzMzYTViZmUyYWI4ZDc0OTNmNDg5ZDZhYWRlZGYxMjYyMTlmNDNmODllMGRiNjlmZDkyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0NWViYjI4YzA4NDMzOTIwYzE0MDdkZjVmMWMyNWVjZDY4YzYyYTFjNzRlNmQ0ZDAxYjMxMWJlZjc5YTA4ZGEyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3Mzc4Y2QzYTdiMGQzODEwNGQwN2MxMzk5ZTJlNDVhZDRjMmIzNDk3MDI2NDU5OWViMmY5MzBlZWJjMDgxNTc5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_c3bafea14bf4417da8a09cd07a7f0b7e",
+      "statement": "reschedule_appointment_v2 cancels the original and creates the successor in one transaction with lineage and cancellation_kind rescheduled, preserves the original duration, requires exact replacement-slot membership excluding the original's own reservation, and enforces policy freshness.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0171_public_reschedule_command_v2.sql#L1-L60",
+          "version": "repo-lines-v1:sha256:cf99917756eff739c991d9c8340e5b360a1fcef3a18d3a1617d8cb45322238cf:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyNDBlZjU1NDcxYmI1MTdmMDNiNTBmOWVkZTgzZjFhOTcyY2M0NGY3OWUyYzVjNmNlN2U0MDk0MWM2MmViYTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFmNjJmY2Q5NmI5ZGE5YjQyZmJiOTg3MTkxZTdmOGY2OTg5MWU5ZTE1YzI1ZGU5YjdkY2VkNTVjNDEzNWM0NWUifQ"
+        },
+        {
+          "resource": "repo://tests/db/public-reschedule-command.db.test.ts#L187-L580",
+          "version": "repo-lines-v1:sha256:70a4d40d0643965fe9156ae7971091864c1485218ff685a9b7f815729fb4649c:eyJzZWxlY3RlZExpbmVDb3VudCI6Mzk0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1ZjhiOTI5YmJkNzVlZjNiZDI1MWMxZTlmZWZkNjA1YjU1OWUyNzY0ZjNiM2E3ZjI1MmFmMTcxNjAzODIxM2IxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmZTNkODE0ZWJlN2M1ZTgyMTRlMzlmMWY2OWQ2ZDExOGQ4M2M2N2EwZmQ2ZDcxN2RmODJmZDk4YWM5ZDc5MzBjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjNmFiZWUyY2FiNDk4NGFmMmZiZjQ4YzBiYzdiOTZhZGIwYTQyNWIzOWNlZjI4MTJlMWVmOGE3MjdjNTI3YmI4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5MDkyYmNiYzVlMmYwNGZhNDIyMmY4OGZlYjliNmE4ZmFlMDIwMGYxYjJjNzY0OGRmNzZlZTJhYTM2ZDYyNGM4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_a1479df7bba74db0aabe4f2a2663a62d",
+      "statement": "The /manage route mutates nothing, applies the token-route rate limit and the same reschedule-eligibility decision, and collapses failures to one generic message.",
+      "evidence": [
+        {
+          "resource": "repo://app/manage/%5Btoken%5D/actions.ts#L1-L25",
+          "version": "repo-lines-v1:sha256:5609c4a7f838ea2d1f329c6d49ccad17fae0c27c9da425ea301ae3b6a555e570:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5ZmRiNmE5NjYxNWI2MDQzZGRhYzA0OWM0YTg3ZGZmMDgyZDIyZmJhNGZkOTkzMTBhMGRkOTJhNGU3Yjk5NjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlYWQ3MWVhN2M2ZDljZjVlOTRkZTAwNDBlYTAyOGRhMTM1ODFkMjIxYjYzYWVmNTJhYjJiMDhlZTNiZDc0MzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUzMTdlOWQ4MGQ5NWZiNzEwMjkwYmU3NGZhOGVhMGY3N2UxZDVlODdlZjlmNTM1ZTk5NzFkZjk2YmVkNWVmYzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1b7bc99aceca46458907181fc6eeecec",
+      "statement": "docs/01_ARCHITECTURE.md's public booking walkthrough still describes a column-based cancellation token and separate appointment and audit inserts, while the code stores only token hashes and commits appointment and audit in one command.",
+      "evidence": [
+        {
+          "resource": "repo://docs/01_ARCHITECTURE.md#L107-L124",
+          "version": "repo-lines-v1:sha256:07bba2795d314b1f8e6e155eed0ea789e30baeecca05aff45440734968e8d864:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjODU0YjgxMTJlOWQ0MGVjMGQwNWZmNjI5ZDE5YTQ2MjU4OTI4MjI4MzdlNDE1MzIxYTUzMjk2ZTBiN2Y2NGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3YzA2YzU2MWQ1YzMyNzM0MzY4NTI2OGE0NmIzMzkxZjM5OThlZWU4OTBkMmJlNTFmMGQyMWNjNGE1M2FlNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAzNmRiMGI4MDlkMjg3MTFmNDFhY2MzYjVjNzljMjI0MTcxNmY5Mzk3OTE1N2VjNGVlNTBiNzRkMGRlMjk2ODQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZhOGRmMzcwZTY5ZTM5MGU2ODQwMmViYTk1MmNmZjZmNzRiZjU0OWI0NWNmN2ExYTI4YzZjNWQyZDFlY2VmODYifQ"
+        },
+        {
+          "resource": "repo://lib/booking/appointment-token.ts#L1-L24",
+          "version": "repo-lines-v1:sha256:7599b89e77c80b440e38a27eea5b11cd6221a346f61833b6141186089f990d56:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzNGZmYzEzOTJhZDUzYzQ5NDk1YjA2N2YyYmZjOWJiOGNkMTUzYTJhNDJkYjkzMTYzNDAzODA3MmYzYmFiMzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJhYTgwZTRiMDM5YmJlZmYyZTM2MTVmNWJjNGMwMWE5ZjA4MDFmN2I3Y2JhNzRmZGNiMDM0NWY3NzkwZTk4M2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0NTYyZGUxM2MzODcwZmUzYTU5YjNkZDU4MjY5ZDUwN2RiMjdjZDViYmNkZmNjMjBhNjE0NGVhMjhkNzdlMGIifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0170_public_appointment_command.sql#L1-L40",
+          "version": "repo-lines-v1:sha256:d53eae6411d390c503f600ca77678e73d8f97b592be5502afe87a05f73d5a59d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwMmI0MmM4ZjMxZDA1MTA2ZTViOTRmNjY1ODI0ZTcxMmU4YWQ4MDg4NDYyZmU0ZjAxYTcyZjA2NjNmZjEwMTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiZDk4OTQ2ZWMzMzE2Y2QyZjlkZWZmNjY4YmJhOWU2N2UyZTVjNzZjOGE2NmE3ZTU3ZWQ4MzVjNWNiODhiOTcifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

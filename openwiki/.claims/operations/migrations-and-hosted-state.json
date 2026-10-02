@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:0ca39c996da84eb278c82b6bf6bdf9183f9191d79331a69379ae0b84f3d3721c",
+  "claims": [
+    {
+      "id": "claim_3fe411f647504ae48d19a4f9a4416134",
+      "statement": "Migration files must be named NNNN_snake_case_name.sql; malformed names or duplicate versions make the migration-state derivation throw, and slot 0158 is permanently skipped when computing the next free number.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/migration-state.mjs#L145-L147",
+          "version": "repo-lines-v1:sha256:d016f726943c72558d246dc125168701bf30cf26669c1a9e3cd304b98c5aabbc:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWE2MzI0ZjFiMGM1NWJkNjk5ZGQ3MDQ5Yzg3ZjIxN2MzYWZhMzNhNWM2MmY3Y2UwNmQyNGFjNGI2N2M1MGYxYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDcxMzRmZmE1MGEzMzdmMTAxNzc4MDhiOGUwMjczNjM4ZjA4NWU2ZmI5MmY4MWJkMTcyY2E3YzQwNjg1YWIxMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDJjOTVjMWVjNmU0M2UwOTFiMjQxNzJlZjgzNDQxYTAzMmUxYWM4MDQ2YjVhMWQ4NTdkMWRhNjdiN2FhOWIwMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWU0YzM4MGJjZWRjY2Q2MjJhNTNiOTQ3YjkyMDg2MjgzN2M4ZDc3NThhYWRlMjVkZjdkZDQ3MDVjZGI3N2M3NCJ9"
+        },
+        {
+          "resource": "repo://scripts/migration-state.mjs#L42-L98",
+          "version": "repo-lines-v1:sha256:727fcfc901d2e09afe876c61adb6554c8cf1a3191bb474b075f29008d8b0fb03:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY4MmJhNGJkYmI0OTAwMGE5Yjk5YjY3ODQ3OWY5MzVkMzIwZTcxODIwYWM3NWUwZTUzNDM2OTNiZTRmNDkwNzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczMjUyNDMzMjk4MTgzMjIyNDdkZDM5NjQ1YjVkOTEzZjdhM2VkYjAzNDgwNjFiMGNlNDBmYmJlMzRlMTM3ODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVjZjRjZWFlNmQ4MGJjMDdhM2U5OWMxNDk5MGMzNDFiNTkwNWE1OWVhZWY3MzM5Y2Q2MTFmYThhNDVjODQxNDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2ee549ac8cd14a9a9450e80f30f71d27",
+      "statement": "Hosted migration state is declared only in docs/production/migration-state.json and must be updated in the same change that records a production apply, while repository state is derived with npm run migration:state.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L86-L128",
+          "version": "repo-lines-v1:sha256:d9a5630a4e5df236101030cd9521c2c316ce8047e8be774ba75f946477e57aa2:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkMzhlMmI5MDk1ODkzZTRiNGZjNDQwNDkzOWYzYTgyZTViOTA4ZDEyYWNmYWQ3MzMxMmVjMGUxZGJlOTNiYTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAyZWVhMDMzZDFmMGI5MzIxMDQ1MDM2ZWMwZGQzYjgyYzdlNDVlYWFmNzQzMTYxODU4MWQ2MzA5NTM1YjliYTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b34a5c58b2b44e0db00befac2eab17b5",
+      "statement": "Migrations must open their own begin/commit and set lock_timeout inside the transaction because supabase db push does not wrap files in a transaction.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L281-L283",
+          "version": "repo-lines-v1:sha256:b654f77588a5d673584282bb0a94842312bd4501bf87ce6bc1ae8bb6e8213db9:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWI1ZDg0YjJlZGMzYmU5MjBmMjI0MmUwNmZjNTFkODk0ZTkyNzJmNjAyOTJmYmI2NWI1MDhiM2NjZTczNmE5OSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFlMDIzM2JmOTc2YmUwN2ExYmNiNTAyMDkxMTdhNTE1YWNkNjIzZDlhZWUxMDQ5MjUwMjRkMDFkMDZmYzc2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWY4MDZmOTIwMzFhZWU2YjFiZDcxZjI3MzQzMjI4ZGZhMWMzY2RlZjk0YWZmOGY5OTcxNmIyZDcxNzk0MDAzNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWVhYmU5OTIyYjdhMTIzMTgzM2ZmZmQ5NjQwNDk4ODU0NmJmOGZjMDJmOTVhZjhlMjkwNmZmN2QwYjc3N2RiMSJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L40-L42",
+          "version": "repo-lines-v1:sha256:0816f78f6f4d8c89abe1e9bc7c5ad6014ccc6463ab9d3154df06dc9cc3022862:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTJjNWU3N2I5N2U3Njk1NDZkOTg4MTU2MGNmYTMyNmVjMjFkZDJhM2Q2ZTA2NDRlM2U2MjkxNzQ2ODFmMDdhNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmJlYWEwYjM3ZDZmODc0YjI2ZjY4MWUwMWUwNWQyY2MxMGJmN2QyNmI2OTEwZTY5MDViYjVhNDUxOTI2ZjA5OCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZjIwZjJiOGU5YWVmNDJiMmU3OWNiZjdkMWU0N2VhZGQ2ZmJiNWY3NTI3MzE5MGI2YjExMjhjMzQwYmZjYzNiYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGU5MDZmNDdhOTVjZGNjMzljNmY2Njg3ZDJjZmU3OWY3NTM5NWRiMjhiMzY5YjkwN2FjMDVhODQyYzc3MDE5YyJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L794-L794",
+          "version": "repo-lines-v1:sha256:ea74db71c32d4d01f95355a4a419cd3cbfa27363ca1763a82a753912572c9b6b:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWE3NGRiNzFjMzJkNGQwMWY5NTM1NWE0YTQxOWNkM2NiZmEyNzM2M2NhMTc2M2E4MmE3NTM5MTI1NzJjOWI2YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZWE3NGRiNzFjMzJkNGQwMWY5NTM1NWE0YTQxOWNkM2NiZmEyNzM2M2NhMTc2M2E4MmE3NTM5MTI1NzJjOWI2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGRlNTk0NTU0MDY4OGUxYWJiMmYyZWM1NWNlZTE2ZTBlMzFhOTkzMjVkNTFlODVjZTMzYTdiM2ExOGVhYTU3MiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_2228c8b4e20f498f8259d4445fce3bc8",
+      "statement": "Authenticated-only commands must revoke EXECUTE from public, anon and service_role by name because Supabase default privileges grant it to all API roles, and a source guard enforces this for directly callable functions requiring auth.uid(), excluding trigger functions.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L284-L288",
+          "version": "repo-lines-v1:sha256:0932cf08b1d28926dd77f2cf05f7193623fbde23f23666b5bb15a7b9a88d0f2b:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjk0OWFlY2VjNzM4NWZlZThlYjUwNmY1NmMxMTBmOWZkNDEzNmRhNzljOWVlYmQ1ODZjOTk4MmQ5N2ZhZmJjOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjlkZGVjYzU2MTM1YTVlMWU1YTRhYTJmMTFkNDI3YjdhNjFjZDg4M2UxNWZkM2NjNDMwYmI3MjU0NzYwY2Q5YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjY1NGY3NzU4OGE1ZDY3MzU4NDI4MmJiMGE5NDg0MjMxMmJkNDUwMWJmODdjZTZiYzFhZThiYjZlODIxM2RiOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDNiZDkzZWM5N2VjOTNjMjE3ZmMwZmI4ZDIwZDE2NDAyMTE4NzY1NjE0MGRlY2IwMzRjYjM3MDMxNDU5MTFjZiJ9"
+        },
+        {
+          "resource": "repo://tests/security/clinical-rpc-grant-guard.test.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:5af93acd1dcda75e9c2513b1c514621401656002b4b1ad569ec1800b86428c34:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiOTUwNmIyMWY0ODNkYzk1ZGYyZjJiMzVmNzBjMGE0NDNiMDUzYTdiOTY0OWY3NzQ2N2U2ODhhMzMyMDA0MDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUyOWViN2RkMGU5ZGMzMWZiMGQwZTk0MzM1NWYzYWNlZTAyNDc1NjgwMzAxNGExNDNhODU3ZTVkZTMzZjc0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk2NTRmMDU1NmU2ODgxMjk0M2I4YTM0NDg0NDJkMzY4ZGVhMzRhZWMxODExNWNiMWVmNGFkYmNiNGEyZDNmNzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6bd50846e7414dc383edb3a4060f8e98",
+      "statement": "A guard script requires pgcrypto and uuid-ossp function calls in migrations to be schema-qualified as extensions.<fn> so the full chain applies on a fresh managed project, exempting the built-in gen_random_uuid.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/check-migration-extension-qualification.mjs#L1-L40",
+          "version": "repo-lines-v1:sha256:a96a054ba72669115b0b952958d4140c9acf7002070beb3659aedc6c89dec5ec:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjczYmYxOWExZTk5ZTlhODYzMDZlZTk0YmVkZDQ5ODM1MWIyYTUzZWY0YjJlZDEzZDE1ZTlkYWFkYTY2NWEyZDUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE2YTAxNzEwZjhlYzFlYTZlODgxMWIzOTI5NWJkOTk1OTBiNjJmYzgxNTQwNDQzMTMxNGYyN2E1MWRmZTIxMzUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d261c44944774921b40d6688d395f799",
+      "statement": "Migration 0204's header still says 'CANDIDATE, NOT APPLIED' although the ledger records it applied, because applied migration files are frozen and keep their authoring-time comments.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L17-L17",
+          "version": "repo-lines-v1:sha256:f389b414f2df2aa6cc78e38b25be5f574e6edee5f7b428402902b7d3521b7073:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjM4OWI0MTRmMmRmMmFhNmNjNzhlMzhiMjViZTVmNTc0ZTZlZGVlNWY3YjQyODQwMjkwMmI3ZDM1MjFiNzA3MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjM4OWI0MTRmMmRmMmFhNmNjNzhlMzhiMjViZTVmNTc0ZTZlZGVlNWY3YjQyODQwMjkwMmI3ZDM1MjFiNzA3MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDRlYmI1ZTBkYzczMDc2OTg0MGYzMGEyZjcxN2FkNDA3NmJhZWI2MDA4YmVjMmY3YmZjZjU5NTE5NjYxMmY4YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWVjZDNkZmY5Y2Q0NDkzMTljOGI5OGQ3ZTE4M2E1MjFhZWI3ZTRhYmU0NzcwZmY1YWY3NWQ3MDM4MGZkMjFkZCJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L1-L7",
+          "version": "repo-lines-v1:sha256:e3181bfc2aa2307fdaa48b4b3a703d8111df3781b78984949b4a888d4f9dbd2d:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmIxYzBmODUyYjQxNGI5NWZmOGE0OGY4ZDRiYWJhMzM5MGQ2ZGEzY2M2ZDc4ZWI5ZTc3ZDliOGU4NjM4ZWEwNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDUzYmI3ZGU3YmIwNTZkZWNlNTFjY2UyMTkzODBhN2MzYTY5Y2UzOWNhNjYwNWNiNDY5NzY5NzY2MjQwZjQ5YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDYyNmYwNzIzYjRmOTdjYjMzNjUzM2MwOGVhMTNlODZmNzFkN2NiOGFjNTYzZGQ2MzBkMmExNjYzNGViNTE0OSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_624cfa0aefa84f939d29923d6fee6873",
+      "statement": "Per-migration tests must not hard-code the repository max; they use helpers (isRepoMax, versionsAbove, countVersion, fileForVersion) over the canonical derivation, and only the current maximum migration's test may assert it is the max.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L101-L115",
+          "version": "repo-lines-v1:sha256:8c1702a8b265a8fc7d36a443df6f07cb4dea8f29f9b73207b4780408f944136b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc0OTcwNGE2NmEyZGRhYTU5NDlmNzcwZjE2MjJkY2VhNTJlZDNmZDY4YTJiNTZlOWRmZmQyZjNjOWMzMjM3NzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjZTQ2NWQzNTk4N2JhYWZjNmU2MTAzOTZhYTRlZjM3ZTM4MWRkZGY1NjRiZTc5YmJmMTYyNmM2MTk5NTA0NzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJmYjgwMzRlM2E1ZTI1MWVhMzFjMGNjMzI0NTJmMDMwOTY3MTgwNzYzOWU0Y2VhMzMwNDc5MDQ5YzZjNTZlNTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVlNjdiNDcyMzM5OGNkYTAzZWY3ZTljYjc4N2MyZGIwYzg4NWY0YTFmYzI0ODE1ODFiZTA5YjgyYWY3OTM0YTYifQ"
+        },
+        {
+          "resource": "repo://tests/migrations/helpers/migration-state.ts#L1-L72",
+          "version": "repo-lines-v1:sha256:bb9a35fa7ccb0fbb44a170795587bb5991b0bf307cb78ef6deff021212053b83:eyJzZWxlY3RlZExpbmVDb3VudCI6NzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkMWYxMjg5YzlhNTIxZjEzZmE3MTVlZDUyMTAxY2JiM2ZlNWRhNTNhNzVlMzhhNDhhNjg1YzFkNmEzYWZiODMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3ZDRmZWE0YmIxNjI5YzlkMWZlMDc1ZWM4NGE4MGZjYzBjMThiZDNhZjNiMjliMmE0NDg1ZTM5NzFmMTdkOGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c067ff072ab543d9ac01ce3b7ab433ce",
+      "statement": "The 0204 migration test holds the current equality claim (hosted equals repo at 0204, nothing pending, next free 0205) and instructs whoever applies the next migration to narrow it to a floor, while older tests hold only floors such as hosted at or above their version.",
+      "evidence": [
+        {
+          "resource": "repo://tests/migrations/0199-reminder-sms-candidate-selection.test.ts#L55-L80",
+          "version": "repo-lines-v1:sha256:1c4923c20c1a4faea22502efc21a17aff6413554e813fc1ca2d7f74b4d600eef:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY4NGY2NzRiMTNmNzZlNzZiYThhNzk4M2U1MjQ4MDk3YTBjNDYxOTAzYjcyZmIxYzI5NDg1MGMwZDJkYmIyZGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImViNGIwNDY4ZTIyYjcyODM5MmE3OWYzZTYwNGNkZjU3YTA2MTRmYjAwYzU4ODQ0MWJjZTA2YWYwZWExNGI0NmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhjZDk4MDI5M2Y5ODZiYjliNDY0NjhlZmQ4MjgzZGE2MmEzMDExZGY1NWE1MWUwMGJmMjQyODIwZDE4ZTQ1MWIifQ"
+        },
+        {
+          "resource": "repo://tests/migrations/0204-new-client-admission-mode.test.ts#L35-L49",
+          "version": "repo-lines-v1:sha256:97f2b7c15584eabef76424b24a38e8a8c48ccbb5aff65994a7018fbee3c7f4f4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUyMGU2MmNmMzNlOTgxNjI0MWRkMDljNjYxZmQ1OGFjYjc5MTExZGE4ZmUzNGUyYmM4ZTI2Yzg0MmQ4OGVkZDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM0ZTBhMmI4ZWUyNGM0NTRmZjQ4MjJkMWM0OTJkZjMwNjExNGFjMGYwYjAwYmVmZTlhNWVlMjhmZGQ5MDhjODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU3ZWQ5ODRkOTNmZjRmZDY4MTcwMjJkMTdmMWY0MGJiMTFjZDUyODU4Y2ZhNzQzMGJlZGRiNDdlMWZkZTBhY2UifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4a97ad95875544fdb9eb2dc19b041ecd",
+      "statement": "check:db-types generates types only from the local Supabase stack, refuses hosted-looking database URLs, and compares column sets in both directions between the database and the hand-rolled lib/types/database.ts for curated tables.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/check-db-types.mjs#L1-L80",
+          "version": "repo-lines-v1:sha256:388af9a8eec5a71f48b74f238b7f451c77c0a9b75cf7691cd22451ca5ca39abe:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwZmZjMzZmNDIyN2IxMWVkYWE5ODMzZTM3YWQ5OTgzYmVjZTE0ZTgxNDgyMTUzNzFlZjc0YzQ1ZWJhYmUwYWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZjZWNiMjkzNTUwNTMxYjIwNzUxODU2MDFhODNlMTliNTU1YWU0ZDI3ZDQ5NjUxNDg4MGEwMjI1Zjc4ZDRjYzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fd6ca2fa2db54267b3e9a05a115a4dd5",
+      "statement": "Changes under supabase/migrations, tests/db, tests/migrations, scripts/migration-state.mjs or the extension checks select the database lane in the CI classifier.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L50-L50",
+          "version": "repo-lines-v1:sha256:cb1158603e31bcf84c590c7e55fedea5ea0176ac9bfaefa6d3ecb34d199766d1:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2IxMTU4NjAzZTMxYmNmODRjNTkwYzdlNTVmZWRlYTVlYTAxNzZhYzliZmFlZmE2ZDNlY2IzNGQxOTk3NjZkMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2IxMTU4NjAzZTMxYmNmODRjNTkwYzdlNTVmZWRlYTVlYTAxNzZhYzliZmFlZmE2ZDNlY2IzNGQxOTk3NjZkMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGE5Y2E0NTNlNjllNzM5MWIyYTkzZDUzOGM4MDE2NzUyYzJmMDI5MGZhNDJkODAzOTgwZTgzYjhiNTAxMTEwNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzQ5YmM1OTI3MTRmODU0ZWE0NmFjZmJjMjY5ZWRkODk1YmQ3ODljMjQ5OWZhNWI2M2M2YWE5YWY1MTgyMDlkZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_75bdcdeb4d3d4e1ab21495e9894f0e27",
+      "statement": "Migration tests 0198 through 0203 assert that versionsAbove(VERSION) equals a literal list ending at 0204, so authoring migration 0205 will fail all six, contrary to the CLAUDE.md rule that older per-migration tests must not carry a 'nothing above me' tripwire.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L101-L115",
+          "version": "repo-lines-v1:sha256:8c1702a8b265a8fc7d36a443df6f07cb4dea8f29f9b73207b4780408f944136b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc0OTcwNGE2NmEyZGRhYTU5NDlmNzcwZjE2MjJkY2VhNTJlZDNmZDY4YTJiNTZlOWRmZmQyZjNjOWMzMjM3NzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjZTQ2NWQzNTk4N2JhYWZjNmU2MTAzOTZhYTRlZjM3ZTM4MWRkZGY1NjRiZTc5YmJmMTYyNmM2MTk5NTA0NzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJmYjgwMzRlM2E1ZTI1MWVhMzFjMGNjMzI0NTJmMDMwOTY3MTgwNzYzOWU0Y2VhMzMwNDc5MDQ5YzZjNTZlNTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVlNjdiNDcyMzM5OGNkYTAzZWY3ZTljYjc4N2MyZGIwYzg4NWY0YTFmYzI0ODE1ODFiZTA5YjgyYWY3OTM0YTYifQ"
+        },
+        {
+          "resource": "repo://tests/migrations/0199-reminder-sms-candidate-selection.test.ts#L41-L53",
+          "version": "repo-lines-v1:sha256:d4741c94aaa728120d272d3847f11d3379dc85cdff69833fc04692ab4aa4c30b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxOTk2OTYwMjZhODRlNWM4OWFkNDJlYmY3MTRkYTQwNTViMWQyOWY4ZmY0ODhhZDk5MjI5ZDNiNDVmNzIwNDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFiZGMyODM1MmI2MTk0ODAxOTZhMTk3OTE4NDY0ODAxZjgzMjk4ZDVkNzI5ZDBhNWM0MWQ3YTBhNmVhODFlZTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc3NTA0NTg2MzhlYWNkYTQ5NmI1ZDYxYTM2ZTAyYjgzY2MxNjVhZjc5ZDcwMTA0NTczZTY5MzJiZDM0Yjc4ZmQifQ"
+        },
+        {
+          "resource": "repo://tests/migrations/0203-waitlist-mobile-verification-authority.test.ts#L42-L42",
+          "version": "repo-lines-v1:sha256:046bb92a6f2ec1fff8779c6a78b78e856e032a6de97b220cbe2c0a1733c6cd8b:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDQ2YmI5MmE2ZjJlYzFmZmY4Nzc5YzZhNzhiNzhlODU2ZTAzMmE2ZGU5N2IyMjBjYmUyYzBhMTczM2M2Y2Q4YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDQ2YmI5MmE2ZjJlYzFmZmY4Nzc5YzZhNzhiNzhlODU2ZTAzMmE2ZGU5N2IyMjBjYmUyYzBhMTczM2M2Y2Q4YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGY5Y2Y4MTYzNDQyMzExMWYzNGE5YWYyNjQ3Y2JlMjJhMGUyY2NiZWRhN2VhYmIzNmFhY2E4NzZkZjUyZDdmYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTUyOGNjM2U3MThkOTM3NTEwMzc0N2U4MmUzZTUxY2Q5OTI5YjZkMTRhNDM4NGRkNTEzZWI4NGE2YmY5ZjYxYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_1ed22b03b2a34fb38b794936620522b5",
+      "statement": "docs/09_DATABASE_AND_RLS.md states the current repo max is 0165 with repo and hosted at parity, and README.md states the production migration max is 0165, although CLAUDE.md requires those files to reference the canonical record instead of repeating a number.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L126-L128",
+          "version": "repo-lines-v1:sha256:86209d6b313fa812b20b5c979dece595c72732c635e5cd6e5bc951e4545fea12:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmI3N2M5NzI5NTJkZmIyZjU4NjE4MjYxZDVhZTE1Nzk3OTViYWQwMWFjNjEyOTgwZmM0Mzc1M2VkZjgwZWU1MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDJlZWEwMzNkMWYwYjkzMjEwNDUwMzZlYzBkZDNiODJjN2U0NWVhYWY3NDMxNjE4NTgxZDYzMDk1MzViOWJhOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzRiMWQxZTQwYTI0MWMyODcxYjFlNGRiMzU4MTUzNWIzNzQ5MDQ1Yzg3YmJhMDJiZmQwOTJmNGZlZDQ1NzQzYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDAxZjJlYzE3NTkzYzEwNTRlYjQ2MzY3ZDg0NTNlZjI0YTE3M2NlOTZiNzExN2Q5MWY5YTY4ZDQ0ZmVmOGIwMSJ9"
+        },
+        {
+          "resource": "repo://README.md#L9-L12",
+          "version": "repo-lines-v1:sha256:9d80bb8b5ddcc53ab5f536a45b9590436d7014b35432cd487779d6387cefa4dd:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzE2NTg5YzM4N2I3NzY1ODRjNzdlY2QxYzM4YzQ4MGM3NDMyMDM2ZDg2NjQxODc3YjVkZDNkMTU4ZTIzNGZmZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjk1YjVlOTY4MGYwYTFkMjQxZWYwMmIyMTVhM2I3NTNkNzI5ZmVmMGQwZDZjODJhNDBiNmYyNDZmZmI4ZmUyYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTllMmU0ZWYxMzliYzVkOWM0NzZkZDgyMmFjMjM4Y2JjODc3YzAxMjM4MzlkNTdjYmQ0NDVhMzc5OWY4OWQzNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzc1MGEwYjFjZDczZWI4ZWIxYjc5YWE4OWY4YjVkZjk0YmM0OGMzZDg3M2NlZWNiYzk0MjI0NmI3NTJhNjg3NCJ9"
+        },
+        {
+          "resource": "repo://docs/09_DATABASE_AND_RLS.md#L30-L37",
+          "version": "repo-lines-v1:sha256:222465c9f933340520d0cb53e26049c270d04839c6932a463b76ac609747b735:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjBmYTQ2MThlMzBlYTUzNTQ5NTk4NDUyZTIyZjllNmNlNzZjOGIwODQxZGRiMmViYmRmOTNkYThkOTlmNGM2NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjdkYmRhZTE3ZDI5N2JjZjAzN2VlOTQxYjYxZjlmNWZkMDM0YjI0ZjZjODg0MDY4ODBmZWQzN2QwMjIxMTI1MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzZjNmQ0MWFkMGNkZGEwYWFhYzUxNmUzZDExOGEwMTA4NjY0ODc2MGVmZjhhMDk4MjdjNTljOGRjMWEyNWIyYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDJmM2VkZmFiNzgyMjRlNTIwZTRiOTA0ZGRjNTk5MjIxZDk0ZDJjNGI5OTVjZGZjNWExMjQyZWVjYWRiNjJhNiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_037c155f631145d5be0d294795999466",
+      "statement": "The grant guard excludes trigger functions because they cannot be called directly, while known limitation L33 records 0204's trigger function holding EXECUTE for every role as debt requiring a new migration.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L658-L658",
+          "version": "repo-lines-v1:sha256:d007b3f82925ac6e8cbb4ddfa4192668259093114ed37658defd3c5b17b34711:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDAwN2IzZjgyOTI1YWM2ZThjYmI0ZGRmYTQxOTI2NjgyNTkwOTMxMTRlZDM3NjU4ZGVmZDNjNWIxN2IzNDcxMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDAwN2IzZjgyOTI1YWM2ZThjYmI0ZGRmYTQxOTI2NjgyNTkwOTMxMTRlZDM3NjU4ZGVmZDNjNWIxN2IzNDcxMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTZmYjQ4NDU0NzM0OTRlNGM1ZTk3ODFiNDM4ZmZlZjQzMzliMWRkMWRkYzU4MGE3MDJjOThlZDIwN2UyZjQxMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTUwYTY4NmJiZWM1NDNjOGRkMmQ0MjIyMjFhYzAzODQwMjYzMmE3MzFjMTY0MjY3NzlmYjQyOWI5MjQ3NzNiNyJ9"
+        },
+        {
+          "resource": "repo://tests/security/clinical-rpc-grant-guard.test.ts#L26-L31",
+          "version": "repo-lines-v1:sha256:889c650a33d1c2b7e89000aae6b41a0b929a2d362c2cab39ff82b2036bff6024:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2FhNGYwM2NkZjBhYWVmNjViY2M3MjM0NWE0ZWNkNGE3OGY2NmQ0MDYxZGYwZjI2YzdjMzA3MjI4MzNiMjdiNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2MwZDUwNDA4ZTlhYzA3YzY5NzJhMjQ3YjY3ZGFiZmZlNGIxZDkwZWFiMTViNzJkY2FkNzM2MjRmZDU3NjY1YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWUwYzhhNTQ1ZWYxZjljNTJjMWI1MWUxOWZmM2UyODE3NDYyYTJhZDc4OGNkNjM3ZmYyZTdjMTQ0ZGY4ZDk1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWFhMzhmM2NmNGIzNTE5NjJkOWRlYTJmMzdlOTRmODcwZTY5MWI2ZGM1MzExOWY1MDRiMzc5MWFlMmMwY2Y1MCJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

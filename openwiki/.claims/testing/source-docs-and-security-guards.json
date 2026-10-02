@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:3a4d432a1e2b00b36b7cad3b2af269d9588347123402f2150ef0a87aa672bc2a",
+  "claims": [
+    {
+      "id": "claim_5623a409c35b44f49cc460a84f7e72fd",
+      "statement": "ENGINEERING_STANDARDS.md ranks source and static contract tests last in the proof hierarchy, calls them architectural tripwires rather than substitutes for testable behaviour, and requires important absence claims to also prove the detector works.",
+      "evidence": [
+        {
+          "resource": "repo://ENGINEERING_STANDARDS.md#L74-L95",
+          "version": "repo-lines-v1:sha256:e71c82a5cabfb0ef7aab601d45388220929c06468f67ab125e406e1ea6d2e097:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkMWM1YzAzYjU0ZDQwMWFiZTAxNjhmZGMzMDdjYzk5NzRkNjY5ZmVkNzdiYWZmMWNlMjY4NDc1NDYyYTZlYzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM5NjZiNjM4NTg2NTI3NDZiOGFmNmRhNmI2MGJjNmNmNzQ3ZjY3NmI5NWZmNTY3MDIxZWQyMzhjMDcyNTFlYTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI1NmQzZjRkMWYzY2E4NGNkOTNhMGY1YzhiNTAwNmU4NGNjY2QzMzYyNWE0MzQ1MDEzYmFlZjM1MGFjMThjOGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f3272c54514747c5ad20d218b51c1842",
+      "statement": "The Supabase write census walks runtime TypeScript under app, lib, components, scripts and middleware with the TypeScript compiler API, resolves table and payload through same-scope bindings, and reports anything it cannot resolve as unresolved instead of skipping it.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/helpers/supabase-write-census.ts#L5-L46",
+          "version": "repo-lines-v1:sha256:7e1da80799c8240a4dcc165c2dd6ebdd429d1f7523c1069f3f86cacc7836dcb2:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1ZTI2Y2Q5MjM2NmY2MGQ4ZWQ5MmQwMjM5ZjA3ZmVmNzRjYWMxNGFhNjlhZGRmOWMyY2MwZDExZWIwMGE0NjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQxM2Q3YjUzNDg4OTYzZmI2YTgwNzgyMzNlMTYyZTZjYWZlMGY4YWZmOTU0N2E2YTg0ZTRhMzY2M2ZlYWEzZTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkMjAyM2I5ODFhYjFhZDczYWZmZjEwMDE1ZDQxZDViMmE2MjlkMzVjMWMzMWY3ZTMxNDZjNDRhMTZkMDNiMjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_201a2c7bc6974c71b4e159335a1aff20",
+      "statement": "The appointment direct-DML guard asserts zero direct appointments write sites after B8 and migration 0177, and only alongside positive controls that the census finds more than 100 write sites overall and more than 20 resolved writes to other tables.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/appointment-direct-dml-guard.test.ts#L518-L580",
+          "version": "repo-lines-v1:sha256:93eb361ce3ffc4ca72432392d1e4c406228519ea3f4d42003d2a3019802d45e1:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcwZGE3NjU3YTUzYjI5NWNlZjI5N2ZmMTk5ODFmYTY2YThmYjlmNjJmMWVhNTNhOWI1ODRiMDRkNGZlZGEzYzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgwYTg5OTlhYzQ5YjhkNTEyYmM5Yzk2ODE4YWEyN2MzMDVjZDhhMmYwMTEwMGU0NDQ1OGNlNTViMTNjMGMyNmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjliMWM3MzQxYjA1NzliMmMyNTkxODlkM2JkN2NlNDc5MjNjYjJiMDBjZTMwZDYzNGVlYjg2NGM4MWQ1YjIzYWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc2ZmEzMzEzYzdmMWUxYWM4NzdkMjY2ODM4NjBkOTQwNjdiYjZjMWFhZDI1ZGY1ZTE4YjFhZWQ4NDJkZDViMTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ba073ee0f82549a68bf4ad764f75159f",
+      "statement": "The clinical RPC grant guard is a textual check over migration SQL limited to directly callable functions that require auth.uid(), excluding trigger functions by design.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/clinical-rpc-grant-guard.test.ts#L5-L49",
+          "version": "repo-lines-v1:sha256:fdc7ef4794fb936f5658328442dcefc8d167e1c147858c205b596b3a8cb10d58:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0MmE5NjgwMTMzYTNlMzE0NjIxNTRjZjBmMzkxNjBkYjE1ZmIxNDgzYzc3OGZiYjI3ZGIwZGNlNzZjZmUwOGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhMGI3YTU0MGJlMjgxNGMzMGQ2OTdmODNhMWE2MTM5NGQ0NWFhNTE3YWNkMjk5ZTZkYjk5NGM4MThlZTJiMTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2983d2573bd7442fb79c44b58e2911d8",
+      "statement": "The service-role allowlist guard greps app and lib for createAdminClient() calls, requires the call-site set to equal the allowlist with each entry's scope-guard string present in its file, and by its own statement proves a guard symbol exists rather than perfect query scoping.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/service-role-allowlist.test.ts#L49-L117",
+          "version": "repo-lines-v1:sha256:61b43bc0e1349d3b6c8e75ecd4e9958f6c322dc6f748fee984939b84ce239e9d:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxMGY2MTQyM2MyMTFmMjhhYjllNDI3NmVjYmUwYWRhYzNlMjhjMzU0MzQ4YWQ4MDJlMWExMjAzZDdiZjA2M2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ2OWY1MGNmMWFkNzdkYmQ0NDkyZjc4MGUyY2ZiMGNiNjY2NmQ1NDkzMTBhMjRlNzllMmRmOTU2MmM3OTdiZDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/security/service-role-allowlist.ts#L1-L11",
+          "version": "repo-lines-v1:sha256:b5fff87b043ff52d8d76b0b07df4c1c1ccd25017585cf4eebc85998829a1c2a2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4YTQ3YzJkMzQ1Yzk3NTQzNTRhY2NlMWExNmI2MjdlY2E0MWViNTc2MGJjMGI0MzI3Y2QwZjJhYzRmNzBlNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcwMTlkMmZmYmMwNTI4YTBhZDI1ZTcxOGFjN2RmY2MyYjg2MzVjN2YyZGNmNjAxNjM1YjgwNWMzY2MyYjIyZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2MTg1ZDkxMzMwYzJiYWNiMjQ0ZTVkOTg1NzJkMTFmNDJjNDJhZTgzNGZiMWE1NTdjNzlmM2IyM2U4NDdjNzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4a3a9610f7ad419ab13ac46c2c984083",
+      "statement": "The public booking and public reschedule command guards are textual checks over route source that pin each route to mutating only through its reviewed command.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/public-booking-command-guard.test.ts#L1-L20",
+          "version": "repo-lines-v1:sha256:7b9b963af6c07fdfb5a4d012d796b01a988e377506bfc04390d0f43e9e433666:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiOTUwNmIyMWY0ODNkYzk1ZGYyZjJiMzVmNzBjMGE0NDNiMDUzYTdiOTY0OWY3NzQ2N2U2ODhhMzMyMDA0MDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZjYzc1ZmM2ODFmMjZjMTM3OTA5YzRjY2FkYTY3NWQzNzkxNGQ5NjYwYzJhMGFhODVkNTg1MjAxYzAzNWVmNmEifQ"
+        },
+        {
+          "resource": "repo://tests/security/public-reschedule-command-guard.test.ts#L1-L20",
+          "version": "repo-lines-v1:sha256:a8843f77b529811f63277ea72f4d9e015e0a0a2827f8b47903a2794c300b5e53:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiOTUwNmIyMWY0ODNkYzk1ZGYyZjJiMzVmNzBjMGE0NDNiMDUzYTdiOTY0OWY3NzQ2N2U2ODhhMzMyMDA0MDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjMjBkOGM2NTJlMDc1YmJiNDYxMGRhZDZiZjkzNjFlYzEyNjZhY2U3ZWQyZjcwOWUxMTJiMjM4N2M5N2ExMGIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg3NWVlYTY2MTdhOTY3MTcyYTkwM2U1OTU5NjFlMjIzMmVmNDg3MThjN2UwNDc2MTA5M2Q4NTYxZjc2NTA4ZTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e1e0c98c9f674e76a1e6acd8f5a28c90",
+      "statement": "The waitlist delivery secret-logging guard forbids the invitation's raw bearer token and the recipient proof code from reaching any log, ops alert or telemetry payload in any hashed, truncated or prefixed form.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/waitlist-delivery-secret-logging.test.ts#L1-L12",
+          "version": "repo-lines-v1:sha256:f290d47a738e8504aa437d953b42adceec6207e1a0d59b72eda07b6f74336906:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2ODE3NTY1ZWI5ZDE0NWQ5ZjNhMzBjN2JjOWRhODUyZDRhNDlkNDgyNGM0M2Y4ZTA2YjY2YzM4ZWQxNDA1NmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZmNmRlYWZkNGVjNjQwYzBmZGIxOWRjNmY2MDI3YTg5MTBhZGM0Y2IzOTcxOGVlZjE1ZTdkOTNhYjkwNWFiNjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRkMjQ4MzI3OTlhNzk0Zjc2ZDc1MTY1M2M2ZjVjY2JhMTZkMDc3OTNiOWVlMjMzOTYxNTllMjY3NDkyODhmOTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_75af13860fff4ff79819238b066d2262",
+      "statement": "Source guards assert that source cannot perform forbidden operations, for example that no SMS code path can purchase, create, attach or fall back to a deployment-global sender, complementing behavioural suites that prove runtime outcomes.",
+      "evidence": [
+        {
+          "resource": "repo://tests/source-guards/sms-adoption-boundary.test.ts#L1-L7",
+          "version": "repo-lines-v1:sha256:8a7aa29d9a6e08383fd028c620ea217ea0c4c4695803a21a0c659406a1de8225:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWI5NTA2YjIxZjQ4M2RjOTVkZjJmMmIzNWY3MGMwYTQ0M2IwNTNhN2I5NjQ5Zjc3NDY3ZTY4OGEzMzIwMDQwNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2RmZjE5ODg0YmIzODlhOWNmMTE3OWM3MjZiMTMwOWI1N2M1ZmU3OGU3MzE1OTkwZThjMTVhYThhZGFlZGUyYyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5d616b7de1094e7f8c3816366a30b283",
+      "statement": "Family guards exist because single-file fixes passed while sibling callers kept the defect, such as the client-facing email identity guard requiring every caller family to use the shared studio identity.",
+      "evidence": [
+        {
+          "resource": "repo://tests/source-guards/client-facing-email-identity.test.ts#L1-L8",
+          "version": "repo-lines-v1:sha256:7160d8f6a1b8062829124a5ffce72c60478fcbb7a755548fb2c3f3d3199051d6:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWI5NTA2YjIxZjQ4M2RjOTVkZjJmMmIzNWY3MGMwYTQ0M2IwNTNhN2I5NjQ5Zjc3NDY3ZTY4OGEzMzIwMDQwNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2NjNGM0ODdjZmMzYjc0NDRjNzZiZTQzZTdmNzI1NWMxMDQ1MzVkOWU2ZTVhMjAxZmE2OTA1NDQ2NTkzODUyMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmRhNjY3MWMxZTlhNGJlMDMyMDM1ZThkZjM1NmQyN2Y5NzllZjUzMzJlZDA4ZWYwMzRlZDU4ZDk2MmI2YTcyZSJ9"
+        },
+        {
+          "resource": "repo://tests/source-guards/lease-fencing-family.test.ts#L1-L8",
+          "version": "repo-lines-v1:sha256:147cae352e0f3b6fcf2ff0aaa21b2a69234438962f46d32db93a2b8dc9a94719:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWI5NTA2YjIxZjQ4M2RjOTVkZjJmMmIzNWY3MGMwYTQ0M2IwNTNhN2I5NjQ5Zjc3NDY3ZTY4OGEzMzIwMDQwNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYmJjYTk2NDdiMDg4NjZiYTc1NDVlZjNhYzVhNmY5YzIxNzEzN2Q0NjllYWQyMDZhOWE4OTAwZDc2ODBhMDI1ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDhjNjIwMTQzNzViZjU3YWFjZTlhNWNlZmVhNWVmYjFiODI2MWQ3NzFkYmFlZjViYmEwYmEzYjk0YzcxYWIwYSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_d8a88680006149be8064722340f9695e",
+      "statement": "The supabase/.temp guard inspects Git's tracked path set with git ls-files and fails if any file under supabase/.temp, including the linked project-reference files, is tracked.",
+      "evidence": [
+        {
+          "resource": "repo://tests/source-guards/supabase-temp-untracked.test.ts#L1-L46",
+          "version": "repo-lines-v1:sha256:74f2e2739e0ae85198206d14c7d8bbbfa2f13388cfa65760becfd191eaca8672:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiOTUwNmIyMWY0ODNkYzk1ZGYyZjJiMzVmNzBjMGE0NDNiMDUzYTdiOTY0OWY3NzQ2N2U2ODhhMzMyMDA0MDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5d773d27b8a54ca7986c586009cb483e",
+      "statement": "The canonical production facts guard reads the five canonical production documents, the canonical migration-state record and the derived migration state, and bans current-state migration maximum or next-free assertions outside the ledger's current block by matching assertive sentence shapes rather than bare numbers.",
+      "evidence": [
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L185-L257",
+          "version": "repo-lines-v1:sha256:4bc8172e1279962cc703237be957e17691c69d7461400684d45cbcf903ec851e:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlhOTIwMTU1ZWZmMWI2MTY1MGU1MmVlYTc0MDgxNDlhYjQ1MmZjMmQ5ZjNlMzUxNDkyMjkyODU3Mzc4ZDJjZjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVlNzE0MzMzMzUwNTdhMjM0MGZkMzg5MGMzY2JlZmIyZjM3MDRlMzgxYTExODAyZDk1NjY0MTM5NjJkNWZmNzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ0YjYwZWFkZmM4MzM1YzhiNDk1ZjFhOTZmMTJhMDIyNDcyMGQwYzNkMjNjOTZjMThhZDEyNGE3MDEwZGQ2ZmIifQ"
+        },
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L8-L75",
+          "version": "repo-lines-v1:sha256:947016b3b97ded7f916528e7b39e128843d04d94743b913fbb80982ac19205d2:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5OTY3ZWMxZWQzODM2ZjhlYjE3YWZmMTcyYjViZmVmN2RlNjA0ODVhNDM5YzZjYTExYzU5MWUxNzU1NzM5YWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczN2Y3ODVhYzEyMmUxZjVkOTFkYzdlYjE3NDRmYzZmMmMwNGMzNmY3MjRlOTVlNGE1MzU4YTNiNWUwYjBhMjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcwMThlMTgyYzZhM2UyODE0ZDBlM2U5Njk5NDFhZjY1MjI1YjQyZTU0NjY1Zjc0YWI2ZWFjNjU4NDcxZWVhZDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1b6d32279cf04d40be4bde072ebfce65",
+      "statement": "Historical text is exempt from the canonical facts rules only inside explicit canonical-facts ignore regions, each of which must declare a reason and be closed.",
+      "evidence": [
+        {
+          "resource": "repo://tests/docs/helpers/canonical-facts.ts#L13-L39",
+          "version": "repo-lines-v1:sha256:5c041f365bd4698281cb583be82f0f8bde54ab3de7cc4fb346a6f959d9002ee5:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkYjljNWRlNzEyOTIyNjhjNzBkYjY1MGIwZWU1MjA2YjkxMjMzOTVkYTc2ODA5Yzc2NDRhNzA1ZDI0MDg4YjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU4YjgyZGE2NzYyNDc2ZDExYzMxOGUwZDQ0MTYzMmFjMGIyOWFmNGNjZDQ1MzE3NDhiMGFlODQxMzlkNjVkOGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_784b4910401a43ecb07391a128fc0c5f",
+      "statement": "Rule A of the canonical facts guard requires every SHA in current-state.md to be a real commit, the pinned runtime SHA to be an ancestor of HEAD, and no file changed since the pin to be runtime-bearing, and it skips in shallow clones such as CI's test checkout.",
+      "evidence": [
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L1650-L1752",
+          "version": "repo-lines-v1:sha256:447ec34cfc493c70935dc4417d6e26c32a1f1c1040e544206d495774a4ee375e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZWQ3MjMwODc2NDU0YjU2ZjM1ZGE0ZDE4ZjJhYWQ5NjZmMjlkZTE4NDlkNDg2OGZmZDI3NTdmOTZhMTU4NjM3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzZTJmN2VlMDFjMjA4ZGE0NmM5MTFmNTlmNWVmNmMwM2Q5MmY0NzRiNDAxZDg5YjlhZjBjNjgyZDMyN2U4Yzk5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlMzFmNzM1MTU2ZTViNDMwMzRhOWU3NTJkYzk0MmJiOTBjMTg5MWIxMjRjMjkxNWVhYjVmZjllM2Y3MTBmYjhmIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_5f7351f804bc460fa2f85dbcf7a77247",
+      "statement": "Rule A3 treats a changed file as runtime-bearing unless the shared change classifier marks it docs-only or it lies under a non-shipping root (tests, e2e, .github, scripts other than those the production build runs, and test or lint configs).",
+      "evidence": [
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L99-L170",
+          "version": "repo-lines-v1:sha256:180eef3bd0b39a19cca235a743aa539e3a27d9192dbe7ca76583419c90668ae3:eyJzZWxlY3RlZExpbmVDb3VudCI6NzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFiYmJiZTQxZGExYTc4ZTA1ODlkMjgwNWE3NTlhMDlkZTEzMzAxMjg5MzBiNjE3NGU2Njg4ZGZhNDg1Y2NkYzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc0Nzc3Yjk4NTkzN2Y2ZDQ1YjY3ZDRlYmY5ZjJmNjM4MzFjZTY2YjhhOWYyOThjMzk3OGJmOTlkMGM2ZDYzZmYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ab2a009b630e45f4a616b2c7071554c2",
+      "statement": "The reminder cadence docs guard forbids reintroducing the deleted CRON_SETUP.md or links to it from root and docs Markdown, requires the canonical cron docs to state the 15-minute cadence, and asserts from shipped code that an hourly cadence would miss reminder offsets.",
+      "evidence": [
+        {
+          "resource": "repo://tests/docs/reminder-cadence-truthfulness.test.ts#L11-L140",
+          "version": "repo-lines-v1:sha256:327ebd9f53a0581a9567fa1bd6297f8dd229f964ca6ce5e73794bbff48266904:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2NmJhMmI1OTk2NzMyZTcxMzkwZDNlMGNjNWI5YmZkZmU1OGFlM2Q2ZDM4M2NlYWEzMjc0YjM3NTk2NTVkZWJlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzZmUwNzY5NTJhZTMzYjQ0MGYxODQzY2E4ZmNkMWRmNjk0NzY0YWNmNGI0ZWQwOGZhZDAzMjczMzI4MDY5ODA3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2MjUzNWRlYjAyZTIzMTE0NzZmMGE5NzkzOWEyNDdlOTBmZjQ5ZWY4NmYwYjkzNWRlNGY3N2M2OWNiOTcxZDEyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyMDhjMjQzOWMwOWQ2YmQ2ODgyZjM4MDYyZTM3ZWM2OTkzZDE4MDBiZDNiODI4YzQwZjRkZGE5YzA1NTcxNzQ0In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_ef20c52d46274639abd954e346c22290",
+      "statement": "A dependency test requires server-only to be a declared runtime dependency resolved in the lockfile and spot-checks that security-boundary modules keep their server-only import.",
+      "evidence": [
+        {
+          "resource": "repo://tests/dependencies/server-only-explicit.test.ts#L5-L54",
+          "version": "repo-lines-v1:sha256:ecb00264851155c78be16fb40ad15ef49a968863a4d644a24926e6b02b5c688a:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjYjhiNjkyMDZlMDQ4MTYzOGE4MzVlMzZiZTlhMTc4ZGQzMDUwMDczMDdiMGFmYjg2NjVkMDQyNmZmYjEzYjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQzMGI5NTliZTU4MThmYjI1Nzg1MWJmNGY4OTE1MDY5MzAyMjc3MDI4NThiMzZmM2UxOWM4OTU2YTJhMTE5ODEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_da0709a83580467d879c7a769f99ed7c",
+      "statement": "ESLint bans native confirm, alert and prompt as globals and as window properties because iOS Safari can silently suppress a native confirm, and the shared restriction array is repeated into overlapping config blocks because flat config replaces rule options.",
+      "evidence": [
+        {
+          "resource": "repo://eslint.config.mjs#L12-L40",
+          "version": "repo-lines-v1:sha256:b7d032506b5540baf1adba3d2d37213e54cc582502d8aac52b01e90468bc5eba:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3YmY0NzM1YjNlNDg1OWE4NjUzY2Y5ZmMwYTgyYzJmZTE2Y2RiNjc1ZTlmYjVjMWMzYmZiMWJiNmRiYjBiOTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyYTgzYjhmNWZiOWIwNzFkNGJmMTljMGQ3Y2ZlZGY3OWE5MTg1MzM4NjQzOTgzZjk3MjU5YzExMDU4ZDI5N2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFmNWU0Yjc0YTFkYmUzNTdmNWUwZTA0ZjViMmQ4NmYwYWRiMTllZDBhYTM4OTEyNzVjYjdkYjg0ZTY4NjI1OWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBiYzE3MzcwMWMyYzIyOTM2NzdhM2EzNThlM2ZmNGMzYmQxN2JjMGU1NDRlNGZlMDc5M2QzNjE1NTYwMzc3ODMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_45067b9e5c304f9bbd9ec1c0d0769ea3",
+      "statement": "docs/09 still says seven direct service_role appointment UPDATEs remain in the calendar and postcare files, while the appointment DML guard now asserts zero direct writers in both former writer files.",
+      "evidence": [
+        {
+          "resource": "repo://docs/09_DATABASE_AND_RLS.md#L185-L190",
+          "version": "repo-lines-v1:sha256:b9f465adf3e3711e0e710cbda56aab007ccfd5fee277919be6cbe128169cbc85:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWNlY2RlY2M0MmNkNTJkOWU1ZGJjNDFiMmUzNmIyZGE1OTliNTk0ZGZlMWQ5ZWUwZjcyMGNmMjU2NGNkNThjYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTk4NTYwYzZjZGFkMzdhMGVmMGY5NWI4ZjM0ZTAxYjU5NjE0Nzg1ODc1NmEzNTM3MTkyZjdjNTVlNjg2ZDQ4NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWJmM2YyNTg4ZThlMjI4N2ZjOTNjODQwMmNjODFhMTM0NjE4MWQ2N2UyMDA5OWIzNGIxMzkxYzllNjA0MDBmYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjE1NGJjNGU0OWFmODM0ZTJjZGJlYzA3NTEyM2UxNTQ3ZjA4YzdkZjVlYTM2NjVlMDNmNTFhMjcwYzk3MDAwMiJ9"
+        },
+        {
+          "resource": "repo://tests/security/appointment-direct-dml-guard.test.ts#L563-L578",
+          "version": "repo-lines-v1:sha256:2fa7ad4d07326c6bf59e37c9878a635b1d9710b4ba3782ea31beddfc4ef25e29:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViNmMyNzg2ZjMxOWE0MjQzZjIzMjlmMTBjZTg5ZDIwNTU1NTNkNGQ2NjFhMzViNmVlMTRmYTJjNWM0MTA1YTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyMzU0MzE1M2NjMDk5Mjk3YzcxMDhhOWNmOGNjMzliZDBkMTVlNzg2YzcwODMzYThhZTI4MjA4MDE2MWRhYTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI1ZmMzMWIwMzI3OWQ3YjMxZTAxMDZhNTIyYmUyNDI5MjIwNjczMzIxMWZlMTdlNjg2ZTVkODY2MzdkNDdkNWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjliOWZjZWJjMDk0YzkzNmYwNGNmZjM2NzE4YTEwNGRiNWY3ZDNkYTM0NTgzYzIxNTRlNDczNWEzOTZmZDUzMzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fa3ea26278b54bfb8aec05783e054bf7",
+      "statement": "The export-copy guard's comment says the export carries fifteen files, while the export registry declares 20 exported entries and its header refuses to state a payload size because such counts go stale.",
+      "evidence": [
+        {
+          "resource": "repo://lib/export/resource-registry.ts#L50-L54",
+          "version": "repo-lines-v1:sha256:1dd6495797447a0ab8c93f7eecfa2fc75e0cb93d32fe1361cc250aedfc928647:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzJjYjFlNmUwODBkN2RmZWE3MWUyY2NhMTE2NzQwNTI3NmVmZWE3ODM0NDBiYWUwNDRjNjBjMjk3YzBhMWQyZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjE3YTQzZDFkOGUyYjlhYTJlYzdiNGUzNzJmNzdiYmJiMzE0NTJjMTM3MDZlZTkxOWFmY2M0MzE5YWMzZDU0ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOWM0MmQ5ZDA5MGJiZWU4NjZkMDIwYTVjODZhNmNiYWVkOTIwYmFjYjNjN2MyOTc3YWEzYjNhNTNkMjhhZWZhZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDZjOWUwOGZiYThjZTBiYzkzNGYyMjNlZTUxYmRiYTkwMDU2NjJmNDg0NTdlNGI1YjhlNmFhYWE5Nzg3M2EyNyJ9"
+        },
+        {
+          "resource": "repo://tests/source-guards/export-copy-truth-guards.test.ts#L24-L24",
+          "version": "repo-lines-v1:sha256:e3f14da8fd3875cf4df524f03889816ae26249cf6658570da39dbdceb741c150:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTNmMTRkYThmZDM4NzVjZjRkZjUyNGYwMzg4OTgxNmFlMjYyNDljZjY2NTg1NzBkYTM5ZGJkY2ViNzQxYzE1MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTNmMTRkYThmZDM4NzVjZjRkZjUyNGYwMzg4OTgxNmFlMjYyNDljZjY2NTg1NzBkYTM5ZGJkY2ViNzQxYzE1MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODAwYTBkOWFlYmQ4ZjczYmMzMjI2MGExOWE3YjdiZDA3N2FkMWFlMGVkZTUwNTljOGVhNWY1NDFlMDI1YjZmMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMThhZmViMDUyZjI3YTg5NWJhYTllZTdlNmI0NzVlMDcwNWI3Y2RiMjhjMzFkNzViNzU1NDZhNjVlZWI5MTg0NyJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}

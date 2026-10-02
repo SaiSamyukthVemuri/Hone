@@ -1,0 +1,390 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:1932371448979abb14d767215bb4ab772b00c09e84d5bc7b564fe5a1b3678616",
+  "claims": [
+    {
+      "id": "claim_3d4bbc2c11fb41d1a2dbf7a7d2de7fca",
+      "statement": "The practitioner magic-link action lets Supabase create an auth user only when a pending invitation exists for the normalized email (looked up through the service-role client), fails closed for sign-up on a lookup error while still sending existing practitioners their link, and returns the same generic success for uninvited addresses so the form is not an account-enumeration oracle.",
+      "evidence": [
+        {
+          "resource": "repo://app/(auth)/login/actions.ts#L35-L82",
+          "version": "repo-lines-v1:sha256:048e21baeb60b347cccf3b1bff00e4ba9400a901bcf60341965c48f2025580c3:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4NjI4MTU3NjdkYzNiMTc2MWNkM2E4YjA0ZWMyMGY3ODgxNjFiYzNiYTMzZTA0NGQ3MTgzMDFmNGEwMjJmMTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiZDA2OWYwOWRmYTQ2NmU0MTA5NTc2ZDNiNWYyZWZkODZkNjhhNzgyMzJjZDBkNDZhN2UzYTc0MWQyMzQ2MjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ca2cdca8a83d4de3b1600927b3eaeffb",
+      "statement": "Since migration 0141 handle_new_user() is a no-op, so creating an auth.users row — including through Google OAuth, which cannot pass shouldCreateUser — creates no studio membership and stamps no legal acceptance.",
+      "evidence": [
+        {
+          "resource": "repo://app/(auth)/login/actions.ts#L24-L29",
+          "version": "repo-lines-v1:sha256:737f65bd92813e005b933726db0f4227f20982f3b53b50fd32376584bb493997:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTNkYTJmYjVmYWExNTZjNjk2YzVlMDY4YmJlNzA5ZDkwMGIxZGZkYWE4OGU5NTRlMzc1YTRjOTdkYmI5Nzg5MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzBjNjQwYzA3YTEwYTE0YjEyODMzYTJiYjUzZDBiNDA1YjFmZjg2ODE0NmE0MTNkNDg1M2FkODAyMjk2ZWE4MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzg2ZjkzZGU1NWQ1ZDY1ODQyNDhkMjAwODFkODQwMGU5NzJiNTllNGExM2Q5YTI3NTMyODZkZDRjMTVkMzE3ZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzk2YTExMTI5ZDM5YmY1MmNmODI2MWE2NDU0YmVkYjUwZDUwNDE3OGJjYjVhMTNiNjQ0ZTE5MGM1MjgyZmU1NiJ9"
+        },
+        {
+          "resource": "repo://app/(auth)/login/page.tsx#L36-L48",
+          "version": "repo-lines-v1:sha256:a2af32ba62b76a37db29a3cd59324ab3a3d0529f6dae665d3b0d77c34cc91395:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUzMDg4N2ViYWEwY2YxMDZkNmQ0OTQxOWE3NTk3YzEwYTE5ZmQzNjVmOGI4NDNhNThmN2JkNmJlYzFkMWViNjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFmZDU4MTI3ZDU1ODdkZTk4NDBmOGY0ZDdmM2JkYjAyNmRkZDIyYWRkYWQzNjEyOGNmMzU2YzE5MTRiMDMzODAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU0ZjEzYjAyZDI4NDI4ZDNmMmYzYWViMWE2NmVhMmJmZmZmMWQ3MjEzMTVjZGRkMDA5ZTM4YzllMjY4N2I5NmMifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0141_onboarding_invitation_reconciliation.sql#L59-L78",
+          "version": "repo-lines-v1:sha256:ac2ed74a4f7092a6328b7a06d5990ffc2b5d8ceebc1dfdb6e6a4e8377f4e3e27:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlMzQ2YjNlYzhlNDY1Zjc5MTMzZTQxYjU0NzdhNzRkZGNmNTc3YzE1YjNmNWUzZDczOTRhOTEyZDE5Zjc0ZmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYwZGVlZjIxYzg3NThjNmIwOWE0NjNhOTE2ZjIxY2U4ZmM0ODIzMDgxZGE1YjZmNWRkYjc3ZjU5MjEyNGU1OTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjljMmNiOTg5ZDU4YTVjMmExMWY4MTg2ZjA1ZDg4Y2YxMjJkN2U5ZmNhYTNiOGQ4YjY5NWMzNTI2NmEwNzUwNjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_607f026f1bc244d4bae3399f04d23e00",
+      "statement": "The /auth/callback route exchanges the code for a session and then calls reconcile_my_pending_invitation, routing acceptance_required to /accept-invitation, conflict and ambiguous to /no-access with a reason, clearing the selected-studio cookie when the user newly has multiple studios, and never blocking sign-in when reconciliation fails.",
+      "evidence": [
+        {
+          "resource": "repo://app/(auth)/auth/callback/route.ts#L9-L76",
+          "version": "repo-lines-v1:sha256:dd5fa39f44a45d5fb1cd5eb464cfb1f350c81b1230ed844b63fb01bac99130df:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJjNGFhMjExZDg5ZTY1NDM5MThlNzkzZDIxNjFmYTA2ZjdkMzJkZWU4MDlkNzkzYzdhMDFmOTE3MjEyNjAwYzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM1YTI0YzUxMWY5ZmE2YWZhOTdjMTdjZTk3NWUwMDIyOTgyZjBiYTUxNGNiNTI3MjQ1N2NkNmYyNTY2MzY2NmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b1bbec38f5cb4d439df80209d9ddedeb",
+      "statement": "reconcile_my_pending_invitation serializes per email with an advisory lock, acts only when exactly one pending invitation matches the caller's verified auth email, refuses with conflict when a different user holds an active same-email practitioner row in the studio, and links a membership only by copying an existing current-version terms and privacy acceptance, otherwise returning acceptance_required.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0141_onboarding_invitation_reconciliation.sql#L202-L307",
+          "version": "repo-lines-v1:sha256:396302f1e651fe35240b9ae070a67067ce7a9d5bfebc6cb6cdab5fa386c14e2d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlMDM4YTQ1ZjVlZmZhMTY3MjdlODU0YzEyYjFiYjhjN2ZhOTJjYWRmZjQ4ZGM5Nzg3NjkyNTg5YzRkMWI5OWYzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJlZTM0NmIzZWM4ZTQ2NWY3OTEzM2U0MWI1NDc3YTc0ZGRjZjU3N2MxNWIzZjVlM2Q3Mzk0YTkxMmQxOWY3NGZmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxMzZlYmI5MThkZjA3ZmM2OTg2ODU2YTdlOGU5ZDM4ZTdhZDc0NTFmZWNlMWRhNTMzODVhMmJlNzVmNGRmNmUyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmYmI0ODc5ZGQwNzBkZTZlNjVhYTZhNDIzZTZjZjEzOGQ0YTg1ZDVjNTZmMTMzYzdmZTNkODc2ZGUwZTUyOWZiIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_123d77261be247ff91fee7b29b714d2c",
+      "statement": "admin_accept_pending_invitation is EXECUTE-granted to service_role only and is reached through the /accept-invitation server action, which validates the current-policy checkbox, resolves the user from the session and passes only the user id; the self-scoped reconcile and read RPCs are granted to authenticated and revoked from anon.",
+      "evidence": [
+        {
+          "resource": "repo://app/(auth)/accept-invitation/actions.ts#L10-L60",
+          "version": "repo-lines-v1:sha256:2d6073a792a5d2f2f50f81a1b0effb9e356042248e676dfb5fac9b102f088fc2:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE3NGE3ZDBkYTFjNjhmMjdhMTljZmYyY2IyNDQwOTU4NjZmNjg1ZTc0OWQ5MTMwYzQ2N2RiYmNiNzgxM2EzZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY5MGRhOTFhMmQzNzhmOTA2N2Q2Mzk1MWQzOGE2MWNhY2NmYWJmMzQ4NDViYTMzNWE5YWQxYWI1ODg0ZGJhMGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0141_onboarding_invitation_reconciliation.sql#L480-L515",
+          "version": "repo-lines-v1:sha256:1daac3df7fe8ae0c1c0c66ad3d1046a57c752079bd93e7c1dffef9630d42675b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxZDM3NTA3OThhYjc2MmVkYjkxN2Y1YjBlMWI4ZmEyYzIzMGZkMGU5NjIyYjk3YzVjOTYxZDUyZTZmNTdiMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI4OWJkZjA0NzY3YjQ1YzJiNWVjNDhhZDYwNjE1MTljYzYwOGI1NmE1YmM0MGNjMjk1NjA5NzAwYjY4NTNjODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4ODJlNTcyZjI4M2I3MmMxMjYyYmQxMDA2NTZjN2RhM2NhYTEyMGNlZGY2MjQ2NDI4OTUwNTEyMTU3ZTgyZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b2054008e8d14f7997d56b1047ff3712",
+      "statement": "Middleware redirects anonymous requests to /login unless the path is on an explicit allowlist of exact public paths and narrow prefixes — marketing pages, the token routes, three portal entry paths, the calendar feed, cron routes and the exact Stripe and Twilio webhook paths — each of which authenticates itself.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/middleware.ts#L36-L157",
+          "version": "repo-lines-v1:sha256:68afc1e8b1e279bea4c789b0de19b11a1e89824fea0dc9bd579a5bed269c93ea:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI4NDQ0NDMzMjcyOTE5NjlhZWUxMzAyMmQ2ZjVkMWNkNWI1MGEyNjk1ZjJlZDcyODVlOWFlMjYyODNlY2ViMWJkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhOGVhMDg1ZGZiY2MyMjQ5MmYyNmRjNDM1OWZkY2IzNjk5ZmJmZjEyMDM0MmNhZTVmY2I0MTYyODRkZWZlMDFmIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0NTFhMTZkZjI4ZWUzYWYxMzk2OGE4ZjBmMGFkYzI3MTRiMjM4Mzc5MmNjM2ViZmM4Y2ZmYjQwMjczODI5OWFiIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_597c28a22c4f4cada7c5026fdf77bd83",
+      "statement": "For a signed-in user on any route except /no-access and /accept-invitation, middleware reads the caller's active memberships through the RLS-scoped anon-key client, sends zero memberships to /no-access, sends two or more memberships without a hone_selected_studio cookie naming one of them to the chooser, and deletes a forged or stale selection cookie.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/middleware.ts#L159-L233",
+          "version": "repo-lines-v1:sha256:8d0fca887434ed9b4289bce7f040ae2451723656112b81e56ed3af919fae9f27:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlYTA5MWE2YTA2NzEwYWM3ZmM1ZTRkMWQ0YTkyMmFmNDRjMWNkOTRmOWQ2OTA0MzlkZGYyMjc5MDU1NTg1MTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU5YzlmYWY2YzgyODVkYWFiOTYzZjE0M2RmODkxNzU5M2ZlMmYwZDc0MTM2NTIxOTgzNjQ2NjVhNjcwOWJjMTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNjMGNlZTZjYThjN2NlMDA4ZDdkOGY5NTU2M2NiYzQxODhkNjdiZTU3ZWU4OGFiMDYyNDYzMzRlNGEwOWVlNjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e5d0de19d593449c8c36446256b33607",
+      "statement": "/admin paths bypass the middleware no-studio gate only for an email on the isAdmin allowlist, and the /admin layout re-checks isAdmin and redirects non-admins to /dashboard.",
+      "evidence": [
+        {
+          "resource": "repo://app/admin/layout.tsx#L13-L18",
+          "version": "repo-lines-v1:sha256:b9d1e3bf82263f0385768608a01a498d2909698d28310ec47f43ebfc8927ef67:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2ZmNDg3MjhlZTI3ZDk3ZjAxNzBiMWI1NWMwYjk5MDQ1NGNhMTgzMTBjMDM3ZjM1NjgxMWY4ZmMzYTNjMjE0OSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWFkN2YxYmZjY2YxZmZkYjQ2NjM1NmNkZjYwYmMwNDM0ZjYzNzM4MGE5ZjYyNDlkMDdmMWY2MDM3OTQ3YTUyNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmYxYjhhZGY3ODNlZWIwMjA0Nzg5NzY2YzgyZDc0Mjg3MzQzZGM3YjFkNWExZjU5OTZkYTRiNjg1YTdkZmE1NCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWM2MzJlMDA0ODJkMGU5Mjc3YmY1MDk0ZGNjNjkzYTZkYjczMTAyZWRhOTEyMGZiNmNiMWY0Mzg4NTg1YzQ2MSJ9"
+        },
+        {
+          "resource": "repo://lib/supabase/middleware.ts#L180-L192",
+          "version": "repo-lines-v1:sha256:817ee6c0138703fd66e58662287e30ecbbde1bd5b0f9f834d15bd4355d7b991c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyYjU1NjdjYjZmYjM4Yjk0ZGY1N2NmNjEwNzE0Y2RhOTFmOTkwNDAwYmI1NDY1YjYwMGQwOGYxNGY4NjdiZmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1OGU1ZjZlNzg2YjkyYTZlNjJjZDhmNzQ0OWY4MDY5MjJhZTBlMWQ5Y2U1ZjZhMzI4MGVhYWIwMjcxNmRmYjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5MWM3NzA3YWQ0NTg0ZGI0MGU1NDc0NDE4NDIxYmY4MDAyOTE1MjBkMWFmZDZmZmQzNjlmMGUwYzE4MTdhMGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhNzZkODFiMjE5M2Y3YzUzNTkwMzM2NWMzNzc0YjdmY2VlNDA0YmFlODM5ODcxYTM3N2NjYjRjNjBjNjU4YzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3f94fd3c0eb54c62843e6a9af8416b4a",
+      "statement": "The middleware matcher exempts licence and marketing-film assets by exact path rather than by prefix, because a prefix exemption would also skip the session check for an authenticated route sharing that URL prefix.",
+      "evidence": [
+        {
+          "resource": "repo://middleware.ts#L8-L58",
+          "version": "repo-lines-v1:sha256:fb12ea2b686ffdc1ad747bbe6f8eddf8223b369a61867c538bdd88f422b26ac5:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU2NzJhMmQ0YjA2OGUxMWNiZWFhYWYyNGY2ODU0OWExNjQyNDE1ZTljMTc2MTMwZDRiYTU1NTRmYzU5YmI5NDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhMWQxYTYzMzkwMjI5Yzc5ODM0N2U4M2EwNDA1NDQxYzk0MDAwMzUyODRhZDE2OGMxYmY2Y2RmMWQ3MGEzNzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ5OTY2ZmI0YWNiZjVhMzE2NzRlOTk3ZjQ3NzM2NTVkMzg3YTRkNGUzOTMxNWRhZmYxMzIyOTE0Y2IyYjQ3YjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_80d8ed1b35a142ebbcfcab6850bbceb4",
+      "statement": "Practitioner identity is resolved once per server request by loadRequestIdentity, a React cache()-memoised call to auth.getUser() plus a select of the caller's own active practitioners rows with their studios; nothing persists beyond the request, so a revoked session is refused on the next request.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/queries.ts#L65-L142",
+          "version": "repo-lines-v1:sha256:3b3e5a7e841a1325cfbc19ac9fe80c9caa7b2f9a3ce1319f9d570565471877d9:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3MWRjYzQ2OTU2YjViM2ZlYjY2MGFmYWVmMzQ5ZWQ3OGRlZTdhYjYwYmIyMTljZjQ5MGM0ZDY5ZDQxZjg5NGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYzNzFjNzEwZjM0NGJlODIwOTZjNTdlMTkyZDQ0MTJkYzZkNWQxZTk0MDM2M2NiNWM0Njc3NWY4MjFlN2JjYTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJlMjZlZjJlYTNhYWU5M2FlMWQ0MWFmODg2MGY2MDI2OGI4ZDM0Njk3OWM2OWY5OGQwOTU1OWZlMGI4MjViYWIifQ"
+        },
+        {
+          "resource": "repo://tests/lib/supabase/request-identity-dedupe.test.ts#L292-L320",
+          "version": "repo-lines-v1:sha256:69350a85aea12045354fd7b673b76b6737ca7f67aeb86ac293f770a41db8ffee:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU1ODUyZmE3YTkzYjNlMWJmNzM0ZWMzNDFlODViZjhlYTE1NGZjNzYyMjRhZTE4MWU3YTJlNjk4MGRmODNmMzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJhMjhkYjUzMWVjM2I0ZWJhMjVhZjdmNmEzMDEwZDk4OWYwNGE2OTMwNzVjNWE0NDBlNDQ5MGM5NGJmZmMyZGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlMzY2Yjg3MGZiNTg5NmJiNDI3MTY4YTViZjU5MDQ5ZjlmYWEzNTRkMDU5YWUwMjU1YTZmMWVkMWQzNzNlYzUifQ"
+        },
+        {
+          "resource": "repo://tests/lib/supabase/request-identity-dedupe.test.ts#L397-L452",
+          "version": "repo-lines-v1:sha256:b29d8303881da37e9fbd72bbe37a331deebc01cd04f865789df2691923279f38:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhZTVkMGRkMzQ0NGM3YzQwYTNjOTNmODFiYjQ5OGFmYThmMmJiODFiMzk3NTMxMTU4ZDUzYWM4YTJkOGFiM2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE3MGU0MTljMjUyNTVhMTBkMWFmNWExZWE1YzM0YjdmNWNmYTFhNTRiYzliOWQ1NDE0MDlhYzc1MGViN2Y2YWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiMWFhNmQ5NjU1OWJlMjU1MDk3YTFkODY2YWZhZjNkY2FiNmM4MDEzMjYxZWY1NzM3OThiMGNhMjkxZmMwMTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_167034a446ad4ed8a9e49eee02533449",
+      "statement": "Membership resolution yields none for zero active rows, the single membership for one row, the cookie-selected membership for two or more rows only when the cookie matches an active row, and otherwise a chooser — a studio is never auto-picked and a forged selection is refused.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/queries.ts#L144-L165",
+          "version": "repo-lines-v1:sha256:eefb2f2b2e23884543963f75cc9d2f087f08cb57afe4db9382f29296f9518b9a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyMjRjNjlhMzc5YmNlOTNiMzdkYzJhMDllNzI4YzQ3ZmE3Y2FhMmJhNjk2NjA0NzQwOWY4ZjZhOTQxNDVhODIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3MDI5NDRiMTVlNmYyZjhhYzFiMWIzZmI5MTFkYTI0YzM0NmE3YjBlMTRkYzE4ZjM5MjI1MTI0YzUxNTQ2MjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNTBmOGEyNWI0MWU1YzFmZGU0NWYyNTBiM2JiMzdlNGEyMTczZjA2NmJjYzAxNmNiNGJmZjA2YmQyZjJkOWYifQ"
+        },
+        {
+          "resource": "repo://tests/lib/supabase/request-identity-dedupe.test.ts#L453-L489",
+          "version": "repo-lines-v1:sha256:7bdf3a0f5f9c7572b7047fd00050bc7e007c9815f531ff12feac7b5f949b49cd:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjMTkxZDcyNmU0Zjc4M2Q0YTdkNzY0Y2YwZmE5ZGVkNDE4MDYwNDExZTk3MWI1OTdmYWQ1NzY5ODU4MmM5YjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFmMGUxMTNlOTVjNDk5YjU5YmY2NWZkZWRkZDg5Y2I2N2IyZmJlZjhkZWQ5MmUwYzBkYzAxOWMwNDIwYjI5ZGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI4OTFlYzJjNDM2Zjg2YzlhNjdhYWYxNTQ3MThmZDYxOTlmNjRmODYxOWNhZjNkMjg1ZWM3MTRhMGMzOTEwNDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_aaa1644aebea4e32b062ec1f791565b1",
+      "statement": "getCurrentPractitionerWithStudio, used by server actions and pages, throws when there is no active membership or an unresolved multi-studio choice, while requirePractitionerWithStudio, used by the app shell, redirects those cases to /no-access or the chooser; both redirect anonymous callers to /login.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/queries.ts#L184-L259",
+          "version": "repo-lines-v1:sha256:ae24bf662a3611166791944bbd96baac7d39b5741ef04a4f17d576b0735c8157:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgyOWI0YmFhOWQ0YzFkMDFmNWY0YjRkMjNkNTJlY2ZlMDk5OWQ4YTUxODk5MmJjYjMyNzJlYmRkZDZlYTEzYzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ODQ3OTdkMTQ3MGE4YmZmN2JkNWE2YTAyMTRlOTViOWYzMzMwNzg4MWU2NmMzNWZmNzAwNTgxYzcyMDhiZGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI2YjgxMDIxMDhjYmQ2MzAyNWQ0MGI3ZTdhYjFlNDhiNjEyOTY2ZDJlNzkwMmU1ZjM3OTU5ZjBlNzFkZDY2NDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_13b29692e63b42a09a7a03d0792d8e2a",
+      "statement": "The hone_selected_studio cookie is httpOnly and sameSite=lax, holds only a studio id, is never trusted on its own, and is set only by switchStudioAction after an RLS-scoped check that the user is an active practitioner in the submitted studio.",
+      "evidence": [
+        {
+          "resource": "repo://app/(auth)/no-access/actions.ts#L16-L51",
+          "version": "repo-lines-v1:sha256:47302840b7f6cba306d389225daf665cc8d6e175be87207d4a52db72fabadaa2:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhNjgxNGRmNzQ2ZmMxN2E0ZWRkMjljMWQyYjY5MTRlMTA5MGVkOWJkZGYyYmZlYWNhOTVmMDEzMTBiNDAwOGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM0NWUxNTc4ZmU5Mzg5NWY2ZDY1ZTE1Mjk4ODgxMTFmN2RiNzlmOWEzZjU1NTliNjVjNGZiY2RiMDhlNDgzODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://lib/supabase/selected-studio.ts#L4-L38",
+          "version": "repo-lines-v1:sha256:95c48807ea12c125bb5e8e531df01918e04b81c424b3738212d9c8ab630a7c29:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExNGQ5YzM0YjkwZjNiZWIxM2JkYTA4ZmU1NzEwNmY0ZTUwZmJlMDdhYmQ3NWU1NDNhMDE0MjRmYTQwMjliNmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk4YWQ5YjYxZWMzZDcwNDRhNzU0YWY2YmY4NTk3NGUwNzliYzgzMTYxM2YyMDJiMTYwZTM4NjZmMDcwZWY5MDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzNzU1YzcyYzE1ZmVkNzY2NDZkN2VlMzQ1ZDA0ZjY1YjBjZTA2MmE1MjdiM2FiNzU2MzU1NTc0N2YzNmI2YTAifQ"
+        },
+        {
+          "resource": "repo://tests/db/multi-studio-membership.db.test.ts#L71-L93",
+          "version": "repo-lines-v1:sha256:0581e066b1fa670e62393b1d34a95b9b3b36b52f32fe52cb6282a59a4aeba81c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0MWQ3OTljNzNhNmM0MWVkN2QzYjRhMDU4OTNmMzE2MjU4MzAxY2U1MmUwYmI5YmI1YTc5YmQxMmVmZWFmMjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_44ceb629148a46bfb9720731d7560c45",
+      "statement": "The RLS helpers is_studio_member and is_studio_owner are SECURITY DEFINER SQL functions that return true only when auth.uid() holds an active practitioners row in the studio (with role owner for the owner variant), and EXECUTE on them is granted to authenticated.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0001_init.sql#L151-L189",
+          "version": "repo-lines-v1:sha256:dc4df3da55f2ad2b4152190afd75f42e1324d6dae8badb2dff2219cb08e45cd2:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhNThlMjVhZDRiNDBmNmRkMmIxMWM0OWNmZDlhODFjMjJmZDA5OGRjZTFkOGYwN2M5NGQzZWEyY2YwYjUwZjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkMWRmNzA1YTU2MTg5OWI2M2MxMWU1ZmJhOWIyMGMyZDgyNWFiMWM2YzNkNmFlOTk0ZTVmMmExNjU2MWMyZGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmZDYyODdmNDA4M2YyOTU4YzUxMTc1NzRlYjI3OThiOWQ1OTFjNmE3ODJhYmFjNDQ4MDg4NTRiZDQ4YWVmOWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhmZWViNDAxMjg3OGY2ZjE1NGM1MjJlNjQ2NGE3NGQyNmU5MGI1MmFhYzM1YjgwOTY1YmUxMmJhY2E1OGMyZjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3b8805b5265e486ab4abe087186a2caa",
+      "statement": "Service-role call sites take studio and actor from getCurrentPractitionerWithStudio rather than from form fields, and every createAdminClient call site must be listed in a service-role allowlist whose scope-guard string must appear in the file — an inventory and drift gate rather than proof of perfect scoping.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/service-role-allowlist.ts#L1-L42",
+          "version": "repo-lines-v1:sha256:0020190a5454219a33ddfbbbf16d2b4d0efebd33c68b23b85e8de0f9a432d954:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4YTQ3YzJkMzQ1Yzk3NTQzNTRhY2NlMWExNmI2MjdlY2E0MWViNTc2MGJjMGI0MzI3Y2QwZjJhYzRmNzBlNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU0YzM4NjJhMmVhNTk5YmMxYjA3YTgwMmUyZmQzNjk3YzMxMTJhZDg0M2UzNDdhZDAxOTEwNmVmYzc0ZjgyY2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_720b8ba409e64004a4ba39efa3b75a5f",
+      "statement": "start_session receives an explicit p_studio_id from the server-side resolver and, at the SECURITY DEFINER boundary, re-proves through session_actor_practitioner that auth.uid() holds an active practitioner row in that studio before reading the client, refusing non-member and inactive-member studios.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/sessions/new/actions.ts#L203-L223",
+          "version": "repo-lines-v1:sha256:e847a537348aba1735223203c25c9d180183841c8c583c77c07c47a327995738:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyYjdiMzg2NTFhOTYyZDQxYzljMGYxZjI2M2Q1YjRiOWExOGI0Nzg5MWRkYmFiZWU0NzRmOTc4NmMxY2NhZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVjZDI5MWNhMTFmM2E1ZTg1ZjkxZTdkZmVlNzM1NGI1NWZiZjI1NGY1Mzc5ZjQ2M2U1MDA4ZThhMzU2YjMxNjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkyMzA3YjA4ZmFjZGFjYmE2MGUxNDY2YzgzNTA0YmMzZmEzMjVhMTk0MDY0MzgwMGI5YjVkMzA0ZWU0Y2Q3NjIifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0167_session_write_commands.sql#L78-L107",
+          "version": "repo-lines-v1:sha256:fc2a7182fe3b6e5370ee4a05eb5975d56913360a78281a973e2486ca637ffceb:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0OTFjNjk0M2Q0M2YzZjdmZjZkM2ZkMmI1ZWViZWM5Y2Q3ZmM3ZDQyYWNlMzdjNGQyMDNkMzNlODBlMDExYzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlMzQ2YjNlYzhlNDY1Zjc5MTMzZTQxYjU0NzdhNzRkZGNmNTc3YzE1YjNmNWUzZDczOTRhOTEyZDE5Zjc0ZmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3MjczNTM3N2EzNWEyYmU2M2NlZDliNTNlM2I4ODIyOTY0NzY2ZWJkMDYxMmU1N2IxN2E5MWJmZTYyNDJmOWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI5YjQ4NGY1MjgyOGVjNjgxZDA1NGQxMmYwNjVjN2YwYTZmY2QzZmJjMGM3ZDM4MzI0YWIyOTZhNThlOTYyNTUifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0181_multi_studio_command_authority.sql#L121-L136",
+          "version": "repo-lines-v1:sha256:93204438626447fb7833b3576b9472124822b6c0c1c9d4895c04501b5c02ccda:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkNTUwNDkxZGFhOGUwNzBjMDExMTQ0MTYxYzY0MDkwYTJlMDBjOWE0NTczNmZjZGUyY2FjN2E0NGMzODA3Y2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJmMmZjZmZlOWExZDA2MWZhZTJmODA3NWZmZDBjZjQzMjRjN2Q2MDIzYWQ4NmNlMTczYTY2MmFjMzYxYjQ4ZTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBhODJjMjQ0ZjNjN2U5MGZjOGQ2Y2MzZTdhNTE0MDk0ODcwZDAxZTg4NzMxZTRkZmRjMDgwMzA5YWY2OGE4ZDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAzNjliZjY4ZWJlNWNkYWNiMzAyMDg1ZDAzMDg2NWFmMmZjODU2NGQ2Mjk5MmFlYzkwOGVhMDI4NDU4YTc0MjMifQ"
+        },
+        {
+          "resource": "repo://tests/db/multi-studio-session-authority.db.test.ts#L107-L200",
+          "version": "repo-lines-v1:sha256:4e3e0d522a1a4d527f722b2ad981421367712c7e5aaeecfaecfcd38a491d55ca:eyJzZWxlY3RlZExpbmVDb3VudCI6OTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2NjQyMTcxMmUwN2YxYzgxN2QxMmMzNmE5ZWQwNzhkNzdhN2ZhMDc3MGZlNmQ4NTc2ZGM5NDkzYjZmZTBhN2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFjY2Y2ODQ1YWZlNDg3MGIyYzY0M2QyNzBlMGVkZWUyM2VjYmM0NmViODExMmQyM2NlNzYwMjU4ZThkZTQ5MzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM0MzU5ZmFkNDIxMTg3Mzg4MDVjYTFmMzNkM2ViODNiYmQ4ZWJiMGE5ZDA1Y2VmNDhiYzFlYTA5ZmYyOTZhZGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8e2a4eb215264cb882e4ea48fb7dfa9b",
+      "statement": "Before 0181, start_session picked the acting studio with an unordered limit 1 over all of the caller's active memberships, so a two-studio practitioner could render a page against the selected studio and run the command against the other; the retained four-argument wrapper now derives the studio from the client's own studio instead.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0181_multi_studio_command_authority.sql#L1-L54",
+          "version": "repo-lines-v1:sha256:d95b3cc28853e1613bba384e74217687e6c743c4f738d75265676b54ed16b17d:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiMjNlZjg4YzkyOTk3ODk1YTA2MzUzMDAxMzk0MTk1MzZjMWZlYjk3MmE1MDE0OTg2YTg1NmIyYTA4ODc4ZTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkMzg3OTBhZDc4N2VjY2E4YjY4Y2I4ZDY3MzdmOGY3ZGE0OGVmYzI0MTkxYmQzM2VkY2NkNGFhNTFjMDRmMzUifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0181_multi_studio_command_authority.sql#L255-L314",
+          "version": "repo-lines-v1:sha256:d902bdbca7214ec89e84e9979c6fa32da22d742d00530a38a7ff0b5d597c48b8:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwMjVjMmQ2NzljZTdlOWQ1NGUzNDMyMTMxYzM4MjA4ODEzMDZhNGE2NzY1YWVmNjEyMmM3MjFkYTk5ZDAwMmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlMzQ2YjNlYzhlNDY1Zjc5MTMzZTQxYjU0NzdhNzRkZGNmNTc3YzE1YjNmNWUzZDczOTRhOTEyZDE5Zjc0ZmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNjNzFkYmYzYjQ3OTY3YzZlN2M4NjRmY2RmYmMwMDhhNTkwMzBlOWE4OGViNGE5YWIwMGY2N2FkMGRjZTJkMGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQzOTIzOTdjYzUzM2ZlOWY0ZDYxZjQwNzg5YjlkMjk2YzI2MzgyMDgwOWNjN2MxYzFmNTU2MGNlZGNjZmM1ZDgifQ"
+        },
+        {
+          "resource": "repo://tests/db/multi-studio-session-authority.db.test.ts#L360-L420",
+          "version": "repo-lines-v1:sha256:c086cbb156fc1d0b744e1235e8ac53b8c0e266463ade5845ae48cc1eee8c8b40:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5Njk0NmUwMzc4ZDZjYWQwZDVmNjdmNDY1YmQ3ODQ1NGY0MDQ0NzM4YjcyMDk0NDAwOTFlZDZlNjdkMmVmNWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkzMmIzNGU2MDI2ZmUzNDc2MGQwMGEyMzU2ZWMwYjkxNTRhYTk2NDAxYmM1MGY5YmFkMjVlOWNhMTQ5NDA5NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQzNTcxYTM0MzM5OTc2MWMwZjY4ZGIxZmNiMWNmMzU1N2I1OWQ4Y2RmMjk0MmFjMzQyZmY3NzQ1YjQ4ZGFlZTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_119cd4dea24c468086af46d8987781f4",
+      "statement": "Since 0178 the practitioners table grants only SELECT to anon, authenticated and service_role after revoking all privileges (including TRUNCATE, REFERENCES, TRIGGER and MAINTAIN), the owner insert and update policies are dropped, and practitioners change their own preferences only through authenticated-callable commands bound to auth.uid().",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0178_practitioner_identity_boundary.sql#L505-L578",
+          "version": "repo-lines-v1:sha256:e50e66a23b8a139ba4244ce30a65d58f65f4a1b3569657ef4dbcc0cd2e640d99:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYwMmRmZDBhNzgwZDMzNmMzNDZmYTNmYjIyYjBiNjQwMjkzMzYzMzlkMjA0YWUyNDFiZTllODU1NDdmYjZkNmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhNzRkYjcxYzMyZDRkMDFmOTUzNTVhNGE0MTljZDNjYmZhMjczNjNjYTE3NjNhODJhNzUzOTEyNTcyYzliNmIifQ"
+        },
+        {
+          "resource": "repo://tests/db/practitioner-identity-boundary.db.test.ts#L116-L381",
+          "version": "repo-lines-v1:sha256:1389550dc492bc449cdd4e1382cb8bcb4298b15724732a23ca809e5f9c8df69a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjY2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlOTQwMDk5NjNmZTZhNTVmYWE3ODRkZWVjZDc0NmU0ZjIyN2Y4YWJiNGJiM2RiOWI5YmNlNTA1MzAxOGJmMWVjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI2NmJhMmI1OTk2NzMyZTcxMzkwZDNlMGNjNWI5YmZkZmU1OGFlM2Q2ZDM4M2NlYWEzMjc0YjM3NTk2NTVkZWJlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxMTBhMWU2MWNjNjRmNzBiYTk4ZmEwM2RmNmFiYTdmOWM4NDYyZjRjZWEwNjM3NjliYjVlMjNkMGMyODQ5N2JlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNzA0NDdmZTQ1NjEwNGIzNzY3YTIwOTg3NWM5MDUzYzY0MzQ0MDU1NDhmYjZhNDljNDFjNDdkY2JkNzNjMzAzIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_eabfc25111704fe98cfb66250e344d4c",
+      "statement": "DB tests prove a member of one studio reads zero rows of another studio's clients, sessions, session blocks, exposure incidents, record-keeping audit events, appointments and appointment audit rows, with ground-truth checks that those rows exist.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/cross-studio-isolation.db.test.ts#L51-L466",
+          "version": "repo-lines-v1:sha256:2b7c1df412b2b6a577052e4cc3c701d9fb505ccd947b107fbb403eeb9c309242:eyJzZWxlY3RlZExpbmVDb3VudCI6NDE2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkYTg5MmQ0ZWRiY2Y1YTFmYjhhNTM4M2MzODliNjk4N2MzZDRkYzM1YzFjYWY0ZDg0YTkwODE2NTkwYWIyMTBjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhY2NmNjg0NWFmZTQ4NzBiMmM2NDNkMjcwZTBlZGVlMjNlY2JjNDZlYjgxMTJkMjNjZTc2MDI1OGU4ZGU0OTM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_4b93a3be1d6143f8900d6103b71d7927",
+      "statement": "Client portal sessions are a separate realm: an httpOnly hone_portal_session cookie carries a random token whose SHA-256 is stored in client_portal_sessions with a server-computed 7-day expiry, lookups reject revoked or expired rows and treat a database error as anonymous, and portal and practitioner sessions never grant each other's access.",
+      "evidence": [
+        {
+          "resource": "repo://lib/portal/session.ts#L6-L159",
+          "version": "repo-lines-v1:sha256:6f06643657b21225b9b74a5b56f458ffd44f1eb89c2af09b093e8ea5623b1a38:eyJzZWxlY3RlZExpbmVDb3VudCI6MTU0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyODUwZWRlMTc0YTQxODRlYmY4YjUzYjcyZGNjYWMwNjQxY2Q4OGM4MDA4ZDQyMGI5ZWRmZmY1NWVmYjBmNGRjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlYjAwNDk5ZmUxNzBiMGM0MWM4NGRkMTI5ZGJmOGJiY2Q1NGEzZGExY2M4MmU0ZjUwYTM2NzczZDhmNTM1YzJlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2MGEyNGJhMmQ1ZTQwNjdiZGFmNzdhODY1OTE3ZTA4NzlkODE4M2YxNzdjZmVmMzM2MjY0OGVjZWYyZjVjZTVjIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_220ed16a73344cacbd8569f668058df4",
+      "statement": "Portal magic links are hashed at rest, expire after 60 minutes and are bound to one studio and client; redemption happens in a POST server action so link scanners do not consume the token, and a conditional consumed_at IS NULL update lets exactly one concurrent redemption create a portal session.",
+      "evidence": [
+        {
+          "resource": "repo://app/portal/verify/%5Btoken%5D/actions.ts#L69-L125",
+          "version": "repo-lines-v1:sha256:894332b5280feeddaa2bac1b4c3ad613b61b11507517d430075e4d4337c65ea0:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4YTA3MWM3YWMzZmI3MWU5NWQ1ZjRhMmM1MjUyNmM5NTIxYTc0ZWY0ODEzYjlkNDZjNzBjNTg4YThmZGM1YmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1OTQ5ODNmZWRkNjU2MTM5NjA3MTk4MzZmYzQxZTk5NmRmYjkyMGNjOWYzZmRmOGExYTlkYWRiMGVkYzgzNjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxZDBiZDlkZDkxMDIzYjg1OTIwYTk4MzNmNTRkZTUwOGJjOWY1ZmJjZGU3YzgyM2YzYWI1Nzk1ZTYwZDc5NzUifQ"
+        },
+        {
+          "resource": "repo://app/portal/verify/%5Btoken%5D/actions.ts#L9-L31",
+          "version": "repo-lines-v1:sha256:659a87f0c92346f3c4f404232ab6e4c5a5bb0b83b4efd7d9a0b89f39b8e4715f:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmZWY1MWVlYzlhOTE4MjQzZWE0NDZkYTNjMDgwZDNmOGM2ZmU2YTI1MDVmMjBiYzUyMjM5MjUxYWEzZGRmMzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJjNGE3MjVlNmVjYjBjOGRmNDI0YWZlMTc4MDg2Y2ZhYWEzNmViODkyOGMzNTU5NGI3YjU5OTNiOGQ3YTlkNzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVmNzMyN2E0NjdiOWE0MzFkNjJiM2U4MDdjZTllMTFjYjc2MzBjZTg4ZGFkOGM1YTAxYjVhZmI4NzljM2NlOGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEwMTNlNzg4NzBhYWJkYTJhYzE5NmY1MmIzYzc1NDI0NDZmMjVhMTYxNTM0MzhiYmUwNmI5N2ZlYjBmZGIwZWMifQ"
+        },
+        {
+          "resource": "repo://lib/portal/magic-link.ts#L6-L55",
+          "version": "repo-lines-v1:sha256:2a521c353f6aa2af026ae7783b6e1969f42e51471072fd147da78e622aa9a12f:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxZDg5MjJhMWY4MTg4NGUzNzI4YjEzZDQxZThhOGJjZWUxZTkzZTU1OTZlMzNiYzNmYjE3YmNhYjQyZTk0ZmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhZmU3ZjBhZmM0MmUxNjg4YzQxZTY5MGQ5MzFhM2JkZDc5NTFjZWRhNmViMDViZTY4YzYzYzY4YWIzMTlkMzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE5ZmRhNWRhYmFkOTMyNjE1NTcxNzgxZDUwYzZhNDcxNzE1MmUzNTM4ZDc3MWVmZmI1ZTM2MmU0OGUyMmUyZjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_174fb58a03eb4ed39b5e7e5300faf46b",
+      "statement": "isAdmin checks a lower-cased ADMIN_EMAILS allowlist; in production an empty or unset value denies everyone with no hard-coded fallback, while non-production environments fall back to a built-in development list.",
+      "evidence": [
+        {
+          "resource": "repo://lib/admin.ts#L10-L21",
+          "version": "repo-lines-v1:sha256:0de9f582e28d1298b3635949d3bf64a6398134443039a405f56b6b6750c46638:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlYTA0OTczYmI5ODZiY2M5N2U0OTE2NjM1OWQzZWMyODE1MGVlN2Y0NWRlNTNlZTVhMDA1NzUwMDc1MzYyZWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwMWVhZDkzNmEyMjgxZDUzZGNjMDY0YjdlMmEyYWIwZDUzYjkyZWYzZWY3YjM0YjY2ODY3MzAwNzg5NWM4NjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVlNDU5MWJhYzE5NGI1OTAwZDg5YTgxOWM2MGUxMWE2MDYzNDVmYTY3ZWNlMmQ5ZDlmZGU0ZDA2ODgxYzFmYmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBjOWVmNWQ4ZjQ3NmJjMTY5ZTA5MTNmNDU4MWUzZjkwNGY5ODI2OTkxZjYwZGQ3ZjgxZDE5ZTkzYzBkZWIzZTAifQ"
+        },
+        {
+          "resource": "repo://lib/admin.ts#L42-L72",
+          "version": "repo-lines-v1:sha256:4ed7655854cfe48799d30ae7f194aa162fd35817e26012cf0a33fa515aafdc8c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0NzE4NGI0N2FlNmZiYTM3ZGU3YWUyYmQwN2E2ODc2Yjc2NmQ0NjIyNjQ1ODUwN2Y2OTVmM2QzN2ZiNjRlZGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFkNDU3MWJiZDVhZTQxNjUxMmMzNjhjMzA5YmQ0MWI0MmNjZDlmY2Y5OTNlYzFjZjg2ZTA2MzhlMTAxM2NjMWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_739b0524cf7043d99a4846c251855df5",
+      "statement": "The login action's header comment still says handle_new_user() places invited practitioners in the inviting studio on first login, which no longer holds after 0141 made the trigger a no-op.",
+      "evidence": [
+        {
+          "resource": "repo://app/(auth)/login/actions.ts#L17-L19",
+          "version": "repo-lines-v1:sha256:c52520280717aa927fc8c99a72cef5e5c0ca1dd968d54d42b7405303d891347f:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjlkODgwZDc1ZWU2MzU3ZDEzZTdiZDM3ZjVmOTZmZjE2N2RmMTAxMTQxNTRmOThjNDk1NDhhYTc3OWNmNzM4YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmFkN2I5NzczMmQ2ZWU1NzcwMzgxMTFmYjA2ZTc1Y2Y2YzZhODQwMzVmYzBkNTRmYzRiNzViYWIyMWZjNmNjOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzg4NGZlMDg0Mjk5MDY3NTg4MzBiYjZlNTYwYTdmZWU3OGU1OTNkOWRhZmU3ZjFmNmZhYzlmMGNlNDg0ZDkyZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzI2N2IzMzI2NWI0NGI4YzRjNDVhNDI1Y2U1NWFkODZkMTUwZmU1OTkzMDE0MTVlOTYwNmU2YTUxMjU5Zjk0OCJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0141_onboarding_invitation_reconciliation.sql#L59-L78",
+          "version": "repo-lines-v1:sha256:ac2ed74a4f7092a6328b7a06d5990ffc2b5d8ceebc1dfdb6e6a4e8377f4e3e27:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlMzQ2YjNlYzhlNDY1Zjc5MTMzZTQxYjU0NzdhNzRkZGNmNTc3YzE1YjNmNWUzZDczOTRhOTEyZDE5Zjc0ZmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYwZGVlZjIxYzg3NThjNmIwOWE0NjNhOTE2ZjIxY2U4ZmM0ODIzMDgxZGE1YjZmNWRkYjc3ZjU5MjEyNGU1OTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjljMmNiOTg5ZDU4YTVjMmExMWY4MTg2ZjA1ZDg4Y2YxMjJkN2U5ZmNhYTNiOGQ4YjY5NWMzNTI2NmEwNzUwNjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_42e81945a0b84ae2b086f2c8414531b8",
+      "statement": "The auth callback records user_signed_in with provider magic_link for every successful code exchange, including Google OAuth sign-ins that redirect to the same callback.",
+      "evidence": [
+        {
+          "resource": "repo://app/(auth)/auth/callback/route.ts#L21-L28",
+          "version": "repo-lines-v1:sha256:82e495b3745604807e855a4880255182b0af02a59ef8b4fd523d9bf99ff325d9:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGMxY2U3MGYyMWJkMjM0NDZhNzkzN2VjMjRmMTBjZGJhOGQ5MjMwZjhhODcxYjdjZmYwODk4M2FlYzY3Y2QzMCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWI2MmY2MGQ4NTkwYTU3OWNmNDZmOGQ2NzM3OGM0YzU3MmI5NjJjZWNjZGI5MGM3YTVmN2I0MmI5NjA3ODJhNCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTY0MzBjYjcyNGIwNmU4NTgxN2YwN2NiM2UyM2FkYzNiNTkyYzM3NzYwNDhmOTU4YzM2NGJiYTFiNTAwODA0NCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDkzOWQwMzU2ZGYzOWMwMWVkMmQ2YmJlZjA4NjQxNzVhMDI1Y2JjZTQ2MjE1YmI2MDExZDBjMDY4YmM0MzJiOCJ9"
+        },
+        {
+          "resource": "repo://app/(auth)/login/page.tsx#L43-L48",
+          "version": "repo-lines-v1:sha256:c2e05639e49c00d054def1d660909232308cd3ad60ce75aa759bba6389eafe55:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWQ3YmU2ODJhNTg4NTAxZGQxOWNmNzA2NDg1Y2NhOTBiNWYxNzAyNjBmYjZmMGM0MzM1Mjc5YjE3ZDU4ZWYzYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjJkMTFjYWY0M2U5N2VmMzY5ZTZiZWVkMWEyNjhiZDA1ODM4ZjI5YjlkZDI1NGJmNjliYTY0ODg0MTQ3MjM0YSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjgyOTAzNzM3MTM4NjkzYjczM2YyMTU1MWM2NmJmMGQyYTQ5ODU1NjlmNWNiYjI3YzVmZDE2ZDBlNDgxMmViZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTRmMTNiMDJkMjg0MjhkM2YyZjNhZWIxYTY2ZWEyYmZmZmYxZDcyMTMxNWNkZGQwMDllMzhjOWUyNjg3Yjk2YyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_3e41e42cdd164464bc64f51f95a4ff1c",
+      "statement": "The auth callback appends an unvalidated next query parameter (default /dashboard) to the request origin for its post-sign-in redirect, and no in-repository caller sets next.",
+      "evidence": [
+        {
+          "resource": "repo://app/(auth)/auth/callback/route.ts#L12-L12",
+          "version": "repo-lines-v1:sha256:088c13434eb5eab973cfa35b143c9ca8594e960c60d635cf729f95cac40beca9:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDg4YzEzNDM0ZWI1ZWFiOTczY2ZhMzViMTQzYzljYTg1OTRlOTYwYzYwZDYzNWNmNzI5Zjk1Y2FjNDBiZWNhOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDg4YzEzNDM0ZWI1ZWFiOTczY2ZhMzViMTQzYzljYTg1OTRlOTYwYzYwZDYzNWNmNzI5Zjk1Y2FjNDBiZWNhOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTIwNzM4ZGQ2NzZlYWRmYzJiZmZiZWFiY2IxZDRiYTI0YjNkYjAyY2ZiNDk0NDU5NzMwMjIwNjI4ZjYyZTAzYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDViMGQ4ZTlmYWExYmQ4ODc0NmNjMTliMmZlMzA5YmEwMDk1Y2ZhMjljOWI3ZmQ5YzZmODM5ODAzNTcxZjBmOSJ9"
+        },
+        {
+          "resource": "repo://app/(auth)/auth/callback/route.ts#L67-L67",
+          "version": "repo-lines-v1:sha256:77469312b859d549fe0b35012ea26dcf3c9bb3a27edc01ba7ab6fd294e6551ca:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzc0NjkzMTJiODU5ZDU0OWZlMGIzNTAxMmVhMjZkY2YzYzliYjNhMjdlZGMwMWJhN2FiNmZkMjk0ZTY1NTFjYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzc0NjkzMTJiODU5ZDU0OWZlMGIzNTAxMmVhMjZkY2YzYzliYjNhMjdlZGMwMWJhN2FiNmZkMjk0ZTY1NTFjYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDk3ZTIzYzQ3MTA4ZjAwYWRhYWY0ZDg2ZTNlMTUyOWNiNWE5YzAyMjdjOGI2NTQ0NGYyZjYyYjc4M2EzM2RiMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2Q3Y2IyZDYyZjQyMWEyN2Q5ODc4MWVmNWYzODMyYWY2NGJiZDJjMThiMjc0Y2NjOTU5NGNkYjA3ZjA3MmMyMCJ9"
+        },
+        {
+          "resource": "repo://app/(auth)/login/actions.ts#L59-L65",
+          "version": "repo-lines-v1:sha256:e0ca9b9b03ec0464b9c62c6e7992318688e12c66e54bb73fc6dfe59050e42deb:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2RiMzU4NWUxODFjYWVjODIyODBkOTRmMjJkNmU0MDQxZjgyNmY3N2NiMTQ4NGVmN2Q4NmQxYzFhZDExMWFlYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGU0MmIwZjY2MmQwYzM0ZjBmNjJhNWRjMGEyMTVkNDBkOTRmOWFiZGQwNTg4YWFhODY2NjFkNmY3NmY4MzllYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzVmZjA1OTJhNDI2ZGFlY2Q2ZDNmZWJkZDM5NzcwODgwMTA1YzRkNjZhN2Q0MGRmODAxYzUyNGZmOTU4OGZmYSJ9"
+        },
+        {
+          "resource": "repo://app/(auth)/login/page.tsx#L43-L48",
+          "version": "repo-lines-v1:sha256:c2e05639e49c00d054def1d660909232308cd3ad60ce75aa759bba6389eafe55:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWQ3YmU2ODJhNTg4NTAxZGQxOWNmNzA2NDg1Y2NhOTBiNWYxNzAyNjBmYjZmMGM0MzM1Mjc5YjE3ZDU4ZWYzYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjJkMTFjYWY0M2U5N2VmMzY5ZTZiZWVkMWEyNjhiZDA1ODM4ZjI5YjlkZDI1NGJmNjliYTY0ODg0MTQ3MjM0YSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjgyOTAzNzM3MTM4NjkzYjczM2YyMTU1MWM2NmJmMGQyYTQ5ODU1NjlmNWNiYjI3YzVmZDE2ZDBlNDgxMmViZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTRmMTNiMDJkMjg0MjhkM2YyZjNhZWIxYTY2ZWEyYmZmZmYxZDcyMTMxNWNkZGQwMDllMzhjOWUyNjg3Yjk2YyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_8706fe313f264352b16b6660c629822a",
+      "statement": "The four-argument start_session wrapper still has an application caller: the session-start action retries with it once when PostgREST reports the five-argument signature missing (PGRST202), although 0181 describes the legacy signature as callerless once the application binds explicitly.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/sessions/new/actions.ts#L225-L261",
+          "version": "repo-lines-v1:sha256:471ce65ce460bbd9d2584c06c1f441b174c4f467d4a408e481f8caf38a036a89:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhjNDBiY2UxYjc1MWY0NjdjZDZkNDEyNjE2MzU0NzY4Mjc2NjBjYmJmZDI2ZDI0Y2E4NDhmY2MwMWVlNWQwYWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA0YmZlMTk3NDJjNWFmNjFhYWE5OTM4YWFkMmFhMmQyZmUzZGJlZWQ1YWZlZmUzMzdlN2ZmZDU0Njc2MjMzYmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJiNDFkYjA5YjJhYmVmYjkxODk0YTE3NTM0ZjBmYWRmMDExYzIxNDA0MjZmYThjZGFhY2Y5NTAwNjIwOTg3NzcifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0181_multi_studio_command_authority.sql#L268-L274",
+          "version": "repo-lines-v1:sha256:0d603622102df9d158ab05b2b554283b3627cce0e7cd737eacf5541ced988b0e:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjZmZTI3ZDNhMGFkNDJkMDVkZDBmYWI1MjQ5YTE3NGEzZGEyODVlNDgwMWJmY2ZjNzZiMmJiNjkwZGQ0MzI3MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2YyOGUxNmZkNzBiOTM2ODYzOGM5ZjViNDFhNzdkOTljMjlkNDBhNTlhYjJmNjk3N2E1OWFmYzFhOWI2MTRmYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGVhZDg2NWQ1MjQ0ZTRhYzIyZWNjOTAyNGVjN2IwYTJhM2ZhZmQwY2Y1ZTlmNzAwYjQ3Mzk4NjMwMGY2ODhiZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWNhMjA4NGNkZmJlYzc2ZDVjYWMxZmQzZmZjMDc2YzJhYzA1ZjlhNjYwOGI5MTE3NDYwNzgwOTEwZTMwN2YyMCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_7d3de45b982548b69fa84c39d37d72a6",
+      "statement": "The declared hosted migration maximum is 0204, which places the invitation-reconciliation (0141), practitioner-identity (0178) and multi-studio command-authority (0181) migrations inside the declared migration-applied range.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-state.json#L16-L16",
+          "version": "repo-lines-v1:sha256:65899fb4b602cd387153ee4160f59b609ed58a2a0c1c77d7f38d8fd4a2b61c45:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjU4OTlmYjRiNjAyY2QzODcxNTNlZTQxNjBmNTliNjA5ZWQ1OGEyYTBjMWM3N2Q3ZjM4ZDhmZDRhMmI2MWM0NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjU4OTlmYjRiNjAyY2QzODcxNTNlZTQxNjBmNTliNjA5ZWQ1OGEyYTBjMWM3N2Q3ZjM4ZDhmZDRhMmI2MWM0NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTAwNTFhYTIxMDNkNDg3ZWFhNzE4MDMwZjliOGY2NjIzZTA3NDliYzMzYzA5MmFiYzdhYjEyNWEzYWI1NDRhMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZmNmYWI3YjdmMGIzZTJmM2JjMjhkZjI0MjBjMDE1MGM5ZGQwZWNjNTFlNmYzMDI1ODBjNjQyMWY2MjI3YTJhZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_cd151f54197c475f9ac4b8eccf2ef30b",
+      "statement": "docs/03_SECURITY_AND_PRIVACY.md still describes invite-only as the shouldCreateUser gate plus the 0081 trigger change without the sign-in reconciliation, whereas docs/20_NEW_STUDIO_SETUP_RUNBOOK.md records that 0141 made handle_new_user a no-op and moved provisioning and acceptance to sign-in.",
+      "evidence": [
+        {
+          "resource": "repo://docs/03_SECURITY_AND_PRIVACY.md#L90-L90",
+          "version": "repo-lines-v1:sha256:17b47342529caa9758da0a255e00b2b3edf7fc0c2ce9bb591b40fbb7880ca021:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTdiNDczNDI1MjljYWE5NzU4ZGEwYTI1NWUwMGIyYjNlZGY3ZmMwYzJjZTliYjU5MWI0MGZiYjc4ODBjYTAyMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTdiNDczNDI1MjljYWE5NzU4ZGEwYTI1NWUwMGIyYjNlZGY3ZmMwYzJjZTliYjU5MWI0MGZiYjc4ODBjYTAyMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGFjMDk3OWE3MzViNjJhYzNlZjRiYTMxM2RjN2YzYTJjZDJhMTc4NDE4NDkwMjEyNGE2NmYyYmI0NWU4ZTc2NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmMzYWE4NThlOGYzN2MyNTVkMTliMDRlYjFiZWYzNzA3ZWI2YzAwM2IwZTc4ZmJiNzNmYmVhOWM0YmFmYzk3MCJ9"
+        },
+        {
+          "resource": "repo://docs/20_NEW_STUDIO_SETUP_RUNBOOK.md#L100-L114",
+          "version": "repo-lines-v1:sha256:46e357304e55c2e962fa4992d6d4075dd7ece8ae92746044d8f68c01ea139e83:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhhZDgzZTlhZTc2MTY5Y2I5NjFhYjQ2MzQ1N2U1ODcxMjdhZTI1OGM0NmM0NWFkZTE4MDE3MTliZjU3MTAyYTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3OWMzYWM0YmFlZTkyYTViNmFhYmFhOTNjMGQ0NTRiNTY2MmI1YmVkMjJlMDRmNTdiMjUwYmY4ZWE3NjM4OTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUxZDY4MzQ5NDM3NjA0ZDczNDc1NWE4MjA3NTBiNWNhNzBmYmE2MWUxODJmN2QyZjYyMmQzM2JiNzJjNjYxZmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkxNDJkNWI2MjNmM2I1YjIzZTQ1ZmVjZjE3ZGIwNTZmY2NjMWQ4MDcyYjQ1ODc2OWZhZWVlODM4ZTAwOWNjMDMifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-02T20:08:11.217Z"
+  }
+}
