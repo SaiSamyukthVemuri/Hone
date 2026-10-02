@@ -1375,18 +1375,40 @@ describe("canonical production docs: the apply history is append-only", () => {
     expect(Array.isArray(comments)).toBe(true);
   });
 
-  it("entries may be APPENDED, never removed", () => {
+  it("no entry is removed", () => {
     expect(
       (comments as string[]).length,
-      "the apply history may only grow: an entry was removed",
-    ).toBeGreaterThanOrEqual(APPLY_HISTORY_ENTRIES);
+      "an entry was REMOVED from the apply history. Historical apply records are " +
+        "not deleted; if one is wrong, append a dated correction entry as entry [9] " +
+        "and entry [11] do",
+    ).not.toBeLessThan(APPLY_HISTORY_ENTRIES);
+  });
+
+  it("an APPEND must advance the pin, so the new entry is immutable immediately", () => {
+    // THE PIN IS AN EQUALITY, NOT A FLOOR. A floor pinned only the history that
+    // existed when the constant was written: entry [12] would have been appendable
+    // and then freely rewritten or deleted for as long as the count stayed above
+    // the floor. That preserves a snapshot, not an append-only history -- which is
+    // the property this block claims, so the floor was the claim outrunning the
+    // code for the second time in one round.
+    //
+    // With equality, recording a new apply means advancing ENTRIES and DIGEST in the
+    // same commit, and the entry you just recorded is frozen from that moment.
+    expect(
+      (comments as string[]).length,
+      "a new apply entry was appended without advancing the pin. Update " +
+        "APPLY_HISTORY_ENTRIES and APPLY_HISTORY_DIGEST in the SAME commit, so the " +
+        "entry you just recorded becomes immutable immediately rather than staying " +
+        "editable until someone notices",
+    ).not.toBeGreaterThan(APPLY_HISTORY_ENTRIES);
   });
 
   it("no existing entry may be rewritten", () => {
-    const prefix = (comments as string[]).slice(0, APPLY_HISTORY_ENTRIES);
+    // Hashed WHOLE, not as a prefix: with the equality above, the array and the
+    // pinned prefix are the same thing, and slicing would quietly re-admit the gap.
     expect(
       createHash("sha256")
-        .update(JSON.stringify(prefix))
+        .update(JSON.stringify(comments as string[]))
         .digest("hex"),
       "a recorded apply entry was edited. Historical records are not rewritten -- " +
         "append a dated correction entry instead, as entry [9] and entry [11] do, " +
