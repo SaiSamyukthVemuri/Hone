@@ -22,8 +22,10 @@ production-exercised and human-accepted states distinct.
 
 Prefer code + executable tests for behavioral claims.
 
-For mutable production truth, use the canonical `docs/production` authorities and
-explicit release evidence.
+For mutable production facts, `docs/production/current-state.md`,
+`docs/production/migration-state.json`, `migration-ledger.md` and explicit
+release evidence are the authorities. **Do not promote historical handoffs or
+comments into standing production truth.**
 
 Identify contradictions instead of silently reconciling them.
 
@@ -32,4 +34,4 @@ Never expose secrets, credentials, tokens or client data.
 ## Page shape
 
 Optimize pages for coding agents: responsibilities, invariants, write
-authorities, data flow, failure semantics and exact source evidence.
+authorities, data flow, failure semantics and exact source links.
