@@ -188,7 +188,7 @@ export default function ChecklistArticlePage() {
             {
               href: "/features/charting-records",
               label: "Charting and records",
-              blurb: "See how Hone captures every item on this checklist as structured data.",
+              blurb: "See which parts of this checklist Hone records as structured fields.",
             },
             {
               href: "/features/treatment-memory",
@@ -200,7 +200,7 @@ export default function ChecklistArticlePage() {
 
         <WalkthroughCTA
           title="See structured charting in Hone."
-          body="We'll walk through charting a session so every item here is captured cleanly, and reply within one business day."
+          body="We'll walk through charting a session and show which parts of this checklist Hone structures — areas and laterality per area, with machine settings, probe, lot and response on the settings block — and reply within one business day."
         />
       </main>
       <SiteFooter />
