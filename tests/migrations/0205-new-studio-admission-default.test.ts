@@ -465,9 +465,30 @@ describe("the comments stop defining non-null set_at as an owner's choice", () =
       "m",
     ).exec(SQL);
     expect(stmt, `${col} has no comment statement`).toBeTruthy();
-    const literals = [...`${stmt![1]}'`.matchAll(/'((?:[^']|'')*)'/g)].map((m) =>
-      m[1].replace(/''/g, "'"),
-    );
+    // TOKENIZE STRICTLY. A bare matchAll over quotes reads ANY quoted text in
+    // the statement region as catalog content, so a future
+    //   -- 'NOT VALIDATED AT INSERT; no INSERT trigger'
+    // sitting between the literals would satisfy the assertions below while
+    // PostgreSQL stored none of it. Review caught that: the helper was
+    // byte-equivalent for THIS source layout, not for every valid one.
+    //
+    // So walk the body: skip whitespace and SQL comments ONLY BETWEEN literals,
+    // consume each literal atomically (which is why `--` or `/*` inside a
+    // comment string is safe), and REJECT anything else - a concatenation
+    // operator, a function call, an identifier - rather than ignoring it.
+    const literals: string[] = [];
+    let rest = `${stmt![1]}'`;
+    for (;;) {
+      rest = rest.replace(/^(?:\s+|--[^\n]*|\/\*[\s\S]*?\*\/)+/, "");
+      if (rest.length === 0) break;
+      const lit = /^'((?:[^']|'')*)'/.exec(rest);
+      expect(
+        lit,
+        `${col}'s comment has a non-literal token: ${JSON.stringify(rest.slice(0, 48))}`,
+      ).toBeTruthy();
+      literals.push(lit![1].replace(/''/g, "'"));
+      rest = rest.slice(lit![0].length);
+    }
     expect(literals.length, `${col}'s comment parsed to no literals`).toBeGreaterThan(0);
     return literals.join("");
   };

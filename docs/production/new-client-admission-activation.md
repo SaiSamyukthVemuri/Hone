@@ -75,10 +75,12 @@ separates an INITIALIZED authority from a row that never had one is
 `new_client_admission_mode_set_at`.
 
 **Since 0205, non-null `set_at` does NOT mean "an owner chose".** It means the
-persisted admission authority **has been initialized**. Two writers initialize
-it — the column default at creation, and an owner's command — and those two are
-what the table below describes; it is a reading of what they produce, not an
-exhaustive account of what the column can hold (see the limits under it):
+persisted admission authority **has been initialized**. Through the product, two
+writers initialize it — the column default at creation, and an owner's command —
+and those two are what the table below describes. They are **not** the only way
+these columns can be written: nothing guards INSERT, so the table is a reading of
+what those two produce rather than an account of what the columns can hold (see
+the limits under it):
 
 | `set_at` | `set_by` | what the row is |
 |---|---|---|

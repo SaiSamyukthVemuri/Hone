@@ -749,11 +749,19 @@ describe("the activation document matches what the source actually does", () => 
     //      which reads exhaustive for a column an ungated INSERT can write.
     //      Both now point at and describe the table correctly.
     //
-    // What survived all five is the only thing the repair needs: a row created
+    //   6. THE WRITER COUNT, which (5) had only half-fixed. The lead-in still
+    //      said "Two writers initialize it" -- a claim about WRITERS -- while
+    //      the qualifier I added spoke only about VALUES the column can hold.
+    //      Since nothing guards INSERT, a direct INSERT is a third writer, so
+    //      the count was still wrong. It now says those two are the writers
+    //      THROUGH THE PRODUCT and that they are not the only way these
+    //      columns can be written.
+    //
+    // What survived all six is the only thing the repair needs: a row created
     // by a path that omits these columns arrives stamped and unattributed. No
     // assertion in this describe block changed, and no other region of the
     // document moved.
-    ).toBe("fa14bddc38795438ced3de597fe50ddbf5b5e8c6a0e23552eae59a22e1441372");
+    ).toBe("628cae7728907a6774057592467422a6df0c42dc7205d7fedd9a885dab4a56f5");
 
     // The record file is evidence, and it must SAY so. This is a deletion guard
     // on its precedence header, not an interpretation of anything logged in it.

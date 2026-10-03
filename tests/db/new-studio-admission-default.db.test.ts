@@ -106,6 +106,71 @@ describe("0205: a studio created now is SYSTEM-INITIALIZED, not legacy", () => {
   });
 });
 
+describe("the shipped column comments are what the catalog actually holds", () => {
+  // THE SOURCE-CONTRACT TEST CANNOT CLOSE THIS ALONE, which is the point of
+  // doing it here. That test reconstructs the comment by parsing concatenated
+  // SQL literals out of the migration file, and review showed the parse is a
+  // claim about SOURCE LAYOUT: a quoted phrase in a `-- comment` between the
+  // literals would satisfy it while PostgreSQL stored none of it. It is now a
+  // strict tokenizer that rejects non-literal tokens, but the only thing that
+  // CANNOT be fooled by layout is reading col_description() back from the
+  // database that applied the migration. That is what this does.
+  //
+  // What it pins is the disclosure review required: these two strings become
+  // pg_description rows, so psql \d+ and every introspection tool read them
+  // first, and set_by's used to present an unvalidated uuid as resolved audit
+  // provenance. public.studios has no INSERT trigger and set_by has no foreign
+  // key, so a direct INSERT can write any value in either column.
+  const description = async (column: string): Promise<string> => {
+    const { rows } = await adminQuery(
+      `select col_description(a.attrelid, a.attnum) as d
+         from pg_attribute a
+        where a.attrelid = 'public.studios'::regclass
+          and a.attname = $1`,
+      [column],
+    );
+    expect(rows.length, `${column} is not a column of public.studios`).toBe(1);
+    const d = rows[0].d as string | null;
+    expect(d, `${column} carries no catalog comment`).toBeTruthy();
+    return d!;
+  };
+
+  it("both columns disclaim INSERT-time validation IN THE CATALOG", async () => {
+    for (const column of [
+      "new_client_admission_mode_set_at",
+      "new_client_admission_mode_set_by",
+    ]) {
+      const d = await description(column);
+      expect(d, `${column} must disclaim INSERT-time validation`).toMatch(
+        /NOT VALIDATED AT INSERT/,
+      );
+      expect(d, `${column} must name the missing INSERT trigger`).toMatch(
+        /no INSERT trigger/i,
+      );
+    }
+  });
+
+  it("set_by's catalog comment scopes its provenance and claims no exhaustive writer", async () => {
+    const d = await description("new_client_admission_mode_set_by");
+    // auth.uid() provenance is true of the COMMAND, not of the column.
+    expect(d, "auth.uid() provenance must be scoped to the command").toMatch(
+      /set_new_client_admission_mode/,
+    );
+    expect(d, "the guard must be described as policing UPDATE, not creation").toMatch(
+      /polices UPDATE, not creation/,
+    );
+    // The exhaustive-writer claim review removed TWICE: first as "cannot be
+    // anything but NULL", then as "the only writer that sets it". Neither may
+    // return, because the same comment documents the ungated INSERT.
+    expect(d, "set_by must not reclaim a single-writer monopoly").not.toMatch(
+      /only writer that sets it/i,
+    );
+    expect(d, "set_by must keep the no-foreign-key rationale").toMatch(
+      /PostgREST embed ambiguous/,
+    );
+  });
+});
+
 describe("the DEFAULT cannot backfill, and an explicit NULL still means legacy", () => {
   it("an insert that explicitly names set_at NULL keeps NULL", async () => {
     // WHAT THE DEFAULT ALONE CANNOT DO. A column default applies only when the
