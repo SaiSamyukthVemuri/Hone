@@ -116,10 +116,12 @@ export function resolveAdmission(input: {
    * NON-NULL NO LONGER IMPLIES AN OWNER CHOSE. Since 0205 the column carries a
    * `now()` default, so a studio is born stamped and system-initialized at
    * `open` - which is the whole point: a brand-new studio is NOT a legacy row
-   * and must not inherit the cutover ceremony. There are therefore two writers,
-   * not one: this default at INSERT, and `set_new_client_admission_mode` on
-   * every owner change. `new_client_admission_mode_set_by` is what tells them
-   * apart - NULL for system initialization, the resolved practitioner for an
+   * and must not inherit the cutover ceremony. Under Hone's current product
+   * paths, studio creation uses the 0205 default and owner changes use
+   * `set_new_client_admission_mode`. THIS IS NOT AN EXHAUSTIVE ACCOUNT OF
+   * DATABASE WRITERS: explicit INSERT values are not constrained by an INSERT
+   * guard or FK. `new_client_admission_mode_set_by` is what tells the two
+   * product paths apart - NULL for system initialization, the resolved practitioner for an
    * owner's change - and it is NULL at creation because the creating path omits
    * the admission columns, so the column takes its own NULL default. Nothing it
    * could record exists anyway: no practitioner row for THIS studio is present

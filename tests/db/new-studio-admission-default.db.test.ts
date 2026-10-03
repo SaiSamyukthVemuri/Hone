@@ -107,20 +107,26 @@ describe("0205: a studio created now is SYSTEM-INITIALIZED, not legacy", () => {
 });
 
 describe("the shipped column comments are what the catalog actually holds", () => {
-  // THE SOURCE-CONTRACT TEST CANNOT CLOSE THIS ALONE, which is the point of
-  // doing it here. That test reconstructs the comment by parsing concatenated
-  // SQL literals out of the migration file, and review showed the parse is a
-  // claim about SOURCE LAYOUT: a quoted phrase in a `-- comment` between the
-  // literals would satisfy it while PostgreSQL stored none of it. It is now a
-  // strict tokenizer that rejects non-literal tokens, but the only thing that
-  // CANNOT be fooled by layout is reading col_description() back from the
-  // database that applied the migration. That is what this does.
+  // THE CATALOG IS THE ONLY AUTHORITY FOR THIS METADATA, and this suite is now
+  // the only place it is checked. A source-contract test used to reconstruct
+  // these two strings by parsing the migration file, and review defeated that
+  // FOUR times running - a quoted phrase inside an SQL comment; a `';` inside a
+  // comment terminating the statement early; statement-head discovery matching
+  // a commented-out head; and NESTED block comments, which PostgreSQL supports
+  // and a non-greedy `*/` does not. Each repair was beaten by the next finding,
+  // because every one of them needed lexical context that was established too
+  // late. Rather than write a fifth SQL parser, the reconstruction was DELETED.
   //
-  // What it pins is the disclosure review required: these two strings become
+  // col_description() cannot be fooled by source layout at all: it returns what
+  // the server stored after applying the migration. These two strings become
   // pg_description rows, so psql \d+ and every introspection tool read them
   // first, and set_by's used to present an unvalidated uuid as resolved audit
-  // provenance. public.studios has no INSERT trigger and set_by has no foreign
-  // key, so a direct INSERT can write any value in either column.
+  // provenance.
+  //
+  // THIS ALSO FAILS IF 0205 GOES AWAY. With the migration absent the catalog
+  // keeps 0204's text, which says "no owner has chosen a mode", never says
+  // "initialized", and carries no INSERT disclaimer - so the positives and the
+  // negative below both trip. Proven by mutation, not assumed.
   const description = async (column: string): Promise<string> => {
     const { rows } = await adminQuery(
       `select col_description(a.attrelid, a.attnum) as d
@@ -135,68 +141,76 @@ describe("the shipped column comments are what the catalog actually holds", () =
     return d!;
   };
 
-  it("both columns disclaim INSERT-time validation IN THE CATALOG", async () => {
-    for (const column of [
-      "new_client_admission_mode_set_at",
-      "new_client_admission_mode_set_by",
-    ]) {
-      const d = await description(column);
-      expect(d, `${column} must disclaim INSERT-time validation`).toMatch(
-        /NOT VALIDATED AT INSERT/,
-      );
-      expect(d, `${column} must name the missing INSERT trigger`).toMatch(
-        /no INSERT trigger/i,
-      );
-    }
-  });
+  // FOUR PHRASINGS OF ONE DEFECT, all withdrawn after review, pinned together
+  // by MEANING rather than by whichever one I happen to remember. The class is
+  // a quantified claim about writers, and it has come back in a new disguise
+  // every time it was fixed: "cannot be anything but NULL", "the only writer
+  // that sets it", "the only UPDATE the guard admits", "two writers, not one".
+  // None may return to either comment, because both comments document an
+  // INSERT that nothing guards.
+  const MONOPOLY: readonly [RegExp, string][] = [
+    [/cannot be anything but null/i, "calls the NULL structurally forced"],
+    [/only writer that sets it/i, "claims a single-writer monopoly"],
+    [/only update the guard admits/i, "claims a monopoly on admitted UPDATEs"],
+    // No scoping exemption. An earlier version of this entry tried to allow
+    // "two writers" when "product" followed it, which (a) rejected the equally
+    // correct wording that puts the scope FIRST, and (b) kept alive the idea
+    // that a count is fine if qualified. The ruling is no count claim at all,
+    // so the catalog states paths, never a number.
+    [/\btwo writers\b/i, "makes a writer-count claim at all"],
+  ];
 
-  it("set_at's catalog comment says INITIALIZED and does not restore the owner-choice claim", async () => {
-    // Review's repro for the extraction bug smuggled exactly this claim back
-    // into set_at and the DB checks did not notice, because they did not assert
-    // the negative the source contract has asserted since 0204. The catalog is
-    // the authority, so the negative belongs here too.
+  const expectNoMonopoly = (column: string, d: string): void => {
+    for (const [pattern, why] of MONOPOLY) {
+      expect(d, `${column} ${why}: ${pattern}`).not.toMatch(pattern);
+    }
+  };
+
+  it("set_at describes INITIALIZED state, with no owner-choice and no exhaustive origin claim", async () => {
     const d = await description("new_client_admission_mode_set_at");
-    expect(d, "set_at must describe initialization, not an owner's choice").toMatch(
-      /initialized/i,
-    );
+    // Truthful about what non-null now means. 0204's text says none of this.
+    expect(d, "set_at must describe initialization").toMatch(/initialized/i);
     expect(d, "set_at must name set_by as the discriminator").toMatch(
       /new_client_admission_mode_set_by/,
     );
+    // 0204's retired claim, which is exactly what survives if 0205 is absent.
     expect(
       d,
-      "0204's retired owner-choice claim must not return to the catalog",
+      "non-null set_at must NOT be described as an owner's choice",
     ).not.toMatch(/no owner has\s+chosen a mode/i);
+    // INSERT-time limitation stated, not implied.
+    expect(d, "set_at must disclaim INSERT-time validation").toMatch(
+      /NOT VALIDATED AT INSERT/,
+    );
+    expect(d, "set_at must name the missing INSERT trigger").toMatch(
+      /no INSERT trigger/i,
+    );
+    expectNoMonopoly("set_at", d);
   });
 
-  it("set_by's catalog comment scopes its provenance and claims no exhaustive writer", async () => {
+  it("set_by scopes auth.uid() provenance to the command and claims no monopoly", async () => {
     const d = await description("new_client_admission_mode_set_by");
-    // auth.uid() provenance is true of the COMMAND, not of the column.
-    expect(d, "auth.uid() provenance must be scoped to the command").toMatch(
+    // The provenance is a property of the COMMAND, not of the column.
+    expect(d, "set_by must name set_new_client_admission_mode").toMatch(
       /set_new_client_admission_mode/,
     );
-    expect(d, "the guard must be described as policing UPDATE, not creation").toMatch(
+    expect(d, "set_by must say that command RESOLVES the value").toMatch(/resolves/i);
+    expect(d, "set_by must attribute the value to auth.uid()").toMatch(/auth\.uid\(\)/);
+    // No FK, and no INSERT-time validation - both acknowledged.
+    expect(d, "set_by must record that it is not a foreign key").toMatch(
+      /not a foreign key/i,
+    );
+    expect(d, "set_by must disclaim INSERT-time validation").toMatch(
+      /NOT VALIDATED AT INSERT/,
+    );
+    expect(d, "set_by must say the guard polices UPDATE, not creation").toMatch(
       /polices UPDATE, not creation/,
     );
-    // The exhaustive-writer claim review removed TWICE: first as "cannot be
-    // anything but NULL", then as "the only writer that sets it". Neither may
-    // return, because the same comment documents the ungated INSERT.
-    // THREE phrasings of the same exhaustive claim have now been withdrawn:
-    // "cannot be anything but NULL", "the only writer that sets it", and "the
-    // only UPDATE the guard admits" - the last false because this migration's
-    // own repair is an admitted UPDATE, as is any ordinary studios update. Pin
-    // all three, by meaning rather than by one remembered phrase.
-    expect(d, "set_by must not reclaim a single-writer monopoly").not.toMatch(
-      /only writer that sets it/i,
-    );
-    expect(d, "set_by must not claim a monopoly on admitted UPDATEs").not.toMatch(
-      /only UPDATE the guard admits/i,
-    );
-    expect(d, "set_by must not call the NULL structurally forced").not.toMatch(
-      /cannot be anything but NULL/i,
-    );
+    // The lesson 0204 recorded after CI run 36729106946 must survive a rewrite.
     expect(d, "set_by must keep the no-foreign-key rationale").toMatch(
       /PostgREST embed ambiguous/,
     );
+    expectNoMonopoly("set_by", d);
   });
 });
 

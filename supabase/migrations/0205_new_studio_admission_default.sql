@@ -287,16 +287,15 @@ comment on column public.studios.new_client_admission_mode_set_at is
   'changed. NON-NULL means the authority IS initialized - by the system at '
   'studio creation (0205 column default, new_client_admission_mode_set_by '
   'NULL), or by an owner choosing a mode through set_new_client_admission_mode '
-  '(set_by non-null). Through either of those two writers the value is the '
-  'DATABASE clock. NULL means it was never initialized: a pre-0204 row still '
+  '(set_by non-null). Written by either of those product paths the value is '
+  'the DATABASE clock. NULL means it was never initialized: a pre-0204 row still '
   'carrying 0204''s backfill default, for which the legacy/unstamped '
   'transition rule applies. Read set_by to tell system initialization from an '
   'owner''s change - this column alone no longer distinguishes them. NOT '
   'VALIDATED AT INSERT: public.studios has no INSERT trigger, so a direct '
   'INSERT may write any value in either column and nothing checks it. The '
-  'guard polices UPDATE only, so those two writers are the ones this '
-  'description covers - not an exhaustive account of what the column can '
-  'hold.';
+  'guard polices UPDATE only, so this description covers the product paths '
+  'named above - not an exhaustive account of what the column can hold.';
 
 comment on column public.studios.new_client_admission_mode_set_by is
   'WHO set the mode. For a value written through '

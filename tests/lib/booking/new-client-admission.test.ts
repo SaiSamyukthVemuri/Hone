@@ -757,11 +757,20 @@ describe("the activation document matches what the source actually does", () => 
     //      THROUGH THE PRODUCT and that they are not the only way these
     //      columns can be written.
     //
-    // What survived all six is the only thing the repair needs: a row created
+    //   7. THE COUNT ITSELF. (6) scoped "two writers" to the product instead of
+    //      removing it, and the same claim then turned up a FOURTH time in the
+    //      runtime module. The ruling that closed it is that no count belongs
+    //      here at all: the document now names the two product PATHS and says
+    //      explicitly that this is not an exhaustive account of database
+    //      writers. My own sweep for the phrase missed this line because the
+    //      words wrapped across a newline -- the third time a split phrase has
+    //      hidden from a single-line grep in this file's history.
+    //
+    // What survived all seven is the only thing the repair needs: a row created
     // by a path that omits these columns arrives stamped and unattributed. No
     // assertion in this describe block changed, and no other region of the
     // document moved.
-    ).toBe("628cae7728907a6774057592467422a6df0c42dc7205d7fedd9a885dab4a56f5");
+    ).toBe("4af24b5a8f5ed227a500d6f372ea6fd3b72d695d1527ed951231516ce30c1403");
 
     // The record file is evidence, and it must SAY so. This is a deletion guard
     // on its precedence header, not an interpretation of anything logged in it.

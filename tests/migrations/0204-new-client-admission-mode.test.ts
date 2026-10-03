@@ -110,7 +110,13 @@ describe("the value set is closed by the DATABASE", () => {
   });
 });
 
-describe("the command is the only writer", () => {
+// Relabelled under #780. The old title was "the command is the only writer",
+// which is the claim family that PR withdrew four times: public.studios has no
+// INSERT trigger and set_by has no FK, so an INSERT writes either column
+// unopposed, and 0205's repair UPDATEs set_at under its own permit. None of the
+// tests below ever asserted a monopoly - they prove the guard's SHAPE - so only
+// the title was wrong, and a title reads as a finding.
+describe("admission-field UPDATEs need the command's row-scoped permit", () => {
   it("a BEFORE UPDATE trigger guards the three admission fields", () => {
     expect(SQL).toMatch(/create trigger studios_admission_mode_guard\s+before update on public\.studios/);
     for (const field of [
