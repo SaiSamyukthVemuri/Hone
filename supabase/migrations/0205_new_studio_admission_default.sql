@@ -44,12 +44,30 @@
 -- copy of this rule.
 --
 -- WHY set_by STAYS NULL, STRUCTURALLY RATHER THAN BY CONVENTION.
--- The owner practitioner DOES NOT EXIST when the studio row is inserted:
+-- The owner practitioner DOES NOT EXIST when the studio row is inserted.
 -- app/admin/studios/new/actions.ts inserts the studio and a pending_invitation,
--- and the owner's practitioner row is created later by handle_new_user() (0081)
--- on their first sign-in. There is no practitioner id to record at creation, so
--- `set_by` cannot be anything but NULL - which is exactly what makes it the
+-- and nothing provisions a practitioner until the owner authenticates:
+--
+--   * NO TRIGGER creates it. Migration 0141 redefined public.handle_new_user()
+--     as a NO-OP, and 0141 is the last migration to define that function.
+--   * The membership is created or reconciled at authenticated sign-in through
+--     0141's reconciliation path - reconcile_my_pending_invitation() at
+--     /auth/callback, which inserts into public.practitioners via
+--     link_invited_membership() - or at explicit invitation acceptance via
+--     admin_accept_pending_invitation().
+--
+-- Both paths run strictly AFTER the studio INSERT, and both require an
+-- authenticated Auth user that does not exist when an operator creates the
+-- studio. So there is no practitioner id to record at creation and `set_by`
+-- cannot be anything but NULL - which is exactly what makes it the
 -- discriminator the next section describes.
+--
+-- RETIRED ATTRIBUTION. This paragraph said the row "is created later by
+-- handle_new_user() (0081) on their first sign-in." True before 0141, false
+-- since. The CONCLUSION it carried - no practitioner at INSERT, so set_by is
+-- structurally NULL - was and remains correct; only the mechanism was stale.
+-- Recorded because the same stale attribution still exists elsewhere in the
+-- repository, outside this change's surface.
 --
 -- THE THREE-STATE READING THIS ESTABLISHES.
 --

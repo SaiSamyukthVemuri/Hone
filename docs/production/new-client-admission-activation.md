@@ -85,8 +85,11 @@ writers that initialize it:
 | non-null | set | an **owner changed the mode** through `set_new_client_admission_mode`. |
 
 `set_by` is NULL at creation because the owner practitioner does not exist when
-the studio row is inserted — `handle_new_user()` (0081) creates it on the
-owner's first sign-in — so that NULL is structural, not a convention.
+the studio row is inserted. No trigger provisions it — migration 0141 redefined
+`handle_new_user()` as a NO-OP — and the membership is created or reconciled
+only later, at authenticated sign-in (`reconcile_my_pending_invitation()` at
+`/auth/callback`) or at explicit invitation acceptance. Both run strictly after
+the studio INSERT, so that NULL is structural, not a convention.
 
 Effective-admission resolution asks only "initialized or not", so both
 initialized states resolve identically:

@@ -715,14 +715,25 @@ describe("the activation document matches what the source actually does", () => 
     expect(
       createHash("sha256").update(DOC).digest("hex"),
       "the contract file is frozen END TO END: any edit -- preamble, a step, the rollback table, an appended line anywhere -- must fail here until the hash is updated deliberately",
-    // UPDATED DELIBERATELY for the 0205 integration, which is what this pin asks
-    // for. The contract's rollback table defined a stamped studio as one "an owner
-    // has chosen"; 0205 makes that false, because a studio is now born stamped and
-    // system-initialized. The table therefore splits into system-initialized
-    // (set_by NULL) and owner-stamped (set_by set), and #779's one-way-door warning
-    // is carried onto the owner row where the commit point actually applies. No
-    // other region of the document changed.
-    ).toBe("32e300ef16247bc829a1b2867df7e44377b734df327ee532e582c1ba56153b29");
+    // UPDATED DELIBERATELY, twice, which is what this pin asks for.
+    //
+    //   1. The 0205 integration. The contract's rollback table defined a stamped
+    //      studio as one "an owner has chosen"; 0205 makes that false, because a
+    //      studio is now born stamped and system-initialized. The table split
+    //      into system-initialized (set_by NULL) and owner-stamped (set_by set),
+    //      and #779's one-way-door warning moved onto the owner row, where the
+    //      commit point actually applies.
+    //   2. A PROVENANCE CORRECTION, no behaviour. The paragraph explaining why
+    //      set_by is NULL at creation attributed the owner practitioner to
+    //      handle_new_user() (0081) on first sign-in. Migration 0141 redefined
+    //      that function as a NO-OP and moved provisioning to the reconciliation
+    //      path, so the mechanism was stale by sixty-odd migrations. The
+    //      conclusion -- no practitioner at INSERT, so the NULL is structural --
+    //      is unchanged, which is why nothing else in the document moved and no
+    //      assertion in this describe block changed.
+    //
+    // No other region of the document changed in either edit.
+    ).toBe("bbff94c08187213445fcbd0a77463a9dd6369f5e36157c1ff7f42695a84ccb70");
 
     // The record file is evidence, and it must SAY so. This is a deletion guard
     // on its precedence header, not an interpretation of anything logged in it.

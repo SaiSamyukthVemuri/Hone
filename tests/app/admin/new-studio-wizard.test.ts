@@ -66,7 +66,7 @@ describe("the two service-role writes mirror the manual runbook", () => {
     expect(ACTION_CODE).toMatch(/role: "owner"/);
   });
 
-  it("NEVER inserts a practitioners row directly (owner is created by the trigger)", () => {
+  it("NEVER inserts a practitioners row directly (owner is provisioned at sign-in)", () => {
     expect(ACTION_CODE).not.toMatch(/\.from\("practitioners"\)/);
   });
 
@@ -164,8 +164,10 @@ describe("new-client admission is initialized by the DATABASE, not by the wizard
     // Calling `set_new_client_admission_mode` at creation would also be a second
     // implementation -- and it could not work: the command resolves an ACTIVE
     // OWNER practitioner from auth.uid(), and no owner practitioner exists yet
-    // (the test above pins that the wizard never inserts one; handle_new_user,
-    // migration 0081, creates it on the owner's first sign-in).
+    // (the test above pins that the wizard never inserts one; the membership is
+    // created or reconciled later, at authenticated sign-in or explicit
+    // invitation acceptance, through 0141's reconciliation path - NOT by
+    // handle_new_user, which 0141 made a NO-OP).
     expect(ACTION_CODE).not.toContain("set_new_client_admission_mode");
   });
 

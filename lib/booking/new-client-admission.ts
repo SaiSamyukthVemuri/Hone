@@ -121,7 +121,10 @@ export function resolveAdmission(input: {
    * every owner change. `new_client_admission_mode_set_by` is what tells them
    * apart - NULL for system initialization, the resolved practitioner for an
    * owner's change - and it is NULL at creation because the owner practitioner
-   * does not exist yet (handle_new_user, 0081, creates it on first sign-in).
+   * does not exist yet. No trigger provisions it - 0141 made
+   * `handle_new_user()` a NO-OP - and the membership is created or reconciled
+   * only later, at authenticated sign-in or explicit invitation acceptance,
+   * through 0141's reconciliation path.
    *
    * Nothing here reads `set_by`: "initialized or not" is the only question this
    * resolution asks, and both initialized states answer it the same way.
