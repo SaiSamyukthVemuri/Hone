@@ -69,16 +69,6 @@
 -- comments below are rewritten to say so, because 0204's say the older thing
 -- and 0204 is frozen.
 --
--- >>> 0205 BACKFILL CLAIM BEGIN
---
--- EVERYTHING BETWEEN THESE MARKERS IS THE LIVE, OPERATOR-FACING CLAIM, and it is
--- the only part a guard can police. Historical notes about what this paragraph
--- USED to say live below the end marker on purpose: a test that greps the whole
--- header cannot tell a retired claim being QUOTED from one being ASSERTED, and
--- that ambiguity has now broken two assertions in this file. So the region is
--- delimited instead, and the rule is simple - no universal claim about rows
--- keeping `set_at` NULL may appear in here.
---
 -- THE DEFAULT ITSELF CANNOT BACKFILL, AND THAT IS A CLAIM ABOUT THE DEFAULT.
 -- `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` records a default for FUTURE
 -- inserts only; it never rewrites an existing row. That is why the default is
@@ -91,16 +81,21 @@
 -- selects them. A studio created AFTER the census but BEFORE this apply does
 -- NOT: section 3 deliberately stamps it, which is the entire point of section 3.
 --
--- <<< 0205 BACKFILL CLAIM END
+-- HISTORY OF THIS PARAGRAPH, kept because it was wrong twice and the shape of
+-- the error is worth a reader's time. It said "every pre-fix studio keeps
+-- `set_at` NULL", and that the fix is not "an UPDATE". Both were true of the
+-- DEFAULT alone and false of the MIGRATION, which performs two UPDATE
+-- statements per candidate - see the STATEMENT INVENTORY below. An absolute
+-- claim in operator-facing prose, about a migration that does write rows, is
+-- the wrong kind of wrong, so the scope is named above instead.
 --
--- HISTORY, OUTSIDE THE POLICED REGION. An earlier revision of the paragraph
--- above said "every pre-fix studio keeps `set_at` NULL" and that the fix is not
--- "an UPDATE". Both were true of the default alone and false of the migration,
--- which performs two UPDATE statements per candidate - see the STATEMENT
--- INVENTORY below. An absolute claim in operator-facing prose about a migration
--- that does write rows is the wrong kind of wrong, so the scope is named
--- instead. This note quotes the retired wording deliberately; it sits outside
--- the markers so that quoting it cannot satisfy or defeat the guard.
+-- NOTHING MACHINE-CHECKS THIS PROSE, deliberately. Two source-contract tests
+-- used to, and both were withdrawn: a regex can tell neither a quoted retired
+-- claim from an asserted one, nor a reworded universal from a scoped one. "All
+-- pre-fix studios retain `set_at` NULL" defeated the last attempt while every
+-- pattern still passed. Semantic accuracy of prose is a REVIEW responsibility -
+-- which is where it has actually worked, four times - and the tests here assert
+-- the SQL instead.
 --
 -- THE CENSUS-TO-APPLY GAP, AND WHY THIS MIGRATION CARRIES A REPAIR.
 --
