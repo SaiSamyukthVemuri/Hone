@@ -303,8 +303,16 @@ describe("the shipped column comments are what the catalog actually holds", () =
       .split("\n")
       .filter((l) => !l.trimStart().startsWith("--"))
       .join("\n");
+    // CASE-INSENSITIVE AND WHITESPACE-TOLERANT, because SQL is. The first
+    // version of these two matchers was lowercase-and-single-space, so an
+    // ordinary `COMMENT ON TABLE public.studios IS '...'` would execute and not
+    // be counted - review's finding. This is not another attempt at parsing SQL;
+    // it is a regex that was simply wrong about the language, since PostgreSQL
+    // keywords are case-insensitive and any run of whitespace separates them.
     const targets = [
-      ...appliedCode.matchAll(/comment on column public\.studios\.(\w+) is/g),
+      ...appliedCode.matchAll(
+        /\bcomment\s+on\s+column\s+public\.studios\.(\w+)\s+is\b/gi,
+      ),
     ].map((m) => m[1]);
     expect(
       targets,
@@ -314,8 +322,8 @@ describe("the shipped column comments are what the catalog actually holds", () =
       "new_client_admission_mode_set_by",
     ]);
     expect(
-      [...appliedCode.matchAll(/comment on /g)].length,
-      "applied 0205 must not COMMENT anything else - a table, a function, or another column",
+      [...appliedCode.matchAll(/\bcomment\s+on\b/gi)].length,
+      "applied 0205 must not COMMENT anything else - a table, a function, or another column, in any letter case",
     ).toBe(2);
   });
 
