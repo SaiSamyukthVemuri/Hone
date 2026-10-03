@@ -179,11 +179,15 @@ describe("0200 is ATOMIC and arms its own lock timeout", () => {
     // refused once for exactly that.
     const ledger = readFileSync(path.join(ROOT, "docs/production/migration-ledger.md"), "utf8");
     expect(ledger, "the ledger must carry 0200's COMPLETE sha256").toContain(APPLIED_SHA256);
-    expect(ledger, "the ledger's current block must record 0200 as APPLIED").toMatch(
-      // Anchored by SECTION: the match must sit between "## Current state" and
-      // the first "## Previous state", so a stale record in a preserved section
-      // can never satisfy it.
-      /## Current state(?:(?!## Previous state)[\s\S])*?0200_waitlist_redeemed_unbooked_exit\.sql`? \| \*\*APPLIED\*\*/,
+    // NO LONGER ANCHORED TO "## Current state". 0200 is HISTORICAL: the current
+    // block belongs to the newest apply, so a section anchor here trips on the
+    // next one -- exactly the "trip on the next one" pin CLAUDE.md s2 forbids,
+    // and it went red when 0205 was applied. What is durable is that the applied
+    // record SURVIVES in the ledger, in whichever section now holds it, under
+    // its complete hash. The current block's own hosted max is proved centrally
+    // by tests/docs/canonical-production-facts.test.ts.
+    expect(ledger, "the ledger must still record 0200 as APPLIED, in any section").toMatch(
+      /0200_waitlist_redeemed_unbooked_exit\.sql`? \| \*\*APPLIED\*\*/,
     );
   });
 });
