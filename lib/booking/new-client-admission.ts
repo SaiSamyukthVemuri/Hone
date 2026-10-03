@@ -102,16 +102,39 @@ export function resolveAdmission(input: {
   /** The stored column, or null when the row predates 0204. */
   storedMode: string | null | undefined;
   /**
-   * `new_client_admission_mode_set_at`: the audit fact that separates an OWNER'S
-   * CHOICE from 0204's backfilled default.
+   * `new_client_admission_mode_set_at`: the audit fact that separates an
+   * INITIALIZED persisted authority from a row that never had one.
    *
-   * 0204 adds the column as `not null default 'open'`, so every pre-existing row
-   * reads `open` the moment it applies - and nobody chose that.
-   * `set_new_client_admission_mode` is the only supported writer and it always
-   * stamps this column, so NON-NULL means "an owner deliberately set this" and
-   * NULL means "nothing has been chosen yet". Without it the two are
-   * indistinguishable, which is how an owner could press "Accept bookings", be
-   * told it saved, and stay waitlisted until operations edited an env var.
+   * 0204 adds the mode column as `not null default 'open'`, so every
+   * pre-existing row reads `open` the moment it applies - and nobody chose
+   * that. NON-NULL means the persisted authority IS initialized; NULL means it
+   * never was, and that row is a pre-0204 legacy row. Without the distinction
+   * the two are indistinguishable, which is how an owner could press "Accept
+   * bookings", be told it saved, and stay waitlisted until operations edited an
+   * env var.
+   *
+   * NON-NULL NO LONGER IMPLIES AN OWNER CHOSE. Since 0205 the column carries a
+   * `now()` default, so a studio is born stamped and system-initialized at
+   * `open` - which is the whole point: a brand-new studio is NOT a legacy row
+   * and must not inherit the cutover ceremony. Under Hone's current product
+   * paths, studio creation uses the 0205 default and owner changes use
+   * `set_new_client_admission_mode`. THIS IS NOT AN EXHAUSTIVE ACCOUNT OF
+   * DATABASE WRITERS: explicit INSERT values are not constrained by an INSERT
+   * guard or FK. `new_client_admission_mode_set_by` is what tells the two
+   * product paths apart - NULL for system initialization, the resolved practitioner for an
+   * owner's change - and it is NULL at creation because the creating path omits
+   * the admission columns, so the column takes its own NULL default. Nothing it
+   * could record exists anyway: no practitioner row for THIS studio is present
+   * at INSERT, since 0141 made `handle_new_user()` a NO-OP and the membership is
+   * created or reconciled only later, at authenticated sign-in or explicit
+   * invitation acceptance, keyed to a studio_id that does not exist until that
+   * INSERT. Two things this is NOT: not enforced (no FK on the column, no INSERT
+   * trigger on studios - an explicit INSERT could stamp and attribute a row),
+   * and not a claim the owner has no Auth account yet (0141 reconciles existing
+   * accounts too).
+   *
+   * Nothing here reads `set_by`: "initialized or not" is the only question this
+   * resolution asks, and both initialized states answer it the same way.
    */
   storedSetAt: string | null | undefined;
   /** True when the studio row itself could not be read. */
@@ -158,7 +181,9 @@ export function resolveAdmission(input: {
     return { ok: true, mode: input.storedMode, source: "persisted" };
   }
 
-  // UNCHOSEN. `set_at` is null, so this is 0204's backfill and not a decision.
+  // NEVER INITIALIZED. `set_at` is null, so this is a pre-0204 row carrying
+  // 0204's backfill default - not a decision, and not a studio created since
+  // 0205 (those are born stamped and took the `persisted` branch above).
   // The bridge still governs, and it is ONE-WAY: it may escalate an unchosen
   // `open` to waitlist, and it may never de-escalate anything.
   if (input.storedMode === "open" && envWaitlist) {

@@ -32,20 +32,42 @@ const STATEMENTS = SQL.split("\n")
 // structure that proof would exercise, so a reviewer can see the contract
 // without a database and a silent removal fails here first.
 
-describe("0204 is APPLIED, and holds the equality claim", () => {
-  it("hosted equals repo at 0204, with nothing pending", () => {
-    // EQUALITY IS A CURRENT CLAIM, so exactly one file may hold it, and after the
-    // 2026-10-01 apply this is that file. 0203 was narrowed to a floor in the same
-    // change, the way 0202, 0201, 0200, 0199 and 0198 were narrowed before it.
-    // WHOEVER APPLIES 0205 MOVES THIS BLOCK: narrow 0204 to a floor and let the new
-    // head take the equality. Leaving it here would go red on that apply, which is
-    // the whole reason the claim travels rather than being restated everywhere.
+describe("0204 is APPLIED, and holds the HOSTED equality claim", () => {
+  it("hosted equals 0204, and the repo has moved above it (migration-first pending)", () => {
+    // THE HOSTED EQUALITY STAYS HERE, and that is the half this file owns.
+    // Exactly one file may hold it; after the 2026-10-01 apply this is that
+    // file, and 0203 was narrowed to a floor in the same change. Nothing in
+    // this branch applies anything, so hosted is STILL 0204 and this claim is
+    // still exactly true. WHOEVER APPLIES 0205 MOVES IT: narrow 0204 to a floor
+    // and let the new head take the equality.
+    //
+    // WHAT CHANGED IS ONLY THE REPO SIDE. This block also pinned
+    // `repo_migration_max`, `repo_equals_hosted`, the whole pending list and the
+    // next free number to the PARITY shape — and a branch that authors the next
+    // migration is not at parity, it is at MIGRATION-FIRST PENDING, which is the
+    // ordinary pre-apply position rather than drift. Pinning parity made this
+    // file red for a migration it says nothing about, which is the "trip on the
+    // next one" pin CLAUDE.md s2 forbids and the eighteen-file sweep that took
+    // 0163, 0164 and 0165 red after push.
+    //
+    // So the repo side is asserted as the RELATION, which is durable in both
+    // shapes: hosted never exceeds repo, and everything pending sits above
+    // hosted. The exact pending suffix is proved centrally, against the derived
+    // state, by tests/docs/canonical-production-facts.test.ts.
     const state = migrationState();
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0205");
+    expect(
+      Number(state.repo_migration_max),
+      "hosted must never exceed the repository: that is a remote-only migration",
+    ).toBeGreaterThanOrEqual(Number(state.hosted_migration_max));
+    expect(
+      state.pending_migrations.every((v) => Number(v) > Number(VERSION)),
+      "something at or below this applied migration is listed as pending",
+    ).toBe(true);
+    expect(
+      Number(state.next_free_migration),
+      "the next free number must sit above the repository maximum",
+    ).toBeGreaterThan(Number(state.repo_migration_max));
   });
 
   it("is recorded in the ledger's CURRENT block as APPLIED, under its full sha256", () => {
@@ -88,7 +110,13 @@ describe("the value set is closed by the DATABASE", () => {
   });
 });
 
-describe("the command is the only writer", () => {
+// Relabelled under #780. The old title was "the command is the only writer",
+// which is the claim family that PR withdrew four times: public.studios has no
+// INSERT trigger and set_by has no FK, so an INSERT writes either column
+// unopposed, and 0205's repair UPDATEs set_at under its own permit. None of the
+// tests below ever asserted a monopoly - they prove the guard's SHAPE - so only
+// the title was wrong, and a title reads as a finding.
+describe("admission-field UPDATEs need the command's row-scoped permit", () => {
   it("a BEFORE UPDATE trigger guards the three admission fields", () => {
     expect(SQL).toMatch(/create trigger studios_admission_mode_guard\s+before update on public\.studios/);
     for (const field of [
