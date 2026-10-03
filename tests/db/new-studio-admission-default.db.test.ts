@@ -141,6 +141,30 @@ describe("the shipped column comments are what the catalog actually holds", () =
     return d!;
   };
 
+  // THE EXACT CATALOG VALUE, PINNED. The semantic assertions below are
+  // ENUMERATIVE: each names one way the text has been wrong. Review showed that
+  // is not the same as enforcing the invariant - "These are the only writers"
+  // or "there are three writers" would be equally false and would satisfy every
+  // pattern, because a pattern list can only recognise the phrasings someone
+  // already thought of. That is the same instrument failure that defeated four
+  // source parsers on this branch.
+  //
+  // So the complete check is equality against the approved value. ANY edit to
+  // either comment fails here until the expectation is updated in the same
+  // commit, which puts a reviewer in front of the new wording - the only
+  // mechanism that has actually caught this defect, five times now.
+  //
+  // These strings are NOT derived from the migration file. Deriving them is
+  // exactly the parsing that was deleted; this is an independent expectation
+  // compared against what the server stored. To change a comment deliberately,
+  // apply the migration locally and read the value back:
+  //   select col_description(a.attrelid, a.attnum) from pg_attribute a
+  //    where a.attrelid = 'public.studios'::regclass and a.attname = '<col>';
+  const EXPECTED: Readonly<Record<string, string>> = {
+    new_client_admission_mode_set_at: "When the persisted new-client admission authority was last initialized or changed. NON-NULL means the authority IS initialized - by the system at studio creation (0205 column default, new_client_admission_mode_set_by NULL), or by an owner choosing a mode through set_new_client_admission_mode (set_by non-null). Written by either of those product paths the value is the DATABASE clock. NULL means it was never initialized: a pre-0204 row still carrying 0204's backfill default, for which the legacy/unstamped transition rule applies - as it does to a row whose INSERT supplied NULL explicitly, which is possible for the reason given below. Read set_by to tell system initialization from an owner's change - this column alone no longer distinguishes them. NOT VALIDATED AT INSERT: public.studios has no INSERT trigger, so a direct INSERT may write any value in either column and nothing checks it. The guard polices UPDATE only, so this description covers the product paths named above - not an exhaustive account of what the column can hold.",
+    new_client_admission_mode_set_by: "WHO set the mode. For a value written through set_new_client_admission_mode - which RESOLVES this value from auth.uid() rather than accepting one - this is the practitioner the DATABASE resolved from auth.uid() at that moment, never an id the browser supplied. NULL means no owner has changed the mode: either the row was system-initialized at studio creation (set_at non-null) or it predates 0204 entirely (set_at NULL), and set_at is what separates those two. NOT VALIDATED AT INSERT, AND THIS MATTERS FOR AUDIT: there is no foreign key and no INSERT trigger on public.studios, so a direct INSERT may write any uuid here - one identifying no practitioner, or a practitioner of another studio - and nothing refuses it. A non-null value is trustworthy provenance only for a row whose mode was set through that command; the scoped permit guard polices UPDATE, not creation. Deliberately NOT a foreign key: a second studios<->practitioners relationship would make the established practitioners -> studio:studios(*) PostgREST embed ambiguous. Integrity for owner changes comes from set_new_client_admission_mode plus that guard, not from a constraint, and the value outlives the practitioner row.",
+  };
+
   // FOUR PHRASINGS OF ONE DEFECT, all withdrawn after review, pinned together
   // by MEANING rather than by whichever one I happen to remember. The class is
   // a quantified claim about writers, and it has come back in a new disguise
@@ -166,8 +190,48 @@ describe("the shipped column comments are what the catalog actually holds", () =
     }
   };
 
+  it("NO column comment on public.studios carries the withdrawn claim family", async () => {
+    // F4 from independent verification. The two tests below read only the two
+    // columns they name, so a comment injected on a THIRD column shipped
+    // unguarded - the demonstrated case added
+    // `comment on column public.studios.new_client_admission_mode is
+    //  'INJECTED: ... the only writer that sets it and cannot be anything but
+    //  null.'` and every assertion still passed.
+    //
+    // This sweeps the whole table instead of enumerating columns, so a new
+    // column or a new comment is covered the moment it exists.
+    //
+    // KNOWN EXCEPTION, deliberately not pinned here: 0204's comment on
+    // new_client_admission_mode claims "no role holds direct UPDATE on this
+    // table", which is measurably FALSE - anon, authenticated, service_role and
+    // postgres all hold UPDATE on that column. 0204 is applied and frozen, so
+    // correcting it needs its own forward migration; it is raised separately and
+    // is out of this change's scope. None of the patterns below match it, so
+    // this guard does not red on it.
+    const { rows } = await adminQuery(
+      `select a.attname as col, col_description(a.attrelid, a.attnum) as d
+         from pg_attribute a
+        where a.attrelid = 'public.studios'::regclass
+          and a.attnum > 0
+          and not a.attisdropped
+          and col_description(a.attrelid, a.attnum) is not null
+        order by a.attname`,
+    );
+    expect(
+      rows.length,
+      "public.studios should carry commented columns; zero means this sweep is vacuous",
+    ).toBeGreaterThan(0);
+    for (const row of rows) {
+      expectNoMonopoly(`studios.${row.col as string}`, row.d as string);
+    }
+  });
+
   it("set_at describes INITIALIZED state, with no owner-choice and no exhaustive origin claim", async () => {
     const d = await description("new_client_admission_mode_set_at");
+    // The complete check. Everything after it is a better error message.
+    expect(d, "set_at's catalog comment is not the approved value").toBe(
+      EXPECTED.new_client_admission_mode_set_at,
+    );
     // Truthful about what non-null now means. 0204's text says none of this.
     expect(d, "set_at must describe initialization").toMatch(/initialized/i);
     expect(d, "set_at must name set_by as the discriminator").toMatch(
@@ -190,6 +254,24 @@ describe("the shipped column comments are what the catalog actually holds", () =
 
   it("set_by scopes auth.uid() provenance to the command and claims no monopoly", async () => {
     const d = await description("new_client_admission_mode_set_by");
+    // The complete check. Everything after it is a better error message.
+    expect(d, "set_by's catalog comment is not the approved value").toBe(
+      EXPECTED.new_client_admission_mode_set_by,
+    );
+    // RESTORED after review. The deleted source tests asserted these two and
+    // the first replacement did not, so they could have regressed silently:
+    // set_by must still distinguish system initialization from a pre-0204 row,
+    // and must name the missing INSERT trigger rather than only disclaim
+    // validation generically.
+    expect(d, "set_by must distinguish system initialization").toMatch(
+      /system-initialized|system initialization/i,
+    );
+    expect(d, "set_by must still identify the pre-0204 legacy case").toMatch(
+      /predates 0204|set_at NULL/i,
+    );
+    expect(d, "set_by must name the missing INSERT trigger").toMatch(
+      /no INSERT trigger/i,
+    );
     // The provenance is a property of the COMMAND, not of the column.
     expect(d, "set_by must name set_new_client_admission_mode").toMatch(
       /set_new_client_admission_mode/,
@@ -680,7 +762,7 @@ describe("the apply-time repair closes the census-to-apply window", () => {
 //
 // THE EMPTY-DATABASE CASE IS PROVED BY THE APPLY ITSELF, not here: on every
 // fresh chain `studios` is empty when 0205 runs, and the migration emits
-// "studios is empty; lineage gate not applicable and nothing to repair" followed
+// "studios is empty; nothing to repair, and neither the lineage gate nor the guard probe is applicable" followed
 // by "stamped 0 studio(s)". That is visible in `supabase db reset` output and in
 // CI's db lane. It cannot be staged in this file, because `studios` cannot be
 // emptied even transactionally — `appointment_audit_studio_fk` refuses.

@@ -25,7 +25,15 @@
 -- became available - a cutover ceremony that belongs only to studios that
 -- really did predate 0204.
 --
--- THE FIX IS ONE DEFAULT, AND IT TOUCHES NO LOGIC.
+-- THE FIX IS ONE DEFAULT, AND IT REWRITES NO LOGIC - BUT IT DOES CHANGE
+-- BEHAVIOUR. No function, trigger, policy or grant is edited. What changes is
+-- which branch existing logic takes: `resolveAdmission` answers `persisted` for
+-- any stamped row before it consults the legacy bridge, so
+-- NEW_CLIENT_WAITLIST_STUDIO_SLUGS becomes permanently inert for every studio
+-- created from here on. That is the intended effect, it is recorded in
+-- docs/production/new-client-admission-activation.md, and it is why
+-- e2e/new-client-waitlist.spec.ts and the commit-authority DB suite now have to
+-- unstamp a studio before they can exercise the legacy path at all.
 --
 -- `set_new_client_admission_mode` reads `set_at` FROM THE ROW, under the lock it
 -- already holds. Giving the column a default means a new row arrives already
@@ -78,8 +86,10 @@
 --     need not identify any practitioner at all, let alone a member of this
 --     studio.
 --   * NO GUARD RUNS ON INSERT. studios_admission_mode_guard is BEFORE UPDATE.
---     Every trigger on public.studios is an UPDATE trigger; the table has no
---     INSERT trigger of any kind, so creation is ungated.
+--     Every USER trigger on public.studios is an UPDATE trigger, and the table
+--     has no INSERT trigger of any kind, so creation is ungated. (Stated of
+--     user triggers deliberately: the table also carries internal
+--     referential-integrity triggers, which fire on DELETE and are not guards.)
 --
 -- So a service-role INSERT, or a future creation path that sets the column
 -- explicitly, can produce a row that is stamped at creation AND attributed to
@@ -290,7 +300,9 @@ comment on column public.studios.new_client_admission_mode_set_at is
   '(set_by non-null). Written by either of those product paths the value is '
   'the DATABASE clock. NULL means it was never initialized: a pre-0204 row still '
   'carrying 0204''s backfill default, for which the legacy/unstamped '
-  'transition rule applies. Read set_by to tell system initialization from an '
+  'transition rule applies - as it does to a row whose INSERT supplied NULL '
+  'explicitly, which is possible for the reason given below. Read set_by to '
+  'tell system initialization from an '
   'owner''s change - this column alone no longer distinguishes them. NOT '
   'VALIDATED AT INSERT: public.studios has no INSERT trigger, so a direct '
   'INSERT may write any value in either column and nothing checks it. The '
@@ -350,7 +362,14 @@ declare
   -- 0204. Unlike `created_at`, a row cannot rewrite its own id -- see the header
   -- for why the timestamp boundary this replaced was not sound.
   --
-  -- This list is CLOSED. It must never grow: adding an id would protect a studio
+  -- This list is CLOSED, and it must not SHRINK either. The lineage gate below
+  -- aborts unless it sees all seven, so DELETING a census studio makes this
+  -- migration permanently unappliable - it would have to be edited, and after an
+  -- apply it is frozen. No product path can delete a studio (studios carries no
+  -- DELETE policy), but admin/service-role tooling can; anyone removing one
+  -- before this migration is applied must reconcile this list in the same change.
+  --
+  -- It must never grow either: adding an id would protect a studio
   -- the census never saw, which is exactly the legacy misclassification 0205
   -- exists to remove.
   k_census constant uuid[] := array[

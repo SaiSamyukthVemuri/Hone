@@ -52,6 +52,25 @@ const CODE = SQL.split("\n")
   .filter((l) => !l.trimStart().startsWith("--"))
   .join("\n");
 
+// CODE strips LINE comments only, and that is a hole unless block comments are
+// absent: independent verification wrapped this migration's entire fix in
+// `/* */`, substituted a different ALTER, and every source assertion still
+// passed because the real statements had become invisible prose.
+//
+// The fix is NOT a smarter stripper. A correct one needs nesting and
+// string-awareness - PostgreSQL nests `/* */` - and four attempts at exactly
+// that kind of parser were defeated on this branch. Instead the migration is
+// required to use `--` only, which makes the simple stripper sound by
+// construction. If a block comment is ever wanted here, this guard fails first
+// and the next author has to reckon with the stripper rather than silently
+// outrun it.
+it("uses LINE comments only, so the CODE stripper above cannot be outrun", () => {
+  expect(
+    SQL,
+    "0205 must not use block comments: CODE strips only `--`, so a `/* */` region would hide executable SQL from every assertion in this file",
+  ).not.toMatch(/\/\*/);
+});
+
 /**
  * The apply-time repair block, as CODE.
  *

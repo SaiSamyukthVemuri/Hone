@@ -46,7 +46,7 @@ describe("0198 position in the chain", () => {
     expect(
       above.every((v) => Number(v) > Number(VERSION)),
       "versionsAbove returned a version at or below its own",
-    ).toBe(true);;
+    ).toBe(true);
   });
 
   it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
