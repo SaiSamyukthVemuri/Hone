@@ -7,6 +7,7 @@ import {
   type ProviderRegistryEntry,
 } from "@/lib/conversion/provider-registry";
 import { TrackingProviderForm } from "./TrackingProviderForm";
+import { SectionLabel } from "@/components/ui/section-label";
 
 type Result = { ok: true; last4?: string | null } | { ok: false; error: string };
 type Action = (formData: FormData) => Promise<Result>;
@@ -24,9 +25,7 @@ function HelpLinks({ entry }: { entry: ProviderRegistryEntry }) {
   if (entry.helpLinks.length === 0) return null;
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-        Official help
-      </span>
+      <SectionLabel>Official help</SectionLabel>
       <ul className="flex flex-col gap-0.5">
         {entry.helpLinks.map((l) => (
           <li key={l.href}>
@@ -133,9 +132,7 @@ function ComingSoonPanel({ entry }: { entry: ProviderRegistryEntry }) {
       </div>
       <p className="text-sm text-neutral-700 dark:text-neutral-300">{entry.purpose}</p>
       <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Future requirements
-        </span>
+        <SectionLabel>Future requirements</SectionLabel>
         <ul className="ml-4 list-disc text-sm text-neutral-700 dark:text-neutral-300">
           {entry.requiredFields.map((f) => (
             <li key={f}>{f}</li>

@@ -15,6 +15,7 @@ import {
   ToggleActiveSubmitButton,
 } from "./ServiceFormControls";
 import { ServiceOrderList } from "./ServiceOrderList";
+import { SectionLabel } from "@/components/ui/section-label";
 
 function formatPrice(cents: number | null): string {
   if (cents == null) return "Not set";
@@ -281,9 +282,7 @@ function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: bo
   return (
     <section className="flex flex-col gap-3">
       <div>
-        <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Add a new service
-        </h3>
+        <SectionLabel as="h3">Add a new service</SectionLabel>
         <p className="mt-1 text-xs text-neutral-500">
           New services appear on your public booking page right away.
         </p>
@@ -435,10 +434,10 @@ function FieldLabel({
 }) {
   return (
     <label className="flex min-w-0 flex-col gap-1.5">
-      <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+      <SectionLabel size="caption">
         {label}
         {required && <span className="text-neutral-400"> *</span>}
-      </span>
+      </SectionLabel>
       {children}
       {hint && (
         <span className="text-[11px] text-neutral-500">{hint}</span>
