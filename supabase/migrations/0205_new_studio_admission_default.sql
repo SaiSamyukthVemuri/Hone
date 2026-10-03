@@ -44,9 +44,9 @@
 -- copy of this rule.
 --
 -- WHY set_by STAYS NULL, STRUCTURALLY RATHER THAN BY CONVENTION.
--- The owner practitioner DOES NOT EXIST when the studio row is inserted.
+-- No practitioner row FOR THIS STUDIO exists when the studio row is inserted.
 -- app/admin/studios/new/actions.ts inserts the studio and a pending_invitation,
--- and nothing provisions a practitioner until the owner authenticates:
+-- and nothing provisions a membership for it until the invited owner acts:
 --
 --   * NO TRIGGER creates it. Migration 0141 redefined public.handle_new_user()
 --     as a NO-OP, and 0141 is the last migration to define that function.
@@ -56,18 +56,32 @@
 --     link_invited_membership() - or at explicit invitation acceptance via
 --     admin_accept_pending_invitation().
 --
--- Both paths run strictly AFTER the studio INSERT, and both require an
--- authenticated Auth user that does not exist when an operator creates the
--- studio. So there is no practitioner id to record at creation and `set_by`
--- cannot be anything but NULL - which is exactly what makes it the
--- discriminator the next section describes.
+-- Both paths run strictly AFTER the studio INSERT, and both act on a membership
+-- SCOPED TO THE INVITED STUDIO: link_invited_membership() keys its lookup and
+-- its insert on (studio_id, user_id) taken from the pending invitation. The
+-- studio_id does not exist until this very INSERT, so no membership for it can
+-- exist while it is being created. There is therefore no practitioner id to
+-- record, and `set_by` cannot be anything but NULL - which is exactly what
+-- makes it the discriminator the next section describes.
 --
--- RETIRED ATTRIBUTION. This paragraph said the row "is created later by
--- handle_new_user() (0081) on their first sign-in." True before 0141, false
--- since. The CONCLUSION it carried - no practitioner at INSERT, so set_by is
--- structurally NULL - was and remains correct; only the mechanism was stale.
--- Recorded because the same stale attribution still exists elsewhere in the
--- repository, outside this change's surface.
+-- TWO RETRACTIONS, because this paragraph has now been wrong in two different
+-- directions and the next reader should not have to rediscover either.
+--
+--   1. MECHANISM. It said the row "is created later by handle_new_user() (0081)
+--      on their first sign-in." True before 0141, false since. The same stale
+--      attribution still exists elsewhere in the repository, outside this
+--      change's surface.
+--   2. PREMISE. The repair for (1) then claimed both paths "require an
+--      authenticated Auth user that does not exist when an operator creates the
+--      studio." That is a STRONGER claim and it is false - 0141 exists
+--      precisely to reconcile invitations for EXISTING Auth accounts, so an
+--      invited email may already be signed up, and may already hold
+--      practitioner rows in OTHER studios. Account existence was never
+--      load-bearing; per-studio membership is.
+--
+-- The CONCLUSION survived both - no membership for this studio at INSERT, so
+-- set_by is structurally NULL - which is why neither retraction changed any
+-- behaviour or any of the three states below.
 --
 -- THE THREE-STATE READING THIS ESTABLISHES.
 --

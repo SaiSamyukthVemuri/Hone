@@ -84,12 +84,19 @@ writers that initialize it:
 | non-null | NULL | **system-initialized at studio creation** by 0205's column default. Persisted `open`, no cutover ceremony. |
 | non-null | set | an **owner changed the mode** through `set_new_client_admission_mode`. |
 
-`set_by` is NULL at creation because the owner practitioner does not exist when
-the studio row is inserted. No trigger provisions it — migration 0141 redefined
-`handle_new_user()` as a NO-OP — and the membership is created or reconciled
-only later, at authenticated sign-in (`reconcile_my_pending_invitation()` at
-`/auth/callback`) or at explicit invitation acceptance. Both run strictly after
-the studio INSERT, so that NULL is structural, not a convention.
+`set_by` is NULL at creation because no practitioner row **for this studio**
+exists when the studio row is inserted. No trigger provisions one — migration
+0141 redefined `handle_new_user()` as a NO-OP — and the membership is created or
+reconciled only later, at authenticated sign-in
+(`reconcile_my_pending_invitation()` at `/auth/callback`) or at explicit
+invitation acceptance. Both run strictly after the studio INSERT and both act on
+a membership keyed to the invited `studio_id`, which does not exist until that
+INSERT, so that NULL is structural, not a convention.
+
+Note the claim is deliberately narrow. It is **not** that the owner has no Auth
+account yet: 0141 exists to reconcile invitations for existing accounts too, so
+an invited owner may already be signed up and may already hold practitioner rows
+in other studios. Per-studio membership is what is load-bearing here.
 
 Effective-admission resolution asks only "initialized or not", so both
 initialized states resolve identically:

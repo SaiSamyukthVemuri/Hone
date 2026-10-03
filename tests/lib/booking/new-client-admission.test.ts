@@ -727,13 +727,18 @@ describe("the activation document matches what the source actually does", () => 
     //      set_by is NULL at creation attributed the owner practitioner to
     //      handle_new_user() (0081) on first sign-in. Migration 0141 redefined
     //      that function as a NO-OP and moved provisioning to the reconciliation
-    //      path, so the mechanism was stale by sixty-odd migrations. The
-    //      conclusion -- no practitioner at INSERT, so the NULL is structural --
-    //      is unchanged, which is why nothing else in the document moved and no
-    //      assertion in this describe block changed.
+    //      path, so the mechanism was stale by sixty-odd migrations.
+    //   3. NARROWING THAT CORRECTION'S OWN PREMISE. (2) leaned on the owner
+    //      having no Auth account at studio creation. False: 0141 reconciles
+    //      invitations for EXISTING accounts, so an invited owner may already be
+    //      signed up and already hold practitioner rows in other studios. The
+    //      paragraph now claims only what is true and sufficient -- no
+    //      membership for THIS studio_id, which does not exist until the INSERT.
     //
-    // No other region of the document changed in either edit.
-    ).toBe("bbff94c08187213445fcbd0a77463a9dd6369f5e36157c1ff7f42695a84ccb70");
+    // The conclusion -- no membership at INSERT, so the NULL is structural --
+    // survived all three, which is why no assertion in this describe block
+    // changed and no other region of the document moved.
+    ).toBe("e19009fb6cc114d8aa7af939b44b36bf6ad9d12cf4cbe6b1593f7cc1fa10aa04");
 
     // The record file is evidence, and it must SAY so. This is a deletion guard
     // on its precedence header, not an interpretation of anything logged in it.
