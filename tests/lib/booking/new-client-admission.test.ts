@@ -731,14 +731,22 @@ describe("the activation document matches what the source actually does", () => 
     //   3. NARROWING THAT CORRECTION'S OWN PREMISE. (2) leaned on the owner
     //      having no Auth account at studio creation. False: 0141 reconciles
     //      invitations for EXISTING accounts, so an invited owner may already be
-    //      signed up and already hold practitioner rows in other studios. The
-    //      paragraph now claims only what is true and sufficient -- no
-    //      membership for THIS studio_id, which does not exist until the INSERT.
+    //      signed up and already hold practitioner rows in other studios.
+    //   4. DROPPING THE MODALITY ALTOGETHER. (3) still called the NULL
+    //      STRUCTURAL and said set_by "cannot" be anything else. It can:
+    //      the column has no FK and public.studios has NO INSERT TRIGGER, so an
+    //      explicit INSERT can stamp and attribute a row at creation. The
+    //      paragraph now says what is actually true -- the creating path OMITS
+    //      the columns and takes the NULL default -- and states both limits:
+    //      unenforced, and not a claim about Auth-account existence. The three
+    //      states are documented as a READING, not a schema-guaranteed
+    //      partition.
     //
-    // The conclusion -- no membership at INSERT, so the NULL is structural --
-    // survived all three, which is why no assertion in this describe block
-    // changed and no other region of the document moved.
-    ).toBe("e19009fb6cc114d8aa7af939b44b36bf6ad9d12cf4cbe6b1593f7cc1fa10aa04");
+    // What survived all four is the only thing the repair needs: a row created
+    // by a path that omits these columns arrives stamped and unattributed. No
+    // assertion in this describe block changed, and no other region of the
+    // document moved.
+    ).toBe("4b9c776eff015e60b168d252495fc278abe41391cb49c584d6cd5cbd2c0f7335");
 
     // The record file is evidence, and it must SAY so. This is a deletion guard
     // on its precedence header, not an interpretation of anything logged in it.

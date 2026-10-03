@@ -120,14 +120,16 @@ export function resolveAdmission(input: {
    * not one: this default at INSERT, and `set_new_client_admission_mode` on
    * every owner change. `new_client_admission_mode_set_by` is what tells them
    * apart - NULL for system initialization, the resolved practitioner for an
-   * owner's change - and it is NULL at creation because no practitioner row FOR
-   * THIS STUDIO exists when the studio is inserted. No trigger provisions one -
-   * 0141 made `handle_new_user()` a NO-OP - and the membership is created or
-   * reconciled only later, at authenticated sign-in or explicit invitation
-   * acceptance, through 0141's reconciliation path, keyed to a studio_id that
-   * does not exist until that INSERT. Deliberately NOT "the owner has no Auth
-   * account yet": 0141 reconciles existing accounts too, so an invited owner may
-   * already be signed up and hold practitioner rows in other studios.
+   * owner's change - and it is NULL at creation because the creating path omits
+   * the admission columns, so the column takes its own NULL default. Nothing it
+   * could record exists anyway: no practitioner row for THIS studio is present
+   * at INSERT, since 0141 made `handle_new_user()` a NO-OP and the membership is
+   * created or reconciled only later, at authenticated sign-in or explicit
+   * invitation acceptance, keyed to a studio_id that does not exist until that
+   * INSERT. Two things this is NOT: not enforced (no FK on the column, no INSERT
+   * trigger on studios - an explicit INSERT could stamp and attribute a row),
+   * and not a claim the owner has no Auth account yet (0141 reconciles existing
+   * accounts too).
    *
    * Nothing here reads `set_by`: "initialized or not" is the only question this
    * resolution asks, and both initialized states answer it the same way.

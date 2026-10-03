@@ -39,12 +39,21 @@
 -- public.studios, but it is not guaranteed to stay the only one. A column
 -- default makes every future creation path - a second admin surface, a
 -- self-serve signup, a restore, a fixture - inherit the same semantics without
--- re-implementing them. The wizard therefore sets NO admission field and keeps
--- inheriting this default; there is deliberately no second application-only
--- copy of this rule.
+-- re-implementing them, PROVIDED IT OMITS THE ADMISSION COLUMNS. That proviso
+-- is a convention and not a constraint: nothing on the table enforces it at
+-- INSERT, for the reasons set out in the next section. The wizard therefore
+-- sets NO admission field and keeps inheriting this default; there is
+-- deliberately no second application-only copy of this rule.
 --
--- WHY set_by STAYS NULL, STRUCTURALLY RATHER THAN BY CONVENTION.
--- No practitioner row FOR THIS STUDIO exists when the studio row is inserted.
+-- WHY set_by IS NULL AT CREATION - AND WHAT DOES NOT ENFORCE IT.
+-- The mechanism is simply that the only current INSERT into public.studios
+-- OMITS the admission columns, so `set_by` takes its own NULL column default
+-- while `set_at` takes the default this migration adds. Stating that precisely
+-- matters, because the obvious stronger story is false and this comment claimed
+-- it twice.
+--
+-- The supporting fact is real: no membership for the new studio exists at that
+-- moment, so the wizard has nothing it COULD record even if it tried.
 -- app/admin/studios/new/actions.ts inserts the studio and a pending_invitation,
 -- and nothing provisions a membership for it until the invited owner acts:
 --
@@ -60,28 +69,55 @@
 -- SCOPED TO THE INVITED STUDIO: link_invited_membership() keys its lookup and
 -- its insert on (studio_id, user_id) taken from the pending invitation. The
 -- studio_id does not exist until this very INSERT, so no membership for it can
--- exist while it is being created. There is therefore no practitioner id to
--- record, and `set_by` cannot be anything but NULL - which is exactly what
--- makes it the discriminator the next section describes.
+-- exist while it is being created.
 --
--- TWO RETRACTIONS, because this paragraph has now been wrong in two different
--- directions and the next reader should not have to rediscover either.
+-- BUT THAT IS NOT AN INVARIANT, AND THIS COMMENT MUST NOT IMPLY ONE. Nothing
+-- stops an INSERT from writing a non-null `set_by` regardless:
+--
+--   * the column has NO FOREIGN KEY. 0204 added it as a bare `uuid`, so a value
+--     need not identify any practitioner at all, let alone a member of this
+--     studio.
+--   * NO GUARD RUNS ON INSERT. studios_admission_mode_guard is BEFORE UPDATE.
+--     Every trigger on public.studios is an UPDATE trigger; the table has no
+--     INSERT trigger of any kind, so creation is ungated.
+--
+-- So a service-role INSERT, or a future creation path that sets the column
+-- explicitly, can produce a row that is stamped at creation AND attributed to
+-- someone, and the database will accept it. Enforcing the invariant would take
+-- an INSERT-time check - a BEFORE INSERT guard, or a CHECK tying `set_by` to a
+-- NULL `set_at` - which is a BEHAVIOURAL change and is deliberately not part of
+-- this migration.
+--
+-- THE SCOPED CLAIM, which is what everything below actually rests on: for any
+-- creation path that OMITS the admission columns - what the previous section
+-- asks of future paths, and what the only current path does - `set_at` is
+-- stamped by this default and `set_by` is NULL. Sufficient, and true.
+--
+-- THREE RETRACTIONS. This paragraph has been wrong three times in three
+-- different ways, each repair introducing the next error, and the next reader
+-- should not have to rediscover any of them.
 --
 --   1. MECHANISM. It said the row "is created later by handle_new_user() (0081)
 --      on their first sign-in." True before 0141, false since. The same stale
 --      attribution still exists elsewhere in the repository, outside this
 --      change's surface.
---   2. PREMISE. The repair for (1) then claimed both paths "require an
---      authenticated Auth user that does not exist when an operator creates the
---      studio." That is a STRONGER claim and it is false - 0141 exists
---      precisely to reconcile invitations for EXISTING Auth accounts, so an
---      invited email may already be signed up, and may already hold
---      practitioner rows in OTHER studios. Account existence was never
---      load-bearing; per-studio membership is.
+--   2. PREMISE. The repair for (1) claimed both paths "require an authenticated
+--      Auth user that does not exist when an operator creates the studio."
+--      False - 0141 exists precisely to reconcile invitations for EXISTING Auth
+--      accounts, so an invited email may already be signed up, and may already
+--      hold practitioner rows in OTHER studios. Account existence was never
+--      load-bearing.
+--   3. MODALITY. The repair for (2) then said `set_by` "cannot be anything but
+--      NULL" and called that NULL STRUCTURAL rather than conventional. It is
+--      not: no foreign key, no INSERT trigger. The absence of a member explains
+--      why the current path records nothing; it does not FORBID a value. A
+--      correct observation about provenance was inflated into an invariant the
+--      schema does not hold.
 --
--- The CONCLUSION survived both - no membership for this studio at INSERT, so
--- set_by is structurally NULL - which is why neither retraction changed any
--- behaviour or any of the three states below.
+-- What survived all three is the only thing the repair below needs: a row
+-- created by a path that omits these columns arrives stamped and unattributed.
+-- No behaviour, and none of the three states below, changed in any of the
+-- three fixes.
 --
 -- THE THREE-STATE READING THIS ESTABLISHES.
 --
@@ -100,6 +136,15 @@
 -- is what separates system initialization from an owner's change. The column
 -- comments below are rewritten to say so, because 0204's say the older thing
 -- and 0204 is frozen.
+--
+-- A READING, NOT AN ENFORCED PARTITION. These three describe the rows the
+-- system and owner paths actually produce. Because INSERT is ungated, a row
+-- that is stamped at creation AND attributed is representable - it has no
+-- meaning here, and nothing reads `set_by` to decide anything (it appears in
+-- application code only as a type declaration in lib/types/database.ts). It
+-- also cannot leak into the repair below, whose candidate predicate requires
+-- `set_at IS NULL AND set_by IS NULL` and so excludes any forged row on its
+-- first conjunct.
 --
 -- THE DEFAULT ITSELF CANNOT BACKFILL, AND THAT IS A CLAIM ABOUT THE DEFAULT.
 -- `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` records a default for FUTURE
