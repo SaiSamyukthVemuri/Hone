@@ -742,11 +742,18 @@ describe("the activation document matches what the source actually does", () => 
     //      states are documented as a READING, not a schema-guaranteed
     //      partition.
     //
-    // What survived all four is the only thing the repair needs: a row created
+    //   5. TWO CONSISTENCY DEFECTS IN (4)'s OWN EDIT, found by sweep and by
+    //      review. The limit paragraph said the three states were "below" when
+    //      the table is above it -- the limit pointed away from what it limits
+    //      -- and the lead-in said "there are two writers that initialize it",
+    //      which reads exhaustive for a column an ungated INSERT can write.
+    //      Both now point at and describe the table correctly.
+    //
+    // What survived all five is the only thing the repair needs: a row created
     // by a path that omits these columns arrives stamped and unattributed. No
     // assertion in this describe block changed, and no other region of the
     // document moved.
-    ).toBe("4b9c776eff015e60b168d252495fc278abe41391cb49c584d6cd5cbd2c0f7335");
+    ).toBe("fa14bddc38795438ced3de597fe50ddbf5b5e8c6a0e23552eae59a22e1441372");
 
     // The record file is evidence, and it must SAY so. This is a deletion guard
     // on its precedence header, not an interpretation of anything logged in it.

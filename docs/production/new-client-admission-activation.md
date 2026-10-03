@@ -75,8 +75,10 @@ separates an INITIALIZED authority from a row that never had one is
 `new_client_admission_mode_set_at`.
 
 **Since 0205, non-null `set_at` does NOT mean "an owner chose".** It means the
-persisted admission authority **has been initialized**, and there are two
-writers that initialize it:
+persisted admission authority **has been initialized**. Two writers initialize
+it — the column default at creation, and an owner's command — and those two are
+what the table below describes; it is a reading of what they produce, not an
+exhaustive account of what the column can hold (see the limits under it):
 
 | `set_at` | `set_by` | what the row is |
 |---|---|---|
@@ -98,7 +100,7 @@ Two limits on that claim, both deliberate:
 - It is **not enforced**. `set_by` has no foreign key and `public.studios` has
   no INSERT trigger at all, so a service-role INSERT or a future creation path
   could stamp and attribute a row at creation and the database would accept it.
-  The three states below are a reading of what the system and owner paths
+  The three states above are a reading of what the system and owner paths
   produce, not a partition the schema guarantees. Enforcing it would need an
   INSERT-time check, which is a behavioural change and is not part of 0205.
 - It is **not** a claim that the owner has no Auth account yet. 0141 reconciles

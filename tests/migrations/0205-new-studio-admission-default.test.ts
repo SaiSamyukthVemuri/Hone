@@ -441,6 +441,37 @@ describe("it does not touch the legacy transition guard", () => {
 });
 
 describe("the comments stop defining non-null set_at as an owner's choice", () => {
+  // EXTRACT WHAT POSTGRES ACTUALLY STORES, not the source layout. These two
+  // statements are concatenated single-quoted literals, and two separate traps
+  // live in that shape:
+  //
+  //   * A SEMICOLON INSIDE THE STRING. set_by's text contains "...set through
+  //     that command; the scoped permit guard...". The obvious
+  //     /...is([\s\S]*?);/ truncates there, which silently hid everything
+  //     after it - including the no-foreign-key rationale that a test below has
+  //     asserted since 0204. That test passed for the wrong reason until the
+  //     semicolon arrived.
+  //   * A PHRASE SPLIT ACROSS LITERALS. 'them. NOT ' + 'VALIDATED AT INSERT:'
+  //     is one sentence in the catalog and two strings in the file, so a regex
+  //     over the raw source cannot see it at all.
+  //
+  // So: take the statement to its terminating quote-semicolon, pull out the
+  // literals, join them, and collapse '' to '. The result is byte-for-byte what
+  // col_description() returns, which is the thing that ships and the thing the
+  // DB suite reads back.
+  const columnComment = (col: string): string => {
+    const stmt = new RegExp(
+      `comment on column public\\.studios\\.${col} is([\\s\\S]*?)';\\s*$`,
+      "m",
+    ).exec(SQL);
+    expect(stmt, `${col} has no comment statement`).toBeTruthy();
+    const literals = [...`${stmt![1]}'`.matchAll(/'((?:[^']|'')*)'/g)].map((m) =>
+      m[1].replace(/''/g, "'"),
+    );
+    expect(literals.length, `${col}'s comment parsed to no literals`).toBeGreaterThan(0);
+    return literals.join("");
+  };
+
   it("rewrites both column comments forward, because 0204 is frozen", () => {
     const comments = [...SQL.matchAll(/comment on column public\.studios\.(\w+) is/g)].map(
       (m) => m[1],
@@ -451,11 +482,7 @@ describe("the comments stop defining non-null set_at as an owner's choice", () =
   });
 
   it("set_at's comment says INITIALIZED, and names set_by as the discriminator", () => {
-    const c = /comment on column public\.studios\.new_client_admission_mode_set_at is([\s\S]*?);/.exec(
-      SQL,
-    );
-    expect(c, "set_at has no comment").toBeTruthy();
-    const body = c![1];
+    const body = columnComment("new_client_admission_mode_set_at");
     expect(body).toMatch(/initialized/i);
     expect(body).toMatch(/new_client_admission_mode_set_by/);
     // And it must NOT still claim non-null means an owner chose.
@@ -463,22 +490,55 @@ describe("the comments stop defining non-null set_at as an owner's choice", () =
   });
 
   it("set_by's comment distinguishes system initialization from an owner change", () => {
-    const c = /comment on column public\.studios\.new_client_admission_mode_set_by is([\s\S]*?);/.exec(
-      SQL,
-    );
-    expect(c, "set_by has no comment").toBeTruthy();
-    const body = c![1];
+    const body = columnComment("new_client_admission_mode_set_by");
     expect(body).toMatch(/system-initialized|system initialization/i);
     expect(body).toMatch(/predates 0204|set_at NULL/i);
+  });
+
+  it("both comments say INSERT does not validate them, because review found them claiming audit trust", () => {
+    // Exact-head P2 at b58a5e69. These two strings become pg_description rows:
+    // they are what every schema-introspection tool, every psql \\d+, and every
+    // future contributor reads FIRST. set_by's said the value was "the
+    // practitioner the DATABASE resolved from auth.uid()" unconditionally, and
+    // that integrity came from the guard. Both are true only for a write
+    // through set_new_client_admission_mode: public.studios has NO INSERT
+    // trigger and the column has NO foreign key, so a direct INSERT can put any
+    // uuid there -- identifying no practitioner, or one from another studio --
+    // and nothing refuses it. Presenting that as audit provenance is the defect.
+    //
+    // This is pinned, unlike the prose in the migration header, because a
+    // `comment on column` is EXECUTABLE SQL that SHIPS. It is the one
+    // documentation surface that is also product.
+    for (const col of [
+      "new_client_admission_mode_set_at",
+      "new_client_admission_mode_set_by",
+    ]) {
+      const body = columnComment(col);
+      expect(body, `${col} must disclaim INSERT-time validation`).toMatch(
+        /NOT VALIDATED AT INSERT/,
+      );
+      expect(body, `${col} must say no INSERT trigger exists`).toMatch(
+        /no INSERT trigger/i,
+      );
+    }
+    const setBy = columnComment("new_client_admission_mode_set_by");
+    // The attribution must be SCOPED to the command, not stated of the column.
+    expect(
+      setBy,
+      "set_by must scope auth.uid() provenance to set_new_client_admission_mode",
+    ).toMatch(/through\s+'?\s*'?set_new_client_admission_mode/);
+    expect(
+      setBy,
+      "set_by must say the guard polices UPDATE rather than creation",
+    ).toMatch(/polices UPDATE, not creation/);
   });
 
   it("keeps the reason there is no foreign key on set_by", () => {
     // 0204 recorded it after CI run 36729106946: a second
     // studios<->practitioners relationship breaks the PostgREST embed. Replacing
     // the comment must not drop the lesson.
-    const c = /comment on column public\.studios\.new_client_admission_mode_set_by is([\s\S]*?);/.exec(
-      SQL,
+    expect(columnComment("new_client_admission_mode_set_by")).toMatch(
+      /PostgREST embed ambiguous|NOT a foreign key/i,
     );
-    expect(c![1]).toMatch(/PostgREST embed ambiguous|NOT a foreign key/i);
   });
 });

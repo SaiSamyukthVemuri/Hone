@@ -284,25 +284,38 @@ alter table public.studios
 -- false the moment a studio is born stamped.
 comment on column public.studios.new_client_admission_mode_set_at is
   'When the persisted new-client admission authority was last initialized or '
-  'changed, from the DATABASE clock. NON-NULL means the authority IS '
-  'initialized - either by the system at studio creation (0205 column default, '
-  'new_client_admission_mode_set_by NULL) or by an owner choosing a mode '
-  'through set_new_client_admission_mode (set_by non-null). NULL means it was '
-  'never initialized: a pre-0204 row still carrying 0204''s backfill default, '
-  'for which the legacy/unstamped transition rule applies. Read set_by to tell '
-  'system initialization from an owner''s change - this column alone no longer '
-  'distinguishes them.';
+  'changed. NON-NULL means the authority IS initialized - by the system at '
+  'studio creation (0205 column default, new_client_admission_mode_set_by '
+  'NULL), or by an owner choosing a mode through set_new_client_admission_mode '
+  '(set_by non-null). Through either of those two writers the value is the '
+  'DATABASE clock. NULL means it was never initialized: a pre-0204 row still '
+  'carrying 0204''s backfill default, for which the legacy/unstamped '
+  'transition rule applies. Read set_by to tell system initialization from an '
+  'owner''s change - this column alone no longer distinguishes them. NOT '
+  'VALIDATED AT INSERT: public.studios has no INSERT trigger, so a direct '
+  'INSERT may write any value in either column and nothing checks it. The '
+  'guard polices UPDATE only, so those two writers are the ones this '
+  'description covers - not an exhaustive account of what the column can '
+  'hold.';
 
 comment on column public.studios.new_client_admission_mode_set_by is
-  'The practitioner the DATABASE resolved from auth.uid() at the moment an '
-  'OWNER set the mode - never an id the browser supplied. NULL means no owner '
-  'has changed the mode: either the row was system-initialized at studio '
-  'creation (set_at non-null) or it predates 0204 entirely (set_at NULL), and '
-  'set_at is what separates those two. Deliberately NOT a foreign key: a '
-  'second studios<->practitioners relationship would make the established '
-  'practitioners -> studio:studios(*) PostgREST embed ambiguous. Integrity '
-  'comes from set_new_client_admission_mode plus the scoped permit guard, not '
-  'from a constraint, and the value outlives the practitioner row.';
+  'WHO set the mode. For a value written through '
+  'set_new_client_admission_mode - the only writer that sets it - this is the '
+  'practitioner the DATABASE resolved from auth.uid() at that moment, never an '
+  'id the browser supplied. NULL means no owner has changed the mode: either '
+  'the row was system-initialized at studio creation (set_at non-null) or it '
+  'predates 0204 entirely (set_at NULL), and set_at is what separates those '
+  'two. NOT VALIDATED AT INSERT, AND THIS MATTERS FOR AUDIT: there is no '
+  'foreign key and no INSERT trigger on public.studios, so a direct INSERT may '
+  'write any uuid here - one identifying no practitioner, or a practitioner of '
+  'another studio - and nothing refuses it. A non-null value is trustworthy '
+  'provenance only for a row whose mode was set through that command; the '
+  'scoped permit guard polices UPDATE, not creation. Deliberately NOT a '
+  'foreign key: a second studios<->practitioners relationship would make the '
+  'established practitioners -> studio:studios(*) PostgREST embed ambiguous. '
+  'Integrity for owner changes comes from set_new_client_admission_mode plus '
+  'that guard, not from a constraint, and the value outlives the practitioner '
+  'row.';
 
 -- ---------------------------------------------------------------------------
 -- 3. THE BOUNDED APPLY-TIME REPAIR
