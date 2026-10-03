@@ -460,27 +460,36 @@ describe("the comments stop defining non-null set_at as an owner's choice", () =
   // col_description() returns, which is the thing that ships and the thing the
   // DB suite reads back.
   const columnComment = (col: string): string => {
-    const stmt = new RegExp(
-      `comment on column public\\.studios\\.${col} is([\\s\\S]*?)';\\s*$`,
-      "m",
-    ).exec(SQL);
-    expect(stmt, `${col} has no comment statement`).toBeTruthy();
-    // TOKENIZE STRICTLY. A bare matchAll over quotes reads ANY quoted text in
-    // the statement region as catalog content, so a future
-    //   -- 'NOT VALIDATED AT INSERT; no INSERT trigger'
-    // sitting between the literals would satisfy the assertions below while
-    // PostgreSQL stored none of it. Review caught that: the helper was
-    // byte-equivalent for THIS source layout, not for every valid one.
+    const head = new RegExp(`comment on column public\\.studios\\.${col} is`).exec(
+      SQL,
+    );
+    expect(head, `${col} has no comment statement`).toBeTruthy();
+    // ONE TOKENIZER, AND IT FINDS ITS OWN TERMINATOR. Two review findings
+    // produced this shape, and the second defeated the fix for the first:
     //
-    // So walk the body: skip whitespace and SQL comments ONLY BETWEEN literals,
-    // consume each literal atomically (which is why `--` or `/*` inside a
-    // comment string is safe), and REJECT anything else - a concatenation
-    // operator, a function call, an identifier - rather than ignoring it.
+    //   1. A bare matchAll over quotes read ANY quoted text in the region as
+    //      catalog content, so `-- 'NOT VALIDATED AT INSERT'` between literals
+    //      satisfied these assertions while PostgreSQL stored none of it.
+    //   2. Tokenizing strictly did not help, because the ENCLOSING regex
+    //      `is([\s\S]*?)';` still cut the statement at the first `';` it saw -
+    //      INCLUDING one inside a line comment. Review reproduced it: `-- ';`
+    //      after the disclaimer, a false claim in the next literal, and the
+    //      parse returned only the prefix. Every source assertion passed. A
+    //      strict tokenizer is worthless if something upstream decides where
+    //      the statement ends.
+    //
+    // So there is no enclosing regex. From just after `is`, consume tokens:
+    // whitespace, line comments and block comments are SKIPPED as units;
+    // literals are consumed ATOMICALLY, which is why a `--`, `/*` or `;` inside
+    // a comment STRING is safe; a top-level `;` ends the statement, and it can
+    // only be seen at top level; anything else is REJECTED rather than ignored,
+    // so a `||`, a function call or an identifier cannot slip in.
     const literals: string[] = [];
-    let rest = `${stmt![1]}'`;
+    let rest = SQL.slice(head!.index + head![0].length);
     for (;;) {
-      rest = rest.replace(/^(?:\s+|--[^\n]*|\/\*[\s\S]*?\*\/)+/, "");
-      if (rest.length === 0) break;
+      const skip = /^(?:\s+|--[^\n]*|\/\*[\s\S]*?\*\/)+/.exec(rest);
+      if (skip) rest = rest.slice(skip[0].length);
+      if (rest.startsWith(";")) break;
       const lit = /^'((?:[^']|'')*)'/.exec(rest);
       expect(
         lit,

@@ -150,6 +150,24 @@ describe("the shipped column comments are what the catalog actually holds", () =
     }
   });
 
+  it("set_at's catalog comment says INITIALIZED and does not restore the owner-choice claim", async () => {
+    // Review's repro for the extraction bug smuggled exactly this claim back
+    // into set_at and the DB checks did not notice, because they did not assert
+    // the negative the source contract has asserted since 0204. The catalog is
+    // the authority, so the negative belongs here too.
+    const d = await description("new_client_admission_mode_set_at");
+    expect(d, "set_at must describe initialization, not an owner's choice").toMatch(
+      /initialized/i,
+    );
+    expect(d, "set_at must name set_by as the discriminator").toMatch(
+      /new_client_admission_mode_set_by/,
+    );
+    expect(
+      d,
+      "0204's retired owner-choice claim must not return to the catalog",
+    ).not.toMatch(/no owner has\s+chosen a mode/i);
+  });
+
   it("set_by's catalog comment scopes its provenance and claims no exhaustive writer", async () => {
     const d = await description("new_client_admission_mode_set_by");
     // auth.uid() provenance is true of the COMMAND, not of the column.
@@ -162,8 +180,19 @@ describe("the shipped column comments are what the catalog actually holds", () =
     // The exhaustive-writer claim review removed TWICE: first as "cannot be
     // anything but NULL", then as "the only writer that sets it". Neither may
     // return, because the same comment documents the ungated INSERT.
+    // THREE phrasings of the same exhaustive claim have now been withdrawn:
+    // "cannot be anything but NULL", "the only writer that sets it", and "the
+    // only UPDATE the guard admits" - the last false because this migration's
+    // own repair is an admitted UPDATE, as is any ordinary studios update. Pin
+    // all three, by meaning rather than by one remembered phrase.
     expect(d, "set_by must not reclaim a single-writer monopoly").not.toMatch(
       /only writer that sets it/i,
+    );
+    expect(d, "set_by must not claim a monopoly on admitted UPDATEs").not.toMatch(
+      /only UPDATE the guard admits/i,
+    );
+    expect(d, "set_by must not call the NULL structurally forced").not.toMatch(
+      /cannot be anything but NULL/i,
     );
     expect(d, "set_by must keep the no-foreign-key rationale").toMatch(
       /PostgREST embed ambiguous/,

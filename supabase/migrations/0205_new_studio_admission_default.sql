@@ -300,8 +300,8 @@ comment on column public.studios.new_client_admission_mode_set_at is
 
 comment on column public.studios.new_client_admission_mode_set_by is
   'WHO set the mode. For a value written through '
-  'set_new_client_admission_mode - which RESOLVES this value rather than '
-  'accepting one, and is the only UPDATE the guard admits - this is the '
+  'set_new_client_admission_mode - which RESOLVES this value from auth.uid() '
+  'rather than accepting one - this is the '
   'practitioner the DATABASE resolved from auth.uid() at that moment, never an '
   'id the browser supplied. NULL means no owner has changed the mode: either '
   'the row was system-initialized at studio creation (set_at non-null) or it '
