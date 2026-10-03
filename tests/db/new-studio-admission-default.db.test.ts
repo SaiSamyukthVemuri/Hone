@@ -249,6 +249,33 @@ describe("the shipped column comments are what the catalog actually holds", () =
       "bb4f8a9f352072719fa9155f9301c0b59c5171de48e8913eedad7a70d65a8f0a",
   };
 
+  it("public.studios carries NO table-level comment, so one cannot be added unnoticed", async () => {
+    // Review's example was `COMMENT ON TABLE public.studios IS '…'`, which
+    // changes no COLUMN digest and so left the column inventory green. The
+    // catalog answers it directly: there is no table-level description today,
+    // and adding one fails here regardless of how the SQL was written - no
+    // keyword matching involved.
+    //
+    // RESIDUAL, stated rather than implied: a COMMENT on an UNRELATED object -
+    // another table, a function - is caught only by the applied-statement count,
+    // which rests on the two construction guards in the source contract (`--`
+    // whole-line, no `/* */`). Pinning every pg_description row in the database
+    // would close that too and would red on every unrelated migration that adds
+    // a comment; that trade is not worth it for a migration whose declared blast
+    // radius is public.studios.
+    const { rows } = await adminQuery(
+      `select count(*)::int as n
+         from pg_description
+        where objoid = 'public.studios'::regclass
+          and classoid = 'pg_class'::regclass
+          and objsubid = 0`,
+    );
+    expect(
+      rows[0].n,
+      "a table-level comment appeared on public.studios; 0205 ships column comments only",
+    ).toBe(0);
+  });
+
   it("the commented-column inventory of public.studios is exactly the approved one", async () => {
     const { rows } = await adminQuery(
       `select a.attname as col,

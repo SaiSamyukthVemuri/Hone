@@ -80,6 +80,34 @@ const CODE = SQL.split("\n")
 // tests against the inverted-default variant. This file is a source contract,
 // not a proof that the SQL does what it says; treat a green run here as
 // necessary and never sufficient.
+it("keeps every `--` comment on its OWN LINE, so stripping them cannot fuse keywords", () => {
+  // Review's third narrowing of the same guarantee. `COMMENT -- sep` on one
+  // line followed by `ON TABLE … IS '…'` on the next is VALID PostgreSQL - the
+  // line comment separates the keywords - but a stripper that removes only
+  // whole `--` lines leaves `COMMENT -- sep` behind, so a matcher looking for
+  // whitespace between COMMENT and ON never sees the statement.
+  //
+  // Patching that matcher a third time is the wrong move: recognising statement
+  // boundaries through arbitrary comment placement is lexing, which is the
+  // instrument this branch has had defeated four times and been told to stop
+  // using. So make the evasion IMPOSSIBLE instead. With `--` confined to whole
+  // lines and `/* */` banned outright (next test), no comment can sit between
+  // two keywords, and stripping whole `--` lines therefore leaves real
+  // whitespace wherever a comment used to be.
+  //
+  // This is what the applied-statement COMMENT count in the DB suite rests on.
+  // The guard lives on the FILE and the count reads the APPLIED text, so the
+  // composition only holds while this passes - which is why it fails loudly
+  // rather than being documented as an assumption.
+  const inlineComment = SQL.split("\n")
+    .map((line, i) => ({ line, n: i + 1 }))
+    .filter(({ line }) => line.includes("--") && !line.trimStart().startsWith("--"));
+  expect(
+    inlineComment.map(({ n, line }) => `${n}: ${line.trim()}`),
+    "0205 must keep `--` comments on their own line: an inline one can separate two SQL keywords, which defeats every whitespace-based matcher over this file and over the applied statements",
+  ).toEqual([]);
+});
+
 it("uses LINE comments only, so the CODE stripper above cannot be outrun", () => {
   expect(
     SQL,
