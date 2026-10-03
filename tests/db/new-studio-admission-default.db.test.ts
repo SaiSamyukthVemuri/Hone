@@ -256,13 +256,23 @@ describe("the shipped column comments are what the catalog actually holds", () =
     // and adding one fails here regardless of how the SQL was written - no
     // keyword matching involved.
     //
-    // RESIDUAL, stated rather than implied: a COMMENT on an UNRELATED object -
-    // another table, a function - is caught only by the applied-statement count,
-    // which rests on the two construction guards in the source contract (`--`
-    // whole-line, no `/* */`). Pinning every pg_description row in the database
-    // would close that too and would red on every unrelated migration that adds
-    // a comment; that trade is not worth it for a migration whose declared blast
-    // radius is public.studios.
+    // WHAT IS NOT COVERED, scoped on review's recommendation rather than
+    // defended further. An earlier version of this note said a COMMENT on an
+    // UNRELATED object is "caught by the applied-statement count". Too broad:
+    // that count sees LITERAL TOP-LEVEL statements only, and
+    //   execute 'COM' || 'MENT ON FUNCTION public.f() IS ...'
+    // inside the existing PL/pgSQL block passes both construction guards, shows
+    // no `comment on` in the applied text, and touches nothing on
+    // public.studios. The source contract already concedes that split dynamic
+    // SQL defeats token assertions; this note had not.
+    //
+    // Review's own judgement, which I asked for and am taking: "not worth
+    // another parser-hardening round; scope the guarantee". So the guarantee IS
+    // scoped - literal top-level COMMENT statements, plus the full catalog
+    // surface of public.studios - and a comment reaching an unrelated object
+    // through dynamic SQL is OUT OF SCOPE here, not silently covered. Closing
+    // it would mean pinning every pg_description row in the database, which
+    // would red on every unrelated migration that adds a comment anywhere.
     const { rows } = await adminQuery(
       `select count(*)::int as n
          from pg_description
@@ -350,7 +360,7 @@ describe("the shipped column comments are what the catalog actually holds", () =
     ]);
     expect(
       [...appliedCode.matchAll(/\bcomment\s+on\b/gi)].length,
-      "applied 0205 must not COMMENT anything else - a table, a function, or another column, in any letter case",
+      "applied 0205 must ship no OTHER literal COMMENT statement - a table, a function, or another column - in any letter case. Scoped to literal top-level statements: dynamic SQL built by concatenation is out of scope and is documented as such above",
     ).toBe(2);
   });
 
