@@ -29,11 +29,19 @@
 -- BEHAVIOUR. No function, trigger, policy or grant is edited. What changes is
 -- which branch existing logic takes: `resolveAdmission` answers `persisted` for
 -- any stamped row before it consults the legacy bridge, so
--- NEW_CLIENT_WAITLIST_STUDIO_SLUGS becomes permanently inert for every studio
--- created from here on. That is the intended effect, it is recorded in
--- docs/production/new-client-admission-activation.md, and it is why
+-- NEW_CLIENT_WAITLIST_STUDIO_SLUGS no longer decides NEW-CLIENT ADMISSION for
+-- any studio created from here on. That is the intended effect, it is recorded
+-- in docs/production/new-client-admission-activation.md, and it is why
 -- e2e/new-client-waitlist.spec.ts and the commit-authority DB suite now have to
 -- unstamp a studio before they can exercise the legacy path at all.
+--
+-- SCOPED DELIBERATELY: that env list is NOT made inert in general. An earlier
+-- revision of this paragraph said "permanently inert", which is false, and the
+-- document it cites says so in as many words - the list still drives EMERG-01's
+-- free-consult reschedule restriction at a stamped studio. That path reads the
+-- env set directly (isNewClientWaitlistEnabled -> slugIsListed) and consults no
+-- stamp, no set_at and no admission mode, so nothing here reaches it. 0205
+-- retires the bridge's authority over ADMISSION only.
 --
 -- `set_new_client_admission_mode` reads `set_at` FROM THE ROW, under the lock it
 -- already holds. Giving the column a default means a new row arrives already
@@ -86,10 +94,13 @@
 --     need not identify any practitioner at all, let alone a member of this
 --     studio.
 --   * NO GUARD RUNS ON INSERT. studios_admission_mode_guard is BEFORE UPDATE.
---     Every USER trigger on public.studios is an UPDATE trigger, and the table
---     has no INSERT trigger of any kind, so creation is ungated. (Stated of
---     user triggers deliberately: the table also carries internal
---     referential-integrity triggers, which fire on DELETE and are not guards.)
+--     All six USER triggers on public.studios are UPDATE-only, and NO trigger
+--     on the table - user or internal - has the INSERT bit set, so creation is
+--     ungated. Measured, not inferred: `tgtype & 4` is 0 for all 77. (An
+--     earlier revision said the 71 internal referential-integrity triggers
+--     "fire on DELETE"; that is wrong, half of them are RI_FKey_noaction_upd
+--     and fire on UPDATE. They are not guards either way - the load-bearing
+--     fact is the absent INSERT bit, which is why it is the one stated.)
 --
 -- So a service-role INSERT, or a future creation path that sets the column
 -- explicitly, can produce a row that is stamped at creation AND attributed to
@@ -350,9 +361,20 @@ comment on column public.studios.new_client_admission_mode_set_by is
 -- compares `hone.admission_mode_studio_id` against the row being written, so a
 -- set-based UPDATE cannot pass it - one permit cannot authorise many rows, which
 -- is the guard working as designed. The loop therefore arms the permit for
--- exactly the row it is about to write, and clears it afterwards so no later
--- statement inherits an authorisation it did not ask for. There is deliberately
--- no value of the permit that means "allow anything".
+-- exactly the row it is about to write, and the block clears it once the loop
+-- has finished so nothing downstream inherits an authorisation it did not ask
+-- for. There is deliberately no value of the permit that means "allow anything".
+--
+-- THE CLEAR IS AFTER THE LOOP, NOT PER ITERATION, and that is worth stating
+-- because the probe comment below used to imply otherwise. From the second
+-- candidate onwards each probe runs with the PREVIOUS candidate's id still in
+-- the permit. That is sound rather than lucky: the guard compares the permit
+-- against the row being written, so a permit naming row k cannot authorise row
+-- k+1, and the probe is still refused for the reason it claims. It was proven
+-- by substituting a guard that authorises on permit PRESENCE instead of
+-- identity - under that guard the second candidate's probe IS allowed and the
+-- repair aborts naming it, which is exactly the failure the row scoping
+-- prevents.
 -- >>> 0205 APPLY-TIME REPAIR BEGIN
 do $repair$
 declare
@@ -409,8 +431,17 @@ begin
   --   EMPTY studios        -> nothing to repair, no lineage to assert, and no
   --                           guard to probe. Every fresh chain, including
   --                           `db reset` and CI's db lane.
-  --   NON-EMPTY studios    -> every census id MUST be present, and the guard MUST
-  --                           be proved live. Any failure ABORTS.
+  --   NON-EMPTY studios    -> every census id MUST be present. Any failure
+  --                           ABORTS.
+  --   PER CANDIDATE         -> the guard MUST be proved live for that row,
+  --                           before that row is written. Any failure ABORTS.
+  --
+  -- THE GUARD PROOF IS PER CANDIDATE, NOT PER APPLY, and the distinction
+  -- matters for the apply this migration is actually written for: the census
+  -- found ZERO candidates, so on a non-empty production database with nothing
+  -- to repair the lineage gate runs and the guard is NEVER probed. An earlier
+  -- revision of this table said a non-empty apply proves the guard live. It
+  -- does not, and cannot - there is no row to probe it against.
   --
   -- ABORT, NOT SKIP, IS DELIBERATE and it has a cost worth naming: 0205 cannot
   -- be applied to a populated non-census database until that database is dealt
@@ -497,11 +528,19 @@ begin
     -- `set_at`. The probe passed and every candidate would have been written
     -- unguarded. That is a `tgqual` defeat shape the single probe could not see.
     --
-    -- So the probe is now the REPAIR'S OWN STATEMENT, differing from it in exactly
-    -- one respect: the permit is not armed. Same row, same column, same value,
-    -- SAME WHERE PREDICATE, same session, immediately before the real write.
-    -- Refusal therefore covers exactly the write that follows, and no narrower
-    -- claim is being made about it.
+    -- So the probe is now the REPAIR'S OWN STATEMENT, differing from it in one
+    -- respect: it runs WITHOUT A PERMIT FOR THIS ROW. Same row, same column,
+    -- same value, SAME WHERE PREDICATE, same session, immediately before the
+    -- real write. Refusal therefore covers exactly the write that follows, and
+    -- no narrower claim is being made about it.
+    --
+    -- "Without a permit for this row" rather than "the permit is not armed",
+    -- which an earlier revision said and which is false from the second
+    -- candidate onwards: the permit is cleared after the LOOP, so each later
+    -- probe still carries the previous candidate's id. The guard compares the
+    -- permit against the row being written, so that stale value cannot
+    -- authorise this row - which is why the refusal still means what it says.
+    -- See THE PERMIT IS ARMED PER ROW above for the proof.
     --
     -- The `set_at IS NULL` clause is carried deliberately rather than dropped as
     -- immaterial. It cannot change which row is matched here - the candidate was

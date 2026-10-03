@@ -190,6 +190,135 @@ describe("the shipped column comments are what the catalog actually holds", () =
     }
   };
 
+  // THE WHOLE COMMENT SURFACE OF public.studios, PINNED BY DIGEST.
+  //
+  // Two review passes converged on the same hole from opposite sides. The
+  // denylist below recognises four remembered phrasings; the exact-value pins
+  // cover two columns. So a false exhaustive claim could still ship by (a) using
+  // wording nobody had imagined, or (b) landing on any OTHER column of this
+  // table. Independent verification demonstrated both at once, passing 42/42
+  // with this text on `public.studios.slug`:
+  //
+  //   "INJECTED FALSE CLAIM: public.set_new_client_admission_mode is the sole
+  //    writer of this studio's admission authority, no other path can ever set
+  //    those columns, and the guard admits exactly one UPDATE per studio. There
+  //    are precisely three writers of studios rows ..."
+  //
+  // Every clause false, and it carries a writer count - the exact thing the
+  // ruling bans. Review independently asked for the same fix: pin the inventory
+  // rather than bless whatever the catalog happens to hold.
+  //
+  // So: the SET of commented columns is exact, and each one's text is pinned by
+  // digest. Any addition, removal, reword or rewrite on this table fails here.
+  // That is deliberate friction on a table that carries the admission authority
+  // - a comment change here should meet a reviewer. The two columns 0205 owns
+  // are ALSO pinned verbatim above, because those are the ones under scrutiny
+  // and a digest diff is not readable.
+  //
+  // To change one deliberately, apply locally and read the digest back:
+  //   select a.attname,
+  //          encode(sha256(col_description(a.attrelid,a.attnum)::bytea),'hex')
+  //     from pg_attribute a
+  //    where a.attrelid = 'public.studios'::regclass and a.attnum > 0
+  //      and col_description(a.attrelid, a.attnum) is not null order by 1;
+  //
+  // KNOWN FALSE, PINNED AS TRACKED DEBT rather than blessed: 0204's comment on
+  // `new_client_admission_mode` claims "no role holds direct UPDATE on this
+  // table", and verification measured anon, authenticated, service_role and
+  // postgres all holding UPDATE on that column. Its guard function also raises
+  // "new-client admission has exactly one writer" - the same banned count, on an
+  // operator-visible surface. 0204 is applied and FROZEN, so both need a forward
+  // migration with its own authorization and are raised separately. Pinning the
+  // digest records the debt and stops it drifting further.
+  const COMMENT_INVENTORY: Readonly<Record<string, string>> = {
+    clinical_corrections_enabled:
+      "3b8c4165432a7fd5927868371a95ecfa97371e7a72872ba00e82f8ff79156d93",
+    clinical_finalization_enabled:
+      "a2d9e5b5b61f58a366b26f995d73b1983a1be23dc204019b8ccee24c6ca75d2b",
+    new_client_admission_mode:
+      "5c1b48c3cc5f16135eb06e5467dc206210462bf397a73359e83c9a8ddf04ccc7",
+    new_client_admission_mode_set_at:
+      "29446438ca37fd699cb4236db723dff886af71ea7a9664f0f8fcf43ae657ff36",
+    new_client_admission_mode_set_by:
+      "513cea62d9707129b193abd53dd819ec7c61230a2542313b9bbd6f4c94a8c69e",
+    postcare_delivery_mode:
+      "d857913bed26e5c61ec91162bf59d1a8680edd88605ba179861df3bcf0e0af56",
+    send_intake_reminders:
+      "8b925c11f89dd93809b01711a25199fa3526ee61ac9ffeeb2c38d6fe5d616cf6",
+    time_format_preference:
+      "bb4f8a9f352072719fa9155f9301c0b59c5171de48e8913eedad7a70d65a8f0a",
+  };
+
+  it("the commented-column inventory of public.studios is exactly the approved one", async () => {
+    const { rows } = await adminQuery(
+      `select a.attname as col,
+              encode(sha256(col_description(a.attrelid, a.attnum)::bytea), 'hex') as digest
+         from pg_attribute a
+        where a.attrelid = 'public.studios'::regclass
+          and a.attnum > 0
+          and not a.attisdropped
+          and col_description(a.attrelid, a.attnum) is not null
+        order by a.attname`,
+    );
+    const actual = Object.fromEntries(
+      rows.map((r) => [r.col as string, r.digest as string]),
+    );
+    expect(
+      Object.keys(actual).sort(),
+      "the SET of commented columns on public.studios changed: a comment was added or removed",
+    ).toEqual(Object.keys(COMMENT_INVENTORY).sort());
+    for (const [col, digest] of Object.entries(COMMENT_INVENTORY)) {
+      expect(
+        actual[col],
+        `public.studios.${col}'s comment text changed; if that was deliberate, update its digest in the same commit`,
+      ).toBe(digest);
+    }
+  });
+
+  it("APPLIED 0205 ships exactly two COMMENT statements, on exactly the two approved columns", async () => {
+    // Review asked for the migration's exact COMMENT count and target columns to
+    // be pinned, rather than treating whatever the catalog holds as approved.
+    // This does it against the APPLIED SQL recorded in schema_migrations, so it
+    // is immune to source layout - the thing that defeated four source parsers.
+    //
+    // Why count here and not in the source contract: a source-level inventory is
+    // satisfiable by a commented-out statement, which is exactly why the old one
+    // was deleted. The applied text is what the server actually ran.
+    //
+    // RESIDUAL, stated rather than papered over: this cannot detect a migration
+    // FILE edited after the last apply - it reads what was applied. Only a fresh
+    // reset reconciles file and catalog, which is what CI's db lane does on every
+    // run; `npm run verify:changed` against a stale local stack will not.
+    const { rows } = await adminQuery(
+      `select array_to_string(statements, E'\n') as sql
+         from supabase_migrations.schema_migrations
+        where version = $1`,
+      ["0205"],
+    );
+    expect(rows.length, "migration 0205 is not recorded as applied").toBe(1);
+    // Strip `--` lines: the applied text carries this migration's prose too, and
+    // a header that merely MENTIONS a comment statement must not count as one.
+    // Sound here because a sibling source assertion forbids block comments.
+    const appliedCode = (rows[0].sql as string)
+      .split("\n")
+      .filter((l) => !l.trimStart().startsWith("--"))
+      .join("\n");
+    const targets = [
+      ...appliedCode.matchAll(/comment on column public\.studios\.(\w+) is/g),
+    ].map((m) => m[1]);
+    expect(
+      targets,
+      "applied 0205 must COMMENT exactly the two admission-provenance columns, in order",
+    ).toEqual([
+      "new_client_admission_mode_set_at",
+      "new_client_admission_mode_set_by",
+    ]);
+    expect(
+      [...appliedCode.matchAll(/comment on /g)].length,
+      "applied 0205 must not COMMENT anything else - a table, a function, or another column",
+    ).toBe(2);
+  });
+
   it("NO column comment on public.studios carries the withdrawn claim family", async () => {
     // F4 from independent verification. The two tests below read only the two
     // columns they name, so a comment injected on a THIRD column shipped

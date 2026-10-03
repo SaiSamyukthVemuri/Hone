@@ -59,11 +59,27 @@ const CODE = SQL.split("\n")
 //
 // The fix is NOT a smarter stripper. A correct one needs nesting and
 // string-awareness - PostgreSQL nests `/* */` - and four attempts at exactly
-// that kind of parser were defeated on this branch. Instead the migration is
-// required to use `--` only, which makes the simple stripper sound by
-// construction. If a block comment is ever wanted here, this guard fails first
-// and the next author has to reckon with the stripper rather than silently
-// outrun it.
+// that kind of parser were defeated on this branch. So the migration is simply
+// required to use `--` only.
+//
+// WHAT THAT BUYS, AND WHAT IT DOES NOT. An earlier revision of this comment
+// claimed it makes the stripper "sound by construction". That is FALSE, and
+// independent verification defeated all 23 assertions in this file with ZERO
+// block comments present, by two routes this guard cannot touch:
+//
+//   * STRING LITERALS. `CODE` keeps them verbatim, so moving the greppable text
+//     into one satisfies the positive assertions while the real statement does
+//     the opposite - a `raise notice '... set default now()'` alongside an
+//     actual `drop default` passed every check here.
+//   * DYNAMIC SQL. `execute 'dele' || 'te from public.studios ...'` defeats
+//     every negative assertion, because no banned verb appears in the source.
+//
+// So this guard closes ONE hole - a `/* */` region hiding executable SQL from a
+// `--`-only stripper - and nothing more. What actually bounds the two above is
+// the DB lane: it applies the migration and asserts behaviour, and it reds 6
+// tests against the inverted-default variant. This file is a source contract,
+// not a proof that the SQL does what it says; treat a green run here as
+// necessary and never sufficient.
 it("uses LINE comments only, so the CODE stripper above cannot be outrun", () => {
   expect(
     SQL,
@@ -353,6 +369,19 @@ describe("the DEFAULT cannot backfill, which is why the repair is explicit", () 
     expect(block).toMatch(/v_anomalous/);
     // 3. nothing in scope may still be NULL afterwards
     expect(block).toMatch(/v_left/);
+    // ATTRIBUTED, not counted. Independent verification demoted this limb from
+    // `raise exception` to `raise notice` and the whole DB suite still passed
+    // 42/42 while this file stayed green at 23/23 - because the only checks
+    // were `/v_left/` (satisfied by a notice) and a COUNT of `raise exception`
+    // that the other three limbs already met. A count cannot attribute a raise
+    // to the limb that needs it. So read the post-condition's own branch and
+    // require the abort inside it.
+    const postCondition = /if\s+v_left\s*<>\s*0\s+then([\s\S]*?)end if;/.exec(block);
+    expect(postCondition, "the v_left post-condition has no if-branch").toBeTruthy();
+    expect(
+      postCondition![1],
+      "FAIL CLOSED #4 must ABORT, not merely notice: a raise-exception count elsewhere in the block does not cover this limb",
+    ).toMatch(/raise exception/);
     // All three must ABORT, which inside begin/commit rolls the whole apply back.
     expect([...block.matchAll(/raise exception/g)].length).toBeGreaterThanOrEqual(3);
   });
