@@ -53,6 +53,7 @@ function briefing(over: Partial<BeforeToday> = {}): BeforeToday {
       modeLabel: "Thermolysis",
       energyLevel: null,
       areaName: "Chin",
+      probeLot: null,
     },
     latestSetupLine: "27.12 MHz · Ballet F3 · Thermolysis",
     reminders: [],
@@ -129,7 +130,7 @@ describe("placement + reuse", () => {
     // 70-char cap is gone. Full-visibility is pinned in its own suite
     // (tests/app/dashboard/dashboard-memory-visibility.test.ts).
     expect(PAGE).toMatch(/Remember: \{workflow\.remember\}/);
-    expect(PAGE).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
+    expect(PAGE).toMatch(/Latest recorded setup: \{workflow\.setup \?\? "Not recorded"\}/);
     // ONE relationship line now: the old card said "No charted history yet."
     // and the brief separately said "No prior treatment history yet".
     expect(PAGE).toMatch(/New client · No charted history yet/);

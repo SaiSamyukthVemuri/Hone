@@ -52,6 +52,7 @@ function input(over: Partial<BeforeTodayInput> = {}): BeforeTodayInput {
           latestProbe: "Ballet F3",
           latestModeLabel: "Thermolysis",
           latestEnergyLevel: 14,
+          latestConfirmedProbeLot: null,
           commonReactionLabel: "Mild redness",
           latestWatchNote: null,
         },
@@ -156,6 +157,9 @@ describe("buildBeforeToday", () => {
       energyLevel: 14,
       // PR #268: the latest setup is tied to its treatment area.
       areaName: "Chin",
+      // BROWSER-FINDING-01: this fixture confirms no lot, so the lot fact is
+      // absent and the line is unchanged.
+      probeLot: null,
     });
     expect(b.latestSetupLine).toBe("27.12 MHz · Ballet F3 · Thermolysis · EL 14");
     const empty = buildBeforeToday(
@@ -165,6 +169,141 @@ describe("buildBeforeToday", () => {
     );
     expect(empty.setup).toBeNull();
     expect(empty.latestSetupLine).toBeNull();
+  });
+
+  it("BROWSER-FINDING-01 — a CONFIRMED probe lot is recorded setup, not \"Not recorded\"", () => {
+    // Proved on hone-synthetic-twin: a historical block held
+    // probe_lot_number = "TEST-LOT-1063" with probe_lot_confirmed = true and
+    // every other setup field null. The full session rendered
+    // "Lot #TEST-LOT-1063 (confirmed)"; Dashboard / Before Today rendered
+    // "Latest recorded setup: Not recorded".
+    //
+    // ONE canonical derivation now answers this (recordedSetupForArea), so the
+    // Treatment Intelligence card cannot disagree with these two summaries.
+    const lotOnly = (over: Partial<BeforeTodayInput["intelligence"]["areas"][number]>) =>
+      buildBeforeToday(
+        input({
+          intelligence: {
+            ...input().intelligence,
+            areas: [
+              {
+                ...input().intelligence.areas[0]!,
+                latestFrequency: null,
+                latestProbe: null,
+                latestModeLabel: null,
+                latestEnergyLevel: null,
+                ...over,
+              },
+            ],
+          },
+        }),
+      );
+
+    const confirmed = lotOnly({ latestConfirmedProbeLot: "TEST-LOT-1063" });
+    expect(
+      confirmed.setup,
+      "a confirmed probe lot is recorded setup, so setup must not be null",
+    ).not.toBeNull();
+    expect(confirmed.latestSetupLine).toBe("Lot TEST-LOT-1063");
+    expect(confirmed.setup?.probeLot).toBe("TEST-LOT-1063");
+    // NOTHING FABRICATED for the parameters the block did not record.
+    expect(confirmed.setup?.frequency).toBeNull();
+    expect(confirmed.setup?.probe).toBeNull();
+    expect(confirmed.setup?.modeLabel).toBeNull();
+    expect(confirmed.setup?.energyLevel).toBeNull();
+
+    // PARTIAL KNOWN SETUP RENDERS POSITIVELY, and the lot joins it.
+    const partial = lotOnly({
+      latestModeLabel: "Thermolysis",
+      latestConfirmedProbeLot: "TEST-LOT-1063",
+    });
+    expect(partial.latestSetupLine).toBe("Thermolysis · Lot TEST-LOT-1063");
+
+    // "Not recorded" survives ONLY where the authority proves no setup fact:
+    // no confirmed lot and no parameter.
+    const nothing = lotOnly({ latestConfirmedProbeLot: null });
+    expect(
+      nothing.setup,
+      "with no setup fact at all, Not recorded is still correct",
+    ).toBeNull();
+    expect(nothing.latestSetupLine).toBeNull();
+  });
+
+  it("#774 P2 — a newer treatment's lot is never attributed to the setup's area", () => {
+    // PROVENANCE, which is what both #774 P2s were about. `last` is the newest
+    // TREATMENT; `setup` is the latest named-area SETUP. They may be DIFFERENT
+    // treatments, and the card used to mix both sources into one chip group
+    // directly under "Latest recorded setup: <area>" — so the newer treatment's
+    // lot read as that area's lot.
+    //
+    // DISCRIMINATING FIXTURE: the older named area owns a confirmed lot; the
+    // newer treatment has no named area and a DIFFERENT lot. If either source
+    // leaked into the other, these values would swap or collide.
+    const diverged = buildBeforeToday(
+      input({
+        lastTreatment: {
+          ...input().lastTreatment!,
+          areaNames: [],
+          blockLots: ["TEST-LOT-2099"],
+        },
+        intelligence: {
+          ...input().intelligence,
+          areas: [
+            {
+              ...input().intelligence.areas[0]!,
+              name: "neck",
+              latestFrequency: null,
+              latestProbe: null,
+              latestModeLabel: null,
+              latestEnergyLevel: null,
+              latestConfirmedProbeLot: "TEST-LOT-1063",
+            },
+          ],
+        },
+      }),
+    );
+
+    // The setup's area owns ITS lot, and the newer lot is not it.
+    expect(diverged.setup?.areaName).toBe("neck");
+    expect(diverged.setup?.probeLot).toBe("TEST-LOT-1063");
+    expect(
+      diverged.latestSetupLine,
+      "TEST-LOT-2099 must never appear as the neck setup",
+    ).toBe("Lot TEST-LOT-1063");
+    // The newer treatment keeps its own lot, as a last-treatment fact.
+    expect(diverged.lastTreated?.probeLot).toBe("TEST-LOT-2099");
+    // Nothing fabricated for the parameters the neck block did not record.
+    expect(diverged.setup?.frequency).toBeNull();
+    expect(diverged.setup?.probe).toBeNull();
+    expect(diverged.setup?.modeLabel).toBeNull();
+    expect(diverged.setup?.energyLevel).toBeNull();
+
+    // AND THE CARD ATTRIBUTES THEM SEPARATELY. Only source can reach this.
+    // Each lot sits in the group under the label naming its own source, so the
+    // last-treatment lot must appear BEFORE the setup label and the setup lot
+    // AFTER it.
+    const lastLot = CARD.indexOf("{last.probeLot && <Chip>Lot {last.probeLot}</Chip>}");
+    const setupLabel = CARD.indexOf("Latest recorded setup: ${setup.areaName}");
+    const setupLot = CARD.indexOf("{setup.probeLot && <Chip>Lot {setup.probeLot}</Chip>}");
+    expect(lastLot, "the last-treatment lot is not rendered").toBeGreaterThan(-1);
+    expect(setupLabel, "the setup label is not rendered").toBeGreaterThan(-1);
+    expect(setupLot, "the setup's own lot is not rendered").toBeGreaterThan(-1);
+    expect(
+      lastLot < setupLabel,
+      "the last-treatment lot must sit in the last-treatment group, before the setup label",
+    ).toBe(true);
+    expect(
+      setupLot > setupLabel,
+      "the setup's lot must sit in the setup group, under the setup label",
+    ).toBe(true);
+    // AND THE TREATMENT'S LOT IS NEVER SUPPRESSED BY MATCHING THE SETUP'S.
+    // Equal lot NUMBERS are not provenance — the newest treatment can reuse the
+    // lot the older area recorded — so a value-equality condition here would
+    // hide that the newest treatment recorded one at all.
+    expect(
+      CARD,
+      "the treatment's lot must not be suppressed by equality with the setup's",
+    ).not.toMatch(/last\.probeLot !== setup\?\.probeLot/);
   });
 
   it("record reminders mirror the completeness rules", () => {
@@ -264,7 +403,7 @@ describe("placement + card", () => {
 
   it("snapshot and response render as wrapping chips; long notes wrap", () => {
     expect(CARD).toMatch(/flex flex-wrap gap-1\.5/);
-    expect(CARD).toMatch(/Lot \{last\.probeLot\}/);
+    expect(CARD).toMatch(/Lot \{setup\.probeLot\}/);
     expect(CARD).toMatch(/EL \{setup\.energyLevel\}/);
     expect(CARD).toMatch(/\{last\.minutes\} min/);
     expect(CARD).toMatch(/Tolerance \{response\.toleranceRating\}\/5/);
