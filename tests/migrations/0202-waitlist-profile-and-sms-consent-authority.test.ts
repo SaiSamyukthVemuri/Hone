@@ -111,8 +111,10 @@ describe("0202 takes the number it derived", () => {
     // So this file keeps only a FLOOR -- `hosted >= 0202` -- the durable fact about
     // an older applied migration, which stays true forever. Re-asserting equality
     // here would make this file red the moment anything else applies, which is the
-    // mechanical multi-file sweep CLAUDE.md forbids. The equality now lives in
-    // 0203's own file.
+    // mechanical multi-file sweep CLAUDE.md forbids. The equality lives in NO
+    // per-migration file: CURRENT migration state is derived from
+    // migrationState() and proved centrally, once, by
+    // tests/docs/canonical-production-facts.test.ts.
     const state = migrationState();
     expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);

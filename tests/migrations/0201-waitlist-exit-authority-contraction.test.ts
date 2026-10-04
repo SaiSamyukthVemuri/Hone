@@ -77,7 +77,9 @@ describe("0201 position in the chain", () => {
     // about an older applied migration, which stays true forever. Re-asserting
     // equality here would make this file red the moment anything else applies,
     // which is the eighteen-file mechanical sweep CLAUDE.md forbids. The equality
-    // now lives in 0202's own file.
+    // lives in NO per-migration file: CURRENT migration state is derived from
+    // migrationState() and proved centrally, once, by
+    // tests/docs/canonical-production-facts.test.ts.
     const state = migrationState();
     expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);

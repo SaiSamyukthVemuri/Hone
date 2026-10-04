@@ -69,7 +69,9 @@ describe("0198 position in the chain", () => {
     // on 2026-09-18, when 0199 was applied and took the chain back to PARITY.
     // 0198 keeps only what stays true forever: something is applied above it,
     // and it is itself no longer pending. The exact hosted-head equality and
-    // the next-free claim belong to 0199's own file now.
+    // the next-free claim belong to NO per-migration file: CURRENT migration
+    // state is derived from migrationState() and proved centrally, once, by
+    // tests/docs/canonical-production-facts.test.ts.
     const state = migrationState();
     expect(Number(state.hosted_migration_max)).toBeGreaterThan(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);
