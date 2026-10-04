@@ -49,7 +49,18 @@ describe("0199 position in the chain", () => {
     // tests/migrations/0201-waitlist-exit-authority-contraction.test.ts
     // carries it.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0200", "0201", "0202", "0203", "0204"]);
+    // DERIVED, NOT PINNED. A literal list here is exactly the "trip on the next
+    // one" pin CLAUDE.md s2 forbids: it goes red for every later migration,
+    // which is the eighteen-file mechanical sweep that took 0163, 0164 and 0165
+    // red after push. Two facts about an older migration are true forever and
+    // for any future head -- something is above it, and everything above it is
+    // greater. Those are what this asserts.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
@@ -122,7 +133,13 @@ describe("0199 position in the chain", () => {
     // 0200, 0201, 0202 and 0203 are ALL APPLIED — 0203 landed on 2026-09-27 — so
     // the repository is at parity with nothing pending and the next free number is
     // 0205, because 0204 is now authored (NEW-CLIENT-MODE-01, pending). Availability is not allocation, and nothing here allocates.
-    expect(migrationState().next_free_migration).toBe("0205");
+    // DERIVED, NOT PINNED, for the reason recorded against `versionsAbove`
+    // above: a literal next-free number is red on every single allocation. The
+    // durable claim is that the next free number sits ABOVE this applied
+    // migration and is never this migration's own.
+    const nextFree = migrationState().next_free_migration;
+    expect(Number(nextFree)).toBeGreaterThan(Number(VERSION));
+    expect(nextFree, "this file must not claim the next free number").not.toBe(VERSION);
   });
 });
 

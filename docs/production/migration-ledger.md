@@ -14,7 +14,71 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-01, post-0204 apply; `0204` APPLIED, repo == hosted)
+## Current state (verified 2026-10-03, post-0205 apply; `0205` APPLIED, repo == hosted)
+
+> **ONE DEFAULT, TWO COLUMN COMMENTS, AND ZERO ROWS WRITTEN.** The complete
+> inventory is: **one `alter table public.studios alter column
+> new_client_admission_mode_set_at set default now()`**, **two `comment on column`**
+> (`_set_at`, `_set_by`), and **one `do` block containing two `update public.studios`
+> statements PER REPAIR CANDIDATE** — a guard probe executed in order to be *refused*,
+> inside an exception-handled subtransaction that rolls back on every path, and the
+> bounded repair itself. No table created or dropped, no column added or dropped, no
+> index, no constraint, no function, no trigger, **no grant or revoke**, and no
+> `insert`/`delete`/`truncate` anywhere. The migration opens its own `begin;`/`commit;`
+> with `set local lock_timeout = '5s'` **inside** the transaction.
+>
+> **THE WINDOW THE REPAIR EXISTS FOR WAS EMPTY, SO THE APPLY WROTE NOTHING.** A column
+> default cannot reach a row that already exists, so 0205 carries a bounded repair for
+> any studio created between the 2026-10-01 census and this apply. At apply time
+> production held exactly **7** studios and **all 7 were census members**: zero
+> candidates, the loop never executed, and the server emitted
+> `0205: apply-time repair stamped 0 studio(s)`. **The per-candidate guard probe
+> therefore did not run at all**, which is correct by construction — it exists to prove
+> the guard polices the writes this migration actually makes, and it made none.
+> All **7** studio rows were verified **byte-for-byte identical** before and after,
+> across `mode`, `set_at`, `set_by` and `created_at`: the five unstamped legacy studios
+> keep their NULL and their cutover ceremony, and the two owner-stamped studios are
+> untouched. **None of the four fail-closed gates tripped** — census lineage 7 of 7
+> present, zero off-shape unstamped non-census rows, no probe required, post-condition
+> clean.
+>
+> **WHAT THE APPLY DID CHANGE.** `set_at` now defaults to `now()`, so every studio
+> created from here is **born stamped and system-initialized at `open`** and no longer
+> inherits the legacy cutover ceremony that belongs only to pre-0204 rows. The two
+> column comments were replaced **forward**, because `0204` is applied and FROZEN and
+> its descriptions had become false: non-null `set_at` no longer means "an owner chose".
+> Both now also disclaim INSERT-time validation.
+>
+> **NO APPLICATION BEHAVIOUR SHIPPED WITH THIS APPLY.**
+> `lib/booking/new-client-admission.ts` is byte-identical to production once comments
+> are stripped, so unlike `0204` this release had **no deploy-order constraint** and the
+> post-merge deployment is behaviourally a no-op.
+>
+> ⚠️ **ONE NUMBER WAS DISPLACED, AND THE WORK IT NAMED IS STILL OPEN.**
+> [new-client-admission-execution-record.md](./new-client-admission-execution-record.md)
+> earmarked **`0205`** for closing the `studios_admission_mode_guard()` grant deviation
+> that `0204` left behind. `0205` was used for this change instead and contains **zero**
+> grant or revoke statements, so **that deviation remains open** and must be closed by a
+> NEW migration — `0206` at the earliest, re-censused immediately before anyone authors
+> against it. The execution record is a historical release record and is **not** rewritten
+> here.
+>
+> **THE BLOCK BELOW IS NOW HISTORY.** Its repo-max / pending / next-free rows were
+> updated by #780 while `0205` was authored and pending, and are **preserved exactly as
+> merged** rather than restored or re-derived.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0205** (`0205_new_studio_admission_default.sql`) |
+| **Repo migration max** | **0205** — at PARITY with hosted, nothing pending. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none.** Verified live immediately after the apply: `max(version)` in `supabase_migrations.schema_migrations` is **`0205`** with **204** rows total (203 → 204, exactly +1), `'0205'` present **exactly once**, `'0204'` present exactly once and **not** re-applied, and **nothing above `0205`**. |
+| **Next free migration** | Next free number is **0206**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0205` IS NO LONGER FREE** — it is applied and FROZEN. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` **before every** Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `da15b753f1547da7978ac995a5cc32fbeb0cbf5b` (PR #780) — the exact authorized head: CI **10 pass / 2 skipping / 0 non-green**, exact-head Codex review clean and naming the commit (`Reviewed commit: da15b753f1`), **0** unresolved review threads, and `mergeStateStatus` **CLEAN**. Merged as `ef611b8460a41613d6b98fcc2932b49f2b831867`; the applying tree's `0205` blob is identical to the reviewed head's. |
+| **Production application SHA at apply time** | `ef611b8460a41613d6b98fcc2932b49f2b831867` (the #780 merge). **No application behaviour was deployed by this apply** — see above. |
+
+## Previous state (verified 2026-10-01, post-0204 apply; `0204` APPLIED, repo == hosted)
 
 > **ADDITIVE SCHEMA PLUS NEW AUTHORITY. ZERO MIGRATION-LEVEL DML.** The complete
 > inventory is: **three `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`** on
@@ -59,10 +123,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0204** (`0204_new_client_admission_mode.sql`) |
-| **Repo migration max** | **0204** — at PARITY with hosted, nothing pending. |
+| **Repo migration max** | **0205** — this branch authors `0205_new_studio_admission_default.sql` (NEW-STUDIO-ADMISSION-DEFAULT): one `alter column ... set default now()` on `studios.new_client_admission_mode_set_at`, two `comment on column`, and **TWO `update public.studios` STATEMENTS**. The first is a PER-CANDIDATE GUARD PROBE: for each row the repair is about to write, it attempts **that row's own `set_at` write without the permit** and requires the guard to refuse it, inside an exception-handled subtransaction so the attempt is rolled back on every path and **can never persist** — a precondition, not a change. It probes the repair's exact mutation because a narrower probe does not cover it: a guard scoped to `set_by` refuses a `set_by` write while never firing for `set_at`. With no candidates it performs no probe and no repair. The second is the **BOUNDED APPLY-TIME REPAIR** over the census-to-apply window, and **that one CAN write rows** — it stamps `new_client_admission_mode_set_at = created_at` for studios provably created after 0204 that are still unstamped, which is the apply's real blast radius; it preserves every owner-stamped row and every genuine pre-0204 legacy row, and it aborts the apply rather than write under a model that does not match the data. **AUTHORED, NOT APPLIED** — the chain has left parity and sits at **MIGRATION-FIRST PENDING**, which is the ordinary pre-apply position of a migration-bearing branch, not drift. The hosted row above carries the production claim and is unchanged by this branch. |
 | **Remote-only migrations** | **none** — derived by set arithmetic between the live remote version list (203 versions) and the applied tree's `supabase/migrations/*.sql`. ⚠️ **NOT** derived from `migration list --linked`: that command reports **false** remote-only rows when run from a worktree whose branch predates them, which it did during this release's preflight (a branch topping out at `0201` reported `0202`/`0203` as remote-only). Use the live version list, not the CLI's local comparison, whenever the invoking tree may not be the release tree. |
-| **Pending migrations** | **none.** Verified live after the apply: `max(version)` in `supabase_migrations.schema_migrations` is **`0204`** with **203** rows total. |
-| **Next free migration** | Next free number is **0205**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0204` IS NO LONGER FREE** — it is applied and FROZEN. |
+| **Pending migrations** | **`0205`** — `0205_new_studio_admission_default.sql`, authored on the NEW-STUDIO-ADMISSION-DEFAULT branch and **NOT applied**. Hosted remains at **`0204`**: verified live after the 0204 apply, `max(version)` in `supabase_migrations.schema_migrations` is **`0204`** with **203** rows total, and re-confirmed still `0204` immediately before this branch was refreshed onto the post-#779 production head. |
+| **Next free migration** | Next free number is **0206**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0204` IS NO LONGER FREE** — it is applied and FROZEN. **`0205` IS NO LONGER FREE** — this branch authors it. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
 | **Reviewed release head** | `d8617859831152306178b3ddca1126adcd5df54a` (PR #773) — the exact authorized head: tree clean and `tree == HEAD`, PR open and `MERGEABLE`/`CLEAN`, **0** non-green checks with the `browser e2e (local stack)` aggregator green, Vercel GREEN, exact-head Codex review **Completed at `d861785` with zero findings**, and **0 of 25** review threads unresolved. |
 | **Production application SHA at apply time** | `a5e179f2e29789c3a1bfc93041d65ed1b4820eac` (the #770 merge). **Unchanged by this apply: no application code was deployed by it.** The #773 application was deployed afterwards — see the release record below. |

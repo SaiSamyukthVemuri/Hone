@@ -53,6 +53,62 @@ async function seedWaitlistStudio() {
     [WAITLIST_SLUG],
   );
   await sql(`update public.studios set slug = $2 where id = $1`, [seed.studioId, WAITLIST_SLUG]);
+
+  // RETURN THE STUDIO TO THE PRE-0204 UNSTAMPED SHAPE, which is the only state
+  // the legacy env bridge governs.
+  //
+  // WHY THIS BECAME NECESSARY AT 0205. This lane makes a studio waitlisted by
+  // holding the reserved slug in NEW_CLIENT_WAITLIST_STUDIO_SLUGS and letting
+  // the bridge escalate `open` -> `waitlist`. The bridge is ONE-WAY and applies
+  // only to a row whose persisted authority was never initialized. Since 0205
+  // `new_client_admission_mode_set_at` carries a `now()` default, so a seeded
+  // studio is born STAMPED and `resolveAdmission` answers `persisted` / `open`
+  // -- correctly ignoring the slug, because a brand-new studio is not a legacy
+  // row. Without this the four scenarios below run against an OPEN studio and
+  // the waitlist never appears.
+  //
+  // UNSTAMPING RATHER THAN PERSISTING `waitlist` IS DELIBERATE. The refusal
+  // scenario moves the slug away and expects the server to decline the join,
+  // which is a BRIDGE behaviour: a persisted `waitlist` would survive the slug
+  // moving and that scenario would stop testing anything. This lane is about
+  // the bridge, and it retires with the bridge at cutover.
+  //
+  // The permit is required because `studios_admission_mode_guard` (BEFORE
+  // UPDATE) refuses any update touching the three admission fields without one.
+  // It is transaction-local and names exactly this studio -- the same mechanism
+  // the supported command uses, not a bypass of it. A `do` block keeps the
+  // permit and the update in ONE transaction, which `sql()` cannot otherwise
+  // guarantee: it opens a fresh connection per call. The `::uuid` casts make a
+  // malformed id a loud error rather than an interpolation hazard.
+  await sql(
+    `do $do$
+     begin
+       perform set_config(
+         'hone.admission_mode_studio_id', '${seed.studioId}'::uuid::text, true);
+       update public.studios
+          set new_client_admission_mode        = 'open',
+              new_client_admission_mode_set_at = null,
+              new_client_admission_mode_set_by = null
+        where id = '${seed.studioId}'::uuid;
+     end
+     $do$;`,
+  );
+
+  // NON-VACUITY AT SETUP. If the unstamp ever silently stops working, every
+  // scenario below would fail somewhere deep in a page flow with no hint why.
+  // Fail here instead, naming the cause.
+  const [shape] = await sql<{ unstamped: boolean }>(
+    `select new_client_admission_mode_set_at is null as unstamped
+       from public.studios where id = $1`,
+    [seed.studioId],
+  );
+  if (!shape?.unstamped) {
+    throw new Error(
+      "seedWaitlistStudio: the studio is still STAMPED, so the legacy env bridge " +
+        "cannot make it waitlisted. The admission permit or the guard changed.",
+    );
+  }
+
   return { ...seed, slug: WAITLIST_SLUG };
 }
 

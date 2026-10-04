@@ -141,6 +141,39 @@ async function stamp(studioId: string, mode: string): Promise<void> {
   });
 }
 
+/**
+ * Return a studio to the PRE-0204 UNSTAMPED shape.
+ *
+ * REQUIRED SINCE MIGRATION 0205. A new studio is now born with its admission
+ * authority initialized — `new_client_admission_mode_set_at` carries a `now()`
+ * default — because a brand-new studio is NOT a legacy row and must not inherit
+ * the cutover ceremony. `seed()` therefore produces a STAMPED studio, and the
+ * blocks below that are about a genuinely unstamped pre-0204 row have to
+ * manufacture that shape explicitly.
+ *
+ * Before 0205 they got it for free, which is exactly the bug 0205 fixed: the
+ * setup was relying on a new studio being indistinguishable from a 2026-05 one.
+ * Their INTENT is unchanged and still correct — an unstamped row still cannot
+ * move straight to open or closed — so only the setup moves.
+ *
+ * Permit-armed, like `stamp`: the BEFORE UPDATE guard refuses any update to the
+ * three admission fields without a transaction-local permit naming this studio.
+ * That is setup through the sanctioned mechanism, not a bypass of it.
+ */
+async function unstamp(studioId: string): Promise<void> {
+  await adminTx(async (q) => {
+    await q("select set_config('hone.admission_mode_studio_id', $1, true)", [studioId]);
+    await q(
+      `update public.studios
+          set new_client_admission_mode = 'open',
+              new_client_admission_mode_set_at = null,
+              new_client_admission_mode_set_by = null
+        where id = $1`,
+      [studioId],
+    );
+  });
+}
+
 /** Begin an owner mode change in `c` and HOLD the row lock, uncommitted. */
 async function ownerHoldsLock(c: Client, studioId: string, mode: string): Promise<void> {
   await c.query("begin");
@@ -452,7 +485,9 @@ describe("the commit-time authority's shape", () => {
 
   it("an UNSTAMPED row keeps the supported bridge semantics", async () => {
     const f = await seed("unstamped");
+    await unstamp(f.studioId);
     // 0204 backfills `open` with no stamp, which is what a pre-cutover row is.
+    // Since 0205 that shape must be made deliberately — see `unstamp`.
     const bridged = await adminQuery(
       `select public.effective_new_client_admission($1, true) as mode`,
       [f.studioId],
@@ -646,6 +681,7 @@ describe("an UNSTAMPED studio cannot be switched OPEN or CLOSED", () => {
     "refuses %s while the studio is still unstamped",
     async (mode) => {
       const f = await seed(`block-${mode}`);
+      await unstamp(f.studioId);
       const r = await setMode(f, mode);
       expect(r.rows[0].outcome).toBe("legacy_waitlist_cutover_required");
       expect(r.rows[0].mode).toBeNull();
@@ -662,6 +698,7 @@ describe("an UNSTAMPED studio cannot be switched OPEN or CLOSED", () => {
 
   it("WAITLIST is still allowed, and it IS the way out", async () => {
     const f = await seed("block-waitlist");
+    await unstamp(f.studioId);
     // The cutover write itself, made while the studio is still email-only.
     const cut = await setMode(f, "waitlist");
     expect(cut.rows[0].outcome).toBe("ok");
@@ -687,8 +724,10 @@ describe("an UNSTAMPED studio cannot be switched OPEN or CLOSED", () => {
   });
 
   it("the block does not touch ordinary durable admission authority", async () => {
-    // Once stamped, every transition is available - the first write is what
-    // stamps, so `waitlist` leads and the rest follow.
+    // Once stamped, every transition is available. Since 0205 a seeded studio is
+    // ALREADY stamped at creation, so this no longer needs `waitlist` to lead in
+    // order to earn the stamp - but the order is kept, because what this asserts
+    // is that all three transitions work, not which one may go first.
     const f = await seed("block-none");
     for (const mode of ["waitlist", "closed", "open"]) {
       const r = await setMode(f, mode);
@@ -702,6 +741,7 @@ describe("an UNSTAMPED studio cannot be switched OPEN or CLOSED", () => {
     // could omit it or pass `false` and restore the transition. There is no such
     // argument now: the stamp is read from the row inside the command.
     const f = await seed("block-direct");
+    await unstamp(f.studioId);
     await expect(
       asUser(f.userId, (q) =>
         q(`select * from public.set_new_client_admission_mode($1, $2, $3)`, [

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import path, { join } from "node:path";
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
@@ -30,9 +30,15 @@ afterEach(() => {
   else process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = ORIGINAL;
 });
 
-// `setAt` is the third axis, and it is what separates an OWNER'S CHOICE from
-// 0204's backfilled default. It defaults to a stamp, because a stored mode in
-// these cases means somebody chose it; `R_UNCHOSEN` is the backfill.
+// `setAt` is the third axis, and it separates an INITIALIZED persisted authority
+// from a row that never had one. It defaults to a stamp, because a stored mode
+// in these cases means the authority is initialized; `R_UNCHOSEN` is the
+// pre-0204 row that never was.
+//
+// SINCE 0205 A STAMP NO LONGER IMPLIES AN OWNER CHOSE: the column carries a
+// `now()` default, so a studio is born stamped and system-initialized at `open`.
+// `new_client_admission_mode_set_by` is what tells the two apart, and
+// `resolveAdmission` deliberately does not take it -- see the final block.
 const R = (
   storedMode: string | null,
   readFailed = false,
@@ -709,7 +715,62 @@ describe("the activation document matches what the source actually does", () => 
     expect(
       createHash("sha256").update(DOC).digest("hex"),
       "the contract file is frozen END TO END: any edit -- preamble, a step, the rollback table, an appended line anywhere -- must fail here until the hash is updated deliberately",
-    ).toBe("575c8480d7d42774ef3cd2d67e6b1765bee530eabe2f92a945bb4fa804008c0c");
+    // UPDATED DELIBERATELY, twice, which is what this pin asks for.
+    //
+    //   1. The 0205 integration. The contract's rollback table defined a stamped
+    //      studio as one "an owner has chosen"; 0205 makes that false, because a
+    //      studio is now born stamped and system-initialized. The table split
+    //      into system-initialized (set_by NULL) and owner-stamped (set_by set),
+    //      and #779's one-way-door warning moved onto the owner row, where the
+    //      commit point actually applies.
+    //   2. A PROVENANCE CORRECTION, no behaviour. The paragraph explaining why
+    //      set_by is NULL at creation attributed the owner practitioner to
+    //      handle_new_user() (0081) on first sign-in. Migration 0141 redefined
+    //      that function as a NO-OP and moved provisioning to the reconciliation
+    //      path, so the mechanism was stale by sixty-odd migrations.
+    //   3. NARROWING THAT CORRECTION'S OWN PREMISE. (2) leaned on the owner
+    //      having no Auth account at studio creation. False: 0141 reconciles
+    //      invitations for EXISTING accounts, so an invited owner may already be
+    //      signed up and already hold practitioner rows in other studios.
+    //   4. DROPPING THE MODALITY ALTOGETHER. (3) still called the NULL
+    //      STRUCTURAL and said set_by "cannot" be anything else. It can:
+    //      the column has no FK and public.studios has NO INSERT TRIGGER, so an
+    //      explicit INSERT can stamp and attribute a row at creation. The
+    //      paragraph now says what is actually true -- the creating path OMITS
+    //      the columns and takes the NULL default -- and states both limits:
+    //      unenforced, and not a claim about Auth-account existence. The three
+    //      states are documented as a READING, not a schema-guaranteed
+    //      partition.
+    //
+    //   5. TWO CONSISTENCY DEFECTS IN (4)'s OWN EDIT, found by sweep and by
+    //      review. The limit paragraph said the three states were "below" when
+    //      the table is above it -- the limit pointed away from what it limits
+    //      -- and the lead-in said "there are two writers that initialize it",
+    //      which reads exhaustive for a column an ungated INSERT can write.
+    //      Both now point at and describe the table correctly.
+    //
+    //   6. THE WRITER COUNT, which (5) had only half-fixed. The lead-in still
+    //      said "Two writers initialize it" -- a claim about WRITERS -- while
+    //      the qualifier I added spoke only about VALUES the column can hold.
+    //      Since nothing guards INSERT, a direct INSERT is a third writer, so
+    //      the count was still wrong. It now says those two are the writers
+    //      THROUGH THE PRODUCT and that they are not the only way these
+    //      columns can be written.
+    //
+    //   7. THE COUNT ITSELF. (6) scoped "two writers" to the product instead of
+    //      removing it, and the same claim then turned up a FOURTH time in the
+    //      runtime module. The ruling that closed it is that no count belongs
+    //      here at all: the document now names the two product PATHS and says
+    //      explicitly that this is not an exhaustive account of database
+    //      writers. My own sweep for the phrase missed this line because the
+    //      words wrapped across a newline -- the third time a split phrase has
+    //      hidden from a single-line grep in this file's history.
+    //
+    // What survived all seven is the only thing the repair needs: a row created
+    // by a path that omits these columns arrives stamped and unattributed. No
+    // assertion in this describe block changed, and no other region of the
+    // document moved.
+    ).toBe("4af24b5a8f5ed227a500d6f372ea6fd3b72d695d1527ed951231516ce30c1403");
 
     // The record file is evidence, and it must SAY so. This is a deletion guard
     // on its precedence header, not an interpretation of anything logged in it.
@@ -864,5 +925,69 @@ describe("the activation document matches what the source actually does", () => 
     );
     // And the policy that would have violated it no longer can: it takes a slug.
     expect(POLICY).toContain("studioSlug: string | null | undefined;");
+  });
+});
+
+// ===========================================================================
+// 0205 -- A STUDIO BORN STAMPED RESOLVES AS PERSISTED, NOT AS LEGACY.
+//
+// 0204 left `set_at` with no default while reading `set_at IS NULL` as the
+// pre-0204 legacy marker, so a studio created after 0204 resolved through the
+// legacy bridge and its owner was told to choose Waitlist before Open or Closed
+// became available. 0205 defaults the column, which puts a new studio on the
+// `persisted` branch from birth.
+//
+// These are UNIT claims about resolution only. That a real INSERT actually
+// produces the stamp is a database fact, proved in
+// tests/db/new-studio-admission-default.db.test.ts.
+// ===========================================================================
+describe("0205: a system-initialized studio is persisted from birth", () => {
+  const STAMP = "2026-10-01T09:00:00.000Z";
+
+  it("open + stamped -> OPEN / persisted, even with the legacy slug listed", () => {
+    // The system-initialized shape: stamped at creation, no owner change yet.
+    // It must resolve exactly like an owner-chosen `open`, because the bridge
+    // governs only rows whose authority was never initialized.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
+    expect(R("open", false, "willow", STAMP)).toEqual({
+      ok: true,
+      mode: "open",
+      source: "persisted",
+    });
+  });
+
+  it("the same row WITHOUT the stamp falls to the bridge -- the before/after pair", () => {
+    // The control that makes the case above non-vacuous: identical inputs, stamp
+    // removed, different answer. If the stamp stopped mattering, this would
+    // agree with the previous test and both would be meaningless.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "willow";
+    expect(R_UNCHOSEN("open", "willow")).toEqual({
+      ok: true,
+      mode: "waitlist",
+      source: "legacy_bridge",
+    });
+  });
+
+  it("resolution reads the STAMP only, never who set it", () => {
+    // "Initialized or not" is the only question this resolution asks, and both
+    // initialized states -- system at creation, owner afterwards -- answer it
+    // identically. Keeping `set_by` out of the resolver is what stops provenance
+    // leaking into a booking decision that must not depend on it.
+    //
+    // FIELD NAMES read from the module, not a fixture built here. The block's own
+    // doc comment legitimately discusses `new_client_admission_mode_set_by` --
+    // explaining why the resolver does not take it -- so a substring search would
+    // fail on the very prose that records the decision.
+    const moduleSource = readFileSync(
+      path.join(process.cwd(), "lib/booking/new-client-admission.ts"),
+      "utf8",
+    );
+    const block = /export function resolveAdmission\(input: \{([\s\S]*?)^\}\):/m.exec(
+      moduleSource,
+    );
+    expect(block, "resolveAdmission's input shape could not be read").toBeTruthy();
+    const fields = [...block![1].matchAll(/^\s{2}(\w+)\??:/gm)].map((m) => m[1]);
+    expect(fields).toEqual(["storedMode", "storedSetAt", "readFailed", "studioSlug"]);
+    expect(fields, "the resolver must not take the actor").not.toContain("storedSetBy");
   });
 });

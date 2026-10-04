@@ -58,7 +58,18 @@ describe("0200 position in the chain", () => {
     // KEEPS the HOSTED-head claim below, because 0201 is authored and NOT
     // applied. Those are two different claims and only the first has moved.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0201", "0202", "0203", "0204"]);
+    // DERIVED, NOT PINNED. A literal list here is exactly the "trip on the next
+    // one" pin CLAUDE.md s2 forbids: it goes red for every later migration,
+    // which is the eighteen-file mechanical sweep that took 0163, 0164 and 0165
+    // red after push. Two facts about an older migration are true forever and
+    // for any future head -- something is above it, and everything above it is
+    // greater. Those are what this asserts.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
     expect(countVersion(VERSION)).toBe(1);
   });
 
@@ -168,11 +179,15 @@ describe("0200 is ATOMIC and arms its own lock timeout", () => {
     // refused once for exactly that.
     const ledger = readFileSync(path.join(ROOT, "docs/production/migration-ledger.md"), "utf8");
     expect(ledger, "the ledger must carry 0200's COMPLETE sha256").toContain(APPLIED_SHA256);
-    expect(ledger, "the ledger's current block must record 0200 as APPLIED").toMatch(
-      // Anchored by SECTION: the match must sit between "## Current state" and
-      // the first "## Previous state", so a stale record in a preserved section
-      // can never satisfy it.
-      /## Current state(?:(?!## Previous state)[\s\S])*?0200_waitlist_redeemed_unbooked_exit\.sql`? \| \*\*APPLIED\*\*/,
+    // NO LONGER ANCHORED TO "## Current state". 0200 is HISTORICAL: the current
+    // block belongs to the newest apply, so a section anchor here trips on the
+    // next one -- exactly the "trip on the next one" pin CLAUDE.md s2 forbids,
+    // and it went red when 0205 was applied. What is durable is that the applied
+    // record SURVIVES in the ledger, in whichever section now holds it, under
+    // its complete hash. The current block's own hosted max is proved centrally
+    // by tests/docs/canonical-production-facts.test.ts.
+    expect(ledger, "the ledger must still record 0200 as APPLIED, in any section").toMatch(
+      /0200_waitlist_redeemed_unbooked_exit\.sql`? \| \*\*APPLIED\*\*/,
     );
   });
 });

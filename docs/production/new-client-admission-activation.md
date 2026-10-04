@@ -71,8 +71,47 @@ owner write cuts that studio over to persisted authority.**
 
 0204 adds `new_client_admission_mode` as `not null default 'open'`, so the moment
 it applies every row reads `open` — and nobody chose that. The fact that
-separates a backfill from a decision is `new_client_admission_mode_set_at`, which
-`set_new_client_admission_mode` stamps on every successful write:
+separates an INITIALIZED authority from a row that never had one is
+`new_client_admission_mode_set_at`.
+
+**Since 0205, non-null `set_at` does NOT mean "an owner chose".** It means the
+persisted admission authority **has been initialized**. Under Hone's current
+product paths, studio creation uses the 0205 column default and owner changes use
+`set_new_client_admission_mode`, and those are the paths the table below
+describes. **This is not an exhaustive account of database writers:** explicit
+INSERT values are not constrained by an INSERT guard or FK, so the table is a
+reading of what the product paths produce rather than an account of what the
+columns can hold (see the limits under it):
+
+| `set_at` | `set_by` | what the row is |
+|---|---|---|
+| NULL | NULL | never initialized — a **pre-0204 legacy row**. Unstamped transition semantics apply. |
+| non-null | NULL | **system-initialized at studio creation** by 0205's column default. Persisted `open`, no cutover ceremony. |
+| non-null | set | an **owner changed the mode** through `set_new_client_admission_mode`. |
+
+`set_by` is NULL at creation because the creating path **omits the admission
+columns**, so the column takes its own NULL default. Nothing it could record
+exists anyway: no practitioner row for this studio is present at INSERT. No
+trigger provisions one — migration 0141 redefined `handle_new_user()` as a
+NO-OP — and the membership is created or reconciled only later, at authenticated
+sign-in (`reconcile_my_pending_invitation()` at `/auth/callback`) or at explicit
+invitation acceptance, keyed to a `studio_id` that does not exist until that
+INSERT.
+
+Two limits on that claim, both deliberate:
+
+- It is **not enforced**. `set_by` has no foreign key and `public.studios` has
+  no INSERT trigger at all, so a service-role INSERT or a future creation path
+  could stamp and attribute a row at creation and the database would accept it.
+  The three states above are a reading of what the system and owner paths
+  produce, not a partition the schema guarantees. Enforcing it would need an
+  INSERT-time check, which is a behavioural change and is not part of 0205.
+- It is **not** a claim that the owner has no Auth account yet. 0141 reconciles
+  invitations for existing accounts too, so an invited owner may already be
+  signed up and may already hold practitioner rows in other studios.
+
+Effective-admission resolution asks only "initialized or not", so both
+initialized states resolve identically:
 
 | stored mode | `set_at` | legacy slug listed | effective | authority |
 |---|---|---|---|---|
@@ -83,6 +122,9 @@ separates a backfill from a decision is `new_client_admission_mode_set_at`, whic
 | `closed` | non-null | either | `closed` | `persisted` |
 | column absent (pre-0204) | — | either | env decides | `legacy_bridge` |
 | read failed | — | either | `unknown` | refuses |
+
+A studio created since 0205 therefore lands on the `persisted` / `open` row from
+birth, and its owner can select Open, Waitlist or Closed immediately.
 
 So an owner who selects **Accept bookings** becomes OPEN immediately, even while
 their slug is still in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`, and `closed` → `open`
@@ -269,13 +311,16 @@ designed and supported mechanism** — a product decision with its own authority
 proof, not an operator workaround and not a mode write.
 
 **Rollback depends on whether the studio has been STAMPED, not on which step you
-are on.** `new_client_admission_mode_set_at` is the test.
+are on.** `new_client_admission_mode_set_at` is the test — but read `set_by`
+alongside it, because since 0205 a stamped row may have been initialized by the
+system at creation rather than by an owner.
 
 | studio state | what can be undone |
 |---|---|
 | **unstamped** (`set_at` NULL, still on the legacy bridge) | restoring its slug to `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` restores its previous waitlist behaviour, for as long as the bridge remains — **this is the only state in which an env edit changes NEW-CLIENT ADMISSION OR THE COMMIT POINT** — it is *not* the only state in which an env edit changes anything, because `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` still drives EMERG-01's free-consult reschedule restriction at a stamped studio too (see the step-H note below) |
 | **0204 applied, application not yet deployed** (between steps B and D) | nothing to roll back at the data layer: the deployed application calls none of the new RPCs and writes none of the new fields, so the migration is inert. Roll back by not deploying. |
-| **stamped** (`set_at` non-null, an owner has chosen) | **ADMISSION MODE only**, through an explicit `set_new_client_admission_mode(<studio>, <mode>)` command — the env list cannot do it. ⚠️ **The COMMIT POINT cannot be undone at all**: writing `waitlist` leaves the studio durable, and `open` / `closed` remove the waitlist instead of restoring email-only. See the one-way-door note above. |
+| **system-initialized** (`set_at` non-null, `set_by` NULL — created since 0205, never owner-changed) | **ADMISSION MODE only**, through an explicit `set_new_client_admission_mode(<studio>, <mode>)` command — the env list cannot do it. There is nothing to "roll back" to: `open` is this studio's intended starting state and it was never on the legacy bridge, so no commit point has been passed. |
+| **stamped by an owner** (`set_at` non-null, `set_by` non-null) | **ADMISSION MODE only**, through an explicit `set_new_client_admission_mode(<studio>, <mode>)` command — the env list cannot do it. ⚠️ **The COMMIT POINT cannot be undone at all**: writing `waitlist` leaves the studio durable, and `open` / `closed` remove the waitlist instead of restoring email-only. See the one-way-door note above. |
 
 **Never claim that restoring an env slug overrides an explicit owner choice.** It
 does not, by design: `resolveAdmission` returns a stamped mode before it consults
