@@ -61,6 +61,8 @@ function setup(fx: Fx, overrides: Record<string, unknown> = {}) {
     prepushCommand: [process.execPath, "-e", ""],
     env: {},
     requiredEnv: [],
+    // CI runs these tests on node 20; the host runs the runner on 22.x.
+    nodeVersion: "22.23.2",
     ...overrides,
   };
   const prs: Array<Record<string, string>> = [];
@@ -370,10 +372,10 @@ describe("fail-closed preflight", () => {
     expect(result.reason).toMatch(/not in production history/u);
   });
 
-  it("an OpenWiki pin other than 0.6.1, or a key file others can read", async () => {
+  it("an OpenWiki pin other than 0.6.1, a key file others can read, or a node below 22.22", async () => {
     const fx = createFixture();
     makeStale(fx);
-    const ctx = setup(fx);
+    const ctx = setup(fx, { nodeVersion: "20.20.2" });
     writeFileSync(path.join(ctx.config.openwikiDir, "package.json"), JSON.stringify({ name: "openwiki", version: "0.6.2" }));
     chmodSync(ctx.config.anthropicKeyFile, 0o644);
     const generator = vi.fn();
@@ -381,6 +383,7 @@ describe("fail-closed preflight", () => {
     expect(result.outcome).toBe("PRECONDITION");
     expect(result.reason).toContain("openwiki@0.6.1");
     expect(result.reason).toContain("readable by its owner only");
+    expect(result.reason).toContain("node >= 22.22.0");
     expect(generator).not.toHaveBeenCalled();
   });
 });

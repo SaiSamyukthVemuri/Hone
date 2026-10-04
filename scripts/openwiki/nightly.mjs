@@ -344,7 +344,10 @@ function runPrerequisiteProblems(config) {
     problems.push(`pinned OpenWiki must be openwiki@${OPENWIKI_VERSION}`);
   }
   if (!existsSync(path.join(config.openwikiDir, "dist", "cli", "cli.js"))) problems.push("OpenWiki CLI entry point is missing");
-  const [major, minor] = process.versions.node.split(".").map(Number);
+  // The OpenWiki child runs on this same node (buildGeneratorInvocation uses
+  // process.execPath). `config.nodeVersion` exists so tests on another node can
+  // exercise the rule; the CLI never sets it.
+  const [major, minor] = String(config.nodeVersion ?? process.versions.node).split(".").map(Number);
   if (major < 22 || (major === 22 && minor < 22)) problems.push("node >= 22.22.0 is required by openwiki@0.6.1");
   if (!privateFile(config.anthropicKeyFile)) problems.push("HONE_WIKI_ANTHROPIC_API_KEY_FILE must exist and be readable by its owner only");
   else if (!readFileSync(config.anthropicKeyFile, "utf8").trim()) problems.push("HONE_WIKI_ANTHROPIC_API_KEY_FILE is empty");
