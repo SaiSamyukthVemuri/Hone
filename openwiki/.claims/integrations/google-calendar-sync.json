@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:08a98488638dea322cba132f9d6d2abac826723c76147b1b00c8f3e4662a7cf4",
+  "claims": [
+    {
+      "id": "claim_c22e9728dd014250bca7ae047eb85025",
+      "statement": "current-state.md section 9 and known limitation L6 record Google Calendar as DB applied, deployed, production-exercised and dormant, with the real-customer studio not connected and every sync flag off, and require separate authorization to connect that studio, enable any outbound flag, activate the worker or begin inbound or two-way work.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L878-L906",
+          "version": "repo-lines-v1:sha256:c3e84098004c1c27e8480901481e16b2276b84b155e696be37d5461c065c7323:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhNjJjMThjMmYwYzkzZmEyZjhjNDE2YWIwNGRlNzM4MWY1ODUwMTJlMGIwYTgwMDYzOGIyNWFhYmMxMjA1NWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2YmE3YzI3OWE4ZTVjN2E5YmE1NzAxNTRhZTkzMDE4NWNlODRlYjUxNjQxODZmNjJjZWU5MTgxY2MxZDA4MWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZlOWFkOWE0ZGEzYWE0NzIxOTI1ZDZmYTdmZGI0MjE1NDFmYWE2YmMwZTkxYTcxOGZmZDFlMzBkY2NjM2RmMWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4NGM3YWJhZjIyNmMwMWNmODdjMWRiZWIyOTAzYmQ3ZGIxZTFlMDlhZjBmMTllMzQ4NzNkNWQwNjg5ZTMyYjAifQ"
+        },
+        {
+          "resource": "repo://docs/production/known-limitations.md#L156-L166",
+          "version": "repo-lines-v1:sha256:6eb57921de336a1ef30aa7ca1995b10acabe3e3a337f474ba6d117af8d49aa23:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViYzE1MDM1MzRiZWQ0N2UyZGFlZDNlNjY2MjY1ZDE3ZDA1M2RiYTUzNGIxMDg0MTcwMzdjNTVlMDAwODdjZTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFmNjVjMDUyYTEyZTZiNmRmMjY2YWMyZTQ2NDYzYTA2NGVjMzdlNGZjMTAwOWRhNTE1Nzg0ZjJiNThhODA3NDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM1MmQ4YWY1OWQ0N2RiMGZiYTNiNGYyZTk4YzUzMjM4NjA4OGJkYzM4ZTY5ZDc4MmIzMDJlZDNkNGRmZGUwZjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_98da3b982bc744918509db5bc445f0af",
+      "statement": "Migration 0121 adds four per-studio Google Calendar flags, connection, outbound sync, inbound busy and two-way updates, each defaulting to false.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0121_google_calendar_connection_foundation.sql#L55-L58",
+          "version": "repo-lines-v1:sha256:3c9bd5a15d26cb68fe16a29b74c410f233c6a76b4012be1a09deb1dbba0fa7dd:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYmNkYWE5N2NlZGVkMjljNDM4NTQ0NGI0NGI1YjUxYjZkOTI3MWI1ODdiNjllNGRkZGYzODZiZTM3NThmYjM4MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODVlYjg2NTE1YWQzOWEyZGIyZTA0ZWM4Yjg0MDg1OWU5N2M3YjRiNWJiNDVmZWY1YWEzMDYyMTNlYTMyMTdlOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzg0Njk4YTM4NjgyMDQ1YzAwNTJkMDRmOWM4MTlhMzk4MzIxNTViOGQxN2VkMjlhYjI3YjY2NGQwZmI0ZDUzOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNmM4MjIxM2U2Y2MzNTkzMGU2ZGY2NTcxYzAwNTM3YTAzNmM2NWZlYzcwOTg1ODlhNjFiYzM5MzhlYWJiNTU3OSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_6de321ad68ac48d7a55a2e3cf2ee155a",
+      "statement": "calendar_connection_outbound_ready (latest definition 0131) is true only when the studio's outbound flag is on, the connection is connected and owned by the studio-calendar owner, a write calendar and destination mode exist, the granted scopes contain the destination's required scopes, and an encrypted refresh token is stored; browser roles cannot execute it.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0131_google_calendar_dual_destination.sql#L148-L170",
+          "version": "repo-lines-v1:sha256:4bed5e86cdee2d66b5d0abbdaf0eeab837aaf98dae3ca9cacd56a7feb1f3dcc6:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2MWJlMjk5MThkOTI3ZTg5M2RlYTUwZWQ3MWJlMzkyNTdlOWU5MGViNGJiMWFhZjQ2MTRiNjMxNzUxNjZiYzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4ZTIyMjgwY2Y2N2Q4MTk0MjJhNjMxODRlMDRjNjM2MDI2MWEwNDM0ODlmZWVlMWE0NmY4M2UzNjY3MTY4NmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMyMmZhY2M5MDNiYzhlNDVhYWRjNjQ4MzllMTVmMDdkNzFkNjBmOTE1YWQ4OTAxYzUxNzc2ZDA4ZGE2MDAwYmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg3OTJhMzVhMmI3NGFlMDM1ZjhhOGZjZWUyODFkN2UzYWZiNzA2ZGY2MGM5NWRjODgwN2IxMmQ3OTY5ZTdkZjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_93ac121108c343c1a84698118b07785e",
+      "statement": "A single-row calendar_sync_control.worker_enabled switch defaults to false and is closed to browser roles, and while it is false or absent claim_calendar_sync_op returns zero rows and mutates nothing.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0125_google_calendar_outbound_enqueue_activation_boundary.sql#L108-L119",
+          "version": "repo-lines-v1:sha256:d2357edeea12407d4211b930d01100b899e4ba0d0ed14af34ee3566313c4b81b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg1MzZhYmJlOTlkNjE4NzRiYzIwMWI0MzNkYzU2MzE3OTlkNGVhOTM2MmJhMzc0Y2FkYTdhYjIwMmU2MTJmYjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkZjc5NTFmMTk3Yjk2ZDg4ZmI1MzE0YzQzY2Y4ZmFhYTRlZGM5N2FmNGU1MDdjNjY5OGJmNGExZTIzZjhiZmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdhNDAwN2ZhZWZiNGFlOTFiYjUxYThkZDE2Y2VlOTBhZTNmZDM5YmJiYThhNjAxZDFlMmNmZTk3ZTBjM2U2MmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQzZDE0NDQwYTEwYzk0OTNmMzE5YTc4MWQ1ZDlkMTllMzVkNTVhMTc3YjFlMDJlNzBiMzM0NTgzZGYwNDVmM2IifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0125_google_calendar_outbound_enqueue_activation_boundary.sql#L429-L452",
+          "version": "repo-lines-v1:sha256:80c7889120498bcccd07ed1865b9024bc11b031013adfac62e6edbb3e622fb7e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkNjViODNiMjg2ZjRjNDljYjVkNjIyZDczNGFmMTlmNjdmN2JhNGY4ODgyNzIyZWU3NTA2MWJjODlmMTYxMzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZlNDg1YTJlZTFmOGI2ZTM0ZjY3NTAyODRiMDRjNDMyMTMzYjg3NjE3ZDdlZWU5YjJhZjY1M2M3Yzg1ZTI2MTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA1ZWYyMzU3OWQzYmM5OGIyNTE2NmQ1M2Y2YzE5NThhYjVjZWM3YWFlMTM5Zjc4NDk3MjEwMjQzODQ4NTNiOGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2a492aa2fcbc41849e5db8da31d33ab2",
+      "statement": "The Google integration uses hand-built fetch calls rather than the googleapis package, requests only openid, userinfo.email and calendarlist.readonly on initial connect, and derives the event scope from the chosen destination (calendar.app.created or calendar.events.owned) without ever requesting broad calendar.events.",
+      "evidence": [
+        {
+          "resource": "repo://lib/google-calendar/config.ts#L51-L83",
+          "version": "repo-lines-v1:sha256:2d2c5cd4ff8bbc3a50ffb0955a532e033bab5dcd50b491c03ef0b6ac506f8fe8:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM5ZDkyMDU5NTUzN2Y1ZjlkZmQyNTBkNDY0NWNiZGRlY2I4NTc2OGNlMTRlNjgzMDY5NzU5MTNlM2E5ZTVmZDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE4NGRhZTk2NTcxMzQ1NDI2MDM2YWUxMWE0NzNiZDVlMmI4NmE4NDhiMDQ0YmY5NzdlODVhNmY5MmRkM2M0ZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4Mzc1ZWNmN2EyODZlMzY5ODYxMzUzOGIwYTgxNDg1ODIzOGU2ZTE2NzVkN2I0MTI2NjNjOTQ5ZDIyMDQ2ODYifQ"
+        },
+        {
+          "resource": "repo://lib/google-calendar/config.ts#L7-L24",
+          "version": "repo-lines-v1:sha256:73720d69dd772b4fa419b09f459cfacbac25843610887901c3b8221257bdec3c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1M2FiMWQwOTM0NmQ2NTNmZDQyYjU2YTM3OGRjMGIxNjBmY2QwMzliNWJkZWFkN2I2MjM1OWIzMjE0Y2NjMDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzMDQ2NTJiYTM0OTRkZjVlZmVlYWY0NGJlOGY2M2ZjOTc2NDBlZTkzZDVhMzJlODgyODFmMWExNTAyMmRlODUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg5ODRhODJhNWI4YmYzOWEzODQ0Yzc3YWM2MGVkOWU2MTI1ZDA5NTQzYmI4NDk1MDQ0ZDMzMDg4NGFhYjg0MGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkMTMzNmY5MjQ5Mzc4YzhlMTU5YTA0NzlhZWU4ODQ2MGVjOTc3OTlhOTdlMzg5NDU5YzZlZjNiYTc5ZTJjMTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6ff24d9e5ca949bf8d6652864e7bca05",
+      "statement": "Google authorization uses PKCE with S256, offline access, incremental scopes and a server-minted state, and the OAuth redirect URI is built server-side rather than from request headers.",
+      "evidence": [
+        {
+          "resource": "repo://lib/google-calendar/config.ts#L85-L91",
+          "version": "repo-lines-v1:sha256:2e069cfc874a807bb2dd9806b11aeef35798c490068774ae8b329641632dbfc4:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTdhODY2NzViYjJmOGIzNjUyZTdkMTc4ZDU5MjI3MDk2ZDU2NjkyZGM0YzcyZmM1YTQ1ZTQ3NmQzYjBlMTU2MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzEzMGQyZjY0MDEyYzIzNzdlOTA3Yjg4M2ZmY2EwMjQzMDViOTNlYTVlMGJmMDk2YjYxZDVlY2ZmZjljZDRiMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTUxNDU2ZmM0ZDY1ZGE3ZjVmNWQ3YzljOTA2NmM4MTY5ODlmNzdkZGIyMzQxNTRkYTJhYWI4NGEwNjJlMGNjZiJ9"
+        },
+        {
+          "resource": "repo://lib/google-calendar/oauth.ts#L27-L84",
+          "version": "repo-lines-v1:sha256:e542b90fab0cb4966edd33f6b7bd6cb4a3ee8f7af4bee9349fad5a4b36a99c83:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ2MjIzNWExMDY1MTAxMDZiNzhkMWU0Mjc5YjZhNTNiMDRhZjlhNTBjNzlhY2ZjYzY4NDk2YTc1NWRlMTQxZjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiYjI5ODg0N2I0Y2EzMGY4NzZiOWVhZmQ4OTBjODRlMWQyYmQ2ZWUwMjNhODNjOGMyMWZiMjBiZjNhZWE0ZTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRhZTgzODU0YjA4YTY5NzA1Mjc2YTY1NDAyOGRhMDkzNDkzYTAzNDk0ZTUwZjQ0NjkzODk1MmJiYTg3MjM0YmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZkODkxZTAyZmJjODlhMzZkYzVkNTlhZDRkMGVhMzU2YWU4NmU3Yzg0MDg5MDZlY2ZhMTlkYzNlNjg2MjRhYTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_69b0c6d7d4c04fb781a7b3e7022b2389",
+      "statement": "The OAuth callback requires a signed-in user, consumes a single-use state bound to that user, re-checks active practitioner membership in the studio, and refuses insufficient scope, a different Google account than the existing connection, or a changed destination.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/google-calendar/oauth/callback/route.ts#L60-L140",
+          "version": "repo-lines-v1:sha256:c772a51643c6b13a4ec208ba2eb529b1af0fabe136e6e162076e0f80b082b786:eyJzZWxlY3RlZExpbmVDb3VudCI6ODEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhNjdjYTE2YTFjOWFkNjRiYTE2MWExYmZlZDk3OThiNDg3ODY5Mjc5NmQzNTU2OGYyNGMzYmI2OTRkM2Q1NmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5MmUzMjcxOWU2ZjdmY2QzNjRlMTIwOGUwYzIxOGU4ZjE5Y2Q3ODA3NzNlMGI3M2MxYzMyYjhiMWRmODRmY2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1NDNjNjEzN2Y0MzE2ZTI5YjYwNTQ0YmI1YTRiZjY0MWM2NDVhNWFmZTlmMDhhOGFiMzhiYzljYmQzMGJjMjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f7fb514efb0b4440b917bf2a81fdedf6",
+      "statement": "Google refresh tokens and PKCE verifiers are encrypted with AES-256-GCM under a dedicated GOOGLE_TOKEN_ENCRYPTION_KEY in a versioned ciphertext format, and encryption helpers fail closed without throwing or logging.",
+      "evidence": [
+        {
+          "resource": "repo://lib/google-calendar/token-crypto.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:a42f0e46dfe7849a5ece377d922f9d7122ddace45ad29137ecd276f8e3a89ccc:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5ZmQ2MmJiMzIzYTUwYzJmNTI2Y2YzZGQ0N2VlYTNiMGQ2ODMwZTFiODQxMmMxM2YwYzUxMGY1MzMzZGEwZjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUzNGZhOTk3NDc1ZWQxYjc5NmY5YjcxYjMyNzM4OTZlZTMxZDIwMzdkNTVlMmIwNWJiYjkwMDI4NGI5YzNmNDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7b9d8abed48e45359c947569d8405eab",
+      "statement": "Outbound sync is enqueued by triggers on appointments after insert or update of starts_at, ends_at, status or sync_version and after delete, with enqueue functions redefined in migration 0132.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0125_google_calendar_outbound_enqueue_activation_boundary.sql#L323-L380",
+          "version": "repo-lines-v1:sha256:ab502ffdc2d1f0dfa1d99704b0efa632fb36f42ea40480ced637785bf73c395b:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyMzAwODdkNDMwNTY2MmJmNjA0ZjBmNjJiOTBiNjI5ZmM1NjE1YjdhOTgwN2Q5MjdhOGUyMTNiOWFjMTYwMGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFjYjU4YjE4YjBhMmIxMTMzNjM2OTUyYTUzZDAxN2M5MGY1YjI0MzJhZmRhN2U2MjJlNzAxNmU0YTRiNWVmYmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdlMjk5YTQ2OTFhYWNmNzZkYjY0ODQyNWQwYmY0NmNjMGUyZjBkYzkxMGE4ZDljNzBjNTE5OGFiNGE0NGRhYzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ1MTMyM2U3ZDdkZjQxNzAyZGQzM2EyOTFhZDExMDdkZjY2MGJjYTUwYmQ4YzZlY2E0ODk5MTFiODg2MTFmMjMifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0125_google_calendar_outbound_enqueue_activation_boundary.sql#L60-L95",
+          "version": "repo-lines-v1:sha256:86b47c76e0efd7582531e10dcf76a621b67b82414bfa09c3c2e02eff0bc571f5:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUyN2M3ZjM3ZjExNjc2MDlkYzZkM2JjNzg5YTVkMjExZTg2Zjk3OTAzM2RjZmJhOGQ5M2NiMGNkMWRmZTRhNzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhMzcxNzY4NzY3NDllZTdiYmRjOWY2ZjA4M2M5MjQ5NjRkM2Q5NWI5NDY2MjU2ZTI4ZjA0NzFiMzNjOTYxMjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQxY2NhMDEyYzdkMWVkMTE0NDMzMTFlYjI4MWE4YWU2ZmYyMTM2NDEwNjVjYTU5MDE0YTM2MmY0Y2Y2ZGRlMjQifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0132_google_calendar_event_link_transitions.sql#L26-L430",
+          "version": "repo-lines-v1:sha256:446a58d051e2b06cf6fca48fda89bef00439759f9cd7ca642c08b3e3088ab9c6:eyJzZWxlY3RlZExpbmVDb3VudCI6NDA1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmNmVjNGEyOWYxZDFiMDVlOWRiNTdiMWU1YTVhYmIyYzZkNTM1MDk4M2Y3ZjViNmM5ZDQwMTMyNTQzMjVmNTdlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1ZTQxMzMzMGI4OTYyM2U4NjI5NzQ1YzJjNmE2MDJlYzBjNjM4NmY5ODIwMmZjYWY0YmVlZmRlNmEyYjAyNjdhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2ZGE5ODdjNDM5YTMxODgwODViMmYzZTZhNjNlMzZkZGFiZmNkNTZjNzBhZjcyYTM3MWNmZTNhODY5MmYxOTdlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5ZTNiNzkwY2E3MDc4ZjZmM2E1NzJkZjgzNWQxOTAxZWRkM2Q4ZjM3ODFmYzE5M2NjZGQyYmYyNDkyMzkzOTQyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_c9b1785b818d444f9c94bb567cadd0e4",
+      "statement": "The calendar worker route authenticates with the cron secret, refuses unexpected query parameters, and claims at most three batches of five jobs, admitting new jobs only within a 50-second window under a 180-second function ceiling.",
+      "evidence": [
+        {
+          "resource": "repo://lib/google-calendar/sync/worker-runtime.ts#L51-L71",
+          "version": "repo-lines-v1:sha256:c10b8f2de0b5290263ae4ded73ccb14efe0bb09dde7b782f72aa21013147744b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0OGM3ODA1NzhkNmFhZGFhOWRlMjNlMTg2YmNiZTdlYjdmNmM1Y2E3Zjc0NWI4NmIyYWJmODE1OTE1NjEwOGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4MDk4NWVkYzczMDcyZTFkNjNmNjM0ZWI3OGNmZTNlMjI2Y2UzM2ZlYjJmMWYzZTBhMTVkODRiMDNmOWY0OWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNlOTc0ODdkNzgxOGFlYzhiOTZkYThjNjA3OTlhZDk2ZjZkY2Y0MGVjZTFkNzZhZWQ5ZmI2YmZhZjk2ZjM4ZTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE5YWJjMTJmODBkNTM2MTEzMDJmZDU1MWY4NGZiNWQ1OWVkODk0YTdhN2MzYTEwZWQzYzM5YjJkNzEzODViN2QifQ"
+        },
+        {
+          "resource": "repo://lib/google-calendar/sync/worker-runtime.ts#L544-L603",
+          "version": "repo-lines-v1:sha256:baba743c92c65047e5fd696531b9fbfb10a7903da53e481c097b0dec82d51985:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmZDU3ZjMyMTUwM2ZkM2ZlNzcwZmIyNTc5OTlhNmY4OTQ3N2YwOGU4ZGY2MzAzMTNmYTM0ODRjMTFmZjRmM2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_69899fe8e9854f6b8ac2ca9158842225",
+      "statement": "Before any Google call, a pure stale fence compares the claimed job's sync_version with the current appointment and link and returns noop, conflict or proceed with create, update or delete, never treating a placeholder link as completion proof.",
+      "evidence": [
+        {
+          "resource": "repo://lib/google-calendar/sync/stale-fence.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:7ee6cc8cdf129852ee925ab739681ac947c21fa47e23332987b8e4e23a32bb55:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwZGQwOTQ4OWVkOGE1ODg2OTdhMzVhZmRjYTEzOGEwNjU2MzYzMzQ4NGRlMjBlZTVkN2MzYjNiZDE1NzUzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAxMWI3NzhlZDNkZmM0ZGM5Zjc0MDIwMjVmYWM2MWZhYWVlNjZhNWJmZTAzYzM2ZmRjZmQxODZhMTY4MjUwNGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b55cfcbddc25474faff3b74a7ca24b5e",
+      "statement": "Google access-token refresh is serialized per connection with a transaction-scoped Postgres advisory lock, and a rotated refresh token is encrypted and stored under that lock.",
+      "evidence": [
+        {
+          "resource": "repo://lib/google-calendar/sync/pg-refresh-coordinator.ts#L1-L32",
+          "version": "repo-lines-v1:sha256:6d737e96da2a985735bcf56c528abc958526897c78ccfe5defddd95f02de81e7:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM2M2E3NDE4NmFjYTUyNmEzODk2YzVjMWVmZjE0NDUyMzU1OWJlYmFmZDRjNjRiM2Y4ZjczNTRlMDZiMzIyMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwMTVkN2Y1MmRmNzUxZTQwYzg2ZWY3YWUwNDA4YmQwMTIzM2Q5NTViYmM4MTAxNzg4ZGEwOTA1NzEzYjA5ZTUifQ"
+        },
+        {
+          "resource": "repo://lib/google-calendar/sync/token-manager.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:5200640a444af8e849479015dcd9cff4cbbd2ba15c028accb85ac6c0e8da4ef3:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjOTBlNzY5MTQ0YjQ3NzgxOTM1YzBkYzFiMzhiMDY0ZmU3ODc1ZTIwOTU5ZDdhNzQyMWRjNDRjNDBkMjBkOTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNhMmZlNmUzMDM3NWRjYWU3ODYxMmRmYjY0ODllNjgyMmNhYmE2NWVlYWNhOTQ5Y2IxNDIzZGJhN2QxYzg4Y2MifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3555b367c24b4297872ac8337109610d",
+      "statement": "The reconciliation sweep never calls Google, only orchestrates existing database repair primitives within intent-eligible studios, and uses an Upstash SET NX EX ownership-token lock per studio with fail-closed mutation safety.",
+      "evidence": [
+        {
+          "resource": "repo://lib/google-calendar/sync/reconcile-lock.ts#L1-L90",
+          "version": "repo-lines-v1:sha256:7f2f1225819775752d2a96effbc3b3c4ff8e505e94379ec275ca0ff8f6293248:eyJzZWxlY3RlZExpbmVDb3VudCI6OTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmMGNkYjk3MmE3YmZiN2VkMjQ2ZjlmZjY3MjM4NWU1NWY0OTY4ZmMxMTA0M2RjNWI2ODRkNTFkZmEzMWRiY2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI0ZmE3ZjUyMzgzM2QzNjZkZmU4OTE2YjM3MGZmNGRmMWE0Y2M3MjU5YzUxMGRkODMxOTQ0YzMxNzM1ODA3OWQifQ"
+        },
+        {
+          "resource": "repo://lib/google-calendar/sync/reconcile.ts#L1-L35",
+          "version": "repo-lines-v1:sha256:120f6ff049e9e6b960d84264ade8f9d0ea90a7e734390bf43ec7fa0a6d9f451e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1NWQ1M2VkMzFhYmU0MjRjNzcyOGNmYmViNDYxOTkwYTI0ZTQwYjE4NTRjMTFlZTU5MTA2MGY3NDlhMzI4ZDcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_de1e7baa15d249a9b938a699a7898ab8",
+      "statement": "The fake Google provider requires HONE_E2E_FAKE_GOOGLE=1 and a valid HONE_E2E_RUN_ID and throws when enabled in a deployed runtime.",
+      "evidence": [
+        {
+          "resource": "repo://lib/google-calendar/e2e/fake-google-guard.ts#L27-L80",
+          "version": "repo-lines-v1:sha256:583c425de695b7bd78ebe29ff7ceb5d06bce4b7bf83ee74535f56cc51d5ac9bc:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg1ODdjNmNiYjE5NTJkMWFkODU0MWUxYmM4NjNjOTFhZDdiNTg4YWZiZTU5NDQ2ZDhkYTViMjkyMzk1MDcwYjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlOGU3YzQ3YWExODg3MDk1ZDliYmQ4ZGRmNWY5MTgyYzdhN2U3MTFjZWNmMjRlOTM0NGExOGQ4ZmE4MzAyMGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFiYjVlNWJmN2JmNTk1ZmU0MjUzZDE2ZWNkZmE2ODVlNThhNDA3YWI1MGQwN2U2NjNiZDk2NGY0MzExNTUxNjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYyMTY0MTMyNDc3OWNkZDE4YmVlMjZiMmU0MGE0ZTZlMTMyNDY5MjhlMDkxOWFjOWIwZTc2MTk0Yjc1ZjZlYTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4a1b5d66b26649be88996b9857ad4204",
+      "statement": "The calendar-sync route header still says the route is not cron-registered and the outbox is empty, while vercel.json registers it and known limitation L6 directs that documents claiming the outbox and links are empty be corrected.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/cron/calendar-sync/route.ts#L4-L23",
+          "version": "repo-lines-v1:sha256:5489f582777ce99e7ba71ac349853b0cd04dfd31e4bdb0c54aefc0e04a0d04aa:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBjNDA4MjJmYmI0NTMyNTM5YWRkZDk0MTY0Y2E5N2Y2ZmRiZGFjM2M5Yzg4YzMyNTgxNTZmYzFlOGU1ZmUxYWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVmODk3YzFjMWI2MmRiZjRhNjBmYzAyNWRlZDkxMzZiOWJlNzU0ZTE3YTUxZTJkMzk0NmFkYmRiMGVhZDUyY2UifQ"
+        },
+        {
+          "resource": "repo://docs/production/known-limitations.md#L156-L166",
+          "version": "repo-lines-v1:sha256:6eb57921de336a1ef30aa7ca1995b10acabe3e3a337f474ba6d117af8d49aa23:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViYzE1MDM1MzRiZWQ0N2UyZGFlZDNlNjY2MjY1ZDE3ZDA1M2RiYTUzNGIxMDg0MTcwMzdjNTVlMDAwODdjZTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFmNjVjMDUyYTEyZTZiNmRmMjY2YWMyZTQ2NDYzYTA2NGVjMzdlNGZjMTAwOWRhNTE1Nzg0ZjJiNThhODA3NDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM1MmQ4YWY1OWQ0N2RiMGZiYTNiNGYyZTk4YzUzMjM4NjA4OGJkYzM4ZTY5ZDc4MmIzMDJlZDNkNGRmZGUwZjUifQ"
+        },
+        {
+          "resource": "repo://vercel.json#L7-L14",
+          "version": "repo-lines-v1:sha256:7dfecb478c27600ffcad044a9b6784f6ba00f3e25012b09006881112e04bcf8b:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjljYTg5MWJmZjdhYzFmN2NlYWFlNDBlZjA1MTA2NmJlOWVmZTQ3YjRlNDI4MWU4NmMzMTliZTJjNTVlYmNlNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDg5M2Y0MGUzNzgxZWI4OTZjODJkMDQ2YTA4MDY3YTExZTM1Y2RmMmYxZGZhZjI2ZmVhOTBiOGRiNjY3NjQxMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmIzMDZiZTI2ZWI2YWNmMjQ0NGU1NDYxNThkOWFmYTllYmE2NDY4NzRiZGVkMTQxMDZkZTYxNTY3NjMxOGM2MyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjIsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTdmNjk5NmUzYjE1ZGZiNDM4NjMwMDFjNzJkM2E1MzlkZTcwZTM4ZTJhOWVkMjBkZTU5MTEwNGE4Mjg2NGY2NiJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:84028371519ba8c68c9bbf7c7fcb7e04a9ce6ba4f37a1e34a701454b36fc0b3f",
+  "claims": [
+    {
+      "id": "claim_25aee9d670884469939cf330e17c9fa6",
+      "statement": "Possession of the invitation URL only allows viewing the offer and requesting proof; booking or declining requires a separately verified recipient capability checked inside the mutating command's locked transaction.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0192_waitlist_recipient_proof_authority.sql#L23-L48",
+          "version": "repo-lines-v1:sha256:af5705688dcd98923c29c550719206606e1b1a87bfa31bf362aea225e86e1e3c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxODhmOTU2NDg3OGQxNzgxYzAyOTk5MTIxZmY1OTVhZDdhMzk0Mzc1YTFiYjAxOTVhYTEwNjQ0NDM3ZTc3ZjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU1NzFjM2ExOGU5ODEyNTQ0OTRhNDVlMjczMjkwZmVhZjYxZTAzYzU1ZTY2OWY4ZGY4MWY3NDI5NjgxNGJkNTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI2MTQwYjgzMWM2OTcwODQ4MjJjZjQ1OGQ4MmMxYTQ2MTA4NDg5MDllZmQyMjhiNDgwODAwZjdiZmJmN2VkMTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5ODQ1ZDI3ZDcxOGM1MTc4NTE1NTJhYWI0Mjk0YzQ5YmU2OWFjN2IwMjRmZDhkNTJhMzU5N2NiZTcwN2U1YzIifQ"
+        },
+        {
+          "resource": "repo://tests/db/waitlist-recipient-proof.db.test.ts#L278-L404",
+          "version": "repo-lines-v1:sha256:fc920f0e195b29c67582f3dbbbd249b009c8660e45d49b82451df9678ec882c5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwZTI2MzczZDNmYjJkYTgzNjE4NmEyNGU0NDQzNjNkZWNmNzI0MGYyNDg1YjViYWVjOTJiN2NhZmUyNzZkZDUyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiYzZlMTQyYWNiN2ZmZDEzZTFmOWFmOTU1YzAzN2NiYzA3ODkxZWMzZDBjYzliMDJhYzg5MzY4MmRkYzA4MmQzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkYjcyZDk2ZjMxNThlMWE5NTk3NjYyOTFkZmI2YTJkMjFhODBlY2Y3ZGFkYjQ0OWZhNTQ0YWIzNDM5MWVkMThlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyZGIzNWJhODQxMjcwODVhYTg5NGYzMWQ4MjNjODJlOTdiYWY5NmIxMmE5MGE1MGUxYjgwMTZmMDllZTUzOWRmIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_3385537797a342f3b5d348f6b40f492c",
+      "statement": "Recipient proof state lives on the invitation row, so a newer challenge replaces the older one and revoke, release, decline, expiry or reissue invalidate outstanding proof, and only SHA-256 digests of the challenge and capability are stored.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0192_waitlist_recipient_proof_authority.sql#L30-L45",
+          "version": "repo-lines-v1:sha256:f5357b9f2a077527c94eed74802e5d5a5e67dd376b0c01c751c1c099a4fba604:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyZjM4MDczZDhhNjQzMDUxNzhkMzdhODlhOGFkNGE5NDVlOTNjZDg3YjkxZGFiZDJhMDlmNWJmYmY5ODU5YzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcwOWYxNDc2MTczZjM2MzBmZWQ4YTc3NDZiYzBlMWUzZjg2YTJhODMzYmI0YzAwNmFhMTQ2YjgwNzI0ZjEwOTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3MmRiOTk5MjM2NTNlM2E4MmZiNDNjYTRiNDk5NmUzYmUzMDEzOGVhNDgwMjE3ZjJiODM4YWRjODc1YzRjMGQifQ"
+        },
+        {
+          "resource": "repo://tests/db/waitlist-recipient-proof.db.test.ts#L499-L760",
+          "version": "repo-lines-v1:sha256:06918e63fb41adb63a788f5ceb4d9934861c622c70cd49f0f67f41161433a207:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiZDBjOTEzZTE4NTE4MDg4YTA2YjU2NGJmYjgyYzAwYWE4MTNhM2Q1MTI1NGQxYTJlNGUyMDEwNzlhYTM2ODhjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJkMDVkNDM5YThiZDEyYjNiOTM2N2EwZWU2YTNiOWYwYjgwMGU3ZjllMDRiZTljYWQzMDg5M2JhZGY2M2UwOWMwIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI4ODk3MTQ0NTczMWZiYmVmNWE3MzYwZjU1NTczNDhmNDhlOGFkZTY3NWRlZDU2NDljMzhlYTE2ZWE5NDE1NzYwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmNmJjNjY2MjE0ZGRhMjFiYzU2NTJkZjMyNDk4NmVjYTY4YTczMGMxOTdkM2ZkNGI1MWQ5NGE2ZDdjZGU4NzUxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_7c824c6898c347858e825a46b21d8851",
+      "statement": "The invitation page renders dynamically without caching, is marked no-index, and performs its first authority call on the server before rendering so a dead or forged link never shows an offer.",
+      "evidence": [
+        {
+          "resource": "repo://app/invitation/%5Btoken%5D/page.tsx#L5-L35",
+          "version": "repo-lines-v1:sha256:507d2a0a5e3e644554e5a0aabc4594f9b25609f1bbba13bdd3b9696def308edc:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkOTY4MTEwOGRiN2U5OWViNDNlNmQ2ZWZjNDU1ODQzNGIzYzBmM2ExYTMxMGE5MGE0OTc4NzM5ZTU5N2ZmZjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5NTVjNDE1OTM4MjBlN2M5ZTlhMDZjZDk1MTkzMzk4OWExMzg1ZGRiY2YwMDdiNzEzODM2Mzk4NmYwOWI4NzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI2MTQ1ZWMwMmQyZjUwNDEyMTFmMjIwMTE1MmI1MGY3NWIxMmQ3NDBjMTJlOGNjNGQ3OGFlNTBkMTQxNDE2MTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_acd05c746c3b4eff9b39ae80361bb2d7",
+      "statement": "The invitation server actions map to service-role commands: resolve for loading, begin and complete proof for the code and capability, decline, and booking through the public booking action.",
+      "evidence": [
+        {
+          "resource": "repo://app/invitation/%5Btoken%5D/actions.ts#L755-L1084",
+          "version": "repo-lines-v1:sha256:c0b3c2123b263a137030875948e9a27b4638554b37655a122d55b8dab53c8c8d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5ZjJkOGYwMGY5NzlhNGM0NDk4YzYyYzdiOTBmNzRlYTkyOGUyYmE1MTI1OTFiNTA5ZTQ1NTdmMGJkNjcyZWMxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIxZTllMWYwMmQ1ODBhNjE3ZjM3MGY3ZGI2NjEzMjhjMGM3MTU5MWRkM2I5MzYzMzhmMThlZmIzMjkwYTk1YjU2IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3MGYzMTE2MjlhMzcyMTUxNTZiZjhlMzA1NmY3N2Q1NTFkZmY1ZmJjNDlhNzY4YTRlYWZiMTNlZDY3Njk4MTFhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhM2U5MzBjNjdhNDJkNWNmYjAwOWZkZjIzNzhjMzljOWY2OGE0NjhhOTlmMTc5ZDFjYmU2ZjhlNTk1ZjgyMDkzIn0"
+        },
+        {
+          "resource": "repo://lib/booking/waitlist-invitation.ts#L473-L870",
+          "version": "repo-lines-v1:sha256:75fb16b03cf29d3e69fcbfdbe2507730a27a827317e7c5d6a3c39442d4af0dd1:eyJzZWxlY3RlZExpbmVDb3VudCI6Mzk4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhMGNjMWZlNjM4NjgzNzc3ZTgzNTM3YzFhYmQ0YWQwMzRkNWVkMmIzZTQ2OGFiZDZmZTUyNTU2NDFkNTc2Mjc4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4NjEyMDFkM2RmMzg5YzY1NjM0YzkyYjE4NGRlMWI2YjgxZmY1MTM4YmI0NGNlMTJmNzc3NTRkMjMxNGY0OGJmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIyODQ3YzE3MGUwMDE5N2RjNTYzY2NmMTE4Yjg3MDY0MjhlMDVlOWEyYzExMWRhOWU0YjUzNmEwMzBkMDczOTc0IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhZDFhMGRiYzViNTNkZDQ4MzQ0MTUyOWRhNjg5NzQ4MGQ3NGE5OWNjMmZmMDNkMDhkOGU2MGRlYWVkNTJiZGI3In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_7d07058859e448e1b3f569296888c035",
+      "statement": "A proof request is rate-limited per invitation and per IP after the invitation resolves and before a new challenge is minted, failing open by design, and issuing a new challenge clears the capability cookie because the old capability is invalidated in the database.",
+      "evidence": [
+        {
+          "resource": "repo://app/invitation/%5Btoken%5D/actions.ts#L794-L841",
+          "version": "repo-lines-v1:sha256:6217b6939e1929341b06074edfd22c56aa51fd098c1d8ec123c573df1d7dc46d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc4OGRhNjBiYzE5ZjBhNDIyODA3MzU4ODcxYmY1ZmFhZTEwYTRiYWEzZjEwNWE5Y2Y0MDg0YzJjODJkNGZkMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmNjFhYTQ4MmEwY2MzMzRmYzk4YTMzOTNkOTE1MTc4Y2Q1OTYyYzQzY2I2YmFmOWQwNmIyNTdhYzY4OTcwNzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3YzczNGM0ZTZjODdhYmM5ZGFjOWUxZjY2MTQzOGViOTEyYWI0ZDY2YWQxYWJhNzMxM2UyMzVjYTFkOGJhM2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkY2Q5NmQzYzNjNTAxY2ZlZTIzOTljNTExY2I3NGZlMDUyNmY5OGUxNjJkMWUzMzNjODBmN2VmNTgxMWRhODMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a83ef10a21804b0f90d5d4fe94ed7632",
+      "statement": "Invitation booking uses the waitlist entry's stored contact details, preferring the stored phone over a typed one, and treats a lost response or a redeemed-but-unbooked result as terminal states rather than re-showing live times.",
+      "evidence": [
+        {
+          "resource": "repo://app/invitation/%5Btoken%5D/actions.ts#L1084-L1180",
+          "version": "repo-lines-v1:sha256:25b02c9d02d09afbe669d6399c63b6ee1cbb5c8a6e0c27460d6ad16457f9dcfd:eyJzZWxlY3RlZExpbmVDb3VudCI6OTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlOWUxZjAyZDU4MGE2MTdmMzcwZjdkYjY2MTMyOGMwYzcxNTkxZGQzYjkzNjMzOGYxOGVmYjMyOTBhOTViNTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0Mzk4YWVjYmEzMTQyNGNiZDVmNmYwNzAyZjkyYjEwMzc4ZjhhNjk2YzljOTAzZmNlMjNmZWM0MjQ3ZWM1OGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU1ZDBjMWY0YzQ0ZDExNjA2MmZiMGU5NWRmYTAyMGEzNzgyOGZlOTFmMzYyOGNmZWYxOTI3MmRmNGExNjA3MDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkwMzgzM2E1Yzk1OTQ1MzRhY2Q4MDQxNWRhMzVlMzBmZmM1MmM1YmYyZDFhNzJlNjdmYzI0MjRiYmY3ZjU3ZjAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e1c62f06230e476fa6df7f79f8f1351d",
+      "statement": "create_waitlist_public_appointment composes create_public_appointment and record_new_client_waitlist_conversion in one transaction and raises a private WA002 to roll back the appointment if conversion refuses, using the server-supplied entry id that the conversion re-verifies under lock.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0195_waitlist_atomic_booking_conversion.sql#L1-L76",
+          "version": "repo-lines-v1:sha256:af96e7616eaf0526c4cb70eb3f82d0e79fa3ea96a15415111f3b74f00f5d6c09:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQzMjM2ODI5OTFkZWM2MWVkOGU1OWUzNzAzYzFlNzU3NDE0Y2NkNjE1OGJkNzM2OWI3NWFiZWE2ZDMwMDU5MjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f70021d5c4544ce59ba1a4e70a8fa632",
+      "statement": "DB tests prove invitation booking commits the appointment, audit and conversion together, binds the conversion to the redeemed recipient, keeps the booking inside the stored offer scope, behaves correctly under concurrency, and is executable only by service_role.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/waitlist-atomic-booking-conversion.db.test.ts#L270-L850",
+          "version": "repo-lines-v1:sha256:044172f1eab94a3aafb6c2ac152c3d002c66ef104c0da8be7d354092edc149dc:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwYWYwYmI0MTllZjBhMzExOGIwMzc3NTNjYWMyYWJhZjFlYWVjOThjMGNlMGIyZjY4OWM3N2IwMmFjNmE3N2IxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNjZiZmY0MTQ1YjE3MTYyOGY0YjhkM2Q2Mzg3NjM2NGQ3MmEyMjJjMTA4NDRhZWViMzcwOWM1YTAwMTBhOWZlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_8116852324814abd8996603bad1073a0",
+      "statement": "Migration 0202 adds nine nullable prospect profile and SMS consent columns with all-or-nothing consent evidence and four service-role commands, while its profile-join and profile-completion commands have no reachable application caller.",
+      "evidence": [
+        {
+          "resource": "repo://lib/waitlist/profile-completion-server.ts#L1-L60",
+          "version": "repo-lines-v1:sha256:46e4e8a825454f6d0eaa1ab7f9472c0aec95dde26f253c1b702da07b4d376478:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFjMzk5MTE3YzVkMmU2ZGExNWNmOTk3NGJkMGZhYmZjNzQ2MWI0ZWJkODYyMDAwMjg3MjZiYTNjNTkxOTc0YzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE4MmQxNTBhYTU4NTU0NTM2ZGNiYjI4YWFlZjU2MzE0YzE5ODEzNWNjM2NmNThhM2JlMzQyMTRiZGRmMTUzNzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEzODI0NWViMjBmMDM1YjkzOGQ0NmY3MWNiOWU1NDg0MmQ1ZGVmNTc4ZTk2YWJiYTBlZjM5MTJlZGI0OGYwYjUifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0202_waitlist_profile_and_sms_consent_authority.sql#L1-L90",
+          "version": "repo-lines-v1:sha256:b94ccf9f8d58df2593d1e15b2ed6ad4b530691c4ee0cf307a583659ca43a5c99:eyJzZWxlY3RlZExpbmVDb3VudCI6OTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlNmJiZjY5ZDI2ZTAzMWU0N2MyYWYyYzRkNjNmYzQ4MzJlOGViYjQyMDIxNjY0N2JhNDIwMDFjODNkZmY1MWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVlM2I5ZmZkODM2NDVmY2U3OWRjMDNjMmQzMzE5MTc2M2IzOThlMjBlZmJlNWU0ZDFjZWExYWJiMTc3Y2U0NTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6e500b07c39d4b79bb0d9b307e4ef69d",
+      "statement": "The inbound Twilio SMS route calls the waitlist prospect suppression commands, so a STOP also suppresses matching waitlist prospects.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L287-L350",
+          "version": "repo-lines-v1:sha256:71e09d15bb770bdf2357694e749bd6957cddcb274624dfa7db5b71a8ee280c72:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxYjhmYzlkNTBkOTJiOWQzZWU4MGU3MDcwODQ1OTI5YzczNDdiZTQ3YTg1NzFiZTllZjY3YTk3MDc2YTNjYTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1NGIxZjhjYTI1MzkzNDRlMTU1MzZmMGRiODkwOTZhZjU5MzUyNzliZWM4NGQxZGRlMmFhNzkyNGRmY2UwYWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkODkzYTdjNzhiMzU3NTRhYjBiODI4YjQ1NDExMmI3NzU4ZmI1NTlkMjU2MTM5OTc4ODU0ZjE3MmE1M2E5MWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_57d4c8ed42b24b428c0395e0a957619d",
+      "statement": "mark_waitlist_mobile_verified stamps a database-clock verification only by compare-and-set against the exact stored phone string, refuses missing or mismatched numbers, is idempotent once set, and keeps phone equivalence in a single TypeScript normalizer.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0203_waitlist_mobile_verification_authority.sql#L1-L41",
+          "version": "repo-lines-v1:sha256:8f9ec1f48db4d6c66d6a5648c56c9c6d0298fe68c37ac3df5b5388de15ff91be:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU1NTU4OTQ5MjY1YTE0NDliNzlhZTFjMWYwNDU3ZDk5NmQ0NmFjYmI1Y2I5OTE0ZDNiMTQ5NTI1NWUwZDE5YjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlkMjk5ZDcxYTA4ZDMwNjk3YzZjZTkzNDk3NTlhNzY1ODM0ODVhMTVlODVkZjdhZDk3N2I0NDhiMDU0MDIzYjMifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0203_waitlist_mobile_verification_authority.sql#L237-L267",
+          "version": "repo-lines-v1:sha256:301385ec6e48b6f87cc670370c8c36639e113db4ba41f0fb8739c36c75e57ecd:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwM2U2ZmUwYjNjNjZkNTNkOGNhYTJjNjFjZGZmODBiYjUyY2IxNjVhNTFiNTMzODJiNjk0YjA5ZmJkNzM1ZWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNhOTliZWI1ZTFlOWNhOGMwMzYwMWZlMzAzMzI0OWU2MjUzZTVlOTEwMzE4OTc4OWI5OTZjNzE0ZTE0N2M1YTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEyODQyY2VhZGQ3NGE3MTE1MTQ1MTY3Y2VjMzZmMWY1NTI0NDIyOTY2Njg2ZWFiMDkxMzNmZGE5MDdkNmQwNDcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2eb26ec279814cbe871caeaeba756134",
+      "statement": "Mobile verification is not reachable from the application: its only server caller is imported solely by a flow module that nothing imports, and the profile capability flag verifiesMobile is false.",
+      "evidence": [
+        {
+          "resource": "repo://lib/waitlist/mobile-verification-server.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:44ae95966eb6bc0384c8410b104fbbcbfa2ef20f633232850ea486077f3c61f9:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQwMmY1OTdhYzJlZGI4ZGM1YjY2MWIyOTBmNGIwYTM2NmM4OTFiNThkNjJlYmI0ZDEwNzEzODIxN2JkMzNmM2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5MTM2YzIxZjkzOGVmZjU1YWZjZGM1ODdiNzFhZTVjYTNlNjVmZTNlY2NhOTMzMTA4YWExYTEyNGJhZTUzNTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg2MTNhOTJkOGFkZDk5NTk2NDY2N2UzMDQ5NTYwYjJhM2E1ZmU1NDc5YWI0YjIzMjFhN2VkMGI3NGVkZWVkNWIifQ"
+        },
+        {
+          "resource": "repo://lib/waitlist/profile-completion-server.ts#L50-L90",
+          "version": "repo-lines-v1:sha256:58bb47849137d6e0e2f2112b96746a7c0f9b38d121ad60988ffa1d256f32dac1:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiOWE2YmYxZGI2ZmY5OGM4YTM2MTYxM2ZmMjcyNTFiOGZiZTQ3ZTE3YmE2NTc3ODEzMjVlZmNjYWRlNTU2ZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1OTY2MTQzZTM1YzBmM2UwY2RmZTEzYmQxZTM5MGUxY2M3NjIxMzJkNTg0NWE5ZTg1ODJhZjY2M2YzZWU2YmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJhMGNiNzYxMjM3YzBjMjE2ZmRjZmViYTE3NmQ4MmMyZTJiNzM3Nzc0NDMzMmRlOWRhNDgyZjAwZTYxMTEyOGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_897037b0fce9489daad7fc2e44138e8e",
+      "statement": "Migration 0198 grants owners column-level SELECT on declined_at so the practitioner surface can evaluate the same liveness predicate as the one-live-invitation-per-entry index, without exposing token, proof or scope columns.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0198_waitlist_live_invitation_read.sql#L1-L40",
+          "version": "repo-lines-v1:sha256:1928ef3d36479cf07d039a19bb6b2f656edcb5c666edb774240c0323b0114614:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5ZmViZjIzNjVmY2YwNjRmMzYxYzNkNjUwMzM0ZWJmMjBhYWQ3MzMyMjI5MWRhZWFiMGFkYzgwZDc0ZDQxOGIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmN2JkYjk5M2JiMTAxODA4ZjhmYzAxY2QzZTE3OTY4YjM4MzUxNWIxMWViODZhMjZkZDRkZDU1NGFmOGFhYmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7ce789da5b5c43e59279b0397025c67c",
+      "statement": "The frozen 0202 header says the inbound STOP route stamps only clients and that its commands have no callers, which no longer matches the current inbound route.",
+      "evidence": [
+        {
+          "resource": "repo://app/api/twilio/inbound-sms/route.ts#L287-L350",
+          "version": "repo-lines-v1:sha256:71e09d15bb770bdf2357694e749bd6957cddcb274624dfa7db5b71a8ee280c72:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxYjhmYzlkNTBkOTJiOWQzZWU4MGU3MDcwODQ1OTI5YzczNDdiZTQ3YTg1NzFiZTllZjY3YTk3MDc2YTNjYTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1NGIxZjhjYTI1MzkzNDRlMTU1MzZmMGRiODkwOTZhZjU5MzUyNzliZWM4NGQxZGRlMmFhNzkyNGRmY2UwYWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkODkzYTdjNzhiMzU3NTRhYjBiODI4YjQ1NDExMmI3NzU4ZmI1NTlkMjU2MTM5OTc4ODU0ZjE3MmE1M2E5MWEifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0202_waitlist_profile_and_sms_consent_authority.sql#L11-L16",
+          "version": "repo-lines-v1:sha256:e92b4ce1451102170fe5485b1510572ab9b40ff473d3fc4db818c307960b1017:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzYzZWM4MTkyM2MxOGFiZDBjNTRhZjBkNjAxYjE1ZTUxZTFiMjE2YTc3ZjdhYmE4Mjg1NjhjODYyMjJkNzM4YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDJmNzI1M2I0YzAyNmFmOTNkZTAxYjU5NWZlOTc1ZjMwOGJlY2JjNTQ0YTViODkwZWI3MmQ4ODUxNzJhOWE3OCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjY5MzgzZmQyM2YzNmFiYTI0YzlhODExMzBjZTFkOTczZGUyYTMyMTgyNTgzZjM4YzhmZjc4MzhiYjZmOTMwYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzllMTZkNzk4ODAxM2JjNzBhYWFjMzJmZTIzYmEzZTVlNTAyZGEyZDE1ZGE0NzQ1MTBjYWI1MWIzOGNiOTM3MCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_692c912f798c417c9ee586332389ca3d",
+      "statement": "The frozen headers of migrations 0203 and 0204 still read CANDIDATE, NOT APPLIED, while the migration ledger records both as applied.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L233-L233",
+          "version": "repo-lines-v1:sha256:0148e4d02def5dce7a37f300241f1e8ef61fb5a9d1af5d34169227986b1e8b98:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDE0OGU0ZDAyZGVmNWRjZTdhMzdmMzAwMjQxZjFlOGVmNjFmYjVhOWQxYWY1ZDM0MTY5MjI3OTg2YjFlOGI5OCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDE0OGU0ZDAyZGVmNWRjZTdhMzdmMzAwMjQxZjFlOGVmNjFmYjVhOWQxYWY1ZDM0MTY5MjI3OTg2YjFlOGI5OCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTQ1ZDM4NDA4MjVmZDRhMTg0M2U2ODIxY2ZhNmJjYjY5Y2M5NzBlOGQ4N2ZhY2MzMmI1NjA4YjgxYjJjZDFlNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDZjOGRhYzEyNDVkYWE1NmM5MGRkOWIxMzFjODUxYjVkNzFlZDY4YjEwM2M1MmRlYTVlOTYwN2VhYzQ1NjQ4NCJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L81-L81",
+          "version": "repo-lines-v1:sha256:45ae38f466ba66efa8899fac68cf79497c009b24d43cca8a9ae4e76fc431cbb1:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDVhZTM4ZjQ2NmJhNjZlZmE4ODk5ZmFjNjhjZjc5NDk3YzAwOWIyNGQ0M2NjYThhOWFlNGU3NmZjNDMxY2JiMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDVhZTM4ZjQ2NmJhNjZlZmE4ODk5ZmFjNjhjZjc5NDk3YzAwOWIyNGQ0M2NjYThhOWFlNGU3NmZjNDMxY2JiMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWVmNTc2ZDg0ODUxMmFkMTUzODRjMGRjMjZhMjY1YThmMjY0NzBhY2MyYTIyMDE2NjViYTg3YmFjM2M2ZTc1OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWVjZDNkZmY5Y2Q0NDkzMTljOGI5OGQ3ZTE4M2E1MjFhZWI3ZTRhYmU0NzcwZmY1YWY3NWQ3MDM4MGZkMjFkZCJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0203_waitlist_mobile_verification_authority.sql#L5-L8",
+          "version": "repo-lines-v1:sha256:2eb6844667c0dfd53b886a7840b8ae4e5bd9b75bb2569a0eb1ec076eb8749633:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTZmMTFlZTcxZmI0MGUwZjgwNGJlMjA5MmY5OTExMmM3MDllOWMxOTlkNjM1MTFhNzdhMmJhMzRkZTQzMzRkNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTgyYmU3MDZkMGEzYzVmZWE3NTE5Mzc3NmVjMmQ0NTQ3MTI5NWNlYjIzMzg3MDQyMDgxY2YxMzcyYjBhZTllYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjQ4YjQ0N2NkZDMxMjY5ZGJhZWZmZjI1NTMxNGVlN2YwYzdiZjYyNGVmZGJmZDdlNWMwYzJmNTI4MzU5OWNhNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmE4NmE3ZWFiYmQ4MDE2YjMzNTM5YWVhYTk0MjhkNTczMzE2ZDIzZWU3ZjEwYTA0Mzg4NDQ2NTcxNTk3Mzk4ZiJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L1-L7",
+          "version": "repo-lines-v1:sha256:e3181bfc2aa2307fdaa48b4b3a703d8111df3781b78984949b4a888d4f9dbd2d:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmIxYzBmODUyYjQxNGI5NWZmOGE0OGY4ZDRiYWJhMzM5MGQ2ZGEzY2M2ZDc4ZWI5ZTc3ZDliOGU4NjM4ZWEwNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDUzYmI3ZGU3YmIwNTZkZWNlNTFjY2UyMTkzODBhN2MzYTY5Y2UzOWNhNjYwNWNiNDY5NzY5NzY2MjQwZjQ5YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDYyNmYwNzIzYjRmOTdjYjMzNjUzM2MwOGVhMTNlODZmNzFkN2NiOGFjNTYzZGQ2MzBkMmExNjYzNGViNTE0OSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

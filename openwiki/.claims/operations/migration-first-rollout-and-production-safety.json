@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:0a902201748d4279f90e1e00b7e0d033387fe65c1797956a779d83181f0ac70b",
+  "claims": [
+    {
+      "id": "claim_4d5df38cf4c745a68d6d9566d60fb7e9",
+      "statement": "CLAUDE.md requires explicit per-change authorization for any production write or migration, read-only production SQL through supabase db query --linked (never db execute), confirmation of the linked project ref before every Supabase command, and treats an applied migration as frozen.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L274-L280",
+          "version": "repo-lines-v1:sha256:cd911f60bd49a91f8c9c9de16d301f225b7e276f1b99a8b627018dba02f80bde:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWExY2U4ODIxODJlMWE1ZmU4MTI5NWYwMDI4OGI0NjI4YTUyZTM4YTgyOGMyZTI4MjQ1Y2I0NjFhZWY5ZmEyNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGEwODRmODE0NGY5MmU5MDMxMWNkOWMyZjgyNjUwNGEzODljZTQzYTZhYWRlYTY5ZTYzYzc2NDU2MTcxOTJmYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDAxZjJlYzE3NTkzYzEwNTRlYjQ2MzY3ZDg0NTNlZjI0YTE3M2NlOTZiNzExN2Q5MWY5YTY4ZDQ0ZmVmOGIwMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjY1NGY3NzU4OGE1ZDY3MzU4NDI4MmJiMGE5NDg0MjMxMmJkNDUwMWJmODdjZTZiYzFhZThiYjZlODIxM2RiOSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_2523a24a81ee4b85ba7c12506e45e864",
+      "statement": "docs/runbooks/migration-first-process.md requires any migration whose objects deployed code reads or writes to be applied to production before the dependent code merges and deploys, and records the 0108 incident in which code writing a not-yet-applied column broke production charting writes.",
+      "evidence": [
+        {
+          "resource": "repo://docs/runbooks/migration-first-process.md#L7-L20",
+          "version": "repo-lines-v1:sha256:2a91329542acafb0a39ac7623eb1efdbb08e67305aa0b5129e849877fcae33bd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVmNjFjYWQ1MGYyY2I5MDUxZDgyMTViYmNhZjhmMzEyMDZkZWNhMzJjZmY1OTIxYjZiNzJkNDFiYTA0YTdkNzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJkNTczODJkMDBkODc5YTYxMzc1MzlhMjVhN2QzZjA4M2QzOTNhYzk1YjBiMDc2YWFlN2U5YmEzYWMyZDRkYTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZhNzUwZjcyNTZhZjFhZjliOTBhZjFhMjU2OWIxZjVjNjAzMTAzMWY2OGU1MDJjZDc1ZmUxYmNjOTJmZDQ4ZTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRjZTM5YzkzNDIzMzc1YWI4NmM1YmIxMDFmZDM3ZWI1NzMwYmUzYWU2YThlM2ViODE5ZWEyZDAzNzE3ZDgzODMifQ"
+        },
+        {
+          "resource": "repo://docs/runbooks/migration-first-process.md#L82-L92",
+          "version": "repo-lines-v1:sha256:9fe2855645df1d0ba44432376c7d82aea9c01d8d60ca3e7b8f543e06d9d73ac3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjllYWE5YTQ2OTAzMWIxYzUzOWJhNmU4MTU3MzQ4Y2VmZjUyOThlZDZiNzhkYjFiODE2ZDczMWUxMzI3MzczN2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5NjY0MTI4ZGVjZGVjOGY4ODRkOGU3NGFlMDRhY2Q5MTBkZTUyOWU0NDZjMTE1OTQwNTdlZjUyNGE0ZDZiMjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFhODc3MDU4ZDA5MjIzMzg4MjgzZTY4NDJhNmQxNjdhNGMzZDQ4ZjUyMTE1ZmFjMzc1ZjBhZWQzYWU3OTkyMjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3ae60e2ea06a46a5bd6bfdf2d9695c59",
+      "statement": "The migration ledger records that the 0204 apply preceded the application deploy because new-client booking calls a function only 0204 creates, so deploying first would have broken every ordinary new-client booking.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L95-L100",
+          "version": "repo-lines-v1:sha256:4562b28f880196337d66b6f8e9db73a03862288acfaad55b1fa02ba6bc015693:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTg0ZWZjN2MxMmEyNmQ5YjRlMjI2YjE1MWYzMmQ0NDhkOTJjOGRlYWRiZWEzZTc4MTA2YzY5ZDcxODVlMDk1YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGEyZDgxMTE2MTE3MWYxMWI4NjdhY2NhOWVjZjQxMmRjOTNjMTA1Mjg2ZWNhZDU0Zjc4ZmRlNjdkMTcxMDFhNSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTk4YTU4N2UwYzcxMjM0N2Y3M2Q2MjMzNDg5Njg4MjY3MTE3N2U4OWI3M2M5YmRlZmQxZTJkYmNhZjExZmNiMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2M1ZDYxMTgyOTNjNjBjYjQ4MGM3NDQwNmIwNTgzMDI3ZjFiNzgxM2I2NDQ5NDNkMWEzMWEzYzFiYmYzMGYzNCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b9fca3a2fb8f4e02a3a571abdbd66da0",
+      "statement": "docs/runbooks/migration-first-process.md defines the sequence list, dry-run, apply, read-only verify, merge, deploy, and stops if the dry run names anything other than the single expected migration, the linked project is wrong, the verifier fails, or the Stripe gates do not pass.",
+      "evidence": [
+        {
+          "resource": "repo://docs/runbooks/migration-first-process.md#L27-L68",
+          "version": "repo-lines-v1:sha256:8c209028fcd8ed56c741dd400b7076ecf1413fb44ee3bd482f19693571a08cce:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1ZTM1N2RmMjYwZjYyNzUzNGQ5ODRmZmM2ZjY1ZTA2MmZlOTc2Y2VkZmEyOTBhMTY3Zjc4NjUxYmM2NzY4YjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4ZjFjZGRmMWIyMDIxYTIzYWI5M2M4N2M3NzMyODQ1ODZkZDY0NTZjZWQwOTYyMGJkYzRkMjkxNzAzZjU1MDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRjMWFjNzYyYzg4YmU1Njc3ZThiMGZhNjAzZWNkNWZkY2VlNzhjMTZjMTg2Yjc4NzRjZGMyOGQ1Y2VlMTUyZTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY4MzNkYjI2OGZlODlhM2I4ZDMwMWFlZDZkMjhmMjEwMzkwODFmMGU3YTQzYjhjYzcxNDM1ODc3NDc5MDRlMjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_835b77eb4f9a44a5b96c3abdb1b8c4f6",
+      "statement": "CLAUDE.md requires local database resets to use the pinned Supabase CLI 2.102.0 because a newer CLI's db reset strips Data-API grants, and the migration ledger records production applies with that pinned CLI and without --include-all.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L205-L213",
+          "version": "repo-lines-v1:sha256:b024f036cd04c4cbc6eb6866b92e9cb8b65f305e4e44173ec1438ba728c46787:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDJmNjBhNDVmNzRkMThjMDMwMjJkNzZlZDRjYTlmNmQ1ZDgzYjEzMDExMmJhZjE2OTBmYjg2ZDJjYzhkODdjZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzhhMzkxZmQxOWU1ZGFhYjVjZjY0YWZmMDYzZWE2MjE4NWJlODRmNDQwZDQyNGIwYzJmMDgxOWJkOGQ5N2UzZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDY1NDI2ZGE5MThkN2VlZTZiNzBlM2IwMGFlZjM1OWMwZTMzMThlOGQwMzQ4MmU1MjdkY2MzNmExMDQzZTkyMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDAxZjJlYzE3NTkzYzEwNTRlYjQ2MzY3ZDg0NTNlZjI0YTE3M2NlOTZiNzExN2Q5MWY5YTY4ZDQ0ZmVmOGIwMSJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L133-L134",
+          "version": "repo-lines-v1:sha256:fd44560b4fa09432cfc22b6bddf766fb2625e5d2a17c35b2898bc0c1ae3589c6:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGFlMWVjMTdmZmNmMjNlZDg4ZjkyN2RkMzEzN2E1Nzc0MDRjNTQzZGU5Yzg3MTQ2ODQ4YTdkZDI2NGVlMjU5MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZThjYzVkNGM4MjJkNWNlNGZjZTdiOTZiYTRmOWE0N2IwMGIyNjg1YjUxYTc5MTdlM2YwNzM4NGRiNThiODE5MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTA1MTgyY2VhNTM3YTgzZjUxZmQzNTA0OWZkNjIyZjRmZWRhZDA4ZTQwMWUxYmUwNjY1MmZkOTc0YmI1OGExZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTEwM2NiYzlhNDMzY2JhZjEwZjIxNTg0YjljMDFkYmFlNjg4MGUyYTZiMWEyNzBjMTgzYTkyZjgwNGEzYmYyYSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_01a96562388f4516b3c635b9f2803bb6",
+      "statement": "CLAUDE.md states that hosted migration state lives only in docs/production/migration-state.json, updated in the same change that records a production apply, with the narrative apply record in migration-ledger.md, whose current block for the 0205 apply records the maxima, pending and remote-only sets, next free number, reviewed release head and application SHA at apply time.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L117-L128",
+          "version": "repo-lines-v1:sha256:d8ca88747eee1c910a4eab4a023c64f7722e393814c174031c0a4f88c50c2d67:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlZDhiYjUxOTBlMmJjZmJmN2Q0N2Q3NzRiZWIwNDVkOTBjNDY5NGMzYzUyNWY5NDZkYzNjYWJiZTllNWQxZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAyZWVhMDMzZDFmMGI5MzIxMDQ1MDM2ZWMwZGQzYjgyYzdlNDVlYWFmNzQzMTYxODU4MWQ2MzA5NTM1YjliYTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ2YjMxNGViOTljN2VmMjI4MmNhOTc0Y2Q4MzU2OTZiZWY4OGYxYmNkMDQyNWMzZDFkMWRiOTA3NGI5ZjI5NWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L17-L80",
+          "version": "repo-lines-v1:sha256:4010fb2e0c10348063c24f2e733f7f24fdd166df8104b68a1cc8d4dd699ff99b:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRhMGVmZWNjMjNiZDY1ZmM1OTI1MmYwN2U2ODVkMGNmZjJkNWE3ODE2YjZmMTMzODVlZjdiMDdhNWEyNjVhM2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0ZWJiNWUwZGM3MzA3Njk4NDBmMzBhMmY3MTdhZDQwNzZiYWViNjAwOGJlYzJmN2JmY2Y1OTUxOTY2MTJmOGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMxODIzYzc4Y2ZkMTkzNzk2OGMwMDMzYzU0MjhkYjczNjg3ZDg2Y2Q4ZWNkMmRhOTNlMTU2MTM3NGNkZDcwODAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7602149e393949389f0465a5023eb9f6",
+      "statement": "Applied migrations are frozen: the 0199 migration test recomputes the sha256 of the migration's raw bytes and compares it with the value verified before the production write, failing if an applied migration is edited.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L280-L280",
+          "version": "repo-lines-v1:sha256:da084f8144f92e90311cd9c2f826504a389ce43a6aadea69e63c7645617192fa:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGEwODRmODE0NGY5MmU5MDMxMWNkOWMyZjgyNjUwNGEzODljZTQzYTZhYWRlYTY5ZTYzYzc2NDU2MTcxOTJmYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGEwODRmODE0NGY5MmU5MDMxMWNkOWMyZjgyNjUwNGEzODljZTQzYTZhYWRlYTY5ZTYzYzc2NDU2MTcxOTJmYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTJkZTVjMTFjYTEyYTdlNzQxOTE3N2Y2ZmMxOGM2NDMzNTYyMzg4ZDI0ZGQ1MzMxZjJmYjMzZDllYTY3YjI2MiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjY1NGY3NzU4OGE1ZDY3MzU4NDI4MmJiMGE5NDg0MjMxMmJkNDUwMWJmODdjZTZiYzFhZThiYjZlODIxM2RiOSJ9"
+        },
+        {
+          "resource": "repo://tests/migrations/0199-reminder-sms-candidate-selection.test.ts#L93-L110",
+          "version": "repo-lines-v1:sha256:2cedfb917bb9c893e22634d1a8b4a2699d70ff65312908a392c7ab22f12d2731:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2ODBjYzljNzRiNjZmNjEyY2RmZDYwYjJmZmZkMTdiZmY2MTkxMzJiZmE3YWY3MDg5NzNkZGNmZDBlNTMxODEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUzNGJlMzEzOGE5OWFkM2ExMTA0NjM4ODU1NmNmN2RkZTg2YmM5MWMxNTczODEyODk4OTgwODNhNjBmNWY1NjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc3YjRmODIxMmUzNjI5M2NkYWQ4MzRhMWZlYTEyYzhkNWE5ZmI0MzNiYWFiOTJiYWNhMjIzZDM3ZDBhZDJmMzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJkYWEyZDVjNDM1NTM5MzVlMTU0N2NiYzRkYTY0ODNiMjNlMDk4MmI0NDNmNzFkMDA3M2VkNWUzZjllMzBkYzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5766cc0939844cdf820ce4ce696d1be4",
+      "statement": "scripts/verify-production.mjs is an operator-run, read-only, fail-closed production health check (not a CI gate) whose reads use supabase db query --linked and return scalars only, and its safety properties are pinned by tests.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/verify-production.mjs#L1-L40",
+          "version": "repo-lines-v1:sha256:ec55c13b280bac713e5a43c2ca82e0d8342c85c0d5e6fb4ca769c9fb1029a28c:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3MmE0MjkzODJiMmUxNDcxOGUwZTM3YjA1NzBhOGExNzAyOTkxZmNkODQ5OGNkODQwNjBhOGJmNGYwNTAxN2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiYzczYTIzNjIwYWQzYjk2MjgyZmMxMjg1ZTI1ZDU0ZjBmNmJjNDVkODYzYjZkMTRhNzdmN2RmODMzNjIwM2MifQ"
+        },
+        {
+          "resource": "repo://tests/scripts/verify-production.test.ts#L158-L176",
+          "version": "repo-lines-v1:sha256:4b11d6c0502b7a2cfcb5e95635a16be0310729908e15c16226d066341c94c96f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0NmNjYTE0ZDIwZTA1YjJjMWZhOGI2MTg1YzA3ZDlhZGEzZGU1MWI5NjU3YTc3YmYwY2FkNGVlYTllNmEzY2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVlNTgxYmRjYjljYTg4MmFjZTc4NmZmYmIyNzkxOWZkMzRkODhkZjRjNDIyZTc0NmFmY2M1ODBjYzI0ZWIzYTQifQ"
+        },
+        {
+          "resource": "repo://tests/scripts/verify-production.test.ts#L32-L78",
+          "version": "repo-lines-v1:sha256:b70070b2780b766e9058534489428b3cc8c6d9931d9eef785ba3a9db554b454d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkODQzYmZlNWFmNzAwYjA4MGE4Y2Q5MjBjNTJlMDk4Y2JjZGQ2ZWJhMDJmZjQxMmFkZTVhNjYwNDg4OWIxNjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0YTJmMmFjYjY5NGM5ZjVhOWFhN2Q3MDA4NzgwMjNmZTlhYWIzMmJlMjE4ZGEwNjE4YTU4NGM5YzNhZjViNjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZkOWU4OGU5NTgxZGQ4YjNjNDIxYTY4MDM4Y2ZiYzUxNjk3MDBlN2ZkZTg2MjE3ZTVjOGU5NGRiMGEyZWU3NjQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0f238a2cdd7f47d9a59b1bf01c7317e9",
+      "statement": "verify-production fails unless the remote migration max equals the repository max derived from filenames, so it fails by design while a reviewed migration is authored but not yet applied.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/verify-production.mjs#L155-L171",
+          "version": "repo-lines-v1:sha256:890d6d2cfafe2e460d16939d7f4e9921c0376b6c10d2ef42aeb21e946f6c159a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2N2UyNjJiNGM2OTE5NjI4NjAwNjI1ODFkMDZlMjBmZTQ4ODc2YmQ5ODEzOTdjODc2YTdlN2UxZGFkN2NkYjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgwOTI5OTk0MjQ4NjIyNzRlZmE3MzdlZGNlZjMxNGI4MGNlM2NiOTg4N2ZiNGNiMWZjZWI1ZDUwNmNlNGE3ZWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzYmE4ZjJjOTAwNTQ1MjFhNGE1ZTRiNDY5NTJlMzIzZTIzM2Q2YzA2ZDk3ODFhZTk4NGJmYTU4ODIzY2VjMDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_809172fc80c547eeb1323a74dad1e39d",
+      "statement": "verify-production fails on any unresolved critical ops alert whose event mentions payment, refund, stripe or charge.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/verify-production.mjs#L335-L354",
+          "version": "repo-lines-v1:sha256:74bbe809368043adcef71c34311a9273523a7528d0a8028c40364bc61f4c4aec:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwMTg3ZTU5NjI5NjgwZTc4MjJiZWVmMmJkNjAxYTJkODg1MDFjZmQ2MWJjODdjYTEzMGNkNTMzM2FjOWE5YTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5OTBjNDJmZTBhNmUxMDk4Mzk4N2I4M2YzMGNiYWQ4YzBjZmIyYTI2NjllZmUzNjlhOWQyMDFiYTFiYWIxMDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ3ZDNhNjk2MDE2ODE0Y2I1OGVkYjg0ZGQ5NjFkM2IwNmI3ZTZjNWFjNmViNGMwYTMxYmQ5MmM1NDE1Y2QwZTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZkY2YwMDIxZDY4MGE0NjJjZTY4NjFhNDQ2ZmY3M2U3Njc5NGNjZjI5YzhkZmU3M2I1NDY5ZDhhNDM3ZTA2ZGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_87650479fd6a40e09765bc908ebce380",
+      "statement": "Hone's rollback posture prefers additive, backward-compatible migrations, rolls back code by reverting the production-branch merge, and corrects schema with a new forward migration rather than a manual down-migration.",
+      "evidence": [
+        {
+          "resource": "repo://docs/11_RUNBOOK.md#L289-L300",
+          "version": "repo-lines-v1:sha256:3fe6c05ee6285fc2d50a3765dd8e09b813a32f9a94dea6c5e1219e67228454e4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3MTRjODJmYWQwOWM1OGRlNjUyNzc0MjQxYzRjMThiNmZkYzYwYjRmNjBlZTcwMzA3NjIwZTYzMDNkNjliYTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhhOTlkMGNlYjE0MmE1MGYxZDY2OWI0MThmZDY0MzQ2MDQxOGEzNWIzMzE2MjhlNGQ3MWE1OTBjZWQzYjNkNjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgxMjlhOGEyMmQ4ODIzZTdlMjcwMmJhN2FjMDJmZjYyODk4YmJkZTNmYWYzMDk3Zjg3OGEwYzZiMzNjYTljZWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRhNDQ4NDcwYTM2NzEwNWRlYzY5MmU0ZGE1ZTVjYjQ4YjkyMDQ4NDJkY2JkZmUzODM5OGJkMDhlYzNlY2IwOGIifQ"
+        },
+        {
+          "resource": "repo://docs/runbooks/migration-first-process.md#L70-L80",
+          "version": "repo-lines-v1:sha256:0816ef6794d3a3229a55897dcc49ffa794e57d95bbcce2bdbafc925b77f93bdd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzNDQ1Njk4MDUwOWVkMDQ4NDdkMDFmZGNmMDBkNGY1MWM1ZGQ1NmUyNGU3M2ZjMjc0NDZjNzExNjMwYmVkZjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY3MjVmMWQwZDZlZGE2ZWVmNGU1MjZhYWJiMzllZTgwOTA1ZDVkMDFhZjNlOGM1NWQwYjg4ZTNmMWM5MDgxZjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNlZmYxMDAyNGIxYmRjMGFhNGZhNmUyMWVjMWExNDUyOTkxOWM0YzE2YjFjOTJlMDNiMGY5Y2JjMjkzOTUyYzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE2NmFjMmU0OTk4ZjEzNzdlYzA2MWNhNGI5MGQ2NzI5NTljMWI1ZWJiNzIxYTAxNmEyMGFhMDNiNWU5OTI3YjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d27e0b47218e485aa3ac63b3e4328d8e",
+      "statement": "The migration-first runbook's ops-alert check filters severity in ('critical','error'), but ops_alerts.severity is constrained to info, warning and critical.",
+      "evidence": [
+        {
+          "resource": "repo://docs/runbooks/migration-first-process.md#L67-L68",
+          "version": "repo-lines-v1:sha256:a581a9d7418b77e15c75e09ac0af70ffb78fa4cc436393706cd9ec522d845cbf:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmUzMTBiYzI4YjMyNjIyMTgzNGM4MzdlOTU3MTIxY2ViNWYxOTdmNGE1YzNlNmZjNzViZDA5ZmY5ZWY5ZjNhOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZThmMWNkZGYxYjIwMjFhMjNhYjkzYzg3Yzc3MzI4NDU4NmRkNjQ1NmNlZDA5NjIwYmRjNGQyOTE3MDNmNTUwMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzE4MzkzZjk4ZTkwMzUzMjBlN2E2ZTY4OGQyM2QzMzI1MDU0YjY0ZWIzZmQyNjI2ZTM2MmQwMDlmMGY5ZjA4YSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjgzM2RiMjY4ZmU4OWEzYjhkMzAxYWVkNmQyOGYyMTAzOTA4MWYwZTdhNDNiOGNjNzE0MzU4Nzc0NzkwNGUyMSJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0067_ops_alerts.sql#L70-L73",
+          "version": "repo-lines-v1:sha256:3928244553980e5f656b4e426883f61567ac86c604eff8813d56a4c255f53413:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDRiNmZkNmMxYzI3MmMyOThkMTczMjlmMmNiNTU3OGMyZGZkMzViNWQ0ZmEyMzY1MjE4NGViNTZmMjYwYWQyNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTAzMTZhMzc3NDMwN2ZlYzc3NGU1NjQyZmQwYzJkYWJhMjU3YzdhYmQ5ZGZhYTEyMmJkMmM3ZGI0ZDY1Y2I1MiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDY1MDE0YmYzNGE5MmE1MGE4YzVjZTU1MWNjYTI5ZWUyNGNkZGQyNDMxYjNiNDlhNDIwYjExMjZjNGU3YzRlMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTAxMDk0ZTY1MTkyMjE1NTllYTc0NjE5ZjUwYzBkN2U5MDk2MWNjZTZlZjU5ODVjODYzNmJkMDdkMWE2MzU4NSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

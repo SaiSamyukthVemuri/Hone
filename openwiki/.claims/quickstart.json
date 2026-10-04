@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:bc2f52e665650d1fd4795c2f64f232a6f6096a70009040df0189d936c59922f6",
+  "claims": [
+    {
+      "id": "claim_41c82af7c33c489b9dcd030f440047cd",
+      "statement": "CLAUDE.md requires contributors to determine the baseline risk tier T0-T3 before choosing how much to prove, states that npm run ci:plan -- --json emits the baseline tier as deterministic path evidence, and states that automated classification may never justify de-escalating a change whose behaviour crosses a higher-risk boundary.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L7-L26",
+          "version": "repo-lines-v1:sha256:bf0dbf439983b4478ba950297a3fcd1c5a1277d88bffd7f6f779cb9d1dbd3d10:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ2NjgzNTdhMzFiOTZkNmU5MDg5YTdhYzBjNzk1ZDY5NDQxYWEzYzg5YmE3MWFhYzI5MDBmZmY0NDYyNTQ5ODEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0ZGI5MjhkMTQ0NTA1YzYyN2FmNmZmODRjY2YyY2ZkNzAwYzMzNGQ5NWI5ZWIyOTkwZGE1MTAxOWM5Njk5NjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_54909da8de0d4db9a881c9e7308f768c",
+      "statement": "CLAUDE.md states that hosted migration state is declared in docs/production/migration-state.json with the narrative apply record in migration-ledger.md, and that other documents should reference that record rather than repeat a changing number.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L117-L128",
+          "version": "repo-lines-v1:sha256:d8ca88747eee1c910a4eab4a023c64f7722e393814c174031c0a4f88c50c2d67:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlZDhiYjUxOTBlMmJjZmJmN2Q0N2Q3NzRiZWIwNDVkOTBjNDY5NGMzYzUyNWY5NDZkYzNjYWJiZTllNWQxZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAyZWVhMDMzZDFmMGI5MzIxMDQ1MDM2ZWMwZGQzYjgyYzdlNDVlYWFmNzQzMTYxODU4MWQ2MzA5NTM1YjliYTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ2YjMxNGViOTljN2VmMjI4MmNhOTc0Y2Q4MzU2OTZiZWY4OGYxYmNkMDQyNWMzZDFkMWRiOTA3NGI5ZjI5NWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_850f69f6f0164137a361f86d7f86a9ee",
+      "statement": "npm run migration:state runs scripts/migration-state.mjs, which derives the repository migration maximum, the next free number skipping the permanently unused 0158, and totals from the migration filenames, throws on malformed or duplicate versions, and reads the declared hosted maximum; executable tests run it through the test helper, the canonical-facts guard that compares hosted state with migration-state.json, the production-verifier test, and verify:prepush.",
+      "evidence": [
+        {
+          "resource": "repo://package.json#L28-L28",
+          "version": "repo-lines-v1:sha256:7b84b4d0c2624fb3d234859cd93b99ce401bda7eaa7d1a9a8c77e1f2f2283c1c:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2I4NGI0ZDBjMjYyNGZiM2QyMzQ4NTljZDkzYjk5Y2U0MDFiZGE3ZWFhN2QxYTlhOGM3N2UxZjJmMjI4M2MxYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiN2I4NGI0ZDBjMjYyNGZiM2QyMzQ4NTljZDkzYjk5Y2U0MDFiZGE3ZWFhN2QxYTlhOGM3N2UxZjJmMjI4M2MxYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzhhNmQyNGUzYjE2ZDdhYWRjOGI5MzRjMjA1MjRiYmU5MmY2YjQyZTYwODk5YTIzMjVmZDZhN2E3NjVkMzE2MSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODdmNmU4MTY1MTBiNDZkNWVjMTZhMjcwMGE2M2FlMDI5ZmUxZGE3ZDdjYTk5ODgyZjMzZTU5YmNkMGM3YjliZSJ9"
+        },
+        {
+          "resource": "repo://scripts/migration-state.mjs#L140-L160",
+          "version": "repo-lines-v1:sha256:f65406f733bbf3af149cd664972a0332bf6f1eb05531caa1c5c1ce66967ff3a9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0ZDVjODI5NDI4MDM3YTM3MjM2NDg3MjVjMmFhNTUwZmNmMDA2ZTBhYWIzNjNiZTE3M2FhZjYwYTI3MGY4NmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhYWI5MTc1NzNkYTM2NTI4YmQ2Mjc1OGQ5OGMyYjNlODgwMjMxMzcwMzg2NzI0MjI1OTc2NDA2MGNiM2M4YmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk4YTdkODhkMjQyYjIwY2YwY2YwZDQ2ZDE4NDQxNGI2Y2NkN2VhNmFlNmNkYzllZGIzYWQ0MDJjMjVkY2ZmMWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkyOTJjZGNhZGM0NTEzODk2YWFmZWU5ZTYyYTc2MTA0MGMyODMzYTZhMDZhMDA5ZjQwZmMyMDE4ZmU3MGNiOTYifQ"
+        },
+        {
+          "resource": "repo://scripts/migration-state.mjs#L42-L98",
+          "version": "repo-lines-v1:sha256:727fcfc901d2e09afe876c61adb6554c8cf1a3191bb474b075f29008d8b0fb03:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY4MmJhNGJkYmI0OTAwMGE5Yjk5YjY3ODQ3OWY5MzVkMzIwZTcxODIwYWM3NWUwZTUzNDM2OTNiZTRmNDkwNzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczMjUyNDMzMjk4MTgzMjIyNDdkZDM5NjQ1YjVkOTEzZjdhM2VkYjAzNDgwNjFiMGNlNDBmYmJlMzRlMTM3ODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVjZjRjZWFlNmQ4MGJjMDdhM2U5OWMxNDk5MGMzNDFiNTkwNWE1OWVhZWY3MzM5Y2Q2MTFmYThhNDVjODQxNDUifQ"
+        },
+        {
+          "resource": "repo://scripts/verify-prepush.mjs#L142-L149",
+          "version": "repo-lines-v1:sha256:db7664c66fc384a458a404b2cddb101b0ada7930afd95c4160d16f68bb29e5ba:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDBjNjEwYmUzMDVhMDkxOTdlOTNjMjQ2MjM4NTk4NTkxMmNjMjg2OTBkNTRhMDRmZjcyOGMwZGFjZjQ1Zjc3NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDFlOTljZjE1NTQ4ZGMzYjg3NWE4MTIzMzM0ZGQ1NDdkZDhiNjQ2MGM0NzRjYzg5NDc2ODE0NGZhZDE3OTZjZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTZjZDc2MGE1MjNmZmYyYmIwZjdlOWY3NjllYTRmZjRkMzE2ZDk4MWQ3NzAzNDYxYTk2MmU1Y2Y1YzUwYjlhNCJ9"
+        },
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L533-L540",
+          "version": "repo-lines-v1:sha256:b3903666b6597ba7cd267d3b1722405d5909140e6ab50baec17777c6966fe514:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzNlOWNjYTM3OWQ3OTgzODIxOWVlM2I1ZTZiZWM0ODgwMDU0M2NjMDg5ZjlmMDkyOGM4OTNiMzliYTZhN2MyZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYmQzNTRhMmM5MTI2Y2QzYmFhZDZmY2I2Yzk0NWFjNzJiNmNhM2IzNTYxZTU4YzQ4NWVhZjY2NDI2NDI3NzE5ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTc3MWUxMTUxMWEwMjQxMjEzYjZlODJiOGY1ZjI2YTZkNmMwYzEyMTRjNmQzNjc1ZDE3YTNiN2Q4YTgxNzdmZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTM1OGZiM2M3NGJiNGVlNDA5MDE1ZjJmZTFjNzkzMjhmZDIyMWRlNjAxMzFiY2FkMDNkNDMzOGVkZGU0YjE2ZiJ9"
+        },
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L70-L75",
+          "version": "repo-lines-v1:sha256:5839de5c26bdacf1be68ebe22687b704078d17902dd0e39b6ad2b7f1845256ba:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjExOGUxYjZhYjEyMWY2NTZlMDRkNTI1NTQzYjhlMjY2NWU2NDViOTkxNjVlMzc3ZTY2NmE1MTVlZGMxMmYyNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDk5NjdlYzFlZDM4MzZmOGViMTdhZmYxNzJiNWJmZWY3ZGU2MDQ4NWE0MzljNmNhMTFjNTkxZTE3NTU3MzlhZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzViNzUyMDQ2MmFkYTZlZTU5MTllZTMzOWRjOGEyY2QxOTNiNDQ2MWNiYmIxODc5YjJjZjY2MTI0NTFhZDdlZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzAxOGUxODJjNmEzZTI4MTRkMGUzZTk2OTk0MWFmNjUyMjViNDJlNTQ2NjVmNzRhYjZlYWM2NTg0NzFlZWFkMSJ9"
+        },
+        {
+          "resource": "repo://tests/migrations/helpers/migration-state.ts#L1-L12",
+          "version": "repo-lines-v1:sha256:b8a695a04b4db8ea803d42253b1c46c85cd5a8afd73ebc2571b006f336e777bb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkMWYxMjg5YzlhNTIxZjEzZmE3MTVlZDUyMTAxY2JiM2ZlNWRhNTNhNzVlMzhhNDhhNjg1YzFkNmEzYWZiODMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0ZTM0Zjg1N2JiNjliZDY2MmYzOWNkMjY2MDE0NzNhM2ExMjM4YjI5NzBiZThkZDFhZDg3MDE3YmI1NDQ5ZDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRhZWUyMGRkZjQ5ZjhjZjc1YjVhMjU5ZWVmZDA5NmQ1MWVkYTI2MDQ5NWI2ODcwMDUwNTRjMWVkNjczYjM2NzYifQ"
+        },
+        {
+          "resource": "repo://tests/scripts/verify-production.test.ts#L80-L104",
+          "version": "repo-lines-v1:sha256:2b836c1c73428397e0a87e910c7a7dcb6a1f542a2edeccf73494add9572e63ab:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhYjA2MTEzOTUxNGY0OGU4MWQzMGFjZTA4Y2U0NjI2NGZkMDA3MDczMzFmNzc1ZDgxYTUzYjUwMmUyMDU5ODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1ZTFhMGRjYmU5NjkxYmUzZTJlZTkyZmMzMjQxYTE2OGVjODliMmVlZjNhNzhlYTBjMDg2NzZhMGU0M2FjZTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZhMzE5MTcwMGY5ODljNTFjOWZmNGM5MjZjOTk1MGI4Mzc5ZWQ2ZWE2NjYwYjgxNGM0OGFlZjdmZWRlYmM5NzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2ODFjMDI4NjVjZGNkN2FiMjQ1NTU1NWFkNWU2YWUxNWVjZjA1MjUyMDlmYWYwYjM2NDQ0N2QxOTg0NWI2OGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2327bee4100b44289362899c3c3c0589",
+      "statement": "CLAUDE.md requires an eight-step delivery sequence before every push, in order: git add -A, git diff --cached --check, git status --porcelain, git commit, git status --porcelain, git diff HEAD --exit-code, npm run verify:prepush, then git push.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L58-L69",
+          "version": "repo-lines-v1:sha256:36cd081170ece240bcd60fa5ae61591bad8cc66f6a980c1d27caa2211f4f6e72:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwNzVlYjNhNzAwNTk0NGFkNDE5MWNkZjIyNTVlNGZlNzEwNGI2MDU5OGFiMGYwYzkzZjM2YTM4YzE3NzBiOWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3YzA2YzU2MWQ1YzMyNzM0MzY4NTI2OGE0NmIzMzkxZjM5OThlZWU4OTBkMmJlNTFmMGQyMWNjNGE1M2FlNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU0ZTZlNDJhMGVjOTdlYTBmNDYyNmEwYmQ2NTM2NWEwN2FlMDU2MGI3ZmFhMDg3MDkyNTkxNWRhNGM5MzYzN2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNiY2FiM2E3YjY4YTBiMjVkOTQ4YzU4MjFiNDQ5ODBhYzQ3NDE3NzBiYzAwNjk2OWZlMDUxZWVlN2FjMDRkNDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_737e8339b3ce43588d8c024b4bf34f08",
+      "statement": "npm run verify:prepush checks that no tracked or unexpected untracked files remain after the commit, HEAD matches the working tree, git diff --check is clean, no conflict markers exist, recently edited files are committed and migration state derives, and it runs no tests.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/verify-prepush.mjs#L62-L160",
+          "version": "repo-lines-v1:sha256:6e2b05c98db697b522f422d8bacd016f58165581733b159a65149e0fd95ea328:eyJzZWxlY3RlZExpbmVDb3VudCI6OTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2OTM4NTAzZWUyYTdmY2Y0MWM0ZjRmYjNhNzY0ODZlNTk2YzNkOTI0N2ZhNjBjNGMzNzRmZGE3OTQ0ODE1ZDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgxMjI0NjU4MzU2NmE5ZmViZjQ4NjhmODI0YjQ2Mjk0MzQ5MTZjZjVjM2Y5YmRhNjkwZTgyMDEwYmYxYzUzYWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVjZTgzOTFkM2ViZTliOWNmODdhNjA0OTYzM2I5MDE5MjAxMDY5MjczODBiNWUwYjFjMTNmMWNiZTU1YjNjMzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7356b760816341019791af757ea9c79b",
+      "statement": "npm run ci:plan reports which CI lanes and browser groups the current diff selects using the same classifier and browser-group selector as CI.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/ci-plan.mjs#L1-L40",
+          "version": "repo-lines-v1:sha256:9d9a13da8dbba5dca5290125d2150dd786a6b233ddabe7d8f28aabb78f5a24da:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlNjRkYWU2MzAzZGQ1YTc3YjM3MTUzYjRhMDc1MGQ5ZGIxZjhkMzhkYzllMDdkZTgwOTRhMTY4ZjQzOGIwZjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmN2MzOGE5ODU4ZjM4NTllZjE4MmZkNTZkODQxZTgxZmRjMjVkOGExZjYwZDJlNzViM2NlNWQzYjM3YjJkYjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_67361c430f474bec86557de8899eda51",
+      "statement": "npm run verify:changed automatically runs only cheap focused checks for the diff and prints expensive lanes such as a DB reset or browser runs as suggestions.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/verify-changed.mjs#L1-L60",
+          "version": "repo-lines-v1:sha256:700a5f7449afb58c8eca726972b0456eef896d0139c69e8a1fc7cd19e5d25e20:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiMjIxZWY4ZTAxNTI2NjAxZDk1OTBjY2ExOTdmNmQ2MTE4NTNlYmI5M2Y2MTNmZjRkZDRjM2U2YzNlMzJmODMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a79db65817c04236b4cdc3971ff95378",
+      "statement": "CLAUDE.md requires explicit per-change authorization for production writes and migration applies, states that applied migrations are frozen and that migrations must open their own transaction for lock_timeout to arm, and requires authenticated-only commands to revoke default EXECUTE grants by name.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L274-L288",
+          "version": "repo-lines-v1:sha256:4a5c457b0044536fd55c318ce9b88c70f4aa65f862ec40c53c277df0638b2c38:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhMWNlODgyMTgyZTFhNWZlODEyOTVmMDAyODhiNDYyOGE1MmUzOGE4MjhjMmUyODI0NWNiNDYxYWVmOWZhMjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5ZGRlY2M1NjEzNWE1ZTFlNWE0YWEyZjExZDQyN2I3YTYxY2Q4ODNlMTVmZDNjYzQzMGJiNzI1NDc2MGNkOWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAzYmQ5M2VjOTdlYzkzYzIxN2ZjMGZiOGQyMGQxNjQwMjExODc2NTYxNDBkZWNiMDM0Y2IzNzAzMTQ1OTExY2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_566640ff87e64511b8a234532f231818",
+      "statement": "CLAUDE.md states that green CI is not merge authorization and that a conditional exact-head merge authorization is invalidated by a changed head.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L226-L231",
+          "version": "repo-lines-v1:sha256:05977905563b72190ab8485d3b9fa1be671314ecbea487d1c7bb110981736ec5:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTUxYjUyMmEzMjNjMmRkMjUxMjNlOWViMzY3OTk4NTg1ZDc1NWJhZTlmZDkzOGQzYWRkMWM1MTMxZjlmNDFhMCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWI3ZDBjNDA3OGE1NjBlN2RjMzA3ZWE5YWFlODViNmI1NjY1MjBhY2ZjNGM2MTNjNjlkZDM2ZWNlYWIxNmUyYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmRhODEyMDhjODhmNGVkYjZlMjMwM2QxNWJiZGIyODM2ZjRjM2JiYmYxMDhhOGNhMDA1MWExMmJmOTdiM2QwZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWMzMTc4OWU5OTdmYjM4ZTRlZTA4ZjhmOWE0ODNmZjQ3ZGQ5YjQ5NjJlZGNiOTgyZDdmMGVhZThiMzQ4ZGVhYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_1a56b5583d7643f9b8a986cbdf2e43fe",
+      "statement": "The package scripts provide unit tests (vitest), a separate DB lane (vitest.db.config.ts), four Playwright lanes, and an aggregate ci script running typecheck, lint, build, unit tests and the safety gates.",
+      "evidence": [
+        {
+          "resource": "repo://package.json#L5-L35",
+          "version": "repo-lines-v1:sha256:66b053cf3d7b09de2982ff8ef6b0686e0173aa00d814eb47dec79953e49b8f31:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0ODMzZDU5NDljMDNhNDBjYTk1MjQ5MTYxMGE2NjU5NjQ0YjNhYTQ2NjM2MmY3OTkwMjBkYmYxOTgxNTQ3ZGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhM2I0NjlkOWUwOTc1NzIyNDY2NjczNGM5ZWY3YjI1NGQ4ODUzNGY1ZDViYjcwOTg5NjA4MDVjNTUzZGMzMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI3MTQ4NjliNGRhNDY0OWIxNGJiODk3YzZlY2E0NzQyYjk3YzkwYjFmZjQ3ODViNTRjNzViMGNlNzMwZjY1MTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ3MGE2ZWVjN2ZiZTY0YWQ3MzFjYzg4N2E1NTc3OGVlZmYwOTAyZWY2ZWRhZmIyMWEwNTgxYTQ3YzhkM2FiMWMifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

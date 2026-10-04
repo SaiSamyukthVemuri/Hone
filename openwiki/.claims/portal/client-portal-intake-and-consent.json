@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:8412aa523fedeb51363214cd7ebcececc714cba565404d13769b9e454dad5941",
+  "claims": [
+    {
+      "id": "claim_bc13b6045b5d4eb98d93a42a05ab6e7f",
+      "statement": "Portal magic links use a 256-bit random token stored only as a SHA-256 hash, are single-use with a 60-minute TTL, are bound to one studio's one client, and the raw token appears only in the emailed URL.",
+      "evidence": [
+        {
+          "resource": "repo://lib/portal/magic-link.ts#L10-L26",
+          "version": "repo-lines-v1:sha256:6e0e22de443b635db17f95002cfa8441331864d13a85ba944f94907cf1694d12:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwMGEwMDdlZDc0ODNjNTEzMjI3YmM4OWEyZGMyM2Q4NzNmZDQ1NzM2YTUyZTg4ODNlNjFiMDgyZDM2OGU5ZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5ZWNjMGY2ZjM5NTgxMzkwODg5NGMwZTNjYzAzMTQ4MDAwNjAwZGQxZTQ2ZTBjMzg4ZmNhZGNmMDE1OWU5YWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmM2U2ODRhMDY3NjZjMDliN2M5YWZiMDZjNjUwMTkzNTI1ODNmOGU3N2I0MGQwN2VmNzk2MGNiNzZkYTJjYjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdkMmM2YzlhZmZlNDJmYjEyZmQxZGFkYmE0NzljNTY1NzQyNGM3MWQwZTE4M2EwNzlhNzUzNWEyMmIzMGQ5ZjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_377af1e134c14a508743ee9696c6f010",
+      "statement": "The public portal login request returns the same generic success whether the email belongs to an active client, an archived client or no client, and pads every post-rate-limit branch to a uniform response-time floor to avoid a timing enumeration channel.",
+      "evidence": [
+        {
+          "resource": "repo://app/portal/login/actions.ts#L56-L80",
+          "version": "repo-lines-v1:sha256:7caa862d97ed593dbc507dc2d6efe3c8eb111aa45011d2eea0b2c39c6ec73c75:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlZTIwNjQxZWIyNzQ2NTYxMDI5ZGYwOTI5MWEwYjM0N2YyYjE0ZjE2NzA1Y2QxNWY1ZGM3NDdkNWE5ZWUxZjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiZmQ5ZTRiMjVmMzk0MjRmMTM5MDU3YTJjZmE1YzViZDgyNGY0OTA0MTM3N2I0YTE0MmQ4ZGQ4ZTIyNDJjYjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5MzNmMGJiNTEwNjkzYWZhNmQyNWYyNjAxOWNiY2Y4MWQ1MzgzY2RiOGNjMzJkMzA4MTQzZjZmYmQyYTA1ZDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBmNWQzNDM3OGI1M2Q5NjhhNWI3NmZkODE2MzViYTI4NzIzZTM3MDBlMjg0ZTExZTdkMjQ5Yjg0NTc3MzczOTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a236fe88c48e428c8775c8b8358cbcd5",
+      "statement": "Portal magic-link verification is non-consuming on GET and consumes the token only on the form POST through a conditional update on consumed_at being null, so concurrent posts resolve to one session.",
+      "evidence": [
+        {
+          "resource": "repo://app/portal/verify/%5Btoken%5D/actions.ts#L9-L30",
+          "version": "repo-lines-v1:sha256:9ed5cef527b0c058546fe483501b5ea23669b2624fb0ad340a9fe6c3406ca17b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmZWY1MWVlYzlhOTE4MjQzZWE0NDZkYTNjMDgwZDNmOGM2ZmU2YTI1MDVmMjBiYzUyMjM5MjUxYWEzZGRmMzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlZDM2Zjc4MWE2ODA0NmVkZjU2YmI1ZGFjYmRjODgyMTBiZTcxYzVmYTViYTUwM2U4YTFkZmU4MDA2ZTk3NTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVmNzMyN2E0NjdiOWE0MzFkNjJiM2U4MDdjZTllMTFjYjc2MzBjZTg4ZGFkOGM1YTAxYjVhZmI4NzljM2NlOGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjllZTZkMWE4NDFhZmMyNGJiOWUyY2I1YzRjNWU4MTk3YTYwMzQzZTRjZGRlMjM3OTY5MDZkZjcyNzIyZTFmOGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f273b745a15d44ff80c2e3fab3fd83f1",
+      "statement": "Portal sessions use an httpOnly, sameSite=lax hone_portal_session cookie whose token is stored only as a SHA-256 hash with a 7-day TTL, are resolved server-side rejecting expired or revoked rows, treat lookup failures as anonymous, and never grant practitioner access.",
+      "evidence": [
+        {
+          "resource": "repo://lib/portal/session.ts#L1-L90",
+          "version": "repo-lines-v1:sha256:7397ff2bbf802f99cadd048d71c95828f5b502c5b511e07708ef57ee15c407d2:eyJzZWxlY3RlZExpbmVDb3VudCI6OTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlNjM3MjA3YmY2MGNkMmI0MjI3Yjc0ZDNmNTVmZWYyMDU5YTU1MzgyNDgzYWRjMDU3ZjdmODdmZWI3NjA2ZDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdkYmFiMTQ3ODE3MjMwYWUwZDk5OTEwODlhZmZkZDY3MTE3NzNjYjM5NmMyNzJiNjY3MWQ3NTY2Y2MyNDQ5ZmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_54b455c678084752b5ec6d4c70d7214f",
+      "statement": "The practitioner-auth middleware lets only /portal, /portal/login and the /portal/verify/ prefix through as portal routes, so any new portal route must add its own portal-session check and allowlist entry or fall back to the practitioner login redirect.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/middleware.ts#L108-L128",
+          "version": "repo-lines-v1:sha256:c545322d2afbcc7570e5c28f9d814cb1315d22eada43372d48e87ee8a805b84b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4MDJjY2FiNTk4ZTkyZGY0MDFiYWViNDlhOWVhZDdiYWMyZWI0MDgzMGQxMzdkODNkMzYxYTI2ZDAzOWI5OTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0ODVjMGU2NGJhNjBiYzZhZjgwYjIxYjQ2OGJjMTA0NDZhMjY5NDZjY2VkOGEzZWRjYzY3ZDIxZDQ2NmQ4MDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU3NTZiMzg1MzY0M2QzOWQ1MjczZWJmZTk3ZmIyMWJkOGEwNzFiZDgyNWI3ZDAyZTVjYThiNmY1YThjODlhOGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRhMTcwYWJkZGE3NjQ0ODc1ZWFlZWZiNjM3ZTA1Zjg5YTlkZmI0OWRkNmU3ZDk2NWJmMjViNTNkNzA5ZjdkZGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bc8d1f4888b14660bb340ee5d64409cf",
+      "statement": "Migration 0111's client_portal_access_events is append-only for app users, with a single studio-scoped SELECT policy, inserts only from service-role send and verify paths, a composite same-studio foreign key, and no columns for raw tokens, URLs, IP addresses, user agents or email addresses.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0111_client_portal_access_events.sql#L1-L24",
+          "version": "repo-lines-v1:sha256:99ee857a6627d22a2dd634c56a7320e8e7e5f8cdb874be73bcc9bce831e2c310:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE2Y2M2MmNjZGIwMTBiN2U2NjAyNDk3OGRkNjc5YzcxZDlhZmQ1ZTZlZmQxYjNjNzc4YWQyZTQ5N2FhMjA2YjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkyOTM3MDdlNWZlYjE0MmYwNTAyNGMwNWYzYTk0NWIzYjRlM2RjMzNlZTg5M2NhZmU2ODBiOGJkOTZiMTUwMjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3d801c69a10040a5bb50171298c6b268",
+      "statement": "Portal rebook calls the same locked create_public_appointment command as public booking with studio and client taken from the portal session, and DB tests prove the appointment is bound to the exact client and studio, audited in the same transaction, duration-derived from the service row, and refused across studios.",
+      "evidence": [
+        {
+          "resource": "repo://app/portal/rebook-actions.ts#L574-L580",
+          "version": "repo-lines-v1:sha256:9c2196514e5a733835c2ca47739a0e0fe58a564b1d210c554148fcb0688bb254:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmY2Y2RmZGQxMzRjMWU1YzhiZWU5ZTAzMmY5MGRlZTA4YmYzMzNmZWQyMDkyM2M1ZmVjNDU3MjNiMzc0MjI3OSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiN2JmNDZmN2Y3MDc2NzE0M2MyYmY5ZWM4NTE1MTJhMDJlMWJhMTc1YjljMzRjMGFlOTlhODhlM2JjZTU1ODcxNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDBmNDlmNjZiNGJjNTQ2MjMyMTc5NGQ3NjQyYjEwYzZiNzU5ZmU1OTY4M2E1MGM1NzFhN2M4NjU1MjI3OTJhMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDQxNGRmZDdkYzU4ZjVkZGJkMzI5MGQ5NGY2ZGU2MGFhYTQxZGE2YzYwM2EwYmViY2Q1YTMxZWVhY2I0YzQ5YiJ9"
+        },
+        {
+          "resource": "repo://app/portal/rebook-actions.ts#L73-L73",
+          "version": "repo-lines-v1:sha256:15b55b0b791cab26af847e821b76b0919ca6f13a37eb6eba150d15aa89fd5780:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTViNTViMGI3OTFjYWIyNmFmODQ3ZTgyMWI3NmIwOTE5Y2E2ZjEzYTM3ZWI2ZWJhMTUwZDE1YWE4OWZkNTc4MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTViNTViMGI3OTFjYWIyNmFmODQ3ZTgyMWI3NmIwOTE5Y2E2ZjEzYTM3ZWI2ZWJhMTUwZDE1YWE4OWZkNTc4MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODIyNTcxODQ3NDE3ZDE2ZTJmNDQ0NGRkMDc1MWExNWM3ZjhkNjRmOGU4ZTAyYTA4OGE1ZTI0NDA3MzQ2MDFlMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzY4Y2I0NTE3OGQwNzJmYzcyZTZmMmJhZTZmZTdjMDg3YmQzNTQ4ZWZlYzJjY2Y1MzU1NjJhNmZkMDliMWEwMSJ9"
+        },
+        {
+          "resource": "repo://tests/db/portal-rebook-booking.db.test.ts#L168-L262",
+          "version": "repo-lines-v1:sha256:a208cb4a06b029744c3b657197fd91e1404921580d952471b51625af23acf31b:eyJzZWxlY3RlZExpbmVDb3VudCI6OTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmOTg4ODc5Yjc3NzU4NDkwODBjZGQ3YzM0ZWM0ODk5OGQzYmE1NzY4ZGRjMzVkMmExNjU1ZTYzN2U1ZDFhZGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU1YzNlZTczNTJhOTEzODRhNTk4MDY3YThiODkxNjJhZGI2NzU2NTMxZmU4MGZiNjMxMjY3NDExMDJjZDBjNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4OTU2ZGFlMDkzOWVkYzU5ZWVjNmEwMzQxMDgwZWE5Y2IzYjkzZmVmMzllOTM3ZDJkYmQ0YjljODExYTM4MjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4MjU0MjEwNGNjNjlkNTA5ZTZhOTdkMTU1ZGM2MjgyYTczNTgwMThhNDhkZWQ3MTBmYTc5M2I3NTJlZDkzMWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0a24593d43ed431aa3f1e865877526bd",
+      "statement": "Intake links are HMAC-SHA256-signed payloads of intake id and expiry under a dedicated INTAKE_SIGNING_SECRET with no fallback to other secrets.",
+      "evidence": [
+        {
+          "resource": "repo://lib/intake/tokens.ts#L1-L45",
+          "version": "repo-lines-v1:sha256:5d32756cdae49b038123a01be45a5f52ea60622846fbe8ca2b61f7852e1214cd:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5MzJlZGI1MmEzNTE5YjljN2UyYzg0NjRlNTE4ZTViNjg3OTFiNTg5OTBhMGY2ZWU3Njk0NDNmMDNjYzkxZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2N2Q3ZWRjNDRjZTZkZjY2ZWRhZGE2NTA5NjE2NWM1MDlhNzI1YjlhNjVlYjJiMWMyZjI2ZDFhZmM5NDkwN2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlkMTZhZTg5MjdmNWU2Y2RhNjJlMmUzYTFmOTAzNDEzNTY5NzczY2NmOWVjZGQ4ZDdiMGU1ZDFhY2RkNWVmMWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a281dc3afe8f4a9ebf4bf4d74a16e26c",
+      "statement": "Migration 0118 makes submitted or reviewed intakes immutable for authenticated end-user updates while exempting service_role writes.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0118_intake_terminal_immutability.sql#L1-L25",
+          "version": "repo-lines-v1:sha256:946aae85bd7b997a8ba784ac07a2478dab88260ee8c9bcf7ff834c14e3d5a3ce:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4OWFlODBiYjNmYWEyZTg3NzQ1ZDQ4N2EyYWI2YjE3NWU4OWIwNDRjYjIwNTM2MjkxMDVkNWFjYTFiNGY4MTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4YzMwMzA2MmNhMTdkYzMwNDY0NjlhOGI2ZTk2YjM0ZTg5YjlhNjA3Y2Q0NjlmZjM0NzRlYmVhZTRmNzE4MzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4MWViOGE5MzljNDgwZGUzMTcyMDUwZjdmNTFlNjVmM2ZmZDg0Zjc2MDRkZjcxMzkzNWIwM2M1ODQ5YTJkOGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dd3d4b8e60c44c789db0c0476cef6db7",
+      "statement": "Migration 0162 allows an intake to become reviewed only from a genuinely submitted row, by the caller's own active same-studio practitioner, at a database-stamped time, and DB tests prove forged or cross-studio review attempts are rejected.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0162_intake_review_transition_integrity.sql#L1-L25",
+          "version": "repo-lines-v1:sha256:650c0d0f0cdff649c85a3678f32f6704796b83af6e9989e35c36012b6996aab4:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY5ODBiYmY0ZDczMzdlZTgwZDdiOTNlZGJjZTNiOTgzNmQzMDVkODIzMTYwZTNkOWZjOTVhZmQ5NDA5NDBkZjcifQ"
+        },
+        {
+          "resource": "repo://tests/db/intake-review-db-boundary.db.test.ts#L130-L270",
+          "version": "repo-lines-v1:sha256:f95c32dfa0a44df1eefaf4bcc782d83ffedb421b6b8e01f2ba4d5aac8c6b95d5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxMWEwMGE5NWFkMmM4ODQ5NTFiZWUyZTFlMmU3ZTczZTE5NmM4ZGU3YjQyNDdjYTUxMDMxYjcxMWFhY2MxZTI1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI3ZTg3MzdmZjI5MDQ1NTYwZmU0ZmFkMDUxMTBmMmQ3NGQ3Yzk1NDBmYmMyNDAzOWMxMWYxYjE0MTk4NTNkY2Q4IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1NmIxODNhNTQ3OGE2MWFiMjVlYWE5Y2FlNWUyODc0YTkxZjg4MDIwNDJiOWI1NjlmYWRmNDNhM2UwNGZiZWQ4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkZmMzMzRiNzIzZDhhYzNiZTliODBjZTIzYWRmOTY0NmFiZWQ2MjVlNDNmMGVkZTdlZWNmODE1MzY0YTY0NGJiIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_2f9691b3534b48ac9a5cdc3e3acd866a",
+      "statement": "Migration 0163 removes authenticated INSERT on client_intake_forms so a member cannot insert an already-reviewed intake with a forged timestamp.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0163_revoke_authenticated_intake_insert.sql#L1-L25",
+          "version": "repo-lines-v1:sha256:309c4003f3d0e995d242948957b457a0e3558b3128729ef55a8e9f88be80c7ef:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlY2QzMGFiODllOGQyNmQ3MjE3MWMwNWRkZGZlN2NmOTY3NmJiNDk4MjBiZWZmOTU5NmZlYTU5YTcyMmIwZjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI3NDgxMmVkZDI0OWVkMzM5MDM1MjQ3ODczN2Y3MTU4MTIzMzQxNGFlN2MxZjBhMzEzN2NlOTE0MjlmODQ2N2QifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f589160c7e5549c8bcd090a929895513",
+      "statement": "sign-consent-form.ts is the single consent-signing implementation: it resolves the live studio template, compares it with what the client was shown, re-checks the client is not archived, validates the typed name, and inserts a server-derived snapshot with a canonical hash, using a caller-supplied trusted studio and client.",
+      "evidence": [
+        {
+          "resource": "repo://lib/consent/sign-consent-form.ts#L1-L50",
+          "version": "repo-lines-v1:sha256:c65c80e05108523443a3cfd6de858c0341426e9c0991a0608ed1ef3cece73f16:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1YjU1MTgyMmE0YjcwNTM2YWYxNWJhOGFlYWMxNWJkMDRhNDM1NWFlMGJhYmE3MzNhODU2MjIxMGVjZDFkMTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUzYzBlYzNjMjU2Y2ExMTZkMGQwZmVjZWQ1NjM2MGYxNmY5OWJjYmFjYmFkZjU4MzRkYzAwNzczMWFkYTgyODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0514a112bcbe481fb7accaa2b8c2f90f",
+      "statement": "The intake consent gate resolves the studio's live consent templates server-side, re-validates the client's consent claims against a fresh read at submit time, and never writes a consent signature.",
+      "evidence": [
+        {
+          "resource": "repo://lib/intake/consent-gate.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:e88003ff8a4be0cee7b5a16027a8952f372cb8039135162f043b0bafe5b88301:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYzNWFjNGZiMjNkZmM2YWU5ODM2Mjc1NTRlYjQxMTJiOTY3NTRhM2ZiNDcwMzhkZWY1MTM1MTIyODk1MTUxMjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_92303546785c4926a705dbf119471490",
+      "statement": "Launch readiness is decided by one module that requires at least one treatment_consent template of the caller's own studio that is both active and live, treats draft, archived and active-but-not-live forms as not qualifying, reports a failed read as a third state, and gates no booking, intake, charting or payment.",
+      "evidence": [
+        {
+          "resource": "repo://lib/consent/launch-readiness.ts#L1-L60",
+          "version": "repo-lines-v1:sha256:7510609086e00b95987b57d330fcd2f5766c88a4354380935a72bea013269c4a:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhMjRjOTlhMmRjNjMyZjRjNWZlMDI0ZTcxZGE3M2E3NmE0ZTc0ZDcwYTNlOWUwZjRmZTBmZWNjMDdiZTM3MTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5MWQ3NjExNWVlNmQzMTYyOTEyOWIzYmQ2ODdlMDEwYjRhMmZmNWIyZjUxMDU0NjBlZTdhM2ZmZTQ4NTU0OGIifQ"
+        },
+        {
+          "resource": "repo://tests/lib/consent/launch-readiness.test.ts#L110-L253",
+          "version": "repo-lines-v1:sha256:3c90ff64da69425783d82ac1b213ed37c4e517b7692ed3ff4e5063393cf47ede:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzNjc5OWNkZjFjYzQ3NmUyMjJiZjdlYTVlNWQ5MThkODc5YjZhOTgzMDcyZTU5MTY4YjU5MTIyYjliZTdiMGM0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2ZjU2ZmU5ZDJmYTllYWNmNmQzZWUwMjExZjFiM2UzMGMyNDBmNDYxMWNiNDg5OWI4ZDc0NTFkMjYwMGEzNmVkIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlN2U2ZWI1ZDFmNGRiMjc2OGY3NDlmNGJjNzkzNmYyZmZlYzdmMGFhYmQ1YzkzMzkzNWYwMGQwZjZhNzhiNjQyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_db0e65b09bc14f3abfecf97eb1ec19e6",
+      "statement": "The canonical record describes the portal and intake as deployed, enabled and in use, and records consent wording as draft and not lawyer-reviewed.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L776-L780",
+          "version": "repo-lines-v1:sha256:f1bacb288a8676ac48e468241f2338bf176291f5c69e22b4e9041ca5c5403b72:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTNhZDhhNmIwMDdhOTc3MjMyYjQ2ZjliMzIzMWU5MWRlYjZhYzBmMzE1NDkyMjJjY2UyYjU4M2QwYTZhNjRhZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzA0MDI2YjFmYTQ2YmE5ZjE3OWRhYWZiMDgyNWY3MWE5ZTRkYWMwZDE3NmU5MzZlNWU0YzI2ZmQ2NTk2OGY1NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTBlZWVlNjM5ODlkZjdmYWJhNDJhMzRjMjEyNjk3YzE5NGExNzEyYWVmMzVhMmZlYjEzYTk2OGUzZTAwMDdmNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZGEwNzEyOWFhZjJiYmYwZTE4MzU2ZmI3MWQ3YWJhMTdlYjFmZTFiNGE4NzM4OTg3YjFlNjI4YjYxMWUyOTFmOCJ9"
+        },
+        {
+          "resource": "repo://docs/production/current-state.md#L794-L795",
+          "version": "repo-lines-v1:sha256:7745c40f558855694553e838a67c5838359c0775cc70434075fce99714171c8b:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmMxMzk4OTY0NzVmZjhlNzNmMmExZWMzOGI3ZDc1M2VmNjc5MjcyYmNmZWUzMzFlMTVmYjA0ZjRlODk3OTJkOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzA1YWYzZDA5YzJmM2IyMWU4Zjg2ZGZhYTkzMmM5ODkxOTAwODg0ZDQwY2YwYjViZmFhYmRkMTI4ODliMmYwMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWU4NWIxMDU3ZWI5YjczNTZjODBlZTRjY2EyYzFmOWZkOGZkMzgzNGNiNDEyYTJjZGYyMzkwYTk0MTE1MjNmMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2NjOWI2M2VjMGJjODZlYzQ3ZTBlMjg4YzA1MzExODg1Y2NlNjcyMzhkNDhiNTE4Y2EwN2NhYjFlNGNhNzExYyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_ef11181e1a9a4105839998ad36b0ac81",
+      "statement": "An archived client holding a live portal session is redirected from /portal to /portal/login (because getPortalIdentity returns null for archived clients) and back to /portal (because a session exists), and archiving a client does not revoke its portal sessions.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/actions.ts#L290-L320",
+          "version": "repo-lines-v1:sha256:1b94b6f300bf1e600363b6b17cd97bf0965ee68f376f1a2f7fee55952c14959b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjMDQ2MTM5MDQ2ZDhkZDk4ZjNlYTA1OTUwNjk3NDMyMmU3ZDIyY2JjNGYxZmU0MWQxNWNiZjJhZDY0MjEyODkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlY2UzMzNiYTU0MDJiMDA1MjZhZmU3NDk5NGUzZWNhMGE3Mjg3MGYzMjdjMGVjMjQ2NzI2MDg0ZWQ5N2UxOTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3YWJiMTJkYWJjYmM0ZjY3YzVlNTBiMzA5YzcyYTkzZjcxYmM2NTRiOGQ2MThhNDA2YWI4YTVlNzdlYmQxNGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkyMmEyMmQyNTI5ZDQ5NzRiZGY3MDM5OWUyZDQwYjZmNTU4ZjkyODlhOTY3OWU3YWE1YThhNGMxMmY0MTVmMDYifQ"
+        },
+        {
+          "resource": "repo://app/portal/login/page.tsx#L25-L34",
+          "version": "repo-lines-v1:sha256:50553cdfd380afa1a6f2bcdaa5002e0d5439976c95cce0728fece1b3e3923833:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQwNDRjNGUyODRhODllMzUyMDYwOGY4MWM4YTA3OThiYmI5OWQ1OWM0OWI1ZjhjYjFlOWFkMjJkNjA5YWQzYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImExOTY2OTFjZTc0YTdiNjZjNzZiOGVmMDZiOTg2NDQ2M2MwYzViYmQ2OWY3M2NmZmExODRjMzdmMjIzMDBjYzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJkMDcyZjJiYWZiMzQyMTY3MDRhOGI3ODg5MTFmNWZlNzVmNzNkNDczYzFjMjkxNmE0ZjhiYmZhMWZiZGUzMDMifQ"
+        },
+        {
+          "resource": "repo://app/portal/page.tsx#L61-L73",
+          "version": "repo-lines-v1:sha256:bd60ae9fd624df7273f937a13c98b1cdea797f706d0c7a33aec2dac8f02dc02a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliYjkwMzMzNWZkZGQ1YTAyOWZlZTllYmIyY2YwZGY5OGNjMDU4YzE4MDBjMjFkMjM1ZTJhNDgyYzlhYjFjZGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhmZTAxNzlmMGY4NjYyYzEyNmRlNTJkMWU4Mzk0NTcxZDk1NTJiYTU3YmNkMzllYTA2YWNiMzUzZTg5YjVlMTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjljMTZmNDE2YzhlYjExZjIzNDJiMzRlNzNhZTU3ODZmNmFjMDZiOWNmNGRlNzE0MDk4Mzk3MGY5M2VmZTQ3NjQifQ"
+        },
+        {
+          "resource": "repo://lib/portal/queries.ts#L72-L88",
+          "version": "repo-lines-v1:sha256:1fa66b76424ba0bf64ac342a8afbbab7deb3fc6dafcdf73e26dd28723f7cec94:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyOWViNjAxMTc4Yzc4MjYyNzA2NGMyYTMxM2ExNzQyMjkzNWQ5YmI3NWVlMzkyOWY4OWI1M2FkNmNmYzVmNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3ZTNlOGRmZjJkZTNiM2IxMWE3YWNjNWY5YjY1MmI0MWVhYmE5ZTc1NjQ5NDk2ODIxZDJlNjUzM2ExZGYyOTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4ZTkxM2Y5MjM4ZTkwYzZjNTU0YWJkZDM4NzE3NTU0ZTg1OGJkZTUwNWI2ZjVkNDE4YWRiMzExMTE0NGVkYjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgxMDkzN2FmZTExYzQ5NGU5MThmNTliNzM5MTNiNjU5NTkzMjEyNWFmMjk1ZWY0ZjJlZDBiNDY0NWM3Njc2ZjEifQ"
+        },
+        {
+          "resource": "repo://lib/portal/session.ts#L160-L175",
+          "version": "repo-lines-v1:sha256:5d0301af6f5918159c7066592de6d61ea78bb5a84cdcd912de59477c30cc035b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlNzVhOTA4NDU4ZGM1YjI4MjNhNjljN2ViYmZjNTgwMTgwYWNiYTEyN2Q5MTgxYTgzZmRkMzMwNWMyMzEyY2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcwNWEwN2UxYzE5ZGVjNjVmZjdjYzNkMzliOGQ4Y2Q4MzQ3MjVkMWVkMjRkYjg2YjQxODEwNDFlYzJlZTRlMjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE0OGQyZjEzNzA1NzA4ZjIyOWQxNWM1MjRjMWY1Y2Q5OThmMWE5MmYxNTM4YjEyMzBjYzU5YTY2YmY3Y2RjMGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ded985f4db3641809463cf804f6e79f9",
+      "statement": "The portal rebook browser spec documents the archived-client redirect loop as a pre-existing defect and deliberately asserts only the first redirect from /portal to /portal/login.",
+      "evidence": [
+        {
+          "resource": "repo://e2e/portal-rebook.spec.ts#L282-L315",
+          "version": "repo-lines-v1:sha256:20cbe3cbbb714e266c306f01979dfaa984af1923d4d146c82a058233daf4c036:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYyYTA5MWIyNzhlNWZkOWIzYTk0MjY2MmIwNWIyZmQ2NDRmOTZhNTk4ODYyYWFjYWI0YTkyNjAyYjE3MDQ1M2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1OTBkZDc5NzQ4MTRjZjc1NzlmZTBiZmY4NjUyMGU3N2Q1M2JhNzkyNjg5Y2I0MWVmYmU5OTRiODE1NDJlZTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

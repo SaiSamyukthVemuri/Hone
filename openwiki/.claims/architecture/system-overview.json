@@ -1,0 +1,266 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:d7082855b416d612ef13e618502abbe901c45482b68abcfe54fa6038635cad60",
+  "claims": [
+    {
+      "id": "claim_c3b07c2a61f64c599aa5b7dbe882a78e",
+      "statement": "middleware.ts delegates every matched request to updateSession, and its matcher excludes static assets plus exact public files (font licence notices and one marketing film) rather than directory prefixes.",
+      "evidence": [
+        {
+          "resource": "repo://middleware.ts#L1-L58",
+          "version": "repo-lines-v1:sha256:f141cc02bfe72d42061388ce03284586e1835f25db1a7dbfcd9c26204d556547:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjMTFkMjk2YmM3NWYxZjNlMDllZWViZTIyNzFjM2EyZGFkYzQxNTE3YzczNThlNGE2Mzg3NDllYjM5Y2FjZjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhMWQxYTYzMzkwMjI5Yzc5ODM0N2U4M2EwNDA1NDQxYzk0MDAwMzUyODRhZDE2OGMxYmY2Y2RmMWQ3MGEzNzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_48d98c5c938142b68b387872578ba7a8",
+      "statement": "updateSession builds an anon-key SSR Supabase client, validates the user with auth.getUser, and redirects any anonymous request whose path is not in an explicit public allowlist to /login, so routes are protected by default.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/middleware.ts#L5-L157",
+          "version": "repo-lines-v1:sha256:4df37d859be51b9ec1bc491e0a1cc5db78042385197b7160d5675b1801d714b9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5MjcyMmRlNTZlMjFhMmNlODMwOGRhYjhhNzAxZTVmODkzMjVjYjYzYzFiOWJhMWE1YWVjMmQ4MDcyZTEzOGI0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1ODc1NDEzZDFiMjk5MDJkODU4ZGNkZDhlYTk1OWRiMDAyNDgxNWJlMzY3MzBiZjIwZDU0NTViNTQwYmI4MjA5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0NTFhMTZkZjI4ZWUzYWYxMzk2OGE4ZjBmMGFkYzI3MTRiMjM4Mzc5MmNjM2ViZmM4Y2ZmYjQwMjczODI5OWFiIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_6239c4be4b21405e8b2b6c395706bdac",
+      "statement": "The middleware public allowlist includes the token-route prefixes (/book, /cancel, /intake, /manage, /invitation, /reschedule, /calendar-feed), three exact portal paths, /api/cron/, and only the exact Stripe and Twilio webhook paths.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/middleware.ts#L82-L151",
+          "version": "repo-lines-v1:sha256:9f3bed55c09adef32f12c329076f21ebbca121f9f53ee4cf92461dd3126a8598:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY0OWI1MWNiYmRkM2U2Mzc1MmQxNTYwOWQ4ZTRiNzgwNmM0YzllMDgwNDhkZWVhYzM5YWJkZTFkMmM0MzZjYTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0NGZkNGY1MGYyYmU0YmE0ZWE0NTE3Zjg3YWM2ZDk4ZTA5NWI3MjZmYWIwYWM1MmNkY2JmNGRiMTU0YWQ5YjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1NTBlNDQyMmEyZDYxMDcwMGRjOWY4NTY3NzRmMzI3ODUwY2Q3ZDZlMjk2YzI3OTQ3NjE2NGNhNGM5M2JlNzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg1ZWY3Nzg5MTYzODY3ZjNiZDI2MmVjNzI1NmVhODE4ZGIzYmM3ODdjZDE2NGFmZjNjNzAyNTM2MjRlNGFlZmUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e98d841121f54703939709fcfc72c118",
+      "statement": "For authenticated users on non-public paths, middleware sends users with no active practitioner membership to /no-access, requires a hone_selected_studio cookie matching an active membership when there are two or more, deletes a stale or forged selection cookie, and exempts /admin paths from the membership gate only for isAdmin emails.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/middleware.ts#L159-L235",
+          "version": "repo-lines-v1:sha256:4c7f248b0d4b5d45e518dcb17af1907bb721a83e37bf76eadac9a77515ccc03d:eyJzZWxlY3RlZExpbmVDb3VudCI6NzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlYTA5MWE2YTA2NzEwYWM3ZmM1ZTRkMWQ0YTkyMmFmNDRjMWNkOTRmOWQ2OTA0MzlkZGYyMjc5MDU1NTg1MTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ2YTg1ZjJhODUwNDc2ZGVmNDUzNDA1ZThmZTY3OWI2YzliYTEwZGI5NjIwNTZmMGU4ZWNlNzNmNmY4ZjgwMDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU5YzlmYWY2YzgyODVkYWFiOTYzZjE0M2RmODkxNzU5M2ZlMmYwZDc0MTM2NTIxOTgzNjQ2NjVhNjcwOWJjMTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_da900910048043a3821632584c6d440a",
+      "statement": "Practitioner identity is resolved once per server request by a React cache()-wrapped loader that performs auth.getUser and an RLS-scoped select of active practitioner rows, and a failed membership read is thrown rather than treated as no memberships.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/queries.ts#L80-L142",
+          "version": "repo-lines-v1:sha256:2ff2db3c0c115d42b86aeff1a60085f94186b6c4ab986daebefc1e6f07aa799d:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY2NmMyYzRiZGM4YzFiYzUzYjQ2NjdkM2ZmOGYyOGQ3YWI2NWUyOWI5NDRlNTQzNWIzYjNkZDE3ODViNWMzYzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJlMjZlZjJlYTNhYWU5M2FlMWQ0MWFmODg2MGY2MDI2OGI4ZDM0Njk3OWM2OWY5OGQwOTU1OWZlMGI4MjViYWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_98ac900e6e1c40f5bcc80946f9ecd244",
+      "statement": "Membership resolution returns none, one, selected or choose; a multi-membership user's selected-studio cookie, which holds only a studio id, is honoured only when it matches an active membership, and a studio is never auto-picked.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/queries.ts#L144-L165",
+          "version": "repo-lines-v1:sha256:eefb2f2b2e23884543963f75cc9d2f087f08cb57afe4db9382f29296f9518b9a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyMjRjNjlhMzc5YmNlOTNiMzdkYzJhMDllNzI4YzQ3ZmE3Y2FhMmJhNjk2NjA0NzQwOWY4ZjZhOTQxNDVhODIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3MDI5NDRiMTVlNmYyZjhhYzFiMWIzZmI5MTFkYTI0YzM0NmE3YjBlMTRkYzE4ZjM5MjI1MTI0YzUxNTQ2MjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNTBmOGEyNWI0MWU1YzFmZGU0NWYyNTBiM2JiMzdlNGEyMTczZjA2NmJjYzAxNmNiNGJmZjA2YmQyZjJkOWYifQ"
+        },
+        {
+          "resource": "repo://lib/supabase/selected-studio.ts#L4-L38",
+          "version": "repo-lines-v1:sha256:95c48807ea12c125bb5e8e531df01918e04b81c424b3738212d9c8ab630a7c29:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExNGQ5YzM0YjkwZjNiZWIxM2JkYTA4ZmU1NzEwNmY0ZTUwZmJlMDdhYmQ3NWU1NDNhMDE0MjRmYTQwMjliNmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk4YWQ5YjYxZWMzZDcwNDRhNzU0YWY2YmY4NTk3NGUwNzliYzgzMTYxM2YyMDJiMTYwZTM4NjZmMDcwZWY5MDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzNzU1YzcyYzE1ZmVkNzY2NDZkN2VlMzQ1ZDA0ZjY1YjBjZTA2MmE1MjdiM2FiNzU2MzU1NTc0N2YzNmI2YTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_df7e27c4b6a142298d73bcaa82da9b75",
+      "statement": "requirePractitionerWithStudio redirects (anonymous to /login, no studio to /no-access, unresolved multi-studio to the chooser) and guards the practitioner app shell, while getCurrentPractitionerWithStudio serves server actions.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/layout.tsx#L23-L40",
+          "version": "repo-lines-v1:sha256:8f63b085995bae5ca05af970389f77873ae10a7c30daba442b459a77ff7a6f59:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxM2VmOWQwYWQ0MTMxOWM0MzA4OWU0MDViNDhjMDIwOTQwNzY1OTdjYmU4OWRhZThmY2FkOWI1MDUzNGMyNDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjMmQwYjU3YTkzY2ViMzM0M2RmMzJlYWYxM2NhNjAyNTg4MDY4Zjg3NTFiYmU1NDhlMmE0ODVhYTRjYWRmYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ1NmUyMjQxMWZmNzcwMTEzNDkzODEwYzllMTJjZGM2MDI1OTljMDU4N2ZiMTZlOGIzNWUzYmQ1N2ZmYzkxZjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE0MjUwNmQ0NmUyMjIwMjViYjBkMzU4OTUwNGU2NTFmZTBhNTlkZjgyZWFiM2UyOTI5YjhlOWEyOGJjNzAxOGIifQ"
+        },
+        {
+          "resource": "repo://lib/supabase/queries.ts#L184-L259",
+          "version": "repo-lines-v1:sha256:ae24bf662a3611166791944bbd96baac7d39b5741ef04a4f17d576b0735c8157:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgyOWI0YmFhOWQ0YzFkMDFmNWY0YjRkMjNkNTJlY2ZlMDk5OWQ4YTUxODk5MmJjYjMyNzJlYmRkZDZlYTEzYzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ODQ3OTdkMTQ3MGE4YmZmN2JkNWE2YTAyMTRlOTViOWYzMzMwNzg4MWU2NmMzNWZmNzAwNTgxYzcyMDhiZGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI2YjgxMDIxMDhjYmQ2MzAyNWQ0MGI3ZTdhYjFlNDhiNjEyOTY2ZDJlNzkwMmU1ZjM3OTU5ZjBlNzFkZDY2NDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4c59fba62dda4469a35af4fe83dda309",
+      "statement": "The service-role admin client imports server-only so a client-bundle import fails the build, reads SUPABASE_SERVICE_ROLE_KEY, throws if it or the Supabase URL is missing, and bypasses RLS.",
+      "evidence": [
+        {
+          "resource": "repo://lib/supabase/admin-server.ts#L1-L27",
+          "version": "repo-lines-v1:sha256:fcdba6004b2dde2df0437b015f1fc4d03e640ad0813cffccddef5982c83b907b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRkZGU2MWQzYmVhZjE2NzlhMzRjYmMyMWMzZGEyZWIxZmI1MWI3NGNjYjAyZDE5YTc4OGFlNDhhOTA3ODVhODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_71b22745ed7843f7aad788a1cd8ff285",
+      "statement": "Every runtime createAdminClient() call site under app/ and lib/ must appear in tests/security/service-role-allowlist.ts with a purpose, an RLS-bypass justification and a scope-guard string present in the file, and the test fails on new, stale, duplicate or unjustified entries; it is an inventory gate, not proof that each query is scoped.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/service-role-allowlist.test.ts#L49-L116",
+          "version": "repo-lines-v1:sha256:e134d1d5739b333e2e2848857f49e0faa974c754bf202eda53867a1475415015:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxMGY2MTQyM2MyMTFmMjhhYjllNDI3NmVjYmUwYWRhYzNlMjhjMzU0MzQ4YWQ4MDJlMWExMjAzZDdiZjA2M2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ2OWY1MGNmMWFkNzdkYmQ0NDkyZjc4MGUyY2ZiMGNiNjY2NmQ1NDkzMTBhMjRlNzllMmRmOTU2MmM3OTdiZDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        },
+        {
+          "resource": "repo://tests/security/service-role-allowlist.ts#L1-L11",
+          "version": "repo-lines-v1:sha256:b5fff87b043ff52d8d76b0b07df4c1c1ccd25017585cf4eebc85998829a1c2a2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4YTQ3YzJkMzQ1Yzk3NTQzNTRhY2NlMWExNmI2MjdlY2E0MWViNTc2MGJjMGI0MzI3Y2QwZjJhYzRmNzBlNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcwMTlkMmZmYmMwNTI4YTBhZDI1ZTcxOGFjN2RmY2MyYjg2MzVjN2YyZGNmNjAxNjM1YjgwNWMzY2MyYjIyZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2MTg1ZDkxMzMwYzJiYWNiMjQ0ZTVkOTg1NzJkMTFmNDJjNDJhZTgzNGZiMWE1NTdjNzlmM2IyM2U4NDdjNzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_64fd48de1936497bada8f9798cb25576",
+      "statement": "The appointment repair commands in migration 0173 are SECURITY DEFINER functions whose EXECUTE is revoked from public, anon and authenticated and granted only to service_role.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0173_appointment_repair_commands.sql#L588-L604",
+          "version": "repo-lines-v1:sha256:805378307aa8585e6c248feec710b541afaa8adcd648861cb10a4df19f4b0c0e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE2YTk4MDFmOGMwMDkzOGQwMGZlM2ZhZmNhYWUzNjkxNzQ2Y2I0ZDZkZmY1MGFlZDUyOGEyZWMxMjExNjA2YWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ3OTliNTRkYmUzMDVmOWI1MjVhZjM2Mjg5ZDllNDRlMmJjYWUwYjhmMTBhMTYwZjIzMjZiNDNhNDE5NGE0NTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc4MmYyYTY5MjA2MmQ3ZTdlZDU4MzU2MTBmNDYyNGJiYzgxNzVhMjJjMmM0NmNlNGE3OWU2MTUwZTJmZDFhM2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0d49cf4b08dc4591ba3daf8dcc689162",
+      "statement": "set_new_client_admission_mode (migration 0204) is a SECURITY DEFINER command with a pinned search_path that re-derives owner authority from auth.uid() via is_studio_owner, and EXECUTE on it is granted only to authenticated.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L146-L176",
+          "version": "repo-lines-v1:sha256:0d5dbf4c50b829290818c135dfe27008acf8000a454af262b4fcd6d3acf0c78f:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhZmJhMDUyN2MzOTUzYzRiNmUwZTViNTczOWJhODM2MTJmODA1M2JjZGM5NDY2NzMwMTkzY2QxZDU5MGI0MDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhYjU3ZjJjZTgxYWM4ZTFjZTgwOWQxM2I2MGZkYjUxY2VjMGRiMTg3ZDZlOTU4YmMwMGFhZjhmNWE2MDZhZjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQyYmYyMTNmZDViZDI3YmQwNWNkZTQxZjIwYTU0NDdlYWM3ZGQxOTY1ZTI2NjUxYTNiZDY5NDJjMTAwM2QzYzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2OTk1NDQzYmQ2NzhkNmQwYmZmMTY3NTk5ODQ5M2UzM2QxOGUwMTAwNjBmMzhmZTZkYjRjYzg5YzdiZTcwYmQifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L326-L330",
+          "version": "repo-lines-v1:sha256:84e94dd8bf6b915496adb0bc5b46858dafe0cde7ac72b7942c5ca7e609b0b03e:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDNlMDA4OTY3MjQzMWJjMzQxMWVkNWUwYzFhZDAwNzE5YzdjMGRkYjBlN2QxNjY5ZTQxMzlkZWMxYzIwNjU2MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGViYWVhZTNkMDM1ZmQ3ZWU5NjljYmNjODg2ZTI2MzJhNjJkN2VkNTkzZTE5YzhiOTJiMmRlMTgxMGVhNmJiNCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzgyNjdiN2I4NDM2OWI5ZjcyMzI2YjNmMTBiMzU3NzdlZDM3NzhhZmRiOGM1YWMyY2Q0ZTc4MGM1YzY5NDgwYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWYxZWMyYmQ2YjNhY2E2OTg1MGFmNmQyYjc2OWUzZDVmNzRmNWZiODUxNGVhYWYwMWU5ZTA2YzhmZTg0NzY5NyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_a3b4170035014754b1f160262902616f",
+      "statement": "Migration 0204 grants EXECUTE on the public new-client waitlist join command and the public new-client booking command to service_role only.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L785-L792",
+          "version": "repo-lines-v1:sha256:dbd9f5f2dfdd7610d00383db35062724192488dd3d72c8ff7e84064f6fa6303d:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTU2ZDhmMjlkZWQwMjA2ZGQwOTM1NDAyMjAwYmM1MjNiZmRmN2I4ZDc1NDAxNjVlMTZiNDMxZmFmZmFhNDE5ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGQ1ODA1MDU2MTlkODY4NGYzZTQ2ZjA2NTYxYTJmZTVlMWMxYzhlNjljYWRmMTMzNWZmODRjMzJmYTBhZTcyMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTI1MDM5ODAzZGIxNTg3NjRlOGZiODk2ZmVlM2U3YmVmNjk5ODY3ODc3MmE1ZmVkYjBjZGU2MGNkNTU0M2RmNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjIsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODg4MmU1NzJmMjgzYjcyYzEyNjJiZDEwMDY1NmM3ZGEzY2FhMTIwY2VkZjYyNDY0Mjg5NTA1MTIxNTdlODJkZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_d35bbd27ad3c4699827258b5649cf25d",
+      "statement": "next.config.ts declares a global security-header block first and then a stricter token-route privacy block for each pattern in TOKEN_ROUTE_PATTERNS, relying on the later block overriding the earlier one.",
+      "evidence": [
+        {
+          "resource": "repo://next.config.ts#L1-L45",
+          "version": "repo-lines-v1:sha256:adf8d9b08ed0714bbe512a1a22d6b79a08a34d46461ded67b19a783a395a96bf:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiYjE2MmNlNGQxMmI0NjcyNjAyYTZjNjYxNjI1Njc1NTg1Zjk3MzRkMTA4ZmJhZGQyY2M1MGJjZjkzMWVhMWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUwNWYwZDRkODRiOGI5ZTVkNmY0ZjdlZGNjODdhYTczZDIxZmQ4MDNmNjJjZTNjMTUyNjIxZDVkNTk5ZGE5MjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0MzM0Yzk5MDhhMGU5OGU5ZjhmN2ZhYmQ5NTEzOTg5YTVmZWIzMzYyMDdmOTg0ZTlhZTRkMDkxNWViMDFjYTgifQ"
+        },
+        {
+          "resource": "repo://next.config.ts#L87-L104",
+          "version": "repo-lines-v1:sha256:58aa378e2a81552038ddd9fa130c8aa7645ac23491b0715b21f91d539134d3b1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4MjAxMmViNjkzOWViZGUyZTNhMWZlNDc3MjIxM2QyMWEyNjFhZWRkOTNjOWZjNzg1NGM0MTczNWFmODliMzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjliOTVmYmNmMDliODIwMDQwMDE5YTRiMzMwMTY1MDI0YmU3YWRmMGUyMjc2ZjliNTNjNWQ2YjJkZTZhMzU4ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ4YmU1NTM1MzUzM2ZhMzBkMjUxYWQ1OTIxOGVlNTZiOTc0OTc3ZDc3OTE5NWNiZDMwOTQyMTM5MzY2ZWE0MDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ed2ddda3eb7949f1b6b61443faac003b",
+      "statement": "PostHog traffic is reverse-proxied under /ingest and Sentry browser traffic is tunnelled through /monitoring, with source maps deleted after upload and Vercel cron monitors auto-instrumented.",
+      "evidence": [
+        {
+          "resource": "repo://next.config.ts#L107-L146",
+          "version": "repo-lines-v1:sha256:6e583a009fd0e2d4f473fabc38e22f5f0cd2aff354331ad91eaaa67230a1d8f1:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE2MGY5NjZkODY3NDZhZWEyNTlkNTMwMGNlMGE4MTYwNWQ4OWQ5ZmU1ZmY2MDQ2YjE2YjRiMGNlOTEyYTA3MGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhMzhlZTljYzczYzlmMWYyYzhmOGM1NmQwMGJkMDBkZTViMDczNjlmMTJlMDgwYWJiZDc5YzhjNDM3NTZjMTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://next.config.ts#L67-L85",
+          "version": "repo-lines-v1:sha256:c739aafd107a6701f68effdc7af324c56282c1b9a728783d0761d33e0aefcc03:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0Yjg1YWMwN2UzMTMyODQ2YjEyY2FhNmFlZWU2NWNkMzE2NDQyMmQ0ZGRmMTgyNjhhZDhiZTMwYjUzNzYyM2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczY2VhMmUzMGIzMjhjNmE1OGZhMDNkOGIwMzNkMWIwYmQ2ODBmM2U4MTEwMDE0NTNiYTlkMzA5NDAxY2NkOTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI4MDI3YjdiNTg4MDgxZDQ3ODgwMzU4MzRjNzEwZWQxZmRhYTZmOTdhMjBiZmRhZTgyNGEyZTYzZmQ5OGExN2IifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a4d5ab2f32684e7382b0fb7a99634f6e",
+      "statement": "Server action bodies are allowed up to 16 MB to admit treatment-image uploads, and the billing receipt fonts are force-included in the serverless file trace.",
+      "evidence": [
+        {
+          "resource": "repo://next.config.ts#L48-L66",
+          "version": "repo-lines-v1:sha256:6193904c487a4d1f69964fea16deafd028ad2ab39b0fbc8b799e13f8b2fe38fa:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlOTIwNDQ0NGJjZjhmYWY3YTM0ZTUwMDQ2NmJjMDVjN2RkNmU0YzE4ZmU0ZjQxZDdmMzRkNTZlZGZiOTI5ZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdmN2VhODUyOTI1NmM4ZWNjYWQ5Y2NiMjgwNTgzYTYwMTlmNDRmYzdmYWY0NzI4ODA1NDNjOGJjNjY2ODU3MWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc5MTc2YjE3YTk3OTI3YWE2MjcyMmRjYzdjOTk5NmRiMGJiOWI5MThmOWZkNDM5ZmVhOTA0OTBjMWNkOTJhZDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8edefc6f1df44f328c6b1895365e266e",
+      "statement": "vercel.json registers exactly three Vercel cron jobs (materialize-recurring-breaks, calendar-reconcile and calendar-sync); the appointment-reminders and no-show-check cron routes are not registered there.",
+      "evidence": [
+        {
+          "resource": "repo://vercel.json#L1-L16",
+          "version": "repo-lines-v1:sha256:717784629d1e9f443f60761ad3f0050da3b49f29f6296f3af96a96e52f806e01:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2ZmIwOGZkYTFhY2I5NTdiNjExNmJkMzc4MTFhMWZlNDFhMDE2MTFjMDYzMWVkYmY3ODZkNjg4OWEyN2E1NWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7ee0b4d53b034298a189ab2965e8f641",
+      "statement": "The production build command runs scripts/check-production-env-gates.mjs before next build.",
+      "evidence": [
+        {
+          "resource": "repo://package.json#L7-L7",
+          "version": "repo-lines-v1:sha256:f5ced31c7bd36d31b2556bab388f7f4284f01d9a5fb79167ef8d55c361651c8e:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjVjZWQzMWM3YmQzNmQzMWIyNTU2YmFiMzg4ZjdmNDI4NGYwMWQ5YTVmYjc5MTY3ZWY4ZDU1YzM2MTY1MWM4ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjVjZWQzMWM3YmQzNmQzMWIyNTU2YmFiMzg4ZjdmNDI4NGYwMWQ5YTVmYjc5MTY3ZWY4ZDU1YzM2MTY1MWM4ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmY2NmRkNDg4MDJjNGUwZDU2YTE1OTA5YzhkNTY4NzU1ODU4NDY0NmQ1YTk5NDk1M2RjYTgxOWQ5MjIxZjg2MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTUzNzgzZDQwMmEyMjBlNThlZjY3YzI5NGJiOTFhZTI5Y2MyOTkwMzA3M2MyMTdhYTFkYmMyMDVmZTcwY2U1YiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_846634bcae7343aca52f44c7ffb68f57",
+      "statement": "Practitioner magic-link sign-in is requested server-side and permits auth-user creation only when a pending invitation exists for the email, collapsing the 'signups not allowed' case into the same generic success response.",
+      "evidence": [
+        {
+          "resource": "repo://app/(auth)/login/actions.ts#L7-L75",
+          "version": "repo-lines-v1:sha256:b21556af588d33989d98bdd374604cc28823b1146bdb6ec775e87403e917b4ca:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRhMzE2NDlkZjVmNDIyNmYyMjY0MjQzNmMyYWFjY2ZiNzBjYTUzY2Y0MjhkMzQ3MmYyMTdkNWZhNmI4Nzc3ZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZhNWZiNzAxZDljMDZlMWJjNTUzZDA2YzBmNGNkZGZhNzc1Mjk2ZDlkZmY3MjVlOTIwNWE1YmViZmY3Mjk0MDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmYWZhNDE3ZjQ1NTJhYTk4ZGU4YjA1OTAzYzdkMzY1NmQ4Yjg2NGQ5NDZkMWNhZDIxODFkN2QxMGRlMzBjOGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f5b62f3cd4464b6b9155f6a9e27dc8de",
+      "statement": "The operator admin surface lives under app/admin, outside the practitioner route group, and its layout redirects unauthenticated users to /login and non-allowlisted users to /dashboard.",
+      "evidence": [
+        {
+          "resource": "repo://app/admin/layout.tsx#L17-L18",
+          "version": "repo-lines-v1:sha256:2245c6acef5fc50a47bfe478c0398562f9a1b8bca154602b4a787fd7dad9b55c:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWY0ZGE1NWM1MGYzYWYwZmViMTFlMGM3NWY0ZDUzYTllMjE2MjE0NmU4ZWRjMTZjZGIzZDE1N2FhZTEyNDNjOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWFkN2YxYmZjY2YxZmZkYjQ2NjM1NmNkZjYwYmMwNDM0ZjYzNzM4MGE5ZjYyNDlkMDdmMWY2MDM3OTQ3YTUyNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTM4MzM0ZWJkNmFiZDNiODI0OGE2YjNiOTI4OWVmNGI2NDEwNzhiYmVhNjc5NTczMzVmZTYyNWIwNWRhMWYzNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWM2MzJlMDA0ODJkMGU5Mjc3YmY1MDk0ZGNjNjkzYTZkYjczMTAyZWRhOTEyMGZiNmNiMWY0Mzg4NTg1YzQ2MSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_11da043ea5414071a5a9b27f1b111fb8",
+      "statement": "isAdmin reads the ADMIN_EMAILS allowlist and fails closed in production when it is unset, while non-production environments fall back to a built-in default list.",
+      "evidence": [
+        {
+          "resource": "repo://lib/admin.ts#L42-L72",
+          "version": "repo-lines-v1:sha256:4ed7655854cfe48799d30ae7f194aa162fd35817e26012cf0a33fa515aafdc8c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0NzE4NGI0N2FlNmZiYTM3ZGU3YWUyYmQwN2E2ODc2Yjc2NmQ0NjIyNjQ1ODUwN2Y2OTVmM2QzN2ZiNjRlZGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFkNDU3MWJiZDVhZTQxNjUxMmMzNjhjMzA5YmQ0MWI0MmNjZDlmY2Y5OTNlYzFjZjg2ZTA2MzhlMTAxM2NjMWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ae3e7e07c613456596dee300bf7ce684",
+      "statement": "docs/01_ARCHITECTURE.md describes middleware.ts as an auth gate for a list of protected paths and places the admin shell under app/(app)/admin, whereas the middleware is default-deny with a public allowlist and the admin routes live under app/admin.",
+      "evidence": [
+        {
+          "resource": "repo://docs/01_ARCHITECTURE.md#L33-L33",
+          "version": "repo-lines-v1:sha256:55d87f981d94f1b60b499925e1ddcb7de21e918e8f272d06cb100a4cc3abbd0c:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNTVkODdmOTgxZDk0ZjFiNjBiNDk5OTI1ZTFkZGNiN2RlMjFlOTE4ZThmMjcyZDA2Y2IxMDBhNGNjM2FiYmQwYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTVkODdmOTgxZDk0ZjFiNjBiNDk5OTI1ZTFkZGNiN2RlMjFlOTE4ZThmMjcyZDA2Y2IxMDBhNGNjM2FiYmQwYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTYzYmVmY2JhODVjOGI5YWMzYzgwYTdhYmMwZDBiZjY4NTcwMTM1MTU4YTVjNGMxODM1YTQ4NDUxOTY4ZDUwOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjUzZWI1MTQ3ZmYwOTM5ZGZmOWQxY2UzZjZkNTU3MGIyMzZhN2Y3YzRmNDhjZjEzNzBmNmYyZTc1M2RjZjdhNCJ9"
+        },
+        {
+          "resource": "repo://docs/01_ARCHITECTURE.md#L78-L79",
+          "version": "repo-lines-v1:sha256:94d6e54294e64d3a3c285c717f0b1bcb6957c5176b78512cc99a324bfb5126b5:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmQ5ZGNmOGI0YzhkMzUzY2EyYmU4MDY5OTM1ZWM5NTZkNjIxYjM1ZTJmNDA3NGE2MjM4NzNiYzZlNTVjMTEwMCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTBmNjU4YTY0MmMzNTBkMGZjZjFjNzA0MzA3OWVkMmYyN2FkN2VmNWE4YmE3OTU3ODNmM2E3MjZjZDQ4NTZlNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjJmMGY4YTQ3ZTcwMzRhNGIwODJmZWRjYWI0NTg0MDRmYjFmZjhkNzkyZTIzODY5N2NiMTBmNzIxZDkwNDVkZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjdkZTM0ZjM5NDJjMWY4NjQ5ZWEzYzAwMzQwMTgxMzA0YTMxYWRhN2U5M2Y4YzM1NTE2Y2M4ZTg0YTg3ZGM4OCJ9"
+        },
+        {
+          "resource": "repo://lib/supabase/middleware.ts#L153-L157",
+          "version": "repo-lines-v1:sha256:7671c9a2185d1cd8a9f976f237ea5a771ec4b9014d6870832ea2ef6f1482892d:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjIxZTA0NDMyNzk0Nzc1YjNkZGE3MGJkZDg2NDlhZDgyNjlkOWM3NmMyZmMyZDUwM2Q3YmQwN2Q1MmY2MTlkYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWFmMTQ4ZWQzMDA4YjFlYTM4OTBjNTRkOTUyNGRiM2IxZDg2NzQ2YjBhNDgwNjNmYTgzNjJlMDIxNjY2NjNmNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDUxYTE2ZGYyOGVlM2FmMTM5NjhhOGYwZjBhZGMyNzE0YjIzODM3OTJjYzNlYmZjOGNmZmI0MDI3MzgyOTlhYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_2893a185788741799bdd7964d383fde6",
+      "statement": "docs/01_ARCHITECTURE.md states an external cron service calls /api/cron/* with the cron bearer secret, while vercel.json registers three of the cron routes with Vercel Cron, so repository code does not establish which scheduler drives the remaining cron routes.",
+      "evidence": [
+        {
+          "resource": "repo://docs/01_ARCHITECTURE.md#L15-L15",
+          "version": "repo-lines-v1:sha256:b2cfe49a8b34b3d19bc85bb64a3be5bfed1532e91890d47ba98c483624db2b10:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjJjZmU0OWE4YjM0YjNkMTliYzg1YmI2NGEzYmU1YmZlZDE1MzJlOTE4OTBkNDdiYTk4YzQ4MzYyNGRiMmIxMCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjJjZmU0OWE4YjM0YjNkMTliYzg1YmI2NGEzYmU1YmZlZDE1MzJlOTE4OTBkNDdiYTk4YzQ4MzYyNGRiMmIxMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTc3MGFhNWI3ZTAwMmY5Y2RhYzhiY2I5NTQ2MzkyY2M5OWI4N2I5NjBiM2Y1OThjOGY2YTIzN2RjMjZjNzViOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZGQ3MzVlMWYxNjYzYWNkNzdkM2FlZDY5ZDk0OGNmYTgyNjVkODQ3NDllMDk0ZWI4YjFkYTNiZGFlZDFjOTljZiJ9"
+        },
+        {
+          "resource": "repo://vercel.json#L1-L16",
+          "version": "repo-lines-v1:sha256:717784629d1e9f443f60761ad3f0050da3b49f29f6296f3af96a96e52f806e01:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2ZmIwOGZkYTFhY2I5NTdiNjExNmJkMzc4MTFhMWZlNDFhMDE2MTFjMDYzMWVkYmY3ODZkNjg4OWEyN2E1NWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}
