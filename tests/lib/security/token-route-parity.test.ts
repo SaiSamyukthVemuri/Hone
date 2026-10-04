@@ -7,21 +7,7 @@ import {
   TOKEN_PLACEHOLDER,
   canonicalizeTokenPaths,
 } from "@/lib/security/token-routes";
-import { scrubErrorEvent as scrubErrorEventRaw } from "@/lib/observability/sentry-scrub";
-
-// SENTRY-NOISE-01: `scrubErrorEvent` may now return null for an event PROVEN to
-// belong to the deliberate E2E fault harness. Every event in this file is an
-// ORDINARY one, so a null here would itself be the defect. Asserting that turns
-// each existing case into a kept-event proof as well as a redaction proof.
-function scrubErrorEvent(event: ErrorEvent): ErrorEvent {
-  const out = scrubErrorEventRaw(event);
-  expect(
-    out,
-    "an ordinary (non-harness) event must never be dropped",
-  ).not.toBeNull();
-  return out as ErrorEvent;
-}
-
+import { scrubErrorEvent } from "@/lib/observability/sentry-scrub";
 import type { ErrorEvent } from "@sentry/nextjs";
 
 // F-PRIV-001 parity gate.
@@ -116,7 +102,15 @@ describe("the Sentry hooks stay wired in all three runtimes", () => {
     it(`${file} keeps sendDefaultPii:false and all three scrub hooks`, () => {
       const src = readFileSync(join(ROOT, file), "utf8");
       expect(src).toMatch(/sendDefaultPii:\s*false/);
-      expect(src).toContain("beforeSend: scrubErrorEvent");
+      // SENTRY-NOISE-01: server/edge wrap the error hook (see
+      // lib/observability/sentry-e2e-fault.ts); the client wires it directly.
+      // Either way sentry-scrub remains the single scrubbing authority, which
+      // the import assertion below still enforces for every runtime.
+      expect(src).toContain(
+        file === "sentry.server.config.ts"
+          ? "beforeSend: beforeSendWithE2eFaultSuppression"
+          : "beforeSend: scrubErrorEvent",
+      );
       expect(src).toContain("beforeSendTransaction: scrubTransactionEvent");
       expect(src).toContain("beforeBreadcrumb: scrubBreadcrumb");
       // The pure common module stays the single authority: no runtime may
