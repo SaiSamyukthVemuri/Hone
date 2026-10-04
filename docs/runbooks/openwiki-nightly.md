@@ -20,8 +20,14 @@ node scripts/openwiki/nightly.mjs [--no-publish]
 | `FAILED` | 1 | Nothing published; the subject checkout is reset. Retried on the next pass. This includes "production advanced during the run". |
 | `PRECONDITION` | 2 | A human must change something: environment, credentials, history or markers. |
 
-Each pass writes a JSON report (no secret values, no matched privacy text) to
-`$HONE_WIKI_STATE_DIR/runs/` and `$HONE_WIKI_STATE_DIR/last-run.json`.
+Each pass writes a JSON report to `$HONE_WIKI_STATE_DIR/runs/` and `$HONE_WIKI_STATE_DIR/last-run.json`. It
+holds no secret values, and privacy findings are recorded by file, line and category, never by matched text.
+
+**OpenWiki's stdout/stderr is intentionally never persisted or printed.** It is untrusted repository and model
+output that can carry names, tenant slugs, contact details or credential-shaped strings. The runner drains it
+in memory and records only the exit code, the timeout flag, its byte count and its SHA-256. It does not forward
+the output to its own stdout, the CLI result or the journal. To see OpenWiki's output, run it by hand in a
+throwaway checkout.
 
 ### Who owns a path (`scripts/openwiki/paths.mjs`)
 
@@ -91,7 +97,14 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
      - the commit is authored and committed by the runner identity.
    - With a fresh token, the runner reads the production branch's exact remote SHA. If it is no longer the tip
      the run was pinned to, nothing is published (`FAILED`, retried from the new tip on the next pass).
-   - It then opens one pull request and posts `@codex review` for the exact head.
+   - It then opens one pull request and posts `@codex review` for the exact head. The pass is `PUBLISHED` only
+     when all three hold: the pull request exists, its head is exactly the verified commit, and that review
+     request was posted.
+   - If anything fails after the pull request is created, the runner closes the pull request **and** deletes
+     its branch, attempting both even if one fails. It records each step's state (`closed`/`close-failed`,
+     `deleted`/`delete-failed`) with the PR number, branch and head, and ends `FAILED`. If cleanup is
+     incomplete, the next pass reports `SKIP` on the leftover branch until a human closes or deletes it; it
+     never treats that state as success.
 
 ### Trust boundary
 
@@ -179,7 +192,8 @@ These steps need a GitHub App, its private key, a dedicated model key and the de
 1. Create a runner-owned state directory, a separate clone location, and a pinned
    `npm install --prefix <tools> openwiki@0.6.1` (its install scripts are required for `better-sqlite3`).
 2. Place the three secret files with mode `0600`, and write the host env file with the names above.
-3. Run a dry run first (`HONE_WIKI_PUBLISH` unset) and read `last-run.json`.
+3. **Mandatory:** run a dry run first (`HONE_WIKI_PUBLISH` unset) and read `last-run.json`. Publishing is
+   enabled only after a dry run on this host has passed.
 4. Install the units below, `systemctl --user daemon-reload`, then enable the timer.
 
 User service (`~/.config/systemd/user/hone-wiki-nightly.service`):

@@ -40,7 +40,7 @@
 // ---------------------------------------------------------------------------
 
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -301,30 +301,56 @@ export function buildGeneratorInvocation(config) {
   };
 }
 
+/**
+ * Runs OpenWiki and drains its stdout/stderr without keeping them. That output
+ * is untrusted repository and model text (it can carry names, tenant slugs,
+ * contact details or credential-shaped strings), so only its size and SHA-256
+ * leave this function. Nothing is forwarded to the runner's own stdout either.
+ */
 export function runOpenWikiProcess({ cwd, invocation, timeoutMs }) {
   return new Promise((resolve) => {
-    let output = "";
+    const digest = createHash("sha256");
+    let outputBytes = 0;
     let timedOut = false;
+    let settled = false;
     const child = spawn(invocation.command, invocation.args, { cwd, env: invocation.env, stdio: ["ignore", "pipe", "pipe"] });
-    const keep = (chunk) => {
-      output = (output + chunk).slice(-65_536);
+    const absorb = (chunk) => {
+      outputBytes += chunk.length;
+      digest.update(chunk);
     };
-    child.stdout.on("data", keep);
-    child.stderr.on("data", keep);
+    child.stdout.on("data", absorb);
+    child.stderr.on("data", absorb);
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 10_000).unref();
     }, timeoutMs);
-    child.on("error", (error) => {
+    const done = (exitCode) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve({ exitCode: 1, timedOut, output: `${output}\n${error.message}` });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ exitCode: code ?? 1, timedOut, output });
-    });
+      resolve({ exitCode, timedOut, outputBytes, outputSha256: digest.digest("hex") });
+    };
+    child.on("error", () => done(1));
+    child.on("close", (code) => done(code ?? 1));
   });
+}
+
+/**
+ * The only facts about a generator run that are persisted: exit code, timeout,
+ * and the size and SHA-256 of its output. The output itself never reaches a
+ * report or the CLI result.
+ */
+export function generatorDiagnostics(result) {
+  const diagnostics = { exitCode: result.exitCode, timedOut: Boolean(result.timedOut) };
+  if (typeof result.output === "string") {
+    diagnostics.outputBytes = Buffer.byteLength(result.output);
+    diagnostics.outputSha256 = createHash("sha256").update(result.output).digest("hex");
+  } else {
+    diagnostics.outputBytes = result.outputBytes ?? 0;
+    diagnostics.outputSha256 = result.outputSha256 ?? null;
+  }
+  return diagnostics;
 }
 
 // ---------------------------------------------------------------- run steps
@@ -585,13 +611,56 @@ async function publish({ subject, tip, sourceHead, previousGitHead, tree, genera
     throw error;
   }
   report.publish.pr = { number: pr.number, url: pr.url };
-  if (pr.headSha !== head) throw new Error("pull request head is not the commit the runner verified");
-  await github.comment(pr.number, `@codex review\n\nExact head \`${head}\`.`);
+
+  // From here a pull request exists. It counts as published only when its
+  // head is exactly the verified commit AND its exact-head review request was
+  // posted. Any failure before that closes it and deletes its branch, or it
+  // would hold the single-flight slot and could be merged without that review.
+  let failure = "head-mismatch";
+  try {
+    if (pr.headSha !== head) throw new Error("pull request head is not the commit the runner verified");
+    failure = "review-request-failed";
+    await github.comment(pr.number, `@codex review\n\nExact head \`${head}\`.`);
+  } catch {
+    const cleanup = await cleanUpCreatedPullRequest({ github, number: pr.number, subject, branch, token });
+    Object.assign(report.publish, { failure, cleanup });
+    const recovery =
+      cleanup.pullRequest === "closed" && cleanup.branch === "deleted"
+        ? "pull request closed and branch deleted"
+        : `cleanup incomplete (pull request #${pr.number}: ${cleanup.pullRequest}; branch ${branch}: ${cleanup.branch}); recover by hand`;
+    throw new Error(`pull request #${pr.number} was not completed (${failure}); ${recovery}`);
+  }
   return report.publish;
 }
 
 /**
- * One runner pass. `deps`: { generator({cwd}) -> {exitCode, timedOut?, output?},
+ * Best-effort cleanup of a pull request that could not be completed. Both
+ * steps are always attempted, whatever the other does, and each reports a
+ * state only, never an error text.
+ */
+async function cleanUpCreatedPullRequest({ github, number, subject, branch, token }) {
+  const cleanup = { pullRequest: "closed", branch: "deleted" };
+  try {
+    await github.closePullRequest(number);
+  } catch {
+    cleanup.pullRequest = "close-failed";
+  }
+  try {
+    remoteGit(subject, ["push", "--quiet", "--no-verify", "origin", "--delete", branch], token);
+  } catch {
+    cleanup.branch = "delete-failed";
+  }
+  return cleanup;
+}
+
+/** The single line the CLI prints: outcome and identifiers only, never generator output. */
+export function cliSummary(result) {
+  const { runId, tip, sourceHead, publish } = result.report ?? {};
+  return JSON.stringify({ outcome: result.outcome, reason: result.reason, runId, tip, sourceHead, publish });
+}
+
+/**
+ * One runner pass. `deps`: { generator({cwd}) -> {exitCode, timedOut?, output? | outputBytes?, outputSha256?},
  * getGitToken?() -> token, github(token) -> client, now?() }.
  */
 export async function runNightly(config, deps) {
@@ -665,7 +734,7 @@ export async function runNightly(config, deps) {
     // HEAD = source head (OpenWiki records it as gitHead); tree = production tip.
     git(subject, ["reset", "--quiet", "--soft", head.sourceHead]);
     const result = await deps.generator({ cwd: subject });
-    report.generator = { exitCode: result.exitCode, timedOut: Boolean(result.timedOut), outputTail: redactSecrets(result.output ?? "").slice(-4_000) };
+    report.generator = generatorDiagnostics(result);
     if (result.exitCode !== 0) {
       resetSubject(subject, tip);
       return finish("FAILED", `OpenWiki exited ${result.exitCode}${result.timedOut ? " after the run timeout" : ""}`);
@@ -795,9 +864,7 @@ async function main(argv) {
   const result = config.stateDir
     ? await runNightly(config, deps)
     : { outcome: "PRECONDITION", reason: "required HONE_WIKI_STATE_DIR is not set", report: {} };
-  process.stdout.write(
-    `${JSON.stringify({ outcome: result.outcome, reason: result.reason, runId: result.report.runId, tip: result.report.tip, sourceHead: result.report.sourceHead, publish: result.report.publish })}\n`,
-  );
+  process.stdout.write(`${cliSummary(result)}\n`);
   process.exitCode = EXIT_CODE[result.outcome];
 }
 

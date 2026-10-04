@@ -83,7 +83,10 @@ export async function createInstallationToken({ appId, installationId, privateKe
   return { token: data.token, expiresAt: data.expires_at };
 }
 
-/** The two GitHub writes the runner makes: open one pull request, and post one comment on it. */
+/**
+ * The GitHub writes the runner makes: open one pull request, post one comment
+ * on it, and close it again when it cannot be completed. No merge call exists.
+ */
 export function createGitHubClient({ token, repository, fetchImpl = fetch }) {
   async function call(method, route, body) {
     const response = await fetchImpl(`${API}/repos/${repository}${route}`, {
@@ -101,6 +104,9 @@ export function createGitHubClient({ token, repository, fetchImpl = fetch }) {
     },
     async comment(number, body) {
       await call("POST", `/issues/${number}/comments`, { body });
+    },
+    async closePullRequest(number) {
+      await call("PATCH", `/pulls/${number}`, { state: "closed" });
     },
   };
 }

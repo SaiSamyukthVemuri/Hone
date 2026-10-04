@@ -1,15 +1,17 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import {
   FORBIDDEN_ENV,
   REQUIRED_ENV,
   buildGeneratorInvocation,
   checkEnvironment,
+  cliSummary,
   createAppTokenSource,
   readOwnerOnlySecret,
   redactSecrets,
+  runOpenWikiProcess,
   isolatedChildEnv,
   runNightly,
   // @ts-expect-error - .mjs utility ships without type declarations
@@ -40,6 +42,7 @@ type Fx = ReturnType<typeof createFixture>;
 type Report = Record<string, any>;
 type Result = { outcome: string; reason: string; report: Report };
 type Gen = (args: { cwd: string }) => Promise<{ exitCode: number; output?: string }>;
+type GitHubBehavior = { headSha?: string; commentFails?: boolean; closeFails?: boolean; beforeComment?: () => Promise<void> };
 
 const IDENTITY = { name: "hone-wiki-runner[bot]", email: "runner@users.noreply.example.com" };
 
@@ -71,16 +74,24 @@ function setup(fx: Fx, overrides: Record<string, unknown> = {}) {
   };
   const prs: Array<Record<string, string>> = [];
   const comments: Array<{ number: number; body: string }> = [];
+  const closes: number[] = [];
+  const behavior: GitHubBehavior = {};
   const github = () => ({
     async createPullRequest(args: Record<string, string>) {
       prs.push(args);
-      return { number: 7, url: "https://example.invalid/pull/7", headSha: originRef(fx, args.head) };
+      return { number: 7, url: "https://example.invalid/pull/7", headSha: behavior.headSha ?? originRef(fx, args.head) };
     },
     async comment(number: number, body: string) {
+      if (behavior.beforeComment) await behavior.beforeComment();
+      if (behavior.commentFails) throw new Error("POST /issues/7/comments failed: HTTP 502");
       comments.push({ number, body });
     },
+    async closePullRequest(number: number) {
+      if (behavior.closeFails) throw new Error("PATCH /pulls/7 failed: HTTP 500");
+      closes.push(number);
+    },
   });
-  return { config, prs, comments, github };
+  return { config, prs, comments, closes, behavior, github };
 }
 
 function originRef(fx: Fx, branch: string): string | undefined {
@@ -133,8 +144,9 @@ function makeStale(fx: Fx): string {
   return source2;
 }
 
-async function run(fx: Fx, generator: Gen, overrides: Record<string, unknown> = {}) {
+async function run(fx: Fx, generator: Gen, overrides: Record<string, unknown> = {}, behavior: GitHubBehavior = {}) {
   const ctx = setup(fx, overrides);
+  Object.assign(ctx.behavior, behavior);
   const spy = vi.fn(generator);
   const result: Result = await runNightly(ctx.config, { generator: spy, github: ctx.github, now: () => Date.UTC(2026, 9, 5) });
   return { ...ctx, result, generator: spy };
@@ -393,6 +405,155 @@ describe("production moved during generation", () => {
     expect(prs).toEqual([]);
     expect(originBranches(fx)).toEqual(["main"]);
     expect(result.report.publish).toBeUndefined();
+  });
+});
+
+describe("after the pull request is created (#786 review of 3644d2fb)", () => {
+  it("1: a head that is not the verified commit closes the PR and deletes the branch", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, closes, comments } = await run(fx, openWikiLike(), {}, { headSha: "0".repeat(40) });
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(result.reason).toBe("pull request #7 was not completed (head-mismatch); pull request closed and branch deleted");
+    expect(closes).toEqual([7]);
+    expect(comments).toEqual([]);
+    expect(originBranches(fx)).toEqual(["main"]);
+    expect(result.report.publish).toMatchObject({ failure: "head-mismatch", cleanup: { pullRequest: "closed", branch: "deleted" }, pr: { number: 7 } });
+  });
+
+  it("2: a failed review-request comment closes the PR and deletes the branch, reporting a category only", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, closes } = await run(fx, openWikiLike(), {}, { commentFails: true });
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(result.reason).toBe("pull request #7 was not completed (review-request-failed); pull request closed and branch deleted");
+    expect(result.reason).not.toContain("HTTP");
+    expect(closes).toEqual([7]);
+    expect(originBranches(fx)).toEqual(["main"]);
+  });
+
+  it("3: a failed branch delete does not stop the PR close, keeps the identity, and the next pass does not claim success", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    git(fx.origin, ["config", "receive.denyDeletes", "true"]);
+    const { result, closes } = await run(fx, openWikiLike(), {}, { commentFails: true });
+    const branch = result.report.publish.branch;
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(closes).toEqual([7]);
+    expect(result.report.publish).toMatchObject({ cleanup: { pullRequest: "closed", branch: "delete-failed" }, head: originRef(fx, branch) });
+    expect(result.reason).toBe(`pull request #7 was not completed (review-request-failed); cleanup incomplete (pull request #7: closed; branch ${branch}: delete-failed); recover by hand`);
+    expect(originBranches(fx)).toContain(branch);
+
+    const next = await run(fx, openWikiLike());
+    expect(next.result.outcome, next.result.reason).toBe("SKIP");
+    expect(next.result.reason).toContain(branch);
+    expect(next.generator).not.toHaveBeenCalled();
+  });
+
+  it("4: a failed PR close does not stop the branch delete", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, closes } = await run(fx, openWikiLike(), {}, { commentFails: true, closeFails: true });
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(closes).toEqual([]);
+    expect(result.report.publish).toMatchObject({ cleanup: { pullRequest: "close-failed", branch: "deleted" } });
+    expect(result.reason).toContain("pull request #7: close-failed");
+    expect(originBranches(fx)).toEqual(["main"]);
+  });
+
+  it("5: a created PR at the verified head with its review request is PUBLISHED, with no cleanup", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, closes, comments } = await run(fx, openWikiLike());
+    const branch = result.report.publish.branch;
+    expect(result.outcome, result.reason).toBe("PUBLISHED");
+    expect(closes).toEqual([]);
+    expect(comments).toEqual([{ number: 7, body: `@codex review\n\nExact head \`${originRef(fx, branch)}\`.` }]);
+    expect(result.report.publish.cleanup).toBeUndefined();
+    expect(originBranches(fx)).toContain(branch);
+  });
+
+  it("6: nothing is PUBLISHED, or recorded, until the review request has succeeded", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const ctx = setup(fx);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    ctx.behavior.beforeComment = () => gate;
+    let settled = false;
+    const pending = runNightly(ctx.config, { generator: openWikiLike(), github: ctx.github, now: () => Date.UTC(2026, 9, 5) }).then(
+      (r: Result) => {
+        settled = true;
+        return r;
+      },
+    );
+    await vi.waitFor(() => expect(ctx.prs).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(settled).toBe(false);
+    expect(existsSync(path.join(ctx.config.stateDir, "last-run.json"))).toBe(false);
+    release();
+    const result: Result = await pending;
+    expect(result.outcome, result.reason).toBe("PUBLISHED");
+    expect(ctx.comments).toHaveLength(1);
+  });
+});
+
+describe("generator output is never persisted or printed (#786 review of 3644d2fb)", () => {
+  const LITERALS = [
+    "Quillon Vantablack",
+    "synthetic-studio-one",
+    "zz.unique.person@hone.example.org",
+    "+1 415 555 0199",
+    "ghs_UniqueTokenValue0123456789abcdefghijkl",
+    "sk-ant-uniquekeyvalue0123456789",
+  ];
+  const noisy = LITERALS.map((value) => `openwiki: ${value}`).join("\n");
+
+  it.each([
+    ["a passing run (dry run)", 0, "DRY_RUN"],
+    ["a failing run", 1, "FAILED"],
+  ])("%s keeps only safe diagnostics", async (_label: string, exitCode: number, outcome: string) => {
+    const fx = createFixture();
+    makeStale(fx);
+    const ctx = setup(fx, { publish: false, denylistFile: writePrivate(path.join(fx.root, "denylist-unique"), "Quillon Vantablack\n") });
+    const generate = openWikiLike();
+    const result: Result = await runNightly(ctx.config, {
+      generator: async (args: { cwd: string }) => ({ ...(await generate(args)), exitCode, output: noisy }),
+      github: ctx.github,
+    });
+    expect(result.outcome, result.reason).toBe(outcome);
+    expect(result.report.generator).toEqual({
+      exitCode,
+      timedOut: false,
+      outputBytes: Buffer.byteLength(noisy),
+      outputSha256: createHash("sha256").update(noisy).digest("hex"),
+    });
+    const runs = path.join(ctx.config.stateDir, "runs");
+    const persisted = [path.join(ctx.config.stateDir, "last-run.json"), ...readdirSync(runs).map((name) => path.join(runs, name))];
+    expect(persisted.length).toBeGreaterThan(1);
+    for (const file of persisted) {
+      const text = readFileSync(file, "utf8");
+      for (const value of LITERALS) expect(text.includes(value), `${value} persisted in ${file}`).toBe(false);
+    }
+    const printed = cliSummary(result);
+    for (const value of LITERALS) expect(printed.includes(value), `${value} printed`).toBe(false);
+  });
+
+  it("the real process runner drains output into a size and a hash, and returns no text", async () => {
+    const fx = createFixture();
+    const result = await runOpenWikiProcess({
+      cwd: fx.root,
+      invocation: { command: process.execPath, args: ["-e", "process.stdout.write('Quillon Vantablack')"], env: { PATH: "/usr/bin:/bin" } },
+      timeoutMs: 30_000,
+    });
+    expect(result).toEqual({
+      exitCode: 0,
+      timedOut: false,
+      outputBytes: Buffer.byteLength("Quillon Vantablack"),
+      outputSha256: createHash("sha256").update("Quillon Vantablack").digest("hex"),
+    });
   });
 });
 

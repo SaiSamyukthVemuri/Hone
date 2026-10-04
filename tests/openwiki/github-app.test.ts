@@ -103,7 +103,7 @@ describe("createInstallationToken", () => {
 });
 
 describe("createGitHubClient", () => {
-  it("opens a non-draft pull request and posts one comment, nothing else", async () => {
+  it("opens a non-draft pull request, posts one comment, can close it, and has no merge call", async () => {
     const fetch = fakeFetch((call) =>
       call.url.endsWith("/pulls")
         ? { status: 201, json: { number: 7, html_url: "https://github.com/owner/repo/pull/7", head: { sha: "f".repeat(40) } } }
@@ -112,11 +112,15 @@ describe("createGitHubClient", () => {
     const client = createGitHubClient({ token: "t", repository: "owner/repo", fetchImpl: fetch.impl });
     const pr = await client.createPullRequest({ head: "openwiki/nightly-x", base: "main", title: "t", body: "b" });
     await client.comment(pr.number, "@codex review");
+    await client.closePullRequest(pr.number);
     expect(pr).toEqual({ number: 7, url: "https://github.com/owner/repo/pull/7", headSha: "f".repeat(40) });
     expect(fetch.calls.map((c) => `${c.init.method} ${c.url}`)).toEqual([
       "POST https://api.github.com/repos/owner/repo/pulls",
       "POST https://api.github.com/repos/owner/repo/issues/7/comments",
+      "PATCH https://api.github.com/repos/owner/repo/pulls/7",
     ]);
+    expect(JSON.parse(fetch.calls[2].init.body)).toEqual({ state: "closed" });
+    expect(Object.keys(client).sort()).toEqual(["closePullRequest", "comment", "createPullRequest"]); // no merge
     expect(JSON.parse(fetch.calls[0].init.body)).toMatchObject({ draft: false, base: "main", head: "openwiki/nightly-x" });
     expect(fetch.calls[0].init.headers.Authorization).toBe("Bearer t");
   });
