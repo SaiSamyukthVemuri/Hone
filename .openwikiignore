@@ -7,3 +7,12 @@ artifacts/
 supabase/.temp/
 docs/audits/
 *.log
+# WIKI-AUTO-01: OpenWiki rewrites the managed block in AGENTS.md at the start of
+# every init and update. Ignoring the file keeps that rewrite from counting as a
+# source change, which would otherwise defeat OpenWiki's own no-op check. No page
+# cites AGENTS.md. (CLAUDE.md stays visible: pages cite it as evidence.)
+/AGENTS.md
+# WIKI-AUTO-01 (A3): the scheduled-workflow scaffold `openwiki init` writes would
+# fail tests/ci/ci-config.test.ts (write permissions, secrets). It is never
+# committed, and OpenWiki init/update must not read it as repository source.
+/.github/workflows/openwiki-update.yml

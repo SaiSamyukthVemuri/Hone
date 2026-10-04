@@ -43,3 +43,6 @@ Hone_Pilot_Control_Sheet.xlsx
 # checkout never silently re-points the CLI at another project (the staging↔prod
 # foot-gun that overwrote the staging link with the production ref).
 /supabase/.temp/
+
+# OpenWiki's resumable run state. A completed run deletes it; it is never committed.
+/openwiki/.run.json

@@ -139,6 +139,11 @@ const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^playwright(\.[\w.-]+)?\.config\./, "test-runner configuration"],
   [/^vitest(\.[\w.-]+)?\.config\./, "test-runner configuration"],
   [/^eslint\.config\./, "linter configuration: gates the build, never served by it"],
+  // WIKI-AUTO-01. Each changed file is classified ALONE, and only Markdown is
+  // docs-only, so OpenWiki's Claim sidecars and run metadata (JSON) counted as
+  // runtime: every wiki regeneration would have invalidated a correct pin.
+  [/^openwiki\//, "OpenWiki generated docs, Claim sidecars and run metadata: never built or served"],
+  [/^\.openwikiignore$/, "OpenWiki read-boundary configuration: never built or served"],
 ];
 
 /**
@@ -1796,6 +1801,10 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
       "vitest.config.ts",
       "docs/production/current-state.md",
       "README.md",
+      "openwiki/.claims/payments/stripe-payments-and-settlement.json",
+      "openwiki/.last-update.json",
+      "openwiki/.page-manifest.json",
+      ".openwikiignore",
     ]) {
       expect(deployed(f), `${f} must NOT count as deployed runtime`).toBe(false);
     }
