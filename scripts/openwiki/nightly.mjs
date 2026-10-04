@@ -161,7 +161,41 @@ function processAlive(pid) {
 }
 
 function privateFile(filePath) {
-  return existsSync(filePath) && (statSync(filePath).mode & 0o077) === 0;
+  return Boolean(filePath) && existsSync(filePath) && (statSync(filePath).mode & 0o077) === 0;
+}
+
+/**
+ * Read a secret file only if no other local account can read it. A key that
+ * another account could read is already compromised, so it is refused.
+ */
+export function readOwnerOnlySecret(filePath, name) {
+  if (!privateFile(filePath)) throw new Error(`${name} must exist and be readable by its owner only`);
+  return readFileSync(filePath, "utf8");
+}
+
+/** The runner's private HOME: OpenWiki's config dir and an empty git config live here. */
+function runnerHome(config) {
+  const home = path.join(config.stateDir, "home");
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  return home;
+}
+
+/**
+ * The environment for repository code the runner executes (the CLAUDE.md
+ * pre-push check). That code comes from the production checkout, so it gets
+ * no credential, no credential path and no App identifier: only what a node
+ * script and git need, with the runner's private HOME.
+ */
+export function repositoryScriptEnv(config) {
+  const home = runnerHome(config);
+  return {
+    HOME: home,
+    PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+    LANG: "C.UTF-8",
+    TZ: "UTC",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: path.join(home, "gitconfig"),
+  };
 }
 
 /** Git env for one remote operation. A token reaches git only via GIT_ASKPASS reading an env var. */
@@ -218,24 +252,18 @@ export function redactSecrets(text) {
 
 /** The only OpenWiki invocation the runner makes. There is no mode parameter: init is unreachable. */
 export function buildGeneratorInvocation(config) {
-  const home = path.join(config.stateDir, "home");
-  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const base = repositoryScriptEnv(config);
   return {
     command: process.execPath,
     args: [path.join(config.openwikiDir, "dist", "cli", "cli.js"), "code", "--update", "--print"],
     env: {
-      HOME: home,
-      OPENWIKI_CONFIG_DIR: path.join(home, ".openwiki"),
-      PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
-      LANG: "C.UTF-8",
-      TZ: "UTC",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: path.join(home, "gitconfig"),
+      ...base,
+      OPENWIKI_CONFIG_DIR: path.join(base.HOME, ".openwiki"),
       OPENWIKI_PROVIDER: "anthropic",
       OPENWIKI_MODEL_ID: config.modelId,
       OPENWIKI_TELEMETRY_DISABLED: "1",
       DO_NOT_TRACK: "1",
-      ANTHROPIC_API_KEY: readFileSync(config.anthropicKeyFile, "utf8").trim(),
+      ANTHROPIC_API_KEY: readOwnerOnlySecret(config.anthropicKeyFile, "HONE_WIKI_ANTHROPIC_API_KEY_FILE").trim(),
     },
   };
 }
@@ -462,8 +490,9 @@ async function publish({ subject, tip, sourceHead, previousGitHead, tree, genera
   const authorProblems = checkCommitAuthors(subject, `${tip}..${head}`, identity);
   if (authorProblems.length > 0) throw new Error(authorProblems.join("; "));
 
+  // Repository code: allowlisted environment only (no credentials, paths to them or App ids).
   const [command, ...args] = config.prepushCommand;
-  const prepush = spawnSync(command, args, { cwd: subject, stdio: "ignore", env: process.env });
+  const prepush = spawnSync(command, args, { cwd: subject, stdio: "ignore", env: repositoryScriptEnv(config) });
   if (prepush.status !== 0) throw new Error("verify:prepush failed");
   remoteGit(subject, ["push", "--quiet", "origin", `${head}:refs/heads/${branch}`], token);
   report.publish = { branch, head };
@@ -603,6 +632,17 @@ export async function runNightly(config, deps) {
       resetSubject(subject, tip);
       return finish("DRY_RUN", "checks passed; publishing is off");
     }
+    // Installation tokens expire one hour after minting, and a run may take
+    // longer (HONE_WIKI_RUN_TIMEOUT_MIN defaults to 90): publish with a fresh one.
+    let publishToken = null;
+    if (deps.getGitToken) {
+      try {
+        publishToken = await deps.getGitToken();
+      } catch (error) {
+        resetSubject(subject, tip);
+        return finish("PRECONDITION", `GitHub App token before publishing: ${error.message}`);
+      }
+    }
     await publish({
       subject,
       tip,
@@ -613,7 +653,7 @@ export async function runNightly(config, deps) {
       ignore,
       config,
       deps,
-      token,
+      token: publishToken,
       report,
     });
     resetSubject(subject, tip);
@@ -650,6 +690,25 @@ export function configFromEnv(env, argv = []) {
   };
 }
 
+/**
+ * Mints one installation token per call. The App private key is read on every
+ * call, and refused unless only its owner can read it: a key file another
+ * local account can read already lets that account mint its own tokens.
+ */
+export function createAppTokenSource(env, fetchImpl = fetch) {
+  return async () => {
+    const privateKeyPem = readOwnerOnlySecret(env.HONE_WIKI_APP_PRIVATE_KEY_FILE, "HONE_WIKI_APP_PRIVATE_KEY_FILE");
+    const { token } = await createInstallationToken({
+      appId: env.HONE_WIKI_APP_ID,
+      installationId: env.HONE_WIKI_APP_INSTALLATION_ID,
+      privateKeyPem,
+      repository: env.HONE_WIKI_REPOSITORY,
+      fetchImpl,
+    });
+    return token;
+  };
+}
+
 async function main(argv) {
   const config = configFromEnv(process.env, argv);
   if (config.stateDir) {
@@ -662,15 +721,7 @@ async function main(argv) {
     process.env.GIT_CONFIG_NOSYSTEM = "1";
   }
   const deps = {
-    getGitToken: async () =>
-      (
-        await createInstallationToken({
-          appId: process.env.HONE_WIKI_APP_ID,
-          installationId: process.env.HONE_WIKI_APP_INSTALLATION_ID,
-          privateKeyPem: readFileSync(process.env.HONE_WIKI_APP_PRIVATE_KEY_FILE, "utf8"),
-          repository: config.repository,
-        })
-      ).token,
+    getGitToken: createAppTokenSource(process.env),
     generator: ({ cwd }) => runOpenWikiProcess({ cwd, invocation: buildGeneratorInvocation(config), timeoutMs: config.timeoutMs }),
     github: (token) => createGitHubClient({ token, repository: config.repository }),
   };

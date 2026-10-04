@@ -77,6 +77,8 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
 8. **Publish (replace, not overlay).**
    - HEAD returns to the production tip, and the generated scope is replaced wholesale, deletions included.
    - The commit goes through the CLAUDE.md eight-step delivery sequence, including `npm run verify:prepush`.
+     That check is repository code, so it runs with an allowlisted environment (`PATH`, a private `HOME`,
+     locale, timezone, isolated git config). It sees no credential, no path to one, and no App identifier.
    - Before pushing, the runner verifies that the commit is a single child of the tip, that its diff is
      generated-only, that `openwiki/` equals the run's output exactly, and that it is authored and committed
      by the runner identity.
@@ -128,8 +130,13 @@ Must be absent (preflight fails otherwise):
 
 The installation token is requested and verified as exactly: `metadata: read`, `contents: write`,
 `pull_requests: write`, `checks: read`, `statuses: read`, for this one repository. In particular the token
-never has `workflows` or `administration`. It is minted per pass, held in memory, and given to git only
-through `GIT_ASKPASS` reading an environment variable, with every credential helper disabled.
+never has `workflows` or `administration`.
+- **Minting:** a token is minted at the start of a pass for the reads. Tokens expire one hour after minting and
+  a run may take longer, so a fresh one is minted immediately before publishing.
+- **Handling:** tokens are held in memory and given to git only through `GIT_ASKPASS` reading an environment
+  variable, with every credential helper disabled.
+- **Private key:** the App private key is read on every mint and refused (`PRECONDITION`) unless only its owner
+  can read it.
 
 ## Host setup: blocked on credentials, not done
 

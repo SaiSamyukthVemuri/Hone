@@ -1,12 +1,16 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { generateKeyPairSync } from "node:crypto";
 import {
   FORBIDDEN_ENV,
   REQUIRED_ENV,
   buildGeneratorInvocation,
   checkEnvironment,
+  createAppTokenSource,
+  readOwnerOnlySecret,
   redactSecrets,
+  repositoryScriptEnv,
   runNightly,
   // @ts-expect-error - .mjs utility ships without type declarations
 } from "../../scripts/openwiki/nightly.mjs";
@@ -385,6 +389,139 @@ describe("fail-closed preflight", () => {
     expect(result.reason).toContain("readable by its owner only");
     expect(result.reason).toContain("node >= 22.22.0");
     expect(generator).not.toHaveBeenCalled();
+  });
+});
+
+describe("#786 review: credentials stay out of repository code, tokens stay fresh, keys stay private", () => {
+  const HOST_CREDENTIAL_ENV = {
+    HONE_WIKI_APP_ID: "4242",
+    HONE_WIKI_APP_INSTALLATION_ID: "4343",
+    HONE_WIKI_APP_PRIVATE_KEY_FILE: "/host/secrets/github-app.pem",
+    HONE_WIKI_ANTHROPIC_API_KEY_FILE: "/host/secrets/anthropic-key",
+  };
+
+  it("P1: the pre-push check runs with an allowlisted environment, whatever the runner holds", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const envOut = path.join(fx.root, "prepush-env.json");
+    const saved = Object.fromEntries(Object.keys(HOST_CREDENTIAL_ENV).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, HOST_CREDENTIAL_ENV);
+    try {
+      const { result } = await run(fx, openWikiLike(), {
+        prepushCommand: [process.execPath, "-e", "require('fs').writeFileSync(process.argv[1], JSON.stringify(process.env))", envOut],
+      });
+      expect(result.outcome).toBe("PUBLISHED");
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    const seen = JSON.parse(readFileSync(envOut, "utf8")) as Record<string, string>;
+    expect(Object.keys(seen).sort()).toEqual(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "HOME", "LANG", "PATH", "TZ"]);
+    expect(JSON.stringify(seen)).not.toMatch(/github-app\.pem|anthropic-key|4242|4343/u);
+  });
+
+  it("P1: the generator gets the model key and nothing else credential-shaped", () => {
+    const fx = createFixture();
+    const { config } = setup(fx);
+    const names = Object.keys(buildGeneratorInvocation(config).env);
+    expect(names.filter((n) => n.startsWith("HONE_WIKI_"))).toEqual([]);
+    expect(Object.keys(repositoryScriptEnv(config)).sort()).toEqual(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "HOME", "LANG", "PATH", "TZ"]);
+  });
+
+  it("P2: a fresh installation token is minted after OpenWiki runs, and publishing uses it", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const ctx = setup(fx);
+    const events: string[] = [];
+    let minted = 0;
+    const tokensUsed: string[] = [];
+    const generate = openWikiLike();
+    const result: Result = await runNightly(ctx.config, {
+      getGitToken: async () => {
+        minted += 1;
+        events.push(`token-${minted}`);
+        return `token-${minted}`;
+      },
+      generator: async (args: { cwd: string }) => {
+        events.push("generate");
+        return generate(args);
+      },
+      github: (token: string) => {
+        tokensUsed.push(token);
+        return ctx.github();
+      },
+      now: () => Date.UTC(2026, 9, 5),
+    });
+    expect(result.outcome).toBe("PUBLISHED");
+    expect(events).toEqual(["token-1", "generate", "token-2"]);
+    expect(tokensUsed).toEqual(["token-2"]);
+  });
+
+  it("P2: if the publish-time token cannot be minted, nothing is published", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const ctx = setup(fx);
+    let calls = 0;
+    const result: Result = await runNightly(ctx.config, {
+      getGitToken: async () => {
+        calls += 1;
+        if (calls > 1) throw new Error("installation token request failed: HTTP 401");
+        return "token-1";
+      },
+      generator: openWikiLike(),
+      github: ctx.github,
+    });
+    expect(result.outcome).toBe("PRECONDITION");
+    expect(result.reason).toContain("before publishing");
+    expect(ctx.prs).toEqual([]);
+    expect(originBranches(fx)).toEqual(["main"]);
+  });
+
+  it("P2: a GitHub App key other accounts can read is refused before any network call", async () => {
+    const fx = createFixture();
+    const pem = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const keyFile = writePrivate(path.join(fx.root, "github-app.pem"), pem);
+    chmodSync(keyFile, 0o644);
+    const fetchImpl = vi.fn();
+    const source = createAppTokenSource(
+      { HONE_WIKI_APP_ID: "1", HONE_WIKI_APP_INSTALLATION_ID: "2", HONE_WIKI_APP_PRIVATE_KEY_FILE: keyFile, HONE_WIKI_REPOSITORY: "owner/repo" },
+      fetchImpl,
+    );
+    await expect(source()).rejects.toThrow("HONE_WIKI_APP_PRIVATE_KEY_FILE must exist and be readable by its owner only");
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    makeStale(fx);
+    const ctx = setup(fx);
+    const generator = vi.fn();
+    const result: Result = await runNightly(ctx.config, { getGitToken: source, generator, github: ctx.github });
+    expect(result.outcome).toBe("PRECONDITION");
+    expect(result.reason).toBe("GitHub App token: HONE_WIKI_APP_PRIVATE_KEY_FILE must exist and be readable by its owner only");
+    expect(generator).not.toHaveBeenCalled();
+  });
+
+  it("P2: an owner-only App key mints a token scoped to the configured repository", async () => {
+    const fx = createFixture();
+    const pem = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const keyFile = writePrivate(path.join(fx.root, "github-app.pem"), pem);
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        token: "minted",
+        expires_at: "2026-10-05T00:00:00Z",
+        permissions: { metadata: "read", contents: "write", pull_requests: "write", checks: "read", statuses: "read" },
+        repositories: [{ full_name: "owner/repo" }],
+      }),
+    }));
+    const source = createAppTokenSource(
+      { HONE_WIKI_APP_ID: "1", HONE_WIKI_APP_INSTALLATION_ID: "2", HONE_WIKI_APP_PRIVATE_KEY_FILE: keyFile, HONE_WIKI_REPOSITORY: "owner/repo" },
+      fetchImpl,
+    );
+    await expect(source()).resolves.toBe("minted");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(readOwnerOnlySecret(keyFile, "key")).toBe(pem);
   });
 });
 
