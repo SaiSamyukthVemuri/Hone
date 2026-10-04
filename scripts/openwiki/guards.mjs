@@ -204,7 +204,67 @@ export const PROVENANCE_PROBLEMS = Object.freeze([
   "manifest-page-version-mismatch",
   "deleted-page-sidecar-left",
   "deleted-page-manifest-entry-left",
+  "evidence-version-invalid",
 ]);
+
+// openwiki@0.6.1 evidence versions, from its only resolver
+// (claims/evidence/repository/resolver.js):
+//   whole file  createHashedVersion("repo-file-v1", source)
+//               -> repo-file-v1:sha256:<64 hex>
+//   line range  formatLineRangeVersion
+//               -> repo-lines-v1:sha256:<64 hex>:<base64url of JSON.stringify(metadata)>
+// where metadata holds exactly seven fields (isLineRangeVersionMetadata):
+// selectedLineCount >= 1, precedingContextLineCount and
+// followingContextLineCount in 0..RANGE_CONTEXT_LINE_COUNT (3), and four
+// lowercase sha256 hex line hashes. An unchanged span reuses its previous
+// version, so that is one of these two forms as well.
+const FILE_EVIDENCE_VERSION = /^repo-file-v1:sha256:[a-f0-9]{64}$/u;
+const RANGE_EVIDENCE_VERSION = /^repo-lines-v1:sha256:[a-f0-9]{64}:([A-Za-z0-9_-]+)$/u;
+const RANGE_CONTEXT_LINE_COUNT = 3;
+const RANGE_LINE_HASHES = ["firstSelectedLineHash", "lastSelectedLineHash", "precedingContextHash", "followingContextHash"];
+
+function isLineRangeVersionMetadata(metadata) {
+  const inRange = (n, min, max) => Number.isSafeInteger(n) && n >= min && n <= max;
+  return (
+    isPlainObject(metadata) &&
+    Object.keys(metadata).length === 7 &&
+    inRange(metadata.selectedLineCount, 1, Number.MAX_SAFE_INTEGER) &&
+    inRange(metadata.precedingContextLineCount, 0, RANGE_CONTEXT_LINE_COUNT) &&
+    inRange(metadata.followingContextLineCount, 0, RANGE_CONTEXT_LINE_COUNT) &&
+    RANGE_LINE_HASHES.every((key) => typeof metadata[key] === "string" && /^[a-f0-9]{64}$/u.test(metadata[key]))
+  );
+}
+
+/**
+ * THE evidence-version validator: true only for a value openwiki@0.6.1
+ * writes, where every byte is a digest or a count. The whole value is
+ * checked, not its prefix: the discriminator, the sha256, and for a line
+ * range a base64url part that must decode and parse to exactly the
+ * seven-field metadata, then re-encode to the same text. So a malformed,
+ * truncated, non-canonical or text-bearing value is refused.
+ */
+export function isValidEvidenceVersion(value) {
+  if (typeof value !== "string") return false;
+  if (FILE_EVIDENCE_VERSION.test(value)) return true;
+  const range = RANGE_EVIDENCE_VERSION.exec(value);
+  if (!range) return false;
+  try {
+    const metadata = JSON.parse(Buffer.from(range[1], "base64url").toString("utf8"));
+    return isLineRangeVersionMetadata(metadata) && Buffer.from(JSON.stringify(metadata), "utf8").toString("base64url") === range[1];
+  } catch {
+    return false;
+  }
+}
+
+/** Whether any evidence in a parsed sidecar carries a `version` that is not valid (evidence without one holds no text). */
+function hasInvalidEvidenceVersion(sidecar) {
+  return (Array.isArray(sidecar.claims) ? sidecar.claims : []).some(
+    (claim) =>
+      isPlainObject(claim) &&
+      Array.isArray(claim.evidence) &&
+      claim.evidence.some((evidence) => isPlainObject(evidence) && Object.hasOwn(evidence, "version") && !isValidEvidenceVersion(evidence.version)),
+  );
+}
 
 /**
  * OpenWiki provenance for every factual page a run touched (the page itself,
@@ -214,8 +274,13 @@ export const PROVENANCE_PROBLEMS = Object.freeze([
  * both the sidecar and the manifest. A deleted page may leave neither a
  * sidecar nor a manifest entry behind.
  *
+ * Every evidence `version` must pass isValidEvidenceVersion. Any other
+ * value is invalid Claim state, and could carry text inside base64 where no
+ * scanner sees it.
+ *
  * Each problem is `{ file, problem }`, where `file` is the changed path that
- * touched the page, so it is always a path the run's path gate cleared.
+ * touched the page, so it is always a path the run's path gate cleared. The
+ * offending value is never part of a problem.
  */
 export function checkProvenance(root, generatedChanges, manifestPages) {
   const touched = new Map();
@@ -246,6 +311,7 @@ export function checkProvenance(root, generatedChanges, manifestPages) {
       continue;
     }
     if (!Array.isArray(claims.value.claims) || claims.value.claims.length === 0) problems.push({ file, problem: "no-claims" });
+    if (hasInvalidEvidenceVersion(claims.value)) problems.push({ file, problem: "evidence-version-invalid" });
     const version = `sha256:${createHash("sha256").update(readFileSync(path.join(root, page))).digest("hex")}`;
     if (claims.value.pageVersion !== version) problems.push({ file, problem: "sidecar-page-version-mismatch" });
     if (!listed(page) || manifestPages[`/${page}`].pageVersion !== version) problems.push({ file, problem: "manifest-page-version-mismatch" });
@@ -589,8 +655,19 @@ export function gateChangedPaths(changes, terms = {}) {
   return { scanned: changes.length, rejected, categories: PATH_GATE_CATEGORIES.filter((c) => categories.has(c)), cleared };
 }
 
-/** Sidecar fields that hold only digests and counts, never text. */
-const SIDECAR_DIGEST_KEYS = new Set(["pageVersion", "version"]);
+/**
+ * The only sidecar values the privacy scan skips: the top-level
+ * `pageVersion`, and each `claims[i].evidence[j].version`. Each is skipped
+ * only when the value itself has its exact digest grammar
+ * (isValidEvidenceVersion for evidence). A key named `version` anywhere
+ * else, or a value that does not conform, is scanned like any other string.
+ */
+function isSidecarDigest(at, value) {
+  if (at.length === 1 && at[0] === "pageVersion") return SHA256_DIGEST.test(value);
+  const isEvidenceVersion =
+    at.length === 5 && at[0] === "claims" && typeof at[1] === "number" && at[2] === "evidence" && typeof at[3] === "number" && at[4] === "version";
+  return isEvidenceVersion && isValidEvidenceVersion(value);
+}
 
 /**
  * The privacy-scan items for one generated file: everything it publishes,
@@ -598,12 +675,10 @@ const SIDECAR_DIGEST_KEYS = new Set(["pageVersion", "version"]);
  *
  * - Pages, and any generated file of an unknown type, are scanned whole.
  * - A Claim sidecar is scanned by every key and every string value (as
- *   written and humanized) except its `pageVersion` and evidence `version`
- *   fields. Those hold OpenWiki digests
- *   (the evidence version is a sha256 plus base64url line counts and hashes,
- *   claims/evidence/repository/resolver.js), which look like tokens by
- *   construction. For a sidecar, a hit's `line` counts the scanned strings in
- *   document order.
+ *   written and humanized), except a `pageVersion` or evidence `version`
+ *   whose value has its exact digest grammar (isSidecarDigest). Valid
+ *   digests look like tokens by construction. For a sidecar, a hit's `line`
+ *   counts the scanned strings in document order.
  * - Run metadata is scanned field by field against its schema
  *   (metadataPrivacyItems), so it is skipped here.
  */
@@ -612,19 +687,19 @@ export function privacyItemsFor(filePath, content) {
   if (RUN_METADATA_PATHS.has(p)) return [];
   if (p.startsWith("openwiki/.claims/") && p.endsWith(".json")) {
     const lines = [];
-    const walk = (node, key) => {
+    const walk = (node, at) => {
       if (typeof node === "string") {
-        if (!SIDECAR_DIGEST_KEYS.has(key)) lines.push(writtenAndHumanized(node));
+        if (!isSidecarDigest(at, node)) lines.push(writtenAndHumanized(node));
       } else if (Array.isArray(node)) {
-        for (const item of node) walk(item, key);
+        node.forEach((item, index) => walk(item, [...at, index]));
       } else if (isPlainObject(node)) {
         for (const [name, value] of Object.entries(node)) {
           lines.push(name);
-          walk(value, name);
+          walk(value, [...at, name]);
         }
       }
     };
-    walk(JSON.parse(content), "");
+    walk(JSON.parse(content), []);
     return [{ file: p, lines }];
   }
   return [{ file: p, lines: String(content).split(/\r?\n/u) }];

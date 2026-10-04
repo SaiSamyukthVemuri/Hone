@@ -152,6 +152,7 @@ const PROVENANCE_TEXT = Object.freeze({
   "manifest-page-version-mismatch": "page manifest pageVersion does not match the page",
   "deleted-page-sidecar-left": "Claim sidecar of a deleted page",
   "deleted-page-manifest-entry-left": "page manifest still lists a deleted page",
+  "evidence-version-invalid": "Claim sidecar has an evidence version that is not one OpenWiki writes",
 });
 
 const LIVENESS_TEXT = Object.freeze({

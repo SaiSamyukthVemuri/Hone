@@ -14,6 +14,7 @@ import {
   findConflictMarkers,
   gateChangedPaths,
   inspectWorkflow,
+  isValidEvidenceVersion,
   loadTenantSlugs,
   metadataPrivacyItems,
   parseDenylist,
@@ -31,6 +32,8 @@ import { loadOpenWikiIgnore } from "../../scripts/openwiki/paths.mjs";
 import {
   AGENTS_TEMPLATE_REWRITE,
   OPENWIKI_SCAFFOLD_WORKFLOW,
+  PRODUCTION_FILE_EVIDENCE_VERSION,
+  PRODUCTION_RANGE_EVIDENCE_VERSION,
   REPO_ROOT,
   cleanupTmp,
   createFixture,
@@ -326,7 +329,7 @@ describe("run metadata: every free-text value is privacy-scanned, and the reposi
     const sidecar = JSON.stringify({
       schemaVersion: 1,
       pageVersion: digest,
-      claims: [{ id: "claim_1", statement: "Clean.", evidence: [{ resource: "repo://lib/synthetic-person.ts#L1-L2", version: "eyJzZWxlY3RlZExpbmVDb3VudCI6NjB9" }] }],
+      claims: [{ id: "claim_1", statement: "Clean.", evidence: [{ resource: "repo://lib/synthetic-person.ts#L1-L2", version: PRODUCTION_RANGE_EVIDENCE_VERSION }] }],
       verification: { by: "openwiki/0.6.1", at: "2026-10-05T03:30:00.000Z" },
       reviewer: "synthetic-studio-one",
     });
@@ -339,6 +342,98 @@ describe("run metadata: every free-text value is privacy-scanned, and the reposi
     expect(privacyItemsFor("openwiki/notes.txt", "a\nb")).toEqual([{ file: "openwiki/notes.txt", lines: ["a", "b"] }]);
     expect(privacyItemsFor("openwiki/.page-manifest.json", "{}")).toEqual([]);
     expect(privacyItemsFor("openwiki/.last-update.json", "{}")).toEqual([]);
+  });
+});
+
+describe("evidence versions: exempt from the privacy scan only when the VALUE has OpenWiki's exact grammar", () => {
+  const RANGE = PRODUCTION_RANGE_EVIDENCE_VERSION;
+  const HASH = RANGE.split(":")[2];
+  const PAYLOAD = RANGE.split(":")[3];
+  const META = JSON.parse(Buffer.from(PAYLOAD, "base64url").toString("utf8"));
+  const withPayload = (payload: string) => `repo-lines-v1:sha256:${HASH}:${payload}`;
+  const encode = (value: unknown) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value), "utf8").toString("base64url");
+  const without = (key: string) => Object.fromEntries(Object.entries(META).filter(([name]) => name !== key));
+
+  it("accepts the evidence versions copied from production, and every evidence version this repository commits", () => {
+    expect(isValidEvidenceVersion(PRODUCTION_RANGE_EVIDENCE_VERSION)).toBe(true);
+    expect(isValidEvidenceVersion(PRODUCTION_FILE_EVIDENCE_VERSION)).toBe(true);
+    const claimsDir = path.join(REPO_ROOT, "openwiki/.claims");
+    const versions = git(REPO_ROOT, ["ls-files", "-z", "openwiki/.claims"])
+      .split("\0")
+      .filter((p: string) => p.endsWith(".json"))
+      .flatMap((p: string) => JSON.parse(readFileSync(path.join(REPO_ROOT, p), "utf8")).claims.flatMap((c: { evidence: Array<{ version: string }> }) => c.evidence.map((e) => e.version)));
+    expect(existsSync(claimsDir)).toBe(true);
+    expect(versions.length).toBeGreaterThan(1000);
+    expect(versions.filter((v: string) => !isValidEvidenceVersion(v))).toEqual([]);
+  });
+
+  it.each([
+    ["free text (the review's example)", "private.person@corp.test"],
+    ["an empty string", ""],
+    ["a bare sha256 digest", `sha256:${HASH}`],
+    ["a bare base64 JSON blob", PAYLOAD],
+    ["another discriminator", `repo-lines-v2:sha256:${HASH}:${PAYLOAD}`],
+    ["a whole-file form with a payload", `repo-file-v1:sha256:${HASH}:${PAYLOAD}`],
+    ["a short sha", withPayload(PAYLOAD).replace(HASH, HASH.slice(1))],
+    ["an uppercase sha", withPayload(PAYLOAD).replace(HASH, HASH.toUpperCase())],
+    ["a non-hex sha", withPayload(PAYLOAD).replace(HASH, `g${HASH.slice(1)}`)],
+    ["no payload", `repo-lines-v1:sha256:${HASH}:`],
+    ["a payload outside base64url", withPayload("!!not-base64!!")],
+    ["a padded payload", withPayload(`${PAYLOAD}==`)],
+    ["a payload that is not JSON", withPayload(encode("Synthetic Person"))],
+    ["a payload that is JSON but not an object", withPayload(encode([1, 2, 3]))],
+    ["a count as a string", withPayload(encode({ ...META, selectedLineCount: "23" }))],
+    ["a zero selected-line count", withPayload(encode({ ...META, selectedLineCount: 0 }))],
+    ["a context count above three", withPayload(encode({ ...META, precedingContextLineCount: 4 }))],
+    ["an uppercase line hash", withPayload(encode({ ...META, firstSelectedLineHash: META.firstSelectedLineHash.toUpperCase() }))],
+    ["a missing field", withPayload(encode(without("followingContextHash")))],
+    ["an extra free-text field", withPayload(encode({ ...META, note: "Synthetic Person" }))],
+    ["a field swapped for free text", withPayload(encode({ ...without("followingContextHash"), note: "Synthetic Person" }))],
+    ["a non-canonical encoding of valid metadata", withPayload(encode(JSON.stringify(META, null, 1)))],
+    ["a truncated value", RANGE.slice(0, -6)],
+    ["the prefix alone", "repo-lines-v1:sha256:"],
+  ])("rejects %s", (_label: string, value: string) => {
+    expect(isValidEvidenceVersion(value)).toBe(false);
+  });
+
+  it("refuses a value that is not a string", () => {
+    for (const value of [undefined, null, 42, { version: RANGE }, [RANGE]]) expect(isValidEvidenceVersion(value)).toBe(false);
+  });
+
+  const sidecarWith = (version: unknown, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ schemaVersion: 1, claims: [{ id: "claim_1", statement: "Clean.", evidence: [{ resource: "repo://lib/a.ts#L1-L2", version }] }], ...extra });
+
+  it("a valid version stays exempt, so its token-like base64 is no false positive", () => {
+    expect(PAYLOAD.startsWith("eyJ")).toBe(true); // it would look like a JWT if it were scanned
+    expect(scanPrivacy(privacyItemsFor("openwiki/.claims/a.json", sidecarWith(RANGE)))).toEqual([]);
+    expect(scanPrivacy(privacyItemsFor("openwiki/.claims/a.json", sidecarWith(PRODUCTION_FILE_EVIDENCE_VERSION)))).toEqual([]);
+  });
+
+  it("a nonconforming version loses the exemption and is scanned like any string", () => {
+    const hits: Hit[] = scanPrivacy(privacyItemsFor("openwiki/.claims/a.json", sidecarWith("private.person@corp.test")));
+    expect(hits).toEqual([expect.objectContaining({ file: "openwiki/.claims/a.json", category: "email" })]);
+  });
+
+  it("a key named version anywhere but claims[i].evidence[j] is scanned, whatever it holds", () => {
+    const hits: Hit[] = scanPrivacy(privacyItemsFor("openwiki/.claims/a.json", sidecarWith(RANGE, { version: "private.person@corp.test", verification: { by: "openwiki/0.6.1", version: "zz.other@corp.test" } })));
+    expect(hits.map((h) => h.category)).toEqual(["email", "email"]);
+  });
+
+  it("checkProvenance rejects a nonconforming version as invalid Claim state, naming the changed path and never the value", () => {
+    const root = makeTmp("evidence");
+    write(root, "openwiki/.page-manifest.json", JSON.stringify({ schemaVersion: 1, pages: {} }));
+    write(root, "openwiki/a.md", "# A\n");
+    stampProvenance(root, ["openwiki/a.md"]);
+    const sidecar = JSON.parse(read(root, "openwiki/.claims/a.json"));
+    const pagesOf = () => JSON.parse(read(root, "openwiki/.page-manifest.json")).pages;
+    sidecar.claims[0].evidence = [{ resource: "repo://lib/a.ts#L1-L2", version: RANGE }];
+    write(root, "openwiki/.claims/a.json", JSON.stringify(sidecar));
+    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }], pagesOf())).toEqual([]);
+    sidecar.claims[0].evidence = [{ resource: "repo://lib/a.ts#L1-L2", version: "private.person@corp.test" }];
+    write(root, "openwiki/.claims/a.json", JSON.stringify(sidecar));
+    const problems = checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }], pagesOf());
+    expect(problems).toEqual([{ file: "openwiki/a.md", problem: "evidence-version-invalid" }]);
+    expect(JSON.stringify(problems)).not.toContain("private.person");
   });
 });
 
@@ -391,9 +486,9 @@ describe("privacy / secret denylist", () => {
     expect(loadTenantSlugs(text)).toEqual(["demo-studio"]);
   });
 
-  it("scans Claim statements and evidence paths, not OpenWiki's base64 evidence versions", () => {
+  it("scans Claim statements and evidence paths, not a valid OpenWiki evidence version", () => {
     const sidecar = JSON.stringify({
-      claims: [{ statement: "Clean statement.", evidence: [{ resource: "repo://lib/a.ts#L1-L2", version: "eyJzZWxlY3RlZExpbmVDb3VudCI6NjB9" }] }],
+      claims: [{ statement: "Clean statement.", evidence: [{ resource: "repo://lib/a.ts#L1-L2", version: PRODUCTION_RANGE_EVIDENCE_VERSION }] }],
     });
     const items = privacyItemsFor("openwiki/.claims/x.json", sidecar);
     expect(scanPrivacy(items)).toEqual([]);

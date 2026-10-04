@@ -141,11 +141,20 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
    - No OpenWiki broken-link stamps and no conflict markers.
    - Provenance for every page the run touched: a Claim sidecar with at least one Claim, and the page's sha256
      as `pageVersion` in both the sidecar and the manifest, with no leftovers of a deleted page.
+   - Every evidence `version` in a changed sidecar must be one `openwiki@0.6.1` writes (the grammar under the
+     privacy-scan bullet below). Any other value is invalid Claim state (`evidence-version-invalid`), because
+     it could carry text inside base64 where no scanner sees it. The report records the problem code, never
+     the value.
    - The privacy/secret scan finds nothing in anything the run publishes. It covers credential and PII shapes,
      terms from `HONE_WIKI_DENYLIST_FILE`, and studio slugs from the tenant register.
      - Changed pages, and changed generated files of any other type, are scanned whole.
-     - In changed Claim sidecars, every key and string is scanned, except the `pageVersion` and evidence
-       `version` fields: those are OpenWiki digests (a sha256 plus base64url line counts and hashes).
+     - In changed Claim sidecars, every key and string is scanned except two positions: the top-level
+       `pageVersion`, and each `claims[i].evidence[j].version`. These are exempt only when the value itself
+       has its exact digest grammar.
+       - The evidence-version grammar is `repo-file-v1:sha256:<64 hex>`, or
+         `repo-lines-v1:sha256:<64 hex>:<base64url>`, whose payload must decode to exactly OpenWiki's
+         seven line counts and hashes and re-encode to the same text.
+       - A value at any other position, or one that does not conform, is scanned like any other string.
      - In run metadata, every value a strict grammar does not pin down is scanned: `model`, `language`, each
        manifest page key and each `completedBy`. Digests, SHAs, UUIDs, timestamps and enums are format-checked
        instead.

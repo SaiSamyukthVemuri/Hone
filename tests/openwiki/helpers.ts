@@ -117,6 +117,16 @@ export const OPENWIKI_SCAFFOLD_WORKFLOW = [
   "",
 ].join("\n");
 
+/**
+ * Evidence versions copied verbatim from this repository's own Claim sidecars
+ * (openwiki/.claims/architecture/production-truth-and-lifecycle-states.json and
+ * a whole-file one), as openwiki@0.6.1 wrote them. Tests use these rather than
+ * a test-only grammar, so the validator cannot drift from the real format.
+ */
+export const PRODUCTION_RANGE_EVIDENCE_VERSION =
+  "repo-lines-v1:sha256:c2bd16f9232fcbd0cf8855aea4ef30d7a3947eab36dba2288f0a94c53cd1c4b0:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlNWRmZjJhOThmYTVhMDE3ZTE3NjhiOGVmNGZmZDg0ZjM4YTM0YjdmMDJhMWFjYTk3YzU4MGFjM2EwN2E2MTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjMzIyZjk1Y2M4ZjkzMTY2YWU4ZWFjMjE2MDMwNjQ4OGUzZDUzNTk0MWQ1YTgyMzlmNWRmNDRhOTc5NTNkNWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiOWVmNWZmOGI4MjRmNGE4YzA3MjAzMDM0ZTA0NDYwZTNjYmU1YjM3N2QyMTgzYzMwMjUzOWQyNTY3YWZkMTQifQ";
+export const PRODUCTION_FILE_EVIDENCE_VERSION = "repo-file-v1:sha256:39f54fced2e1b323ed3022b3ea3576e98496d6d30063a273533931d2122db1a0";
+
 /** OpenWiki's pageVersion: sha256 of the page bytes. */
 export function pageVersion(root: string, page: string): string {
   return `sha256:${createHash("sha256").update(readFileSync(path.join(root, page))).digest("hex")}`;
@@ -201,7 +211,7 @@ export function createFixture(): Fixture {
       "openwiki/topic/old-page.md": "# Old page\n\nRetired topic.\n",
       "openwiki/.claims/topic/kept-page.json": JSON.stringify({
         schemaVersion: 1,
-        claims: [{ id: "claim_1", statement: "Feature is 1.", evidence: [{ resource: "repo://lib/feature.ts#L1-L1", version: "eyJmaXh0dXJlIjoidmVyc2lvbiBtZXRhZGF0YSJ9" }] }],
+        claims: [{ id: "claim_1", statement: "Feature is 1.", evidence: [{ resource: "repo://lib/feature.ts#L1-L1", version: PRODUCTION_RANGE_EVIDENCE_VERSION }] }],
       }),
       "openwiki/.page-manifest.json": JSON.stringify({ schemaVersion: 1, pages: {} }),
     },

@@ -977,6 +977,31 @@ describe("run metadata: strict schemas, and the same privacy scan for every free
     expectNowhere(config.stateDir, result, ["synthetic-person"]);
   });
 
+  it("an evidence version that is not OpenWiki's grammar is rejected AND scanned, and no sink holds it (#786 review of 663f86a3)", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, prs, config } = await run(
+      fx,
+      openWikiLike({
+        pages: (cwd) => {
+          const sidecar = JSON.parse(read(cwd, "openwiki/.claims/topic/kept-page.json"));
+          sidecar.claims[0].evidence[0].version = "private.person@corp.test";
+          write(cwd, "openwiki/.claims/topic/kept-page.json", JSON.stringify(sidecar));
+        },
+      }),
+    );
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect([result.reasonCode, ...result.report.additionalReasons.map((r: { reasonCode: string }) => r.reasonCode)]).toEqual([
+      "PROVENANCE_INVALID",
+      "CONTENT_PRIVACY_HITS",
+    ]);
+    expect(result.report.checks.provenance).toEqual([{ file: "openwiki/topic/kept-page.md", problem: "evidence-version-invalid" }]);
+    expect(result.report.checks.privacyHits).toEqual([expect.objectContaining({ file: "openwiki/.claims/topic/kept-page.json", category: "email" })]);
+    expect(prs).toEqual([]);
+    expect(originBranches(fx)).toEqual(["main"]);
+    expectNowhere(config.stateDir, result, ["private.person@corp.test", "private.person"]);
+  });
+
   it("a generated file of an unknown type is scanned whole", async () => {
     const fx = createFixture();
     makeStale(fx);
