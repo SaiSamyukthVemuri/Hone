@@ -330,8 +330,123 @@ function scrubEventCommon<T extends Event>(event: T): T {
   return event;
 }
 
-/** beforeSend: scrub an error event in place. */
-export function scrubErrorEvent(event: ErrorEvent): ErrorEvent {
+// ===========================================================================
+// SENTRY-NOISE-01 - the deliberate E2E fault harness is not an operational event
+// ===========================================================================
+//
+// `app/(app)/e2e-fault/[case]` exists to make `app/(app)/error.tsx` catch a REAL
+// thrown route error (see lib/reliability/e2e-route-fault.ts and
+// e2e/authenticated-route-error-containment.spec.ts). Those throws are
+// deliberate, and `e2e/helpers/local-env.ts` sets HONE_E2E_ROUTE_FAULT=1 for
+// every run of the local browser lane, so each run posted synthetic failures
+// into the same Sentry project that carries genuine production ones. An
+// operational queue that mixes the two is a queue nobody can triage.
+//
+// WHY beforeSend AND NOT A DISABLED TRANSPORT. The lane's whole value is that it
+// runs the REAL client and server paths; a transport switch that silences Sentry
+// would have to be readable by the running app, which is a deployable bypass -
+// exactly the shape the fault guard refuses to have. Dropping at beforeSend
+// needs no new environment input, so there is nothing to misconfigure in
+// production: the decision is made from the EVENT, and an event that is not the
+// harness is unaffected.
+//
+// SUPPRESSION IS NARROW BY CONSTRUCTION. It requires an identity that cannot
+// occur by accident. It must never key on an error CLASS or a generic message:
+// `relation "clients" does not exist`, `Failed to fetch`, `TypeError`, a 500,
+// `No active practitioner found`, a `cookies()`/`after()` misuse or a failed
+// Server Action are all real defects whose synthetic twins differ only by this
+// identity, and suppressing the class would hide the real one.
+
+/** The random token embedded in `E2E_ROUTE_FAULT_CANARY`. Unique to the harness.
+ *
+ *  Declared here rather than imported: lib/reliability/e2e-route-fault.ts is
+ *  `server-only` and this module is deliberately isomorphic (the identical
+ *  logic runs in the browser, Node and edge). The two literals are tied
+ *  mechanically by tests/lib/observability/sentry-e2e-fault-suppression.test.ts,
+ *  which imports the guard module and asserts this is a substring of the canary,
+ *  so they cannot drift. */
+export const E2E_FAULT_MARKER = "HONE-LEAK-CANARY-9f3c1d";
+
+/** The ONE real error reachable on the harness route, which must always be sent.
+ *
+ *  `assertRouteFaultNotRequestedInDeployment` throws when HONE_E2E_ROUTE_FAULT
+ *  is set in a deployed runtime, and it exists precisely so that
+ *  misconfiguration "surfaces immediately". It is raised ON the harness route
+ *  and carries no canary, so a route-identity rule alone would silence the
+ *  alarm it exists to raise. Checked BEFORE every suppression branch. */
+const E2E_FAULT_DEPLOYMENT_GUARD_SENTINEL =
+  "must never be set in a deployed environment";
+
+/** `/e2e-fault/<one segment>`: the route URL (`/e2e-fault/server-throw`) and the
+ *  Next transaction name (`/e2e-fault/[case]`) are both one segment deep. Not a
+ *  prefix match - a nested or differently-rooted path is not this harness. */
+const E2E_FAULT_PATHNAME_RE = /^\/e2e-fault\/[^/]+\/?$/;
+
+function pathnameOf(value: string): string | null {
+  if (value.startsWith("/")) return value.split("?")[0].split("#")[0];
+  try {
+    return new URL(value).pathname;
+  } catch {
+    return null;
+  }
+}
+
+/** The message-bearing strings of an error event, and only those.
+ *
+ *  Deliberately NOT breadcrumbs, extra, tags or contexts: the marker is matched
+ *  to DROP an event, so widening where it may be found widens what a stray
+ *  mention can silence. */
+function errorTexts(event: ErrorEvent): string[] {
+  const texts: string[] = [];
+  if (typeof event.message === "string") texts.push(event.message);
+  for (const ex of event.exception?.values ?? []) {
+    if (typeof ex.value === "string") texts.push(ex.value);
+  }
+  return texts;
+}
+
+/**
+ * True only for an event PROVEN to belong to the deliberate E2E fault harness.
+ *
+ * Pure, and evaluated on the RAW event before any redaction, because
+ * `redactString` rewrites `exception.values[].value` and a scrubbed message is
+ * no longer reliable evidence of its own origin.
+ */
+export function isDeliberateE2eFaultEvent(event: ErrorEvent): boolean {
+  const texts = errorTexts(event);
+
+  // Exemption first: never suppress the deployment-guard alarm.
+  if (texts.some((t) => t.includes(E2E_FAULT_DEPLOYMENT_GUARD_SENTINEL))) {
+    return false;
+  }
+
+  // Identity 1 - the exact harness marker. Covers both the server throw and the
+  // client throw, which receives the same canary string as a prop.
+  if (texts.some((t) => t.includes(E2E_FAULT_MARKER))) return true;
+
+  // Identity 2 - the canonical harness route. Catches a synthetic event whose
+  // message the framework replaced (React elides a server error's message in a
+  // production build) and which therefore carries no marker. In a deployed
+  // runtime this route calls notFound(), so it raises no exception at all.
+  const candidates: unknown[] = [event.transaction];
+  const req = event.request as { url?: unknown } | undefined;
+  if (typeof req?.url === "string") candidates.push(req.url);
+  for (const c of candidates) {
+    if (typeof c !== "string") continue;
+    const path = pathnameOf(c);
+    if (path && E2E_FAULT_PATHNAME_RE.test(path)) return true;
+  }
+
+  return false;
+}
+
+/** beforeSend: drop a deliberate E2E fault event, otherwise scrub it in place.
+ *
+ *  Returning null is how Sentry is told to discard an event, so the same
+ *  `beforeSend: scrubErrorEvent` wiring in instrumentation-client.ts,
+ *  sentry.server.config.ts and sentry.edge.config.ts is unchanged. */
+export function scrubErrorEvent(event: ErrorEvent): ErrorEvent | null {
+  if (isDeliberateE2eFaultEvent(event)) return null;
   return scrubEventCommon(event);
 }
 

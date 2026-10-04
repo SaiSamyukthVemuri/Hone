@@ -2,10 +2,24 @@ import { describe, expect, it } from "vitest";
 import type { Breadcrumb, ErrorEvent, Event } from "@sentry/nextjs";
 import {
   scrubBreadcrumb,
-  scrubErrorEvent,
+  scrubErrorEvent as scrubErrorEventRaw,
   scrubTransactionEvent,
   redactString,
 } from "@/lib/observability/sentry-scrub";
+
+// SENTRY-NOISE-01: `scrubErrorEvent` may now return null for an event PROVEN to
+// belong to the deliberate E2E fault harness. Every event in this file is an
+// ORDINARY one, so a null here would itself be the defect. Asserting that turns
+// each existing case into a kept-event proof as well as a redaction proof.
+function scrubErrorEvent(event: ErrorEvent): ErrorEvent {
+  const out = scrubErrorEventRaw(event);
+  expect(
+    out,
+    "an ordinary (non-harness) event must never be dropped",
+  ).not.toBeNull();
+  return out as ErrorEvent;
+}
+
 import {
   TOKEN_ROUTE_PREFIXES,
   TOKEN_PLACEHOLDER,
