@@ -1,13 +1,15 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
 import {
   checkCommitAuthors,
   checkLastUpdate,
   checkManagedBlockMarkers,
+  checkProvenance,
   diffTrees,
   discardChanges,
   findBrokenLinkStamps,
+  findConflictMarkers,
   inspectWorkflow,
   loadTenantSlugs,
   parseDenylist,
@@ -26,8 +28,10 @@ import {
   createFixture,
   git,
   isolateGitConfig,
+  makeTmp,
   read,
   restoreGitConfig,
+  stampProvenance,
   write,
 } from "./helpers";
 
@@ -100,6 +104,64 @@ describe("page and metadata checks", () => {
     expect(checkManagedBlockMarkers("AGENTS.md", `${AGENTS_TEMPLATE_REWRITE}${AGENTS_TEMPLATE_REWRITE}`)).toHaveLength(1);
     expect(checkManagedBlockMarkers("AGENTS.md", "<!-- OPENWIKI:END -->\n<!-- OPENWIKI:START -->\n")).toHaveLength(1);
     expect(checkManagedBlockMarkers("CLAUDE.md", undefined)).toEqual([]);
+  });
+});
+
+describe("conflict markers and provenance (trusted checks on the subject as data)", () => {
+  it("finds conflict markers with git's grammar, and nothing else", () => {
+    const text = ["<<<<<<< HEAD", "ours", "=======", "theirs", ">>>>>>> branch", "|||||||", "========", "<<<<<<<<", "<<<<<<<x", "a ======="].join("\n");
+    expect(findConflictMarkers(text)).toEqual([1, 3, 5, 6]);
+  });
+
+  const wiki = () => {
+    const root = makeTmp("provenance");
+    write(root, "openwiki/.page-manifest.json", JSON.stringify({ schemaVersion: 1, pages: {} }));
+    write(root, "openwiki/a.md", "# A\n");
+    write(root, "openwiki/b.md", "# B\n");
+    stampProvenance(root, ["openwiki/a.md", "openwiki/b.md"]);
+    return root;
+  };
+
+  it("accepts pages whose sidecar and manifest carry the page's sha256, with at least one Claim", () => {
+    const root = wiki();
+    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }, { status: "M", path: "openwiki/.claims/b.json" }])).toEqual([]);
+  });
+
+  it("flags a page edited after its provenance was recorded, in both sidecar and manifest", () => {
+    const root = wiki();
+    write(root, "openwiki/a.md", "# A, edited\n");
+    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }])).toEqual([
+      "openwiki/.claims/a.json: pageVersion does not match the page",
+      "openwiki/a.md: page manifest pageVersion does not match the page",
+    ]);
+  });
+
+  it("flags a missing sidecar, a sidecar with no Claims, and leftovers of a deleted page", () => {
+    const root = wiki();
+    write(root, "openwiki/c.md", "# C\n");
+    const empty = JSON.parse(read(root, "openwiki/.claims/b.json"));
+    empty.claims = [];
+    write(root, "openwiki/.claims/b.json", JSON.stringify(empty));
+    rmSync(path.join(root, "openwiki/a.md"));
+    expect(
+      checkProvenance(root, [
+        { status: "A", path: "openwiki/c.md" },
+        { status: "M", path: "openwiki/.claims/b.json" },
+        { status: "D", path: "openwiki/a.md" },
+      ]),
+    ).toEqual([
+      "openwiki/.claims/a.json: Claim sidecar of a deleted page",
+      "openwiki/a.md: page manifest still lists a deleted page",
+      "openwiki/.claims/b.json: no Claims",
+      "openwiki/c.md: no Claim sidecar",
+    ]);
+  });
+
+  it("ignores pages the run did not touch, and structural pages", () => {
+    const root = wiki();
+    write(root, "openwiki/b.md", "# B, drifted before this run\n");
+    write(root, "openwiki/index.md", "# Index\n");
+    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }, { status: "A", path: "openwiki/index.md" }])).toEqual([]);
   });
 });
 

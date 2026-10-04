@@ -19,15 +19,27 @@
 //     outside it fails the run.
 //   * Publishing REPLACES the generated scope with what the run produced,
 //     deletions included, on top of the production tip. It is never an
-//     overlay onto an older wiki. It goes through CLAUDE.md's eight-step
-//     delivery sequence, then opens one pull request. It never merges.
+//     overlay onto an older wiki. A run that changed only run metadata is
+//     published too: repository state is the cursor, so the processed source
+//     head must become durable. It opens one pull request. It never merges.
 //   * Every failure publishes nothing and resets the subject checkout.
+//
+// TRUST BOUNDARY. This runner holds the GitHub App key and the model key, and
+// anything it starts runs as the same user: such a process can read
+// /proc/$PPID/environ and the key files named there. So the runner NEVER
+// executes code from the subject repository. That rules out package scripts,
+// repository scripts and `npm run verify:prepush`. It reads the subject only as
+// data, through git and the filesystem. CLAUDE.md's delivery steps 1-6 and 8
+// run as written. Step 7 is replaced by trusted structural checks on that data
+// (publish below). Repository-controlled verification (the test suites,
+// verify:prepush, migration state) runs in PR CI, where these credentials are
+// absent.
 //
 // Outcomes and exit codes: SKIP, NOOP, DRY_RUN and PUBLISHED exit 0; FAILED
 // exits 1; PRECONDITION exits 2 because a human has to change something.
 // ---------------------------------------------------------------------------
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -36,6 +48,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   statfsSync,
@@ -43,15 +56,17 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createGitHubClient, createInstallationToken } from "./github-app.mjs";
 import {
   checkCommitAuthors,
   checkLastUpdate,
   checkManagedBlockMarkers,
+  checkProvenance,
   diffTrees,
   discardChanges,
   findBrokenLinkStamps,
+  findConflictMarkers,
   inspectWorkflow,
   loadTenantSlugs,
   parseDenylist,
@@ -133,6 +148,22 @@ export function checkEnvironment(env, required = REQUIRED_ENV) {
 
 // ---------------------------------------------------------------- small helpers
 
+/** Where this runner's own code lives. It must never be inside the subject clone. */
+const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+function realOrResolved(p) {
+  try {
+    return realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+function isInside(child, parent) {
+  const rel = path.relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
 function acquireLock(stateDir) {
   const file = path.join(stateDir, "run.lock");
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -181,12 +212,14 @@ function runnerHome(config) {
 }
 
 /**
- * The environment for repository code the runner executes (the CLAUDE.md
- * pre-push check). That code comes from the production checkout, so it gets
- * no credential, no credential path and no App identifier: only what a node
- * script and git need, with the runner's private HOME.
+ * The base environment for the one child the runner starts besides git: the
+ * pinned OpenWiki CLI, from the runner's tools directory, never from the
+ * subject. It holds no GitHub credential, no credential path and no App
+ * identifier. This is hygiene, not the trust boundary: a same-user child can
+ * still read /proc/$PPID/environ, which is why no subject code is ever started
+ * (see the header).
  */
-export function repositoryScriptEnv(config) {
+export function isolatedChildEnv(config) {
   const home = runnerHome(config);
   return {
     HOME: home,
@@ -252,7 +285,7 @@ export function redactSecrets(text) {
 
 /** The only OpenWiki invocation the runner makes. There is no mode parameter: init is unreachable. */
 export function buildGeneratorInvocation(config) {
-  const base = repositoryScriptEnv(config);
+  const base = isolatedChildEnv(config);
   return {
     command: process.execPath,
     args: [path.join(config.openwikiDir, "dist", "cli", "cli.js"), "code", "--update", "--print"],
@@ -318,6 +351,15 @@ function syncSubject(config, token) {
 }
 
 class PreconditionError extends Error {}
+
+/** Production moved after the run was pinned: the run is stale and nothing may be published from it. */
+class BaseMovedError extends Error {
+  constructor(tip, remote) {
+    super(
+      `production advanced during the run (${tip.slice(0, 7)} -> ${String(remote || "missing").slice(0, 7)}); nothing published, the next pass regenerates from the new tip`,
+    );
+  }
+}
 
 function baselineProblems(subject, tip) {
   const read = (file) => {
@@ -429,6 +471,7 @@ function validateGenerated(subject, generated, sourceHead, config) {
   const tenantSlugs = loadTenantSlugs(existsSync(stateFile) ? readFileSync(stateFile, "utf8") : "");
   const denylistTerms = parseDenylist(readFileSync(config.denylistFile, "utf8"));
   const stamps = [];
+  const conflictMarkers = [];
   const items = [];
   for (const change of generated) {
     if (change.status === "D") continue;
@@ -436,6 +479,7 @@ function validateGenerated(subject, generated, sourceHead, config) {
     if (change.path.endsWith(".md")) {
       for (const line of findBrokenLinkStamps(content)) stamps.push({ file: change.path, line });
     }
+    for (const line of findConflictMarkers(content)) conflictMarkers.push({ file: change.path, line });
     try {
       items.push(...privacyItemsFor(change.path, content));
     } catch {
@@ -443,9 +487,11 @@ function validateGenerated(subject, generated, sourceHead, config) {
     }
   }
   if (stamps.length > 0) problems.push(`${stamps.length} broken-link stamp(s) left by OpenWiki`);
+  if (conflictMarkers.length > 0) problems.push(`${conflictMarkers.length} conflict marker line(s)`);
+  problems.push(...checkProvenance(subject, generated));
   const privacyHits = scanPrivacy(items, { denylistTerms, tenantSlugs });
   if (privacyHits.length > 0) problems.push(`${privacyHits.length} privacy/secret denylist hit(s)`);
-  return { problems, stamps, privacyHits };
+  return { problems, stamps, conflictMarkers, privacyHits };
 }
 
 function summarize(generated) {
@@ -453,7 +499,7 @@ function summarize(generated) {
   return { changed: generated.length, added: count("A"), modified: count("M"), deleted: count("D") };
 }
 
-async function publish({ subject, tip, sourceHead, previousGitHead, tree, generated, ignore, config, deps, token, report }) {
+async function publish({ subject, tip, sourceHead, previousGitHead, tree, generated, metadataOnly, ignore, config, deps, token, report }) {
   const stamp = new Date(deps.now ? deps.now() : Date.now()).toISOString().slice(0, 10).replace(/-/gu, "");
   const branch = `${NIGHTLY_BRANCH_PREFIX}${stamp}-${sourceHead.slice(0, 7)}`;
   const identity = config.identity;
@@ -468,18 +514,25 @@ async function publish({ subject, tip, sourceHead, previousGitHead, tree, genera
   git(subject, ["reset", "--quiet", "--soft", tip]);
   git(subject, ["switch", "--quiet", "--force-create", branch]);
 
-  // CLAUDE.md "Follow this sequence before every push", in order.
+  // CLAUDE.md "Follow this sequence before every push": steps 1-6, in order.
   git(subject, ["add", "-A"]);
   git(subject, ["diff", "--cached", "--check"]);
-  const staged = git(subject, ["status", "--porcelain"]);
+  const staged = git(subject, ["status", "--porcelain", "--untracked-files=all"]);
   if (staged.split("\n").some((line) => line.startsWith("??"))) throw new Error("an untracked file was not staged");
-  const title = `docs(openwiki): nightly update at source ${sourceHead.slice(0, 7)}`;
-  git(subject, ["commit", "--quiet", "-m", title, "-m", `Generated by the WIKI-AUTO-01 runner from production source ${sourceHead} (production tip ${tip}). Only generated openwiki/ files change.`], { env });
-  if (git(subject, ["status", "--porcelain"]) !== "") throw new Error("working tree is not clean after commit");
+  const title = metadataOnly
+    ? `docs(openwiki): record source ${sourceHead.slice(0, 7)} (metadata only)`
+    : `docs(openwiki): nightly update at source ${sourceHead.slice(0, 7)}`;
+  git(subject, ["commit", "--quiet", "--no-verify", "-m", title, "-m", `Generated by the WIKI-AUTO-01 runner from production source ${sourceHead} (production tip ${tip}). Only generated openwiki/ files change.`], { env });
+  if (git(subject, ["status", "--porcelain", "--untracked-files=all"]) !== "") throw new Error("working tree is not clean after commit");
   git(subject, ["diff", "HEAD", "--exit-code"]);
 
-  // Verify the commit before it leaves the machine.
+  // Step 7 is NOT `npm run verify:prepush`: that is subject code, and the
+  // runner never executes subject code (see the header). These are trusted
+  // structural checks over the commit as data. The repository's own
+  // verification runs in PR CI, without these credentials.
   const head = git(subject, ["rev-parse", "HEAD"]);
+  git(subject, ["diff", "--cached", "--exit-code"]); // index == HEAD (with the step above: worktree == index == HEAD)
+  git(subject, ["diff", "--check", tip, head]); // whitespace errors and conflict markers, as git defines them
   const parents = git(subject, ["rev-list", "--parents", "-n", "1", head]).split(" ").slice(1);
   if (parents.length !== 1 || parents[0] !== tip) throw new Error("publish commit is not a single-parent child of the production tip");
   const published = diffTrees(subject, tip, head);
@@ -490,11 +543,17 @@ async function publish({ subject, tip, sourceHead, previousGitHead, tree, genera
   const authorProblems = checkCommitAuthors(subject, `${tip}..${head}`, identity);
   if (authorProblems.length > 0) throw new Error(authorProblems.join("; "));
 
-  // Repository code: allowlisted environment only (no credentials, paths to them or App ids).
-  const [command, ...args] = config.prepushCommand;
-  const prepush = spawnSync(command, args, { cwd: subject, stdio: "ignore", env: repositoryScriptEnv(config) });
-  if (prepush.status !== 0) throw new Error("verify:prepush failed");
-  remoteGit(subject, ["push", "--quiet", "origin", `${head}:refs/heads/${branch}`], token);
+  // Production must still be exactly the tip this run was pinned to. A run can
+  // take an hour or more; publishing a stale run would open a clean-looking PR
+  // that omits commits already on production.
+  const baseRef = `refs/heads/${config.baseBranch}`;
+  const remote = remoteGit(subject, ["ls-remote", "origin", baseRef], token)
+    .split("\n")
+    .map((line) => line.split("\t"))
+    .find(([, ref]) => ref === baseRef)?.[0];
+  if (remote !== tip) throw new BaseMovedError(tip, remote);
+  // --no-verify: no hook runs either (the clone's hooks are git's inactive samples).
+  remoteGit(subject, ["push", "--quiet", "--no-verify", "origin", `${head}:refs/heads/${branch}`], token);
   report.publish = { branch, head };
 
   const github = deps.github(token);
@@ -506,9 +565,10 @@ async function publish({ subject, tip, sourceHead, previousGitHead, tree, genera
     `- Source head documented: \`${sourceHead}\` (newest production commit with a source change)`,
     `- Production tip: \`${tip}\``,
     `- Previous wiki gitHead: \`${previousGitHead}\``,
-    `- Generated files: ${s.changed} (${s.added} added, ${s.modified} modified, ${s.deleted} deleted)`,
+    `- Generated files: ${s.changed} (${s.added} added, ${s.modified} modified, ${s.deleted} deleted)${metadataOnly ? ", run metadata only: records the processed source head" : ""}`,
     `- Discarded generator writes: ${discardedList}`,
-    "- Checks passed: generated scope, replace-not-overlay, runner authorship, `.last-update.json` gitHead equality, broken-link stamps, privacy/secret denylist, `npm run verify:prepush`",
+    "- Trusted pre-publish checks passed on the runner host: liveness, `.last-update.json` gitHead equality, generated-only scope, replace-not-overlay, single child of the production tip, runner authorship, clean worktree with HEAD/tree identity, `git diff --check`, conflict markers, provenance, broken-link stamps, privacy/secret denylist",
+    "- Repository-controlled verification (the test suites and `verify:prepush`) runs in this PR's CI; the runner executes no repository code",
     "",
     "The runner never merges. Merge authority stays with a human.",
   ].join("\n");
@@ -557,6 +617,11 @@ export async function runNightly(config, deps) {
   try {
     const envProblems = checkEnvironment(config.env ?? {}, config.requiredEnv ?? REQUIRED_ENV);
     if (envProblems.length > 0) return finish("PRECONDITION", envProblems.join("; "));
+    // The runner's code must come from a pinned checkout, never from the
+    // subject it resets and documents (config.runnerDir exists for tests).
+    if (isInside(realOrResolved(config.runnerDir ?? RUNNER_DIR), realOrResolved(subject))) {
+      return finish("PRECONDITION", "the runner must run from a pinned checkout outside HONE_WIKI_SUBJECT_DIR");
+    }
 
     let token = null;
     if (deps.getGitToken) {
@@ -616,13 +681,15 @@ export async function runNightly(config, deps) {
       return finish("FAILED", `generator wrote outside the generated scope: ${scope.unexpected.map((c) => c.path).join(", ")}`);
     }
     report.generated = summarize(scope.generated);
-    if (scope.generated.every((c) => RUN_METADATA_PATHS.has(c.path))) {
-      resetSubject(subject, tip);
-      return finish("NOOP", "OpenWiki changed only run metadata");
-    }
+    // A run that changed only run metadata still processed a new source head.
+    // Repository state is the cursor, so it is validated and published like any
+    // other run; discarding it would make every later pass regenerate the same
+    // source. (No output at all fails the gitHead equality check below.)
+    const metadataOnly = scope.generated.every((c) => RUN_METADATA_PATHS.has(c.path));
+    report.metadataOnly = metadataOnly;
 
     const checks = validateGenerated(subject, scope.generated, head.sourceHead, config);
-    report.checks = { brokenLinkStamps: checks.stamps, privacyHits: checks.privacyHits };
+    report.checks = { brokenLinkStamps: checks.stamps, conflictMarkers: checks.conflictMarkers, privacyHits: checks.privacyHits };
     if (checks.problems.length > 0) {
       resetSubject(subject, tip);
       return finish("FAILED", checks.problems.join("; "));
@@ -630,7 +697,7 @@ export async function runNightly(config, deps) {
 
     if (!config.publish) {
       resetSubject(subject, tip);
-      return finish("DRY_RUN", "checks passed; publishing is off");
+      return finish("DRY_RUN", metadataOnly ? "checks passed; metadata-only source advance; publishing is off" : "checks passed; publishing is off");
     }
     // Installation tokens expire one hour after minting, and a run may take
     // longer (HONE_WIKI_RUN_TIMEOUT_MIN defaults to 90): publish with a fresh one.
@@ -650,6 +717,7 @@ export async function runNightly(config, deps) {
       previousGitHead: liveness.gitHead,
       tree: scope.tree,
       generated: scope.generated,
+      metadataOnly,
       ignore,
       config,
       deps,
@@ -657,7 +725,7 @@ export async function runNightly(config, deps) {
       report,
     });
     resetSubject(subject, tip);
-    return finish("PUBLISHED", `pull request #${report.publish.pr.number}`);
+    return finish("PUBLISHED", `pull request #${report.publish.pr.number}${metadataOnly ? " (metadata only)" : ""}`);
   } catch (error) {
     if (tip) resetSubject(subject, tip);
     return finish(error instanceof PreconditionError ? "PRECONDITION" : "FAILED", redactSecrets(error.message));
@@ -685,7 +753,6 @@ export function configFromEnv(env, argv = []) {
     identity: { name: env.HONE_WIKI_GIT_AUTHOR_NAME, email: env.HONE_WIKI_GIT_AUTHOR_EMAIL },
     minFreeBytes: Number(env.HONE_WIKI_MIN_FREE_GB ?? 10) * 2 ** 30,
     timeoutMs: Number(env.HONE_WIKI_RUN_TIMEOUT_MIN ?? 90) * 60_000,
-    prepushCommand: ["npm", "run", "verify:prepush"],
     env,
   };
 }

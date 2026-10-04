@@ -5,7 +5,8 @@
 // report must not re-leak what the privacy scan caught.
 // ---------------------------------------------------------------------------
 
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { KNOWN_SIDE_EFFECT_PATHS, classifyPath, normalizePath } from "./paths.mjs";
@@ -105,6 +106,80 @@ export function inspectWorkflow(text) {
 }
 
 // ---------------------------------------------------------------- page checks
+
+/**
+ * Leftover merge-conflict markers, with git's grammar (default marker size 7):
+ * `<<<<<<<`, `|||||||` or `>>>>>>>` followed by a space or end of line, or a
+ * bare `=======`. Read as data, so the subject's .gitattributes cannot switch
+ * the check off the way it can for `git diff --check`.
+ */
+export function findConflictMarkers(text) {
+  return String(text)
+    .split(/\r?\n/u)
+    .flatMap((line, index) => (/^(?:<{7}|\|{7}|>{7})(?: |$)|^={7}$/u.test(line) ? [index + 1] : []));
+}
+
+const FACTUAL_PAGE_EXCLUDED = new Set(["index.md", "log.md", "INSTRUCTIONS.md"]);
+
+function isFactualPage(p) {
+  return (
+    p.startsWith("openwiki/") &&
+    p.endsWith(".md") &&
+    !p.split("/").some((segment) => segment.startsWith(".")) &&
+    !FACTUAL_PAGE_EXCLUDED.has(path.posix.basename(p))
+  );
+}
+
+/**
+ * OpenWiki provenance for every factual page a run touched (the page itself,
+ * or its Claim sidecar). A live page needs a sidecar with at least one Claim,
+ * and `sha256:<hex of the page bytes>` as the pageVersion in both the sidecar
+ * and openwiki/.page-manifest.json. A deleted page may leave neither a sidecar
+ * nor a manifest entry behind.
+ */
+export function checkProvenance(root, generatedChanges) {
+  const touched = new Set();
+  for (const change of generatedChanges) {
+    const p = normalizePath(change.path);
+    if (isFactualPage(p)) touched.add(p);
+    else if (p.startsWith("openwiki/.claims/") && p.endsWith(".json")) {
+      touched.add(`openwiki/${p.slice("openwiki/.claims/".length, -".json".length)}.md`);
+    }
+  }
+  if (touched.size === 0) return [];
+  const full = (p) => path.join(root, p);
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(full("openwiki/.page-manifest.json"), "utf8")).pages ?? {};
+  } catch {
+    return ["openwiki/.page-manifest.json is missing or unreadable"];
+  }
+  const problems = [];
+  for (const page of [...touched].sort()) {
+    const sidecar = `openwiki/.claims/${page.slice("openwiki/".length, -".md".length)}.json`;
+    if (!existsSync(full(page))) {
+      if (existsSync(full(sidecar))) problems.push(`${sidecar}: Claim sidecar of a deleted page`);
+      if (manifest[`/${page}`]) problems.push(`${page}: page manifest still lists a deleted page`);
+      continue;
+    }
+    if (!existsSync(full(sidecar))) {
+      problems.push(`${page}: no Claim sidecar`);
+      continue;
+    }
+    let claims;
+    try {
+      claims = JSON.parse(readFileSync(full(sidecar), "utf8"));
+    } catch {
+      problems.push(`${sidecar}: not valid JSON`);
+      continue;
+    }
+    if (!Array.isArray(claims.claims) || claims.claims.length === 0) problems.push(`${sidecar}: no Claims`);
+    const version = `sha256:${createHash("sha256").update(readFileSync(full(page))).digest("hex")}`;
+    if (claims.pageVersion !== version) problems.push(`${sidecar}: pageVersion does not match the page`);
+    if (manifest[`/${page}`]?.pageVersion !== version) problems.push(`${page}: page manifest pageVersion does not match the page`);
+  }
+  return problems;
+}
 
 const BROKEN_LINK_STAMP = /^\s*<!--\s*openwiki:\s*broken internal link\b.*?-->\s*$/u;
 

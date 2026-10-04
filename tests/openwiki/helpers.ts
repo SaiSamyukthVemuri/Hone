@@ -3,7 +3,8 @@
 // runs with an empty global config so an operator's ~/.gitconfig (signing,
 // credential helpers, hooks) cannot change what the tests observe.
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -116,6 +117,38 @@ export const OPENWIKI_SCAFFOLD_WORKFLOW = [
   "",
 ].join("\n");
 
+/** OpenWiki's pageVersion: sha256 of the page bytes. */
+export function pageVersion(root: string, page: string): string {
+  return `sha256:${createHash("sha256").update(readFileSync(path.join(root, page))).digest("hex")}`;
+}
+
+const sidecarOf = (page: string) => `openwiki/.claims/${page.slice("openwiki/".length, -".md".length)}.json`;
+
+/**
+ * What OpenWiki's finish step does for the pages a run touched: a live page's
+ * sidecar (created with one Claim if missing) and manifest entry carry its
+ * pageVersion; a deleted page loses both.
+ */
+export function stampProvenance(root: string, livePages: string[], deletedPages: string[] = []): void {
+  const manifestFile = "openwiki/.page-manifest.json";
+  const manifest = JSON.parse(read(root, manifestFile));
+  manifest.pages ??= {};
+  for (const page of livePages) {
+    const sidecar = sidecarOf(page);
+    const claims = existsSync(path.join(root, sidecar))
+      ? JSON.parse(read(root, sidecar))
+      : { schemaVersion: 1, claims: [{ id: `claim_${page.length}`, statement: `About ${page}.`, evidence: [{ resource: "repo://lib/feature.ts#L1-L1" }] }] };
+    claims.pageVersion = pageVersion(root, page);
+    write(root, sidecar, `${JSON.stringify(claims, null, 2)}\n`);
+    manifest.pages[`/${page}`] = { pageVersion: claims.pageVersion };
+  }
+  for (const page of deletedPages) {
+    rmSync(path.join(root, sidecarOf(page)), { force: true });
+    delete manifest.pages[`/${page}`];
+  }
+  write(root, manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
 export type Fixture = {
   root: string;
   origin: string;
@@ -153,7 +186,7 @@ export function createFixture(): Fixture {
     git(work, ["push", "--quiet", "--force", "origin", `HEAD:refs/heads/${ref}`]);
   };
 
-  const source1 = commit(
+  commit(
     {
       ".openwikiignore": read(REPO_ROOT, ".openwikiignore"),
       ".gitignore": "/openwiki/.run.json\n",
@@ -167,18 +200,24 @@ export function createFixture(): Fixture {
       "openwiki/topic/kept-page.md": "# Kept page\n\nFeature is 1.\n",
       "openwiki/topic/old-page.md": "# Old page\n\nRetired topic.\n",
       "openwiki/.claims/topic/kept-page.json": JSON.stringify({
+        schemaVersion: 1,
         claims: [{ id: "claim_1", statement: "Feature is 1.", evidence: [{ resource: "repo://lib/feature.ts#L1-L1", version: "eyJmaXh0dXJlIjoidmVyc2lvbiBtZXRhZGF0YSJ9" }] }],
       }),
       "openwiki/.page-manifest.json": JSON.stringify({ schemaVersion: 1, pages: {} }),
     },
     "source: initial",
   );
+  // The committed wiki is provenance-consistent, as OpenWiki leaves it.
+  stampProvenance(work, ["openwiki/quickstart.md", "openwiki/topic/kept-page.md", "openwiki/topic/old-page.md"]);
+  git(work, ["add", "-A"]);
+  git(work, ["commit", "--quiet", "--amend", "--no-edit"]);
+  const stamped = git(work, ["rev-parse", "HEAD"]);
   const wiki1 = commit(
     {
-      "openwiki/.last-update.json": `${JSON.stringify({ command: "update", gitHead: source1, status: "complete", language: "en" }, null, 2)}\n`,
+      "openwiki/.last-update.json": `${JSON.stringify({ command: "update", gitHead: stamped, status: "complete", language: "en" }, null, 2)}\n`,
     },
     "docs(openwiki): record run metadata",
   );
   push();
-  return { root, origin, work, source1, wiki1, commit, push };
+  return { root, origin, work, source1: stamped, wiki1, commit, push };
 }

@@ -1,8 +1,9 @@
 # OpenWiki nightly runner (WIKI-AUTO-01)
 
-**Status.** Repository side only. The runner is not installed on any host, publishing is off unless
-`HONE_WIKI_PUBLISH=on`, and the runner never merges. Merge authority stays with a human
-(`docs/roadmap/CANONICAL_ROADMAP.md` §16: "Phase 1 continues with a permanent human merge/release gate").
+**Status.** Repository side only. The runner is not installed on any host, and publishing is off unless
+`HONE_WIKI_PUBLISH=on`. The runner never merges and never executes code from the repository it documents
+(see the trust boundary below). Merge authority stays with a human (`docs/roadmap/CANONICAL_ROADMAP.md` §16:
+"Phase 1 continues with a permanent human merge/release gate").
 
 ```
 node scripts/openwiki/nightly.mjs [--no-publish]
@@ -13,10 +14,10 @@ node scripts/openwiki/nightly.mjs [--no-publish]
 | Outcome | Exit | Meaning |
 |---|---|---|
 | `SKIP` | 0 | Disabled, kill switch present, another pass holds the lock, or an unmerged nightly branch is already in flight. |
-| `NOOP` | 0 | The wiki already describes the source head (startup no-op, OpenWiki never runs), or OpenWiki changed only run metadata. |
-| `DRY_RUN` | 0 | Every check passed; publishing is off. |
-| `PUBLISHED` | 0 | One pull request opened from `openwiki/nightly-<YYYYMMDD>-<source7>`, plus one `@codex review` request. |
-| `FAILED` | 1 | Nothing published; the subject checkout is reset. Retried on the next pass. |
+| `NOOP` | 0 | The wiki already describes the source head: the startup no-op. OpenWiki never runs. |
+| `DRY_RUN` | 0 | Every check passed; publishing is off. This includes a successful metadata-only source advance. |
+| `PUBLISHED` | 0 | One pull request opened from `openwiki/nightly-<YYYYMMDD>-<source7>`, plus one `@codex review` request. A run that changed only run metadata is published too, titled "(metadata only)". |
+| `FAILED` | 1 | Nothing published; the subject checkout is reset. Retried on the next pass. This includes "production advanced during the run". |
 | `PRECONDITION` | 2 | A human must change something: environment, credentials, history or markers. |
 
 Each pass writes a JSON report (no secret values, no matched privacy text) to
@@ -66,23 +67,56 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
    stays the production tip (the newest wiki is the baseline). The runner then executes
    `openwiki code --update --print` with an allowlisted environment and its own `HOME`. It never runs `init`.
 6. **Scope.** Discard and record writes outside the generated scope (see A3 below). Fail on an unexpected write
-   or leftover `openwiki/.run.json`.
+   or leftover `openwiki/.run.json`. A run that changed only `.last-update.json` and `.page-manifest.json`
+   still processed a new source head. Repository state is the cursor, so the run is validated and published
+   like any other; after the merge, the next pass is a startup no-op.
 7. **Checks.**
    - `openwiki/.last-update.json` is `{command: update, status: complete}` and its `gitHead` equals the source
      head;
-   - no OpenWiki broken-link stamps;
+   - no OpenWiki broken-link stamps and no conflict markers;
+   - provenance for every page the run touched: a Claim sidecar with at least one Claim, and the page's sha256
+     as `pageVersion` in both the sidecar and `.page-manifest.json`, with no leftovers of a deleted page;
    - the privacy/secret scan finds nothing: credential and PII shapes, terms from `HONE_WIKI_DENYLIST_FILE`,
      and studio slugs from the tenant register in `docs/production/current-state.md` §0. It runs over changed
      pages and over changed Claim statements and evidence paths.
 8. **Publish (replace, not overlay).**
    - HEAD returns to the production tip, and the generated scope is replaced wholesale, deletions included.
-   - The commit goes through the CLAUDE.md eight-step delivery sequence, including `npm run verify:prepush`.
-     That check is repository code, so it runs with an allowlisted environment (`PATH`, a private `HOME`,
-     locale, timezone, isolated git config). It sees no credential, no path to one, and no App identifier.
-   - Before pushing, the runner verifies that the commit is a single child of the tip, that its diff is
-     generated-only, that `openwiki/` equals the run's output exactly, and that it is authored and committed
-     by the runner identity.
+   - The commit follows CLAUDE.md's delivery sequence steps 1-6 and 8 as written (git hooks disabled). Step 7,
+     `npm run verify:prepush`, is **not** executed (see the trust boundary). Instead the runner checks the
+     commit as data:
+     - clean worktree, and HEAD/index/worktree identity;
+     - `git diff --check`;
+     - the commit is a single child of the tip and its diff is generated-only;
+     - `openwiki/` equals the run's output exactly;
+     - the commit is authored and committed by the runner identity.
+   - With a fresh token, the runner reads the production branch's exact remote SHA. If it is no longer the tip
+     the run was pinned to, nothing is published (`FAILED`, retried from the new tip on the next pass).
    - It then opens one pull request and posts `@codex review` for the exact head.
+
+### Trust boundary
+
+The runner holds the GitHub App key and the model key. Any process it starts runs as the same unix user, and
+such a process can read the runner's `/proc/$PPID/environ` and the key files named there. Cleaning a child's
+environment does not change that.
+
+- **The runner never executes code from the subject repository**: no package or repository scripts, no
+  `npm run verify:prepush`, no test suite. It reads the subject only as data, through git and the filesystem.
+  Its own code runs from a pinned runner checkout, never from the subject clone. Its only other child is the
+  pinned OpenWiki CLI from the tools install. OpenWiki confines its agent's shell to `pwd` and
+  `git rev-parse HEAD`, and its writes to `openwiki/`.
+- **Trusted pre-publish checks on the host:** liveness, `.last-update.json` gitHead equality, generated-only
+  scope, replace-not-overlay, single child of the tip, runner authorship, worktree/HEAD identity,
+  `git diff --check`, conflict markers, provenance, broken-link stamps, and the privacy/secret denylist.
+  These checks deliberately do not reimplement repository business or test logic (for example
+  `scripts/migration-state.mjs`). A generated-only commit cannot change a migration.
+- **Repository-controlled verification runs in PR CI:** the test suites, `verify:prepush` semantics, migration
+  state, and the rest of the CI lanes. They run on GitHub, where the wiki-runner credentials are absent.
+- **The runner never merges.** It has no merge code path. A generated PR advances only when a human merges it
+  after its CI and exact-head review gates, under the roadmap's human merge/release gate.
+- **Not enforced by GitHub today.** The production branch has no branch protection or required checks, and the
+  App token's `contents: write` would technically permit the merge API. So "never merges" is a property of
+  the runner's code plus the human gate, not a GitHub restriction. Protect the production branch (required
+  checks and review) before enabling publishing if that guarantee must be structural.
 
 ### A3: the OpenWiki workflow scaffold
 
