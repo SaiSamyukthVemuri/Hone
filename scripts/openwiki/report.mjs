@@ -18,7 +18,7 @@
 // runner's own constant paths.
 // ---------------------------------------------------------------------------
 
-import { ENV_VALUE_RULES, FORBIDDEN_ENV_PREFIXES, KNOWN_ENV_NAMES } from "./environment.mjs";
+import { ENV_VALUE_RULES, FORBIDDEN_ENV_PREFIXES, KNOWN_ENV_NAMES, RUN_LIMIT_DEFAULTS } from "./environment.mjs";
 import {
   LAST_UPDATE_PROBLEMS,
   MANIFEST_PROBLEMS,
@@ -118,8 +118,12 @@ const LAST_UPDATE_TEXT = Object.freeze({
   missing: "is missing after the run",
   malformed: "is not valid JSON",
   "not-an-object": "is not a JSON object",
+  "unknown-key": "has a key outside OpenWiki's schema (updatedAt, command, gitHead, model, status, language)",
+  "invalid-updated-at": "updatedAt is not an ISO instant",
   "command-not-update": 'command is not "update"',
+  "invalid-model": "model is not a non-blank string",
   "status-not-complete": 'status is not "complete"',
+  "invalid-language": "language is not a canonical locale OpenWiki resolves",
   "git-head-mismatch": "gitHead does not equal the source head the run was pinned to",
 });
 
@@ -134,9 +138,9 @@ const MANIFEST_TEXT = Object.freeze({
   "entry-not-an-object": "has an entry that is not an object",
   "unknown-entry-key": "has an entry with an unknown key",
   "invalid-page-version": "has an entry without a sha256 pageVersion",
-  "invalid-git-head": "has an entry with an empty gitHead",
+  "invalid-git-head": "has an entry whose gitHead is not a full commit SHA",
   "invalid-source-fingerprint": "has an entry with a malformed sourceFingerprint",
-  "invalid-completed-by": "has an entry with an empty completedBy",
+  "invalid-completed-by": "has an entry whose completedBy is not an OpenWiki producer id",
   "invalid-completed-run-id": "has an entry whose completedRunId is not a UUID",
 });
 
@@ -337,6 +341,9 @@ export const REASONS = Object.freeze({
     "docs/production/current-state.md has no readable tenant register (section 0), so the tenant-slug scan would check nothing",
   ),
   MODEL_ID_EMPTY: fixed("PRECONDITION", "OPENWIKI_MODEL_ID is empty"),
+  RUN_LIMIT_INVALID: reason("PRECONDITION", { name: oneOf(Object.keys(RUN_LIMIT_DEFAULTS)) }, (d) =>
+    `${d.name ?? "a run limit"} must be a plain positive number (unset or blank means its default)`,
+  ),
   LOW_DISK: fixed("PRECONDITION", "free disk space is below HONE_WIKI_MIN_FREE_GB"),
 });
 

@@ -53,7 +53,7 @@ import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, 
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { KNOWN_ENV_NAMES, REQUIRED_ENV, checkEnvironment } from "./environment.mjs";
+import { KNOWN_ENV_NAMES, MAX_TIMER_MS, REQUIRED_ENV, checkEnvironment, runLimits } from "./environment.mjs";
 import { createGitHubClient, createInstallationToken } from "./github-app.mjs";
 import {
   PRIVACY_CATEGORIES,
@@ -69,6 +69,7 @@ import {
   findConflictMarkers,
   gateChangedPaths,
   inspectWorkflow,
+  metadataPrivacyItems,
   parseDenylist,
   parseTenantRegister,
   privacyItemsFor,
@@ -400,8 +401,16 @@ function runPrerequisites(config, subject) {
   const register = registerFile.state === "present-valid" ? parseTenantRegister(registerFile.text) : { found: false, slugs: [] };
   if (!register.found || register.slugs.length === 0) reasons.push(reason("TENANT_REGISTER_UNREADABLE"));
   if (!String(config.modelId ?? "").trim()) reasons.push(reason("MODEL_ID_EMPTY"));
-  const fs = statfsSync(config.stateDir);
-  if (fs.bavail * fs.bsize < config.minFreeBytes) reasons.push(reason("LOW_DISK"));
+  // The limits again, as the config carries them: a NaN floor would make the
+  // disk comparison always pass, and a bad timeout would end the run at once.
+  if (!(Number.isFinite(config.minFreeBytes) && config.minFreeBytes > 0)) reasons.push(reason("RUN_LIMIT_INVALID", { name: "HONE_WIKI_MIN_FREE_GB" }));
+  else {
+    const fs = statfsSync(config.stateDir);
+    if (fs.bavail * fs.bsize < config.minFreeBytes) reasons.push(reason("LOW_DISK"));
+  }
+  if (!(Number.isSafeInteger(config.timeoutMs) && config.timeoutMs > 0 && config.timeoutMs <= MAX_TIMER_MS)) {
+    reasons.push(reason("RUN_LIMIT_INVALID", { name: "HONE_WIKI_RUN_TIMEOUT_MIN" }));
+  }
   return { reasons, terms: { denylistTerms, tenantSlugs: register.slugs } };
 }
 
@@ -445,7 +454,8 @@ function validateGenerated(subject, generated, sourceHead, terms) {
   const reasons = [];
   const checks = { lastUpdate: [], manifest: [], brokenLinkStamps: [], conflictMarkers: [], provenance: [], privacyHits: [] };
 
-  checks.lastUpdate = checkLastUpdate(readWorktreeState(subject, "openwiki/.last-update.json"), sourceHead);
+  const lastUpdate = readWorktreeState(subject, "openwiki/.last-update.json");
+  checks.lastUpdate = checkLastUpdate(lastUpdate, sourceHead);
   if (checks.lastUpdate.length > 0) reasons.push(reason("LAST_UPDATE_INVALID", { problems: checks.lastUpdate }));
 
   const manifest = readWorktreeState(subject, "openwiki/.page-manifest.json");
@@ -484,6 +494,8 @@ function validateGenerated(subject, generated, sourceHead, terms) {
     reasons.push(reason("PROVENANCE_INVALID", { count: checks.provenance.length, problems }));
   }
 
+  // Run metadata is published too: its free-text values go through the same scan.
+  items.push(...metadataPrivacyItems(lastUpdate, manifest));
   checks.privacyHits = scanPrivacy(items, terms);
   if (checks.privacyHits.length > 0) {
     const categories = PRIVACY_CATEGORIES.filter((category) => checks.privacyHits.some((hit) => hit.category === category));
@@ -837,6 +849,9 @@ export async function runNightly(config, deps) {
 
 export function configFromEnv(env, argv = []) {
   const repository = env.HONE_WIKI_REPOSITORY;
+  // Validated before any conversion; an invalid limit is null here and
+  // PRECONDITION in checkEnvironment, by name only.
+  const limits = runLimits(env);
   return {
     enabled: env.HONE_WIKI_NIGHTLY === "on",
     publish: env.HONE_WIKI_PUBLISH === "on" && !argv.includes("--no-publish"),
@@ -850,8 +865,8 @@ export function configFromEnv(env, argv = []) {
     denylistFile: env.HONE_WIKI_DENYLIST_FILE,
     modelId: env.OPENWIKI_MODEL_ID,
     identity: { name: env.HONE_WIKI_GIT_AUTHOR_NAME, email: env.HONE_WIKI_GIT_AUTHOR_EMAIL },
-    minFreeBytes: Number(env.HONE_WIKI_MIN_FREE_GB ?? 10) * 2 ** 30,
-    timeoutMs: Number(env.HONE_WIKI_RUN_TIMEOUT_MIN ?? 90) * 60_000,
+    minFreeBytes: limits.minFreeBytes,
+    timeoutMs: limits.timeoutMs,
     env,
   };
 }

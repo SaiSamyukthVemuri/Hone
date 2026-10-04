@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { KNOWN_SIDE_EFFECT_PATHS, classifyPath, normalizePath } from "./paths.mjs";
+import { KNOWN_SIDE_EFFECT_PATHS, RUN_METADATA_PATHS, classifyPath, normalizePath } from "./paths.mjs";
 import { git } from "./source-head.mjs";
 
 // ---------------------------------------------------------------- run scope
@@ -267,27 +267,69 @@ export const LAST_UPDATE_PROBLEMS = Object.freeze([
   "missing",
   "malformed",
   "not-an-object",
+  "unknown-key",
+  "invalid-updated-at",
   "command-not-update",
+  "invalid-model",
   "status-not-complete",
+  "invalid-language",
   "git-head-mismatch",
 ]);
 
+const LAST_UPDATE_KEYS = new Set(["updatedAt", "command", "gitHead", "model", "status", "language"]);
+// What openwiki@0.6.1 writes for updatedAt: new Date().toISOString().
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+
+/** A free-text metadata value: a non-blank string with no control characters. It is privacy-scanned, never trusted. */
+function isMetadataText(value) {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/u.test(value);
+}
+
 /**
- * openwiki/.last-update.json after a runner run (a readWorktreeState result)
- * must name the source head the runner pinned, as a completed update.
- * Anything else means the generator did not document what the runner thinks
- * it documented.
+ * A language openwiki@0.6.1 resolveLanguage would record: a canonical locale
+ * tag whose primary language Intl recognizes. A variant subtag can still carry
+ * a word, so the value is privacy-scanned too (metadataPrivacyItems).
+ */
+function isResolvedLanguage(value) {
+  if (typeof value !== "string" || value.length === 0) return false;
+  try {
+    const [canonical] = Intl.getCanonicalLocales(value);
+    if (canonical !== value) return false;
+    const primary = new Intl.Locale(canonical).language;
+    const name = new Intl.DisplayNames(["en"], { type: "language" }).of(primary);
+    return Boolean(name) && name.toLowerCase() !== primary.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * openwiki/.last-update.json after a runner run (a readWorktreeState result),
+ * against the strict schema openwiki@0.6.1 writes it with (agent/utils.js
+ * writeLastUpdateMetadata, generation/run-state.js UpdateMetadataSchema):
+ *
+ *   { updatedAt: ISO instant, command: "init"|"update", gitHead?: string,
+ *     model: string, status: "complete"|"interrupted", language?: string }
+ *
+ * No other key is allowed, so no extra key can carry text. The runner further
+ * requires a completed update recording exactly the pinned source head, a
+ * non-blank model and a resolvable language. `model` and `language` are free
+ * text, so metadataPrivacyItems scans them.
  */
 export function checkLastUpdate(state, sourceHead) {
   if (state?.state === "absent") return ["missing"];
   if (state?.state !== "present-valid") return ["malformed"];
   const metadata = state.value;
   if (!isPlainObject(metadata)) return ["not-an-object"];
-  const problems = [];
-  if (metadata.command !== "update") problems.push("command-not-update");
-  if (metadata.status !== "complete") problems.push("status-not-complete");
-  if (metadata.gitHead !== sourceHead) problems.push("git-head-mismatch");
-  return problems;
+  const problems = new Set();
+  if (Object.keys(metadata).some((key) => !LAST_UPDATE_KEYS.has(key))) problems.add("unknown-key");
+  if (typeof metadata.updatedAt !== "string" || !ISO_INSTANT.test(metadata.updatedAt)) problems.add("invalid-updated-at");
+  if (metadata.command !== "update") problems.add("command-not-update");
+  if (!isMetadataText(metadata.model)) problems.add("invalid-model");
+  if (metadata.status !== "complete") problems.add("status-not-complete");
+  if (metadata.language !== undefined && !isResolvedLanguage(metadata.language)) problems.add("invalid-language");
+  if (metadata.gitHead !== sourceHead) problems.add("git-head-mismatch");
+  return LAST_UPDATE_PROBLEMS.filter((code) => problems.has(code));
 }
 
 /** What checkPageManifest can find, as codes. */
@@ -310,6 +352,12 @@ export const MANIFEST_PROBLEMS = Object.freeze([
 
 const MANIFEST_ENTRY_KEYS = new Set(["gitHead", "sourceFingerprint", "pageVersion", "completedBy", "completedRunId"]);
 const SHA256_DIGEST = /^sha256:[a-f0-9]{64}$/u;
+const COMMIT_SHA = /^[0-9a-f]{40}$/u;
+// The producers openwiki@0.6.1 records: the CLI as openwiki/<version>
+// (version.js OPENWIKI_PRODUCER_ACTOR), or a host integration id
+// (integrations/core/protocol.js HOST_ID_PATTERN). A host id can still spell
+// a name, so completedBy is privacy-scanned too (metadataPrivacyItems).
+const PRODUCER_ID = /^(?:openwiki\/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?|[a-z0-9-]{1,64})$/u;
 // zod 4's z.string().uuid(), which openwiki@0.6.1 applies to completedRunId.
 const ZOD_UUID = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/u;
 const RESERVED_WIKI_FILES = new Set(["index.md", "log.md", "instructions.md"]);
@@ -331,9 +379,14 @@ function isCanonicalFactualPageKey(page) {
  * zod objects):
  *
  *   { schemaVersion: 1, pages: { "/openwiki/<factual page>.md": entry } }
- *   entry: { pageVersion: "sha256:<64 hex>", gitHead?: non-empty string,
- *            sourceFingerprint?: "sha256:<64 hex>", completedBy?: non-blank
- *            string, completedRunId?: UUID }
+ *   entry: { pageVersion: "sha256:<64 hex>", gitHead?: string,
+ *            sourceFingerprint?: "sha256:<64 hex>", completedBy?: string,
+ *            completedRunId?: UUID }
+ *
+ * Where OpenWiki's schema allows any string, the runner holds the field to
+ * what OpenWiki actually writes: gitHead is the run's full commit SHA, and
+ * completedBy a producer id. Page keys and completedBy are still free enough
+ * to spell a name, so metadataPrivacyItems scans them.
  *
  * The manifest is OpenWiki's committed record of page coverage, and every run
  * rewrites it, a metadata-only run included. So it is checked on every run,
@@ -358,11 +411,11 @@ export function checkPageManifest(state) {
       }
       if (Object.keys(entry).some((key) => !MANIFEST_ENTRY_KEYS.has(key))) problems.add("unknown-entry-key");
       if (typeof entry.pageVersion !== "string" || !SHA256_DIGEST.test(entry.pageVersion)) problems.add("invalid-page-version");
-      if (entry.gitHead !== undefined && !(typeof entry.gitHead === "string" && entry.gitHead.length > 0)) problems.add("invalid-git-head");
+      if (entry.gitHead !== undefined && !(typeof entry.gitHead === "string" && COMMIT_SHA.test(entry.gitHead))) problems.add("invalid-git-head");
       if (entry.sourceFingerprint !== undefined && !(typeof entry.sourceFingerprint === "string" && SHA256_DIGEST.test(entry.sourceFingerprint))) {
         problems.add("invalid-source-fingerprint");
       }
-      if (entry.completedBy !== undefined && !(typeof entry.completedBy === "string" && entry.completedBy.trim().length > 0)) problems.add("invalid-completed-by");
+      if (entry.completedBy !== undefined && !(typeof entry.completedBy === "string" && PRODUCER_ID.test(entry.completedBy))) problems.add("invalid-completed-by");
       if (entry.completedRunId !== undefined && !(typeof entry.completedRunId === "string" && ZOD_UUID.test(entry.completedRunId))) {
         problems.add("invalid-completed-run-id");
       }
@@ -501,6 +554,11 @@ function humanizePath(p) {
   return p.replace(/[-_./]+/gu, " ").trim();
 }
 
+/** One scan line holding a value as written and humanized, so `jane-doe` also matches the term "Jane Doe". */
+function writtenAndHumanized(value) {
+  return `${value} ${humanizePath(value)}`;
+}
+
 /**
  * THE PATH GATE. It runs over every path a run changed (generated pages and
  * metadata, OpenWiki's known side effects, and unexpected writes, whether
@@ -531,24 +589,67 @@ export function gateChangedPaths(changes, terms = {}) {
   return { scanned: changes.length, rejected, categories: PATH_GATE_CATEGORIES.filter((c) => categories.has(c)), cleared };
 }
 
+/** Sidecar fields that hold only digests and counts, never text. */
+const SIDECAR_DIGEST_KEYS = new Set(["pageVersion", "version"]);
+
 /**
- * The privacy-scan items for one generated file. Pages are scanned whole.
- * Claim sidecars are scanned by statement and evidence resource only: their
- * evidence `version` fields hold OpenWiki's base64 metadata, which looks like
- * a token by construction; for a sidecar, a hit's `line` counts statements
- * and evidence resources in order. Run metadata is not prose and is skipped.
+ * The privacy-scan items for one generated file: everything it publishes,
+ * unless a strict grammar shows it cannot carry text.
+ *
+ * - Pages, and any generated file of an unknown type, are scanned whole.
+ * - A Claim sidecar is scanned by every key and every string value (as
+ *   written and humanized) except its `pageVersion` and evidence `version`
+ *   fields. Those hold OpenWiki digests
+ *   (the evidence version is a sha256 plus base64url line counts and hashes,
+ *   claims/evidence/repository/resolver.js), which look like tokens by
+ *   construction. For a sidecar, a hit's `line` counts the scanned strings in
+ *   document order.
+ * - Run metadata is scanned field by field against its schema
+ *   (metadataPrivacyItems), so it is skipped here.
  */
 export function privacyItemsFor(filePath, content) {
   const p = normalizePath(filePath);
-  if (p.endsWith(".md")) return [{ file: p, lines: String(content).split(/\r?\n/u) }];
+  if (RUN_METADATA_PATHS.has(p)) return [];
   if (p.startsWith("openwiki/.claims/") && p.endsWith(".json")) {
-    const parsed = JSON.parse(content);
     const lines = [];
-    for (const claim of parsed.claims ?? []) {
-      lines.push(String(claim.statement ?? ""));
-      for (const evidence of claim.evidence ?? []) lines.push(String(evidence.resource ?? ""));
-    }
+    const walk = (node, key) => {
+      if (typeof node === "string") {
+        if (!SIDECAR_DIGEST_KEYS.has(key)) lines.push(writtenAndHumanized(node));
+      } else if (Array.isArray(node)) {
+        for (const item of node) walk(item, key);
+      } else if (isPlainObject(node)) {
+        for (const [name, value] of Object.entries(node)) {
+          lines.push(name);
+          walk(value, name);
+        }
+      }
+    };
+    walk(JSON.parse(content), "");
     return [{ file: p, lines }];
   }
-  return [];
+  return [{ file: p, lines: String(content).split(/\r?\n/u) }];
+}
+
+/**
+ * The privacy-scan items for run metadata: every value a strict grammar does
+ * not pin down. These are `.last-update.json`'s `model` and `language`, and
+ * every `.page-manifest.json` page key (as written and humanized) and
+ * `completedBy`, each as written and humanized. Digests, SHAs, UUIDs,
+ * timestamps and enums are held to their
+ * grammar by checkLastUpdate and checkPageManifest instead. A hit's `line`
+ * counts the scanned values in order, never quoting one.
+ */
+export function metadataPrivacyItems(lastUpdate, manifest) {
+  const items = [];
+  const metadata = lastUpdate?.state === "present-valid" && isPlainObject(lastUpdate.value) ? lastUpdate.value : {};
+  const lastUpdateLines = [metadata.model, metadata.language].filter((value) => typeof value === "string").map(writtenAndHumanized);
+  if (lastUpdateLines.length > 0) items.push({ file: "openwiki/.last-update.json", lines: lastUpdateLines });
+  const pages = manifest?.state === "present-valid" && isPlainObject(manifest.value) && isPlainObject(manifest.value.pages) ? manifest.value.pages : {};
+  const manifestLines = [];
+  for (const [page, entry] of Object.entries(pages)) {
+    manifestLines.push(writtenAndHumanized(page));
+    if (isPlainObject(entry) && typeof entry.completedBy === "string") manifestLines.push(writtenAndHumanized(entry.completedBy));
+  }
+  if (manifestLines.length > 0) items.push({ file: "openwiki/.page-manifest.json", lines: manifestLines });
+  return items;
 }

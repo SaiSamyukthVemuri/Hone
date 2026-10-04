@@ -54,6 +54,44 @@ export const FORBIDDEN_ENV_PREFIXES = Object.freeze(["SUPABASE_", "STRIPE_", "TW
 /** Required names whose value is fixed. */
 export const ENV_VALUE_RULES = Object.freeze({ OPENWIKI_PROVIDER: "anthropic", OPENWIKI_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1" });
 
+/** The optional run limits, by name, with their documented defaults (GB of free disk; minutes per run). */
+export const RUN_LIMIT_DEFAULTS = Object.freeze({ HONE_WIKI_MIN_FREE_GB: 10, HONE_WIKI_RUN_TIMEOUT_MIN: 90 });
+
+/** The longest delay a Node timer can hold; a longer one fires at once. */
+export const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * THE parser for both optional run limits. Unset or blank (whitespace only)
+ * means the documented default. Anything else must be a plain decimal
+ * (digits, optionally a fractional part) whose value is finite and above
+ * zero. Otherwise the result is null, never a coerced number: "NaN",
+ * "Infinity", "-1", "0", "1e3" and "ten" are all refused.
+ */
+export function parseRunLimit(raw, fallback) {
+  if (raw === undefined || raw === null) return fallback;
+  const text = String(raw).trim();
+  if (text === "") return fallback;
+  if (!/^\d+(?:\.\d+)?$/u.test(text)) return null;
+  const value = Number(text);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * Both limits, validated first and only then converted: minFreeBytes and
+ * timeoutMs are finite positive numbers, or null when the variable is
+ * invalid. A timeout must also fit a Node timer.
+ */
+export function runLimits(env) {
+  const minFreeGb = parseRunLimit(env.HONE_WIKI_MIN_FREE_GB, RUN_LIMIT_DEFAULTS.HONE_WIKI_MIN_FREE_GB);
+  const timeoutMin = parseRunLimit(env.HONE_WIKI_RUN_TIMEOUT_MIN, RUN_LIMIT_DEFAULTS.HONE_WIKI_RUN_TIMEOUT_MIN);
+  const minFreeBytes = minFreeGb === null ? null : minFreeGb * 2 ** 30;
+  const timeoutMs = timeoutMin === null ? null : Math.ceil(timeoutMin * 60_000);
+  return {
+    minFreeBytes: Number.isFinite(minFreeBytes) && minFreeBytes > 0 ? minFreeBytes : null,
+    timeoutMs: Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= MAX_TIMER_MS ? timeoutMs : null,
+  };
+}
+
 /** Every name a report may carry. */
 export const KNOWN_ENV_NAMES = Object.freeze([...REQUIRED_ENV, ...OPTIONAL_ENV, ...FORBIDDEN_ENV]);
 
@@ -79,5 +117,8 @@ export function checkEnvironment(env, required = REQUIRED_ENV) {
   for (const [name, expected] of Object.entries(ENV_VALUE_RULES)) {
     if (required.includes(name) && env[name] && env[name] !== expected) reasons.push({ code: "ENV_VALUE_INVALID", details: { name } });
   }
+  const limits = runLimits(env);
+  if (limits.minFreeBytes === null) reasons.push({ code: "RUN_LIMIT_INVALID", details: { name: "HONE_WIKI_MIN_FREE_GB" } });
+  if (limits.timeoutMs === null) reasons.push({ code: "RUN_LIMIT_INVALID", details: { name: "HONE_WIKI_RUN_TIMEOUT_MIN" } });
   return reasons;
 }

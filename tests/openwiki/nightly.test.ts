@@ -8,6 +8,7 @@ import {
   buildGeneratorInvocation,
   checkEnvironment,
   cliSummary,
+  configFromEnv,
   createAppTokenSource,
   readOwnerOnlySecret,
   runOpenWikiProcess,
@@ -17,6 +18,8 @@ import {
 } from "../../scripts/openwiki/nightly.mjs";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { renderReasons } from "../../scripts/openwiki/report.mjs";
+// @ts-expect-error - .mjs utility ships without type declarations
+import { MAX_TIMER_MS, parseRunLimit } from "../../scripts/openwiki/environment.mjs";
 import {
   AGENTS_AUTHORED,
   AGENTS_TEMPLATE_REWRITE,
@@ -74,7 +77,7 @@ function setup(fx: Fx, overrides: Record<string, unknown> = {}) {
     denylistFile: writePrivate(path.join(host, "denylist"), "Synthetic Person\n"),
     modelId: "claude-fixture",
     identity: IDENTITY,
-    minFreeBytes: 0,
+    minFreeBytes: 1,
     timeoutMs: 60_000,
     env: {},
     requiredEnv: [],
@@ -118,6 +121,12 @@ function originBranches(fx: Fx): string[] {
   return git(fx.origin, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]).split("\n").filter(Boolean);
 }
 
+/** openwiki/.last-update.json exactly as openwiki@0.6.1 writes it (agent/utils.js writeLastUpdateMetadata). */
+function lastUpdateJson(gitHead: string, overrides: Record<string, unknown> = {}): string {
+  const metadata = { updatedAt: "2026-10-05T03:30:00.000Z", command: "update", gitHead, model: "claude-fixture", status: "complete", language: "en", ...overrides };
+  return `${JSON.stringify(metadata, null, 2)}\n`;
+}
+
 /**
  * Simulates `openwiki code --update --print`, including its writes outside
  * openwiki/. `pages` runs before OpenWiki's finish step (provenance, run
@@ -133,8 +142,7 @@ function openWikiLike(opts: { pages?: (cwd: string) => void; after?: (cwd: strin
     git(cwd, ["rm", "--quiet", "openwiki/topic/old-page.md"]);
     opts.pages?.(cwd);
     stampProvenance(cwd, ["openwiki/topic/kept-page.md", "openwiki/topic/new-page.md"], ["openwiki/topic/old-page.md"]);
-    const head = git(cwd, ["rev-parse", "HEAD"]);
-    write(cwd, "openwiki/.last-update.json", `${JSON.stringify({ command: "update", gitHead: head, status: "complete", language: "en" }, null, 2)}\n`);
+    write(cwd, "openwiki/.last-update.json", lastUpdateJson(git(cwd, ["rev-parse", "HEAD"])));
     write(cwd, "AGENTS.md", AGENTS_TEMPLATE_REWRITE);
     write(cwd, ".github/workflows/openwiki-update.yml", OPENWIKI_SCAFFOLD_WORKFLOW);
     opts.after?.(cwd);
@@ -143,10 +151,9 @@ function openWikiLike(opts: { pages?: (cwd: string) => void; after?: (cwd: strin
 }
 
 /** A run that only refreshes run metadata, as OpenWiki's no-op path or an empty plan does. */
-function metadataOnly(opts: { manifest?: (cwd: string) => void } = {}): Gen {
+function metadataOnly(opts: { lastUpdate?: Record<string, unknown>; manifest?: (cwd: string) => void } = {}): Gen {
   return async ({ cwd }) => {
-    const head = git(cwd, ["rev-parse", "HEAD"]);
-    write(cwd, "openwiki/.last-update.json", `${JSON.stringify({ command: "update", gitHead: head, status: "complete", language: "en" }, null, 2)}\n`);
+    write(cwd, "openwiki/.last-update.json", lastUpdateJson(git(cwd, ["rev-parse", "HEAD"]), opts.lastUpdate));
     opts.manifest?.(cwd);
     return { exitCode: 0 };
   };
@@ -685,9 +692,10 @@ describe("G3: privacy hits are represented in report.checks without what they ma
       }),
     );
     expect(result.reasonCode).toBe("CONTENT_PRIVACY_HITS");
+    // Sidecar lines count every scanned key and string: schemaVersion, claims, id, "claim_1", statement, <the statement>.
     expect(result.report.checks.privacyHits).toEqual([
-      { file: "openwiki/.claims/topic/kept-page.json", line: 1, category: "email" },
-      { file: "openwiki/.claims/topic/kept-page.json", line: 1, category: "denylist-term" },
+      { file: "openwiki/.claims/topic/kept-page.json", line: 6, category: "email" },
+      { file: "openwiki/.claims/topic/kept-page.json", line: 6, category: "denylist-term" },
     ]);
     expectNowhere(config.stateDir, result, ["synthetic person", "zz.unique.person@hone.example.org"]);
   });
@@ -894,6 +902,170 @@ describe("G10: no error text, API text or repository text reaches a sink", () =>
     expect(result.outcome, result.reason).toBe("PRECONDITION");
     expect(result.report.safeDetails).toEqual({ phase: "start", cause: "unknown" });
     expectNowhere(ctx.config.stateDir, result, LITERALS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #786 review of 826eea45: generated run metadata is published, so it is held
+// to OpenWiki's own strict schemas and every free-text value in it goes
+// through the same privacy scan. The optional run limits are validated by one
+// parser before they are converted.
+// ---------------------------------------------------------------------------
+
+describe("run metadata: strict schemas, and the same privacy scan for every free-text value", () => {
+  const setCompletedBy = (value: string) => (cwd: string) => {
+    const manifest = JSON.parse(read(cwd, "openwiki/.page-manifest.json"));
+    for (const entry of Object.values(manifest.pages) as Array<Record<string, string>>) entry.completedBy = value;
+    write(cwd, "openwiki/.page-manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
+  };
+  const addEntryKey = (cwd: string) => {
+    const manifest = JSON.parse(read(cwd, "openwiki/.page-manifest.json"));
+    (Object.values(manifest.pages)[0] as Record<string, string>).reviewer = "Synthetic Person";
+    write(cwd, "openwiki/.page-manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
+  };
+
+  it.each([
+    ["a denylisted name as completedBy, in a valid host-id form", { manifest: setCompletedBy("synthetic-person") }, "CONTENT_PRIVACY_HITS", ["synthetic-person"]],
+    ["a tenant slug as completedBy", { manifest: setCompletedBy("synthetic-studio-one") }, "CONTENT_PRIVACY_HITS", ["synthetic-studio-one"]],
+    ["a completedBy that is not an OpenWiki producer id at all", { manifest: setCompletedBy("Synthetic Person") }, "MANIFEST_INVALID", ["synthetic person"]],
+    ["an unknown textual key in a manifest entry", { manifest: addEntryKey }, "MANIFEST_INVALID", ["synthetic person"]],
+    ["a denylisted name in .last-update.json's model", { lastUpdate: { model: "synthetic-person/claude" } }, "CONTENT_PRIVACY_HITS", ["synthetic-person"]],
+    ["an email address as the model", { lastUpdate: { model: "zz.unique.person@hone.example.org" } }, "CONTENT_PRIVACY_HITS", ["zz.unique.person@hone.example.org"]],
+    ["an unknown textual key in .last-update.json", { lastUpdate: { note: "Synthetic Person" } }, "LAST_UPDATE_INVALID", ["synthetic person"]],
+    ["a language that is not a locale OpenWiki resolves", { lastUpdate: { language: "Synthetic Person" } }, "LAST_UPDATE_INVALID", ["synthetic person"]],
+    ["a model that is blank", { lastUpdate: { model: "  " } }, "LAST_UPDATE_INVALID", []],
+    ["an updatedAt that is not an ISO instant", { lastUpdate: { updatedAt: "Synthetic Person" } }, "LAST_UPDATE_INVALID", ["synthetic person"]],
+  ])("a metadata-only run with %s FAILS, publishes nothing, and no sink holds the value", async (_label: string, opts: Record<string, unknown>, reasonCode: string, literals: string[]) => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, prs, config } = await run(fx, metadataOnly(opts));
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(result.reasonCode, result.reason).toBe(reasonCode);
+    expect(result.report.metadataOnly).toBe(true);
+    expect(prs).toEqual([]);
+    expect(originBranches(fx)).toEqual(["main"]);
+    expectNowhere(config.stateDir, result, literals);
+  });
+
+  it("a denylisted word in a language variant subtag is a valid locale, so the scan is what catches it", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, config } = await run(fx, metadataOnly({ lastUpdate: { language: "en-quillon" } }), {
+      denylistFile: writePrivate(path.join(fx.root, "denylist-variant"), "Synthetic Person\nQuillon\n"),
+    });
+    expect(result.reasonCode, result.reason).toBe("CONTENT_PRIVACY_HITS");
+    expect(result.report.checks.lastUpdate).toEqual([]);
+    expect(result.report.checks.privacyHits).toEqual([{ file: "openwiki/.last-update.json", line: 2, category: "denylist-term" }]);
+    expectNowhere(config.stateDir, result, ["quillon"]);
+  });
+
+  it("a hyphenated name in a Claim sidecar's verification producer is caught (every sidecar string is scanned)", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, config } = await run(
+      fx,
+      openWikiLike({
+        pages: (cwd) => {
+          const sidecar = JSON.parse(read(cwd, "openwiki/.claims/topic/kept-page.json"));
+          sidecar.verification = { by: "synthetic-person", at: "2026-10-05T03:30:00.000Z" };
+          write(cwd, "openwiki/.claims/topic/kept-page.json", JSON.stringify(sidecar));
+        },
+      }),
+    );
+    expect(result.reasonCode, result.reason).toBe("CONTENT_PRIVACY_HITS");
+    expect(result.report.checks.privacyHits).toEqual([expect.objectContaining({ file: "openwiki/.claims/topic/kept-page.json", category: "denylist-term" })]);
+    expectNowhere(config.stateDir, result, ["synthetic-person"]);
+  });
+
+  it("a generated file of an unknown type is scanned whole", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, config } = await run(fx, openWikiLike({ pages: (cwd) => write(cwd, "openwiki/notes.txt", "Owner: Synthetic Person\n") }));
+    expect(result.reasonCode, result.reason).toBe("CONTENT_PRIVACY_HITS");
+    expect(result.report.checks.privacyHits).toEqual([{ file: "openwiki/notes.txt", line: 1, category: "denylist-term" }]);
+    expectNowhere(config.stateDir, result, ["synthetic person"]);
+  });
+
+  it("metadata in OpenWiki's real shape still publishes, including a completedBy from the pinned CLI", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result } = await run(fx, metadataOnly({ manifest: setCompletedBy("openwiki/0.6.1") }));
+    expect(result.outcome, result.reason).toBe("PUBLISHED");
+    expect(result.report.checks.lastUpdate).toEqual([]);
+    expect(result.report.checks.manifest).toEqual([]);
+    expect(result.report.checks.privacyHits).toEqual([]);
+  });
+});
+
+describe("optional run limits: one parser, validated before conversion", () => {
+  const GB = 2 ** 30;
+  const VARIABLES: Array<[string, "minFreeBytes" | "timeoutMs", number, number]> = [
+    // [variable, config field, its unit in the field, documented default]
+    ["HONE_WIKI_MIN_FREE_GB", "minFreeBytes", GB, 10],
+    ["HONE_WIKI_RUN_TIMEOUT_MIN", "timeoutMs", 60_000, 90],
+  ];
+
+  describe.each(VARIABLES)("%s", (name: string, field: "minFreeBytes" | "timeoutMs", unit: number, fallback: number) => {
+    it.each([
+      ["unset", undefined, fallback],
+      ["blank", "", fallback],
+      ["whitespace only", "   ", fallback],
+      ["a valid integer", "25", 25],
+      ["a valid positive decimal", "1.5", 1.5],
+      ["a number with surrounding whitespace", " 7 ", 7],
+    ])("%s gives a finite positive value", (_label: string, raw: string | undefined, expected: number) => {
+      const env = raw === undefined ? {} : { [name]: raw };
+      const config = configFromEnv(env);
+      expect(config[field]).toBe(Math.ceil(expected * unit));
+      expect(Number.isFinite(config[field]) && config[field] > 0).toBe(true);
+      expect(checkEnvironment(env, [])).toEqual([]);
+    });
+
+    it.each([["0"], ["0.0"], ["-1"], ["-0.5"], ["ten"], ["Infinity"], ["-Infinity"], ["NaN"], ["1e3"], ["0x10"], ["12 parsecs"]])(
+      "%j is PRECONDITION by name, never coerced",
+      (raw: string) => {
+        expect(configFromEnv({ [name]: raw })[field]).toBeNull();
+        const reasons = checkEnvironment({ [name]: raw }, []);
+        expect(reasons).toEqual([{ code: "RUN_LIMIT_INVALID", details: { name } }]);
+        const text = renderReasons(reasons);
+        expect(text).toContain(name);
+        expect(text.includes(raw), text).toBe(false);
+      },
+    );
+  });
+
+  it("a timeout too long for a Node timer (it would fire at once) is refused too", () => {
+    expect(parseRunLimit("40000", 90)).toBe(40000);
+    expect(configFromEnv({ HONE_WIKI_RUN_TIMEOUT_MIN: "40000" }).timeoutMs).toBeNull();
+    expect(configFromEnv({ HONE_WIKI_RUN_TIMEOUT_MIN: "35791" }).timeoutMs).toBeLessThanOrEqual(MAX_TIMER_MS);
+  });
+
+  it.each([
+    ["HONE_WIKI_MIN_FREE_GB", "Infinity"],
+    ["HONE_WIKI_RUN_TIMEOUT_MIN", "12 parsecs"],
+  ])("an invalid %s in the environment stops the pass before OpenWiki runs, naming only the variable", async (name: string, raw: string) => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, generator, config } = await run(fx, openWikiLike(), { env: { [name]: raw } });
+    expect(result.outcome, result.reason).toBe("PRECONDITION");
+    expect(result.reasonCode).toBe("RUN_LIMIT_INVALID");
+    expect(result.report.safeDetails).toEqual({ name });
+    expect(generator).not.toHaveBeenCalled();
+    expectNowhere(config.stateDir, result, [raw]);
+  });
+
+  it.each([
+    ["a NaN disk floor", { minFreeBytes: Number.NaN }, "HONE_WIKI_MIN_FREE_GB"],
+    ["a zero timeout", { timeoutMs: 0 }, "HONE_WIKI_RUN_TIMEOUT_MIN"],
+    ["a timeout longer than a timer holds", { timeoutMs: MAX_TIMER_MS + 1 }, "HONE_WIKI_RUN_TIMEOUT_MIN"],
+  ])("a config carrying %s is refused before OpenWiki runs, whatever built it", async (_label: string, overrides: Record<string, unknown>, name: string) => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, generator } = await run(fx, openWikiLike(), overrides);
+    expect(result.outcome, result.reason).toBe("PRECONDITION");
+    expect(result.reasonCode).toBe("RUN_LIMIT_INVALID");
+    expect(result.report.safeDetails).toEqual({ name });
+    expect(generator).not.toHaveBeenCalled();
   });
 });
 

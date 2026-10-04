@@ -15,6 +15,7 @@ import {
   gateChangedPaths,
   inspectWorkflow,
   loadTenantSlugs,
+  metadataPrivacyItems,
   parseDenylist,
   parseTenantRegister,
   privacyItemsFor,
@@ -93,14 +94,39 @@ describe("page and metadata checks", () => {
 
   it("requires a completed update recording exactly the pinned source head, and tells missing from malformed", () => {
     const sha = "b".repeat(40);
-    const valid = (value: unknown) => ({ state: "present-valid", value });
-    expect(checkLastUpdate(valid({ command: "update", status: "complete", gitHead: sha }), sha)).toEqual([]);
-    expect(checkLastUpdate(valid({ command: "init", status: "complete", gitHead: sha }), sha)).toEqual(["command-not-update"]);
-    expect(checkLastUpdate(valid({ command: "update", status: "interrupted", gitHead: sha }), sha)).toEqual(["status-not-complete"]);
-    expect(checkLastUpdate(valid({ command: "update", status: "complete", gitHead: "c".repeat(40) }), sha)).toEqual(["git-head-mismatch"]);
-    expect(checkLastUpdate(valid(["update"]), sha)).toEqual(["not-an-object"]);
+    const base = { updatedAt: "2026-10-05T03:30:00.000Z", command: "update", gitHead: sha, model: "claude-fixture", status: "complete", language: "en" };
+    const check = (overrides: Record<string, unknown>) => checkLastUpdate({ state: "present-valid", value: { ...base, ...overrides } }, sha);
+    expect(check({})).toEqual([]);
+    expect(check({ command: "init" })).toEqual(["command-not-update"]);
+    expect(check({ status: "interrupted" })).toEqual(["status-not-complete"]);
+    expect(check({ gitHead: "c".repeat(40) })).toEqual(["git-head-mismatch"]);
+    expect(checkLastUpdate({ state: "present-valid", value: ["update"] }, sha)).toEqual(["not-an-object"]);
     expect(checkLastUpdate({ state: "absent" }, sha)).toEqual(["missing"]);
     expect(checkLastUpdate({ state: "present-invalid" }, sha)).toEqual(["malformed"]);
+  });
+
+  it.each([
+    ["an extra key, whatever it holds", { note: "Synthetic Person" }, "unknown-key"],
+    ["no updatedAt", { updatedAt: undefined }, "invalid-updated-at"],
+    ["an updatedAt that is not an ISO instant", { updatedAt: "yesterday" }, "invalid-updated-at"],
+    ["no model", { model: undefined }, "invalid-model"],
+    ["a blank model", { model: " " }, "invalid-model"],
+    ["a model with a control character", { model: "claude\nfixture" }, "invalid-model"],
+    ["a language that is not a locale", { language: "Synthetic Person" }, "invalid-language"],
+    ["a language in a non-canonical spelling", { language: "EN" }, "invalid-language"],
+    ["a language Intl does not recognize", { language: "xx" }, "invalid-language"],
+  ])(".last-update.json is held to openwiki@0.6.1's strict schema: %s", (_label: string, overrides: Record<string, unknown>, problem: string) => {
+    const sha = "b".repeat(40);
+    const value: Record<string, unknown> = { updatedAt: "2026-10-05T03:30:00.000Z", command: "update", gitHead: sha, model: "claude-fixture", status: "complete", language: "en", ...overrides };
+    for (const key of Object.keys(value)) if (value[key] === undefined) delete value[key];
+    expect(checkLastUpdate({ state: "present-valid", value }, sha)).toEqual([problem]);
+  });
+
+  it("accepts a language without it (optional), and a canonical regional locale", () => {
+    const sha = "b".repeat(40);
+    const base = { updatedAt: "2026-10-05T03:30:00.000Z", command: "update", gitHead: sha, model: "claude-fixture", status: "complete" };
+    expect(checkLastUpdate({ state: "present-valid", value: base }, sha)).toEqual([]);
+    expect(checkLastUpdate({ state: "present-valid", value: { ...base, language: "pt-BR" } }, sha)).toEqual([]);
   });
 
   it("accepts no markers or one ordered pair, and refuses anything else", () => {
@@ -248,12 +274,71 @@ describe("the page manifest: openwiki@0.6.1's strict schema, on every run", () =
     ["no pageVersion", { schemaVersion: 1, pages: { "/openwiki/a.md": {} } }, "invalid-page-version"],
     ["an uppercase pageVersion", { schemaVersion: 1, pages: { "/openwiki/a.md": { pageVersion: `sha256:${"A".repeat(64)}` } } }, "invalid-page-version"],
     ["an empty gitHead", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, gitHead: "" } } }, "invalid-git-head"],
+    ["a gitHead that is not a full commit SHA", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, gitHead: "Synthetic Person" } } }, "invalid-git-head"],
+    ["a completedBy that is no producer id", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, completedBy: "Synthetic Person" } } }, "invalid-completed-by"],
     ["a malformed fingerprint", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, sourceFingerprint: "md5:x" } } }, "invalid-source-fingerprint"],
     ["a blank completedBy", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, completedBy: "  " } } }, "invalid-completed-by"],
     ["a non-UUID completedRunId", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, completedRunId: "run-1" } } }, "invalid-completed-run-id"],
     ["a null optional field", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, gitHead: null } } }, "invalid-git-head"],
   ])("refuses %s", (_label: string, manifest: unknown, problem: string) => {
     expect(valid(manifest)).toEqual([problem]);
+  });
+});
+
+describe("run metadata: every free-text value is privacy-scanned, and the repository's own metadata passes", () => {
+  const terms = { denylistTerms: parseDenylist("Synthetic Person\n"), tenantSlugs: ["synthetic-studio-one"] };
+  const lastUpdate = (value: Record<string, unknown>) => ({ state: "present-valid", value });
+  const manifest = (pages: Record<string, unknown>) => ({ state: "present-valid", value: { schemaVersion: 1, pages } });
+  const digest = `sha256:${"a".repeat(64)}`;
+
+  it("scans model, language, every page key and every completedBy, as written and humanized", () => {
+    const items = metadataPrivacyItems(
+      lastUpdate({ model: "synthetic-person/claude", language: "en", updatedAt: "2026-10-05T03:30:00.000Z" }),
+      manifest({ "/openwiki/studios/synthetic-studio-one.md": { pageVersion: digest, completedBy: "claude-code" }, "/openwiki/a.md": { pageVersion: digest, completedBy: "synthetic-person" } }),
+    );
+    expect(scanPrivacy(items, terms)).toEqual([
+      { file: "openwiki/.last-update.json", line: 1, category: "denylist-term" },
+      { file: "openwiki/.page-manifest.json", line: 1, category: "tenant-slug" },
+      { file: "openwiki/.page-manifest.json", line: 4, category: "denylist-term" },
+    ]);
+  });
+
+  it("never scans what a strict grammar pins down (a UUID run id would otherwise look like private data)", () => {
+    const items = metadataPrivacyItems(
+      lastUpdate({ model: "claude-fixture", gitHead: "b".repeat(40), updatedAt: "2026-10-05T03:30:00.000Z" }),
+      manifest({ "/openwiki/a.md": { pageVersion: digest, completedRunId: "123e4567-e89b-42d3-a456-426614174000", gitHead: "b".repeat(40) } }),
+    );
+    expect(scanPrivacy(items, terms)).toEqual([]);
+    expect(JSON.stringify(items)).not.toContain("123e4567");
+  });
+
+  it("the repository's own committed metadata holds the strict schemas and scans clean against the real tenant register", () => {
+    const committed = readWorktreeState(REPO_ROOT, "openwiki/.last-update.json");
+    expect(checkLastUpdate(committed, committed.value.gitHead)).toEqual([]);
+    const pages = readWorktreeState(REPO_ROOT, "openwiki/.page-manifest.json");
+    expect(checkPageManifest(pages)).toEqual([]);
+    const tenantSlugs = parseTenantRegister(readFileSync(path.join(REPO_ROOT, "docs/production/current-state.md"), "utf8")).slugs;
+    expect(tenantSlugs.length).toBeGreaterThan(0);
+    expect(scanPrivacy(metadataPrivacyItems(committed, pages), { tenantSlugs })).toEqual([]);
+  });
+
+  it("scans every key and string of a Claim sidecar, humanized, except its digest fields", () => {
+    const sidecar = JSON.stringify({
+      schemaVersion: 1,
+      pageVersion: digest,
+      claims: [{ id: "claim_1", statement: "Clean.", evidence: [{ resource: "repo://lib/synthetic-person.ts#L1-L2", version: "eyJzZWxlY3RlZExpbmVDb3VudCI6NjB9" }] }],
+      verification: { by: "openwiki/0.6.1", at: "2026-10-05T03:30:00.000Z" },
+      reviewer: "synthetic-studio-one",
+    });
+    const hits = scanPrivacy(privacyItemsFor("openwiki/.claims/a.json", sidecar), terms);
+    expect(hits.map((h: Hit) => h.category).sort()).toEqual(["denylist-term", "tenant-slug"]);
+    expect(hits.every((h: Hit) => h.file === "openwiki/.claims/a.json")).toBe(true);
+  });
+
+  it("scans a generated file of an unknown type whole, and leaves run metadata to the schema-aware scan", () => {
+    expect(privacyItemsFor("openwiki/notes.txt", "a\nb")).toEqual([{ file: "openwiki/notes.txt", lines: ["a", "b"] }]);
+    expect(privacyItemsFor("openwiki/.page-manifest.json", "{}")).toEqual([]);
+    expect(privacyItemsFor("openwiki/.last-update.json", "{}")).toEqual([]);
   });
 });
 

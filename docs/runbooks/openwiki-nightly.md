@@ -122,21 +122,36 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
      processed a new source head. Repository state is the cursor, so the run is validated and published like
      any other; after the merge, the next pass is a startup no-op.
 7. **Checks.**
-   - `openwiki/.last-update.json` is present, parses, is `{command: update, status: complete}` and its `gitHead`
-     equals the source head.
+   - `openwiki/.last-update.json` is present, parses, and holds the strict schema `openwiki@0.6.1` writes it with:
+     `{updatedAt, command, gitHead, model, status, language}` and no other key, so no extra key can carry text.
+     The runner holds the fields to:
+     - `updatedAt`: an ISO instant;
+     - `command`: `update`; `status`: `complete`;
+     - `gitHead`: exactly the source head;
+     - `model`: non-blank text;
+     - `language`: a canonical locale OpenWiki resolves.
    - **The page manifest is a state invariant, checked on every run, metadata-only runs included.**
      `openwiki/.page-manifest.json` must exist, parse, and hold the strict schema `openwiki@0.6.1` enforces
      itself:
      - `{schemaVersion: 1, pages}`, with no other key;
      - every key a canonical factual `/openwiki/*.md` page;
-     - every entry carrying a `sha256:` `pageVersion`, with only OpenWiki's optional fields, each in its
-       format.
+     - every entry carrying a `sha256:` `pageVersion`, with only OpenWiki's optional fields, each in the format
+       OpenWiki actually writes: `gitHead` a full commit SHA, `sourceFingerprint` a `sha256:` digest,
+       `completedBy` an OpenWiki producer id (`openwiki/<version>` or a host id), `completedRunId` a UUID.
    - No OpenWiki broken-link stamps and no conflict markers.
    - Provenance for every page the run touched: a Claim sidecar with at least one Claim, and the page's sha256
      as `pageVersion` in both the sidecar and the manifest, with no leftovers of a deleted page.
-   - The privacy/secret scan finds nothing in generated content. It covers credential and PII shapes, terms from
-     `HONE_WIKI_DENYLIST_FILE`, and studio slugs from the tenant register. It runs over changed pages and over
-     changed Claim statements and evidence paths.
+   - The privacy/secret scan finds nothing in anything the run publishes. It covers credential and PII shapes,
+     terms from `HONE_WIKI_DENYLIST_FILE`, and studio slugs from the tenant register.
+     - Changed pages, and changed generated files of any other type, are scanned whole.
+     - In changed Claim sidecars, every key and string is scanned, except the `pageVersion` and evidence
+       `version` fields: those are OpenWiki digests (a sha256 plus base64url line counts and hashes).
+     - In run metadata, every value a strict grammar does not pin down is scanned: `model`, `language`, each
+       manifest page key and each `completedBy`. Digests, SHAs, UUIDs, timestamps and enums are format-checked
+       instead.
+     - Path-like values (sidecar strings, run metadata) are scanned as written and humanized, so `jane-doe`
+       matches "Jane Doe".
+     - A hit fails the run with its category, file and a line count, never the matched value.
 8. **Publish (replace, not overlay).**
    - HEAD returns to the production tip, and the generated scope is replaced wholesale, deletions included.
    - The commit follows CLAUDE.md's delivery sequence steps 1-6 and 8 as written (git hooks disabled). Step 7,
@@ -223,6 +238,13 @@ environment does not change that.
 
 Optional: `HONE_WIKI_PUBLISH` (`on` to publish; default off), `HONE_WIKI_MIN_FREE_GB` (default 10),
 `HONE_WIKI_RUN_TIMEOUT_MIN` (default 90).
+
+The two limits share one parser, applied before any conversion to bytes or milliseconds:
+- unset, or blank and whitespace-only, means the default;
+- anything else must be a plain positive decimal such as `25` or `1.5`;
+- `0`, negatives, `NaN`, `Infinity`, exponent notation and any other text are `PRECONDITION`, and so is a
+  timeout too long for a Node timer (over about 35,791 minutes);
+- the report names the variable, never its value.
 
 Must be absent (preflight fails otherwise):
 - `GITHUB_TOKEN` and `GH_TOKEN`;
