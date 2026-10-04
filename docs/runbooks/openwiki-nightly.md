@@ -85,6 +85,9 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
    - the privacy/secret scan finds nothing: credential and PII shapes, terms from `HONE_WIKI_DENYLIST_FILE`,
      and studio slugs from the tenant register in `docs/production/current-state.md` §0. It runs over changed
      pages and over changed Claim statements and evidence paths.
+   - Before those content checks it scans every added or modified generated path, since paths are published
+     too. Each path is read as written and with separators as spaces, so `people/jane-doe.md` matches
+     "Jane Doe". A path hit fails the run before any other check, so no other finding names that path.
 8. **Publish (replace, not overlay).**
    - HEAD returns to the production tip, and the generated scope is replaced wholesale, deletions included.
    - The commit follows CLAUDE.md's delivery sequence steps 1-6 and 8 as written (git hooks disabled). Step 7,
@@ -101,7 +104,9 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
      when all three hold: the pull request exists, its head is exactly the verified commit, and that review
      request was posted.
    - If anything fails after the pull request is created, the runner closes the pull request **and** deletes
-     its branch, attempting both even if one fails. It records each step's state (`closed`/`close-failed`,
+     its branch, attempting both even if one fails. The branch is deleted only while it still points at the
+     verified head (`--force-with-lease`). If someone pushed a newer commit to it, it is left in place as
+     `delete-failed` rather than deleted. It records each step's state (`closed`/`close-failed`,
      `deleted`/`delete-failed`) with the PR number, branch and head, and ends `FAILED`. If cleanup is
      incomplete, the next pass reports `SKIP` on the leftover branch until a human closes or deletes it; it
      never treats that state as success.

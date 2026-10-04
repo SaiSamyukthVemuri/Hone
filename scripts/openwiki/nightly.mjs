@@ -71,6 +71,7 @@ import {
   loadTenantSlugs,
   parseDenylist,
   privacyItemsFor,
+  privacyItemsForPaths,
   scanPrivacy,
   snapshotWorktree,
   sortRunChanges,
@@ -460,7 +461,7 @@ function runPrerequisiteProblems(config) {
  * snapshot tree.
  */
 function enforceScope(subject, tip, ignore, report) {
-  const before = sortRunChanges(diffTrees(subject, tip, snapshotWorktree(subject)), ignore);
+  const before = sortRunChanges(diffTrees(subject, tip, snapshotWorktree(subject, tip)), ignore);
   for (const change of before.sideEffects) {
     const entry = { path: change.path, status: change.status, reason: "known OpenWiki side effect outside the generated scope" };
     if (change.path === OPENWIKI_WORKFLOW_PATH) {
@@ -476,7 +477,7 @@ function enforceScope(subject, tip, ignore, report) {
     report.discarded.push({ path: change.path, status: change.status, reason: `unexpected generator write (${change.kind})` });
   }
   discardChanges(subject, tip, [...before.sideEffects, ...before.unexpected]);
-  const tree = snapshotWorktree(subject);
+  const tree = snapshotWorktree(subject, tip);
   const after = sortRunChanges(diffTrees(subject, tip, tree), ignore);
   if (after.sideEffects.length > 0 || after.unexpected.length > 0) {
     throw new Error("writes outside the generated scope survived the discard");
@@ -496,6 +497,17 @@ function validateGenerated(subject, generated, sourceHead, config) {
   const stateFile = path.join(subject, "docs/production/current-state.md");
   const tenantSlugs = loadTenantSlugs(existsSync(stateFile) ? readFileSync(stateFile, "utf8") : "");
   const denylistTerms = parseDenylist(readFileSync(config.denylistFile, "utf8"));
+  // Generated paths first. If a path itself carries a privacy term, nothing
+  // else is computed: every other finding would name that path in the report.
+  const pathHits = scanPrivacy(privacyItemsForPaths(generated), { denylistTerms, tenantSlugs });
+  if (pathHits.length > 0) {
+    return {
+      problems: [`${pathHits.length} privacy/secret denylist hit(s) in generated paths`],
+      stamps: [],
+      conflictMarkers: [],
+      privacyHits: pathHits,
+    };
+  }
   const stamps = [];
   const conflictMarkers = [];
   const items = [];
@@ -603,11 +615,8 @@ async function publish({ subject, tip, sourceHead, previousGitHead, tree, genera
     pr = await github.createPullRequest({ head: branch, base: config.baseBranch, title, body });
   } catch (error) {
     // A pushed branch without a pull request would hold the in-flight slot forever.
-    try {
-      remoteGit(subject, ["push", "--quiet", "origin", "--delete", branch], token);
-    } catch {
-      // Reported below; the next run's in-flight check names the branch.
-    }
+    // If the delete fails (or the branch moved), the next run's in-flight check names it.
+    deleteOwnBranch(subject, branch, head, token);
     throw error;
   }
   report.publish.pr = { number: pr.number, url: pr.url };
@@ -622,7 +631,7 @@ async function publish({ subject, tip, sourceHead, previousGitHead, tree, genera
     failure = "review-request-failed";
     await github.comment(pr.number, `@codex review\n\nExact head \`${head}\`.`);
   } catch {
-    const cleanup = await cleanUpCreatedPullRequest({ github, number: pr.number, subject, branch, token });
+    const cleanup = await cleanUpCreatedPullRequest({ github, number: pr.number, subject, branch, head, token });
     Object.assign(report.publish, { failure, cleanup });
     const recovery =
       cleanup.pullRequest === "closed" && cleanup.branch === "deleted"
@@ -638,19 +647,29 @@ async function publish({ subject, tip, sourceHead, previousGitHead, tree, genera
  * steps are always attempted, whatever the other does, and each reports a
  * state only, never an error text.
  */
-async function cleanUpCreatedPullRequest({ github, number, subject, branch, token }) {
+async function cleanUpCreatedPullRequest({ github, number, subject, branch, head, token }) {
   const cleanup = { pullRequest: "closed", branch: "deleted" };
   try {
     await github.closePullRequest(number);
   } catch {
     cleanup.pullRequest = "close-failed";
   }
-  try {
-    remoteGit(subject, ["push", "--quiet", "--no-verify", "origin", "--delete", branch], token);
-  } catch {
-    cleanup.branch = "delete-failed";
-  }
+  cleanup.branch = deleteOwnBranch(subject, branch, head, token);
   return cleanup;
+}
+
+/**
+ * Delete the runner's nightly branch only while it still points at the commit
+ * this pass pushed. `--force-with-lease=<ref>:<head>` makes the push fail if
+ * the remote ref moved, so a newer commit someone else added is never deleted.
+ */
+function deleteOwnBranch(subject, branch, head, token) {
+  try {
+    remoteGit(subject, ["push", "--quiet", "--no-verify", `--force-with-lease=refs/heads/${branch}:${head}`, "origin", `:refs/heads/${branch}`], token);
+    return "deleted";
+  } catch {
+    return "delete-failed";
+  }
 }
 
 /** The single line the CLI prints: outcome and identifiers only, never generator output. */

@@ -42,7 +42,7 @@ type Fx = ReturnType<typeof createFixture>;
 type Report = Record<string, any>;
 type Result = { outcome: string; reason: string; report: Report };
 type Gen = (args: { cwd: string }) => Promise<{ exitCode: number; output?: string }>;
-type GitHubBehavior = { headSha?: string; commentFails?: boolean; closeFails?: boolean; beforeComment?: () => Promise<void> };
+type GitHubBehavior = { headSha?: string; createFails?: boolean; commentFails?: boolean; closeFails?: boolean; beforeComment?: () => Promise<void> };
 
 const IDENTITY = { name: "hone-wiki-runner[bot]", email: "runner@users.noreply.example.com" };
 
@@ -78,6 +78,7 @@ function setup(fx: Fx, overrides: Record<string, unknown> = {}) {
   const behavior: GitHubBehavior = {};
   const github = () => ({
     async createPullRequest(args: Record<string, string>) {
+      if (behavior.createFails) throw new Error("POST /pulls failed: HTTP 422");
       prs.push(args);
       return { number: 7, url: "https://example.invalid/pull/7", headSha: behavior.headSha ?? originRef(fx, args.head) };
     },
@@ -497,6 +498,63 @@ describe("after the pull request is created (#786 review of 3644d2fb)", () => {
     const result: Result = await pending;
     expect(result.outcome, result.reason).toBe("PUBLISHED");
     expect(ctx.comments).toHaveLength(1);
+  });
+});
+
+describe("cleanup deletes only the branch it pushed (#786 review of 61c9496a)", () => {
+  it("leaves a nightly branch that moved after the runner pushed it, while still closing the PR", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const ctx = setup(fx);
+    let movedTo = "";
+    ctx.behavior.commentFails = true;
+    ctx.behavior.beforeComment = async () => {
+      // Someone else pushes to the nightly branch between PR creation and the failed comment.
+      const branch = ctx.prs[0].head;
+      git(fx.work, ["fetch", "--quiet", "origin", branch]);
+      git(fx.work, ["switch", "--quiet", "--detach", "FETCH_HEAD"]);
+      write(fx.work, "openwiki/topic/extra.md", "# Someone else's commit\n");
+      git(fx.work, ["add", "-A"]);
+      git(fx.work, ["commit", "--quiet", "-m", "someone else"]);
+      git(fx.work, ["push", "--quiet", "origin", `HEAD:refs/heads/${branch}`]);
+      movedTo = git(fx.work, ["rev-parse", "HEAD"]);
+      git(fx.work, ["switch", "--quiet", "main"]);
+    };
+    const result: Result = await runNightly(ctx.config, { generator: openWikiLike(), github: ctx.github, now: () => Date.UTC(2026, 9, 5) });
+    const branch = result.report.publish.branch;
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(ctx.closes).toEqual([7]);
+    expect(result.report.publish.cleanup).toEqual({ pullRequest: "closed", branch: "delete-failed" });
+    expect(originRef(fx, branch)).toBe(movedTo);
+  });
+
+  it("a failed PR creation still deletes the branch it pushed", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, prs } = await run(fx, openWikiLike(), {}, { createFails: true });
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(prs).toEqual([]);
+    expect(originBranches(fx)).toEqual(["main"]);
+  });
+});
+
+describe("generated paths are privacy-scanned before publishing (#786 review of 61c9496a)", () => {
+  it.each([
+    ["a tenant slug", "openwiki/studios/synthetic-studio-one.md", "synthetic-studio-one", "tenant-slug"],
+    ["a hyphenated denylisted name", "openwiki/people/synthetic-person.md", "synthetic-person", "denylist-term"],
+  ])("%s in a generated filename fails the run, and no report names the path", async (_label: string, file: string, literal: string, category: string) => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result, prs } = await run(fx, openWikiLike({ pages: (cwd) => write(cwd, file, "# Page\n\nNothing sensitive in the text.\n") }));
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(result.reason).toBe("1 privacy/secret denylist hit(s) in generated paths");
+    expect(result.report.checks.privacyHits).toEqual([{ file: "(generated paths)", line: expect.any(Number), category }]);
+    expect(prs).toEqual([]);
+    const stateDir = path.join(fx.root, "host", "state");
+    const runs = path.join(stateDir, "runs");
+    for (const persisted of [path.join(stateDir, "last-run.json"), ...readdirSync(runs).map((n) => path.join(runs, n))]) {
+      expect(readFileSync(persisted, "utf8").toLowerCase().includes(literal), `${literal} in ${persisted}`).toBe(false);
+    }
   });
 });
 

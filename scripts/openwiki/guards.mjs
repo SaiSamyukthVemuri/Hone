@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { KNOWN_SIDE_EFFECT_PATHS, classifyPath, normalizePath } from "./paths.mjs";
@@ -15,18 +15,22 @@ import { git } from "./source-head.mjs";
 // ---------------------------------------------------------------- run scope
 
 /**
- * Hash the working tree as `git add -A` would see it, without touching the
- * real index: a copy of the index absorbs the add. Returns the tree SHA, so
- * "what did the generator change" is one diff against the base commit,
- * deletions included.
+ * Hash the working tree as `git add -A` would see it, relative to `base`, and
+ * return the tree SHA. "What did the generator change" is then one diff
+ * against `base`, deletions included. The real index is never touched.
+ *
+ * The scratch index is seeded with `git read-tree <base>`, whose entries
+ * carry no stat data, so every file is compared by CONTENT. A copy of the
+ * real index would carry its stat cache under a newer file mtime, defeating
+ * git's racy-clean check. A same-size rewrite within the same second as the
+ * checkout (a gitHead swap in .last-update.json, for one) would then look
+ * unchanged.
  */
-export function snapshotWorktree(cwd) {
-  const realIndex = path.resolve(cwd, git(cwd, ["rev-parse", "--git-path", "index"]));
+export function snapshotWorktree(cwd, base) {
   const scratch = mkdtempSync(path.join(os.tmpdir(), "hone-wiki-index-"));
-  const tempIndex = path.join(scratch, "index");
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(scratch, "index") };
   try {
-    if (existsSync(realIndex)) copyFileSync(realIndex, tempIndex);
-    const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
+    git(cwd, ["read-tree", base], { env });
     git(cwd, ["add", "-A"], { env });
     return git(cwd, ["write-tree"], { env });
   } finally {
@@ -308,6 +312,23 @@ export function scanPrivacy(items, { denylistTerms = [], tenantSlugs = [] } = {}
     });
   }
   return hits;
+}
+
+/**
+ * Generated paths are published too (as repository paths), so they are
+ * scanned like content. Each added or modified path is one line, read both as
+ * written and with path separators as spaces, so `people/jane-doe.md` matches
+ * the denylist term "Jane Doe". Deleted paths publish nothing new. A hit names
+ * the line number in this list, never the path.
+ */
+export function privacyItemsForPaths(changes) {
+  const lines = changes
+    .filter((change) => change.status !== "D")
+    .map((change) => {
+      const p = normalizePath(change.path);
+      return `${p} ${p.replace(/[-_./]+/gu, " ")}`;
+    });
+  return lines.length > 0 ? [{ file: "(generated paths)", lines }] : [];
 }
 
 /**

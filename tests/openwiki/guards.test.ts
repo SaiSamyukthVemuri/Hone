@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   checkCommitAuthors,
@@ -14,6 +14,7 @@ import {
   loadTenantSlugs,
   parseDenylist,
   privacyItemsFor,
+  privacyItemsForPaths,
   scanPrivacy,
   snapshotWorktree,
   sortRunChanges,
@@ -204,6 +205,19 @@ describe("privacy / secret denylist", () => {
     expect(JSON.stringify(hits).toLowerCase()).not.toContain("synthetic");
   });
 
+  it("scans added and modified generated paths, also with separators as spaces, and never returns the path", () => {
+    const items = privacyItemsForPaths([
+      { status: "A", path: "openwiki/people/jane-doe.md" },
+      { status: "D", path: "openwiki/old/jane-doe.md" },
+      { status: "M", path: "./openwiki/topics/booking.md" },
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0].lines).toEqual(["openwiki/people/jane-doe.md openwiki people jane doe md", "openwiki/topics/booking.md openwiki topics booking md"]);
+    const hits: Hit[] = scanPrivacy(items, { denylistTerms: ["Jane Doe"] });
+    expect(hits).toEqual([{ file: "(generated paths)", line: 1, category: "denylist-term" }]);
+    expect(privacyItemsForPaths([{ status: "D", path: "openwiki/x.md" }])).toEqual([]);
+  });
+
   it("reads tenant slugs from the register table only", () => {
     const text = "## 0. Tenant register\n\n| Studio | Class |\n|---|---|\n| **demo-studio** | x |\n| Totals | 2 |\n\n## 1. Other\n| not-a-tenant | y |\n";
     expect(loadTenantSlugs(text)).toEqual(["demo-studio"]);
@@ -229,7 +243,7 @@ describe("run scope on a real repository", () => {
     write(fx.work, "lib/feature.ts", "export const feature = 99;\n");
     write(fx.work, "openwiki/INSTRUCTIONS.md", "# Instructions\n\nRewritten by the generator.\n");
 
-    const changes: Change[] = diffTrees(fx.work, tip, snapshotWorktree(fx.work));
+    const changes: Change[] = diffTrees(fx.work, tip, snapshotWorktree(fx.work, tip));
     const sorted = sortRunChanges(changes, loadOpenWikiIgnore(fx.work));
     expect(sorted.generated.map((c: Change) => c.path)).toEqual(["openwiki/topic/kept-page.md"]);
     expect(sorted.sideEffects.map((c: Change) => c.path).sort()).toEqual([".github/workflows/openwiki-update.yml", "AGENTS.md"]);
@@ -239,13 +253,28 @@ describe("run scope on a real repository", () => {
     expect(existsSync(path.join(fx.work, ".github/workflows/openwiki-update.yml"))).toBe(false);
     expect(read(fx.work, "lib/feature.ts")).toBe("export const feature = 1;\n");
     expect(read(fx.work, "openwiki/INSTRUCTIONS.md")).toBe("# Instructions\n\nAuthored.\n");
-    expect(diffTrees(fx.work, tip, snapshotWorktree(fx.work))).toEqual([{ status: "M", path: "openwiki/topic/kept-page.md" }]);
+    expect(diffTrees(fx.work, tip, snapshotWorktree(fx.work, tip))).toEqual([{ status: "M", path: "openwiki/topic/kept-page.md" }]);
+  });
+
+  it("does not inherit the real index's cached state (stat cache, assume-unchanged)", () => {
+    // The intermittent #786 failure: a copy of the real index carried its stat
+    // cache under a newer file mtime, so a same-size rewrite of
+    // .last-update.json inside the same second looked unchanged. That timing
+    // cannot be forced in a test; an assume-unchanged entry hides a change the
+    // same way, deterministically. The snapshot must see the content.
+    const fx = createFixture();
+    const tip = git(fx.work, ["rev-parse", "HEAD"]);
+    git(fx.work, ["update-index", "--assume-unchanged", "openwiki/.last-update.json"]);
+    const file = path.join(fx.work, "openwiki/.last-update.json");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/"gitHead": "[0-9a-f]{40}"/u, `"gitHead": "${"b".repeat(40)}"`));
+    expect(git(fx.work, ["status", "--porcelain"])).toBe(""); // invisible to the real index
+    expect(diffTrees(fx.work, tip, snapshotWorktree(fx.work, tip))).toEqual([{ status: "M", path: "openwiki/.last-update.json" }]);
   });
 
   it("the snapshot does not disturb the real index", () => {
     const fx = createFixture();
     write(fx.work, "openwiki/new.md", "# New\n");
-    snapshotWorktree(fx.work);
+    snapshotWorktree(fx.work, "HEAD");
     expect(git(fx.work, ["status", "--porcelain"])).toBe("?? openwiki/new.md");
   });
 
