@@ -11,6 +11,10 @@
 //
 // The token lives in memory only. It reaches git through GIT_ASKPASS reading
 // an environment variable (see nightly.mjs), never argv, a URL or a file.
+//
+// Errors carry `tokenCause` (a code from report.mjs TOKEN_CAUSES) and
+// `httpStatus`. The runner reads only those fields. A message can quote API
+// data, so it never reaches a report.
 // ---------------------------------------------------------------------------
 
 import { createSign } from "node:crypto";
@@ -24,6 +28,10 @@ export const RUNNER_TOKEN_PERMISSIONS = Object.freeze({
 });
 
 const API = "https://api.github.com";
+
+function failure(message, fields) {
+  return Object.assign(new Error(message), fields);
+}
 
 function base64url(input) {
   return Buffer.from(input).toString("base64").replace(/=+$/u, "").replace(/\+/gu, "-").replace(/\//gu, "_");
@@ -48,7 +56,7 @@ export function assertExactPermissions(actual, expected = RUNNER_TOKEN_PERMISSIO
   for (const name of Object.keys(got)) {
     if (!(name in expected)) problems.push(`${name}: not allowed (${got[name]})`);
   }
-  if (problems.length > 0) throw new Error(`installation token permissions are not exact: ${problems.join("; ")}`);
+  if (problems.length > 0) throw failure(`installation token permissions are not exact: ${problems.join("; ")}`, { tokenCause: "permissions-not-exact" });
 }
 
 function headers(auth) {
@@ -66,19 +74,19 @@ function headers(auth) {
  */
 export async function createInstallationToken({ appId, installationId, privateKeyPem, repository, fetchImpl = fetch, nowSeconds }) {
   const [, name] = String(repository).split("/");
-  if (!name) throw new Error("repository must be owner/name");
+  if (!name) throw failure("repository must be owner/name", { tokenCause: "invalid-repository" });
   const jwt = createAppJwt({ appId, privateKeyPem, nowSeconds });
   const response = await fetchImpl(`${API}/app/installations/${installationId}/access_tokens`, {
     method: "POST",
     headers: { ...headers(jwt), "Content-Type": "application/json" },
     body: JSON.stringify({ repositories: [name], permissions: RUNNER_TOKEN_PERMISSIONS }),
   });
-  if (!response.ok) throw new Error(`installation token request failed: HTTP ${response.status}`);
+  if (!response.ok) throw failure(`installation token request failed: HTTP ${response.status}`, { tokenCause: "http-status", httpStatus: response.status });
   const data = await response.json();
   assertExactPermissions(data.permissions);
   const repos = (data.repositories ?? []).map((r) => r.full_name);
   if (repos.length !== 1 || repos[0] !== repository) {
-    throw new Error("installation token is not scoped to exactly the configured repository");
+    throw failure("installation token is not scoped to exactly the configured repository", { tokenCause: "repository-scope" });
   }
   return { token: data.token, expiresAt: data.expires_at };
 }
@@ -94,7 +102,7 @@ export function createGitHubClient({ token, repository, fetchImpl = fetch }) {
       headers: { ...headers(token), "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!response.ok) throw new Error(`${method} ${route} failed: HTTP ${response.status}`);
+    if (!response.ok) throw failure(`${method} ${route} failed: HTTP ${response.status}`, { httpStatus: response.status });
     return response.json();
   }
   return {

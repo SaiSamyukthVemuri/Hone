@@ -1,20 +1,25 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
+  PATH_GATE_CATEGORIES,
   checkCommitAuthors,
   checkLastUpdate,
   checkManagedBlockMarkers,
+  checkPageManifest,
   checkProvenance,
   diffTrees,
   discardChanges,
   findBrokenLinkStamps,
   findConflictMarkers,
+  gateChangedPaths,
   inspectWorkflow,
   loadTenantSlugs,
   parseDenylist,
+  parseTenantRegister,
   privacyItemsFor,
-  privacyItemsForPaths,
+  readWorktreeFile,
+  readWorktreeState,
   scanPrivacy,
   snapshotWorktree,
   sortRunChanges,
@@ -25,6 +30,7 @@ import { loadOpenWikiIgnore } from "../../scripts/openwiki/paths.mjs";
 import {
   AGENTS_TEMPLATE_REWRITE,
   OPENWIKI_SCAFFOLD_WORKFLOW,
+  REPO_ROOT,
   cleanupTmp,
   createFixture,
   git,
@@ -44,16 +50,13 @@ type Change = { status: string; path: string };
 type Hit = { file: string; line: number; category: string };
 
 describe("A3 — inspectWorkflow (subset of tests/ci/ci-config.test.ts)", () => {
-  it("the OpenWiki init scaffold fails inspection, with reasons", () => {
-    const violations = inspectWorkflow(OPENWIKI_SCAFFOLD_WORKFLOW);
-    expect(violations).toEqual(
-      expect.arrayContaining([
-        "top-level permissions must be exactly `contents: read`",
-        "requests a write permission",
-        "references the secrets context",
-        "a checkout keeps persisted credentials",
-      ]),
-    );
+  it("the OpenWiki init scaffold fails inspection, by code", () => {
+    expect(inspectWorkflow(OPENWIKI_SCAFFOLD_WORKFLOW)).toEqual([
+      "top-level-permissions-not-read-only",
+      "write-permission",
+      "secrets-context",
+      "persisted-credentials",
+    ]);
   });
 
   it("a least-privilege, SHA-pinned workflow passes", () => {
@@ -74,9 +77,9 @@ describe("A3 — inspectWorkflow (subset of tests/ci/ci-config.test.ts)", () => 
     expect(inspectWorkflow(compliant)).toEqual([]);
   });
 
-  it("flags an action pinned to a tag", () => {
-    expect(inspectWorkflow("permissions:\n  contents: read\nsteps:\n  - uses: some/action@v4\n")).toEqual([
-      "action not pinned to a full commit SHA: some/action@v4",
+  it("flags an action pinned to a tag without quoting the reference (it is generator output)", () => {
+    expect(inspectWorkflow("permissions:\n  contents: read\nsteps:\n  - uses: some/synthetic-person@v4\n  - uses: other/action@main\n")).toEqual([
+      "unpinned-action",
     ]);
   });
 });
@@ -88,21 +91,24 @@ describe("page and metadata checks", () => {
     expect(findBrokenLinkStamps("# clean\n")).toEqual([]);
   });
 
-  it("requires a completed update recording exactly the pinned source head", () => {
+  it("requires a completed update recording exactly the pinned source head, and tells missing from malformed", () => {
     const sha = "b".repeat(40);
-    expect(checkLastUpdate({ command: "update", status: "complete", gitHead: sha }, sha)).toEqual([]);
-    expect(checkLastUpdate({ command: "init", status: "complete", gitHead: sha }, sha)).toHaveLength(1);
-    expect(checkLastUpdate({ command: "update", status: "interrupted", gitHead: sha }, sha)).toHaveLength(1);
-    expect(checkLastUpdate({ command: "update", status: "complete", gitHead: "c".repeat(40) }, sha)).toEqual([
-      "gitHead does not equal the source head the run was pinned to",
-    ]);
-    expect(checkLastUpdate(undefined, sha)).toHaveLength(1);
+    const valid = (value: unknown) => ({ state: "present-valid", value });
+    expect(checkLastUpdate(valid({ command: "update", status: "complete", gitHead: sha }), sha)).toEqual([]);
+    expect(checkLastUpdate(valid({ command: "init", status: "complete", gitHead: sha }), sha)).toEqual(["command-not-update"]);
+    expect(checkLastUpdate(valid({ command: "update", status: "interrupted", gitHead: sha }), sha)).toEqual(["status-not-complete"]);
+    expect(checkLastUpdate(valid({ command: "update", status: "complete", gitHead: "c".repeat(40) }), sha)).toEqual(["git-head-mismatch"]);
+    expect(checkLastUpdate(valid(["update"]), sha)).toEqual(["not-an-object"]);
+    expect(checkLastUpdate({ state: "absent" }, sha)).toEqual(["missing"]);
+    expect(checkLastUpdate({ state: "present-invalid" }, sha)).toEqual(["malformed"]);
   });
 
   it("accepts no markers or one ordered pair, and refuses anything else", () => {
     expect(checkManagedBlockMarkers("AGENTS.md", "plain\n")).toEqual([]);
     expect(checkManagedBlockMarkers("AGENTS.md", AGENTS_TEMPLATE_REWRITE)).toEqual([]);
-    expect(checkManagedBlockMarkers("AGENTS.md", `${AGENTS_TEMPLATE_REWRITE}${AGENTS_TEMPLATE_REWRITE}`)).toHaveLength(1);
+    expect(checkManagedBlockMarkers("AGENTS.md", `${AGENTS_TEMPLATE_REWRITE}${AGENTS_TEMPLATE_REWRITE}`)).toEqual([
+      { code: "MANAGED_BLOCK_MARKERS_MALFORMED", details: { file: "AGENTS.md" } },
+    ]);
     expect(checkManagedBlockMarkers("AGENTS.md", "<!-- OPENWIKI:END -->\n<!-- OPENWIKI:START -->\n")).toHaveLength(1);
     expect(checkManagedBlockMarkers("CLAUDE.md", undefined)).toEqual([]);
   });
@@ -123,38 +129,48 @@ describe("conflict markers and provenance (trusted checks on the subject as data
     return root;
   };
 
+  const pages = (root: string) => JSON.parse(read(root, "openwiki/.page-manifest.json")).pages;
+
   it("accepts pages whose sidecar and manifest carry the page's sha256, with at least one Claim", () => {
     const root = wiki();
-    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }, { status: "M", path: "openwiki/.claims/b.json" }])).toEqual([]);
+    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }, { status: "M", path: "openwiki/.claims/b.json" }], pages(root))).toEqual([]);
   });
 
   it("flags a page edited after its provenance was recorded, in both sidecar and manifest", () => {
     const root = wiki();
     write(root, "openwiki/a.md", "# A, edited\n");
-    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }])).toEqual([
-      "openwiki/.claims/a.json: pageVersion does not match the page",
-      "openwiki/a.md: page manifest pageVersion does not match the page",
+    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }], pages(root))).toEqual([
+      { file: "openwiki/a.md", problem: "sidecar-page-version-mismatch" },
+      { file: "openwiki/a.md", problem: "manifest-page-version-mismatch" },
     ]);
   });
 
-  it("flags a missing sidecar, a sidecar with no Claims, and leftovers of a deleted page", () => {
+  it("flags a missing sidecar, a sidecar with no Claims or bad JSON, and leftovers of a deleted page, naming the CHANGED path", () => {
     const root = wiki();
     write(root, "openwiki/c.md", "# C\n");
+    write(root, "openwiki/d.md", "# D\n");
+    write(root, "openwiki/.claims/d.json", "{ not json");
     const empty = JSON.parse(read(root, "openwiki/.claims/b.json"));
     empty.claims = [];
     write(root, "openwiki/.claims/b.json", JSON.stringify(empty));
     rmSync(path.join(root, "openwiki/a.md"));
     expect(
-      checkProvenance(root, [
-        { status: "A", path: "openwiki/c.md" },
-        { status: "M", path: "openwiki/.claims/b.json" },
-        { status: "D", path: "openwiki/a.md" },
-      ]),
+      checkProvenance(
+        root,
+        [
+          { status: "A", path: "openwiki/c.md" },
+          { status: "M", path: "openwiki/.claims/b.json" },
+          { status: "D", path: "openwiki/a.md" },
+          { status: "A", path: "openwiki/d.md" },
+        ],
+        pages(root),
+      ),
     ).toEqual([
-      "openwiki/.claims/a.json: Claim sidecar of a deleted page",
-      "openwiki/a.md: page manifest still lists a deleted page",
-      "openwiki/.claims/b.json: no Claims",
-      "openwiki/c.md: no Claim sidecar",
+      { file: "openwiki/a.md", problem: "deleted-page-sidecar-left" },
+      { file: "openwiki/a.md", problem: "deleted-page-manifest-entry-left" },
+      { file: "openwiki/.claims/b.json", problem: "no-claims" },
+      { file: "openwiki/c.md", problem: "no-sidecar" },
+      { file: "openwiki/d.md", problem: "sidecar-not-json" },
     ]);
   });
 
@@ -162,7 +178,82 @@ describe("conflict markers and provenance (trusted checks on the subject as data
     const root = wiki();
     write(root, "openwiki/b.md", "# B, drifted before this run\n");
     write(root, "openwiki/index.md", "# Index\n");
-    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }, { status: "A", path: "openwiki/index.md" }])).toEqual([]);
+    expect(checkProvenance(root, [{ status: "M", path: "openwiki/a.md" }, { status: "A", path: "openwiki/index.md" }], pages(root))).toEqual([]);
+  });
+});
+
+describe("state files: existence is not parse success", () => {
+  it("reads absent, present-valid and present-invalid as three different states", () => {
+    const root = makeTmp("state");
+    write(root, "valid.json", JSON.stringify({ a: 1 }));
+    write(root, "broken.json", "{ not json");
+    mkdirSync(path.join(root, "dir.json"));
+    symlinkSync(path.join(root, "valid.json"), path.join(root, "link.json"));
+    expect(readWorktreeState(root, "missing.json")).toEqual({ state: "absent" });
+    expect(readWorktreeState(root, "valid.json/inner.json")).toEqual({ state: "absent" });
+    expect(readWorktreeState(root, "valid.json")).toEqual({ state: "present-valid", value: { a: 1 } });
+    expect(readWorktreeState(root, "broken.json")).toEqual({ state: "present-invalid" });
+    expect(readWorktreeState(root, "dir.json")).toEqual({ state: "present-invalid" });
+    expect(readWorktreeState(root, "link.json")).toEqual({ state: "present-invalid" });
+    expect(readWorktreeFile(root, "broken.json")).toEqual({ state: "present-valid", text: "{ not json" });
+  });
+});
+
+describe("the page manifest: openwiki@0.6.1's strict schema, on every run", () => {
+  const valid = (value: unknown) => checkPageManifest({ state: "present-valid", value });
+  const entry = { pageVersion: `sha256:${"a".repeat(64)}` };
+
+  it("accepts the repository's own committed manifest", () => {
+    expect(checkPageManifest(readWorktreeState(REPO_ROOT, "openwiki/.page-manifest.json"))).toEqual([]);
+  });
+
+  it("accepts every optional field in its OpenWiki format", () => {
+    expect(
+      valid({
+        schemaVersion: 1,
+        pages: {
+          "/openwiki/a.md": {
+            ...entry,
+            gitHead: "b".repeat(40),
+            sourceFingerprint: `sha256:${"c".repeat(64)}`,
+            completedBy: "claude-code",
+            completedRunId: "123e4567-e89b-42d3-a456-426614174000",
+          },
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it.each([
+    ["missing", { state: "absent" }, ["missing"]],
+    ["malformed", { state: "present-invalid" }, ["malformed"]],
+    ["an array", { state: "present-valid", value: [] }, ["not-an-object"]],
+  ])("reports a manifest that is %s", (_label: string, state: unknown, problems: string[]) => {
+    expect(checkPageManifest(state)).toEqual(problems);
+  });
+
+  it.each([
+    ["an unknown top-level key", { schemaVersion: 1, pages: {}, extra: true }, "unknown-top-level-key"],
+    ["schemaVersion 2", { schemaVersion: 2, pages: {} }, "schema-version"],
+    ["schemaVersion as a string", { schemaVersion: "1", pages: {} }, "schema-version"],
+    ["pages as an array", { schemaVersion: 1, pages: [] }, "pages-not-an-object"],
+    ["a structural page", { schemaVersion: 1, pages: { "/openwiki/index.md": entry } }, "invalid-page-path"],
+    ["INSTRUCTIONS.md in any case", { schemaVersion: 1, pages: { "/openwiki/Instructions.md": entry } }, "invalid-page-path"],
+    ["a Claim sidecar", { schemaVersion: 1, pages: { "/openwiki/.claims/a.md": entry } }, "invalid-page-path"],
+    ["a non-canonical key", { schemaVersion: 1, pages: { "openwiki/a.md": entry } }, "invalid-page-path"],
+    ["a traversal", { schemaVersion: 1, pages: { "/openwiki/../openwiki/a.md": entry } }, "invalid-page-path"],
+    ["a page outside openwiki/", { schemaVersion: 1, pages: { "/docs/a.md": entry } }, "invalid-page-path"],
+    ["an entry that is not an object", { schemaVersion: 1, pages: { "/openwiki/a.md": "sha256:x" } }, "entry-not-an-object"],
+    ["an unknown entry key", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, note: "x" } } }, "unknown-entry-key"],
+    ["no pageVersion", { schemaVersion: 1, pages: { "/openwiki/a.md": {} } }, "invalid-page-version"],
+    ["an uppercase pageVersion", { schemaVersion: 1, pages: { "/openwiki/a.md": { pageVersion: `sha256:${"A".repeat(64)}` } } }, "invalid-page-version"],
+    ["an empty gitHead", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, gitHead: "" } } }, "invalid-git-head"],
+    ["a malformed fingerprint", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, sourceFingerprint: "md5:x" } } }, "invalid-source-fingerprint"],
+    ["a blank completedBy", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, completedBy: "  " } } }, "invalid-completed-by"],
+    ["a non-UUID completedRunId", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, completedRunId: "run-1" } } }, "invalid-completed-run-id"],
+    ["a null optional field", { schemaVersion: 1, pages: { "/openwiki/a.md": { ...entry, gitHead: null } } }, "invalid-git-head"],
+  ])("refuses %s", (_label: string, manifest: unknown, problem: string) => {
+    expect(valid(manifest)).toEqual([problem]);
   });
 });
 
@@ -205,17 +296,9 @@ describe("privacy / secret denylist", () => {
     expect(JSON.stringify(hits).toLowerCase()).not.toContain("synthetic");
   });
 
-  it("scans added and modified generated paths, also with separators as spaces, and never returns the path", () => {
-    const items = privacyItemsForPaths([
-      { status: "A", path: "openwiki/people/jane-doe.md" },
-      { status: "D", path: "openwiki/old/jane-doe.md" },
-      { status: "M", path: "./openwiki/topics/booking.md" },
-    ]);
-    expect(items).toHaveLength(1);
-    expect(items[0].lines).toEqual(["openwiki/people/jane-doe.md openwiki people jane doe md", "openwiki/topics/booking.md openwiki topics booking md"]);
-    const hits: Hit[] = scanPrivacy(items, { denylistTerms: ["Jane Doe"] });
-    expect(hits).toEqual([{ file: "(generated paths)", line: 1, category: "denylist-term" }]);
-    expect(privacyItemsForPaths([{ status: "D", path: "openwiki/x.md" }])).toEqual([]);
+  it("reads tenant slugs from the register table only, and says whether the register exists at all", () => {
+    expect(parseTenantRegister("# State\n\n## 1. Other\n| demo-studio | x |\n")).toEqual({ found: false, slugs: [] });
+    expect(parseTenantRegister("## 0. Tenant register\n\nmoved\n")).toEqual({ found: true, slugs: [] });
   });
 
   it("reads tenant slugs from the register table only", () => {
@@ -230,6 +313,60 @@ describe("privacy / secret denylist", () => {
     const items = privacyItemsFor("openwiki/.claims/x.json", sidecar);
     expect(scanPrivacy(items)).toEqual([]);
     expect(privacyItemsFor("openwiki/.page-manifest.json", "{}")).toEqual([]);
+  });
+});
+
+describe("the path gate: every changed path is classified before any is recorded", () => {
+  const terms = { denylistTerms: parseDenylist("Synthetic Person\n"), tenantSlugs: ["synthetic-studio-one"] };
+
+  it("covers every change kind (generated, side effect, unexpected) and status (A, M, D, T)", () => {
+    const gate = gateChangedPaths(
+      [
+        { status: "A", path: "openwiki/people/synthetic-person.md" }, // generated, added
+        { status: "D", path: "openwiki/old/synthetic-studio-one.md" }, // generated, deleted
+        { status: "M", path: "docs/Synthetic-Person.md" }, // unexpected, modified
+        { status: "T", path: "lib/synthetic-studio-one" }, // unexpected, type change
+        { status: "M", path: "AGENTS.md" }, // known side effect
+        { status: "M", path: "openwiki/topics/booking.md" },
+      ],
+      terms,
+    );
+    expect(gate).toEqual({
+      scanned: 6,
+      rejected: 4,
+      categories: ["denylist-term", "tenant-slug"],
+      cleared: new Set(["AGENTS.md", "openwiki/topics/booking.md"]),
+    });
+  });
+
+  it("reads a path as written and humanized, so a hyphenated or snake_case name still matches", () => {
+    for (const p of ["people/synthetic-person.md", "people/synthetic_person.md", "people/Synthetic.Person.md", "people/SYNTHETIC-PERSON/x.md"]) {
+      expect(gateChangedPaths([{ status: "A", path: p }], terms).categories, p).toEqual(["denylist-term"]);
+    }
+    expect(gateChangedPaths([{ status: "A", path: "people/syntheticperson.md" }], terms).rejected).toBe(0);
+  });
+
+  it.each([
+    ["an email", "notes/zz.person@hone.example.org.md", "email"],
+    ["a UUID", "data/123e4567-e89b-42d3-a456-426614174000.json", "uuid"],
+    ["a credential shape", "keys/ghp_ABCDEFGHIJKLMNOPQRSTUVWX.txt", "github-token"],
+    ["whitespace", "docs/two words.md", "unsafe-path-format"],
+    ["a backtick", "docs/`x`.md", "unsafe-path-format"],
+    ["a newline", "docs/a\nb.md", "unsafe-path-format"],
+    ["a non-ASCII letter", "docs/caf\u00e9.md", "unsafe-path-format"],
+    ["a non-canonical spelling", "./docs/a.md", "unsafe-path-format"],
+  ])("rejects a path with %s, returning its category only", (_label: string, p: string, category: string) => {
+    const gate = gateChangedPaths([{ status: "A", path: p }], terms);
+    expect(gate.rejected).toBe(1);
+    expect(gate.categories).toEqual([category]);
+    expect(gate.cleared.size).toBe(0);
+    expect(PATH_GATE_CATEGORIES).toContain(category);
+  });
+
+  it("clears the repository's own paths: every tracked path fits the reportable grammar", () => {
+    const tracked = git(REPO_ROOT, ["ls-files", "-z"]).split("\0").filter(Boolean);
+    const gate = gateChangedPaths(tracked.map((p: string) => ({ status: "M", path: p })), {});
+    expect(gate.categories).not.toContain("unsafe-path-format");
   });
 });
 
@@ -283,8 +420,8 @@ describe("run scope on a real repository", () => {
     const base = git(fx.work, ["rev-parse", "HEAD"]);
     fx.commit({ "openwiki/a.md": "# A\n" }, "wiki");
     const fixtureIdentity = { name: "Fixture Author", email: "fixture@example.com" };
-    expect(checkCommitAuthors(fx.work, `${base}..HEAD`, fixtureIdentity)).toEqual([]);
-    expect(checkCommitAuthors(fx.work, `${base}..HEAD`, { name: "hone-wiki-runner[bot]", email: "x@example.com" })).toHaveLength(1);
-    expect(checkCommitAuthors(fx.work, `${base}..${base}`, fixtureIdentity)).toEqual([`no commits in ${base}..${base}`]);
+    expect(checkCommitAuthors(fx.work, `${base}..HEAD`, fixtureIdentity)).toEqual({ commits: 1, mismatched: 0 });
+    expect(checkCommitAuthors(fx.work, `${base}..HEAD`, { name: "hone-wiki-runner[bot]", email: "x@example.com" })).toEqual({ commits: 1, mismatched: 1 });
+    expect(checkCommitAuthors(fx.work, `${base}..${base}`, fixtureIdentity)).toEqual({ commits: 0, mismatched: 0 });
   });
 });

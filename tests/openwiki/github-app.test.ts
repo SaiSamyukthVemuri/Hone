@@ -55,6 +55,7 @@ describe("assertExactPermissions", () => {
     ["a broader level", { ...RUNNER_TOKEN_PERMISSIONS, checks: "write" }, /checks: expected read, got write/u],
   ])("refuses %s", (_label: string, actual: Record<string, string>, message: RegExp) => {
     expect(() => assertExactPermissions(actual)).toThrow(message);
+    expect(() => assertExactPermissions(actual)).toThrow(expect.objectContaining({ tokenCause: "permissions-not-exact" }));
   });
 });
 
@@ -81,7 +82,7 @@ describe("createInstallationToken", () => {
     }));
     await expect(
       createInstallationToken({ appId: 1, installationId: 99, privateKeyPem: PEM, repository: "owner/repo", fetchImpl: fetch.impl }),
-    ).rejects.toThrow(/administration: not allowed/u);
+    ).rejects.toThrow(expect.objectContaining({ tokenCause: "permissions-not-exact", message: expect.stringMatching(/administration: not allowed/u) }));
   });
 
   it("refuses a token scoped to another repository set", async () => {
@@ -91,14 +92,22 @@ describe("createInstallationToken", () => {
     }));
     await expect(
       createInstallationToken({ appId: 1, installationId: 99, privateKeyPem: PEM, repository: "owner/repo", fetchImpl: fetch.impl }),
-    ).rejects.toThrow(/exactly the configured repository/u);
+    ).rejects.toThrow(expect.objectContaining({ tokenCause: "repository-scope", message: expect.stringMatching(/exactly the configured repository/u) }));
   });
 
-  it("reports an HTTP failure by status only", async () => {
+  it("reports an HTTP failure by status only, as coded fields the runner reads", async () => {
     const fetch = fakeFetch(() => ({ status: 422, json: { message: "nope" } }));
     await expect(
       createInstallationToken({ appId: 1, installationId: 99, privateKeyPem: PEM, repository: "owner/repo", fetchImpl: fetch.impl }),
-    ).rejects.toThrow("installation token request failed: HTTP 422");
+    ).rejects.toThrow(expect.objectContaining({ tokenCause: "http-status", httpStatus: 422, message: "installation token request failed: HTTP 422" }));
+  });
+
+  it("refuses a repository that is not owner/name before any request", async () => {
+    const fetch = fakeFetch(() => ({ status: 201, json: {} }));
+    await expect(createInstallationToken({ appId: 1, installationId: 99, privateKeyPem: PEM, repository: "repo", fetchImpl: fetch.impl })).rejects.toThrow(
+      expect.objectContaining({ tokenCause: "invalid-repository" }),
+    );
+    expect(fetch.calls).toHaveLength(0);
   });
 });
 
@@ -123,5 +132,11 @@ describe("createGitHubClient", () => {
     expect(Object.keys(client).sort()).toEqual(["closePullRequest", "comment", "createPullRequest"]); // no merge
     expect(JSON.parse(fetch.calls[0].init.body)).toMatchObject({ draft: false, base: "main", head: "openwiki/nightly-x" });
     expect(fetch.calls[0].init.headers.Authorization).toBe("Bearer t");
+  });
+
+  it("an API failure carries its HTTP status as a field", async () => {
+    const fetch = fakeFetch(() => ({ status: 502, json: { message: "upstream said something" } }));
+    const client = createGitHubClient({ token: "t", repository: "owner/repo", fetchImpl: fetch.impl });
+    await expect(client.comment(7, "x")).rejects.toThrow(expect.objectContaining({ httpStatus: 502 }));
   });
 });

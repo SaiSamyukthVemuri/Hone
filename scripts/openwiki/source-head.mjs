@@ -82,44 +82,83 @@ export function discoverSourceHead(cwd, tip, ignore, { maxCommits = 5000 } = {})
       return { sourceHead: sha, skippedCommits: commits.slice(0, index), sourcePaths };
     }
   }
-  throw new Error(`no source change within ${commits.length} first-parent commits of ${tip}`);
-}
-
-/** Parse a JSON file as it exists in `commit`; undefined when absent or unparseable. */
-export function readJsonAtCommit(cwd, commit, filePath) {
-  try {
-    return JSON.parse(git(cwd, ["show", `${commit}:${filePath}`]));
-  } catch {
-    return undefined;
-  }
+  throw Object.assign(new Error("no source change within the first-parent walk"), { commitsScanned: commits.length });
 }
 
 /**
- * Compare openwiki/.last-update.json with the source head.
+ * The tree entry for `filePath` in `commit`, or null. Existence is read from
+ * the tree alone, so it never depends on what the file holds. Any git failure
+ * other than "no such path" throws.
+ */
+function committedEntry(cwd, commit, filePath) {
+  const listed = git(cwd, ["ls-tree", "-z", "--full-tree", commit, "--", filePath]).split("\0").filter(Boolean);
+  for (const line of listed) {
+    const tab = line.indexOf("\t");
+    const [, type, object] = line.slice(0, tab).split(" ");
+    if (line.slice(tab + 1) === filePath) return { type, object };
+  }
+  return null;
+}
+
+/** Whether anything (a file, a directory, a link) is committed at `filePath` in `commit`. */
+export function committedPathExists(cwd, commit, filePath) {
+  return committedEntry(cwd, commit, filePath) !== null;
+}
+
+/**
+ * A JSON state file as committed in `commit`, in one of three states:
+ *
+ *   absent          - nothing is committed at that path
+ *   present-valid   - a file whose content parses as JSON (`value`)
+ *   present-invalid - something is committed there, but it is not a file
+ *                     whose content parses as JSON
+ *
+ * Malformed content is never reported as absent.
+ */
+export function readCommittedState(cwd, commit, filePath) {
+  const entry = committedEntry(cwd, commit, filePath);
+  if (!entry) return { state: "absent" };
+  if (entry.type !== "blob") return { state: "present-invalid" };
+  try {
+    return { state: "present-valid", value: JSON.parse(git(cwd, ["cat-file", "blob", entry.object])) };
+  } catch {
+    return { state: "present-invalid" };
+  }
+}
+
+/** Why a committed .last-update.json cannot be assessed. */
+export const LIVENESS_PROBLEMS = Object.freeze([
+  "missing",
+  "malformed",
+  "not-an-object",
+  "status-not-complete",
+  "git-head-not-full-sha",
+  "git-head-not-in-history",
+]);
+
+/**
+ * Compare openwiki/.last-update.json, as `readCommittedState` read it at the
+ * tip, with the source head.
  *
  *   live    - gitHead is the source head, or a descendant of it at or below
  *             the tip: no source changed after the wiki was generated
  *   stale   - gitHead is an ancestor of the source head: source changed since
- *   invalid - missing, unfinished, not a full SHA, or not in production
- *             history: the runner cannot reason about it and must not guess
+ *   invalid - missing, malformed, unfinished, not a full SHA, or not in
+ *             production history: the runner cannot reason about it and must
+ *             not guess. `problem` says which, as a LIVENESS_PROBLEMS code.
  */
 export function assessLiveness(cwd, { tip, sourceHead, lastUpdate }) {
-  if (!lastUpdate || typeof lastUpdate !== "object") {
-    return { state: "invalid", reason: "openwiki/.last-update.json is missing or unreadable" };
-  }
-  if (lastUpdate.status !== "complete") {
-    return { state: "invalid", reason: `previous OpenWiki run status is ${JSON.stringify(lastUpdate.status)}, not "complete"` };
-  }
-  const gitHead = lastUpdate.gitHead;
-  if (typeof gitHead !== "string" || !SHA.test(gitHead)) {
-    return { state: "invalid", reason: "recorded gitHead is not a full commit SHA" };
-  }
+  if (lastUpdate?.state === "absent") return { state: "invalid", problem: "missing" };
+  if (lastUpdate?.state !== "present-valid") return { state: "invalid", problem: "malformed" };
+  const metadata = lastUpdate.value;
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) return { state: "invalid", problem: "not-an-object" };
+  if (metadata.status !== "complete") return { state: "invalid", problem: "status-not-complete" };
+  const gitHead = metadata.gitHead;
+  if (typeof gitHead !== "string" || !SHA.test(gitHead)) return { state: "invalid", problem: "git-head-not-full-sha" };
   if (!commitExists(cwd, gitHead) || !isAncestor(cwd, gitHead, tip)) {
-    return { state: "invalid", reason: "recorded gitHead is not in production history", gitHead };
+    return { state: "invalid", problem: "git-head-not-in-history", gitHead };
   }
   if (gitHead === sourceHead) return { state: "live", gitHead };
-  if (isAncestor(cwd, sourceHead, gitHead)) {
-    return { state: "live", gitHead, note: "recorded after the latest source change" };
-  }
+  if (isAncestor(cwd, sourceHead, gitHead)) return { state: "live", gitHead, note: "recorded-after-source-change" };
   return { state: "stale", gitHead };
 }

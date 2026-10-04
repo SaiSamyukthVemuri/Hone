@@ -13,15 +13,34 @@ node scripts/openwiki/nightly.mjs [--no-publish]
 
 | Outcome | Exit | Meaning |
 |---|---|---|
-| `SKIP` | 0 | Disabled, kill switch present, another pass holds the lock, or an unmerged nightly branch is already in flight. |
+| `SKIP` | 0 | Disabled, kill switch present, another pass holds the lock, or an unmerged `openwiki/nightly-*` branch is already in flight. |
 | `NOOP` | 0 | The wiki already describes the source head: the startup no-op. OpenWiki never runs. |
 | `DRY_RUN` | 0 | Every check passed; publishing is off. This includes a successful metadata-only source advance. |
 | `PUBLISHED` | 0 | One pull request opened from `openwiki/nightly-<YYYYMMDD>-<source7>`, plus one `@codex review` request. A run that changed only run metadata is published too, titled "(metadata only)". |
 | `FAILED` | 1 | Nothing published; the subject checkout is reset. Retried on the next pass. This includes "production advanced during the run". |
-| `PRECONDITION` | 2 | A human must change something: environment, credentials, history or markers. |
+| `PRECONDITION` | 2 | A human must change something: environment, credentials, history, markers, committed run state, a run lock that holds no process id, an empty denylist or an unreadable tenant register. |
 
-Each pass writes a JSON report to `$HONE_WIKI_STATE_DIR/runs/` and `$HONE_WIKI_STATE_DIR/last-run.json`. It
-holds no secret values, and privacy findings are recorded by file, line and category, never by matched text.
+Each pass writes a JSON report to `$HONE_WIKI_STATE_DIR/runs/` and `$HONE_WIKI_STATE_DIR/last-run.json`.
+
+### Reporting boundary (`scripts/openwiki/report.mjs`)
+
+Every report, the CLI line, and the publish commit message, pull request title, body and review request go
+through one sink.
+- **Coded reasons.** A pass ends with a `reasonCode` from a closed catalog, plus `safeDetails`: counts, flags,
+  constants from closed sets, and identifiers in the runner's own formats (full commit SHAs, branch names of
+  the form `openwiki/nightly-<YYYYMMDD>-<source7>`, pull request numbers). The human-readable `reason` is
+  rendered from those values. When several checks fail together, the first is the `reasonCode` and the rest are
+  in `additionalReasons`.
+- **No free text.** No untrusted text reaches a sink: no pathname, generator output, remote ref name, API error,
+  git error or value parsed from the repository. An error with no catalog code is reported as
+  `UNEXPECTED_ERROR` with the step it happened in, and at most a system error code and an exit status. To see
+  the underlying error, rerun that step by hand in a throwaway checkout.
+- **Closed schema.** Every field of the report is checked against a closed schema when it is written. A value
+  that fails its kind is dropped and counted in `withheld`, never passed through. `withheld` is 0 unless the
+  runner itself has a bug.
+- **Paths.** A report holds a pathname only if this pass's path gate cleared it (One pass, step 6), or if it is
+  one of the runner's own constant paths.
+- **Privacy findings** are recorded by cleared file, line and category, never by matched text.
 
 **OpenWiki's stdout/stderr is intentionally never persisted or printed.** It is untrusted repository and model
 output that can carry names, tenant slugs, contact details or credential-shaped strings. The runner drains it
@@ -56,38 +75,68 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
 
 1. **Preflight, fail-closed:**
    - `HONE_WIKI_NIGHTLY=on`, no `DISABLED` file, lock acquired;
-   - every name in the environment table set, no forbidden name present;
+   - every name in the environment table set, no forbidden name present (a name forbidden by its prefix is
+     reported by that prefix only);
    - App token permissions exactly as below;
    - subject checkout cloned or fetched, then reset and cleaned at the production tip;
    - well-formed managed-block markers;
-   - no committed workflow scaffold or run state.
-2. **Startup no-op** when the wiki is live.
+   - no committed workflow scaffold;
+   - nothing committed at `openwiki/.run.json`: transient run state must never be committed, so a file there,
+     valid JSON or not (or a directory), is `PRECONDITION`. Existence is read from the git tree, never by
+     parsing the file.
+   - A run lock that holds no process id is not treated as absent: it is `PRECONDITION`, and the lock stays.
+     Remove `$HONE_WIKI_STATE_DIR/run.lock` by hand once no runner pass is active.
+2. **Startup no-op** when the wiki is live. A committed `.last-update.json` that is missing, malformed or not an
+   object is `PRECONDITION`, and the report says which of the three it is.
 3. **Single flight:** `SKIP` while any `openwiki/nightly-*` branch on the remote is not contained in production.
-   To let the runner resume, merge that PR or delete the branch.
+   To let the runner resume, merge that PR or delete the branch. Only branch names in the runner's own format
+   are named in the report. Any other `openwiki/nightly-*` name is remote state the runner does not own, so it
+   is counted as unrecognized and its name is withheld.
 4. **Run prerequisites:**
    - the pinned `openwiki@0.6.1` install;
    - node ≥ 22.22.0;
    - owner-only key and denylist files;
+   - a denylist with at least one term;
+   - a readable tenant register (§0 of `docs/production/current-state.md` at the production tip) with at least
+     one studio slug;
    - free disk above `HONE_WIKI_MIN_FREE_GB`.
+
+   An empty denylist or an unreadable register would silently turn a privacy scan into a no-op, so each is
+   `PRECONDITION`.
 5. **Pin the run.** `HEAD` moves to the source head (OpenWiki records it as `gitHead`), and the working tree
    stays the production tip (the newest wiki is the baseline). The runner then executes
    `openwiki code --update --print` with an allowlisted environment and its own `HOME`. It never runs `init`.
-6. **Scope.** Discard and record writes outside the generated scope (see A3 below). Fail on an unexpected write
-   or leftover `openwiki/.run.json`. A run that changed only `.last-update.json` and `.page-manifest.json`
-   still processed a new source head. Repository state is the cursor, so the run is validated and published
-   like any other; after the merge, the next pass is a startup no-op.
+6. **Path gate, then scope.**
+   - **Path gate first.** Before any changed path is recorded, reported or interpolated anywhere, the runner
+     takes every path the run changed. That means generated files, OpenWiki's known side effects and unexpected
+     writes, whether added, modified, deleted or type-changed. It normalizes each path and scans it as written
+     and humanized (separators read as spaces), so `people/jane-doe.md` matches "Jane Doe". A path is cleared
+     only if it has no privacy hit and fits the reportable path grammar (every path in the repository today
+     does).
+   - If any path fails the gate, the pass is `FAILED` with `PATH_PRIVACY_REJECTED`. Only a count and the
+     categories are kept. No pathname from that pass reaches `discarded`, `checks`, the reason, the CLI line or
+     a pull request.
+   - **Then scope.** The runner discards and records writes outside the generated scope (see A3 below). It
+     fails on an unexpected write or leftover `openwiki/.run.json`.
+   - **Metadata-only runs.** A run that changed only `.last-update.json` and `.page-manifest.json` still
+     processed a new source head. Repository state is the cursor, so the run is validated and published like
+     any other; after the merge, the next pass is a startup no-op.
 7. **Checks.**
-   - `openwiki/.last-update.json` is `{command: update, status: complete}` and its `gitHead` equals the source
-     head;
-   - no OpenWiki broken-link stamps and no conflict markers;
-   - provenance for every page the run touched: a Claim sidecar with at least one Claim, and the page's sha256
-     as `pageVersion` in both the sidecar and `.page-manifest.json`, with no leftovers of a deleted page;
-   - the privacy/secret scan finds nothing: credential and PII shapes, terms from `HONE_WIKI_DENYLIST_FILE`,
-     and studio slugs from the tenant register in `docs/production/current-state.md` §0. It runs over changed
-     pages and over changed Claim statements and evidence paths.
-   - Before those content checks it scans every added or modified generated path, since paths are published
-     too. Each path is read as written and with separators as spaces, so `people/jane-doe.md` matches
-     "Jane Doe". A path hit fails the run before any other check, so no other finding names that path.
+   - `openwiki/.last-update.json` is present, parses, is `{command: update, status: complete}` and its `gitHead`
+     equals the source head.
+   - **The page manifest is a state invariant, checked on every run, metadata-only runs included.**
+     `openwiki/.page-manifest.json` must exist, parse, and hold the strict schema `openwiki@0.6.1` enforces
+     itself:
+     - `{schemaVersion: 1, pages}`, with no other key;
+     - every key a canonical factual `/openwiki/*.md` page;
+     - every entry carrying a `sha256:` `pageVersion`, with only OpenWiki's optional fields, each in its
+       format.
+   - No OpenWiki broken-link stamps and no conflict markers.
+   - Provenance for every page the run touched: a Claim sidecar with at least one Claim, and the page's sha256
+     as `pageVersion` in both the sidecar and the manifest, with no leftovers of a deleted page.
+   - The privacy/secret scan finds nothing in generated content. It covers credential and PII shapes, terms from
+     `HONE_WIKI_DENYLIST_FILE`, and studio slugs from the tenant register. It runs over changed pages and over
+     changed Claim statements and evidence paths.
 8. **Publish (replace, not overlay).**
    - HEAD returns to the production tip, and the generated scope is replaced wholesale, deletions included.
    - The commit follows CLAUDE.md's delivery sequence steps 1-6 and 8 as written (git hooks disabled). Step 7,
@@ -103,6 +152,9 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
    - It then opens one pull request and posts `@codex review` for the exact head. The pass is `PUBLISHED` only
      when all three hold: the pull request exists, its head is exactly the verified commit, and that review
      request was posted.
+   - The commit message, pull request title and body, and the review request are rendered by the reporting
+     boundary from validated values only. A value that is not in its safe format stops the publish before
+     anything is committed.
    - If anything fails after the pull request is created, the runner closes the pull request **and** deletes
      its branch, attempting both even if one fails. The branch is deleted only while it still points at the
      verified head (`--force-with-lease`). If someone pushed a newer commit to it, it is left in place as
@@ -122,9 +174,10 @@ environment does not change that.
   Its own code runs from a pinned runner checkout, never from the subject clone. Its only other child is the
   pinned OpenWiki CLI from the tools install. OpenWiki confines its agent's shell to `pwd` and
   `git rev-parse HEAD`, and its writes to `openwiki/`.
-- **Trusted pre-publish checks on the host:** liveness, `.last-update.json` gitHead equality, generated-only
-  scope, replace-not-overlay, single child of the tip, runner authorship, worktree/HEAD identity,
-  `git diff --check`, conflict markers, provenance, broken-link stamps, and the privacy/secret denylist.
+- **Trusted pre-publish checks on the host:** liveness, `.last-update.json` gitHead equality, the path gate
+  over every changed path, generated-only scope, the page-manifest schema, replace-not-overlay, single child of
+  the tip, runner authorship, worktree/HEAD identity, `git diff --check`, conflict markers, provenance,
+  broken-link stamps, and the privacy/secret denylist on generated content.
   These checks deliberately do not reimplement repository business or test logic (for example
   `scripts/migration-state.mjs`). A generated-only commit cannot change a migration.
 - **Repository-controlled verification runs in PR CI:** the test suites, `verify:prepush` semantics, migration

@@ -35,117 +35,71 @@
 // verify:prepush, migration state) runs in PR CI, where these credentials are
 // absent.
 //
+// REPORTING BOUNDARY. Nothing here writes text to a report, the CLI or GitHub.
+// A pass ends with reason CODES from report.mjs's closed catalog, plus details
+// that are counts, flags and validated identifiers. report.mjs renders every
+// sentence and is the only sink. Pathnames reach it only after the path gate
+// (guards.mjs gateChangedPaths) cleared every path the run changed. An error
+// with no catalog code is reported by the step it happened in, never by its
+// message.
+//
 // Outcomes and exit codes: SKIP, NOOP, DRY_RUN and PUBLISHED exit 0; FAILED
 // exits 1; PRECONDITION exits 2 because a human has to change something.
 // ---------------------------------------------------------------------------
 
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  statfsSync,
-  writeFileSync,
-} from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { KNOWN_ENV_NAMES, REQUIRED_ENV, checkEnvironment } from "./environment.mjs";
 import { createGitHubClient, createInstallationToken } from "./github-app.mjs";
 import {
+  PRIVACY_CATEGORIES,
+  PROVENANCE_PROBLEMS,
   checkCommitAuthors,
   checkLastUpdate,
   checkManagedBlockMarkers,
+  checkPageManifest,
   checkProvenance,
   diffTrees,
   discardChanges,
   findBrokenLinkStamps,
   findConflictMarkers,
+  gateChangedPaths,
   inspectWorkflow,
-  loadTenantSlugs,
   parseDenylist,
+  parseTenantRegister,
   privacyItemsFor,
-  privacyItemsForPaths,
+  readWorktreeFile,
+  readWorktreeState,
   scanPrivacy,
   snapshotWorktree,
   sortRunChanges,
+  worktreePathExists,
 } from "./guards.mjs";
-import { OPENWIKI_WORKFLOW_PATH, RUN_METADATA_PATHS, classifyPath, loadOpenWikiIgnore } from "./paths.mjs";
-import { assessLiveness, commitExists, discoverSourceHead, git, isAncestor, readJsonAtCommit } from "./source-head.mjs";
+import { OPENWIKI_VERSION, OPENWIKI_WORKFLOW_PATH, RUN_METADATA_PATHS, classifyPath, loadOpenWikiIgnore } from "./paths.mjs";
+import {
+  CodedError,
+  NIGHTLY_BRANCH,
+  NIGHTLY_BRANCH_PREFIX,
+  TOKEN_CAUSES,
+  nightlyBranchName,
+  persistableReport,
+  renderPublishText,
+  renderReviewRequest,
+} from "./report.mjs";
+import { assessLiveness, commitExists, committedPathExists, discoverSourceHead, git, isAncestor, readCommittedState } from "./source-head.mjs";
 
-export const OPENWIKI_VERSION = "0.6.1";
-export const NIGHTLY_BRANCH_PREFIX = "openwiki/nightly-";
+export { FORBIDDEN_ENV, FORBIDDEN_ENV_PREFIXES, OPTIONAL_ENV, REQUIRED_ENV, checkEnvironment } from "./environment.mjs";
+export { NIGHTLY_BRANCH_PREFIX, OPENWIKI_VERSION };
 export const EXIT_CODE = Object.freeze({ SKIP: 0, NOOP: 0, DRY_RUN: 0, PUBLISHED: 0, FAILED: 1, PRECONDITION: 2 });
 
-/** Names the host must set (values live in the host env file; secrets only as *_FILE paths). */
-export const REQUIRED_ENV = Object.freeze([
-  "HONE_WIKI_NIGHTLY",
-  "HONE_WIKI_REPOSITORY",
-  "HONE_WIKI_BASE_BRANCH",
-  "HONE_WIKI_SUBJECT_DIR",
-  "HONE_WIKI_STATE_DIR",
-  "HONE_WIKI_APP_ID",
-  "HONE_WIKI_APP_INSTALLATION_ID",
-  "HONE_WIKI_APP_PRIVATE_KEY_FILE",
-  "HONE_WIKI_GIT_AUTHOR_NAME",
-  "HONE_WIKI_GIT_AUTHOR_EMAIL",
-  "HONE_WIKI_OPENWIKI_DIR",
-  "HONE_WIKI_ANTHROPIC_API_KEY_FILE",
-  "HONE_WIKI_DENYLIST_FILE",
-  "OPENWIKI_PROVIDER",
-  "OPENWIKI_MODEL_ID",
-  "OPENWIKI_TELEMETRY_DISABLED",
-  "DO_NOT_TRACK",
-]);
-export const OPTIONAL_ENV = Object.freeze(["HONE_WIKI_PUBLISH", "HONE_WIKI_MIN_FREE_GB", "HONE_WIKI_RUN_TIMEOUT_MIN"]);
+const SHA = /^[0-9a-f]{40}$/u;
 
-/**
- * Must be absent from the runner's environment. Operator GitHub tokens would
- * bypass the App's narrowed permissions. A raw provider key in the runner's
- * own environment would reach every child, not only OpenWiki; it arrives as a
- * file. Tracing would ship repository content to LangSmith. The runner holds
- * no production credential.
- */
-export const FORBIDDEN_ENV = Object.freeze([
-  "GITHUB_TOKEN",
-  "GH_TOKEN",
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "OPENAI_COMPATIBLE_API_KEY",
-  "OPENROUTER_API_KEY",
-  "GEMINI_API_KEY",
-  "LANGSMITH_API_KEY",
-  "LANGCHAIN_API_KEY",
-  "LANGCHAIN_TRACING_V2",
-  "OPENWIKI_LANGSMITH_API_KEY",
-]);
-export const FORBIDDEN_ENV_PREFIXES = Object.freeze(["SUPABASE_", "STRIPE_", "TWILIO_", "VERCEL_", "SENTRY_"]);
-
-/** Problems with the runner environment, by NAME only. Values are never read into a message. */
-export function checkEnvironment(env, required = REQUIRED_ENV) {
-  const problems = [];
-  for (const name of required) {
-    if (!String(env[name] ?? "").trim()) problems.push(`required ${name} is not set`);
-  }
-  for (const name of Object.keys(env)) {
-    if (FORBIDDEN_ENV.includes(name) || FORBIDDEN_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))) {
-      problems.push(`forbidden ${name} is set`);
-    }
-  }
-  if (required.includes("OPENWIKI_PROVIDER") && env.OPENWIKI_PROVIDER && env.OPENWIKI_PROVIDER !== "anthropic") {
-    problems.push("OPENWIKI_PROVIDER must be anthropic");
-  }
-  for (const name of ["OPENWIKI_TELEMETRY_DISABLED", "DO_NOT_TRACK"]) {
-    if (required.includes(name) && env[name] && env[name] !== "1") problems.push(`${name} must be 1`);
-  }
-  return problems;
-}
+/** One catalog reason (report.mjs REASONS). */
+const reason = (code, details = {}) => ({ code, details });
 
 // ---------------------------------------------------------------- small helpers
 
@@ -165,6 +119,11 @@ function isInside(child, parent) {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+/**
+ * The run lock holds the owning pid. A lock whose owner is gone is taken over.
+ * A lock that holds no pid is not treated as absent: it is reported, and a
+ * human removes it.
+ */
 function acquireLock(stateDir) {
   const file = path.join(stateDir, "run.lock");
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -172,15 +131,18 @@ function acquireLock(stateDir) {
       const fd = openSync(file, "wx", 0o600);
       writeFileSync(fd, String(process.pid));
       closeSync(fd);
-      return file;
+      return { file };
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      const pid = Number(readFileSync(file, "utf8").trim());
-      if (pid > 0 && processAlive(pid)) return null;
-      rmSync(file, { force: true });
     }
+    const lock = readWorktreeFile(stateDir, "run.lock");
+    if (lock.state === "absent") continue; // released between the two calls
+    const pid = lock.state === "present-valid" && /^\d{1,10}$/u.test(lock.text.trim()) ? Number(lock.text.trim()) : 0;
+    if (pid <= 0) return { held: "LOCK_UNREADABLE" };
+    if (processAlive(pid)) return { held: "LOCK_HELD" };
+    rmSync(file, { force: true });
   }
-  return null;
+  return { held: "LOCK_HELD" };
 }
 
 function processAlive(pid) {
@@ -201,7 +163,9 @@ function privateFile(filePath) {
  * another account could read is already compromised, so it is refused.
  */
 export function readOwnerOnlySecret(filePath, name) {
-  if (!privateFile(filePath)) throw new Error(`${name} must exist and be readable by its owner only`);
+  if (!privateFile(filePath)) {
+    throw Object.assign(new Error(`${name} must exist and be readable by its owner only`), { tokenCause: "key-file-not-owner-only", envName: name });
+  }
   return readFileSync(filePath, "utf8");
 }
 
@@ -271,17 +235,6 @@ function resetSubject(subject, tip) {
   }
 }
 
-const SECRET_SHAPES = [
-  /\bsk-ant-[A-Za-z0-9_-]{10,}/gu,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}/gu,
-  /\beyJ[A-Za-z0-9_-]{15,}/gu,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu,
-];
-
-export function redactSecrets(text) {
-  return SECRET_SHAPES.reduce((out, re) => out.replace(re, "[redacted]"), String(text));
-}
-
 // ---------------------------------------------------------------- the generator
 
 /** The only OpenWiki invocation the runner makes. There is no mode parameter: init is unreachable. */
@@ -343,15 +296,14 @@ export function runOpenWikiProcess({ cwd, invocation, timeoutMs }) {
  * report or the CLI result.
  */
 export function generatorDiagnostics(result) {
-  const diagnostics = { exitCode: result.exitCode, timedOut: Boolean(result.timedOut) };
-  if (typeof result.output === "string") {
-    diagnostics.outputBytes = Buffer.byteLength(result.output);
-    diagnostics.outputSha256 = createHash("sha256").update(result.output).digest("hex");
-  } else {
-    diagnostics.outputBytes = result.outputBytes ?? 0;
-    diagnostics.outputSha256 = result.outputSha256 ?? null;
-  }
-  return diagnostics;
+  const output = typeof result.output === "string" ? result.output : undefined;
+  const hashOf = (text) => createHash("sha256").update(text).digest("hex");
+  return {
+    exitCode: Number.isSafeInteger(result.exitCode) ? result.exitCode : 1,
+    timedOut: Boolean(result.timedOut),
+    outputBytes: output !== undefined ? Buffer.byteLength(output) : (result.outputBytes ?? 0),
+    outputSha256: output !== undefined ? hashOf(output) : (result.outputSha256 ?? hashOf("")),
+  };
 }
 
 // ---------------------------------------------------------------- run steps
@@ -362,174 +314,182 @@ function syncSubject(config, token) {
     mkdirSync(path.dirname(subject), { recursive: true });
     remoteGit(path.dirname(subject), ["clone", "--quiet", "--no-checkout", "--no-tags", config.remoteUrl, subject], token);
   }
-  if (git(subject, ["remote", "get-url", "origin"]) !== config.remoteUrl) {
-    throw new PreconditionError("subject checkout's origin is not the configured repository");
-  }
+  if (git(subject, ["remote", "get-url", "origin"]) !== config.remoteUrl) throw new CodedError("SUBJECT_ORIGIN_MISMATCH");
   const base = config.baseBranch;
   remoteGit(subject, ["fetch", "--quiet", "--no-tags", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`], token);
   const tip = git(subject, ["rev-parse", `refs/remotes/origin/${base}^{commit}`]);
   git(subject, ["checkout", "--quiet", "--detach", "--force", tip]);
   git(subject, ["reset", "--quiet", "--hard", tip]);
   git(subject, ["clean", "-ffdxq"]);
-  if (git(subject, ["status", "--porcelain", "--untracked-files=all"]) !== "") {
-    throw new PreconditionError("subject checkout is not clean after reset");
-  }
+  if (git(subject, ["status", "--porcelain", "--untracked-files=all"]) !== "") throw new CodedError("SUBJECT_NOT_CLEAN");
   return tip;
 }
 
-class PreconditionError extends Error {}
-
-/** Production moved after the run was pinned: the run is stale and nothing may be published from it. */
-class BaseMovedError extends Error {
-  constructor(tip, remote) {
-    super(
-      `production advanced during the run (${tip.slice(0, 7)} -> ${String(remote || "missing").slice(0, 7)}); nothing published, the next pass regenerates from the new tip`,
-    );
-  }
-}
-
+/**
+ * Committed state OpenWiki would choke on, or that must never be committed.
+ * openwiki/.run.json is transient: committed at all, parseable or not, it
+ * stops the pass. Its existence is read from the tree, never by parsing it.
+ */
 function baselineProblems(subject, tip) {
-  const read = (file) => {
-    const full = path.join(subject, file);
-    return existsSync(full) ? readFileSync(full, "utf8") : undefined;
-  };
-  const problems = [
-    ...checkManagedBlockMarkers("AGENTS.md", read("AGENTS.md")),
-    ...checkManagedBlockMarkers("CLAUDE.md", read("CLAUDE.md")),
-  ];
-  if (existsSync(path.join(subject, OPENWIKI_WORKFLOW_PATH))) {
-    problems.push(`${OPENWIKI_WORKFLOW_PATH} is committed at the production tip`);
+  const reasons = [];
+  for (const file of ["AGENTS.md", "CLAUDE.md"]) {
+    const read = readWorktreeFile(subject, file);
+    if (read.state === "present-valid") reasons.push(...checkManagedBlockMarkers(file, read.text));
   }
-  if (readJsonAtCommit(subject, tip, "openwiki/.run.json") !== undefined) {
-    problems.push("openwiki/.run.json is committed at the production tip");
-  }
-  return problems;
+  if (committedPathExists(subject, tip, OPENWIKI_WORKFLOW_PATH)) reasons.push(reason("WORKFLOW_SCAFFOLD_COMMITTED"));
+  if (committedPathExists(subject, tip, "openwiki/.run.json")) reasons.push(reason("COMMITTED_RUN_STATE_PRESENT"));
+  return reasons;
 }
 
-/** Nightly branches on the remote that production does not contain: at most one run in flight. */
+/**
+ * Nightly branches on the remote that production does not contain: at most
+ * one run in flight. A branch counts whatever its name. Only a name in the
+ * runner's own format is reported; any other `openwiki/nightly-*` name is
+ * remote state the runner does not own, so it is only counted.
+ */
 function unmergedNightlyBranches(subject, tip, token) {
   // List every head and filter here: ls-remote patterns match ref-name tails,
   // which is not the same thing as a prefix.
-  const listed = remoteGit(subject, ["ls-remote", "--heads", "origin"], token)
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [sha, ref] = line.split("\t");
-      return { sha, branch: ref.replace(/^refs\/heads\//u, "") };
-    })
-    .filter(({ branch }) => branch.startsWith(NIGHTLY_BRANCH_PREFIX));
-  const unmerged = [];
-  for (const { sha, branch } of listed) {
-    if (!commitExists(subject, sha)) {
-      remoteGit(subject, ["fetch", "--quiet", "--no-tags", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], token);
+  const prefix = `refs/heads/${NIGHTLY_BRANCH_PREFIX}`;
+  const branches = [];
+  let unrecognized = 0;
+  for (const line of remoteGit(subject, ["ls-remote", "--heads", "origin"], token).split("\n").filter(Boolean)) {
+    const [sha, ref] = line.split("\t");
+    if (typeof ref !== "string" || !ref.startsWith(prefix)) continue;
+    const branch = ref.slice("refs/heads/".length);
+    if (!SHA.test(sha)) {
+      unrecognized += 1; // cannot be shown to be merged, so it is in flight
+      continue;
     }
-    if (!isAncestor(subject, sha, tip)) unmerged.push(branch);
+    if (!commitExists(subject, sha)) {
+      remoteGit(subject, ["fetch", "--quiet", "--no-tags", "origin", `+${ref}:refs/remotes/origin/${branch}`], token);
+    }
+    if (isAncestor(subject, sha, tip)) continue;
+    if (NIGHTLY_BRANCH.test(branch)) branches.push(branch);
+    else unrecognized += 1;
   }
-  return unmerged;
+  return { branches, unrecognized };
 }
 
-function runPrerequisiteProblems(config) {
-  const problems = [];
-  const pkgFile = path.join(config.openwikiDir, "package.json");
-  let pkg;
-  try {
-    pkg = JSON.parse(readFileSync(pkgFile, "utf8"));
-  } catch {
-    problems.push("pinned OpenWiki install is missing (HONE_WIKI_OPENWIKI_DIR)");
-  }
-  if (pkg && (pkg.name !== "openwiki" || pkg.version !== OPENWIKI_VERSION)) {
-    problems.push(`pinned OpenWiki must be openwiki@${OPENWIKI_VERSION}`);
-  }
-  if (!existsSync(path.join(config.openwikiDir, "dist", "cli", "cli.js"))) problems.push("OpenWiki CLI entry point is missing");
+/**
+ * What a run needs before it may start, and the privacy terms every scan uses.
+ * An empty denylist or an unreadable tenant register would silently turn a
+ * privacy scan into a no-op, so each stops the pass instead.
+ */
+function runPrerequisites(config, subject) {
+  const reasons = [];
+  const pkg = readWorktreeState(config.openwikiDir, "package.json");
+  if (pkg.state === "absent") reasons.push(reason("OPENWIKI_INSTALL_MISSING"));
+  else if (pkg.state === "present-invalid") reasons.push(reason("OPENWIKI_INSTALL_MALFORMED"));
+  else if (pkg.value?.name !== "openwiki" || pkg.value?.version !== OPENWIKI_VERSION) reasons.push(reason("OPENWIKI_VERSION_MISMATCH"));
+  if (!existsSync(path.join(config.openwikiDir, "dist", "cli", "cli.js"))) reasons.push(reason("OPENWIKI_CLI_MISSING"));
   // The OpenWiki child runs on this same node (buildGeneratorInvocation uses
   // process.execPath). `config.nodeVersion` exists so tests on another node can
   // exercise the rule; the CLI never sets it.
   const [major, minor] = String(config.nodeVersion ?? process.versions.node).split(".").map(Number);
-  if (major < 22 || (major === 22 && minor < 22)) problems.push("node >= 22.22.0 is required by openwiki@0.6.1");
-  if (!privateFile(config.anthropicKeyFile)) problems.push("HONE_WIKI_ANTHROPIC_API_KEY_FILE must exist and be readable by its owner only");
-  else if (!readFileSync(config.anthropicKeyFile, "utf8").trim()) problems.push("HONE_WIKI_ANTHROPIC_API_KEY_FILE is empty");
-  if (!privateFile(config.denylistFile)) problems.push("HONE_WIKI_DENYLIST_FILE must exist and be readable by its owner only");
-  if (!String(config.modelId ?? "").trim()) problems.push("OPENWIKI_MODEL_ID is empty");
+  if (major < 22 || (major === 22 && minor < 22)) reasons.push(reason("NODE_TOO_OLD"));
+  if (!privateFile(config.anthropicKeyFile)) reasons.push(reason("MODEL_KEY_FILE_NOT_OWNER_ONLY"));
+  else if (!readFileSync(config.anthropicKeyFile, "utf8").trim()) reasons.push(reason("MODEL_KEY_FILE_EMPTY"));
+  let denylistTerms = [];
+  if (!privateFile(config.denylistFile)) reasons.push(reason("DENYLIST_FILE_NOT_OWNER_ONLY"));
+  else {
+    denylistTerms = parseDenylist(readFileSync(config.denylistFile, "utf8"));
+    if (denylistTerms.length === 0) reasons.push(reason("DENYLIST_EMPTY"));
+  }
+  const registerFile = readWorktreeFile(subject, "docs/production/current-state.md");
+  const register = registerFile.state === "present-valid" ? parseTenantRegister(registerFile.text) : { found: false, slugs: [] };
+  if (!register.found || register.slugs.length === 0) reasons.push(reason("TENANT_REGISTER_UNREADABLE"));
+  if (!String(config.modelId ?? "").trim()) reasons.push(reason("MODEL_ID_EMPTY"));
   const fs = statfsSync(config.stateDir);
-  if (fs.bavail * fs.bsize < config.minFreeBytes) problems.push("free disk space is below HONE_WIKI_MIN_FREE_GB");
-  return problems;
+  if (fs.bavail * fs.bsize < config.minFreeBytes) reasons.push(reason("LOW_DISK"));
+  return { reasons, terms: { denylistTerms, tenantSlugs: register.slugs } };
 }
 
 /**
- * Split the run's changes by owner, discard everything outside the generated
- * scope, and record what was discarded and why. Returns the post-discard
- * snapshot tree.
+ * Split the run's GATED changes by owner, discard everything outside the
+ * generated scope, and record what was discarded and why. Every path here has
+ * already been cleared by the path gate. Returns the post-discard snapshot
+ * tree.
  */
-function enforceScope(subject, tip, ignore, report) {
-  const before = sortRunChanges(diffTrees(subject, tip, snapshotWorktree(subject, tip)), ignore);
-  for (const change of before.sideEffects) {
-    const entry = { path: change.path, status: change.status, reason: "known OpenWiki side effect outside the generated scope" };
-    if (change.path === OPENWIKI_WORKFLOW_PATH) {
+function enforceScope(subject, tip, changes, ignore, report) {
+  const sorted = sortRunChanges(changes, ignore);
+  for (const change of sorted.sideEffects) {
+    const entry = { path: change.path, status: change.status, kind: change.kind, reasonCode: "KNOWN_SIDE_EFFECT" };
+    if (change.path === OPENWIKI_WORKFLOW_PATH && change.status !== "D") {
       const violations = inspectWorkflow(readFileSync(path.join(subject, change.path), "utf8"));
-      entry.reason = violations.length
-        ? "A3: OpenWiki's workflow scaffold would fail CI-workflow inspection; never published"
-        : "A3: OpenWiki's workflow scaffold is outside the generated scope; never published";
+      entry.reasonCode = violations.length > 0 ? "WORKFLOW_SCAFFOLD_FAILS_INSPECTION" : "WORKFLOW_SCAFFOLD";
       entry.workflowInspection = violations;
     }
     report.discarded.push(entry);
   }
-  for (const change of before.unexpected) {
-    report.discarded.push({ path: change.path, status: change.status, reason: `unexpected generator write (${change.kind})` });
+  for (const change of sorted.unexpected) {
+    report.discarded.push({ path: change.path, status: change.status, kind: change.kind, reasonCode: "UNEXPECTED_WRITE" });
   }
-  discardChanges(subject, tip, [...before.sideEffects, ...before.unexpected]);
+  discardChanges(subject, tip, [...sorted.sideEffects, ...sorted.unexpected]);
   const tree = snapshotWorktree(subject, tip);
-  const after = sortRunChanges(diffTrees(subject, tip, tree), ignore);
-  if (after.sideEffects.length > 0 || after.unexpected.length > 0) {
-    throw new Error("writes outside the generated scope survived the discard");
-  }
-  return { tree, generated: after.generated, unexpected: before.unexpected };
+  // What survives the discard must be exactly the generated changes the gate saw.
+  const expected = new Set(sorted.generated.map((c) => `${c.status}\0${c.path}`));
+  const after = diffTrees(subject, tip, tree);
+  if (after.length !== expected.size || after.some((c) => !expected.has(`${c.status}\0${c.path}`))) throw new CodedError("SCOPE_DISCARD_INCOMPLETE");
+  return { tree, generated: sorted.generated, unexpected: sorted.unexpected };
 }
 
-function validateGenerated(subject, generated, sourceHead, config) {
-  const problems = [];
-  let lastUpdate;
-  try {
-    lastUpdate = JSON.parse(readFileSync(path.join(subject, "openwiki/.last-update.json"), "utf8"));
-  } catch {
-    lastUpdate = undefined;
-  }
-  problems.push(...checkLastUpdate(lastUpdate, sourceHead).map((p) => `openwiki/.last-update.json: ${p}`));
-  const stateFile = path.join(subject, "docs/production/current-state.md");
-  const tenantSlugs = loadTenantSlugs(existsSync(stateFile) ? readFileSync(stateFile, "utf8") : "");
-  const denylistTerms = parseDenylist(readFileSync(config.denylistFile, "utf8"));
-  // Generated paths first. If a path itself carries a privacy term, nothing
-  // else is computed: every other finding would name that path in the report.
-  const pathHits = scanPrivacy(privacyItemsForPaths(generated), { denylistTerms, tenantSlugs });
-  if (pathHits.length > 0) {
-    return {
-      problems: [`${pathHits.length} privacy/secret denylist hit(s) in generated paths`],
-      stamps: [],
-      conflictMarkers: [],
-      privacyHits: pathHits,
-    };
-  }
-  const stamps = [];
-  const conflictMarkers = [];
+/**
+ * The checks on what the run generated, in order: run metadata, the page
+ * manifest as a state invariant (present, parseable, OpenWiki's schema; on
+ * every run, a metadata-only one included), page content, page/Claim
+ * provenance for changed pages and deleted-page leftovers, then the content
+ * privacy scan. Every finding is a code with a cleared path at most.
+ */
+function validateGenerated(subject, generated, sourceHead, terms) {
+  const reasons = [];
+  const checks = { lastUpdate: [], manifest: [], brokenLinkStamps: [], conflictMarkers: [], provenance: [], privacyHits: [] };
+
+  checks.lastUpdate = checkLastUpdate(readWorktreeState(subject, "openwiki/.last-update.json"), sourceHead);
+  if (checks.lastUpdate.length > 0) reasons.push(reason("LAST_UPDATE_INVALID", { problems: checks.lastUpdate }));
+
+  const manifest = readWorktreeState(subject, "openwiki/.page-manifest.json");
+  checks.manifest = checkPageManifest(manifest);
+  if (checks.manifest.length > 0) reasons.push(reason("MANIFEST_INVALID", { problems: checks.manifest }));
+
   const items = [];
+  const unreadableSidecars = [];
   for (const change of generated) {
     if (change.status === "D") continue;
     const content = readFileSync(path.join(subject, change.path), "utf8");
     if (change.path.endsWith(".md")) {
-      for (const line of findBrokenLinkStamps(content)) stamps.push({ file: change.path, line });
+      for (const line of findBrokenLinkStamps(content)) checks.brokenLinkStamps.push({ file: change.path, line });
     }
-    for (const line of findConflictMarkers(content)) conflictMarkers.push({ file: change.path, line });
+    for (const line of findConflictMarkers(content)) checks.conflictMarkers.push({ file: change.path, line });
     try {
       items.push(...privacyItemsFor(change.path, content));
     } catch {
-      problems.push(`${change.path}: Claim sidecar is not valid JSON`);
+      unreadableSidecars.push({ file: change.path, problem: "sidecar-not-json" });
     }
   }
-  if (stamps.length > 0) problems.push(`${stamps.length} broken-link stamp(s) left by OpenWiki`);
-  if (conflictMarkers.length > 0) problems.push(`${conflictMarkers.length} conflict marker line(s)`);
-  problems.push(...checkProvenance(subject, generated));
-  const privacyHits = scanPrivacy(items, { denylistTerms, tenantSlugs });
-  if (privacyHits.length > 0) problems.push(`${privacyHits.length} privacy/secret denylist hit(s)`);
-  return { problems, stamps, conflictMarkers, privacyHits };
+  if (checks.brokenLinkStamps.length > 0) reasons.push(reason("BROKEN_LINK_STAMPS", { count: checks.brokenLinkStamps.length }));
+  if (checks.conflictMarkers.length > 0) reasons.push(reason("CONFLICT_MARKERS", { count: checks.conflictMarkers.length }));
+
+  // Provenance reads the validated manifest; a manifest that failed its schema has already failed the run.
+  const provenance = checks.manifest.length === 0 ? checkProvenance(subject, generated, manifest.value.pages) : [];
+  const seen = new Set();
+  for (const finding of [...unreadableSidecars, ...provenance]) {
+    const key = `${finding.file}\0${finding.problem}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    checks.provenance.push(finding);
+  }
+  if (checks.provenance.length > 0) {
+    const problems = PROVENANCE_PROBLEMS.filter((code) => checks.provenance.some((p) => p.problem === code));
+    reasons.push(reason("PROVENANCE_INVALID", { count: checks.provenance.length, problems }));
+  }
+
+  checks.privacyHits = scanPrivacy(items, terms);
+  if (checks.privacyHits.length > 0) {
+    const categories = PRIVACY_CATEGORIES.filter((category) => checks.privacyHits.some((hit) => hit.category === category));
+    reasons.push(reason("CONTENT_PRIVACY_HITS", { hits: checks.privacyHits.length, categories }));
+  }
+  return { reasons, checks };
 }
 
 function summarize(generated) {
@@ -537,9 +497,27 @@ function summarize(generated) {
   return { changed: generated.length, added: count("A"), modified: count("M"), deleted: count("D") };
 }
 
-async function publish({ subject, tip, sourceHead, previousGitHead, tree, generated, metadataOnly, ignore, config, deps, token, report }) {
-  const stamp = new Date(deps.now ? deps.now() : Date.now()).toISOString().slice(0, 10).replace(/-/gu, "");
-  const branch = `${NIGHTLY_BRANCH_PREFIX}${stamp}-${sourceHead.slice(0, 7)}`;
+/** A trusted structural check on the publish commit: a coded failure, never a git message. */
+function trusted(check, holds) {
+  if (!holds) throw new CodedError("PUBLISH_CHECK_FAILED", { check });
+}
+
+function gitCheck(subject, args, check) {
+  try {
+    git(subject, args);
+  } catch {
+    throw new CodedError("PUBLISH_CHECK_FAILED", { check });
+  }
+}
+
+async function publish({ subject, tip, sourceHead, previousGitHead, tree, generated, metadataOnly, ignore, config, deps, token, report, clearedPaths, at }) {
+  at("publish-commit");
+  const branch = nightlyBranchName(deps.now ? deps.now() : Date.now(), sourceHead);
+  // Rendered before anything is committed: every word comes from validated values (report.mjs).
+  const text = renderPublishText(
+    { sourceHead, tip, previousGitHead, generated: summarize(generated), metadataOnly, discarded: report.discarded },
+    { clearedPaths },
+  );
   const identity = config.identity;
   const env = {
     ...process.env,
@@ -554,90 +532,77 @@ async function publish({ subject, tip, sourceHead, previousGitHead, tree, genera
 
   // CLAUDE.md "Follow this sequence before every push": steps 1-6, in order.
   git(subject, ["add", "-A"]);
-  git(subject, ["diff", "--cached", "--check"]);
+  gitCheck(subject, ["diff", "--cached", "--check"], "diff-check");
   const staged = git(subject, ["status", "--porcelain", "--untracked-files=all"]);
-  if (staged.split("\n").some((line) => line.startsWith("??"))) throw new Error("an untracked file was not staged");
-  const title = metadataOnly
-    ? `docs(openwiki): record source ${sourceHead.slice(0, 7)} (metadata only)`
-    : `docs(openwiki): nightly update at source ${sourceHead.slice(0, 7)}`;
-  git(subject, ["commit", "--quiet", "--no-verify", "-m", title, "-m", `Generated by the WIKI-AUTO-01 runner from production source ${sourceHead} (production tip ${tip}). Only generated openwiki/ files change.`], { env });
-  if (git(subject, ["status", "--porcelain", "--untracked-files=all"]) !== "") throw new Error("working tree is not clean after commit");
-  git(subject, ["diff", "HEAD", "--exit-code"]);
+  trusted("untracked-not-staged", !staged.split("\n").some((line) => line.startsWith("??")));
+  git(subject, ["commit", "--quiet", "--no-verify", "-m", text.title, "-m", text.commitBody], { env });
+  trusted("worktree-not-clean", git(subject, ["status", "--porcelain", "--untracked-files=all"]) === "");
+  gitCheck(subject, ["diff", "HEAD", "--exit-code"], "worktree-not-head");
 
   // Step 7 is NOT `npm run verify:prepush`: that is subject code, and the
   // runner never executes subject code (see the header). These are trusted
   // structural checks over the commit as data. The repository's own
   // verification runs in PR CI, without these credentials.
   const head = git(subject, ["rev-parse", "HEAD"]);
-  git(subject, ["diff", "--cached", "--exit-code"]); // index == HEAD (with the step above: worktree == index == HEAD)
-  git(subject, ["diff", "--check", tip, head]); // whitespace errors and conflict markers, as git defines them
+  gitCheck(subject, ["diff", "--cached", "--exit-code"], "index-not-head"); // index == HEAD (with the step above: worktree == index == HEAD)
+  gitCheck(subject, ["diff", "--check", tip, head], "diff-check"); // whitespace errors and conflict markers, as git defines them
   const parents = git(subject, ["rev-list", "--parents", "-n", "1", head]).split(" ").slice(1);
-  if (parents.length !== 1 || parents[0] !== tip) throw new Error("publish commit is not a single-parent child of the production tip");
-  const published = diffTrees(subject, tip, head);
-  if (published.some((c) => classifyPath(c.path, ignore) !== "generated")) throw new Error("publish commit leaves the generated scope");
-  if (git(subject, ["rev-parse", `${head}:openwiki`]) !== git(subject, ["rev-parse", `${tree}:openwiki`])) {
-    throw new Error("published openwiki/ is not exactly the run's output (replace, not overlay)");
-  }
-  const authorProblems = checkCommitAuthors(subject, `${tip}..${head}`, identity);
-  if (authorProblems.length > 0) throw new Error(authorProblems.join("; "));
+  trusted("not-single-child-of-tip", parents.length === 1 && parents[0] === tip);
+  trusted("leaves-generated-scope", diffTrees(subject, tip, head).every((c) => classifyPath(c.path, ignore) === "generated"));
+  trusted("not-replace-exact", git(subject, ["rev-parse", `${head}:openwiki`]) === git(subject, ["rev-parse", `${tree}:openwiki`]));
+  const authors = checkCommitAuthors(subject, `${tip}..${head}`, identity);
+  trusted("author-mismatch", authors.commits === 1 && authors.mismatched === 0);
 
   // Production must still be exactly the tip this run was pinned to. A run can
   // take an hour or more; publishing a stale run would open a clean-looking PR
   // that omits commits already on production.
+  at("publish-push");
   const baseRef = `refs/heads/${config.baseBranch}`;
   const remote = remoteGit(subject, ["ls-remote", "origin", baseRef], token)
     .split("\n")
     .map((line) => line.split("\t"))
     .find(([, ref]) => ref === baseRef)?.[0];
-  if (remote !== tip) throw new BaseMovedError(tip, remote);
+  if (remote !== tip) throw new CodedError("BASE_MOVED", { pinnedTip: tip, remoteTip: SHA.test(remote ?? "") ? remote : undefined });
   // --no-verify: no hook runs either (the clone's hooks are git's inactive samples).
   remoteGit(subject, ["push", "--quiet", "--no-verify", "origin", `${head}:refs/heads/${branch}`], token);
   report.publish = { branch, head };
 
+  at("pull-request");
   const github = deps.github(token);
-  const s = summarize(generated);
-  const discardedList = report.discarded.map((d) => `\`${d.path}\` (${d.reason})`).join("; ") || "none";
-  const body = [
-    "Automated OpenWiki update (WIKI-AUTO-01). Generated `openwiki/` files only; no product, runtime, test or workflow change.",
-    "",
-    `- Source head documented: \`${sourceHead}\` (newest production commit with a source change)`,
-    `- Production tip: \`${tip}\``,
-    `- Previous wiki gitHead: \`${previousGitHead}\``,
-    `- Generated files: ${s.changed} (${s.added} added, ${s.modified} modified, ${s.deleted} deleted)${metadataOnly ? ", run metadata only: records the processed source head" : ""}`,
-    `- Discarded generator writes: ${discardedList}`,
-    "- Trusted pre-publish checks passed on the runner host: liveness, `.last-update.json` gitHead equality, generated-only scope, replace-not-overlay, single child of the production tip, runner authorship, clean worktree with HEAD/tree identity, `git diff --check`, conflict markers, provenance, broken-link stamps, privacy/secret denylist",
-    "- Repository-controlled verification (the test suites and `verify:prepush`) runs in this PR's CI; the runner executes no repository code",
-    "",
-    "The runner never merges. Merge authority stays with a human.",
-  ].join("\n");
   let pr;
   try {
-    pr = await github.createPullRequest({ head: branch, base: config.baseBranch, title, body });
+    pr = await github.createPullRequest({ head: branch, base: config.baseBranch, title: text.title, body: text.body });
   } catch (error) {
     // A pushed branch without a pull request would hold the in-flight slot forever.
-    // If the delete fails (or the branch moved), the next run's in-flight check names it.
-    deleteOwnBranch(subject, branch, head, token);
-    throw error;
+    // If the delete fails (or the branch moved), the next run's in-flight check counts it.
+    const branchState = deleteOwnBranch(subject, branch, head, token);
+    throw new CodedError("PULL_REQUEST_CREATE_FAILED", { httpStatus: Number.isSafeInteger(error?.httpStatus) ? error.httpStatus : undefined, branchState });
   }
-  report.publish.pr = { number: pr.number, url: pr.url };
+  if (!Number.isSafeInteger(pr?.number) || pr.number <= 0) {
+    throw new CodedError("PULL_REQUEST_CREATE_FAILED", { invalidResponse: true, branchState: deleteOwnBranch(subject, branch, head, token) });
+  }
+  report.publish.pr = { number: pr.number };
 
   // From here a pull request exists. It counts as published only when its
   // head is exactly the verified commit AND its exact-head review request was
   // posted. Any failure before that closes it and deletes its branch, or it
   // would hold the single-flight slot and could be merged without that review.
+  at("review-request");
   let failure = "head-mismatch";
   try {
     if (pr.headSha !== head) throw new Error("pull request head is not the commit the runner verified");
     failure = "review-request-failed";
-    await github.comment(pr.number, `@codex review\n\nExact head \`${head}\`.`);
+    await github.comment(pr.number, renderReviewRequest(head));
   } catch {
+    at("cleanup");
     const cleanup = await cleanUpCreatedPullRequest({ github, number: pr.number, subject, branch, head, token });
     Object.assign(report.publish, { failure, cleanup });
-    const recovery =
-      cleanup.pullRequest === "closed" && cleanup.branch === "deleted"
-        ? "pull request closed and branch deleted"
-        : `cleanup incomplete (pull request #${pr.number}: ${cleanup.pullRequest}; branch ${branch}: ${cleanup.branch}); recover by hand`;
-    throw new Error(`pull request #${pr.number} was not completed (${failure}); ${recovery}`);
+    throw new CodedError(failure === "head-mismatch" ? "PULL_REQUEST_HEAD_MISMATCH" : "REVIEW_REQUEST_FAILED", {
+      number: pr.number,
+      branch,
+      pullRequest: cleanup.pullRequest,
+      branchState: cleanup.branch,
+    });
   }
   return report.publish;
 }
@@ -672,10 +637,31 @@ function deleteOwnBranch(subject, branch, head, token) {
   }
 }
 
-/** The single line the CLI prints: outcome and identifiers only, never generator output. */
+/** A failure to mint an installation token, by cause. The error's message is never read. */
+function tokenFailure(phase, error) {
+  const cause = TOKEN_CAUSES.includes(error?.tokenCause) ? error.tokenCause : "unknown";
+  return reason("APP_TOKEN_UNAVAILABLE", {
+    phase,
+    cause,
+    httpStatus: cause === "http-status" && Number.isSafeInteger(error.httpStatus) ? error.httpStatus : undefined,
+    name: cause === "key-file-not-owner-only" && KNOWN_ENV_NAMES.includes(error.envName) ? error.envName : undefined,
+  });
+}
+
+/** An error with no catalog code: the step it ended, a system error code and an exit status at most. */
+function unexpectedError(step, error) {
+  return reason("UNEXPECTED_ERROR", {
+    step,
+    errorCode: typeof error?.code === "string" && /^E[A-Z0-9_]{1,40}$/u.test(error.code) ? error.code : undefined,
+    exitStatus: Number.isSafeInteger(error?.status) ? error.status : undefined,
+  });
+}
+
+/** The single line the CLI prints, from the report as the sink renders it: never generator output or error text. */
 export function cliSummary(result) {
-  const { runId, tip, sourceHead, publish } = result.report ?? {};
-  return JSON.stringify({ outcome: result.outcome, reason: result.reason, runId, tip, sourceHead, publish });
+  const report = persistableReport(result?.report ?? {});
+  const { outcome, reasonCode, reason: text, runId, tip, sourceHead, publish: published } = report;
+  return JSON.stringify({ outcome, reasonCode, reason: text, runId, tip, sourceHead, publish: published });
 }
 
 /**
@@ -684,89 +670,110 @@ export function cliSummary(result) {
  */
 export async function runNightly(config, deps) {
   const report = { runId: randomUUID(), startedAt: new Date().toISOString(), discarded: [] };
+  let clearedPaths = new Set();
+  let step = "start";
+  const at = (name) => {
+    step = name;
+  };
   mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
-  const finish = (outcome, reason) => {
-    Object.assign(report, { outcome, reason, finishedAt: new Date().toISOString() });
+  /** Accepts catalog reasons only. The persisted and returned report is the sink's (report.mjs). */
+  const finish = (reasons) => {
+    const persisted = persistableReport({ ...report, reasons, finishedAt: new Date().toISOString() }, { clearedPaths });
     const runs = path.join(config.stateDir, "runs");
     mkdirSync(runs, { recursive: true, mode: 0o700 });
-    const text = `${JSON.stringify(report, null, 2)}\n`;
+    const text = `${JSON.stringify(persisted, null, 2)}\n`;
     writeFileSync(path.join(runs, `${report.startedAt.replace(/[:.]/gu, "-")}-${report.runId}.json`), text, { mode: 0o600 });
     writeFileSync(path.join(config.stateDir, "last-run.json"), text, { mode: 0o600 });
-    return { outcome, reason, report };
+    return { outcome: persisted.outcome, reasonCode: persisted.reasonCode, reason: persisted.reason, report: persisted };
   };
 
-  if (!config.enabled) return finish("SKIP", 'HONE_WIKI_NIGHTLY is not "on"');
-  if (existsSync(path.join(config.stateDir, "DISABLED"))) return finish("SKIP", "kill switch: DISABLED file is present");
+  if (!config.enabled) return finish(reason("NIGHTLY_DISABLED"));
+  if (existsSync(path.join(config.stateDir, "DISABLED"))) return finish(reason("KILL_SWITCH"));
   const lock = acquireLock(config.stateDir);
-  if (!lock) return finish("SKIP", "another runner pass holds the lock");
+  if (lock.held) return finish(reason(lock.held));
 
   const subject = config.subjectDir;
   let tip;
   try {
+    at("environment");
     const envProblems = checkEnvironment(config.env ?? {}, config.requiredEnv ?? REQUIRED_ENV);
-    if (envProblems.length > 0) return finish("PRECONDITION", envProblems.join("; "));
+    if (envProblems.length > 0) return finish(envProblems);
     // The runner's code must come from a pinned checkout, never from the
     // subject it resets and documents (config.runnerDir exists for tests).
-    if (isInside(realOrResolved(config.runnerDir ?? RUNNER_DIR), realOrResolved(subject))) {
-      return finish("PRECONDITION", "the runner must run from a pinned checkout outside HONE_WIKI_SUBJECT_DIR");
-    }
+    if (isInside(realOrResolved(config.runnerDir ?? RUNNER_DIR), realOrResolved(subject))) return finish(reason("RUNNER_INSIDE_SUBJECT"));
 
+    at("token");
     let token = null;
     if (deps.getGitToken) {
       try {
         token = await deps.getGitToken();
       } catch (error) {
-        return finish("PRECONDITION", `GitHub App token: ${error.message}`);
+        return finish(tokenFailure("start", error));
       }
     }
 
+    at("sync");
     tip = syncSubject(config, token);
     report.tip = tip;
+    at("baseline");
     const baseline = baselineProblems(subject, tip);
-    if (baseline.length > 0) return finish("PRECONDITION", baseline.join("; "));
+    if (baseline.length > 0) return finish(baseline);
 
     // Startup no-op: decide from git alone, before any model credential is touched.
+    at("source-head");
     const ignore = loadOpenWikiIgnore(subject);
     let head;
     try {
       head = discoverSourceHead(subject, tip, ignore);
     } catch (error) {
-      throw new PreconditionError(error.message);
+      if (Number.isSafeInteger(error?.commitsScanned)) return finish(reason("SOURCE_HEAD_NOT_FOUND", { commitsScanned: error.commitsScanned }));
+      throw error;
     }
     report.sourceHead = head.sourceHead;
     report.skippedGeneratedCommits = head.skippedCommits.length;
-    const liveness = assessLiveness(subject, {
-      tip,
-      sourceHead: head.sourceHead,
-      lastUpdate: readJsonAtCommit(subject, tip, "openwiki/.last-update.json"),
-    });
+    at("liveness");
+    const liveness = assessLiveness(subject, { tip, sourceHead: head.sourceHead, lastUpdate: readCommittedState(subject, tip, "openwiki/.last-update.json") });
     report.liveness = liveness;
-    if (liveness.state === "invalid") return finish("PRECONDITION", liveness.reason);
-    if (liveness.state === "live") return finish("NOOP", "wiki is live: no source change after its recorded gitHead");
+    if (liveness.state === "invalid") return finish(reason("LIVENESS_INVALID", { problem: liveness.problem }));
+    if (liveness.state === "live") return finish(reason("WIKI_LIVE", { gitHead: liveness.gitHead }));
 
+    at("in-flight");
     const inFlight = unmergedNightlyBranches(subject, tip, token);
-    if (inFlight.length > 0) return finish("SKIP", `unmerged nightly branch awaits a human: ${inFlight.join(", ")}`);
+    if (inFlight.branches.length > 0 || inFlight.unrecognized > 0) return finish(reason("IN_FLIGHT_RUN_EXISTS", inFlight));
 
-    const prerequisites = runPrerequisiteProblems(config);
-    if (prerequisites.length > 0) return finish("PRECONDITION", prerequisites.join("; "));
+    at("prerequisites");
+    const prerequisites = runPrerequisites(config, subject);
+    if (prerequisites.reasons.length > 0) return finish(prerequisites.reasons);
 
     // HEAD = source head (OpenWiki records it as gitHead); tree = production tip.
+    at("generate");
     git(subject, ["reset", "--quiet", "--soft", head.sourceHead]);
     const result = await deps.generator({ cwd: subject });
     report.generator = generatorDiagnostics(result);
     if (result.exitCode !== 0) {
       resetSubject(subject, tip);
-      return finish("FAILED", `OpenWiki exited ${result.exitCode}${result.timedOut ? " after the run timeout" : ""}`);
+      return finish(reason("GENERATOR_EXIT_NONZERO", { exitCode: report.generator.exitCode, timedOut: report.generator.timedOut }));
+    }
+    if (worktreePathExists(subject, "openwiki/.run.json")) {
+      resetSubject(subject, tip);
+      return finish(reason("RUN_STATE_LEFT_BEHIND"));
     }
 
-    if (existsSync(path.join(subject, "openwiki/.run.json"))) {
+    // THE PATH GATE, before any changed path is recorded, reported or
+    // interpolated: every path the run changed, whatever its owner or status.
+    at("scope");
+    const changes = diffTrees(subject, tip, snapshotWorktree(subject, tip));
+    const gate = gateChangedPaths(changes, prerequisites.terms);
+    report.pathGate = { scanned: gate.scanned, rejected: gate.rejected, categories: gate.categories };
+    if (gate.rejected > 0) {
       resetSubject(subject, tip);
-      return finish("FAILED", "OpenWiki left openwiki/.run.json: the run did not complete");
+      return finish(reason("PATH_PRIVACY_REJECTED", { paths: gate.rejected, categories: gate.categories }));
     }
-    const scope = enforceScope(subject, tip, ignore, report);
+    clearedPaths = gate.cleared;
+    const scope = enforceScope(subject, tip, changes, ignore, report);
     if (scope.unexpected.length > 0) {
       resetSubject(subject, tip);
-      return finish("FAILED", `generator wrote outside the generated scope: ${scope.unexpected.map((c) => c.path).join(", ")}`);
+      return finish(reason("UNEXPECTED_GENERATOR_WRITE", { paths: scope.unexpected.length }));
     }
     report.generated = summarize(scope.generated);
     // A run that changed only run metadata still processed a new source head.
@@ -776,26 +783,28 @@ export async function runNightly(config, deps) {
     const metadataOnly = scope.generated.every((c) => RUN_METADATA_PATHS.has(c.path));
     report.metadataOnly = metadataOnly;
 
-    const checks = validateGenerated(subject, scope.generated, head.sourceHead, config);
-    report.checks = { brokenLinkStamps: checks.stamps, conflictMarkers: checks.conflictMarkers, privacyHits: checks.privacyHits };
-    if (checks.problems.length > 0) {
+    at("validate");
+    const checks = validateGenerated(subject, scope.generated, head.sourceHead, prerequisites.terms);
+    report.checks = checks.checks;
+    if (checks.reasons.length > 0) {
       resetSubject(subject, tip);
-      return finish("FAILED", checks.problems.join("; "));
+      return finish(checks.reasons);
     }
 
     if (!config.publish) {
       resetSubject(subject, tip);
-      return finish("DRY_RUN", metadataOnly ? "checks passed; metadata-only source advance; publishing is off" : "checks passed; publishing is off");
+      return finish(reason("PUBLISHING_OFF", { metadataOnly }));
     }
     // Installation tokens expire one hour after minting, and a run may take
     // longer (HONE_WIKI_RUN_TIMEOUT_MIN defaults to 90): publish with a fresh one.
+    at("publish-token");
     let publishToken = null;
     if (deps.getGitToken) {
       try {
         publishToken = await deps.getGitToken();
       } catch (error) {
         resetSubject(subject, tip);
-        return finish("PRECONDITION", `GitHub App token before publishing: ${error.message}`);
+        return finish(tokenFailure("publish", error));
       }
     }
     await publish({
@@ -811,14 +820,16 @@ export async function runNightly(config, deps) {
       deps,
       token: publishToken,
       report,
+      clearedPaths,
+      at,
     });
     resetSubject(subject, tip);
-    return finish("PUBLISHED", `pull request #${report.publish.pr.number}${metadataOnly ? " (metadata only)" : ""}`);
+    return finish(reason("PULL_REQUEST_OPENED", { number: report.publish.pr.number, metadataOnly }));
   } catch (error) {
     if (tip) resetSubject(subject, tip);
-    return finish(error instanceof PreconditionError ? "PRECONDITION" : "FAILED", redactSecrets(error.message));
+    return finish(error instanceof CodedError ? reason(error.reasonCode, error.safeDetails) : unexpectedError(step, error));
   } finally {
-    rmSync(lock, { force: true });
+    rmSync(lock.file, { force: true });
   }
 }
 
@@ -880,16 +891,16 @@ async function main(argv) {
     generator: ({ cwd }) => runOpenWikiProcess({ cwd, invocation: buildGeneratorInvocation(config), timeoutMs: config.timeoutMs }),
     github: (token) => createGitHubClient({ token, repository: config.repository }),
   };
-  const result = config.stateDir
-    ? await runNightly(config, deps)
-    : { outcome: "PRECONDITION", reason: "required HONE_WIKI_STATE_DIR is not set", report: {} };
+  const result = config.stateDir ? await runNightly(config, deps) : { report: persistableReport({ reasons: reason("STATE_DIR_MISSING") }) };
+  const summary = persistableReport(result.report);
   process.stdout.write(`${cliSummary(result)}\n`);
-  process.exitCode = EXIT_CODE[result.outcome];
+  process.exitCode = EXIT_CODE[summary.outcome];
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main(process.argv.slice(2)).catch((error) => {
-    process.stderr.write(`${redactSecrets(error.message)}\n`);
+    // Outside a pass there is no report to write; the line printed is still the sink's.
+    process.stdout.write(`${cliSummary({ report: persistableReport({ reasons: unexpectedError("start", error) }) })}\n`);
     process.exitCode = EXIT_CODE.FAILED;
   });
 }

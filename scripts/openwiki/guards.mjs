@@ -1,12 +1,13 @@
 // ---------------------------------------------------------------------------
 // WIKI-AUTO-01: the checks between an OpenWiki run and anything leaving the
-// runner. Every function here is read-only except discardChanges, and every
-// finding names a file, a line and a category, never the matched text: a
-// report must not re-leak what the privacy scan caught.
+// runner. Every function here is read-only except discardChanges. A finding is
+// a code from a closed set, with a cleared path and a line number at most,
+// never the text it matched: a report must not re-leak what a check caught.
+// What a report may hold is enforced once, at the sink (report.mjs).
 // ---------------------------------------------------------------------------
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { KNOWN_SIDE_EFFECT_PATHS, classifyPath, normalizePath } from "./paths.mjs";
@@ -81,6 +82,16 @@ export function discardChanges(cwd, base, changes) {
 
 const WRITE_SCOPE = /^\s*[a-z-]+\s*:\s*write\b|permissions\s*:\s*write-all\b/mu;
 
+/** What inspectWorkflow can find, as codes. An unpinned action is reported without its reference. */
+export const WORKFLOW_VIOLATIONS = Object.freeze([
+  "top-level-permissions-not-read-only",
+  "write-permission",
+  "secrets-context",
+  "github-token",
+  "persisted-credentials",
+  "unpinned-action",
+]);
+
 /**
  * A3: a subset of tests/ci/ci-config.test.ts (CI-HARDEN-01B) applied to the
  * workflow file `openwiki init` scaffolds. The runner never publishes that
@@ -88,26 +99,76 @@ const WRITE_SCOPE = /^\s*[a-z-]+\s*:\s*write\b|permissions\s*:\s*write-all\b/mu;
  * stays the authority for workflows that are committed.
  */
 export function inspectWorkflow(text) {
-  const violations = [];
+  const violations = new Set();
   const body = String(text);
   const top = /^permissions:[ \t]*\n((?:[ \t]+.*\n?)*)/mu.exec(body);
   const topEntries = top ? top[1].split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")) : [];
-  if (topEntries.length !== 1 || !/^contents:\s*read$/u.test(topEntries[0] ?? "")) {
-    violations.push("top-level permissions must be exactly `contents: read`");
-  }
-  if (WRITE_SCOPE.test(body)) violations.push("requests a write permission");
-  if (/\$\{\{\s*secrets\./u.test(body)) violations.push("references the secrets context");
-  if (/\bGITHUB_TOKEN\b/u.test(body)) violations.push("uses GITHUB_TOKEN");
+  if (topEntries.length !== 1 || !/^contents:\s*read$/u.test(topEntries[0] ?? "")) violations.add("top-level-permissions-not-read-only");
+  if (WRITE_SCOPE.test(body)) violations.add("write-permission");
+  if (/\$\{\{\s*secrets\./u.test(body)) violations.add("secrets-context");
+  if (/\bGITHUB_TOKEN\b/u.test(body)) violations.add("github-token");
   const checkouts = (body.match(/uses:\s*actions\/checkout@/gu) ?? []).length;
   const unpersisted = (body.match(/persist-credentials:\s*false\b/gu) ?? []).length;
-  if (checkouts > unpersisted) violations.push("a checkout keeps persisted credentials");
+  if (checkouts > unpersisted) violations.add("persisted-credentials");
   for (const match of body.matchAll(/uses:\s*([^\s#]+)/gu)) {
     const ref = match[1];
     if (ref.startsWith("./") || ref.startsWith("docker://")) continue;
-    if (!/@[0-9a-f]{40}$/u.test(ref)) violations.push(`action not pinned to a full commit SHA: ${ref}`);
+    if (!/@[0-9a-f]{40}$/u.test(ref)) violations.add("unpinned-action");
   }
-  return violations;
+  return WORKFLOW_VIOLATIONS.filter((code) => violations.has(code));
 }
+
+// ---------------------------------------------------------------- state files
+
+/**
+ * A text file in the working tree: absent, present-valid (a regular file, its
+ * `text`), or present-invalid (something else is at that path).
+ */
+export function readWorktreeFile(root, filePath) {
+  const full = path.join(root, filePath);
+  let stat;
+  try {
+    stat = lstatSync(full);
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return { state: "absent" };
+    throw error;
+  }
+  return stat.isFile() ? { state: "present-valid", text: readFileSync(full, "utf8") } : { state: "present-invalid" };
+}
+
+/**
+ * A JSON state file in the working tree, in one of three states:
+ *
+ *   absent          - nothing at that path
+ *   present-valid   - a regular file whose content parses as JSON (`value`)
+ *   present-invalid - something is there, but it is not a regular file whose
+ *                     content parses as JSON
+ *
+ * Malformed content is never reported as absent. The committed counterpart
+ * is source-head.mjs readCommittedState.
+ */
+export function readWorktreeState(root, filePath) {
+  const file = readWorktreeFile(root, filePath);
+  if (file.state !== "present-valid") return file;
+  try {
+    return { state: "present-valid", value: JSON.parse(file.text) };
+  } catch {
+    return { state: "present-invalid" };
+  }
+}
+
+/** Whether anything at all is at `filePath` in the working tree, a dangling link included. */
+export function worktreePathExists(root, filePath) {
+  try {
+    lstatSync(path.join(root, filePath));
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
+const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
 // ---------------------------------------------------------------- page checks
 
@@ -134,53 +195,60 @@ function isFactualPage(p) {
   );
 }
 
+/** What checkProvenance can find, as codes. */
+export const PROVENANCE_PROBLEMS = Object.freeze([
+  "no-sidecar",
+  "sidecar-not-json",
+  "no-claims",
+  "sidecar-page-version-mismatch",
+  "manifest-page-version-mismatch",
+  "deleted-page-sidecar-left",
+  "deleted-page-manifest-entry-left",
+]);
+
 /**
  * OpenWiki provenance for every factual page a run touched (the page itself,
- * or its Claim sidecar). A live page needs a sidecar with at least one Claim,
- * and `sha256:<hex of the page bytes>` as the pageVersion in both the sidecar
- * and openwiki/.page-manifest.json. A deleted page may leave neither a sidecar
- * nor a manifest entry behind.
+ * or its Claim sidecar), against the run's VALIDATED page manifest (its
+ * `pages` map; see checkPageManifest). A live page needs a sidecar with at
+ * least one Claim, and `sha256:<hex of the page bytes>` as the pageVersion in
+ * both the sidecar and the manifest. A deleted page may leave neither a
+ * sidecar nor a manifest entry behind.
+ *
+ * Each problem is `{ file, problem }`, where `file` is the changed path that
+ * touched the page, so it is always a path the run's path gate cleared.
  */
-export function checkProvenance(root, generatedChanges) {
-  const touched = new Set();
+export function checkProvenance(root, generatedChanges, manifestPages) {
+  const touched = new Map();
   for (const change of generatedChanges) {
     const p = normalizePath(change.path);
-    if (isFactualPage(p)) touched.add(p);
+    if (isFactualPage(p)) touched.set(p, p);
     else if (p.startsWith("openwiki/.claims/") && p.endsWith(".json")) {
-      touched.add(`openwiki/${p.slice("openwiki/.claims/".length, -".json".length)}.md`);
+      const page = `openwiki/${p.slice("openwiki/.claims/".length, -".json".length)}.md`;
+      if (!touched.has(page)) touched.set(page, p);
     }
   }
-  if (touched.size === 0) return [];
-  const full = (p) => path.join(root, p);
-  let manifest;
-  try {
-    manifest = JSON.parse(readFileSync(full("openwiki/.page-manifest.json"), "utf8")).pages ?? {};
-  } catch {
-    return ["openwiki/.page-manifest.json is missing or unreadable"];
-  }
+  const listed = (page) => Object.hasOwn(manifestPages, `/${page}`);
   const problems = [];
-  for (const page of [...touched].sort()) {
+  for (const [page, file] of [...touched].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const sidecar = `openwiki/.claims/${page.slice("openwiki/".length, -".md".length)}.json`;
-    if (!existsSync(full(page))) {
-      if (existsSync(full(sidecar))) problems.push(`${sidecar}: Claim sidecar of a deleted page`);
-      if (manifest[`/${page}`]) problems.push(`${page}: page manifest still lists a deleted page`);
+    if (!worktreePathExists(root, page)) {
+      if (worktreePathExists(root, sidecar)) problems.push({ file, problem: "deleted-page-sidecar-left" });
+      if (listed(page)) problems.push({ file, problem: "deleted-page-manifest-entry-left" });
       continue;
     }
-    if (!existsSync(full(sidecar))) {
-      problems.push(`${page}: no Claim sidecar`);
+    const claims = readWorktreeState(root, sidecar);
+    if (claims.state === "absent") {
+      problems.push({ file, problem: "no-sidecar" });
       continue;
     }
-    let claims;
-    try {
-      claims = JSON.parse(readFileSync(full(sidecar), "utf8"));
-    } catch {
-      problems.push(`${sidecar}: not valid JSON`);
+    if (claims.state !== "present-valid" || !isPlainObject(claims.value)) {
+      problems.push({ file, problem: "sidecar-not-json" });
       continue;
     }
-    if (!Array.isArray(claims.claims) || claims.claims.length === 0) problems.push(`${sidecar}: no Claims`);
-    const version = `sha256:${createHash("sha256").update(readFileSync(full(page))).digest("hex")}`;
-    if (claims.pageVersion !== version) problems.push(`${sidecar}: pageVersion does not match the page`);
-    if (manifest[`/${page}`]?.pageVersion !== version) problems.push(`${page}: page manifest pageVersion does not match the page`);
+    if (!Array.isArray(claims.value.claims) || claims.value.claims.length === 0) problems.push({ file, problem: "no-claims" });
+    const version = `sha256:${createHash("sha256").update(readFileSync(path.join(root, page))).digest("hex")}`;
+    if (claims.value.pageVersion !== version) problems.push({ file, problem: "sidecar-page-version-mismatch" });
+    if (!listed(page) || manifestPages[`/${page}`].pageVersion !== version) problems.push({ file, problem: "manifest-page-version-mismatch" });
   }
   return problems;
 }
@@ -194,18 +262,113 @@ export function findBrokenLinkStamps(text) {
     .flatMap((line, index) => (BROKEN_LINK_STAMP.test(line) ? [index + 1] : []));
 }
 
+/** What checkLastUpdate can find, as codes. */
+export const LAST_UPDATE_PROBLEMS = Object.freeze([
+  "missing",
+  "malformed",
+  "not-an-object",
+  "command-not-update",
+  "status-not-complete",
+  "git-head-mismatch",
+]);
+
 /**
- * openwiki/.last-update.json after a runner run must name the source head the
- * runner pinned, as a completed update. Anything else means the generator did
- * not document what the runner thinks it documented.
+ * openwiki/.last-update.json after a runner run (a readWorktreeState result)
+ * must name the source head the runner pinned, as a completed update.
+ * Anything else means the generator did not document what the runner thinks
+ * it documented.
  */
-export function checkLastUpdate(metadata, sourceHead) {
-  if (!metadata || typeof metadata !== "object") return ["openwiki/.last-update.json is missing or unreadable"];
-  const errors = [];
-  if (metadata.command !== "update") errors.push(`command is ${JSON.stringify(metadata.command)}, not "update"`);
-  if (metadata.status !== "complete") errors.push(`status is ${JSON.stringify(metadata.status)}, not "complete"`);
-  if (metadata.gitHead !== sourceHead) errors.push("gitHead does not equal the source head the run was pinned to");
-  return errors;
+export function checkLastUpdate(state, sourceHead) {
+  if (state?.state === "absent") return ["missing"];
+  if (state?.state !== "present-valid") return ["malformed"];
+  const metadata = state.value;
+  if (!isPlainObject(metadata)) return ["not-an-object"];
+  const problems = [];
+  if (metadata.command !== "update") problems.push("command-not-update");
+  if (metadata.status !== "complete") problems.push("status-not-complete");
+  if (metadata.gitHead !== sourceHead) problems.push("git-head-mismatch");
+  return problems;
+}
+
+/** What checkPageManifest can find, as codes. */
+export const MANIFEST_PROBLEMS = Object.freeze([
+  "missing",
+  "malformed",
+  "not-an-object",
+  "unknown-top-level-key",
+  "schema-version",
+  "pages-not-an-object",
+  "invalid-page-path",
+  "entry-not-an-object",
+  "unknown-entry-key",
+  "invalid-page-version",
+  "invalid-git-head",
+  "invalid-source-fingerprint",
+  "invalid-completed-by",
+  "invalid-completed-run-id",
+]);
+
+const MANIFEST_ENTRY_KEYS = new Set(["gitHead", "sourceFingerprint", "pageVersion", "completedBy", "completedRunId"]);
+const SHA256_DIGEST = /^sha256:[a-f0-9]{64}$/u;
+// zod 4's z.string().uuid(), which openwiki@0.6.1 applies to completedRunId.
+const ZOD_UUID = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/u;
+const RESERVED_WIKI_FILES = new Set(["index.md", "log.md", "instructions.md"]);
+
+/** openwiki@0.6.1 normalizeWikiPagePath, plus its canonical-key rule: the key must already be in canonical form. */
+function isCanonicalFactualPageKey(page) {
+  const slashed = page.trim().replace(/\\/gu, "/");
+  if (slashed.split("/").some((segment) => segment === "." || segment === "..")) return false;
+  const absolute = path.posix.normalize(`/${slashed.replace(/^\/+/u, "")}`);
+  if (!absolute.startsWith("/openwiki/") || !absolute.endsWith(".md")) return false;
+  const lower = absolute.toLowerCase();
+  if (lower.split("/").includes(".claims") || RESERVED_WIKI_FILES.has(path.posix.basename(lower))) return false;
+  return absolute === page;
+}
+
+/**
+ * openwiki/.page-manifest.json (a readWorktreeState result) against the
+ * schema openwiki@0.6.1 itself enforces (generation/page-manifest.js, strict
+ * zod objects):
+ *
+ *   { schemaVersion: 1, pages: { "/openwiki/<factual page>.md": entry } }
+ *   entry: { pageVersion: "sha256:<64 hex>", gitHead?: non-empty string,
+ *            sourceFingerprint?: "sha256:<64 hex>", completedBy?: non-blank
+ *            string, completedRunId?: UUID }
+ *
+ * The manifest is OpenWiki's committed record of page coverage, and every run
+ * rewrites it, a metadata-only run included. So it is checked on every run,
+ * not only when a page or Claim sidecar changed.
+ */
+export function checkPageManifest(state) {
+  if (state?.state === "absent") return ["missing"];
+  if (state?.state !== "present-valid") return ["malformed"];
+  const manifest = state.value;
+  if (!isPlainObject(manifest)) return ["not-an-object"];
+  const problems = new Set();
+  if (Object.keys(manifest).some((key) => key !== "schemaVersion" && key !== "pages")) problems.add("unknown-top-level-key");
+  if (manifest.schemaVersion !== 1) problems.add("schema-version");
+  if (!isPlainObject(manifest.pages)) {
+    problems.add("pages-not-an-object");
+  } else {
+    for (const [page, entry] of Object.entries(manifest.pages)) {
+      if (!isCanonicalFactualPageKey(page)) problems.add("invalid-page-path");
+      if (!isPlainObject(entry)) {
+        problems.add("entry-not-an-object");
+        continue;
+      }
+      if (Object.keys(entry).some((key) => !MANIFEST_ENTRY_KEYS.has(key))) problems.add("unknown-entry-key");
+      if (typeof entry.pageVersion !== "string" || !SHA256_DIGEST.test(entry.pageVersion)) problems.add("invalid-page-version");
+      if (entry.gitHead !== undefined && !(typeof entry.gitHead === "string" && entry.gitHead.length > 0)) problems.add("invalid-git-head");
+      if (entry.sourceFingerprint !== undefined && !(typeof entry.sourceFingerprint === "string" && SHA256_DIGEST.test(entry.sourceFingerprint))) {
+        problems.add("invalid-source-fingerprint");
+      }
+      if (entry.completedBy !== undefined && !(typeof entry.completedBy === "string" && entry.completedBy.trim().length > 0)) problems.add("invalid-completed-by");
+      if (entry.completedRunId !== undefined && !(typeof entry.completedRunId === "string" && ZOD_UUID.test(entry.completedRunId))) {
+        problems.add("invalid-completed-run-id");
+      }
+    }
+  }
+  return MANIFEST_PROBLEMS.filter((code) => problems.has(code));
 }
 
 /**
@@ -221,21 +384,17 @@ export function checkManagedBlockMarkers(fileName, text) {
   if (starts === 1 && ends === 1 && text.indexOf("<!-- OPENWIKI:START -->") < text.indexOf("<!-- OPENWIKI:END -->")) {
     return [];
   }
-  return [`${fileName} has malformed or duplicated OpenWiki managed-block markers`];
+  return [{ code: "MANAGED_BLOCK_MARKERS_MALFORMED", details: { file: fileName } }];
 }
 
 /** Every commit in `range` must be authored and committed by the runner identity. */
 export function checkCommitAuthors(cwd, range, identity) {
-  const rows = git(cwd, ["log", "--format=%H%x00%an%x00%ae%x00%cn%x00%ce", range]).split("\n").filter(Boolean);
-  if (rows.length === 0) return [`no commits in ${range}`];
-  const errors = [];
-  for (const row of rows) {
-    const [sha, an, ae, cn, ce] = row.split("\0");
-    if (an !== identity.name || ae !== identity.email || cn !== identity.name || ce !== identity.email) {
-      errors.push(`commit ${sha} is not authored and committed by the runner identity`);
-    }
-  }
-  return errors;
+  const rows = git(cwd, ["log", "--format=%an%x00%ae%x00%cn%x00%ce", range]).split("\n").filter(Boolean);
+  const mismatched = rows.filter((row) => {
+    const [an, ae, cn, ce] = row.split("\0");
+    return an !== identity.name || ae !== identity.email || cn !== identity.name || ce !== identity.email;
+  }).length;
+  return { commits: rows.length, mismatched };
 }
 
 // ---------------------------------------------------------------- privacy
@@ -257,14 +416,21 @@ export const PRIVACY_PATTERNS = Object.freeze([
   ["private-key", /-----BEGIN [A-Z ]*PRIVATE KEY-----/u],
 ]);
 
+/** Every category scanPrivacy can report. */
+export const PRIVACY_CATEGORIES = Object.freeze([...PRIVACY_PATTERNS.map(([category]) => category), "denylist-term", "tenant-slug"]);
+
+/** Every category the path gate can report: the privacy categories, plus a path it cannot safely record at all. */
+export const PATH_GATE_CATEGORIES = Object.freeze([...PRIVACY_CATEGORIES, "unsafe-path-format"]);
+
 /**
- * Studio slugs from the canonical tenant register (docs/production/current-state.md
- * section 0): the first cell of each register table row that looks like a slug.
+ * The tenant register (docs/production/current-state.md section 0): whether
+ * the section is there, and the first cell of each register table row that
+ * looks like a studio slug.
  */
-export function loadTenantSlugs(currentStateText) {
+export function parseTenantRegister(currentStateText) {
   const lines = String(currentStateText ?? "").split("\n");
   const start = lines.findIndex((line) => line.startsWith("## 0. Tenant register"));
-  if (start === -1) return [];
+  if (start === -1) return { found: false, slugs: [] };
   const slugs = [];
   for (const line of lines.slice(start + 1)) {
     if (line.startsWith("## ")) break;
@@ -272,7 +438,11 @@ export function loadTenantSlugs(currentStateText) {
     const cell = line.split("|")[1].replace(/[*`]/gu, "").trim();
     if (/^[a-z0-9][a-z0-9-]{2,}$/u.test(cell)) slugs.push(cell);
   }
-  return slugs;
+  return { found: true, slugs };
+}
+
+export function loadTenantSlugs(currentStateText) {
+  return parseTenantRegister(currentStateText).slugs;
 }
 
 /** One term per line; blank lines and `#` comments skipped. The file lives on the host, never in the repository. */
@@ -315,20 +485,50 @@ export function scanPrivacy(items, { denylistTerms = [], tenantSlugs = [] } = {}
 }
 
 /**
- * Generated paths are published too (as repository paths), so they are
- * scanned like content. Each added or modified path is one line, read both as
- * written and with path separators as spaces, so `people/jane-doe.md` matches
- * the denylist term "Jane Doe". Deleted paths publish nothing new. A hit names
- * the line number in this list, never the path.
+ * The grammar of a path a report may hold: every path in the repository today
+ * fits it. No whitespace, quotes, backticks, angle brackets, `$`, `%`, `&`,
+ * `#` or control characters, so a recorded path can be neither markup nor
+ * shell, and no empty, `.` or `..` segment.
  */
-export function privacyItemsForPaths(changes) {
-  const lines = changes
-    .filter((change) => change.status !== "D")
-    .map((change) => {
-      const p = normalizePath(change.path);
-      return `${p} ${p.replace(/[-_./]+/gu, " ")}`;
-    });
-  return lines.length > 0 ? [{ file: "(generated paths)", lines }] : [];
+const REPORTABLE_PATH = /^[A-Za-z0-9._@+~()[\]/-]{1,512}$/u;
+
+function isReportablePathFormat(p) {
+  return REPORTABLE_PATH.test(p) && p.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+/** `people/jane-doe.md` read with its separators as spaces: `people jane doe md`. */
+function humanizePath(p) {
+  return p.replace(/[-_./]+/gu, " ").trim();
+}
+
+/**
+ * THE PATH GATE. It runs over every path a run changed (generated pages and
+ * metadata, OpenWiki's known side effects, and unexpected writes, whether
+ * added, modified or deleted) BEFORE any of them is recorded, reported or
+ * interpolated anywhere. Each path is normalized, then scanned as written and
+ * humanized (`people/jane-doe.md` matches the denylist term "Jane Doe").
+ *
+ * A path is cleared only if it has no privacy hit, is already in canonical
+ * form, and fits the reportable grammar. Any other path fails the run, and
+ * only the categories and a count are kept: the path itself is never
+ * returned. The sink (report.mjs) accepts no pathname outside `cleared`.
+ */
+export function gateChangedPaths(changes, terms = {}) {
+  const cleared = new Set();
+  const categories = new Set();
+  let rejected = 0;
+  for (const change of changes) {
+    const p = normalizePath(change.path);
+    const hits = new Set(scanPrivacy([{ file: "", lines: [p, humanizePath(p)] }], terms).map((hit) => hit.category));
+    if (p !== change.path || !isReportablePathFormat(p)) hits.add("unsafe-path-format");
+    if (hits.size === 0) {
+      cleared.add(p);
+      continue;
+    }
+    rejected += 1;
+    for (const category of hits) categories.add(category);
+  }
+  return { scanned: changes.length, rejected, categories: PATH_GATE_CATEGORIES.filter((c) => categories.has(c)), cleared };
 }
 
 /**

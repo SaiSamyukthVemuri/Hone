@@ -18,8 +18,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+/** The one OpenWiki release the runner drives, and whose rules this module and guards.mjs mirror. */
+export const OPENWIKI_VERSION = "0.6.1";
+
 export const WIKI_DIR = "openwiki";
 export const OPENWIKI_IGNORE_FILE = ".openwikiignore";
+
+/** The classes classifyPath returns. */
+export const PATH_CLASSES = Object.freeze(["authored", "transient", "generated", "ignored", "source"]);
 
 /** Authored inputs inside the wiki directory. OpenWiki reads them; the runner never publishes a change to them. */
 export const AUTHORED_WIKI_PATHS = new Set(["openwiki/INSTRUCTIONS.md"]);
