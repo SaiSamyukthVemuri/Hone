@@ -344,18 +344,37 @@ function scrubEventCommon<T extends Event>(event: T): T {
 //
 // WHY beforeSend AND NOT A DISABLED TRANSPORT. The lane's whole value is that it
 // runs the REAL client and server paths; a transport switch that silences Sentry
-// would have to be readable by the running app, which is a deployable bypass -
-// exactly the shape the fault guard refuses to have. Dropping at beforeSend
-// needs no new environment input, so there is nothing to misconfigure in
-// production: the decision is made from the EVENT, and an event that is not the
-// harness is unaffected.
+// would have to be readable by the running app, and the CLIENT half could only
+// read a `NEXT_PUBLIC_*` input - inlined at build time and shipped to every
+// visitor, i.e. a deployable bypass able to silence client-side Sentry in
+// production. That is exactly the shape the fault guard refuses to have
+// ("Server-only, never NEXT_PUBLIC_*"). Dropping at beforeSend needs no new
+// environment input, so there is nothing to misconfigure in production: the
+// decision is made from the EVENT, and an event that is not the harness is
+// unaffected.
 //
-// SUPPRESSION IS NARROW BY CONSTRUCTION. It requires an identity that cannot
-// occur by accident. It must never key on an error CLASS or a generic message:
+// THE IDENTITY IS THE MARKER, AND ONLY THE MARKER.
+//
+// An earlier revision also suppressed on the canonical `/e2e-fault/<case>`
+// route, reasoning that a production build elides a server error's message and
+// so a synthetic event might arrive without the canary. Review rejected that,
+// correctly: the route proves WHERE an error happened, never THAT it was
+// deliberate. The harness page runs real framework code behind the real
+// middleware and app shell, so an unexpected TypeError, a `cookies()` misuse or
+// a framework regression can be raised ON that route - and route identity would
+// have silenced every one of them. The real Sentry evidence settles the premise
+// too: the deliberate server fault retains the exact marker, so the case the
+// fallback existed for does not arise.
+//
+// DELIBERATELY FAIL-OPEN FOR OBSERVABILITY. If a future framework version does
+// elide the marker, the synthetic event becomes VISIBLE again. A little
+// recurring noise is recoverable; a suppressed genuine error is not.
+//
+// Suppression therefore never keys on an error CLASS or a generic message:
 // `relation "clients" does not exist`, `Failed to fetch`, `TypeError`, a 500,
 // `No active practitioner found`, a `cookies()`/`after()` misuse or a failed
 // Server Action are all real defects whose synthetic twins differ only by this
-// identity, and suppressing the class would hide the real one.
+// marker, and suppressing the class would hide the real one.
 
 /** The random token embedded in `E2E_ROUTE_FAULT_CANARY`. Unique to the harness.
  *
@@ -371,25 +390,10 @@ export const E2E_FAULT_MARKER = "HONE-LEAK-CANARY-9f3c1d";
  *
  *  `assertRouteFaultNotRequestedInDeployment` throws when HONE_E2E_ROUTE_FAULT
  *  is set in a deployed runtime, and it exists precisely so that
- *  misconfiguration "surfaces immediately". It is raised ON the harness route
- *  and carries no canary, so a route-identity rule alone would silence the
- *  alarm it exists to raise. Checked BEFORE every suppression branch. */
+ *  misconfiguration "surfaces immediately". Checked BEFORE the marker, so the
+ *  alarm survives even if a canary string is somehow present beside it. */
 const E2E_FAULT_DEPLOYMENT_GUARD_SENTINEL =
   "must never be set in a deployed environment";
-
-/** `/e2e-fault/<one segment>`: the route URL (`/e2e-fault/server-throw`) and the
- *  Next transaction name (`/e2e-fault/[case]`) are both one segment deep. Not a
- *  prefix match - a nested or differently-rooted path is not this harness. */
-const E2E_FAULT_PATHNAME_RE = /^\/e2e-fault\/[^/]+\/?$/;
-
-function pathnameOf(value: string): string | null {
-  if (value.startsWith("/")) return value.split("?")[0].split("#")[0];
-  try {
-    return new URL(value).pathname;
-  } catch {
-    return null;
-  }
-}
 
 /** The message-bearing strings of an error event, and only those.
  *
@@ -406,11 +410,14 @@ function errorTexts(event: ErrorEvent): string[] {
 }
 
 /**
- * True only for an event PROVEN to belong to the deliberate E2E fault harness.
+ * True only for an event carrying the exact harness marker.
  *
  * Pure, and evaluated on the RAW event before any redaction, because
  * `redactString` rewrites `exception.values[].value` and a scrubbed message is
  * no longer reliable evidence of its own origin.
+ *
+ * Nothing about the route, transaction or URL participates. That is the point:
+ * see the "IDENTITY IS THE MARKER" note above.
  */
 export function isDeliberateE2eFaultEvent(event: ErrorEvent): boolean {
   const texts = errorTexts(event);
@@ -420,24 +427,7 @@ export function isDeliberateE2eFaultEvent(event: ErrorEvent): boolean {
     return false;
   }
 
-  // Identity 1 - the exact harness marker. Covers both the server throw and the
-  // client throw, which receives the same canary string as a prop.
-  if (texts.some((t) => t.includes(E2E_FAULT_MARKER))) return true;
-
-  // Identity 2 - the canonical harness route. Catches a synthetic event whose
-  // message the framework replaced (React elides a server error's message in a
-  // production build) and which therefore carries no marker. In a deployed
-  // runtime this route calls notFound(), so it raises no exception at all.
-  const candidates: unknown[] = [event.transaction];
-  const req = event.request as { url?: unknown } | undefined;
-  if (typeof req?.url === "string") candidates.push(req.url);
-  for (const c of candidates) {
-    if (typeof c !== "string") continue;
-    const path = pathnameOf(c);
-    if (path && E2E_FAULT_PATHNAME_RE.test(path)) return true;
-  }
-
-  return false;
+  return texts.some((t) => t.includes(E2E_FAULT_MARKER));
 }
 
 /** beforeSend: drop a deliberate E2E fault event, otherwise scrub it in place.
