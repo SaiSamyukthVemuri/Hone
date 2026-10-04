@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:923b56d0150c6bcf7b2d545b4e584120c27494edb02bfe141e97d1bd2d69e637",
+  "pageVersion": "sha256:81ef5fd39635c31a73251af612d0db47e8cfa624c0c20a387676d308b37ddb2e",
   "claims": [
     {
       "id": "claim_634ae4b4ac5649009d5696a86b36b96a",
@@ -202,29 +202,97 @@
     },
     {
       "id": "claim_3f891c8b92d948669cb91dc2e67f18e6",
-      "statement": "OpenWiki pages match the classifier's docs-only patterns, but Claim sidecars and run metadata under openwiki/ are JSON files that match no docs, lane or tier rule, so a wiki regeneration diff classifies as baseline tier T1 with every lane boolean false and runs the validate job but no database or browser lane.",
+      "statement": "A diff of OpenWiki pages alone is docs-only T0 with every lane off, but a regeneration diff that also contains its JSON Claim sidecars or run metadata is not docs-only, so the unanchored payment (/payment/i, /stripe/i), Google Calendar (/google[-_]?calendar/i) and mobile (/mobile/i, /responsive/i) lane patterns match topic words in its page and Claim paths and gate the payment, Google and mobile browser jobs.",
       "evidence": [
         {
-          "resource": "repo://.github/workflows/ci.yml#L228-L231",
-          "version": "repo-lines-v1:sha256:4a731424aa466194ddb5d7582d37b46c1242ccfd0ef48ce04c7f4a1a587b86ce:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzJiZGViZmRjMWNhZWQzMTBmYTE2Yzc4Y2U0MmJkNzZlM2Q3N2JjNDlmMDEwMzE3MTI3Nzg3NzAwZGM4YWM3YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODNhNzdlNTgyZjdjYjJiNGU3N2NkNDVkMmYxZDRhOWVhOTE3MjBhNDhjZmMzOGY5YmIzNDc4NzIzY2NjNTZmMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTUzMDBkYTEwOGYzNWFjY2E5ZWUyMzYxOTBjMmNlYzI5MjNjZGM4NDNhMjBlOWRiMWI2NTM4ZmFkOWQ2NmJkYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTgxYjVmMGIzNGZkODJmMGQyMWRkM2NmZTdiODJjZGM2YzBjMTE3NWZiNWJiYTM3YjVlZjI4MzVhYTQyNTFhZiJ9"
+          "resource": "repo://.github/workflows/ci.yml#L781-L784",
+          "version": "repo-lines-v1:sha256:d44f3464ec13c6a173dbe391f4f63698428cea1b6d31b27034a5c59a4e3ce31a:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODVhODBhMWM5NTEzOGI0MWU2ZDNmOWRlZDc4ZDcxNTQxOTE3MDkxNWU2ZjM0ZmMyZTgyZmM4OTA2ZGZhNDJlNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWE5ZjUzNjNiNTgzNjNlZTk4MjI4NzIzNWYxZjQyZTMxYzhlNTJmMjA3ODRiMTQwZjcwNDllMjA1NDViMDdlOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmU5NzE5ZmQyODI1YzdmYmRjNTljOTI4ZGRjNzM3YzVmYTYzY2Q0OWFjYjEwZWVmNDBlZjgyMDM1OWI4NzYxNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjk4ZjRhNDhlNjhkNDg5NDEyN2Y2YzA0NTBmYzQ2YjJlNGE5MjNjMzliMWM1N2YzMTJiZTQyNDM3NTEyNDM3OSJ9"
         },
         {
-          "resource": "repo://scripts/classify-changes.mjs#L196-L213",
-          "version": "repo-lines-v1:sha256:f7e8a206ffdd48886aa3e00df8efa7416801a7194b97a4068a75fc93b2f78b2d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyM2NiNGMxM2Q2Nzc1OWQ1NGY3NjcxZDQ0MDM0OTcyZDA5MDNhMzlkMDhhZmFlNzNiYjk4MWViOWFiMGRjZjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkOWUxMjU0NjQyNTU3NmQzZGVhZThjOWI5ZGJmMTI4ZDVkNmRkYWY1ZDdmZTg1NzkzNDkyN2RlZmZhM2I5ZGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM0OGYzODg3OGIyZWEzNzFhNmVjYTBhZmIzNDA0MTc1Zjc2YzAzNjA0ZGE5ODE3ZmIxZjhjZjk2NDA4ZGEyZTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBiOGQ3YjUzMmJkYzZjZmQ3M2M3NTFkZjM2MWEzMzU4MDQ0ZWQ1ZDJjYzhhOTY2MDMwODgwM2FmZDliYTUzOWIifQ"
+          "resource": "repo://.github/workflows/ci.yml#L898-L901",
+          "version": "repo-lines-v1:sha256:9a918f56cd470158163fffd512c2e7a3e77d601cc7bc092f0bf3746321827d7a:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzg1MDIwYzg4YzcwNjU2N2NkY2UzODI0NTBjMTUyYTEyOWFkOTA1MzA2NTAzYTIyNDM1MjBjMDhlZWE1NGUwNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTE0MzU1ZThkMGYxODhhZThlNmQzZWUxZjkyZjY2MzNmNGY4ZDQ2MjQ4ZjM1ODU0ODUyNDc1YTVkNmQ1OWFhNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmUxNTdjMmVlMDcwMDc5ZjExOGM2MzYxNjc5NGU1MDk2NTE0ZWI2MWM1MzdjZTAxMjM0YjQ1MmE2ZTJkNmRmNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDQ4NmMwMDAzNTBjOTQ4ZjIyMDkzOTExZDU2NjYwZTFjZGJmMmI3NWEyYWE2NTRhOGMyNjhkNjc2MjQzMjA1MiJ9"
         },
         {
-          "resource": "repo://scripts/classify-changes.mjs#L250-L262",
-          "version": "repo-lines-v1:sha256:95e1414dc8e02358d13931b362e21e26a773ca3f2e22699bc96a846b02c92681:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhmYmQ1NjA5ZTI5MmIwOTlkYWNjYWU1YzhjY2Q5MDI3YzI3NDc4NGRkNjA3MWUzNjkyOGQxNmQ4MmYyMDE2Y2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4ZTc2Zjk2ZWFjYWU0YWY3Zjg5ZGI0ZGJjOWNlMDFkYWMxZGE3ZTg1YTU2YWRkYzc5YzgxOTdlODg2NmE4MWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlN2RhMzY3NDAyN2U3MjBhMGFhYTViODk1ZGNiOTczNDIzNGYxYTIxYzZjNWM0OTM1YTM3MTA0NTExMjgwZDEifQ"
+          "resource": "repo://.github/workflows/ci.yml#L989-L992",
+          "version": "repo-lines-v1:sha256:ca42624fba039fe2d1e57289ebc9de6a3ea5d31470802230f57b3e1f1b4ada64:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzA2OWM2OTRjNTgyYjIwYTkyZGI3Mzg3NzNjNDMwZDU1ZjlhZmQ2MmZlY2VjYjZhN2YyNTMxMzM1ZDVmNTFlMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzNkZmQzYzk3NzU0YWY3NzAzNjU1MDg0M2JiNzlhZmM1ZDA2NmUzN2MxYTE3YWY1OTJiZjQ3ZDFlYzMyZTkxMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYmU0NGQzOWRjMGI1ZWQ0YmE1YzU4MjMxMzMyMDdhYTlhZjAyNTk5MTg1ZWFjM2FlYTE5ZGQ5ZDhkMGFhOTg3MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODY5MjFkZmI2NTAxMGJhNTU5MDgxNzdmOTlhYzY5OTM1ZGU3YzcxOGFmNDlhZTA1ZmUwOTQ1ODI2ZTVkY2QxZCJ9"
+        },
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L245-L262",
+          "version": "repo-lines-v1:sha256:aa4bd9aea603051eaefb3902df7accd182715a4a322d9c869b4a8a672601612c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg1ODRlN2ZiN2Q4NTUyZWVmY2NhNzdhNDkyZTYwODY0YjE2Yzk4ZWVjYjQyZWU2MWU5ZGY3Yzc5YmIyODM5ZmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM0ZWI4ZmM3OGQxNzcyZGI3NzYxNDI3NTFjM2E0NjYwMTc5NmJhNWJmMGQxZDIzZjY2ODEzZDliYTlhZjlhOWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlN2RhMzY3NDAyN2U3MjBhMGFhYTViODk1ZGNiOTczNDIzNGYxYTIxYzZjNWM0OTM1YTM3MTA0NTExMjgwZDEifQ"
         },
         {
           "resource": "repo://scripts/classify-changes.mjs#L33-L40",
           "version": "repo-lines-v1:sha256:5653145f125eabb0ddfef4ff369979c014b34faa9eec515c32672116805a4282:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzg3ZmVlZDYxODFkZGJhMzg2MWY5YzhkYTAyZDQyMTMyZDdiMWI1MDcwYWRmYTI5YTA5NWQ2YWFiMjM2YWIwMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjAyZDJjMGQ2ZGM1ZTc0ZDkyZmExNGI5MWRiZWEyNjQwOTBiZWIzNWZkYjkxODhkOWIzNDExODFkY2U5ZjRjZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmFjYmY1MjdkZDkwODYzNzRmNjgxMDk4ZDMzYTZmNzk5NjZjNjhiZTY4NWJjOTc0MmMzNWZlZjg3ZTU2MzZjYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZmUyZGQyNmExYTM3MDA1MDc0NzM0MzM3Yzk4MzA2ZTY3OTQzYjUxMzZiZjg3Mjc5ODE4YzA4ODdlMjhhYTVjOSJ9"
+        },
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L42-L58",
+          "version": "repo-lines-v1:sha256:1e83e46df21437d7fb629d706ab6ce70d4d0c3d0badac3fc39c2741558d10714:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxODAyZTc5OThkYzAzZjdmOWI2ZjlmMTIzZmVkMTA2Y2YzMTdmOTJjOTkwNzQ1NjljYjU4NjU4YzYzNjMyMDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI2ODIwODVkZDVhODBlZTQ0Yzg2YThkYTQ1NDNhMmUzMDIwMGI2YTZiYjk0OTZlNzkwNTJjOTMwNDBlMTg0MjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJkYzcwMzA3ZGY5NTA5NTI0NDEzNTc2M2VlOTE3NGZhMDg5MWJhYjU1YjczMjY5ZDhiZmM2YmJkZTkwNjU5ODkifQ"
+        },
+        {
+          "resource": "repo://tests/ci/browser-selection.test.ts#L217-L230",
+          "version": "repo-lines-v1:sha256:eda6f567c50e538c730ad6bec6d45847e9f032dc4aa38ca6ce538958daa8df0f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhMTkxYTQzOGVjM2IyMjFhMTk3OTE5Y2E2MmJiY2Y5Zjk1ZDM0YWNiODQ5MjlkODgwMjYxNzZlN2ZhYTQxZjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwOGQwMWM4MDliNDk1Y2RiNDMwZWYxZTJmMWQzY2NmNTI1NmViNDVmYmZlYzhlOWQ5YzMzYTFmYTU3MzQ5YjgifQ"
+        },
+        {
+          "resource": "repo://tests/ci/browser-selection.test.ts#L272-L290",
+          "version": "repo-lines-v1:sha256:c3d0b1b67e336ac279ca4794ebee7eb26b230355c9cc6404b923eac196003807:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZlZDgxOTk4NTcwNzM5YmRmY2ZjNzFhMGQyMjg2NzFjODYwYjIwODY2NmMzZGFiNDE0Nzc2Yzk5YTM0MWFjNGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVlOTczYTA0YmZhNzYzNDZkZDQ3OWJmMTJkZDRhMWE0NjdhM2Q0NTlhZGEyODczNDZjMGJkMjY4ZDJkYjcxY2EifQ"
+        },
+        {
+          "resource": "repo://tests/ci/classify-changes.test.ts#L13-L40",
+          "version": "repo-lines-v1:sha256:9532cd2b87853ae9e877be2b754ed1ad774b017220ac6d44be448bb8de38b6c5:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlYzM3MzI1MTdjZTM1MGY4MjkxOTJlZDM0NTY1NTg1YTE3YjNlMGRlOGU3YzEzMGE3MzgzZWY5OTA5ZmRkMzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZlYWIzOTE5ZGQ2NjI1MDMyYTg5MjJiMGNjYWU3ZWRhNjkyOWYwYWM2MTEzYmIxYzgxMmMzNDM1YzYyY2Y0MDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQzZDhiMTUxYjljNzQ1MmY1ZGRhODdiN2Q5ZjUyMzg5NTJlZmM5MTk5OTRiNmEyYzc0MzcwY2U2NTI4OGYwYzUifQ"
+        },
+        {
+          "resource": "repo://tests/ci/classify-changes.test.ts#L351-L359",
+          "version": "repo-lines-v1:sha256:d6b12c9faf781d1625c25608ab41ebc15addc5fbafa935f37d8c7cd84584827c:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTQ2YzBlY2I1NWQyYjc2YzlkYmI2M2EzZmJlNTViYzliYTBkNzE4ZGQ5MDQyZDljNjMxNDA4MDcwMGE3ZjcyYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmJkYmYyYTU0NzE0MjM1YjU3ZWI2ODZiMjg0OGNhOTQyNTRiOGZmYTVmOGRkMjMyNTBlNzJjMjE5NzRmMTdmMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTJmZTZkMzliZGEzMzIzMjNjNzg2ZDc4NWMwZjNmMDA4ZTNlMDFiNzFiZTFhZTcyZjhkNWFiNjM0MTdmM2M2MiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_360d5791b4ff46ae9031db2314e10e75",
+      "statement": "A non-docs-only wiki diff can reach only the T2 external-integration tier rule, which is keyed on the Google Calendar lane, because the other lane-keyed tier rules depend on anchored lanes, the full-matrix patterns are anchored and the only unanchored tier patterns require an -actions.ts suffix; its baseline is therefore T2 when a changed wiki path names Google Calendar and T1 otherwise.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L19-L31",
+          "version": "repo-lines-v1:sha256:9e3d7cd17f54d64568be12918ad668bbb69b0604541a6c8183060b2aa1f2e852:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4MTE3NTA3ZGI0NDZiMmQ2ODY0MmM5MmZmNjg0NjM1OWEwYWNkOTE5OWQ1ZDM4Mjg1NzNiODZlNzgwYmMwOWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRmYmIzNDcyZTlkN2E3NjMwNmQwZTFiNWRkODFiZDEyNGE5YzkwZjk0MDAxNjA2NWFmOGQ5MDRjMGY3OWJiODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlkNjYyNWMzOWFlZjJkZGVmMDc3YmI3OTAyZTI1MDYyMGU4OTQzOTJmYzgzNTJjNDE5MDgwYzY3NDkwZTZhNWYifQ"
+        },
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L200-L217",
+          "version": "repo-lines-v1:sha256:eeb77952920a2afca7f4631e65d141a807271aa4d7b6e619ff91fef3e044d340:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlZWZkZGJkMDA2YmMwYjg2ZTRiMjcyZmQyMDE2YTgzNTA5OWE2Y2I0ZDM2MmY5OTI5ZjQyYmMyNGU4ZGY2ZGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUyOGFhN2U3ZmNhM2NkNDQ5M2RjMTA4NjNmMGRkOTkxNzYyNGFjNTA4MTc0Yjk1YzBjYThlMzUzYTMwMmYwZjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU0MGNhYjUwZTRhZjk4MTVlNGYwOGViODUxOTdkMWE4NmJhOWNiYWExMDAwODBiMDIwM2MwYTIxZjg5MWU0NDAifQ"
+        },
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L42-L58",
+          "version": "repo-lines-v1:sha256:1e83e46df21437d7fb629d706ab6ce70d4d0c3d0badac3fc39c2741558d10714:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxODAyZTc5OThkYzAzZjdmOWI2ZjlmMTIzZmVkMTA2Y2YzMTdmOTJjOTkwNzQ1NjljYjU4NjU4YzYzNjMyMDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI2ODIwODVkZDVhODBlZTQ0Yzg2YThkYTQ1NDNhMmUzMDIwMGI2YTZiYjk0OTZlNzkwNTJjOTMwNDBlMTg0MjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJkYzcwMzA3ZGY5NTA5NTI0NDEzNTc2M2VlOTE3NGZhMDg5MWJhYjU1YjczMjY5ZDhiZmM2YmJkZTkwNjU5ODkifQ"
+        },
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L77-L176",
+          "version": "repo-lines-v1:sha256:0c207b9c69fcdfc2c53ee11023e7977dc272772f1470b26d9bf242c72f5951ad:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyNGU4Zjc3OGY0MTFlMTI5ZWZmNGIyMjg0Y2E2NGE3ZTI5N2QwMzY4OTNlYzE4NTA2MDUyNTZjMjNhMzYzM2EzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiMDJkMmMwZDZkYzVlNzRkOTJmYTE0YjkxZGJlYTI2NDA5MGJlYjM1ZmRiOTE4OGQ5YjM0MTE4MWRjZTlmNGNlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwMTRjYTY1MWIyN2JkNzUxZTVmMmRhMDNiODk4Y2JhNTY1OGZkNDA1MjQxZmIxMTczNDUxM2NmYzljN2NmZDJhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlZjk0OGZmZjBkNGZlMzAxMDdkMzI3ZjU0YjMwNWFlNmExZTgzY2MyYjVlYThjYzU1OGIzOWJlNzBiNzFkNmVjIn0"
+        },
+        {
+          "resource": "repo://tests/ci/classify-changes.test.ts#L168-L179",
+          "version": "repo-lines-v1:sha256:145563f6f9667f6cfdabc731828b91cf6a0d336f8d3cdd96a8e1d1228d459ebd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkNWE2ZjY2N2ZkNGRkNmIzMWIzMmI2NzA4OTU2Y2E1ODUzNjJiNTI1M2ZkYzc1OTRmYjliZDEyZGRjMWY1MmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEyMGE2YTA2YmNkNWIyYTI3NjNkMTVlZDViYzBkNjViMGFjZGI2MjA4MDQ0MGU0YjE1NzE2NzgxNTAwMDY1MjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYzZTliOGZkNzQ0ZDRhNDA4MGFmNzhkMzQ1NDI3N2FmOGMyMzM0YzdiM2E3MDRjNmRmMjUyZGMzYzNiOTAwOWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_eaa82404ea4c43c0ad51d8924b7ec43b",
+      "statement": "Browser-group selection returns no group only when every changed path is non-browser, with Markdown counted as non-browser; once a wiki diff includes a Claim sidecar or run-metadata file, every page and Claim path is matched against the unanchored group patterns and smoke is added, and wiki paths cannot force extended coverage because the shared-infrastructure and unattributed-code fail-safes match only source paths.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/browser-groups.mjs#L381-L440",
+          "version": "repo-lines-v1:sha256:8b81952396c9b45717b1b45118cc381e949204ea4f7dcb42842bb65b361daec6:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwN2U3NjBkMjRjNjgxNDQ5YjFjNTkzNGE3YzFiNjEzMjY3YzZhYjJmMmFhOTM3ZDNhMTEzYTA3NTlmMTYzZjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVhY2NmODlhNGUyZGJmMTQ4YmNjMDJmNjljMmViNDA3ZDFmM2E3YzA3YjIxZDE4OGFiY2Y3NGIwMzU0YjQxYTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYzOGQ4MWVhMmMzNmJmNmQ0OWI1YzgzMzE3NDU5OTQxMTE3YzdiNDE4NGFjYjAyMjY2YzIyMDJkMGUwZWQ4MDMifQ"
+        },
+        {
+          "resource": "repo://scripts/browser-groups.mjs#L456-L535",
+          "version": "repo-lines-v1:sha256:f0357fe35184297d15f8ec6e34c460332022783ad3498cc3aabe03b000d64000:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2ODAxYTZjZmNlNjg4ZThiZmRmMzI0ZGUyYzVkOWZkZjBkMzg0YTkwNzkwMWYwOTg4OTc1NTlkODk5OTMyMGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYzOWM2YjBlNGRiYmVmYjcwMzk3YThmMDIxYTNmMGQxMmFkZGM5ZGQzMDkwOTc1Y2Y0Nzc5MDFhMjQ0NjI3NjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRjYWZlMjAxMWJjMWE0MjI4OTk2NWQwNWUxMWY1YzZiZmZiMzM0M2ZiNGM2MjFkNDc1MmVmMTc2MGQ2OTlkN2YifQ"
+        },
+        {
+          "resource": "repo://tests/ci/browser-selection.test.ts#L174-L186",
+          "version": "repo-lines-v1:sha256:78f0e8f3d2f117b98a56f45e12ba344ab4338ac6bd8e658574b8d7e86d638c5a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5MTMxYjg0YTgwZjc4Y2YxYTZjMjdkNTM4NmFjMmQwNGVhM2JmNDBiNDM0ZWQ5MWEyYTRhYzk0M2Q1ZmYzMjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZkYjhhNjhmMTNmZjYzZTc0OGM4Yzg0ZDViNDk4YzJmMGIwNmNhODYwZjMzMDNmZDA5ODkyNzRlNDQ2YmI2OWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ1NTUyZTdiZWJhNzlhYjdjODc5NGEyOTdlNDk3NzUzZWRlNGJmNDc4YTdlNjVjYTBkZmQ1OGQ4Y2RlYzFkMWUifQ"
         }
       ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-04T01:59:59.625Z"
+    "at": "2026-10-04T13:03:00.899Z"
   }
 }

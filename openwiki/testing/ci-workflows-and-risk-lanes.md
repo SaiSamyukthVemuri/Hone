@@ -5,7 +5,7 @@ description: How Hone's CI decides what to run — the ci.yml job graph keyed of
 tags: [ci, github-actions, risk-tiers, classification, supply-chain, testing]
 verified:
   - by: openwiki/0.6.1
-    at: 2026-10-04T01:59:59.625Z
+    at: 2026-10-04T13:03:00.899Z
 sources:
   - id: openwiki-source-164e2da859b5277df81c7d94
     resource: repo://.github/workflows/ci.yml
@@ -15,6 +15,8 @@ sources:
     resource: repo://CLAUDE.md
   - id: openwiki-source-3ad934bbd2c1fea4924f842a
     resource: repo://ENGINEERING_STANDARDS.md
+  - id: openwiki-source-6480634db094b4fd9dc7e537
+    resource: repo://scripts/browser-groups.mjs
   - id: openwiki-source-d76a4c2ee174d60d80d31d1d
     resource: repo://scripts/ci-plan.mjs
   - id: openwiki-source-8576950bcf5d6a2cb4498309
@@ -23,9 +25,13 @@ sources:
     resource: repo://scripts/verify-changed.mjs
   - id: openwiki-source-b4b8e96cb5e10de20a1b35cb
     resource: repo://tests/ci/aggregate-fail-closed.test.ts
+  - id: openwiki-source-f6a9df45d3a108b6059bb641
+    resource: repo://tests/ci/browser-selection.test.ts
   - id: openwiki-source-2596c45699032de1ba03ae0c
     resource: repo://tests/ci/ci-config.test.ts
-generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
+  - id: openwiki-source-0ada8f8769be2a663c75f0c9
+    resource: repo://tests/ci/classify-changes.test.ts
+generated: { by: "claude-code", at: "2026-10-04T13:03:00.899Z" }
 ---
 
 # CI workflows, risk lanes and browser sharding
@@ -109,13 +115,44 @@ Local tooling shares the same classifier and group selector:
 
 [`classify-changes.test.ts`](../../tests/ci/classify-changes.test.ts) proves the mapping with table-driven cases.
 
-**Wiki output is not docs-only.** The DOCS patterns are `docs/`, `README.md`, `CLAUDE.md`, any `*.md` file and the
-GitHub issue and PR templates ([L33-L40](../../scripts/classify-changes.mjs#L33-L40)). OpenWiki pages match them, but its
-Claim sidecars and run metadata (`openwiki/.claims/*.json`, `openwiki/.last-update.json`) and `.openwikiignore` do not,
-and they match no lane or tier rule either. A wiki regeneration therefore classifies as T1 with every lane boolean
-false: `validate` (including `npm test` and the docs-consistency suites) runs, and no database or browser lane does
-([L196-L213](../../scripts/classify-changes.mjs#L196-L213), [L250-L262](../../scripts/classify-changes.mjs#L250-L262);
-[`ci.yml` L228-L231](../../.github/workflows/ci.yml#L228-L231)).
+**A wiki regeneration is not docs-only.** The DOCS patterns are `docs/`, `README.md`, `CLAUDE.md`, any `*.md` file
+and the GitHub issue and PR templates ([L33-L40](../../scripts/classify-changes.mjs#L33-L40)). A diff of OpenWiki pages
+alone is therefore docs-only: T0, every lane off and no browser group. A regeneration also commits its Claim sidecars
+(`openwiki/.claims/**/*.json`) and run metadata (`openwiki/.last-update.json`, `openwiki/.page-manifest.json`). Those
+are not Markdown, so the diff is not docs-only and the raw lane hits stand
+([L245-L262](../../scripts/classify-changes.mjs#L245-L262)). From then on, the topic words in **every** changed path,
+page or Claim, decide what runs:
+
+- **Lanes.** Three lanes have unanchored word patterns: payment (`/payment/i`, `/stripe/i`), Google
+  (`/google[-_]?calendar/i`) and mobile (`/mobile/i`, `/responsive/i`)
+  ([L42-L58](../../scripts/classify-changes.mjs#L42-L58)). A payments page or its Claims therefore run
+  `payment-browser-e2e`, and the Google Calendar sync page or its Claims run `google-browser-e2e`
+  ([`ci.yml` L781-L784](../../.github/workflows/ci.yml#L781-L784), [L989-L992](../../.github/workflows/ci.yml#L989-L992)).
+  No current page path names mobile or responsive. Every other lane and the full-matrix list either match only
+  anchored source paths or need a TypeScript file, so no wiki path reaches them
+  ([L19-L31](../../scripts/classify-changes.mjs#L19-L31)).
+- **Tier.** The T2 "external integration or messaging path changed" rule is keyed on the `google_calendar` lane, so a
+  Google hit makes the baseline T2 ([L151-L156](../../scripts/classify-changes.mjs#L151-L156),
+  [L200-L217](../../scripts/classify-changes.mjs#L200-L217)). The only unanchored tier patterns need an `-actions.ts`
+  suffix ([L110-L121](../../scripts/classify-changes.mjs#L110-L121), [L158-L173](../../scripts/classify-changes.mjs#L158-L173)),
+  so without a Google hit the diff is T1.
+- **Browser groups.** `selectBrowserGroups` selects nothing only when **every** path is non-browser, and `.md` counts
+  as non-browser. One Claim or metadata file is enough for it to match every path against the group patterns. Words
+  such as `appointment`, `calendar`, `intake`, `portal`, `marketing`, `practitioner` and `treatment-memory` select
+  targeted groups, and `smoke` is added. Wiki paths cannot force extended coverage, because the
+  shared-infrastructure and unattributed-code fail-safes match only source paths
+  ([`browser-groups.mjs` L381-L440](../../scripts/browser-groups.mjs#L381-L440),
+  [L456-L535](../../scripts/browser-groups.mjs#L456-L535)).
+
+For the current page set, a full regeneration diff is therefore T2. It runs `validate`, the payment and Google
+browser lanes, and targeted browser shards for booking, calendar, google, intake, marketing, owner_admin, portal and
+sessions plus smoke. The database and mobile lanes do not run
+([`ci.yml` L228-L231](../../.github/workflows/ci.yml#L228-L231), [L356-L359](../../.github/workflows/ci.yml#L356-L359),
+[L487-L492](../../.github/workflows/ci.yml#L487-L492), [L898-L901](../../.github/workflows/ci.yml#L898-L901)). A partial
+update selects only what its own changed paths name. Run `npm run ci:plan -- --files <comma-separated paths>` on the
+real path set instead of predicting the plan.
+[`classify-changes.test.ts`](../../tests/ci/classify-changes.test.ts) and
+[`browser-selection.test.ts`](../../tests/ci/browser-selection.test.ts) pin the docs-only and per-lane behaviour.
 
 ## 4. Browser sharding and the fail-closed aggregator
 
