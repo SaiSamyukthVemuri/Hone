@@ -80,8 +80,15 @@ describe("0203 takes the number it derived", () => {
     // NARROWED TO A FLOOR 2026-10-01, when 0204 was applied. The block above said
     // equality is a current claim that exactly one file may hold, and that whoever
     // applied 0204 had to move it; this is that move. 0203 now asserts only that
-    // hosted has not gone BACKWARDS past it -- which is what its own title claims --
-    // and 0204's test carries the equality.
+    // hosted has not gone BACKWARDS past it -- which is what its own title claims.
+    //
+    // THE EQUALITY NO LONGER TRAVELS BETWEEN FILES. 0204's file held it until
+    // 0205 was applied on 2026-10-03, and that apply took 0200, 0202 and 0204
+    // red together -- three files holding one current claim. It is now owned by
+    // NO per-migration file: CURRENT migration state is derived from
+    // migrationState() and proved centrally, once, by
+    // tests/docs/canonical-production-facts.test.ts. That is why nothing here
+    // has to move on the next apply.
     //
     // IT WENT RED BEFORE IT WAS MOVED, and the reason is worth recording: the
     // docs-only risk classification skips the validate lane, so a migration-state

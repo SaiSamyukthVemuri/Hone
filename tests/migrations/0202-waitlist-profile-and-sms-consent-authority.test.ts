@@ -111,8 +111,10 @@ describe("0202 takes the number it derived", () => {
     // So this file keeps only a FLOOR -- `hosted >= 0202` -- the durable fact about
     // an older applied migration, which stays true forever. Re-asserting equality
     // here would make this file red the moment anything else applies, which is the
-    // mechanical multi-file sweep CLAUDE.md forbids. The equality now lives in
-    // 0203's own file.
+    // mechanical multi-file sweep CLAUDE.md forbids. The equality lives in NO
+    // per-migration file: CURRENT migration state is derived from
+    // migrationState() and proved centrally, once, by
+    // tests/docs/canonical-production-facts.test.ts.
     const state = migrationState();
     expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);
@@ -137,11 +139,14 @@ describe("0202 takes the number it derived", () => {
     expect(ledger, "the ledger must carry 0202's COMPLETE sha256").toContain(
       "7a95e4e66c7c5fe50dbb2d7e73d54f7155c54f376a504ff2fbac47826dbb4ce1",
     );
-    // Anchored by SECTION: the match must sit between "## Current state" and the
-    // first "## Previous state", so a stale record in a preserved section can
-    // never satisfy it.
-    expect(ledger, "the ledger's current block must record 0202 as APPLIED").toMatch(
-      /## Current state(?:(?!## Previous state)[\s\S])*?0202_waitlist_profile_and_sms_consent_authority\.sql`? \| \*\*APPLIED\*\*/,
+    // NO LONGER ANCHORED TO "## Current state". 0202 is HISTORICAL: the current
+    // block belongs to the newest apply, so a section anchor here trips on the
+    // next one -- exactly the "trip on the next one" pin CLAUDE.md s2 forbids,
+    // and it went red when 0205 was applied. What is durable is that the applied
+    // record SURVIVES in the ledger, in whichever section now holds it, under
+    // its complete hash.
+    expect(ledger, "the ledger must still record 0202 as APPLIED, in any section").toMatch(
+      /0202_waitlist_profile_and_sms_consent_authority\.sql`? \| \*\*APPLIED\*\*/,
     );
   });
 });
