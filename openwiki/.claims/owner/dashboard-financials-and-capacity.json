@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:ce26f4619a40ac312a929d0ba66bc73df2352ca9d206c8fd45f5d3e3ca279488",
+  "pageVersion": "sha256:a0ca4824ac1fa5a7a9a69381d57523762ee3ca17b8298c5f733bd44552601829",
   "claims": [
     {
-      "id": "claim_22559d4f328148a1b1c803e0ae810889",
+      "id": "claim_fc043bcf232047efb7ca0a2a57d318e8",
       "statement": "The dashboard renders a failed card or prep read as a neutral 'unavailable' state distinct from empty or negative states, and defaults an appointment's payment state to 'unavailable' when it could not be read.",
       "evidence": [
         {
@@ -21,7 +21,7 @@
       ]
     },
     {
-      "id": "claim_7c18b41fed6b4cb9aaaac917db545765",
+      "id": "claim_9c7b7893c9484d79bd10f810f758807e",
       "statement": "The owner capacity page refuses non-owners in place before any capacity read is issued.",
       "evidence": [
         {
@@ -31,7 +31,7 @@
       ]
     },
     {
-      "id": "claim_4fa4b98541ee4d6c8c2e51555e797529",
+      "id": "claim_f5892888d7ce41cfbe4f57ee16208588",
       "statement": "The owner capacity gate is an application-layer role check, not a database boundary, because RLS on clients, treatment_plans and appointments admits every studio member.",
       "evidence": [
         {
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "id": "claim_5547a3cda19b4502a264ac74f62654c8",
+      "id": "claim_1c8931fb55d841f3883cae788c8c574b",
       "statement": "The /financials page is force-dynamic and owner-only, with loadFinancialsView refusing on role before constructing a Supabase client, and the route is unadvertised in navigation and search.",
       "evidence": [
         {
@@ -51,7 +51,7 @@
       ]
     },
     {
-      "id": "claim_ec00372478f24d03a7829862299111f9",
+      "id": "claim_89a2db755a814a559ddc352458e6712a",
       "statement": "The financials loader projects only appointment status and starts_at for one studio-local period, performs no writes, RPCs or Stripe calls, and is explicitly not a database boundary because RLS on appointments, payment_charge_attempts and appointment_settlements admits every studio member.",
       "evidence": [
         {
@@ -61,7 +61,7 @@
       ]
     },
     {
-      "id": "claim_d0432a7e51584ad59739f5c3cb0d81aa",
+      "id": "claim_a3639211a02a4d3e8512c444dd8577a7",
       "statement": "Financial facts use a closed unknown vocabulary (not_recorded, unavailable, unknowable, not_yet_supported, not_enumerable), and known() is the only way a value, including zero, becomes displayable.",
       "evidence": [
         {
@@ -71,7 +71,7 @@
       ]
     },
     {
-      "id": "claim_4bfbeec0f58842729e07c3323946d3af",
+      "id": "claim_817353de22064945b3e2dbdda4ba7dff",
       "statement": "practitioner-notifications.ts is the single writer to practitioner_notifications, writing through the service role with server-derived fields from public event sources, and it never throws into the caller.",
       "evidence": [
         {
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "id": "claim_cfce9153a0f24c54b58b39b6f6069928",
+      "id": "claim_d339dc1078d44317af8945c7de53ea72",
       "statement": "Migration 0154 adds a nullable dedupe_key to practitioner_notifications with a partial unique index on (studio_id, dedupe_key) so a repeated event inserts once.",
       "evidence": [
         {
@@ -91,8 +91,8 @@
       ]
     },
     {
-      "id": "claim_dbfd98796eac443e8895346249b205f2",
-      "statement": "The canonical record describes the owner capacity surface as implemented, merged, deployed and enabled for owners but not production-exercised as a measured fact, with slices 2 and 4 not started.",
+      "id": "claim_30f67d03d901449eb3fceef5c21df6d6",
+      "statement": "The canonical record describes the owner capacity surface as implemented, merged, deployed and enabled for owners but not production-exercised as a measured fact, with later slices not started.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L928-L957",
@@ -101,7 +101,7 @@
       ]
     },
     {
-      "id": "claim_f8aaf6e39dcd456b892cbd798002ab2a",
+      "id": "claim_d0b8541de80c417ab7f9d279b9ea07b2",
       "statement": "The canonical record describes FIN-01A slice 1 (/financials) as implemented, merged, deployed and owner-only with no migration or RPC, and not production-exercised as a measured fact.",
       "evidence": [
         {
@@ -111,7 +111,7 @@
       ]
     },
     {
-      "id": "claim_b1054aca73cd48db972239bc421f1234",
+      "id": "claim_e79b9f1125874396acea85a679434301",
       "statement": "The financials loader bounds its read by a 1,000-row API page size documented as coming from supabase/config.toml.",
       "evidence": [
         {
@@ -121,7 +121,7 @@
       ]
     },
     {
-      "id": "claim_5177d4de1a23462eb65da1409057b0fc",
+      "id": "claim_fcd2aa8974574549adc1f7ce1ed5b46f",
       "statement": "The practitioner dashboard bulk-loads pinned notes, intake status and card-on-file status only for the selected day's client ids, alongside the practitioner roster, in one read-only Promise.all batch.",
       "evidence": [
         {
@@ -133,6 +133,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

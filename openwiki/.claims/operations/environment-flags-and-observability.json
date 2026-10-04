@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:efa128baa4b8d7758139e1c565130dddf6857fd730db784b923c1d2d0eee5cfd",
+  "pageVersion": "sha256:e8a93aff5f11e456e108da26db730c92bb0f7ca4141fbdf18aff313cd44fa68f",
   "claims": [
     {
-      "id": "claim_9eda5421570e4d13bc02afb53bb28fe3",
+      "id": "claim_cd5e0d4cb6f24d96b82e2efe49dff22d",
       "statement": "The production build runs scripts/check-production-env-gates.mjs before next build, and the script acts only when VERCEL_ENV is 'production', printing SKIP and exiting 0 everywhere else.",
       "evidence": [
         {
@@ -21,7 +21,7 @@
       ]
     },
     {
-      "id": "claim_2b3dc31652fd4675925f5b2d07bb98ae",
+      "id": "claim_fd063f47f4d045269275454b16bb9f3f",
       "statement": "Production env gate 1 fails the production build when the Upstash rate-limit variables are missing because runtime public rate limiting fails open, and there is deliberately no bypass.",
       "evidence": [
         {
@@ -31,7 +31,7 @@
       ]
     },
     {
-      "id": "claim_f011ecbbe0cb44d0a803d98bc6db51e1",
+      "id": "claim_6a3b71c754f94db0bb9adeb10d48f492",
       "statement": "Production env gate 2 fails the production build when OPS_ALERT_EMAILS does not parse to at least one recipient.",
       "evidence": [
         {
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "id": "claim_3fe0ed57e6c745d0aee58c99fca77d5d",
+      "id": "claim_3085343ade0845618949203b63b61f03",
       "statement": "Production env gate 3 passes as dormant when all Google Calendar variables are absent and fails when they are partially set, the token encryption key does not decode to 32 bytes, or the key version is not a positive integer.",
       "evidence": [
         {
@@ -51,7 +51,7 @@
       ]
     },
     {
-      "id": "claim_d55897a1cd2d421eb4a1f9e8aeb28cae",
+      "id": "claim_271758cff1e84634b6dda4fe27883ef1",
       "statement": "Production env gate 4 is report-only for the durable waitlist allowlist, proves neither studio existence nor activation, and states that a durable-allowlisted studio is activated only if it is also in NEW_CLIENT_WAITLIST_STUDIO_SLUGS.",
       "evidence": [
         {
@@ -61,7 +61,7 @@
       ]
     },
     {
-      "id": "claim_2619455f996b46de89194eaa4b3bfa85",
+      "id": "claim_3c758e57b1114474b8a29e891a89746b",
       "statement": "Live SMS provisioning and live prospect mobile verification each require a dedicated *_LIVE environment flag in addition to Twilio credentials.",
       "evidence": [
         {
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "id": "claim_121a51c8140944da8457de9b51f0009f",
+      "id": "claim_7ecc9bdc25c14f5b8aa84e63fa77bcd1",
       "statement": "Per-studio configuration columns include the Google Calendar flags, practitioner capacity flags, onboarding v2, the persisted new-client admission mode, email/SMS/intake reminder toggles and the postcare delivery mode.",
       "evidence": [
         {
@@ -85,7 +85,7 @@
       ]
     },
     {
-      "id": "claim_8d903856917947e39fe512864f3e54e5",
+      "id": "claim_a14e06c90134417da14e3331ee210dde",
       "statement": "Sentry initializes with sendDefaultPii false and deny-by-default scrubbers on errors, transactions and breadcrumbs, with browser Session Replay and Sentry Logs disabled and events sent through the /monitoring tunnel.",
       "evidence": [
         {
@@ -99,7 +99,7 @@
       ]
     },
     {
-      "id": "claim_4fa703f891ea40f3ad5d29c813bcbf1a",
+      "id": "claim_ea773149c67742b6b361abcc9566192d",
       "statement": "Sentry traces are sampled at 0.1 in production and 1 elsewhere.",
       "evidence": [
         {
@@ -109,7 +109,7 @@
       ]
     },
     {
-      "id": "claim_54004aeb7147490486c85efc84a637d0",
+      "id": "claim_05a192ded4a74efc869a7b79c037971a",
       "statement": "The PostHog browser client disables recording, surveys, exception capture, heatmaps and web-vitals, masks all text, and passes every event through guardBrowserEvent, which allows only pageview, pageleave, autocapture and marketing events on canonical marketing routes.",
       "evidence": [
         {
@@ -123,7 +123,7 @@
       ]
     },
     {
-      "id": "claim_9cf36ec0793e4b788cad7bb91795f0f8",
+      "id": "claim_27d623b0cd31436593e1e266364eceb6",
       "statement": "Authenticated analytics identification is performed server-side only with an opaque id and coarse role.",
       "evidence": [
         {
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "id": "claim_d830fdf28f47475ebb0e256361f3d43f",
+      "id": "claim_fe99654905604ccd97fa8e7562ce08bc",
       "statement": "Marketing conversions are dispatched only with booking marketing consent, an enabled studio tracking provider, a won dedup claim and the studio's own decrypted server token, and the dispatcher never throws.",
       "evidence": [
         {
@@ -143,8 +143,8 @@
       ]
     },
     {
-      "id": "claim_23115ec658b545a7ae0c747bbeb7518d",
-      "statement": "The canonical record states marketing conversion tracking is deployed but inert per studio because no studio has configured a provider token.",
+      "id": "claim_0f5b731e5190470aa268d9e97452465e",
+      "statement": "The canonical record states marketing conversion tracking is deployed but inert per studio until a provider token is configured.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L875-L876",
@@ -153,7 +153,7 @@
       ]
     },
     {
-      "id": "claim_2f8cde6bfdb5445a809a3481ad1dbd35",
+      "id": "claim_4aea6d5390b8454b955cc34b2dbfff14",
       "statement": "Public rate limiting fails open at runtime when Upstash is unconfigured or unavailable, returning allowed for every request.",
       "evidence": [
         {
@@ -171,7 +171,7 @@
       ]
     },
     {
-      "id": "claim_a0f9a3725274484aa9ed6d52ecf3dcdf",
+      "id": "claim_909569f65b65403495d351cfdd8bfa73",
       "statement": "Several environment variables read by runtime code (Google OAuth and token-encryption keys, PostHog project token and host, the tracking-token encryption key, the Twilio Verify service id and the two *_LIVE arming flags) appear in neither .env.local.example nor docs/10_DEPLOYMENT_AND_ENV.md.",
       "evidence": [
         {
@@ -193,7 +193,7 @@
       ]
     },
     {
-      "id": "claim_19daf1ea18124fc7b299fb496ca01d6f",
+      "id": "claim_0d8ca3f5f3f94b4e8290b4133a7db8b8",
       "statement": "The env-gate script says its gate-4 contract consists of eight sentences, but the contract it pins lists nine.",
       "evidence": [
         {
@@ -203,7 +203,7 @@
       ]
     },
     {
-      "id": "claim_055102c4590446498e031727ee4c8b28",
+      "id": "claim_26dfec63d70e4e4f80d06f6548eb0e85",
       "statement": "The canonical record states that whether Sentry or PostHog receive events, and whether the PostHog variables are set in Vercel, is unknown pending verification.",
       "evidence": [
         {
@@ -215,6 +215,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

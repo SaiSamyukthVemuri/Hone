@@ -5,7 +5,7 @@ description: The three practitioner note stores on a client and how each is guar
 tags: [treatment-memory, clinical-notes, pinned-notes, personal-notes, append-only, rls, privacy]
 verified:
   - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-3756b26543e238d254da3bc1
     resource: repo://app/(app)/clients/%5Bid%5D/clinical-notes-actions.ts
@@ -33,7 +33,7 @@ sources:
     resource: repo://tests/db/client-clinical-notes.db.test.ts
   - id: openwiki-source-3ea2b4cb44bae516b82dfe9d
     resource: repo://tests/source-guards/clinical-notes-guards.test.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Clinical notes, pinned notes and personal notes

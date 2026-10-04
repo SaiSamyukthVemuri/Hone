@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:c096abc612017dcf53a0cd78aff3b4777be1b1f24271fa5a47f1fe68c60f4960",
+  "pageVersion": "sha256:37cfd9a1a3de97cae0f5c2ba2b826eb07758d54cc91a84af9ea8f4b3c68fd2f8",
   "claims": [
     {
-      "id": "claim_bab6249bea4243f6a2474462eb46b5a6",
+      "id": "claim_8f0c9861d4b6450f8f3c6428ed6699ba",
       "statement": "treatment_plans rows carry a name, an active or closed status with creator and closer attribution and a legacy suggested visit count, and sessions link to a plan through a nullable treatment_plan_id that is set to NULL when the plan is deleted.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_e505c2374ab040baabc0dc49069c2f0f",
+      "id": "claim_948af37fd70e42b984f2fc0025264598",
       "statement": "Migration 0051 additively added optional treatment_areas (1 to 12 entries) and estimated timeline months (1 to 60, min not above max) to treatment plans and defaulted the legacy suggested_visit_count to 12, keeping legacy rows valid.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_0731c204e41a4ea7b06bc183746566c0",
+      "id": "claim_0fa37aab2baf401b8698f9db4123d123",
       "statement": "treatment_plan_stages constrain cadence to weekly, every two weeks or monthly, visit length to 5 to 240 minutes and stage length to weeks or months, and derive studio_id from the parent plan by trigger.",
       "evidence": [
         {
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "id": "claim_50cb92f1b885438d8e587f2eb0ed9206",
+      "id": "claim_094df49105ed4c12adf3b4a292a34d58",
       "statement": "treatment_goals holds one row per client with an estimated total in minutes and an active, reached, revised or archived status, and 0026 added an off-by-default studio toggle for showing treatment time to clients.",
       "evidence": [
         {
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "id": "claim_69e06fb903b8450d86c9d0849dd53ef0",
+      "id": "claim_93806c4a7ad54adfa9e6234006fff6ab",
       "statement": "Creating a treatment plan inserts the plan and then seeds three fixed clinical stages in a separate write, and on a stage insert failure the action closes the plan because treatment_plans has no authenticated delete policy.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_542a2d35655c487b98cac89cada991b8",
+      "id": "claim_f04a02ea7b4a43e7b003befd8a85a0c1",
       "statement": "Closing a treatment plan first verifies the plan belongs to the studio and submitted client and is active, then binds id, studio, client and active status in the update and treats zero rows as a refusal, because treatment_plans RLS is studio-scoped only and has no database backstop against cross-client writes.",
       "evidence": [
         {
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "id": "claim_a654c68e131246f0870525c3b73bdddf",
+      "id": "claim_5c0893eaa2944e4cb99eca4e1d7dda01",
       "statement": "set_session_treatment_plan is a SECURITY DEFINER command executable only by authenticated that asserts the session is writable for the caller and client and refuses a plan that is missing, closed or belongs to another client before updating the session's plan link.",
       "evidence": [
         {
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "id": "claim_3c63a1efbbbf4074989068375c9b9a98",
+      "id": "claim_86e82c8df83d4f1eae0e2e0a999c1878",
       "statement": "Treatment time totals cover electrolysis sessions only and load non-deleted sessions with their non-deleted blocks and structured areas in one round trip.",
       "evidence": [
         {
@@ -91,7 +91,7 @@
       ]
     },
     {
-      "id": "claim_d5b010da97f946ce84f76a4772ab1721",
+      "id": "claim_bf1492a217cf4ad1be5cd6361d0f3217",
       "statement": "A multi-area block's minutes are credited once to a single combined bucket naming all its areas, never split, duplicated or credited to the first area alone, so the client's global total is unchanged.",
       "evidence": [
         {
@@ -105,7 +105,7 @@
       ]
     },
     {
-      "id": "claim_84ee2c9a38fc4f21ac59738cf3cc9974",
+      "id": "claim_3fec758f831a462c9c964baba415dd3f",
       "statement": "The treatment goal action accepts 1 to 1000 hours, stores minutes and upserts on the client id after re-proving the client belongs to the session's studio.",
       "evidence": [
         {
@@ -115,7 +115,7 @@
       ]
     },
     {
-      "id": "claim_b0eeda629239433e8978ddb2bf230475",
+      "id": "claim_5e9beac39819424fa326839b486b9433",
       "statement": "Treatment Intelligence credits a multi-area block's full minutes to every area card it treated, whereas the treatment-time breakdown credits the block once to a single combined bucket, and both count each block once in their overall totals.",
       "evidence": [
         {
@@ -135,6 +135,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T23:26:41.194Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

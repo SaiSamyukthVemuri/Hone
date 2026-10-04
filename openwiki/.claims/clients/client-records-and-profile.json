@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:5aac1e7d3b939e641d0564e483df8fd0433b26f42fad014f80670356c1135e27",
+  "pageVersion": "sha256:d01671af6ef1c4bfc40d46f6ce35def4a0da28c220066a906ac590e44977ad09",
   "claims": [
     {
-      "id": "claim_40bde3f8a85e4e089d6f82c5f5477fc8",
+      "id": "claim_a55cb38a22b64677a920fcae318b0c0b",
       "statement": "Client create and update are server actions over the user-scoped RLS Supabase client that derive the studio from the session, re-prove an existing client by (id, studio_id) before writing, and filter the write by both columns.",
       "evidence": [
         {
@@ -21,8 +21,8 @@
       ]
     },
     {
-      "id": "claim_f8ca26b907fd4d9fb9533a1513966bd9",
-      "statement": "Migration 0087 replaced the 0001 members FOR ALL policy on clients with explicit select, insert and update policies on is_studio_member and no delete policy, so authenticated members cannot hard-delete clients; it removed delete the same way from client_tags, client_personal_notes and clinical history tables.",
+      "id": "claim_3c67660282ac49e8a25fc1e7f0c70731",
+      "statement": "Migration 0087 replaced the 0001 members FOR ALL policy on clients with explicit select, insert and update policies on is_studio_member and no delete policy, so authenticated members cannot hard-delete clients.",
       "evidence": [
         {
           "resource": "repo://supabase/migrations/0001_init.sql#L253-L257",
@@ -35,7 +35,7 @@
       ]
     },
     {
-      "id": "claim_e729716c2eab42269a197f6c0c7554aa",
+      "id": "claim_dbfa7c639ebf407da915d1e8f1542e8f",
       "statement": "Migration 0032 added a generated normalized_email column and the partial unique index clients_studio_normalized_email_uniq on (studio_id, normalized_email), allowing at most one client per normalized email in a studio while permitting clients without email, to protect payment identity from near-duplicate clients.",
       "evidence": [
         {
@@ -45,7 +45,7 @@
       ]
     },
     {
-      "id": "claim_9d49978356a546e98e130e54574334aa",
+      "id": "claim_472a2ec5aa1f4d3f90dabb78da04f428",
       "statement": "Client create and update pre-check the normalized email to tell the practitioner whether the duplicate is active or archived, and treat a 23505 on the normalized-email index as a lost race that is re-read and returned as curated copy rather than thrown.",
       "evidence": [
         {
@@ -59,8 +59,8 @@
       ]
     },
     {
-      "id": "claim_000fe172e7654ee48d274b63c9952d6f",
-      "statement": "Client create and update no longer write clients.skin_notes; the legacy column is left untouched and new skin/hair observations are recorded as append-only client_clinical_notes.",
+      "id": "claim_0168c6983cbc46ec8132860298b58512",
+      "statement": "Client create and update no longer write clients.skin_notes; the legacy column is left untouched.",
       "evidence": [
         {
           "resource": "repo://app/(app)/clients/%5Bid%5D/actions.ts#L213-L238",
@@ -73,7 +73,7 @@
       ]
     },
     {
-      "id": "claim_91d64bfc18c04317b8329be4e376a738",
+      "id": "claim_ed7e3b6f6d1b4202aff7b7d24f44844c",
       "statement": "Clients are archived rather than deleted: archive stamps archived_at and archived_by only when unset, unarchive clears them only when set, and each writes an audit_logs row whose failure is logged without undoing the archive.",
       "evidence": [
         {
@@ -83,7 +83,7 @@
       ]
     },
     {
-      "id": "claim_56fe4c5736fe44dda901c6a56a424ba3",
+      "id": "claim_00319df5eaa34d7c94d44287aabf9217",
       "statement": "The active client list query excludes archived clients while a separate archived query returns them newest-archived first, and the client detail page intentionally still resolves archived clients.",
       "evidence": [
         {
@@ -97,7 +97,7 @@
       ]
     },
     {
-      "id": "claim_337ae826e0b44a9a9875937258bbbc3d",
+      "id": "claim_cd86afec66f64bdba98d02d080fadf9d",
       "statement": "Client tags are capped at 60 characters and removed by soft delete (deleted_at, deleted_by) rather than row deletion, and the tag table has no unique constraint so a re-added label does not conflict.",
       "evidence": [
         {
@@ -111,7 +111,7 @@
       ]
     },
     {
-      "id": "claim_e02bd126c27f422a91aedf07077b3034",
+      "id": "claim_989fc3d7b2834b7ba9f5b3f5f787515a",
       "statement": "The birthday action stores month and day in clients.date_of_birth using a 1900 sentinel year for new values while preserving an existing real year, and the birthday read skips archived clients.",
       "evidence": [
         {
@@ -125,7 +125,7 @@
       ]
     },
     {
-      "id": "claim_baa7da27310f44f98838fab0c2e2a0a4",
+      "id": "claim_316fc393446f4048b1b9a10768667352",
       "statement": "client_budget_context holds at most one current row per client because client_id is its primary key, with budget_level limited to NULL or three practitioner-selected values and budget_notes capped at 20000 characters independently of the level.",
       "evidence": [
         {
@@ -139,7 +139,7 @@
       ]
     },
     {
-      "id": "claim_2cc55d5ac4ee412ca923219354a7463f",
+      "id": "claim_78698d64152d43168e4086528c864bf6",
       "statement": "Budget context tenancy is enforced by a composite foreign key to clients (id, studio_id) plus a trigger that derives studio_id from the parent client, and a trigger rejects any change of client_id even for service_role.",
       "evidence": [
         {
@@ -161,7 +161,7 @@
       ]
     },
     {
-      "id": "claim_18e0fe6cd5de4f57a0b409d052dc927e",
+      "id": "claim_faaad4305a5e4625afc309b980a370a2",
       "statement": "Budget context insert and update policies require updated_by_practitioner_id to be an active practitioner in the row's studio whose user_id is auth.uid(), so members cannot attribute writes to colleagues, other studios or NULL.",
       "evidence": [
         {
@@ -175,8 +175,8 @@
       ]
     },
     {
-      "id": "claim_f4f782c0d1244f57926ad02328c85260",
-      "statement": "Migration 0184 revokes all privileges on client_budget_context from public, anon, authenticated and service_role and grants back only select, insert and update to authenticated, and revokes all privileges on the three budget trigger functions, repairing 0183's incomplete revoke list.",
+      "id": "claim_49dd195ad1bd47cb99d08d8d2c62e116",
+      "statement": "Migration 0184 revokes all privileges on client_budget_context from public, anon, authenticated and service_role and grants back only select, insert and update to authenticated, and revokes all privileges on the budget trigger functions, repairing 0183's incomplete revoke list.",
       "evidence": [
         {
           "resource": "repo://supabase/migrations/0184_client_budget_context_least_privilege.sql#L1-L112",
@@ -185,8 +185,8 @@
       ]
     },
     {
-      "id": "claim_1343f8059b834f7080bb5823ffa36855",
-      "statement": "updateClientBudgetContextAction is the single writer of budget context: it refuses an unrecognised level instead of nulling it, does not trim notes, re-proves the client against the session studio and upserts on client_id, and the treatment-plan editor no longer writes budget_notes.",
+      "id": "claim_3b097c175a7e42a49207ed1454c88ecc",
+      "statement": "updateClientBudgetContextAction is the single writer of budget context: it refuses an unrecognised level instead of nulling it, does not trim notes, re-proves the client against the session studio and upserts on client_id, and a test asserts it is the only writer repo-wide.",
       "evidence": [
         {
           "resource": "repo://app/(app)/clients/%5Bid%5D/budget-context-actions.ts#L1-L116",
@@ -199,7 +199,7 @@
       ]
     },
     {
-      "id": "claim_c2e5bff0ffb4458e8c810362cadf67d3",
+      "id": "claim_dda26a4c3db249568b44d8ad446b5588",
       "statement": "The client profile has seven deep-linkable tabs and loads gated reads only for the active tab; a development and test-only check throws when a tab renders data whose read was deferred, and it returns immediately in production.",
       "evidence": [
         {
@@ -213,8 +213,8 @@
       ]
     },
     {
-      "id": "claim_c6e6cefa8d4a4f80a00e4a2e0c3af326",
-      "statement": "Database tests run the real client profile page as a signed-in practitioner against the local stack to prove per-tab queries and visible output, including that no profile query runs when the client does not resolve for the caller.",
+      "id": "claim_ef44ebb3f0044d46bf357dd413019660",
+      "statement": "Database tests run the real client profile page as a signed-in practitioner against the local stack to prove per-tab queries and visible output, including that profile work waits until the client resolves for the caller.",
       "evidence": [
         {
           "resource": "repo://tests/db/client-profile-tab-behaviour.db.test.ts#L158-L394",
@@ -231,8 +231,8 @@
       ]
     },
     {
-      "id": "claim_e32feb873fa240b6a963209f6d4be6da",
-      "statement": "The profile overview contains each independent clinical read failure at its own edge so one failure shows an unavailable state without blanking a sibling read, while a failing notes summary still fails the page loudly.",
+      "id": "claim_17885c61c9524d97ad99794a22e08942",
+      "statement": "The profile overview contains each independent clinical read failure at its own edge so one failure shows an unavailable state without blanking a sibling read.",
       "evidence": [
         {
           "resource": "repo://tests/db/client-profile-read-failure-containment.db.test.ts#L1-L20",
@@ -245,7 +245,7 @@
       ]
     },
     {
-      "id": "claim_a9261d08aec9403c9c44e93095cb86d3",
+      "id": "claim_880af3fad28546a3ba0b77c7e262772f",
       "statement": "updateClientBudgetContextAction returns raw database error messages in its result object, which is the kind of internal text DESIGN.md LAW 7 forbids in user-facing refusals.",
       "evidence": [
         {
@@ -261,6 +261,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T23:09:08.246Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

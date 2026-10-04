@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:cccab26353d065bf1f5d52076dbddbfdda17db88a278a32a9103732edaeab880",
+  "pageVersion": "sha256:9de94ca682929418e5bcbb85e6486a3f76d1aceed801dad06177015c0401873d",
   "claims": [
     {
-      "id": "claim_4e619c7f65bb4ce6a20997b67e478811",
+      "id": "claim_0c29a2f3aa154c93b242207d22432bae",
       "statement": "A settings block may carry several treated areas in session_block_areas, each with its own laterality; child rows are authoritative when present, otherwise the legacy primary_area and side apply, and writes also keep a legacy projection that sets side only when all areas share it.",
       "evidence": [
         {
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "id": "claim_14c5b541d4be4687a24cbedb9a4a4820",
+      "id": "claim_4ef6de6983a94df181c311f37ce77f29",
       "statement": "session_block_areas.studio_id is trigger-derived from the parent block so it cannot be spoofed, and RLS limits every operation to studio members.",
       "evidence": [
         {
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_c010dd81ec0d4d4b8fe2bd933dcaefd6",
+      "id": "claim_242d581b4c214bbaa6d70d3bc93d1388",
       "statement": "Migrations 0164 through 0168 moved every runtime clinical writer behind narrow SECURITY DEFINER commands, and 0169 then revoked INSERT, UPDATE and DELETE from authenticated on sessions, session_blocks, session_block_areas, electrolysis_entries, laser_entries and treatment_images while retaining SELECT.",
       "evidence": [
         {
@@ -37,7 +37,7 @@
       ]
     },
     {
-      "id": "claim_daa6927a453143129944d62e6efbabab",
+      "id": "claim_1a672df74e9e43a0a14c2f72ed5d6255",
       "statement": "The 0166 block commands perform each block, area, entry, probe-link and chip mutation in one function body so a failure rolls back the whole workflow, and they delegate the block-and-areas half to the existing 0129 commands to keep one area-write path.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_c6bc0b60b65f43ee943c372a7cc05434",
+      "id": "claim_b3b0521cf02d493591a554982e475012",
       "statement": "Session command failures map known raised sentences to fixed practitioner wording and everything else to one generic message, so raw database text never reaches the practitioner.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_a3b733a6c2114fd2acc2b37968c215f4",
+      "id": "claim_8da5bf500ed04df8803b3c480fd325e6",
       "statement": "DB tests prove the 0167 session commands accept authorized same-studio writes, refuse cross-studio sessions, mismatched clients, foreign performers, plans and appointments, refuse unauthenticated and inactive callers, derive soft-delete actors, are executable by authenticated only as SECURITY DEFINER with an empty search_path, and coexist with revoked direct DML.",
       "evidence": [
         {
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "id": "claim_f7b58b3e2000455ba87d2f4921cc175e",
+      "id": "claim_d9b886cf169f4059b1c936fc1769dbeb",
       "statement": "Migration 0160 makes clinical lineage immutable on UPDATE for every role: a session cannot change client or studio, a block cannot move to another session, and entries cannot change session or block, while other fields stay editable and a mis-filed session is corrected by soft delete and re-charting.",
       "evidence": [
         {
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "id": "claim_bbbef07aa10a4a4e90629feddf72ee17",
+      "id": "claim_e934e6dfa17f472a99829357175392b7",
       "statement": "Migrations open their own transaction because supabase db push does not wrap a migration file, so a bare SET LOCAL lock_timeout never arms and the file would not be atomic.",
       "evidence": [
         {
@@ -91,7 +91,7 @@
       ]
     },
     {
-      "id": "claim_36dad375f184447596cce99c5a146059",
+      "id": "claim_354cc41c133340389efc4f392054463e",
       "statement": "Signed and cryptographically finalized clinical records are permanently retired as a product decision, and treatment sessions remain ordinary editable records corrected through the normal charting commands.",
       "evidence": [
         {
@@ -105,7 +105,7 @@
       ]
     },
     {
-      "id": "claim_914fb49bc2f845bdbbe3e13e890974ac",
+      "id": "claim_c3f147d05cd4432c8c757186c4e5e514",
       "statement": "Migration 0159 enforces the retirement in the database by pinning both studio finalization flags false with CHECK constraints, revoking EXECUTE on the retired finalize, correct and amend RPCs and correction appliers, blocking transitions into finalized or void record status, and blocking inserts into the signed-record ledgers.",
       "evidence": [
         {
@@ -115,7 +115,7 @@
       ]
     },
     {
-      "id": "claim_1958f8acc1634c968f37e03f03403e0b",
+      "id": "claim_b69b3806b8924521a190bc84d945c794",
       "statement": "0159 keeps the 0119 and 0120 objects instead of dropping them and keeps sessions.record_status because whole-session copy and area soft delete read it.",
       "evidence": [
         {
@@ -125,7 +125,7 @@
       ]
     },
     {
-      "id": "claim_203ec973da984fdd82f80354cc4ac716",
+      "id": "claim_b91e37236a25469d9531a70356ab5e41",
       "statement": "The ordinary audit trails (session_audit, record_keeping_audit_events, session_copy_operations, admin_action_events and client_portal_access_events) are retained, while clinical_audit_events belongs to the retired signed-record system.",
       "evidence": [
         {
@@ -155,7 +155,7 @@
       ]
     },
     {
-      "id": "claim_d6d7131995d34449b0504198f4d5e78f",
+      "id": "claim_e92fcb5ba4c54c2f90c6cebbdc227d7f",
       "statement": "The 0129 create_session_block_with_areas and update_session_block_with_areas RPCs remain EXECUTE-granted to both authenticated and service_role with no later revoke, although 0169 describes every clinical write command as authenticated-only with service_role denied.",
       "evidence": [
         {
@@ -169,7 +169,7 @@
       ]
     },
     {
-      "id": "claim_4065268627ad46089e4ac568896c066b",
+      "id": "claim_8dddb2d8ca424d21816e2313f7533294",
       "statement": "Migration 0169 deliberately avoids REVOKE ALL so as not to absorb future privilege types, the opposite of the revoke-all-then-grant-back doctrine 0178 applies.",
       "evidence": [
         {
@@ -185,6 +185,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

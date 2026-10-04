@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:df919e876eddba3e74f766c7dfd76e6ba910ee2f2b512361919c666f47301fe8",
+  "pageVersion": "sha256:08a98488638dea322cba132f9d6d2abac826723c76147b1b00c8f3e4662a7cf4",
   "claims": [
     {
-      "id": "claim_a5b53801ee1d4c7c9a56d4a95b1cff82",
-      "statement": "The canonical record describes Google Calendar as DB applied, deployed, production-exercised exactly once (one outbound event on the controlled test studio on 2026-07-18) and dormant, with the real-customer studio not connected and every sync flag false on every studio as re-verified 2026-08-23.",
+      "id": "claim_c22e9728dd014250bca7ae047eb85025",
+      "statement": "current-state.md section 9 and known limitation L6 record Google Calendar as DB applied, deployed, production-exercised and dormant, with the real-customer studio not connected and every sync flag off, and require separate authorization to connect that studio, enable any outbound flag, activate the worker or begin inbound or two-way work.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L878-L906",
@@ -17,8 +17,8 @@
       ]
     },
     {
-      "id": "claim_a7037706122e4ea9b769611ac4d06150",
-      "statement": "Migration 0121 adds four per-studio Google Calendar flags: connection, outbound sync, inbound busy and two-way updates.",
+      "id": "claim_98da3b982bc744918509db5bc445f0af",
+      "statement": "Migration 0121 adds four per-studio Google Calendar flags, connection, outbound sync, inbound busy and two-way updates, each defaulting to false.",
       "evidence": [
         {
           "resource": "repo://supabase/migrations/0121_google_calendar_connection_foundation.sql#L55-L58",
@@ -27,8 +27,8 @@
       ]
     },
     {
-      "id": "claim_0d33a3066d474dcba16f395c5d2b8be9",
-      "statement": "calendar_connection_outbound_ready (latest definition 0131) is true only when the studio's outbound flag is on, the connection is connected and owned by the studio-calendar owner, a write calendar and destination mode exist, the granted scopes contain the destination's required scopes, and an encrypted refresh token is stored; it is executable only by service_role.",
+      "id": "claim_6de321ad68ac48d7a55a2e3cf2ee155a",
+      "statement": "calendar_connection_outbound_ready (latest definition 0131) is true only when the studio's outbound flag is on, the connection is connected and owned by the studio-calendar owner, a write calendar and destination mode exist, the granted scopes contain the destination's required scopes, and an encrypted refresh token is stored; browser roles cannot execute it.",
       "evidence": [
         {
           "resource": "repo://supabase/migrations/0131_google_calendar_dual_destination.sql#L148-L170",
@@ -37,8 +37,8 @@
       ]
     },
     {
-      "id": "claim_e184161e97364339a15aa8d654322af4",
-      "statement": "A single-row calendar_sync_control.worker_enabled switch defaults to false and is readable and updatable only by service_role, and while it is false or absent claim_calendar_sync_op returns zero rows and mutates nothing.",
+      "id": "claim_93ac121108c343c1a84698118b07785e",
+      "statement": "A single-row calendar_sync_control.worker_enabled switch defaults to false and is closed to browser roles, and while it is false or absent claim_calendar_sync_op returns zero rows and mutates nothing.",
       "evidence": [
         {
           "resource": "repo://supabase/migrations/0125_google_calendar_outbound_enqueue_activation_boundary.sql#L108-L119",
@@ -51,7 +51,7 @@
       ]
     },
     {
-      "id": "claim_9cb63a1abb8b4a1da3287cb6bfafe7da",
+      "id": "claim_2a492aa2fcbc41849e5db8da31d33ab2",
       "statement": "The Google integration uses hand-built fetch calls rather than the googleapis package, requests only openid, userinfo.email and calendarlist.readonly on initial connect, and derives the event scope from the chosen destination (calendar.app.created or calendar.events.owned) without ever requesting broad calendar.events.",
       "evidence": [
         {
@@ -65,7 +65,7 @@
       ]
     },
     {
-      "id": "claim_9ca9a25af9d0401ab8254cce7a85f404",
+      "id": "claim_6ff24d9e5ca949bf8d6652864e7bca05",
       "statement": "Google authorization uses PKCE with S256, offline access, incremental scopes and a server-minted state, and the OAuth redirect URI is built server-side rather than from request headers.",
       "evidence": [
         {
@@ -79,7 +79,7 @@
       ]
     },
     {
-      "id": "claim_cb0f1782aa43422e97ea2ffab4886bad",
+      "id": "claim_69b0c6d7d4c04fb781a7b3e7022b2389",
       "statement": "The OAuth callback requires a signed-in user, consumes a single-use state bound to that user, re-checks active practitioner membership in the studio, and refuses insufficient scope, a different Google account than the existing connection, or a changed destination.",
       "evidence": [
         {
@@ -89,7 +89,7 @@
       ]
     },
     {
-      "id": "claim_97f47e82893342f4a3e0d7967065c3c3",
+      "id": "claim_f7fb514efb0b4440b917bf2a81fdedf6",
       "statement": "Google refresh tokens and PKCE verifiers are encrypted with AES-256-GCM under a dedicated GOOGLE_TOKEN_ENCRYPTION_KEY in a versioned ciphertext format, and encryption helpers fail closed without throwing or logging.",
       "evidence": [
         {
@@ -99,7 +99,7 @@
       ]
     },
     {
-      "id": "claim_19d3fb6fdd894c92b95940f734795fa4",
+      "id": "claim_7b9d8abed48e45359c947569d8405eab",
       "statement": "Outbound sync is enqueued by triggers on appointments after insert or update of starts_at, ends_at, status or sync_version and after delete, with enqueue functions redefined in migration 0132.",
       "evidence": [
         {
@@ -117,7 +117,7 @@
       ]
     },
     {
-      "id": "claim_150500c8047f4ea0911acdffb0a80a8f",
+      "id": "claim_c9b1785b818d444f9c94bb567cadd0e4",
       "statement": "The calendar worker route authenticates with the cron secret, refuses unexpected query parameters, and claims at most three batches of five jobs, admitting new jobs only within a 50-second window under a 180-second function ceiling.",
       "evidence": [
         {
@@ -131,7 +131,7 @@
       ]
     },
     {
-      "id": "claim_ec6e478ae8ea439b850ef822b6c78b94",
+      "id": "claim_69899fe8e9854f6b8ac2ca9158842225",
       "statement": "Before any Google call, a pure stale fence compares the claimed job's sync_version with the current appointment and link and returns noop, conflict or proceed with create, update or delete, never treating a placeholder link as completion proof.",
       "evidence": [
         {
@@ -141,7 +141,7 @@
       ]
     },
     {
-      "id": "claim_dd98e4bba87343ba92af37e65a01e6d6",
+      "id": "claim_b55cfcbddc25474faff3b74a7ca24b5e",
       "statement": "Google access-token refresh is serialized per connection with a transaction-scoped Postgres advisory lock, and a rotated refresh token is encrypted and stored under that lock.",
       "evidence": [
         {
@@ -155,7 +155,7 @@
       ]
     },
     {
-      "id": "claim_72f47e65d185438ca263df0bb26a1b5e",
+      "id": "claim_3555b367c24b4297872ac8337109610d",
       "statement": "The reconciliation sweep never calls Google, only orchestrates existing database repair primitives within intent-eligible studios, and uses an Upstash SET NX EX ownership-token lock per studio with fail-closed mutation safety.",
       "evidence": [
         {
@@ -169,7 +169,7 @@
       ]
     },
     {
-      "id": "claim_3739bb518df24ee880036f58651b6377",
+      "id": "claim_de1e7baa15d249a9b938a699a7898ab8",
       "statement": "The fake Google provider requires HONE_E2E_FAKE_GOOGLE=1 and a valid HONE_E2E_RUN_ID and throws when enabled in a deployed runtime.",
       "evidence": [
         {
@@ -179,16 +179,16 @@
       ]
     },
     {
-      "id": "claim_a1cdc18c21cc4210b284d1daf725e30a",
-      "statement": "The calendar-sync route header still says the route is not cron-registered and the outbox is empty, while vercel.json registers it and the canonical record reports one outbox row.",
+      "id": "claim_4a1b5d66b26649be88996b9857ad4204",
+      "statement": "The calendar-sync route header still says the route is not cron-registered and the outbox is empty, while vercel.json registers it and known limitation L6 directs that documents claiming the outbox and links are empty be corrected.",
       "evidence": [
         {
           "resource": "repo://app/api/cron/calendar-sync/route.ts#L4-L23",
           "version": "repo-lines-v1:sha256:5489f582777ce99e7ba71ac349853b0cd04dfd31e4bdb0c54aefc0e04a0d04aa:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBjNDA4MjJmYmI0NTMyNTM5YWRkZDk0MTY0Y2E5N2Y2ZmRiZGFjM2M5Yzg4YzMyNTgxNTZmYzFlOGU1ZmUxYWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVmODk3YzFjMWI2MmRiZjRhNjBmYzAyNWRlZDkxMzZiOWJlNzU0ZTE3YTUxZTJkMzk0NmFkYmRiMGVhZDUyY2UifQ"
         },
         {
-          "resource": "repo://docs/production/current-state.md#L878-L906",
-          "version": "repo-lines-v1:sha256:c3e84098004c1c27e8480901481e16b2276b84b155e696be37d5461c065c7323:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhNjJjMThjMmYwYzkzZmEyZjhjNDE2YWIwNGRlNzM4MWY1ODUwMTJlMGIwYTgwMDYzOGIyNWFhYmMxMjA1NWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2YmE3YzI3OWE4ZTVjN2E5YmE1NzAxNTRhZTkzMDE4NWNlODRlYjUxNjQxODZmNjJjZWU5MTgxY2MxZDA4MWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZlOWFkOWE0ZGEzYWE0NzIxOTI1ZDZmYTdmZGI0MjE1NDFmYWE2YmMwZTkxYTcxOGZmZDFlMzBkY2NjM2RmMWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4NGM3YWJhZjIyNmMwMWNmODdjMWRiZWIyOTAzYmQ3ZGIxZTFlMDlhZjBmMTllMzQ4NzNkNWQwNjg5ZTMyYjAifQ"
+          "resource": "repo://docs/production/known-limitations.md#L156-L166",
+          "version": "repo-lines-v1:sha256:6eb57921de336a1ef30aa7ca1995b10acabe3e3a337f474ba6d117af8d49aa23:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViYzE1MDM1MzRiZWQ0N2UyZGFlZDNlNjY2MjY1ZDE3ZDA1M2RiYTUzNGIxMDg0MTcwMzdjNTVlMDAwODdjZTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFmNjVjMDUyYTEyZTZiNmRmMjY2YWMyZTQ2NDYzYTA2NGVjMzdlNGZjMTAwOWRhNTE1Nzg0ZjJiNThhODA3NDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM1MmQ4YWY1OWQ0N2RiMGZiYTNiNGYyZTk4YzUzMjM4NjA4OGJkYzM4ZTY5ZDc4MmIzMDJlZDNkNGRmZGUwZjUifQ"
         },
         {
           "resource": "repo://vercel.json#L7-L14",
@@ -199,6 +199,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

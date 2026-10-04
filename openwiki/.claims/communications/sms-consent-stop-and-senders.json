@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:dd0c7b51f0e03de79aab07939134652b0b248d239a5bf24037d5c81832a979b2",
+  "pageVersion": "sha256:0044924963d8a8dd60b06895aea98f596399abd48d2df0b80f7e44ed9ed8bd6f",
   "claims": [
     {
-      "id": "claim_c371ab8d7592435e9625c95e9908338f",
+      "id": "claim_7bcdf2e37df34f128860b67d5eb15a23",
       "statement": "Outbound SMS is sent with a direct fetch to Twilio's Messages API using Basic auth, without the Twilio SDK, and a source guard forbids the SDK dependency and Twilio hosts outside allowlisted adapters.",
       "evidence": [
         {
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "id": "claim_ff0b1f1d24c34d18989e723923811ccd",
+      "id": "claim_32af091981e64f2784189c0392e9e0e0",
       "statement": "sendSmsSafely sends from the platform-wide TWILIO_MESSAGING_SERVICE_SID, falling back to TWILIO_FROM_NUMBER, and returns non-retryable failures when account credentials or both senders are missing.",
       "evidence": [
         {
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_55ab85d12751422780dd7f98562b8dfb",
+      "id": "claim_d59f187630f3472cb2a4c9396341aa4e",
       "statement": "sendSmsSafely aborts the request after 15 seconds, reduces the provider response to a message SID, and never logs the auth token or full phone numbers.",
       "evidence": [
         {
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "id": "claim_1466a41fbcad426ca26066843b1c6ec5",
+      "id": "claim_f6514bad162749d88aa39cb097ab9cea",
       "statement": "normalizePhoneForSms accepts '+' with 8-15 digits, promotes 10-digit numbers to +1 and 11-digit numbers beginning with 1 to +1, and returns null otherwise, and normalizePhoneForMatch canonicalizes through it so consent and STOP compare the same digits.",
       "evidence": [
         {
@@ -51,7 +51,7 @@
       ]
     },
     {
-      "id": "claim_c4083621288b4e9d807ed82cdc11198a",
+      "id": "claim_2799fd470264447da41872705efe1aa8",
       "statement": "Appointment SMS passes a consent gate (studio toggle on, client not opted out, client consent present, phone normalizable), then claims the SMS slot, posts to Twilio, and always records the result in a finally block.",
       "evidence": [
         {
@@ -65,8 +65,8 @@
       ]
     },
     {
-      "id": "claim_ee4a1ffa1cb54176ae44017df1248a68",
-      "statement": "Migration 0049 added per-client SMS consent/opt-out columns, per-studio SMS toggles defaulting to false, and per-message-type SMS sent/attempts/claimed columns on appointments.",
+      "id": "claim_9eb511cca3724d11a80dd0e980b04351",
+      "statement": "Migration 0049 added per-client SMS consent and opt-out columns, per-studio SMS toggles defaulting to false, and per-message-type SMS sent, attempts and claimed columns on appointments.",
       "evidence": [
         {
           "resource": "repo://supabase/migrations/0049_sms_foundation.sql#L77-L133",
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "id": "claim_b7f166600fd047cbacb20ebcd6cef2e1",
+      "id": "claim_929036c988724143a66b9d619af050ff",
       "statement": "Migration 0062 revoked claim_sms_send and record_sms_result from public, anon and authenticated and granted them to service_role only, superseding 0049's grant to authenticated.",
       "evidence": [
         {
@@ -89,7 +89,7 @@
       ]
     },
     {
-      "id": "claim_d880c5e3f474494794321aac414b9033",
+      "id": "claim_5cd13428a22c451e847f717b040d3404",
       "statement": "On public booking, an existing client's SMS consent is stamped only when the client is not opted out, has no earlier consent, and the submitted phone normalizes to the stored phone, and a stamping failure does not block the booking.",
       "evidence": [
         {
@@ -99,7 +99,7 @@
       ]
     },
     {
-      "id": "claim_7506b1e0a574463e90a6c40d39e3be63",
+      "id": "claim_7bef44cba8c94eb18ce7e322d933cc39",
       "statement": "The inbound Twilio webhook refuses with 500 when TWILIO_AUTH_TOKEN is unset and with 403 when the signature is missing or invalid, validating HMAC-SHA1 over the canonical URL and sorted form fields before any database access.",
       "evidence": [
         {
@@ -113,7 +113,7 @@
       ]
     },
     {
-      "id": "claim_5806c8b6a579426da7ef15ca4804ce7a",
+      "id": "claim_54a468b9514647bbaa5ef9c750d2e57c",
       "statement": "Only whole-body STOP, STOPALL, UNSUBSCRIBE, CANCEL, END or QUIT opt out; any other inbound body receives an empty TwiML response and is neither stored nor logged.",
       "evidence": [
         {
@@ -127,7 +127,7 @@
       ]
     },
     {
-      "id": "claim_a79527bac95f4b67bf452c6f650bf237",
+      "id": "claim_e86a6612ab1a4bfc8c3f32855b5ec63b",
       "statement": "A STOP opts out every client row with a matching phone in every studio and every matching waitlist prospect (through waitlist_prospect_suppression_candidates and suppress_waitlist_prospects), independent of the studio or number the message arrived on.",
       "evidence": [
         {
@@ -141,7 +141,7 @@
       ]
     },
     {
-      "id": "claim_b4672393ce4c402dbac5cb9a678cdd99",
+      "id": "claim_5304b4cc603c4e8a8dc2740855cab948",
       "statement": "The STOP webhook audits each stamped record with masked numbers, never un-suppresses on audit failure, and returns 500 if any scan or stamp failed so Twilio retries, with retries touching only rows not yet opted out.",
       "evidence": [
         {
@@ -151,7 +151,7 @@
       ]
     },
     {
-      "id": "claim_3833e90397e94be5b858e960533b030e",
+      "id": "claim_ed78cd830afc48d785cb42f4679e20c9",
       "statement": "studio_sms_senders (migration 0191) carries a guarded status machine and lease protocol, at most one live row per studio, and is closed to every role including service_role, writable only through service_role-only lease commands.",
       "evidence": [
         {
@@ -169,7 +169,7 @@
       ]
     },
     {
-      "id": "claim_9a9528c749ea473f84991fc4b27751a6",
+      "id": "claim_7fa2fca404a54a3fa971f4bb7982ba09",
       "statement": "resolve_active_studio_sms_sender (migration 0194) is executable only by service_role and returns the set of active senders' messaging-service ids for a studio.",
       "evidence": [
         {
@@ -179,8 +179,8 @@
       ]
     },
     {
-      "id": "claim_3e16d43e8b4e46f19745faf0a81ebde8",
-      "statement": "resolveStudioSmsSender fails closed with no_active_sender, ambiguous_active_sender or read_failed and has no environment-sender fallback, and it has no caller in app/ or lib/ outside its own module.",
+      "id": "claim_240ec2d0f7f94e139036b6a8a7c97281",
+      "statement": "resolveStudioSmsSender fails closed with no_active_sender, ambiguous_active_sender or read_failed and has no environment-sender fallback.",
       "evidence": [
         {
           "resource": "repo://lib/sms/studio-sender.ts#L1-L133",
@@ -189,7 +189,7 @@
       ]
     },
     {
-      "id": "claim_6dcbbe91a9844292b926cf84d81773a2",
+      "id": "claim_51d073987930455c98e9b90806f0b69b",
       "statement": "The SMS provisioning provider defaults to a fake and selects the real Twilio provisioning adapter only when HONE_SMS_PROVISIONING_LIVE is 'true' and credentials are present, and a guard asserts the flag is not set anywhere in the repository.",
       "evidence": [
         {
@@ -203,8 +203,8 @@
       ]
     },
     {
-      "id": "claim_40a90d6ccbcf46c4b31e529a6002c4a1",
-      "statement": "A source guard forbids the sender adoption module from purchasing numbers, creating or configuring messaging services or attaching numbers, requires the fenced provider wrapper, and requires ownership proof before configuration comparison before a provider test.",
+      "id": "claim_9aea9204b1a04603a017320bfc0c82a0",
+      "statement": "A source guard forbids the sender adoption module from purchasing numbers, creating or configuring messaging services or attaching numbers, forbids it from reading the global sender credentials, and requires ownership proof before configuration comparison before a provider test.",
       "evidence": [
         {
           "resource": "repo://tests/source-guards/sms-adoption-boundary.test.ts#L124-L143",
@@ -217,7 +217,7 @@
       ]
     },
     {
-      "id": "claim_a7f7e6a21463440a84ac03dc28d1ce2f",
+      "id": "claim_d02ab6fcec634852b06f467a8b213940",
       "statement": "The only product surface for studio SMS senders is the owner-only Settings Integrations status card, which reads through the request-scoped session client and is guarded to perform no provider call, RPC, write or interactive control.",
       "evidence": [
         {
@@ -231,21 +231,21 @@
       ]
     },
     {
-      "id": "claim_962ed78f0ee3435f8dd8157bf06da214",
-      "statement": "The canonical record describes SMS as pilot scale only (env-gated, per-studio toggle, per-client consent) with broad-SaaS SMS not built, and the ledger recorded studio_sms_senders as empty with no sender provisioned on 2026-09-18.",
+      "id": "claim_5f8c0150fa52435eac8be6a10a836a54",
+      "statement": "current-state.md describes SMS as pilot scale only (env-gated, per-studio toggle, per-client consent) with broad-SaaS SMS not built, and the migration ledger's post-0199 record states that no SMS provider was contacted and no studio sender was provisioned.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L871-L873",
           "version": "repo-lines-v1:sha256:a148b4bf78e3eed1cc6b27514fd1a3ba51272b7e0258e95a0752be4735a7918f:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzIzYzg0NTM4NmJhZjQyNzQxZDIwMWE3Y2M1MTM4ZTExZTAxOWExMTRjM2Y5NWViMjUxODg3MzM5YzNlNTcxNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjk4ZWM3N2Q2ZDIyZmIwYzgzZTFkYmZmYmZhNTk5OWJlMGJhZjFkYjMyYWJhZTA3MjU1MzEwZTVlYWNiYTQxNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGRkNTczOTcyYTllZGI0NjNjOWQwMTU0MDEzZWVmNjE4OTU0Y2Q5YjNmZTY4Y2FhN2U1Zjc2NTJjZjc1MDI4MyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODUzMzkzMWVhZGJjNTBkYzk5ODYwOTUwNTkxNzZmMzc0OTE3MzM3MDRhODUxYmNlNTAyOTNmM2QyNjBkY2I3NCJ9"
         },
         {
-          "resource": "repo://docs/production/migration-ledger.md#L512-L516",
-          "version": "repo-lines-v1:sha256:5543c676a3b1312d786b884df470c72e43181a633d416d57c04d11275d91dde6:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWI1OGFhNzU2ODc5Y2I0Zjc4NmJhNDM2ZTViZTIzZDk5YWE4ZjQwYjY4NzRiZGQ0ZGMyYTMyMjRkNzdiMTRkNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzA0ZmI2OTEwZmFlOTIyZTRhMDI4YTE4M2ZiNTc2NWU2MDVkNDQ1ZDFkMWY0NTE2ZmZhMzRlYjY4NzRiYzgzNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzU3NjE2MGUxMDYwOWY0ZWVlMDgyZGI4MDMyNzYyMTQyMjhhMjZmNWQwMjhjNmYyN2Q1NDE5ODU1ZDcwZWJlZiJ9"
+          "resource": "repo://docs/production/migration-ledger.md#L576-L579",
+          "version": "repo-lines-v1:sha256:5d2cfa4cfc2f6973d44c474869265925d1ec5a66f3ccb0ed2705ce4de1b57863:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWI1OGFhNzU2ODc5Y2I0Zjc4NmJhNDM2ZTViZTIzZDk5YWE4ZjQwYjY4NzRiZGQ0ZGMyYTMyMjRkNzdiMTRkNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWQ4MWY3NmUxNGZjZGZkMzY4ZGI2ZDM5NmQwMjY5ZDU5MzNjMzM1NTYyZGM1MjgzZGU1YmZkNWI2YTJmZjZjOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzA0ZmI2OTEwZmFlOTIyZTRhMDI4YTE4M2ZiNTc2NWU2MDVkNDQ1ZDFkMWY0NTE2ZmZhMzRlYjY4NzRiYzgzNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTUwYTY4NmJiZWM1NDNjOGRkMmQ0MjIyMjFhYzAzODQwMjYzMmE3MzFjMTY0MjY3NzlmYjQyOWI5MjQ3NzNiNyJ9"
         }
       ]
     },
     {
-      "id": "claim_302d1c4be8fc42e4857b82a2202253b6",
+      "id": "claim_bbc0543297d0472e9da106e5f2d05be0",
       "statement": "Known limitation L14 records that the studio-sender routing cutover (PR #716) is unmerged, WAIT invitations remain email-only, and broader SMS rollout is blocked.",
       "evidence": [
         {
@@ -255,7 +255,7 @@
       ]
     },
     {
-      "id": "claim_e73e027bacb44ac791217feec3abbd2f",
+      "id": "claim_a2490eead46b42e79e99ab5096267ccf",
       "statement": "The canonical record says SMS has STOP/HELP handled, but the application recognises only the six opt-out keywords and answers any other inbound body, including HELP, with an empty response.",
       "evidence": [
         {
@@ -273,7 +273,7 @@
       ]
     },
     {
-      "id": "claim_92b720795f774961904967608e2a0d9a",
+      "id": "claim_de235f7413824582b462229ff0076d1e",
       "statement": "The STOP webhook reads all phone-bearing client rows in a single unpaginated PostgREST select and matches in application code, while the local API configuration caps responses at 1,000 rows.",
       "evidence": [
         {
@@ -289,6 +289,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:178f4ee2911c5013749ce6a78adc3a4668cf10ce8fc4340f60eb25d6ca018f2a",
+  "pageVersion": "sha256:84028371519ba8c68c9bbf7c7fcb7e04a9ce6ba4f37a1e34a701454b36fc0b3f",
   "claims": [
     {
-      "id": "claim_6ac78072e9bb4d598ca8d007c04f60e7",
+      "id": "claim_25aee9d670884469939cf330e17c9fa6",
       "statement": "Possession of the invitation URL only allows viewing the offer and requesting proof; booking or declining requires a separately verified recipient capability checked inside the mutating command's locked transaction.",
       "evidence": [
         {
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "id": "claim_52a89bbd9a9741f49b1403beba2e6753",
+      "id": "claim_3385537797a342f3b5d348f6b40f492c",
       "statement": "Recipient proof state lives on the invitation row, so a newer challenge replaces the older one and revoke, release, decline, expiry or reissue invalidate outstanding proof, and only SHA-256 digests of the challenge and capability are stored.",
       "evidence": [
         {
@@ -31,7 +31,7 @@
       ]
     },
     {
-      "id": "claim_dd33a000b72c4f998b1647acae54577e",
+      "id": "claim_7c824c6898c347858e825a46b21d8851",
       "statement": "The invitation page renders dynamically without caching, is marked no-index, and performs its first authority call on the server before rendering so a dead or forged link never shows an offer.",
       "evidence": [
         {
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "id": "claim_7f991d69b7284972bfb4e136d4d6fcde",
+      "id": "claim_acd05c746c3b4eff9b39ae80361bb2d7",
       "statement": "The invitation server actions map to service-role commands: resolve for loading, begin and complete proof for the code and capability, decline, and booking through the public booking action.",
       "evidence": [
         {
@@ -55,7 +55,7 @@
       ]
     },
     {
-      "id": "claim_b6400e834d094ed4988e3fc1c772a771",
+      "id": "claim_7d07058859e448e1b3f569296888c035",
       "statement": "A proof request is rate-limited per invitation and per IP after the invitation resolves and before a new challenge is minted, failing open by design, and issuing a new challenge clears the capability cookie because the old capability is invalidated in the database.",
       "evidence": [
         {
@@ -65,7 +65,7 @@
       ]
     },
     {
-      "id": "claim_a59fa92c75b540d9988505b4a3dd88ff",
+      "id": "claim_a83ef10a21804b0f90d5d4fe94ed7632",
       "statement": "Invitation booking uses the waitlist entry's stored contact details, preferring the stored phone over a typed one, and treats a lost response or a redeemed-but-unbooked result as terminal states rather than re-showing live times.",
       "evidence": [
         {
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "id": "claim_4195c9bf3b6c4afba938c76cc4056ef7",
+      "id": "claim_e1c62f06230e476fa6df7f79f8f1351d",
       "statement": "create_waitlist_public_appointment composes create_public_appointment and record_new_client_waitlist_conversion in one transaction and raises a private WA002 to roll back the appointment if conversion refuses, using the server-supplied entry id that the conversion re-verifies under lock.",
       "evidence": [
         {
@@ -85,7 +85,7 @@
       ]
     },
     {
-      "id": "claim_acc0e96499684efc9ad5ff5d08cece76",
+      "id": "claim_f70021d5c4544ce59ba1a4e70a8fa632",
       "statement": "DB tests prove invitation booking commits the appointment, audit and conversion together, binds the conversion to the redeemed recipient, keeps the booking inside the stored offer scope, behaves correctly under concurrency, and is executable only by service_role.",
       "evidence": [
         {
@@ -95,7 +95,7 @@
       ]
     },
     {
-      "id": "claim_1f9cc5123e5d4e82bea6e352e5a79d1c",
+      "id": "claim_8116852324814abd8996603bad1073a0",
       "statement": "Migration 0202 adds nine nullable prospect profile and SMS consent columns with all-or-nothing consent evidence and four service-role commands, while its profile-join and profile-completion commands have no reachable application caller.",
       "evidence": [
         {
@@ -109,7 +109,7 @@
       ]
     },
     {
-      "id": "claim_be2974b030864a279c1f74bf6b233323",
+      "id": "claim_6e500b07c39d4b79bb0d9b307e4ef69d",
       "statement": "The inbound Twilio SMS route calls the waitlist prospect suppression commands, so a STOP also suppresses matching waitlist prospects.",
       "evidence": [
         {
@@ -119,7 +119,7 @@
       ]
     },
     {
-      "id": "claim_384e3b55f1df4549b581f73ba433bc1a",
+      "id": "claim_57d4c8ed42b24b428c0395e0a957619d",
       "statement": "mark_waitlist_mobile_verified stamps a database-clock verification only by compare-and-set against the exact stored phone string, refuses missing or mismatched numbers, is idempotent once set, and keeps phone equivalence in a single TypeScript normalizer.",
       "evidence": [
         {
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "id": "claim_22d5a20812964b638a5faa9b24a31a2b",
+      "id": "claim_2eb26ec279814cbe871caeaeba756134",
       "statement": "Mobile verification is not reachable from the application: its only server caller is imported solely by a flow module that nothing imports, and the profile capability flag verifiesMobile is false.",
       "evidence": [
         {
@@ -147,7 +147,7 @@
       ]
     },
     {
-      "id": "claim_db576b8a73b448b59712cd2752bdfb84",
+      "id": "claim_897037b0fce9489daad7fc2e44138e8e",
       "statement": "Migration 0198 grants owners column-level SELECT on declined_at so the practitioner surface can evaluate the same liveness predicate as the one-live-invitation-per-entry index, without exposing token, proof or scope columns.",
       "evidence": [
         {
@@ -157,7 +157,7 @@
       ]
     },
     {
-      "id": "claim_33a9612f35da40bcadf16ae16905506e",
+      "id": "claim_7ce789da5b5c43e59279b0397025c67c",
       "statement": "The frozen 0202 header says the inbound STOP route stamps only clients and that its commands have no callers, which no longer matches the current inbound route.",
       "evidence": [
         {
@@ -169,10 +169,32 @@
           "version": "repo-lines-v1:sha256:e92b4ce1451102170fe5485b1510572ab9b40ff473d3fc4db818c307960b1017:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzYzZWM4MTkyM2MxOGFiZDBjNTRhZjBkNjAxYjE1ZTUxZTFiMjE2YTc3ZjdhYmE4Mjg1NjhjODYyMjJkNzM4YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDJmNzI1M2I0YzAyNmFmOTNkZTAxYjU5NWZlOTc1ZjMwOGJlY2JjNTQ0YTViODkwZWI3MmQ4ODUxNzJhOWE3OCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjY5MzgzZmQyM2YzNmFiYTI0YzlhODExMzBjZTFkOTczZGUyYTMyMTgyNTgzZjM4YzhmZjc4MzhiYjZmOTMwYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzllMTZkNzk4ODAxM2JjNzBhYWFjMzJmZTIzYmEzZTVlNTAyZGEyZDE1ZGE0NzQ1MTBjYWI1MWIzOGNiOTM3MCJ9"
         }
       ]
+    },
+    {
+      "id": "claim_692c912f798c417c9ee586332389ca3d",
+      "statement": "The frozen headers of migrations 0203 and 0204 still read CANDIDATE, NOT APPLIED, while the migration ledger records both as applied.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L233-L233",
+          "version": "repo-lines-v1:sha256:0148e4d02def5dce7a37f300241f1e8ef61fb5a9d1af5d34169227986b1e8b98:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDE0OGU0ZDAyZGVmNWRjZTdhMzdmMzAwMjQxZjFlOGVmNjFmYjVhOWQxYWY1ZDM0MTY5MjI3OTg2YjFlOGI5OCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDE0OGU0ZDAyZGVmNWRjZTdhMzdmMzAwMjQxZjFlOGVmNjFmYjVhOWQxYWY1ZDM0MTY5MjI3OTg2YjFlOGI5OCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTQ1ZDM4NDA4MjVmZDRhMTg0M2U2ODIxY2ZhNmJjYjY5Y2M5NzBlOGQ4N2ZhY2MzMmI1NjA4YjgxYjJjZDFlNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDZjOGRhYzEyNDVkYWE1NmM5MGRkOWIxMzFjODUxYjVkNzFlZDY4YjEwM2M1MmRlYTVlOTYwN2VhYzQ1NjQ4NCJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L81-L81",
+          "version": "repo-lines-v1:sha256:45ae38f466ba66efa8899fac68cf79497c009b24d43cca8a9ae4e76fc431cbb1:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDVhZTM4ZjQ2NmJhNjZlZmE4ODk5ZmFjNjhjZjc5NDk3YzAwOWIyNGQ0M2NjYThhOWFlNGU3NmZjNDMxY2JiMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDVhZTM4ZjQ2NmJhNjZlZmE4ODk5ZmFjNjhjZjc5NDk3YzAwOWIyNGQ0M2NjYThhOWFlNGU3NmZjNDMxY2JiMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWVmNTc2ZDg0ODUxMmFkMTUzODRjMGRjMjZhMjY1YThmMjY0NzBhY2MyYTIyMDE2NjViYTg3YmFjM2M2ZTc1OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWVjZDNkZmY5Y2Q0NDkzMTljOGI5OGQ3ZTE4M2E1MjFhZWI3ZTRhYmU0NzcwZmY1YWY3NWQ3MDM4MGZkMjFkZCJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0203_waitlist_mobile_verification_authority.sql#L5-L8",
+          "version": "repo-lines-v1:sha256:2eb6844667c0dfd53b886a7840b8ae4e5bd9b75bb2569a0eb1ec076eb8749633:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTZmMTFlZTcxZmI0MGUwZjgwNGJlMjA5MmY5OTExMmM3MDllOWMxOTlkNjM1MTFhNzdhMmJhMzRkZTQzMzRkNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTgyYmU3MDZkMGEzYzVmZWE3NTE5Mzc3NmVjMmQ0NTQ3MTI5NWNlYjIzMzg3MDQyMDgxY2YxMzcyYjBhZTllYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjQ4YjQ0N2NkZDMxMjY5ZGJhZWZmZjI1NTMxNGVlN2YwYzdiZjYyNGVmZGJmZDdlNWMwYzJmNTI4MzU5OWNhNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmE4NmE3ZWFiYmQ4MDE2YjMzNTM5YWVhYTk0MjhkNTczMzE2ZDIzZWU3ZjEwYTA0Mzg4NDQ2NTcxNTk3Mzk4ZiJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L1-L7",
+          "version": "repo-lines-v1:sha256:e3181bfc2aa2307fdaa48b4b3a703d8111df3781b78984949b4a888d4f9dbd2d:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmIxYzBmODUyYjQxNGI5NWZmOGE0OGY4ZDRiYWJhMzM5MGQ2ZGEzY2M2ZDc4ZWI5ZTc3ZDliOGU4NjM4ZWEwNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDUzYmI3ZGU3YmIwNTZkZWNlNTFjY2UyMTkzODBhN2MzYTY5Y2UzOWNhNjYwNWNiNDY5NzY5NzY2MjQwZjQ5YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDYyNmYwNzIzYjRmOTdjYjMzNjUzM2MwOGVhMTNlODZmNzFkN2NiOGFjNTYzZGQ2MzBkMmExNjYzNGViNTE0OSJ9"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

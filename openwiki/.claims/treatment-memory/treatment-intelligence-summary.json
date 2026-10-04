@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:d4ba84e4cae8d8904bd146bfe4045e1d193fe83243418ef0a7263b600bca6dd6",
+  "pageVersion": "sha256:c3207d67436ce8aa0e2102e7a57c968cbd8f4eca2c593e046a9459b6bb5f1300",
   "claims": [
     {
-      "id": "claim_17bc700da3ce45d2b6baf7e554f28a13",
+      "id": "claim_0e14bcfae1e74a98b4c641306ae0f99b",
       "statement": "buildTreatmentIntelligence is recorded-history analytics, never advice: it suggests no settings, makes no causal or outcome claims and projects nothing, and missing values stay null to render Not recorded.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_6d95d598db2a4ad2b8fd8f66caf15f79",
+      "id": "claim_fd3fcc04a47f4bcfa5b90cfa63746206",
       "statement": "The Treatment Intelligence card uses recorded-history wording only, carries the helper text that it reflects recorded history only and asks for professional judgment, and renders missing values as Not recorded.",
       "evidence": [
         {
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_e7061c1727154303b434fdff0864c953",
+      "id": "claim_8d3cec77ff7c423bb1a12405dbacecf0",
       "statement": "A test fails if the card or builder contains overclaiming words such as best, recommend, caused, diagnosis, predicted or success, and asserts the builder imports no Supabase client while the page's block read is a select filtered on deleted_at is null.",
       "evidence": [
         {
@@ -37,17 +37,25 @@
       ]
     },
     {
-      "id": "claim_dcb3117da5b745358c6b4663bcb2dbce",
-      "statement": "A session counts as charted when it has at least one loaded block or any electrolysis or laser entry, and with no charted session the builder returns charted false with every overall figure null.",
+      "id": "claim_01912f3506394c66be36318ead73ed3a",
+      "statement": "A session counts as charted when it has at least one loaded block or any electrolysis or laser entry, and with no charted session buildTreatmentIntelligence returns charted false, chartedSessions 0, areasCharted 0, null for every other overall figure (minutes, hairs, hairs per minute, first and last treated), no area cards, and null reaction, tolerance, watch-note and plan fields.",
       "evidence": [
         {
           "resource": "repo://lib/sessions/treatment-intelligence.ts#L205-L231",
           "version": "repo-lines-v1:sha256:d7e0f1dc7023f38b4e6aa0969d343547cee0e8d6396095c62dd12893731d3873:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4NDAzZDg2NGJmMDA2YTkzMTNmOWI2NDllMWI0MTRhZWIzMTRmZGFjNjBjYTM4YmZmMjMzMGMxMGZjYzI3ZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1NGY4YjFhZTYyYjIyZjRhZTQ4OWU0M2Y3N2I1MGJjMDU0Mzc1Y2Q0MDMyNDJhZTc2ZmI2MjExMTBkYjkxMzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwMjViYmRiNThlYmMzMTNkODhiZGNkYjU1NmI5OTVhNzczMGY3YmMzNDM1YWVkMTlkOTQ0NzM4NzViODdhMDUifQ"
+        },
+        {
+          "resource": "repo://tests/app/clients/treatment-intelligence.test.ts#L60-L67",
+          "version": "repo-lines-v1:sha256:8a3215ee695b9180683a509a406be84b2b194f5da1bdc16200db4d30dfefdac6:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOGM1ZGEyNjJmMTA0NTMwYjkwZjlhOWVmNzJmN2Y2MzYxYThiMjE2NzhjZWI2MDcyNTZhYmRiNzJlM2E5MGIyOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmYzYTE2OGI2YTVhZTAzOWQ3MTc4YjYwYzA2YTc1MzNjMTA5N2MwNGQ0YzgzNDQzZjBmZmRjODZmMjJlMThkZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmQxMjYxMDNjMGJmMGMxZjA4MmE1NGFjNjc4N2NhNGQwZGQwZGMxNDIwMDJmZWVlNjE4OGJmNTk1MTdhMDUzZiJ9"
+        },
+        {
+          "resource": "repo://tests/app/sessions/whole-session-copy-metric-invariant.test.ts#L50-L83",
+          "version": "repo-lines-v1:sha256:730587cacb113bedd553905fd37e107973bdf179e0c123c0be1d4c9e412ac727:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5ZTc1MGQ5ZmJhYTYzMTkzNWJmNjgyYjc4MmJlYzJmYmZlMDMxODQ5ZjMxMTUzM2UyYTQ5OThmYTYzZjBmOTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
         }
       ]
     },
     {
-      "id": "claim_130efbf4cf9949d0a5be71b5b74de4a7",
+      "id": "claim_72b912eccf5f45289f8f8a35c31e5d5f",
       "statement": "Overall minutes sum only positive block minutes_performed, and overall hairs sum positive block-entry hairs plus a session's own electrolysis entries only when that session has no loaded blocks, so no pass is counted twice.",
       "evidence": [
         {
@@ -61,7 +69,7 @@
       ]
     },
     {
-      "id": "claim_2b44db77b78c459a8a2e2d3cc1346e78",
+      "id": "claim_47d8cbc46892458d8473ee4854e045c8",
       "statement": "Hairs per minute is computed only when both hairs and minutes are positive and is rounded to one decimal, and zero or negative values never become metrics.",
       "evidence": [
         {
@@ -75,8 +83,8 @@
       ]
     },
     {
-      "id": "claim_5345b46e2c4b41bfaf19ce53de9ebdaf",
-      "statement": "The overall treatment-areas-charted figure is the number of loaded blocks, first and last treated come from charted sessions' start times, and totals that sum to zero are reported as null.",
+      "id": "claim_5fab334cd4814ebaa9737fbe04818b7f",
+      "statement": "The overall treatment-areas-charted figure is the number of loaded blocks, first and last treated come from charted sessions' start times, and minutes or hairs totals that sum to zero are reported as null rather than as a stated zero.",
       "evidence": [
         {
           "resource": "repo://lib/sessions/treatment-intelligence.ts#L256-L258",
@@ -89,7 +97,7 @@
       ]
     },
     {
-      "id": "claim_8c6e171d6374476bacd76d0740919f48",
+      "id": "claim_12cd0460b8f946ee9a82bd7a42cb1d4f",
       "statement": "Area cards group by trimmed case-insensitive name with the newest spelling as the label; a block with structured areas contributes to every area it treated, legacy blocks fall back to primary_area then block_name, laterality is not part of the key, and blank names form no card while still counting in overall totals.",
       "evidence": [
         {
@@ -107,7 +115,7 @@
       ]
     },
     {
-      "id": "claim_80a942448b304d7bb04e3b5ddea99fb7",
+      "id": "claim_b8f7b0e7d48f4ff5b843069ffc0832ea",
       "statement": "Each area card shows the latest recorded frequency, probe, mode label and energy level from the area's most recent block, with the Apilus modality label taking precedence over the base mode, and area cards are ordered by last treated, newest first.",
       "evidence": [
         {
@@ -125,7 +133,7 @@
       ]
     },
     {
-      "id": "claim_6e7f7014c61943a9b4f5c1b657af50cd",
+      "id": "claim_af18dae5205e452d9bd9350cae90819c",
       "statement": "Reaction labels per block are the unified set of the legacy reaction_type label and every clinical-response chip in the block's live entries, deduplicated case-insensitively with every response retained.",
       "evidence": [
         {
@@ -143,7 +151,7 @@
       ]
     },
     {
-      "id": "claim_5172210846c14753a8d14271a3837c28",
+      "id": "claim_adef6725aa3a4372adbfb90256f36cf5",
       "statement": "The commonly recorded reaction is the most frequent label across blocks with every label of a multi-reaction block counted and ties resolved to the most recent occurrence.",
       "evidence": [
         {
@@ -157,7 +165,7 @@
       ]
     },
     {
-      "id": "claim_5658131ee95c41afa7d94a4adf3b8224",
+      "id": "claim_f5a1d2332e4a4a3daac578128b1c15cd",
       "statement": "The latest recorded reaction joins all labels of the most recent block that has any, latest tolerance is the most recent non-null rating, the watch note comes from the most recent caution flag or note with Previously noted as fallback, and the plan is the newest non-empty next-session note.",
       "evidence": [
         {
@@ -171,7 +179,7 @@
       ]
     },
     {
-      "id": "claim_566a6ba60f8e41289f73753aa8acac90",
+      "id": "claim_de00670171c14c10bebec3d817401094",
       "statement": "Per-area minutes and hairs are not additive across area cards because a multi-area block adds its full minutes and hairs to every area it treated while overall totals count it once, unlike the treatment-time card which credits such a block once to a combined bucket.",
       "evidence": [
         {
@@ -189,7 +197,7 @@
       ]
     },
     {
-      "id": "claim_ff884337b2d84227ba48cc36eda1c5c0",
+      "id": "claim_348eae043cb94c538583666cc4745940",
       "statement": "Soft-deleted rows are excluded before the builder runs: the client loader keeps only non-deleted sessions and strips voided entries, the intelligence block read filters deleted blocks, and the page drops voided entries from hair counts and reaction chips.",
       "evidence": [
         {
@@ -207,7 +215,7 @@
       ]
     },
     {
-      "id": "claim_64d8c94031b149b093e3702342cdf69e",
+      "id": "claim_836e8dad1d074416b09c70758bead269",
       "statement": "A failed intelligence read, returned or thrown, sets intelligenceUnavailable, the builder runs only on a successful read, and the card checks unavailable before charted so it renders the clinical-unavailable notice instead of an empty-history statement or zeroed stats.",
       "evidence": [
         {
@@ -233,7 +241,7 @@
       ]
     },
     {
-      "id": "claim_d3ac0fee115e428f8e6f6c7b55a57093",
+      "id": "claim_35e48761e23b4417baa757dbadf2cd4c",
       "statement": "Rendering tests prove recorded stats appear on a successful read and the No charted treatment history yet. statement appears only for a genuinely empty history.",
       "evidence": [
         {
@@ -243,7 +251,7 @@
       ]
     },
     {
-      "id": "claim_8c981fd30e6f4efaa9a51dc02bf0f649",
+      "id": "claim_ab05c10b7b7a4ceabb7cd0c6f3e55324",
       "statement": "The Treatment Intelligence card renders only on the client profile Overview tab, after Client info and before Pricing, and a test pins that order and that it is absent from the Record Keeping page.",
       "evidence": [
         {
@@ -257,7 +265,7 @@
       ]
     },
     {
-      "id": "claim_419634f0c35c4581941b6ddf940ec55c",
+      "id": "claim_3c1df08cd6324c11b4ae9e3ea47ffd9f",
       "statement": "The profile reads session_blocks for only the client's newest 200 sessions while the builder receives every non-deleted session, so older sessions contribute only through their session-row entries and add no minutes or area cards.",
       "evidence": [
         {
@@ -279,7 +287,7 @@
       ]
     },
     {
-      "id": "claim_c50eadabca52468591a70a8104b7f288",
+      "id": "claim_42c0206d2bf54e5197290852f12b9a66",
       "statement": "Structured treated areas are attached to both the last-treatment and intelligence block reads in a single query.",
       "evidence": [
         {
@@ -289,7 +297,7 @@
       ]
     },
     {
-      "id": "claim_bf082346f8494b6c8dbf1cd1769685f0",
+      "id": "claim_bfd9f91fc813482fa336e004b9d9d6df",
       "statement": "Before Today on the client profile consumes the Treatment Intelligence value and treats either clinical block-read failure as making its clinical claims unavailable.",
       "evidence": [
         {
@@ -299,7 +307,7 @@
       ]
     },
     {
-      "id": "claim_491a22a044d747438019c6e10201b79a",
+      "id": "claim_a4c7ec6756354c6eb09f895318acf91e",
       "statement": "Dashboard Before Today previews build Treatment Intelligence through the same pipeline but pass empty entry hairs, so hair figures are not computed there.",
       "evidence": [
         {
@@ -313,7 +321,7 @@
       ]
     },
     {
-      "id": "claim_1678189e90644877a5123490a982db7d",
+      "id": "claim_9f8f345972684c9fbf2d87d2e30bd6a0",
       "statement": "Imported treatment memory is not part of Treatment Intelligence: the builder's inputs are sessions and session blocks only, the page passes imported memory only to the Before Today card, and the imported-memory module lists surfacing in Treatment Intelligence as later work.",
       "evidence": [
         {
@@ -331,7 +339,7 @@
       ]
     },
     {
-      "id": "claim_df53746281e64eb9a963a375cd19f38c",
+      "id": "claim_cd8693e4bf82435cabaffc2415df493c",
       "statement": "An empty session left by the contained whole-session copy is not charted and adds no minutes, and the totals change only when a real block is saved.",
       "evidence": [
         {
@@ -347,6 +355,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T23:26:41.194Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

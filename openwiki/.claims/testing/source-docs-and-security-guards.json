@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:7c5db9d6707533f81aa2c6003fc52672265a916027f085d25ccb9678d18b26a4",
+  "pageVersion": "sha256:f59664bd3c5661ffbd19816258de6abb6461294818237699d14b5cde9a63ed5d",
   "claims": [
     {
-      "id": "claim_5623a409c35b44f49cc460a84f7e72fd",
+      "id": "claim_94b08faf337c4764a4cf95a6b46300c7",
       "statement": "ENGINEERING_STANDARDS.md ranks source and static contract tests last in the proof hierarchy, calls them architectural tripwires rather than substitutes for testable behaviour, and requires important absence claims to also prove the detector works.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_f3272c54514747c5ad20d218b51c1842",
+      "id": "claim_598fecbd9ec04d1b94856d08d70b9bcd",
       "statement": "The Supabase write census walks runtime TypeScript under app, lib, components, scripts and middleware with the TypeScript compiler API, resolves table and payload through same-scope bindings, and reports anything it cannot resolve as unresolved instead of skipping it.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_201a2c7bc6974c71b4e159335a1aff20",
+      "id": "claim_bc0f987bfd39430a8008860eb6086e31",
       "statement": "The appointment direct-DML guard asserts zero direct appointments write sites after B8 and migration 0177, and only alongside positive controls that the census finds more than 100 write sites overall and more than 20 resolved writes to other tables.",
       "evidence": [
         {
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "id": "claim_ba073ee0f82549a68bf4ad764f75159f",
+      "id": "claim_3450f6efa1894ac19be458ec2f81c49e",
       "statement": "The clinical RPC grant guard is a textual check over migration SQL limited to directly callable functions that require auth.uid(), excluding trigger functions by design.",
       "evidence": [
         {
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "id": "claim_2983d2573bd7442fb79c44b58e2911d8",
+      "id": "claim_a562f59822684a36b07b108337cfe6f5",
       "statement": "The service-role allowlist guard greps app and lib for createAdminClient() calls, requires the call-site set to equal the allowlist with each entry's scope-guard string present in its file, and by its own statement proves a guard symbol exists rather than perfect query scoping.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_4a3a9610f7ad419ab13ac46c2c984083",
+      "id": "claim_afa54e5634a146c1afc8d30ca407ca72",
       "statement": "The public booking and public reschedule command guards are textual checks over route source that pin each route to mutating only through its reviewed command.",
       "evidence": [
         {
@@ -71,7 +71,7 @@
       ]
     },
     {
-      "id": "claim_e1e0c98c9f674e76a1e6acd8f5a28c90",
+      "id": "claim_6bcc404672164603bf3c72b88fc386fb",
       "statement": "The waitlist delivery secret-logging guard forbids the invitation's raw bearer token and the recipient proof code from reaching any log, ops alert or telemetry payload in any hashed, truncated or prefixed form.",
       "evidence": [
         {
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "id": "claim_75af13860fff4ff79819238b066d2262",
+      "id": "claim_1b76557578764bd09b4114433c754b56",
       "statement": "Source guards assert that source cannot perform forbidden operations, for example that no SMS code path can purchase, create, attach or fall back to a deployment-global sender, complementing behavioural suites that prove runtime outcomes.",
       "evidence": [
         {
@@ -91,7 +91,7 @@
       ]
     },
     {
-      "id": "claim_5d616b7de1094e7f8c3816366a30b283",
+      "id": "claim_dd5f41f62ef443aebe137b1ee89c8ba6",
       "statement": "Family guards exist because single-file fixes passed while sibling callers kept the defect, such as the client-facing email identity guard requiring every caller family to use the shared studio identity.",
       "evidence": [
         {
@@ -105,7 +105,7 @@
       ]
     },
     {
-      "id": "claim_d8a88680006149be8064722340f9695e",
+      "id": "claim_c73440833c374e98934755b7396318c8",
       "statement": "The supabase/.temp guard inspects Git's tracked path set with git ls-files and fails if any file under supabase/.temp, including the linked project-reference files, is tracked.",
       "evidence": [
         {
@@ -115,7 +115,7 @@
       ]
     },
     {
-      "id": "claim_5d773d27b8a54ca7986c586009cb483e",
+      "id": "claim_b76b7e9ee3d24388801e3a75123fb67a",
       "statement": "The canonical production facts guard reads the five canonical production documents, the canonical migration-state record and the derived migration state, and bans current-state migration maximum or next-free assertions outside the ledger's current block by matching assertive sentence shapes rather than bare numbers.",
       "evidence": [
         {
@@ -129,7 +129,7 @@
       ]
     },
     {
-      "id": "claim_1b6d32279cf04d40be4bde072ebfce65",
+      "id": "claim_3d2df04271884a0e9843c20245a696de",
       "statement": "Historical text is exempt from the canonical facts rules only inside explicit canonical-facts ignore regions, each of which must declare a reason and be closed.",
       "evidence": [
         {
@@ -139,7 +139,7 @@
       ]
     },
     {
-      "id": "claim_784b4910401a43ecb07391a128fc0c5f",
+      "id": "claim_50f28f9e1a8e49fc89a055dc8c7e1f7b",
       "statement": "Rule A of the canonical facts guard requires every SHA in current-state.md to be a real commit, the pinned runtime SHA to be an ancestor of HEAD, and no file changed since the pin to be runtime-bearing, and it skips in shallow clones such as CI's test checkout.",
       "evidence": [
         {
@@ -149,7 +149,7 @@
       ]
     },
     {
-      "id": "claim_5f7351f804bc460fa2f85dbcf7a77247",
+      "id": "claim_3e12df1cec2d421db73e3a3ba8a87afa",
       "statement": "Rule A3 treats a changed file as runtime-bearing unless the shared change classifier marks it docs-only or it lies under a non-shipping root (tests, e2e, .github, scripts other than those the production build runs, and test or lint configs).",
       "evidence": [
         {
@@ -159,7 +159,7 @@
       ]
     },
     {
-      "id": "claim_ab2a009b630e45f4a616b2c7071554c2",
+      "id": "claim_1a1ee83f7e104dcebd635c0ceeb4c13b",
       "statement": "The reminder cadence docs guard forbids reintroducing the deleted CRON_SETUP.md or links to it from root and docs Markdown, requires the canonical cron docs to state the 15-minute cadence, and asserts from shipped code that an hourly cadence would miss reminder offsets.",
       "evidence": [
         {
@@ -169,7 +169,7 @@
       ]
     },
     {
-      "id": "claim_ef20c52d46274639abd954e346c22290",
+      "id": "claim_983114638f3b4444be0b97235870246b",
       "statement": "A dependency test requires server-only to be a declared runtime dependency resolved in the lockfile and spot-checks that security-boundary modules keep their server-only import.",
       "evidence": [
         {
@@ -179,7 +179,7 @@
       ]
     },
     {
-      "id": "claim_da0709a83580467d879c7a769f99ed7c",
+      "id": "claim_43cb94a773ce4b9b910839d183182305",
       "statement": "ESLint bans native confirm, alert and prompt as globals and as window properties because iOS Safari can silently suppress a native confirm, and the shared restriction array is repeated into overlapping config blocks because flat config replaces rule options.",
       "evidence": [
         {
@@ -189,7 +189,7 @@
       ]
     },
     {
-      "id": "claim_45067b9e5c304f9bbd9ec1c0d0769ea3",
+      "id": "claim_54950cb83b13487a99d56d6727c82827",
       "statement": "docs/09 still says seven direct service_role appointment UPDATEs remain in the calendar and postcare files, while the appointment DML guard now asserts zero direct writers in both former writer files.",
       "evidence": [
         {
@@ -203,7 +203,7 @@
       ]
     },
     {
-      "id": "claim_fa3ea26278b54bfb8aec05783e054bf7",
+      "id": "claim_f0a49753e1d642d1a3a257fe5bcbd476",
       "statement": "The export-copy guard's comment says the export carries fifteen files, while the export registry declares 20 exported entries and its header refuses to state a payload size because such counts go stale.",
       "evidence": [
         {
@@ -215,10 +215,30 @@
           "version": "repo-lines-v1:sha256:e3f14da8fd3875cf4df524f03889816ae26249cf6658570da39dbdceb741c150:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTNmMTRkYThmZDM4NzVjZjRkZjUyNGYwMzg4OTgxNmFlMjYyNDljZjY2NTg1NzBkYTM5ZGJkY2ViNzQxYzE1MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTNmMTRkYThmZDM4NzVjZjRkZjUyNGYwMzg4OTgxNmFlMjYyNDljZjY2NTg1NzBkYTM5ZGJkY2ViNzQxYzE1MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODAwYTBkOWFlYmQ4ZjczYmMzMjI2MGExOWE3YjdiZDA3N2FkMWFlMGVkZTUwNTljOGVhNWY1NDFlMDI1YjZmMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMThhZmViMDUyZjI3YTg5NWJhYTllZTdlNmI0NzVlMDcwNWI3Y2RiMjhjMzFkNzViNzU1NDZhNjVlZWI5MTg0NyJ9"
         }
       ]
+    },
+    {
+      "id": "claim_ee659190d2a5431fbfd56c145ac15c31",
+      "statement": "Rule A4 of the canonical facts guard allows only current-state.md to carry the runtime-bearing SHA pin, so a copy in another canonical document fails.",
+      "evidence": [
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L1872-L1880",
+          "version": "repo-lines-v1:sha256:fede63d3a9e7a5033d0399d3f50f85a6fd99e28bc1567f41efe14038fba4827c:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2M0MzMwOGYyNGU1N2NmMzM5YzE5Mjk4NjY5ZTJjNGJlYmU1ZmY0MWQyMzcwYWEwNTRmOGU4MzgzOWFjNWU5MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTBkYzM4NjVhNDVkMzFjMTIyMmQ0M2Y1OGVlMzhlYzU0NGZhNzYzZmY2ZDBhZDY2ZTBiYjg5YzcxZGFjZmQ5ZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOWZhMmUyZDE1NDY4ODNjY2VhZGEzNzQ0NzBjZDFkNTRmMzE0MTVhNDk3N2EzYjViNDRlMzg3NjcxMmI5YTdmNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmRiNGI3MDg4NjU1ZWRmNDg4MzNiNmFmZDRjNmY2ZTM2YjhjYWRiY2Q2YzRmNjFhM2VmZDI0OGVmNDMwMzE0YSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_6f9d951c84a64e8c9802d3a0c707f145",
+      "statement": "Rule A5 of the canonical facts guard requires the recorded Current Git branch HEAD in current-state.md to equal the production branch ref resolved locally, and reports that it could not run on a shallow clone or when the ref is absent.",
+      "evidence": [
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L2531-L2575",
+          "version": "repo-lines-v1:sha256:77441690aadcc943b57388c892eaa1533c635d1db967422922130af4614d69c5:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliNDZiODUwYjQxMjZmNjI5ODlhYzFkOTNhNjI2Yzc0NDYwY2M4MjA2NDI5MTYzMTMyNDIyN2RmNmI0MTM1ZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUzMjJlYjYwMGZlY2IyMzM1NjAwZTdlNzNjZDQwODYwYjY0YjdiOWY5MGRhZTM1ZWM3NDNjOGY4YWE2MWZhMTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkNGFmYzEwOGRjZjI3NmUzOGY2MTc1NDA0NWYzMWIzZWM2ODk3MTdkNzAxNWU3ZTgwYjBkYjJjMzU0ZjQ0ZGYifQ"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

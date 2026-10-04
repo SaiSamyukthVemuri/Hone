@@ -5,7 +5,7 @@ description: The client-profile Treatment Intelligence card — a pure, read-onl
 tags: [treatment-memory, treatment-intelligence, recorded-history, client-profile, read-model, clinical-read-truth]
 verified:
   - by: openwiki/0.6.1
-    at: 2026-10-02T23:26:41.194Z
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-3bae44e51508539a63dfac8d
     resource: repo://app/(app)/clients/%5Bid%5D/page.tsx
@@ -31,7 +31,7 @@ sources:
     resource: repo://tests/app/sessions/whole-session-copy-metric-invariant.test.ts
   - id: openwiki-source-ab92d6e276365dff46322a67
     resource: repo://tests/lib/sessions/reaction-unified.test.ts
-generated: { by: "claude-code", at: "2026-10-02T23:26:41.194Z" }
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Treatment Intelligence summary
@@ -88,11 +88,17 @@ The wording follows from that:
 | **First treated / Last treated** | earliest and latest `started_at` among charted sessions |
 | **Latest tolerance** | `tolerance_rating` of the most recent block that has one, shown as `n/5` |
 
-If no session is charted, the builder returns `charted: false` with every figure `null`. The card then says
-**"No charted treatment history yet."** ([L212-L231](../../lib/sessions/treatment-intelligence.ts#L212-L231)).
-An empty session left behind by the contained whole-session copy, with no blocks and no entries, is **not
-charted** and adds no minutes; only a saved block changes the totals
-(`tests/app/sessions/whole-session-copy-metric-invariant.test.ts`).
+**Empty history.** With no charted session, `buildTreatmentIntelligence` returns `charted: false`,
+`chartedSessions: 0`, `areasCharted: 0`, `null` for every other overall figure (`minutes`, `hairs`,
+`hairsPerMinute`, `firstTreated`, `lastTreated`), no area cards (`areas: []`), and `null` reaction, tolerance,
+watch-note and plan fields (`commonReactionLabel`, `latestReactionLabel`, `latestToleranceRating`,
+`latestWatchNote`, `latestPlan`) ([L212-L231](../../lib/sessions/treatment-intelligence.ts#L212-L231)). The card
+then says **"No charted treatment history yet."** The test "no charted history returns the empty state" pins
+`charted: false` and `chartedSessions: 0`
+([`treatment-intelligence.test.ts` L60-L67](../../tests/app/clients/treatment-intelligence.test.ts#L60-L67)), and
+[`whole-session-copy-metric-invariant.test.ts` L50-L83](../../tests/app/sessions/whole-session-copy-metric-invariant.test.ts#L50-L83)
+pins that an empty session left behind by the contained whole-session copy, with no blocks and no entries, is **not
+charted** (`chartedSessions: 0`, `minutes: null`), and that only a saved block changes the totals.
 
 ## 3. Per-area memory
 
@@ -156,8 +162,9 @@ reaction tie-breaks, and latest tolerance, watch note and plan.
 - **Blockless legacy sessions.** A session's own `electrolysis_entries` count **only when that session has no
   loaded blocks**, so a charted pass is never counted twice.
 - **Non-positive values** (zero, negative, `null`, non-finite) contribute nothing.
-- **No zero totals.** An overall or per-area total that sums to 0 becomes `null` ("Not recorded"), never a
-  stated zero.
+- **No zero totals.** A minutes or hairs total, overall or per area, that sums to 0 becomes `null`
+  ("Not recorded"), never a stated zero. The two counts, `chartedSessions` and `areasCharted`, are counts and are
+  `0` when nothing is charted.
 - **Hairs/min** exists only when both hairs and minutes are positive.
 
 The DB-free test proves the blockless rule: a block's hairs are not re-added from the session row, a blockless

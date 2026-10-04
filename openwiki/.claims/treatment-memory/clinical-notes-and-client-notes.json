@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:1a41c86fe3731f18c4329f647e0ab89667c8b85a08b85cdf100503f75f3001ae",
+  "pageVersion": "sha256:39365a122e4370c317aee6784277afcf591113526805a5ec70f6dec013a4c734",
   "claims": [
     {
-      "id": "claim_5c5643f037514177a79bc53aa8635c31",
+      "id": "claim_72ada9ce3dcb496f8559777f2ed5276f",
       "statement": "client_clinical_notes rows are consultation or skin_hair_analysis notes with a non-blank body, a clinical occurred_at date and optional area tags, tied to the same studio as their client and authoring practitioner by composite foreign keys.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_8e3ec54ff8ed4566ac977b819d325aa5",
+      "id": "claim_8fec163c47a74230ab87c8bd72c6440c",
       "statement": "A plain BEFORE UPDATE trigger on client_clinical_notes always raises, so no role including service_role can edit a saved note, and authenticated holds no update, delete or truncate privilege while anon holds nothing.",
       "evidence": [
         {
@@ -31,7 +31,7 @@
       ]
     },
     {
-      "id": "claim_edcf93965501466c8c964ce8806db373",
+      "id": "claim_cd36cf7bc3d4405aa310e3180b8e355f",
       "statement": "A clinical note revision is a new row with supersedes_note_id; the insert trigger derives studio_id from the client and requires the superseded note to share client, studio and kind, and a partial unique index allows only one direct successor so a concurrent second revision fails.",
       "evidence": [
         {
@@ -45,7 +45,7 @@
       ]
     },
     {
-      "id": "claim_23e3bcad9c70440f934053e871c06829",
+      "id": "claim_8c05ab43967c48fd8b6d55f9b37cfc6c",
       "statement": "The clinical-note insert policy requires the note's practitioner to be the caller's own active practitioner in the note's studio, after 0127 replaced a 0126 subquery whose unqualified studio_id made the same-studio check a tautology.",
       "evidence": [
         {
@@ -59,7 +59,7 @@
       ]
     },
     {
-      "id": "claim_a57750dfa6e644f49c23427979c009e2",
+      "id": "claim_2e366262cb8241a7861151cea39ed017",
       "statement": "Migration 0179 changed the clinical note author foreign key from ON DELETE CASCADE to ON DELETE RESTRICT so deleting a practitioner cannot destroy their notes.",
       "evidence": [
         {
@@ -69,7 +69,7 @@
       ]
     },
     {
-      "id": "claim_b093b8c0e87b4295800bdb4aac834454",
+      "id": "claim_8cd9337357234198943320aa61b44e07",
       "statement": "The clinical-note server actions run under the RLS-scoped user client, force the author to the signed-in practitioner, confirm the stored row with a separate read-back, and map a supersession unique violation to a stale_revision conflict without retrying.",
       "evidence": [
         {
@@ -87,7 +87,7 @@
       ]
     },
     {
-      "id": "claim_12bc26f3d7cb4c7eb385f51100a5b97e",
+      "id": "claim_6285814c4b3d48f0a5a67212e2652ef5",
       "statement": "The current clinical note of a kind is the newest non-superseded row, computed in the server-only RLS-scoped query module.",
       "evidence": [
         {
@@ -97,7 +97,7 @@
       ]
     },
     {
-      "id": "claim_003ce90828d14f94bc109e9be5b11373",
+      "id": "claim_c3079a6b7f8c4b7ea048d817c3e5f3fb",
       "statement": "A source guard audits that email, SMS, Stripe, portal and booking surfaces import no clinical-notes module and that the print view lives under the authenticated app tree.",
       "evidence": [
         {
@@ -107,7 +107,7 @@
       ]
     },
     {
-      "id": "claim_ba017ab546154d9ea35d7fa2ef869678",
+      "id": "claim_93d89138f97c49c098d9e9966bd35fd0",
       "statement": "client_pinned_notes holds notes of at most 200 characters with select, insert and delete policies on the caller's active practitioner studios and no update policy, and its migration header describes changes as remove and re-add.",
       "evidence": [
         {
@@ -117,7 +117,7 @@
       ]
     },
     {
-      "id": "claim_e390f86f081a4c408424578c2b15650d",
+      "id": "claim_473a4b68d2d44937931f0a252ccd033c",
       "statement": "Editing a pinned note uses the service-role client with an update scoped to the note id, the session's studio and the client, plus the original text as an optimistic-concurrency guard, and writes only the text column.",
       "evidence": [
         {
@@ -127,7 +127,7 @@
       ]
     },
     {
-      "id": "claim_0cc8cf893a5a4017ace348d6b4bee0c2",
+      "id": "claim_6c773b9442dd4436887ce5c520364239",
       "statement": "client_personal_notes keeps one row per client with personal_notes and private_warnings capped at 20000 characters and a trigger-derived studio_id, and the action upserts both fields under the user client without trimming.",
       "evidence": [
         {
@@ -141,7 +141,7 @@
       ]
     },
     {
-      "id": "claim_c7a3561f3be0444b96b3ce6fe51892c7",
+      "id": "claim_157b51b32d83477196ca0a0bc1fc824b",
       "statement": "The clinical-notes contract document says service-role hard delete is kept so removing a parent practitioner can cascade notes, which no longer matches 0179's ON DELETE RESTRICT author foreign key.",
       "evidence": [
         {
@@ -155,7 +155,7 @@
       ]
     },
     {
-      "id": "claim_f302a70cddec452cb6049a93b2ff3073",
+      "id": "claim_b1c6f6c7017848c8a5401dfc1848a259",
       "statement": "client_clinical_notes grants select and insert to authenticated and revokes only update, delete and truncate, the name-and-revoke pattern that 0184 found left REFERENCES, TRIGGER and MAINTAIN in place on client_budget_context.",
       "evidence": [
         {
@@ -171,6 +171,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:747549bbba613f54158d5121d797e5bc44366a711d5852a5f1d0e385189e54ee",
+  "pageVersion": "sha256:f0d66054df43f32a11b2b1bc1b692ba6ca3962cbfca12532206172429e943a9f",
   "claims": [
     {
-      "id": "claim_1632612d16a44b6694c249e0bc19b564",
+      "id": "claim_8781cd5a78ac41c1ae50dc836aefe847",
       "statement": "Row-level security filters rows only for SELECT, INSERT, UPDATE and DELETE and does not govern TRUNCATE, REFERENCES or TRIGGER, so audit and append-only tables need a table-privilege revocation in addition to RLS policies.",
       "evidence": [
         {
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "id": "claim_cda347bdc43c4719b975ff184b6df377",
+      "id": "claim_66e76ee3f25e4c80b184d0869c720643",
       "statement": "Because Supabase's default privileges grant the full table privilege set (including PostgreSQL 17's MAINTAIN) to runtime roles, later migrations state a table posture as revoke-all-then-grant-back rather than a by-name denylist, as 0178 does for practitioners.",
       "evidence": [
         {
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_d37ab758d2f841fd9706dcc7a5069921",
+      "id": "claim_b79b7a5f91c04836b3767fb18818e52a",
       "statement": "is_studio_member and is_studio_owner are the RLS tenant predicates: SECURITY DEFINER SQL functions that check auth.uid() against an active practitioners row (owner role for the owner variant), granted to authenticated.",
       "evidence": [
         {
@@ -37,7 +37,7 @@
       ]
     },
     {
-      "id": "claim_ba0b8005ccc34158b168e80295a479e4",
+      "id": "claim_55132c4e05d04051b7275cf8ba92e17e",
       "statement": "Migration 0172 revoked INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER and MAINTAIN from anon and authenticated on appointments and appointment_audit, replaced the member FOR ALL appointment policy with a SELECT-only policy, and dropped the member audit-insert policy.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_33f202eb40ca48f0b4119e1e8dff5b7c",
+      "id": "claim_f0bca893d1e74ace9b2c6e60262f83af",
       "statement": "Since 0135 the studio availability default and override tables allow members to read but only studio owners to write, through a FOR ALL owner policy.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_98574c509e904ad990552df2d6379382",
+      "id": "claim_ed23e389d9bc427e80acbbdf76aadf07",
       "statement": "Migration 0173 revoked DELETE on services and practitioners from anon and authenticated and replaced the services FOR ALL member policy with member SELECT, INSERT and UPDATE policies and no DELETE policy.",
       "evidence": [
         {
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "id": "claim_a50ac0b3f93e4119be60ea15a896efd5",
+      "id": "claim_1527d0c8b31042fd80716f589e1a757f",
       "statement": "studio_blockouts still carries the 0010 member FOR ALL policy, and no later migration changes its policies or table privileges.",
       "evidence": [
         {
@@ -77,7 +77,7 @@
       ]
     },
     {
-      "id": "claim_9f8dbd25aa004b448837ee5a0c0675dd",
+      "id": "claim_1f7727deb6f247c1bc268b41d1ced1f5",
       "statement": "Migration 0159 revoked every write and maintenance verb from anon on the six clinical tables and revoked TRUNCATE, REFERENCES and TRIGGER from authenticated on them.",
       "evidence": [
         {
@@ -87,7 +87,7 @@
       ]
     },
     {
-      "id": "claim_8c47d746175f48a7b12d674e80fa987e",
+      "id": "claim_9594f5c9fd5949e59cd4d6f5c80ec68c",
       "statement": "An authenticated-only SECURITY DEFINER command must revoke EXECUTE from public, anon and service_role by name, because default privileges grant all of them; 0129 missed anon and 0164 missed service_role, and a static grant guard now enforces the rule.",
       "evidence": [
         {
@@ -101,7 +101,7 @@
       ]
     },
     {
-      "id": "claim_338274684ecf4b67838a3db0332f76c4",
+      "id": "claim_d2697d823cd74f3091110f04ab555ea6",
       "statement": "The clinical RPC grant guard checks every migration-created, directly callable function that requires a non-null auth.uid() for revokes from public, anon and service_role and a grant to authenticated, keeps internal helpers ungranted, limits the service-role exemption list, and excludes trigger functions on principle.",
       "evidence": [
         {
@@ -115,7 +115,7 @@
       ]
     },
     {
-      "id": "claim_28dd54bc1d434529a10d8842d7a9480a",
+      "id": "claim_ddeb2720ef554957b43d5c89ea3e953e",
       "statement": "0178 revokes EXECUTE from PUBLIC, anon, authenticated and service_role on its new functions and grants back only the three own-preference commands to authenticated, leaving its internal helpers granted to nobody.",
       "evidence": [
         {
@@ -125,7 +125,7 @@
       ]
     },
     {
-      "id": "claim_e7127a9e551441f886750fe265ddd88d",
+      "id": "claim_2b5278fbe3e849eb8c6e18f3e2acea76",
       "statement": "Migration 0094 replaced single-column parent foreign keys on clinical and import child tables with composite (parent_id, studio_id) foreign keys that mirror the previous ON DELETE actions and keep exactly one relationship per table pair so PostgREST embeds stay unambiguous.",
       "evidence": [
         {
@@ -135,7 +135,7 @@
       ]
     },
     {
-      "id": "claim_ba77eb3937a94c7f8d09f232bed593f2",
+      "id": "claim_9c4197fd46a34d2a902a7185583727e7",
       "statement": "Migration 0151 applied composite same-studio foreign keys to appointments' client, service and practitioner references under an exclusive lock with a preflight that raises a fixed non-PII error on any existing cross-studio reference.",
       "evidence": [
         {
@@ -145,7 +145,7 @@
       ]
     },
     {
-      "id": "claim_b34aab889f1043c2a5421afd10e6cf11",
+      "id": "claim_0241b3630f3540e49eb1284f8ca9e444",
       "statement": "DB tests prove cross-studio parent references are rejected by the composite foreign keys even when RLS allows the write, that cascade behaviour is preserved, that exactly one FK exists per table pair, and that appointment client, service and practitioner cross-studio references trip three distinct 23503 constraints.",
       "evidence": [
         {
@@ -159,7 +159,7 @@
       ]
     },
     {
-      "id": "claim_b40a59396ed54f9da488893be283165f",
+      "id": "claim_de966fe511334f08a68989285b469ca9",
       "statement": "The service-role allowlist test requires the set of app/ and lib/ files calling createAdminClient() to equal the allowlist exactly, every entry to carry a purpose, a justification and a scope-guard string present in its file, and justification-only entries to stay under 5%.",
       "evidence": [
         {
@@ -173,7 +173,7 @@
       ]
     },
     {
-      "id": "claim_a925037ec5e84634b0d3b310f884b659",
+      "id": "claim_e3fd6928b6e24106a0b580c67d8c4348",
       "statement": "The Supabase write census parses runtime source under app, lib, components, scripts and middleware with the TypeScript compiler API and fails closed by reporting any write expression it cannot resolve as unresolved rather than skipping it.",
       "evidence": [
         {
@@ -183,7 +183,7 @@
       ]
     },
     {
-      "id": "claim_130600f8b0704c29af2cc6d839d69a2d",
+      "id": "claim_0fa650f1f697485aaa0450e56104e798",
       "statement": "No migration performs a schema-wide grant sweep or changes Supabase's default privileges, and session_audit and record_keeping_audit_events have never been named in a grant or revoke, so known limitation L19(a) records them as still carrying the default TRUNCATE grant (narrowed, not closed).",
       "evidence": [
         {
@@ -197,7 +197,7 @@
       ]
     },
     {
-      "id": "claim_eab877f4c97f4348b8315d996b72a8e8",
+      "id": "claim_163fea5550f84156a2698e83174f18f2",
       "statement": "Known limitation L20 is recorded open: service_role retains TRIGGER on sessions, session_blocks, electrolysis_entries and laser_entries, so 0160's lineage guards are not tamper-proof against that role, though it is not reachable from the application.",
       "evidence": [
         {
@@ -207,8 +207,8 @@
       ]
     },
     {
-      "id": "claim_6b4bae56cd0e4c208465cff4fc7805d6",
-      "statement": "Known limitation L33 is recorded open at P3 and not exploitable: 0204's studios_admission_mode_guard() trigger function holds EXECUTE for anon, authenticated, service_role and PUBLIC per a read-only verification dated 2026-10-01, and closing it requires a new migration.",
+      "id": "claim_d141f352f0784596b5c70d2310d899fb",
+      "statement": "Known limitation L33 is recorded open at P3 and not exploitable: 0204's studios_admission_mode_guard() trigger function holds EXECUTE for anon, authenticated, service_role and PUBLIC according to a recorded read-only verification, and closing it requires a new migration.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L135-L135",
@@ -221,8 +221,8 @@
       ]
     },
     {
-      "id": "claim_611aff9c31504f63b00cb02a3cca46a3",
-      "statement": "Known limitations L18 (authenticated clinical row writes, closed by 0169 on 2026-08-03) and L23 (foreign-key actions writing appointments, closed by 0173 on 2026-08-09) are recorded closed.",
+      "id": "claim_0de7be98790948dc821f2e16d7d9d46a",
+      "statement": "Known limitations L18 (authenticated clinical row writes, closed by migration 0169) and L23 (foreign-key actions writing appointments, closed by migration 0173) are recorded closed.",
       "evidence": [
         {
           "resource": "repo://docs/production/known-limitations.md#L314-L329",
@@ -235,7 +235,7 @@
       ]
     },
     {
-      "id": "claim_8a0a43f1508b4d4fa8419b9add00de20",
+      "id": "claim_9355b44644a84cc7871c0fc727f21cc4",
       "statement": "Known limitation L17 records that the deep production, security and code audit has not been performed and that it blocks broader launch.",
       "evidence": [
         {
@@ -245,8 +245,8 @@
       ]
     },
     {
-      "id": "claim_42c1e5291a6a4e41a0e0d90ca0da9d14",
-      "statement": "docs/09 records a production verification dated 2026-07-27 of 139 SECURITY DEFINER functions in public, none without a pinned search_path, 22 executable by authenticated and 7 by anon, all of the latter being RLS predicates or trigger functions.",
+      "id": "claim_e1487f5bfcc94312bbef681f0de8291c",
+      "statement": "docs/09 records a production inventory of SECURITY DEFINER functions in the public schema that found none without a pinned search_path, with every function executable by authenticated or anon being an RLS predicate or a trigger function.",
       "evidence": [
         {
           "resource": "repo://docs/09_DATABASE_AND_RLS.md#L313-L329",
@@ -255,8 +255,8 @@
       ]
     },
     {
-      "id": "claim_b658785ae0924e24b3ecb80c149c6ea1",
-      "statement": "docs/09 still states that L23 remains open in production and that 0173 is not merged or applied, while known-limitations.md records L23 closed by 0173 applied on 2026-08-09.",
+      "id": "claim_f27ccedcd3ba47a980720427e6160b23",
+      "statement": "docs/09 still states that L23 remains open in production and that 0173 is not merged or applied, while known-limitations.md records L23 closed by 0173.",
       "evidence": [
         {
           "resource": "repo://docs/09_DATABASE_AND_RLS.md#L210-L213",
@@ -269,7 +269,7 @@
       ]
     },
     {
-      "id": "claim_bfd7d0c8f639479ab775fbc078bcffd7",
+      "id": "claim_0bf87db01fda4490b66b1ec140f4d818",
       "statement": "docs/09 lists owner-only ALL policies for studios, services, availability and blockouts, but the migrations give any active member INSERT and UPDATE on services and FOR ALL on studio_blockouts, with only the two availability tables owner-write.",
       "evidence": [
         {
@@ -291,7 +291,7 @@
       ]
     },
     {
-      "id": "claim_4286d8713f78457a9fba4a061fc528da",
+      "id": "claim_530a988dcc7f49f0bf64fca9048ebb0c",
       "statement": "The 0138 lock-only trigger that takes the studio capacity lock covers timed blocks, recurring break rules, break occurrences and blockouts but not the availability default or override tables, whose owner FOR ALL policy still permits direct writes outside the locked schedule commands.",
       "evidence": [
         {
@@ -309,7 +309,7 @@
       ]
     },
     {
-      "id": "claim_a021a404516044b594beaa3c37b36d9f",
+      "id": "claim_b5334aa43e4f480098315a24ecc7d592",
       "statement": "Known limitation L22's heading and status say both intake review boundaries are closed by 0162 and 0163, while its next-gate and blocks cells still describe the INSERT path as open.",
       "evidence": [
         {
@@ -319,7 +319,7 @@
       ]
     },
     {
-      "id": "claim_2c03ba9b945d49048c40f702a295a6b6",
+      "id": "claim_0b1378534cc5406997beacecd4b9af93",
       "statement": "The grant guard excludes trigger functions as inert, while known limitation L33 treats the default EXECUTE on 0204's trigger function as a defect and asks for the guard to be extended to trigger functions.",
       "evidence": [
         {
@@ -331,10 +331,20 @@
           "version": "repo-lines-v1:sha256:889c650a33d1c2b7e89000aae6b41a0b929a2d362c2cab39ff82b2036bff6024:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2FhNGYwM2NkZjBhYWVmNjViY2M3MjM0NWE0ZWNkNGE3OGY2NmQ0MDYxZGYwZjI2YzdjMzA3MjI4MzNiMjdiNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2MwZDUwNDA4ZTlhYzA3YzY5NzJhMjQ3YjY3ZGFiZmZlNGIxZDkwZWFiMTViNzJkY2FkNzM2MjRmZDU3NjY1YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWUwYzhhNTQ1ZWYxZjljNTJjMWI1MWUxOWZmM2UyODE3NDYyYTJhZDc4OGNkNjM3ZmYyZTdjMTQ0ZGY4ZDk1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWFhMzhmM2NmNGIzNTE5NjJkOWRlYTJmMzdlOTRmODcwZTY5MWI2ZGM1MzExOWY1MDRiMzc5MWFlMmMwY2Y1MCJ9"
         }
       ]
+    },
+    {
+      "id": "claim_8b898735b7be42e7ad167e052415446c",
+      "statement": "The migration ledger records that 0205, which had been earmarked to close the studios_admission_mode_guard() grant deviation, was used for another change and contains no grant or revoke statements, so the deviation remains open and needs a new migration.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L57-L64",
+          "version": "repo-lines-v1:sha256:3e0d1033573d86e816c807d31bb23d3edf37d6395ee24f33b171c250bbc7305e:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2YwOGEwYzVjNDBjM2EyZWNiNTU1NjQ1ZDdiNmZjMWYzZjQxYTM3MDFlYTk5YzE3YjZlZWM1Zjk1YTA3YzZlNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjlmNDdmOGZjOTNhMDUzOWJmNjg2ZTMxYzk4OTQ0OWMzMDk2MGVkODhiOTBjM2VkYmQ3Yjk2ODMwMTk1MmVhYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzU0MGUzM2YwMjE2ZjQ5ZjI0NmMyNTk5OTZiMDYxYTA1YTBlYWIzZTc1MzI1OGVjNmZmZTFmOGZkYjM3MjgwOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzkxOGE0NDk4ZDI5NTczY2E5YWVkMGIyNmI1OGVlMDQxNDY4ZDE5YzUxYTUzYTIyYjI0NDdlMmU1YTNiODlmOCJ9"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

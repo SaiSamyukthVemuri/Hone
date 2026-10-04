@@ -3,6 +3,9 @@ type: data model
 title: Treatment plans and treatment time
 description: How a client's treatment plan is modelled and written — plan rows with multi-area and month-timeline fields, the three seeded clinical stages, attaching sessions through the set_session_treatment_plan command, closing a plan with an application-only cross-client guard — plus the per-client treatment-time goal, the electrolysis-only time totals and their multi-area attribution rule, and the non-atomic edges.
 tags: [treatment-memory, treatment-plans, stages, treatment-time, sessions, rls]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-251a72d0b52c2c5e4a1ece78
     resource: repo://app/(app)/clients/%5Bid%5D/treatment-plans-actions.ts
@@ -28,10 +31,7 @@ sources:
     resource: repo://supabase/migrations/0167_session_write_commands.sql
   - id: openwiki-source-aef347f415985d3f29b05db4
     resource: repo://tests/lib/treatment-time/area-attribution.test.ts
-generated: { by: "claude-code", at: "2026-10-02T23:26:41.194Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T23:26:41.194Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Treatment plans and treatment time

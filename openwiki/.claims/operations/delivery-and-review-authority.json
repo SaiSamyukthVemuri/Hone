@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:996974c909553e0d1e3c8a7c451b4c9be7480c694f7236ed38bcdceb2585c93f",
+  "pageVersion": "sha256:750433edb50cfe6e1b022162b3764f13c9b81e7f58b9b16928665cf65149b357",
   "claims": [
     {
-      "id": "claim_e661486fb7c24bcc94f00793bba1c5fa",
+      "id": "claim_14da7e6591e549bf8bd44c6f2048559f",
       "statement": "Hone's contributor rules state that green CI is not merge authorization, that green CI is necessary but not sufficient, and that a changed head invalidates a conditional exact-head merge authorization.",
       "evidence": [
         {
@@ -17,8 +17,8 @@
       ]
     },
     {
-      "id": "claim_e7dc5c329b4a4eebb8a2dd3b342b6938",
-      "statement": "Validation depth follows a T0-T3 risk tier; the path-based classifier gives only a baseline, may never justify de-escalation, and T3 covers auth, tenancy, RLS, service_role, payments, migrations, destructive operations and external-side-effect state machines.",
+      "id": "claim_16fc165649f54b38a19e87809dc4cd85",
+      "statement": "ENGINEERING_STANDARDS.md defines validation depth by a T0-T3 risk tier, treats the path-based classifier as a baseline that may never justify de-escalation, and places auth, tenancy, RLS, service_role, payments, migrations, destructive operations and external-side-effect state machines in T3.",
       "evidence": [
         {
           "resource": "repo://ENGINEERING_STANDARDS.md#L27-L73",
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_397d0310c09d4b1d9f26e10fa35e6508",
+      "id": "claim_af2494fc54c6443889431109899e6ee2",
       "statement": "The engineering standards prefer real database behaviour over server, component, browser and static-contract proof, and require anti-vacuity proof for important absence claims.",
       "evidence": [
         {
@@ -37,17 +37,17 @@
       ]
     },
     {
-      "id": "claim_5e44a3e98b1b49579e1cae834f6fbc12",
-      "statement": "The required delivery sequence stages everything, checks whitespace, commits, requires an empty status and an empty diff against HEAD, then runs npm run verify:prepush before pushing.",
+      "id": "claim_c43e703e37ff4ad7ac2cd999959e44aa",
+      "statement": "CLAUDE.md requires an eight-step delivery sequence before every push: git add -A, git diff --cached --check, git status --porcelain, git commit, git status --porcelain (must be empty), git diff HEAD --exit-code, npm run verify:prepush, then git push.",
       "evidence": [
         {
-          "resource": "repo://CLAUDE.md#L45-L82",
-          "version": "repo-lines-v1:sha256:e98fa9bf9b191a0b4ef8b82353f4268483cf3b9b6c1434ea65b2aca486e0648d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4YzBmMDQ3NjQ4NGY0MGJiY2NjODNhNjgyNDU3OWI3ZTUyMWViYTViMDI5YWFhYTc2YmJlODgyNGMwYWVlODkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc5ZTQ1ZjI1NTBlMzViZmMyZjVjOTRmMjZlOWVjYzgxNmVmOTdjMjI3ZDkzMjI5Y2YxZWQ2MzVmZWY4ZjA1ZmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+          "resource": "repo://CLAUDE.md#L58-L69",
+          "version": "repo-lines-v1:sha256:36cd081170ece240bcd60fa5ae61591bad8cc66f6a980c1d27caa2211f4f6e72:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwNzVlYjNhNzAwNTk0NGFkNDE5MWNkZjIyNTVlNGZlNzEwNGI2MDU5OGFiMGYwYzkzZjM2YTM4YzE3NzBiOWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3YzA2YzU2MWQ1YzMyNzM0MzY4NTI2OGE0NmIzMzkxZjM5OThlZWU4OTBkMmJlNTFmMGQyMWNjNGE1M2FlNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU0ZTZlNDJhMGVjOTdlYTBmNDYyNmEwYmQ2NTM2NWEwN2FlMDU2MGI3ZmFhMDg3MDkyNTkxNWRhNGM5MzYzN2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNiY2FiM2E3YjY4YTBiMjVkOTQ4YzU4MjFiNDQ5ODBhYzQ3NDE3NzBiYzAwNjk2OWZlMDUxZWVlN2FjMDRkNDUifQ"
         }
       ]
     },
     {
-      "id": "claim_7c8a7e8f3fd2453097fb53f9928275de",
+      "id": "claim_d28103f6c6d143a38cdfb16d4ab3ed99",
       "statement": "verify:prepush checks only git state (no tracked modifications, allowlisted untracked files, empty diff against HEAD, whitespace and conflict markers, untracked source-like files absent from HEAD) and that scripts/migration-state.mjs exits cleanly; it runs no typecheck, lint, build or test.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_2c929d0fc08b4db49788f871eec1048e",
+      "id": "claim_1ecacb2cb9b0446692a106f60e7a2a5f",
       "statement": "The pull request template requires a baseline risk tier and any semantic escalation, trust-boundary, database and external-side-effect declarations, proof, and a production section stating production access and migration state.",
       "evidence": [
         {
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "id": "claim_4258a615eb6840eca89a194a2c3a2bcb",
+      "id": "claim_37c9d13b2c214a5181d47a6dacebc97b",
       "statement": "npm run eng -- status reports GitHub facts for one pull request at its exact head and does not decide release readiness, record findings or merge.",
       "evidence": [
         {
@@ -77,7 +77,7 @@
       ]
     },
     {
-      "id": "claim_bef2f8ca6664491ab5061481457f504e",
+      "id": "claim_f335e19a651e48a5b75a07a934209f36",
       "statement": "The eng tooling permits a positive (GREEN or CLEAN) state only when evidence is both complete and authorized, and trusts reviewer verdicts by an immutable bot account id rather than login, author association or wording.",
       "evidence": [
         {
@@ -87,7 +87,7 @@
       ]
     },
     {
-      "id": "claim_272490dfab254c46a1919fccab0d3f73",
+      "id": "claim_1b8b30c2ffd1437c80590d590154084c",
       "statement": "Review provenance refuses to treat re-anchored comments, replies, empty review objects or verdicts for other heads as current review completion, and prefix-matches abbreviated SHAs with a seven-character minimum.",
       "evidence": [
         {
@@ -97,8 +97,8 @@
       ]
     },
     {
-      "id": "claim_5d1074dd276646dca789198f938cc696",
-      "statement": "Codex exact-head review is operator-side and must not be wired into a workflow because it needs a GitHub API credential that the CI posture removes.",
+      "id": "claim_d994334b9ad641f9acaac7df5816967f",
+      "statement": "CLAUDE.md states that Codex exact-head review is operator-side and must not be wired into a workflow because it needs a GitHub API credential that the CI posture removes.",
       "evidence": [
         {
           "resource": "repo://CLAUDE.md#L305-L307",
@@ -107,7 +107,7 @@
       ]
     },
     {
-      "id": "claim_37a4b7015f9046f5940dbf92e76c22fd",
+      "id": "claim_829eee0e28fe460a80358c702120c11e",
       "statement": "CLAUDE.md and verify-prepush treat supabase/config.toml as an untracked local-only file, but it is tracked in the repository, and the supabase-temp guard only covers supabase/.temp/.",
       "evidence": [
         {
@@ -129,7 +129,7 @@
       ]
     },
     {
-      "id": "claim_b605d24181474ea09a926aaf9529f54e",
+      "id": "claim_418f2df9a89a4a6c908657f68618e33f",
       "statement": "The canonical-facts guard comment says its history-dependent rules are enforced by verify:changed and verify:prepush before every push, but verify:prepush runs no tests.",
       "evidence": [
         {
@@ -143,7 +143,7 @@
       ]
     },
     {
-      "id": "claim_28e8024962f74541863f6349d3a1040c",
+      "id": "claim_742567c1e4d2475887d5228cfcb8e4e7",
       "statement": "ENGINEERING_STANDARDS.md says a test must not require full developer git history, while the canonical-facts Rule A requires full history and skips on shallow clones.",
       "evidence": [
         {
@@ -157,8 +157,8 @@
       ]
     },
     {
-      "id": "claim_235e43db70f84bbfb9f97fbebbec7469",
-      "statement": "CONTRIBUTING.md says GitHub Actions runs the same six-command set on every PR, whereas the CI workflow is risk-based and skips the validate lane for documentation-only diffs.",
+      "id": "claim_061bfc532d4e4b3ebcff22b334248921",
+      "statement": "CONTRIBUTING.md says the same six-command set must pass and runs on every PR, whereas the CI workflow is risk-based and skips the validate lane for documentation-only diffs.",
       "evidence": [
         {
           "resource": "repo://.github/workflows/ci.yml#L228-L232",
@@ -173,6 +173,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

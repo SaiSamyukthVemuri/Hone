@@ -3,6 +3,9 @@ type: test infrastructure
 title: Database and migration test harness
 description: How Hone proves database behaviour — the separate vitest DB lane against a local, fully migrated Supabase Postgres, the localhost-only harness with role and JWT simulation, seeding and synthetic-tenant helpers, lock-wait observation for concurrency tests, reachability closure, migration source-contract tests and frozen-hash pins, the pinned Supabase CLI and one-fresh-reset rule, and what a passing DB test does and does not prove.
 tags: [db-tests, rls, migrations, vitest, supabase, testing, concurrency]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-a2371d6362e5db4bc834ad03
     resource: repo://CLAUDE.md
@@ -10,6 +13,8 @@ sources:
     resource: repo://docs/09_DATABASE_AND_RLS.md
   - id: openwiki-source-d81538d8891efe37053aeccb
     resource: repo://supabase/config.toml
+  - id: openwiki-source-f6a9df45d3a108b6059bb641
+    resource: repo://tests/ci/browser-selection.test.ts
   - id: openwiki-source-f08cb5f9aff737afac9bb1d1
     resource: repo://tests/db/active-card-per-mode.db.test.ts
   - id: openwiki-source-0d83da4b8318a33a4625642e
@@ -22,18 +27,19 @@ sources:
     resource: repo://tests/db/helpers/waitlist-concurrency.ts
   - id: openwiki-source-4d53e0951cb8b5b071868d30
     resource: repo://tests/db/mode-scoped-connect-provisioning.db.test.ts
+  - id: openwiki-source-a122c291bea87f78ace90c43
+    resource: repo://tests/db/new-studio-admission-default.db.test.ts
   - id: openwiki-source-7b7b3bd77fe1c8a232af1dcd
     resource: repo://tests/migrations/0127-fix-author-insert-policy.test.ts
+  - id: openwiki-source-a11a9d40d902ff26739beca0
+    resource: repo://tests/migrations/0205-new-studio-admission-default.test.ts
   - id: openwiki-source-d1274f4c491d333b834e3c28
     resource: repo://tests/migrations/helpers/migration-state.ts
   - id: openwiki-source-672b943870a6b7ef89646e1e
     resource: repo://tests/scripts/db-harness-guardrails.test.ts
   - id: openwiki-source-f312c1d8cbce2135dbecf8e0
     resource: repo://vitest.db.config.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Database and migration test harness
@@ -61,8 +67,8 @@ It does **not** prove anything about the hosted database:
 - what the production ACLs are.
 
 Hosted state comes only from the authorities on [Migrations and hosted state](../operations/migrations-and-hosted-state.md),
-and production privilege facts need a dated verification (see
-[RLS, grants and SECURITY DEFINER commands](../security/rls-grants-and-security-definer.md#7-what-production-verification-recorded-dated)).
+and production privilege facts need a recorded verification (see
+[RLS, grants and SECURITY DEFINER commands](../security/rls-grants-and-security-definer.md#7-what-production-verification-records)).
 
 ## 2. The DB lane
 
@@ -127,7 +133,7 @@ it, deliberately instead of shipping a production-reachable RPC that would accep
 `tests/migrations/` has one file per significant migration. These files pin:
 
 - each migration's scope — what it changes and what it must not touch;
-- the bytes of earlier **applied** migrations through SHA-256. 33 files use `createHash`, for example
+- the bytes of earlier **applied** migrations through SHA-256, computed with `createHash("sha256")` over the file, for example
   [`0127-fix-author-insert-policy.test.ts` L42-L51](../../tests/migrations/0127-fix-author-insert-policy.test.ts#L42-L51),
   which pins `0126`.
 
@@ -139,7 +145,14 @@ Tests must not hard-code the repository maximum or a "nothing above me" filename
 - the declared hosted maximum and its precision;
 - `versionsAbove` and `countVersion` (which must be 1).
 
-Those hand-maintained pins once lived in 18 files and went red after each new migration.
+`CLAUDE.md` records that those hand-maintained pins once lived in 18 files and went red after each new migration
+([§ 2. Migration state is DERIVED](../../CLAUDE.md#2-migration-state-is-derived--never-hard-code-it)). Only the current
+head's own test may assert that it is the maximum; at this source head that is `0205`
+([`0205-new-studio-admission-default.test.ts` L137-L144](../../tests/migrations/0205-new-studio-admission-default.test.ts#L137-L144)).
+The same derive-don't-pin rule reaches database tests: the `0205` apply-time repair suite reads its census set from the
+migration file instead of restating it
+([`new-studio-admission-default.db.test.ts` L858-L880](../../tests/db/new-studio-admission-default.db.test.ts#L858-L880)).
+How the per-migration tests are shaped is on [Migrations and hosted state](../operations/migrations-and-hosted-state.md).
 
 ## 4. The pinned CLI and the fresh-reset rule
 
@@ -176,7 +189,7 @@ until the next reset.
    ([`docs/09` § DB/RLS integration test harness (PR #220)](../../docs/09_DATABASE_AND_RLS.md#dbrls-integration-test-harness-pr-220), [§ Generated types drift check (PR #221)](../../docs/09_DATABASE_AND_RLS.md#generated-types-drift-check-pr-221)).
    `CLAUDE.md` requires the pinned `supabase@2.102.0`, because newer CLIs strip grants
    ([§ Local testing by migration risk class](../../CLAUDE.md#local-testing-by-migration-risk-class)).
-2. **`docs/09` quotes a dated browser-spec count.** It cites "54 specs under `e2e/`" in a note dated 2026-07-27
+2. **`docs/09` quotes a dated browser-spec count.** It cites "54 specs under `e2e/`" in a dated note
    ([§ DB/RLS integration test harness (PR #220)](../../docs/09_DATABASE_AND_RLS.md#dbrls-integration-test-harness-pr-220)). The browser group manifest now maps 94 specs.
 3. **The synthetic fleet is incomplete by its own account.** Its Studio C failure modes are inert labels, and
    richer per-domain seeding is not delivered

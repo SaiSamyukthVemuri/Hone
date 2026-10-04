@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:905b078c00fcd11527e5e95cee4f8c835a0c6d4b7d13f48423deb9ffea43a398",
+  "pageVersion": "sha256:90406482851c27c72919ebe412e98d5318ad2da0887bf55d9e8a8bbdaf0fe914",
   "claims": [
     {
-      "id": "claim_c4dab1eb34e54ddaac5816872a4a7b06",
+      "id": "claim_b7aa5ba1def94319aaaae9f68aa2e7a9",
       "statement": "Migration 0174 establishes that every legitimate appointment mutation goes through a reviewed SECURITY DEFINER command that writes exactly one semantic appointment_audit event, while raw lifecycle DML is denied and triggers never invent audit events.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_3eafc0e233b14815870d3b14db6eb1c3",
+      "id": "claim_c63474dd12de466dbb0ae18f014597f6",
       "statement": "Migration 0172 revokes INSERT, UPDATE and DELETE (plus TRUNCATE, REFERENCES, TRIGGER and MAINTAIN) on appointments and appointment_audit from anon and authenticated.",
       "evidence": [
         {
@@ -27,7 +27,17 @@
       ]
     },
     {
-      "id": "claim_9603cfd52f12472c8b5f3b8bdda5f212",
+      "id": "claim_b7c0d3815d8b4df38bc18e226dffc676",
+      "statement": "Migration 0174 removes service_role lifecycle DML on appointments except a temporary column-level UPDATE on postcare bookkeeping columns.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L1-L80",
+          "version": "repo-lines-v1:sha256:2851775694f951374c906d6b5103fb6215dbd05f0a86e0a7065f6cb860c08e91:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkZmE0ZDY1NGJjY2QzZjliMzA3N2RhZmY0MGUyOWQwYWJjYjEzNTAyZTNkNTNmY2I4OTU0NmZlODVjYjMzODUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmZjdiNjFhM2YxOWUzNDUxZTFhNGYyMjYwMzJiNGExMTQyMjMyNTVkZjJhMTYxZmE0NDJjZjFkNmMyYzkwYzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a491a05435cc4562a94cb5ef0131d131",
       "statement": "After migration 0177, service_role holds only SELECT on appointments with no column-level UPDATE, and postcare bookkeeping moved to the claim_postcare_send and settle_postcare_send commands.",
       "evidence": [
         {
@@ -37,8 +47,8 @@
       ]
     },
     {
-      "id": "claim_b5594a29537a404d95dd162eb366d652",
-      "statement": "A TypeScript-compiler-based census guard requires zero direct appointments writers and zero appointment_audit runtime writers in application code.",
+      "id": "claim_287f93a8e9ca477397ea9a0a1161365e",
+      "statement": "A TypeScript-compiler-based census guard with non-vacuity controls requires that application code has no direct appointments writer and no appointment_audit runtime writer, and pins the reviewed set of variable-table writers.",
       "evidence": [
         {
           "resource": "repo://tests/security/appointment-direct-dml-guard.test.ts#L518-L740",
@@ -47,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_c8ee8ff90d4f4f74996e2f1fb2f585c7",
+      "id": "claim_30681f8c629c4f46afdfc74517ff94a0",
       "statement": "create_public_appointment (0170) locks the studio row, takes the studio capacity advisory lock, validates availability, time, studio-local horizon, client and service, inserts the appointment with server-derived fields, and inserts its created audit row in the same transaction, executable only by service_role.",
       "evidence": [
         {
@@ -61,7 +71,7 @@
       ]
     },
     {
-      "id": "claim_3bac808a1a7c4df2a39cad402493b16a",
+      "id": "claim_311a5b23240545fbbcb4e666d816d37b",
       "statement": "create_public_appointment_for_new_client (0204) and create_waitlist_public_appointment (0195) both delegate appointment creation to create_public_appointment and are executable only by service_role.",
       "evidence": [
         {
@@ -83,7 +93,7 @@
       ]
     },
     {
-      "id": "claim_907a825846c04b828cfbe2db7870e585",
+      "id": "claim_5072171c54ce4a5f9f723e0f5a9ad343",
       "statement": "The latest definitions of create_internal_appointment_v2, practitioner_cancel_appointment and move_or_reassign_appointment are in migration 0174, which revokes EXECUTE on them from public, anon and authenticated and retains service_role.",
       "evidence": [
         {
@@ -105,7 +115,7 @@
       ]
     },
     {
-      "id": "claim_c57ce7459a794517b5a5362be070f2e3",
+      "id": "claim_30f9463c0c464ddb8c6f9f8a7f6e1376",
       "statement": "A DB test pins the installed functions that insert into appointment_audit to exactly create_internal_appointment_v2, create_public_appointment, mark_appointment_complete, mark_appointment_no_show, move_or_reassign_appointment, practitioner_cancel_appointment, public_cancel_appointment_with_token, reschedule_appointment_v2 and write_appointment_audit, with no trigger writing audit rows.",
       "evidence": [
         {
@@ -115,7 +125,7 @@
       ]
     },
     {
-      "id": "claim_dac674f9ef1b4e4c830740b43154cdac",
+      "id": "claim_22564e1c129d49869061ffa193c8c9c8",
       "statement": "Migration 0175 dropped the legacy reschedule_appointment, practitioner_move_appointment and create_internal_appointment functions.",
       "evidence": [
         {
@@ -125,7 +135,7 @@
       ]
     },
     {
-      "id": "claim_c1c29289a30c43f5bf147f58e117cb1a",
+      "id": "claim_8bac084a79c344fe8271a6c9071ddb73",
       "statement": "A BEFORE UPDATE OF status trigger allows only confirmed to completed, cancelled or no_show and the repair edges from those terminal states back to confirmed, and refuses any other change or same-status rewrite with SQLSTATE 23514.",
       "evidence": [
         {
@@ -135,7 +145,7 @@
       ]
     },
     {
-      "id": "claim_7ea474e35929415ea92b90089e6698b0",
+      "id": "claim_99f3e34e2d284dd0841c017be66dfdee",
       "statement": "Appointment completion is allowed from starts_at while no-show stays gated on ends_at, and early completion does not release the booked interval's capacity.",
       "evidence": [
         {
@@ -149,7 +159,7 @@
       ]
     },
     {
-      "id": "claim_66d731d597df42c4afb176fc4a3c5147",
+      "id": "claim_c2759c5bde684de69f95b54ff378927c",
       "statement": "Internal booking lets owners book for any eligible practitioner and members only for themselves, refuses inactive, ineligible, cross-studio, past and non-positive-duration bookings, yields 23P01 for a double booking of one practitioner, and serializes concurrent bookings with a studio advisory lock.",
       "evidence": [
         {
@@ -159,7 +169,7 @@
       ]
     },
     {
-      "id": "claim_3984bf69c0954394b049b270c86183aa",
+      "id": "claim_02eb3f0100f447a0afe9feaec0c6a024",
       "statement": "revert_appointment_outcome is an owner-only, service_role-executed repair limited to a 72-hour window that refuses when blocking dependents exist, and repair commands lock studio row, then studio capacity advisory lock, then the appointment row.",
       "evidence": [
         {
@@ -177,7 +187,7 @@
       ]
     },
     {
-      "id": "claim_58a385527d0042c59c22f4d3779296ef",
+      "id": "claim_a296f0b7fa494c8e9d417fca0bc0083b",
       "statement": "Migration 0174 adds creator, canceller and outside-availability authoriser practitioner attribution columns to appointments, with NULL meaning no practitioner actor, and DB tests prove public bookings and client-token cancellations leave them NULL.",
       "evidence": [
         {
@@ -191,7 +201,7 @@
       ]
     },
     {
-      "id": "claim_712765bf2aec4374a0e100f43147f498",
+      "id": "claim_3223f9fee8b6477697aeadd75f6fe347",
       "statement": "Migrations 0173 and 0175 record a standing prohibition on re-emitting snapshot_appointment_buffer() because production carries out-of-band behaviour in that function that exists in no repository migration.",
       "evidence": [
         {
@@ -205,7 +215,7 @@
       ]
     },
     {
-      "id": "claim_7ed5ecc637b74641a813d07a8f916a5f",
+      "id": "claim_e9a74591c44d4835a422bd2935b8487d",
       "statement": "The service-role allowlist entry for move-appointment-actions.ts still says move_or_reassign_appointment's effective definition is 0152 and that practitioner_move_appointment is a caller-less delegate, although 0174 redefined the former and 0175 dropped the latter.",
       "evidence": [
         {
@@ -225,6 +235,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T20:08:11.217Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

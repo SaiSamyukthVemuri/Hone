@@ -3,6 +3,9 @@ type: domain model
 title: Probes, treatment settings and record keeping
 description: The electrolysis setup and safety-record model — the code-only probe catalog, machine readings and the pulse-delay range, numbing notes, structured observation chips and the unified reaction contract, inventory-backed probe lots with a same-studio composite FK, expiry versus discard as independent lifecycles, sterile-item and disinfectant logbooks — and, for each rule, whether the database or only the application enforces it.
 tags: [probes, record-keeping, sterile-inventory, observation-chips, charting, validation]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-5ac4bfebd3f01c9163136f75
     resource: repo://app/(app)/clients/%5Bid%5D/sessions/%5BsessionId%5D/actions.ts
@@ -40,10 +43,7 @@ sources:
     resource: repo://tests/db/probe-inventory-linkage.db.test.ts
   - id: openwiki-source-1ee7a7ace5306ea40f92a98e
     resource: repo://tests/db/sterile-item-discard-lifecycle.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Probes, treatment settings and record keeping
@@ -224,7 +224,7 @@ discard status is computed at read time ([`disinfectant-status.ts`](../../lib/re
      ([`0156` L24](../../supabase/migrations/0156_conditional_numbing_notes.sql#L24-L24)).
    - `addElectrolysisEntryAction` still reads a `probe_lot_id` form field, validates it against the legacy
      `probe_lots` table, and passes it to `add_electrolysis_pass`
-     ([`sessions/[sessionId]/actions.ts` L305-L330](../../app/(app)/clients/[id]/sessions/[sessionId]/actions.ts#L305-L330)).
+     (`app/(app)/clients/[id]/sessions/[sessionId]/actions.ts` L305-L330).
    - The mounted entry form never sends that field, and the only component that renders a legacy lot selector is
      imported nowhere. In practice the column stays NULL, but a direct POST could still set it to an own-studio
      legacy lot.

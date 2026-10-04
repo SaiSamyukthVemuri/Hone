@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:154a006be841679f27b680b1a0a417f429df48646a063e1e3b2a2e972cbbe74f",
+  "pageVersion": "sha256:d2b212af158af07bcfcddc19f78c2b8456764d53bc2781e69d1983baafcf9432",
   "claims": [
     {
-      "id": "claim_5ac4dcc6b25940d5ac518de98fcec118",
+      "id": "claim_cbc7de4e5d264c619b772e98a3c024ff",
       "statement": "lib/security/token-routes.ts is the canonical registry of seven token-bearing route prefixes (/portal/verify, /cancel, /reschedule, /manage, /intake, /calendar-feed, /invitation), exporting `:token*` catch-all header patterns and a fixed [Redacted] placeholder that is deliberately not a hash, fingerprint or truncation of the credential.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_986701bebe8e4563b1f303cc2e6c42ef",
+      "id": "claim_1a649c47c31e486b9726ff18fcf21726",
       "statement": "canonicalizeTokenPaths replaces the credential based on the route prefix rather than the credential's shape, consumes trailing segments, query string and fragment, leaves unrelated ids intact, and never parses or percent-decodes the URL.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_4c6812f272df4be689d95cc7285539f5",
+      "id": "claim_318e56495a1240bc9a862b781ce2f96e",
       "statement": "next.config.ts applies a global security-header block to every route and then, declared after it so its keys win, a token-route block on each registry pattern that sets X-Robots-Tag noindex,nofollow and Referrer-Policy no-referrer.",
       "evidence": [
         {
@@ -37,7 +37,7 @@
       ]
     },
     {
-      "id": "claim_4da4c414a60c492784bb1e794a970ef1",
+      "id": "claim_f9d3e12359ae49f882495e9ac4f64cef",
       "statement": "The global header baseline sets one-year HSTS with includeSubDomains and no preload, X-Frame-Options DENY, nosniff, Referrer-Policy strict-origin-when-cross-origin, an all-empty Permissions-Policy, and an enforced CSP with frame-ancestors 'none', 'unsafe-inline' kept, 'unsafe-eval' only in development, and connect-src limited to self, the Supabase host, Stripe and Vercel.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_7401cdc9c64e486ca0afd56b8506301a",
+      "id": "claim_fc37d4a0e98342c7be4b026989c2bbf6",
       "statement": "When NEXT_PUBLIC_SUPABASE_URL is missing or malformed at build time, the CSP connect-src falls back to wildcard https and wss *.supabase.co sources rather than failing the build.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_0242ecacc10b42feb4e90b8f22b9491e",
+      "id": "claim_c144ec7a4f904b14af5c14d3ef691218",
       "statement": "The Sentry scrubber canonicalizes token paths first and then redacts emails, JWTs, bearer tokens, Supabase token shapes and phone-number runs from every string, and drops values under a deny-by-default list of auth, identifier and clinical keys.",
       "evidence": [
         {
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "id": "claim_ab2ecaae40f4487d9b18f6b9bdaf6bfe",
+      "id": "claim_5e673b8695d4476f8e035c614ab137b9",
       "statement": "Before a Sentry event leaves the process, request cookies, headers and query string are deleted, the request URL is token-canonicalized and stripped of query and fragment, console breadcrumbs are dropped entirely, and the user object loses email, username and IP address.",
       "evidence": [
         {
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "id": "claim_0597fb51429d4731967bb5f1ed3328c1",
+      "id": "claim_4185fa1938b64235bc12947e1b309736",
       "statement": "The server Sentry configuration sets sendDefaultPii false and installs the scrubber as beforeSend, beforeSendTransaction and beforeBreadcrumb, and a parity test requires all three runtimes to keep those hooks and every registry family to be canonicalized.",
       "evidence": [
         {
@@ -95,7 +95,7 @@
       ]
     },
     {
-      "id": "claim_37da3c1a2d5e4e5390c9dc1cbc65a095",
+      "id": "claim_da3fd8d2800c42288d9a32ef3af05024",
       "statement": "Production performance traces are sampled at 10% and development at 100%, while error events are not subject to that sampling rate.",
       "evidence": [
         {
@@ -105,7 +105,7 @@
       ]
     },
     {
-      "id": "claim_59c698969a06456caf6dea5f48d3e02e",
+      "id": "claim_43ae6bc8d7c74b95bf52b0513209e99b",
       "statement": "The PostHog browser before_send hook fails closed: an event survives only if its $current_url is an exact canonical marketing route and its name is on the marketing allowlist, so app, booking, portal, token, login, payment, unknown-route and unparsable-URL events are dropped rather than redacted.",
       "evidence": [
         {
@@ -119,7 +119,7 @@
       ]
     },
     {
-      "id": "claim_752fda0c4b9347f8bc1fdb53e2432c9b",
+      "id": "claim_d032e1508b1b4795b023a3ce1730f13d",
       "statement": "PostHog is initialized with session recording disabled, exception capture off, autocapture armed only on marketing URLs, the /ingest same-origin proxy as API host, and guardBrowserEvent as before_send.",
       "evidence": [
         {
@@ -129,7 +129,7 @@
       ]
     },
     {
-      "id": "claim_508494bd2a43441496fa67664b6f2816",
+      "id": "claim_956d109f22e6443fa645186cd663fe12",
       "statement": "A route-privacy test enumerates every dynamic route under app/ and fails unless each is registered as a token route or explicitly classified non-bearer with a written reason, so a new bearer route fails by default.",
       "evidence": [
         {
@@ -143,7 +143,7 @@
       ]
     },
     {
-      "id": "claim_c315b1d0fff74411a285a076a5b70bc0",
+      "id": "claim_4e8661eda3d14389ae5d34302bea2a97",
       "statement": "Calendar-feed tokens are 32 random bytes encoded base64url and are stored only as a SHA-256 hex digest; migration 0116 dropped the raw calendar_feed_token column and its index, which a DB test verifies on the migrated schema.",
       "evidence": [
         {
@@ -161,7 +161,7 @@
       ]
     },
     {
-      "id": "claim_9287e93b981745c99bba6c09599e83a2",
+      "id": "claim_5e1d65bd492444e7a86ba871049c9a7a",
       "statement": "The calendar feed resolves the practitioner by token hash with the service-role client, returns a generic 404 for a short or unknown token, an inactive practitioner or any lookup error, excludes cancelled appointments, emits generic event titles and descriptions without client or service data, and is served private, no-store.",
       "evidence": [
         {
@@ -175,7 +175,7 @@
       ]
     },
     {
-      "id": "claim_a2271ab58c0c48598b2ed04ec473aefa",
+      "id": "claim_544a122643f444f59c987039ec098616",
       "statement": "Waitlist invitation tokens are 32 random bytes hex-encoded in SQL with only their SHA-256 stored, so the raw token is returned once and a resend must mint a new link.",
       "evidence": [
         {
@@ -189,7 +189,7 @@
       ]
     },
     {
-      "id": "claim_b9e4d21b2b224af1b126c101fc72f8c2",
+      "id": "claim_b907d17326664dfcb2480bb52d3d30a3",
       "statement": "The invitation recipient-proof capability is kept in an httpOnly cookie whose HMAC binds it to the hash of the invitation token and to the database-issued expiry; without APPOINTMENT_SIGNING_SECRET nothing is treated as proven.",
       "evidence": [
         {
@@ -199,7 +199,7 @@
       ]
     },
     {
-      "id": "claim_94f9aa6df6bd441ea4566e1fa9c166e7",
+      "id": "claim_65b5a2cdabcc450fad1724b282f71ac0",
       "statement": "Appointment HMAC tokens and intake tokens each require a dedicated signing secret with no fallback to another key, and the secret getter throws when it is unset; intake verification is timing-safe and rejects expired payloads.",
       "evidence": [
         {
@@ -217,7 +217,7 @@
       ]
     },
     {
-      "id": "claim_008ad61fee394196b7533dfdcda3fe14",
+      "id": "claim_0c62bace904b4358bde77f36db8aea83",
       "statement": "The public cancellation action collapses malformed, unknown and expired tokens to one generic error, and the manage action returns a single generic message for any non-success, so error shapes cannot reveal whether an appointment or token exists.",
       "evidence": [
         {
@@ -231,7 +231,7 @@
       ]
     },
     {
-      "id": "claim_d73abcf4d93c408299b9430f7ab6c79f",
+      "id": "claim_1d267f1cb9e141c6ab7f06bfab45f9c9",
       "statement": "The public Upstash rate limiters fail open: with missing Upstash configuration or a backend error the request is allowed, missing configuration is logged once per instance (as an error in production), and identifiers are SHA-256 hashed before reaching Redis keys or logs.",
       "evidence": [
         {
@@ -245,7 +245,7 @@
       ]
     },
     {
-      "id": "claim_9f058840d63b4d968cb64c340a48506d",
+      "id": "claim_d437e6021b444fd3ae9f22c6e99d7a3f",
       "statement": "Rate-limit client IP is taken from x-real-ip, then the first x-forwarded-for hop, and otherwise all callers share a single unknown_ip bucket.",
       "evidence": [
         {
@@ -255,7 +255,7 @@
       ]
     },
     {
-      "id": "claim_bac5f043257d4deabf787afca09058d9",
+      "id": "claim_1682db47a1da4fc3ab9ff99aa8ce3f8d",
       "statement": "Public slot fetches are limited to 60 per 60 seconds per (IP, slug), and public booking submits to 5 per 10 minutes per (IP, slug) and 3 per hour per (email, slug).",
       "evidence": [
         {
@@ -269,7 +269,7 @@
       ]
     },
     {
-      "id": "claim_14047dc3713b4ec39ed576546d8951a5",
+      "id": "claim_f3c8c8dbf5fa486a80966cdc9d7a705e",
       "statement": "Token-route actions are rate-limited per hash(token):hash(IP) with per-class windows, and the limiter runs before token verification so a 429 reveals nothing about token validity.",
       "evidence": [
         {
@@ -283,7 +283,7 @@
       ]
     },
     {
-      "id": "claim_e1fd9bbbefad47e8a9ef01575436fc9e",
+      "id": "claim_96cebe2af80142af865817534f8a00ad",
       "statement": "The waitlist recipient-proof limiter fails open by an explicit decision, because failing closed would strand a prospect who has no other way to obtain the proof code their booking requires; its limits are imported from the delivery policy module rather than restated.",
       "evidence": [
         {
@@ -293,7 +293,7 @@
       ]
     },
     {
-      "id": "claim_eff5ed4f21524ff4b3a15e244fd63f4c",
+      "id": "claim_05f6f837ec5b42a2945e3987d9ddf821",
       "statement": "The browser analytics boundary declares its own six-prefix token list without /invitation/ instead of importing the canonical registry, and the parity test covers only next.config.ts and the Sentry scrubber.",
       "evidence": [
         {
@@ -307,7 +307,7 @@
       ]
     },
     {
-      "id": "claim_21f0eac4c6cd49a9bb5e06ff72c51d53",
+      "id": "claim_3c55c8be393e49329946dae5f7e3c56b",
       "statement": "The token-route registry header and docs/03_SECURITY_AND_PRIVACY.md both describe six token families without /invitation, while the registry and its parity test have seven.",
       "evidence": [
         {
@@ -329,7 +329,7 @@
       ]
     },
     {
-      "id": "claim_8f9e7aa3a1594596a0946cabc4c918e5",
+      "id": "claim_dac28eb098d648708f14f745b8b9f95a",
       "statement": "docs/03_SECURITY_AND_PRIVACY.md and a calendar-feed token comment still describe the raw feed token as retained or read by the settings UI, although migration 0116 dropped the raw column.",
       "evidence": [
         {
@@ -347,7 +347,7 @@
       ]
     },
     {
-      "id": "claim_38a1c5bd9eb44839baaf0c1db9f779af",
+      "id": "claim_f64079b2d680471a9ab366e4e68dc21e",
       "statement": "The invitation route-privacy test header still says the invitation route does not exist and no prefix is added, although /invitation is registered and the route exists.",
       "evidence": [
         {
@@ -361,7 +361,7 @@
       ]
     },
     {
-      "id": "claim_916aae6b25e24dfe8f5458ab0152cabf",
+      "id": "claim_b6390a754f604caaa3bb7e32d3300e3b",
       "statement": "The intake signing-secret comment says apps without INTAKE_SIGNING_SECRET fail fast at startup, but the secret is read lazily, so the failure occurs when an intake token is first minted or verified.",
       "evidence": [
         {
@@ -369,10 +369,20 @@
           "version": "repo-lines-v1:sha256:d390df5c87dec697e2d29e87decf220d66bac5c54b17ff576d49e2c02d44f54a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFjNDNmMjE4MTlhYjhhZjFhMmYzM2U2NjkwMTczZGE0MmUyY2YyMzAyM2FlMzYzNDcwZmQyMWYwMTYxMWI3YzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzYTM1Mzc1ZWUwYjRiODRjZTM2MGMzYWE2NGQ3MWRjY2JkMDBiYzlmOTEzMWQ1ZWRkYmQwODBkNDgyZGNlYWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1N2NhNmQwYWU3NDc0ODA0YjAyMWIyZDQ3OTVmNzY5N2EyN2Q3N2IwYWRjNmE4ODNjODUwMTQ5ZjAxZmQyNTcifQ"
         }
       ]
+    },
+    {
+      "id": "claim_807d3d0b2b174c79ad2bb2daa0f91bb3",
+      "statement": "The migration ledger records migration 0116, which dropped the raw calendar-feed token column after hash-only lookup was deployed, as applied.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L2842-L2842",
+          "version": "repo-lines-v1:sha256:9061516c79f1efa13cb230de820ee3f246372170b1eefd4acbcc5dbb083cbad6:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTA2MTUxNmM3OWYxZWZhMTNjYjIzMGRlODIwZWUzZjI0NjM3MjE3MGIxZWVmZDRhY2JjYzVkYmIwODNjYmFkNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTA2MTUxNmM3OWYxZWZhMTNjYjIzMGRlODIwZWUzZjI0NjM3MjE3MGIxZWVmZDRhY2JjYzVkYmIwODNjYmFkNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTUwYjU0NDlhOWQxNWE5YmFlYjQ1MThmMjljNmNkNjEyOTkyNjNlOTlkZGM2ODgzZjZhMTA1MzhhNzhmMWU1YiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTMwMGM4MjIyYmMzNjE1NThmNjA5ZDZjZTA5MmFkYjkyYjMxYjZlZWJkZTJkNzAwZmZlODhkYzIzYmI2MTdiMSJ9"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

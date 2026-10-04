@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:4b2a5fc0b0c1748e30981ffe6837d34270343b5a02c0731ee303911a7a2a4cde",
+  "pageVersion": "sha256:88f0b1a1c79aeb0a6dacea6c2a93f1c8550f63b4d52d5a52f9deaae267e0a352",
   "claims": [
     {
-      "id": "claim_f96ba282f8d94c95bbfb51454ed2ca9b",
+      "id": "claim_16d19326cab04f4b8d63e6a987614bbb",
       "statement": "Studios are created only by the operator-gated New Studio Wizard action, which re-checks isAdmin, records blocked, started, failed and succeeded admin actions, and uses the service-role client because studios has no INSERT policy and owner invitations are owner-only under RLS.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_0442f23e110b40d98409069967bcc6c1",
+      "id": "claim_42affbdaa4e84e29a9e43bb8bfad4bfb",
       "statement": "The wizard inserts the studio and then the owner invitation as two separate writes, compensating for an invitation failure by deleting the just-created studio and logging the studio id if that cleanup also fails.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_4070bcb3faad4d1893141bf2342d5bc1",
+      "id": "claim_b9ef2b04796f4368870b7cc8f6eafe22",
       "statement": "Wizard input validation requires a lowercase alphanumeric-and-hyphen slug of at most 64 characters that is not a reserved route name, and a valid IANA timezone defaulting to America/Toronto.",
       "evidence": [
         {
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "id": "claim_998c4d0114fa4c4c8142c6d7b6af69eb",
+      "id": "claim_040f64600817440e81971b19df95c87c",
       "statement": "The wizard sets onboarding_v2_enabled and sends the welcome invitation email only when the operator opts in, and studio creation does not depend on that email succeeding.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_56a650b9e4024a88abeabbe14def5de5",
+      "id": "claim_62220b49561e4decbaa6c84027203813",
       "statement": "A DB test proves an ordinary authenticated user cannot insert a studio or an owner invitation, and that the service-role wizard path leaves no practitioner until admin_accept_pending_invitation provisions exactly one active owner with terms and privacy stamped.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_361433ea65ba40ad96689c89e593daa0",
+      "id": "claim_352da4f3953047a8a3df92420ce487c7",
       "statement": "Team invitation, revocation and removal actions require the live role owner via getCurrentPractitionerWithStudio; invitations accept only the owner or practitioner role and refuse emails already active or already invited in the studio.",
       "evidence": [
         {
@@ -71,7 +71,7 @@
       ]
     },
     {
-      "id": "claim_7d29af48f34f472a8a9d238b054066b9",
+      "id": "claim_3d6acf1efa874fe3b57812e8f0394c9e",
       "statement": "Only one pending invitation per email can exist across all studios, enforced by a partial unique index on lower(email) where status is pending.",
       "evidence": [
         {
@@ -85,7 +85,7 @@
       ]
     },
     {
-      "id": "claim_18c031a4f104486c8d98ae9112d73f44",
+      "id": "claim_fbb5c7d76ff84f5f8088de407722adf8",
       "statement": "Team invitation emails are sent directly through the Resend client without an idempotency key, and a send failure is logged without failing the invitation.",
       "evidence": [
         {
@@ -99,7 +99,7 @@
       ]
     },
     {
-      "id": "claim_e1f725a636144eeeab9aaefadfbabad4",
+      "id": "claim_6faabca107444842acd8437fd9c5dd65",
       "statement": "Removing a practitioner goes through the service-role set_practitioner_active_locked command, which takes the studio lock order, refuses to deactivate the owner and preserves the practitioner's appointments; owners cannot remove themselves.",
       "evidence": [
         {
@@ -109,7 +109,7 @@
       ]
     },
     {
-      "id": "claim_f127d332566b4a9c9201e5d32c1376ca",
+      "id": "claim_fe78d76e934e44638eeadf73b24d653f",
       "statement": "Migration 0140 added a default-false studios.onboarding_v2_enabled flag and a per-studio studio_onboarding progress row, with a SECURITY INVOKER guard trigger rejecting flag changes by anon or authenticated because the owners-update policy otherwise lets an owner write any studios column.",
       "evidence": [
         {
@@ -119,7 +119,7 @@
       ]
     },
     {
-      "id": "claim_ec6ce13b8d194d25ab47ec87f77c2819",
+      "id": "claim_a2cd58d789a44799a0a020d60a655880",
       "statement": "The practitioner-capacity flags use the same pattern: a guard trigger on studios rejects any change to either capacity flag by anon or authenticated.",
       "evidence": [
         {
@@ -129,7 +129,7 @@
       ]
     },
     {
-      "id": "claim_e00d2f6affd34108896da960068c707a",
+      "id": "claim_552fc47ebf204e96a656503a0230d586",
       "statement": "Owners record onboarding progress (step pointer, skipped, completed, dismissed and celebrated stamps) by upserting their own studio_onboarding row through the RLS client under owner-write policy.",
       "evidence": [
         {
@@ -139,7 +139,7 @@
       ]
     },
     {
-      "id": "claim_5262411132514fdab3ab3232a198bde2",
+      "id": "claim_89e03d2454b44e2abe1d9567c5f1d19d",
       "statement": "Treatment images live in a private bucket with 60-second signed URLs, a 15 MB cap and a JPEG/PNG/WebP allowlist, and their storage path is server-derived as studio/client/uuid.ext and revalidated against the caller's studio and the row's client before any URL is signed.",
       "evidence": [
         {
@@ -149,7 +149,7 @@
       ]
     },
     {
-      "id": "claim_abf4258d10e34ee891ba17ff5bb8a496",
+      "id": "claim_2a1164f0779844a2a4991b8e19f8b4d1",
       "statement": "Migration 0093 made treatment-image objects service-role only, bound bucket and path to the row's studio and client with CHECK constraints, enforced parent consistency and froze identity columns with a trigger, and only raises a notice asking the operator to confirm bucket privacy if it lacks privilege to enforce it.",
       "evidence": [
         {
@@ -159,7 +159,7 @@
       ]
     },
     {
-      "id": "claim_1e229de44a3642fbb933ffb79e3ef8b5",
+      "id": "claim_633a52b4d7b24db48b3f28aeb07ae83b",
       "statement": "The studio data export is an owner-only server action that refuses inactive practitioners, reads through the RLS client and returns a ZIP of CSV files built from the export resource registry.",
       "evidence": [
         {
@@ -169,7 +169,7 @@
       ]
     },
     {
-      "id": "claim_ab1cfa649b224817a77c81895fcfc5e3",
+      "id": "claim_d97cc9a47665441ea2b21a1b818d061f",
       "statement": "The export resource registry assigns every public base table and storage bucket exactly one disposition (exported, excluded or pending), and the declared disposition, executed SELECT, CSV output and manifest counts must agree or tests fail.",
       "evidence": [
         {
@@ -179,7 +179,7 @@
       ]
     },
     {
-      "id": "claim_0a1e19e4e46b463eba924882cdd25058",
+      "id": "claim_9b2e3f67ffc247ef863892f47cbaf557",
       "statement": "A DB test introspects the migrated local schema and fails when a live table or bucket lacks a disposition, a registry entry no longer exists, an exported table's included and excluded columns do not exactly equal its live columns, or a credential-bearing table is not permanently excluded.",
       "evidence": [
         {
@@ -189,8 +189,8 @@
       ]
     },
     {
-      "id": "claim_63c14832af8b4fdbaf3dec963a5d25d9",
-      "statement": "Known limitation L29 records the studio export as still partial at P2 open, with roughly fifty-nine studio-owned resources pending and the payload-changing TRUTH-01B slice not yet merged.",
+      "id": "claim_51efb4e46b4e4328ab6fe695a5e599f7",
+      "statement": "Known limitation L29 records the studio export as still partial at P2 open, with a large set of studio-owned resources pending, each carrying a ticket and tier in the registry, and the payload-changing TRUTH-01B slice not yet merged.",
       "evidence": [
         {
           "resource": "repo://docs/production/known-limitations.md#L570-L582",
@@ -199,7 +199,7 @@
       ]
     },
     {
-      "id": "claim_1e0f5e26835a416e98108975f11803d8",
+      "id": "claim_17af3771e0fe4fe1b19f926b0b5d4d5c",
       "statement": "Quick Import is a pure parse, normalize, group and plan pipeline that writes only imported treatment memories, skips duplicate clients rather than merging them, caps imports at 2,000 rows and never stores the raw pasted text.",
       "evidence": [
         {
@@ -209,7 +209,7 @@
       ]
     },
     {
-      "id": "claim_f855720e0c6c46e580275c1e01fb97c1",
+      "id": "claim_f452817fe8af4db7802296bfd6e9f2f3",
       "statement": "Both Quick Import server actions require an active owner who also has platform-operator standing before their first statement.",
       "evidence": [
         {
@@ -219,7 +219,7 @@
       ]
     },
     {
-      "id": "claim_499ee4ff8cd5437bba1b90a301b4d619",
+      "id": "claim_fd08768cc85b41cb86abeec37d5d8d5f",
       "statement": "Quick Import confirmation performs three independent writes (the import batch, the clients, then the memories) without a transaction; when the memory insert still fails after one retry the created clients stay committed and the batch is soft-voided, and known limitation L24 records execution as mitigated to operator-assisted runs, not fixed.",
       "evidence": [
         {
@@ -233,7 +233,7 @@
       ]
     },
     {
-      "id": "claim_f9d555f40ab141d5a970f9a4c08388d8",
+      "id": "claim_89cfa08846fd48a4a2c5c5d0bcbb8d6c",
       "statement": "logAdminAction is the only writer and reader of admin_action_events, uses the service-role client after the isAdmin gate, drops credential- or PII-shaped metadata keys, keeps only primitive values and applies the ops-alert redactor.",
       "evidence": [
         {
@@ -243,7 +243,7 @@
       ]
     },
     {
-      "id": "claim_e4c716753d0c4138a4346fe4d3a8950d",
+      "id": "claim_0e0ada786a2443cb8ba4c6ec178587ae",
       "statement": "Known limitations L27 (no automated retention or permanent deletion) and L28 (soft-only treatment-image archive with no storage reconciler) are recorded open at P2.",
       "evidence": [
         {
@@ -253,7 +253,7 @@
       ]
     },
     {
-      "id": "claim_60974dee630f46a98975bc98c6a94f4d",
+      "id": "claim_11733a6837ca410b9e3ce6c3c37dc229",
       "statement": "The wizard action's comments still say the owner practitioner is created by handle_new_user on first sign-in and that there is no email automation, and the wizard DB test's header and title still credit the trigger, although 0141 made the trigger a no-op and the test body provisions through explicit acceptance.",
       "evidence": [
         {
@@ -275,7 +275,7 @@
       ]
     },
     {
-      "id": "claim_b89640b1574e4a859ef778650c2cca86",
+      "id": "claim_c068b9319aac44f79b67965ddccc1008",
       "statement": "Wizard failure paths place raw database error messages, and for a duplicate invitation the owner email, into the redirect URL's error query parameter.",
       "evidence": [
         {
@@ -291,10 +291,102 @@
           "version": "repo-lines-v1:sha256:64fea8c08dcc09ccf5ef2fd416dd3479c165ab164f2cc15864ac900a85c193ab:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRlYzlhYTYzOWRjYWQxMDU1MTc5OGRlM2JiNzBiN2FmOWE2MjM0YjViYjI5YmQ1MGE4Nzk5ZjEzMjJlOGQ4ODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU5NDZiMjBmM2I1ZWI3Y2VjYjRiNWYzMjc1YjdiMmU2YmI0OWZlMTU2MGQyMTBmM2E2NGFkMmM2MjQ4ZjExM2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQzMjFlOWNjMTY2ZDI1YWE2ZjYyMTM1Yzc2OTNiNTY5NWQ3NWI3Y2YyMDA0NWJjNWVlM2VmN2NiN2ExODVhZTcifQ"
         }
       ]
+    },
+    {
+      "id": "claim_56c2388a81bf4649a1f13f4eb534df48",
+      "statement": "Migration 0205 gives studios.new_client_admission_mode_set_at a now() default without changing any function, trigger, policy or grant, so a studio inserted without the admission columns is born open and stamped with set_by NULL instead of being indistinguishable from an unstamped pre-0204 legacy row that must cut over through Waitlist.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0205_new_studio_admission_default.sql#L1-L32",
+          "version": "repo-lines-v1:sha256:dd553c4a7efb5f0d473c6fa77be2c903e592e7b583310d6fcd202577fd7f486b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUzYTNmZWRmZTdkZWVkZGExNjMzOTYzZmVlNjgzMmFhNDc0OTlhZjNlYzA4ZGQ3NTM3YWE4YjgxNWUyYTk0NDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYxNDIwOTA1ZTU1MGE5MTI0ODg2NmVmNDExNTFhOGYwZWU4ZmFlYTUxNDY2Njk4MDQzN2QyNTE3MmQwYzc0OTYifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0205_new_studio_admission_default.sql#L283-L297",
+          "version": "repo-lines-v1:sha256:fe7e88a42fbeca448ac883f58eec3ff789a78aac89888caf355a8e54dd30576b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkODJhNTNhMTI3YTVmZTEwNzNlMTk0YWQ2NTQwYWZmOTNjMTFmOGNjYjQyZDZhY2FmNWQyNDI2ZWRjMzFiNTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3NzdlZTBmNGIxOTc0OWFkZTc1YTI4N2Y2ZGIyZWE1YTA0NGViMjgxOTRjNzVkZTM1OTQ0N2Q1MTMzMzliN2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRhOGM3OTM5ODI5ZjlkNzYwM2E5NWM5NDQ1NDcwOTM5N2NlZTRmZjY5YzM2ZTU3Y2ViNDE0ZTU3NTRjNjdmYzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRjZWUxM2JhZGIwOTA2NmVlOWNhZWYwNWI1ZGIyN2YzOGIxYzU0NjQ1NDdhYWQzMjBkMmI4ZWM3YjE0ZjMxMTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_923279f0f17840758977b297d2ee3591",
+      "statement": "Migration 0205 replaces the 0204 column comments on new_client_admission_mode_set_at and new_client_admission_mode_set_by forward, defining non-null set_at as initialized by the system at creation or by an owner through set_new_client_admission_mode.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0205_new_studio_admission_default.sql#L300-L340",
+          "version": "repo-lines-v1:sha256:86f519deed9d682cefce2ec73369a5be5f9b4b0824e79f5d148ca9834275260a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgwZDc2N2QzZWY3NzRkYzllNTA4ODUzMWJlMTdiOWIwZTZlOWQ0YTRlYmQxZmY2OWVhNWY5Mjc2MWMyOGI3N2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0MjE5NzRjZTFkN2Y2ZmZiNDlhZmY4NzUxNzU5NDIwOWQyNWE1NWM2MzgzYTc4MGIzYjI0ODg2ZDQ0OTdhMzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNhZjYwN2EzYmRlOTZlMGJkMDI0ZWQ2ZDAyNjllNWY1NjE3MmZjZTE1NmZmZTEwMjI0ZjAyNzNhMmIzYjE2YjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhhNmUwOGEwNWY4OGRhMmJjYjBkYTY0ZjdmMWFlMmNmYWI0MTIzNjhjZTJlZjhlMGVkMjZmOGQ3ZGE0ODMyZmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dfc1335804a6474ba02648c16fcbe07f",
+      "statement": "The New Studio Wizard sets none of the three new-client admission fields and does not call set_new_client_admission_mode, inheriting the 0205 column default instead, and a source test pins that absence together with a non-vacuity check that the studio insert still exists.",
+      "evidence": [
+        {
+          "resource": "repo://tests/app/admin/new-studio-wizard.test.ts#L149-L179",
+          "version": "repo-lines-v1:sha256:2c90c3430750463187becd3c8d66fb59db4aea3b7faee0cc4580d24cd18875a1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4YWEzNzg2ODY0MGIyODQ3MjMxZDRhMTUzYTUyOGYzM2RiNDIzNmY3ZTlkNTJkZmE2YWYwYzU3Y2JlOWVkMjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMwZjg5M2E2NDkxMDQ2M2JjNzlhODgzMDlkN2FmYmVjNjM0ZmMxOGFmMjlhNTlhMzQ5NDA3MzVlMzE4MTBmZmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4da1735abb3d4fde929ba1d78eafaabd",
+      "statement": "A null set_by at studio creation is a convention of creation paths that omit the admission columns rather than an invariant, because the column has no foreign key and public.studios has no INSERT trigger.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0205_new_studio_admission_default.sql#L64-L111",
+          "version": "repo-lines-v1:sha256:8d5ac3f7b88b15e5f80706ceb29db89297c9701dfe74addaa1ba26230ae591a6:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE5ODc4YzA2Mzg0ZTZlNDhlZDAwYmJmYTA2MThmZTIwZDk5NmE3N2VjMWEwZDczM2I1ZmI3MmM0ZWJlNzBjZTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJiZTUwYmI4NzZmMzczYTIyNTgxZjY3ZjRiNThiMzkxZWNlODAzZTFlNTMxOGI3MDhlMzMwOTJlNmNhZGQ5MjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJhODY3NGYwMmEzYmZhMGJjYjkwMzgzM2ZlMzFmYjlmZWIzMmZlODQyODU2MmJmOTcxMzlkZjE2NTNiMjcyMTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9b89635081254ddc9a910d6f5f062d9d",
+      "statement": "Migration 0205 carries an idempotent apply-time repair that stamps only studios provably created between the 0204 and 0205 applies, identified by census membership rather than the owner-mutable created_at, arming the admission guard permit per row.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0205_new_studio_admission_default.sql#L344-L380",
+          "version": "repo-lines-v1:sha256:6d2ae5d5603c7867a9fc62cb49d243efeab66df32901ff5e6667523ca7ef8b1d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyYmVlODkyOWJmNWExNWVmYjI4NTBmN2QxOThiOGNlMzM5NTM1YjdjNWU3MjQ1NWNiZGQwNDM2ZTBkZjg4ZmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjczMzE0ZDYyZjViZTVjN2ZjMzZjZDU3Yjk3Yzg0MDk3Yjk5Mjg2NGE4ZGY1OGFhMWFjNGRjZjQ2NDNlYTA0YjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhhNmUwOGEwNWY4OGRhMmJjYjBkYTY0ZjdmMWFlMmNmYWI0MTIzNjhjZTJlZjhlMGVkMjZmOGQ3ZGE0ODMyZmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjIyNTEyMGExMjhhOTY4ZmY1M2M4M2YxZDBhYWI3MTc4NzExMWNhYmY0NjI0MWJlZmRmNDU2MjU2ZjU1NjMyZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_037d44e413254b62a669b3bfbfe03812",
+      "statement": "DB tests prove a bare studio insert is system-initialized (open, stamped from the database clock, set_by NULL), a fresh owner can move directly to Open or Closed and Waitlist records the owner, the legacy transition guard is unchanged for unstamped rows, and the apply-time repair closes only the census-to-apply window.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/new-studio-admission-default.db.test.ts#L502-L637",
+          "version": "repo-lines-v1:sha256:7cb7c72d4ad5a1be32b905d1e3f40064d2474ca597576d5132a622090b3e79d4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYzI4Y2Y0MTBlMWY3OWRjMzZlMWE2NGQwOWVlNGE4YWZkY2Y3MDAyODczN2YxNTA3NThkZDhjZDRhMTcwZDBjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNzc5ZDExOGQ2ZTNjYmY0NTA1Mzk3NDhkZWU3YTQzMDdhY2JlNjQ0NmNiYTI5N2YyNzYwZmE1ZDBiYmExYmMyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3YjJlZmE4Y2YzZjhlZmQ0NGRkZmE5YzNhOGM2MWM3NmE4MWVjZDhlYTk0YjA5MWU1Yjg0MTA3YWEzY2FhZjc4In0"
+        },
+        {
+          "resource": "repo://tests/db/new-studio-admission-default.db.test.ts#L72-L107",
+          "version": "repo-lines-v1:sha256:b01bd9d0a27745c1cbe3d67a72de880fb03623d9d22b96c07a33d3e0ba097481:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiN2RlOGNhMTBjODFhMjM2MWMxMjkyY2VlYWM2ODI1OGZjYmI2NTQ3NTg3MjU0YzQ3NjJiMTY0ODlmY2IwMTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIzMDRhNTk1NWIzNWNiNDUyMmNhNzZjZTBhMzk5NzU2ODQwYTA4OTc1NzNiYTg0MDMxNWUyYTU1ZjM2NDYyMjUifQ"
+        },
+        {
+          "resource": "repo://tests/db/new-studio-admission-default.db.test.ts#L858-L972",
+          "version": "repo-lines-v1:sha256:dbf7187f8ce5b8c1dc577c5d15ba6402cb60a7a5ea82b13fbea55b654c76953a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwMzUwODAzMzczZjkyYjBkYjlkZjBkY2U5NDAzZmQwZjIxODI3YzQ3YTY2N2JkMTNlOTExM2U0MmUzOThlNzE3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIxZmQwNzcxNGY4OWQ5NjIzYjE5M2Y1NjA1MzVlNTZhNWE4NTA3YTBiMzQwNTk3NzIxOWZiMDFkZWMwZjc4NjUyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwOTRmYzBjMTczZDFlYzNmYzUwMWQ3ZGZhOTI4NTUwMWM1MjdjZmI0NzEyNTgzZGEzY2MzNjE4MDU2NmI0YmUzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmZGQzMzIwYzQ0ZWZkMDRiYjY5YThlMGYyOTFkZGZmZTI1MmFlZWE2NTdiMzY1YWZhNDM4MTdiNmQ0YTY3Y2YyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_8d691347bf664efcbe6fbacf454ef9a0",
+      "statement": "The migration ledger records 0205 as applied with repository and hosted state equal.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L17-L17",
+          "version": "repo-lines-v1:sha256:4a0efecc23bd65fc59252f07e685d0cff2d5a7816b6f13385ef7b07a5a265a3a:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGEwZWZlY2MyM2JkNjVmYzU5MjUyZjA3ZTY4NWQwY2ZmMmQ1YTc4MTZiNmYxMzM4NWVmN2IwN2E1YTI2NWEzYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGEwZWZlY2MyM2JkNjVmYzU5MjUyZjA3ZTY4NWQwY2ZmMmQ1YTc4MTZiNmYxMzM4NWVmN2IwN2E1YTI2NWEzYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDRlYmI1ZTBkYzczMDc2OTg0MGYzMGEyZjcxN2FkNDA3NmJhZWI2MDA4YmVjMmY3YmZjZjU5NTE5NjYxMmY4YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDEyZDQ3ODMxMjMyOTkzZDAyODQ0MzE5NTdmMTZhNTQxYjYxMWZlMzE0MDYxNmYzNTEyYzJlOTQwY2M1YzhjMiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_4446d411ddf54ae8b8144d274f52f97f",
+      "statement": "Known limitation L8 records that a studio cannot onboard itself, practitioner signup is invite-only, new studios are provisioned through the operator runbook, and onboarding v2 is not broadly enabled.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L178-L188",
+          "version": "repo-lines-v1:sha256:e1186dea9b342993640ef8d836e8470674d0f7bd0024e45eb1c92a148708afea:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhmMjg2MDU0MmMzYTc5NzZjNTQ2NTg5NGQ2MDJiOTFjMzY5MTQ2ODI1MDY0N2U1YzJiYTNkNWZlN2VkZGEwZTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFhY2NlZmU3MjhhNDkxMTUwZGE1ZWI3MTRkMzM0NDhkODYwZjYyYzdkNzI4YTdlODRhNmMzOThlYjIwYzYzMDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgzZTgyMmY4Njk1MTc3ZTVjMzUwZTRjYzc1MjA2NjI4M2Y0ZmI0YTgyYzc5ODVhYTQ0NDdiNjZkNDk5MWFlOTEifQ"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

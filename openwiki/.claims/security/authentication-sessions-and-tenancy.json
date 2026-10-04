@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:0481b6a0bc56dc74339ec4bb1e76138739812f78df41e32824358293e8e12d44",
+  "pageVersion": "sha256:41b714babe253552eab673ebd4a79c35379d07509755871977bad2d374909455",
   "claims": [
     {
-      "id": "claim_3d4bbc2c11fb41d1a2dbf7a7d2de7fca",
+      "id": "claim_513800dba1ea40b08ef31481c5d65442",
       "statement": "The practitioner magic-link action lets Supabase create an auth user only when a pending invitation exists for the normalized email (looked up through the service-role client), fails closed for sign-up on a lookup error while still sending existing practitioners their link, and returns the same generic success for uninvited addresses so the form is not an account-enumeration oracle.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_ca2cdca8a83d4de3b1600927b3eaeffb",
+      "id": "claim_152bba7c8f4d46f88b3047a356bc199d",
       "statement": "Since migration 0141 handle_new_user() is a no-op, so creating an auth.users row — including through Google OAuth, which cannot pass shouldCreateUser — creates no studio membership and stamps no legal acceptance.",
       "evidence": [
         {
@@ -31,7 +31,7 @@
       ]
     },
     {
-      "id": "claim_607f026f1bc244d4bae3399f04d23e00",
+      "id": "claim_a43c4231944d40379f6d7bfcc842a5e4",
       "statement": "The /auth/callback route exchanges the code for a session and then calls reconcile_my_pending_invitation, routing acceptance_required to /accept-invitation, conflict and ambiguous to /no-access with a reason, clearing the selected-studio cookie when the user newly has multiple studios, and never blocking sign-in when reconciliation fails.",
       "evidence": [
         {
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "id": "claim_b1bbec38f5cb4d439df80209d9ddedeb",
+      "id": "claim_565fd010c74f4038bdf910495ee47900",
       "statement": "reconcile_my_pending_invitation serializes per email with an advisory lock, acts only when exactly one pending invitation matches the caller's verified auth email, refuses with conflict when a different user holds an active same-email practitioner row in the studio, and links a membership only by copying an existing current-version terms and privacy acceptance, otherwise returning acceptance_required.",
       "evidence": [
         {
@@ -51,7 +51,7 @@
       ]
     },
     {
-      "id": "claim_123d77261be247ff91fee7b29b714d2c",
+      "id": "claim_0dec9505256a4be0854bf8f5d0d3aa52",
       "statement": "admin_accept_pending_invitation is EXECUTE-granted to service_role only and is reached through the /accept-invitation server action, which validates the current-policy checkbox, resolves the user from the session and passes only the user id; the self-scoped reconcile and read RPCs are granted to authenticated and revoked from anon.",
       "evidence": [
         {
@@ -65,7 +65,7 @@
       ]
     },
     {
-      "id": "claim_b2054008e8d14f7997d56b1047ff3712",
+      "id": "claim_8b955520d64e451f8e39024e56888082",
       "statement": "Middleware redirects anonymous requests to /login unless the path is on an explicit allowlist of exact public paths and narrow prefixes — marketing pages, the token routes, three portal entry paths, the calendar feed, cron routes and the exact Stripe and Twilio webhook paths — each of which authenticates itself.",
       "evidence": [
         {
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "id": "claim_597c28a22c4f4cada7c5026fdf77bd83",
+      "id": "claim_e8499a016f4146e3871ef6538ffe4a46",
       "statement": "For a signed-in user on any route except /no-access and /accept-invitation, middleware reads the caller's active memberships through the RLS-scoped anon-key client, sends zero memberships to /no-access, sends two or more memberships without a hone_selected_studio cookie naming one of them to the chooser, and deletes a forged or stale selection cookie.",
       "evidence": [
         {
@@ -85,7 +85,7 @@
       ]
     },
     {
-      "id": "claim_e5d0de19d593449c8c36446256b33607",
+      "id": "claim_1f43a076acc847c29617b1e85e3ce348",
       "statement": "/admin paths bypass the middleware no-studio gate only for an email on the isAdmin allowlist, and the /admin layout re-checks isAdmin and redirects non-admins to /dashboard.",
       "evidence": [
         {
@@ -99,7 +99,7 @@
       ]
     },
     {
-      "id": "claim_3f94fd3c0eb54c62843e6a9af8416b4a",
+      "id": "claim_6fb0f230362d402ab6697277b964be9d",
       "statement": "The middleware matcher exempts licence and marketing-film assets by exact path rather than by prefix, because a prefix exemption would also skip the session check for an authenticated route sharing that URL prefix.",
       "evidence": [
         {
@@ -109,7 +109,7 @@
       ]
     },
     {
-      "id": "claim_80d8ed1b35a142ebbcfcab6850bbceb4",
+      "id": "claim_817b24833bd4483489560653aa98b8d1",
       "statement": "Practitioner identity is resolved once per server request by loadRequestIdentity, a React cache()-memoised call to auth.getUser() plus a select of the caller's own active practitioners rows with their studios; nothing persists beyond the request, so a revoked session is refused on the next request.",
       "evidence": [
         {
@@ -127,7 +127,7 @@
       ]
     },
     {
-      "id": "claim_167034a446ad4ed8a9e49eee02533449",
+      "id": "claim_ebf751fd9ddc4b319b226438f338d6b3",
       "statement": "Membership resolution yields none for zero active rows, the single membership for one row, the cookie-selected membership for two or more rows only when the cookie matches an active row, and otherwise a chooser — a studio is never auto-picked and a forged selection is refused.",
       "evidence": [
         {
@@ -141,7 +141,7 @@
       ]
     },
     {
-      "id": "claim_aaa1644aebea4e32b062ec1f791565b1",
+      "id": "claim_b446537ab9a840be8c85c73d4aa5f883",
       "statement": "getCurrentPractitionerWithStudio, used by server actions and pages, throws when there is no active membership or an unresolved multi-studio choice, while requirePractitionerWithStudio, used by the app shell, redirects those cases to /no-access or the chooser; both redirect anonymous callers to /login.",
       "evidence": [
         {
@@ -151,7 +151,7 @@
       ]
     },
     {
-      "id": "claim_13b29692e63b42a09a7a03d0792d8e2a",
+      "id": "claim_a7e621cd7222411b9b141fe36d514309",
       "statement": "The hone_selected_studio cookie is httpOnly and sameSite=lax, holds only a studio id, is never trusted on its own, and is set only by switchStudioAction after an RLS-scoped check that the user is an active practitioner in the submitted studio.",
       "evidence": [
         {
@@ -169,7 +169,7 @@
       ]
     },
     {
-      "id": "claim_44ceb629148a46bfb9720731d7560c45",
+      "id": "claim_4347279f3f0c4d57805965a134691487",
       "statement": "The RLS helpers is_studio_member and is_studio_owner are SECURITY DEFINER SQL functions that return true only when auth.uid() holds an active practitioners row in the studio (with role owner for the owner variant), and EXECUTE on them is granted to authenticated.",
       "evidence": [
         {
@@ -179,7 +179,7 @@
       ]
     },
     {
-      "id": "claim_3b8805b5265e486ab4abe087186a2caa",
+      "id": "claim_fd39eb6f52fa4d379c7dc421d8eb0130",
       "statement": "Service-role call sites take studio and actor from getCurrentPractitionerWithStudio rather than from form fields, and every createAdminClient call site must be listed in a service-role allowlist whose scope-guard string must appear in the file — an inventory and drift gate rather than proof of perfect scoping.",
       "evidence": [
         {
@@ -189,7 +189,7 @@
       ]
     },
     {
-      "id": "claim_720b8ba409e64004a4ba39efa3b75a5f",
+      "id": "claim_7fcf577dd3b44361a527bf26718c7385",
       "statement": "start_session receives an explicit p_studio_id from the server-side resolver and, at the SECURITY DEFINER boundary, re-proves through session_actor_practitioner that auth.uid() holds an active practitioner row in that studio before reading the client, refusing non-member and inactive-member studios.",
       "evidence": [
         {
@@ -211,7 +211,7 @@
       ]
     },
     {
-      "id": "claim_8e2a4eb215264cb882e4ea48fb7dfa9b",
+      "id": "claim_ed0fa8731d614480856ea3a6772f950d",
       "statement": "Before 0181, start_session picked the acting studio with an unordered limit 1 over all of the caller's active memberships, so a two-studio practitioner could render a page against the selected studio and run the command against the other; the retained four-argument wrapper now derives the studio from the client's own studio instead.",
       "evidence": [
         {
@@ -229,7 +229,7 @@
       ]
     },
     {
-      "id": "claim_119cd4dea24c468086af46d8987781f4",
+      "id": "claim_c181c05feda6430884b736275de9bd4a",
       "statement": "Since 0178 the practitioners table grants only SELECT to anon, authenticated and service_role after revoking all privileges (including TRUNCATE, REFERENCES, TRIGGER and MAINTAIN), the owner insert and update policies are dropped, and practitioners change their own preferences only through authenticated-callable commands bound to auth.uid().",
       "evidence": [
         {
@@ -243,7 +243,7 @@
       ]
     },
     {
-      "id": "claim_eabfc25111704fe98cfb66250e344d4c",
+      "id": "claim_6f073d1ff8b74f5d93fd2f226cc597a9",
       "statement": "DB tests prove a member of one studio reads zero rows of another studio's clients, sessions, session blocks, exposure incidents, record-keeping audit events, appointments and appointment audit rows, with ground-truth checks that those rows exist.",
       "evidence": [
         {
@@ -253,7 +253,7 @@
       ]
     },
     {
-      "id": "claim_4b93a3be1d6143f8900d6103b71d7927",
+      "id": "claim_54d249af4fdc4332a116dcce9a260f56",
       "statement": "Client portal sessions are a separate realm: an httpOnly hone_portal_session cookie carries a random token whose SHA-256 is stored in client_portal_sessions with a server-computed 7-day expiry, lookups reject revoked or expired rows and treat a database error as anonymous, and portal and practitioner sessions never grant each other's access.",
       "evidence": [
         {
@@ -263,7 +263,7 @@
       ]
     },
     {
-      "id": "claim_220ed16a73344cacbd8569f668058df4",
+      "id": "claim_ad41b78f60704787aa0d7870d652185f",
       "statement": "Portal magic links are hashed at rest, expire after 60 minutes and are bound to one studio and client; redemption happens in a POST server action so link scanners do not consume the token, and a conditional consumed_at IS NULL update lets exactly one concurrent redemption create a portal session.",
       "evidence": [
         {
@@ -281,7 +281,7 @@
       ]
     },
     {
-      "id": "claim_174fb58a03eb4ed39b5e7e5300faf46b",
+      "id": "claim_cc1aeae522014148a2b6776bd499ca16",
       "statement": "isAdmin checks a lower-cased ADMIN_EMAILS allowlist; in production an empty or unset value denies everyone with no hard-coded fallback, while non-production environments fall back to a built-in development list.",
       "evidence": [
         {
@@ -295,7 +295,7 @@
       ]
     },
     {
-      "id": "claim_739b0524cf7043d99a4846c251855df5",
+      "id": "claim_ab7a26687ae247678e791de40a6bb749",
       "statement": "The login action's header comment still says handle_new_user() places invited practitioners in the inviting studio on first login, which no longer holds after 0141 made the trigger a no-op.",
       "evidence": [
         {
@@ -309,7 +309,7 @@
       ]
     },
     {
-      "id": "claim_42e81945a0b84ae2b086f2c8414531b8",
+      "id": "claim_983c9d2993c94295a7e7d5e98328ce74",
       "statement": "The auth callback records user_signed_in with provider magic_link for every successful code exchange, including Google OAuth sign-ins that redirect to the same callback.",
       "evidence": [
         {
@@ -323,7 +323,7 @@
       ]
     },
     {
-      "id": "claim_3e41e42cdd164464bc64f51f95a4ff1c",
+      "id": "claim_e36e3872876d471eb9868c0fbea2b0fd",
       "statement": "The auth callback appends an unvalidated next query parameter (default /dashboard) to the request origin for its post-sign-in redirect, and no in-repository caller sets next.",
       "evidence": [
         {
@@ -345,7 +345,7 @@
       ]
     },
     {
-      "id": "claim_8706fe313f264352b16b6660c629822a",
+      "id": "claim_be33ec28286c43c1a441927e7563fe72",
       "statement": "The four-argument start_session wrapper still has an application caller: the session-start action retries with it once when PostgREST reports the five-argument signature missing (PGRST202), although 0181 describes the legacy signature as callerless once the application binds explicitly.",
       "evidence": [
         {
@@ -359,17 +359,25 @@
       ]
     },
     {
-      "id": "claim_7d3de45b982548b69fa84c39d37d72a6",
-      "statement": "The declared hosted migration maximum is 0204, which places the invitation-reconciliation (0141), practitioner-identity (0178) and multi-studio command-authority (0181) migrations inside the declared migration-applied range.",
+      "id": "claim_82e5f67d07e94658ba9188d3a88818e1",
+      "statement": "The migration ledger records migrations 0141 (invitation reconciliation), 0178 (practitioner identity boundary) and 0181 (multi-studio command authority) as applied.",
       "evidence": [
         {
-          "resource": "repo://docs/production/migration-state.json#L16-L16",
-          "version": "repo-lines-v1:sha256:65899fb4b602cd387153ee4160f59b609ed58a2a0c1c77d7f38d8fd4a2b61c45:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjU4OTlmYjRiNjAyY2QzODcxNTNlZTQxNjBmNTliNjA5ZWQ1OGEyYTBjMWM3N2Q3ZjM4ZDhmZDRhMmI2MWM0NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjU4OTlmYjRiNjAyY2QzODcxNTNlZTQxNjBmNTliNjA5ZWQ1OGEyYTBjMWM3N2Q3ZjM4ZDhmZDRhMmI2MWM0NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTAwNTFhYTIxMDNkNDg3ZWFhNzE4MDMwZjliOGY2NjIzZTA3NDliYzMzYzA5MmFiYzdhYjEyNWEzYWI1NDRhMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZmNmYWI3YjdmMGIzZTJmM2JjMjhkZjI0MjBjMDE1MGM5ZGQwZWNjNTFlNmYzMDI1ODBjNjQyMWY2MjI3YTJhZiJ9"
+          "resource": "repo://docs/production/migration-ledger.md#L1948-L1948",
+          "version": "repo-lines-v1:sha256:1bf6284e7c9d580f53a039166cf09c33a102f1bd1c72f12622d4caf8e2986394:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWJmNjI4NGU3YzlkNTgwZjUzYTAzOTE2NmNmMDljMzNhMTAyZjFiZDFjNzJmMTI2MjJkNGNhZjhlMjk4NjM5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWJmNjI4NGU3YzlkNTgwZjUzYTAzOTE2NmNmMDljMzNhMTAyZjFiZDFjNzJmMTI2MjJkNGNhZjhlMjk4NjM5NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGU5ZjgzNTRjNjcxNTlmZjdiY2YwODM5MmI3NWJlZjFhMTNhZDBmOWM2OTVlZTM3NzhlMGQxYjBjNTczYTQ2MiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTUwYTY4NmJiZWM1NDNjOGRkMmQ0MjIyMjFhYzAzODQwMjYzMmE3MzFjMTY0MjY3NzlmYjQyOWI5MjQ3NzNiNyJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L2867-L2867",
+          "version": "repo-lines-v1:sha256:316be683fd90a85aa3fa80be0ac7fbd18e15e2c8426a70115d2dfcabbc868838:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzE2YmU2ODNmZDkwYTg1YWEzZmE4MGJlMGFjN2ZiZDE4ZTE1ZTJjODQyNmE3MDExNWQyZGZjYWJiYzg2ODgzOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzE2YmU2ODNmZDkwYTg1YWEzZmE4MGJlMGFjN2ZiZDE4ZTE1ZTJjODQyNmE3MDExNWQyZGZjYWJiYzg2ODgzOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjBkMzU2MjIzZTRmYTc3MDJiNzMxOTg1MDI0MmJhYTBlYThmMDk4ZjY3MjllMGU1OTBkYzFiZmQ0MTA2MjY0YiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzNmNGRiYmZhYzYwMmE2NjU3YzcxMmZlMTlkMTcxOGY4NzYwMTY4MTVlZDBjY2IxYzMxZDMyYTExNjhmODdkOCJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L3255-L3255",
+          "version": "repo-lines-v1:sha256:a33c074a50713cea970906a554bf34ce74d49ffdd51c5c95ee0d6c0a4ed2916b:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTMzYzA3NGE1MDcxM2NlYTk3MDkwNmE1NTRiZjM0Y2U3NGQ0OWZmZGQ1MWM1Yzk1ZWUwZDZjMGE0ZWQyOTE2YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTMzYzA3NGE1MDcxM2NlYTk3MDkwNmE1NTRiZjM0Y2U3NGQ0OWZmZGQ1MWM1Yzk1ZWUwZDZjMGE0ZWQyOTE2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzBjNzUxZWYxY2YxMzVhMzcwODY5YTBmMDc1YWE1ODVlNzRlMGQ0NjJiOGVkZjExMzNhMGJlNDBkYWI5MDc4ZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTRjMjM2ZjFmNzBiZTVlYmUyODFiYjEyYTcxMThjYTQ4ZTYyYjcyZGRiMmRiN2NmODJlYTkwYzIwZjI2OTkxZSJ9"
         }
       ]
     },
     {
-      "id": "claim_cd151f54197c475f9ac4b8eccf2ef30b",
+      "id": "claim_9ba144dbfda9427eb4769a7f553343b8",
       "statement": "docs/03_SECURITY_AND_PRIVACY.md still describes invite-only as the shouldCreateUser gate plus the 0081 trigger change without the sign-in reconciliation, whereas docs/20_NEW_STUDIO_SETUP_RUNBOOK.md records that 0141 made handle_new_user a no-op and moved provisioning and acceptance to sign-in.",
       "evidence": [
         {
@@ -385,6 +393,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

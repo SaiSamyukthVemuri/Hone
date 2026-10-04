@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:c2b3723e81e9b281b54c540a9b03180dac8712dc6538866a68e24409cbfa8a54",
+  "pageVersion": "sha256:2b3d21ba12372248f747602b2b4ffe80033d321c64133d35e954bf8aa1dde721",
   "claims": [
     {
-      "id": "claim_f72f15748d8c4f0e8d1d39ee57ed6f79",
+      "id": "claim_26094bdb956641bfb8df82dda94c8cb3",
       "statement": "A single module defines the newest prior charted session: the caller supplies studio- and client-scoped, non-deleted sessions newest first, and the pure half excludes void and current sessions, applies the time bound and requires at least one live block, live electrolysis entry or live laser entry, because start_session creates empty rows that previously masked the real last treatment.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_4158b2dd6a37468b8a60b76a9a68d7f7",
+      "id": "claim_85c98303421f4d77940dd7a4fbf3bdea",
       "statement": "The last-treatment loader reads the candidate sessions' blocks in one batched, RLS-scoped user-client query with an explicit studio filter and a 600-row ceiling, and uses no service-role client.",
       "evidence": [
         {
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_6ee1cc1517d44eb9ac54f90fbec1572c",
+      "id": "claim_b9671b78b2e9404fa91adc4a439c0433",
       "statement": "The loader distinguishes a selected treatment, a successful read that found nothing charted, and a failed block read, logging a failed read with only its SQLSTATE, studio id and candidate count rather than the raw error message.",
       "evidence": [
         {
@@ -37,7 +37,7 @@
       ]
     },
     {
-      "id": "claim_416ddc76600144a1b431b916f6b9ac62",
+      "id": "claim_7dc097247e1d4d6d9e2dc3609fb38543",
       "statement": "The charting screen and the new-session page keep a fail-soft contract in which both no-history and read-failure return null and render nothing, while only the appointment-prep companion distinguishes none from unavailable because it makes an explicit statement to the practitioner.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_52ac6a0d84224b5fbe2a7f65849ba12e",
+      "id": "claim_21907ea5926944fc9682f74645c6a772",
       "statement": "Appointment-prep memory carries an unavailable flag set only when a read actually failed and returns practitioner narrative separately from the charted treatment, so a plan written on an uncharted visit and narrative from a failed block read still surface.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_69703a8bde2644bfaafe4628603892f1",
+      "id": "claim_7e8d788537184ceabff3d3512c94dc0c",
       "statement": "In the batched dashboard loader, a client whose candidate window was truncated by the shared row budget is returned as unavailable rather than as having no treatment.",
       "evidence": [
         {
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "id": "claim_45113d3eb876422b9a091c77a51d4830",
+      "id": "claim_5d043343c2794cc8a154dc96deaeb57c",
       "statement": "Before Today carries independent clinical and client-record unavailability flags, and its unavailable field must be read first because hasHistory false then means the history could not be read, not that none exists.",
       "evidence": [
         {
@@ -77,7 +77,7 @@
       ]
     },
     {
-      "id": "claim_682d268349cf4c3aae65988fc1b3dd13",
+      "id": "claim_579492f844274eb898f97d12399b4fe8",
       "statement": "The dashboard Today row orders its answers unavailable, new, silent, history; its no-history line requires both authorities to agree, and an unavailable prep read never routes a client as new.",
       "evidence": [
         {
@@ -87,7 +87,7 @@
       ]
     },
     {
-      "id": "claim_e8ca2ac56eb24fc5bf1d47928810a327",
+      "id": "claim_e6d8012b88b8435ebd81c71d158e6bce",
       "statement": "Point-of-care memory is a pure view model that gates machine readings by mode, never reads the retired galvanic intensity, takes entry setup from the earliest live pass, sums hairs over live passes, excludes soft-deleted passes and reuses the shared label helpers.",
       "evidence": [
         {
@@ -97,7 +97,7 @@
       ]
     },
     {
-      "id": "claim_bef72edd6c8e4fd1903937a49f9eb871",
+      "id": "claim_843d1c20cf6b4682895924f6da1b37fd",
       "statement": "DB tests prove the newest charted session wins over a newer empty one, multi-area minutes are credited once, other clients and studios never appear, soft-deleted rows are excluded, the read uses a fixed number of statements as history grows, and a client with no charted history yields no memory.",
       "evidence": [
         {
@@ -107,7 +107,7 @@
       ]
     },
     {
-      "id": "claim_7ac00ca4d1ee4b39880f3443de7ccfdb",
+      "id": "claim_6df3b3c1056647bea0b8a1d4e82ad47f",
       "statement": "Appointment-prep memory adds a narrative layer limited to audited practitioner-authored session, block, entry and laser notes, excludes structured chips, dead columns and deletion metadata, and prevents duplicates by note source, area and text.",
       "evidence": [
         {
@@ -117,7 +117,7 @@
       ]
     },
     {
-      "id": "claim_5f4e4ff1f99f45ea9a3dc7a7f60da472",
+      "id": "claim_8957573ac52a4f9492edc68996f49c64",
       "statement": "Imported treatment memory lives in separate tables rather than sessions, readable by members, insertable and voidable by owners, with no DELETE policy and an append-only audit table written only by a definer trigger.",
       "evidence": [
         {
@@ -127,7 +127,7 @@
       ]
     },
     {
-      "id": "claim_ca8a094463b14d50a46ed1b71f296cdc",
+      "id": "claim_852419a8c3f143bf80f7290296ea882e",
       "statement": "The imported-memory read model uses the RLS-backed server client, excludes voided rows, and returns provenance labels and recorded-history wording only.",
       "evidence": [
         {
@@ -137,7 +137,7 @@
       ]
     },
     {
-      "id": "claim_c334abec06644039b4ebdfcadeb56a1a",
+      "id": "claim_613c03b29ca9469cbbde9438fd926fe9",
       "statement": "Global search merges direct block-text matches with structured treatment-area matches so secondary areas become findable, deduplicating the overlap into one result per block.",
       "evidence": [
         {
@@ -147,7 +147,7 @@
       ]
     },
     {
-      "id": "claim_a71b1ebaa03b43259223f68840fe301f",
+      "id": "claim_c49c2887fa234168b31ac0c30f636685",
       "statement": "copy_session_setup is service-role only, re-verifies the practitioner's active membership, derives the source session itself, fails closed with zero rows on a stale fingerprint, locks an empty electrolysis draft target, copies setup and area only (never outcomes, probe lots or minutes performed) and records an idempotency ledger row.",
       "evidence": [
         {
@@ -157,7 +157,7 @@
       ]
     },
     {
-      "id": "claim_6fa17c362d9f42ea84889adf6410ba41",
+      "id": "claim_2d50539c128d4618b1fe7f7cad552f23",
       "statement": "DB tests prove the whole-session copy drops outcomes and minutes, replays an identical idempotent request, rejects ambiguous keys, stale or non-canonical sources and ineligible targets, refuses non-members and the authenticated role, and rolls back a failing batch entirely.",
       "evidence": [
         {
@@ -167,7 +167,7 @@
       ]
     },
     {
-      "id": "claim_cb0cf7666ad04ecda05876f477f507f2",
+      "id": "claim_906c47d000a74fa38633d750303f5235",
       "statement": "The imported-memory module header says surfacing imported memory in Before Today or the client page is a later PR, although the client page and Before Today card already import it and a browser spec proves it appears.",
       "evidence": [
         {
@@ -181,7 +181,7 @@
       ]
     },
     {
-      "id": "claim_afc59fda2ba44034a1a157867aa642da",
+      "id": "claim_9522cf3d1e934ca295561d4564678c8f",
       "statement": "The charted-session module documents a known divergence: the dashboard's clients-needing-attention list uses a blocks-only charted rule without the legacy-entry fallback.",
       "evidence": [
         {
@@ -191,7 +191,7 @@
       ]
     },
     {
-      "id": "claim_90bc325d168a4b5bbea8854af6565535",
+      "id": "claim_caf328b60ea346dbbd288b4d60b73e2c",
       "statement": "Before Today takes its latest recorded setup from the most recently treated Treatment Intelligence area and its latest tolerance and reaction from the Treatment Intelligence rollup.",
       "evidence": [
         {
@@ -211,6 +211,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T23:26:41.194Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:bb04394c3af693d9cc8e8e45887a4e18f8225599d6042bf6d022e09e6420c3de",
+  "pageVersion": "sha256:a5a4a390d65f9e74ffeb01358645b2911e64f15c67830e75ac6980cc708bdfdb",
   "claims": [
     {
-      "id": "claim_99db346292ec4d22b45d0b5382a86f88",
+      "id": "claim_dc4cc037406a4742b0d5c480f81a0d91",
       "statement": "booking_tracking_consents stores only consent bookkeeping (studio, appointment, client, a boolean, a text version and a checked source) and has no anon or authenticated insert policy, so rows are written by the service role while studio members can read them.",
       "evidence": [
         {
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "id": "claim_5b2d7c078bb9458d915323f60981ed3b",
+      "id": "claim_0854f6a18178463bab69a60ff00b3dcd",
       "statement": "conversion_event_deliveries is unique on (studio_id, provider, event_id) with a checked status, readable by studio members and writable only through the service role and the claim function.",
       "evidence": [
         {
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_8a0d1380cf064326b364ade9a2499662",
+      "id": "claim_5c361055704c4ccea79145ebca52d777",
       "statement": "claim_conversion_delivery is a SECURITY DEFINER function executable only by service_role that inserts a claimed delivery row with on conflict do nothing and returns whether this caller created it, and a DB test shows it returns true once and then false.",
       "evidence": [
         {
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "id": "claim_7f86a59539ba4082850f171eeb188140",
+      "id": "claim_919f20dc03d04cfd82fb7924351c6262",
       "statement": "Migration 0107 adds encrypted token, last4, timestamps and token_status columns to studio_tracking_providers and replaces the member insert and update policies with owner-only policies, while members keep select.",
       "evidence": [
         {
@@ -55,7 +55,7 @@
       ]
     },
     {
-      "id": "claim_4f5834673ddf4c8c9dd1c0d00e331c5e",
+      "id": "claim_f29d1bd632ed41e192eaa7b5caf91675",
       "statement": "Public-booking marketing consent is opt-in: only an explicit true or on value counts, and the consent row records the fixed text version marketing_analytics_v1 and source public_booking.",
       "evidence": [
         {
@@ -65,7 +65,7 @@
       ]
     },
     {
-      "id": "claim_56e4847500f1413c9f52f305f2ff7a3a",
+      "id": "claim_8816003468e94703aa1e75e705efba72",
       "statement": "After a public booking commits, the booking action inserts the consent row and calls dispatchBookingConversion fire-and-forget, passing normalized email, phone, service modality and the event source URL but no client IP or user agent.",
       "evidence": [
         {
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "id": "claim_94743c66cb1140fea9017a2b539e5100",
+      "id": "claim_9209c1404d9542308b84553b01a22621",
       "statement": "dispatchBookingConversion never throws and sends only when consent is granted, the studio has an enabled provider with an adapter, the atomic claim is won for the deterministic event id, and the studio's own token decrypts; a decrypt failure records a skipped delivery.",
       "evidence": [
         {
@@ -89,7 +89,7 @@
       ]
     },
     {
-      "id": "claim_563e9fbbafc942ac9deab72553e754d4",
+      "id": "claim_2e7e59654089454d98433b5560227419",
       "statement": "A failed provider send records a failed delivery with a safe error string and raises a warning-severity ops alert, and delivery rows never carry a raw token, email or phone.",
       "evidence": [
         {
@@ -103,7 +103,7 @@
       ]
     },
     {
-      "id": "claim_3f8c4eacd4f64741a94f9d1d4600bdad",
+      "id": "claim_ea0990d18ace4bf7866a2b988b061213",
       "statement": "The Meta adapter sends a Schedule event to the Graph API events endpoint for the configured pixel with the decrypted token, SHA-256 hashing normalized email and phone and reducing the service to an allowlisted generic category.",
       "evidence": [
         {
@@ -121,7 +121,7 @@
       ]
     },
     {
-      "id": "claim_68e4e14de0ae4e02be06491768697dae",
+      "id": "claim_0901f76694d143048a7f296bbbea32b8",
       "statement": "Provider tokens are encrypted with AES-256-GCM under a single TRACKING_TOKEN_ENCRYPTION_KEY master key and stored as iv, auth tag and ciphertext plus the last four characters; decryption fails closed with a reason and never returns the raw error.",
       "evidence": [
         {
@@ -131,7 +131,7 @@
       ]
     },
     {
-      "id": "claim_2c2c6123c2a3429baaccbfafd22d588c",
+      "id": "claim_0b45e50614844bd49e18328e074c5322",
       "statement": "The tracking settings actions require an active studio owner in application code, write provider configuration through the service-role client, refuse to store anything when encryption fails, keep the existing token when the field is blank, and clearing a token sets token_status to absent.",
       "evidence": [
         {
@@ -141,8 +141,8 @@
       ]
     },
     {
-      "id": "claim_109efbb8806348cb8a8038c72959101c",
-      "statement": "The capability register records per-studio conversion tracking (0106/0107) as merged, applied and deployed but inert per studio because no studio has configured a provider token.",
+      "id": "claim_237a544d619e499eb15d5c08f3bcefb4",
+      "statement": "The capability register records per-studio conversion tracking (0106/0107) as merged, applied and deployed but inert per studio until a provider token is configured, and current-state.md calls configuring one an enablement step.",
       "evidence": [
         {
           "resource": "repo://docs/production/capability-register.md#L196-L196",
@@ -155,7 +155,7 @@
       ]
     },
     {
-      "id": "claim_9c1ab83c141d4725a5b1b51135c42cf0",
+      "id": "claim_e4f7771ecebf4d0b878f8a3367b9e596",
       "statement": "The meta-capi module header still says it is not wired into the booking flow, although the public booking action now imports and calls dispatchBookingConversion.",
       "evidence": [
         {
@@ -169,7 +169,7 @@
       ]
     },
     {
-      "id": "claim_cdd876b70f464960816d8bec372519e8",
+      "id": "claim_f243c2a1a9494d3980ee62dd05b0eda8",
       "statement": "The 0107 migration header says it is not applied to production in its PR, while the capability register records 0106/0107 as applied.",
       "evidence": [
         {
@@ -183,7 +183,7 @@
       ]
     },
     {
-      "id": "claim_f71495dd616143a4b600152d9c4bd61d",
+      "id": "claim_75f52c6961d941fdbe3d81b059ef8bbe",
       "statement": "The studio member select policy on studio_tracking_providers is row-scoped only and no migration restricts its columns, so members can read the encrypted token ciphertext column added by 0107.",
       "evidence": [
         {
@@ -197,7 +197,7 @@
       ]
     },
     {
-      "id": "claim_5f8ec64fb5f640f8aff75740da329819",
+      "id": "claim_40f73636ccde4ec9be50f5ac79f82780",
       "statement": "TRACKING_TOKEN_ENCRYPTION_KEY is read by the token encryption module but is not listed in .env.local.example.",
       "evidence": [
         {
@@ -213,6 +213,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

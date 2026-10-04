@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:d56f75d160ec0d7e18dda94d69a6b9f17b65f306b4a3ed625b6d2619f4681f77",
+  "pageVersion": "sha256:82b4821ba6eec43d92413eb2ffc4aeaa7bd4aa0409429cdf8e21eb4e72b9edda",
   "claims": [
     {
-      "id": "claim_6ea219a2e8d74c55b1c77ca88ba24158",
+      "id": "claim_3d3afaaa6bb944cfadb568bf0a778a24",
       "statement": "Hone learns only that Resend accepted a message: there is no delivery webhook, bounce or complaint tracking, or suppression list, and a source guard requires the deployment doc to say so.",
       "evidence": [
         {
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "id": "claim_ab4fa5831dce4ccaa8c08aa34fdc44a6",
+      "id": "claim_3659ebb129e84e8399513490d088344e",
       "statement": "lib/email/client.ts asserts at module load that the fake transport is not requested in a deployed runtime, constructs a Resend client only when RESEND_API_KEY is set, and exposes getResendTransport, which returns the fake only when explicitly enabled.",
       "evidence": [
         {
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_6d886c35371c49d387c0b609adbe4f27",
+      "id": "claim_e62deb13ee0c40bebacf369b5658ba30",
       "statement": "sendEmailSafely refuses when Resend is unconfigured or the recipient lacks '@', builds From from server-resolved studio identity or FROM_ADDRESS, attaches Reply-To only when one was resolved, and races the send against a 15-second timer that does not cancel the in-flight provider request.",
       "evidence": [
         {
@@ -37,7 +37,7 @@
       ]
     },
     {
-      "id": "claim_8240dc2d6d3b4264b19252f48ff962ce",
+      "id": "claim_a8139f95f9234d72adc8e9997f9d3ab3",
       "statement": "sendEmailSafely classifies 429 and 5xx provider errors as retryable, other 4xx statuses and known validation error names as terminal, and unfamiliar error shapes as retryable.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_8120e1b768ed4218ad887489de00a12a",
+      "id": "claim_5dc105038c8b432cb43ac3fd0b60a4b3",
       "statement": "sendWaitlistEmailIdempotent sends a provider Idempotency-Key derived from a namespace, the server-resolved studio id, an optional durable event scope and a SHA-256 of the exact payload, or an event-only key when the payload carries a secret.",
       "evidence": [
         {
@@ -61,7 +61,7 @@
       ]
     },
     {
-      "id": "claim_a3c33ef2f5164e80b8911d566cbb297a",
+      "id": "claim_0a91575a6519421ba8d3a1268714a08a",
       "statement": "The idempotent waitlist transport refuses locally with not_configured, invalid_recipient, missing_tenant_scope or missing_event_scope before any provider request, and these local refusal codes are a closed union kept distinct from provider refusals.",
       "evidence": [
         {
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "id": "claim_f3503e8c8c644e15a5529352db27eeda",
+      "id": "claim_bbca0676aea74d9ea0bad23ef506c15f",
       "statement": "In the idempotent transport a timeout, network exception, missing message id or concurrent_idempotent_requests error yields an ambiguous outcome, while any other provider error, including invalid_idempotent_request, yields rejected.",
       "evidence": [
         {
@@ -85,7 +85,7 @@
       ]
     },
     {
-      "id": "claim_48577f4ad071444b899794a9f84dbf04",
+      "id": "claim_7bb87c622e20401491caf00826640470",
       "statement": "On an ambiguous first attempt the idempotent transport retries exactly once with the same key and payload, and only an acceptance on the retry resolves the outcome; otherwise it remains ambiguous with the first attempt's reason.",
       "evidence": [
         {
@@ -95,7 +95,7 @@
       ]
     },
     {
-      "id": "claim_cc55dfa90744462782d77524f9e2ba64",
+      "id": "claim_c9a08edb6338484a8bb1aa7c54d99218",
       "statement": "Waitlist invitation emails are sent only to the address stored on the waitlist entry, are never sent for an expired invitation, and use the invitation id as the idempotency event scope.",
       "evidence": [
         {
@@ -109,7 +109,7 @@
       ]
     },
     {
-      "id": "claim_4c753a97c6d141468b1c37d730abf355",
+      "id": "claim_2c334600c5a94f85bdf16b975466a867",
       "statement": "The studio welcome email uses an attempt-id single-flight claim so concurrent callers produce one send, records results with a compare-and-set on the attempt id, and its claim and result commands are not executable by anon or authenticated.",
       "evidence": [
         {
@@ -123,7 +123,7 @@
       ]
     },
     {
-      "id": "claim_5c3c44715f5f4556a2fa902d305854f8",
+      "id": "claim_ac67cc5b13454bcb93820a7804f8b18b",
       "statement": "Studio-branded email identity uses one verified envelope address for every studio with the studio name as display text only, sanitised by removing control characters and RFC 5322 specials and capped at 60 characters.",
       "evidence": [
         {
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "id": "claim_a2b33c8fba2a4114bd03112373ea34c2",
+      "id": "claim_e7a35615a894444ba2304a14ca02bc6b",
       "statement": "Reply-To resolves to the studio's postcare contact address if valid, else the studio owner email if valid, else is omitted, and is never the client's own address.",
       "evidence": [
         {
@@ -143,7 +143,7 @@
       ]
     },
     {
-      "id": "claim_ed7adc0539a74c459ce8fdecc3a9597b",
+      "id": "claim_71c1cf51f47143ad8dd64d70e22035ee",
       "statement": "Source guards forbid hand-assembled From headers in the email send modules and require every sendEmailSafely caller to be studio-branded or explicitly declared Hone-facing, with identity resolved server-side.",
       "evidence": [
         {
@@ -157,7 +157,7 @@
       ]
     },
     {
-      "id": "claim_321cc9a5d7174b35b21bc4ed5c3d7fd6",
+      "id": "claim_21eb2fcce79846a5a7e3bd18d021f11d",
       "statement": "Booking confirmation emails are sent once inside the booking request and recorded with record_email_attempt, which increments the attempt counter and stamps confirmation_sent_at only on success, and that function is executable only by service_role.",
       "evidence": [
         {
@@ -171,7 +171,7 @@
       ]
     },
     {
-      "id": "claim_8e3bd2f4db4843abaa6595147e8603a1",
+      "id": "claim_2ff59b5306f64af8b5917ede52573ed3",
       "statement": "Postcare email sending is a two-command state machine (claim_postcare_send, provider call, settle_postcare_send) in which SQL owns the completed-only gate, the attempt counter and the five-minute stale window.",
       "evidence": [
         {
@@ -181,7 +181,7 @@
       ]
     },
     {
-      "id": "claim_f0210f9d3fab4d9ebe6d8876dc6be928",
+      "id": "claim_3efd2ac40f51417a8304e3e5379a2362",
       "statement": "logEmailFailure always writes a structured log line and records an email_send_gave_up warning ops alert only for a final or non-retryable failure, and claimEmailSend treats a failed claim RPC as not winning the claim.",
       "evidence": [
         {
@@ -195,7 +195,7 @@
       ]
     },
     {
-      "id": "claim_535d9399ff7d49f8aa470a48127d4261",
+      "id": "claim_d53d71d96b02461a9a6e9f8502ffbae5",
       "statement": "The fake Resend transport is server-only, enabled only by HONE_E2E_FAKE_RESEND=1, throws if that flag is set in a deployed runtime, and supports success, reject, throw, failonce and hold modes selectable by env override or recipient prefix.",
       "evidence": [
         {
@@ -205,7 +205,7 @@
       ]
     },
     {
-      "id": "claim_8ef58d0c962540bfb35abbb7a54a1ee9",
+      "id": "claim_9b12ec0eceea4d09823b4b081c67534b",
       "statement": "Only getResendTransport callers (the welcome email and the idempotent waitlist transport) reach the fake transport; sendEmailSafely uses the real client and reports not configured when no API key is present.",
       "evidence": [
         {
@@ -223,7 +223,7 @@
       ]
     },
     {
-      "id": "claim_852952873805412e9fd1e143bdc61e1d",
+      "id": "claim_68c2ac9e646044e3b89ac5a20acaa47d",
       "statement": "Critical ops-alert email uses the bare Resend client, sends only when OPS_ALERT_EMAILS is configured, never throws, and never records further ops alerts.",
       "evidence": [
         {
@@ -233,7 +233,7 @@
       ]
     },
     {
-      "id": "claim_f68e614ae86c402b9810dc66568076ec",
+      "id": "claim_98e471b1dd674b85b971b25230cac9c1",
       "statement": "sendEmailSafely's documentation states there is exactly one Resend path in the codebase, but emails.send is called from five modules: send-appointment, new-client-waitlist-send, send-welcome, ops alert-email and the team invitation action.",
       "evidence": [
         {
@@ -259,7 +259,7 @@
       ]
     },
     {
-      "id": "claim_f9e6a808d17343068a192d38457924ec",
+      "id": "claim_0c288b5e72754b5ca1de0737808f4e5b",
       "statement": "The source-guard test titled 'there is still exactly ONE transport, not two' only asserts that FROM_ADDRESS exists with its historical fallback value and does not detect additional transports.",
       "evidence": [
         {
@@ -271,6 +271,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

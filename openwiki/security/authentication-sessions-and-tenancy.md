@@ -2,7 +2,10 @@
 type: security boundary
 title: Authentication, sessions and tenancy
 description: How Hone authenticates practitioners (invite-only magic link or Google OAuth, sign-in-time invitation reconciliation), gates every request in middleware, derives the acting studio and practitioner exactly once per request, and where a studio id supplied by the browser is or is not trusted — plus the separate client-portal session realm and the operator allowlist.
-tags: [authentication, tenancy, multi-studio, invite-only, sessions, client-portal, admin, security]
+tags: [authentication, sessions, tenancy, middleware, multi-studio, rls]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-29f5d815aa4966f3c92bbe05
     resource: repo://app/(app)/clients/%5Bid%5D/sessions/new/actions.ts
@@ -24,8 +27,8 @@ sources:
     resource: repo://docs/03_SECURITY_AND_PRIVACY.md
   - id: openwiki-source-81540d55f57e8108b840432e
     resource: repo://docs/20_NEW_STUDIO_SETUP_RUNBOOK.md
-  - id: openwiki-source-e2ff2d5ec8ce9ed68fec4e72
-    resource: repo://docs/production/migration-state.json
+  - id: openwiki-source-f79f369ce2044c952565dcb9
+    resource: repo://docs/production/migration-ledger.md
   - id: openwiki-source-074418188d433d183a2d2a90
     resource: repo://lib/admin.ts
   - id: openwiki-source-e65da206b9c2f6871acfa78c
@@ -62,10 +65,7 @@ sources:
     resource: repo://tests/lib/supabase/request-identity-dedupe.test.ts
   - id: openwiki-source-833044c4d4591cb2eabb5a7e
     resource: repo://tests/security/service-role-allowlist.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Authentication, sessions and tenancy
@@ -74,49 +74,47 @@ Hone has four kinds of caller, and they never share a credential:
 
 | Caller | Credential | Resolved to |
 |---|---|---|
-| Practitioner | Supabase Auth session cookie (magic link or Google OAuth) | an **active** `practitioners` row in one studio (§3) |
-| Client | `hone_portal_session` cookie, a separate realm (§6) | one `(studio_id, client_id)` pair |
-| Anonymous link holder | appointment or invitation token in the URL | the row the token resolves to — see [Public token routes and privacy](public-token-routes-and-privacy.md) |
-| Operator | a practitioner session whose email is on `ADMIN_EMAILS` (§7) | cross-studio, read-mostly `/admin` surface |
+| Practitioner | Supabase Auth session cookie (magic link or Google OAuth) | an **active** `practitioners` row in one studio (section 3) |
+| Client | `hone_portal_session` cookie, a separate realm (section 6) | one `(studio_id, client_id)` pair |
+| Anonymous link holder | appointment or invitation token in the URL | the row the token resolves to; see [Public token routes and privacy](public-token-routes-and-privacy.md) |
+| Operator | a practitioner session whose email is on `ADMIN_EMAILS` (section 7) | the cross-studio, read-mostly `/admin` surface |
 
-The rule this page documents: **the browser never chooses the tenant**. The studio and the acting
-practitioner come from the server-side resolver, and every database command re-proves membership itself.
-Row-level policies are covered on [RLS, grants and SECURITY DEFINER commands](rls-grants-and-security-definer.md).
+The rule this page documents: **the browser never chooses the tenant**. The studio and the acting practitioner come
+from the server-side resolver, and every database command re-proves membership itself. Row-level policies are covered
+on [RLS, grants and SECURITY DEFINER commands](rls-grants-and-security-definer.md).
 
 ## 1. Practitioner sign-in is invite-only
 
-**Magic link.** `/login` sends the address to `requestPractitionerMagicLinkAction`. That action:
+**Magic link.** `/login` sends the address to `requestPractitionerMagicLinkAction`, which
+(`app/(auth)/login/actions.ts` L35-L82):
 
-- looks up a `pending` invitation with the service-role client (the requester is anonymous, and
-  `pending_invitations` is limited to studio members by RLS);
-- sets `shouldCreateUser` only when an invitation exists — a lookup error fails closed for sign-up, but
-  existing practitioners still get their link;
-- returns the same generic success either way, folding Supabase's "signups not allowed" into it, so the form
-  cannot reveal who has an account.
+- looks up a `pending` invitation with the service-role client (the requester is anonymous, and `pending_invitations`
+  is limited to studio members by RLS);
+- sets `shouldCreateUser` only when an invitation exists; a lookup error fails closed for sign-up, but existing
+  practitioners still get their link;
+- returns the same generic success either way, folding Supabase's "signups not allowed" into it, so the form cannot
+  reveal who has an account.
 
-Evidence: `app/(auth)/login/actions.ts` L35-L82.
+**Google OAuth.** It starts in the browser and cannot pass `shouldCreateUser`, so it can create an `auth.users` row for
+anyone (`app/(auth)/login/page.tsx` L36-L48). Creating that row grants nothing:
 
-**Google OAuth.** It starts in the browser and cannot pass `shouldCreateUser`, so it can create an
-`auth.users` row for anyone (`app/(auth)/login/page.tsx` L36-L48).
-Creating that row grants nothing:
-
-- since `0141`, `handle_new_user()` is a **no-op** — it creates no membership and stamps no acceptance
+- since `0141`, `handle_new_user()` is a **no-op**: it creates no membership and stamps no acceptance
   ([`0141` L59-L78](../../supabase/migrations/0141_onboarding_invitation_reconciliation.sql#L59-L78));
 - `0081` had already removed the older fallback that gave every new user a fresh studio
   ([`0081` L1-L17](../../supabase/migrations/0081_invite_only_handle_new_user.sql#L1-L17)).
 
-**Provisioning happens at sign-in.** Both methods land on `/auth/callback`
-(`app/(auth)/auth/callback/route.ts` L9-L76):
+**Provisioning happens at sign-in.** Both methods land on `/auth/callback` (`app/(auth)/auth/callback/route.ts`
+L9-L76):
 
 1. It exchanges the code for a session.
 2. It calls `reconcile_my_pending_invitation()`, an authenticated, self-scoped `SECURITY DEFINER` RPC that
    ([`0141` L202-L307](../../supabase/migrations/0141_onboarding_invitation_reconciliation.sql#L202-L307)):
    - takes a per-email advisory lock;
-   - acts only when exactly **one** pending invitation matches the caller's verified auth email
-     (more than one returns `ambiguous`);
+   - acts only when exactly **one** pending invitation matches the caller's verified auth email (more than one returns
+     `ambiguous`);
    - refuses with `conflict` when another user already holds an active row with that email in the studio;
-   - links a membership **only** by copying an existing current-version terms + privacy acceptance;
-     otherwise it returns `acceptance_required`.
+   - links a membership **only** by copying an existing current-version terms and privacy acceptance; otherwise it
+     returns `acceptance_required`.
 3. The callback routes on the result:
 
 | Result | Destination |
@@ -124,27 +122,25 @@ Creating that row grants nothing:
 | `acceptance_required` | `/accept-invitation` |
 | `conflict` | `/no-access?reason=invite-conflict` |
 | `ambiguous` | `/no-access?reason=invite-ambiguous` |
-| linked, now a member of 2+ studios | `/dashboard`, with the studio-selection cookie cleared so the chooser appears |
+| linked, now a member of two or more studios | `/dashboard`, with the studio-selection cookie cleared so the chooser appears |
 
 Any reconciliation failure falls through to the default destination; it never blocks sign-in.
 
 **Explicit acceptance.** `/accept-invitation` is the single authoritative acceptance point
-(`app/(auth)/accept-invitation/actions.ts` L10-L60). Its server
-action checks the current-policy checkbox, resolves the user from the session, and calls
-`admin_accept_pending_invitation(p_user_id)` with **only** the user id. That command is service-role-only; the
-two self-scoped readers are granted to `authenticated` and never to `anon`
+(`app/(auth)/accept-invitation/actions.ts` L10-L60). Its server action checks the current-policy checkbox, resolves the
+user from the session, and calls `admin_accept_pending_invitation(p_user_id)` with **only** the user id. That command
+is service-role-only; the two self-scoped readers are granted to `authenticated` and never to `anon`
 ([`0141` L480-L515](../../supabase/migrations/0141_onboarding_invitation_reconciliation.sql#L480-L515)).
 
-`0141` is at or below the declared hosted maximum (`0204`,
-[`migration-state.json` L16](../../docs/production/migration-state.json#L16-L16)), so this flow is
-migration-applied. See [Migrations and hosted state](../operations/migrations-and-hosted-state.md) for how to
-read that file.
+**Lifecycle state.** The migration ledger records `0141`, `0178` and `0181` as applied, so the flows on this page that
+depend on them are migration-applied; the declared hosted maximum lives in `docs/production/migration-state.json` (see
+[Migrations and hosted state](../operations/migrations-and-hosted-state.md) for how to read it).
 
 ## 2. The request gate (`middleware.ts` → `updateSession`)
 
-Every request outside the static-asset matcher runs `updateSession`
-([`middleware.ts` L4-L58](../../middleware.ts#L4-L58)). The matcher excludes a few files by **exact path**,
-never by prefix, because a prefix would also exempt a same-named authenticated route.
+Every request outside the static-asset matcher runs `updateSession` ([`middleware.ts` L4-L58](../../middleware.ts#L4-L58)).
+The matcher excludes a few files by **exact path**, never by prefix, because a prefix would also exempt a same-named
+authenticated route.
 
 `updateSession` refreshes the Supabase cookies through `auth.getUser()`, then applies three gates in order
 ([`lib/supabase/middleware.ts` L5-L236](../../lib/supabase/middleware.ts#L5-L236)):
@@ -158,25 +154,24 @@ never by prefix, because a prefix would also exempt a same-named authenticated r
    - `/calendar-feed/` and `/api/cron/`, plus the exact Stripe and Twilio webhook paths.
 
    Each route on the list authenticates itself.
-2. **No-studio gate.** For a signed-in user on any route except `/no-access` and `/accept-invitation`, it reads
-   the caller's **active** memberships through the RLS-scoped anon-key client
+2. **No-studio gate.** For a signed-in user on any route except `/no-access` and `/accept-invitation`, it reads the
+   caller's **active** memberships through the RLS-scoped anon-key client
    ([L159-L233](../../lib/supabase/middleware.ts#L159-L233)):
 
    | Active memberships | Outcome |
    |---|---|
-   | 0 | `/no-access` |
-   | 1 | proceed |
-   | 2+, `hone_selected_studio` cookie names one of them | proceed |
-   | 2+, no valid cookie | the chooser (`/no-access?reason=multiple-studios`); a forged or stale cookie is deleted |
+   | none | `/no-access` |
+   | exactly one | proceed |
+   | two or more, `hone_selected_studio` cookie names one of them | proceed |
+   | two or more, no valid cookie | the chooser (`/no-access?reason=multiple-studios`); a forged or stale cookie is deleted |
 
 3. **Operator carve-out.** `/admin` paths skip the no-studio gate only for an `isAdmin` email
    ([L180-L192](../../lib/supabase/middleware.ts#L180-L192)), and the `/admin` layout checks `isAdmin` again
    ([`app/admin/layout.tsx` L13-L18](../../app/admin/layout.tsx#L13-L18)).
 
-The middleware is a gate, not an identity source: nothing downstream reads its result.
-Browser proof: [`e2e/invite-only.spec.ts` L69-L130](../../e2e/invite-only.spec.ts#L69-L130). In it, an
-uninvited signed-in user lands on `/no-access` from every app route, with no studio navigation visible, and
-an anonymous user is sent to `/login`.
+The middleware is a gate, not an identity source: nothing downstream reads its result. Browser proof is
+[`e2e/invite-only.spec.ts` L69-L130](../../e2e/invite-only.spec.ts#L69-L130): an uninvited signed-in user lands on
+`/no-access` from every app route, with no studio navigation visible, and an anonymous user is sent to `/login`.
 
 ## 3. The single derivation of studio and practitioner
 
@@ -185,22 +180,21 @@ All of it lives in `lib/supabase/queries.ts`.
 **`loadRequestIdentity`** is wrapped in React `cache()`, so it runs once per server request
 ([L80-L142](../../lib/supabase/queries.ts#L80-L142)). It makes two calls:
 
-- `auth.getUser()` — a real GoTrue round trip, not a cookie decode;
+- `auth.getUser()`, a real GoTrue round trip rather than a cookie decode;
 - a select of `practitioners` joined to `studios`, filtered to `user_id = <the authenticated user>` and
   `active = true`, on the authenticated client ([L65-L78](../../lib/supabase/queries.ts#L65-L78)).
 
-The cache is per request only: nothing survives the response, so a revoked session is refused on the next
-request.
+The cache is per request only: nothing survives the response, so a revoked session is refused on the next request.
 
 **`resolveActivePractitionerMembership`** turns those rows into one decision
 ([L144-L165](../../lib/supabase/queries.ts#L144-L165)):
 
 | Active rows | Result |
 |---|---|
-| 0 | `none` |
-| 1 | that membership |
-| 2+, selection cookie matches a row | that row |
-| 2+, otherwise | `choose` — a studio is never auto-picked |
+| none | `none` |
+| exactly one | that membership |
+| two or more, selection cookie matches a row | that row |
+| two or more, otherwise | `choose`; a studio is never auto-picked |
 
 Two wrappers expose it, and they differ only in how they fail:
 
@@ -217,29 +211,26 @@ re-read on every wrapper call and honoured only when it matches an active row
 
 Tests:
 
-- [`request-identity-dedupe.test.ts`](../../tests/lib/supabase/request-identity-dedupe.test.ts#L292-L532):
-  - one navigation costs one `getUser` and one membership query;
-  - the read is limited to the caller's own active rows;
-  - no identity crosses a request boundary;
-  - a forged cookie is refused even inside a memoised request;
-  - a failed membership read surfaces as an error, never as "no memberships".
-- [`multi-studio-membership.db.test.ts` L36-L93](../../tests/db/multi-studio-membership.db.test.ts#L36-L93):
-  2+ memberships is a reachable state, and the switch check returns zero rows for a studio the user does not
-  belong to.
+- [`request-identity-dedupe.test.ts`](../../tests/lib/supabase/request-identity-dedupe.test.ts#L292-L532): one
+  navigation costs one `getUser` and one membership query; the read is limited to the caller's own active rows; no
+  identity crosses a request boundary; a forged cookie is refused even inside a memoised request; a failed membership
+  read surfaces as an error, never as "no memberships".
+- [`multi-studio-membership.db.test.ts` L36-L93](../../tests/db/multi-studio-membership.db.test.ts#L36-L93): multiple
+  memberships are a reachable state, and the switch check returns no rows for a studio the user does not belong to.
 
 ## 4. Where a studio id crosses into the database
 
 | Path | Who names the studio | Who re-proves it |
 |---|---|---|
 | Authenticated-client reads and writes | the row's own `studio_id` | RLS predicates `is_studio_member` / `is_studio_owner`: `auth.uid()` must hold an **active** row (owner role for the owner variant) ([`0001` L151-L189](../../supabase/migrations/0001_init.sql#L151-L189)) |
-| Service-role commands (Pattern A) | the server action, from `getCurrentPractitionerWithStudio()` — never a form field | the command re-derives membership and role from `(studio_id, user_id)`. Every `createAdminClient()` call site must appear in an allowlist that requires a scope guard to be present in the file — an inventory and drift gate, not a proof of perfect scoping ([`service-role-allowlist.ts` L1-L42](../../tests/security/service-role-allowlist.ts#L1-L42)) |
-| Authenticated-callable commands that take a studio (Pattern B) | the server action passes `p_studio_id` from the resolver (`app/(app)/clients/[id]/sessions/new/actions.ts` L203-L223) | the command maps `auth.uid()` + that studio to an active practitioner row, or refuses (`session_actor_practitioner`, [`0167` L78-L107](../../supabase/migrations/0167_session_write_commands.sql#L78-L107); `own_practitioner_in_studio`, [`0178` L59-L86](../../supabase/migrations/0178_practitioner_identity_boundary.sql#L59-L86)) |
-| Studio switch | a form field | an RLS-scoped active-membership check before the cookie is set (§3) |
-| Public slug, appointment and invitation tokens, portal session | the credential's own row | each route — see [Public token routes and privacy](public-token-routes-and-privacy.md) |
+| Service-role commands (Pattern A) | the server action, from `getCurrentPractitionerWithStudio()`, never a form field | the command re-derives membership and role from `(studio_id, user_id)`. Every `createAdminClient()` call site must appear in an allowlist that requires a scope guard to be present in the file: an inventory and drift gate, not a proof of perfect scoping ([`service-role-allowlist.ts` L1-L42](../../tests/security/service-role-allowlist.ts#L1-L42)) |
+| Authenticated-callable commands that take a studio (Pattern B) | the server action passes `p_studio_id` from the resolver (`app/(app)/clients/[id]/sessions/new/actions.ts` L203-L223) | the command maps `auth.uid()` and that studio to an active practitioner row, or refuses (`session_actor_practitioner`, [`0167` L78-L107](../../supabase/migrations/0167_session_write_commands.sql#L78-L107); `own_practitioner_in_studio`, [`0178` L59-L86](../../supabase/migrations/0178_practitioner_identity_boundary.sql#L59-L86)) |
+| Studio switch | a form field | an RLS-scoped active-membership check before the cookie is set (section 3) |
+| Public slug, appointment and invitation tokens, portal session | the credential's own row | each route; see [Public token routes and privacy](public-token-routes-and-privacy.md) |
 
-**Why `p_studio_id` is explicit.** In the incident behind `0181`, `start_session` chose a studio with an
-unordered `limit 1` over all of the caller's memberships. A practitioner in two studios could therefore render
-the page for the selected studio and then run the command against the other one
+**Why `p_studio_id` is explicit.** In the incident behind `0181`, `start_session` chose a studio with an unordered
+`limit 1` over all of the caller's memberships, so a practitioner in two studios could render the page for the selected
+studio and then run the command against the other one
 ([`0181` L1-L54](../../supabase/migrations/0181_multi_studio_command_authority.sql#L1-L54)). The fix:
 
 - the five-argument command proves an active membership in the **named** studio before reading the client
@@ -249,62 +240,51 @@ the page for the selected studio and then run the command against the other one
 
 Proof: [`multi-studio-session-authority.db.test.ts` L107-L200](../../tests/db/multi-studio-session-authority.db.test.ts#L107-L200)
 (explicit A, explicit B, a cross-studio client, a non-member studio and an inactive membership) and
-[L360-L420](../../tests/db/multi-studio-session-authority.db.test.ts#L360-L420) (the legacy wrapper).
-`0178` fixed the same class in `treatment_image_actor`: it took the first active row with no studio scope,
-which made the actor nondeterministic and caused intermittent refusals rather than a proven leak
+[L360-L420](../../tests/db/multi-studio-session-authority.db.test.ts#L360-L420) (the legacy wrapper). `0178` fixed the
+same class in `treatment_image_actor`: it took the first active row with no studio scope, which made the actor
+nondeterministic and caused intermittent refusals rather than a proven leak
 ([`0178` L33-L39](../../supabase/migrations/0178_practitioner_identity_boundary.sql#L33-L39)).
 
 ## 5. The practitioner roster is SELECT-only
 
-`0178` revoked **all** privileges on `public.practitioners` from `public`, `anon`, `authenticated` and
-`service_role`, then granted back `SELECT` only. This covers TRUNCATE, REFERENCES, TRIGGER and PostgreSQL 17's
-MAINTAIN, none of which RLS governs. It also dropped the owner insert and update policies and kept
-`practitioners: members read`
+`0178` revoked **all** privileges on `public.practitioners` from `public`, `anon`, `authenticated` and `service_role`,
+then granted back `SELECT` only. This covers TRUNCATE, REFERENCES, TRIGGER and PostgreSQL 17's MAINTAIN, none of which
+RLS governs. It also dropped the owner insert and update policies and kept `practitioners: members read`
 ([`0178` L505-L544](../../supabase/migrations/0178_practitioner_identity_boundary.sql#L505-L544)).
 
 What remains writable, and how:
 
-- **Own preferences** (name, colour, feed-token hash, default frequency): three authenticated-callable
-  commands bound to `auth.uid()`
-  ([L546-L578](../../supabase/migrations/0178_practitioner_identity_boundary.sql#L546-L578)).
+- **Own preferences** (name, colour, feed-token hash, default frequency): three authenticated-callable commands bound
+  to `auth.uid()` ([L546-L578](../../supabase/migrations/0178_practitioner_identity_boundary.sql#L546-L578)).
 - **Team lifecycle**: the owner-gated locked command, unchanged.
 
 Proof ([`practitioner-identity-boundary.db.test.ts` L116-L453](../../tests/db/practitioner-identity-boundary.db.test.ts#L116-L453)):
-
-- a real authenticated UPDATE is denied by privilege, not silently filtered by RLS;
-- a non-owner can edit their own preferences but cannot self-promote, deactivate themselves or touch a
-  colleague;
-- a forged studio id mutates nothing;
-- a multi-studio user resolves per studio;
-- multiple owners stay valid.
+a real authenticated UPDATE is denied by privilege, not silently filtered by RLS; a non-owner can edit their own
+preferences but cannot self-promote, deactivate themselves or touch a colleague; a forged studio id mutates nothing; a
+multi-studio user resolves per studio; multiple owners stay valid.
 
 Cross-studio read isolation, with positive controls and "the row exists" ground truth, is proved in
 [`cross-studio-isolation.db.test.ts` L51-L466](../../tests/db/cross-studio-isolation.db.test.ts#L51-L466).
 
-## 6. Client portal sessions — a separate realm
+## 6. Client portal sessions: a separate realm
 
-`lib/portal/session.ts` owns the `hone_portal_session` cookie
-([L6-L33](../../lib/portal/session.ts#L6-L33)):
+`lib/portal/session.ts` owns the `hone_portal_session` cookie ([L6-L33](../../lib/portal/session.ts#L6-L33)):
 
 - the cookie is httpOnly, `sameSite=lax` and `secure` in production, and carries the raw token;
 - the database stores only its SHA-256 (`client_portal_sessions`);
 - the TTL is 7 days, computed on the server;
 - portal sessions never grant practitioner access, and practitioner sessions never grant portal access.
 
-**Lookup** ([L43-L120](../../lib/portal/session.ts#L43-L120)) filters on the hash and rejects a revoked or
-expired row. A database error is treated as anonymous rather than a 500.
+**Lookup** ([L43-L120](../../lib/portal/session.ts#L43-L120)) filters on the hash and rejects a revoked or expired row.
+A database error is treated as anonymous rather than a 500. **Sign-out**
+([L164-L200](../../lib/portal/session.ts#L164-L200)) revokes the row and always clears the cookie.
 
-**Sign-out** ([L164-L200](../../lib/portal/session.ts#L164-L200)) revokes the row and always clears the cookie.
-
-**Portal magic links** ([`lib/portal/magic-link.ts` L6-L55](../../lib/portal/magic-link.ts#L6-L55)) are
-256-bit random tokens, hashed at rest, valid for 60 minutes and bound to one studio and client.
-
-**Redemption** happens in a POST server action, so link scanners that fetch the URL do not consume it
-([`verify/[token]/actions.ts` L9-L31](../../app/portal/verify/[token]/actions.ts#L9-L31)). The action:
-
-- re-checks expiry and whether the client is archived;
-- consumes the link with a conditional `consumed_at IS NULL` update, so exactly one concurrent POST wins;
-- only then creates the session ([L69-L125](../../app/portal/verify/[token]/actions.ts#L69-L125)).
+**Portal magic links** ([`lib/portal/magic-link.ts` L6-L55](../../lib/portal/magic-link.ts#L6-L55)) are 256-bit random
+tokens, hashed at rest, valid for 60 minutes and bound to one studio and client. **Redemption** happens in a POST
+server action, so link scanners that fetch the URL do not consume it
+([portal verify action L9-L31](../../app/portal/verify/[token]/actions.ts#L9-L31)). The action re-checks expiry and
+whether the client is archived, consumes the link with a conditional `consumed_at IS NULL` update so exactly one
+concurrent POST wins, and only then creates the session ([L69-L125](../../app/portal/verify/[token]/actions.ts#L69-L125)).
 
 More on the portal: [Client portal, intake and consent](../portal/client-portal-intake-and-consent.md).
 
@@ -317,41 +297,35 @@ More on the portal: [Client portal, intake and consent](../portal/client-portal-
   hard-coded fallback ([L10-L21](../../lib/admin.ts#L10-L21)).
 - **Outside production:** a built-in development list applies.
 
-Admin pages and actions use the service-role client for cross-studio reads, and each action re-checks
-`isAdmin`.
+Admin pages and actions use the service-role client for cross-studio reads, and each action re-checks `isAdmin`.
 
 ## 8. Contradictions and open questions
 
 1. **Code comments still describe trigger-based provisioning.**
-   - The login action's header says that on first login `handle_new_user()` "matches the invite and places
-     the practitioner in the inviting studio"
-     (`app/(auth)/login/actions.ts` L17-L19).
-   - Since `0141` that trigger is a no-op, and provisioning happens only in the sign-in reconciliation (§1).
-   - `docs/03_SECURITY_AND_PRIVACY.md` still frames invite-only as the `shouldCreateUser` gate plus the `0081`
-     change and does not mention reconciliation
+   - The login action's header says that on first login `handle_new_user()` "matches the invite and places the
+     practitioner in the inviting studio" (`app/(auth)/login/actions.ts` L17-L19).
+   - Since `0141` that trigger is a no-op, and provisioning happens only in the sign-in reconciliation (section 1).
+   - `docs/03_SECURITY_AND_PRIVACY.md` still frames invite-only as the `shouldCreateUser` gate plus the `0081` change
+     and does not mention reconciliation
      ([§ 2. Public route model](../../docs/03_SECURITY_AND_PRIVACY.md#2-public-route-model)).
    - `docs/20_NEW_STUDIO_SETUP_RUNBOOK.md` carries the corrected account
      ([§ 2.2 Create the owner invitation](../../docs/20_NEW_STUDIO_SETUP_RUNBOOK.md#22-create-the-owner-invitation-production-write-show-sql-get-approval-first)).
 2. **Sign-in analytics label every sign-in as a magic link.** The callback sends `user_signed_in` with
-   `provider: "magic_link"` for every successful exchange
-   (`app/(auth)/auth/callback/route.ts` L21-L28), including Google OAuth sign-ins,
-   which use the same callback.
+   `provider: "magic_link"` for every successful exchange (`app/(auth)/auth/callback/route.ts` L21-L28), including
+   Google OAuth sign-ins, which use the same callback.
 3. **The callback accepts an unvalidated `next` parameter.** It reads `next` from the query string (default
    `/dashboard`) and appends it to the request origin without checking that it is a same-origin path
-   (`app/(auth)/auth/callback/route.ts` L12,
-   L67). No caller in the repository sets `next`.
-   Restricting it to relative paths is an open hardening question, not a documented decision.
+   (`app/(auth)/auth/callback/route.ts` L12, L67). No caller in the repository sets `next`. Restricting it to relative
+   paths is an open hardening question, not a documented decision.
 4. **The four-argument `start_session` still has an application caller.**
-   - `0181` says the legacy signature will have no caller once the app binds explicitly, and "may be dropped
-     by a later migration"
-     ([`0181` L268-L274](../../supabase/migrations/0181_multi_studio_command_authority.sql#L268-L274)).
-   - The session-start action still calls it as a one-retry fallback when PostgREST reports the five-argument
-     signature missing (`PGRST202`)
-     (`app/(app)/clients/[id]/sessions/new/actions.ts` L225-L261).
+   - `0181` says the legacy signature will have no caller once the app binds explicitly, and "may be dropped by a later
+     migration" ([`0181` L268-L274](../../supabase/migrations/0181_multi_studio_command_authority.sql#L268-L274)).
+   - The session-start action still calls it as a one-retry fallback when PostgREST reports the five-argument signature
+     missing (`PGRST202`) (`app/(app)/clients/[id]/sessions/new/actions.ts` L225-L261).
    - No later migration drops it.
-5. **The "sole remaining unconstrained resolver" finding is a dated record, not a guard.** `0181`'s header
-   reports a live-schema census that found `start_session` was the last `SECURITY DEFINER` function picking
-   a practitioner from `auth.uid()` with no studio constraint
-   ([`0181` L56-L74](../../supabase/migrations/0181_multi_studio_command_authority.sql#L56-L74)). The DB
-   tests above prove the specific commands. No test located for this page enumerates every such function, so
-   a new unconstrained resolver would not be caught automatically.
+5. **The "sole remaining unconstrained resolver" finding is a dated record, not a guard.** `0181`'s header reports a
+   live-schema census that found `start_session` was the last `SECURITY DEFINER` function picking a practitioner from
+   `auth.uid()` with no studio constraint
+   ([`0181` L56-L74](../../supabase/migrations/0181_multi_studio_command_authority.sql#L56-L74)). The database tests above
+   prove the specific commands, but no test located for this page enumerates every such function, so a new
+   unconstrained resolver would not be caught automatically.

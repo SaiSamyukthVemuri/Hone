@@ -3,6 +3,9 @@ type: ci pipeline
 title: CI workflows, risk lanes and browser sharding
 description: How Hone's CI decides what to run — the ci.yml job graph keyed off one changed-path classifier, the deterministic risk tiers T0–T3, browser group selection and sharding, the fail-closed browser aggregator that is the stable required check, the nightly full matrix, job budgets, the least-privilege and SHA-pinning guards that cover every workflow file, and what a green run does and does not prove.
 tags: [ci, github-actions, risk-tiers, classification, supply-chain, testing]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-164e2da859b5277df81c7d94
     resource: repo://.github/workflows/ci.yml
@@ -22,10 +25,7 @@ sources:
     resource: repo://tests/ci/aggregate-fail-closed.test.ts
   - id: openwiki-source-2596c45699032de1ba03ae0c
     resource: repo://tests/ci/ci-config.test.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # CI workflows, risk lanes and browser sharding
@@ -109,6 +109,14 @@ Local tooling shares the same classifier and group selector:
 
 [`classify-changes.test.ts`](../../tests/ci/classify-changes.test.ts) proves the mapping with table-driven cases.
 
+**Wiki output is not docs-only.** The DOCS patterns are `docs/`, `README.md`, `CLAUDE.md`, any `*.md` file and the
+GitHub issue and PR templates ([L33-L40](../../scripts/classify-changes.mjs#L33-L40)). OpenWiki pages match them, but its
+Claim sidecars and run metadata (`openwiki/.claims/*.json`, `openwiki/.last-update.json`) and `.openwikiignore` do not,
+and they match no lane or tier rule either. A wiki regeneration therefore classifies as T1 with every lane boolean
+false: `validate` (including `npm test` and the docs-consistency suites) runs, and no database or browser lane does
+([L196-L213](../../scripts/classify-changes.mjs#L196-L213), [L250-L262](../../scripts/classify-changes.mjs#L250-L262);
+[`ci.yml` L228-L231](../../.github/workflows/ci.yml#L228-L231)).
+
 ## 4. Browser sharding and the fail-closed aggregator
 
 **Shards** ([`ci.yml` L146-L216](../../.github/workflows/ci.yml#L146-L216), [L494-L550](../../.github/workflows/ci.yml#L494-L550)):
@@ -189,8 +197,8 @@ and "Green CI is not merge authorization" ([`CLAUDE.md` § 4. CI watchers and de
    runs a selected or sharded multi-spec suite and three more browser lanes exist.
 2. **Any new workflow is subject to the whole-directory guards.** A workflow that needs a write scope, a secret
    or another checkout fails the guards in §6 unless the guards and the reviewed checkout count change with it.
-   The generated `openwiki-update.yml` scaffold is in that position: it requests write permissions and
-   provider secrets.
+   OpenWiki's generated `openwiki-update.yml` scaffold, which is not committed in this repository, is in that
+   position: it requests write permissions and provider secrets.
 3. **Docs-only diffs skip the `validate` lane, including `npm test`.** A Markdown-only PR therefore never runs the
    docs-consistency vitest suites in CI ([L228-L231](../../.github/workflows/ci.yml#L228-L231)). Those guards run
    only through local `verify:changed` (which auto-runs `tests/docs/` for a docs-only diff) or on a later

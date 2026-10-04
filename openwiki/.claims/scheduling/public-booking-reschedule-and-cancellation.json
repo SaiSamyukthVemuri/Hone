@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:4534c6849c7975643b21b26f4353787a95807435bf31a62e6170d9ba656ba1fe",
+  "pageVersion": "sha256:af37b1766eb16de5e4344ed14ce711986fbc68b890dd42ad685a3d2895b44322",
   "claims": [
     {
-      "id": "claim_2a6f62b59b54472aa9e6b98e63137e83",
-      "statement": "The public booking action rate-limits by request headers, slug and email before resolving the studio, and creates nothing and sends nothing when limited.",
+      "id": "claim_20983e357b964cac9b05bc8292a56904",
+      "statement": "The public booking action rate-limits by request headers, slug and email before resolving the studio, fails open when the limiter is unavailable, and creates nothing and sends nothing when limited.",
       "evidence": [
         {
           "resource": "repo://app/book/%5Bslug%5D/actions.ts#L533-L545",
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_8bfdcfccb336441bb0a0582eebf9eab7",
+      "id": "claim_e0dd03e8f9e04049a1d62f53e79bcfbf",
       "statement": "For new clients the public booking action applies the studio's new-client admission mode before booking and handles a presented waitlist invitation separately.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_69ad3be021fa45a38b834ce46c3e6035",
+      "id": "claim_d574c767b1bf4ac3b1bef0f242d74e26",
       "statement": "Existing-client booking resolves the client by exact normalized email among non-archived clients and returns the same generic error for unknown and archived emails, without overwriting stored demographics.",
       "evidence": [
         {
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "id": "claim_51e92234577246e3a97c0e34351137ea",
+      "id": "claim_8bc7e1549b05443fb32b26fa06a0eb3c",
       "statement": "The public booking action commits through create_public_appointment_for_new_client, create_waitlist_public_appointment or create_public_appointment, and maps not_a_public_slot, 23P01 and HB001 to an unavailable-time response.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_bbf9b08ba1554fc5b256894a93083a82",
+      "id": "claim_ecbd7bf03ebe43d7bb362c0a97037d1f",
       "statement": "After the booking command returns created, confirmation email, SMS, practitioner notifications, revalidation and analytics run as post-commit secondary effects that cannot turn the committed booking into a failure.",
       "evidence": [
         {
@@ -61,7 +61,7 @@
       ]
     },
     {
-      "id": "claim_06a1b81ed0984d01aae2a51ae3875c60",
+      "id": "claim_0ade0910e4014162b766abaf577b9647",
       "statement": "DB tests prove the public appointment command derives values server-side, writes exactly one audit row and the shadow reservation, refuses cross-studio and archived inputs without enumeration, and enforces past, horizon, closed-day, override, blockout and timed-block rules with capacity off.",
       "evidence": [
         {
@@ -71,7 +71,7 @@
       ]
     },
     {
-      "id": "claim_314ef18999584f94bf48b9d355347b62",
+      "id": "claim_9f52586e381e485bb8e3755f0c92928b",
       "statement": "Appointment bearer tokens are 24 random bytes whose SHA-256 is the only stored value, and replay after a successful cancel or reschedule is prevented by the appointment state machine rather than a single-use table.",
       "evidence": [
         {
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "id": "claim_49e7fa13f4ba443789abb2a55741e697",
+      "id": "claim_dc67eced2a374b8090e94e60175058ca",
       "statement": "Stateless appointment tokens are HMAC-SHA256-signed {appointment_id, expires_at} payloads under a dedicated APPOINTMENT_SIGNING_SECRET with no fallback to the service-role key.",
       "evidence": [
         {
@@ -91,7 +91,7 @@
       ]
     },
     {
-      "id": "claim_2ba5a79b84774290b7ec63f38ff6fd48",
+      "id": "claim_555fe7f062084fdaa7a73dfbf5cbe1d0",
       "statement": "The public cancel action resolves the token by hash lookup then HMAC verification, rate-limits the token route, validates the reason allowlist and note length, and requires policy acknowledgement when policy text exists.",
       "evidence": [
         {
@@ -105,7 +105,7 @@
       ]
     },
     {
-      "id": "claim_28071835bbbe4aee8978e7a44c7e1909",
+      "id": "claim_22b1b836b8794a428a380af6279f4ce6",
       "statement": "public_cancel_appointment_with_token commits the cancellation, audit row and policy acknowledgement atomically (0176 moved the acknowledgement insert inside the command after a route-side insert could fail silently), fails closed on stale or missing policy hashes, refuses at-or-after-start and terminal appointments, yields one success for concurrent submits, and rolls back appointment, audit, reservation and calendar outbox together.",
       "evidence": [
         {
@@ -119,7 +119,7 @@
       ]
     },
     {
-      "id": "claim_c3bafea14bf4417da8a09cd07a7f0b7e",
+      "id": "claim_7cb7175062fb476791cf64e50feec56b",
       "statement": "reschedule_appointment_v2 cancels the original and creates the successor in one transaction with lineage and cancellation_kind rescheduled, preserves the original duration, requires exact replacement-slot membership excluding the original's own reservation, and enforces policy freshness.",
       "evidence": [
         {
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "id": "claim_a1479df7bba74db0aabe4f2a2663a62d",
+      "id": "claim_db9880ba5ac24aa4aec7d340fd5c90b7",
       "statement": "The /manage route mutates nothing, applies the token-route rate limit and the same reschedule-eligibility decision, and collapses failures to one generic message.",
       "evidence": [
         {
@@ -143,7 +143,7 @@
       ]
     },
     {
-      "id": "claim_1b7bc99aceca46458907181fc6eeecec",
+      "id": "claim_1da36889ca5a486c96eafd293a7d0ba5",
       "statement": "docs/01_ARCHITECTURE.md's public booking walkthrough still describes a column-based cancellation token and separate appointment and audit inserts, while the code stores only token hashes and commits appointment and audit in one command.",
       "evidence": [
         {
@@ -161,7 +161,7 @@
       ]
     },
     {
-      "id": "claim_1446f3b993484e6d826d262a61ec91c5",
+      "id": "claim_d872700f79054646a8e5a3a2c3adb420",
       "statement": "All four public reschedule entry points rate-limit first and pass through assertReschedulableOriginal, which resolves the token by hash, requires a confirmed future original, and only then applies the free-consultation waitlist-only refusal so the policy cannot be enumerated with unknown or stale tokens.",
       "evidence": [
         {
@@ -175,7 +175,7 @@
       ]
     },
     {
-      "id": "claim_49370eab15d74474b833cd8ef3522d5c",
+      "id": "claim_ccbbacbda21b47e28b0628811f4702fe",
       "statement": "The reschedule submit posts back the hash of the policy text the page rendered, and because the command re-derives the current hash from the studio row, a stale or tampered value can only cause a refusal and never record a false acknowledgement.",
       "evidence": [
         {
@@ -183,10 +183,20 @@
           "version": "repo-lines-v1:sha256:5cfbb2e683e4c7727019bed6882b9d80d3844fe79d6133ada1147882bf402b01:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjZGI2ZTU1MmFkMDJjM2FhYjA3YzNkZmNmOTZkMGExYTg4MDhjN2Y1NGYzNTczNjc1MTM2YmY4MGVjNTM0ZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4MGE2YzcxMWQyYTZjYWI0MjUxMjc2NjYyYTI5ZTk1MmM1ODkyMzc4ZGVmMDJiYzQ0ZTg3NGI5NjI1NWMxYzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0NjA3OTFiYWIwNDYzYmEwZDgwMjZlNjhkNjBmZjFkZjg1YzhkY2M1ZTVkN2Q0NDI0YmJlZTdkYWVjNGQ0NjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU2NWFiYjZhZjE0MzBlMzg1NWQxYmEzMjA3MTBiYjZhNDZhNmI4ZjNhOGY1ODg2ZmRlOWY5Yjc2NDJmZTAwODcifQ"
         }
       ]
+    },
+    {
+      "id": "claim_8d6e1c70d733488ab6cf5aac0a1fd274",
+      "statement": "The random appointment bearer token has no expiry of its own beyond appointment eligibility, which the token module records as an accepted bearer-link property rather than a control.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/appointment-token.ts#L18-L24",
+          "version": "repo-lines-v1:sha256:16aaa372b108d889e87e0e91adf5977d2cad8090eb295933063d8c14a5befbfc:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTAxZWFkOTM2YTIyODFkNTNkY2MwNjRiN2UyYTJhYjBkNTNiOTJlZjNlZjdiMzRiNjY4NjczMDA3ODk1Yzg2MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMmFhODBlNGIwMzliYmVmZjJlMzYxNWY1YmM0YzAxYTlmMDgwMWY3YjdjYmE3NGZkY2IwMzQ1Zjc3OTBlOTgzZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjViNGQ3NjA0NTdlNGFkMDQ0ZDU5NjZhZmI1ZmQ2YzM0YThmNzkzOWZlZTc4YTIyNjIzODZjMDc3Y2FmZmMxZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzQ1NjJkZTEzYzM4NzBmZTNhNTliM2RkNTgyNjlkNTA3ZGIyN2NkNWJiY2RmY2MyMGE2MTQ0ZWEyOGQ3N2UwYiJ9"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

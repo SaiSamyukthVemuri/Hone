@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:fcc48acaaccf0741687205b088c79b1cfa965310255d977fc2b3fec4d20265c6",
+  "pageVersion": "sha256:a51d5bd162d80c67f186673c0bf8a82fdfb4352fbea85a6f3bd911e92d0630eb",
   "claims": [
     {
-      "id": "claim_4ca4e90b9f2a45cf969567263440156a",
+      "id": "claim_7e59fd7a55034f9abbe68362f5068ede",
       "statement": "vercel.json registers exactly three daily Vercel cron jobs (materialize-recurring-breaks, calendar-reconcile, calendar-sync), and a config test requires appointment-reminders and no-show-check to be absent from it and the calendar crons to be daily with reconcile before sync.",
       "evidence": [
         {
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "id": "claim_2e356d5804a84f27894f8d9ac143b027",
+      "id": "claim_ed8758bdda95459d8705ba40c16e9103",
       "statement": "The appointment-reminders route is designed to be fired every 15 minutes by an external scheduler because the Vercel plan caps cron cadence at once per day.",
       "evidence": [
         {
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_eafd1404142a419fa00ef8b5453722c8",
+      "id": "claim_b3919d0b20fc483fb1c5e7c5a026bfb0",
       "statement": "isAuthorizedCronRequest rejects requests when CRON_SECRET is unset, the Authorization header is missing, or the header does not equal 'Bearer <secret>', comparing with timingSafeEqual after a length check.",
       "evidence": [
         {
@@ -37,7 +37,7 @@
       ]
     },
     {
-      "id": "claim_068dd56f877e46688611416ec6c692e1",
+      "id": "claim_4ee37e4e4b264465941f731a1de92a87",
       "statement": "Reminder windows are closed intervals of 1380-1500 minutes (24h pass) and 105-135 minutes (2h pass) from the run time, and the 15-minute cadence covers every appointment minute offset of the 2h window while an hourly cadence would not.",
       "evidence": [
         {
@@ -51,7 +51,7 @@
       ]
     },
     {
-      "id": "claim_f5133a8013744f5ab459c86a36347d24",
+      "id": "claim_8a826ecae5204e9fa326a7739f6ca743",
       "statement": "The reminder route selects confirmed appointments whose sent-at column is null, whose attempt counter is below three and whose start falls in the window, ordered by starts_at and limited to 50 rows per pass.",
       "evidence": [
         {
@@ -65,8 +65,8 @@
       ]
     },
     {
-      "id": "claim_fd952b40374543b49dac81f5d30b41ef",
-      "statement": "Each appointment receives at most one reminder email per window: the appointment reminder and any intake CTA are composed into one email claimed on the reminder_24h or reminder_2h slot according to a six-case law over the reminder toggle, intake toggle and live intake state.",
+      "id": "claim_72a41528fe59472781d06106182ec5f9",
+      "statement": "Each appointment receives at most one reminder email per window: the appointment reminder and any intake call to action are composed into one email claimed on the reminder_24h or reminder_2h slot according to a six-case law over the reminder toggle, intake toggle and live intake state.",
       "evidence": [
         {
           "resource": "repo://app/api/cron/appointment-reminders/route.ts#L183-L204",
@@ -79,8 +79,8 @@
       ]
     },
     {
-      "id": "claim_4dc15595213347a2b6d084d5b6716817",
-      "statement": "The email reminder pass claims before sending, re-reads appointment status after the claim, re-reads intake state live before deciding the CTA, and records the result after the send.",
+      "id": "claim_5416d98bba6f4ddb8f3f2848a9157db4",
+      "statement": "The email reminder pass claims before sending, re-reads appointment status after the claim, re-reads intake state live before deciding the call to action, and records the result after the send.",
       "evidence": [
         {
           "resource": "repo://app/api/cron/appointment-reminders/route.ts#L270-L311",
@@ -97,7 +97,7 @@
       ]
     },
     {
-      "id": "claim_b8e12d917ee24b72805a8a62ecd7e75b",
+      "id": "claim_a6ec4951a587499fa5d90193f9f77d7c",
       "statement": "claim_email_send increments the attempt counter and stamps claimed_at only when the slot is unsent, under three attempts and not claimed within the last five minutes, and record_email_result stamps sent_at on success and clears the claim; both are SECURITY DEFINER and executable only by service_role, with 0098 holding the latest definitions.",
       "evidence": [
         {
@@ -111,7 +111,7 @@
       ]
     },
     {
-      "id": "claim_4e087f92c5ed4e31b4473b4a2416ef40",
+      "id": "claim_44b139251bb848e1b689e7679f5fcf10",
       "statement": "Reminder sends stop after three attempts, and a failure on the third attempt records a reminder_send_exhausted warning ops alert with non-sensitive details.",
       "evidence": [
         {
@@ -125,8 +125,8 @@
       ]
     },
     {
-      "id": "claim_b2563485c1b748f8b3b7598cbdbadfda",
-      "statement": "SMS reminder passes use independent sms_reminder_* columns and the SMS claim pair, skip without claiming when the studio SMS toggle is off or the client lacks a phone, lacks consent or has opted out, and compose any intake CTA into the same SMS.",
+      "id": "claim_678567fda1184348bcac6bc86a375119",
+      "statement": "SMS reminder passes use independent sms_reminder_* columns and the SMS claim pair, skip without claiming when the studio SMS toggle is off or the client lacks a phone, lacks consent or has opted out, and compose any intake call to action into the same SMS.",
       "evidence": [
         {
           "resource": "repo://app/api/cron/appointment-reminders/route.ts#L444-L585",
@@ -139,8 +139,8 @@
       ]
     },
     {
-      "id": "claim_512dddceea0343d9a816c37f40c3c3e1",
-      "statement": "The SMS sendOne helper runs the consent gate, takes the SMS claim, posts through sendSmsSafely, and always records the SMS result in a finally block.",
+      "id": "claim_17828724dbda4ecfbae1adafa3701f65",
+      "statement": "The SMS sendOne helper runs the consent gate, takes the SMS claim, posts through the platform sender, and always records the SMS result in a finally block.",
       "evidence": [
         {
           "resource": "repo://lib/sms/send-appointment.ts#L369-L459",
@@ -149,7 +149,7 @@
       ]
     },
     {
-      "id": "claim_957a81dbe975488ea4ee0fee419c5b43",
+      "id": "claim_29d00ea747d243538dcd98598a0b2c0f",
       "statement": "A thrown reminder run records a critical cron_route_failed ops alert and returns HTTP 500, and a successful run records the reminder heartbeat only after all four passes complete.",
       "evidence": [
         {
@@ -159,8 +159,8 @@
       ]
     },
     {
-      "id": "claim_babace83698b493d855570f43882adcb",
-      "statement": "recordOpsAlert never throws: it writes a structured stderr line, inserts a redacted ops_alerts row through the service-role client, and emails critical alerts through a separate alert-email module.",
+      "id": "claim_def1dd880a4a4322a48ee18442475a81",
+      "statement": "recordOpsAlert never throws: it writes a structured stderr line, inserts a redacted ops_alerts row through the service-role client, and emails critical alerts through a separate alert-email path.",
       "evidence": [
         {
           "resource": "repo://lib/ops/alerts.ts#L106-L200",
@@ -173,7 +173,7 @@
       ]
     },
     {
-      "id": "claim_20201fdda6b54651b92d765a4a8bb862",
+      "id": "claim_b9cc811e09c3420a97afa7ef6bc8d6dc",
       "statement": "The reminder scheduler heartbeat is a single overwritten Upstash key with a 24-hour TTL holding aggregate run counts, and its writes and reads are best-effort and fail-open.",
       "evidence": [
         {
@@ -183,7 +183,7 @@
       ]
     },
     {
-      "id": "claim_ec37b7e1c5c741648e79c516903ea475",
+      "id": "claim_1bd35e61dc264be4abeb00ca30ef7330",
       "statement": "Reminder scheduler health is degraded beyond twice the cadence (30 minutes), stale beyond three times (45 minutes), and a stored timestamp more than five minutes in the future is not trusted.",
       "evidence": [
         {
@@ -197,7 +197,7 @@
       ]
     },
     {
-      "id": "claim_a3fecf0e89f54705b721285917a8f184",
+      "id": "claim_a70baecf064d40539069a210b4d72258",
       "statement": "The admin page reads and classifies the reminder heartbeat without writing, while the daily cron routes call recordReminderSchedulerHealthAlert inside a finally block that cannot alter their own response.",
       "evidence": [
         {
@@ -215,7 +215,7 @@
       ]
     },
     {
-      "id": "claim_510b4a9fd4d047ddb1f11ff737ecd1f8",
+      "id": "claim_1300d9e84f9244c9b882f0c4b773fa27",
       "statement": "The no-show-check cron route is a disabled, non-mutating stub that only authenticates the request and reports disabled; no-show is a practitioner action.",
       "evidence": [
         {
@@ -225,7 +225,7 @@
       ]
     },
     {
-      "id": "claim_c8c84bb639a148a58216297e9450df71",
+      "id": "claim_a8dea4fce59142a5bb1d06af9ae9ee04",
       "statement": "The recurring-break cron materializes every active rule through materialize_recurring_break_rule up to a studio-local horizon of the maximum public booking horizon plus 14 days, treating 23P01 exclusion conflicts as expected conflicts and alerting on failures.",
       "evidence": [
         {
@@ -239,7 +239,7 @@
       ]
     },
     {
-      "id": "claim_62221d8e3a484461aab6bf2507105b40",
+      "id": "claim_c31633df892a43e7b82d532304326ab2",
       "statement": "Migration 0186 moved intake reminders from the 7d/3d cadence to composition into the ~24h/~2h window email by adding only studios.send_intake_reminders (default true), retaining the 0098 7d/3d columns as history.",
       "evidence": [
         {
@@ -249,8 +249,8 @@
       ]
     },
     {
-      "id": "claim_2f19c95bf8c748139c9dbc64b60ea46b",
-      "statement": "The canonical record states appointment reminders were observed running in production on 2026-08-12 at a ~15-minute cadence with HTTP 200 responses, while scheduler ownership facts remain unverified, and intake reminders at 24h/2h (0186) were applied and verified on 2026-08-24.",
+      "id": "claim_edeebb7befb5429e9c665bfb9a12d53f",
+      "statement": "current-state.md records appointment reminders as production operation proven by read-only request-log observation with scheduler ownership still unverified, and records the 0186 intake-reminder change as applied and verified.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L846-L869",
@@ -259,8 +259,8 @@
       ]
     },
     {
-      "id": "claim_0dcd8b5460ef44218a0306dc11761411",
-      "statement": "A docs guard requires the scheduler ownership register in docs/08 to exist, keep every ownership box unverified, forbid recording secrets, and keep dated runtime evidence separate from human facts.",
+      "id": "claim_24e8e6ce66524653814993988e6db1b8",
+      "statement": "A docs guard requires the scheduler ownership register in docs/08 to exist, keep every ownership box unverified and forbid recording secrets there.",
       "evidence": [
         {
           "resource": "repo://docs/08_EMAIL_SMS_AND_CRON.md#L262-L277",
@@ -273,17 +273,17 @@
       ]
     },
     {
-      "id": "claim_d7d23e822e1b4f459e089f4d99fdf81e",
-      "statement": "Migration 0199 (bounded reminder SMS candidate selection) was applied to production on 2026-09-18 from the unmerged PR #716 head, and its application consumer was not merged or deployed.",
+      "id": "claim_5028ac25b6d04b96bd0bb517efdc6123",
+      "statement": "The migration ledger records migration 0199 (bounded reminder SMS candidate selection) as applied from the unmerged PR #716 head, with no application code deployed for it.",
       "evidence": [
         {
-          "resource": "repo://docs/production/migration-ledger.md#L504-L594",
-          "version": "repo-lines-v1:sha256:289fcf14df059757ec024acee1ae937cb0e4fdcbf6e0a571d311197a8d5f1cbb:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4NTQwNTcxNDkzYmIxZWM0Mzg0ODU5MDc2NDIxZDQ5ZDE0Y2ZlMDljYWE1ZTIxOTQwOTkxYjdhNWFmODM0NjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMzA5MjAzMzJlMWMyYWY5OWNjMTA1NTIxNDUyYWMxOWVmYThhMTE5MGUxN2Q3NjRjNDgzZjYxNDlhY2I1ZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjllZDNhM2UwMTJkNzIyZTE4NDgyODhmMTE2ZjNlMTQ2NDUwNWE2MDkwYmJiMWI4YWE4MjZkZWFkMzRlZGIzMjcifQ"
+          "resource": "repo://docs/production/migration-ledger.md#L568-L593",
+          "version": "repo-lines-v1:sha256:1f5625c68e2e3eafb0e706566e188c59ef4adc3d4fdd8be1af6c62eeca636f11:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4NTQwNTcxNDkzYmIxZWM0Mzg0ODU5MDc2NDIxZDQ5ZDE0Y2ZlMDljYWE1ZTIxOTQwOTkxYjdhNWFmODM0NjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRkOTI1YmNmMzk5MTgxODBjMzc3NGRlOTI3NmU3ZjQzZmUzYmJhMGI3ZDliMDQzYjg1YmMwZTAzMjg2MjliYjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMzA5MjAzMzJlMWMyYWY5OWNjMTA1NTIxNDUyYWMxOWVmYThhMTE5MGUxN2Q3NjRjNDgzZjYxNDlhY2I1ZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmODUxZWU1NzVmNTI2MDc1MjNmMmYxNWM4YjU0YjFkYjg1Y2I5NTJiMTRmODIzMDI3NTMyNjc0NTJkNmM0MzEifQ"
         }
       ]
     },
     {
-      "id": "claim_1de114266d894cb186a1dafcfed4c124",
+      "id": "claim_f15399023be84f65853d0f0f19658086",
       "statement": "The merged SMS reminder pass does not call 0199's candidate-selection functions; it still selects a fixed 50-row page ordered by starts_at through the shared TypeScript query.",
       "evidence": [
         {
@@ -301,7 +301,7 @@
       ]
     },
     {
-      "id": "claim_707d143d96b944069a7708bfa1428d93",
+      "id": "claim_6e4d380e2fc6478c918874cd602f6783",
       "statement": "Migration 0199's header says every selected appointment passes a sendOne that resolves the active studio SMS sender before claiming, but the merged sendOne claims and sends without resolving a studio sender.",
       "evidence": [
         {
@@ -315,8 +315,8 @@
       ]
     },
     {
-      "id": "claim_e01257744d0b4a7babde4cb30a60f84b",
-      "statement": "A next.config.ts comment describes the cron jobs as currently dormant, which conflicts with the canonical record that the reminder route was observed running in production.",
+      "id": "claim_a8ee3d1ee1a74ae08a9f850527e2c90d",
+      "statement": "A next.config.ts comment describes the cron jobs as currently dormant, which conflicts with the canonical record that the reminder route runs in production.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L846-L861",
@@ -331,6 +331,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:05dc491cea09bd9090bea5c5dd5604f570f47ba19bab9f14a9f81a2b3e4fa337",
+  "pageVersion": "sha256:dc7e9380f2c0f6783181eb14e06d0c23c28a565e0e64bbeabc82ad3d80d4f578",
   "claims": [
     {
-      "id": "claim_b66ed25512404ef6abb6f3e3e5fc8511",
-      "statement": "Intake links are HMAC-SHA256-signed {intake_id, expires_at} payloads under a dedicated INTAKE_SIGNING_SECRET and are verified with a timing-safe comparison.",
+      "id": "claim_453cd7d7f5004730a6ba7f99999d3c51",
+      "statement": "Intake links are HMAC-SHA256-signed {intake_id, expires_at} payloads under a dedicated INTAKE_SIGNING_SECRET with no fallback secret, and are verified with a timing-safe comparison.",
       "evidence": [
         {
           "resource": "repo://lib/intake/tokens.ts#L1-L40",
@@ -17,8 +17,8 @@
       ]
     },
     {
-      "id": "claim_c7cec25a4b2949448f41ebef639bbd26",
-      "statement": "The public intake save and submit actions rate-limit before verifying the token, collapse every token failure into one generic message, and whitelist responses to known question keys plus one bounded consent claim.",
+      "id": "claim_760bdba30d8943f9acc0c0dd326bd664",
+      "statement": "The public intake save and submit actions rate-limit before verifying the token with a limiter that fails open, collapse every token failure into one generic message, and whitelist responses to known question keys plus one bounded consent claim.",
       "evidence": [
         {
           "resource": "repo://app/intake/%5Btoken%5D/actions.ts#L187-L205",
@@ -31,7 +31,7 @@
       ]
     },
     {
-      "id": "claim_3cdef120bbbc4114bba92bd0422d0805",
+      "id": "claim_75b7f67954c84a9f90081f4fe6add433",
       "statement": "Intake draft consent records are re-derived from the studio's own live template rows, so a stale or forged consent claim is dropped rather than stored, and the save update is conditional on status in_progress.",
       "evidence": [
         {
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "id": "claim_a65c05e1dc194f589bdf11967a8009dc",
+      "id": "claim_8a9c594564e7423aa3987c614917416f",
       "statement": "Submitting an intake refuses missing required answers and invalid choices, validates live consent responses against a fresh read, moves the row in_progress to submitted in one conditional update, and treats an already-submitted intake or a lost race as success.",
       "evidence": [
         {
@@ -51,8 +51,8 @@
       ]
     },
     {
-      "id": "claim_2edef01644ed47739e6de04c208e2bea",
-      "statement": "After submission the intake syncs emergency contact, date of birth, pronouns, address and allergy text onto the client only where the client field is empty, and records an intake_submitted practitioner notification.",
+      "id": "claim_f5ff01dd8ba14fae91a6a6f1dddc48f5",
+      "statement": "After submission the intake syncs emergency contact, date of birth, pronouns, address and allergy text onto the client only where the client field is empty, and only the winning submit records an intake_submitted practitioner notification.",
       "evidence": [
         {
           "resource": "repo://app/intake/%5Btoken%5D/actions.ts#L358-L392",
@@ -65,7 +65,7 @@
       ]
     },
     {
-      "id": "claim_371e4a15bc064a6e9c17c3fc12016c6e",
+      "id": "claim_53007475dce84b398a5c1927b69284fc",
       "statement": "The retired electrolysis acknowledgement keys are stripped from incoming intake responses so no new record can be authored from a browser while stored historical records survive the merge.",
       "evidence": [
         {
@@ -79,7 +79,7 @@
       ]
     },
     {
-      "id": "claim_9c89b2f910334b9aae779093661220a9",
+      "id": "claim_b9b911a80fb34748ad0c57541f834756",
       "statement": "Requesting an intake update always creates a new in_progress intake while preserving earlier submitted and reviewed rows, and emailing it is behind a per-practitioner per-client rate limit.",
       "evidence": [
         {
@@ -89,7 +89,7 @@
       ]
     },
     {
-      "id": "claim_5cf8aa58d0f64a31830b828f0f69c834",
+      "id": "claim_b6167614ee3a493da4b864467df06365",
       "statement": "Intake link status is a display mirror computed from the 0097 metadata, with the signed token remaining the authoritative expiry and legacy rows using a flagged fallback heuristic.",
       "evidence": [
         {
@@ -99,7 +99,7 @@
       ]
     },
     {
-      "id": "claim_db4237e686dc42228a7e95c375146e6a",
+      "id": "claim_8404fa400fe54edfbb746ab144582234",
       "statement": "markIntakeReviewedAction performs one conditional update to reviewed that requires matching studio and client, not deleted, status submitted and a non-null submitted_at, requires exactly one returned row, and collapses every other outcome into one opaque refusal.",
       "evidence": [
         {
@@ -117,7 +117,7 @@
       ]
     },
     {
-      "id": "claim_76ef49b4903a45b787df65b15b551bea",
+      "id": "claim_66a108c016484be48eacc14914a2a45d",
       "statement": "Assisted intake lets practitioners write only non-acknowledgement steps, refuses any change to client-owned keys (acknowledgement questions plus every checkbox question and their notes), and guards each write with the updated_at value the editor last saw.",
       "evidence": [
         {
@@ -131,7 +131,7 @@
       ]
     },
     {
-      "id": "claim_cac17e456e9f404fa86f9bf68f850a80",
+      "id": "claim_831d2de8984242748b2258233cbacfc9",
       "statement": "Assisted intake hand-off stamps provenance only when assisted entry happened, advances to the acknowledgements step and returns a fresh link without submitting, so only the client's own submit reaches submitted.",
       "evidence": [
         {
@@ -141,7 +141,7 @@
       ]
     },
     {
-      "id": "claim_bbf28a28d3aa47a9a999da8e7a050499",
+      "id": "claim_794006edc59040d0800a401dd4067f94",
       "statement": "Database tests show a member can write a draft's assisted answers but cannot move an intake to submitted or attach review metadata, frozen intakes cannot be rewritten, and other studios cannot read or write the intake.",
       "evidence": [
         {
@@ -151,7 +151,17 @@
       ]
     },
     {
-      "id": "claim_b9f9dc293084455fb752700f3f182844",
+      "id": "claim_9a6c4fe6accd47f48a115feb07b5ed34",
+      "statement": "The assisted-intake browser journey covers recording, resuming and handing off the questionnaire, the client's own submit, review provenance, and live consent forms appearing only on the client side of the hand-off.",
+      "evidence": [
+        {
+          "resource": "repo://e2e/practitioner-assisted-intake.spec.ts#L127-L474",
+          "version": "repo-lines-v1:sha256:85193c2cb74958a150927c1e4469f69a79ec965d1b1195b5b2b116d72b604c6b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQ4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyODUzZDgzN2JkOWZmMDZjNWY0MjQzMTQyZTI5YjJmNGY5ZWI0MWZmZGY0NzIyNWU4OWYxOWNjYjBiZDNmM2EzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhMjc0NzQ5ZGUxNWJkYWEzNmY5YzJlNWE2MWY5N2IwYTM4YWNjMDEyNzcwODU0MDIyZjI5MTI3NGVhZTU5OGU4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhNmQ0MzM4MWM5YTlmZTdkYzI0N2E3OWNiN2JjYmI5MWJlNWMyZGIxMDU4Mjk0ZDE0OTkyMDgwYmQ3MGNhYjAzIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_d0f594a8edc24831bc4cd97e32e42781",
       "statement": "Assisted-intake provenance is not database-enforced: a DB test proves a member can write provenance naming a colleague by direct SQL because the member update policy checks only studio membership.",
       "evidence": [
         {
@@ -161,22 +171,22 @@
       ]
     },
     {
-      "id": "claim_9890b4e93d554d9e85859524e396a1e9",
-      "statement": "The intake review action's header comment still says migration 0162 is not yet applied to production with a hosted maximum of 0161, which predates the current declared hosted state.",
+      "id": "claim_64f5f22e58124f0698a515c0a845b26a",
+      "statement": "The intake review action's header comment still says migration 0162 exists but is not yet applied to production, while the migration ledger records 0162 as applied.",
       "evidence": [
         {
           "resource": "repo://app/(app)/clients/%5Bid%5D/intake/actions.ts#L47-L55",
           "version": "repo-lines-v1:sha256:e5c581c5eec7782672bc6276c60f05c7ed13de17e28b9c8b5274de8172804aeb:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmVjYWIwNzRkNDM3YmUxYjAwZmIyYzIxODZlZjg3NjExMmEwMzExMDE4MWI2ODA4YmI0MmYyNDY1YmFkMDY5NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDI5ODEzN2I2MWZlZGQzZTU1NTIzZDQ2NTZhYjkzODlkOTFhMGE1OGE4MjdiYzEzYTVhOWQyZTc4YWI2MzRjYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzcyMmIyNGJkODRjOThlMzgwNGI3NjZiMjc5YzczNDNhMzMwMDFjZDIzZTkyNzZjNjg1ODY2MmFmYWU3ZDMzYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTZiMmIwOTVjMWIzNTM5MWQyNDc4ZTQzMTkxMWJlMjAxZGIzNjcxMGZiMjhmNjJiY2ExODVkNWYyZTc1Mzg3MCJ9"
         },
         {
-          "resource": "repo://docs/production/migration-state.json",
-          "version": "repo-file-v1:sha256:9bde54e5066ca3e21e230577e3d2e0ae51bfe32c4515cf51a673b97ba29e2c19"
+          "resource": "repo://docs/production/migration-ledger.md#L2649-L2649",
+          "version": "repo-lines-v1:sha256:1e6c113451f114d4a2d282bc5261108651f99570ceedf3f3d3c9387241bbbe59:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWU2YzExMzQ1MWYxMTRkNGEyZDI4MmJjNTI2MTEwODY1MWY5OTU3MGNlZWRmM2YzZDNjOTM4NzI0MWJiYmU1OSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWU2YzExMzQ1MWYxMTRkNGEyZDI4MmJjNTI2MTEwODY1MWY5OTU3MGNlZWRmM2YzZDNjOTM4NzI0MWJiYmU1OSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmFkN2JiNjVhZGUzMmNiYTAzZjg0MWNmZGQ5MzIzNTk5Y2QxYWU0ZDFjMjQ5ZjQ5ZmE1NmFlMzkzODM4ZTE0NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2I2MmExMWE5MTA0M2ZlYzY3YTBiYjNjOGQzM2MxMDdhMTRiMWFlZWRkMzkxNWRjZTQzMTllZDU0NGQzYjNiYSJ9"
         }
       ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

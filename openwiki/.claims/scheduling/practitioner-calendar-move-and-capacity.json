@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:5bfa2e4fdf19db76f591d0875b8e6df43b3494e9fb1a6b6446f3e39ba02e7e29",
+  "pageVersion": "sha256:2268de5f09e1ede4d13628c6c3277a5d778c24f315b89dda7415a438315036a6",
   "claims": [
     {
-      "id": "claim_952c18208d854a3b955c595da3df7f64",
+      "id": "claim_38a41120dd704b9babd84e2d5a399792",
       "statement": "Migration 0134 adds default-off practitioner capacity in which a studio with practitioner_capacity_enabled false keeps studio-wide single-resource collision behaviour, while an enabled studio keys reservations per practitioner and fans studio-wide blocks out to every practitioner.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_8ea8ff4848cb489bb69061674e165c76",
+      "id": "claim_1be9045e0f2c405c96585df8be1f2aa7",
       "statement": "Migration 0136 adds practitioner_capacity_booking_enabled, giving three valid states (LEGACY, CAPACITY_READY_BOOKING_PAUSED, LIVE) and rejecting capacity off with booking on.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_f2390c6ba3444786a25907316a7780cc",
+      "id": "claim_9a3422b42dc24761a7fe673fce271f04",
       "statement": "create_internal_appointment_v2 returns booking_paused whenever practitioner capacity is enabled and the booking flag is disabled, after taking the studio row and advisory locks.",
       "evidence": [
         {
@@ -37,7 +37,7 @@
       ]
     },
     {
-      "id": "claim_9fe4f007018946ec9336ae3bfeed40fb",
+      "id": "claim_90c954f89cb9459c91148d42e39249d9",
       "statement": "The public booking surface is unconditionally capacity-off: the public slot loader passes no practitioner and create_public_appointment uses its own studio-wide validator.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_a1f410f652324e3a9f10b6e0024fd1d7",
+      "id": "claim_bc9ef0a2cb214f6992977181eab85533",
       "statement": "validate_appointment_availability performs practitioner, eligibility, closed-day and working-hours checks only when practitioner capacity is enabled; with capacity disabled it applies only the soft-buffer check.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_48f60f0528e04d90a740e52d66785807",
+      "id": "claim_6a8e5b73b9ec42a095a2306e877042a4",
       "statement": "Calendar quick-book creates appointments through create_internal_appointment_v2 with server-resolved studio and actor, and the outside-availability override is owner-only and re-checked server-side.",
       "evidence": [
         {
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "id": "claim_5a0e25ba767b4e41a0c5ea21eb946b56",
+      "id": "claim_7341491b3ec34cdcb708eb5a331d2ddd",
       "statement": "Only a confirmed appointment that has not started can be moved; custom-time moves are owner-only and derived from the server-resolved role; reassignment is offered only to owners of capacity-enabled studios from active, service-eligible practitioners.",
       "evidence": [
         {
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "id": "claim_ccc3f6a9f5f145d8acb3c6e292717d9b",
+      "id": "claim_8faf1cf1e02a4798be764e531d2ceab1",
       "statement": "In available-slot mode the move action regenerates the slot list server-side and refuses a time that is not offered, then calls move_or_reassign_appointment with expected start and end times and allows outside-availability only for custom time.",
       "evidence": [
         {
@@ -95,7 +95,7 @@
       ]
     },
     {
-      "id": "claim_46edc64a2f9e4e18b4283618f6e1b787",
+      "id": "claim_ddf35967a30f48e3b21a670b8722f81e",
       "statement": "A source guard requires moves to use only move_or_reassign_appointment, never cancel-and-rebook, use server-resolved tenant identity, map outcomes to closed copy, resolve the app origin before the mutation and notify after commit.",
       "evidence": [
         {
@@ -105,17 +105,17 @@
       ]
     },
     {
-      "id": "claim_8ab6df248cd945d58cb4a3df86475085",
-      "statement": "The canonical record, re-verified 2026-08-23, states practitioner_capacity_enabled is true only on the controlled test studio and practitioner_capacity_booking_enabled is false on every studio.",
+      "id": "claim_ce8bd5e7bde74799a8964471fc923b05",
+      "statement": "The canonical record states that per-practitioner availability, scoped blocks and breaks and the atomic internal booking, move and reassign commands are deployed and follow the capacity flag, that public practitioner selection and assignment is not active, and that broad multi-practitioner rollout requires the deep audit and explicit authorization.",
       "evidence": [
         {
-          "resource": "repo://docs/production/current-state.md#L908-L925",
-          "version": "repo-lines-v1:sha256:a0901b5df770a5a8d89824ec89f42dd2f3a9c04c66ee2b25713f3cd3b9497f6b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmYTMyNGQ3OGY4Y2M0ZjZiMGY1ZmZhY2E3YWJiYjZiMDZmYmQyMzYzYzMxN2VhNTE5MTQzOTVkN2NmZWM5OGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmZGVmZTMwZjU3MGIzMzk2ZmRhODA0NTYwMzRjNjliNDUwOGFjMTA5ZjM2M2I1MzUxMGQxNTg2YTQ0MWY3ZDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdkNWZlNjQ1NjhiMjA4NTJmZDYzNzE3ZTFkMTgyMWI2MTBkMGNhMzY3ZWQ2ZDI3Y2UzMTA3NzkxZjk1ZjY5ZmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ0ZTRjMjM5N2I1OTYzYTk5MmNlZjA2YjZjMGE3YjY4ZGI0M2U3OWZjMGU2NmFhZGRkNDc4MjUyN2UyMDU5N2MifQ"
+          "resource": "repo://docs/production/current-state.md#L919-L927",
+          "version": "repo-lines-v1:sha256:9021d4fd62ee4a9a3c82b8b1986ad9a1129f38b34cbb0d10d3d8d1883c780d09:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjBlNTE0ZjQyZDc1Mjc2ODQ4MjY5YjFhNDQ5N2UyMWM4NWVhNTA4YmRjODhiNWYwNDdiNGRjZTRiYmMzYTFhMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTFkZTgwZWQ1ZTA5N2U3ZWNkYzBkYjNmZDJkYTdlYjczN2VkYjM0ZGIzZDFjMGU5OTk4OTZhY2RhMzQ5YTlkYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZGM5NTcxNzlmZmM4MDcxYWZlYjQ3ZjViMjMyOWU3ZDE4MDBhNTE1NmIwNGUzMDI3MzdlOTZmZTM4MjUwOTYyYyJ9"
         }
       ]
     },
     {
-      "id": "claim_03eef9857b3242be83a715626a9b9ae8",
+      "id": "claim_5fb409b697e84c469783faa42b8b0c8f",
       "statement": "current-state.md calls practitioner_capacity_booking_enabled the public-booking kill switch, but in code a capacity-enabled studio with the flag off refuses all new internal bookings with booking_paused while the public surface ignores capacity.",
       "evidence": [
         {
@@ -129,7 +129,7 @@
       ]
     },
     {
-      "id": "claim_649b9b19c3754618bda5c1496b2e6083",
+      "id": "claim_863d5f216a8f4e06981e2bdcff2fa23a",
       "statement": "docs/07_CALENDAR_AND_AVAILABILITY.md and the move action's own header still name the 0133 practitioner_move_appointment RPC as the move backend, while the action calls move_or_reassign_appointment and 0175 dropped the 0133 function.",
       "evidence": [
         {
@@ -149,6 +149,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

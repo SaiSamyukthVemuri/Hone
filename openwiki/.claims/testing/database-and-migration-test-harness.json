@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:fa474c0fc9de63dc62aa2a31e182a50406a25b77b54105f6c2b446b5c601d24c",
+  "pageVersion": "sha256:110fc8cab5d62892ee7472fc2aab366981a2be4a1e5d58127c02010f1fb4718f",
   "claims": [
     {
-      "id": "claim_2b00637c663840d887c77ed62a9e720c",
+      "id": "claim_372b848bd13d4a1581a5e61c1380321f",
       "statement": "The DB integration lane is a separate vitest config that includes only tests/db/**/*.db.test.ts, runs in forked node processes with file parallelism disabled because suites share one local database, and stubs server-only so server modules can be imported.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_fe11921ff3fe4b65b0d0e588fb60db39",
+      "id": "claim_6af9ef38e7c94305bcfa80bf629a18b9",
       "statement": "The DB harness consults only HONE_LOCAL_DB_URL (defaulting to the local port 54322), refuses any connection string matching hosted-database host patterns, and refuses any host that is not a loopback name before a query runs.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_6bcf68a77c7c4e9397d6f1621618899c",
+      "id": "claim_15345ee987c648c889776aff2990ed30",
       "statement": "asUser runs statements in a transaction as the authenticated role with request.jwt.claims set to the user's sub, the way PostgREST presents a signed-in user, so auth.uid() and RLS behave as in production, and commits so trigger side effects are observable.",
       "evidence": [
         {
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "id": "claim_fdbc07d70ad64ab18eab9cc3e2db5b1c",
+      "id": "claim_8cc68eb441ae43329352480bbea4483c",
       "statement": "asRole runs privilege probes as an allow-listed anon, authenticated or service_role role inside a transaction that is always rolled back, while adminTx groups admin statements in one transaction so they share a single now().",
       "evidence": [
         {
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "id": "claim_8198c0d48a674453b26a092d7cbf6cb2",
+      "id": "claim_0cb5f0afef2545ff8c63dda00d7d88d3",
       "statement": "Harness seeding inserts fake local auth.users rows with random UUIDs and harness.local emails plus studio, practitioner and client rows, so suites can rerun against the same database as long as assertions scope by the seeded ids.",
       "evidence": [
         {
@@ -53,7 +53,7 @@
       ]
     },
     {
-      "id": "claim_6f89b72186ed4b4ea8b816ee52e0c257",
+      "id": "claim_fa2a33f3d21f4dc5a40896b48895ec31",
       "statement": "States that require bypassing a guard trigger, such as a 72-hour-old appointment audit row, are seeded by disabling the trigger as the table owner inside the test rather than through a production-reachable RPC.",
       "evidence": [
         {
@@ -63,7 +63,7 @@
       ]
     },
     {
-      "id": "claim_becf1f2fba2c4a83a95e7747b520daab",
+      "id": "claim_ec6c6ae4d8b74fae99921f60c09d8f53",
       "statement": "Concurrency tests observe genuine blocking by polling pg_stat_activity until a backend waits on a lock, rather than inferring it from elapsed time, and report the last observed state when it never blocks.",
       "evidence": [
         {
@@ -73,7 +73,7 @@
       ]
     },
     {
-      "id": "claim_5851bdab0d724e74865ca3b94adfed5e",
+      "id": "claim_4d94aee887514b81870b35fe1c827b85",
       "statement": "The reachability helper computes a closure over function-to-function mentions, function-to-table mentions, table triggers and foreign-key actions, deliberately treating reaching a table as writing it so a resource can be called dead only when no application-reachable path touches it.",
       "evidence": [
         {
@@ -83,7 +83,7 @@
       ]
     },
     {
-      "id": "claim_2ea7cf5bf49b401099246d68c6390d0d",
+      "id": "claim_05970369010c448ea7a428f5d71d138b",
       "statement": "The synthetic tenant fleet provides run-unique SYNTH studios A, B and C with cleanup by id, but is only partially delivered: Studio C failure modes are inert labels without executable fault injection.",
       "evidence": [
         {
@@ -93,7 +93,7 @@
       ]
     },
     {
-      "id": "claim_b3b5601aa52d4c528204aad1af8b35be",
+      "id": "claim_f9b0d54ae7dc4fa89b8d06d552e113a5",
       "statement": "Migration source-contract tests pin the bytes of earlier applied migrations with SHA-256 hashes, for example the 0127 test pinning 0126.",
       "evidence": [
         {
@@ -103,7 +103,7 @@
       ]
     },
     {
-      "id": "claim_ca41b7e7f04f42dcadaae0e642ff0252",
+      "id": "claim_c0b16695b99f44c68950263e691bac22",
       "statement": "Migration tests obtain repository maximum, next free number, skipped versions and declared hosted maximum from a wrapper over scripts/migration-state.mjs instead of hard-coding them, after hand-maintained pins across 18 files repeatedly broke when migrations landed.",
       "evidence": [
         {
@@ -113,7 +113,7 @@
       ]
     },
     {
-      "id": "claim_5cff342f39d04c848d39cd7cac40f0b3",
+      "id": "claim_c8599c8f5e3b4e50955e5261b1eba9e0",
       "statement": "A unit-lane guardrail pins that the unit config excludes tests/db, that the DB lane has its own config and script, that the harness allows only localhost and reads no production credentials, and that the CI DB job never uses --linked, a project ref or an access token.",
       "evidence": [
         {
@@ -123,7 +123,7 @@
       ]
     },
     {
-      "id": "claim_9047894ecfa44fc39286e06bd0984ba3",
+      "id": "claim_3932c829078145cebb235fee23320491",
       "statement": "CLAUDE.md limits local DB testing to one fresh reset per migration head using the pinned supabase@2.102.0 CLI, because a newer CLI's db reset strips Data-API grants and makes authenticated queries fail like an application bug.",
       "evidence": [
         {
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "id": "claim_68daeebf5d5e4cfdb8c4ddd013839997",
+      "id": "claim_98392b33d9f64fbba18e387777065f4a",
       "statement": "Suites that touch the globally unique Stripe account id derive every synthetic id from one run-unique namespace, because hard-coded ids passed on a fresh database and failed on a second local run.",
       "evidence": [
         {
@@ -147,7 +147,7 @@
       ]
     },
     {
-      "id": "claim_ea31c194fe504573adbdc5313c2c7ac8",
+      "id": "claim_6ef74ae0f7ed4c2ca24f21904961941b",
       "statement": "The local Supabase stack used by the DB lane runs Postgres major version 17 with the database on port 54322.",
       "evidence": [
         {
@@ -157,7 +157,7 @@
       ]
     },
     {
-      "id": "claim_e6e0ae5f3fd8425da4501b9ae3a916c9",
+      "id": "claim_7fa49dfb42464d448b1d8381e82a69d2",
       "statement": "docs/09 instructs running supabase db start and supabase db reset --local with an unpinned CLI, while CLAUDE.md requires the pinned 2.102.0 CLI because newer versions strip grants.",
       "evidence": [
         {
@@ -169,10 +169,44 @@
           "version": "repo-lines-v1:sha256:e9dec01a5acb2cda19c1e91c2a183c9cee36030e021622747d5d41152a3d34cd:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTlkZWMwMWE1YWNiMmNkYTE5YzFlOTFjMmExODNjOWNlZTM2MDMwZTAyMTYyMjc0N2Q1ZDQxMTUyYTNkMzRjZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTlkZWMwMWE1YWNiMmNkYTE5YzFlOTFjMmExODNjOWNlZTM2MDMwZTAyMTYyMjc0N2Q1ZDQxMTUyYTNkMzRjZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjE1YjcxZjAwYzg2NTEwODUzN2M2MjkxMjM2ZTM0ZDZiOTRmMTc4YjYyZWFiZjA5ODkwMWQxZWUwMzc1NzQwYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYWRmNWIzYjNhODcwODc5NDNlMjc1YWIyZmZjZGUxNzMzYzEyNjU2YzZhYTM5YzM3MGJiZDg0YzIzOWE3ZDMwOCJ9"
         }
       ]
+    },
+    {
+      "id": "claim_31eb395ba8f44ba6b661c83058e06e80",
+      "statement": "At this source head only the current head migration test (0205) asserts that its version is the repository maximum and that nothing sits above it, using the derived isRepoMax and versionsAbove helpers.",
+      "evidence": [
+        {
+          "resource": "repo://tests/migrations/0205-new-studio-admission-default.test.ts#L137-L144",
+          "version": "repo-lines-v1:sha256:a9b4713172b95d752501ca906242020dd191525c749dff59128ca3578bd598f9:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGQ2MjIyMzgzN2U3Yjc0NjQ1NzhjZmYzYjFiODFlZTEwNDg2NzNjNGE2NGFmYWY2Yjg0ZGIyN2ZmZDA3MDAyZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2FkMDcxZTgwM2MyNGVmMzlkY2MxNTY2Nzg5MjExNGE5ZmYzODExNjI1Yjg5NjJiNDNlY2FmYzA5YTk0MDk0MiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmQxZDVlZjIyNmZkNzg2ZDIyZDk3MWNjMzRkNzhkODVlNTgyZWE3NjU0NzI2NzIzZmZkOTkxNWFiNWIxMGM2ZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_e4e6262bda6b43abb0bf24173b55e3d0",
+      "statement": "The 0205 apply-time repair DB suite reads its census set of studio ids from the migration file rather than restating it in the test.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/new-studio-admission-default.db.test.ts#L858-L880",
+          "version": "repo-lines-v1:sha256:436b098b1c095e5af7f6a4cf762899dba34a515b4dd4e626d3c4b4fe86edd402:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzNTA4MDMzNzNmOTJiMGRiOWRmMGRjZTk0MDNmZDBmMjE4MjdjNDdhNjY3YmQxM2U5MTEzZTQyZTM5OGU3MTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRhMTk1ODRkN2IxNzljNzEwMWNlMjM5MWNjZGJhYjc1MmRhOWYxZWRlOWMwMWNkNmQ0NGU1ZGMxOWZlYmNkN2IifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_74de332f4b054b308f09028dbeb056dc",
+      "statement": "docs/09 cites a browser-spec count of 54 specs under e2e/ in a dated note, while the browser group manifest maps 94 specs.",
+      "evidence": [
+        {
+          "resource": "repo://docs/09_DATABASE_AND_RLS.md#L519-L519",
+          "version": "repo-lines-v1:sha256:f04b40189cd549e15810bb10c7eae3dcb231648f80a49dc58cadf5d18c8432f2:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjA0YjQwMTg5Y2Q1NDllMTU4MTBiYjEwYzdlYWUzZGNiMjMxNjQ4ZjgwYTQ5ZGM1OGNhZGY1ZDE4Yzg0MzJmMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjA0YjQwMTg5Y2Q1NDllMTU4MTBiYjEwYzdlYWUzZGNiMjMxNjQ4ZjgwYTQ5ZGM1OGNhZGY1ZDE4Yzg0MzJmMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDIxYjIzM2YxYzg4ODQyZWI1YjUxOTMzMTkzMmYzODhkYzllMjdhZDYxNTM4NjA1MzA0NGI5MDk4YmJkYzkxYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzQ5Yjc5Mjg4ZWI3MzI1Mjg1ZGZkNmEzYzk0MGMxOGUwY2M3YTE5MTdlZWNmZjdkMzFkM2RhZjhhNmVlZjNkYSJ9"
+        },
+        {
+          "resource": "repo://tests/ci/browser-selection.test.ts#L86-L88",
+          "version": "repo-lines-v1:sha256:e43e82037954df70a1ddb0bb52683740a334a271eb4b816945cd3fda059960a2:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmJkYjU0ZjRkMDQ3Yzc5YjhlYzg5ZmRjOTY3ODRjNTA4ZmUxNzc1Y2NhMzViNDgzYzk2ZmRhNWI5NzE1ZDc4ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDhjYTIxZGI2N2E2YzA4YTk4MmU4YmI3MTBmNjc4NjdjMzBkMTBlYzgyOTQ1NjAxNDdhYjI5ZWVmNjc0MjM4NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGQxNTcyM2FmMTFhZmIwZWI4YjFjNGE5NDUyYWJhOTUwZGQxNDQ3MTk1ZWE4ODNkNWUzM2FjZTA2YTQ4NjAzOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDJhNjc1NmIzMmU5ZWY3YzRmNzNlMGExMzMyM2RkZTk4MzcxYWQwM2U1MDZiYzBjNjAzYWI3OGVmMzMxMTQzMSJ9"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

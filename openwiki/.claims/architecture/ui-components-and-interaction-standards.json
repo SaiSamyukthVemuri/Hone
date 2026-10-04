@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:7b8b764775b6b910e3fa2aa8c9057abcf5b1d8d73a20b5b733577a20c07ab551",
+  "pageVersion": "sha256:27eab7db336d4f5c2f3c2eaaf4f0c6c55ff603bd46ec5f09f45a77c691c7a858",
   "claims": [
     {
-      "id": "claim_8764850223b243188a8b0a9bf62e1d0c",
+      "id": "claim_3a9ac8ad822c426184ae60439470b061",
       "statement": "components/ui is a server-compatible primitive layer: tests/components/ui-foundations.test.ts fails if any file in it declares \"use client\", uses useState, useEffect, useRef, useTransition or useFormStatus, or imports a class-merging or motion dependency.",
       "evidence": [
         {
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "id": "claim_457776537a7941cb8936b958a603c0de",
+      "id": "claim_db02b26a1d6c423dbfdf2768efd80a4b",
       "statement": "Client components that need a hook (PendingButton, PendingLink and the dialog keyboard and return-focus hooks) live in components/ rather than components/ui/, so the server-primitive guard is kept instead of being given an exception.",
       "evidence": [
         {
@@ -35,8 +35,8 @@
       ]
     },
     {
-      "id": "claim_681a2bbb176446779d2255c03c85c849",
-      "statement": "CONTROL_MIN_TOUCH ships inline-flex together with min-h-[44px], and CONTROL_COMPACT_FINE_POINTER relaxes the height to 32px only under a fine pointer media query rather than a width breakpoint.",
+      "id": "claim_16b115a2414a4d048c6bd5c2214402e5",
+      "statement": "CONTROL_MIN_TOUCH ships inline-flex together with min-h-[44px], and CONTROL_COMPACT_FINE_POINTER relaxes the height to 32px only under a fine pointer media query rather than a width breakpoint; the foundations test requires the 44px floor and inline-flex for every Button variant and size.",
       "evidence": [
         {
           "resource": "repo://components/ui/control-base.ts#L33-L55",
@@ -49,7 +49,7 @@
       ]
     },
     {
-      "id": "claim_5f250ca95ff34ddf82d207e47d9c9b2a",
+      "id": "claim_f66061d30a494441b7e71c7d0cfa6e6c",
       "statement": "FOCUS_RING uses focus-visible with outline-hidden so that forced-colors mode keeps a transparent outline fallback when the box-shadow ring is removed, and the test checks this against CSS compiled by the installed Tailwind.",
       "evidence": [
         {
@@ -63,7 +63,7 @@
       ]
     },
     {
-      "id": "claim_b1ec44ad2a074ba3be56661c965b2f0e",
+      "id": "claim_fb36b316c8a442fea2082dec878741b5",
       "statement": "Button defaults to type=button, and its pending prop disables the control and sets aria-busy and data-pending; it swaps the label only when busyLabel is supplied and otherwise keeps the label in flow at opacity-0 under a centred spinner so the box and accessible name do not change.",
       "evidence": [
         {
@@ -73,7 +73,7 @@
       ]
     },
     {
-      "id": "claim_627cd75ff95e467489ce92afcefe589e",
+      "id": "claim_f4eea54e289b4191b3935397a973072a",
       "statement": "PendingButton reads useFormStatus inside its form and renders a submit Button whose pending state disables it, and a browser test issues two raw activations before the busy state commits and counts real server-action POSTs to prove a rapid second activation does not reach the server.",
       "evidence": [
         {
@@ -87,7 +87,7 @@
       ]
     },
     {
-      "id": "claim_2db962fba0764cca8a7a1f952755756b",
+      "id": "claim_70cb8f4f4081431b840c3b740a01b5dc",
       "statement": "PendingLink is presentation-only navigation acknowledgement driven by useLinkStatus inside the owning Link, adopted because a group-level loading.tsx stalled query-only navigations and was withdrawn.",
       "evidence": [
         {
@@ -97,7 +97,7 @@
       ]
     },
     {
-      "id": "claim_de9b414174d1415295b365f17437c9af",
+      "id": "claim_16b9c8d5dbca485eb512b020f3ba89d6",
       "statement": "ConfirmDialog replaces window.confirm with a presentational alertdialog that never calls a server action, moves focus in on open and restores the opener on close, traps Tab, closes on Escape or backdrop only while not pending, disables both 44px buttons while pending and shows a caller-supplied error in an alert region.",
       "evidence": [
         {
@@ -115,8 +115,8 @@
       ]
     },
     {
-      "id": "claim_029c5718246b49b7b9cc6ae26caf9c1a",
-      "statement": "ESLint rejects native confirm, alert and prompt in app/** and components/** both as globals and as receiver-qualified calls through a local hone-dialog rule, and the financials block repeats the dialog restrictions because flat config replaces rather than merges rule options.",
+      "id": "claim_e675df07224d42388b14bcc9b2d8e85b",
+      "statement": "ESLint rejects native confirm, alert and prompt in app/** and components/** both as globals and as receiver-qualified calls through a local hone-dialog rule, the financials block repeats the dialog restrictions because flat config replaces rather than merges rule options, and a test lints native forms and legitimate bindings through the real config.",
       "evidence": [
         {
           "resource": "repo://eslint.config.mjs#L12-L33",
@@ -137,7 +137,7 @@
       ]
     },
     {
-      "id": "claim_fdfa3dda2d4f42e6b8d60ea3265d146a",
+      "id": "claim_0d20944d56d24e50b50caa1ed4f628e5",
       "statement": "useReturnFocus moves focus to a surviving anchor only after a confirmed action that removes its own opener, while cancel and failure leave ConfirmDialog's opener restoration untouched, and browser tests prove both paths.",
       "evidence": [
         {
@@ -151,7 +151,7 @@
       ]
     },
     {
-      "id": "claim_00c275e2ecd147bdaf2c5f67880895c9",
+      "id": "claim_21d7e977bb584911b575d8e546a1b024",
       "statement": "useDialogKeyboard gives in-app modals a shared keyboard contract of focus-in, focus restore, a Tab trap and Escape suppressed while busy.",
       "evidence": [
         {
@@ -165,7 +165,7 @@
       ]
     },
     {
-      "id": "claim_6f0db70280a74f738801f4bd7623f34b",
+      "id": "claim_8bd8efecba214a51ab239fcc313f4488",
       "statement": "Interaction timing is defined once as CSS custom properties (120ms press, 180ms UI, a reserved 240ms overlay) applied through marker classes, and reduced motion collapses those transitions to 1ms and stops skeleton animation rather than removing the state change.",
       "evidence": [
         {
@@ -179,7 +179,7 @@
       ]
     },
     {
-      "id": "claim_06fb2c6994654ac089fb0598f452fc25",
+      "id": "claim_0919f25233664fbd9f371b27146ea772",
       "statement": "Each Button variant has a pressed colour distinct from its hover colour so a press is visible without hover or motion, while LEAF_CONTROL_PRESS contributes only a 0.98 scale and SURFACE_PRESS is restricted to neutral-surface controls.",
       "evidence": [
         {
@@ -197,8 +197,8 @@
       ]
     },
     {
-      "id": "claim_5d49ead710854945967303d316a895ff",
-      "statement": "DESIGN.md is canonical for design decisions but subordinate to ENGINEERING_STANDARDS.md, tags rules as LAW, CONTRACT, PILOT or PRODUCT AUTHORITY REQUIRED, and forbids agents from implementing undecided items.",
+      "id": "claim_e436dea810d446199e44e88c729bf3aa",
+      "statement": "DESIGN.md states that it is canonical for design decisions but subordinate to ENGINEERING_STANDARDS.md, tags rules as LAW, CONTRACT, PILOT or PRODUCT AUTHORITY REQUIRED, and forbids agents from promoting proposals or review comments into laws.",
       "evidence": [
         {
           "resource": "repo://DESIGN.md#L1-L48",
@@ -211,18 +211,22 @@
       ]
     },
     {
-      "id": "claim_cb4e7a0d78194954a64f06ad52151d69",
-      "statement": "DESIGN.md's MOTION-01 pilot must not start until the drawer's dismissal geometry is resolved, and that prerequisite work is recorded as proposed and not scheduled.",
+      "id": "claim_3e64a124dc7e4214ba1cc6845e79fdd0",
+      "statement": "DESIGN.md states that the MOTION-01 pilot must not start until the drawer's dismissal geometry is resolved, and records further motion candidates as neither pilots nor scheduled.",
       "evidence": [
         {
           "resource": "repo://DESIGN.md#L162-L201",
           "version": "repo-lines-v1:sha256:6e76d4e8aff808cbc79119b70f3e360e146fa64c02321f0c8fdcdd09e290e2a5:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5YmI3MzM3NzFiNTNjOTgxMDVlMjQ1ZTc4YmU4YTU4NmZhMWUyMDhmOTNkZGVkZTFiNzg4ODdhZTIyZTI3MmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwN2ZmYmFmMDE5YjI5YzIyZTFhMjg3MGU1YjA1ZGU5ZjVlODQ3ZmJhNzQwOTJhZDcyMjVmYzFiNjQ2N2FiZDUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        },
+        {
+          "resource": "repo://DESIGN.md#L339-L346",
+          "version": "repo-lines-v1:sha256:77364cad73e8c92af43caab2ae3efa99d608e491d316408f29a5e062a4a3c1eb:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjRkNzJjZmFmMTEzN2U2YTQzMjgwMTI2MmYwNzFmYWY1YzcxZmRjN2RkMTljNDU2ZDE4ZDEyMzJkZTM5MTg0NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2FkMDI3MTk1YTNlZTYxMGYyNmEzNzlmYzQwNGU3OGE1ZjQyZTI3Mjc1Y2RlNzQyMjM1MTcyZTI2NjY5MzEyMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDAxZjJlYzE3NTkzYzEwNTRlYjQ2MzY3ZDg0NTNlZjI0YTE3M2NlOTZiNzExN2Q5MWY5YTY4ZDQ0ZmVmOGIwMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTRhMDQ3OGY2MzllODIyODU5YTI5Zjk1ZTJkNDQ5NzZhN2FmZTZiNzRjZTE5NzQ0ZjNlMDU2NTdmMDgwMzBlNyJ9"
         }
       ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T23:26:41.194Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

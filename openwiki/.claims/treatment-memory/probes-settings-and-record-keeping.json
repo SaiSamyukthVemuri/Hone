@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:b207dcdda2aff8bd90cec097b2933d86dc21aab80d2f310be13893386d1ce4f0",
+  "pageVersion": "sha256:122605f887eedd04f79dd2cba02f7d3a45d0ee396e608994e6039d3edde723d5",
   "claims": [
     {
-      "id": "claim_fe78ca7ffbc04fb0861acb38d5cebfd8",
+      "id": "claim_fe48b88a645d4c64a6bf9d9b0c18c58d",
       "statement": "Known limitation L16 records that treatment-area and probe-lot validation is application-layer only, with 0155's same-studio foreign key for the inventory-backed probe link as the database-level exception.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_fe891c2e74d6430d95cda2fdcd5aab1c",
+      "id": "claim_69537089f6b848828597b91b17993a24",
       "statement": "The electrolysis probe catalog is a hard-coded TypeScript list of valid brand, material, piece-type, shank, size and length combinations validated by server actions, with no database enum or check on the probe columns, so adding a brand is a code change.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_d57823294c4e4adeb8bebfe7ea90eb63",
+      "id": "claim_9f9009ebddb94ea3b4c78c978f111eba",
       "statement": "electrolysis_entries.pulse_delay_seconds is numeric(4,2) with a database check allowing NULL or 0.03-1.90 seconds, while recording it only when pulse_count exceeds one is an application rule.",
       "evidence": [
         {
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "id": "claim_0dfe62b1b0bf4abe8901122ddd4ad30e",
+      "id": "claim_7a186226faa944ab8b9666a9eb9e3476",
       "statement": "session_blocks.numbing_notes is a nullable text column with no database check or length cap; the application trims it, stores NULL when blank and keeps it only when numbing was used.",
       "evidence": [
         {
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "id": "claim_d2ba00486e4a4f449054b220220b5a65",
+      "id": "claim_126fc4d656184e23a3b25a07ed7e7e98",
       "statement": "Observation chips are stored structurally in electrolysis_entries.observation_chips as a jsonb array defaulting to empty with a check that the value is an array, without backfilling chips previously embedded in comment text.",
       "evidence": [
         {
@@ -53,7 +53,7 @@
       ]
     },
     {
-      "id": "claim_9f3e536c0714408a940cc9e657b23ea3",
+      "id": "claim_657c12a386344593ab9f4d70fca29325",
       "statement": "Observation presets and legacy reaction labels share one structured multi-select, and a legacy session_blocks.reaction_type is folded into the chip set on load and display rather than lost.",
       "evidence": [
         {
@@ -63,7 +63,7 @@
       ]
     },
     {
-      "id": "claim_c8b58db2ec1143e79f68cab151720f79",
+      "id": "claim_d9da2ca9588041c093cb898b77a56e4f",
       "statement": "The unified reaction contract classifies reactions only by explicit reaction-chip definitions and ranks severity by the existing reaction enum order, with safety-response labels ranked through a declared coded peer.",
       "evidence": [
         {
@@ -73,7 +73,7 @@
       ]
     },
     {
-      "id": "claim_ada9cf4efb57497085318ff40f1ad8b6",
+      "id": "claim_0d13bafdb85e4adda1e200d66470eae9",
       "statement": "Migration 0155 makes record_keeping_sterile_items the canonical probe inventory, adds a length-checked probe_key classification, and links session_blocks.probe_inventory_item_id through a same-studio composite foreign key with ON DELETE SET NULL on the link column only, preserving the block and its lot-number snapshot.",
       "evidence": [
         {
@@ -83,7 +83,7 @@
       ]
     },
     {
-      "id": "claim_c08bd979118a44328bb2577a07d429e2",
+      "id": "claim_5dec476b957d4164b241034639a8a74b",
       "statement": "The 0155 atomic block commands carry probe_inventory_item_id from the block payload while sourcing studio and session from authorized parameters, so a forged cross-studio inventory id fails the composite foreign key and aborts the transaction.",
       "evidence": [
         {
@@ -93,7 +93,7 @@
       ]
     },
     {
-      "id": "claim_c42faae0260d49178dacc9efa3eed68c",
+      "id": "claim_71036c888d464d1fa28e0575b5cc2ad1",
       "statement": "Server-side probe inventory resolution trusts no client-supplied inventory id: a new or changed link must exist in the caller's studio, match the selected probe, have a nonblank lot and pass expiry and discard policies, with the lot snapshot derived from the database row, while an unchanged link on edit keeps its frozen snapshot without re-validation.",
       "evidence": [
         {
@@ -103,7 +103,7 @@
       ]
     },
     {
-      "id": "claim_7ce585ef07f2413ca516802c913ac6b5",
+      "id": "claim_00f69efc16e9459fa2888b84e3bf7641",
       "statement": "Probe-lot options are identified by inventory row id rather than lot number, current stock means neither expired nor discarded, and expired or discarded rows remain in the foundational read so historical links still resolve.",
       "evidence": [
         {
@@ -113,7 +113,7 @@
       ]
     },
     {
-      "id": "claim_793676f3cf164cf0b48f64b45e08dc66",
+      "id": "claim_79d3960f352c4e669d6e2252aeaef556",
       "statement": "DB tests prove the probe_key length backstop, same-studio link storage, rejection of cross-studio and forged inventory ids by the foreign key, snapshot immutability when inventory changes, link nulling on inventory deletion, and that old payloads without the new key fabricate no link.",
       "evidence": [
         {
@@ -123,7 +123,7 @@
       ]
     },
     {
-      "id": "claim_42184a0f5cc7418790e7412bf854ddfa",
+      "id": "claim_105c7f7ea8dd459d9252eb549b35da85",
       "statement": "Migration 0182 adds a nullable date_discarded to sterile items, mirroring the disinfectant logbook, infers nothing from note text, hides nothing at the database level, adds no DELETE policy, and relies on the column-generic record-keeping audit trigger to audit discard and un-discard.",
       "evidence": [
         {
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "id": "claim_efd330424a304103b792607f595a7f4a",
+      "id": "claim_8f65dc135a2d4e02b41952f2b4d07f02",
       "statement": "DB tests prove a session linked to a sterile item stays valid and resolvable after the item is discarded, traceability, record lists and export still include discarded items, other studios cannot read or change discard state, and discard and un-discard are audited.",
       "evidence": [
         {
@@ -143,7 +143,7 @@
       ]
     },
     {
-      "id": "claim_ab4c44443684432e8a727689f29e9bd7",
+      "id": "claim_42b1bfa0819a494a9afc8498c06321d2",
       "statement": "Sterile supplies count as expiring within 30 days and expired strictly before today, computed from a studio-local date passed in rather than read from the clock, as a display-only state.",
       "evidence": [
         {
@@ -153,7 +153,7 @@
       ]
     },
     {
-      "id": "claim_3b355ef336254aac97b287b10f68b065",
+      "id": "claim_f16099136b4842f6912e6f7a5e3d51b8",
       "statement": "The add-electrolysis-entry action still reads a legacy probe_lot_id field, validates it against the legacy probe_lots table and passes it to add_electrolysis_pass, although 0155 and 0156 describe probe_lots and electrolysis_entries.probe_lot_id as dormant.",
       "evidence": [
         {
@@ -167,7 +167,7 @@
       ]
     },
     {
-      "id": "claim_35e236fe0b70408087760db01339743b",
+      "id": "claim_58110c758d4743d0bba1e99c1a8a6da4",
       "statement": "Record-keeping server actions resolve the studio from the session, never the form, and write through the user-scoped client so is_studio_member RLS isolates studios; a disinfectant operator is accepted only as a same-studio active practitioner resolved server-side, otherwise a free-text operator.",
       "evidence": [
         {
@@ -177,7 +177,7 @@
       ]
     },
     {
-      "id": "claim_2f977bef87ea4a82b71f034e14267d90",
+      "id": "claim_bac8089c865d44fda0bb96179787bed2",
       "statement": "Marking a session's aftercare as explained from the records surface goes through the set_session_aftercare_explained command.",
       "evidence": [
         {
@@ -187,7 +187,7 @@
       ]
     },
     {
-      "id": "claim_de0b2cca873d40f1bba797a96a26eae1",
+      "id": "claim_9db3e54bef3c40c1b9c344ba6f4d15a9",
       "statement": "Since migration 0088 any studio member may file an exposure incident but only owners may read or update incidents and read exposure-incident audit rows, and there is still no delete policy.",
       "evidence": [
         {
@@ -197,7 +197,7 @@
       ]
     },
     {
-      "id": "claim_7adf5153b43e42a39697bc67dd57c466",
+      "id": "claim_7902f77dcd334114bd024221528e7371",
       "statement": "record_keeping_audit_events has only a studio-scoped select policy for application users and is written solely by SECURITY DEFINER trigger functions that diff the firing row and resolve the actor from auth.uid().",
       "evidence": [
         {
@@ -213,6 +213,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

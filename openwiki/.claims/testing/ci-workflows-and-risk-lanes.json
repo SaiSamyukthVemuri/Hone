@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:735abc3ed8b5c6e4be85949f55351e959e0aab89920f1fd813c996a9a91358af",
+  "pageVersion": "sha256:923b56d0150c6bcf7b2d545b4e584120c27494edb02bfe141e97d1bd2d69e637",
   "claims": [
     {
-      "id": "claim_9b27799567c34495ba01c723c279ddf6",
+      "id": "claim_634ae4b4ac5649009d5696a86b36b96a",
       "statement": "The PR CI workflow runs on every pull request and on pushes to the default branch, declares top-level permissions of contents: read, uses no secrets, and cancels superseded runs per pull request.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_89e9e61a3d104e05b8a2793d805ed649",
+      "id": "claim_f6a9850a4438491abc1069bd72d745b4",
       "statement": "The changes job diffs the PR head against the merge base on a full-history checkout without persisted credentials, runs the change classifier and browser-group selector, and every other CI lane keys off its outputs.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_38db53e6354040a5a89c47f151baf30a",
+      "id": "claim_c95c401f7a2a4067b26e7ff5281cdc0d",
       "statement": "The validate job is skipped for docs-only diffs and otherwise runs npm ci, typecheck, lint, build, npm test, git diff --check, the Stripe safety gates and the migration extension-qualification check within 15 minutes.",
       "evidence": [
         {
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "id": "claim_0a8005fe42df433e946907e485a85af2",
+      "id": "claim_b08c9695e2644f3bad3acebd09c7c2f8",
       "statement": "The db-integration job runs for database, security or full-matrix diffs and applies the full migration chain to a local Supabase stack with supabase db reset --local before the fresh-managed extension proof, the DB/RLS integration tests and a generated-types drift check.",
       "evidence": [
         {
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "id": "claim_4df3b49c15e8436ab418cd3df5ce886b",
+      "id": "claim_cd665e5d5e244f329b21d5b65e98073a",
       "statement": "The change classifier marks a diff docs_only (switching every lane off) when all paths are docs, README, CLAUDE.md, Markdown or GitHub templates, and requires the full matrix for package, tsconfig, framework or test config, middleware, lib/supabase, lib/env, test-helper, CI-workflow or empty diffs.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_fb201f4822644b3c81a3f2be77977bff",
+      "id": "claim_c03fe8e18cea49868cf2e17b61963aae",
       "statement": "The classifier assigns a deterministic baseline risk tier where the highest matching tier wins regardless of rule order, an empty diff fails safe to T3, docs-only is T0, and application code with no higher signal is T1.",
       "evidence": [
         {
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "id": "claim_d36de84add1947b299ae7f64eb5975b6",
+      "id": "claim_096791bab23c45d383d914b78074b96f",
       "statement": "T3 baseline signals include migrations and DB tests, security paths, payment authority modules and money-moving action files, auth and tenancy paths, public and token routes, and sensitive-data libraries; T2 covers business workflows, integrations and messaging, cron, server actions and APIs, CI and shared configuration.",
       "evidence": [
         {
@@ -77,7 +77,7 @@
       ]
     },
     {
-      "id": "claim_29df8348fa794578b7a6e9139c974714",
+      "id": "claim_3ca9521a61654486b1d0bd136276f5c6",
       "statement": "ENGINEERING_STANDARDS.md defines tiers T0-T3 with validation depth following risk and states that automated path classification is not semantic proof and may never be cited to de-escalate a change that crosses a higher-risk boundary.",
       "evidence": [
         {
@@ -87,7 +87,7 @@
       ]
     },
     {
-      "id": "claim_f506ed76de594db1bbd069557153c436",
+      "id": "claim_7beadbc8657c44f4b21888c5f830f3a5",
       "statement": "npm run ci:plan and npm run verify:changed reuse the CI classifier and browser-group selector so local scope matches CI, with verify:changed auto-running only cheap focused checks and printing expensive lanes as suggestions.",
       "evidence": [
         {
@@ -101,7 +101,7 @@
       ]
     },
     {
-      "id": "claim_f0224f185df944c3b30ec1e078b1239d",
+      "id": "claim_a4940d8cfe4d45c7bd9e9faf2bc27757",
       "statement": "Browser shard jobs run with fail-fast disabled and hard timeouts of 15 minutes for targeted and 18 minutes for extended coverage, documented as failure ceilings above a target of under 10 minutes per shard.",
       "evidence": [
         {
@@ -111,7 +111,7 @@
       ]
     },
     {
-      "id": "claim_d7e3bee5c94c4ccb8f09ad3dd70b3f35",
+      "id": "claim_4b66d782a0854c3ba532937f22570674",
       "statement": "The browser-e2e aggregator is the stable required check and fails closed: it fails if changed-path detection did not succeed, if a required shard result is missing, if shards were cancelled or skipped while coverage was required, or if extended coverage did not run exactly four shards.",
       "evidence": [
         {
@@ -125,7 +125,7 @@
       ]
     },
     {
-      "id": "claim_85c94e221a40467b9bf281cedd2d2018",
+      "id": "claim_801f0e2617df453ca4e0ab9672f407d8",
       "statement": "The payment, mobile and Google browser lanes run only when the classifier sets their lane flag or the full matrix is required, each on a local Supabase stack with the full migration chain, with timeouts of 18, 10 and 15 minutes.",
       "evidence": [
         {
@@ -135,7 +135,7 @@
       ]
     },
     {
-      "id": "claim_976a1880dfda4c12835885d388d41cee",
+      "id": "claim_359c65e069eb436ea385daa65729f0f1",
       "statement": "The nightly workflow runs daily at 07:00 UTC and on manual dispatch with read-only permissions and fail-fast disabled, covering the unit and safety gates, the full migration chain with DB/RLS tests, the core browser suite in four shards and the payment, mobile and Google lanes.",
       "evidence": [
         {
@@ -145,7 +145,7 @@
       ]
     },
     {
-      "id": "claim_3f25cd2751ab4893b6c3fc3dbeff87d8",
+      "id": "claim_bbae320ccb164c56bb8c31adfa435550",
       "statement": "A CI config test reads every file in .github/workflows and requires valid YAML, SHA-pinned actions with version comments, persist-credentials false on checkouts, top-level permissions of exactly contents: read with no write scope anywhere, and a reviewed total of 8 checkouts.",
       "evidence": [
         {
@@ -163,7 +163,7 @@
       ]
     },
     {
-      "id": "claim_009e9c68fe8f46559777495a11524713",
+      "id": "claim_8020608ac77a4e1a9e05c5400da72f00",
       "statement": "The CI config test fails any workflow that uses GITHUB_TOKEN, pushes or tags, calls gh write commands, references the secrets context or passes secrets to a called workflow.",
       "evidence": [
         {
@@ -173,8 +173,8 @@
       ]
     },
     {
-      "id": "claim_829378bd3144471a899857adf5e478e0",
-      "statement": "Green CI is necessary but not sufficient, and is not merge authorization; appropriate T3 work continues through independent review, production preflight and controlled rollout.",
+      "id": "claim_d4417125beca40fdaa14abbac8e21f28",
+      "statement": "ENGINEERING_STANDARDS.md states that green CI is necessary but not sufficient, with appropriate T3 work continuing through independent review, production preflight and controlled rollout, and CLAUDE.md states that green CI is not merge authorization.",
       "evidence": [
         {
           "resource": "repo://CLAUDE.md#L231-L231",
@@ -187,7 +187,7 @@
       ]
     },
     {
-      "id": "claim_d0d0b041c55943188cc1f4fb8eb51130",
+      "id": "claim_6feb358225fa4073bd5ba50fce854174",
       "statement": "The ci.yml header still describes six local gates and the browser lane comment still describes one browser and one core flow, although CI now runs a selected or sharded multi-spec browser suite plus three further browser lanes.",
       "evidence": [
         {
@@ -199,10 +199,32 @@
           "version": "repo-lines-v1:sha256:e2df548495f75dcf0f738a7c6e173edd70d855f80fdc2619b0cfd1b9dbee8ac0:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzQ2MGNkMTk4ZmViMDBhMzdkYTU1NWU3ZTYxMzYyYjg5MzcwNDc5OGNmODA0ZWFjYmUzYmFiYzYzMzlmM2U2YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODc4NjcyZTlhNmZjNjU0MDAxOGM5NGE2NmZjZGZhZjU4NWUzM2ZjNDAxZjBiZWQ5Y2U0MjdhMWNjZjg5ZWIyMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2EwMTRhNzA0Y2RlYmZiMmJmMDhlMmE2ZDFmZjBkZWRhMzk1NzExMzA1Y2RhMjQ1NGJhZGQ3OTFmYjRjNmNmZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWZkNDBjODBmZmQ2ODc0OTUyMjJkMmM4NjRiZWM4N2Q2NjNmNjdjYTllYzM2MWIxNTg5Yzg3OTkzOWMxYjU3NSJ9"
         }
       ]
+    },
+    {
+      "id": "claim_3f891c8b92d948669cb91dc2e67f18e6",
+      "statement": "OpenWiki pages match the classifier's docs-only patterns, but Claim sidecars and run metadata under openwiki/ are JSON files that match no docs, lane or tier rule, so a wiki regeneration diff classifies as baseline tier T1 with every lane boolean false and runs the validate job but no database or browser lane.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L228-L231",
+          "version": "repo-lines-v1:sha256:4a731424aa466194ddb5d7582d37b46c1242ccfd0ef48ce04c7f4a1a587b86ce:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzJiZGViZmRjMWNhZWQzMTBmYTE2Yzc4Y2U0MmJkNzZlM2Q3N2JjNDlmMDEwMzE3MTI3Nzg3NzAwZGM4YWM3YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODNhNzdlNTgyZjdjYjJiNGU3N2NkNDVkMmYxZDRhOWVhOTE3MjBhNDhjZmMzOGY5YmIzNDc4NzIzY2NjNTZmMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTUzMDBkYTEwOGYzNWFjY2E5ZWUyMzYxOTBjMmNlYzI5MjNjZGM4NDNhMjBlOWRiMWI2NTM4ZmFkOWQ2NmJkYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTgxYjVmMGIzNGZkODJmMGQyMWRkM2NmZTdiODJjZGM2YzBjMTE3NWZiNWJiYTM3YjVlZjI4MzVhYTQyNTFhZiJ9"
+        },
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L196-L213",
+          "version": "repo-lines-v1:sha256:f7e8a206ffdd48886aa3e00df8efa7416801a7194b97a4068a75fc93b2f78b2d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyM2NiNGMxM2Q2Nzc1OWQ1NGY3NjcxZDQ0MDM0OTcyZDA5MDNhMzlkMDhhZmFlNzNiYjk4MWViOWFiMGRjZjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkOWUxMjU0NjQyNTU3NmQzZGVhZThjOWI5ZGJmMTI4ZDVkNmRkYWY1ZDdmZTg1NzkzNDkyN2RlZmZhM2I5ZGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM0OGYzODg3OGIyZWEzNzFhNmVjYTBhZmIzNDA0MTc1Zjc2YzAzNjA0ZGE5ODE3ZmIxZjhjZjk2NDA4ZGEyZTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBiOGQ3YjUzMmJkYzZjZmQ3M2M3NTFkZjM2MWEzMzU4MDQ0ZWQ1ZDJjYzhhOTY2MDMwODgwM2FmZDliYTUzOWIifQ"
+        },
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L250-L262",
+          "version": "repo-lines-v1:sha256:95e1414dc8e02358d13931b362e21e26a773ca3f2e22699bc96a846b02c92681:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhmYmQ1NjA5ZTI5MmIwOTlkYWNjYWU1YzhjY2Q5MDI3YzI3NDc4NGRkNjA3MWUzNjkyOGQxNmQ4MmYyMDE2Y2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4ZTc2Zjk2ZWFjYWU0YWY3Zjg5ZGI0ZGJjOWNlMDFkYWMxZGE3ZTg1YTU2YWRkYzc5YzgxOTdlODg2NmE4MWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlN2RhMzY3NDAyN2U3MjBhMGFhYTViODk1ZGNiOTczNDIzNGYxYTIxYzZjNWM0OTM1YTM3MTA0NTExMjgwZDEifQ"
+        },
+        {
+          "resource": "repo://scripts/classify-changes.mjs#L33-L40",
+          "version": "repo-lines-v1:sha256:5653145f125eabb0ddfef4ff369979c014b34faa9eec515c32672116805a4282:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzg3ZmVlZDYxODFkZGJhMzg2MWY5YzhkYTAyZDQyMTMyZDdiMWI1MDcwYWRmYTI5YTA5NWQ2YWFiMjM2YWIwMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjAyZDJjMGQ2ZGM1ZTc0ZDkyZmExNGI5MWRiZWEyNjQwOTBiZWIzNWZkYjkxODhkOWIzNDExODFkY2U5ZjRjZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmFjYmY1MjdkZDkwODYzNzRmNjgxMDk4ZDMzYTZmNzk5NjZjNjhiZTY4NWJjOTc0MmMzNWZlZjg3ZTU2MzZjYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZmUyZGQyNmExYTM3MDA1MDc0NzM0MzM3Yzk4MzA2ZTY3OTQzYjUxMzZiZjg3Mjc5ODE4YzA4ODdlMjhhYTVjOSJ9"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

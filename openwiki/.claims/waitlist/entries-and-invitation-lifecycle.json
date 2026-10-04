@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:029134e3dfbdddbbf48afe053ab978864e4f201579e7c8cf96201c296eb206f0",
+  "pageVersion": "sha256:be66646728717aeb35ccaa303f6c53ee974e9cd54050a83df1e896bd8ffa52c9",
   "claims": [
     {
-      "id": "claim_4e9d5456196a463891e55465506cd38a",
+      "id": "claim_d8d183a3e76c444997bfbebf293c77f5",
       "statement": "Waitlist entries are SELECT-only for authenticated (owner-visible through RLS) and grant nothing to anon or service_role, and their join and removal writers are SECURITY DEFINER commands executable only by service_role.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_1fe2770ef5e9481690a60728753edd0f",
+      "id": "claim_ac467fc92d0d403b9bc6bd269b638a81",
       "statement": "Invitations revoke all privileges from public, anon, authenticated and service_role and grant authenticated SELECT only on a column list that excludes the token hash, proof fields and scope fields, with rows visible to studio owners through RLS.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_cc971eb13a204507be3319116757e047",
+      "id": "claim_d30ad6dfb17a4339bd9895c86f0a4c3e",
       "statement": "The server-side waitlist invitation module calls service-role-only commands, translates closed result codes into typed outcomes, never throws across the boundary, and reports unexpected transport failures as in doubt rather than as refusals.",
       "evidence": [
         {
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "id": "claim_cc5b5bf99e8243f1929fb7f67bde8454",
+      "id": "claim_e0f27fc41db847108f3571753ecee6b8",
       "statement": "Every waitlist lifecycle transition is an explicit authenticated operator command with no timer, sweep or automatic release, and an invitation grants only the opportunity to book through the canonical public booking authority.",
       "evidence": [
         {
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "id": "claim_00d2f449fdff4a29baddfddb460bc010",
+      "id": "claim_05fff877d83b4597a0b364a39d408332",
       "statement": "Entry status is one of waiting, claimed, invited, converted, expired, released or removed.",
       "evidence": [
         {
@@ -53,7 +53,7 @@
       ]
     },
     {
-      "id": "claim_9b865bd74536428dbfbff4ebe1d10624",
+      "id": "claim_3061d2bb7ec64182b643510399690932",
       "statement": "The latest entry transition guard permits only waiting to claimed or removed, claimed to invited or released, invited to converted, expired or released, expired to released, waiting or removed, and released to waiting or removed, so an invited entry cannot be removed directly and each transition may write only the evidence columns it owns.",
       "evidence": [
         {
@@ -63,7 +63,7 @@
       ]
     },
     {
-      "id": "claim_f6ce83c0f46948d8b43748b3c49fa5b7",
+      "id": "claim_f664c881a7e74bab841afe62a2f317c8",
       "statement": "The entry guard keeps id, studio_id, joined_at, source, name and email immutable, forbids replacing a stored mobile, makes an SMS opt-out and its evidence terminal, and allows mobile_verified_at to be set once by its single authorized writer.",
       "evidence": [
         {
@@ -73,7 +73,7 @@
       ]
     },
     {
-      "id": "claim_74af3c0703304f389aba81fea5ef728e",
+      "id": "claim_79e7cb6c724e4f1f8f71db4646bcdb99",
       "statement": "Invitation rows store only a 64-character lowercase hex SHA-256 of the token, with server-owned issue and expiry times, a check that the expiry is after issue and at most seven days later, and same-studio composite foreign keys to the entry and issuer.",
       "evidence": [
         {
@@ -83,7 +83,7 @@
       ]
     },
     {
-      "id": "claim_436a82a2330941e980a06bb9e1adaa24",
+      "id": "claim_1ba7d1942328488ca77acd8946669b06",
       "statement": "Migration 0192 added an all-or-nothing offer scope, a decline outcome and the authorizing admission round to invitations, and constrains each invitation to at most one terminal outcome among redeemed, expired, released and declined.",
       "evidence": [
         {
@@ -93,7 +93,7 @@
       ]
     },
     {
-      "id": "claim_9528c91abf294621865fc4748238c919",
+      "id": "claim_a20089c4b95e404c9215b5a833a04200",
       "statement": "Waitlist TTL decisions use the post-lock wall clock rather than transaction-start now(), because a redeem that began before the deadline and waited on a lock past it previously succeeded.",
       "evidence": [
         {
@@ -107,7 +107,7 @@
       ]
     },
     {
-      "id": "claim_43d76bb10a484583b0806c4ef0ae37ff",
+      "id": "claim_491671e6287847fabac2831ab8e87d7d",
       "statement": "Migration 0190 anchors an invitation's window at issuance instead of transaction start and stops a legal status transition from rewriting evidence the transition does not own.",
       "evidence": [
         {
@@ -117,7 +117,7 @@
       ]
     },
     {
-      "id": "claim_88d7d84cdd804d0397c19471cecc0993",
+      "id": "claim_0d7a290e430749dd8cabb38357532215",
       "statement": "A round's consumed count includes every outstanding invitation still inside its window and every redeemed invitation; declined, expired, released or lapsed invitations free their seat, and a redeemed seat is not recycled.",
       "evidence": [
         {
@@ -127,7 +127,7 @@
       ]
     },
     {
-      "id": "claim_eee8dadbd6d445119a4c8485e2b94f3b",
+      "id": "claim_8ee12f9e5ff94c15a908914c505579fc",
       "statement": "Admission policy defaults and bounds live in an owner-only table separate from studios and from prospect preference, because default grants on studios cannot be narrowed per column.",
       "evidence": [
         {
@@ -137,7 +137,7 @@
       ]
     },
     {
-      "id": "claim_e34151675a154eb7a66e16f0c4cd4d3a",
+      "id": "claim_67971b80548149a59750982dc41b8030",
       "statement": "admit_new_client_waitlist_entry re-derives owner authority, locks the studio, the open admission round and the entry, then claims and issues a scoped invitation in one transaction, unwinding the claim when the issuer refuses and returning the raw token once with the database-owned issue and expiry instants.",
       "evidence": [
         {
@@ -147,7 +147,7 @@
       ]
     },
     {
-      "id": "claim_8e2af475028c406b9d68ee6ce45b00f6",
+      "id": "claim_61991fdae8654dc0b7ee56ad0c06d1b1",
       "statement": "DB tests prove admission is one action, leaves no claimed residue on refusal, refuses members, cross-studio entries, exhausted allowances, foreign services and invalid scopes, and yields at most one invitation under concurrent invites.",
       "evidence": [
         {
@@ -157,7 +157,7 @@
       ]
     },
     {
-      "id": "claim_11a83776852c4e2ba31b0ad9117c217d",
+      "id": "claim_cd66dd9645ac4de09386e4299fcce401",
       "statement": "Invitation delivery outcomes are stored as an all-or-nothing accepted, refused or unknown disposition with a timestamp, where NULL means never recorded; the first observation wins, a repeat is unchanged, and a contradicting disposition is refused without writing or affecting the invitation.",
       "evidence": [
         {
@@ -167,7 +167,7 @@
       ]
     },
     {
-      "id": "claim_ddc9a4887edb433b9ddbcc5de42467b8",
+      "id": "claim_bc392dcb970e4edc8662054634b594fa",
       "statement": "Migration 0197 adds a gateway the service role can call to read a round's consumed count, because the canonical count function is SECURITY INVOKER and service_role deliberately lacks SELECT on invitations, which had made capacity appear unknown and withheld sends.",
       "evidence": [
         {
@@ -181,7 +181,7 @@
       ]
     },
     {
-      "id": "claim_526cb2c6639b445381d24024610c8190",
+      "id": "claim_92b4ba721c6241939886bbc443b957d3",
       "statement": "Redemption leaves the entry at invited until a recorded conversion, so before 0200 a prospect who redeemed and never booked was immovable because release, expire, remove and requeue all refused and no new invitation could be issued.",
       "evidence": [
         {
@@ -191,7 +191,7 @@
       ]
     },
     {
-      "id": "claim_018caa07bdb640c2aec3c74691122b46",
+      "id": "claim_f74c457011864161ad594c42432785fe",
       "statement": "The 0200 close command moves a redeemed-but-unbooked entry from invited to released and stamps closed_at as a non-terminal record, keeps the round seat consumed, and requeue is redefined to refuse an entry holding a redeemed invitation so one entry can never carry two redeemed invitations.",
       "evidence": [
         {
@@ -205,7 +205,7 @@
       ]
     },
     {
-      "id": "claim_7d3f7090be4c4ca49664b7c72c184cee",
+      "id": "claim_5183449c29b84b57b107844d7e5e11c5",
       "statement": "Migration 0201 removed the close command's scan of appointments, because appointments carry no link to a waitlist cycle and, since 0195, a cycle booking converts the entry in the same transaction, so the scan could only match unrelated bookings and raced appointment writers.",
       "evidence": [
         {
@@ -219,7 +219,7 @@
       ]
     },
     {
-      "id": "claim_58adec9fa32c4a348a771bb397499b20",
+      "id": "claim_13e8bfedc3b34e3b8463841b8a4ca227",
       "statement": "Waitlist conversion records the converted client but not the appointment, and the waitlist booking command does not pass the entry id to create_public_appointment, so which appointment came from an invitation cycle cannot be determined from data.",
       "evidence": [
         {
@@ -229,7 +229,7 @@
       ]
     },
     {
-      "id": "claim_a114e02ca680457c89f1e26b0e1c8775",
+      "id": "claim_10b6b437191d40079214354b42006815",
       "statement": "The practitioner invite action accepts only the product fields and entry id from the browser and resolves studio and actor on the server.",
       "evidence": [
         {
@@ -241,6 +241,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

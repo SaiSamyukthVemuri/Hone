@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:28bf4319629a6425251cf2e655fc9e103fe5fcea76246fdf72ec0f4cba342a5d",
+  "pageVersion": "sha256:98fa37cb50e927eb6027820c5f0ec87ebcc148075497af00ced5eada7c45f7d9",
   "claims": [
     {
-      "id": "claim_fe50e946410c4394a3971d3488db2a01",
-      "statement": "Hone's capability status dimensions (Designed, Implemented, Merged, DB applied, Deployed, Enabled, Production exercised, Human accepted, Dormant, Held, Deferred, Retired) are independent, a capability is never described as live merely because a table, migration, component, route or flag exists, and Production exercised requires a row, log line or recorded operation.",
+      "id": "claim_0801884863f94b0e811225714c195987",
+      "statement": "capability-register.md defines the capability status dimensions (Designed, Implemented, Merged, DB applied, Deployed, Enabled, Production exercised, Human accepted, Dormant, Held, Deferred, Retired) as independent, forbids describing a capability as live merely because a table, migration, component, route or flag exists, and sets the bar for Production exercised at a row, a log line or a recorded operation.",
       "evidence": [
         {
           "resource": "repo://docs/production/capability-register.md#L65-L87",
@@ -13,8 +13,8 @@
       ]
     },
     {
-      "id": "claim_b1ac6240a70c4df69f1e975eb2b82a8e",
-      "statement": "Retired is a terminal status meaning a product decision permanently removed the capability and the database enforces that it cannot be enabled, which distinguishes it from Dormant, Held and Deferred.",
+      "id": "claim_2aa3a652b6c246c2979f941d83e8aa39",
+      "statement": "capability-register.md defines Retired as terminal: a product decision permanently removed the capability and the database enforces that it cannot be enabled, which distinguishes it from Dormant, Held and Deferred; current-state.md repeats that Retired is not a later phase or a grantable gate.",
       "evidence": [
         {
           "resource": "repo://docs/production/capability-register.md#L70-L83",
@@ -27,8 +27,8 @@
       ]
     },
     {
-      "id": "claim_72a0ccdef4684ef992392295c229c40e",
-      "statement": "scripts/migration-state.mjs derives repository migration state from supabase/migrations filenames, throws on malformed NNNN_ prefixes or duplicate versions, and computes the next free migration number by skipping the permanently unused slot 0158.",
+      "id": "claim_4d8a8fcc5a6e48b28107917152b11b79",
+      "statement": "scripts/migration-state.mjs derives repository migration state from supabase/migrations filenames, throws on malformed NNNN_ prefixes and duplicate versions, and computes the next free number by skipping the permanently unused slot 0158; the canonical-facts guard executes the script with --json, and per-migration tests consume it through the migration-state test helper.",
       "evidence": [
         {
           "resource": "repo://scripts/migration-state.mjs#L140-L148",
@@ -37,22 +37,34 @@
         {
           "resource": "repo://scripts/migration-state.mjs#L42-L98",
           "version": "repo-lines-v1:sha256:727fcfc901d2e09afe876c61adb6554c8cf1a3191bb474b075f29008d8b0fb03:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY4MmJhNGJkYmI0OTAwMGE5Yjk5YjY3ODQ3OWY5MzVkMzIwZTcxODIwYWM3NWUwZTUzNDM2OTNiZTRmNDkwNzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczMjUyNDMzMjk4MTgzMjIyNDdkZDM5NjQ1YjVkOTEzZjdhM2VkYjAzNDgwNjFiMGNlNDBmYmJlMzRlMTM3ODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVjZjRjZWFlNmQ4MGJjMDdhM2U5OWMxNDk5MGMzNDFiNTkwNWE1OWVhZWY3MzM5Y2Q2MTFmYThhNDVjODQxNDUifQ"
+        },
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L70-L71",
+          "version": "repo-lines-v1:sha256:8421ab7636ffb8eb0cd81815a64218327248f9418a1caa2f83aeecf6e5037859:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjExOGUxYjZhYjEyMWY2NTZlMDRkNTI1NTQzYjhlMjY2NWU2NDViOTkxNjVlMzc3ZTY2NmE1MTVlZGMxMmYyNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzNmYjQ4NzRmYTRkOTg0NzYzNmQ2MTAyMmIxODU4NjJmYTY1NjIxNzMwOTZmNDNkOGI5NjUwOTgyMmNjMThlMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzViNzUyMDQ2MmFkYTZlZTU5MTllZTMzOWRjOGEyY2QxOTNiNDQ2MWNiYmIxODc5YjJjZjY2MTI0NTFhZDdlZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2I2NWRiNTVkMGUwNGM1MWY0MjI2Y2NjOWEzY2UyNzUwM2E5NTFkZjkxNDkzMzQxMGE0OTNiYTRkOTk3NWY0MiJ9"
+        },
+        {
+          "resource": "repo://tests/migrations/helpers/migration-state.ts#L11-L12",
+          "version": "repo-lines-v1:sha256:c7858088aff3011e78f49853469e0e0a0b6639b5127770f32eca8e785e09838a:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTEyM2Q0NjI0NzQ3NjljOTE5MzUxYmYwNzg4YmY2N2U0YWI5NmMyOGI4NGEzMDU5ZmQyNTFiNzkwYWE5NzU1ZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTRlMzRmODU3YmI2OWJkNjYyZjM5Y2QyNjYwMTQ3M2EzYTEyMzhiMjk3MGJlOGRkMWFkODcwMTdiYjU0NDlkMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODJjYmJjZWI4NWRiN2UxOTdhYzY4MTc0ZmFiMjAwODdkMzFhNGU4Mjc2ZGQ0NTNkMzM1MjIwOWZlYjcxZDZhYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZGFlZTIwZGRmNDlmOGNmNzViNWEyNTllZWZkMDk2ZDUxZWRhMjYwNDk1YjY4NzAwNTA1NGMxZWQ2NzNiMzY3NiJ9"
         }
       ]
     },
     {
-      "id": "claim_07aa47009d6f4eb1a42e7c408985eeb5",
-      "statement": "Hosted migration state is not derived from the repository; scripts/migration-state.mjs reads it from docs/production/migration-state.json and requires hosted_migration_max as a four-digit string, hosted_applied_at as null or an ISO date/instant, and hosted_note.",
+      "id": "claim_4b61648288694be98430b44aa3802195",
+      "statement": "Hosted migration state is declared rather than derived: readCanonicalRecord loads docs/production/migration-state.json, requires hosted_migration_max, hosted_applied_at and hosted_note, requires a four-digit maximum and accepts hosted_applied_at only as null or an ISO date or instant, and the canonical-facts guard asserts the derived output reports the same hosted maximum as the record.",
       "evidence": [
         {
           "resource": "repo://scripts/migration-state.mjs#L100-L135",
           "version": "repo-lines-v1:sha256:7bf5fd81d3e7f350965fa211079639c416c87b0a4f443904929ba14cd8db0a22:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmMzNmZTMyNTFjMTE3MGY4NmJjNjM4M2E2Y2NiYTk5Yjc1YTExZWJiMDBmZmRhNGNlYTg5MzljYmU0YzEyZDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE3YThmZDBkMTQ3ODg5NzgyMWQwZTA4MDhlZTE4ZmQ2ZDljZDQ5Yjg0ZDczNzk3NTM5ZDFkZmExODk0MGJhMGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhODc1ODYxNTM4NjQyNTY2N2E0MGNhZWY4Y2JkNjUyNWVkMDg5NTIyZjc4YTA5YmQzZGI4M2U5NjFhOTAwNTUifQ"
+        },
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L533-L540",
+          "version": "repo-lines-v1:sha256:b3903666b6597ba7cd267d3b1722405d5909140e6ab50baec17777c6966fe514:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzNlOWNjYTM3OWQ3OTgzODIxOWVlM2I1ZTZiZWM0ODgwMDU0M2NjMDg5ZjlmMDkyOGM4OTNiMzliYTZhN2MyZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYmQzNTRhMmM5MTI2Y2QzYmFhZDZmY2I2Yzk0NWFjNzJiNmNhM2IzNTYxZTU4YzQ4NWVhZjY2NDI2NDI3NzE5ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTc3MWUxMTUxMWEwMjQxMjEzYjZlODJiOGY1ZjI2YTZkNmMwYzEyMTRjNmQzNjc1ZDE3YTNiN2Q4YTgxNzdmZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTM1OGZiM2M3NGJiNGVlNDA5MDE1ZjJmZTFjNzkzMjhmZDIyMWRlNjAxMzFiY2FkMDNkNDMzOGVkZGU0YjE2ZiJ9"
         }
       ]
     },
     {
-      "id": "claim_4468ec2037db48b5811c9e60f987aad0",
-      "statement": "The derived pending set is every repository migration version numerically above the declared hosted max, and repo_equals_hosted is a numeric equality of the repository and hosted maxima.",
+      "id": "claim_c17c2f43692a4564b0c110374233fe73",
+      "statement": "The derived pending set is every repository migration version numerically above the declared hosted maximum, and repo_equals_hosted is a numeric equality of the repository and hosted maxima.",
       "evidence": [
         {
           "resource": "repo://scripts/migration-state.mjs#L149-L175",
@@ -61,8 +73,22 @@
       ]
     },
     {
-      "id": "claim_1f4cb838df8e477eacf9d06b83663cf9",
-      "statement": "current-state.md records a dated source/runtime baseline rather than live telemetry and deliberately states no migration number, deferring hosted max to migration-state.json and repository values to npm run migration:state.",
+      "id": "claim_1587d3a5afc44f35937ff2d6f099e851",
+      "statement": "npm run verify:prepush runs scripts/migration-state.mjs and fails its migration-state check when the script throws, so a malformed or duplicate migration filename fails the pre-push verification.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/migration-state.mjs#L58-L98",
+          "version": "repo-lines-v1:sha256:f6bd1a276e9919a4d891775aa5cd7333b456875f45e7c6ee97307a150619ecbb:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwYWY3NTlhOTU0OWE2ZGMwMzRjNzUzMzdlYzMyZTk2NDEzZjA0YWUwY2JkOWEyZTlmODNhZGI3OTY2Y2UzN2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFiNGE0OWYyNDBjMWFkMzEzYzk3ZDk0YjMxZTcyZGVhNDJmNzAzZjljNjhkNzZkYzAzZjI3MWVkNjRlZjA1ZjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVjZjRjZWFlNmQ4MGJjMDdhM2U5OWMxNDk5MGMzNDFiNTkwNWE1OWVhZWY3MzM5Y2Q2MTFmYThhNDVjODQxNDUifQ"
+        },
+        {
+          "resource": "repo://scripts/verify-prepush.mjs#L142-L149",
+          "version": "repo-lines-v1:sha256:db7664c66fc384a458a404b2cddb101b0ada7930afd95c4160d16f68bb29e5ba:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDBjNjEwYmUzMDVhMDkxOTdlOTNjMjQ2MjM4NTk4NTkxMmNjMjg2OTBkNTRhMDRmZjcyOGMwZGFjZjQ1Zjc3NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDFlOTljZjE1NTQ4ZGMzYjg3NWE4MTIzMzM0ZGQ1NDdkZDhiNjQ2MGM0NzRjYzg5NDc2ODE0NGZhZDE3OTZjZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTZjZDc2MGE1MjNmZmYyYmIwZjdlOWY3NjllYTRmZjRkMzE2ZDk4MWQ3NzAzNDYxYTk2MmU1Y2Y1YzUwYjlhNCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5e16795692944a4898135164f3af55fe",
+      "statement": "current-state.md describes itself as a dated source/runtime baseline rather than live telemetry and states no migration number of its own, deferring the hosted maximum to migration-state.json and repository values to npm run migration:state; the canonical-facts guard fails if current-state, capability-register or known-limitations assert a current migration maximum.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L16-L19",
@@ -71,12 +97,16 @@
         {
           "resource": "repo://docs/production/current-state.md#L32-L33",
           "version": "repo-lines-v1:sha256:4adbb93cd17276c8eca461da75eea37f48c5f63c18c73c0369df0cc25c2c8a27:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWI5NjM4NGM4Y2RmOWU4ODA5NGJhYjMyZmMyY2RlMzEwMjk5MjliNjJmMDk5NjM1YmFiZDUyNmIyMDk1ZTUzZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWE2Zjg2YTNjMTIxZjE5N2M5ZDBmYTYxNWZkMjg4ODkyOWU2MDE4Mjk2ZWZmMTQ2OWM4ZDY1ZjQ2NTJhYmJiMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzg3OWE4YjcxOGE0M2UyMWRlZDk4ZDJlMDI0MjE1NTQwOWU0MmE4YWU3ZjIxNDZhOTViZmY0NzZhNjI0YzE0YSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjg1ZjhjM2ZlMDQzMTcwOGJiMzE1MjA4ODdhYzQ2ZDZlNmY3NmJkMjI4YzQ3NzUyYjJhNjE1ZTNhMGRjMDg0OCJ9"
+        },
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L404-L428",
+          "version": "repo-lines-v1:sha256:eb0f24bdc77dad7b03a5c031f433d42c0cdec31712d4e41a5862e590feec93bd:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjODg4MmRhZDI1MWQ4MjU3YThhOGVmZjA4MDQwZTE1MThiNjg5OWEzNmJjYWU1ODVhNDA5NjliMGNiOGJjNzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0YjhlZWJhZDQ2ZTA2ZTllMzg3MzNhODAwZDAwYzRjYjI1OTRmYjczMTFlZmRjYTdlY2UxMjAzYzFiMmM1NzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE2MjRjYjUxNjFhMjU2OTgwYmQzYjQ2NTc5MzEzNWE4OGVmMjQyZGU1ODBlMGY4ZmZlY2JmMWU3YzM0ZDU4NGUifQ"
         }
       ]
     },
     {
-      "id": "claim_ef67b324608e4fbea3b83fdfec63c551",
-      "statement": "current-state.md section 0 is the canonical production tenant classification; the production database contains a sanctioned synthetic tenant whose rows are never customer activity, and all-tenant totals must be labelled as including synthetic rows, which the canonical-facts guard enforces.",
+      "id": "claim_c62225fccc79499bbe5116f3ebe69b5a",
+      "statement": "current-state.md section 0 is the canonical classification of production tenants into real-customer, controlled-test, synthetic and empty classes, records that the production database contains a sanctioned synthetic tenant whose rows are never customer activity, and the canonical-facts guard requires every tenant to be classified and the register to be referenced rather than copied.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L182-L217",
@@ -89,22 +119,22 @@
       ]
     },
     {
-      "id": "claim_a8fac2772b6a4292bf5af167c0de3e28",
-      "statement": "An open pull request is never described as production: current-state.md declares the open set without head SHAs, shipped status is determined by ancestry of the production head, and the guard fails if a declared-open PR has actually merged or is described as shipped.",
+      "id": "claim_25253061f2d2419e96461765b856224a",
+      "statement": "current-state.md declares the open pull-request set as not production and names commit ancestry of the production head as the test for shipped; the canonical-facts guard requires that section, a non-production state word on every declared-open row, and fails if a declared-open PR has actually merged.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L138-L180",
           "version": "repo-lines-v1:sha256:0bdb7999832f2d44e62e0370c42a33383ef1e84665fd8c8a03929d38e298371a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZmYzU1NWQ3ZDNjMWNjOGM4NTgyZmMxNDMzODJmYWExMTRlNDNlMmE5MDM2OTkwYWNiMGE2OGQyZGU0YmRhOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE2ZDdkNzkyN2ViOTIyMzRjMjc5OTNiZTc2YTFlNGRmMGJlODU4YzAyOWZlZWQ4MWZlNjkxNjIxNGUxYzQ1YzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI4OWM0OWYxNTczYjUxYWE2NGM4OTI0NTI5NjY5NTQ3Yjc4Y2MwMzk3ZWRjNGJhYjU3MTlkZjMxMzYxYTNhMWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIxOGNjYTdmOTAyNTIwMmEwZjJiMDA2ZTgwMmE1ZmYwMWJhNzZiOTRlYjgwOGI2NTllNDk1YjQwZTVlM2UxODAifQ"
         },
         {
-          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L2850-L2979",
-          "version": "repo-lines-v1:sha256:21bdfc324280ec51e5a5c580fd423bd7b8822934534288c2bb758d6265362cba:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiMzUxODU2M2UzNjlkYzJjYzEyZjgwNzFjOGNkNjJiNGNhMmYyMzFlNDUxNmVhNTBkMDNkMjM5ZjExYTNiZWJjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIxZmQwNzcxNGY4OWQ5NjIzYjE5M2Y1NjA1MzVlNTZhNWE4NTA3YTBiMzQwNTk3NzIxOWZiMDFkZWMwZjc4NjUyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNzc5ZDExOGQ2ZTNjYmY0NTA1Mzk3NDhkZWU3YTQzMDdhY2JlNjQ0NmNiYTI5N2YyNzYwZmE1ZDBiYmExYmMyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyYTEzMjRmOTUzNWY5OWNiZDA3YjBlM2M5OTk5NDUyNjEzZTUzMzdlNGU4NDQyNGZkMDM5YzUxODI0NDA1OGY5In0"
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L2850-L2975",
+          "version": "repo-lines-v1:sha256:d25d8fc34c8bf023bd0e4f6ac8371ab3be767e131b8689a164e3bc07c785de77:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiMzUxODU2M2UzNjlkYzJjYzEyZjgwNzFjOGNkNjJiNGNhMmYyMzFlNDUxNmVhNTBkMDNkMjM5ZjExYTNiZWJjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNzc5ZDExOGQ2ZTNjYmY0NTA1Mzk3NDhkZWU3YTQzMDdhY2JlNjQ0NmNiYTI5N2YyNzYwZmE1ZDBiYmExYmMyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI4NGU5OTUwNjc2Y2I1NWJiZWQ4YjBkZGYyMzQwZGY0YWQwZGM2MzNhM2QxM2E3YmU2M2QxYzM0NWZlZWU5MTVmIn0"
         }
       ]
     },
     {
-      "id": "claim_4de0432e51324b6faaf999d7ad53d4c2",
-      "statement": "current-state.md's re-verification procedure orders external sources (production Git graph, Vercel deployment record, supabase migration list --linked, read-only db query, code at the production SHA) before documentation, treats documentation only as claims to verify, and forbids db execute for production SQL.",
+      "id": "claim_f7db84e303df4faf85a7797e0672b74f",
+      "statement": "current-state.md's re-verification section states the document is not evidence for itself and orders external sources (production Git graph, deployment record, linked migration list, read-only queries, code at the production SHA) before existing documentation, which it treats only as claims to verify; the guard's Rule G pins both statements.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L1191-L1244",
@@ -117,8 +147,8 @@
       ]
     },
     {
-      "id": "claim_88352917d94a4ca995b8ad246e8c4f37",
-      "statement": "Human acceptance is tracked separately from production exercise: deployed and repeatedly exercised features remain human-acceptance pending, and acceptance must not be inferred from usage.",
+      "id": "claim_79791b79b12e4ccf83959d2eabc02d37",
+      "statement": "current-state.md section 15 records human acceptance separately from production exercise: deployed and even repeatedly exercised features remain human-acceptance pending, and the section forbids inferring acceptance from usage.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L1142-L1163",
@@ -127,18 +157,8 @@
       ]
     },
     {
-      "id": "claim_45ba7edc269c4bfbafc5299d88e82696",
-      "statement": "The canonical-facts guard bans hard-coded current migration maxima and next-free numbers in current-state.md, capability-register.md and known-limitations.md and in the release-changelog preamble.",
-      "evidence": [
-        {
-          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L404-L468",
-          "version": "repo-lines-v1:sha256:689abb0767c620bb4eba2bdce48af5a4ac1093f655f06e9a9feda593c19eabe7:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjODg4MmRhZDI1MWQ4MjU3YThhOGVmZjA4MDQwZTE1MThiNjg5OWEzNmJjYWU1ODVhNDA5NjliMGNiOGJjNzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0YjhlZWJhZDQ2ZTA2ZTllMzg3MzNhODAwZDAwYzRjYjI1OTRmYjczMTFlZmRjYTdlY2UxMjAzYzFiMmM1NzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk1MDlhNjA2YjhlMGZlZGNkM2JjODg5NGZhMzYzZjhmNjMwZDYwOTEwZWJhZTFlZDU5OGEyMTlkNmNiOGViYWEifQ"
-        }
-      ]
-    },
-    {
-      "id": "claim_3c1bf8949f64474c933af2e9c2b0e70e",
-      "statement": "The canonical-facts guard requires the migration ledger's current block to state the hosted max declared in migration-state.json and the derived repo max, and allows the repo/hosted relationship to be only parity or migration-first pending.",
+      "id": "claim_32485367be7044dbb37f386167f2f4b6",
+      "statement": "The canonical-facts guard requires the migration ledger's current block to state the hosted maximum declared in migration-state.json and the derived repository maximum and next free number, and allows the repository/hosted relationship to be only parity or migration-first pending.",
       "evidence": [
         {
           "resource": "repo://tests/docs/canonical-production-facts.test.ts#L470-L746",
@@ -147,12 +167,12 @@
       ]
     },
     {
-      "id": "claim_4fd5439a5da547868c6d5edf215d8540",
-      "statement": "The only exemption from the canonical production-doc guards is an explicit canonical-facts:ignore-start/ignore-end frozen region declaring a reason; all text outside such regions is treated as current prose.",
+      "id": "claim_dc6f15975d964485b1d1f31f1554005a",
+      "statement": "The only exemption from the canonical production-doc guards is an explicit canonical-facts:ignore-start/ignore-end frozen region; all text outside such regions is treated as current prose, and the guard requires every ignore marker in each scanned document to declare a reason.",
       "evidence": [
         {
-          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L1420-L1468",
-          "version": "repo-lines-v1:sha256:cc4cc50fbcc351507b70eb676e69a3c42d1ecbd6fd4559694f079aa2e88ef0ff:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQwOWUwM2Q1OTc4MDRlNjcyOGVkNmJmN2RiNWE5OWU5MTgwZWMzZGZiYjAzNTc2NmNjODAxOTk0YjE2MDcxN2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFlNzE5ODI4ZTBjMmQ3YzY1MmU1OWJmYWM4YTIyODYzYzU3MTBjNWE0NjJiNGVkYmFmMWRmZDgzZTQ1ZGM1YjMifQ"
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L1420-L1461",
+          "version": "repo-lines-v1:sha256:3a167b8dd26ced8f146fae59844569c4703609b6bd45f4eea5c89b44ab698305:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQwOWUwM2Q1OTc4MDRlNjcyOGVkNmJmN2RiNWE5OWU5MTgwZWMzZGZiYjAzNTc2NmNjODAxOTk0YjE2MDcxN2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzNTFhMDIyY2UwMmUzN2I3MmI5NDM5ZmZhOGEyOTZjNTQyNjk1OWZmN2FlNjhlMjdkMzE0NjlkMmQ0NjkzMWEifQ"
         },
         {
           "resource": "repo://tests/docs/helpers/canonical-facts.ts#L13-L34",
@@ -161,18 +181,18 @@
       ]
     },
     {
-      "id": "claim_f445fd22f7e54226aa05170372277106",
-      "statement": "The apply history in migration-state.json ($comment) is enforced as an append-only array of dated entries whose existing entries may not be removed or rewritten.",
+      "id": "claim_dcaee40fc4ac47dfab46f8543b89ced7",
+      "statement": "The guard treats the $comment apply history in migration-state.json as an append-only array of dated entries, pinning its entry count and digest so that an existing entry cannot be removed or rewritten.",
       "evidence": [
         {
-          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L1356-L1418",
-          "version": "repo-lines-v1:sha256:722f96e52e1bfe2abedcc5d71f42f8134186bb721336b250dcbefea728586bb5:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZkMGEyZTY5ZjE4YWQzYzliMzZkNWUyYmY3NzhlYWQ2NzMwYmY2OTVlOGZhNjQ5MzA3MzRiMjA0YjE2NTM0MmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFjY2YzYmU4MDUxMzRjMTA3ZGE0MjFlZmRiNTYwOTlkZmRmZjRlZGZhY2Q2YzBhZmM2NWY2MTA1YThhYzliYmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA1ODQ2ODk2OTgxNGMwYTk3ZWY2NmU3NThlZGE4ODA2MmI1YjM2YmIwZGIyZjYyZTQ4NDBhYzcyMmRiZjNhOTYifQ"
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L1352-L1418",
+          "version": "repo-lines-v1:sha256:5547d24fe45b9c3720f9f2a79e1091caf99c9e1ed5d8750e43ae35d09be8d891:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2MDdmNjhkNzFmOGM3YWJlNTBkYmZkZjVjYTFmMTg0Yjg2NGQ4MjliZjcwMzJiZDcyNDc3ZDU3OWI5YTc0MWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA1ODQ2ODk2OTgxNGMwYTk3ZWY2NmU3NThlZGE4ODA2MmI1YjM2YmIwZGIyZjYyZTQ4NDBhYzcyMmRiZjNhOTYifQ"
         }
       ]
     },
     {
-      "id": "claim_0922587a8ac34577aa5d829bd6e0339d",
-      "statement": "Guard Rule A requires every 40-hex SHA in current-state.md to resolve to a commit, the pinned runtime-bearing SHA to be an ancestor of HEAD, and no runtime-bearing file (per scripts/classify-changes.mjs minus non-shipping roots) to have changed since the pin, and these rules skip on a shallow clone.",
+      "id": "claim_07ffb46a2dbd4f9d9e3b9f7ee8a10198",
+      "statement": "Rule A requires every SHA written in current-state.md to resolve to a commit, the pinned runtime-bearing SHA to be an ancestor of HEAD, and no runtime-bearing file (as classified by scripts/classify-changes.mjs) to have changed since the pin, and the A-rules record their environment and skip on a shallow clone.",
       "evidence": [
         {
           "resource": "repo://tests/docs/canonical-production-facts.test.ts#L1650-L1752",
@@ -181,8 +201,18 @@
       ]
     },
     {
-      "id": "claim_e7ced8af38944a949e2af5b87c2047f9",
-      "statement": "Among the canonical production documents only current-state.md may contain a commit SHA; capability-register.md and known-limitations.md must reference current-state.md for the runtime-bearing baseline instead.",
+      "id": "claim_7aa3878958a74c2a9a0b052243aa179f",
+      "statement": "Rule A5 asserts that the Current Git branch HEAD recorded in current-state.md equals the production branch ref, and skips when git history is not usable.",
+      "evidence": [
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L2531-L2575",
+          "version": "repo-lines-v1:sha256:77441690aadcc943b57388c892eaa1533c635d1db967422922130af4614d69c5:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliNDZiODUwYjQxMjZmNjI5ODlhYzFkOTNhNjI2Yzc0NDYwY2M4MjA2NDI5MTYzMTMyNDIyN2RmNmI0MTM1ZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUzMjJlYjYwMGZlY2IyMzM1NjAwZTdlNzNjZDQwODYwYjY0YjdiOWY5MGRhZTM1ZWM3NDNjOGY4YWE2MWZhMTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkNGFmYzEwOGRjZjI3NmUzOGY2MTc1NDA0NWYzMWIzZWM2ODk3MTdkNzAxNWU3ZTgwYjBkYjJjMzU0ZjQ0ZGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b02bebf2584a477eb95f303fddc4d9f5",
+      "statement": "Among the canonical production documents only current-state.md may contain a commit SHA; the guard requires capability-register.md and known-limitations.md to contain none and to reference current-state.md instead.",
       "evidence": [
         {
           "resource": "repo://tests/docs/canonical-production-facts.test.ts#L2820-L2848",
@@ -191,8 +221,8 @@
       ]
     },
     {
-      "id": "claim_354a012ffc5e433a8f626c57505baf46",
-      "statement": "In CI only the change-detection job checks out full history; the validate job that runs npm test uses a shallow checkout and is skipped for docs-only diffs, so the history-dependent canonical-facts rules do not enforce in CI.",
+      "id": "claim_38dee4530e644afdbfd475cb916000d8",
+      "statement": "In CI only the change-detection job checks out full history, while the validate job that runs npm test uses a shallow checkout and is skipped when the classifier reports docs_only, so the history-dependent canonical-facts rules do not enforce in CI.",
       "evidence": [
         {
           "resource": "repo://.github/workflows/ci.yml#L105-L122",
@@ -217,7 +247,7 @@
       ]
     },
     {
-      "id": "claim_e9c2454c2fe3440a954a5b3f4560e051",
+      "id": "claim_e4621ad85831401d95fe6efd48d2f010",
       "statement": "The unit Vitest configuration includes every tests/**/*.test.ts file except tests/db/**, so the documentation guards run as part of npm test.",
       "evidence": [
         {
@@ -227,8 +257,8 @@
       ]
     },
     {
-      "id": "claim_46f7fc420c3741548d011c2a86444185",
-      "statement": "The release changelog records each row's state at its PR date and does not rewrite historical rows; only its preamble is kept current and it states no current migration max or runtime-bearing head.",
+      "id": "claim_0fc6e616566b431d808f6b9db8eb9f8c",
+      "statement": "release-changelog.md states that each row reflects its state at the PR's date, that historical rows are not rewritten, and that only its preamble is kept current, with no current migration maximum or runtime-bearing head.",
       "evidence": [
         {
           "resource": "repo://docs/production/release-changelog.md#L1-L26",
@@ -237,8 +267,8 @@
       ]
     },
     {
-      "id": "claim_ae56f6528d934e23a64abf773dd7d459",
-      "statement": "Durable new-client waitlist activation must be recorded in current-state.md as a dated bound with a dated non-zero row count, and the guard forbids canonical documents from calling the durable waitlist dormant, dark or zero-rowed.",
+      "id": "claim_628aa9f291704e578c535c1a2ce4fa98",
+      "statement": "The canonical-facts guard requires the durable new-client waitlist activation to be recorded as a dated bound with a dated non-zero row count, and forbids the scanned canonical documents from calling the durable waitlist dormant, dark or zero-rowed.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L738-L738",
@@ -251,8 +281,8 @@
       ]
     },
     {
-      "id": "claim_1c1e2753b7db4c6bb6ad880c99d4eb1b",
-      "statement": "current-state.md pins 410e5039 (the #745 merge) as both branch head and last runtime-bearing application head at its 2026-09-21 sync, and its 2026-10-01 addendum states production has since advanced (#773, #778, #777) without re-pinning the header.",
+      "id": "claim_f56bd5dbfede44ffb1673b711302fc17",
+      "statement": "current-state.md's reconciliation header pins a branch head and a last runtime-bearing head at its 2026-09-20/21 sync, and its NEW-CLIENT-MODE-01 subsection states that production has advanced past that pin and deliberately does not re-pin, which Rules A3 and A5 treat as a failure on a full clone.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L105-L120",
@@ -261,12 +291,60 @@
         {
           "resource": "repo://docs/production/current-state.md#L23-L30",
           "version": "repo-lines-v1:sha256:5aff0bec00329c1a65d75fffaca36b193d3457d4af829d56d71c4c7bb883cda2:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWI0YmNlMzgxY2MyZDRkMjBmZGRjMzIzZjViMmJjNjNkN2M3NTQ4NDgzMTIwM2E4NTM3YTRlYzQ0YWQ2NTEzZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmEwOTg1MTdjYjlmNmZlNGViZWY2YWUwM2M5MmQzMDc5YjgzYmE2YTk3M2I5ZDdhNzUwNTg0YzcyYzk2ZjMzNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDAxZjJlYzE3NTkzYzEwNTRlYjQ2MzY3ZDg0NTNlZjI0YTE3M2NlOTZiNzExN2Q5MWY5YTY4ZDQ0ZmVmOGIwMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGMwMGNjZWJhOTRkODI5N2UwZmVkMmFmNDE4ZmQwN2E3NWMwYmI5ZWYyNTAwZWEzOGQwYmEzNTQ1ZjFkNThkYyJ9"
+        },
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L1729-L1752",
+          "version": "repo-lines-v1:sha256:6bff7a9fa5be217d0bcff8a5ece110590728b577386299b0e5fa375f11fe25bc:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzMDdkYzRhN2NjOTA3OTQ0NzU2OWJmMDM4OTNkNzVjMjAzNWUxNTM4OThjYTU1MTNkYTBiM2E0YTI4NmZhODkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEyZmEwZDFlMDE5YWE3Mzc1ZTI5MDdkYjJjZWY2ZDA5NGJhOWQ5MjJiYWVlMWFjYTQyNzRkYzRkZjdmNWI4Y2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzMWY3MzUxNTZlNWI0MzAzNGE5ZTc1MmRjOTQyYmI5MGMxODkxYjEyNGMyOTE1ZWFiNWZmOWUzZjcxMGZiOGYifQ"
+        },
+        {
+          "resource": "repo://tests/docs/canonical-production-facts.test.ts#L2531-L2575",
+          "version": "repo-lines-v1:sha256:77441690aadcc943b57388c892eaa1533c635d1db967422922130af4614d69c5:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliNDZiODUwYjQxMjZmNjI5ODlhYzFkOTNhNjI2Yzc0NDYwY2M4MjA2NDI5MTYzMTMyNDIyN2RmNmI0MTM1ZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUzMjJlYjYwMGZlY2IyMzM1NjAwZTdlNzNjZDQwODYwYjY0YjdiOWY5MGRhZTM1ZWM3NDNjOGY4YWE2MWZhMTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkNGFmYzEwOGRjZjI3NmUzOGY2MTc1NDA0NWYzMWIzZWM2ODk3MTdkNzAxNWU3ZTgwYjBkYjJjMzU0ZjQ0ZGYifQ"
         }
       ]
     },
     {
-      "id": "claim_df53e99be79f4644ad8a6b6c36149676",
-      "statement": "docs/15_DOCS_MAINTENANCE.md still lists 'Whole-session copy is production-exercised' as a banned false claim and states the production migration max as 0157, contradicting current-state.md's record that whole-session copy is production exercised, and that file is not among the documents the canonical-facts guard reads.",
+      "id": "claim_05b94d2dbf3d4b43809f5127ef56c068",
+      "statement": "The current-state.md tenant register is a dated measurement that classifies fewer studio rows than the migration ledger's later apply records verify, and current-state.md's own NEW-CLIENT-MODE-01 table refers to more studios than its header's tenant posture, so at least one production studio row is outside the canonical tenant classification.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L133-L133",
+          "version": "repo-lines-v1:sha256:ad3d32bb022aa6740debfa2ae7acc99408b9c687d2aa74b3c74515dbd0710d37:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWQzZDMyYmIwMjJhYTY3NDBkZWJmYTJhZTdhY2M5OTQwOGI5YzY4N2QyYWE3NGIzYzc0NTE1ZGJkMDcxMGQzNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWQzZDMyYmIwMjJhYTY3NDBkZWJmYTJhZTdhY2M5OTQwOGI5YzY4N2QyYWE3NGIzYzc0NTE1ZGJkMDcxMGQzNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2Y2ZjRhNjBhYjY2YjZlZGVjMjBlMTMwZDc4OWQ2YmMwYTdlYTYxZjkyMDBhMGZlMjY0MzU0YzIzMzc1OTU0MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTFkNDdjZWY2ZTE3ZGRjNzUwNmIyNjk1NjExODFhYjlmMDAwZTg0NmQ0YjQxNGYzNmEwZjc2YTBiNDljNzg0YyJ9"
+        },
+        {
+          "resource": "repo://docs/production/current-state.md#L36-L36",
+          "version": "repo-lines-v1:sha256:040a87e887e218c83c9530457ae7a1d7e38cf14e27eb6018dfae6d359a69d2ff:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDQwYTg3ZTg4N2UyMThjODNjOTUzMDQ1N2FlN2ExZDdlMzhjZjE0ZTI3ZWI2MDE4ZGZhZTZkMzU5YTY5ZDJmZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDQwYTg3ZTg4N2UyMThjODNjOTUzMDQ1N2FlN2ExZDdlMzhjZjE0ZTI3ZWI2MDE4ZGZhZTZkMzU5YTY5ZDJmZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTUxYzY1MWFhNGIyOWVhMmVkOGZhYzFjMWM4MTQ1MTRiNGM4MjBjMDE3NmFkYzEyMTRiZDc1MGNmYzMyNDQ1NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjIwZThmOTM2N2I2YzhjNjlmMTRiMTk3NDQwYTNiMjEzMDU2OTA0YjRiM2YzNmM4ZDVjZDczYTY1YWFhYWU1MyJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L38-L40",
+          "version": "repo-lines-v1:sha256:43d4be2c147798d21dba72e5e2da0e72c7d21940a91de2b27bf7c5af67be0ce7:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjFjZmYwNmFhYmE3NWI3OTBkY2Y3MTBhYWE3YTI4YWJmZGY5ZjM4YzcxMDgzMTU3NjYxZjIyMDdlOTVkOTcwZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzk2MTRkZTVkNWRiY2FhMTZlZGNmM2RiZmJjZWRiOGQ2ZjNlMjdkYmQwYTgxN2FhZTZiMDdiOTRhMjcwNTA4ZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWIyYzQ4YjE2NjAzZjg1ODY1ODM4YzZkOTUxY2ZmMjUxYmRjZTBhM2ZiZWZhZDQ2NTU4ODc2ZTAzMDU2N2Y5OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDI3NzdlN2I1OWY0ZjZiODk4YjczMTM2YWY3NjEzNDVkZWNjYTNlYmY3ZGNkMjIwNTM1YzI0MDhiMWZhMjA3MCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_42a1d96a84824defb072819611244a54",
+      "statement": "The canonical documents were reconciled at different times: capability-register.md and known-limitations.md are older than current-state.md's 2026-09-20/21 sync, and the migration ledger's current block (the 0205 apply) is newer than all three.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/capability-register.md#L7-L7",
+          "version": "repo-lines-v1:sha256:64a61cfae6c3a69003721fdb9d683b4021031ac35b7b1fd14044b5163019d8db:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjRhNjFjZmFlNmMzYTY5MDAzNzIxZmRiOWQ2ODNiNDAyMTAzMWFjMzViN2IxZmQxNDA0NGI1MTYzMDE5ZDhkYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjRhNjFjZmFlNmMzYTY5MDAzNzIxZmRiOWQ2ODNiNDAyMTAzMWFjMzViN2IxZmQxNDA0NGI1MTYzMDE5ZDhkYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzk0MjJhYzU4ZWQzN2JjYjBlZWVhMjYxMmI4ZDAxMjA4MTA0MjhiNzc1M2VhNThiMmIyYzE4MjM5NDBiZDVkOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmRjMzUyYmY4NTg5NDc5YTEwZmM4Mzc1OTcwMGZiNDBlMzRkYmY2ZjNmYjViNGY4NGRkZjA4MDA0YTE1NjljYiJ9"
+        },
+        {
+          "resource": "repo://docs/production/current-state.md#L27-L27",
+          "version": "repo-lines-v1:sha256:205acde2d14527cd35965e33d444e6e7f0756b56f13b507cfeff93b1d1476c3d:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjA1YWNkZTJkMTQ1MjdjZDM1OTY1ZTMzZDQ0NGU2ZTdmMDc1NmI1NmYxM2I1MDdjZmVmZjkzYjFkMTQ3NmMzZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjA1YWNkZTJkMTQ1MjdjZDM1OTY1ZTMzZDQ0NGU2ZTdmMDc1NmI1NmYxM2I1MDdjZmVmZjkzYjFkMTQ3NmMzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTUwYTY4NmJiZWM1NDNjOGRkMmQ0MjIyMjFhYzAzODQwMjYzMmE3MzFjMTY0MjY3NzlmYjQyOWI5MjQ3NzNiNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2U4MjJkN2E2ZTQ2ZTRiMjczZjg5NjcxNzI3NjFiNzFjZGZlNGIxMDM5MzFhMTQ2NGUwY2IzYjU0OWFiNTU3YiJ9"
+        },
+        {
+          "resource": "repo://docs/production/known-limitations.md#L3-L3",
+          "version": "repo-lines-v1:sha256:dea345b560059d8c01fcd1f818a41053f801d302e02eed31328fa05a95e46dc1:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGVhMzQ1YjU2MDA1OWQ4YzAxZmNkMWY4MThhNDEwNTNmODAxZDMwMmUwMmVlZDMxMzI4ZmEwNWE5NWU0NmRjMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGVhMzQ1YjU2MDA1OWQ4YzAxZmNkMWY4MThhNDEwNTNmODAxZDMwMmUwMmVlZDMxMzI4ZmEwNWE5NWU0NmRjMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjIsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYmYxOWZiMjc1MzFmZmVlNmUwOThlYzBmNGNhNDEyYWU0NzNkMGFjODRkYzk5OGM2YTNjOWYxYjJmNzRhMWFkYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjNmZDBjMTk3ZDdmZmFiNmI1ZTM2MzBiYzg1ODhlZDYwZjAwMWFlM2E3ZDc5NGFkNGNkNzQzYjRlMmNiNGY2NyJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L17-L17",
+          "version": "repo-lines-v1:sha256:4a0efecc23bd65fc59252f07e685d0cff2d5a7816b6f13385ef7b07a5a265a3a:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGEwZWZlY2MyM2JkNjVmYzU5MjUyZjA3ZTY4NWQwY2ZmMmQ1YTc4MTZiNmYxMzM4NWVmN2IwN2E1YTI2NWEzYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGEwZWZlY2MyM2JkNjVmYzU5MjUyZjA3ZTY4NWQwY2ZmMmQ1YTc4MTZiNmYxMzM4NWVmN2IwN2E1YTI2NWEzYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDRlYmI1ZTBkYzczMDc2OTg0MGYzMGEyZjcxN2FkNDA3NmJhZWI2MDA4YmVjMmY3YmZjZjU5NTE5NjYxMmY4YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDEyZDQ3ODMxMjMyOTkzZDAyODQ0MzE5NTdmMTZhNTQxYjYxMWZlMzE0MDYxNmYzNTEyYzJlOTQwY2M1YzhjMiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_d6928e3e83c44cc491c28a3c3d8beb49",
+      "statement": "docs/15_DOCS_MAINTENANCE.md still lists 'Whole-session copy is production-exercised' as a banned false claim and prints a hard-coded production migration maximum as current, contradicting current-state.md, which records whole-session copy as production exercised; that file is not among the documents the canonical-facts guard scans.",
       "evidence": [
         {
           "resource": "repo://docs/15_DOCS_MAINTENANCE.md#L117-L148",
@@ -287,8 +365,8 @@
       ]
     },
     {
-      "id": "claim_4f0de605b0744343bcc1d56e59c90f2c",
-      "statement": "current-state.md section 16 still lists WAIT-02B Stage B2 activation as next work whose authorization is not granted, while known-limitations L25 records that activation was taken on or before 2026-08-25 and that only the activation's governance record remains open.",
+      "id": "claim_395717f337f945c184382a985a211a81",
+      "statement": "current-state.md section 16 still lists WAIT-02B Stage B2 activation as next work whose authorization is not granted, while known-limitations L25 records that the activation was already taken and that only its governance record remains open.",
       "evidence": [
         {
           "resource": "repo://docs/production/current-state.md#L1176-L1178",
@@ -301,48 +379,26 @@
       ]
     },
     {
-      "id": "claim_02a27dc080c24e1f8b990516dff7e207",
-      "statement": "The current-state.md tenant register classifies six studios from a 2026-08-23 measurement, while the 2026-10-01 migration 0204 apply record counts seven studio rows, so one studio row is not classified by the canonical register.",
+      "id": "claim_3f11ab90c1d54e4ea23b5d1acaa1e8ca",
+      "statement": "The migration ledger's current block records migration 0205 as applied with repository and hosted at parity, and records that the studios_admission_mode_guard() grant deviation which the new-client admission execution record had earmarked 0205 to close remains open and needs a new migration.",
       "evidence": [
-        {
-          "resource": "repo://docs/production/current-state.md#L133-L133",
-          "version": "repo-lines-v1:sha256:ad3d32bb022aa6740debfa2ae7acc99408b9c687d2aa74b3c74515dbd0710d37:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWQzZDMyYmIwMjJhYTY3NDBkZWJmYTJhZTdhY2M5OTQwOGI5YzY4N2QyYWE3NGIzYzc0NTE1ZGJkMDcxMGQzNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWQzZDMyYmIwMjJhYTY3NDBkZWJmYTJhZTdhY2M5OTQwOGI5YzY4N2QyYWE3NGIzYzc0NTE1ZGJkMDcxMGQzNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2Y2ZjRhNjBhYjY2YjZlZGVjMjBlMTMwZDc4OWQ2YmMwYTdlYTYxZjkyMDBhMGZlMjY0MzU0YzIzMzc1OTU0MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTFkNDdjZWY2ZTE3ZGRjNzUwNmIyNjk1NjExODFhYjlmMDAwZTg0NmQ0YjQxNGYzNmEwZjc2YTBiNDljNzg0YyJ9"
-        },
-        {
-          "resource": "repo://docs/production/current-state.md#L36-L36",
-          "version": "repo-lines-v1:sha256:040a87e887e218c83c9530457ae7a1d7e38cf14e27eb6018dfae6d359a69d2ff:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDQwYTg3ZTg4N2UyMThjODNjOTUzMDQ1N2FlN2ExZDdlMzhjZjE0ZTI3ZWI2MDE4ZGZhZTZkMzU5YTY5ZDJmZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDQwYTg3ZTg4N2UyMThjODNjOTUzMDQ1N2FlN2ExZDdlMzhjZjE0ZTI3ZWI2MDE4ZGZhZTZkMzU5YTY5ZDJmZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTUxYzY1MWFhNGIyOWVhMmVkOGZhYzFjMWM4MTQ1MTRiNGM4MjBjMDE3NmFkYzEyMTRiZDc1MGNmYzMyNDQ1NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjIwZThmOTM2N2I2YzhjNjlmMTRiMTk3NDQwYTNiMjEzMDU2OTA0YjRiM2YzNmM4ZDVjZDczYTY1YWFhYWU1MyJ9"
-        },
-        {
-          "resource": "repo://docs/production/migration-ledger.md#L38-L40",
-          "version": "repo-lines-v1:sha256:b9d84406874327bff6d36eda81017be1069b8515337ab9a0da93a5eaebe9e8e6:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmYxMGYxOWY0ZGYyY2QyZTUwM2Y5YzVkZTM2YjVkNzRkM2QyOGZhMGFmM2VkZWIyNDc2YzdjNzFkYjk4NTk0NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzMwYzA4YjRhMjE2ZjNmMTA0MWI3Yjc5OGZlYzA0YTY3NTc3YmQxOTA3ZThkMjVkOTFjNjEwZTAxOTE2M2IxOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWU2ZjM1YTg4NjEzMDdkY2Q0ZGVlMWU2YWEyMjAyZTAyMmVjZmNhY2NmMmY1YzIzNWEyNzUwZjVlNmU3ZWY3MSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGNkZjhmNTZjNTMyNzY1OGZkZmQ4MzNiN2Y0N2U0MWI1YjJiOWRlYzlmM2YxYzE5ZGNlOGIyYWQzYTEyMTI5NSJ9"
-        }
-      ]
-    },
-    {
-      "id": "claim_0e87deb9f2ec45fdad092a9957151f4f",
-      "statement": "capability-register.md was last reconciled on 2026-08-27 and known-limitations.md records limitations verified as of 2026-08-27, both earlier than current-state.md's 2026-09-20/21 sync and the migration ledger's 2026-10-01 current block.",
-      "evidence": [
-        {
-          "resource": "repo://docs/production/capability-register.md#L7-L7",
-          "version": "repo-lines-v1:sha256:64a61cfae6c3a69003721fdb9d683b4021031ac35b7b1fd14044b5163019d8db:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjRhNjFjZmFlNmMzYTY5MDAzNzIxZmRiOWQ2ODNiNDAyMTAzMWFjMzViN2IxZmQxNDA0NGI1MTYzMDE5ZDhkYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjRhNjFjZmFlNmMzYTY5MDAzNzIxZmRiOWQ2ODNiNDAyMTAzMWFjMzViN2IxZmQxNDA0NGI1MTYzMDE5ZDhkYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzk0MjJhYzU4ZWQzN2JjYjBlZWVhMjYxMmI4ZDAxMjA4MTA0MjhiNzc1M2VhNThiMmIyYzE4MjM5NDBiZDVkOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmRjMzUyYmY4NTg5NDc5YTEwZmM4Mzc1OTcwMGZiNDBlMzRkYmY2ZjNmYjViNGY4NGRkZjA4MDA0YTE1NjljYiJ9"
-        },
-        {
-          "resource": "repo://docs/production/current-state.md#L27-L27",
-          "version": "repo-lines-v1:sha256:205acde2d14527cd35965e33d444e6e7f0756b56f13b507cfeff93b1d1476c3d:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjA1YWNkZTJkMTQ1MjdjZDM1OTY1ZTMzZDQ0NGU2ZTdmMDc1NmI1NmYxM2I1MDdjZmVmZjkzYjFkMTQ3NmMzZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjA1YWNkZTJkMTQ1MjdjZDM1OTY1ZTMzZDQ0NGU2ZTdmMDc1NmI1NmYxM2I1MDdjZmVmZjkzYjFkMTQ3NmMzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTUwYTY4NmJiZWM1NDNjOGRkMmQ0MjIyMjFhYzAzODQwMjYzMmE3MzFjMTY0MjY3NzlmYjQyOWI5MjQ3NzNiNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2U4MjJkN2E2ZTQ2ZTRiMjczZjg5NjcxNzI3NjFiNzFjZGZlNGIxMDM5MzFhMTQ2NGUwY2IzYjU0OWFiNTU3YiJ9"
-        },
-        {
-          "resource": "repo://docs/production/known-limitations.md#L3-L3",
-          "version": "repo-lines-v1:sha256:dea345b560059d8c01fcd1f818a41053f801d302e02eed31328fa05a95e46dc1:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGVhMzQ1YjU2MDA1OWQ4YzAxZmNkMWY4MThhNDEwNTNmODAxZDMwMmUwMmVlZDMxMzI4ZmEwNWE5NWU0NmRjMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGVhMzQ1YjU2MDA1OWQ4YzAxZmNkMWY4MThhNDEwNTNmODAxZDMwMmUwMmVlZDMxMzI4ZmEwNWE5NWU0NmRjMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjIsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYmYxOWZiMjc1MzFmZmVlNmUwOThlYzBmNGNhNDEyYWU0NzNkMGFjODRkYzk5OGM2YTNjOWYxYjJmNzRhMWFkYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjNmZDBjMTk3ZDdmZmFiNmI1ZTM2MzBiYzg1ODhlZDYwZjAwMWFlM2E3ZDc5NGFkNGNkNzQzYjRlMmNiNGY2NyJ9"
-        },
         {
           "resource": "repo://docs/production/migration-ledger.md#L17-L17",
-          "version": "repo-lines-v1:sha256:f389b414f2df2aa6cc78e38b25be5f574e6edee5f7b428402902b7d3521b7073:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjM4OWI0MTRmMmRmMmFhNmNjNzhlMzhiMjViZTVmNTc0ZTZlZGVlNWY3YjQyODQwMjkwMmI3ZDM1MjFiNzA3MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjM4OWI0MTRmMmRmMmFhNmNjNzhlMzhiMjViZTVmNTc0ZTZlZGVlNWY3YjQyODQwMjkwMmI3ZDM1MjFiNzA3MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDRlYmI1ZTBkYzczMDc2OTg0MGYzMGEyZjcxN2FkNDA3NmJhZWI2MDA4YmVjMmY3YmZjZjU5NTE5NjYxMmY4YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWVjZDNkZmY5Y2Q0NDkzMTljOGI5OGQ3ZTE4M2E1MjFhZWI3ZTRhYmU0NzcwZmY1YWY3NWQ3MDM4MGZkMjFkZCJ9"
+          "version": "repo-lines-v1:sha256:4a0efecc23bd65fc59252f07e685d0cff2d5a7816b6f13385ef7b07a5a265a3a:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGEwZWZlY2MyM2JkNjVmYzU5MjUyZjA3ZTY4NWQwY2ZmMmQ1YTc4MTZiNmYxMzM4NWVmN2IwN2E1YTI2NWEzYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGEwZWZlY2MyM2JkNjVmYzU5MjUyZjA3ZTY4NWQwY2ZmMmQ1YTc4MTZiNmYxMzM4NWVmN2IwN2E1YTI2NWEzYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDRlYmI1ZTBkYzczMDc2OTg0MGYzMGEyZjcxN2FkNDA3NmJhZWI2MDA4YmVjMmY3YmZjZjU5NTE5NjYxMmY4YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDEyZDQ3ODMxMjMyOTkzZDAyODQ0MzE5NTdmMTZhNTQxYjYxMWZlMzE0MDYxNmYzNTEyYzJlOTQwY2M1YzhjMiJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L57-L64",
+          "version": "repo-lines-v1:sha256:3e0d1033573d86e816c807d31bb23d3edf37d6395ee24f33b171c250bbc7305e:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2YwOGEwYzVjNDBjM2EyZWNiNTU1NjQ1ZDdiNmZjMWYzZjQxYTM3MDFlYTk5YzE3YjZlZWM1Zjk1YTA3YzZlNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjlmNDdmOGZjOTNhMDUzOWJmNjg2ZTMxYzk4OTQ0OWMzMDk2MGVkODhiOTBjM2VkYmQ3Yjk2ODMwMTk1MmVhYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzU0MGUzM2YwMjE2ZjQ5ZjI0NmMyNTk5OTZiMDYxYTA1YTBlYWIzZTc1MzI1OGVjNmZmZTFmOGZkYjM3MjgwOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzkxOGE0NDk4ZDI5NTczY2E5YWVkMGIyNmI1OGVlMDQxNDY4ZDE5YzUxYTUzYTIyYjI0NDdlMmU1YTNiODlmOCJ9"
+        },
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L70-L74",
+          "version": "repo-lines-v1:sha256:9952b9db4b85d8631aaab01dced7a68ad7bb682788943a05302f98b0a74ad0ad:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzU3NmYzNGQxNTQxZmEwZDcwMDg1MWExOGY2MDkwNTI0ZjdlMDBlZjk2NjVlZjdiZGUxNjg2OThiZTBjODA4ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzE0NTMyMTI0ODFmZmI2MTUwYTZmMzEzZTgxZDg3YzExMTE0YTk3Yzc0ZmRjMDQzMmU3MWZmYTgwYjk4OWM3MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzY5NzQwMTI2MzM3ZTdmNjQ5YWU5OWEwYjlhN2ZkYzFhZDBiMjM4ZTljZDkwOWVkNjdmY2VmYTU4MDU1MmJhMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZmYwZWRhZjlmYzJiOWE3Y2M0NzNkYTczZWJhZDBiNTk5MzFkNjczNTA0YTIwYTkzNGZhNTQxZjZmZjA2YmY4MyJ9"
         }
       ]
     }
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

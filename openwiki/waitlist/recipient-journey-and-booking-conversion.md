@@ -3,6 +3,9 @@ type: product workflow
 title: Waitlist recipient journey and booking conversion
 description: What an invited prospect experiences on /invitation/[token] and which server authority backs each step — the server-side resolve, recipient proof by emailed code and the signed capability cookie, decline, booking through the public booking action into the atomic create-and-convert command — plus what the bearer token does and does not prove, and the profile, SMS-consent and mobile-verification authorities that exist in the database but are not yet reachable.
 tags: [waitlist, invitations, recipient-proof, booking-conversion, public-routes, sms-consent]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-08abff96c852db46fe5155e9
     resource: repo://app/api/twilio/inbound-sms/route.ts
@@ -10,6 +13,8 @@ sources:
     resource: repo://app/invitation/%5Btoken%5D/actions.ts
   - id: openwiki-source-fddaf8a665973ce5c2c6303a
     resource: repo://app/invitation/%5Btoken%5D/page.tsx
+  - id: openwiki-source-f79f369ce2044c952565dcb9
+    resource: repo://docs/production/migration-ledger.md
   - id: openwiki-source-ed9ea36b9695d07178f640a2
     resource: repo://lib/booking/waitlist-invitation.ts
   - id: openwiki-source-6182a5bc3a8c1b8e14327aab
@@ -26,14 +31,13 @@ sources:
     resource: repo://supabase/migrations/0202_waitlist_profile_and_sms_consent_authority.sql
   - id: openwiki-source-07bdcb79c54bb791aa3d8cc8
     resource: repo://supabase/migrations/0203_waitlist_mobile_verification_authority.sql
+  - id: openwiki-source-f12a840b2f4a93ce89828ca9
+    resource: repo://supabase/migrations/0204_new_client_admission_mode.sql
   - id: openwiki-source-5974493332a90b29c2776d64
     resource: repo://tests/db/waitlist-atomic-booking-conversion.db.test.ts
   - id: openwiki-source-23b6ad401cd24a89f9891e63
     resource: repo://tests/db/waitlist-recipient-proof.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T20:08:11.217Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Waitlist recipient journey and booking conversion
@@ -123,7 +127,7 @@ forever and could be invited again
 - **The entry id is supplied by the server's redemption path, not inferred.** The conversion command re-verifies
   the entry's studio and state under its own lock.
 - **Lock order:** `studios FOR NO KEY UPDATE`, then entry, then client, then the nested canonical booking order
-  (see [Scheduling concurrency and lock order](../scheduling/concurrency-and-lock-order.md#5-waitlist-booking-conversion--the-nested-order)).
+  (see [Scheduling concurrency and lock order](../scheduling/concurrency-and-lock-order.md#5-waitlist-booking-conversion-the-nested-order)).
 
 Ordinary public booking keeps calling `create_public_appointment` directly and takes no waitlist locks. The
 invitation path is the scoped exception to the studio's admission mode: an invited prospect books even while new
@@ -159,8 +163,7 @@ live ([`0198` L1-L40](../../supabase/migrations/0198_waitlist_live_invitation_re
 
 1. **Frozen migration headers still say "not applied".** `0203` reads "CANDIDATE, NOT APPLIED"
    ([L5-L8](../../supabase/migrations/0203_waitlist_mobile_verification_authority.sql#L5-L8)), and so does `0204`.
-   Both are within the declared hosted range in `migration-state.json`. The headers are frozen history; the record
-   is the authority.
+   The migration ledger records both as applied. The headers are frozen history; the ledger is the authority.
 2. **`0202` says STOP stamps only clients.** Its header says the inbound STOP route "still stamps `clients` alone"
    and that its four commands are "called by NOTHING"
    ([L11-L16](../../supabase/migrations/0202_waitlist_profile_and_sms_consent_authority.sql#L11-L16)). Today the

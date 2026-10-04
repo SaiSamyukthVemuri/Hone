@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:89b815603b1571d10ed9eeb9c609f66d44f7cfccd35839c1dd498aa494eaa0f5",
+  "pageVersion": "sha256:af6b558029776d84e2ace9a260287cdf85ebab2a08c3459bb82871b72c242cba",
   "claims": [
     {
-      "id": "claim_a73573fba69a47879cb04b15ce0760c0",
+      "id": "claim_99d3b525e2dc4cadbd3628579a6315a7",
       "statement": "The core Playwright lane runs e2e specs on one Chromium project with a single worker and no full parallelism against a production build started by npm run e2e:server, with a shared global setup and teardown and one retry in CI.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_3388e47327b84bf6b1fba8766f8fd87c",
+      "id": "claim_ef29560245894bb7a6dfd3f535b80607",
       "statement": "The mobile lane runs the Chromium engine at iPhone 13 dimensions plus a Pixel 5 control rather than WebKit, because a WebKit context over the plain-http localhost harness upgrades subresources to https and drops Secure cookies.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_1086957e3aa245fb898dd4330f0199d4",
+      "id": "claim_517754e4f63a424f8fdf88a2fc5334e7",
       "statement": "The E2E environment module refuses to load if Supabase or database URL overrides point off the loopback host or at a hosted pattern, if a live Stripe key is present or if STRIPE_ALLOW_LIVE_MODE is set, and otherwise supplies literal local endpoints, public local demo JWTs and dummy provider values.",
       "evidence": [
         {
@@ -37,7 +37,7 @@
       ]
     },
     {
-      "id": "claim_3e3e1c7cd1a24f12b9b3c0eb1778fdf3",
+      "id": "claim_f0c1427130e943058ea455810658a445",
       "statement": "The new-client waitlist and durable-waitlist flags are enabled in the E2E server only for one reserved slug claimed by a single spec, so every other seeded studio runs with the features off.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_1733cab7a9264f299c86b4295b181bf5",
+      "id": "claim_960d41074ca343c0a418279181b379e9",
       "statement": "Each worktree derives a candidate E2E app port in 3200-3999 by hashing its root path, port 3111 is reserved for CI, the host is the literal localhost, and every Playwright config sets reuseExistingServer to false so a collision fails loudly instead of testing another worktree's server.",
       "evidence": [
         {
@@ -61,7 +61,7 @@
       ]
     },
     {
-      "id": "claim_aa70573b902346889d91071009283e73",
+      "id": "claim_761e67a3a82f4ca4ab01822c8692e5c6",
       "statement": "All browser lanes share a global setup that refuses to run any test when the local stack's applied migrations differ from the checkout's, and a global teardown re-checks at the end of the run.",
       "evidence": [
         {
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "id": "claim_8642f83aac04405890ebd85d44362e2c",
+      "id": "claim_825fc450761b47689f8f6281abea4e10",
       "statement": "Because handle_new_user is a no-op, the E2E seed creates the owner's auth user through the local GoTrue admin API, inserts the practitioner directly with current-version acceptance stamps and marks the invitation accepted; specs then sign in through the real magic-link form.",
       "evidence": [
         {
@@ -89,7 +89,7 @@
       ]
     },
     {
-      "id": "claim_468d3cab8c2d45cbb59d625d0104ab67",
+      "id": "claim_bf0d9836e5be4ef39f040d42bdc9e5d2",
       "statement": "The E2E seed gives each studio a fixed-offset Etc/GMT zone whose local clock reads about 09:00 at seed time so the local day keeps bookable slots at any real hour, and a unit test checks every UTC hour.",
       "evidence": [
         {
@@ -103,7 +103,7 @@
       ]
     },
     {
-      "id": "claim_64571d4c1dd54bc2afe86d309225c948",
+      "id": "claim_eda084f826854c00a8b7c29d06983a33",
       "statement": "The fake Resend transport activates only when HONE_E2E_FAKE_RESEND=1 and no Vercel, AWS or Kubernetes signal is present, throws if requested in a deployed runtime, makes no network call, and supports success, reject, throw, failonce and hold modes selected by environment or recipient prefix.",
       "evidence": [
         {
@@ -113,7 +113,7 @@
       ]
     },
     {
-      "id": "claim_e328177bf72c4d588c9d5c8f9ebe90c9",
+      "id": "claim_48d88697961b426593b284a09f7e3e0f",
       "statement": "The email client module runs the fake-Resend deployment assertion at load, and getResendTransport returns the fake only when the fake guard passes; the welcome and new-client waitlist email paths use getResendTransport.",
       "evidence": [
         {
@@ -127,7 +127,7 @@
       ]
     },
     {
-      "id": "claim_fd4e6966951647a584444bbe145eb636",
+      "id": "claim_c6d5196da44a464cac51ad93ee7ee7af",
       "statement": "Fake Stripe requires HONE_E2E_FAKE_STRIPE=1 plus a well-formed HONE_E2E_RUN_ID and rejects any Vercel, AWS or Kubernetes runtime; NODE_ENV is deliberately not the gate because the E2E server runs next start in production mode.",
       "evidence": [
         {
@@ -137,7 +137,7 @@
       ]
     },
     {
-      "id": "claim_ccb2f1dcaa6049aaaac88e8c36c71490",
+      "id": "claim_dd8184d6290a4ce79d285340ee69888d",
       "statement": "The fake Stripe client implements only payment-intent create, retrieve and cancel and refund creation with synthetic ids, selects each attempt's outcome from a guarded per-run ledger keyed by idempotency key rather than from the browser, and records idempotent replays as invocations without new effects.",
       "evidence": [
         {
@@ -151,7 +151,7 @@
       ]
     },
     {
-      "id": "claim_e12b2e8c123a43f89004095523189b09",
+      "id": "claim_36a2b5727c6f4658ac72d30fd5532c39",
       "statement": "The fake Google provider is reached through googleFetch only when HONE_E2E_FAKE_GOOGLE=1, a valid run id is present and no deployed-runtime signal exists, and it returns synthetic responses for the OAuth and calendar endpoints with scenarios read from a per-run ledger.",
       "evidence": [
         {
@@ -169,7 +169,7 @@
       ]
     },
     {
-      "id": "claim_29947511884a4b89a21688e9ee4a23ff",
+      "id": "claim_ed2381d56b9f4c90ab7bb4325bf71e68",
       "statement": "Route fault injection is enabled only by HONE_E2E_ROUTE_FAULT=1 outside any deployed runtime, the fault page sits inside the authenticated route group and calls notFound() when the guard fails, and its cases prove error containment including that a raw database canary string never reaches the DOM.",
       "evidence": [
         {
@@ -183,7 +183,7 @@
       ]
     },
     {
-      "id": "claim_ede6db0cf1f24649be2c87ed77603fde",
+      "id": "claim_0483ad257b6b4fa7a9a89b0dc330ca96",
       "statement": "Guardrail tests pin that the E2E lane uses local endpoints, refuses hosted overrides and live Stripe, logs in through the real magic-link UI, has no app/api/e2e route, keeps npm run ci browser-free, runs the CI job without secrets or --linked, and serves a production build.",
       "evidence": [
         {
@@ -193,7 +193,7 @@
       ]
     },
     {
-      "id": "claim_18688b5502314197af43ad0d1df9549a",
+      "id": "claim_b199f0f7f3124fba8f577dd37feef1bf",
       "statement": "Browser group selection returns extended coverage for an empty diff, shared infrastructure changes or any app, components, lib or hooks file matching no group pattern, returns no browser lane for docs, migrations and non-browser test changes, and otherwise selects the matched groups plus smoke.",
       "evidence": [
         {
@@ -203,7 +203,7 @@
       ]
     },
     {
-      "id": "claim_badf5937518f487fad861ab3c97f9379",
+      "id": "claim_a8e89e80b2274423a70e482451e50563",
       "statement": "CI shards targeted browser selections into at most three shards (never more than the selected spec files) and extended selections, including full-matrix runs with no selected group, into four shards.",
       "evidence": [
         {
@@ -217,7 +217,7 @@
       ]
     },
     {
-      "id": "claim_50aa7e2b868d4d6eb9f11f4b469f2931",
+      "id": "claim_187c3f57f06a4ba2a2f0db9ead541210",
       "statement": "A CI test requires every e2e spec on disk to be mapped to exactly one browser group, deriving the expected count from the disk, and pins the targeted calendar plus sessions plus smoke selection at 39 specs as a cost limit.",
       "evidence": [
         {
@@ -231,7 +231,7 @@
       ]
     },
     {
-      "id": "claim_11b4e17511684bef8f6703a79d36dbd1",
+      "id": "claim_d4f6d2c8382b445aac5515e06d1c9aa2",
       "statement": "The targeted browser cost pin is stated three ways: the assertion uses 39, the test title says 30, and a browser-groups.mjs comment says 36.",
       "evidence": [
         {
@@ -249,7 +249,7 @@
       ]
     },
     {
-      "id": "claim_8f0530f4a1714a1db3c93c6905f3e8b3",
+      "id": "claim_000ec62c686c4ba196efb4a69c1f256e",
       "statement": "The E2E guardrail comment claims nothing under app/ or lib/ knows about E2E, but its assertion only checks for an E2E_AUTH_BYPASS variable and an app/api/e2e directory while lib/ contains the test fakes and an authenticated e2e-fault route exists.",
       "evidence": [
         {
@@ -263,7 +263,7 @@
       ]
     },
     {
-      "id": "claim_c4406cf9faf94630a9dc509999db9478",
+      "id": "claim_472c6616a01a4ad98e9057f6dca9e3bf",
       "statement": "The E2E seed header still describes owner provisioning through the handle_new_user trigger, while the seed code inserts the practitioner directly because the trigger is a no-op.",
       "evidence": [
         {
@@ -277,7 +277,7 @@
       ]
     },
     {
-      "id": "claim_6acfeb0f9d7f437db3486490835a65c5",
+      "id": "claim_24a4f6e0501d4c2ab08dc620719fec7f",
       "statement": "Fake-Stripe comments describe the processor as future and fixed to success, while the fake already selects success, decline or processing per idempotency key from the ledger.",
       "evidence": [
         {
@@ -295,7 +295,7 @@
       ]
     },
     {
-      "id": "claim_acacc6621db44f96bb1a22754e777d88",
+      "id": "claim_7dd26c8972ab4ff0bcb5fc49119a26e1",
       "statement": "The core Playwright config header still describes one core treatment-memory flow and the browser-groups header still cites 53 serial specs, while the e2e directory holds 94 mapped specs.",
       "evidence": [
         {
@@ -313,7 +313,7 @@
       ]
     },
     {
-      "id": "claim_3bb90abd57b444549a792626b9c6302e",
+      "id": "claim_4f8a71d2d3a443a38a2b06d33aed1a71",
       "statement": "The Google Calendar Playwright lane is isolated in e2e-google with its own fake-Google production-build server that is never reused, the shared schema preflight and teardown, and a single worker, and its fake guard is fail-closed so no real Google request can leave the lane.",
       "evidence": [
         {
@@ -323,7 +323,7 @@
       ]
     },
     {
-      "id": "claim_8d332a9f1b0d4397970fb51da575bc25",
+      "id": "claim_42739af6f35f49e7aed67441771d58d9",
       "statement": "The e2e-google specs prove the dedicated-calendar flow requests only the app.created scope, creates exactly one calendar idempotently, fails closed on an ambiguous multi-match and adopts a single orphan on retry, and that the existing-calendar flow requests only events.owned behind an owner-only picker.",
       "evidence": [
         {
@@ -337,7 +337,7 @@
       ]
     },
     {
-      "id": "claim_498eabcc97ac4b52b9dbde38405151a1",
+      "id": "claim_8a8e40487a9f4ade832fa145798dd07d",
       "statement": "The e2e-google security specs prove unauthenticated, non-owner and inactive callers are denied, an account switch or partial grant never replaces stored credentials, a tampered OAuth state is rejected, and provisioning-pending and selection-pending states keep the grant.",
       "evidence": [
         {
@@ -347,7 +347,7 @@
       ]
     },
     {
-      "id": "claim_8b29e0a667254efe897586727e3a2b0a",
+      "id": "claim_2be485ce326f4b809943b2f9d27f8adc",
       "statement": "The mobile lane proves on iPhone dimensions that Mark completed through the accessible dialog leads to in-place checkout with exactly one fake charge and no other providers, that cancelling the dialog sends no request, and that no-show uses its own dialog.",
       "evidence": [
         {
@@ -359,6 +359,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:58baeee5eb1cbca0aa32aaf30a2685cc75cdacce2e366c365c11113dde0d877a",
+  "pageVersion": "sha256:d7082855b416d612ef13e618502abbe901c45482b68abcfe54fa6038635cad60",
   "claims": [
     {
-      "id": "claim_e5021a1b7cdd4921b91f7e24126c0e60",
+      "id": "claim_c3b07c2a61f64c599aa5b7dbe882a78e",
       "statement": "middleware.ts delegates every matched request to updateSession, and its matcher excludes static assets plus exact public files (font licence notices and one marketing film) rather than directory prefixes.",
       "evidence": [
         {
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "id": "claim_19958bce1966451281125656d23af0da",
+      "id": "claim_48d98c5c938142b68b387872578ba7a8",
       "statement": "updateSession builds an anon-key SSR Supabase client, validates the user with auth.getUser, and redirects any anonymous request whose path is not in an explicit public allowlist to /login, so routes are protected by default.",
       "evidence": [
         {
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "claim_c14a3d1361744f9286f2ceef4745b40d",
+      "id": "claim_6239c4be4b21405e8b2b6c395706bdac",
       "statement": "The middleware public allowlist includes the token-route prefixes (/book, /cancel, /intake, /manage, /invitation, /reschedule, /calendar-feed), three exact portal paths, /api/cron/, and only the exact Stripe and Twilio webhook paths.",
       "evidence": [
         {
@@ -33,8 +33,8 @@
       ]
     },
     {
-      "id": "claim_b45fa9518ba146199e6f1ac10a6abdbe",
-      "statement": "For authenticated users on non-public paths, middleware sends users with zero active practitioner memberships to /no-access, requires a hone_selected_studio cookie matching an active membership when there are two or more, deletes a stale or forged selection cookie, and exempts /admin paths from the membership gate only for isAdmin emails.",
+      "id": "claim_e98d841121f54703939709fcfc72c118",
+      "statement": "For authenticated users on non-public paths, middleware sends users with no active practitioner membership to /no-access, requires a hone_selected_studio cookie matching an active membership when there are two or more, deletes a stale or forged selection cookie, and exempts /admin paths from the membership gate only for isAdmin emails.",
       "evidence": [
         {
           "resource": "repo://lib/supabase/middleware.ts#L159-L235",
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "id": "claim_bce75945b8ff4189a3b9e40f2aa93949",
+      "id": "claim_da900910048043a3821632584c6d440a",
       "statement": "Practitioner identity is resolved once per server request by a React cache()-wrapped loader that performs auth.getUser and an RLS-scoped select of active practitioner rows, and a failed membership read is thrown rather than treated as no memberships.",
       "evidence": [
         {
@@ -53,8 +53,8 @@
       ]
     },
     {
-      "id": "claim_c365d72f84274862919383015239ba1f",
-      "statement": "Membership resolution returns none, one, selected or choose; a multi-membership user's selected-studio cookie is honoured only when it matches an active membership, and a studio is never auto-picked.",
+      "id": "claim_98ac900e6e1c40f5bcc80946f9ecd244",
+      "statement": "Membership resolution returns none, one, selected or choose; a multi-membership user's selected-studio cookie, which holds only a studio id, is honoured only when it matches an active membership, and a studio is never auto-picked.",
       "evidence": [
         {
           "resource": "repo://lib/supabase/queries.ts#L144-L165",
@@ -67,8 +67,8 @@
       ]
     },
     {
-      "id": "claim_d1f5cc4c1e9644eca0c6d46376203bda",
-      "statement": "requirePractitionerWithStudio redirects (anonymous to /login, no studio to /no-access, unresolved multi-studio to the chooser) and guards the practitioner app shell, while getCurrentPractitionerWithStudio throws and serves server actions.",
+      "id": "claim_df7e27c4b6a142298d73bcaa82da9b75",
+      "statement": "requirePractitionerWithStudio redirects (anonymous to /login, no studio to /no-access, unresolved multi-studio to the chooser) and guards the practitioner app shell, while getCurrentPractitionerWithStudio serves server actions.",
       "evidence": [
         {
           "resource": "repo://app/(app)/layout.tsx#L23-L40",
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "id": "claim_ae49655026f94ce4afd5b05e12356035",
+      "id": "claim_4c59fba62dda4469a35af4fe83dda309",
       "statement": "The service-role admin client imports server-only so a client-bundle import fails the build, reads SUPABASE_SERVICE_ROLE_KEY, throws if it or the Supabase URL is missing, and bypasses RLS.",
       "evidence": [
         {
@@ -91,7 +91,7 @@
       ]
     },
     {
-      "id": "claim_a71e431ce6454ba086f771b2851fc1d8",
+      "id": "claim_71b22745ed7843f7aad788a1cd8ff285",
       "statement": "Every runtime createAdminClient() call site under app/ and lib/ must appear in tests/security/service-role-allowlist.ts with a purpose, an RLS-bypass justification and a scope-guard string present in the file, and the test fails on new, stale, duplicate or unjustified entries; it is an inventory gate, not proof that each query is scoped.",
       "evidence": [
         {
@@ -105,7 +105,7 @@
       ]
     },
     {
-      "id": "claim_538a775c9c854b6eb84f0033066eb636",
+      "id": "claim_64fd48de1936497bada8f9798cb25576",
       "statement": "The appointment repair commands in migration 0173 are SECURITY DEFINER functions whose EXECUTE is revoked from public, anon and authenticated and granted only to service_role.",
       "evidence": [
         {
@@ -115,7 +115,7 @@
       ]
     },
     {
-      "id": "claim_61666fed38f844dd8b8c0acaafcb3320",
+      "id": "claim_0d49cf4b08dc4591ba3daf8dcc689162",
       "statement": "set_new_client_admission_mode (migration 0204) is a SECURITY DEFINER command with a pinned search_path that re-derives owner authority from auth.uid() via is_studio_owner, and EXECUTE on it is granted only to authenticated.",
       "evidence": [
         {
@@ -129,8 +129,8 @@
       ]
     },
     {
-      "id": "claim_7bf77dda77ec44ebbe34a1749573343e",
-      "statement": "Migration 0204 grants EXECUTE on the public new-client waitlist join command and the public new-client booking command to service_role.",
+      "id": "claim_a3b4170035014754b1f160262902616f",
+      "statement": "Migration 0204 grants EXECUTE on the public new-client waitlist join command and the public new-client booking command to service_role only.",
       "evidence": [
         {
           "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L785-L792",
@@ -139,7 +139,7 @@
       ]
     },
     {
-      "id": "claim_1fac1a118bb046bca20531d831354317",
+      "id": "claim_d35bbd27ad3c4699827258b5649cf25d",
       "statement": "next.config.ts declares a global security-header block first and then a stricter token-route privacy block for each pattern in TOKEN_ROUTE_PATTERNS, relying on the later block overriding the earlier one.",
       "evidence": [
         {
@@ -153,7 +153,7 @@
       ]
     },
     {
-      "id": "claim_b5da7b57ea914d0bba810bb5ceff9848",
+      "id": "claim_ed2ddda3eb7949f1b6b61443faac003b",
       "statement": "PostHog traffic is reverse-proxied under /ingest and Sentry browser traffic is tunnelled through /monitoring, with source maps deleted after upload and Vercel cron monitors auto-instrumented.",
       "evidence": [
         {
@@ -167,7 +167,7 @@
       ]
     },
     {
-      "id": "claim_b7e78224477246bdb13ff1ba3dc2cbb0",
+      "id": "claim_a4d5ab2f32684e7382b0fb7a99634f6e",
       "statement": "Server action bodies are allowed up to 16 MB to admit treatment-image uploads, and the billing receipt fonts are force-included in the serverless file trace.",
       "evidence": [
         {
@@ -177,7 +177,7 @@
       ]
     },
     {
-      "id": "claim_835f1dc9d8aa440993946743d79f47b1",
+      "id": "claim_8edefc6f1df44f328c6b1895365e266e",
       "statement": "vercel.json registers exactly three Vercel cron jobs (materialize-recurring-breaks, calendar-reconcile and calendar-sync); the appointment-reminders and no-show-check cron routes are not registered there.",
       "evidence": [
         {
@@ -187,7 +187,7 @@
       ]
     },
     {
-      "id": "claim_e73130daa4f342a68e622a417355b200",
+      "id": "claim_7ee0b4d53b034298a189ab2965e8f641",
       "statement": "The production build command runs scripts/check-production-env-gates.mjs before next build.",
       "evidence": [
         {
@@ -197,7 +197,7 @@
       ]
     },
     {
-      "id": "claim_aec711d8e1a342e8a98cec315995d9c0",
+      "id": "claim_846634bcae7343aca52f44c7ffb68f57",
       "statement": "Practitioner magic-link sign-in is requested server-side and permits auth-user creation only when a pending invitation exists for the email, collapsing the 'signups not allowed' case into the same generic success response.",
       "evidence": [
         {
@@ -207,7 +207,7 @@
       ]
     },
     {
-      "id": "claim_9786dcb07d0645c1ae5c14b90ef62689",
+      "id": "claim_f5b62f3cd4464b6b9155f6a9e27dc8de",
       "statement": "The operator admin surface lives under app/admin, outside the practitioner route group, and its layout redirects unauthenticated users to /login and non-allowlisted users to /dashboard.",
       "evidence": [
         {
@@ -217,7 +217,7 @@
       ]
     },
     {
-      "id": "claim_6ad554dfe64343e791b36cb7574940af",
+      "id": "claim_11da043ea5414071a5a9b27f1b111fb8",
       "statement": "isAdmin reads the ADMIN_EMAILS allowlist and fails closed in production when it is unset, while non-production environments fall back to a built-in default list.",
       "evidence": [
         {
@@ -227,7 +227,7 @@
       ]
     },
     {
-      "id": "claim_1537aa030b7b4fc3a4e8259b3c200948",
+      "id": "claim_ae3e7e07c613456596dee300bf7ce684",
       "statement": "docs/01_ARCHITECTURE.md describes middleware.ts as an auth gate for a list of protected paths and places the admin shell under app/(app)/admin, whereas the middleware is default-deny with a public allowlist and the admin routes live under app/admin.",
       "evidence": [
         {
@@ -245,7 +245,7 @@
       ]
     },
     {
-      "id": "claim_c950976224e544dda9db9a4514cc7e67",
+      "id": "claim_2893a185788741799bdd7964d383fde6",
       "statement": "docs/01_ARCHITECTURE.md states an external cron service calls /api/cron/* with the cron bearer secret, while vercel.json registers three of the cron routes with Vercel Cron, so repository code does not establish which scheduler drives the remaining cron routes.",
       "evidence": [
         {
@@ -261,6 +261,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

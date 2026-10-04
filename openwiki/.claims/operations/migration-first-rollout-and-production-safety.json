@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:a225fdd9efa4975b0d1a5d70d98a91e517cc1463b75001b1cf0734585a2f3781",
+  "pageVersion": "sha256:0a902201748d4279f90e1e00b7e0d033387fe65c1797956a779d83181f0ac70b",
   "claims": [
     {
-      "id": "claim_977a794de0c74179ac4ac72d5236fae7",
-      "statement": "Production writes and migration applies require explicit per-change authorization, production SQL must be read-only via supabase db query --linked (never db execute), and the linked project ref must be confirmed before every Supabase command.",
+      "id": "claim_4d5df38cf4c745a68d6d9566d60fb7e9",
+      "statement": "CLAUDE.md requires explicit per-change authorization for any production write or migration, read-only production SQL through supabase db query --linked (never db execute), confirmation of the linked project ref before every Supabase command, and treats an applied migration as frozen.",
       "evidence": [
         {
           "resource": "repo://CLAUDE.md#L274-L280",
@@ -13,8 +13,8 @@
       ]
     },
     {
-      "id": "claim_b9d7a787cb754e838c18f0cffdb76d39",
-      "statement": "Hone's migration-first rule requires any migration whose objects deployed code reads or writes to be applied to production before the dependent code merges and deploys, motivated by the 0108 incident in which code writing a not-yet-applied column broke production charting writes.",
+      "id": "claim_2523a24a81ee4b85ba7c12506e45e864",
+      "statement": "docs/runbooks/migration-first-process.md requires any migration whose objects deployed code reads or writes to be applied to production before the dependent code merges and deploys, and records the 0108 incident in which code writing a not-yet-applied column broke production charting writes.",
       "evidence": [
         {
           "resource": "repo://docs/runbooks/migration-first-process.md#L7-L20",
@@ -27,18 +27,18 @@
       ]
     },
     {
-      "id": "claim_8360ce1aa5d745749b35e60c9d7be45d",
-      "statement": "The 0204 apply preceded the application deploy because the new booking code calls a function that only 0204 creates.",
+      "id": "claim_3ae60e2ea06a46a5bd6bfdf2d9695c59",
+      "statement": "The migration ledger records that the 0204 apply preceded the application deploy because new-client booking calls a function only 0204 creates, so deploying first would have broken every ordinary new-client booking.",
       "evidence": [
         {
-          "resource": "repo://docs/production/migration-ledger.md#L31-L37",
-          "version": "repo-lines-v1:sha256:8365e1eac444a3a7f8158e43941ea5bf38429cd1b454411c83c86d29d47cae98:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTg0ZWZjN2MxMmEyNmQ5YjRlMjI2YjE1MWYzMmQ0NDhkOTJjOGRlYWRiZWEzZTc4MTA2YzY5ZDcxODVlMDk1YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjAzOTRjZjhhNDY5ODBkNjE5OWQwYTNhNzE2OTJlY2I2Njg5MTUxZjQ2YTcwODVkMzFmYWFiOTBiOWQxZjVkNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTk4YTU4N2UwYzcxMjM0N2Y3M2Q2MjMzNDg5Njg4MjY3MTE3N2U4OWI3M2M5YmRlZmQxZTJkYmNhZjExZmNiMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjlkODQ0MDY4NzQzMjdiZmY2ZDM2ZWRhODEwMTdiZTEwNjliODUxNTMzN2FiOWEwZGE5M2E1ZWFlYmU5ZThlNiJ9"
+          "resource": "repo://docs/production/migration-ledger.md#L95-L100",
+          "version": "repo-lines-v1:sha256:4562b28f880196337d66b6f8e9db73a03862288acfaad55b1fa02ba6bc015693:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTg0ZWZjN2MxMmEyNmQ5YjRlMjI2YjE1MWYzMmQ0NDhkOTJjOGRlYWRiZWEzZTc4MTA2YzY5ZDcxODVlMDk1YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGEyZDgxMTE2MTE3MWYxMWI4NjdhY2NhOWVjZjQxMmRjOTNjMTA1Mjg2ZWNhZDU0Zjc4ZmRlNjdkMTcxMDFhNSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTk4YTU4N2UwYzcxMjM0N2Y3M2Q2MjMzNDg5Njg4MjY3MTE3N2U4OWI3M2M5YmRlZmQxZTJkYmNhZjExZmNiMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2M1ZDYxMTgyOTNjNjBjYjQ4MGM3NDQwNmIwNTgzMDI3ZjFiNzgxM2I2NDQ5NDNkMWEzMWEzYzFiYmYzMGYzNCJ9"
         }
       ]
     },
     {
-      "id": "claim_a6ab160829994cd38091abdac59c87c8",
-      "statement": "The migration-first sequence is list, dry-run, apply, read-only verify, merge, deploy, and it stops if the dry run names anything other than the single expected migration, the linked project is wrong, the verifier reports a FAIL, or the Stripe gates do not pass.",
+      "id": "claim_b9fca3a2fb8f4e02a3a571abdbd66da0",
+      "statement": "docs/runbooks/migration-first-process.md defines the sequence list, dry-run, apply, read-only verify, merge, deploy, and stops if the dry run names anything other than the single expected migration, the linked project is wrong, the verifier fails, or the Stripe gates do not pass.",
       "evidence": [
         {
           "resource": "repo://docs/runbooks/migration-first-process.md#L27-L68",
@@ -47,49 +47,49 @@
       ]
     },
     {
-      "id": "claim_e93cd7da94dd4342bc21bb6ea8a23a64",
-      "statement": "Local database resets and applies use the pinned Supabase CLI 2.102.0 because a newer CLI's db reset strips Data-API grants.",
+      "id": "claim_835b77eb4f9a44a5b96c3abdb1b8c4f6",
+      "statement": "CLAUDE.md requires local database resets to use the pinned Supabase CLI 2.102.0 because a newer CLI's db reset strips Data-API grants, and the migration ledger records production applies with that pinned CLI and without --include-all.",
       "evidence": [
         {
           "resource": "repo://CLAUDE.md#L205-L213",
           "version": "repo-lines-v1:sha256:b024f036cd04c4cbc6eb6866b92e9cb8b65f305e4e44173ec1438ba728c46787:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDJmNjBhNDVmNzRkMThjMDMwMjJkNzZlZDRjYTlmNmQ1ZDgzYjEzMDExMmJhZjE2OTBmYjg2ZDJjYzhkODdjZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzhhMzkxZmQxOWU1ZGFhYjVjZjY0YWZmMDYzZWE2MjE4NWJlODRmNDQwZDQyNGIwYzJmMDgxOWJkOGQ5N2UzZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDY1NDI2ZGE5MThkN2VlZTZiNzBlM2IwMGFlZjM1OWMwZTMzMThlOGQwMzQ4MmU1MjdkY2MzNmExMDQzZTkyMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDAxZjJlYzE3NTkzYzEwNTRlYjQ2MzY3ZDg0NTNlZjI0YTE3M2NlOTZiNzExN2Q5MWY5YTY4ZDQ0ZmVmOGIwMSJ9"
         },
         {
-          "resource": "repo://docs/production/migration-ledger.md#L69-L70",
+          "resource": "repo://docs/production/migration-ledger.md#L133-L134",
           "version": "repo-lines-v1:sha256:fd44560b4fa09432cfc22b6bddf766fb2625e5d2a17c35b2898bc0c1ae3589c6:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGFlMWVjMTdmZmNmMjNlZDg4ZjkyN2RkMzEzN2E1Nzc0MDRjNTQzZGU5Yzg3MTQ2ODQ4YTdkZDI2NGVlMjU5MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZThjYzVkNGM4MjJkNWNlNGZjZTdiOTZiYTRmOWE0N2IwMGIyNjg1YjUxYTc5MTdlM2YwNzM4NGRiNThiODE5MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTA1MTgyY2VhNTM3YTgzZjUxZmQzNTA0OWZkNjIyZjRmZWRhZDA4ZTQwMWUxYmUwNjY1MmZkOTc0YmI1OGExZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTEwM2NiYzlhNDMzY2JhZjEwZjIxNTg0YjljMDFkYmFlNjg4MGUyYTZiMWEyNzBjMTgzYTkyZjgwNGEzYmYyYSJ9"
         }
       ]
     },
     {
-      "id": "claim_bac7587e329e43de92c1c1d59f79b8ee",
-      "statement": "Each production apply is recorded in a new current-state block of migration-ledger.md with hosted and repo maxima, pending and remote-only sets, the reviewed release head, the application SHA at apply time, the CLI and command, the migration sha256, apply-time precision, and read-only pre/post evidence, while migration-state.json is updated in the same change.",
+      "id": "claim_01a96562388f4516b3c635b9f2803bb6",
+      "statement": "CLAUDE.md states that hosted migration state lives only in docs/production/migration-state.json, updated in the same change that records a production apply, with the narrative apply record in migration-ledger.md, whose current block for the 0205 apply records the maxima, pending and remote-only sets, next free number, reviewed release head and application SHA at apply time.",
       "evidence": [
         {
           "resource": "repo://CLAUDE.md#L117-L128",
           "version": "repo-lines-v1:sha256:d8ca88747eee1c910a4eab4a023c64f7722e393814c174031c0a4f88c50c2d67:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlZDhiYjUxOTBlMmJjZmJmN2Q0N2Q3NzRiZWIwNDVkOTBjNDY5NGMzYzUyNWY5NDZkYzNjYWJiZTllNWQxZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAyZWVhMDMzZDFmMGI5MzIxMDQ1MDM2ZWMwZGQzYjgyYzdlNDVlYWFmNzQzMTYxODU4MWQ2MzA5NTM1YjliYTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ2YjMxNGViOTljN2VmMjI4MmNhOTc0Y2Q4MzU2OTZiZWY4OGYxYmNkMDQyNWMzZDFkMWRiOTA3NGI5ZjI5NWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
         },
         {
-          "resource": "repo://docs/production/migration-ledger.md#L17-L86",
-          "version": "repo-lines-v1:sha256:469f360fbf19fd082c3e35a5dd85bc53558a8c5983e06dea94bf5e60a872ce90:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzODliNDE0ZjJkZjJhYTZjYzc4ZTM4YjI1YmU1ZjU3NGU2ZWRlZTVmN2I0Mjg0MDI5MDJiN2QzNTIxYjcwNzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0ZWJiNWUwZGM3MzA3Njk4NDBmMzBhMmY3MTdhZDQwNzZiYWViNjAwOGJlYzJmN2JmY2Y1OTUxOTY2MTJmOGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI5MTE5YWZhZTkzNzM5YjE1NWQzNzEzY2FiMGM4NWQ4YmI4ZTA5MmE4MDExZTVmOWRhMjMwMGU4YjZjY2QxNzYifQ"
+          "resource": "repo://docs/production/migration-ledger.md#L17-L80",
+          "version": "repo-lines-v1:sha256:4010fb2e0c10348063c24f2e733f7f24fdd166df8104b68a1cc8d4dd699ff99b:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRhMGVmZWNjMjNiZDY1ZmM1OTI1MmYwN2U2ODVkMGNmZjJkNWE3ODE2YjZmMTMzODVlZjdiMDdhNWEyNjVhM2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0ZWJiNWUwZGM3MzA3Njk4NDBmMzBhMmY3MTdhZDQwNzZiYWViNjAwOGJlYzJmN2JmY2Y1OTUxOTY2MTJmOGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMxODIzYzc4Y2ZkMTkzNzk2OGMwMDMzYzU0MjhkYjczNjg3ZDg2Y2Q4ZWNkMmRhOTNlMTU2MTM3NGNkZDcwODAifQ"
         }
       ]
     },
     {
-      "id": "claim_ab5ba9e8e9d64701a81cb93e22febd26",
-      "statement": "Applied migrations are frozen, and 33 migration tests recompute the sha256 of their migration file and compare it with the value gated before the production apply, so editing an applied migration turns them red.",
+      "id": "claim_7602149e393949389f0465a5023eb9f6",
+      "statement": "Applied migrations are frozen: the 0199 migration test recomputes the sha256 of the migration's raw bytes and compares it with the value verified before the production write, failing if an applied migration is edited.",
       "evidence": [
         {
           "resource": "repo://CLAUDE.md#L280-L280",
           "version": "repo-lines-v1:sha256:da084f8144f92e90311cd9c2f826504a389ce43a6aadea69e63c7645617192fa:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGEwODRmODE0NGY5MmU5MDMxMWNkOWMyZjgyNjUwNGEzODljZTQzYTZhYWRlYTY5ZTYzYzc2NDU2MTcxOTJmYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGEwODRmODE0NGY5MmU5MDMxMWNkOWMyZjgyNjUwNGEzODljZTQzYTZhYWRlYTY5ZTYzYzc2NDU2MTcxOTJmYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTJkZTVjMTFjYTEyYTdlNzQxOTE3N2Y2ZmMxOGM2NDMzNTYyMzg4ZDI0ZGQ1MzMxZjJmYjMzZDllYTY3YjI2MiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjY1NGY3NzU4OGE1ZDY3MzU4NDI4MmJiMGE5NDg0MjMxMmJkNDUwMWJmODdjZTZiYzFhZThiYjZlODIxM2RiOSJ9"
         },
         {
-          "resource": "repo://tests/migrations/0199-reminder-sms-candidate-selection.test.ts#L81-L100",
-          "version": "repo-lines-v1:sha256:c4c8cafcf101199af2a72f627c286ec7bffc4f778fdc3d40ff46b4bb3fc1cf66:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlNGIyMmE1Yjg4ODA5OTM2ZDczOWVmZjJhMmJjNzE4NjhjZjE3N2Q5ZmUzZWEzYmNiMWU3NzRjMzk4MTM4YWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk1MWY2NDY0ZTBlNjFmNjc0Y2ExZTU5ZWZjODM0NDliZjIzMTAyNTk2YjhlMzYyM2I0NzIxYWY5ZDYzZDQ0NzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA5NDE0ZWYxYTU0MDAyNDcxYjViMDVhMmFjOTI4OTVlYWYwNjUzZmE2YjA3NTdkYzE2ZDFmOGIzM2RkODZkM2EifQ"
+          "resource": "repo://tests/migrations/0199-reminder-sms-candidate-selection.test.ts#L93-L110",
+          "version": "repo-lines-v1:sha256:2cedfb917bb9c893e22634d1a8b4a2699d70ff65312908a392c7ab22f12d2731:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2ODBjYzljNzRiNjZmNjEyY2RmZDYwYjJmZmZkMTdiZmY2MTkxMzJiZmE3YWY3MDg5NzNkZGNmZDBlNTMxODEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUzNGJlMzEzOGE5OWFkM2ExMTA0NjM4ODU1NmNmN2RkZTg2YmM5MWMxNTczODEyODk4OTgwODNhNjBmNWY1NjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc3YjRmODIxMmUzNjI5M2NkYWQ4MzRhMWZlYTEyYzhkNWE5ZmI0MzNiYWFiOTJiYWNhMjIzZDM3ZDBhZDJmMzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJkYWEyZDVjNDM1NTM5MzVlMTU0N2NiYzRkYTY0ODNiMjNlMDk4MmI0NDNmNzFkMDA3M2VkNWUzZjllMzBkYzcifQ"
         }
       ]
     },
     {
-      "id": "claim_01d79b89145d4d8a9065e60edeb5e08a",
+      "id": "claim_5766cc0939844cdf820ce4ce696d1be4",
       "statement": "scripts/verify-production.mjs is an operator-run, read-only, fail-closed production health check (not a CI gate) whose reads use supabase db query --linked and return scalars only, and its safety properties are pinned by tests.",
       "evidence": [
         {
@@ -107,7 +107,7 @@
       ]
     },
     {
-      "id": "claim_5e478521b9da4394aabb09cccc7bafe8",
+      "id": "claim_0f238a2cdd7f47d9a59b1bf01c7317e9",
       "statement": "verify-production fails unless the remote migration max equals the repository max derived from filenames, so it fails by design while a reviewed migration is authored but not yet applied.",
       "evidence": [
         {
@@ -117,7 +117,7 @@
       ]
     },
     {
-      "id": "claim_670148a78f2b470cb57f4eddbec2437d",
+      "id": "claim_809172fc80c547eeb1323a74dad1e39d",
       "statement": "verify-production fails on any unresolved critical ops alert whose event mentions payment, refund, stripe or charge.",
       "evidence": [
         {
@@ -127,7 +127,7 @@
       ]
     },
     {
-      "id": "claim_ecb7b11695cb43e3b4fbb54eb4b36ac3",
+      "id": "claim_87650479fd6a40e09765bc908ebce380",
       "statement": "Hone's rollback posture prefers additive, backward-compatible migrations, rolls back code by reverting the production-branch merge, and corrects schema with a new forward migration rather than a manual down-migration.",
       "evidence": [
         {
@@ -141,7 +141,7 @@
       ]
     },
     {
-      "id": "claim_26fa4f37b5fb468f98f1d6fa2529b361",
+      "id": "claim_d27e0b47218e485aa3ac63b3e4328d8e",
       "statement": "The migration-first runbook's ops-alert check filters severity in ('critical','error'), but ops_alerts.severity is constrained to info, warning and critical.",
       "evidence": [
         {
@@ -157,6 +157,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

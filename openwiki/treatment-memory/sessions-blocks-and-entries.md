@@ -3,6 +3,9 @@ type: write authority
 title: "Sessions, blocks and entries: charting write authority"
 description: The charting data model — sessions, settings blocks with multi-area laterality, electrolysis and laser entries, treatment images — and how every clinical write now goes through narrow authenticated SECURITY DEFINER commands after direct browser DML was revoked; immutable lineage, soft delete and audit; and the permanently retired signed/finalized record system and what the database enforces about it.
 tags: [charting, sessions, write-authority, security-definer, lineage, retired-capability, treatment-memory]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-293e361099157076c0158b5d
     resource: repo://docs/decisions/clinical-finalization-retired.md
@@ -36,10 +39,7 @@ sources:
     resource: repo://tests/db/immutable-clinical-lineage.db.test.ts
   - id: openwiki-source-00dbf77641fc5a104589e4dc
     resource: repo://tests/db/session-write-commands.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Sessions, blocks and entries: charting write authority
@@ -139,7 +139,7 @@ bare `SET LOCAL lock_timeout` never arms and the file is not atomic
 
 ## 4. The retired signed/finalized record system
 
-**Decision (2026-07-29, accepted):** Hone will **not** offer signed or cryptographically finalized clinical
+**Decision (accepted):** Hone will **not** offer signed or cryptographically finalized clinical
 records. That rules out:
 
 - practitioner-signed snapshots;

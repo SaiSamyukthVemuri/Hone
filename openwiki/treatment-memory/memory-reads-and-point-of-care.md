@@ -3,6 +3,9 @@ type: read model
 title: Treatment memory reads and point-of-care memory
 description: How Hone assembles "what happened last time" — the single charted-session authority, the last-treatment loader and its fail-soft versus none-versus-unavailable contracts, point-of-care memory on the charting screen, the appointment-prep narrative, Before Today, imported history, global search recall, and the setup-only whole-session copy — with the rule that a failed clinical read is never presented as "no history".
 tags: [treatment-memory, charting, read-model, before-today, whole-session-copy, clinical-safety]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-04c3958a8a9bb834f8fda65e
     resource: repo://e2e/before-today-imported.spec.ts
@@ -30,10 +33,7 @@ sources:
     resource: repo://tests/db/point-of-care-memory.db.test.ts
   - id: openwiki-source-a9f87fe69bcb9ce0a2bac358
     resource: repo://tests/db/whole-session-copy.db.test.ts
-generated: { by: "claude-code", at: "2026-10-02T23:26:41.194Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T23:26:41.194Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Treatment memory reads and point-of-care memory
@@ -103,8 +103,8 @@ How each caller uses the outcome:
   for `none` *and* `unavailable`, and the panel renders nothing. A memory panel must never take charting down,
   and these surfaces make no "no history" statement ([L155-L180](../../lib/sessions/last-treatment-loader.ts#L155-L180)).
 - **Appointment prep** makes an explicit statement to the practitioner, so it carries an `unavailable` flag.
-  - A transient timeout used to render "No previous treatment charted for this client." for a client with forty
-    visits ([L371-L408](../../lib/sessions/last-treatment-loader.ts#L371-L408)).
+  - A transient timeout used to render "No previous treatment charted for this client." for a client with a long
+    charted history ([L371-L408](../../lib/sessions/last-treatment-loader.ts#L371-L408)).
   - The **narrative** (the plan note and legacy session notes) is returned separately. It survives both
     "nothing charted" and "blocks read failed", because a plan can be written on a visit that was never charted.
   - In the batched dashboard variant, a client whose window was **truncated** by the shared row budget comes back

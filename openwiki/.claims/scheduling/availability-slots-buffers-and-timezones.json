@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:107bdacb83915e6baf3041c3e35b38331b042adc802788027a26d553a77500a5",
+  "pageVersion": "sha256:d4b04065637826ab20abd0c7ff356aaee1fc66a5836abb69e0d1b5fcdb2bcb20",
   "claims": [
     {
-      "id": "claim_f0b2b9bf5ac1410a85b76ae9fbd29f23",
+      "id": "claim_ee3f558d083440fe9dc2409250880a88",
       "statement": "All stored appointment times are UTC instants and the studio's IANA timezone defines local days and hours; slots carry ISO UTC start and end with a display label.",
       "evidence": [
         {
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "id": "claim_4d89557cdb5847d4a4c6b35ff80a8149",
+      "id": "claim_8459e4944cdd44c3b07b37c5fa672104",
       "statement": "utcInstantFromLocal re-samples the timezone offset to resolve DST transitions, mapping an ambiguous fall-back time to its first occurrence and a non-existent spring-forward time to one hour earlier.",
       "evidence": [
         {
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "id": "claim_9b5e55b20bd14603a90ca39aaac00d37",
+      "id": "claim_b8b6b3f17fd248278271883df078fd26",
       "statement": "A dated availability override wins over the weekly default, and an override marked closed closes the day even when a default exists.",
       "evidence": [
         {
@@ -37,7 +37,7 @@
       ]
     },
     {
-      "id": "claim_44df1d0a0f764dac82e730d4247831a6",
+      "id": "claim_6ad82dc4dfcc4768b7d11e8e4cda3f70",
       "statement": "Slot candidates are anchored to the opening time, the protected end of each reservation, the latest start fitting before a reservation, and a coarse fallback, with a closing-edge anchor enabled only for internal practitioner surfaces via INTERNAL_SLOT_PACKING.",
       "evidence": [
         {
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "id": "claim_36d4c63565384cb6b049f7b4d2fa560f",
+      "id": "claim_8909cf68307f4ddf9107736ebf00cb21",
       "statement": "In slot generation an appointment protects its actual end plus the current studio buffer, while blocks, recurring breaks and blockouts protect only their raw interval.",
       "evidence": [
         {
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "id": "claim_7988586547454338bdc719c7ebc8ac22",
+      "id": "claim_e7234f113f1342f9b8b9a0e9bc02ede1",
       "statement": "The closing edge is tested against the service end rather than the buffered end, so a trailing buffer may spill past closing time, matching the capacity-on working-hours check in the database validator.",
       "evidence": [
         {
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "id": "claim_257cfaea87954f8c8a49e11aadccd91c",
+      "id": "claim_b7ac1a0e87c744abb6b67d996f49d6ea",
       "statement": "Public slot lists drop past slots with filterFutureSlots, while practitioner surfaces deliberately do not.",
       "evidence": [
         {
@@ -85,7 +85,7 @@
       ]
     },
     {
-      "id": "claim_2ecc08e1e8e54e66b88d2ae43a67015b",
+      "id": "claim_994afd5f11be4ef5b815331c902e7be9",
       "statement": "Migration 0152 makes actual treatment overlap a hard GiST exclusion on confirmed appointments, studio-wide when capacity is disabled and per practitioner when enabled.",
       "evidence": [
         {
@@ -99,7 +99,7 @@
       ]
     },
     {
-      "id": "claim_15198e5fd3c4445b9044458c650afa49",
+      "id": "claim_117701f5341c445f90bf4fa53975b45f",
       "statement": "The appointment-to-shadow-reservation trigger stores each confirmed or completed appointment's actual interval in studio_calendar_reservations keyed to the studio or practitioner resource.",
       "evidence": [
         {
@@ -109,7 +109,7 @@
       ]
     },
     {
-      "id": "claim_c9609bd7d83640ea9ce09bac9447862b",
+      "id": "claim_a1117d21788a421dbb76f61100149cd8",
       "statement": "The soft buffer check flags a candidate whose buffer-expanded window overlaps another confirmed or completed appointment on the same resource without actual overlap, and a trigger raises HB001 for every writer unless the row is booked_outside_availability, which only owner-gated internal commands set.",
       "evidence": [
         {
@@ -119,7 +119,7 @@
       ]
     },
     {
-      "id": "claim_0e8978fcf0f340c0ad060160af665e01",
+      "id": "claim_0ca1a3f3482e4f95914b28085a45fce7",
       "statement": "With practitioner capacity enabled, validate_appointment_availability checks full-day blockouts and the working-hours window with practitioner-specific windows winning over studio-wide ones, and the owner outside-availability override bypasses the working-hours window and the soft buffer check but never a full-day blockout.",
       "evidence": [
         {
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "id": "claim_46a76c959cf4416f805c6227f2806dda",
+      "id": "claim_cefa3a5285914e779368c328e32b323c",
       "statement": "snapshot_appointment_buffer (0029) stamps buffer_minutes_snapshot and blocked_ends_at on every appointment insert or time change and blocks tampering with them on other updates.",
       "evidence": [
         {
@@ -143,7 +143,7 @@
       ]
     },
     {
-      "id": "claim_0c89217f8b5c4d4d911c1fbae724a7d9",
+      "id": "claim_f3155bf2323d4f94a1497aca285988c8",
       "statement": "The public booking horizon applies only to public booking and reschedule, ranges from 1 to 12 months per studio, treats a month as 31 days, and its maximum drives recurring-break materialization and the next-available scan cap.",
       "evidence": [
         {
@@ -153,7 +153,7 @@
       ]
     },
     {
-      "id": "claim_c025ea2027e04a0a9edf14e3328a3a78",
+      "id": "claim_1c0354c6dee84e48821df1eb5797400c",
       "statement": "A DB parity suite runs the SQL public slot-candidate function and the TypeScript slot loader against the same seeded studio and requires identical instant sets, including DST cases.",
       "evidence": [
         {
@@ -167,7 +167,7 @@
       ]
     },
     {
-      "id": "claim_10de1d44a13a4221823471c0e7f0a782",
+      "id": "claim_780143377404437ba4dbea247229a8b1",
       "statement": "On a capacity-enabled studio, an availability parity suite proves the internal booking command accepts the intervals the slot reader offers and rejects those it hides across overrides, closed days, blockouts, blocks and buffers.",
       "evidence": [
         {
@@ -181,7 +181,7 @@
       ]
     },
     {
-      "id": "claim_d0b5fa3016804ac39d5f3e45f24586eb",
+      "id": "claim_be77124ca23a4a5b9b55392a3e768e3f",
       "statement": "Both the database soft-buffer check and the slot generator use the studio's current buffer_minutes for existing appointments rather than each appointment's stored buffer_minutes_snapshot.",
       "evidence": [
         {
@@ -195,7 +195,7 @@
       ]
     },
     {
-      "id": "claim_8e01472fbb8240ecb05f5fa456fe4772",
+      "id": "claim_cd86983c7038403eafad33bb7d4bfa7b",
       "statement": "With practitioner capacity disabled, validate_appointment_availability skips membership, eligibility, blockout and working-hours checks and runs only the soft buffer check, so the database accepts an internal booking outside any window, while public booking uses a separate validator that recomputes the offered candidate set.",
       "evidence": [
         {
@@ -215,6 +215,6 @@
   ],
   "verification": {
     "by": "openwiki/0.6.1",
-    "at": "2026-10-02T22:34:57.394Z"
+    "at": "2026-10-04T01:59:59.625Z"
   }
 }

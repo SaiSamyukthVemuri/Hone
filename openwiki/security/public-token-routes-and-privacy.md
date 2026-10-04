@@ -3,6 +3,9 @@ type: security boundary
 title: Public token routes and privacy controls
 description: The anonymous, token-addressed routes (cancel, reschedule, manage, intake, invitation, portal verify, calendar feed) — how each token is generated and stored, the canonical token-route registry and the privacy headers, Sentry and PostHog scrubbing it drives, generic error collapsing, and the Upstash rate limiters, with fail-open versus fail-closed behaviour stated for every control.
 tags: [tokens, privacy, security-headers, rate-limiting, sentry, posthog, public-routes, security]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-2cb1f993558f06c74257613f
     resource: repo://app/calendar-feed/%5Btoken%5D/route.ts
@@ -14,6 +17,8 @@ sources:
     resource: repo://app/manage/%5Btoken%5D/actions.ts
   - id: openwiki-source-428f7e71a4b573a67a7647da
     resource: repo://docs/03_SECURITY_AND_PRIVACY.md
+  - id: openwiki-source-f79f369ce2044c952565dcb9
+    resource: repo://docs/production/migration-ledger.md
   - id: openwiki-source-72e0e60a94ee9fdc1aea5900
     resource: repo://instrumentation-client.ts
   - id: openwiki-source-08ed42d9f7dabee8e311184f
@@ -48,10 +53,7 @@ sources:
     resource: repo://tests/lib/security/token-route-parity.test.ts
   - id: openwiki-source-368da29387b3f22f3051f8b5
     resource: repo://tests/security/waitlist-invitation-route-privacy.test.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Public token routes and privacy controls
@@ -119,7 +121,7 @@ token is returned once, so a "resend" must mint a new link
 To book or decline, an invitation holder also needs a **recipient-proof capability**. It is kept in an httpOnly
 cookie of the form `<capability>.<expiry>.<hmac>`; the HMAC binds it to the hash of this invitation's token and
 to the database's own expiry
-([`app/invitation/[token]/actions.ts` L96-L167](../../app/invitation/[token]/actions.ts#L96-L167)).
+([invitation action L96-L167](../../app/invitation/[token]/actions.ts#L96-L167)).
 
 ## 2. One registry, several consumers
 
@@ -220,9 +222,9 @@ Examples:
 
 - `/cancel` collapses malformed, unknown and expired tokens to the same string. A distinct "expired" message was
   removed because it signalled that a structurally valid token existed
-  ([`cancel/[token]/actions.ts` L173-L182](../../app/cancel/[token]/actions.ts#L173-L182)).
+  ([cancel action L173-L182](../../app/cancel/[token]/actions.ts#L173-L182)).
 - `/manage` uses a single message for any failure
-  ([`manage/[token]/actions.ts` L15-L21](../../app/manage/[token]/actions.ts#L15-L21)).
+  ([manage action L15-L21](../../app/manage/[token]/actions.ts#L15-L21)).
 
 ## 6. Public rate limiting (Upstash)
 
@@ -248,7 +250,7 @@ Examples:
 
 For token routes the limiter runs **before** token verification, so a 429 reveals nothing about the token
 ([L265-L274](../../lib/rate-limit/public.ts#L265-L274);
-[`cancel/[token]/actions.ts` L162-L171](../../app/cancel/[token]/actions.ts#L162-L171)).
+[cancel action L162-L171](../../app/cancel/[token]/actions.ts#L162-L171)).
 
 The waitlist proof limiter fails open by a written decision, not by habit: failing closed would leave a
 prospect unable to get the code their booking needs ([L640-L662](../../lib/rate-limit/public.ts#L640-L662)).
@@ -295,7 +297,7 @@ prospect unable to get the code their booking needs ([L640-L662](../../lib/rate-
      2 that "is not started" ([§ 8. Known risks and deferred hardening](../../docs/03_SECURITY_AND_PRIVACY.md#8-known-risks-and-deferred-hardening)).
    - `token.ts` still says the settings UI reads and writes the raw token
      ([L21-L26](../../lib/calendar-feed/token.ts#L21-L26)).
-   - `0116` dropped the raw column. It sits within the declared hosted migration range, so the feed is hash-only.
+   - `0116` dropped the raw column, and the migration ledger records it as applied, so the feed is hash-only.
 5. **"Fail fast at startup" is not what the intake secret does.** The comment says apps without
    `INTAKE_SIGNING_SECRET` fail fast at startup ([L29-L31](../../lib/intake/tokens.ts#L29-L31)), but
    `getSecret()` throws only when a token is minted or verified. A missing secret surfaces on the first intake

@@ -3,6 +3,9 @@ type: test infrastructure
 title: Source, docs and security guard tests
 description: The static guard tests that pin Hone's architecture and its written truth — security censuses (direct DML, grants, service-role allowlist, route privacy, secret logging), source guards over boundaries, canonical-production-facts and docs-drift guards, dependency and lint boundaries — with what each family parses, what it pins, how it can pass vacuously, and the anti-vacuity controls that answer that.
 tags: [guards, static-analysis, security-tests, docs-tests, lint, testing]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
 sources:
   - id: openwiki-source-eb10efb7264b39a67076cb7b
     resource: repo://docs/09_DATABASE_AND_RLS.md
@@ -46,10 +49,7 @@ sources:
     resource: repo://tests/source-guards/sms-adoption-boundary.test.ts
   - id: openwiki-source-80bc5185d95430a1f19fc11d
     resource: repo://tests/source-guards/supabase-temp-untracked.test.ts
-generated: { by: "claude-code", at: "2026-10-02T22:34:57.394Z" }
-verified:
-  - by: openwiki/0.6.1
-    at: 2026-10-02T22:34:57.394Z
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
 ---
 
 # Source, docs and security guard tests
@@ -149,6 +149,8 @@ What it pins:
 | A1b | an "At `<sha>`" claim matches the pin |
 | A2 | the pin is an ancestor of `HEAD` |
 | A3 | **no file changed since the pin is runtime-bearing** |
+| A4 | only `current-state.md` carries the runtime-bearing pin; a copy in another canonical document fails ([L1872-L1880](../../tests/docs/canonical-production-facts.test.ts#L1872-L1880)) |
+| A5 | the recorded "Current Git branch HEAD" equals the production branch ref, resolved locally without network ([L2531-L2575](../../tests/docs/canonical-production-facts.test.ts#L2531-L2575)) |
 
 A3 decides "runtime-bearing" with the repository's own classifier: not `docs_only` **and** not under a
 non-shipping root (`tests/`, `e2e*/`, `.github/`, `scripts/` except scripts the production build runs, and test
@@ -204,5 +206,8 @@ native-dialog lint ban, are described on
    - Generated machine files outside those roots therefore fail A3 in a full-history run even though they never
      ship. An example is JSON sidecars under a new top-level directory such as `openwiki/`.
    - Whether to add such roots is a guard-policy decision, not one a documentation change can make.
+   - On a full-history clone of this source head, A3 and A5 already fail because the canonical record's pins lag
+     production; that is an observation of this generation run, recorded on
+     [Production truth and lifecycle states](../architecture/production-truth-and-lifecycle-states.md#7-contradictions-and-open-questions).
 4. **The canonical-facts guard covers only the five canonical documents.** Current-state assertions elsewhere —
    other `docs/` files, code comments, or this wiki — are not checked by it.
