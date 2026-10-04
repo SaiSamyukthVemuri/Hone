@@ -1,0 +1,388 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:d2b212af158af07bcfcddc19f78c2b8456764d53bc2781e69d1983baafcf9432",
+  "claims": [
+    {
+      "id": "claim_cbc7de4e5d264c619b772e98a3c024ff",
+      "statement": "lib/security/token-routes.ts is the canonical registry of seven token-bearing route prefixes (/portal/verify, /cancel, /reschedule, /manage, /intake, /calendar-feed, /invitation), exporting `:token*` catch-all header patterns and a fixed [Redacted] placeholder that is deliberately not a hash, fingerprint or truncation of the credential.",
+      "evidence": [
+        {
+          "resource": "repo://lib/security/token-routes.ts#L26-L56",
+          "version": "repo-lines-v1:sha256:4e2b210ad995ea1be27b4e42125fff4835f88a2ac9a5617bedc18d94c50b1a65:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhOTZhMDFjZjE1Y2ZkNzI4NzdmODQ3NmNiMTZkZDJkYjJkZjJjOTcyNDNlOGM1OTFlNDI4NDAxMTgxYWQ1YTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlNGM4NDg4ODgyM2JjNDhmNGFkZDljM2Q1M2NhMTlhZjcxYWU1ZjI1YWIyNWRmYzIxYTI1Y2RjMGE5ZTllOTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA2M2IxYjNjN2IyZmJlMjIwM2IxYTRjZGRkYWYxZDliZTZlMjRhM2YzOTgzMjU4YTk0NzgxNWZkZTIyYTdmY2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcwNTFkNDUyYTRlMzVhZjg2OWZmOWM5YjZiYTVjZDg4OTMwZDQ0YzNkZDY5MTI5MGQ2NTQ2NmQxMDY3ZGEzM2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1a649c47c31e486b9726ff18fcf21726",
+      "statement": "canonicalizeTokenPaths replaces the credential based on the route prefix rather than the credential's shape, consumes trailing segments, query string and fragment, leaves unrelated ids intact, and never parses or percent-decodes the URL.",
+      "evidence": [
+        {
+          "resource": "repo://lib/security/token-routes.ts#L58-L107",
+          "version": "repo-lines-v1:sha256:17216a10d45511362b1bd0769dd21017cd63ec26c468f9ba764de9e4c9a54547:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4OGIxYWIzMDhjMzBkNDZhNGRiNjIzZjllYTBkOGI2OTIxOWM5Njk4ODA1ZjYzZGI5NDlhYjZhNzUzNzc4OTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE4OWI4NzdhNmI0N2NmYjUwYjA2NzNmMmVhMGQ3MDUxMGRmNjEyYjcwYjU0YWU5MjE5NjFiN2RkYzhlY2JmODAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_318e56495a1240bc9a862b781ce2f96e",
+      "statement": "next.config.ts applies a global security-header block to every route and then, declared after it so its keys win, a token-route block on each registry pattern that sets X-Robots-Tag noindex,nofollow and Referrer-Policy no-referrer.",
+      "evidence": [
+        {
+          "resource": "repo://lib/security/headers.ts#L236-L245",
+          "version": "repo-lines-v1:sha256:1d43f42c1d83d75029f8361b120db5412d03e7102c263a23caed008fd17086e6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExZWRlNWNkYmM3ODQ0Y2QzZmQxZDkyNzYyMDBiMjdkYjc1MmE4NzEyNmY4Y2JiOWFhYTcyNGE4YmVkYmVlYzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU0MDA1MjRmZDJjOWUwNzVhNzQ2YjM3MTc0M2EwMjFmNDY0ODlkNjYwYTMxNjA1YjkzNTA2MjcyODZjM2M2OGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://next.config.ts#L87-L104",
+          "version": "repo-lines-v1:sha256:58aa378e2a81552038ddd9fa130c8aa7645ac23491b0715b21f91d539134d3b1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4MjAxMmViNjkzOWViZGUyZTNhMWZlNDc3MjIxM2QyMWEyNjFhZWRkOTNjOWZjNzg1NGM0MTczNWFmODliMzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjliOTVmYmNmMDliODIwMDQwMDE5YTRiMzMwMTY1MDI0YmU3YWRmMGUyMjc2ZjliNTNjNWQ2YjJkZTZhMzU4ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ4YmU1NTM1MzUzM2ZhMzBkMjUxYWQ1OTIxOGVlNTZiOTc0OTc3ZDc3OTE5NWNiZDMwOTQyMTM5MzY2ZWE0MDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f9d3e12359ae49f882495e9ac4f64cef",
+      "statement": "The global header baseline sets one-year HSTS with includeSubDomains and no preload, X-Frame-Options DENY, nosniff, Referrer-Policy strict-origin-when-cross-origin, an all-empty Permissions-Policy, and an enforced CSP with frame-ancestors 'none', 'unsafe-inline' kept, 'unsafe-eval' only in development, and connect-src limited to self, the Supabase host, Stripe and Vercel.",
+      "evidence": [
+        {
+          "resource": "repo://lib/security/headers.ts#L94-L234",
+          "version": "repo-lines-v1:sha256:bf036a5acefbec06246b5d6e6df1144978e8944d9afd8da7a3dcfd47c6a883f7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3MmE5NjNhNjhiZGM1MmFiNmZkODBmZGJkODFkZWZjMWJjYzI2MzdmMjM2MmEyYjdkMTM0Y2NhZjdlMDdiMDIzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIyN2IwODI1NDgwNmZkZmI3NTMzMjA4ZjZiYTEzYjNkZjYyNDgyMGU1NzYyZWVjY2FkYjIyMjAzNzY4MTVlNTIyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2OGE1ZGMyNjMyZTQ2YTY2OTA1Yjg2OGZjMzA0Njc0YjRkNmFkZTBhNDk4ODJlNDBkZDk0ZDg2ZmE4ODJiMDI0In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_fc37d4a0e98342c7be4b026989c2bbf6",
+      "statement": "When NEXT_PUBLIC_SUPABASE_URL is missing or malformed at build time, the CSP connect-src falls back to wildcard https and wss *.supabase.co sources rather than failing the build.",
+      "evidence": [
+        {
+          "resource": "repo://lib/security/headers.ts#L109-L133",
+          "version": "repo-lines-v1:sha256:d4b1c9b558762d09ccd357d241bc9796bc736db266b3fd5d5a145f782e1ed26b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5MmNlNTIyYTE5YmE3ZTdhMmY4NThjNTRhN2IxNWM0M2I3YjViODgyMzJmODYxMmE2M2E4MDc2ZmFkNDhkY2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1MGJiNmI2ZmVmYzk3M2ZkZTE3Yjc1MjRmM2QyZTMyZTI3MjI3YzU3YjY1OWZlNTU5N2Y5NzQ4YzNiMmI2YzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI0ZjVmYjdhMGFkYjgwMzliNWI0MzUwM2UxNWRkZTM3YTIxOTZmYmI2NTM2YjVmNzM0ODEzZTkyYmY5Yjk4NTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c144ec7a4f904b14af5c14d3ef691218",
+      "statement": "The Sentry scrubber canonicalizes token paths first and then redacts emails, JWTs, bearer tokens, Supabase token shapes and phone-number runs from every string, and drops values under a deny-by-default list of auth, identifier and clinical keys.",
+      "evidence": [
+        {
+          "resource": "repo://lib/observability/sentry-scrub.ts#L24-L120",
+          "version": "repo-lines-v1:sha256:c37e1baa180f9f0dbf9e1f8ccc4e042e572831d55bdf297c4d80329c76908d95:eyJzZWxlY3RlZExpbmVDb3VudCI6OTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzZTA3MjViYjE1MDNhZDFiYzBjZDkyNTEwNWExOGZkYzkyOTQ5OWNlYjM0YWE1MjNiNzY5MGIzZjg0MTc4YTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYyOGIwZWE4ZThjODAyOWNiNGI4NTI2MjBmMGFmM2Y2MWM2ZjE4MGM1ZjVjYjJhZGFiMWU3ZjA5NmYxN2U0YjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiNWNkYmVhNGVjOWEzNmVjOWRlNWIyZWFkMmE3NmVlOGQxZjZkMjAwODdiOGIzMjU4ZTY3ZTMzOGQ5NjBjOGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5e673b8695d4476f8e035c614ab137b9",
+      "statement": "Before a Sentry event leaves the process, request cookies, headers and query string are deleted, the request URL is token-canonicalized and stripped of query and fragment, console breadcrumbs are dropped entirely, and the user object loses email, username and IP address.",
+      "evidence": [
+        {
+          "resource": "repo://lib/observability/sentry-scrub.ts#L206-L260",
+          "version": "repo-lines-v1:sha256:d6a97b051e26c79bb451f37ee10ea691a79e85e73af2112de40c0ff163045efe:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM1Y2E5N2ViYmM4MmNjM2Y3OTlkMWRhMjRlMjIzNTE2YzM2YTdiYWQ0NGUxNTZkNDYxNDk2MGQzNzhjMzEyOWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0MjYyNTZhY2EyOTJjZjBiZDBmZWMwYTBhZTEzOWIxYWI3YjU4Zjg1NmI2NTg0Y2VjN2Q0NWRhNTE2Y2JmMTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjIzNDViZTJkNjZmYmZjN2ExY2VmNTdmYTJhNDEyYWFhYWNkMWM5MThlYzJhMzIxODJlY2E4OTJmMmUzY2U3YTAifQ"
+        },
+        {
+          "resource": "repo://lib/observability/sentry-scrub.ts#L263-L299",
+          "version": "repo-lines-v1:sha256:7ef71a0ebe5765ac9c7ade21a89a3a267c32a6566a85dac0fb393188baeb5484:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyNTJlYzUxMjJiN2U0MDliMzZkZjA4MGU5YTY5OTU5ZGMwOGM3YWY3NjFhNTJhMTRkMTJiYjhmZmY0ZWIzMTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhMjAwYzE1OGJlNWE3Nzc1ZTc3N2NjZjNkM2U0Y2JlNTE0MDM4OTA5OWUyNWI1YmJiNDU4NmNkMzBiYTdlNjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBkOWMwYzA0MzVlMWYzZGYwZThkMWI2NzViMWEzMjczYTYwOWFjZDAxZTNiMWM5YThkNGY4NGM2MWUxNzJkMTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU1MTRkZmJlMjhmMWI3OGNkNTI0NTQxODI4ZjViN2M2OWI5NzhjZDM3NjgwZDM4ZTNhY2VmMGZkODJjOGZjODAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4185fa1938b64235bc12947e1b309736",
+      "statement": "The server Sentry configuration sets sendDefaultPii false and installs the scrubber as beforeSend, beforeSendTransaction and beforeBreadcrumb, and a parity test requires all three runtimes to keep those hooks and every registry family to be canonicalized.",
+      "evidence": [
+        {
+          "resource": "repo://sentry.server.config.ts#L19-L25",
+          "version": "repo-lines-v1:sha256:6b8dda348369af3e433db182702ad6c40a86c5e92760230762422b703cfb3505:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjljYmMzZjI2MTU4MjNhZDcyNTJjMzVkZjVkZWQ1ZmM3MmExNjYxODAyOWZmODYyNTEyNzBjMTUzZjliODRlZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzhlMzIxMzVjOWJmMjM4ZWM2NWIyYjMyMzY3NjdmMzc0OGQ4MzlhOWQyMDRjMzA1MDE2NzNhZDVmZDI3NzAyMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTc1YzI0N2Y5MzNhNmMwZmZmMDIxYzEzNTdiNTg5MGU4N2Q2ZTMxM2I5YjdhM2YyOTk4MDU2ZDZiYmZmNDRjYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjEsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjZmNWI0MGIxNTg0NTdkMTc4NjRmMjE3OTA3ODZkZDVhMmVjZGI2NGI2NmE2NTFmNzg4ZDRlMjVjZDMzMDNkMiJ9"
+        },
+        {
+          "resource": "repo://tests/lib/security/token-route-parity.test.ts#L25-L120",
+          "version": "repo-lines-v1:sha256:e839f20a9abf650454a409fa773735e723103973801488cd2dbf04bcda48febe:eyJzZWxlY3RlZExpbmVDb3VudCI6OTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjY2VlMzg5NTU5NWVlNWE0ZjUyMjAyYmRhMDY1NzllZWI5Y2YwYWEzMDZkYTI2MzlmOWNkZWRiYTRkOGM5NmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU3OTJkOTYxMDZmYWRlYTkxOTExMGVkODQ0MDI5ZWE0NTNhYWYzOGRmODNjYmUyMTMwZDQxYjIxYjQ0YTExNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiMGM5NDMyMWZjNzUwMmEwMDg3OTIwMGI5ZjMyMjQ5NDZjNGVhNjcwMWIxNzE5MzhhNGY0MjNlODI3N2Q2ZDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA3OTc3ZDNhOTczMGMzZTdiOGJhNDQ0OTJlNWVkZjU2NDA3MmMwYWRiM2E3MzVhMDBlMWM2N2QxY2MwZDIzYjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_da3fd8d2800c42288d9a32ef3af05024",
+      "statement": "Production performance traces are sampled at 10% and development at 100%, while error events are not subject to that sampling rate.",
+      "evidence": [
+        {
+          "resource": "repo://lib/observability/sentry-scrub.ts#L360-L365",
+          "version": "repo-lines-v1:sha256:e2b36f8bd3587a751faabbc2c22efcd4dd07192593ff5487f5aa23f63d86b9f9:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2Q4NWJlZDU5Nzk1OGJkMTc5M2M2ZGU3NDRkZjAzNmU3ODFjNTQ4MWE5ZGU4NTFlZTc5MTY3YzA4MDhlNGUwMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDM5YjIwNzE1NDczNTlkZDcyM2Y1ZDdkYzMyYTQwZDk5YWUyYTk4NTg3MmZkODYwZjExOTdkZTZhNTk4NjdjOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_43ae6bc8d7c74b95bf52b0513209e99b",
+      "statement": "The PostHog browser before_send hook fails closed: an event survives only if its $current_url is an exact canonical marketing route and its name is on the marketing allowlist, so app, booking, portal, token, login, payment, unknown-route and unparsable-URL events are dropped rather than redacted.",
+      "evidence": [
+        {
+          "resource": "repo://lib/analytics/client-boundary.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:bf0df5d6a40c115bafbeb0c64faf9def382abe75e15d45a42d029ba7f3af089a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhZWJjZDg5OWNmOTcxYzkzMGQ1MzE1YjI5ZTdiNGUxMmVmNmFhZWVlOWU4ZGQ1YTlhZDQxNjEwZjliZmIyNGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJjYWEyYjZjMTE5M2IwMDE4Y2FkZmRmMzliMTZhYzRhOWMwNzdkYzhiZjAxOGQyNjE2MTVlMGRjZGM2ZmUwOTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVjYjQ0YTIzOGY4ZTE3ZmQwZjFlMTFiNTMyNTQ2ZTY1YmFjYjliOGRkMmMxZTE3Y2UzY2M0ZTExMjAxNjc0ZWUifQ"
+        },
+        {
+          "resource": "repo://lib/analytics/client-boundary.ts#L196-L230",
+          "version": "repo-lines-v1:sha256:314bb2a09c684b68dec08e333fa38bf24cfdb4defbf48c4b91103b212e3b5811:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZiOGQzNTc0Y2ExOTc0ZDIzOTVkYWRkOWZmODE4OGQzM2U2MDBhN2NiOTkwY2UzZTkwOTYzMzMzM2UzYWQ2Y2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d032e1508b1b4795b023a3ce1730f13d",
+      "statement": "PostHog is initialized with session recording disabled, exception capture off, autocapture armed only on marketing URLs, the /ingest same-origin proxy as API host, and guardBrowserEvent as before_send.",
+      "evidence": [
+        {
+          "resource": "repo://instrumentation-client.ts#L56-L82",
+          "version": "repo-lines-v1:sha256:80693229543f79503e9162a40f82c92320e5ce105148f3f9c51039e24302a3a4:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhZDY0Y2I2YzMyOGQ0MzEyYzY1ZmUwODdkY2IxOGMwMmVjOGI3YzkxYTAzNDgxMmQwNWFmZjVhN2YxOWU5OGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxNzE2MDQxMzk5NGM5ZjgwNGY3NzU4MjNiNjlkMjI1ZjRhYzA4MTc4Zjc5ZDlhNTI3ZGRmZWQ5NTg4ZmI0NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdhY2FlZDdiOWZlNTg2MWU4YzMyOGMxM2M2MmJlOWU1NTJlYTAwNjcxYzUxNDliZjM2NmUzOTE4NDEzNmFkZTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_956d109f22e6443fa645186cd663fe12",
+      "statement": "A route-privacy test enumerates every dynamic route under app/ and fails unless each is registered as a token route or explicitly classified non-bearer with a written reason, so a new bearer route fails by default.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/waitlist-invitation-route-privacy.test.ts#L317-L438",
+          "version": "repo-lines-v1:sha256:b03ec64a903d02c5b8d38781d7f667bb3e9e2a54b10e13859bbd9cd5a84eb761:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5YTQ3ZDY5ZmJlYzMxODM5YzUxNWIxODhkYjE2ZDY1MmE1NWZjZWZiNjgwMmFiYmFkZDBmOTIwYzI5ZWJhOGM2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3YTY4ODJiMWFkYWQzOTc4YjIwNzlkMGI1Y2Q4OTQxOWYzZThlOTg0ZDQ5YjU4MjI1NTc5Mjg4ODBkZDgxODZmIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyOGFjNDU5N2YwMDc0MjVhNTQ2MGM1MTVlYzZkMTYwZDc3Y2MwN2ZkZmVkYTNjNTdhMjkyOWJmZWY0Yjk1YWUwIn0"
+        },
+        {
+          "resource": "repo://tests/security/waitlist-invitation-route-privacy.test.ts#L54-L70",
+          "version": "repo-lines-v1:sha256:9734509f0b37f46be7a647e5e4fd4377aba8d0b77f69c0a6ca9cfa649893bb1e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZhODdiMGNlYzZhYzM4YzU0YTA0NGVmMzViOTY2NDUxZDQyZTZjZTdhZmVkYjhiNTJmN2NhZmEyZTRiZGQ2YzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwYmJhODUyODcxNzhkYzQxNDdjZGM4N2EzNGQ3NGQxNjY0NzlkOTFiNDI2MzQwMGI4ZmNjYWEzYzY3OWMxZmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4e8661eda3d14389ae5d34302bea2a97",
+      "statement": "Calendar-feed tokens are 32 random bytes encoded base64url and are stored only as a SHA-256 hex digest; migration 0116 dropped the raw calendar_feed_token column and its index, which a DB test verifies on the migrated schema.",
+      "evidence": [
+        {
+          "resource": "repo://lib/calendar-feed/token.ts#L32-L40",
+          "version": "repo-lines-v1:sha256:a7f7659f76b31da54e66836b28074f37a156d88368690507941ec546a4124822:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWE4MTU4ZjRlMDM5NGJhNWY5YTU3YWViMjMyOGQ4NjI0ZTc3ZDRjOGI3NzFjZWQzZGRiMmRiYjcyYTRiN2E4OSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOGE1ODUyZTg0MjU5M2Y5ZWYyZTg0M2I5YTg3MGZkN2Y4OGExYWE1NWQxZTFmOGQ5NzY4Mzc1ZDI1NzkxOTJhOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0116_drop_calendar_feed_raw_token.sql#L1-L32",
+          "version": "repo-lines-v1:sha256:01479d84b5c406786b203f3abddc3f38b8c3a4f6f5500659f78e1e83ddbfcbb6:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUzZGJjZTU4ZDQyOTRiNDMzMmQ0ODBlNjFiOTQyNWU4M2UzODlkNTNhMzFlMjgwZDE5MmY1YzhiMDJmZDU1NWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU2MTExMmM1Y2IwNDJiMGM1ZjY2OTIyZjQ2NWNjNWVhZDk0YmM2ZjcwOGRjNDhlNGVkNTY4NDlmYjUzZTY5YTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/db/calendar-feed-hash-only.db.test.ts#L14-L49",
+          "version": "repo-lines-v1:sha256:b31aceb7980ad5445a2f76cf021d80f5d0ef8079a29fda6b5766556679aa9738:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJhYTFjNzE0ZDE0ZDA1MmQ2MWU3NzEyMjZkNWQ2Y2ExMTZiMTQ3M2JjOWY4YzQzZjZiNzE1OTM1ODRiNDk3YzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFjY2Y2ODQ1YWZlNDg3MGIyYzY0M2QyNzBlMGVkZWUyM2VjYmM0NmViODExMmQyM2NlNzYwMjU4ZThkZTQ5MzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5e1d65bd492444e7a86ba871049c9a7a",
+      "statement": "The calendar feed resolves the practitioner by token hash with the service-role client, returns a generic 404 for a short or unknown token, an inactive practitioner or any lookup error, excludes cancelled appointments, emits generic event titles and descriptions without client or service data, and is served private, no-store.",
+      "evidence": [
+        {
+          "resource": "repo://app/calendar-feed/%5Btoken%5D/route.ts#L64-L176",
+          "version": "repo-lines-v1:sha256:57ddfd30e83a956c2359533acbbf5fc7e3d2370afc46e4dce8dcfba409138513:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwY2YxMGExYTlkZDY2OGMwNzk1MDk1MDIwODYyZTgwOTY5ODhkOTg2YmQwYmY2MDhhZGFiYjdkYTRlYWZlZWFkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2NmEwYjBlNGI3YzJiNWQ4ZDFmMDRjNjAwNzY2NTMyZWI1ZTFkNmYxNDQyMDllOWYzNmY0YTkwODhhMWJlMGY4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://app/calendar-feed/%5Btoken%5D/route.ts#L7-L47",
+          "version": "repo-lines-v1:sha256:bb0aab81b4ef477a8c9c75250bbb7a5380dc7c392a41da14274fce8d68b14c7d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhjZjdjYjA3NmFhMzUyODFiYjZmODIzNzU4ZWRiYjFkNjRlMGI3NDg2ODlkYTdkYWY2ZjNmYzhhNTRlYjA2ZDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3OTYyMDhmNDM3NDNiYzhkNGRkNjFjODdjMjg5NWQzNmJiNWY1ZDIyNjE3OThhOTNhYjc0NGEwY2NjZTQ2YjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIxYWE0Zjg1ZTdiZmRmMzFkNmM1NWNjZDhmNWRjMDNiOWY2YThiOTAwZDdiZWQ3MTlkNWMzNzg0ZjE2ZjU0NDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM4NTE1NTIzNDRlZTE5MjM1MDg5YTQ5Y2I5MzUwZDVhNjgxNzZjNDQ5ZTFmMGNmYWNmYjc3OGM4OWQxOGE3N2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_544a122643f444f59c987039ec098616",
+      "statement": "Waitlist invitation tokens are 32 random bytes hex-encoded in SQL with only their SHA-256 stored, so the raw token is returned once and a resend must mint a new link.",
+      "evidence": [
+        {
+          "resource": "repo://lib/waitlist/invite-to-book-contract.ts#L59-L70",
+          "version": "repo-lines-v1:sha256:ab77619a816fcac2f67049defe8b8d1a73894333fc4ea55dba893213a8cba3f0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBkZDZjNjQ2ZjQxNGE5ZWVkMjkxNmQ4NDAwOTJhMGNkNTRhNTA3MjE5YzhlYzY1MDM1ZjQ3MzUxMDE0OWY0ZmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjczMDBjMDBmNWQ2OGQzMWY0Y2YxZjAzZjczMzZiMGU3YmI1NmRiMWIxNmE3YWJiYmRiMzU0ZDIwY2VlZmE1YWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYzZDMwMWY0MmJkNjZiYWUxOWE2YTZlNzE2YmNkZTViMDEwYWM2ZjIwMTMyMjRkYzc1NGYxZmFjYTZkZWU0MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdkZmE4MDgwNzVlMDkyYTlkMTUxN2MyNDc5ZTM3N2VjYjEyMDliMWZhNzU0NjJjNDYwYzcyNzFlMGU0ODE5M2IifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0192_waitlist_recipient_proof_authority.sql#L484-L485",
+          "version": "repo-lines-v1:sha256:0ec3efc9d80ab5a77b87cc886ed637e28563631df6dfe11a69c0cda1b4adaba7:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGRkMDcyNDdmYzBiNWQ1ZjdiN2M4MTlmYWMwMWQzMzI2MjM4NDNmMDYwNDk0MWIyYTMzMDUwNGNmZjAyODhkZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjQ4ZmQwZTBhZWY2MWJmOTIwMDA2YWZlN2IyNDY5N2UwYTA3ZTU1MWQwMWMzYjE1NWY2NTFkNWNiNDM0M2Y0NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYmQ1MjYwYThlY2I4OTBkMzI4MzUzMjhiMDMwNmRhNmM5OWM4NjI5MzVlYjAzZDY5NjAyMTY3NmQ2YTQ1MmI3ZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzYzN2VmNjZiYWQwNDg3YzkwODljZTFlZjQxZDhmMWY2ZGUxNTA2ZDJkMTMwNTM0ZjMyMWVhNmQyMjc1YjM5MiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b907d17326664dfcb2480bb52d3d30a3",
+      "statement": "The invitation recipient-proof capability is kept in an httpOnly cookie whose HMAC binds it to the hash of the invitation token and to the database-issued expiry; without APPOINTMENT_SIGNING_SECRET nothing is treated as proven.",
+      "evidence": [
+        {
+          "resource": "repo://app/invitation/%5Btoken%5D/actions.ts#L96-L167",
+          "version": "repo-lines-v1:sha256:625c2f35b35911e9d7ecc157a42fccf7e26bae5c2c1d37196650b0a3a428cf77:eyJzZWxlY3RlZExpbmVDb3VudCI6NzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0MGFjNzhiODY5MzViZTlhNjJlNjBiOTM4YjI5ZWE3ZmFiN2RlM2MzZTkxZmE1OWQ1ZmE5ODFjYzIwZGIwNTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRlODFiZDRhN2I4ZDUyZjExYTJjZGRmNTdjZTA1Njg3MjBmOTRjM2IwOWI1YTdhZmU2MmI1YzlhZGQyZTcyMTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI3Y2ViYTczOGZjMDAyMmFhNzJmMDAzNTQ0Nzc1OWQ2NTk1MDNlZTNmMzAzYTAxYjUwNTE4MzBlMjkzYzBlODAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_65b5a2cdabcc450fad1724b282f71ac0",
+      "statement": "Appointment HMAC tokens and intake tokens each require a dedicated signing secret with no fallback to another key, and the secret getter throws when it is unset; intake verification is timing-safe and rejects expired payloads.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/tokens.ts#L13-L30",
+          "version": "repo-lines-v1:sha256:489f72a00578864a68eb65452d1f763f9151a068b090a6d781d0c36caf8a9d76:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxMjY0YTJmZTRjZGI1M2QzY2EyNTdhNzYzMTFkOTNkOTA0ZGE3ZGNmMmUwOTAxYjUyMzIxYTk0YWJiMGViMzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0OTljYzg4ZGVhNzMzMDFkOTE1YjdkMWQ1NjkwZjJlMzA5OTA0YzAwMTgwY2MxMjU3NjZhNjk2Y2I5ODA1NGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNjk3MTU1ZGM4NWE5NmIyNjIxZDg2NmY5NTNjN2Y1OTE4Y2I5NTNiZTE4OTFhYmRiMDhmZmE2NWNkZWFkMjAifQ"
+        },
+        {
+          "resource": "repo://lib/intake/tokens.ts#L16-L43",
+          "version": "repo-lines-v1:sha256:3323f05aad20801a3e128d03e723a590491f2b05fccd68a5310393414c23bd03:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3OTM1Y2I5N2JiYzIzZTMxMDI1MzE0YTQ0ZTAyYjZiNTc3NzYxMWQ3NmQ3NzE4MzZjZjdhOTczYmZhMTM0ODgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZmNDJiZjgyZGEzMjQ3YjllY2MwOTBjOGQyZWQ5ZDkzODkwMTEwMmIyN2MyZGZjNzYwZmUxYTQ1ZGM2ZjM0NmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1N2NhNmQwYWU3NDc0ODA0YjAyMWIyZDQ3OTVmNzY5N2EyN2Q3N2IwYWRjNmE4ODNjODUwMTQ5ZjAxZmQyNTcifQ"
+        },
+        {
+          "resource": "repo://lib/intake/tokens.ts#L64-L116",
+          "version": "repo-lines-v1:sha256:e32a2eecf3e6e96d181e949356618c12d94b8293fad14c4bf0fb16e956c76245:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxZTcxMDAzYWZkNjdjOGQyMGQwYmY3ODkwNWY2N2Y0NjUyMzhiZjI0ZDJmMjViMTBiOTk0ZTEzZjU4NTgzOWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzMDFiMzc0MWZjYzUxNzI5NzdiMjc5MTMyN2ZiMDM3YWEzZjA5Mjc3OWFjOTU2MTAzODg4YmQ3MjUyOTQxMGIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0c62bace904b4358bde77f36db8aea83",
+      "statement": "The public cancellation action collapses malformed, unknown and expired tokens to one generic error, and the manage action returns a single generic message for any non-success, so error shapes cannot reveal whether an appointment or token exists.",
+      "evidence": [
+        {
+          "resource": "repo://app/cancel/%5Btoken%5D/actions.ts#L173-L182",
+          "version": "repo-lines-v1:sha256:3cdb7758b3961215f0cf0c2d65125923ddd2ebf05efc0dee41bb399cf8cfc16a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5ZGE0MzRhMGYwZWQ2MTMxOWRmNDc5YmM3ODE0ZTJkZDJkYTIzYTc5YTE4ZjY1NjJlMGM3ODViODg0ZjdlYWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI2NDhhNTIyYmJiMDNiYmJkNGJkNTU3ZmQyN2IwZGVhYTZhNjRhNTcxYjkxY2YxYzY2MDI2MGU0MmMyMjBlMTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlhZmY3MWE5ZDQ3NDhkOGVjMzI3NWYxZTJlYmM0YWEzYTc5MDllNWM2YTM4MjIyNmEwOGZlZGRhNzc3NDNjNzQifQ"
+        },
+        {
+          "resource": "repo://app/manage/%5Btoken%5D/actions.ts#L15-L21",
+          "version": "repo-lines-v1:sha256:1f425b584e89fcb5f24011dc4f085c833a1065a97ca31a3f782c83ed74396805:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmUxMDEzNTMwNWVjYjMwNDY1M2Y4MzRmNTY5NDdjZWU1ZjAwYWQ2MzVhYTY4NzJiNzBhYzZjMjI5NmE1MTk2MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzE4Y2U3N2Y5MzNkNDI1ZThkZjY3OTIwOTNlYTM2OWQwYzJmMThiZGY1OTExZDNmMWEwOGE2ZTc1MjcyOGRjZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGIwMzU2ZjY0NzFiNDNmYWRjMjMwNGQwNmY4OGU1NGRiNDRkYzllNWRiMGY5YmQ0MGE0MjY0MWEzZWU3YmM5MiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWVmNWYyMWQ5ZDMwNzEyZWIzZDdmYjgxYTQ5ZDZjNDkwMDE5MzUxMTVmMjdiYjMwMjNhMzBiMjQ3NThhZmZmNSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_1d267f1cb9e141c6ab7f06bfab45f9c9",
+      "statement": "The public Upstash rate limiters fail open: with missing Upstash configuration or a backend error the request is allowed, missing configuration is logged once per instance (as an error in production), and identifiers are SHA-256 hashed before reaching Redis keys or logs.",
+      "evidence": [
+        {
+          "resource": "repo://lib/rate-limit/public.ts#L70-L100",
+          "version": "repo-lines-v1:sha256:0b770111246483b403533edd1fb2bd0f503abe695b41b9264dbf0cb1d2b3ccf7:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzYjg1YjlkN2Q3NDVlN2UxOTBlNzNkNzUyNGEyOGI4MGVlMTBiYTkyNDI2MTcwNDdkOWQ2YzU5NjQwZmVmYzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRhOTJiYzhmMjRlN2IwMGE4Yzg0NDA5MjkzYmUzYjgyOTQ5NzJiNWUwYzJmNjc2NDc0NDE2NTI5N2RhZDliZTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc4MGNiOTAxMTBkZWY4M2E1YzUyODZkNjEyNWI5MTExMmY3NmY1ZTc4NDg1NTE0Mzc1NzQ5ZWE1NWExZTBjZWEifQ"
+        },
+        {
+          "resource": "repo://lib/rate-limit/public.ts#L9-L28",
+          "version": "repo-lines-v1:sha256:cb454aaa1f868542c7d37a72e2d786a624e5635ff24eeb796b2b24b49553f2b1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5NzhkMmQzZWQ0ZmVlMTY1ZWJhZWNhMzIxMGY0YTlkZDRlMjEyY2ZmOTA2N2JiZGUxMDMyMzFiNzI5MmY5ZmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2ZDRhMTNlNzViZTIzYWE1MTBjOTRiYWE3YWE1YTM4M2NjZjEyYzc0ODI4ZmM5MTJlZDE2NWM2OTE0OTNjYWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzNTY1ZjY0M2Q2YmE1MTE1MjE4MTE2ODkxMzFjOTRmZmE5OTRkMmYxMWVjYmIwYWEzYjJkZTNkNWQ0MThkNmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMzMTVlZWIwNGEyMmU3ODRhMTQ4ZjU4NjE3Y2M1NzI2ODNkMmM4NTVhNTEwMDg2OWI0YmZkMDA2NjI4NDEwMGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d437e6021b444fd3ae9f22c6e99d7a3f",
+      "statement": "Rate-limit client IP is taken from x-real-ip, then the first x-forwarded-for hop, and otherwise all callers share a single unknown_ip bucket.",
+      "evidence": [
+        {
+          "resource": "repo://lib/rate-limit/public.ts#L39-L58",
+          "version": "repo-lines-v1:sha256:7f78f2c419272a3c640ada8ae28bbc4c2b93709d796d50e755a78667b6cfd42b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc0MzExN2IwOWJjYzk0ZmM3M2Y2YWIyNDUwZTY5MmRmY2UwNjg4NGMwY2Q2N2U2OGRmYmE2YTI3OTYyOGQwMmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI4ZDI5ODlhNGM4MThlM2ExZmRiOTcyNmVmZDdkNTg5ZGRjNDdlYzU4OGQxMTJiZTcxOTdjMzM3MjYwNTM3YWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA3MTZmOGFjMmViZTMxM2U2NDUwM2IwYjNhM2Q2ZmUwZWYzYWU4NWI1YzIyY2RjNzNmNTIzOGFjNTU1ODM4NWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1682db47a1da4fc3ab9ff99aa8ce3f8d",
+      "statement": "Public slot fetches are limited to 60 per 60 seconds per (IP, slug), and public booking submits to 5 per 10 minutes per (IP, slug) and 3 per hour per (email, slug).",
+      "evidence": [
+        {
+          "resource": "repo://lib/rate-limit/public.ts#L121-L147",
+          "version": "repo-lines-v1:sha256:51d9a2e66452b8b12084c16b58d9be01d6bbd1313f2340cb8c126e0ac38d3867:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MWI5NTgyNmJhZDMwZTI1NmU5YTE4MzJkZWUwOGJhMTc1MDBhMmI2ZjA5NmQ0YzU0NmE3NGRiNGE2NTFiNjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3ZDY1Mzg0MzY1OGIyMTRjMGQ0Nzg3YmI4YmIwYTVmODdjNmMwNjM2NzUxOGVkZDgxMjkyNDM0ZTBhMDcxNjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2YzE0MzIzZThlOTY2MTZiNWEzNmJkYzJjYTc3NDY4M2Y3NzU4NDhhZTEwYzk5ZjgxNTA2Y2E1YTI2MzRjYzkifQ"
+        },
+        {
+          "resource": "repo://lib/rate-limit/public.ts#L206-L232",
+          "version": "repo-lines-v1:sha256:609268e0bd6ed324147f8f54975c0ea42a9c9a45e0a79d7e2d340cae78ee42ca:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzNTkyZmIzZTkwMWFmODIyNTRmZTNkM2UwN2M4YmE5YjYzMzBmYmQ5NzJmY2U0M2JiZGQ5MTZhMTFiZjlmYTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlYzRkMjUwNTllMGNkMWRhNzVhMWJhZWE0OTE3NTUyYzllM2VkZjk3ZDMxYzgwMjUzZjRjMjU4YmI1NWFmMTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRjYzUwZmQ3M2U3YThiMTgxNGNhN2YwM2I0NDUwMWQ0YWE0MmRhMjNlMzIzNTZhZGQ4YTdjZDNiMTRiMWNjMzUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f3c8c8dbf5fa486a80966cdc9d7a705e",
+      "statement": "Token-route actions are rate-limited per hash(token):hash(IP) with per-class windows, and the limiter runs before token verification so a 429 reveals nothing about token validity.",
+      "evidence": [
+        {
+          "resource": "repo://app/cancel/%5Btoken%5D/actions.ts#L162-L171",
+          "version": "repo-lines-v1:sha256:ea334c9640c4007a526d545737b850b792b43b9dff28c3b73cf324ddb839ad35:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0M2IzYjhhMTA1MzFiMGNjNmM1MWUxNTZjOWQ1N2FhZWU0NWVjZmIwNGU5Y2FlMzJkMjUyMWFiZjRhYmQ0MGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1ZmRkMzM4ZmRkNTlmYjE3NTM1NjYzMjcwY2U0MjMxOGNiYTY0NTMzNzU4NjJiYTExYTA0ZGI4NDNkYThiZmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0NzdiYjk3N2ExYWRlYjUzYjM5ZDJlZWRmYjRhNmM3YTU1MDlhMjM0MGVmNDY0ZDRkYjI2YmI4ZjYwMzA1ZTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEwODAxMzllMWI1MTI2MjZlZTVmYzY0MmJjNGFhNWM5MWVhNGI1NmI3MTFmYzI4NjI5YWE4ODNjZDBjM2E4ODIifQ"
+        },
+        {
+          "resource": "repo://lib/rate-limit/public.ts#L265-L329",
+          "version": "repo-lines-v1:sha256:6a6faf2b06b2c411db2878f2268b60ca17ed7e5239c622785951f6180c4d41bc:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2YmEyYjU5OTY3MzJlNzEzOTBkM2UwY2M1YjliZmRmZTU4YWUzZDZkMzgzY2VhYTMyNzRiMzc1OTY1NWRlYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjIyZTRkY2RkYWU0YWViY2E4OGM5ZGU3MjI2Njc3Yjc3NjQwZjQ2OGY0MDE4YzVlOWIzZGViYTljNDVhYjZjODQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_96cebe2af80142af865817534f8a00ad",
+      "statement": "The waitlist recipient-proof limiter fails open by an explicit decision, because failing closed would strand a prospect who has no other way to obtain the proof code their booking requires; its limits are imported from the delivery policy module rather than restated.",
+      "evidence": [
+        {
+          "resource": "repo://lib/rate-limit/public.ts#L640-L662",
+          "version": "repo-lines-v1:sha256:b28d6590aff439067fbb996ddd1afc7b50d23beec554b508a6c4fac58887c7e0:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkNjA2NTI2YzNiN2Q5NjY0ZmRiZGU1YjJhMDQwZWYzOWM3Yjc2NWRiZDA3Mjg4MWE3NWI3NDU1MTRjMTUzNTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNTNlZDhmMmE4NTE0ZjVhMDJlMjI3ZjE0MWZlNTRjODMxZTgxOWQ3ZjExMDYxN2I4NjUyZjNjMzM4NmYxODAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNhNDFkZDQ4NGQyZDkwMmYxYjAxOGQ2Nzk5M2ZlNjMwY2IxNDAyMDM2NzQxMTE5N2QyMGQwZGRlYWEzODdiMjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFjNTY2MGY3NTBjNzk0NTYxYTNjMTZiYzE2NmJiMDBkNzYwNDdhZDRkYzkzNzA2MzQwYTFhM2U0YmJlYWQ4NDcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_05f6f837ec5b42a2945e3987d9ddf821",
+      "statement": "The browser analytics boundary declares its own six-prefix token list without /invitation/ instead of importing the canonical registry, and the parity test covers only next.config.ts and the Sentry scrubber.",
+      "evidence": [
+        {
+          "resource": "repo://lib/analytics/client-boundary.ts#L40-L49",
+          "version": "repo-lines-v1:sha256:1b21c614695936a0f78076c16a0b38b677fe89ae6293a5c78753178bd98c37ba:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVlM2E0MWI3NDM4NGVjZmUwNzkwZDY3ZDU4NzI1ZjQwM2I1YjMxZGM4OWVlMmNiNGZiN2NmMjllMDc5M2I4ZDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNmNzg5MzdhZmY5ZTRkYjM0ZTkwMjU5NGE4MTZkOTA2ZmJiNDJkNGIxOWI1ODJlMjcxMzJmNjRmYTU3NmM4NDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM4ODI5MjVlOWQyM2QwNzczZTYwZDJhYTU5NzhjZTY3MWFjZTM2NGEwYzI1MmU4OTQ1MzM0NDRmNGNmMjkzNTYifQ"
+        },
+        {
+          "resource": "repo://tests/lib/security/token-route-parity.test.ts#L25-L50",
+          "version": "repo-lines-v1:sha256:39dc373a6d5e91881f554f7628324020a756513d9c1e879ad0e417973e1170c9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjY2VlMzg5NTU5NWVlNWE0ZjUyMjAyYmRhMDY1NzllZWI5Y2YwYWEzMDZkYTI2MzlmOWNkZWRiYTRkOGM5NmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiMGM5NDMyMWZjNzUwMmEwMDg3OTIwMGI5ZjMyMjQ5NDZjNGVhNjcwMWIxNzE5MzhhNGY0MjNlODI3N2Q2ZDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU0M2RlNGZiNjBmOTkyZjQ5ZjIzYzdkNWQzMTI1NTI5MzJiMjVhNDY0NWFkMDQwNDVjMzRhMmYzNWE3NjQyZGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3c55c8be393e49329946dae5f7e3c56b",
+      "statement": "The token-route registry header and docs/03_SECURITY_AND_PRIVACY.md both describe six token families without /invitation, while the registry and its parity test have seven.",
+      "evidence": [
+        {
+          "resource": "repo://docs/03_SECURITY_AND_PRIVACY.md#L121-L121",
+          "version": "repo-lines-v1:sha256:fea1f607d1376636daf337a28d92ba1b63cdc363899d6c8e403b5205e6de599c:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmVhMWY2MDdkMTM3NjYzNmRhZjMzN2EyOGQ5MmJhMWI2M2NkYzM2Mzg5OWQ2YzhlNDAzYjUyMDVlNmRlNTk5YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmVhMWY2MDdkMTM3NjYzNmRhZjMzN2EyOGQ5MmJhMWI2M2NkYzM2Mzg5OWQ2YzhlNDAzYjUyMDVlNmRlNTk5YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODUxZTczMmZjOTM5ZGY5OThkMjBmZmU0NTIwYzhiMjBiZmQ4ZmY4OWM1YTJhMDlmMDEzN2Y5N2E5N2E5ODJjMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTgzMmFmYTMxZDZhZWNmYjgyNGUyMDE3NGRkYjAwMTllMTVmNzQzMzRhYjQ5MDk0ZjE2YWM1YTgyYzg3MDFkMSJ9"
+        },
+        {
+          "resource": "repo://docs/03_SECURITY_AND_PRIVACY.md#L138-L138",
+          "version": "repo-lines-v1:sha256:d007cbf3c6817a707e369a767c4c6e4d61612755b914c6657bb1de457696e278:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDAwN2NiZjNjNjgxN2E3MDdlMzY5YTc2N2M0YzZlNGQ2MTYxMjc1NWI5MTRjNjY1N2JiMWRlNDU3Njk2ZTI3OCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDAwN2NiZjNjNjgxN2E3MDdlMzY5YTc2N2M0YzZlNGQ2MTYxMjc1NWI5MTRjNjY1N2JiMWRlNDU3Njk2ZTI3OCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDZhNWU1MDRiZGZiNzRlOWVjNjBjNGVmYzFhNzhlZThhYjFjMzBiNjgxNDFhOWYwZGY5ZWM3MzBkYzYxMjY4NCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjY1MTRhN2UyOTZlNmUwYWM4Mzg1OTc3YTgwMzZmZTM5NmE2NzliNzgyZGQ0MDc3OTVjMjkyZGJmMmUyMzZjNiJ9"
+        },
+        {
+          "resource": "repo://lib/security/token-routes.ts#L3-L3",
+          "version": "repo-lines-v1:sha256:430a8eb7de33e324270798ef209a8d11ee58bc34e22b2ec7c1413e42987833e3:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDMwYThlYjdkZTMzZTMyNDI3MDc5OGVmMjA5YThkMTFlZTU4YmMzNGUyMmIyZWM3YzE0MTNlNDI5ODc4MzNlMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDMwYThlYjdkZTMzZTMyNDI3MDc5OGVmMjA5YThkMTFlZTU4YmMzNGUyMmIyZWM3YzE0MTNlNDI5ODc4MzNlMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjIsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmUyYTM1MWZmNzg0MzljZjFiYmI0MDlkYTliOTQyOTM0N2U2YzZlNjYwMGE3ZWEyNTcyOGFiOTkwNjNlZGEzOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTMxN2JiYWQ5ZjQ2NmMwYzEwZDU2ODU4MjQzNmI4YjU1NTA3YzhiZDU5MGY0MzNhMDFhMjc5YWE5ZDNmZjFkNSJ9"
+        },
+        {
+          "resource": "repo://tests/lib/security/token-route-parity.test.ts#L51-L70",
+          "version": "repo-lines-v1:sha256:7011fcdf27f9ec9658d2d36a5ebacbffc62f5a5d1f3050a3e022795a391eb4c3:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0ZWFjZjEzNDg3OGNiNjhjMmU4M2E5MWYyM2FiNzkyZTM5ZDgxMjI1MWMzYjRhY2FlNzU1NGE0YzJmNzUwOTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyMGZjOWU2N2RiMDdlZDIzOWJiM2FkMjMxMmVhYWI5YTcwZTFmNmZiYTAxMjg4YjBiYTZlNjFkN2Y4ZWU3ODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ4MjU3YmE5NDJkYzAzMjE1NDViMmI1NWJkNWVmOGM5YWM4MDAzNzlhY2RiYWFlNTQ1YjU5ZTZlNWVhMWEzNDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dac28eb098d648708f14f745b8b9f95a",
+      "statement": "docs/03_SECURITY_AND_PRIVACY.md and a calendar-feed token comment still describe the raw feed token as retained or read by the settings UI, although migration 0116 dropped the raw column.",
+      "evidence": [
+        {
+          "resource": "repo://docs/03_SECURITY_AND_PRIVACY.md#L247-L247",
+          "version": "repo-lines-v1:sha256:3eaea5528a769fa3d9842824462bd68b7300d40e668747e041f495ed71e47db3:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2VhZWE1NTI4YTc2OWZhM2Q5ODQyODI0NDYyYmQ2OGI3MzAwZDQwZTY2ODc0N2UwNDFmNDk1ZWQ3MWU0N2RiMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2VhZWE1NTI4YTc2OWZhM2Q5ODQyODI0NDYyYmQ2OGI3MzAwZDQwZTY2ODc0N2UwNDFmNDk1ZWQ3MWU0N2RiMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWZjN2E5YmU5YzU2NzRlZmE3MjFkYWQ1NDk1ZGJiOThhZDUyMzA5ZjhiMTQxNjI5NjY0Y2U1NmM2NjRlYzg2YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNmIwMWZiNTJmMmYwNDI3MWVjMjU2NjhmZDAwZjIwODU3NjE3MjY4ZjdiNTdiZjZjZmE4ZjNhYjY2YzRlNWY0YiJ9"
+        },
+        {
+          "resource": "repo://lib/calendar-feed/token.ts#L21-L26",
+          "version": "repo-lines-v1:sha256:7b690353273782ac4dbab5612a096ba652f87a9b32193861d0a85e79355d4560:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWUzNjgyMzAzMjU5YTYyMGNhMTFlZmNjMjMzMGEwOWNkMzk5M2UwNTQ2NTEwNGQ3ZmY2N2E0NDc3ODNkNmQxYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2YyYTFjMGRmYTgzOWVkMjA0YjNmNzliMDYxMzYzMDljMTFmZjA2MGE5MTVkMTQzYTI1ZDc3YTcxMjhhYmMwZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTZhMTg0YjRmYjU4NjIxNDMwNzFlNWY2OWUwYjI0OGM5YTUwYWRiNWUyN2ViNTlhMmQ3ZGNlMWVkMjMyYzNkYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmE5NjQzZGM5NGMzY2Q3YjI1NGM1YTVkODhhMDAzNjZkNGE3NTkwNmQ5NWYwMGFlYTZiYzY4NWVjMGJmNTA3NCJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0116_drop_calendar_feed_raw_token.sql#L28-L32",
+          "version": "repo-lines-v1:sha256:660df75647def9a6d83e2be30e24c3c8ff107452a5108178d3258c21f271bbf1:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTM4ZjAxZGZiZGFlNjMxNzY4NzgyOThlMWRkYWRhMjAyMmY0YWJlNjIzY2NlYzE2YTg1NWRhZWViYWNlOWNmYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTYxMTEyYzVjYjA0MmIwYzVmNjY5MjJmNDY1Y2M1ZWFkOTRiYzZmNzA4ZGM0OGU0ZWQ1Njg0OWZiNTNlNjlhMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYWJhM2NiZDliODk0YmJiZDZkZTYyZTNmNjhkMTE3YzZkODNmYTEwODRhMDM3OTBjN2JiZGU4NTAzZTkzZjBhNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_f64079b2d680471a9ab366e4e68dc21e",
+      "statement": "The invitation route-privacy test header still says the invitation route does not exist and no prefix is added, although /invitation is registered and the route exists.",
+      "evidence": [
+        {
+          "resource": "repo://lib/security/token-routes.ts#L34-L40",
+          "version": "repo-lines-v1:sha256:9611b3f2fd6537205a50d758d9eec9742715b8c8db958976bb57b0be1dc38dd7:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGI1NDU3MWIxY2E5ZjY1NDU4MzU3NTYxN2ZmMDAzZTcxMzg1YmQ2YTVhOTFhOGQzOTcyNThiMjJjZGQzMTU5NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmNkYzc2ZDEyZTUzMDRkMzA3OWVkYjVmODkwMDA3ZWEwNWYyMjZlNGQ5M2I2OTU2ODQ2MGNhZmFmODAwNzQ0YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjAxMTMxMTc2MDc2ZjE3ODZhODU3ZTM4NGRkMTliY2QwYjQ0MmE4MjcyOTE2Y2NjM2IxNTJhMzlhNGIzYTg2NCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2Q4ZTM1ZTk4MDY2ZTUwYzRmYzcwMWE4NWQwMmJmZjU0MTg5MDdiZWM1ZDc1NzEwN2RiNjgwOTIwY2Q4ZmZmOSJ9"
+        },
+        {
+          "resource": "repo://tests/security/waitlist-invitation-route-privacy.test.ts#L17-L20",
+          "version": "repo-lines-v1:sha256:4c272abf6461e5801985db0711a0b08d52bac943c11348c58a28cc07f01979cf:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmIyNmRjMWY3ZjM2NTc2M2YxZDdiMTQ1NzU5NTIyMjVjM2NmNzQyOWMxMmEyNWFmNDZmNTU3ODIyZTQyYjk2MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGJkOTIxMGY0OGVhYWNkNzdkMzcxNjk5YzJlZGVlYjA5NmU3YjI0ZDg2NzQ3NTM2OTk0ZmE5NGI1YWYxYTZjZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2JiYmY2Y2EyN2RkNmFlMWI4ZWExNGZiNTE0NGI2YzA0NDNmN2EyMWNmNzczMzJhZmIzN2YzZGYxNjAzZWNkMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTVkYzhlNDNiZWQ1OTJjODFhZWUyMmY1NTVlZTAyNjNjZjc5OWIxZWRiNTMzY2NiNTAyZDU5MGQ4NDgyOTk1OCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b6390a754f604caaa3bb7e32d3300e3b",
+      "statement": "The intake signing-secret comment says apps without INTAKE_SIGNING_SECRET fail fast at startup, but the secret is read lazily, so the failure occurs when an intake token is first minted or verified.",
+      "evidence": [
+        {
+          "resource": "repo://lib/intake/tokens.ts#L29-L43",
+          "version": "repo-lines-v1:sha256:d390df5c87dec697e2d29e87decf220d66bac5c54b17ff576d49e2c02d44f54a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFjNDNmMjE4MTlhYjhhZjFhMmYzM2U2NjkwMTczZGE0MmUyY2YyMzAyM2FlMzYzNDcwZmQyMWYwMTYxMWI3YzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzYTM1Mzc1ZWUwYjRiODRjZTM2MGMzYWE2NGQ3MWRjY2JkMDBiYzlmOTEzMWQ1ZWRkYmQwODBkNDgyZGNlYWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1N2NhNmQwYWU3NDc0ODA0YjAyMWIyZDQ3OTVmNzY5N2EyN2Q3N2IwYWRjNmE4ODNjODUwMTQ5ZjAxZmQyNTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_807d3d0b2b174c79ad2bb2daa0f91bb3",
+      "statement": "The migration ledger records migration 0116, which dropped the raw calendar-feed token column after hash-only lookup was deployed, as applied.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L2842-L2842",
+          "version": "repo-lines-v1:sha256:9061516c79f1efa13cb230de820ee3f246372170b1eefd4acbcc5dbb083cbad6:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTA2MTUxNmM3OWYxZWZhMTNjYjIzMGRlODIwZWUzZjI0NjM3MjE3MGIxZWVmZDRhY2JjYzVkYmIwODNjYmFkNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTA2MTUxNmM3OWYxZWZhMTNjYjIzMGRlODIwZWUzZjI0NjM3MjE3MGIxZWVmZDRhY2JjYzVkYmIwODNjYmFkNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTUwYjU0NDlhOWQxNWE5YmFlYjQ1MThmMjljNmNkNjEyOTkyNjNlOTlkZGM2ODgzZjZhMTA1MzhhNzhmMWU1YiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTMwMGM4MjIyYmMzNjE1NThmNjA5ZDZjZTA5MmFkYjkyYjMxYjZlZWJkZTJkNzAwZmZlODhkYzIzYmI2MTdiMSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

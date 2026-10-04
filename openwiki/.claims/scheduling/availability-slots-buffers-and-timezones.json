@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:d4b04065637826ab20abd0c7ff356aaee1fc66a5836abb69e0d1b5fcdb2bcb20",
+  "claims": [
+    {
+      "id": "claim_ee3f558d083440fe9dc2409250880a88",
+      "statement": "All stored appointment times are UTC instants and the studio's IANA timezone defines local days and hours; slots carry ISO UTC start and end with a display label.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/slots.ts#L13-L21",
+          "version": "repo-lines-v1:sha256:cebe195d3d6c0c48c3163f1e33bb035d7a1b5c568af3d7be1e5b293d17dbaee5:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTYzNjhkMjhmOWJjZDFmYjU4MjM0ODU1M2ZmNDY1MTZkNTIwNGJlMTEzMWRmNjY2YjA4MzQ3YTgwZjI4YzUwMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWMyNGFhNmRkYTMyMGQyNDIzYTBiNGNkNGQ5YjJmZTgxNGNjNDZlNDNhZjRjNTNiZTRmODM5YTM1NmYwMTI1NiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzM2M2JlZDIyZWZkM2JkYjM1MGRhNDMwNGEzMzM2ZmMxZTZkMDUwYjU4NmJmZmIwZDZjNjE2YzFmYjdkYzQ0MSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2NhZjViYWUwOGNlNzI0OWJmNmY0NWNjZjZhZTNmNzVmM2VmMDdhMWIxZTYxYzA5OGM0OGU5OWUzZTBhYjQ5NSJ9"
+        },
+        {
+          "resource": "repo://lib/booking/tz.ts#L1-L2",
+          "version": "repo-lines-v1:sha256:b065d8efe06526331ca322ea1c740c32579811edfcd8f74a08537aeaea9b661f:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWU0MWQ4ZGYzMjE3MTUyN2Q4YmRiOWVkMWMxYjEzMTczZTU5Yjc4MTg0YzUzYWIzYjk2NDFkODE2NzVmOTg3ZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTMyNDk3YmM3N2I4MDc2ODBhY2M0YWQ1ZGJlMjUwZWU2NmZiMDJiNzg2ZjA1ZWM2MTFhMTU1MTdmNDc1NGRiMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzU5NzYxZmMzNTMwNTE4NzUyOTFlODU4MDQ1M2Y3OGRmZmUxMTE1ZjkyOWZkMjg5NDM4NTFhZmZkNzdjODIzNCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_8459e4944cdd44c3b07b37c5fa672104",
+      "statement": "utcInstantFromLocal re-samples the timezone offset to resolve DST transitions, mapping an ambiguous fall-back time to its first occurrence and a non-existent spring-forward time to one hour earlier.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/tz.ts#L42-L69",
+          "version": "repo-lines-v1:sha256:8035b4d6f9305e887972790911d501a81bbaeea229345fd25bea24f9a06f4067:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlZTgwZWVhMTQxMDUyMTdjMmVhZWE4ODQ1N2QwYWI0MTMyOTMxNmEwMDc3YjllM2ZmYTMzNzc3ODI5ZjIwMmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2ZWFmZjQ4YmYzZWM0Y2U3OGQwMmI3MTkxNzRlMTNhOGY4ZmQyYTg5YWViNDY0N2IxYzc5N2IwM2M0NThlODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU3NGJmZjRlYjUxMDc5YTY5Y2ZjNWI3MGQyNDc3Y2UyN2E2ZjQ2ZTZmYzllN2JlMGRiZDAwMGU5ZDIyMzIwMTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b8b6b3f17fd248278271883df078fd26",
+      "statement": "A dated availability override wins over the weekly default, and an override marked closed closes the day even when a default exists.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/slots.ts#L223-L258",
+          "version": "repo-lines-v1:sha256:e6e2be4e3e632feb1caa6cffaea889703abab739839788e5f9d374647bdc5b0c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0ODBjYmZiN2U4ZmRhMDBkNGU3ODdlMGMxODRiYTQzY2Q4YTUyNDMxYzQ1N2IwNjJlZDIzN2RkMGFmZGQwOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZkYjUxOGI0NGFhOGU5MzljMWE3NDM0YTBmNDZiNGVkZmUyY2JmZWU1MzM5ZThlNTQwNTc2YzFjZDAwYzljNjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAxNzFhZDMzZDg3OTM2ZmUzNjQyYmFlNDRkY2ZiNjEwMzA5ZTBlYTI4YTEzODJkNTNjNzY5MDMxZmZhNjQzOTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwNjY4NmE4MGNhYWJlNzIxYjk3NDA5YjViNmJlN2RmMTQ0NTQ1NzVkNWUwYzc3NTM1ZWRkYzQwYTVmNzI5NTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6ad82dc4dfcc4768b7d11e8e4cda3f70",
+      "statement": "Slot candidates are anchored to the opening time, the protected end of each reservation, the latest start fitting before a reservation, and a coarse fallback, with a closing-edge anchor enabled only for internal practitioner surfaces via INTERNAL_SLOT_PACKING.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/slots.ts#L116-L210",
+          "version": "repo-lines-v1:sha256:6a0efd50ce34918a8f208fbdc8daefe4045882111cc0dc1c987a97743af17925:eyJzZWxlY3RlZExpbmVDb3VudCI6OTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1ZjJhYTc1MzdhZmUxZDhiZDk0NzFiOGEzMzMzMjA4NzE0Y2VhYzM3MDMyNzg5NjRmMGRlN2JlNDk5ZWIwZWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5NzQxZGJkZjc3NTVhZTZiNGJlNzVlY2U3NGU4NGJjZGU4OWZhMTA0NzFjY2EzOTRjMDQ3MmE3YWFiMDM0YmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFhNWNkMzRlNDE1NjQxMDViYmYxMTZjZWExZTY0NzBhY2MyNTdlNzE2YzI0NGI3ZGE5NGMzNWExNTkyZDNhMGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMxMTJmNjRlZjJhZmRkNzY4NzJjNTVkNDU1YjAwNWRmNDBkNDZhZDg5ZDRiN2MxZDNkM2NkMzI0Mjc3NGY0ODcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8909cf68307f4ddf9107736ebf00cb21",
+      "statement": "In slot generation an appointment protects its actual end plus the current studio buffer, while blocks, recurring breaks and blockouts protect only their raw interval.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/slots.ts#L260-L305",
+          "version": "repo-lines-v1:sha256:60637b1389973a64ab2742bc352a9842f3347b76227d0ecf731f4ed35d6b49a1:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzOGQxNzFkNDY5Mzc2MDQyMDg2ZTQ3YjhlYjM3NjRkOWVmYWFlZGZiOTBjMWUyNGY5ZWY1YzFhNzlkMTRlYjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRhZjExYTdkMGU0ZDE3MzdlNjJlZGIwM2E3YTJkMzZjNjkxN2M1NTk2ZDllZGE0OWQyODRjYjc1MjA4MzJjYzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY5ZDNhZTVhYTliYWFjNzU5NWEwZjI1MGUyNGRhOWQ0NWFlMDJjMTJhOWU4ZWM5MDE3OTY5YjYwM2ViNWNiMTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e7234f113f1342f9b8b9a0e9bc02ede1",
+      "statement": "The closing edge is tested against the service end rather than the buffered end, so a trailing buffer may spill past closing time, matching the capacity-on working-hours check in the database validator.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/slots.ts#L150-L165",
+          "version": "repo-lines-v1:sha256:57a3528bd7eda1a48f25ac34d60d368169ef846c1edb0e8eafe7e12eb2f1de17:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNmMWE5MTczZTk1MzAwNmRjNWI2ZTJjZmZmMzQwMGU5MjY5YWRlNmI1ZThkMjlmYTgwZTY1YjA3YzFjNmM1OTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAyNjg0YjIwYWQzMzY3MmQxNDRlNTE4OGZlYWFkMTBjNmM1YWI3OTRiNGM1MmIzOTBhYTY5ZGRjNGY0ZTVmMzciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU5ZjhmNjVjMDU1OTgzZWIwYzllMmU3NmQzZGU3Y2NhNzA5ZDJhZTYxY2UxNzdiN2FiYjk2ZmQwMWUwOTg1NmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzNzViNzlkYmE5YmEyZDNhZDZkMTIzNTRlZmYyNjc1ODJkMjU1OGZlM2YxOTk0NTYwYTM3YTM4MWYzZDEzNjcifQ"
+        },
+        {
+          "resource": "repo://lib/booking/slots.ts#L610-L610",
+          "version": "repo-lines-v1:sha256:52a2dfde19d70b85a098b6e0f61469a97c1527d5194af05fc4d9686a44f414f3:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNTJhMmRmZGUxOWQ3MGI4NWEwOThiNmUwZjYxNDY5YTk3YzE1MjdkNTE5NGFmMDVmYzRkOTY4NmE0NGY0MTRmMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTJhMmRmZGUxOWQ3MGI4NWEwOThiNmUwZjYxNDY5YTk3YzE1MjdkNTE5NGFmMDVmYzRkOTY4NmE0NGY0MTRmMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjNiNGRlNGM5ZjViMzI2OTgyNmE4MWUyYjM4N2E5NDNjNzFlOTA3ZDExM2Y3NmFhZjdiMDZmZGI0YjUwZTQ1OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTllYjJlZWQxMGQwYzk4NDVmYzc5ODVlMTQxN2JmOGM1Y2Y0ZTNkM2NjNDEyNzlhZTgwYmNmYmQwMTM1ZjAxMiJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L343-L351",
+          "version": "repo-lines-v1:sha256:621d83274f2b9401b22789ea7bc462cdc3cf6b441f045aaa765701f4f6b427b0:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjk4OTQ0OGI5YzY3NTliMTBlOTc3ZjkzNWYxNWFiMDRiNDFjYjI1NGYwOGExMTliZjk3MDZlZGE2OTgxZDQ1NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjQ1NDdhNTEzYTEzMDhiNjNmYzE5YzYwNGNjYzhmMTFkNzMzNWRhYjEwZDhiNDFmNGIyYjNkYjhmZmEwMjk5NiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTRkMzZiYjFkYWNkM2RjOTViOTU1YTQ5ZWM3NGViMmI5ODAwYTQzYzM1ZmEyMWY1MmYxZDYwZjI1MjYzNDI1OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTcwMGFlZjRmOTgxZWQzM2JmZjc5OTY4YzM2NDkyNDIxNGZhOWRjYzA4YzI5OTFmMTgyY2EyNTg4NWRjNmFkNSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b7ac1a0e87c744abb6b67d996f49d6ea",
+      "statement": "Public slot lists drop past slots with filterFutureSlots, while practitioner surfaces deliberately do not.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/slots.ts#L23-L52",
+          "version": "repo-lines-v1:sha256:56d18556ba05b3d6e3b9b833044af6f760c3d7ea0f01e6693f29f7101643b0ad:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVjMjM4NjUyM2JhOTViNzlmMmU0MDQ5MDc4MzFhN2ZjNzQ4ZDQzYWMyYjZhMjQ3YmI1Njg0M2UxOTgwMDA1ODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3ODBiMGU0ZDBmYWZmZDdmODg0ODU1ZjMwMjk5ZDBlZDdkNGJmYTU4NjcyOWIwYzRjNmRlNjVjNDQ3NWU5ZTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_994afd5f11be4ef5b815331c902e7be9",
+      "statement": "Migration 0152 makes actual treatment overlap a hard GiST exclusion on confirmed appointments, studio-wide when capacity is disabled and per practitioner when enabled.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L1-L24",
+          "version": "repo-lines-v1:sha256:2299c5f6ee27bcc5c7b7cc558bb5adc8ea6a1fe68c4b039e26a74cd132028604:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhODFhOWIyNjI0ZWFkYzhiN2YwYjYwNTRhYjRlOGZhZTJiZjk0ZDlmZTY4ZTdhYWRhYmJkNzk4OTcxYWI0MGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1MjdlYjY4ZWFjYjI1M2U3OGUzMDlkYjVkYTRkMzA0MjY3NGFhNzNlNjFiZWQzNTQwOWNkN2ZiZTRkNDAzODgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhMTI1YWI3NGY3NjBmYmQ3N2ZjNWRmNGY3YzhlMTRlMmQ2ZDE3NWM4NzA5ZTQxODBmNGVkYjVhMTdhOTQ0ZTcifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L76-L98",
+          "version": "repo-lines-v1:sha256:e93ae2c04528008ae6f792e128e1d4cb9ee2ecf172f9d297bc1f643a01fdc79c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE0NTY4MGQxNDM2NWI2MWIwOGRlODlhNzIxMWZkNThlOThhNjVhYWM1MzAxMGFmYjQyNDUyNzhmNmE1YTIyYWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxZDM3NTA3OThhYjc2MmVkYjkxN2Y1YjBlMWI4ZmEyYzIzMGZkMGU5NjIyYjk3YzVjOTYxZDUyZTZmNTdiMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRhODI3ZjFmNWNjYzA5NDllN2IxZGFlMWU1MGI3YTE4NDJkNDg3MmJkMGE5MDliNTdjNzQ2NDVhZjIxODM0ZjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI0NzQ4M2M5MzA4Y2ZhMDZhNjVjYTQ3ZjZjYzE2OWFiMmU5ZmFjYTg1ZjU0NDBiMzRjYWQxOTQ0MzE3NTIwZjAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_117701f5341c445f90bf4fa53975b45f",
+      "statement": "The appointment-to-shadow-reservation trigger stores each confirmed or completed appointment's actual interval in studio_calendar_reservations keyed to the studio or practitioner resource.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L100-L156",
+          "version": "repo-lines-v1:sha256:8cd7998616ce7a26c04b2f7ff1acf84432342f19d9a5259f414e88d5822e2303:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2ZTcwYTA3YzQyYjI2NGExNTRlNzk5MTI0NDY5NjlkOWU5ZjY0NzQwMmQ4M2ZiMTVmYmM3YmExY2Q3MDIwYzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlkNDU1NGM3NjdkMTcwNzU0ZWRiZTIxOWQzNmQ2MTBhNzdjYWZjZTU4YzZjYTQ2YzQzMTc2NjNkMDY4M2I0ZWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5MTM2OWI4MjllNWI0MmNkMWIwYWIxMmE3MjZlNjU3N2M3OWQ5YzkzY2Y5NjIwZjBjOThiZTE3ZDZiODc0YjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a1117d21788a421dbb76f61100149cd8",
+      "statement": "The soft buffer check flags a candidate whose buffer-expanded window overlaps another confirmed or completed appointment on the same resource without actual overlap, and a trigger raises HB001 for every writer unless the row is booked_outside_availability, which only owner-gated internal commands set.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L163-L247",
+          "version": "repo-lines-v1:sha256:6fb7bad27debeba8a23af2f33d6ab34d34ac7f4867667d11f5d4d9ac402d5263:eyJzZWxlY3RlZExpbmVDb3VudCI6ODUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3YjcxNTBkOTc1Y2QzOTUxYzhjMzkzNDU4YTRiYjliMDI4YTk4NDUxNjZjZmI0YTkyMmQyYjE5ZTRkMDk1MGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhY2Y3N2ZjYjU5YWJjN2Q3YTMyNWMzNjBmYjliNmE0MWNkODg4ODUyMWMzOGQ3ZDdkZDRkYjU4NzM5Njg4MDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0ca1a3f3482e4f95914b28085a45fce7",
+      "statement": "With practitioner capacity enabled, validate_appointment_availability checks full-day blockouts and the working-hours window with practitioner-specific windows winning over studio-wide ones, and the owner outside-availability override bypasses the working-hours window and the soft buffer check but never a full-day blockout.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L305-L366",
+          "version": "repo-lines-v1:sha256:0529f45e673ceec9be6f611b25b453504a185c1d17442d4bd4b59fd58dc6e9f7:eyJzZWxlY3RlZExpbmVDb3VudCI6NjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4N2ExNTRjNDJkNmQ5MGJhNzZjYjkyNWQwODRlYmNjNWQzMzAwZWM2OWQ4MGNlNDFjYTRiNzY0NWRjY2Q3NWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhYjU3ZjJjZTgxYWM4ZTFjZTgwOWQxM2I2MGZkYjUxY2VjMGRiMTg3ZDZlOTU4YmMwMGFhZjhmNWE2MDZhZjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiNDM2MjZhY2IwYTg1ZDI2M2I3NjEyM2QxZDIwYjE3Njk2YjcxYzdiMWU2NGMyZWY0MTE2NDVhMmJkNjhjMGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI2MmFlZGUzN2EyNWU0YjExYTMyMzgxOWFiNGRkOTNjYmM2NWNlODc2ZWUzZTVmNWQyZDBlYmEwNWQ3NDFlYmEifQ"
+        },
+        {
+          "resource": "repo://tests/db/duration-and-availability-validator.db.test.ts#L78-L115",
+          "version": "repo-lines-v1:sha256:56e7e9b11d6a7697df8116dde128dd019ea56c82b74c82a82aea741f54c4562b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkZjczYzNhMGRkNjYzYjZjMzIyMjhmNWJkZTBiNjQ5ODU4OTg4YmVlM2MxN2ZiZjdhZmVkYTc4ZjRkM2U5MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBmYzQwYTU4MWU3ZGFhNzUyN2RiNmNkNWI5Y2FiMGQyMDU2N2JlN2NmZGUzYjkxNWYxMjkwN2U0YjJjOTQ4N2EiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVhOGJlOWMwODJmM2EwY2E4YTNiNmRhMWE5ZmU3ZjMzMjQ4NmZlZjBlMWExNTVkOGNhOGM4ZmMxMzQzOWM5ZTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0MzQ3YjY1MWJkODYwNWU2YTY2MzIzYThmNGIxNDRhZjU1ZTljZWIxOTYzN2E2MzhlODE3NTc1Mjk4NzkxOGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_cefa3a5285914e779368c328e32b323c",
+      "statement": "snapshot_appointment_buffer (0029) stamps buffer_minutes_snapshot and blocked_ends_at on every appointment insert or time change and blocks tampering with them on other updates.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0029_double_booking_constraint.sql#L50-L110",
+          "version": "repo-lines-v1:sha256:f6493bd9ec2e39c049d7f5155040d9dc16fdf0f4f7dd0b115a1138504aca8e40:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhM2I3MTg5MGMwZWVhZjIxMDYwZjEwYzU1MTk2MzJiZThkZjZiNDJhMTk2NjU5NDkwOTE1MmJjOGUxNmY2YmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4ODYwZmE5NTcwMWNhMjkwZjlkNWRmZjk1MmRkNzE3MGU2NDk3ZTk4NjllNjNhZTY3YjZlNjY3NGY0NjczZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkwMDM1ZDAzY2FkZTQ1ZWY0MTY0YjQ4YTc1NGEzMzYwODY4ZmQ3YjQzYTdlMTI1NDJlMWE0NmI3MmI4MzQ2ODMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMwOWFlMDc4MTFjNTBlNmUzYjI3NzdmZGE3YWI0M2M1NWI0MjBiNTk5NWU5ZDYwOGI4OTVmZmM1YmFjYTQ5ZTQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f3155bf2323d4f94a1497aca285988c8",
+      "statement": "The public booking horizon applies only to public booking and reschedule, ranges from 1 to 12 months per studio, treats a month as 31 days, and its maximum drives recurring-break materialization and the next-available scan cap.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/horizon.ts#L1-L45",
+          "version": "repo-lines-v1:sha256:05b611049c83db733fe943508642066ebaaf081a3332f23d3e4909f7deb3a85b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1YTNlNTU0Y2E0NjMzMDgwM2YwYWQ2NThiZDliM2MwOTMxOTU3YTllNGYwMzBhM2U3NzVjY2I1YTI3OTA2ZjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2NmY1MzJlZDJiZGE3YjliZDc4Zjg2YjY3ZmU0MjIzYjRkYjY0YzcyNTg3NDZmYzcxYjMwZTk5ZDUxOWY2YzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1c0354c6dee84e48821df1eb5797400c",
+      "statement": "A DB parity suite runs the SQL public slot-candidate function and the TypeScript slot loader against the same seeded studio and requires identical instant sets, including DST cases.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/public-booking-slot-parity.db.test.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:4840c46f80c64d53abc4a7bdd9e2d0355700549267b0aae8120f9c3a172faf58:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3MzdhNWRhMDYyOGM5NmRjNzUxZWJkNDUwZTlmNTMyZjE2ZTk5ZmVlNTRhNzY5NThmZDc2YTMzNDY1YjAwYWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE3NjYyYzE4Njk3YWE5ZGVmNmJlNjk4M2NiYTVhODIzNjczZGQyZTA2Y2M5YzVmNDFiYjI0OTIzZTA2NTYyMTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI3MzZmM2Y3OGI1Mzc1OTQwODI4ZGZhOTUxNTk1MDQwY2Q2MTM0MjM2MTUwZTliNzg3ZjQxZGQ3MmE3YWFjM2UifQ"
+        },
+        {
+          "resource": "repo://tests/db/public-booking-slot-parity.db.test.ts#L116-L215",
+          "version": "repo-lines-v1:sha256:06cf779da69fcfe34354cb765c42b785d7da3df8ad9d43f8e6566f7e2e029114:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2NGJhMWJjNzIzYjQ0YWUwODcxYTJlZTBlZGRlM2ExZTA1ZGZmN2NiZmZjMDBmMjIzMzI1MDExMmVhNzQ1ZDY3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwY2RhYzhmMzg0NWQ5NjJiOGFiYzYxNTk4YzdhNjBkNWNiYjAwNTY0NjdhMDY3OWQ0ZmUyMjJlMDVlMjIzYjQ2IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhY2NmNjg0NWFmZTQ4NzBiMmM2NDNkMjcwZTBlZGVlMjNlY2JjNDZlYjgxMTJkMjNjZTc2MDI1OGU4ZGU0OTM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3NzcwNjdlZjBkMmMyNDkzZDU2NTdmOGQ3YjJmOWJiYzcyZjA1NDNhNjdlNzUyOGE0MzUwNzliMDI5OWU3YjlkIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_780143377404437ba4dbea247229a8b1",
+      "statement": "On a capacity-enabled studio, an availability parity suite proves the internal booking command accepts the intervals the slot reader offers and rejects those it hides across overrides, closed days, blockouts, blocks and buffers.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/availability-parity.db.test.ts#L28-L32",
+          "version": "repo-lines-v1:sha256:6946ffb32896c02e2067cfc48b4b8522c21da4312d7bbeb3b7ebd01ba359f0d2:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYmFkODQ4NjI5ZjJmYzFmMzg5ZTY2MWQ3MTMxZDkxYzA0MjBhZGEyYTc4NzUzYjk4ZjBhNjg3M2E2ZWFmNTQ4NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWEyMmY1MGUzYzg1ODc5ZTczYjBiYjJlOTZlNmIwNjVmZDk5OGYyMmY1NWVhOTNjMzNlYWM3OTcwZjk0NDgyMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGYxODM4MmY2YmMwNzllYjMxNjM1Y2MxZWU1NWJlZjY4M2JhNGY3NWYzNjM0MWFjMjJhMGNmOGIzYzA5YWU0OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2FhMjM0MGYzYjViNTdhYjhhY2M4NDljNTVjY2QwZDhiMzkwZDI0ZDBjNDRhODY5NTFkZjAwZjlhZjZmYTUyYiJ9"
+        },
+        {
+          "resource": "repo://tests/db/availability-parity.db.test.ts#L68-L120",
+          "version": "repo-lines-v1:sha256:d12b7c11076c61391389a8661b3b68e27bfadb8001dfeb60f2f634dd56c08507:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQyMmZiODAyNWFkMTg1NjMxMjA4YmRhYjA1MGI5NGQ4NGE4Y2NiYjRkNmIwMzY1MTFkMmRkNTgwYTQxMTZhM2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0ZTQyMDhjZDZmZmI4YzRhMzU0N2IyZjU0YWRhMTk5NzhjM2YzNjVlNzhmOTUwMmVmNTE0NWNkZDJhYTg1NDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY5YjczYTU1MGI2OGVlMDViMzM4Y2UyMmRhOTdjOGE2OTRkODA5N2Q2YjNlNmY1OTQwZGY2MWI1ODY3MzMyY2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVkMmE2ODliNGNkODgzM2RjNjU4YjA0OTkyYTY4M2E0YWE0OGZkMzJjNDI2YzdkMzdlZTY4ZWFmNTE0NDAxY2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_be77124ca23a4a5b9b55392a3e768e3f",
+      "statement": "Both the database soft-buffer check and the slot generator use the studio's current buffer_minutes for existing appointments rather than each appointment's stored buffer_minutes_snapshot.",
+      "evidence": [
+        {
+          "resource": "repo://lib/booking/slots.ts#L260-L305",
+          "version": "repo-lines-v1:sha256:60637b1389973a64ab2742bc352a9842f3347b76227d0ecf731f4ed35d6b49a1:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzOGQxNzFkNDY5Mzc2MDQyMDg2ZTQ3YjhlYjM3NjRkOWVmYWFlZGZiOTBjMWUyNGY5ZWY1YzFhNzlkMTRlYjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRhZjExYTdkMGU0ZDE3MzdlNjJlZGIwM2E3YTJkMzZjNjkxN2M1NTk2ZDllZGE0OWQyODRjYjc1MjA4MzJjYzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY5ZDNhZTVhYTliYWFjNzU5NWEwZjI1MGUyNGRhOWQ0NWFlMDJjMTJhOWU4ZWM5MDE3OTY5YjYwM2ViNWNiMTEifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L163-L190",
+          "version": "repo-lines-v1:sha256:573d9d4a1958d8fc2ce5aed164b0d2390272a08aaa28583d67011009ed534614:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRlM2MzOGNhMGJjNTAzYzlkYzg5MGJhY2Y4NjlmMjRiMTFhM2Y0YTJlODE4OTVkYzU5YWE2MTI2ZmY1M2QzOTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3YjcxNTBkOTc1Y2QzOTUxYzhjMzkzNDU4YTRiYjliMDI4YTk4NDUxNjZjZmI0YTkyMmQyYjE5ZTRkMDk1MGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkNDNmNWRiNjU2ZGYzN2NjNGI5ZDI1N2Q5ODNmZWRhNjgwNDQ4ZTNlMTAwYWJiZmU5ZGExZjcwNjI4N2ZmNzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_cd86983c7038403eafad33bb7d4bfa7b",
+      "statement": "With practitioner capacity disabled, validate_appointment_availability skips membership, eligibility, blockout and working-hours checks and runs only the soft buffer check, so the database accepts an internal booking outside any window, while public booking uses a separate validator that recomputes the offered candidate set.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0152_actual_overlap_hard_buffer_soft.sql#L280-L290",
+          "version": "repo-lines-v1:sha256:cebdc7704c02e2cdb6f38c26894e56e9e1caae135746c40e281f544e3d8804e9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxOGQ5NGM1ZDQ5N2IxYWM3MjE2NTg3Zjk4MDI3ZjAwYTliN2EyNzc3NDAyYWZlOGRmMWM5ODU5MWM2YzRmNzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxNDI3MDhiNzUyYTJjOWQ3OTk3Y2QyY2M3MGMxMzQ4ZGZkYzAxMTBkMDRhYTdjYTg1NjYwYjUxN2UzYzU1YzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU3NTNiMDQ1NmJlODM4N2ZmYjBkYThjOTkwMWUzODZiZTFmMzc2N2NiZjNkYzE5YmQxZGNmNmM4ZDU0MDVhNzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg1MzUzOTMxNzlmODk5MDk4NDU4MTYxNzZjOWNkNWVjNGQ5MjU2M2U4ZmJiMjVmM2U2OTc3OWY5YTg4ZWZmZDMifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0170_public_appointment_command.sql#L44-L59",
+          "version": "repo-lines-v1:sha256:e4305c908d5982cbfeadfdaeac275aaf4ed4b6a254e6bead6edca005be8aa5da:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4ZWZmOGE1NmZjNjIzMWZiNjNkZjY4NDYxOWNmOTMwZTA3M2YxMzVmMDg1NTg1OGM5YjhjYjM4ZWYyMWIzNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4MjZiMDQ2ODgyMDVkMTE1YjFjZWM3Mzk1YWZjYzUyZWE0NzQzYTNmZjg3MjUwMTlhY2ZiZjRiMjlhMmVhODkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFiZDk4OTQ2ZWMzMzE2Y2QyZjlkZWZmNjY4YmJhOWU2N2UyZTVjNzZjOGE2NmE3ZTU3ZWQ4MzVjNWNiODhiOTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBlODU4NWE0NmQwYjljMDZhODMxMTAwNjczNTcxYjg0NTkzNDI1ZDA0ZDQ3YWI3MjlmMzI0M2RkZGNkOTc5NjkifQ"
+        },
+        {
+          "resource": "repo://tests/db/duration-and-availability-validator.db.test.ts#L118-L125",
+          "version": "repo-lines-v1:sha256:b1152c505cb175504ed861f612b4cc8aadb2ed9b052bd6e1d4f2a761fded261e:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNThjNWI4NzY0OWVjYTU0Yzc5YmI3YjUyZmJjMWI3NTQ5YWM0OWQyZTQzMWE4MTMwOTI0MTkyMGVkYTY3YjhiMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGVkMDRiM2RhYWZkYzcxYjU2MzQzODM1YjliMjQ2M2ZlOTQzNTVlODlmNmRlN2E0OTRkZTM3ZjNhMmZjMDNhZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2UyOGEyMDRiOGM4Njk1YWUzYTAyNDRkOGY3ZmEzYzNkN2Y2MWRlMDZjNjg0NjY3MjM2YWZmOTI4YzBmZGY0NiJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

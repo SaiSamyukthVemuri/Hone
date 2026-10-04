@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:82b4821ba6eec43d92413eb2ffc4aeaa7bd4aa0409429cdf8e21eb4e72b9edda",
+  "claims": [
+    {
+      "id": "claim_3d3afaaa6bb944cfadb568bf0a778a24",
+      "statement": "Hone learns only that Resend accepted a message: there is no delivery webhook, bounce or complaint tracking, or suppression list, and a source guard requires the deployment doc to say so.",
+      "evidence": [
+        {
+          "resource": "repo://docs/10_DEPLOYMENT_AND_ENV.md#L75-L77",
+          "version": "repo-lines-v1:sha256:a58c91e4f9c401c59a85dfaf05cde6b950f78ac2768dfa6cec5555e7038309cd:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmFmM2ZmMzFlZGQ4MTIzMWQ2ZWVkZDQxMmVkNzIyNmFjMmI0YmZlMmYyODE0MGNmZDU0YTAzYzkxZmI0YjYyMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTdkZGY0YjU5MzkzMWYxNWM1Yjk4NTY4NmI5ZWI2MjlmYzc4ZGQ2YTRmYTBhYWM5YzcyMDEwZTY2NGZhOWM1NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTRjNWIwZjU5ZDUxY2M5ZjNiMzkzODE2ZjRmNTRkNDFjNTYyZTA1MzYzZDIwMzgxZDQ3OWI4ZThhNTg2OTFjOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNGY3NGUyN2RjMTViNWU3YjI5MTBmMzdiNTg3NDRmNzBmOTAyYmUxMWU2NDNmMWYzYzhkMWY2NThlMmY1YTlkYSJ9"
+        },
+        {
+          "resource": "repo://tests/source-guards/studio-email-identity-guards.test.ts#L107-L111",
+          "version": "repo-lines-v1:sha256:ae74513f08b8a706e3b54b22b9f14e6a89e0005378fc62b14fdc9ccc1539aeb6:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjE2NDhkMjYyMTZiZGE1YzkyZDgyNTUzOWNjYzA0NjVlOGM0ZDE5MjVlYjFkM2IwMDcyNjIxMDMwNjcyZTkyZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjQ1NmQ3MzVjYmU4NmE5NzhmM2U2MDU5N2U0MWVmYzAwZGExMGIyYmE2NDRhMTMxMDAwNzZkNzhjMTQwNzJhMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjEsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjZmNWI0MGIxNTg0NTdkMTc4NjRmMjE3OTA3ODZkZDVhMmVjZGI2NGI2NmE2NTFmNzg4ZDRlMjVjZDMzMDNkMiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_3659ebb129e84e8399513490d088344e",
+      "statement": "lib/email/client.ts asserts at module load that the fake transport is not requested in a deployed runtime, constructs a Resend client only when RESEND_API_KEY is set, and exposes getResendTransport, which returns the fake only when explicitly enabled.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/client.ts#L9-L35",
+          "version": "repo-lines-v1:sha256:5c5bf3165379c6569d75c3119032ea2b2416c6e12a60df028543f5a9c0b1bd83:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVmYjEzMzU3ZTczZGViZTYzM2RhZGM3MmEzODYwMzUwODczMmIwZTQzMjk0ZmUxMjFhOGY3ZjIwYzdiYmFmNmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjMDczMTIxNWQyNmZjY2U2NmU0MzZhMjM4OWZjMzI2YTI3MmVjYzZkZTJhZDZkZWYzNzI0MTY5NWJlYmNjZTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYxOWIzZjgzNTEwMGRkZjc2NGI1YWFmNmU2NWM5NWMyZTcyMWZlNzVkMTVjM2Y2YTg1YjQyZWU1ZTRjYjM0MGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e62deb13ee0c40bebacf369b5658ba30",
+      "statement": "sendEmailSafely refuses when Resend is unconfigured or the recipient lacks '@', builds From from server-resolved studio identity or FROM_ADDRESS, attaches Reply-To only when one was resolved, and races the send against a 15-second timer that does not cancel the in-flight provider request.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/send-appointment.ts#L82-L195",
+          "version": "repo-lines-v1:sha256:08b0b97134173351317cb3845d68768d941fdd2a819679a1df9ddf3584a38ea1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1MmFlOTFjZjVlNjBiNzUyODllOWNlODIwOTBiM2EwMjVmOWU4ZDZkMDIzMDExZjBmMGFlOWI3ODAzZjNjYTRmIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlZjE3MDcwNjkzNDFhZjVjYmEyYzRjMmM5YmQ2OTY0YzYxYTllZDZhNzY1MGY2NjhlMTU0MDVkNGJlY2JjZGI1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0ZjdkODkwOGE0MTMxY2Q5MDhmNjUzZTMzNDQ0ZjIzMzk0YTdkZTEyYmIwNjBlODkwZTM1NDI4NzVlNWQ5NDZjIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_a8139f95f9234d72adc8e9997f9d3ab3",
+      "statement": "sendEmailSafely classifies 429 and 5xx provider errors as retryable, other 4xx statuses and known validation error names as terminal, and unfamiliar error shapes as retryable.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/send-appointment.ts#L45-L80",
+          "version": "repo-lines-v1:sha256:f06d0f2d65b10b3339433912cf9bcedc5173edd3add87f3997b8be1aa68c9232:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1MTY0ZGQ3NTRhZWZjM2FiNzliZjdiNDY3OWVmNjE5NjA0YTQ5ZWZlYjRiNWFkNTkwZTZlY2Y3MjFhNGZhNGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQwNWViMzViNjU5YzI3M2I1ZjA3MzQwZTE0MDk0N2U3YTNjNTQ2MjRjMjVlZjczN2M0ZTMxNGVlMGNhMWI2MGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgyZDRmMjBiMTIzYzA1MGZmNjgwN2Y3MThjYThkYTAzMjg1YWVjNThkZTYyNWQ2ZDQ5YTIxNWUyM2JkNzgyZjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5dc105038c8b432cb43ac3fd0b60a4b3",
+      "statement": "sendWaitlistEmailIdempotent sends a provider Idempotency-Key derived from a namespace, the server-resolved studio id, an optional durable event scope and a SHA-256 of the exact payload, or an event-only key when the payload carries a secret.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/new-client-waitlist-send.ts#L175-L228",
+          "version": "repo-lines-v1:sha256:b4bfda88c0083b8717466c259481e77a4b134094274e87725c4192baa79b931b:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkODc2ZjhkY2NkOGQxYWEwM2ZlYzI2MzZkYzQ0NDk2YjhiZjUzOWUyZGY2YWE1ZDdlMzc0MWMyOGE2ZmJiNDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkMDNhODJjZWUxN2QwYjU4YTkyOTZjYTE1YjIwMDdiNDU5NjFjY2I1OTVlOTUyN2ZmYjk1YzBhMmM3ZGM3ZjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFlMWQ3MzE3ODZlZjFiMDNjNjNjY2E2YzE1NjkxN2U5ZTA5OWUyNTE3Zjk5NDhmNDBlNjM1ZWNhZjFjYTU5ZWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://lib/email/new-client-waitlist-send.ts#L398-L422",
+          "version": "repo-lines-v1:sha256:c5169eb3254bee6bff7c02e6014273d0e00d2fbdbe7fc659063cf386a3e83585:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmN2ZlODdlYWU1ZWNlYTkwNjIxODQ5ODgwNGMzZTEyNGY1YjdmZmNjMDlhYmFkM2RiMGNjMDNmYjQ5MmQxYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZlZjY5MDA3YTdlNzVjY2RiMmMxOWVmYTlkOTVjNDNiZjc4N2YzM2EyYjljODI2NWM0YTVjZTY0MmZlNmRiZWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjllNzA4ODJiZmVlMzkwZWYxODdjYWYwMzQ2MTU2NjJmZWQwMWI3NjEwNGU4ZjMyY2QwZGVlMTRhMzQ4MDkzMzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM2ZDI0NDE3ZWQ0N2FjNjYxMjVhMzg4NjY0ZDJmMWJiNmI5MDFkYWRhYTFiNGFmYmEzY2VmYjBiMjk0MTI4MmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0a91575a6519421ba8d3a1268714a08a",
+      "statement": "The idempotent waitlist transport refuses locally with not_configured, invalid_recipient, missing_tenant_scope or missing_event_scope before any provider request, and these local refusal codes are a closed union kept distinct from provider refusals.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/new-client-waitlist-send.ts#L376-L396",
+          "version": "repo-lines-v1:sha256:eaf5a4aaa932f5821c794df16f78cfa5fbfd90770c2d877777df70f9b1c67172:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlY2MyYjIwZmY4YmEzMGRlNjE0OGY3ZWM2NmZhYjdmMzlkYmUzMjQzNDc2OGE0YzE5YTM2NGRhYzM1MzQ1ZDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjM2E1Yjc5OWI3YmJmYmIwZGVjNmJiMzg0MmYzMmRlMmU2NDU0NjUxOGVkMmFlOGVhNTZiMTNjNjIzODA0ODEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU4M2NhODQzMzc5NDllMWY3OGFkYTY1MDU2OTllYjcxM2YyMjE4ZDhlNWUzZDIxMWRlMWY2MDQ0ODRkYjc3YzkifQ"
+        },
+        {
+          "resource": "repo://lib/email/send-refusals.ts#L1-L60",
+          "version": "repo-lines-v1:sha256:a7e9c978a206c626d61eadc09d9c8bf2ee2b420a434b638efd2858fc4d1a6a85:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4NDhjYWQxNmI3ZDE1ZWI4YzJlY2U4ZmFjMjZhMGVlMDU1NzFmZWQ2M2VmNWM0YmM2ZWU3OTM1NmI5YzE3ZmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE5YWIxMTkyMzc3YTU0NTFhMzQ2MjUxYzdlNDJhMzgzYTZhMmI4ZjRiMTE1ZDA3MWYwMzE5NTU1NjJjZWZkNzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bbca0676aea74d9ea0bad23ef506c15f",
+      "statement": "In the idempotent transport a timeout, network exception, missing message id or concurrent_idempotent_requests error yields an ambiguous outcome, while any other provider error, including invalid_idempotent_request, yields rejected.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/new-client-waitlist-send.ts#L265-L311",
+          "version": "repo-lines-v1:sha256:8406f4d3350cf9334146d7686b5a3c847f67e3132cdb12a4cd00714c7dee43b9:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiMmZlZGI3NmE4MTZhYzBkMGQ5NWMwMTFhNjQzNTQzNWNjNTYzYjFhYmY1NzVkMjgwYjBhYzI2YjRhODdlNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM0YTc2MDI3ZDY4ZTM2ZDRiYTczYmE0ZTJkNzRjNTczMjJjMTQwMWZjZTg0NzNhOWJjMWUxZWEyNmI3ZmQ2NjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNhNDk0YThjNmY5OGNmMDRhMzU4ZjQwN2MwNzg5MDM2OTU2NzhmZmI1ZWNiNDAzNGU5MzlhYzM3ZDJkZGIwZjQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7bb87c622e20401491caf00826640470",
+      "statement": "On an ambiguous first attempt the idempotent transport retries exactly once with the same key and payload, and only an acceptance on the retry resolves the outcome; otherwise it remains ambiguous with the first attempt's reason.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/new-client-waitlist-send.ts#L424-L452",
+          "version": "repo-lines-v1:sha256:41aac9c8831357fe0320e040872b21e04c4c12b659299732899cfa3ca903f42a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5ZjFkODE4N2M0M2U4NTY3MTI5MmQ0YzhiZWI4ZTIzYzZiMjU0NTMxNjQxZjE5MDA1NDRhNmE0NmMzNGE1NGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1MTBlMjYyZDc5MjNmYTAwOTk5M2ZkNGRkMjE0N2ZkMzQzNTAxN2NkMGRmYTFlNTBhN2JiNGJkYzIxNGUxYjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c9a08edb6338484a8bb1aa7c54d99218",
+      "statement": "Waitlist invitation emails are sent only to the address stored on the waitlist entry, are never sent for an expired invitation, and use the invitation id as the idempotency event scope.",
+      "evidence": [
+        {
+          "resource": "repo://lib/waitlist/delivery/send.ts#L161-L200",
+          "version": "repo-lines-v1:sha256:d8eac63f50a6d033308d8d8f7f7c1192ae37831f282b0fc4c30eb677679dd8eb:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAwMjc4MzIwNzdhNWM0NDJjODY1Y2EwMTc3ZGNjOGU4NzZiZmY1NTJmMTk3YzViMjMxZDI5NWNjMGZlY2VjN2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkOWUxMjU0NjQyNTU3NmQzZGVhZThjOWI5ZGJmMTI4ZDVkNmRkYWY1ZDdmZTg1NzkzNDkyN2RlZmZhM2I5ZGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMzZWFmMzU4YjY0ZjYzZGIzNjE5MmZjOWEwMjA3Mjc5OTBlZDYxMDM1NGNhODNiMjJiMDQyNDIwZGYyM2NiOTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwODc2YWI1MjdmNjIzNzE3M2FlMmU4NGFjZGM5ZmZmYWQxOTFiOGRhZmFlOTQ5MDJkMjFmNGJjMmZjYWY5YjUifQ"
+        },
+        {
+          "resource": "repo://lib/waitlist/delivery/send.ts#L21-L60",
+          "version": "repo-lines-v1:sha256:3f7363488c02fa848b9e954b48ac5cf34705d5ff23b888c632cf5dd6974a6214:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5YzIyY2EyNjhkNjNlMDJkOGQ2MWEwZmI2MjY2MzVjOGNkNzA5NWVkZDdmNzEyMTE0MmUzYjM0YzJmYjA5MGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIzY2VhYTk4ODg1MzIwOWE2MmM2Nzg4ZjY3YzNmM2MwNTczNjc3YjQyYzg3NTgzNjdhN2M4MmI4ZWFlMDYyMTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNjYjM4NjZiNTc0ZDk3YjMyY2RiYTg3M2NjM2RmY2U5YzQ0ZjMyM2YwMzZjNzAwNmRjOTYyMDEzYTMzYzMwZWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2c334600c5a94f85bdf16b975466a867",
+      "statement": "The studio welcome email uses an attempt-id single-flight claim so concurrent callers produce one send, records results with a compare-and-set on the attempt id, and its claim and result commands are not executable by anon or authenticated.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/send-welcome.ts#L10-L84",
+          "version": "repo-lines-v1:sha256:e955e160af6ff34fcb8e65c259a572a8250f6bc391a67a0176a0a4f016979017:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzNmVjZWFkZmFlMjViMTgxMDAzOWY0ZDY2ODU1NjkxNGM3MjBlZDM4OGUyODRkZmViZjg1YjM5NTFhNDhhYWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjliZjBlY2I5MjgzODM3NDc2OTVmMjhkMzk1MTVlN2EyYWE3MTBmNWI3NWQyNWRiMmEzMDI4NmY1NTUzNjBiNTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/db/welcome-email-claim.db.test.ts#L47-L200",
+          "version": "repo-lines-v1:sha256:615b35fbe25c8dac6dcb8136b63d00d848a4bb5c8d1f0288ab9b566ed2d949bf:eyJzZWxlY3RlZExpbmVDb3VudCI6MTU0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzYzE3MGNiYjY0OTVkNDAwNTI2MzgxYjhlZWQ3ZjgzNDZiMzgwNzU2ZDMzNjg0ZDg0MWNmMjNlOTZiYWMwMmQ4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1MWRmZmMyNjA5ZDZkYzEwNTA2ZjcwYmVjZmNjYzdjZWJmOTY1ZDY4MjUwYzk1ZDQ5MzEyYWNkM2Y3MmZkNjUzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3MmY3OGZlMWJlY2JjNTQ3NTFmY2ZmNzQ4YzJkYjdmN2QwODFkYzYxNzJmNDM3Yjk3NGIzZmU2NTIzMTA5ZmExIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNzBiNzUxMTZjZmJmMzU3NTZlZGQ5MDIxNzZjMmQwN2U0NzFlYjNjZTIzNjQ1NmVmZmNlZTBiOWUzNDgxNTQxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_ac67cc5b13454bcb93820a7804f8b18b",
+      "statement": "Studio-branded email identity uses one verified envelope address for every studio with the studio name as display text only, sanitised by removing control characters and RFC 5322 specials and capped at 60 characters.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/studio-identity.ts#L28-L76",
+          "version": "repo-lines-v1:sha256:01da52d7829e2eaf399c11f72124b6cf2db125459990a55bb3a0d8d56128824c:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlYTgxM2M1YjA2ZWJjNDA1ODczMTQzYTI5ZGY3NWY2Y2I3YTc4MjcyOGNmMTYwZjY5Y2YxZmU1ZDAyODc1ODciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc2NmRmNWVkMzlkMThiNzI3OTZkODlhNzViMmFkOTRiNThiNDg4NDI4OWY4NDExOWE3MjgyODgxNjEzYTYyODIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA5NzI2MTBhNDhhMTM5MTdlYjNmYjVmNzc4YzhhNzA5MjM4MDVkZTU2ODU0M2Q3Nzg4YmI0M2YwYWNhYzIwMGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e7a35615a894444ba2304a14ca02bc6b",
+      "statement": "Reply-To resolves to the studio's postcare contact address if valid, else the studio owner email if valid, else is omitted, and is never the client's own address.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/studio-identity.ts#L99-L170",
+          "version": "repo-lines-v1:sha256:64d71f328f89e60d83465d70c9ed6f9d925a7854d3a11a5392f49472bcbee204:eyJzZWxlY3RlZExpbmVDb3VudCI6NzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ5MzVhMDQwY2Q5MWUxNTMyZDY5NWQyMTNmYTY5OWU4NDJkODc0NmIxZGNmZWY1NGUyOTIzYmRmODEyZGMyNmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4MWI3Y2I3YTIwNjA5NjkwMDY0NDBkMzQ3YjUxYmE5MmVhNTE5Y2EyYTE2ZjNhN2U4OGE0ZjMxOTJlZTJjY2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_71c1cf51f47143ad8dd64d70e22035ee",
+      "statement": "Source guards forbid hand-assembled From headers in the email send modules and require every sendEmailSafely caller to be studio-branded or explicitly declared Hone-facing, with identity resolved server-side.",
+      "evidence": [
+        {
+          "resource": "repo://tests/source-guards/client-facing-email-identity.test.ts#L186-L300",
+          "version": "repo-lines-v1:sha256:bed32c2a591987d11fc6e8ebd8068d614f5f152ed17b0aa7fca66d8837b7b7b5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhZjU1MTk0YzNlN2ZlYmQyZTdlYTE1MWU0NDgzNjM3MmY1ZmZiYTM2NjY4ZTA4ODdkNjk0MDFiOTgwNTc2YWQ0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4NjA1NDU2NTk4MmJhNWFkZTg3YWIyNmNkOWE4ZTNkYmYxZTM0M2Y2MWJiYmZiMDFmMmI5N2IxOGEwYTk3NDRlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0YmJkM2I5NGQwZmJmZTM5OWYzMzhjOGM3YWMzY2M1NGExZTBlOGY0YjRmYzNjZjk0NzY0NTM0NmQxYzViNDBjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2U3ZDI4MDYzODFlY2U5N2RkZDY5MmU1ZmI4M2E0ODk3OTU4MmZlZWUwMWMwM2RkYzhmNmNlMWU4ZjYwNzc5In0"
+        },
+        {
+          "resource": "repo://tests/source-guards/studio-email-identity-guards.test.ts#L17-L60",
+          "version": "repo-lines-v1:sha256:47048a24a29932c11e33da08930914ab3606121e5c5658c9d20a65f0bf65b01f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4YmNjNGQ0YWRlOTRmMmMzMGIyMjlkODI4MjQ4NzJiZGUzYjlmODgwNzM4MDBlYWM3NDVlYWI3ODgzYzIyYTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjViY2I4ZTI3YzFkYWZlYThjZDJkNWFlYjcyNThlNGQ4NTU0ZWFjYmM3MWQxZWI1MWJmNjhjYjE3Mzg2ZGUwNTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA1ZjVkNjgyM2RlNGY5OTc0M2FlMzk3MmU4YzY5ZjdjN2I0ODYzOTUyM2Q4MzY4ODdkZGZkZDk4MTRlNjY0ZjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_21eb2fcce79846a5a7e3bd18d021f11d",
+      "statement": "Booking confirmation emails are sent once inside the booking request and recorded with record_email_attempt, which increments the attempt counter and stamps confirmation_sent_at only on success, and that function is executable only by service_role.",
+      "evidence": [
+        {
+          "resource": "repo://app/book/%5Bslug%5D/actions.ts#L1707-L1772",
+          "version": "repo-lines-v1:sha256:e7966b035dd2c8593eac751e494ce759a7f51283c8f54c0ec031192c1065474c:eyJzZWxlY3RlZExpbmVDb3VudCI6NjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiZGE2M2JkMWQ4YjFkMTM5NTIyNDBmZjRlOTNmZjhlMmQ2YjY5ZDEzY2I1NGI5YzQxZTg5ZDQ2YjRiNjdjNDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0ZTQyMDhjZDZmZmI4YzRhMzU0N2IyZjU0YWRhMTk5NzhjM2YzNjVlNzhmOTUwMmVmNTE0NWNkZDJhYTg1NDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU1YWRmYWJhNDgyMzEwMWRkNzY1ZDcxNmIyNDEzMGJkMmNkZDM3ZGI1NTVhMmI1YzFjMDRiZWRmMWU4M2EwMDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA1MTI4NzlkYmVkNGU3MzkyOTAxNTQzNzZlNDg2NzQ4YTliODg2ZGFhNTgyY2EzY2ZmOGRlY2NiYmZiZGMwMTYifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0033_pre_stripe_operational_hardening.sql#L111-L114",
+          "version": "repo-lines-v1:sha256:e3097feecbfc89d6bd1f43f92d43858615e2d496346ff67a2826dbe39299bb7a:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODM1YTYzMmIyMDdlOWUyZWNjZjQ2NGEyNDdjYjUzZTdiOGI5NjlkYzcwZjlkNGMzNDYxYzIxMzAzOGEwNmJhYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzNkN2Y3YjMwOGI2Y2Q3MzBlOTNlMjA4NmNiNTIyM2ZkOTQ0NjA5OWI2YjliYTJiYmUzZTk3MjhiNmU2ZTYzOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2E5OWJlYjVlMWU5Y2E4YzAzNjAxZmUzMDMzMjQ5ZTYyNTNlNWU5MTAzMTg5Nzg5Yjk5NmM3MTRlMTQ3YzVhNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNGIyYTE0MmMwOTlkZjQxOTkzYmYyZDdkOWFlMDE5Y2MwNzIyODMwYTI0Y2Q1ZWJmNDliODJlMjViM2IzNDgwZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_2ff59b5306f64af8b5917ede52573ed3",
+      "statement": "Postcare email sending is a two-command state machine (claim_postcare_send, provider call, settle_postcare_send) in which SQL owns the completed-only gate, the attempt counter and the five-minute stale window.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/calendar/actions.ts#L1000-L1010",
+          "version": "repo-lines-v1:sha256:0fb6a871fbce3beef1fd9cadf1fdfa26323347118210724b6c735f8496fcba54:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzMTE0YWE5NDkwZmZkZDMyMTZhN2YzZTI0MTc4ZmU0YTM0NmQzOWEyMWI4YzIyZDAzMzNlZTc0MThiOTQ0ODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNiZDUxZjMwZWZmMmUzNTJkNGJjMjg1ZDE4NTg5MTFjZjQ4NDQ2OWRjYjdmZDVkNTMwMzI3ZGE5Y2IzZDAzMTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZlZTQyYjEwZTBhYzBjNWJkNGIxMGQ5MzI4ODdiYzY2ODNlMDNmNDljNzNlMzBhNmNiZGE2MTg0OTY4ZTBmZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ3ZmVkNDgwM2U1NjMzMjFmM2ExMWQzNTc1MTY3ZDMxYjI1NzlkMDA5OTEzNDAzYmM2MGU3YWFjNjBiMzdkODEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3efd2ac40f51417a8304e3e5379a2362",
+      "statement": "logEmailFailure always writes a structured log line and records an email_send_gave_up warning ops alert only for a final or non-retryable failure, and claimEmailSend treats a failed claim RPC as not winning the claim.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/send-appointment.ts#L240-L282",
+          "version": "repo-lines-v1:sha256:c3dbbf158861e0953be4b9df01cf4606117d8376be301688a8bf8b0192950ed8:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3Y2Q1Zjg5YzgyNzdlMTI3NjA1ZDk5YzM2MTdiNWYwMzczNTllYjViYWM2MWY0ZWI0YmQ2ODRhMmY3NmVmYmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM2NDEwNmNiM2M4YTc1OWM0YWU5NGU2YjZhNjdiZGQ2YjU5MDdkMzc2YWRhMzc1OWVjZTIzZjhlNzNiZWFjOTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIxNDNmYjM1YmQzYjU0NzM2OTc2NmIxNzBmN2Q4NDU3ZGU2ZjAxNjA1N2EwNmYyZjI0MzkwODEwMGIwM2RiMmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc0YzRjZTY0MjUyN2Y3NDk5OTFlNDQ3NmQxZjBiMWQ2ZGM5ZmFlMmM1OGM1NjNjZGMzZGM3ZmY1ZGUwOTkxZGUifQ"
+        },
+        {
+          "resource": "repo://lib/email/send-appointment.ts#L313-L382",
+          "version": "repo-lines-v1:sha256:6b708d215cde1cb638bad88c80680b1e74655c54ef4a49fa70136bed42de5da3:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc4MzM3MWZjNWNiM2I0MWUxN2NiZjI1YjNhNjAxMTU0MTM0YjZlZGQxNjBjNDRlMmI3MDBmOWIyNzg2YjZkOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU1MGYwMDNhYTU2OTRiMDQzODM5ZjJhYzQ1OTI4MmI1ZDhkMTRjZDg3MGNjMjRlYjcwYTVkZDJmM2NkMjI0OGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d53d71d96b02461a9a6e9f8502ffbae5",
+      "statement": "The fake Resend transport is server-only, enabled only by HONE_E2E_FAKE_RESEND=1, throws if that flag is set in a deployed runtime, and supports success, reject, throw, failonce and hold modes selectable by env override or recipient prefix.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/e2e-fake-resend.ts#L1-L80",
+          "version": "repo-lines-v1:sha256:1cd4b3854bc28120e41f81bedbd753c43ed9d652ab66564c61d194e98034e12e:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3OGJjZjBlNTE1MmQwYzM0YWU4MWYyMWE2YjlkMDJkNjNjNjQwOTIwZDU4MzhmMTVkYmVmYTM2YjVkNDA5OWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEzOTZlOWFhNDE0YTZlMGZmYjM2MTQ0MmM0ZmUxNjFjZTQ3OWJjM2RkYjczYzdkMjQ3OTYwODI4OWUzYjIyZTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9b12ec0eceea4d09823b4b081c67534b",
+      "statement": "Only getResendTransport callers (the welcome email and the idempotent waitlist transport) reach the fake transport; sendEmailSafely uses the real client and reports not configured when no API key is present.",
+      "evidence": [
+        {
+          "resource": "repo://lib/email/new-client-waitlist-send.ts#L359-L376",
+          "version": "repo-lines-v1:sha256:caf6950485861548a6ef17e987bf6a60e31904069dafabedbbd2efdaa5a4f425:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiNTI2NWQ3NDlkYzBkZDc1ZDZhMjRhYmY0Y2RlMGUxNzliMzEzY2JkNjk2NTBiMmZmMzc0NjI0M2U2NTBhMDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlY2MyYjIwZmY4YmEzMGRlNjE0OGY3ZWM2NmZhYjdmMzlkYmUzMjQzNDc2OGE0YzE5YTM2NGRhYzM1MzQ1ZDUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhNmExMGQ2OGQ5NWQ3NDVkYzg0ZmM0OGY2ODU3Mjk4MTA0NTg4NmQ3N2Y0NTkyNjU5MjhlMGY0Y2IwNzJhY2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdlNWU3YjIyOTI3NmZlZGU4OWNjNTVmMmM5MjczNDQyOGIxMDZiOTUwY2VlZDMxODdlMTIwODRmNTMyZWFlMTAifQ"
+        },
+        {
+          "resource": "repo://lib/email/send-appointment.ts#L104-L110",
+          "version": "repo-lines-v1:sha256:6520ebaf281181001d914a7a58edea193c8d676f5fb74d84f68262aa0d2b3999:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGJlZGEzMjkzZGYzZmE3N2QwYzhlMmZhNDA5NmEwMjQxMDRjZmMwMmUzN2E0YzhjM2FhMTQxODYwMzEyNjNmMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDA3MWVhYzcyNjNjN2E5OWE2Yzg2MzJhZDc3ODYyZDU1ZTYxYzk2NmJhMzkyZWYwNmJiMWViMzhkOGJkOGFlYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmMxMTg0NWFkY2ZkNjM4YzBiMmU1YjcwMDg0N2YxYWFkZTE1NzU4OTJlNTAyNzcwOWEwNTExMDM3MzY2MDU4MSJ9"
+        },
+        {
+          "resource": "repo://lib/email/send-welcome.ts#L49-L55",
+          "version": "repo-lines-v1:sha256:471e6190a51c04a804b1aa550550a4c5cfb0ed1b4341d6585342cb94ab0a1578:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDQxNTBlMWU4MjZiZDg3MGVjZTk0NmQ3OGE2NDg1MzkwMmUyYTc1NWZlMTRkZTZmMjg1ZDhhN2JiZTVkZjk0NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjFjYWE5OTM1ZGJkZWU4YTM5MjUwMTZmYzVhNzBhZTMwZDJmNmExNGM2ZDgzNTI2ZGY3ZDQ5NjJhMDc3MGZhNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOGRjODE5NDk2M2EwNGUyZmEzNTViZGNkNTNlOTBhZjViY2I4ZmU3ODNkMjAyOGQyNmEyMzIxMTU4ZmZmODhkMiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_68c2ac9e646044e3b89ac5a20acaa47d",
+      "statement": "Critical ops-alert email uses the bare Resend client, sends only when OPS_ALERT_EMAILS is configured, never throws, and never records further ops alerts.",
+      "evidence": [
+        {
+          "resource": "repo://lib/ops/alert-email.ts#L1-L27",
+          "version": "repo-lines-v1:sha256:60c36f130a025f48a11e3f82924ed7d672871abc3bc9654744d88942b0bcef46:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0MWI5NzZkOTQ2NGQ1ZTk0YzE2MjkxMzI1ZmY4ZGNmZjM4ZWI4YWYzY2Q3ZGY1NzhkMGRlZDlmMjU5ZDY1NzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUyNDdkMjI0YzQ1NGZjYjU0NTdmNjYxMmVmYjhhN2U5ZTRlNjA1MDBjNDY0NzE1ZmRkNDFhNjQ3Mjk5MzhmYzUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_98e471b1dd674b85b971b25230cac9c1",
+      "statement": "sendEmailSafely's documentation states there is exactly one Resend path in the codebase, but emails.send is called from five modules: send-appointment, new-client-waitlist-send, send-welcome, ops alert-email and the team invitation action.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/settings/team/actions.ts#L66-L72",
+          "version": "repo-lines-v1:sha256:e714c8c036d389557e01d12a00cd751d69f4c3daad409f4ed3c40be454d8eb94:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjNjZGNhZmViMGMxMzE2M2QxYTZjZWY0ZTY1YTk2MGRhN2ZiYjQwYTEzZTA2NWI3NjVlZjYzNDQ4MzM3MzVhNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjJkMTFjYWY0M2U5N2VmMzY5ZTZiZWVkMWEyNjhiZDA1ODM4ZjI5YjlkZDI1NGJmNjliYTY0ODg0MTQ3MjM0YSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmVmYjU4YTc3MDhjZGVhYTMxNzBiM2QyYTY4MDlkNDc3ZjZjODBjZDhhMmQzMzMxYjU1MTBhOGEwZGMyMWZmZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjU2NGRmZGVlODMyNWQwZWYwMDE5MjM5M2VjODFjZDQzZWZiNWI5ZTM5YmEwM2YxMTRmYTYxMDQzMWJiOGY2MiJ9"
+        },
+        {
+          "resource": "repo://lib/email/new-client-waitlist-send.ts#L276-L276",
+          "version": "repo-lines-v1:sha256:4bc254c7a31e8c939f75376049902bd781e3a7d0ccfae58364f53b1177c2f55c:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGJjMjU0YzdhMzFlOGM5MzlmNzUzNzYwNDk5MDJiZDc4MWUzYTdkMGNjZmFlNTgzNjRmNTNiMTE3N2MyZjU1YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGJjMjU0YzdhMzFlOGM5MzlmNzUzNzYwNDk5MDJiZDc4MWUzYTdkMGNjZmFlNTgzNjRmNTNiMTE3N2MyZjU1YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTNkMjZlYzNkMjU2MDBjODc4ZmNmNmZkMzVlN2FiMzgzYTkzMWYyYWI4ZmRlZWNmY2Y4MDBhODg2MzA0ZjQ5YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjhjMjhhOTEyOGE2OTkzM2ExMDhmNmIwZjIzNjQ4OTExMDRmNjYzZGJiYzAyNjM4YTUzMTMwODA1NDdiOGVkYyJ9"
+        },
+        {
+          "resource": "repo://lib/email/send-appointment.ts#L88-L95",
+          "version": "repo-lines-v1:sha256:9e48839c6448d18c7a745fb413f0ae1a91ac6fc5e465980999febd376eb64541:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGYyYTJmOTk2ZjA4ZTY4MGJkMjkyMTM1YTZmYTQ5NzhiZGEyNmU2MDJkODRmMzNjYjFkNTk0Nzc1ZDQzMDRiNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZWU3MTEyN2Y3ZjVmMTcxN2I5NmU3ZTk3NjkwYTdkMTgxYTUwNzIzN2ZjYWQxODg0MGJiYjA5MzQwMjJhOTIwYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTQ4Y2VkZTI4Mzg5NjUxMzViZmIyOWZlYzJmNGI3ODdmOWVmNWU4ODQ4MmIyNzgyOTU3ZjExMDMxZGRhZDdjYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZGY4ZGFkY2ZlMmM1ODFkMGRlYzA0ZmRiMTI5ZWM5ZDZjMWRkOWEwOGY3MDk4NzE4NDc0ZjMwOGUyMTVmYWFmZiJ9"
+        },
+        {
+          "resource": "repo://lib/email/send-welcome.ts#L60-L66",
+          "version": "repo-lines-v1:sha256:c0d3e0e72d923e8bc4acf2a57087772264b6f7a4710f43847839947926fccec3:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDA3M2ZmYzlkY2I0YTI0ZTJmYzIxYjA4ZmE1ODc2NTFjNTZjNjc1ZTBhN2EwMTRlZWQzYWYyMTgxNzk5YzA3NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjJkMTFjYWY0M2U5N2VmMzY5ZTZiZWVkMWEyNjhiZDA1ODM4ZjI5YjlkZDI1NGJmNjliYTY0ODg0MTQ3MjM0YSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWZhMDA2MDk5NjgyZTVkNTYzOTg0MDcyMDMwMzlkMjI3NTBhYzg5YjllMTIwOWZkODllZGMxYmYwODZhMzdhYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjBiODYwNzUzNGExOTczZTdhZjM2NjRhNzJjZTUwZWMzMzlhZGQxN2U2MmNkYzVlOWY5YTRmYTQ1ZTVlMDY0MyJ9"
+        },
+        {
+          "resource": "repo://lib/ops/alert-email.ts#L109-L109",
+          "version": "repo-lines-v1:sha256:f3cdcafeb0c13163d1a6cef4e65a960da7fbb40a13e065b765ef6344833735a4:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjNjZGNhZmViMGMxMzE2M2QxYTZjZWY0ZTY1YTk2MGRhN2ZiYjQwYTEzZTA2NWI3NjVlZjYzNDQ4MzM3MzVhNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjNjZGNhZmViMGMxMzE2M2QxYTZjZWY0ZTY1YTk2MGRhN2ZiYjQwYTEzZTA2NWI3NjVlZjYzNDQ4MzM3MzVhNCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWQwOWIwNmI3MzBlYzFkN2RkZDc4YWU3YWQ2MDI0YzBlYjYzZmI2YjYyZmY4YjIyODc5ZTk3NmMyNGE3Yzc5MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmNmYTRmZGExOWMzYTY5MDE0OGE3YWIxM2EyNTc1ZTJmMDc0YmIxZWVjZDM1NjE1ODk3YjNhNzgxYTNjMGY2NSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_0c288b5e72754b5ca1de0737808f4e5b",
+      "statement": "The source-guard test titled 'there is still exactly ONE transport, not two' only asserts that FROM_ADDRESS exists with its historical fallback value and does not detect additional transports.",
+      "evidence": [
+        {
+          "resource": "repo://tests/source-guards/studio-email-identity-guards.test.ts#L42-L46",
+          "version": "repo-lines-v1:sha256:e6a6b7cbce92d2d393684cbaa8c49432658ac76ae688c1f5dad42bfc930ad0d2:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWY3MzRjNTYwMmQxMGFjZmE3OWViZWQ3ZGZkMmQxNzEyOGI3NzIwNzllNDkyYThhZTI0Y2UyNGM5YWRkYjY2YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYmIzMjg4YzJlODdiMzI3MGIzMWE0OWExZDI5ZGY4MGRhMDRhNjY2OGNhMDdiYzM0N2RhNDE2OWYwMzk2NDVhYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOGYyY2UxNzMyMThkOGY4Zjk0ZGE2NTM1NDAxMGMxYTJmMzFkZjA1NTA1NTYyZTQwNGI4YjUyZGRlZTFiZjAwYiJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}
