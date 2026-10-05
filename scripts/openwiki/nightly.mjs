@@ -336,6 +336,102 @@ export function generatorDiagnostics(result) {
   };
 }
 
+/**
+ * WIKI-RETRY-01, the generator retry contract. openwiki@0.6.1 exits 0 or 1
+ * and records no error class (cli/runners.js), and the runner never holds the
+ * generator's output, so a transient provider failure (the service
+ * overloaded, a 429, a provider 5xx) cannot be told from any other failure.
+ * The contract is therefore:
+ *
+ *   - at most GENERATOR_MAX_ATTEMPTS attempts, i.e. exactly one retry;
+ *   - a retry only after a PROMPT non-zero exit, never after a timeout;
+ *   - GENERATOR_RETRY_DELAY_MS before it, and only if at least
+ *     GENERATOR_MIN_RETRY_BUDGET_MS of the run budget remains after the
+ *     delay, checked before the wait and again after it (a timer can fire
+ *     late). The run budget (HONE_WIKI_RUN_TIMEOUT_MIN) covers every attempt
+ *     and the delay together, and the retry gets only what is left of it;
+ *   - the retry starts from the same pinned state as the first attempt;
+ *     nothing the failed attempt wrote survives.
+ *
+ * Nothing the runner checks after generation is ever retried: the path gate,
+ * scope, run metadata, provenance and privacy checks, GitHub and publishing.
+ * A run OpenWiki itself records as `interrupted` while exiting 0 is caught
+ * by those checks (LAST_UPDATE_INVALID), so it is not retried either.
+ */
+export const GENERATOR_MAX_ATTEMPTS = 2;
+export const GENERATOR_RETRY_DELAY_MS = 60_000;
+export const GENERATOR_MIN_RETRY_BUDGET_MS = 15 * 60_000;
+
+/**
+ * Back to the pinned starting state before a retry: the working tree is the
+ * production tip again, with nothing the failed attempt wrote left over (its
+ * openwiki/.run.json included), and HEAD is the source head. Unlike
+ * resetSubject, any failure here throws: a retry never runs on a tree the
+ * runner could not restore.
+ */
+function repinForRetry(subject, tip, sourceHead) {
+  git(subject, ["checkout", "--quiet", "--detach", "--force", tip]);
+  git(subject, ["reset", "--quiet", "--hard", tip]);
+  git(subject, ["clean", "-ffdxq"]);
+  if (git(subject, ["status", "--porcelain", "--untracked-files=all"]) !== "") throw new Error("subject checkout is not clean before the retry");
+  git(subject, ["reset", "--quiet", "--soft", sourceHead]);
+}
+
+/**
+ * Run the generator under the retry contract above. Returns the final
+ * attempt's result, how many attempts ran, and why a failed first attempt was
+ * not retried, if it was not. `config.retryDelayMs` and
+ * `config.minRetryBudgetMs` exist so tests can shorten the wait; the CLI never
+ * sets them.
+ */
+async function runGenerator({ subject, tip, sourceHead, config, deps }) {
+  const deadline = Date.now() + config.timeoutMs;
+  const delayMs = config.retryDelayMs ?? GENERATOR_RETRY_DELAY_MS;
+  const minBudgetMs = config.minRetryBudgetMs ?? GENERATOR_MIN_RETRY_BUDGET_MS;
+  const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  let attempts = 0;
+  let result;
+  let noRetryReason;
+  for (;;) {
+    attempts += 1;
+    result = await deps.generator({ cwd: subject, timeoutMs: Math.max(1, deadline - Date.now()) });
+    if (result.exitCode === 0 || attempts >= GENERATOR_MAX_ATTEMPTS) break;
+    if (result.timedOut) {
+      noRetryReason = "timed-out";
+      break;
+    }
+    if (deadline - Date.now() - delayMs < minBudgetMs) {
+      noRetryReason = "insufficient-time";
+      break;
+    }
+    repinForRetry(subject, tip, sourceHead);
+    await sleep(delayMs);
+    // The timer can fire late (a suspended host, a blocked event loop), so the
+    // budget is checked again after the wait: a retry never starts without
+    // the minimum left, or with the deadline already gone.
+    const remaining = deadline - Date.now();
+    if (remaining <= 0 || remaining < minBudgetMs) {
+      noRetryReason = "insufficient-time";
+      break;
+    }
+  }
+  return { result, attempts, noRetryReason };
+}
+
+/** The persisted generator facts: attempt count and the final attempt's diagnostics, never its output. */
+function generatorReport({ result, attempts, noRetryReason }) {
+  const final = generatorDiagnostics(result);
+  return {
+    attempts,
+    retried: attempts > 1,
+    finalExitCode: final.exitCode,
+    timedOut: final.timedOut,
+    outputBytes: final.outputBytes,
+    outputSha256: final.outputSha256,
+    ...(noRetryReason ? { noRetryReason } : {}),
+  };
+}
+
 // ---------------------------------------------------------------- run steps
 
 function syncSubject(config, token) {
@@ -706,8 +802,8 @@ export function cliSummary(result) {
 }
 
 /**
- * One runner pass. `deps`: { generator({cwd}) -> {exitCode, timedOut?, output? | outputBytes?, outputSha256?},
- * getGitToken?() -> token, github(token) -> client, now?() }.
+ * One runner pass. `deps`: { generator({cwd, timeoutMs}) -> {exitCode, timedOut?, output? | outputBytes?, outputSha256?},
+ * getGitToken?() -> token, github(token) -> client, now?(), sleep?(ms) }.
  */
 export async function runNightly(config, deps) {
   const report = { runId: randomUUID(), startedAt: new Date().toISOString(), discarded: [] };
@@ -789,11 +885,13 @@ export async function runNightly(config, deps) {
     // HEAD = source head (OpenWiki records it as gitHead); tree = production tip.
     at("generate");
     git(subject, ["reset", "--quiet", "--soft", head.sourceHead]);
-    const result = await deps.generator({ cwd: subject });
-    report.generator = generatorDiagnostics(result);
-    if (result.exitCode !== 0) {
+    const generation = await runGenerator({ subject, tip, sourceHead: head.sourceHead, config, deps });
+    report.generator = generatorReport(generation);
+    if (generation.result.exitCode !== 0) {
       resetSubject(subject, tip);
-      return finish(reason("GENERATOR_EXIT_NONZERO", { exitCode: report.generator.exitCode, timedOut: report.generator.timedOut }));
+      return finish(
+        reason("GENERATOR_EXIT_NONZERO", { exitCode: report.generator.finalExitCode, timedOut: report.generator.timedOut, attempts: report.generator.attempts }),
+      );
     }
     if (worktreePathExists(subject, "openwiki/.run.json")) {
       resetSubject(subject, tip);
@@ -931,7 +1029,7 @@ async function main(argv) {
   }
   const deps = {
     getGitToken: createAppTokenSource(process.env),
-    generator: ({ cwd }) => runOpenWikiProcess({ cwd, invocation: buildGeneratorInvocation(config), timeoutMs: config.timeoutMs }),
+    generator: ({ cwd, timeoutMs }) => runOpenWikiProcess({ cwd, invocation: buildGeneratorInvocation(config), timeoutMs }),
     github: (token) => createGitHubClient({ token, repository: config.repository }),
   };
   const result = config.stateDir ? await runNightly(config, deps) : { report: persistableReport({ reasons: reason("STATE_DIR_MISSING") }) };

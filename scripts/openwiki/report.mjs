@@ -271,7 +271,9 @@ export const REASONS = Object.freeze({
 
   PULL_REQUEST_OPENED: reason("PUBLISHED", { number: positive, metadataOnly: flag }, (d) => `pull request #${d.number ?? "?"}${d.metadataOnly ? " (metadata only)" : ""}`),
 
-  GENERATOR_EXIT_NONZERO: reason("FAILED", { exitCode: integer, timedOut: flag }, (d) => `OpenWiki exited ${d.exitCode ?? "?"}${d.timedOut ? " after the run timeout" : ""}`),
+  GENERATOR_EXIT_NONZERO: reason("FAILED", { exitCode: integer, timedOut: flag, attempts: oneOf([1, 2]) }, (d) =>
+    `OpenWiki exited ${d.exitCode ?? "?"}${d.timedOut ? " after the run timeout" : ""}${d.attempts ? ` (${plural(d.attempts, "attempt")})` : ""}`,
+  ),
   RUN_STATE_LEFT_BEHIND: fixed("FAILED", "OpenWiki left openwiki/.run.json: the run did not complete"),
   PATH_PRIVACY_REJECTED: reason("FAILED", { paths: count, categories: listOf(oneOf(PATH_GATE_CATEGORIES)) }, (d) =>
     `${plural(d.paths ?? 0, "changed path")} failed the privacy/secret path gate (${(d.categories ?? []).join(", ")}); no pathname was recorded`,
@@ -424,7 +426,15 @@ const REPORT_FIELDS = shape({
     problem: oneOf(LIVENESS_PROBLEMS),
   }),
   pathGate: shape({ scanned: count, rejected: count, categories: listOf(oneOf(PATH_GATE_CATEGORIES)) }),
-  generator: shape({ exitCode: integer, timedOut: flag, outputBytes: count, outputSha256: sha256Hex }),
+  generator: shape({
+    attempts: oneOf([1, 2]),
+    retried: flag,
+    finalExitCode: integer,
+    timedOut: flag,
+    outputBytes: count,
+    outputSha256: sha256Hex,
+    noRetryReason: oneOf(["timed-out", "insufficient-time"]),
+  }),
   generated: shape({ changed: count, added: count, modified: count, deleted: count }),
   metadataOnly: flag,
   discarded: listOf(DISCARDED_ENTRY),
