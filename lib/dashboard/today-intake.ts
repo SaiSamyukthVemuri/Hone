@@ -27,7 +27,7 @@ import type { IntakeStatus } from "@/lib/types/database";
 // client profile's Health & Forms tab deep-links to and the appointment
 // briefing links to: app/(app)/clients/[id]/intake/page.tsx. It is
 // session-authenticated and re-derives the studio from
-// getCurrentPractitionerWithStudio(), so the client id in the path is a
+// requirePractitionerWithStudio(), so the client id in the path is a
 // pointer, never a credential.
 //
 // It is deliberately NOT the public /intake/<token> questionnaire. That route

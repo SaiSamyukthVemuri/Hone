@@ -191,7 +191,7 @@ describe("dashboard placement", () => {
   });
 
   it("the page is protected (server component resolving studio) and is the login landing", () => {
-    expect(PAGE).toMatch(/getCurrentPractitionerWithStudio/);
+    expect(PAGE).toMatch(/requirePractitionerWithStudio/);
     expect(PAGE).not.toMatch(/^"use client"/);
   });
 

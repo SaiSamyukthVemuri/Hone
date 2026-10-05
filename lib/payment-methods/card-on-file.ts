@@ -34,7 +34,7 @@ import {
 // loaded and nothing more can reach rendered HTML.
 //
 // TENANCY. `studioId` is resolved SERVER-SIDE from
-// getCurrentPractitionerWithStudio() and the client id set is the server-loaded
+// requirePractitionerWithStudio() and the client id set is the server-loaded
 // roster for today; neither ever comes from the browser. The read is scoped by
 // both, exactly as getActiveCardForStudioClient() is.
 //

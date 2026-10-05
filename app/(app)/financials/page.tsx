@@ -3,7 +3,7 @@ import {
   type ReportingPeriod,
 } from "@/lib/booking/reporting-period";
 import { loadFinancialsView } from "@/lib/finance/financial-briefing";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 import { FinancialSpine } from "./financial-spine";
 
@@ -39,7 +39,7 @@ export default async function FinancialsPage({
 }: {
   searchParams: Promise<{ period?: string | string[] }>;
 }) {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
 
   const sp = await searchParams;
   const requested = Array.isArray(sp.period) ? sp.period[0] : sp.period;

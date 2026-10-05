@@ -83,7 +83,7 @@ next.config.ts                Token-route privacy headers (PR #142).
 
 ## Route group conventions
 
-- `app/(app)/`; every page requires a practitioner session resolved via `getCurrentPractitionerWithStudio()`. Header / footer / SafeAnalytics mounted in the route-group layout.
+- `app/(app)/`; every page requires a practitioner session. Pages, layouts and server components resolve it with `requirePractitionerWithStudio()`, which redirects anonymous → `/login`, no active membership → `/no-access`, and 2+ memberships without a valid selection → the chooser; server actions use the throwing `getCurrentPractitionerWithStudio()`, because a redirect inside an action's try/catch would be swallowed. A page cannot rely on the shell layout's guard: Next renders a route's layouts and page in parallel, and a soft navigation does not re-render the shell (SENTRY-IDENTITY-01, pinned by `tests/source-guards/server-render-identity-guard.test.ts`). Header / footer / SafeAnalytics mounted in the route-group layout.
 - `app/(auth)/`; magic-link login, callback.
 - `app/book/[slug]/`; public; slug is the studio's public booking identifier (not a bearer token). SafeAnalytics mounted in `app/book/layout.tsx`.
 - `app/cancel/[token]/`, `app/reschedule/[token]/`, `app/manage/[token]/`, `app/intake/[token]/`, `app/portal/verify/[token]/`, `app/calendar-feed/[token]/`; public **token routes**. The token IS the credential. SafeAnalytics NOT mounted. `next.config.ts` adds `X-Robots-Tag: noindex, nofollow` and `Referrer-Policy: no-referrer`. Each page also sets `metadata.robots = { index: false, follow: false }`.

@@ -208,7 +208,7 @@ describe("print route: filter parity", () => {
   });
 
   it("print stays practitioner-authenticated (no public/anon path)", () => {
-    expect(PRINT).toMatch(/getCurrentPractitionerWithStudio\(\)/);
+    expect(PRINT).toMatch(/requirePractitionerWithStudio\(\)/);
     expect(PRINT).not.toMatch(/admin-server|createAdminClient|service_role/);
   });
 });

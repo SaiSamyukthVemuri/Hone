@@ -3,7 +3,7 @@ import { buttonClasses } from "@/components/ui/button";
 import { PendingLink } from "@/components/pending-link";
 import {
   getClientsForStudio,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
   getPractitionersForStudio,
 } from "@/lib/supabase/queries";
 import { todayInTz } from "@/lib/booking/tz";
@@ -193,7 +193,7 @@ export default async function RecordKeepingPage({
   const lotSearch = normalizeLotSearch(sp.lot);
   // Measurement only (perf/route-timing-baseline).
   const { practitioner, studio } = await timed("records.identity", () =>
-    getCurrentPractitionerWithStudio(),
+    requirePractitionerWithStudio(),
   );
   // PR #222: exposure incident HISTORY is owner-only (RLS-enforced by
   // migration 0088); any member may still file a new incident.

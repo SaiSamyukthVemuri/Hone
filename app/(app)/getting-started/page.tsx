@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   buildGettingStarted,
   legacyChecklistMayOfferNextStep,
@@ -70,7 +70,7 @@ const FIRST_CONSULTATION = [
 ];
 
 export default async function GettingStartedPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   const signals = await getGettingStartedSignals(
     { id: studio.id, name: studio.name, slug: studio.slug },
     practitioner.display_name?.trim() || practitioner.email,

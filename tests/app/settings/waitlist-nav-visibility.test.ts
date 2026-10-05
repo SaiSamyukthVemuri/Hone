@@ -62,12 +62,19 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => {
     getNewClientAdmissionMode: vi.fn(async () => admissionScenario.value),
   };
 });
-vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({
+vi.mock("@/lib/supabase/queries", () => {
+  // ONE identity under both names: the settings layout and page resolve it
+  // through the redirecting guard, server actions through the throwing
+  // backstop (SENTRY-IDENTITY-01).
+  const identity = async () => ({
     practitioner: { id: "prac-1", role: scenario.role, user_id: "user-1" },
     studio: { id: STUDIO_ID, slug: SLUG, name: "Willow Electrolysis" },
-  }),
-}));
+  });
+  return {
+    getCurrentPractitionerWithStudio: identity,
+    requirePractitionerWithStudio: identity,
+  };
+});
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => {
