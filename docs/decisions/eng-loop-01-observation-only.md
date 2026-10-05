@@ -82,10 +82,35 @@ authority vehicles (#617–#623). The answer is a smaller model, not a third pat
 | No request inference | `@codex review` from anyone, opening a PR, or marking it ready changes nothing |
 | Exact-head binding | a verdict naming any other commit, or a near-miss prefix, is not a verdict for the head |
 | Latest applicable run only | earlier runs at the same sha, other workflows and other events change nothing; run order does not matter |
+| External checks are negative-only | a failed or pending external check holds a PR back; adding a passing one, in any situation, changes nothing |
 | No malformed or partial answer produces a candidate | request, answer, leaf and truncation fault sweeps derived from what the collector actually reads |
 | Never merges / writes | the fetcher's exact argv, the refused GraphQL documents, and a source scan |
 
-## 6. A future authority re-entry would need
+## 6. Amendment (2026-10-05): external head checks are NEGATIVE-ONLY
+
+Codex's exact-head review of `46234e71` showed that reading CI from the latest Actions run alone
+dropped external head checks (Vercel's, for example) from the picture. Decided (option b):
+
+1. The latest applicable GitHub Actions run for the exact head remains the **authority** for
+   Actions CI state.
+2. Historical Actions runs at the same sha are ignored — including their check runs, which are
+   never read as "external".
+3. External exact-head check runs (any app but GitHub Actions) and commit statuses are read
+   **separately**, as their own signal.
+4. An external state **may** block candidacy (failed, errored, cancelled, or another failing
+   conclusion) and **may** keep candidacy waiting (pending). Production has no required-check
+   configuration, so every external check reported for the exact head is treated as relevant.
+5. An external state may **never** make CI green, make a PR a candidate, or compensate for a
+   failed or missing Actions run.
+6. An unknown, partial or undocumented external state never grants anything: it keeps a PR from
+   candidacy.
+7. ENG-LOOP-01 remains observation-only: the candidate state is advisory, nothing merges, no
+   branch is refreshed, and nothing it reports is normative release authority.
+
+This was the final bounded repair for this re-entry decision. A further P0–P2 finding after it is
+proposed as follow-on work, not patched on this PR.
+
+## 7. A future authority re-entry would need
 
 An explicit operator decision recorded here, satisfying §16.5 in full: mechanically derived
 completeness, an independent falsifier by construction, and fault injection at every authority

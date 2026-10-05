@@ -18,7 +18,11 @@
 //   * every comment-derived input passes ONE authority gate (`admit`): only
 //     the trusted Codex account, by immutable id and type, is evidence;
 //   * CI is the LATEST applicable workflow run for the exact head - never every
-//     run that ever ran at that sha.
+//     run that ever ran at that sha;
+//   * EXTERNAL head checks (non-Actions check runs, commit statuses - Vercel's,
+//     say) are a separate, NEGATIVE-ONLY signal: a failed one blocks candidacy
+//     and a pending one holds it, but no external state can make CI green, make
+//     a PR a candidate, or stand in for a failed or missing Actions run.
 //
 // Stop laws are still evaluated, as recommendations: consecutive P0-P2 review
 // rounds, or consecutive red CI heads, past the tier's repair budget (§7.4)
@@ -77,6 +81,7 @@ export const DOMAINS = Object.freeze({
   branch: Object.freeze(["CURRENT", "BEHIND", UNKNOWN]),
   conflicts: Object.freeze(["NONE", "CONFLICTING", "PENDING", UNKNOWN]),
   ci: Object.freeze(["GREEN", "RUNNING", "QUEUED", "NOT_STARTED", "CANCELLED", "FAILED", UNKNOWN]),
+  external: Object.freeze(["CLEAR", "PENDING", "FAILED", UNKNOWN]),
   review: Object.freeze(["VERDICT_AT_HEAD", "NO_VERDICT_AT_HEAD", UNKNOWN]),
   findings: Object.freeze(["NONE_BLOCKING", "FRESH", "CARRIED", UNKNOWN]),
   history: Object.freeze(["INTACT", "REWRITTEN", UNKNOWN]),
@@ -92,6 +97,9 @@ export const CANDIDATE_POINT = Object.freeze({
   branch: "CURRENT",
   conflicts: "NONE",
   ci: "GREEN",
+  // CLEAR is "nothing external holds the PR back" - including no external
+  // check at all. It is a precondition, never a contribution.
+  external: "CLEAR",
   review: "VERDICT_AT_HEAD",
   findings: "NONE_BLOCKING",
   history: "INTACT",
@@ -144,6 +152,8 @@ export function decide(s) {
   if (s.ci === "FAILED") actions.push("FIX_CI");
   const newHeadComing = actions.length > 0;
   if (s.findings === "CARRIED") actions.push("DISPOSITION_FINDINGS");
+  // A failed external check holds the PR back; its cause lives with its provider.
+  if (s.external === "FAILED") actions.push("CHECK_EXTERNAL");
   if (!newHeadComing) {
     // Production comes in once CI has settled, before the review it would make
     // stale; a refresh re-runs every lane, so it replaces a re-run.
@@ -158,6 +168,7 @@ export function decide(s) {
 
   const waits = [];
   if (s.ci === "RUNNING" || s.ci === "QUEUED" || s.ci === "NOT_STARTED") waits.push("WAIT_CI");
+  if (s.external === "PENDING") waits.push("WAIT_EXTERNAL");
   if (s.conflicts === "PENDING") waits.push("WAIT_MERGEABILITY");
   if (waits.length) return outcome(STATE.WAITING, { waits });
 
@@ -266,6 +277,64 @@ export function deriveCi(sf, policy = POLICY) {
   }
   const reason = signal === UNKNOWN ? `run ${run.id} reads ${run.status}/${run.conclusion} with jobs that do not agree` : null;
   return report(signal, run, reason, jobs);
+}
+
+const EXTERNAL_PASSED = new Set(["success", "neutral", "skipped"]);
+const EXTERNAL_RED = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]);
+
+/**
+ * EXTERNAL checks at the exact head - non-Actions check runs and commit
+ * statuses - as a NEGATIVE-ONLY signal (decision record, amendment):
+ *
+ *   FAILED  a check failed, errored or was cancelled: it blocks candidacy;
+ *   PENDING one has not finished: candidacy waits for it. With no required
+ *           checks configured on production, every external check reported
+ *           for the exact head is treated as relevant;
+ *   UNKNOWN unreadable, partial, or a state GitHub never documented: it can
+ *           only keep a PR from candidacy;
+ *   CLEAR   nothing external holds the PR back - which includes there being
+ *           no external check at all, so CLEAR can never contribute anything.
+ *
+ * Nothing here reads Actions: the latest applicable run is CI's authority, and
+ * an external pass cannot make it green or stand in for it.
+ */
+export function deriveExternal(sf) {
+  const failed = [];
+  const pending = [];
+  const unrecognized = [];
+  const checks = listIn(sf.externalChecks);
+  const statuses = listIn(sf.commitStatuses);
+  for (const c of checks ?? []) {
+    const name = `${c.name} (${c.app})`;
+    if (c.status === "completed") {
+      if (EXTERNAL_RED.has(c.conclusion)) failed.push(name);
+      else if (!EXTERNAL_PASSED.has(c.conclusion)) unrecognized.push(name);
+    } else if (c.status === "in_progress" || QUEUED.has(c.status)) pending.push(name);
+    else unrecognized.push(name);
+  }
+  for (const s of statuses ?? []) {
+    const name = `${s.context} (status)`;
+    if (s.state === "failure" || s.state === "error") failed.push(name);
+    else if (s.state === "pending") pending.push(name);
+    else if (s.state !== "success") unrecognized.push(name);
+  }
+  const complete = mayAssertPositive(sf.externalChecks) && mayAssertPositive(sf.commitStatuses);
+  let signal;
+  // A failure is a negative fact and stands on whatever was read.
+  if (failed.length) signal = "FAILED";
+  else if (!complete || unrecognized.length) signal = UNKNOWN;
+  else if (pending.length) signal = "PENDING";
+  else signal = "CLEAR";
+  const unread = [sf.externalChecks, sf.commitStatuses].find((e) => !mayAssertPositive(e));
+  return {
+    signal,
+    failed: sorted(failed),
+    pending: sorted(pending),
+    unrecognized: sorted(unrecognized),
+    checks: checks ? checks.length : UNKNOWN,
+    statuses: statuses ? statuses.length : UNKNOWN,
+    reason: unread ? unread.reason : unrecognized.length ? `undocumented state: ${list(unrecognized)}` : null,
+  };
 }
 
 /**
@@ -451,6 +520,7 @@ export function deriveSignals(sf, { tier = null, policy = POLICY } = {}) {
 
   const tierDetail = deriveTier(sf, tier, policy);
   const ci = deriveCi(sf, policy);
+  const external = deriveExternal(sf);
   const rv = deriveReview(sf, admit(sf.comments), { budget: tierDetail.budget });
   // A head whose latest run PASSED ends any failure streak by definition, so
   // its own evidence settles the count; history is only needed when it did not.
@@ -468,6 +538,7 @@ export function deriveSignals(sf, { tier = null, policy = POLICY } = {}) {
     branch: cmp ? (cmp.behindBy === 0 ? "CURRENT" : "BEHIND") : UNKNOWN,
     conflicts: p ? (p.mergeable === true ? "NONE" : p.mergeable === false ? "CONFLICTING" : "PENDING") : UNKNOWN,
     ci: ci.signal,
+    external: external.signal,
     review: rv.review,
     findings: rv.findings,
     history: rv.history,
@@ -484,6 +555,7 @@ export function deriveSignals(sf, { tier = null, policy = POLICY } = {}) {
       reason: cmp ? null : sf.comparison.reason,
     },
     ci,
+    external,
     review: rv.detail,
     findings: rv.findingsDetail,
     rounds: { ...rv.roundsDetail, ...tierDetail },
@@ -574,6 +646,12 @@ const TEXT = {
     return `The latest ${c.workflow} run (${c.run.id}) at ${short(h)} is ${c.run.status}${lanes ? `: ${lanes}` : ""}.`;
   },
   WAIT_MERGEABILITY: () => "GitHub has not finished computing mergeability. Read again.",
+  CHECK_EXTERNAL: (d, h) =>
+    `An external check at ${short(h)} failed: ${list(d.external.failed)}. External checks can only hold a PR back, never pass it. ` +
+    "Recommended: inspect it at its provider - the shepherd cannot see why it failed - and, if this PR caused it, fix it with a " +
+    "new commit on top; otherwise it is the operator's to route.",
+  WAIT_EXTERNAL: (d, h) =>
+    `External check(s) at ${short(h)} still pending: ${list(d.external.pending)}. They cannot make the PR a candidate, but candidacy waits for them.`,
 };
 
 const NOT_PROVEN = {
@@ -583,6 +661,7 @@ const NOT_PROVEN = {
   branch: (d) => `the branch's position against production (${d.branch.reason ?? "unknown"})`,
   conflicts: (d) => `mergeability (${d.pull.reason ?? "unknown"})`,
   ci: (d) => `CI at this head (${d.ci.reason ?? "not conclusive"})`,
+  external: (d) => `that no external check holds this head back (${d.external.reason ?? "unknown"})`,
   review: (d) => `a trusted exact-head review result (${d.review.reason ?? "unknown"})`,
   findings: (d) => `that no actionable finding is open (${d.findings.reason ?? "a trusted finding could not be graded"})`,
   history: (d) => `that the branch history is intact (${d.rounds.reason ?? "unknown"})`,
@@ -670,6 +749,16 @@ export function renderShepherd(result) {
       (c.failed.length ? `; failed: ${list(c.failed, 4)}` : c.running.length || c.queued.length ? `; ${c.running.length} running, ${c.queued.length} queued` : "")
     : (c.reason ?? "");
   row("ci", s.ci, ciNote);
+  const x = d.external;
+  row(
+    "external",
+    s.external,
+    x.failed.length
+      ? `failed: ${list(x.failed, 4)}`
+      : x.pending.length
+        ? `pending: ${list(x.pending, 4)}`
+        : x.reason ?? `${x.checks} check run(s), ${x.statuses} status(es) at head; negative-only, never a pass`,
+  );
   const rv = d.review;
   const untrusted = rv.untrusted ? rv.untrusted.reviews + rv.untrusted.issueComments + rv.untrusted.inlineComments : 0;
   row(
@@ -716,5 +805,5 @@ export function renderShepherd(result) {
 /** One line per observed change while watching. */
 export function renderTransition(result, at) {
   const s = result.signals;
-  return `${new Date(at).toISOString().slice(11, 19)} ${result.state.padEnd(33)} head ${short(result.head)}  ci=${s.ci} review=${s.review} findings=${s.findings} branch=${s.branch}`;
+  return `${new Date(at).toISOString().slice(11, 19)} ${result.state.padEnd(33)} head ${short(result.head)}  ci=${s.ci} external=${s.external} review=${s.review} findings=${s.findings} branch=${s.branch}`;
 }

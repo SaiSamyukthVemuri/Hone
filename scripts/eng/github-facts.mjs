@@ -417,7 +417,10 @@ export const SHAPES = Object.freeze({
   issueComment: { id: is.int, user: ACTOR, body: is.str },
   workflowRun: { id: is.int, path: is.str, event: is.str, status: is.str, conclusion: nullable(is.str), head_sha: is.sha },
   job: { id: is.int, run_id: is.int, name: is.str, status: is.str, conclusion: nullable(is.str), head_sha: is.sha },
-  commit: { sha: is.sha, parents: listOf({ sha: is.sha }, 1), commit: { committer: { date: is.time } } },
+  checkRun: { name: is.str, status: is.str, conclusion: nullable(is.str), head_sha: is.sha, app: { slug: is.str } },
+  commitStatus: { context: is.str, state: is.str },
+  // No commit time: nothing is inferred from when a commit was made or pushed.
+  commit: { sha: is.sha, parents: listOf({ sha: is.sha }, 1) },
   file: { filename: is.str, previous_filename: optional(is.str) },
   thread: { isResolved: is.bool, isOutdated: is.bool, comments: { nodes: listOf({ databaseId: is.int }, 1) } },
   ref: { object: { sha: is.sha, type: is.str } },
@@ -463,7 +466,7 @@ function strictList(res, shape, { expected = null, project = (x) => x } = {}) {
  * one page read without `--paginate`, so a larger total is reported as
  * INCOMPLETE and the reader must treat what it has as a lower bound.
  */
-function strictPaged(res, { items, total, shape, bind = () => null, project = (x) => x, single = false }) {
+function strictPaged(res, { items, total, shape, bind = () => null, bindPage = () => null, project = (x) => x, single = false }) {
   if (!res.ok) return invalid(`could not be read: ${res.reason}`);
   const pages = single ? [res.data] : res.data;
   if (!Array.isArray(pages) || pages.length === 0) return invalid("malformed: expected at least one page");
@@ -472,6 +475,8 @@ function strictPaged(res, { items, total, shape, bind = () => null, project = (x
   for (const page of pages) {
     if (page === null || typeof page !== "object" || Array.isArray(page)) return invalid("malformed: a page is not an object");
     if (Array.isArray(page.errors) && page.errors.length > 0) return invalid("the API reported errors in its answer");
+    const foreignPage = bindPage(page);
+    if (foreignPage) return invalid(foreignPage);
     const t = total(page);
     const xs = items(page);
     if (!is.count(t)) return invalid("malformed: a page does not state a non-negative integer total");
@@ -547,6 +552,13 @@ function threadsMatchComments(threads, inline) {
 export const PR_WORKFLOW = Object.freeze({ path: ".github/workflows/ci.yml", event: "pull_request" });
 
 /**
+ * The app GitHub Actions reports its jobs as. Its check runs are NOT external:
+ * the latest applicable run already speaks for Actions, and its older runs at
+ * the same sha are history.
+ */
+export const ACTIONS_APP = "github-actions";
+
+/**
  * The run whose answer IS the head's CI: the LATEST run of the pull-request
  * workflow, triggered by a pull request, at exactly this sha. Other workflows
  * (the nightly), other events, and EARLIER runs at the same sha are history,
@@ -612,8 +624,8 @@ export function collectShepherdFacts({ pr, fetcher, repo = DEFAULT_REPO, workflo
   if (!p) {
     return {
       repo, pr: Number(pr), head, pull, comments,
-      ciRun: none, production: none, comparison: none, commits: none, files: none, threads: none, branchRuns: none,
-      headAfter: UNKNOWN, unavailable,
+      ciRun: none, externalChecks: none, commitStatuses: none, production: none, comparison: none,
+      commits: none, files: none, threads: none, branchRuns: none, headAfter: UNKNOWN, unavailable,
     };
   }
 
@@ -652,6 +664,34 @@ export function collectShepherdFacts({ pr, fetcher, repo = DEFAULT_REPO, workflo
     }
   }
 
+  // EXTERNAL checks at the exact head, read separately from Actions and kept
+  // apart from it (docs/decisions/eng-loop-01-observation-only.md, amendment):
+  // check runs from any app but GitHub Actions, and commit statuses. The reader
+  // may only let them hold a PR back - never make CI green or a PR a candidate.
+  const checkRuns = strictPaged(read("check_runs", `repos/{repo}/commits/${head}/check-runs`, { paginate: true }), {
+    items: (pg) => pg.check_runs,
+    total: (pg) => pg.total_count,
+    shape: SHAPES.checkRun,
+    bind: bindHead(head),
+    project: (c) => ({ name: c.name, app: c.app.slug, status: c.status, conclusion: c.conclusion }),
+  });
+  // Actions' own check runs leave HOWEVER the read went: a partial read keeps
+  // its completeness, but is never where an Actions failure becomes external.
+  const externalChecks = Array.isArray(checkRuns.value)
+    ? evidence(
+        checkRuns.value.filter((c) => c.app !== ACTIONS_APP),
+        { completeness: checkRuns.completeness, authority: checkRuns.authority, reason: checkRuns.reason },
+      )
+    : checkRuns;
+  const commitStatuses = strictPaged(read("commit_statuses", `repos/{repo}/commits/${head}/status?per_page=100`, { paginate: true }), {
+    items: (pg) => pg.statuses,
+    total: (pg) => pg.total_count,
+    shape: SHAPES.commitStatus,
+    // The combined status names its commit; it must name ours.
+    bindPage: (pg) => (pg.sha === head ? null : "the statuses answered describe another commit than the head"),
+    project: (s) => ({ context: s.context, state: s.state }),
+  });
+
   const branchPath = p.productionBranch.split("/").map(encodeURIComponent).join("/");
   const production = strictObject(
     read("production_ref", `repos/{repo}/git/ref/heads/${branchPath}`),
@@ -671,7 +711,7 @@ export function collectShepherdFacts({ pr, fetcher, repo = DEFAULT_REPO, workflo
 
   const commits = strictList(read("commits", `repos/{repo}/pulls/${pr}/commits`, { paginate: true }), SHAPES.commit, {
     expected: p.commitCount,
-    project: (c) => ({ sha: c.sha, parents: c.parents.map((x) => x.sha), committedAt: c.commit.committer.date }),
+    project: (c) => ({ sha: c.sha, parents: c.parents.map((x) => x.sha) }),
   });
   const files = strictList(read("files", `repos/{repo}/pulls/${pr}/files`, { paginate: true }), SHAPES.file, {
     expected: p.changedFiles,
@@ -705,7 +745,7 @@ export function collectShepherdFacts({ pr, fetcher, repo = DEFAULT_REPO, workflo
 
   return {
     repo, pr: Number(pr), head, pull, comments,
-    ciRun, production, comparison, commits, files, threads, branchRuns,
+    ciRun, externalChecks, commitStatuses, production, comparison, commits, files, threads, branchRuns,
     headAfter, unavailable,
   };
 }

@@ -6,8 +6,9 @@
 // shepherd says, advisory - docs/decisions/eng-loop-01-observation-only.md):
 //
 //   * report when the state SETTLES, not on every poll. Two things are worth
-//     waiting for: CI, and the trusted exact-head review. A WAITING state is
-//     the first; a recommendation to request the exact-head review, and
+//     waiting for: CI (with the head's external checks), and the trusted
+//     exact-head review. A WAITING state is the first; a recommendation to
+//     request the exact-head review, and
 //     nothing else, is the second - the shepherd deliberately cannot see
 //     whether that review was asked for, so the watch keeps looking until a
 //     verdict lands or NO_PROGRESS ends it;
@@ -45,13 +46,14 @@ export const WATCH_LIMITS = Object.freeze({
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Progress is any change in state, head, signals, or which lanes are moving. */
+/** Progress is any change in state, head, signals, or which lanes or external checks are moving. */
 export function fingerprint(result) {
   const c = result.detail.ci;
-  return JSON.stringify([result.state, result.head, result.signals, c.run, c.running, c.queued, c.failed, c.cancelled]);
+  const x = result.detail.external;
+  return JSON.stringify([result.state, result.head, result.signals, c.run, c.running, c.queued, c.failed, c.cancelled, x?.pending, x?.failed]);
 }
 
-/** Still waiting on something outside the caller's hands: CI, or the exact-head review. */
+/** Still waiting on something outside the caller's hands: CI or an external check, or the exact-head review. */
 export function stillPending(result) {
   if (result.state === STATE.WAITING) return true;
   return (

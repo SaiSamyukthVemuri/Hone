@@ -200,6 +200,9 @@ people and the existing release procedure:
   authorizes a merge.
 - **UNKNOWN never counts as clean.** A surface that cannot be read, or reads
   malformed, keeps a PR from candidacy; it is reported, never defaulted.
+- **External checks can only hold a PR back.** CI is the latest Actions run for
+  the exact head; an external check or status (Vercel's, say) that fails or is
+  pending holds the PR, but a passing one never makes it a candidate.
 - **The §7.4 stop law binds people, not the tool.** The shepherd recommends
   ESCALATE when consecutive P0-P2 review rounds or red CI heads pass the tier's
   repair budget; the operator decides what follows.

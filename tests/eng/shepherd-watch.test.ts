@@ -145,6 +145,18 @@ describe("every watch is bounded", () => {
     expect(ended.watch.terminatedBy).toBe("NO_PROGRESS");
   });
 
+  it("an external check finishing while another is still pending is progress; a stuck one still ends at NO_PROGRESS", async () => {
+    const waitingOn = (...pending: string[]): Json => {
+      const r = result("WAITING", { running: [] });
+      return { ...r, detail: { ...r.detail, external: { pending, failed: [] } } };
+    };
+    const both = waitingOn("Vercel (status)", "Vercel Preview Comments (vercel)");
+    const ended = await watchPr({ ...fakeClock(), observe: script(...Array(20).fill(both), waitingOn("Vercel (status)")) });
+    expect(ended.watch.terminatedBy).toBe("NO_PROGRESS");
+    // One check finishing at minute 20 restarted the no-progress clock.
+    expect(ended.watch.elapsedMs).toBe(20 * MIN + WATCH_DEFAULTS.noProgressMs);
+  });
+
   it("progress that never settles stops at the time bound, never past it", async () => {
     let n = 0;
     const ended = await watchPr({

@@ -14,7 +14,11 @@ import { CANDIDATE_POINT, CODES, DOMAINS, EXIT_CODE, LAW, STATE, decide, interpr
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { renderHuman } from "../../scripts/eng/cli.mjs";
+// prettier-ignore
+// @ts-expect-error - .mjs utility ships without type declarations
+import { stillPending } from "../../scripts/eng/watch.mjs";
 import {
+  ACTIONS,
   CI_WORKFLOW,
   CODEX,
   CODEX_ID_AS_USER,
@@ -24,9 +28,12 @@ import {
   OUTSIDER,
   PROD_BRANCH,
   REPO,
+  VERCEL,
   ago,
+  checkRun,
   ciRun,
   cleanVerdict,
+  commitStatus,
   deepFreeze,
   fetcherFor,
   finding,
@@ -36,6 +43,7 @@ import {
   readyWorld,
   sha,
   short,
+  statusPage,
   type Call,
   type Json,
   type World,
@@ -63,6 +71,8 @@ import {
 //      prefix, is never a verdict for the head.
 //   6. CI is the LATEST applicable run: a seeded property test over random run
 //      sets at one sha, checked against the rule restated independently.
+//      EXTERNAL checks are NEGATIVE-ONLY: in every situation, adding a passing
+//      external check or status - or any Actions check run - changes nothing.
 //   7. The §7.4 stop law fires on REAL history: #786, at 3644d2fb.
 //   8. Fault injection BY CONSTRUCTION: the requests and response leaves that
 //      are failed, corrupted or truncated are the ones the collector actually
@@ -71,7 +81,6 @@ import {
 
 const R = (w: World): Json => w.responses;
 const threadsOf = (w: World): Json => R(w).threads[0].data.repository.pullRequest.reviewThreads;
-const H = (w: World) => w.head;
 const dropIssue = (w: World, id: number) => {
   R(w).issues[0] = R(w).issues[0].filter((c: Json) => c.id !== id);
 };
@@ -124,6 +133,36 @@ function runsAtHead(w: World, runs: Json[], jobsByRun: Record<number, Json[]> = 
     runs.map((r) => [r.id, jobsPage(jobsByRun[r.id] ?? [job(r.id * 10, r.id, r.head_sha, "lane", r.conclusion ?? null, r.status)])]),
   );
 }
+
+/** Add one check run at the head, keeping GitHub's stated total true. False if there is no page to add to. */
+function addCheckRun(w: World, c: Json): boolean {
+  const page = R(w).checkRuns?.[0];
+  if (!page || !Array.isArray(page.check_runs) || typeof page.total_count !== "number") return false;
+  page.check_runs.push(c);
+  page.total_count += 1;
+  return true;
+}
+
+/** Add one commit status at the head, keeping GitHub's stated total true. False if there is no page to add to. */
+function addStatus(w: World, s: Json): boolean {
+  const page = R(w).statuses?.[0];
+  if (!page || !Array.isArray(page.statuses) || typeof page.total_count !== "number") return false;
+  page.statuses.push(s);
+  page.total_count += 1;
+  return true;
+}
+
+/** Set Vercel's own check run (status, conclusion) and/or its commit status at the head. */
+function vercel(w: World, { check, status }: { check?: [string, string | null]; status?: string }) {
+  if (check) {
+    const c = R(w).checkRuns[0].check_runs.find((x: Json) => x.app.slug === VERCEL.slug);
+    Object.assign(c, { status: check[0], conclusion: check[1] });
+  }
+  if (status) R(w).statuses[0].statuses.find((x: Json) => x.context === "Vercel").state = status;
+}
+
+/** A CI lane's name. An external app's check may share it: what is external is the reporting app, never the name. */
+const LANE = "typecheck / lint / build / test / safety gates";
 
 interface Scenario {
   mutate: (w: World) => void;
@@ -238,6 +277,118 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     state: "ESCALATE",
     codes: ["CI_FAILURES_REPEATED"],
+  },
+
+  // --- External checks at the head: NEGATIVE-ONLY ---------------------------
+  // The latest Actions run is green in each of these unless stated otherwise.
+  "Vercel's commit status failed": {
+    mutate: (w) => vercel(w, { status: "failure" }),
+    state: "ACTION_RECOMMENDED",
+    codes: ["CHECK_EXTERNAL"],
+  },
+  "Vercel's commit status errored": {
+    mutate: (w) => vercel(w, { status: "error" }),
+    state: "ACTION_RECOMMENDED",
+    codes: ["CHECK_EXTERNAL"],
+  },
+  "Vercel's check run failed": {
+    mutate: (w) => vercel(w, { check: ["completed", "failure"] }),
+    state: "ACTION_RECOMMENDED",
+    codes: ["CHECK_EXTERNAL"],
+  },
+  "Vercel's check run was cancelled": {
+    mutate: (w) => vercel(w, { check: ["completed", "cancelled"] }),
+    state: "ACTION_RECOMMENDED",
+    codes: ["CHECK_EXTERNAL"],
+  },
+  "an external check named like a CI lane failed": {
+    mutate: (w) => void addCheckRun(w, checkRun(LANE, VERCEL, w.head, "failure")),
+    state: "ACTION_RECOMMENDED",
+    codes: ["CHECK_EXTERNAL"],
+  },
+  "Vercel's commit status is still pending": {
+    mutate: (w) => vercel(w, { status: "pending" }),
+    state: "WAITING",
+    codes: ["WAIT_EXTERNAL"],
+  },
+  "Vercel's check run is still in progress": {
+    mutate: (w) => vercel(w, { check: ["in_progress", null] }),
+    state: "WAITING",
+    codes: ["WAIT_EXTERNAL"],
+  },
+  "the latest run is still running and Vercel is pending": {
+    mutate: (w) => {
+      SCENARIOS["the latest run is still running, its later jobs not yet reported"].mutate(w);
+      vercel(w, { status: "pending" });
+    },
+    state: "WAITING",
+    codes: ["WAIT_CI", "WAIT_EXTERNAL"],
+  },
+  "the latest run failed, and so did Vercel": {
+    mutate: (w) => {
+      failHeadRun(w);
+      vercel(w, { status: "failure" });
+    },
+    state: "ACTION_RECOMMENDED",
+    codes: ["FIX_CI", "CHECK_EXTERNAL"],
+  },
+  "Vercel failed while the latest run is still running": {
+    mutate: (w) => {
+      SCENARIOS["the latest run is still running, its later jobs not yet reported"].mutate(w);
+      vercel(w, { check: ["completed", "failure"] });
+    },
+    state: "ACTION_RECOMMENDED",
+    codes: ["CHECK_EXTERNAL"],
+  },
+  "an external check reports a conclusion GitHub never documented": {
+    mutate: (w) => vercel(w, { check: ["completed", "pondering"] }),
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_EXTERNAL"],
+  },
+  "an external check reports a status GitHub never documented": {
+    mutate: (w) => vercel(w, { check: ["paused", null] }),
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_EXTERNAL"],
+  },
+  "a commit status reports a state GitHub never documented": {
+    mutate: (w) => vercel(w, { status: "maybe" }),
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_EXTERNAL"],
+  },
+  "the commit statuses answered describe another commit": {
+    mutate: (w) => {
+      R(w).statuses[0].sha = sha("elsewhere");
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_EXTERNAL"],
+  },
+  "a check run answered for the head names another commit": {
+    mutate: (w) => {
+      R(w).checkRuns[0].check_runs[0].head_sha = sha("elsewhere");
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_EXTERNAL"],
+  },
+  "a page of check runs is missing": {
+    mutate: (w) => {
+      R(w).checkRuns[0].total_count = 40;
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_EXTERNAL"],
+  },
+  "the check runs cannot be read": {
+    mutate: (w) => {
+      delete R(w).checkRuns;
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_EXTERNAL"],
+  },
+  "the commit statuses cannot be read": {
+    mutate: (w) => {
+      delete R(w).statuses;
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_EXTERNAL"],
   },
 
   // --- Review: one fact - a TRUSTED verdict for the CURRENT exact head --------
@@ -442,6 +593,22 @@ const STILL_CANDIDATE: Record<string, (w: World) => void> = {
     R(w).jobs[3003][0].jobs.push(job(9005, 3003, w.head, "advisory", "neutral"));
     R(w).jobs[3003][0].total_count = 5;
   },
+  "an earlier run's failed Actions check runs at the same sha are history, not external checks": (w) => {
+    runsAtHead(w, [ciRun(2990, w.head, "failure"), ciRun(3003, w.head, "success")], { 3003: R(w).jobs[3003][0].jobs });
+    addCheckRun(w, checkRun(LANE, ACTIONS, w.head, "failure"));
+    addCheckRun(w, checkRun("browser e2e (local stack)", ACTIONS, w.head, "cancelled"));
+  },
+  "an Actions check run carrying Vercel's name is still Actions": (w) =>
+    void addCheckRun(w, checkRun("Vercel Preview Comments", ACTIONS, w.head, "failure")),
+  "no external check or status exists at all, so the combined status reads pending": (w) => {
+    R(w).checkRuns[0].check_runs = R(w).checkRuns[0].check_runs.filter((c: Json) => c.app.slug !== VERCEL.slug);
+    R(w).checkRuns[0].total_count = R(w).checkRuns[0].check_runs.length;
+    R(w).statuses = statusPage(w.head, []);
+  },
+  "external checks that ended neutral or skipped hold nothing back": (w) => {
+    addCheckRun(w, checkRun("Lighthouse", { slug: "lighthouse-ci", name: "Lighthouse CI" }, w.head, "neutral"));
+    addCheckRun(w, checkRun("Vercel - docs preview", VERCEL, w.head, "skipped"));
+  },
   "the run history is unreadable, but the head itself is green": (w) => {
     delete R(w).branchRuns;
   },
@@ -553,6 +720,18 @@ describe("the decision is a total function, and CANDIDATE_READY_FOR_HUMAN_REVIEW
       if (out.actions.includes("REPAIR_FINDINGS") && !(s.findings === "FRESH" && s.rounds === "WITHIN_CAP")) flag("repair outside budget");
       if (out.actions.includes("FIX_CI") && !(s.ci === "FAILED" && s.ciStreak === "WITHIN_CAP")) flag("CI fix outside budget");
       if (out.actions.includes("REQUEST_EXACT_HEAD_REVIEW") && s.review !== "NO_VERDICT_AT_HEAD") flag("review requested with a verdict at head");
+      // External checks are negative-only: a failure is never waited out or
+      // passed over, and nothing external is reported that is not so. (A torn
+      // snapshot decides nothing at all but "read again".)
+      if (s.external === "FAILED" && s.snapshot !== "TORN" && (out.state === STATE.WAITING || out.state === CANDIDATE)) {
+        flag("a failed external check waited out");
+      }
+      if (out.state === STATE.ACTION_RECOMMENDED && (s.external === "FAILED") !== out.actions.includes("CHECK_EXTERNAL")) {
+        flag("CHECK_EXTERNAL does not track a failed external check");
+      }
+      if (out.state === STATE.WAITING && s.snapshot !== "TORN" && (s.external === "PENDING") !== out.waits.includes("WAIT_EXTERNAL")) {
+        flag("WAIT_EXTERNAL does not track a pending external check");
+      }
       if (out.state !== CANDIDATE && codes === 0) flag("a state with no reason");
       if (out.state === CANDIDATE && codes !== 0) flag("candidate with reasons attached");
       // The final fall-through is for evidence that could not be read. A fully
@@ -839,6 +1018,124 @@ describe("CI derives from the latest applicable run at the exact head only", () 
 });
 
 // ---------------------------------------------------------------------------
+// 6b. external head checks are NEGATIVE-ONLY (decision record, amendment)
+// ---------------------------------------------------------------------------
+
+/** Passing external evidence, of each kind the collector reads. */
+const PASSING_EXTERNAL: Array<[string, (w: World) => boolean]> = [
+  ["a passing Vercel check run", (w) => addCheckRun(w, checkRun("Vercel - deployment", VERCEL, w.head, "success"))],
+  ["a passing external check named exactly like a CI lane", (w) => addCheckRun(w, checkRun(LANE, VERCEL, w.head, "success"))],
+  ["a neutral check run of another app", (w) => addCheckRun(w, checkRun("Lighthouse", { slug: "lighthouse-ci", name: "Lighthouse CI" }, w.head, "neutral"))],
+  ["a passing commit status", (w) => addStatus(w, commitStatus("Vercel - preview", "success"))],
+  ["a passing commit status named like the CI workflow", (w) => addStatus(w, commitStatus("ci", "success"))],
+];
+
+/** Actions check runs at the head, in any state: the latest applicable run already speaks for Actions. */
+const ACTIONS_CHECK_RUNS: Array<[string, (w: World) => boolean]> = [
+  ["a passing Actions check run", (w) => addCheckRun(w, checkRun("browser e2e (local stack)", ACTIONS, w.head, "success"))],
+  ["a failed Actions check run", (w) => addCheckRun(w, checkRun(LANE, ACTIONS, w.head, "failure"))],
+  ["a running Actions check run", (w) => addCheckRun(w, checkRun("db integration (local supabase)", ACTIONS, w.head, null, "in_progress"))],
+];
+
+describe("external head checks are NEGATIVE-ONLY: they can hold a PR back, never pass it", () => {
+  it("ADDING any passing external check or status - or any Actions check run - in ANY situation changes nothing", () => {
+    const changed: string[] = [];
+    let checks = 0;
+    for (const [name, mutate, tier] of SITUATIONS) {
+      const base = build(mutate);
+      const expected = JSON.stringify(verdictOf(run(base, { tier })));
+      for (const [what, add] of [...PASSING_EXTERNAL, ...ACTIONS_CHECK_RUNS]) {
+        const w = structuredClone(base);
+        if (!add(w)) continue;
+        checks += 1;
+        if (JSON.stringify(verdictOf(run(w, { tier }))) !== expected) changed.push(`${name} / + ${what}`);
+      }
+    }
+    expect(changed).toEqual([]);
+    // Anti-vacuity: only the situations with an unreadable external answer had nothing to add to.
+    expect(checks).toBeGreaterThan((SITUATIONS.length - 2) * PASSING_EXTERNAL.length);
+  });
+
+  it("latest Actions run green + Vercel red: NOT a candidate, and the failure is named", () => {
+    for (const name of ["Vercel's commit status failed", "Vercel's commit status errored", "Vercel's check run failed", "Vercel's check run was cancelled"]) {
+      const r = run(build(SCENARIOS[name].mutate));
+      expect({ name, ci: r.signals.ci, external: r.signals.external }).toEqual({ name, ci: "GREEN", external: "FAILED" });
+      expect(r.state).not.toBe(CANDIDATE);
+      expect(codesOf(r)).toEqual(["CHECK_EXTERNAL"]);
+      expect(r.actions[0].text).toMatch(/failed: Vercel/);
+    }
+  });
+
+  it("latest Actions run green + Vercel pending: WAITING for it, and a watch keeps watching", () => {
+    const r = run(build(SCENARIOS["Vercel's commit status is still pending"].mutate));
+    expect(r.signals).toMatchObject({ ci: "GREEN", external: "PENDING" });
+    expect(r.state).toBe(STATE.WAITING);
+    expect(r.waits[0].text).toMatch(/still pending: Vercel \(status\)/);
+    expect(stillPending(r)).toBe(true);
+  });
+
+  it("latest Actions run green + Vercel green: the pass grants nothing - a trusted exact-head review is still required", () => {
+    const r = run(build((w) => dropIssue(w, 6003)));
+    expect(r.signals).toMatchObject({ ci: "GREEN", external: "CLEAR", review: "NO_VERDICT_AT_HEAD" });
+    expect(r.detail.external).toMatchObject({ checks: 1, statuses: 1, failed: [], pending: [] });
+    expect(codesOf(r)).toEqual(["REQUEST_EXACT_HEAD_REVIEW"]);
+  });
+
+  it("a candidate leans on no external pass: with no external check at all it is still one", () => {
+    const r = run(build(STILL_CANDIDATE["no external check or status exists at all, so the combined status reads pending"]));
+    expect(r.detail.external).toMatchObject({ signal: "CLEAR", checks: 0, statuses: 0 });
+    expect(r.state).toBe(CANDIDATE);
+  });
+
+  it("a passing external check cannot stand in for a failed, missing, running, cancelled or contradictory Actions run", () => {
+    const cases: Array<[string, string]> = [
+      ["the latest run failed", "FAILED"],
+      ["no applicable run exists at the head yet", "NOT_STARTED"],
+      ["the latest run is still running, its later jobs not yet reported", "RUNNING"],
+      ["the latest run was cancelled", "CANCELLED"],
+      ["the latest run says success while one of its jobs failed", "UNKNOWN"],
+    ];
+    for (const [name, ci] of cases) {
+      const r = run(
+        build((w) => {
+          SCENARIOS[name].mutate(w);
+          addCheckRun(w, checkRun(LANE, VERCEL, w.head, "success"));
+          addStatus(w, commitStatus("ci", "success"));
+        }),
+      );
+      expect({ name, ci: r.signals.ci, state: r.state, codes: codesOf(r) }).toEqual({
+        name,
+        ci,
+        state: SCENARIOS[name].state,
+        codes: SCENARIOS[name].codes,
+      });
+    }
+  });
+
+  it("an old failed Actions run + the latest green run: the latest run wins, and the old run's check runs are not external", () => {
+    const r = run(build(STILL_CANDIDATE["an earlier run's failed Actions check runs at the same sha are history, not external checks"]));
+    expect(r.state).toBe(CANDIDATE);
+    expect(r.detail.ci.run).toEqual({ id: 3003, status: "completed", conclusion: "success" });
+    expect(r.detail.external).toMatchObject({ signal: "CLEAR", checks: 1, failed: [] });
+  });
+
+  it("what is external is decided by the reporting app, never by a check's name", () => {
+    const vercelNamedLikeCi = run(build(SCENARIOS["an external check named like a CI lane failed"].mutate));
+    expect(vercelNamedLikeCi.detail.external.failed).toEqual([`${LANE} (vercel)`]);
+    const actionsNamedLikeVercel = run(build(STILL_CANDIDATE["an Actions check run carrying Vercel's name is still Actions"]));
+    expect(actionsNamedLikeVercel.detail.external.failed).toEqual([]);
+    expect(actionsNamedLikeVercel.state).toBe(CANDIDATE);
+  });
+
+  it("the report shows the external row as negative-only, and recommends, never authorizes", () => {
+    expect(renderShepherd(run(readyWorld()))).toMatch(/external\s+CLEAR\s+.*1 check run\(s\), 1 status\(es\) at head; negative-only, never a pass/);
+    const r = run(build(SCENARIOS["Vercel's check run failed"].mutate));
+    expect(r.actions[0].text).toMatch(/External checks can only hold a PR back, never pass it\. Recommended:/);
+    expect(r.advisory).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 7. the stop law on real history: #786
 // ---------------------------------------------------------------------------
 
@@ -883,6 +1180,9 @@ describe("the §7.4 review-round stop law, replayed on #786", () => {
       comparison: { status: "ahead", ahead_by: k + 1, behind_by: 0, base_commit: { sha: P } },
       workflowRuns: [{ total_count: 1, workflow_runs: [ciRun(4000 + k, head, "success")] }],
       jobs: { [4000 + k]: jobsPage([job(41000 + k, 4000 + k, head, "ci", "success")]) },
+      // No external check was recorded for #786: none, bound to its head.
+      checkRuns: [{ total_count: 0, check_runs: [] }],
+      statuses: statusPage(head, []),
       branchRuns: { total_count: k + 1, workflow_runs: shas.slice(0, k + 1).map((s, i) => ciRun(4000 + i, s, "success")) },
     });
     return w;
@@ -1015,17 +1315,15 @@ const NOT_CANDIDATE = Object.entries(SCENARIOS);
 const CANDIDACY_INDEPENDENT: Record<string, string> = {
   files: "the file list only sets the repair budget; losing it applies the strictest budget, and a zero streak is within any budget",
   branchRuns: "the head's own green run ends any failure streak, so run history is only consulted while the head is not green",
-  checkRuns: "read by `status` only; the shepherd never requests it",
 };
 
 describe("fault injection and corruption: what was read is what is attacked", () => {
-  it("every request the collector makes is answered by the synthetic GitHub (the attack surface is real)", () => {
+  it("every request the collector makes is answered by the synthetic GitHub, and every answer is asked for", () => {
     const record: Call[] = [];
     const w = readyWorld();
     interpret(collectShepherdFacts({ pr: w.pr, fetcher: fetcherFor(w, { record }), repo: REPO }), { now: NOW });
     expect(record.filter((c) => c.key === null)).toEqual([]);
-    // `checkRuns` is read by `status` only; the shepherd never asks for it.
-    expect(new Set(record.map((c) => c.key))).toEqual(new Set(Object.keys(w.responses).filter((k) => k !== "checkRuns")));
+    expect(new Set(record.map((c) => c.key))).toEqual(new Set(Object.keys(w.responses)));
   });
 
   it("losing ANY request takes candidacy away, except the two surfaces it provably does not need", () => {
@@ -1037,7 +1335,9 @@ describe("fault injection and corruption: what was read is what is attacked", ()
       const r = run(readyWorld(), { fault: (c) => (c.index === call.index ? { ok: false, reason: "injected" } : undefined) });
       if (r.state === CANDIDATE) kept.push(String(call.key));
     }
-    expect(kept.sort()).toEqual(Object.keys(CANDIDACY_INDEPENDENT).filter((k) => k !== "checkRuns").sort());
+    // The external reads are among those it needs: unread is UNKNOWN, never clear.
+    expect(record.map((c) => c.key)).toEqual(expect.arrayContaining(["checkRuns", "statuses"]));
+    expect(kept.sort()).toEqual(Object.keys(CANDIDACY_INDEPENDENT).sort());
   });
 
   it("no lost request, from any situation that is not a candidate, ever produces one", () => {
@@ -1247,7 +1547,9 @@ describe("the shepherd is read-only by construction, and advisory in what it say
     const section8 = standards.slice(standards.indexOf("## 8."));
     expect(decision).toMatch(/OBSERVATION-ONLY/);
     expect(decision).toMatch(/\*\*Status\*\* \| \*\*ACCEPTED\*\*/);
+    expect(decision).toMatch(/external head checks are NEGATIVE-ONLY/);
     expect(section8).toMatch(/advisory/);
+    expect(section8).toMatch(/External checks can only hold a PR back/);
     expect(section8).toContain("docs/decisions/eng-loop-01-observation-only.md");
     for (const state of Object.values(STATE)) expect(section8).toContain(state);
     // The superseded authority vocabulary survives only as history in the decision record.

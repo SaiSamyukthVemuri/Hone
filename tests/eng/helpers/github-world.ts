@@ -67,8 +67,9 @@ const ROUTES: Array<[RegExp, string]> = [
   [/^repos\/\{repo\}\/pulls\/\d+\/reviews$/, "reviews"],
   [/^repos\/\{repo\}\/pulls\/\d+\/comments$/, "inline"],
   [/^repos\/\{repo\}\/issues\/\d+\/comments$/, "issues"],
-  // `status` (CP-005a) reads check runs; the shepherd does not.
+  // Read by `status` (CP-005a) and, for EXTERNAL checks only, by the shepherd.
   [/^repos\/\{repo\}\/commits\/[0-9a-f]{40}\/check-runs$/, "checkRuns"],
+  [/^repos\/\{repo\}\/commits\/[0-9a-f]{40}\/status\?per_page=100$/, "statuses"],
   [/^repos\/\{repo\}\/actions\/runs\?head_sha=[0-9a-f]{40}&per_page=100$/, "workflowRuns"],
   [/^repos\/\{repo\}\/actions\/runs\/\d+\/jobs\?per_page=100$/, "jobs"],
   [/^repos\/\{repo\}\/git\/ref\/heads\/.+$/, "productionRef"],
@@ -153,6 +154,40 @@ export const job = (id: number, runId: number, head: string, name: string, concl
 /** One page of a run's jobs. */
 export const jobsPage = (jobs: Json[]) => [{ total_count: jobs.length, jobs }];
 
+/** The apps that report check runs here, as GitHub names them (checked live on #795). */
+export const ACTIONS = { slug: "github-actions", name: "GitHub Actions" };
+export const VERCEL = { slug: "vercel", name: "Vercel" };
+
+/** A check run at a commit. GitHub Actions reports every job as one; other apps report their own. */
+export const checkRun = (name: string, app: Json, head: string, conclusion: string | null, status = "completed") => ({
+  name,
+  app: { ...app },
+  status,
+  conclusion,
+  head_sha: head,
+});
+
+/** A commit status, as the combined status lists it (the latest per context). */
+export const commitStatus = (context: string, state: string) => ({ context, state, description: `${context}: ${state}` });
+
+/**
+ * One page of the combined status. GitHub states the combined `state` too, and
+ * reads "pending" when NO status exists at all - which is why only the
+ * per-context statuses are read, never the combined state.
+ */
+export const statusPage = (head: string, statuses: Json[]) => [
+  {
+    state: statuses.some((s) => s.state === "failure" || s.state === "error")
+      ? "failure"
+      : statuses.length === 0 || statuses.some((s) => s.state === "pending")
+        ? "pending"
+        : "success",
+    sha: head,
+    total_count: statuses.length,
+    statuses,
+  },
+];
+
 /**
  * A pull request that is a CANDIDATE for human review. Its history is
  * deliberately not trivial, so candidacy is reached THROUGH the cases that must
@@ -161,6 +196,8 @@ export const jobsPage = (jobs: Json[]) => [{ total_count: jobs.length, jobs }];
  *   * a P2 found at C2 is carried, re-anchored onto the head, and RESOLVED;
  *   * C2's review round raised it, then the head's round came back clean;
  *   * CI failed once (C1) and passed since; one lane of the head's run skipped;
+ *   * GitHub Actions reports its jobs as check runs too - they are not external;
+ *     Vercel reports a check run and a commit status, both passing;
  *   * the operator's own comments - requests included - are not evidence;
  *   * Codex's summary comment mentions "@codex review" and changes nothing.
  */
@@ -210,7 +247,17 @@ export function readyWorld(): World {
           { id: 6003, user: CODEX, body: cleanVerdict(H) },
         ],
       ],
-      checkRuns: [{ total_count: 1, check_runs: [{ name: "status-only", status: "completed", conclusion: "success", head_sha: H }] }],
+      checkRuns: [
+        {
+          total_count: 3,
+          check_runs: [
+            checkRun("Vercel Preview Comments", VERCEL, H, "success"),
+            checkRun("typecheck / lint / build / test / safety gates", ACTIONS, H, "success"),
+            checkRun("payment browser e2e (fake stripe)", ACTIONS, H, "skipped"),
+          ],
+        },
+      ],
+      statuses: statusPage(H, [commitStatus("Vercel", "success")]),
       workflowRuns: [{ total_count: 1, workflow_runs: [ciRun(3003, H, "success")] }],
       jobs: {
         3003: jobsPage([
