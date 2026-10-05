@@ -129,6 +129,17 @@ test.describe("public reschedule v2", () => {
     const { appointmentId, token } = await bookAndTokenise(page, seed);
     const before = await appointmentRow(appointmentId);
 
+    // OPT IN TO ACCEPTANCE. The lane's fake default is `reject`, reproducing
+    // what the dummy Resend key used to do for every send, so a spec that needs
+    // the provider to ACCEPT asks for it by recipient. Explicit in both
+    // directions: this test says "accept", B7 says "refuse", and no other spec
+    // changes behaviour because of either.
+    const b1ClientId = (await getClientIdByEmail(seed.studioId, seed.clientEmail))!;
+    await sql(`update public.clients set email = $2 where id = $1`, [
+      b1ClientId,
+      `success+${b1ClientId}@harness.local`,
+    ]);
+
     await openReschedule(page, token);
     await pickAnyOfferedSlot(page);
     // The policy card is rendered, so the checkbox is required.

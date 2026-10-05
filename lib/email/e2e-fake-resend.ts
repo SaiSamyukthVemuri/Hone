@@ -72,9 +72,13 @@ export function fakeResendModeFromEnv(
 
 // Per-recipient mode control. A single running E2E server exercises every send
 // outcome without restarts by seeding studios whose owner_email local-part is
-// prefixed with the mode, e.g. `reject+<id>@harness.local`. A global
-// HONE_E2E_FAKE_RESEND_MODE env, when set, OVERRIDES the prefix (unit tests rely
-// on that); otherwise the recipient prefix decides, defaulting to success.
+// prefixed with the mode, e.g. `reject+<id>@harness.local`.
+//
+// PRECEDENCE, highest first:
+//   1. HONE_E2E_FAKE_RESEND_MODE          global force (unit tests rely on it)
+//   2. the recipient's local-part prefix  per-send control, no restart needed
+//   3. HONE_E2E_FAKE_RESEND_DEFAULT_MODE  the host's default for "asks nothing"
+//   4. "success"                          library default
 /** How long `hold` keeps a send in flight. Long enough to observe a pending
  *  surface, short enough that a suite never waits on it meaningfully. */
 export const HOLD_MS = 4_000;
@@ -87,7 +91,22 @@ export function fakeResendModeForRecipient(
   if (forced) return forced;
   const localPart = to.split("@")[0] ?? "";
   const prefix = localPart.split("+")[0]?.toLowerCase();
-  return asMode(prefix) ?? "success";
+  const byPrefix = asMode(prefix);
+  if (byPrefix) return byPrefix;
+  // RESCHEDULE-E2E-01: the HOST'S default, for recipients that ask for nothing.
+  //
+  // Arming the fake for a whole lane changes what every spec that asks for
+  // nothing gets. With `success` as the only fallback, each documented
+  // degraded-path scenario in the suite silently became an ACCEPTED send --
+  // and kept passing, because those specs assert what is absent on a refusal,
+  // which is also absent on success. The browser lane therefore sets this to
+  // `reject`, reproducing exactly what the dummy Resend key used to produce
+  // for every send, and a spec that needs ACCEPTANCE opts in with a `success+`
+  // recipient. Behaviour-preserving by default, explicit where it differs.
+  //
+  // The library default stays `success`, so unit tests and any non-lane
+  // consumer are unaffected.
+  return asMode(env.HONE_E2E_FAKE_RESEND_DEFAULT_MODE) ?? "success";
 }
 
 // Structural shape both the real Resend client and the fake satisfy.

@@ -80,27 +80,44 @@ describe("the fake transport decides the outcome, per recipient", () => {
 });
 
 describe("production behaviour is unchanged", () => {
+  // THESE TWO MUST CONTROL THEIR OWN ENVIRONMENT, and an earlier revision did
+  // not. `lib/email/client.ts` reads RESEND_API_KEY at MODULE LOAD, so
+  // `vi.stubEnv` after the static import above came too late: on a machine with
+  // no key these passed, and in CI -- which has one -- `resend` was a real
+  // client, the "unconfigured" assertion saw "API key is invalid" instead, and
+  // the test had made a LIVE request to the provider. A test whose verdict
+  // depends on ambient environment is the very thing this PR removes, so these
+  // reset the module registry and import with the environment already set.
+  const freshSend = async (env: Record<string, string>, to: string) => {
+    vi.resetModules();
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    const mod = await import("@/lib/email/send-appointment");
+    return mod.sendEmailSafely({ ...BASE, to });
+  };
+
   it("with the fake marker ABSENT and no API key, the send is refused as unconfigured", async () => {
     // The guard this path has always had: `getResendTransport()` returns the
     // real client, which is null without RESEND_API_KEY. No network call, and
     // the same terminal result the raw-`resend` guard used to produce.
-    vi.stubEnv("HONE_E2E_FAKE_RESEND", "");
-    vi.stubEnv("RESEND_API_KEY", "");
-    const result = await sendEmailSafely({ ...BASE, to: "client@example.com" });
+    const result = await freshSend(
+      { HONE_E2E_FAKE_RESEND: "", RESEND_API_KEY: "" },
+      "client@example.com",
+    );
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toMatch(/not configured/i);
   });
 
-  it("a deployed runtime signal makes the fake marker REFUSE to take effect", async () => {
-    // Same fail-closed posture as the other E2E fakes: even if the marker
-    // leaked into a deployed environment, the fake does not serve sends there.
+  it("a deployed runtime signal makes the fake marker REFUSE AT IMPORT", async () => {
+    // Stronger than checking a send result: `client.ts` calls
+    // `assertFakeResendNotRequestedInDeployment()` at module scope, so a leaked
+    // marker in a deployed runtime does not degrade quietly -- the module
+    // refuses to load at all. Nothing can send fake mail from production.
+    vi.resetModules();
     vi.stubEnv("HONE_E2E_FAKE_RESEND", "1");
     vi.stubEnv("VERCEL", "1");
-    vi.stubEnv("RESEND_API_KEY", "");
-    const result = await sendEmailSafely({ ...BASE, to: "client@example.com" });
-    expect(result.ok).toBe(false);
-    // Unconfigured, NOT a fake success: the fake refused to participate.
-    expect(result.ok === false && result.error).toMatch(/not configured/i);
+    await expect(import("@/lib/email/send-appointment")).rejects.toThrow(
+      /must never be set in a deployed environment/i,
+    );
   });
 });
 

@@ -142,6 +142,21 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // Default mode is `success`; a spec drives a refusal per-recipient with a
   // `reject+`/`throw+` local-part, needing no restart and no global switch.
   HONE_E2E_FAKE_RESEND: "1",
+  // AND THE DEFAULT IS REFUSAL, because that is what this lane already did.
+  //
+  // Every send here used to go through the real SDK with the dummy key above
+  // and be refused. Arming the fake with `success` as the fallback silently
+  // converted every documented degraded-path scenario in the suite into an
+  // accepted send -- portal-rebook's degraded acknowledgement, the dashboard
+  // card's safe-failure copy, the waitlist spec's refused notifications -- and
+  // all of them kept PASSING, because each asserts what is absent on a refusal,
+  // which is also absent on success. Three separate specs lost their scenario
+  // without a single red test.
+  //
+  // So the lane default reproduces the old behaviour exactly, and a spec that
+  // needs ACCEPTANCE opts in with a `success+` recipient. New coverage is
+  // explicit; existing coverage is untouched.
+  HONE_E2E_FAKE_RESEND_DEFAULT_MODE: "reject",
   // A global MODE override, when the outer process sets one, forces every
   // recipient. Specs do NOT rely on it (it would apply to the whole server);
   // it exists for a deliberate whole-run refusal sweep.
