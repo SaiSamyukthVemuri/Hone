@@ -2,79 +2,69 @@
 // ---------------------------------------------------------------------------
 // ENG-LOOP-01: `npm run eng -- shepherd <pr> [--json] [--watch]`
 //
-// `status` answers "what does GitHub say about this PR, at its exact head?".
-// The shepherd answers the question an operator kept answering by hand from
-// screenshots: GIVEN those facts, what happens next - wait, act, stop, or hand
-// the merge decision to a human.
+// OBSERVATION ONLY (docs/decisions/eng-loop-01-observation-only.md). The
+// shepherd reads a pull request's exact-head facts from GitHub, normalizes them
+// into one state, and RECOMMENDS a next step. It is not release authority:
 //
-// It is the smallest deterministic layer over the CP-005a facts, bounded on
-// every side:
+//   * it never merges, rebases, amends, squashes, force-pushes or refreshes a
+//     branch, never writes to GitHub, and persists nothing - every answer is
+//     re-derived at read time (no ledger: CP-005b retired on exactly that);
+//   * its best state, CANDIDATE_READY_FOR_HUMAN_REVIEW, is ADVISORY. Neither it
+//     nor green CI authorizes a merge; the human / existing release procedure
+//     decides (CANONICAL_ROADMAP §16.2, Phase 1);
+//   * it infers NOTHING about review requests - not from comments, not from
+//     when a PR was opened or marked ready. The one review fact it reads is
+//     whether a TRUSTED Codex verdict exists for the CURRENT exact head;
+//   * every comment-derived input passes ONE authority gate (`admit`): only
+//     the trusted Codex account, by immutable id and type, is evidence;
+//   * CI is the LATEST applicable workflow run for the exact head - never every
+//     run that ever ran at that sha.
 //
-//   * It READS. It never merges, never writes to GitHub, and persists nothing:
-//     every answer is re-derived from GitHub at read time, so there is no
-//     ledger to corrupt (CP-005b retired on exactly that). The only process it
-//     runs is `gh api`, read-only by construction (github-facts.mjs).
-//   * READY_FOR_HUMAN_MERGE is a HAND-OFF, not an authorization: every
-//     mechanical gate holds at this exact head, and the merge decision stays
-//     the operator's (CANONICAL_ROADMAP §16.2, Phase 1). Green CI alone never
-//     reaches it.
-//   * Stop laws are evaluated, not merely displayed. Consecutive P0-P2 review
-//     rounds, or consecutive red CI heads, beyond the tier's repair budget
-//     (§7.4) ESCALATE - and no repair is proposed while that budget cannot be
-//     read.
-//   * A root-cause FAMILY is a semantic judgement. The shepherd does not guess
-//     one: with two or more fresh findings it says the family check is owed
-//     before any patch.
+// Stop laws are still evaluated, as recommendations: consecutive P0-P2 review
+// rounds, or consecutive red CI heads, past the tier's repair budget (§7.4)
+// read ESCALATE, and no repair is recommended while that budget is unreadable.
+// A root-cause FAMILY stays a human judgement.
 //
 // THE DECISION IS A TOTAL FUNCTION over a closed set of signals (DOMAINS), in
 // one fixed precedence:
 //
-//   CLOSED > ESCALATE > BLOCKED > ACTION_REQUIRED > WAITING
-//          > BLOCKED (not proven) > READY_FOR_HUMAN_MERGE
+//   CLOSED > ESCALATE > BLOCKED > ACTION_RECOMMENDED > WAITING
+//          > BLOCKED (not proven) > CANDIDATE_READY_FOR_HUMAN_REVIEW
 //
-// READY is an explicit conjunction - every signal at its one positive value
-// (READY_POINT) - and never a fall-through. tests/eng/shepherd.test.ts
-// enumerates the whole product of DOMAINS, so "UNKNOWN never reaches READY" is
-// checked for every combination, not for the ones someone thought of.
+// The candidate state is an explicit conjunction - every signal at its one
+// positive value (CANDIDATE_POINT) - never a fall-through.
+// tests/eng/shepherd.test.ts enumerates the whole product of DOMAINS.
 // ---------------------------------------------------------------------------
 
 import { classify } from "../classify-changes.mjs";
-import { AUTHORIZED, CODEX_ACTOR, COMPLETE, UNKNOWN, mayAssertPositive } from "./evidence.mjs";
-import { collectVerdicts, shaMatches } from "./review-provenance.mjs";
+import { AUTHORIZED, COMPLETE, UNKNOWN, actorAuthority, mayAssertPositive } from "./evidence.mjs";
+import { PR_WORKFLOW, latestApplicableRun, projectInlineComment, projectIssueComment, projectReview } from "./github-facts.mjs";
+import { shaMatches } from "./review-provenance.mjs";
 
 export { UNKNOWN };
 
 export const STATE = Object.freeze({
-  READY_FOR_HUMAN_MERGE: "READY_FOR_HUMAN_MERGE",
+  CANDIDATE_READY_FOR_HUMAN_REVIEW: "CANDIDATE_READY_FOR_HUMAN_REVIEW",
   WAITING: "WAITING",
-  ACTION_REQUIRED: "ACTION_REQUIRED",
+  ACTION_RECOMMENDED: "ACTION_RECOMMENDED",
   BLOCKED: "BLOCKED",
   ESCALATE: "ESCALATE",
   CLOSED: "CLOSED",
 });
 
-/** One exit code per state, so a shell loop can branch without parsing. */
+/** One exit code per state, so a shell loop can branch. None is authorization. */
 export const EXIT_CODE = Object.freeze({
-  READY_FOR_HUMAN_MERGE: 0,
+  CANDIDATE_READY_FOR_HUMAN_REVIEW: 0,
   WAITING: 10,
-  ACTION_REQUIRED: 20,
+  ACTION_RECOMMENDED: 20,
   BLOCKED: 30,
   ESCALATE: 40,
   CLOSED: 50,
 });
 
 export const POLICY = Object.freeze({
-  /**
-   * The pull-request workflow. Every check at the head gates - production has
-   * no branch protection and no rulesets, so GitHub marks nothing required -
-   * AND this workflow's run at the head must have finished. Jobs behind
-   * `needs:`, the `browser e2e (local stack)` aggregator among them, have no
-   * check run until their dependencies finish, so "every visible check passed"
-   * can be true while CI is still running (seen live on #793).
-   */
-  requiredWorkflow: ".github/workflows/ci.yml",
-  /** Codex answered within 2-7 minutes of every request on #730-#792. */
-  reviewAnswerMs: 30 * 60_000,
+  /** The pull-request workflow; its latest run at the head is the head's CI. */
+  workflow: PR_WORKFLOW,
   /** Repairs allowed before the stop law fires (CANONICAL_ROADMAP §7.4). */
   repairBudget: Object.freeze({ T0: 2, T1: 2, T2: 1, T3: 1 }),
 });
@@ -87,15 +77,15 @@ export const DOMAINS = Object.freeze({
   branch: Object.freeze(["CURRENT", "BEHIND", UNKNOWN]),
   conflicts: Object.freeze(["NONE", "CONFLICTING", "PENDING", UNKNOWN]),
   ci: Object.freeze(["GREEN", "RUNNING", "QUEUED", "NOT_STARTED", "CANCELLED", "FAILED", UNKNOWN]),
-  review: Object.freeze(["VERDICT_AT_HEAD", "REQUESTED", "REQUEST_OVERDUE", "STALE", "NONE", UNKNOWN]),
+  review: Object.freeze(["VERDICT_AT_HEAD", "NO_VERDICT_AT_HEAD", UNKNOWN]),
   findings: Object.freeze(["NONE_BLOCKING", "FRESH", "CARRIED", UNKNOWN]),
   history: Object.freeze(["INTACT", "REWRITTEN", UNKNOWN]),
   rounds: Object.freeze(["WITHIN_CAP", "EXCEEDED", UNKNOWN]),
   ciStreak: Object.freeze(["WITHIN_CAP", "EXCEEDED", UNKNOWN]),
 });
 
-/** The ONE point of that product at which the human merge gate is reached. */
-export const READY_POINT = Object.freeze({
+/** The ONE point of that product at which a PR is a candidate for human review. */
+export const CANDIDATE_POINT = Object.freeze({
   pr: "OPEN",
   base: "PRODUCTION",
   snapshot: "CONSISTENT",
@@ -119,9 +109,9 @@ const outcome = (state, { stops = [], blocks = [], actions = [], waits = [] } = 
 
 /**
  * THE DECISION. Pure and total: every combination of DOMAINS maps to exactly
- * one state, and READY only at READY_POINT. Each tier of the precedence is a
- * list, so everything that applies at the winning tier is reported, not just
- * the first thing found.
+ * one state, and the candidate state only at CANDIDATE_POINT. Each tier of the
+ * precedence is a list, so everything that applies at the winning tier is
+ * reported, not just the first thing found. Every output is a recommendation.
  */
 export function decide(s) {
   if (s.pr === UNKNOWN) return outcome(STATE.BLOCKED, { blocks: ["UNREADABLE_PULL_REQUEST"] });
@@ -130,26 +120,24 @@ export function decide(s) {
   // Answers that straddle a push are not one snapshot; nothing else is decided.
   if (s.snapshot === "TORN") return outcome(STATE.WAITING, { waits: ["HEAD_MOVED_DURING_READ"] });
 
-  // Stop laws. A CONFIRMED breach stops the loop whatever else is true.
+  // Stop laws. A CONFIRMED breach recommends stopping whatever else is true.
   const stops = [];
   if (s.rounds === "EXCEEDED") stops.push("REVIEW_ROUNDS_EXCEEDED");
   if (s.ciStreak === "EXCEEDED") stops.push("CI_FAILURES_REPEATED");
   if (stops.length) return outcome(STATE.ESCALATE, { stops });
 
-  // Hard blocks: the loop may not continue without a human.
+  // Blocks: nothing the loop should do next without a human.
   const blocks = [];
   if (s.pr === "DRAFT") blocks.push("PR_DRAFT");
   if (s.base === "OTHER") blocks.push("BASE_NOT_PRODUCTION");
   if (s.history === "REWRITTEN") blocks.push("HISTORY_REWRITTEN");
-  if (s.review === "REQUEST_OVERDUE") blocks.push("REVIEW_UNANSWERED");
-  // A repair is never proposed while the budget that would forbid it is unread.
+  // A repair is never recommended while the budget that would forbid it is unread.
   if (s.findings === "FRESH" && s.rounds !== "WITHIN_CAP") blocks.push("REPAIR_BUDGET_UNKNOWN");
   if (s.ci === "FAILED" && s.ciStreak !== "WITHIN_CAP") blocks.push("CI_BUDGET_UNKNOWN");
   if (blocks.length) return outcome(STATE.BLOCKED, { blocks });
 
-  // Actions the loop can take now. The first three each produce a new head,
-  // so nothing that the new head would immediately invalidate is proposed
-  // alongside them.
+  // Recommendations. The first three each produce a new head, so nothing the
+  // new head would immediately make stale is recommended alongside them.
   const actions = [];
   if (s.conflicts === "CONFLICTING") actions.push("RESOLVE_CONFLICTS");
   if (s.findings === "FRESH") actions.push("REPAIR_FINDINGS");
@@ -157,31 +145,64 @@ export function decide(s) {
   const newHeadComing = actions.length > 0;
   if (s.findings === "CARRIED") actions.push("DISPOSITION_FINDINGS");
   if (!newHeadComing) {
-    // Production is merged in at release review, not on every move it makes:
-    // only once CI has settled and no review is in flight. A refresh also
-    // re-runs every lane, so it replaces a re-run of cancelled ones.
+    // Production comes in once CI has settled, before the review it would make
+    // stale; a refresh re-runs every lane, so it replaces a re-run.
     const settled = s.ci === "GREEN" || s.ci === "CANCELLED";
-    if (s.branch === "BEHIND" && settled && s.review !== "REQUESTED") actions.push("REFRESH_PRODUCTION");
+    if (s.branch === "BEHIND" && settled) actions.push("REFRESH_PRODUCTION");
     if (s.ci === "CANCELLED" && s.branch === "CURRENT") actions.push("RERUN_CI");
-    if ((s.review === "NONE" || s.review === "STALE") && s.branch === "CURRENT") actions.push("REQUEST_REVIEW");
+    // No trusted verdict for this exact head: recommend asking for one. Whether
+    // someone already asked is deliberately NOT inferred.
+    if (s.review === "NO_VERDICT_AT_HEAD" && s.branch === "CURRENT") actions.push("REQUEST_EXACT_HEAD_REVIEW");
   }
-  if (actions.length) return outcome(STATE.ACTION_REQUIRED, { actions });
+  if (actions.length) return outcome(STATE.ACTION_RECOMMENDED, { actions });
 
   const waits = [];
   if (s.ci === "RUNNING" || s.ci === "QUEUED" || s.ci === "NOT_STARTED") waits.push("WAIT_CI");
-  if (s.review === "REQUESTED") waits.push("WAIT_REVIEW");
   if (s.conflicts === "PENDING") waits.push("WAIT_MERGEABILITY");
   if (waits.length) return outcome(STATE.WAITING, { waits });
 
-  // The human merge gate: an explicit conjunction over EVERY signal.
-  const unproven = Object.keys(READY_POINT).filter((k) => s[k] !== READY_POINT[k]);
-  if (unproven.length === 0) return outcome(STATE.READY_FOR_HUMAN_MERGE);
+  // The candidate state: an explicit conjunction over EVERY signal.
+  const unproven = Object.keys(CANDIDATE_POINT).filter((k) => s[k] !== CANDIDATE_POINT[k]);
+  if (unproven.length === 0) return outcome(STATE.CANDIDATE_READY_FOR_HUMAN_REVIEW);
   return outcome(STATE.BLOCKED, { blocks: unproven.map((k) => `NOT_PROVEN_${k.toUpperCase()}`) });
 }
 
 // ---------------------------------------------------------------------------
+// THE AUTHORITY GATE.
+// ---------------------------------------------------------------------------
+
+/**
+ * Every comment-derived input - submitted reviews, issue comments, inline
+ * review comments - passes here ONCE, and only what the trusted reviewer wrote
+ * comes out as evidence. Trust is `actorAuthority` (evidence.mjs): the Codex
+ * reviewer's immutable account id AND type. Never a login, never wording,
+ * never `author_association`; and no public commenter is ever an operator -
+ * the shepherd reads no requests at all.
+ *
+ * Untrusted items come out only as COUNTS, for display. No derivation receives
+ * them, and tests/eng/shepherd.test.ts proves it: adding or re-attributing any
+ * comment, in any situation, changes nothing but those counts.
+ *
+ * Returns null for a collection that could not be read strictly.
+ */
+export function admit(comments) {
+  const split = (env) => {
+    if (!mayAssertPositive(env)) return null;
+    const trusted = [];
+    let untrusted = 0;
+    for (const item of env.value) {
+      if (actorAuthority(item.user).authority === AUTHORIZED) trusted.push(item);
+      else untrusted += 1;
+    }
+    return { trusted, untrusted };
+  };
+  return { reviews: split(comments.reviews), inline: split(comments.inline), issues: split(comments.issues) };
+}
+
+// ---------------------------------------------------------------------------
 // Facts -> signals. Each derivation reads only evidence that passed the strict
-// collector, and anything it cannot establish is UNKNOWN - never a default.
+// collector (and, for comments, the gate). Anything it cannot establish is
+// UNKNOWN - never a default.
 // ---------------------------------------------------------------------------
 
 const P0_P2 = new Set(["P0", "P1", "P2"]);
@@ -192,63 +213,59 @@ const TIERS = ["T0", "T1", "T2", "T3"];
 
 const listIn = (env) => (env && Array.isArray(env.value) ? env.value : null);
 const fullList = (env) => (mayAssertPositive(env) ? env.value : null);
+const sorted = (xs) => [...xs].sort();
 
 /**
- * CI at the exact head, across check runs, workflow runs and commit statuses.
- * A confirmed failing, running or cancelled lane is a NEGATIVE fact and stands
- * on what was read; GREEN needs all three collections complete, every lane
- * passed, and the required workflow's run finished successfully.
+ * CI at the exact head: the LATEST applicable run (github-facts.mjs) and its
+ * own jobs. The run's status and conclusion are the authority; the jobs name
+ * the lanes. A failed job is a negative fact and stands even while the run is
+ * still going; a "success" run with any job that did not pass is a
+ * contradiction, so it is UNKNOWN, not GREEN.
  */
 export function deriveCi(sf, policy = POLICY) {
-  const failed = [];
-  const cancelled = [];
-  const running = [];
-  const queued = [];
-  const unrecognized = [];
-  const lane = (name, status, conclusion) => {
-    if (status === "completed") {
-      if (!PASSED.has(conclusion)) (conclusion === "cancelled" ? cancelled : failed).push(name);
-    } else if (status === "in_progress") running.push(name);
-    else if (QUEUED.has(status)) queued.push(name);
-    else unrecognized.push(name);
-  };
-  const runs = listIn(sf.checkRuns);
-  const workflows = listIn(sf.workflowRuns);
-  const statuses = listIn(sf.statuses);
-  for (const r of runs ?? []) lane(r.name, r.status, r.conclusion);
-  for (const w of workflows ?? []) lane(`workflow ${w.path}`, w.status, w.conclusion);
-  for (const s of statuses ?? []) {
-    if (s.state === "success") continue;
-    if (s.state === "pending") running.push(s.context);
-    else if (s.state === "failure" || s.state === "error") failed.push(s.context);
-    else unrecognized.push(s.context);
+  const lanes = { failed: [], cancelled: [], running: [], queued: [], unrecognized: [] };
+  const report = (signal, run, reason, jobs = null) => ({
+    signal,
+    run: run ? { id: run.id, status: run.status, conclusion: run.conclusion } : null,
+    workflow: policy.workflow.path,
+    ...Object.fromEntries(Object.entries(lanes).map(([k, v]) => [k, sorted(v)])),
+    jobs: jobs === null ? UNKNOWN : jobs.length,
+    reason,
+  });
+  const env = sf.ciRun;
+  if (!mayAssertPositive(env)) return report(UNKNOWN, null, env?.reason ?? "not read");
+  if (env.value === null) return report("NOT_STARTED", null, env.reason);
+
+  const { run, jobs } = env.value;
+  for (const j of jobs) {
+    if (j.status === "completed") {
+      if (!PASSED.has(j.conclusion)) (j.conclusion === "cancelled" ? lanes.cancelled : lanes.failed).push(j.name);
+    } else if (j.status === "in_progress") lanes.running.push(j.name);
+    else if (QUEUED.has(j.status)) lanes.queued.push(j.name);
+    else lanes.unrecognized.push(j.name);
   }
-  const required = (workflows ?? []).filter((w) => w.path === policy.requiredWorkflow);
-  const complete = [sf.checkRuns, sf.workflowRuns, sf.statuses].every(mayAssertPositive);
+  const unsettledJobs = lanes.running.length + lanes.queued.length + lanes.unrecognized.length;
 
   let signal;
-  if (failed.length) signal = "FAILED";
-  else if (running.length) signal = "RUNNING";
-  else if (queued.length) signal = "QUEUED";
-  else if (cancelled.length) signal = "CANCELLED";
-  else if (!complete || unrecognized.length) signal = UNKNOWN;
-  else if (required.length === 0) signal = "NOT_STARTED";
-  else if (runs.length === 0 || !required.every((w) => w.conclusion === "success")) signal = UNKNOWN;
-  else signal = "GREEN";
-
-  const sorted = (xs) => [...xs].sort();
-  return {
-    signal,
-    failed: sorted(failed),
-    cancelled: sorted(cancelled),
-    running: sorted(running),
-    queued: sorted(queued),
-    unrecognized: sorted(unrecognized),
-    lanes: runs ? runs.length : UNKNOWN,
-    requiredWorkflow: policy.requiredWorkflow,
-    requiredRuns: workflows ? required.length : UNKNOWN,
-    reason: complete ? null : [sf.checkRuns, sf.workflowRuns, sf.statuses].find((e) => !mayAssertPositive(e))?.reason,
-  };
+  if (run.status === "completed" && run.conclusion === "success") {
+    signal = jobs.length > 0 && lanes.failed.length + lanes.cancelled.length + unsettledJobs === 0 ? "GREEN" : UNKNOWN;
+  } else if (lanes.failed.length) {
+    signal = "FAILED";
+  } else if (run.status !== "completed") {
+    const known = run.status === "in_progress" || QUEUED.has(run.status);
+    if (!known || lanes.unrecognized.length) signal = UNKNOWN;
+    else signal = run.status === "in_progress" || lanes.running.length ? "RUNNING" : "QUEUED";
+  } else if (run.conclusion === "cancelled") {
+    signal = "CANCELLED";
+    if (!lanes.cancelled.length) lanes.cancelled.push(`workflow ${run.path}`);
+  } else if (RED.has(run.conclusion)) {
+    signal = "FAILED";
+    lanes.failed.push(`workflow ${run.path}`);
+  } else {
+    signal = UNKNOWN;
+  }
+  const reason = signal === UNKNOWN ? `run ${run.id} reads ${run.status}/${run.conclusion} with jobs that do not agree` : null;
+  return report(signal, run, reason, jobs);
 }
 
 /**
@@ -268,11 +285,11 @@ export function deriveTier(sf, override = null, policy = POLICY) {
 }
 
 /**
- * Review provenance, findings, history and the review-round stop law. They
- * share their inputs, so they are derived together and fail together: one
- * unreadable surface makes every one of them UNKNOWN.
+ * Review, findings, history and the review-round stop law, from GATED evidence
+ * only. They share their inputs, so they are derived together and fail
+ * together: one unreadable surface makes every one of them UNKNOWN.
  */
-export function deriveReview(sf, { now, policy = POLICY, budget }) {
+export function deriveReview(sf, gate, { budget }) {
   const head = sf.head;
   const unknown = (reason) => ({
     review: UNKNOWN,
@@ -284,94 +301,52 @@ export function deriveReview(sf, { now, policy = POLICY, budget }) {
     roundsDetail: { streak: UNKNOWN, heads: [], reason },
   });
   if (head === UNKNOWN) return unknown("the head is unknown");
-  const strict = ["reviews", "inlineComments", "issueComments"].find((k) => !mayAssertPositive(sf.provenance[k]));
-  if (strict) return unknown(`${strict}: ${sf.provenance[strict].reason}`);
-  const projected = ["reviews", "inlineComments", "issueComments"].every((k) => Array.isArray(sf.facts[k]?.value));
-  const verdicts = projected ? collectVerdicts(sf.facts) : UNKNOWN;
-  if (verdicts === UNKNOWN) return unknown("review verdicts could not be collected");
+  const unread = ["reviews", "inline", "issues"].find((k) => gate[k] === null);
+  if (unread) return unknown(`${unread}: ${sf.comments[unread].reason}`);
 
   const commits = fullList(sf.commits);
   const threads = fullList(sf.threads);
-  const roots = sf.facts.inlineComments.value.filter((c) => c.inReplyToId === null || c.inReplyToId === undefined);
-  // A finding is a severity badge from the TRUSTED reviewer, by immutable
-  // account id. The badge is markup anyone can type - on a public repository,
-  // anyone - so an untrusted one must not drive a repair, count toward a stop
-  // law, or make a trusted verdict that states nothing look as if it stated
-  // something. Look-alikes stay visible as a count; they are never used.
-  const trusted = (c) => c.authorId === CODEX_ACTOR.id;
-  const findings = roots.filter((c) => c.severity && trusted(c));
-  const untrustedFindings = roots.filter((c) => c.severity && !trusted(c));
+  // Trusted evidence, projected by the same parsers `status` uses.
+  const verdicts = [
+    ...gate.reviews.trusted.map((r) => projectReview(r).verdict),
+    ...gate.issues.trusted.map(projectIssueComment).flatMap((c) => (c.verdict ? [c.verdict] : [])),
+  ].filter((v) => v.completeness === COMPLETE);
+  const roots = gate.inline.trusted.map(projectInlineComment).filter((c) => c.inReplyToId === null);
+  const findings = roots.filter((c) => c.severity);
   // A Codex root comment without a severity badge is a finding nobody can
   // grade. It is never read as "no finding".
-  const ungraded = roots.filter((c) => !c.severity && trusted(c));
+  const ungraded = roots.filter((c) => !c.severity);
   const raisedAt = (sha) => (c) => c.originalCommitId === sha;
   const atHead = raisedAt(head);
 
-  // Resolution is GitHub's review-thread state, set by a person after checking
-  // the finding against the current head (§7.5) - read here, never written.
-  // Threads are also the only TOTAL the inline comments have, so the two
-  // surfaces must describe exactly the same root comments.
-  let threadOf = null;
-  if (threads) {
-    const byRoot = new Map(threads.map((t) => [t.rootCommentId, t]));
-    const rootIds = new Set(roots.map((c) => c.id));
-    const agree =
-      byRoot.size === threads.length &&
-      threads.every((t) => rootIds.has(t.rootCommentId)) &&
-      roots.every((c) => byRoot.has(c.id));
-    if (agree) threadOf = byRoot;
+  // THE review fact: a trusted verdict that names this exact head. One that
+  // states neither a clean result nor any finding is not a result anyone can
+  // act on.
+  const verdictsAtHead = verdicts.filter((v) => shaMatches(v.reviewedCommit, head));
+  let review = "NO_VERDICT_AT_HEAD";
+  if (verdictsAtHead.length) {
+    const statesSomething = verdictsAtHead.some((v) => v.clean === true) || findings.some(atHead) || ungraded.some(atHead);
+    review = statesSomething ? "VERDICT_AT_HEAD" : UNKNOWN;
   }
+
+  // Resolution is GitHub's review-thread state, set by someone with write
+  // access after checking the finding against the current head (§7.5) - read
+  // here, never written. The collector has already proved threads and root
+  // comments describe the same set.
+  const threadOf = threads ? new Map(threads.map((t) => [t.rootCommentId, t])) : null;
   const gating = [...findings.filter((c) => P0_P2.has(c.severity)), ...ungraded];
-  const unresolved = threadOf ? gating.filter((c) => !threadOf.get(c.id).isResolved) : null;
+  const unresolved = threadOf ? gating.filter((c) => !threadOf.get(c.id)?.isResolved) : null;
   let findingsSignal;
   if (!unresolved) findingsSignal = UNKNOWN;
   else if (unresolved.some((c) => c.severity && atHead(c))) findingsSignal = "FRESH";
   else if (unresolved.some((c) => !c.severity)) findingsSignal = UNKNOWN;
   else findingsSignal = unresolved.length ? "CARRIED" : "NONE_BLOCKING";
 
-  // Verdicts and requests for THIS head.
-  const usable = verdicts.filter((v) => v.usable);
-  const usableAtHead = usable.filter((v) => v.atHead);
-  const headCommit = commits?.find((c) => c.sha === head) ?? null;
-  const requestsAtHead = sf.facts.issueComments.value.filter((c) => {
-    // Codex's own summary and verdict comments contain "@codex review" too; a
-    // request is something an operator asked for.
-    if (!c.isReviewRequest || c.authorId === CODEX_ACTOR.id) return false;
-    if (c.requestedCommit) return shaMatches(c.requestedCommit, head);
-    // An unbound request only counts if it was made after this head existed.
-    return headCommit !== null && Date.parse(c.createdAt) >= Date.parse(headCommit.committedAt);
-  });
-  // Making a pull request reviewable asks Codex for a review with no comment at
-  // all: "Reviews are triggered when you open a pull request for review" or
-  // "mark a draft as ready". The ask is dated by that moment - the latest
-  // ready-for-review event, or creation for a PR that never was a draft - and
-  // covers the head committed before it. Without it, every freshly opened PR
-  // would be told to request a review Codex is already running. An unreadable
-  // timeline dates nothing: asking again is harmless, waiting on a guess is not.
-  const p = mayAssertPositive(sf.pull) ? sf.pull.value : null;
-  const ready = mayAssertPositive(sf.readyForReview) ? sf.readyForReview.value : UNKNOWN;
-  const reviewableSince = p !== null && !p.draft && ready !== UNKNOWN ? (ready ?? p.createdAt) : null;
-  const askedByOpening =
-    reviewableSince !== null && headCommit !== null && Date.parse(headCommit.committedAt) <= Date.parse(reviewableSince);
-  const askedAt = [...requestsAtHead.map((c) => Date.parse(c.createdAt)), ...(askedByOpening ? [Date.parse(reviewableSince)] : [])];
-  const latestRequest = askedAt.length ? Math.max(...askedAt) : null;
-  let review;
-  if (usableAtHead.length) {
-    // A trusted verdict that states neither a clean result nor any finding is
-    // not a review result anyone can act on.
-    const statesSomething = usableAtHead.some((v) => v.clean === true) || findings.some(atHead) || ungraded.some(atHead);
-    review = statesSomething ? "VERDICT_AT_HEAD" : UNKNOWN;
-  } else if (latestRequest !== null) {
-    review = now - latestRequest > policy.reviewAnswerMs ? "REQUEST_OVERDUE" : "REQUESTED";
-  } else {
-    review = usable.length ? "STALE" : "NONE";
-  }
-
-  // History: every head that was reviewed or carries a finding must still be in
+  // History: every head a trusted verdict or finding names must still be in
   // the PR. One that is not means the branch was rewritten after review.
   const indexOf = (sha) => (commits ? commits.findIndex((c) => shaMatches(sha, c.sha)) : -1);
   const seen = [
-    ...usable.map((v) => v.reviewedCommit),
+    ...verdicts.map((v) => v.reviewedCommit),
     ...findings.map((c) => c.originalCommitId),
     ...ungraded.map((c) => c.originalCommitId),
   ];
@@ -390,7 +365,7 @@ export function deriveReview(sf, { now, policy = POLICY, budget }) {
       const sha = commits[reviewed[k]].sha;
       const raised = raisedAt(sha);
       const p02 = findings.some((c) => raised(c) && P0_P2.has(c.severity)) || ungraded.some(raised);
-      const clean = usable.some((v) => shaMatches(v.reviewedCommit, sha) && v.clean === true);
+      const clean = verdicts.some((v) => shaMatches(v.reviewedCommit, sha) && v.clean === true);
       const minorOnly = !p02 && findings.some(raised);
       if (!p02 && (clean || minorOnly)) break;
       streakHeads.push(sha);
@@ -398,36 +373,31 @@ export function deriveReview(sf, { now, policy = POLICY, budget }) {
     rounds = streakHeads.length > budget ? "EXCEEDED" : "WITHIN_CAP";
   }
 
-  const lastReviewedIndex = usable.length && commits ? Math.max(...usable.map((v) => indexOf(v.reviewedCommit))) : -1;
-  const since = lastReviewedIndex >= 0 && headCommit ? commits.slice(lastReviewedIndex + 1) : [];
+  const lastReviewedIndex = verdicts.length && commits ? Math.max(...verdicts.map((v) => indexOf(v.reviewedCommit))) : -1;
+  const since = lastReviewedIndex >= 0 ? commits.slice(lastReviewedIndex + 1) : [];
   const brief = (c) => ({ id: c.id, severity: c.severity ?? UNKNOWN, path: c.path, line: c.line, title: c.title ?? null, raisedAt: c.originalCommitId });
   const byId = (a, b) => a.id - b.id;
-  const freshAll = gating.filter(atHead);
   return {
     review,
     findings: findingsSignal,
     history,
     rounds,
     detail: {
-      verdictsAtHead: usableAtHead.length,
-      cleanAtHead: usableAtHead.some((v) => v.clean === true),
-      requestsAtHead: requestsAtHead.length,
-      askedByOpening,
-      latestRequestAgeMinutes: latestRequest === null ? null : Math.floor((now - latestRequest) / 60_000),
+      trustedVerdictsAtHead: verdictsAtHead.length,
+      cleanAtHead: verdictsAtHead.some((v) => v.clean === true),
       lastReviewedHead: lastReviewedIndex >= 0 ? commits[lastReviewedIndex].sha : null,
       commitsSinceReview: since.length,
       mergeCommitsSinceReview: since.filter((c) => c.parents.length > 1).length,
-      untrustedAtHead: verdicts.filter((v) => v.atHead && v.authority !== AUTHORIZED).length,
+      untrusted: { reviews: gate.reviews.untrusted, issueComments: gate.issues.untrusted, inlineComments: gate.inline.untrusted },
       reason: review === UNKNOWN ? "a trusted verdict names this head but states neither a clean result nor a finding" : null,
     },
     findingsDetail: {
       fresh: (unresolved ?? []).filter((c) => c.severity && atHead(c)).map(brief).sort(byId),
       carried: (unresolved ?? []).filter((c) => c.severity && !atHead(c)).map(brief).sort(byId),
       ungraded: (unresolved ?? []).filter((c) => !c.severity).map(brief).sort(byId),
-      resolvedAtHead: threadOf ? freshAll.filter((c) => threadOf.get(c.id).isResolved).length : UNKNOWN,
+      resolvedAtHead: threadOf ? gating.filter((c) => atHead(c) && threadOf.get(c.id)?.isResolved).length : UNKNOWN,
       minorAtHead: findings.filter((c) => atHead(c) && !P0_P2.has(c.severity)).length,
-      untrusted: untrustedFindings.length,
-      reason: threadOf ? null : threads ? "review threads and inline comments do not describe the same comments" : sf.threads.reason,
+      reason: threadOf ? null : sf.threads.reason,
     },
     roundsDetail: {
       streak: history === "INTACT" ? streakHeads.length : UNKNOWN,
@@ -443,11 +413,12 @@ export function deriveReview(sf, { now, policy = POLICY, budget }) {
 }
 
 /**
- * The CI-repetition stop law: consecutive heads, newest first, whose required
- * workflow run FAILED. A cancelled run is no verdict (superseded, or cut at a
- * budget), so it neither counts nor breaks the streak. Only the newest page of
- * branch runs is read; if it does not reach a passing head, the count is a
- * LOWER bound - enough to escalate, never enough to clear.
+ * The CI-repetition stop law: consecutive heads, newest first, whose LATEST
+ * applicable run FAILED - the same "latest applicable run" rule as the head's
+ * own CI. A cancelled run is no verdict (superseded, or cut at a budget), so it
+ * neither counts nor breaks the streak. Only the newest page of branch runs is
+ * read; if it does not reach a passing head, the count is a LOWER bound -
+ * enough to escalate, never enough to clear.
  */
 export function deriveCiStreak(sf, { policy = POLICY, budget }) {
   const runs = listIn(sf.branchRuns);
@@ -455,16 +426,12 @@ export function deriveCiStreak(sf, { policy = POLICY, budget }) {
   if (!runs || !commits) {
     return { signal: UNKNOWN, streak: UNKNOWN, budget, heads: [], lowerBound: false, reason: (runs ? sf.commits : sf.branchRuns).reason };
   }
-  const latest = new Map();
-  for (const r of runs) {
-    if (r.path !== policy.requiredWorkflow) continue;
-    const prev = latest.get(r.headSha);
-    if (!prev || r.id > prev.id) latest.set(r.headSha, r);
-  }
+  const byHead = new Map();
+  for (const r of runs) byHead.set(r.headSha, [...(byHead.get(r.headSha) ?? []), r]);
   const heads = [];
   let passed = false;
   for (let i = commits.length - 1; i >= 0 && !passed; i--) {
-    const run = latest.get(commits[i].sha);
+    const run = latestApplicableRun(byHead.get(commits[i].sha) ?? [], policy.workflow);
     if (!run || run.status !== "completed") continue;
     if (RED.has(run.conclusion)) heads.push(commits[i].sha);
     else if (run.conclusion === "success") passed = true;
@@ -475,7 +442,7 @@ export function deriveCiStreak(sf, { policy = POLICY, budget }) {
 }
 
 /** Facts -> signals + the detail a human (or a caller) needs to act on them. */
-export function deriveSignals(sf, { now, tier = null, policy = POLICY } = {}) {
+export function deriveSignals(sf, { tier = null, policy = POLICY } = {}) {
   const p = mayAssertPositive(sf.pull) ? sf.pull.value : null;
   let pr = UNKNOWN;
   if (p && p.merged) pr = p.state === "closed" ? "MERGED" : UNKNOWN;
@@ -484,10 +451,9 @@ export function deriveSignals(sf, { now, tier = null, policy = POLICY } = {}) {
 
   const tierDetail = deriveTier(sf, tier, policy);
   const ci = deriveCi(sf, policy);
-  const rv = deriveReview(sf, { now, policy, budget: tierDetail.budget });
-  // A head whose required workflow PASSED ends any failure streak by
-  // definition, so its own complete evidence settles the count; the branch
-  // history is only needed while the head is not green.
+  const rv = deriveReview(sf, admit(sf.comments), { budget: tierDetail.budget });
+  // A head whose latest run PASSED ends any failure streak by definition, so
+  // its own evidence settles the count; history is only needed when it did not.
   const ciStreak =
     ci.signal === "GREEN"
       ? { signal: "WITHIN_CAP", streak: 0, budget: tierDetail.budget, heads: [], lowerBound: false, reason: null }
@@ -527,87 +493,86 @@ export function deriveSignals(sf, { now, tier = null, policy = POLICY } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Signals -> words. Every code the decision can emit has exactly one text.
-// None of them instructs anything outside the delivery rules: new commits on
-// top, normal merge commits from production, pushes without rewriting.
+// Signals -> words. Every code the decision can emit has exactly one text, and
+// every text is a recommendation. None proposes anything outside the delivery
+// rules: new commits on top, production brought in by a normal merge commit.
 // ---------------------------------------------------------------------------
 
 const short = (sha) => (typeof sha === "string" && sha !== UNKNOWN ? sha.slice(0, 10) : UNKNOWN);
-const askedHow = (d) => (d.review.askedByOpening && d.review.requestsAtHead === 0 ? " (by making the PR reviewable)" : "");
 const n = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 const list = (xs, max = 6) => (xs.length > max ? `${xs.slice(0, max).join(", ")}, +${xs.length - max} more` : xs.join(", "));
 
 const TEXT = {
   UNREADABLE_PULL_REQUEST: (d) => `The pull request could not be read strictly, so there is no head to bind anything to (${d.pull.reason}).`,
-  PR_MERGED: () => "Merged. After a merge, verify only branch containment, deployment and a clean tree; no full CI re-run.",
-  PR_CLOSED: () => "Closed without merging. Nothing to shepherd.",
+  PR_MERGED: () => "Merged. After a merge, only branch containment, deployment and a clean tree are worth checking; no full CI re-run.",
+  PR_CLOSED: () => "Closed without merging. Nothing to observe.",
   HEAD_MOVED_DURING_READ: (d, h) => `The head moved while it was being read (${short(h)} -> ${short(d.headAfter)}). Read again.`,
   REVIEW_ROUNDS_EXCEEDED: (d) =>
     `${n(d.rounds.streak, "consecutive review round")} raised P0-P2 findings (${d.rounds.heads.map(short).join(", ")}), past the ` +
-    `${d.rounds.tier} repair budget of ${d.rounds.budget}. Stop patching: §7.4 requires an architecture review before any further repair.`,
+    `${d.rounds.tier} repair budget of ${d.rounds.budget}. Recommended: stop patching - under §7.4 this is an architecture-review ` +
+    "trigger, and the operator decides what comes next.",
   CI_FAILURES_REPEATED: (d) =>
-    `The required workflow failed at ${n(d.ciStreak.streak, "consecutive head")}${d.ciStreak.lowerBound ? " (at least)" : ""} ` +
-    `(${d.ciStreak.heads.map(short).join(", ")}), past the ${d.rounds.tier} repair budget of ${d.ciStreak.budget}. ` +
-    "This is non-convergence, not one more fix: stop and escalate (§7.4).",
-  PR_DRAFT: () => "The pull request is a draft. Parking a PR is an operator decision; the shepherd does not drive a draft.",
+    `The latest ${d.ci.workflow} run failed at ${n(d.ciStreak.streak, "consecutive head")}${d.ciStreak.lowerBound ? " (at least)" : ""} ` +
+    `(${d.ciStreak.heads.map(short).join(", ")}), past the ${d.rounds.tier} repair budget of ${d.ciStreak.budget}. Recommended: stop ` +
+    "and escalate rather than push one more fix - and first check whether the same failure is red on production, which no PR can repair.",
+  PR_DRAFT: () => "The pull request is a draft. Parking a PR is an operator decision; nothing is recommended for a draft.",
   BASE_NOT_PRODUCTION: (d) => `The base is ${d.pull.baseRef}, not production (${d.pull.productionBranch}). A stacked PR is outside this shepherd.`,
   HISTORY_REWRITTEN: () =>
-    "A head that was reviewed, or that carries a finding, is no longer in this PR's history: the branch was rewritten after review. " +
-    "Exact-head evidence cannot be trusted across that; an operator must decide.",
-  REVIEW_UNANSWERED: (d, h) =>
-    `A review was requested for ${short(h)}${askedHow(d)} ${d.review.latestRequestAgeMinutes} min ago and no trusted verdict ` +
-    `has arrived (bound ${POLICY.reviewAnswerMs / 60_000} min). Re-request once, or ask the operator.`,
+    "A head that a trusted verdict or finding names is no longer in this PR's history: the branch was rewritten after review. " +
+    "Exact-head evidence cannot be trusted across that; an operator should decide.",
   REPAIR_BUDGET_UNKNOWN: (d) =>
-    `Fresh P0-P2 findings need repair, but the review-round history cannot be read, so the stop law cannot be checked. ` +
-    `Do not repair until it can (${d.rounds.reason ?? "rounds UNKNOWN"}).`,
+    "Fresh P0-P2 findings need repair, but the review-round history cannot be read, so the stop law cannot be checked. " +
+    `Recommended: no repair until it can (${d.rounds.reason ?? "rounds UNKNOWN"}).`,
   CI_BUDGET_UNKNOWN: (d) =>
-    `CI failed, but the run history cannot establish how many heads in a row it has failed, so the stop law cannot be checked. ` +
-    `Do not push a fix until it can (${d.ciStreak.reason ?? "history incomplete"}).`,
+    "CI failed, but the run history cannot establish how many heads in a row it has failed, so the stop law cannot be checked. " +
+    `Recommended: no fix until it can (${d.ciStreak.reason ?? "history incomplete"}).`,
   RESOLVE_CONFLICTS: (d) =>
-    `GitHub reports merge conflicts with production. Merge origin/${d.branch.production.branch} into the branch with a normal ` +
-    "merge commit, resolve the conflicts, and push normally.",
+    `GitHub reports merge conflicts with production. Recommended: merge origin/${d.branch.production.branch} into the branch with a ` +
+    "normal merge commit, resolve the conflicts, and push normally.",
   REPAIR_FINDINGS: (d, h) => {
     const fresh = d.findings.fresh;
     const family =
       fresh.length >= 2
-        ? ` Before patching, decide whether these ${fresh.length} share a root-cause family: if they do, stop - §7.4 requires an architecture review, not ${fresh.length} patches.`
+        ? ` Before patching, decide whether these ${fresh.length} share a root-cause family: if they do, stop - §7.4 treats that as an architecture-review trigger, not ${fresh.length} patches.`
         : "";
     return (
-      `${n(fresh.length, "unresolved P0-P2 finding")} raised at ${short(h)}: ` +
-      `${list(fresh.map((f) => `${f.severity} ${f.path}:${f.line}`))}. Verify each premise against the head, repair with a new ` +
-      `commit on top, then request an exact-head review. Review round ${d.rounds.streak} of a ${d.rounds.tier} budget of ${d.rounds.budget}.${family}`
+      `${n(fresh.length, "unresolved P0-P2 finding")} raised at ${short(h)} by the trusted reviewer: ` +
+      `${list(fresh.map((f) => `${f.severity} ${f.path}:${f.line}`))}. Recommended: verify each premise against the head, repair with ` +
+      `a new commit on top, then request an exact-head review. Review round ${d.rounds.streak} of a ${d.rounds.tier} budget of ${d.rounds.budget}.${family}`
     );
   },
   FIX_CI: (d, h) =>
-    `Failed at ${short(h)}: ${list(d.ci.failed)}. Fix with a new commit on top ` +
-    `(${n(d.ciStreak.streak, "consecutive red head")} so far, budget ${d.ciStreak.budget}).` +
-    (d.branch.behindBy > 0 ? ` Production has moved ${n(d.branch.behindBy, "commit")}: it may be merged in the same push.` : ""),
+    `The latest ${d.ci.workflow} run (${d.ci.run ? d.ci.run.id : UNKNOWN}) failed at ${short(h)}: ${list(d.ci.failed)}. Recommended: check ` +
+    "whether the same failure is red on production first - an inherited failure is not this PR's to fix - and otherwise fix it " +
+    `with a new commit on top (${n(d.ciStreak.streak, "consecutive red head")} so far, budget ${d.ciStreak.budget}).`,
   DISPOSITION_FINDINGS: (d, h) =>
-    `${n(d.findings.carried.length, "unresolved P0-P2 finding")} raised at earlier heads: ` +
-    `${list(d.findings.carried.map((f) => `${f.severity} ${f.path}:${f.line} @${short(f.raisedAt)}`))}. For each, verify it against ` +
+    `${n(d.findings.carried.length, "unresolved P0-P2 finding")} raised by the trusted reviewer at earlier heads: ` +
+    `${list(d.findings.carried.map((f) => `${f.severity} ${f.path}:${f.line} @${short(f.raisedAt)}`))}. Recommended: verify each against ` +
     `${short(h)} by line, reply with that evidence, and resolve that one thread (§7.5). A later clean review does not close it.`,
   RERUN_CI: (d, h) =>
-    `Cancelled at ${short(h)}: ${list(d.ci.cancelled)}. A cancellation is not a verdict on the code - check what the lane ` +
-    "completed before it stopped (a budget cut reads like a failure), then re-run it.",
-  REQUEST_REVIEW: (d, h) => {
+    `The latest ${d.ci.workflow} run at ${short(h)} was cancelled (${list(d.ci.cancelled)}). A cancellation is not a verdict on the code. ` +
+    "Recommended: check what the lane completed before it stopped (a budget cut reads like a failure), then re-run it.",
+  REQUEST_EXACT_HEAD_REVIEW: (d, h) => {
     const r = d.review;
     const stale = r.lastReviewedHead
       ? ` The last trusted verdict was for ${short(r.lastReviewedHead)}, ${n(r.commitsSinceReview, "commit")} ago` +
-        `${r.mergeCommitsSinceReview ? ` (${n(r.mergeCommitsSinceReview, "merge commit")})` : ""}; new commits invalidate it.`
+        `${r.mergeCommitsSinceReview ? ` (${n(r.mergeCommitsSinceReview, "merge commit")})` : ""}; any new commit makes a verdict stale.`
       : "";
-    return `No trusted verdict names ${short(h)}.${stale} Comment "@codex review" naming \`${short(h)}\`.`;
+    return (
+      `No trusted Codex verdict names ${short(h)}.${stale} Recommended: comment "@codex review" naming \`${short(h)}\`. ` +
+      "Whether someone already asked is not inferred; this stays the recommendation until a trusted verdict for this exact head exists."
+    );
   },
   REFRESH_PRODUCTION: (d) =>
-    `The branch is ${n(d.branch.behindBy, "commit")} behind production (${short(d.branch.production.head)}). Merge ` +
+    `The branch is ${n(d.branch.behindBy, "commit")} behind production (${short(d.branch.production.head)}). Recommended: merge ` +
     `origin/${d.branch.production.branch} with a normal merge commit and push normally; the new head then needs CI and an exact-head review.`,
   WAIT_CI: (d, h) => {
     const c = d.ci;
-    if (c.signal === "NOT_STARTED") return `No run of ${c.requiredWorkflow} exists for ${short(h)} yet.`;
+    if (c.signal === "NOT_STARTED") return `No ${c.workflow} run for a pull request exists at ${short(h)} yet.`;
     const parts = [c.running.length ? `${c.running.length} running: ${list(c.running, 4)}` : "", c.queued.length ? `${c.queued.length} queued: ${list(c.queued, 4)}` : ""];
-    return `CI at ${short(h)}: ${parts.filter(Boolean).join("; ")}.`;
+    const lanes = parts.filter(Boolean).join("; ");
+    return `The latest ${c.workflow} run (${c.run.id}) at ${short(h)} is ${c.run.status}${lanes ? `: ${lanes}` : ""}.`;
   },
-  WAIT_REVIEW: (d, h) =>
-    `A review was requested for ${short(h)}${askedHow(d)} ${d.review.latestRequestAgeMinutes} min ago; waiting for a trusted verdict.`,
   WAIT_MERGEABILITY: () => "GitHub has not finished computing mergeability. Read again.",
 };
 
@@ -617,9 +582,9 @@ const NOT_PROVEN = {
   snapshot: () => "that the head held still for the whole read",
   branch: (d) => `the branch's position against production (${d.branch.reason ?? "unknown"})`,
   conflicts: (d) => `mergeability (${d.pull.reason ?? "unknown"})`,
-  ci: (d) => `CI at this head (${d.ci.reason ?? (d.ci.unrecognized.length ? `unrecognized status: ${list(d.ci.unrecognized)}` : "not conclusive")})`,
-  review: (d) => `an exact-head review result (${d.review.reason ?? "unknown"})`,
-  findings: (d) => `that no actionable finding is open (${d.findings.reason ?? "a finding could not be graded"})`,
+  ci: (d) => `CI at this head (${d.ci.reason ?? "not conclusive"})`,
+  review: (d) => `a trusted exact-head review result (${d.review.reason ?? "unknown"})`,
+  findings: (d) => `that no actionable finding is open (${d.findings.reason ?? "a trusted finding could not be graded"})`,
   history: (d) => `that the branch history is intact (${d.rounds.reason ?? "unknown"})`,
   rounds: (d) => `the review-round count (${d.rounds.reason ?? "unknown"})`,
   ciStreak: (d) => `the CI failure streak (${d.ciStreak.reason ?? "history does not reach a passing head"})`,
@@ -628,7 +593,7 @@ const NOT_PROVEN = {
 function explain(code, detail, head) {
   if (code.startsWith("NOT_PROVEN_")) {
     const key = Object.keys(NOT_PROVEN).find((k) => `NOT_PROVEN_${k.toUpperCase()}` === code);
-    return `Cannot establish ${NOT_PROVEN[key](detail)}, so readiness is not asserted.`;
+    return `Cannot establish ${NOT_PROVEN[key](detail)}, so the PR is not a candidate.`;
   }
   return TEXT[code](detail, head);
 }
@@ -636,16 +601,18 @@ function explain(code, detail, head) {
 /** Every code `decide` can emit, so a test can hold the catalogue complete. */
 export const CODES = Object.freeze([...Object.keys(TEXT), ...Object.keys(NOT_PROVEN).map((k) => `NOT_PROVEN_${k.toUpperCase()}`)]);
 
-const READY_TEXT =
-  "Every mechanical gate holds at this exact head. The merge decision is the operator's: neither green CI nor this state is merge authorization.";
+const CANDIDATE_TEXT =
+  "Every mechanical check holds at this exact head, so this PR is a CANDIDATE for human review. That is advisory: neither green " +
+  "CI nor this state authorizes a merge - the operator and the existing release procedure decide.";
 
-/** The whole answer for one read: state, why, what next, and the evidence. */
+/** The whole answer for one read: state, why, what is recommended, and the evidence. */
 export function interpret(sf, { now = Date.now(), tier = null, policy = POLICY } = {}) {
-  const { signals, detail } = deriveSignals(sf, { now, tier, policy });
+  const { signals, detail } = deriveSignals(sf, { tier, policy });
   const d = decide(signals);
   const say = (code) => ({ code, text: explain(code, detail, sf.head) });
   return {
-    schema: "hone.eng.shepherd/v1",
+    schema: "hone.eng.shepherd/v2",
+    advisory: true,
     repo: sf.repo,
     pr: sf.pr,
     observedAt: new Date(now).toISOString(),
@@ -653,7 +620,7 @@ export function interpret(sf, { now = Date.now(), tier = null, policy = POLICY }
     production: detail.branch.production,
     state: d.state,
     exitCode: EXIT_CODE[d.state],
-    summary: d.state === STATE.READY_FOR_HUMAN_MERGE ? READY_TEXT : null,
+    summary: d.state === STATE.CANDIDATE_READY_FOR_HUMAN_REVIEW ? CANDIDATE_TEXT : null,
     stops: d.stops.map(say),
     blocks: d.blocks.map(say),
     actions: d.actions.map(say),
@@ -672,14 +639,16 @@ const DIM = "\u001b[2m";
 const RESET = "\u001b[0m";
 
 export const LAW =
-  "The shepherd only reads. It never merges, rebases, amends, squashes or force-pushes, and nothing it reports is merge authorization.";
+  "Observation only: the shepherd reads GitHub and recommends. It never merges, rebases, amends, squashes, force-pushes " +
+  "or refreshes a branch, and nothing it reports is authorization - the human release procedure decides.";
 
 export const SHEPHERD_USAGE = `
   npm run eng -- shepherd <pr> [--json] [--tier T0|T1|T2|T3]
   npm run eng -- shepherd <pr> --watch [--interval <seconds>] [--max-minutes <minutes>] [--json]
 
-Interprets exact-head facts into one next step: READY_FOR_HUMAN_MERGE, WAITING,
-ACTION_REQUIRED, BLOCKED, ESCALATE or CLOSED (exit 0/10/20/30/40/50).
+Observes a pull request at its exact head and recommends one next step:
+CANDIDATE_READY_FOR_HUMAN_REVIEW, WAITING, ACTION_RECOMMENDED, BLOCKED, ESCALATE
+or CLOSED (exit 0/10/20/30/40/50). Every state is advisory.
 --tier may raise the classifier's baseline tier, never lower it.
 --watch polls until the state settles, the head changes, nothing progresses,
 or the time bound is reached.
@@ -691,25 +660,24 @@ export function renderShepherd(result) {
   const s = result.signals;
   const d = result.detail;
   const out = [];
-  const row = (label, value, note) => out.push(`  ${label.padEnd(11)}${String(value).padEnd(16)}${DIM}${note}${RESET}`);
+  const row = (label, value, note) => out.push(`  ${label.padEnd(11)}${String(value).padEnd(20)}${DIM}${note}${RESET}`);
   out.push("");
-  out.push(`PR #${result.pr}  head ${short(result.head)}  production ${d.branch.production.branch} @ ${short(d.branch.production.head)}`);
+  out.push(`PR #${result.pr}  head ${short(result.head)}  production ${d.branch.production.branch} @ ${short(d.branch.production.head)}  ${DIM}(advisory)${RESET}`);
   row("branch", s.branch, `${d.branch.behindBy} behind, ${d.branch.aheadBy} ahead`);
-  const ciNote = d.ci.failed.length
-    ? `failed: ${list(d.ci.failed, 4)}`
-    : d.ci.running.length || d.ci.queued.length
-      ? `${d.ci.running.length} running, ${d.ci.queued.length} queued`
-      : d.ci.cancelled.length
-        ? `cancelled: ${list(d.ci.cancelled, 4)}`
-        : `${d.ci.lanes} lane(s); ${d.ci.requiredWorkflow} runs: ${d.ci.requiredRuns}`;
+  const c = d.ci;
+  const ciNote = c.run
+    ? `latest ${c.workflow} run ${c.run.id}: ${c.run.status}/${c.run.conclusion ?? "-"}` +
+      (c.failed.length ? `; failed: ${list(c.failed, 4)}` : c.running.length || c.queued.length ? `; ${c.running.length} running, ${c.queued.length} queued` : "")
+    : (c.reason ?? "");
   row("ci", s.ci, ciNote);
   const rv = d.review;
+  const untrusted = rv.untrusted ? rv.untrusted.reviews + rv.untrusted.issueComments + rv.untrusted.inlineComments : 0;
   row(
     "review",
     s.review,
     rv.lastReviewedHead !== undefined
-      ? `trusted verdicts at head: ${rv.verdictsAtHead}${rv.lastReviewedHead ? `; last reviewed ${short(rv.lastReviewedHead)}` : ""}` +
-          `${rv.untrustedAtHead ? `; ${rv.untrustedAtHead} untrusted look-alike(s) ignored` : ""}`
+      ? `trusted verdicts at head: ${rv.trustedVerdictsAtHead}${rv.lastReviewedHead ? `; last trusted verdict ${short(rv.lastReviewedHead)}` : ""}` +
+          `${untrusted ? `; ${untrusted} comment(s) from untrusted authors ignored` : ""}`
       : rv.reason,
   );
   const f = d.findings;
@@ -717,11 +685,10 @@ export function renderShepherd(result) {
     "findings",
     s.findings,
     f.fresh
-      ? `unresolved P0-P2: ${f.fresh.length} at head, ${f.carried.length} carried; ${f.minorAtHead} P3 at head` +
+      ? `unresolved trusted P0-P2: ${f.fresh.length} at head, ${f.carried.length} carried; ${f.minorAtHead} P3 at head` +
           // Shown at the gate on purpose: a finding raised at this head and then
           // resolved without a new commit is an adjudication a human should see.
-          (f.resolvedAtHead > 0 ? `; ${f.resolvedAtHead} raised at head and resolved in its thread without a new commit` : "") +
-          (f.untrusted > 0 ? `; ${f.untrusted} badge look-alike(s) from untrusted authors ignored` : "")
+          (f.resolvedAtHead > 0 ? `; ${f.resolvedAtHead} raised at head and resolved in its thread without a new commit` : "")
       : f.reason,
   );
   row("rounds", s.rounds, `${d.rounds.streak} consecutive P0-P2 round(s); ${d.rounds.tier} budget ${d.rounds.budget}`);
@@ -749,5 +716,5 @@ export function renderShepherd(result) {
 /** One line per observed change while watching. */
 export function renderTransition(result, at) {
   const s = result.signals;
-  return `${new Date(at).toISOString().slice(11, 19)} ${result.state.padEnd(22)} head ${short(result.head)}  ci=${s.ci} review=${s.review} findings=${s.findings} branch=${s.branch}`;
+  return `${new Date(at).toISOString().slice(11, 19)} ${result.state.padEnd(33)} head ${short(result.head)}  ci=${s.ci} review=${s.review} findings=${s.findings} branch=${s.branch}`;
 }

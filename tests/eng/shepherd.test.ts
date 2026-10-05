@@ -4,21 +4,24 @@ import path from "node:path";
 
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { collectFacts, collectShepherdFacts, ghFetcher } from "../../scripts/eng/github-facts.mjs";
+import { PR_WORKFLOW, collectFacts, collectShepherdFacts, ghFetcher, latestApplicableRun } from "../../scripts/eng/github-facts.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { summarize } from "../../scripts/eng/review-provenance.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { CODES, DOMAINS, EXIT_CODE, LAW, READY_POINT, STATE, decide, interpret, renderShepherd } from "../../scripts/eng/shepherd.mjs";
+import { CANDIDATE_POINT, CODES, DOMAINS, EXIT_CODE, LAW, STATE, decide, interpret, renderShepherd } from "../../scripts/eng/shepherd.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { renderHuman } from "../../scripts/eng/cli.mjs";
 import {
   CI_WORKFLOW,
   CODEX,
+  CODEX_ID_AS_USER,
+  CODEX_LOGIN_OTHER_ID,
   NOW,
   OPERATOR,
+  OUTSIDER,
   PROD_BRANCH,
   REPO,
   ago,
@@ -28,6 +31,8 @@ import {
   fetcherFor,
   finding,
   findingsVerdict,
+  job,
+  jobsPage,
   readyWorld,
   sha,
   short,
@@ -37,36 +42,40 @@ import {
 } from "./helpers/github-world";
 
 // ===========================================================================
-// ENG-LOOP-01 acceptance: the PR shepherd.
+// ENG-LOOP-01 acceptance: the PR shepherd, OBSERVATION-ONLY
+// (docs/decisions/eng-loop-01-observation-only.md).
 // ===========================================================================
 //
 // What is proved here, and how each proof avoids the way CP-005's authority
-// vehicles failed (#617-#623: a builder's hand-enumerated cases, with omitted
-// surfaces falling through permissive defaults into a positive state):
+// vehicles failed (#617-#623: hand-enumerated cases, with omitted surfaces
+// falling through permissive defaults into a positive state):
 //
 //   1. `status` is unchanged - byte-for-byte against output captured from the
-//      unmodified production tree BEFORE this change.
-//   2. The decision is TOTAL and READY is ONE point: every combination of every
-//      signal value is enumerated from the exported DOMAINS, not hand-picked.
-//   3. Each delivery situation maps to the state and next step the delivery
-//      rules require, through the real collector against GitHub-shaped answers.
-//   4. The §7.4 stop law fires on REAL history: #786 crossed the
-//      three-round trigger at 3644d2fb and was patched past it.
-//   5. Fault injection BY CONSTRUCTION: the requests and response leaves that
+//      unmodified production tree BEFORE ENG-LOOP-01.
+//   2. The decision is TOTAL and the candidate state is ONE point: every
+//      combination of every signal value is enumerated from the exported DOMAINS.
+//   3. Each delivery situation maps to the recommendation the delivery rules
+//      call for, through the real collector against GitHub-shaped answers.
+//   4. THE AUTHORITY GATE: adding, or re-attributing, ANY comment in ANY
+//      situation changes nothing - so no untrusted actor's text, request,
+//      verdict or badge can reach a decision. Requests are not inferred at all.
+//   5. EXACT-HEAD REVIEW: a verdict for any other commit, or a near-miss
+//      prefix, is never a verdict for the head.
+//   6. CI is the LATEST applicable run: a seeded property test over random run
+//      sets at one sha, checked against the rule restated independently.
+//   7. The §7.4 stop law fires on REAL history: #786, at 3644d2fb.
+//   8. Fault injection BY CONSTRUCTION: the requests and response leaves that
 //      are failed, corrupted or truncated are the ones the collector actually
-//      made and read, recorded at run time - so a surface added later is
-//      covered without anyone remembering to list it.
-//   6. Read-only by construction: the exact argv, the refused GraphQL
-//      document, and no write or history-rewriting path in the source.
+//      made and read, recorded at run time.
+//   9. Read-only by construction, and advisory in every word it emits.
 
 const R = (w: World): Json => w.responses;
-/** Anyone at all: on a public repository, anyone can type a severity badge. */
-const OUTSIDER = { login: "someone-else", id: 424242, type: "User" };
-const timelineOf = (w: World): Json => R(w).threads[0].data.repository.pullRequest.timelineItems;
 const threadsOf = (w: World): Json => R(w).threads[0].data.repository.pullRequest.reviewThreads;
+const H = (w: World) => w.head;
 const dropIssue = (w: World, id: number) => {
   R(w).issues[0] = R(w).issues[0].filter((c: Json) => c.id !== id);
 };
+const issue = (w: World, id: number): Json => R(w).issues[0].find((c: Json) => c.id === id);
 
 function run(w: World, { tier = null, fault }: { tier?: string | null; fault?: (c: Call) => unknown } = {}) {
   const sf = collectShepherdFacts({ pr: w.pr, fetcher: fetcherFor(w, { fault }), repo: REPO });
@@ -74,6 +83,8 @@ function run(w: World, { tier = null, fault }: { tier?: string | null; fault?: (
 }
 
 const codesOf = (r: Json): string[] => [...r.stops, ...r.blocks, ...r.actions, ...r.waits].map((x: Json) => x.code);
+/** What a decision IS, without the display-only detail. */
+const verdictOf = (r: Json) => ({ state: r.state, codes: codesOf(r), signals: r.signals });
 
 function addRoot(w: World, c: { id: number; severity: string | null; at: string; resolved: boolean; user?: Json }) {
   R(w).inline[0].push({
@@ -84,28 +95,34 @@ function addRoot(w: World, c: { id: number; severity: string | null; at: string;
     original_commit_id: c.at,
     path: "scripts/eng/world.mjs",
     line: c.id % 100,
-    original_line: c.id % 100,
-    created_at: ago(10),
-    reactions: { total_count: 0 },
   });
   const t = threadsOf(w);
   t.nodes.push({ isResolved: c.resolved, isOutdated: false, comments: { nodes: [{ databaseId: c.id }] } });
   t.totalCount += 1;
 }
 
-/** A Codex round at the head that raised a finding, with no clean verdict for it. */
+/** A trusted Codex round at the head that raised a finding, with no clean verdict for it. */
 function findingRoundAtHead(w: World, severity: string, resolved = false) {
   addRoot(w, { id: 5002, severity, at: w.head, resolved });
-  R(w).reviews[0].push({ id: 7002, user: CODEX, body: findingsVerdict(w.head), state: "COMMENTED", commit_id: w.head, submitted_at: ago(10) });
+  R(w).reviews[0].push({ id: 7002, user: CODEX, body: findingsVerdict(w.head), state: "COMMENTED", commit_id: w.head });
   dropIssue(w, 6003);
 }
 
-function failLane(w: World, heads: "head" | "all" = "head") {
-  R(w).checkRuns[0].check_runs[1].conclusion = "failure";
-  R(w).workflowRuns[0].workflow_runs[0].conclusion = "failure";
-  for (const run of R(w).branchRuns.workflow_runs) {
-    if (heads === "all" || run.head_sha === w.head) run.conclusion = "failure";
+/** The head's latest run failed on one lane; optionally every head's did. */
+function failHeadRun(w: World, heads: "head" | "all" = "head") {
+  Object.assign(R(w).workflowRuns[0].workflow_runs[0], { conclusion: "failure" });
+  R(w).jobs[3003][0].jobs[1].conclusion = "failure";
+  for (const r of R(w).branchRuns.workflow_runs) {
+    if (heads === "all" || r.head_sha === w.head) r.conclusion = "failure";
   }
+}
+
+/** Replace the runs at the head (and their jobs). Jobs default to one passing lane per run. */
+function runsAtHead(w: World, runs: Json[], jobsByRun: Record<number, Json[]> = {}) {
+  R(w).workflowRuns = [{ total_count: runs.length, workflow_runs: runs }];
+  R(w).jobs = Object.fromEntries(
+    runs.map((r) => [r.id, jobsPage(jobsByRun[r.id] ?? [job(r.id * 10, r.id, r.head_sha, "lane", r.conclusion ?? null, r.status)])]),
+  );
 }
 
 interface Scenario {
@@ -116,44 +133,172 @@ interface Scenario {
 }
 
 const SCENARIOS: Record<string, Scenario> = {
-  "a lane failed at the head": { mutate: (w) => failLane(w), state: "ACTION_REQUIRED", codes: ["FIX_CI"] },
-  "every visible check passed, but the workflow is still running (its aggregator has no check run yet)": {
+  // --- CI: the latest applicable run at the exact head -----------------------
+  "the latest run failed": { mutate: (w) => failHeadRun(w), state: "ACTION_RECOMMENDED", codes: ["FIX_CI"] },
+  "the latest run is still running, its later jobs not yet reported": {
     mutate: (w) => {
-      const run = R(w).workflowRuns[0].workflow_runs[0];
-      run.status = "in_progress";
-      run.conclusion = null;
-      R(w).checkRuns[0].check_runs.splice(2, 1);
-      R(w).checkRuns[0].total_count = 4;
+      Object.assign(R(w).workflowRuns[0].workflow_runs[0], { status: "in_progress", conclusion: null });
+      R(w).jobs[3003][0].jobs.splice(2);
+      R(w).jobs[3003][0].total_count = 2;
     },
     state: "WAITING",
     codes: ["WAIT_CI"],
   },
-  "no run of the required workflow exists for the head yet": {
+  "the latest run is queued": {
     mutate: (w) => {
-      R(w).workflowRuns = [{ total_count: 0, workflow_runs: [] }];
+      Object.assign(R(w).workflowRuns[0].workflow_runs[0], { status: "queued", conclusion: null });
+      R(w).jobs[3003] = jobsPage([]);
     },
     state: "WAITING",
     codes: ["WAIT_CI"],
   },
-  "a lane was cancelled": {
+  "no applicable run exists at the head yet": {
+    mutate: (w) => runsAtHead(w, []),
+    state: "WAITING",
+    codes: ["WAIT_CI"],
+  },
+  "the latest run was cancelled": {
     mutate: (w) => {
-      R(w).checkRuns[0].check_runs[2].conclusion = "cancelled";
-      R(w).workflowRuns[0].workflow_runs[0].conclusion = "cancelled";
+      Object.assign(R(w).workflowRuns[0].workflow_runs[0], { conclusion: "cancelled" });
+      R(w).jobs[3003][0].jobs[2].conclusion = "cancelled";
     },
-    state: "ACTION_REQUIRED",
+    state: "ACTION_RECOMMENDED",
     codes: ["RERUN_CI"],
   },
-  "a commit status failed": {
+  "two runs at one sha: the earlier passed, the latest failed": {
     mutate: (w) => {
-      R(w).statuses[0].state = "failure";
-      R(w).statuses[0].statuses[0].state = "failure";
+      runsAtHead(w, [ciRun(3003, w.head, "success"), ciRun(3010, w.head, "failure")]);
+      R(w).branchRuns.workflow_runs.push(ciRun(3010, w.head, "failure"));
+      R(w).branchRuns.total_count = 4;
     },
-    state: "ACTION_REQUIRED",
+    state: "ACTION_RECOMMENDED",
     codes: ["FIX_CI"],
   },
+  "two runs at one sha: the earlier passed, the latest is still running": {
+    mutate: (w) => runsAtHead(w, [ciRun(3003, w.head, "success"), ciRun(3010, w.head, null, "in_progress")]),
+    state: "WAITING",
+    codes: ["WAIT_CI"],
+  },
+  "the latest run says success while one of its jobs failed": {
+    mutate: (w) => {
+      R(w).jobs[3003][0].jobs[1].conclusion = "failure";
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_CI"],
+  },
+  "a job answered for this run belongs to another run": {
+    mutate: (w) => {
+      R(w).jobs[3003][0].jobs[0].run_id = 9999;
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_CI"],
+  },
+  "a job of the run names another commit": {
+    mutate: (w) => {
+      R(w).jobs[3003][0].jobs[0].head_sha = sha("elsewhere");
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_CI"],
+  },
+  "a run answered for the head names another commit": {
+    mutate: (w) => {
+      R(w).workflowRuns[0].workflow_runs[0].head_sha = sha("elsewhere");
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_CI"],
+  },
+  "the run reports a status GitHub never documented": {
+    mutate: (w) => {
+      Object.assign(R(w).workflowRuns[0].workflow_runs[0], { status: "paused", conclusion: null });
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_CI"],
+  },
+  "CI failed at three consecutive heads": { mutate: (w) => failHeadRun(w, "all"), state: "ESCALATE", codes: ["CI_FAILURES_REPEATED"] },
+  "CI failed and the run history cannot be read": {
+    mutate: (w) => {
+      failHeadRun(w);
+      delete R(w).branchRuns;
+    },
+    state: "BLOCKED",
+    codes: ["CI_BUDGET_UNKNOWN"],
+  },
+  "CI failed and the newest page of runs never reaches a passing head": {
+    mutate: (w) => {
+      failHeadRun(w);
+      R(w).branchRuns = { total_count: 500, workflow_runs: [ciRun(3003, w.head, "failure")] };
+    },
+    state: "BLOCKED",
+    codes: ["CI_BUDGET_UNKNOWN"],
+  },
+  "three red heads inside a partial page are already enough to stop": {
+    mutate: (w) => {
+      failHeadRun(w, "all");
+      R(w).branchRuns.total_count = 500;
+    },
+    state: "ESCALATE",
+    codes: ["CI_FAILURES_REPEATED"],
+  },
+
+  // --- Review: one fact - a TRUSTED verdict for the CURRENT exact head --------
+  "no review present at all": {
+    mutate: (w) => {
+      R(w).reviews[0] = [];
+      R(w).inline[0] = [];
+      threadsOf(w).nodes = [];
+      threadsOf(w).totalCount = 0;
+      dropIssue(w, 6003);
+    },
+    state: "ACTION_RECOMMENDED",
+    codes: ["REQUEST_EXACT_HEAD_REVIEW"],
+  },
+  "the only trusted verdict is for an older head": {
+    mutate: (w) => dropIssue(w, 6003),
+    state: "ACTION_RECOMMENDED",
+    codes: ["REQUEST_EXACT_HEAD_REVIEW"],
+  },
+  "a trusted verdict names the head but states nothing": {
+    mutate: (w) => {
+      issue(w, 6003).body = `**Reviewed commit:** \`${short(w.head)}\`\n\nNotes.`;
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_REVIEW"],
+  },
+  "an outsider posted a look-alike clean verdict for the head": {
+    mutate: (w) => {
+      dropIssue(w, 6003);
+      R(w).issues[0].push({ id: 6006, user: OUTSIDER, body: cleanVerdict(w.head) });
+    },
+    state: "ACTION_RECOMMENDED",
+    codes: ["REQUEST_EXACT_HEAD_REVIEW"],
+  },
+  "a bot reusing Codex's login under another id posted a clean verdict": {
+    mutate: (w) => {
+      issue(w, 6003).user = CODEX_LOGIN_OTHER_ID;
+    },
+    state: "ACTION_RECOMMENDED",
+    codes: ["REQUEST_EXACT_HEAD_REVIEW"],
+  },
+  "Codex's account id, but as a User rather than a Bot, posted a clean verdict": {
+    mutate: (w) => {
+      issue(w, 6003).user = CODEX_ID_AS_USER;
+    },
+    state: "ACTION_RECOMMENDED",
+    codes: ["REQUEST_EXACT_HEAD_REVIEW"],
+  },
+  "an untrusted badge cannot lend a trusted verdict that states nothing a result": {
+    mutate: (w) => {
+      issue(w, 6003).body = `**Reviewed commit:** \`${short(w.head)}\`\n\nNotes.`;
+      addRoot(w, { id: 5005, severity: "P3", at: w.head, resolved: false, user: OUTSIDER });
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_REVIEW"],
+  },
+
+  // --- Findings, from the trusted reviewer only -----------------------------
   "an unresolved P1 was raised at the head": {
     mutate: (w) => findingRoundAtHead(w, "P1"),
-    state: "ACTION_REQUIRED",
+    state: "ACTION_RECOMMENDED",
     codes: ["REPAIR_FINDINGS"],
   },
   "the same P1, on a change raised to T2 (one autonomous repair)": {
@@ -166,19 +311,47 @@ const SCENARIOS: Record<string, Scenario> = {
     mutate: (w) => {
       threadsOf(w).nodes[0].isResolved = false;
     },
-    state: "ACTION_REQUIRED",
+    state: "ACTION_RECOMMENDED",
     codes: ["DISPOSITION_FINDINGS"],
   },
+  "a Codex comment carries no severity badge": {
+    mutate: (w) => addRoot(w, { id: 5003, severity: null, at: w.commits[1], resolved: false }),
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_FINDINGS"],
+  },
+  "review threads and inline comments disagree": {
+    mutate: (w) => {
+      threadsOf(w).nodes.push({ isResolved: true, isOutdated: false, comments: { nodes: [{ databaseId: 9999 }] } });
+      threadsOf(w).totalCount = 2;
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_FINDINGS"],
+  },
+  "a fresh P1 when the commit history cannot be read": {
+    mutate: (w) => {
+      findingRoundAtHead(w, "P1");
+      delete R(w).commits;
+    },
+    state: "BLOCKED",
+    codes: ["REPAIR_BUDGET_UNKNOWN"],
+  },
+  "a reviewed head is no longer in the branch history": {
+    mutate: (w) => R(w).issues[0].push({ id: 6005, user: CODEX, body: cleanVerdict(sha("rewritten")) }),
+    state: "BLOCKED",
+    codes: ["HISTORY_REWRITTEN"],
+  },
+
+  // --- The pull request and its branch --------------------------------------
   "production moved on": {
     mutate: (w) => Object.assign(R(w).comparison, { status: "diverged", behind_by: 2 }),
-    state: "ACTION_REQUIRED",
+    state: "ACTION_RECOMMENDED",
     codes: ["REFRESH_PRODUCTION"],
   },
   "the branch conflicts with production": {
     mutate: (w) => {
       R(w).pull.mergeable = false;
     },
-    state: "ACTION_REQUIRED",
+    state: "ACTION_RECOMMENDED",
     codes: ["RESOLVE_CONFLICTS"],
   },
   "GitHub has not computed mergeability yet": {
@@ -195,95 +368,6 @@ const SCENARIOS: Record<string, Scenario> = {
     state: "BLOCKED",
     codes: ["PR_DRAFT"],
   },
-  "the only trusted verdict is for an older head": {
-    mutate: (w) => {
-      dropIssue(w, 6002);
-      dropIssue(w, 6003);
-    },
-    state: "ACTION_REQUIRED",
-    codes: ["REQUEST_REVIEW"],
-  },
-  "a review was requested 20 minutes ago": {
-    mutate: (w) => dropIssue(w, 6003),
-    state: "WAITING",
-    codes: ["WAIT_REVIEW"],
-  },
-  "a PR was just opened: Codex reviews it unasked, so the shepherd waits instead of re-asking": {
-    mutate: (w) => {
-      dropIssue(w, 6002);
-      dropIssue(w, 6003);
-      // The head (committed 40 minutes ago) is the head the PR was opened with.
-      R(w).pull.created_at = ago(10);
-    },
-    state: "WAITING",
-    codes: ["WAIT_REVIEW"],
-  },
-  // #795, Codex P2: a draft's CREATION is not a review request; becoming ready is.
-  "a PR opened as a draft 35 minutes ago and marked ready 5 minutes ago is waiting, not overdue": {
-    mutate: (w) => {
-      dropIssue(w, 6002);
-      dropIssue(w, 6003);
-      R(w).pull.created_at = ago(35);
-      timelineOf(w).nodes = [{ createdAt: ago(5) }];
-    },
-    state: "WAITING",
-    codes: ["WAIT_REVIEW"],
-  },
-  "a draft marked ready 39 minutes ago that Codex never answered": {
-    mutate: (w) => {
-      dropIssue(w, 6002);
-      dropIssue(w, 6003);
-      timelineOf(w).nodes = [{ createdAt: ago(39) }];
-    },
-    state: "BLOCKED",
-    codes: ["REVIEW_UNANSWERED"],
-  },
-  // #795, Codex P1: an untrusted badge must not lend a contentless trusted
-  // verdict the appearance of a result - here that path reached READY.
-  "an untrusted badge cannot make a trusted verdict that states nothing count": {
-    mutate: (w) => {
-      R(w).issues[0].find((c: Json) => c.id === 6003).body = `**Reviewed commit:** \`${short(w.head)}\`\n\nNotes.`;
-      addRoot(w, { id: 5005, severity: "P3", at: w.head, resolved: false, user: OUTSIDER });
-    },
-    state: "BLOCKED",
-    codes: ["NOT_PROVEN_REVIEW"],
-  },
-  "a PR opened 39 minutes ago that Codex never answered": {
-    mutate: (w) => {
-      dropIssue(w, 6002);
-      dropIssue(w, 6003);
-      R(w).pull.created_at = ago(39);
-    },
-    state: "BLOCKED",
-    codes: ["REVIEW_UNANSWERED"],
-  },
-  "an unbound request made before this head existed does not count for it": {
-    mutate: (w) => {
-      dropIssue(w, 6002);
-      dropIssue(w, 6003);
-      // The head was committed 40 minutes ago; this ask predates it.
-      R(w).issues[0].push({ id: 6007, user: OPERATOR, body: "@codex review", created_at: ago(60) });
-    },
-    state: "ACTION_REQUIRED",
-    codes: ["REQUEST_REVIEW"],
-  },
-  "an unbound request made after this head counts for it": {
-    mutate: (w) => {
-      dropIssue(w, 6002);
-      dropIssue(w, 6003);
-      R(w).issues[0].push({ id: 6007, user: OPERATOR, body: "@codex review", created_at: ago(5) });
-    },
-    state: "WAITING",
-    codes: ["WAIT_REVIEW"],
-  },
-  "a review was requested 45 minutes ago and never answered": {
-    mutate: (w) => {
-      dropIssue(w, 6003);
-      R(w).issues[0].find((c: Json) => c.id === 6002).created_at = ago(45);
-    },
-    state: "BLOCKED",
-    codes: ["REVIEW_UNANSWERED"],
-  },
   "the PR is stacked on another branch": {
     mutate: (w) => {
       R(w).pull.base.ref = "feat/parent";
@@ -298,25 +382,28 @@ const SCENARIOS: Record<string, Scenario> = {
     state: "WAITING",
     codes: ["HEAD_MOVED_DURING_READ"],
   },
-  "a reviewed head is no longer in the branch history": {
-    mutate: (w) => R(w).issues[0].push({ id: 6005, user: CODEX, body: cleanVerdict(sha("rewritten")), created_at: ago(60) }),
-    state: "BLOCKED",
-    codes: ["HISTORY_REWRITTEN"],
-  },
-  "a Codex comment carries no severity badge": {
-    mutate: (w) => addRoot(w, { id: 5003, severity: null, at: w.commits[1], resolved: false }),
-    state: "BLOCKED",
-    codes: ["NOT_PROVEN_FINDINGS"],
-  },
-  "review threads and inline comments disagree": {
+  "the closing head re-read returns nothing": {
     mutate: (w) => {
-      threadsOf(w).nodes.push({ isResolved: true, isOutdated: false, comments: { nodes: [{ databaseId: 9999 }] } });
-      threadsOf(w).totalCount = 2;
+      R(w).pullAfter = null;
     },
     state: "BLOCKED",
-    codes: ["NOT_PROVEN_FINDINGS"],
+    codes: ["NOT_PROVEN_SNAPSHOT"],
   },
-  "merged": {
+  "the comparison with production cannot be read": {
+    mutate: (w) => {
+      delete R(w).comparison;
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_BRANCH"],
+  },
+  "the pull request cannot be read": {
+    mutate: (w) => {
+      delete R(w).pull;
+    },
+    state: "BLOCKED",
+    codes: ["UNREADABLE_PULL_REQUEST"],
+  },
+  merged: {
     mutate: (w) => Object.assign(R(w).pull, { state: "closed", merged_at: ago(1) }),
     state: "CLOSED",
     codes: ["PR_MERGED"],
@@ -328,133 +415,44 @@ const SCENARIOS: Record<string, Scenario> = {
     state: "CLOSED",
     codes: ["PR_CLOSED"],
   },
-  "CI failed at three consecutive heads": {
-    mutate: (w) => failLane(w, "all"),
-    state: "ESCALATE",
-    codes: ["CI_FAILURES_REPEATED"],
-  },
-  "CI failed and the run history cannot be read": {
-    mutate: (w) => {
-      failLane(w);
-      delete R(w).branchRuns;
-    },
-    state: "BLOCKED",
-    codes: ["CI_BUDGET_UNKNOWN"],
-  },
-  "CI failed and the newest page of runs never reaches a passing head": {
-    mutate: (w) => {
-      failLane(w);
-      R(w).branchRuns = { total_count: 500, workflow_runs: [ciRun(3003, w.head, "failure")] };
-    },
-    state: "BLOCKED",
-    codes: ["CI_BUDGET_UNKNOWN"],
-  },
-  "three red heads inside a partial page are already enough to stop": {
-    mutate: (w) => {
-      failLane(w, "all");
-      R(w).branchRuns.total_count = 500;
-    },
-    state: "ESCALATE",
-    codes: ["CI_FAILURES_REPEATED"],
-  },
-  "a fresh P1 when the commit history cannot be read": {
-    mutate: (w) => {
-      findingRoundAtHead(w, "P1");
-      delete R(w).commits;
-    },
-    state: "BLOCKED",
-    codes: ["REPAIR_BUDGET_UNKNOWN"],
-  },
-  "the pull request cannot be read": {
-    mutate: (w) => {
-      delete R(w).pull;
-    },
-    state: "BLOCKED",
-    codes: ["UNREADABLE_PULL_REQUEST"],
-  },
-  "an operator posted a look-alike clean verdict for the head": {
-    mutate: (w) => {
-      dropIssue(w, 6002);
-      dropIssue(w, 6003);
-      R(w).issues[0].push({
-        id: 6006,
-        user: OPERATOR,
-        body: `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${short(w.head)}\``,
-        created_at: ago(5),
-      });
-    },
-    state: "ACTION_REQUIRED",
-    codes: ["REQUEST_REVIEW"],
-  },
-  "a trusted verdict names the head but states nothing": {
-    mutate: (w) => {
-      R(w).issues[0].find((c: Json) => c.id === 6003).body = `**Reviewed commit:** \`${short(w.head)}\`\n\nNotes.`;
-    },
-    state: "BLOCKED",
-    codes: ["NOT_PROVEN_REVIEW"],
-  },
-  "the comparison with production cannot be read": {
-    mutate: (w) => {
-      delete R(w).comparison;
-    },
-    state: "BLOCKED",
-    codes: ["NOT_PROVEN_BRANCH"],
-  },
-  "the closing head re-read returns nothing": {
-    mutate: (w) => {
-      R(w).pullAfter = null;
-    },
-    state: "BLOCKED",
-    codes: ["NOT_PROVEN_SNAPSHOT"],
-  },
-  // Exact-head binding. A well-formed answer about ANOTHER commit is not a
-  // malformed one, so the corruption sweep cannot produce it; these can.
-  "the check runs answered describe another commit": {
-    mutate: (w) => {
-      for (const c of R(w).checkRuns[0].check_runs) c.head_sha = sha("elsewhere");
-    },
-    state: "BLOCKED",
-    codes: ["NOT_PROVEN_CI"],
-  },
-  "the workflow runs answered describe another commit": {
-    mutate: (w) => {
-      R(w).workflowRuns[0].workflow_runs[0].head_sha = sha("elsewhere");
-    },
-    state: "BLOCKED",
-    codes: ["NOT_PROVEN_CI"],
-  },
-  "the commit statuses answered describe another commit": {
-    mutate: (w) => {
-      R(w).statuses[0].sha = sha("elsewhere");
-    },
-    state: "BLOCKED",
-    codes: ["NOT_PROVEN_CI"],
-  },
-  "a lane reports a status GitHub never documented": {
-    mutate: (w) => {
-      R(w).checkRuns[0].check_runs[0].status = "paused";
-    },
-    state: "BLOCKED",
-    codes: ["NOT_PROVEN_CI"],
-  },
 };
 
-/** Changes that must NOT block the gate - each one is a trap for a sloppy reader. */
-const STILL_READY: Record<string, (w: World) => void> = {
-  "a P3 at the head is not actionable": (w) => findingRoundAtHead(w, "P3"),
-  "a P1 at the head that was resolved in its thread": (w) => findingRoundAtHead(w, "P1", true),
-  "a neutral lane passes": (w) => {
-    R(w).checkRuns[0].check_runs.push({ name: "advisory", status: "completed", conclusion: "neutral", head_sha: w.head });
-    R(w).checkRuns[0].total_count = 6;
+/** Changes that must NOT take candidacy away - each a trap for a sloppy reader. */
+const STILL_CANDIDATE: Record<string, (w: World) => void> = {
+  "an earlier run at the same sha failed; the latest passed": (w) =>
+    runsAtHead(w, [ciRun(2990, w.head, "failure"), ciRun(3003, w.head, "success")], {
+      3003: R(w).jobs[3003][0].jobs,
+    }),
+  "a failed run of another workflow at the same sha, with a higher id": (w) => {
+    R(w).workflowRuns[0].workflow_runs.push(
+      ciRun(3050, w.head, "failure", "completed", { path: ".github/workflows/nightly.yml", event: "schedule" }),
+    );
+    R(w).workflowRuns[0].total_count = 2;
+  },
+  "a failed push-event run of the PR workflow at the same sha": (w) => {
+    R(w).workflowRuns[0].workflow_runs.push(ciRun(3051, w.head, "failure", "completed", { event: "push" }));
+    R(w).workflowRuns[0].total_count = 2;
+  },
+  "runs listed oldest-last, newest-first or shuffled": (w) => {
+    runsAtHead(w, [ciRun(3003, w.head, "success"), ciRun(2990, w.head, "failure"), ciRun(2995, w.head, "cancelled")], {
+      3003: R(w).jobs[3003][0].jobs,
+    });
+  },
+  "a neutral job passes": (w) => {
+    R(w).jobs[3003][0].jobs.push(job(9005, 3003, w.head, "advisory", "neutral"));
+    R(w).jobs[3003][0].total_count = 5;
   },
   "the run history is unreadable, but the head itself is green": (w) => {
     delete R(w).branchRuns;
   },
+  "an operator's request for a review is not evidence of anything": (w) =>
+    R(w).issues[0].push({ id: 6010, user: OPERATOR, body: `@codex review \`${short(w.head)}\`` }),
+  "a P3 at the head is not actionable": (w) => findingRoundAtHead(w, "P3"),
+  "a P1 at the head that was resolved in its thread": (w) => findingRoundAtHead(w, "P1", true),
   "an outsider's P1 badge at the head is not a finding": (w) =>
     addRoot(w, { id: 5101, severity: "P1", at: w.head, resolved: false, user: OUTSIDER }),
-  "outsider badges at three consecutive heads cannot force the stop law": (w) => {
-    w.commits.forEach((at, i) => addRoot(w, { id: 5110 + i, severity: "P1", at, resolved: false, user: OUTSIDER }));
-  },
+  "outsider badges at three consecutive heads cannot force the stop law": (w) =>
+    w.commits.forEach((at, i) => addRoot(w, { id: 5110 + i, severity: "P1", at, resolved: false, user: OUTSIDER })),
 };
 
 /**
@@ -467,6 +465,8 @@ const build = (mutate?: (w: World) => void): World => {
   mutate?.(w);
   return JSON.parse(JSON.stringify(w));
 };
+
+const CANDIDATE = STATE.CANDIDATE_READY_FOR_HUMAN_REVIEW;
 
 // ---------------------------------------------------------------------------
 // 1. status is unchanged
@@ -499,17 +499,17 @@ describe("`status` stays facts-only and behaviour-compatible", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. the decision is total, and READY is one point
+// 2. the decision is total, and the candidate state is one point
 // ---------------------------------------------------------------------------
 
-describe("the decision is a total function, and READY_FOR_HUMAN_MERGE is exactly one point", () => {
+describe("the decision is a total function, and CANDIDATE_READY_FOR_HUMAN_REVIEW is exactly one point", () => {
   const keys = Object.keys(DOMAINS) as string[];
   const values = keys.map((k) => DOMAINS[k] as string[]);
   const states = new Set(Object.values(STATE));
 
-  it("DOMAINS and READY_POINT describe the same signals, and the ready value is in each domain", () => {
-    expect(Object.keys(READY_POINT).sort()).toEqual([...keys].sort());
-    for (const k of keys) expect(DOMAINS[k]).toContain(READY_POINT[k]);
+  it("DOMAINS and CANDIDATE_POINT describe the same signals, and the candidate value is in each domain", () => {
+    expect(Object.keys(CANDIDATE_POINT).sort()).toEqual([...keys].sort());
+    for (const k of keys) expect(DOMAINS[k]).toContain(CANDIDATE_POINT[k]);
     for (const k of keys) expect(DOMAINS[k]).toContain("UNKNOWN");
   });
 
@@ -517,7 +517,7 @@ describe("the decision is a total function, and READY_FOR_HUMAN_MERGE is exactly
     const violations: string[] = [];
     const emitted = new Set<string>();
     const reached = new Set<string>();
-    const readyAt = keys.map((k, i) => values[i].indexOf(READY_POINT[k]));
+    const pointAt = keys.map((k, i) => values[i].indexOf(CANDIDATE_POINT[k]));
     const unknownAt = keys.map((_, i) => values[i].indexOf("UNKNOWN"));
     const idx = keys.map(() => 0);
     const s: Json = Object.fromEntries(keys.map((k, i) => [k, values[i][0]]));
@@ -531,10 +531,10 @@ describe("the decision is a total function, and READY_FOR_HUMAN_MERGE is exactly
       const out = decide(s);
       combos += 1;
       reached.add(out.state);
-      let atReadyPoint = true;
+      let atPoint = true;
       let anyUnknown = false;
       for (let j = 0; j < idx.length; j++) {
-        if (idx[j] !== readyAt[j]) atReadyPoint = false;
+        if (idx[j] !== pointAt[j]) atPoint = false;
         if (idx[j] === unknownAt[j]) anyUnknown = true;
       }
       let codes = 0;
@@ -545,15 +545,16 @@ describe("the decision is a total function, and READY_FOR_HUMAN_MERGE is exactly
 
       const live = s.pr !== "UNKNOWN" && s.pr !== "MERGED" && s.pr !== "CLOSED" && s.snapshot !== "TORN";
       if (!states.has(out.state)) flag("unknown state");
-      if ((out.state === STATE.READY_FOR_HUMAN_MERGE) !== atReadyPoint) flag("READY off the ready point, or not at it");
+      if ((out.state === CANDIDATE) !== atPoint) flag("candidate off the candidate point, or not at it");
       if ((out.state === STATE.CLOSED) !== (s.pr === "MERGED" || s.pr === "CLOSED")) flag("CLOSED mismatch");
       if ((out.state === STATE.ESCALATE) !== (live && (s.rounds === "EXCEEDED" || s.ciStreak === "EXCEEDED"))) {
         flag("ESCALATE does not track a confirmed stop law");
       }
       if (out.actions.includes("REPAIR_FINDINGS") && !(s.findings === "FRESH" && s.rounds === "WITHIN_CAP")) flag("repair outside budget");
       if (out.actions.includes("FIX_CI") && !(s.ci === "FAILED" && s.ciStreak === "WITHIN_CAP")) flag("CI fix outside budget");
-      if (out.state !== STATE.READY_FOR_HUMAN_MERGE && codes === 0) flag("a state with no reason");
-      if (out.state === STATE.READY_FOR_HUMAN_MERGE && codes !== 0) flag("READY with reasons attached");
+      if (out.actions.includes("REQUEST_EXACT_HEAD_REVIEW") && s.review !== "NO_VERDICT_AT_HEAD") flag("review requested with a verdict at head");
+      if (out.state !== CANDIDATE && codes === 0) flag("a state with no reason");
+      if (out.state === CANDIDATE && codes !== 0) flag("candidate with reasons attached");
       // The final fall-through is for evidence that could not be read. A fully
       // KNOWN situation must always get a concrete next step instead.
       if (out.blocks.length > 0 && out.blocks[0].startsWith("NOT_PROVEN_") && !anyUnknown) {
@@ -572,13 +573,12 @@ describe("the decision is a total function, and READY_FOR_HUMAN_MERGE is exactly
 
     expect(violations).toEqual([]);
     expect(combos).toBe(values.reduce((n, v) => n * v.length, 1));
-    // Every emitted code has words, and every state is actually reachable.
     expect([...emitted].filter((c) => !CODES.includes(c))).toEqual([]);
     expect([...reached].sort()).toEqual([...states].sort());
   }, 60_000);
 
   it("is pure: the same input gives the same answer and is not modified", () => {
-    const s = Object.freeze({ ...READY_POINT, ci: "FAILED" });
+    const s = Object.freeze({ ...CANDIDATE_POINT, ci: "FAILED" });
     expect(decide(s)).toEqual(decide({ ...s }));
   });
 });
@@ -587,16 +587,18 @@ describe("the decision is a total function, and READY_FOR_HUMAN_MERGE is exactly
 // 3. delivery situations, through the real collector
 // ---------------------------------------------------------------------------
 
-describe("delivery situations map to the state and step the rules require", () => {
-  it("POSITIVE CONTROL: a PR at the gate is READY_FOR_HUMAN_MERGE, and says the human decides", () => {
+describe("delivery situations map to the recommendation the rules call for", () => {
+  it("POSITIVE CONTROL: a PR at the gate is a CANDIDATE for human review, and says it is advisory", () => {
     const r = run(readyWorld());
-    expect(r.state).toBe(STATE.READY_FOR_HUMAN_MERGE);
-    expect(r.exitCode).toBe(EXIT_CODE.READY_FOR_HUMAN_MERGE);
+    expect(r.state).toBe(CANDIDATE);
+    expect(r.exitCode).toBe(EXIT_CODE[CANDIDATE]);
+    expect(r.advisory).toBe(true);
     expect(codesOf(r)).toEqual([]);
-    expect(r.summary).toMatch(/merge decision is the operator's/);
-    expect(r.summary).toMatch(/neither green CI nor this state is merge authorization/);
+    expect(r.summary).toMatch(/CANDIDATE for human review/);
+    expect(r.summary).toMatch(/advisory/);
+    expect(r.summary).toMatch(/neither green CI nor this state authorizes a merge/);
     expect(r.unavailable).toEqual([]);
-    expect(r.signals).toEqual(READY_POINT);
+    expect(r.signals).toEqual(CANDIDATE_POINT);
   });
 
   for (const [name, sc] of Object.entries(SCENARIOS)) {
@@ -607,59 +609,39 @@ describe("delivery situations map to the state and step the rules require", () =
     });
   }
 
-  for (const [name, mutate] of Object.entries(STILL_READY)) {
-    it(`${name}: still READY_FOR_HUMAN_MERGE`, () => {
-      expect(run(build(mutate)).state).toBe(STATE.READY_FOR_HUMAN_MERGE);
+  for (const [name, mutate] of Object.entries(STILL_CANDIDATE)) {
+    it(`${name}: still a candidate`, () => {
+      expect(run(build(mutate)).state).toBe(CANDIDATE);
     });
   }
 
+  it("green CI alone never makes a candidate", () => {
+    const r = run(build(SCENARIOS["no review present at all"].mutate));
+    expect(r.signals.ci).toBe("GREEN");
+    expect(r.state).not.toBe(CANDIDATE);
+  });
+
+  it("a stale verdict is named, and the recommendation names the exact head", () => {
+    const r = run(build(SCENARIOS["the only trusted verdict is for an older head"].mutate));
+    expect(r.signals.review).toBe("NO_VERDICT_AT_HEAD");
+    expect(r.actions[0].text).toContain(`"@codex review" naming \`${short(sha("head"))}\``);
+    expect(r.actions[0].text).toContain(`last trusted verdict was for ${short(sha("c2"))}`);
+    expect(r.actions[0].text).toMatch(/Whether someone already asked is not inferred/);
+  });
+
   it("a resolved P1 at the head is shown to the human at the gate, not hidden", () => {
-    const r = run(build(STILL_READY["a P1 at the head that was resolved in its thread"]));
+    const r = run(build(STILL_CANDIDATE["a P1 at the head that was resolved in its thread"]));
     expect(r.detail.findings.resolvedAtHead).toBe(1);
     expect(renderShepherd(r)).toMatch(/resolved in its thread without a new commit/);
   });
 
-  it("green CI alone never reaches the gate", () => {
-    const w = build((x) => {
-      dropIssue(x, 6002);
-      dropIssue(x, 6003);
-      R(x).reviews[0] = [];
-      R(x).inline[0] = [];
-      threadsOf(x).nodes = [];
-      threadsOf(x).totalCount = 0;
-    });
-    const r = run(w);
-    expect(r.signals.ci).toBe("GREEN");
-    expect(r.state).not.toBe(STATE.READY_FOR_HUMAN_MERGE);
-    expect(codesOf(r)).toEqual(["REQUEST_REVIEW"]);
+  it("untrusted comments are counted and shown as ignored, never used", () => {
+    const r = run(build(STILL_CANDIDATE["an outsider's P1 badge at the head is not a finding"]));
+    expect(r.detail.review.untrusted).toEqual({ reviews: 0, issueComments: 2, inlineComments: 1 });
+    expect(renderShepherd(r)).toMatch(/3 comment\(s\) from untrusted authors ignored/);
   });
 
-  it("a new commit invalidates the exact-head verdict, and the request names the new head", () => {
-    const r = run(build(SCENARIOS["the only trusted verdict is for an older head"].mutate));
-    expect(r.signals.review).toBe("STALE");
-    expect(r.actions[0].text).toContain(`@codex review" naming \`${short(sha("head"))}\``);
-    expect(r.actions[0].text).toContain(`last trusted verdict was for ${short(sha("c2"))}`);
-  });
-
-  it("an untrusted badge is shown at the gate as ignored, never counted", () => {
-    const r = run(build(STILL_READY["an outsider's P1 badge at the head is not a finding"]));
-    expect(r.detail.findings).toMatchObject({ untrusted: 1, fresh: [], carried: [] });
-    expect(renderShepherd(r)).toMatch(/1 badge look-alike\(s\) from untrusted authors ignored/);
-  });
-
-  it("a review asked for by opening the PR says so", () => {
-    const r = run(build(SCENARIOS["a PR was just opened: Codex reviews it unasked, so the shepherd waits instead of re-asking"].mutate));
-    expect(r.detail.review).toMatchObject({ askedByOpening: true, requestsAtHead: 0, latestRequestAgeMinutes: 10 });
-    expect(r.waits[0].text).toContain("(by making the PR reviewable) 10 min ago");
-  });
-
-  it("Codex's own comments are never counted as review requests", () => {
-    const r = run(build((w) => dropIssue(w, 6002)));
-    // 6003 (Codex) and 6000 (Codex summary) both say "@codex review"; neither asks.
-    expect(r.detail.review.requestsAtHead).toBe(0);
-  });
-
-  it("two fresh findings: the root-cause family check is required before patching", () => {
+  it("two fresh findings: the root-cause family check is recommended before patching", () => {
     const r = run(
       build((w) => {
         findingRoundAtHead(w, "P1");
@@ -674,15 +656,190 @@ describe("delivery situations map to the state and step the rules require", () =
     const fresh = build((w) => findingRoundAtHead(w, "P1"));
     expect(run(fresh, { tier: "T0" }).detail.rounds).toMatchObject({ baselineTier: "T1", tier: "T1", budget: 2 });
     expect(run(fresh, { tier: "T3" }).detail.rounds).toMatchObject({ baselineTier: "T1", tier: "T3", budget: 1 });
-    const unreadable = build((w) => {
-      delete R(w).files;
-    });
-    expect(run(unreadable).detail.rounds).toMatchObject({ tier: "UNKNOWN", budget: 1 });
+    expect(run(build((w) => void delete R(w).files)).detail.rounds).toMatchObject({ tier: "UNKNOWN", budget: 1 });
   });
 });
 
 // ---------------------------------------------------------------------------
-// 4. the stop law on real history: #786
+// 4. the authority gate: untrusted evidence is inert
+// ---------------------------------------------------------------------------
+
+/** Every comment-derived item in a world, as a path into its responses. */
+function commentPaths(w: World): Array<{ kind: "reviews" | "issues" | "inline"; i: number }> {
+  const out: Array<{ kind: "reviews" | "issues" | "inline"; i: number }> = [];
+  for (const kind of ["reviews", "issues", "inline"] as const) {
+    if (!Array.isArray(R(w)[kind]?.[0])) continue;
+    R(w)[kind][0].forEach((_: Json, i: number) => out.push({ kind, i }));
+  }
+  return out;
+}
+
+/** Remove one comment; an inline root takes its thread with it, as on GitHub. */
+function removeComment(w: World, kind: string, i: number) {
+  const [item] = R(w)[kind][0].splice(i, 1);
+  if (kind === "inline" && (item.in_reply_to_id === undefined || item.in_reply_to_id === null)) {
+    const t = threadsOf(w);
+    t.nodes = t.nodes.filter((n: Json) => n.comments.nodes[0].databaseId !== item.id);
+    t.totalCount = t.nodes.length;
+  }
+}
+
+const UNTRUSTED = [OUTSIDER, OPERATOR, CODEX_LOGIN_OTHER_ID, CODEX_ID_AS_USER];
+const SITUATIONS: Array<[string, (w: World) => void, string | null]> = [
+  ["a candidate", () => {}, null],
+  ...Object.entries(SCENARIOS).map(([name, sc]): [string, (w: World) => void, string | null] => [name, sc.mutate, sc.tier ?? null]),
+  ...Object.entries(STILL_CANDIDATE).map(([name, m]): [string, (w: World) => void, string | null] => [name, m, null]),
+];
+
+describe("the authority gate: no untrusted actor's evidence reaches a decision", () => {
+  it("ADDING an untrusted copy of any comment, in any situation, changes nothing", () => {
+    const changed: string[] = [];
+    let checks = 0;
+    for (const [name, mutate, tier] of SITUATIONS) {
+      const base = build(mutate);
+      const expected = verdictOf(run(base, { tier }));
+      for (const { kind, i } of commentPaths(base)) {
+        for (const user of UNTRUSTED) {
+          const w = structuredClone(base);
+          const copy = { ...structuredClone(R(w)[kind][0][i]), id: 880000 + i, user };
+          R(w)[kind][0].push(copy);
+          if (kind === "inline" && (copy.in_reply_to_id === undefined || copy.in_reply_to_id === null)) {
+            threadsOf(w).nodes.push({ isResolved: false, isOutdated: false, comments: { nodes: [{ databaseId: copy.id }] } });
+            threadsOf(w).totalCount += 1;
+          }
+          checks += 1;
+          if (JSON.stringify(verdictOf(run(w, { tier }))) !== JSON.stringify(expected)) changed.push(`${name} / +${kind}[${i}] by ${user.login}#${user.id}`);
+        }
+      }
+    }
+    expect(changed).toEqual([]);
+    expect(checks).toBeGreaterThan(SITUATIONS.length * 4);
+  });
+
+  it("RE-ATTRIBUTING any comment to an untrusted actor is exactly the same as deleting it", () => {
+    const changed: string[] = [];
+    for (const [name, mutate, tier] of SITUATIONS) {
+      const base = build(mutate);
+      for (const { kind, i } of commentPaths(base)) {
+        const removed = structuredClone(base);
+        removeComment(removed, kind, i);
+        const expected = JSON.stringify(verdictOf(run(removed, { tier })));
+        for (const user of UNTRUSTED) {
+          const w = structuredClone(base);
+          R(w)[kind][0][i].user = user;
+          if (JSON.stringify(verdictOf(run(w, { tier }))) !== expected) changed.push(`${name} / ${kind}[${i}] as ${user.login}#${user.id}`);
+        }
+      }
+    }
+    expect(changed).toEqual([]);
+  });
+
+  it("no request is inferred: asking for a review, from anyone, never stands in for a verdict", () => {
+    const w = build(SCENARIOS["no review present at all"].mutate);
+    for (const user of [OPERATOR, OUTSIDER, CODEX]) {
+      R(w).issues[0].push({ id: 6100 + user.id % 97, user, body: `@codex review \`${short(w.head)}\`` });
+    }
+    const r = run(w);
+    expect(codesOf(r)).toEqual(["REQUEST_EXACT_HEAD_REVIEW"]);
+    expect(r.detail.review).not.toHaveProperty("requestsAtHead");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. exact-head review binding
+// ---------------------------------------------------------------------------
+
+describe("a verdict counts only for the exact head it names", () => {
+  it("only a sha that IS the head - in full or by a 7+ character prefix - is a verdict for it", () => {
+    const head = sha("head");
+    const nearMiss = head.slice(0, 6) + (head[6] === "0" ? "1" : "0") + head.slice(7, 10);
+    const cases: Array<[string, boolean]> = [
+      [head, true],
+      [head.slice(0, 10), true],
+      [head.slice(0, 7), true],
+      [nearMiss, false],
+      [sha("c2"), false],
+      [sha("c2").slice(0, 10), false],
+      [sha("c1").slice(0, 7), false],
+      [sha("production"), false],
+      [sha("elsewhere"), false],
+    ];
+    for (const [named, isHead] of cases) {
+      const w = build((x) => {
+        issue(x, 6003).body = `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${named}\``;
+      });
+      const r = run(w);
+      // A verdict for any commit outside the PR is a rewritten history, not a review of the head.
+      const inHistory = w.commits.some((c) => c.startsWith(named) || named.startsWith(c.slice(0, named.length)));
+      expect({ named, review: r.signals.review }).toEqual({ named, review: isHead ? "VERDICT_AT_HEAD" : "NO_VERDICT_AT_HEAD" });
+      expect(r.state).toBe(isHead ? CANDIDATE : inHistory ? STATE.ACTION_RECOMMENDED : STATE.BLOCKED);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. CI is the LATEST applicable run, never all runs at the sha
+// ---------------------------------------------------------------------------
+
+describe("CI derives from the latest applicable run at the exact head only", () => {
+  it("latestApplicableRun takes the highest id of the PR workflow's pull_request runs, in any order", () => {
+    const at = (id: number, over: Json = {}) => ciRun(id, sha("head"), "success", "completed", over);
+    expect(latestApplicableRun([at(5), at(9), at(7)]).id).toBe(9);
+    expect(latestApplicableRun([at(9, { event: "push" }), at(3)]).id).toBe(3);
+    expect(latestApplicableRun([at(9, { path: ".github/workflows/nightly.yml" }), at(3)]).id).toBe(3);
+    expect(latestApplicableRun([at(9, { event: "workflow_dispatch" })])).toBeNull();
+    expect(latestApplicableRun([])).toBeNull();
+    expect(PR_WORKFLOW).toEqual({ path: CI_WORKFLOW, event: "pull_request" });
+  });
+
+  it("over 300 seeded random run sets, CI is exactly what the latest applicable run alone says", () => {
+    let seed = 795;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    const pick = <T>(xs: T[]): T => xs[Math.floor(rand() * xs.length)];
+    const shapes: Array<[string, string | null]> = [
+      ["completed", "success"],
+      ["completed", "failure"],
+      ["completed", "cancelled"],
+      ["completed", "timed_out"],
+      ["in_progress", null],
+      ["queued", null],
+    ];
+    const mismatches: string[] = [];
+    for (let k = 0; k < 300; k++) {
+      const base = readyWorld();
+      const head = base.head;
+      const ids = [...new Set(Array.from({ length: 2 + Math.floor(rand() * 4) }, () => 1000 + Math.floor(rand() * 9000)))];
+      const runs = ids.map((id) => {
+        const [status, conclusion] = pick(shapes);
+        return ciRun(id, head, conclusion, status, {
+          path: rand() < 0.75 ? CI_WORKFLOW : ".github/workflows/nightly.yml",
+          event: rand() < 0.75 ? "pull_request" : pick(["push", "schedule", "workflow_dispatch"]),
+        });
+      });
+      // Shuffle the listing: order must not matter.
+      runs.sort(() => rand() - 0.5);
+      const jobsFor = (r: Json) => [job(r.id * 10, r.id, head, "lane", r.conclusion, r.status)];
+      // The rule, restated independently of the code under test.
+      const applicable = runs.filter((r) => r.path === CI_WORKFLOW && r.event === "pull_request");
+      const latest = applicable.length ? applicable.reduce((a, b) => (b.id > a.id ? b : a)) : null;
+
+      const all = structuredClone(base);
+      runsAtHead(all, runs, Object.fromEntries(runs.map((r) => [r.id, jobsFor(r)])));
+      const alone = structuredClone(base);
+      runsAtHead(alone, latest ? [latest] : [], latest ? { [latest.id]: jobsFor(latest) } : {});
+
+      const got = run(all).detail.ci;
+      const want = run(alone).detail.ci;
+      if (JSON.stringify([got.signal, got.run]) !== JSON.stringify([want.signal, want.run])) {
+        mismatches.push(`${JSON.stringify(runs.map((r) => [r.id, r.path.split("/").pop(), r.event, r.status, r.conclusion]))}: ${got.signal} vs ${want.signal}`);
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. the stop law on real history: #786
 // ---------------------------------------------------------------------------
 
 describe("the §7.4 review-round stop law, replayed on #786", () => {
@@ -705,7 +862,6 @@ describe("the §7.4 review-round stop law, replayed on #786", () => {
       number: 786,
       state: "open",
       draft: false,
-      created_at: fx.commits[0].commit.committer.date,
       merged_at: null,
       mergeable: true,
       commits: k + 1,
@@ -722,20 +878,11 @@ describe("the §7.4 review-round stop law, replayed on #786", () => {
       issues: [fx.issues.filter((c: Json) => keep(named(c.body), c.created_at))],
       commits: [fx.commits.slice(0, k + 1)],
       files: [fx.files],
-      threads: [
-        {
-          data: {
-            repository: {
-              pullRequest: { timelineItems: { nodes: [] }, reviewThreads: { totalCount: nodes.length, pageInfo: { hasNextPage: false }, nodes } },
-            },
-          },
-        },
-      ],
+      threads: [{ data: { repository: { pullRequest: { reviewThreads: { totalCount: nodes.length, pageInfo: { hasNextPage: false }, nodes } } } } }],
       productionRef: { ref: `refs/heads/${PROD_BRANCH}`, object: { sha: P, type: "commit" } },
       comparison: { status: "ahead", ahead_by: k + 1, behind_by: 0, base_commit: { sha: P } },
-      checkRuns: [{ total_count: 1, check_runs: [{ name: "ci", status: "completed", conclusion: "success", head_sha: head }] }],
       workflowRuns: [{ total_count: 1, workflow_runs: [ciRun(4000 + k, head, "success")] }],
-      statuses: [{ sha: head, state: "pending", total_count: 0, statuses: [] }],
+      jobs: { [4000 + k]: jobsPage([job(41000 + k, 4000 + k, head, "ci", "success")]) },
       branchRuns: { total_count: k + 1, workflow_runs: shas.slice(0, k + 1).map((s, i) => ciRun(4000 + i, s, "success")) },
     });
     return w;
@@ -745,18 +892,16 @@ describe("the §7.4 review-round stop law, replayed on #786", () => {
     expect(shas.map((s) => s.slice(0, 8))).toEqual([
       "7d1e7dd4", "e9cd5d10", "0080ea7b", "2b6b28a2", "3644d2fb", "61c9496a", "2ba37643", "826eea45", "663f86a3", "1af828a3",
     ]);
-    const r = run(asOf(9));
-    expect(r.detail.rounds.baselineTier).toBe("T1");
+    expect(run(asOf(9)).detail.rounds.baselineTier).toBe("T1");
   });
 
-  it("repairs are proposed for rounds one and two, and the loop stops at the third - 3644d2fb", () => {
-    const at = (k: number) => run(asOf(k));
-    expect(codesOf(at(2))).toEqual(["REPAIR_FINDINGS"]);
-    expect(codesOf(at(3))).toEqual(["REPAIR_FINDINGS"]);
-    const third = at(4);
+  it("repairs are recommended for rounds one and two, and the loop is told to stop at the third - 3644d2fb", () => {
+    expect(codesOf(run(asOf(2)))).toEqual(["REPAIR_FINDINGS"]);
+    expect(codesOf(run(asOf(3)))).toEqual(["REPAIR_FINDINGS"]);
+    const third = run(asOf(4));
     expect(third.state).toBe(STATE.ESCALATE);
     expect(third.detail.rounds.heads.map((s: string) => s.slice(0, 8))).toEqual(["3644d2fb", "2b6b28a2", "0080ea7b"]);
-    expect(third.stops[0].text).toMatch(/3 consecutive review rounds .* T1 repair budget of 2/);
+    expect(third.stops[0].text).toMatch(/3 consecutive review rounds .* T1 repair budget of 2\. Recommended: stop patching/);
   });
 
   it("every round the operator patched past the trigger stays ESCALATE", () => {
@@ -764,11 +909,11 @@ describe("the §7.4 review-round stop law, replayed on #786", () => {
   });
 
   it("a T2 budget stops one round earlier, at 2b6b28a2", () => {
-    expect(run(asOf(2), { tier: "T2" }).state).toBe(STATE.ACTION_REQUIRED);
+    expect(run(asOf(2), { tier: "T2" }).state).toBe(STATE.ACTION_RECOMMENDED);
     expect(run(asOf(3), { tier: "T2" }).state).toBe(STATE.ESCALATE);
   });
 
-  it("the clean head ends the streak, but sixteen unresolved findings still bar the gate", () => {
+  it("the clean head ends the streak, but sixteen unresolved findings still stand between it and candidacy", () => {
     const r = run(asOf(9));
     expect(r.detail.rounds.streak).toBe(0);
     expect(r.signals.review).toBe("VERDICT_AT_HEAD");
@@ -778,7 +923,7 @@ describe("the §7.4 review-round stop law, replayed on #786", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. fault injection and corruption, derived from what was actually read
+// 8. fault injection and corruption, derived from what was actually read
 // ---------------------------------------------------------------------------
 
 type Path = Array<string | number>;
@@ -837,6 +982,17 @@ function withCorruption<T>(w: World, path: Path, value: unknown, fn: () => T): T
   }
 }
 
+/** Every whole answer the collector can receive: one per key, and one per run's jobs. */
+function answers(w: World): Path[] {
+  const out: Path[] = [];
+  for (const key of Object.keys(w.responses)) {
+    if (key === "jobs" && w.responses.jobs && typeof w.responses.jobs === "object") {
+      for (const runId of Object.keys(w.responses.jobs)) out.push(["jobs", runId]);
+    } else out.push([key]);
+  }
+  return out;
+}
+
 /** Arrays whose length GitHub states, so losing one item is detectable. */
 function totalledArrays(w: World): Path[] {
   const out: Path[] = [];
@@ -850,15 +1006,16 @@ function totalledArrays(w: World): Path[] {
   return out;
 }
 
-const NOT_READY = Object.entries(SCENARIOS).filter(([, sc]) => sc.state !== STATE.READY_FOR_HUMAN_MERGE);
+const NOT_CANDIDATE = Object.entries(SCENARIOS);
 
 /**
- * Surfaces READY does not depend on, each for a stated reason. Everything NOT
- * listed here must, when lost, take READY away - which the request sweep checks.
+ * Surfaces candidacy does not depend on, each for a stated reason. Everything
+ * NOT listed here must, when lost, take candidacy away - the request sweep checks.
  */
-const READY_INDEPENDENT: Record<string, string> = {
+const CANDIDACY_INDEPENDENT: Record<string, string> = {
   files: "the file list only sets the repair budget; losing it applies the strictest budget, and a zero streak is within any budget",
-  branchRuns: "the head's own green CI ends any failure streak, so run history is only consulted while the head is not green",
+  branchRuns: "the head's own green run ends any failure streak, so run history is only consulted while the head is not green",
+  checkRuns: "read by `status` only; the shepherd never requests it",
 };
 
 describe("fault injection and corruption: what was read is what is attacked", () => {
@@ -867,99 +1024,71 @@ describe("fault injection and corruption: what was read is what is attacked", ()
     const w = readyWorld();
     interpret(collectShepherdFacts({ pr: w.pr, fetcher: fetcherFor(w, { record }), repo: REPO }), { now: NOW });
     expect(record.filter((c) => c.key === null)).toEqual([]);
-    expect(new Set(record.map((c) => c.key))).toEqual(new Set([...Object.keys(w.responses)]));
+    // `checkRuns` is read by `status` only; the shepherd never asks for it.
+    expect(new Set(record.map((c) => c.key))).toEqual(new Set(Object.keys(w.responses).filter((k) => k !== "checkRuns")));
   });
 
-  it("losing ANY request takes READY away, except the two surfaces READY provably does not need", () => {
+  it("losing ANY request takes candidacy away, except the two surfaces it provably does not need", () => {
     const record: Call[] = [];
-    const w = readyWorld();
-    run({ ...w, responses: w.responses }, { fault: (c) => void record.push(c) });
+    run(readyWorld(), { fault: (c) => void record.push(c) });
     expect(record.length).toBeGreaterThan(10);
     const kept: string[] = [];
     for (const call of record) {
       const r = run(readyWorld(), { fault: (c) => (c.index === call.index ? { ok: false, reason: "injected" } : undefined) });
-      if (r.state === STATE.READY_FOR_HUMAN_MERGE) kept.push(String(call.key));
+      if (r.state === CANDIDATE) kept.push(String(call.key));
     }
-    expect(kept.sort()).toEqual(Object.keys(READY_INDEPENDENT).sort());
+    expect(kept.sort()).toEqual(Object.keys(CANDIDACY_INDEPENDENT).filter((k) => k !== "checkRuns").sort());
   });
 
-  it("no lost request, from any situation that is not ready, ever produces READY", () => {
+  it("no lost request, from any situation that is not a candidate, ever produces one", () => {
     const flips: string[] = [];
-    for (const [name, sc] of NOT_READY) {
+    for (const [name, sc] of NOT_CANDIDATE) {
       const record: Call[] = [];
       run(build(sc.mutate), { tier: sc.tier ?? null, fault: (c) => void record.push(c) });
       for (const call of record) {
         const r = run(build(sc.mutate), { tier: sc.tier ?? null, fault: (c) => (c.index === call.index ? { ok: false, reason: "x" } : undefined) });
-        if (r.state === STATE.READY_FOR_HUMAN_MERGE) flips.push(`${name} / ${call.key}`);
+        if (r.state === CANDIDATE) flips.push(`${name} / ${call.key}`);
       }
     }
     expect(flips).toEqual([]);
   });
 
-  it("a malformed answer is reported as that surface's failure, contained to it", () => {
-    // Without this containment the lenient `status` projection throws on a null
-    // pull request, and every surface - not just the broken one - goes UNKNOWN.
-    const r = run(build((w) => void (R(w).pull = null)));
-    expect(r.state).toBe(STATE.BLOCKED);
-    expect(r.unavailable).toContainEqual({ surface: "pull_request", reason: "malformed: the answer is not a JSON object or array" });
-    expect(r.unavailable.map((u: Json) => u.surface)).not.toContain("projection");
-  });
-
-  it("a projection that throws on a malformed answer degrades to UNKNOWN instead of ending the read", () => {
-    // `status`'s projection iterates `check_runs`; an object there throws in it.
-    const r = run(build((w) => void (R(w).checkRuns[0].check_runs = {})));
-    expect(r.state).toBe(STATE.BLOCKED);
-    expect(r.signals.ci).toBe("UNKNOWN");
-    expect(r.unavailable.map((u: Json) => u.surface)).toContain("projection");
-  });
-
-  it("the collector never modifies an answer it reads (so a corruption sweep may reuse one world)", () => {
-    const w = build();
-    deepFreeze(w.responses);
-    expect(run(w).state).toBe(STATE.READY_FOR_HUMAN_MERGE);
-    for (const [, sc] of NOT_READY.slice(0, 8)) {
-      const v = build(sc.mutate);
-      deepFreeze(v.responses);
-      expect(() => run(v, { tier: sc.tier ?? null })).not.toThrow();
-    }
-  });
-
-  it("no malformed WHOLE answer, anywhere, ever produces READY from a situation that is not ready", () => {
+  it("no malformed WHOLE answer, anywhere, ever produces a candidate from a situation that is not one", () => {
     const shapes: unknown[] = [DELETE, null, {}, [], "x", 0, [[]], [{}], [null]];
     const flips: string[] = [];
-    for (const [name, sc] of NOT_READY) {
+    for (const [name, sc] of NOT_CANDIDATE) {
       const base = build(sc.mutate);
-      for (const key of Object.keys(base.responses)) {
+      for (const answer of answers(base)) {
         for (const value of shapes) {
-          const r = withCorruption(base, [key], value, () => run(base, { tier: sc.tier ?? null }));
-          if (r.state === STATE.READY_FOR_HUMAN_MERGE) flips.push(`${name} / ${key} = ${String(value)}`);
+          const r = withCorruption(base, answer, value, () => run(base, { tier: sc.tier ?? null }));
+          if (r.state === CANDIDATE) flips.push(`${name} / ${answer.join(".")} = ${String(value)}`);
         }
       }
     }
     expect(flips).toEqual([]);
   });
 
-  it("no single corrupted leaf, anywhere in any answer, ever produces READY from a situation that is not ready", () => {
+  it("no single corrupted leaf, anywhere in any answer, ever produces a candidate from a situation that is not one", () => {
     const flips: string[] = [];
     let attempts = 0;
-    for (const [name, sc] of NOT_READY) {
+    for (const [name, sc] of NOT_CANDIDATE) {
       const base = build(sc.mutate);
       for (const node of [...nodesOf(base.responses)]) {
         for (const m of malformations(node)) {
           attempts += 1;
           const r = withCorruption(base, node.path, m.value, () => run(base, { tier: sc.tier ?? null }));
-          if (r.state === STATE.READY_FOR_HUMAN_MERGE) flips.push(`${name} / ${node.path.join(".")} ${m.label}`);
+          if (r.state === CANDIDATE) flips.push(`${name} / ${node.path.join(".")} ${m.label}`);
         }
       }
     }
     expect(flips).toEqual([]);
     // Anti-vacuity: the sweep really ran at scale across every situation.
-    expect(attempts).toBeGreaterThan(NOT_READY.length * 100);
+    expect(attempts).toBeGreaterThan(NOT_CANDIDATE.length * 100);
   }, 120_000);
 
-  it("no item dropped from a collection GitHub states the size of ever produces READY", () => {
+  it("no item dropped from a collection GitHub states the size of ever produces a candidate", () => {
     const flips: string[] = [];
-    for (const [name, sc] of NOT_READY) {
+    for (const [name, sc] of NOT_CANDIDATE) {
       const base = build(sc.mutate);
       for (const arrayPath of totalledArrays(base)) {
         let target: Json = base.responses;
@@ -970,15 +1099,15 @@ describe("fault injection and corruption: what was read is what is attacked", ()
           let arr: Json = copy.responses;
           for (const step of arrayPath) arr = arr[step];
           arr.splice(i, 1);
-          if (run(copy, { tier: sc.tier ?? null }).state === STATE.READY_FOR_HUMAN_MERGE) flips.push(`${name} / ${arrayPath.join(".")}[${i}]`);
+          if (run(copy, { tier: sc.tier ?? null }).state === CANDIDATE) flips.push(`${name} / ${arrayPath.join(".")}[${i}]`);
         }
       }
     }
     expect(flips).toEqual([]);
   });
 
-  it("from READY, dropping any stated-size item takes READY away unless READY does not depend on it", () => {
-    const base = readyWorld();
+  it("from a candidate, dropping any stated-size item takes candidacy away unless it does not depend on it", () => {
+    const base = build();
     const kept: string[] = [];
     for (const arrayPath of totalledArrays(base)) {
       let target: Json = base.responses;
@@ -988,13 +1117,24 @@ describe("fault injection and corruption: what was read is what is attacked", ()
         let arr: Json = copy.responses;
         for (const step of arrayPath) arr = arr[step];
         arr.splice(i, 1);
-        if (run(copy).state === STATE.READY_FOR_HUMAN_MERGE) kept.push(String(arrayPath[0]));
+        if (run(copy).state === CANDIDATE) kept.push(String(arrayPath[0]));
       }
     }
-    expect([...new Set(kept)].filter((k) => !(k in READY_INDEPENDENT))).toEqual([]);
+    expect([...new Set(kept)].filter((k) => !(k in CANDIDACY_INDEPENDENT))).toEqual([]);
   });
 
-  it("corruption never crashes the shepherd: every leaf of the READY world, every malformation", () => {
+  it("the collector never modifies an answer it reads (so a corruption sweep may reuse one world)", () => {
+    const w = build();
+    deepFreeze(w.responses);
+    expect(run(w).state).toBe(CANDIDATE);
+    for (const [, sc] of NOT_CANDIDATE.slice(0, 8)) {
+      const v = build(sc.mutate);
+      deepFreeze(v.responses);
+      expect(() => run(v, { tier: sc.tier ?? null })).not.toThrow();
+    }
+  });
+
+  it("corruption never crashes the shepherd: every leaf of the candidate world, every malformation", () => {
     const base = build();
     const states = new Set(Object.values(STATE));
     const broken: string[] = [];
@@ -1015,10 +1155,10 @@ describe("fault injection and corruption: what was read is what is attacked", ()
 });
 
 // ---------------------------------------------------------------------------
-// 6. read-only by construction
+// 9. read-only by construction, and advisory in every word
 // ---------------------------------------------------------------------------
 
-describe("the shepherd is read-only by construction", () => {
+describe("the shepherd is read-only by construction, and advisory in what it says", () => {
   it("REST reads are bare `gh api <path>`: no method and no fields, so they are GETs", () => {
     const argv: string[][] = [];
     const exec = (bin: string, args: string[]) => {
@@ -1066,7 +1206,7 @@ describe("the shepherd is read-only by construction", () => {
     }
   });
 
-  it("no merge, history rewrite, GitHub write or local persistence exists in the eng sources", () => {
+  it("no merge, refresh, history rewrite, GitHub write or local persistence exists in the eng sources", () => {
     const dir = path.resolve(__dirname, "../../scripts/eng");
     const strip = (src: string) => src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
     const code = (f: string) => strip(readFileSync(path.join(dir, f), "utf8"));
@@ -1082,22 +1222,42 @@ describe("the shepherd is read-only by construction", () => {
     expect(code("github-facts.mjs")).toMatch(/exec\("gh", args/);
   });
 
-  it("no step the shepherd proposes rewrites history, merges the PR or forces a push", () => {
+  it("every recommendation is phrased as one, and none rewrites history, merges or forces a push", () => {
     const texts: string[] = [];
     for (const sc of Object.values(SCENARIOS)) {
       const r = run(build(sc.mutate), { tier: sc.tier ?? null });
+      for (const a of r.actions) expect(a.text, a.code).toMatch(/Recommended:/);
       texts.push(...[...r.stops, ...r.blocks, ...r.actions, ...r.waits].map((x: Json) => x.text));
     }
     texts.push(run(readyWorld()).summary);
     expect(texts.length).toBeGreaterThan(Object.keys(SCENARIOS).length);
     for (const t of texts) {
       expect(t).not.toMatch(/\b(rebase|amend|squash|force)/i);
-      expect(t).not.toMatch(/gh pr merge|merge (the|this) (pull request|PR)/i);
+      expect(t).not.toMatch(/gh pr merge|merge (the|this) (pull request|PR)\b/i);
+      expect(t).not.toMatch(/\b(required|must|mandatory)\b/i);
     }
-    expect(LAW).toMatch(/never merges, rebases, amends, squashes or force-pushes/);
+    expect(LAW).toMatch(/^Observation only/);
+    expect(LAW).toMatch(/never merges, rebases, amends, squashes, force-pushes or refreshes a branch/);
   });
 
-  it("the required workflow the shepherd waits for is the repository's pull-request workflow", () => {
+  it("the standards and the decision record describe the shepherd as advisory, in its current vocabulary", () => {
+    const root = path.resolve(__dirname, "../..");
+    const decision = readFileSync(path.join(root, "docs/decisions/eng-loop-01-observation-only.md"), "utf8");
+    const standards = readFileSync(path.join(root, "ENGINEERING_STANDARDS.md"), "utf8");
+    const section8 = standards.slice(standards.indexOf("## 8."));
+    expect(decision).toMatch(/OBSERVATION-ONLY/);
+    expect(decision).toMatch(/\*\*Status\*\* \| \*\*ACCEPTED\*\*/);
+    expect(section8).toMatch(/advisory/);
+    expect(section8).toContain("docs/decisions/eng-loop-01-observation-only.md");
+    for (const state of Object.values(STATE)) expect(section8).toContain(state);
+    // The superseded authority vocabulary survives only as history in the decision record.
+    for (const f of ["shepherd.mjs", "watch.mjs", "cli.mjs", "github-facts.mjs"]) {
+      expect(readFileSync(path.join(root, "scripts/eng", f), "utf8"), f).not.toMatch(/READY_FOR_HUMAN_MERGE|ACTION_REQUIRED/);
+    }
+    expect(section8).not.toMatch(/READY_FOR_HUMAN_MERGE|ACTION_REQUIRED/);
+  });
+
+  it("the workflow the shepherd reads as CI is the repository's pull-request workflow", () => {
     const ci = readFileSync(path.resolve(__dirname, "../../", CI_WORKFLOW), "utf8");
     expect(ci).toMatch(/^on:\s*\n\s+pull_request:/m);
   });

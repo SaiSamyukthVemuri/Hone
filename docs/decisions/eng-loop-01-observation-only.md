@@ -1,0 +1,93 @@
+# Decision — the PR shepherd (ENG-LOOP-01) is OBSERVATION-ONLY
+
+| Field | Value |
+|---|---|
+| **Decision** | `npm run eng -- shepherd <pr>` v1 observes and recommends. It is not release authority, and nothing it reports authorizes anything. |
+| **Date** | 2026-10-05 |
+| **Status** | **ACCEPTED** |
+| **Decided by** | Sam (operator), after the §7.4 stop law fired on PR #795 |
+| **Scope** | `scripts/eng/shepherd.mjs`, `scripts/eng/watch.mjs`, the shepherd collector in `scripts/eng/github-facts.mjs`, and every document that describes their output. `npm run eng -- status` (CP-005a) is unchanged. |
+| **Enforced by** | The code and `tests/eng/shepherd.test.ts` / `tests/eng/shepherd-watch.test.ts` — see section 5. |
+| **Supersedes** | The authority-bearing model #795 first proposed: `READY_FOR_HUMAN_MERGE`, review-request inference, and "the shepherd's rules are the delivery rules". |
+
+---
+
+## 1. The decision, plainly
+
+ENG-LOOP-01 v1 is **observation-only**. It may:
+
+- collect deterministic GitHub / CI / review facts for one pull request at its exact head;
+- normalize them into one state;
+- **recommend** a next action;
+- watch for transitions, within bounds;
+- report **candidate** readiness.
+
+It may **not**:
+
+- act as release authority;
+- merge, or offer to;
+- refresh a branch, or take any other action on its own;
+- issue normative repository delivery decisions;
+- have its best state treated as sufficient authorization.
+
+**The human / existing release procedure remains authoritative.** The never-merge invariant is
+preserved: the shepherd only reads, and its fetcher refuses anything but `gh api` reads and
+read-only GraphQL queries.
+
+## 2. Why
+
+The §7.4 stop law fired on #795 at `8ed5dea8` — and the shepherd itself reported it. Two
+consecutive Codex rounds raised P0–P2 findings in the **same two root-cause families**:
+
+| Family | Round 1 (`7a4d628e`) | Round 2 (`8ed5dea8`) |
+|---|---|---|
+| Text from an untrusted actor used as authority | severity badges from any author were findings | `@codex review` from any commenter was an operator request |
+| A timestamp used as a proxy for an event | a draft's creation time dated the implicit review request | a commit's time stood in for when it was pushed |
+
+Repairing one surface moved each defect to the next — the pattern that retired CP-005's
+authority vehicles (#617–#623). The answer is a smaller model, not a third patch.
+
+## 3. The simplified model
+
+1. **No review-request inference.** Nothing is inferred from PR creation, ready-for-review
+   events, commit times, or comments asking for a review.
+2. **One review fact.** Is there a **trusted** Codex verdict for the **current exact head**?
+3. **If not:** the recommendation is `REQUEST_EXACT_HEAD_REVIEW` — whether or not someone
+   already asked, which the shepherd does not try to know.
+4. **One authority gate.** Every comment-derived input (submitted reviews, issue comments,
+   inline review comments) passes `admit()` once. Only the Codex reviewer's immutable account id
+   and type is evidence; no public commenter is ever treated as an operator. Untrusted comments
+   survive only as counts, for display.
+5. **CI is the latest applicable run.** The latest run of `.github/workflows/ci.yml` triggered by
+   `pull_request` at the exact head, with its own jobs — never every run that ever ran at that sha.
+6. **Advisory vocabulary.** `CANDIDATE_READY_FOR_HUMAN_REVIEW` replaces `READY_FOR_HUMAN_MERGE`;
+   `ACTION_RECOMMENDED` replaces `ACTION_REQUIRED`; every reason is phrased as a recommendation.
+
+## 4. What this decision is not
+
+- **Not an authority re-entry.** CANONICAL_ROADMAP §16.5 is unchanged: authoritative
+  control-plane state (CP-005b ledger, CP-007 stop engine, readiness authority, auto-merge)
+  remains NOT_NOW. This decision uses the clause that permits *observation-only reporting when
+  bounded and independently reviewed*.
+- **Not a weakening of the stop laws.** §7.4 still binds people. The shepherd evaluates it and
+  *recommends* `ESCALATE`; the operator decides what follows.
+- **Not a change to `status`.** Its output stays byte-identical, pinned by test.
+
+## 5. Enforcement
+
+| Rule | Proved by |
+|---|---|
+| Candidate state is one explicit point; UNKNOWN never reaches it | the whole decision product enumerated |
+| Only trusted Codex evidence counts | the inertness sweep: adding or re-attributing any comment in any situation changes nothing but the untrusted counts |
+| No request inference | `@codex review` from anyone, opening a PR, or marking it ready changes nothing |
+| Exact-head binding | a verdict naming any other commit, or a near-miss prefix, is not a verdict for the head |
+| Latest applicable run only | earlier runs at the same sha, other workflows and other events change nothing; run order does not matter |
+| No malformed or partial answer produces a candidate | request, answer, leaf and truncation fault sweeps derived from what the collector actually reads |
+| Never merges / writes | the fetcher's exact argv, the refused GraphQL documents, and a source scan |
+
+## 6. A future authority re-entry would need
+
+An explicit operator decision recorded here, satisfying §16.5 in full: mechanically derived
+completeness, an independent falsifier by construction, and fault injection at every authority
+boundary — plus a role-based authority model for operators (not "anyone who is not Codex") and
+event-bound head evidence (not timestamps).

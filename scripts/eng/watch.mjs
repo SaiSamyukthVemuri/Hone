@@ -2,9 +2,15 @@
 // ---------------------------------------------------------------------------
 // ENG-LOOP-01: the bounded watch behind `npm run eng -- shepherd <pr> --watch`.
 //
-// CLAUDE.md §4's watcher rules, made mechanical:
+// CLAUDE.md §4's watcher rules, made mechanical (and, like everything the
+// shepherd says, advisory - docs/decisions/eng-loop-01-observation-only.md):
 //
-//   * report when the state SETTLES - anything but WAITING - not on every poll;
+//   * report when the state SETTLES, not on every poll. Two things are worth
+//     waiting for: CI, and the trusted exact-head review. A WAITING state is
+//     the first; a recommendation to request the exact-head review, and
+//     nothing else, is the second - the shepherd deliberately cannot see
+//     whether that review was asked for, so the watch keeps looking until a
+//     verdict lands or NO_PROGRESS ends it;
 //   * a superseded head's watcher terminates: when the head moves, this watch
 //     ends (HEAD_CHANGED) and the caller starts a new one for the new head;
 //   * every watch is BOUNDED - a total time limit, a no-progress limit and a
@@ -42,23 +48,24 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /** Progress is any change in state, head, signals, or which lanes are moving. */
 export function fingerprint(result) {
   const c = result.detail.ci;
-  return JSON.stringify([
-    result.state,
-    result.head,
-    result.signals,
-    c.running,
-    c.queued,
-    c.failed,
-    c.cancelled,
-    result.detail.review.requestsAtHead ?? null,
-  ]);
+  return JSON.stringify([result.state, result.head, result.signals, c.run, c.running, c.queued, c.failed, c.cancelled]);
+}
+
+/** Still waiting on something outside the caller's hands: CI, or the exact-head review. */
+export function stillPending(result) {
+  if (result.state === STATE.WAITING) return true;
+  return (
+    result.state === STATE.ACTION_RECOMMENDED &&
+    result.actions.length > 0 &&
+    result.actions.every((a) => a.code === "REQUEST_EXACT_HEAD_REVIEW")
+  );
 }
 
 /**
  * Poll until something a person or agent must act on happens, or a bound is
  * hit. Returns the last result read and how the watch ended:
  *
- *   SETTLED        the state is no longer WAITING
+ *   SETTLED        nothing is pending any more (see `stillPending`)
  *   HEAD_CHANGED   the head this watch was started for has been superseded
  *   NO_PROGRESS    nothing changed for `noProgressMs` while waiting
  *   READ_FAILURES  `maxReadFailures` consecutive reads were incomplete
@@ -121,7 +128,7 @@ export async function watchPr({
         transitions.push({ at: new Date(lastChangeAt).toISOString(), state: result.state, head: result.head });
         onChange(result, lastChangeAt);
       }
-      if (result.state !== STATE.WAITING) return end("SETTLED", result);
+      if (!stillPending(result)) return end("SETTLED", result);
       if (now() - lastChangeAt >= noProgressMs) return end("NO_PROGRESS", result);
     }
 
