@@ -1,5 +1,5 @@
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
-import { E2E_SENTRY_EGRESS_LOG } from "./local-env";
+import { E2E_SENTRY_EGRESS_GUARD, E2E_SENTRY_EGRESS_LOG } from "./local-env";
 
 // SENTRY-E2E-NOISE-02. Reads what the lane's server WOULD have sent to Sentry,
 // as recorded by e2e/helpers/sentry-egress-guard.cjs, so a spec can assert on
@@ -86,6 +86,35 @@ export function errorEvents(records: EgressRecord[]): EgressErrorEvent[] {
 export function eventTexts(item: EgressItem): string[] {
   return [item.message, item.logentry, ...(item.exceptions ?? []).map((e) => e.value)].filter(
     (t): t is string => typeof t === "string",
+  );
+}
+
+/**
+ * Refuse a lane whose web server would not load the guard, before any spec
+ * runs. The containment spec proves the guard at runtime, but only when it
+ * runs, and every spec before it would send unguarded (Codex P1 at de43cb15).
+ * Checked against the env Playwright actually hands the server, for whichever
+ * lane is running.
+ */
+export function assertSentryEgressGuardWired(
+  serverEnv: Record<string, string> | undefined,
+): void {
+  if ((serverEnv?.NODE_OPTIONS ?? "").includes(E2E_SENTRY_EGRESS_GUARD)) return;
+  throw new Error(
+    [
+      "",
+      "=".repeat(72),
+      "E2E SENTRY EGRESS GUARD NOT WIRED - refusing to run",
+      "=".repeat(72),
+      "",
+      "  This lane's web server would start without",
+      `  ${E2E_SENTRY_EGRESS_GUARD}`,
+      "  so everything it sends would reach the operational Sentry project.",
+      "  Its environment must carry withSentryEgressGuard(...) as NODE_OPTIONS",
+      "  (E2E_WEB_SERVER_ENV in e2e/helpers/local-env.ts, which every lane spreads).",
+      "=".repeat(72),
+      "",
+    ].join("\n"),
   );
 }
 

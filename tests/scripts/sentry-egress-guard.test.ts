@@ -1,17 +1,40 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  E2E_SENTRY_EGRESS_GUARD,
-  E2E_SENTRY_EGRESS_LOG,
-  E2E_WEB_SERVER_ENV,
-  withSentryEgressGuard,
-} from "../../e2e/helpers/local-env";
-import { PAYMENT_WEB_SERVER_ENV } from "../../e2e-payment/helpers/payment-env";
-import { GOOGLE_WEB_SERVER_ENV } from "../../e2e-google/helpers/google-env";
-import { formatSentryEgressReport, type EgressRecord } from "../../e2e/helpers/sentry-egress";
+import type { EgressRecord } from "../../e2e/helpers/sentry-egress";
+
+// The e2e env modules refuse, AT IMPORT, any Supabase URL that is not the local
+// stack - and the unit lane sets NEXT_PUBLIC_SUPABASE_URL to a hosted-looking
+// placeholder on purpose, for the build. So they are imported only after this
+// file clears those variables, and the stub is undone afterwards. (A static
+// import here failed the whole file in CI while passing on a bare shell.)
+let E2E_SENTRY_EGRESS_GUARD: string;
+let E2E_SENTRY_EGRESS_LOG: string;
+let E2E_WEB_SERVER_ENV: Record<string, string>;
+let withSentryEgressGuard: (existing: string | undefined) => string;
+let PAYMENT_WEB_SERVER_ENV: Record<string, string>;
+let GOOGLE_WEB_SERVER_ENV: Record<string, string>;
+let assertSentryEgressGuardWired: (serverEnv: Record<string, string> | undefined) => void;
+let formatSentryEgressReport: (records: EgressRecord[]) => string[];
+
+beforeAll(async () => {
+  for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_DB_URL", "HONE_LOCAL_DB_URL", "E2E_SUPABASE_URL"]) {
+    vi.stubEnv(name, "");
+  }
+  const localEnv = await import("../../e2e/helpers/local-env");
+  ({ E2E_SENTRY_EGRESS_GUARD, E2E_SENTRY_EGRESS_LOG, E2E_WEB_SERVER_ENV, withSentryEgressGuard } = localEnv);
+  ({ PAYMENT_WEB_SERVER_ENV } = await import("../../e2e-payment/helpers/payment-env"));
+  ({ GOOGLE_WEB_SERVER_ENV } = await import("../../e2e-google/helpers/google-env"));
+  ({ assertSentryEgressGuardWired, formatSentryEgressReport } = await import(
+    "../../e2e/helpers/sentry-egress"
+  ));
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
 
 // SENTRY-E2E-NOISE-02. Unit-lane proof for e2e/helpers/sentry-egress-guard.cjs,
 // the preload that keeps every local browser lane out of the operational Sentry
@@ -356,31 +379,21 @@ describe("everything else is untouched", () => {
   });
 });
 
-describe("fails open in any deployed runtime", () => {
-  it.each(DEPLOYED_SIGNALS)("%s: installs nothing and says so", (_label, signal) => {
-    // Nothing is sent here, by construction: the probe only inspects whether
-    // the request functions were replaced.
-    const probe = runWithGuard(
-      `
-      const state = globalThis[Symbol.for("hone.e2e.sentryEgressGuard")];
-      console.log(JSON.stringify({
-        active: state?.active ?? null,
-        httpsPatched: require("node:https").request.name === "guardedRequest",
-        tlsPatched: require("node:tls").connect.name === "guardedTlsConnect",
-        fetchPatched: globalThis.fetch.name === "guardedFetch",
-      }));
-    `,
-      signal,
-    );
+describe("an inherited deployed-runtime signal aborts the lane instead of disarming it", () => {
+  // Codex P1 at de43cb15. Only the local lanes load the guard, so a deployed
+  // signal here was inherited (a developer's AWS_REGION, a runner on
+  // Kubernetes). Standing down would let every spec before the containment
+  // probe send to the operational project; refusing to start fails the lane
+  // before its web server - or npm itself - is up.
+  it.each(DEPLOYED_SIGNALS)("%s: the process refuses to start and runs none of its code", (_label, signal) => {
+    // Nothing could be sent here: the probe below would not even reach a
+    // request, and it must never print at all.
+    const probe = runWithGuard(`console.log(JSON.stringify({ ran: true }));`, signal);
 
-    expect(probe.status, probe.stderr).toBe(0);
-    expect(lastJson(probe.stdout)).toEqual({
-      active: false,
-      httpsPatched: false,
-      tlsPatched: false,
-      fetchPatched: false,
-    });
-    expect(probe.stderr).toContain("[sentry-egress-guard] NOT ACTIVE");
+    expect(probe.status).not.toBe(0);
+    expect(probe.stdout).not.toContain('"ran"');
+    expect(probe.stderr).toContain("[sentry-egress-guard] REFUSING TO START");
+    expect(probe.stderr).toContain("operational Sentry project");
   });
 
   it("arms in the local lane (the negative control for the cases above)", () => {
@@ -465,6 +478,30 @@ describe("every browser lane loads it, and nothing deployed can", () => {
       expect(env.NODE_OPTIONS).toBe(E2E_WEB_SERVER_ENV.NODE_OPTIONS);
       expect(env.HONE_E2E_SENTRY_EGRESS_LOG).toBe(E2E_SENTRY_EGRESS_LOG);
     }
+  });
+
+  it("globalSetup refuses, before any spec, a lane whose server env lost the guard", () => {
+    // Codex P1 at de43cb15: the containment spec's runtime probe only runs
+    // when that spec does; every spec before it would send unguarded.
+    for (const env of [E2E_WEB_SERVER_ENV, PAYMENT_WEB_SERVER_ENV, GOOGLE_WEB_SERVER_ENV]) {
+      expect(() => assertSentryEgressGuardWired(env)).not.toThrow();
+    }
+    expect(() => assertSentryEgressGuardWired(undefined)).toThrow(/NOT WIRED/);
+    expect(() => assertSentryEgressGuardWired({})).toThrow(/NOT WIRED/);
+    expect(() =>
+      assertSentryEgressGuardWired({ ...E2E_WEB_SERVER_ENV, NODE_OPTIONS: "--max-old-space-size=4096" }),
+    ).toThrow(/NOT WIRED/);
+
+    // And it is the FIRST thing globalSetup does, on the env Playwright hands
+    // the server - so it runs for every lane, ahead of the schema preflight.
+    const setup = readFileSync(path.join(ROOT, "e2e", "global-setup.ts"), "utf8");
+    const body = setup.slice(setup.indexOf("export default async function globalSetup"));
+    const firstStatement = body
+      .slice(body.indexOf("{") + 1)
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l && !l.startsWith("//"));
+    expect(firstStatement).toBe("assertSentryEgressGuardWired(config.webServer?.env);");
   });
 
   it("composes with existing NODE_OPTIONS instead of replacing them, once", () => {

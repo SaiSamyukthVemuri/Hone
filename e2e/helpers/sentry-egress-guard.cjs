@@ -28,9 +28,10 @@
  *     NEXT_PUBLIC_* input, and no change to what ships to a visitor.
  *   * It never reads event content, so no request-controlled text (the canary
  *     is not secret) can widen or narrow it.
- *   * The Sentry wiring is untouched: sentry.*.config.ts, instrumentation*.ts
- *     and next.config.ts are byte-identical, so deployed and preview reporting
- *     has nothing new that could fail.
+ *   * The Sentry runtime wiring is untouched: sentry.*.config.ts and
+ *     instrumentation*.ts are byte-identical, so deployed and preview
+ *     reporting has nothing new that could fail. (next.config.ts gains one
+ *     build option, and only inside a process where this guard armed.)
  *   * It covers what a per-event rule cannot. Measured on this lane with
  *     SENTRY-NOISE-01 in place: the server's request-session aggregates still
  *     counted every dropped synthetic throw as a CRASHED session, browser
@@ -53,12 +54,24 @@
  * dns.lookup is deliberately NOT patched. block-google-fonts.cjs records that a
  * dns patch hung `next build` partway through the client compile.
  *
- * FAILS OPEN FOR OBSERVABILITY. In a runtime carrying any deployed-environment
- * signal this installs nothing and says so on stderr, so a misconfiguration can
- * never silence a deployment's Sentry. The signal list mirrors
+ * A DEPLOYED-RUNTIME SIGNAL ABORTS THE LANE (Codex P1 at de43cb15). Only the
+ * local lanes load this file, so a Vercel/AWS/Kubernetes signal here is a
+ * contradiction - an AWS_REGION inherited from a developer shell, a runner on
+ * Kubernetes - never a deployment. Standing down would silently reopen the
+ * leak for every spec that runs before anything probes the guard, so it
+ * refuses to start instead: the process exits, the web server never comes up,
+ * and the lane fails before a single spec runs. A real deployment cannot reach
+ * this branch at all: nothing it runs sets NODE_OPTIONS to this file, and the
+ * file is not traced into the server bundle. The signal list mirrors
  * deployedEnvironmentSignal in lib/reliability/e2e-route-fault.ts (that module
  * is TypeScript and server-only, so it cannot be required here); a test holds
  * the two lists to the same set.
+ *
+ * WHEN ARMED, IT SAYS SO ON globalThis[Symbol.for("hone.e2e.sentryEgressGuard")].
+ * next.config.ts reads that mark to stop the lane's `next build` from creating
+ * releases or uploading source maps: those calls are made by the native
+ * sentry-cli binary, which no Node preload can intercept (Codex P2 at
+ * de43cb15).
  */
 
 const fs = require("node:fs");
@@ -464,12 +477,18 @@ function install() {
 
 const signal = deployedEnvironmentSignal(process.env);
 if (signal) {
-  console.error(
-    `[sentry-egress-guard] NOT ACTIVE in pid ${process.pid}: deployed runtime (${signal}). ` +
-      "Sentry egress is left untouched.",
+  // Thrown from a --require preload, this ends the process before any of its
+  // own code runs - for `npm run e2e:server`, before npm itself starts.
+  throw new Error(
+    `[sentry-egress-guard] REFUSING TO START (pid ${process.pid}): this environment carries a ` +
+      `deployed-runtime signal (${signal}). This guard is loaded only by the local browser lanes ` +
+      "(E2E_WEB_SERVER_ENV), so the signal was inherited, not deployed - and running without the " +
+      "guard would send this lane's events to the operational Sentry project. Unset it for the E2E " +
+      "run, e.g. `env -u AWS_REGION -u AWS_EXECUTION_ENV -u KUBERNETES_SERVICE_HOST -u VERCEL " +
+      "-u VERCEL_ENV npm run test:e2e`.",
   );
-  globalThis[GUARD_KEY] = { active: false, reason: signal };
-} else if (!globalThis[GUARD_KEY] || !globalThis[GUARD_KEY].active) {
+}
+if (!globalThis[GUARD_KEY] || !globalThis[GUARD_KEY].active) {
   install();
   globalThis[GUARD_KEY] = { active: true };
 }

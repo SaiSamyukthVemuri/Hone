@@ -157,8 +157,10 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // operational Sentry project: not the deliberate faults above, not a real
   // failure raised during a run, not the browser envelopes the /monitoring
   // tunnel forwards. The guard is a NODE_OPTIONS preload rather than an app
-  // setting so that production code stays byte-identical and no NEXT_PUBLIC_*
-  // input is involved. It refuses to arm in any deployed runtime.
+  // setting so that the Sentry runtime wiring stays byte-identical and no
+  // NEXT_PUBLIC_* input is involved. An inherited deployed-runtime signal
+  // (AWS_REGION, VERCEL_ENV, ...) makes it refuse to start, failing the lane
+  // before any spec runs rather than letting it send.
   NODE_OPTIONS: withSentryEgressGuard(process.env.NODE_OPTIONS),
   HONE_E2E_SENTRY_EGRESS_LOG: E2E_SENTRY_EGRESS_LOG,
   // `next start` reads PORT when no -p flag is given (commander `.env("PORT")`),
