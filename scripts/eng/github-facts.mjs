@@ -522,9 +522,12 @@ function comparisonProblem(d, base) {
   return expected[d.status] ? null : `status "${d.status}" contradicts ahead ${d.ahead_by} / behind ${d.behind_by}`;
 }
 
+// The latest ready-for-review event rides on the same read: `last: 1` needs no
+// paging, and only `reviewThreads` carries the `pageInfo` gh pages on.
 const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { createdAt } } }
       reviewThreads(first: 100, after: $endCursor) {
         totalCount
         pageInfo { hasNextPage endCursor }
@@ -535,6 +538,21 @@ const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $en
 }`;
 
 const threadsOf = (page) => page.data?.repository?.pullRequest?.reviewThreads;
+
+/**
+ * When the PR last became reviewable by leaving draft: the time of its latest
+ * ready-for-review event, or null if it never was a draft. Every page carries
+ * the same answer, and every page must agree on it.
+ */
+function readyForReviewEvent(res) {
+  if (!res.ok || !Array.isArray(res.data) || res.data.length === 0) return invalid("the PR timeline could not be read");
+  const answers = res.data.map((page) => page?.data?.repository?.pullRequest?.timelineItems?.nodes);
+  const wellFormed = (nodes) => Array.isArray(nodes) && nodes.length <= 1 && nodes.every((n) => conforms(n, { createdAt: is.time }));
+  if (!answers.every(wellFormed)) return invalid("malformed: the ready-for-review timeline");
+  const at = answers.map((nodes) => nodes[0]?.createdAt ?? null);
+  if (at.some((t) => t !== at[0])) return invalid("malformed: pages disagree about the ready-for-review event");
+  return evidence(at[0], { completeness: COMPLETE, authority: AUTHORIZED, reason: at[0] ? `ready for review at ${at[0]}` : "never a draft" });
+}
 
 /**
  * Collect everything `shepherd` reads for one PR, bound to ONE head.
@@ -622,7 +640,7 @@ export function collectShepherdFacts({ pr, fetcher, repo = DEFAULT_REPO }) {
     return {
       repo, pr: Number(pr), head, facts, pull, provenance,
       checkRuns: none, workflowRuns: none, statuses: none, production: none, comparison: none,
-      commits: none, files: none, threads: none, branchRuns: none, headAfter: UNKNOWN, unavailable,
+      commits: none, files: none, threads: none, readyForReview: none, branchRuns: none, headAfter: UNKNOWN, unavailable,
     };
   }
 
@@ -671,18 +689,17 @@ export function collectShepherdFacts({ pr, fetcher, repo = DEFAULT_REPO }) {
     expected: p.changedFiles,
     project: (f) => (f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]),
   });
-  const threads = strictPaged(
-    read("review_threads", "graphql", {
-      paginate: true,
-      graphql: { query: THREADS_QUERY, variables: { owner, name, number: Number(pr) } },
-    }),
-    {
-      items: (pg) => threadsOf(pg)?.nodes,
-      total: (pg) => threadsOf(pg)?.totalCount,
-      shape: SHAPES.thread,
-      project: (t) => ({ rootCommentId: t.comments.nodes[0].databaseId, isResolved: t.isResolved, isOutdated: t.isOutdated }),
-    },
-  );
+  const threadsRead = read("review_threads", "graphql", {
+    paginate: true,
+    graphql: { query: THREADS_QUERY, variables: { owner, name, number: Number(pr) } },
+  });
+  const threads = strictPaged(threadsRead, {
+    items: (pg) => threadsOf(pg)?.nodes,
+    total: (pg) => threadsOf(pg)?.totalCount,
+    shape: SHAPES.thread,
+    project: (t) => ({ rootCommentId: t.comments.nodes[0].databaseId, isResolved: t.isResolved, isOutdated: t.isOutdated }),
+  });
+  const readyForReview = readyForReviewEvent(threadsRead);
   // The newest 100 runs of this branch. Older history is deliberately not
   // paged in: the reader needs the last few heads, and treats a page that does
   // not reach back far enough as a lower bound, never as a clean history.
@@ -698,7 +715,7 @@ export function collectShepherdFacts({ pr, fetcher, repo = DEFAULT_REPO }) {
 
   return {
     repo, pr: Number(pr), head, facts, pull, provenance,
-    checkRuns, workflowRuns, statuses, production, comparison, commits, files, threads, branchRuns,
+    checkRuns, workflowRuns, statuses, production, comparison, commits, files, threads, readyForReview, branchRuns,
     headAfter, unavailable,
   };
 }

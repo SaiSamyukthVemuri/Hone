@@ -293,10 +293,17 @@ export function deriveReview(sf, { now, policy = POLICY, budget }) {
   const commits = fullList(sf.commits);
   const threads = fullList(sf.threads);
   const roots = sf.facts.inlineComments.value.filter((c) => c.inReplyToId === null || c.inReplyToId === undefined);
-  const findings = roots.filter((c) => c.severity);
+  // A finding is a severity badge from the TRUSTED reviewer, by immutable
+  // account id. The badge is markup anyone can type - on a public repository,
+  // anyone - so an untrusted one must not drive a repair, count toward a stop
+  // law, or make a trusted verdict that states nothing look as if it stated
+  // something. Look-alikes stay visible as a count; they are never used.
+  const trusted = (c) => c.authorId === CODEX_ACTOR.id;
+  const findings = roots.filter((c) => c.severity && trusted(c));
+  const untrustedFindings = roots.filter((c) => c.severity && !trusted(c));
   // A Codex root comment without a severity badge is a finding nobody can
   // grade. It is never read as "no finding".
-  const ungraded = roots.filter((c) => !c.severity && c.authorId === CODEX_ACTOR.id);
+  const ungraded = roots.filter((c) => !c.severity && trusted(c));
   const raisedAt = (sha) => (c) => c.originalCommitId === sha;
   const atHead = raisedAt(head);
 
@@ -334,15 +341,19 @@ export function deriveReview(sf, { now, policy = POLICY, budget }) {
     // An unbound request only counts if it was made after this head existed.
     return headCommit !== null && Date.parse(c.createdAt) >= Date.parse(headCommit.committedAt);
   });
-  // Opening a pull request asks Codex for a review with no comment at all
-  // ("Reviews are triggered when you open a pull request for review"). That
-  // implicit ask covers the head the PR was opened with - one committed before
-  // the PR existed. Without it, every freshly opened PR would be told to
-  // request a review Codex is already running.
+  // Making a pull request reviewable asks Codex for a review with no comment at
+  // all: "Reviews are triggered when you open a pull request for review" or
+  // "mark a draft as ready". The ask is dated by that moment - the latest
+  // ready-for-review event, or creation for a PR that never was a draft - and
+  // covers the head committed before it. Without it, every freshly opened PR
+  // would be told to request a review Codex is already running. An unreadable
+  // timeline dates nothing: asking again is harmless, waiting on a guess is not.
   const p = mayAssertPositive(sf.pull) ? sf.pull.value : null;
+  const ready = mayAssertPositive(sf.readyForReview) ? sf.readyForReview.value : UNKNOWN;
+  const reviewableSince = p !== null && !p.draft && ready !== UNKNOWN ? (ready ?? p.createdAt) : null;
   const askedByOpening =
-    p !== null && !p.draft && headCommit !== null && Date.parse(headCommit.committedAt) <= Date.parse(p.createdAt);
-  const askedAt = [...requestsAtHead.map((c) => Date.parse(c.createdAt)), ...(askedByOpening ? [Date.parse(p.createdAt)] : [])];
+    reviewableSince !== null && headCommit !== null && Date.parse(headCommit.committedAt) <= Date.parse(reviewableSince);
+  const askedAt = [...requestsAtHead.map((c) => Date.parse(c.createdAt)), ...(askedByOpening ? [Date.parse(reviewableSince)] : [])];
   const latestRequest = askedAt.length ? Math.max(...askedAt) : null;
   let review;
   if (usableAtHead.length) {
@@ -415,6 +426,7 @@ export function deriveReview(sf, { now, policy = POLICY, budget }) {
       ungraded: (unresolved ?? []).filter((c) => !c.severity).map(brief).sort(byId),
       resolvedAtHead: threadOf ? freshAll.filter((c) => threadOf.get(c.id).isResolved).length : UNKNOWN,
       minorAtHead: findings.filter((c) => atHead(c) && !P0_P2.has(c.severity)).length,
+      untrusted: untrustedFindings.length,
       reason: threadOf ? null : threads ? "review threads and inline comments do not describe the same comments" : sf.threads.reason,
     },
     roundsDetail: {
@@ -521,7 +533,7 @@ export function deriveSignals(sf, { now, tier = null, policy = POLICY } = {}) {
 // ---------------------------------------------------------------------------
 
 const short = (sha) => (typeof sha === "string" && sha !== UNKNOWN ? sha.slice(0, 10) : UNKNOWN);
-const askedHow = (d) => (d.review.askedByOpening && d.review.requestsAtHead === 0 ? " (by opening the PR)" : "");
+const askedHow = (d) => (d.review.askedByOpening && d.review.requestsAtHead === 0 ? " (by making the PR reviewable)" : "");
 const n = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 const list = (xs, max = 6) => (xs.length > max ? `${xs.slice(0, max).join(", ")}, +${xs.length - max} more` : xs.join(", "));
 
@@ -708,7 +720,8 @@ export function renderShepherd(result) {
       ? `unresolved P0-P2: ${f.fresh.length} at head, ${f.carried.length} carried; ${f.minorAtHead} P3 at head` +
           // Shown at the gate on purpose: a finding raised at this head and then
           // resolved without a new commit is an adjudication a human should see.
-          (f.resolvedAtHead > 0 ? `; ${f.resolvedAtHead} raised at head and resolved in its thread without a new commit` : "")
+          (f.resolvedAtHead > 0 ? `; ${f.resolvedAtHead} raised at head and resolved in its thread without a new commit` : "") +
+          (f.untrusted > 0 ? `; ${f.untrusted} badge look-alike(s) from untrusted authors ignored` : "")
       : f.reason,
   );
   row("rounds", s.rounds, `${d.rounds.streak} consecutive P0-P2 round(s); ${d.rounds.tier} budget ${d.rounds.budget}`);

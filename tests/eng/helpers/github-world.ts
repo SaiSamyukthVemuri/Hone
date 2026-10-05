@@ -219,6 +219,8 @@ export function readyWorld(): World {
           data: {
             repository: {
               pullRequest: {
+                // Never a draft, so no ready-for-review event.
+                timelineItems: { nodes: [] },
                 reviewThreads: {
                   totalCount: 1,
                   pageInfo: { hasNextPage: false, endCursor: "Y3Vyc29yOjE=" },

@@ -60,6 +60,9 @@ import {
 //      document, and no write or history-rewriting path in the source.
 
 const R = (w: World): Json => w.responses;
+/** Anyone at all: on a public repository, anyone can type a severity badge. */
+const OUTSIDER = { login: "someone-else", id: 424242, type: "User" };
+const timelineOf = (w: World): Json => R(w).threads[0].data.repository.pullRequest.timelineItems;
 const threadsOf = (w: World): Json => R(w).threads[0].data.repository.pullRequest.reviewThreads;
 const dropIssue = (w: World, id: number) => {
   R(w).issues[0] = R(w).issues[0].filter((c: Json) => c.id !== id);
@@ -214,6 +217,36 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     state: "WAITING",
     codes: ["WAIT_REVIEW"],
+  },
+  // #795, Codex P2: a draft's CREATION is not a review request; becoming ready is.
+  "a PR opened as a draft 35 minutes ago and marked ready 5 minutes ago is waiting, not overdue": {
+    mutate: (w) => {
+      dropIssue(w, 6002);
+      dropIssue(w, 6003);
+      R(w).pull.created_at = ago(35);
+      timelineOf(w).nodes = [{ createdAt: ago(5) }];
+    },
+    state: "WAITING",
+    codes: ["WAIT_REVIEW"],
+  },
+  "a draft marked ready 39 minutes ago that Codex never answered": {
+    mutate: (w) => {
+      dropIssue(w, 6002);
+      dropIssue(w, 6003);
+      timelineOf(w).nodes = [{ createdAt: ago(39) }];
+    },
+    state: "BLOCKED",
+    codes: ["REVIEW_UNANSWERED"],
+  },
+  // #795, Codex P1: an untrusted badge must not lend a contentless trusted
+  // verdict the appearance of a result - here that path reached READY.
+  "an untrusted badge cannot make a trusted verdict that states nothing count": {
+    mutate: (w) => {
+      R(w).issues[0].find((c: Json) => c.id === 6003).body = `**Reviewed commit:** \`${short(w.head)}\`\n\nNotes.`;
+      addRoot(w, { id: 5005, severity: "P3", at: w.head, resolved: false, user: OUTSIDER });
+    },
+    state: "BLOCKED",
+    codes: ["NOT_PROVEN_REVIEW"],
   },
   "a PR opened 39 minutes ago that Codex never answered": {
     mutate: (w) => {
@@ -417,6 +450,11 @@ const STILL_READY: Record<string, (w: World) => void> = {
   "the run history is unreadable, but the head itself is green": (w) => {
     delete R(w).branchRuns;
   },
+  "an outsider's P1 badge at the head is not a finding": (w) =>
+    addRoot(w, { id: 5101, severity: "P1", at: w.head, resolved: false, user: OUTSIDER }),
+  "outsider badges at three consecutive heads cannot force the stop law": (w) => {
+    w.commits.forEach((at, i) => addRoot(w, { id: 5110 + i, severity: "P1", at, resolved: false, user: OUTSIDER }));
+  },
 };
 
 /**
@@ -603,10 +641,16 @@ describe("delivery situations map to the state and step the rules require", () =
     expect(r.actions[0].text).toContain(`last trusted verdict was for ${short(sha("c2"))}`);
   });
 
+  it("an untrusted badge is shown at the gate as ignored, never counted", () => {
+    const r = run(build(STILL_READY["an outsider's P1 badge at the head is not a finding"]));
+    expect(r.detail.findings).toMatchObject({ untrusted: 1, fresh: [], carried: [] });
+    expect(renderShepherd(r)).toMatch(/1 badge look-alike\(s\) from untrusted authors ignored/);
+  });
+
   it("a review asked for by opening the PR says so", () => {
     const r = run(build(SCENARIOS["a PR was just opened: Codex reviews it unasked, so the shepherd waits instead of re-asking"].mutate));
     expect(r.detail.review).toMatchObject({ askedByOpening: true, requestsAtHead: 0, latestRequestAgeMinutes: 10 });
-    expect(r.waits[0].text).toContain("(by opening the PR) 10 min ago");
+    expect(r.waits[0].text).toContain("(by making the PR reviewable) 10 min ago");
   });
 
   it("Codex's own comments are never counted as review requests", () => {
@@ -678,7 +722,15 @@ describe("the §7.4 review-round stop law, replayed on #786", () => {
       issues: [fx.issues.filter((c: Json) => keep(named(c.body), c.created_at))],
       commits: [fx.commits.slice(0, k + 1)],
       files: [fx.files],
-      threads: [{ data: { repository: { pullRequest: { reviewThreads: { totalCount: nodes.length, pageInfo: { hasNextPage: false }, nodes } } } } }],
+      threads: [
+        {
+          data: {
+            repository: {
+              pullRequest: { timelineItems: { nodes: [] }, reviewThreads: { totalCount: nodes.length, pageInfo: { hasNextPage: false }, nodes } },
+            },
+          },
+        },
+      ],
       productionRef: { ref: `refs/heads/${PROD_BRANCH}`, object: { sha: P, type: "commit" } },
       comparison: { status: "ahead", ahead_by: k + 1, behind_by: 0, base_commit: { sha: P } },
       checkRuns: [{ total_count: 1, check_runs: [{ name: "ci", status: "completed", conclusion: "success", head_sha: head }] }],
