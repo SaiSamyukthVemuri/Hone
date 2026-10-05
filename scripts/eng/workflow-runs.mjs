@@ -43,6 +43,13 @@
 // other workflows or events never contribute: only what they ARE must be
 // consistent, and their attempts, start times and states are never read.
 //
+// INPUT IS EVIDENCE TOO. A collection is read index by index and must be a
+// DENSE array - a hole is not a snapshot, and `every` would silently skip it -
+// and a start time must be a REAL calendar instant in GitHub's documented form
+// ("All timestamps return in UTC time, ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ"):
+// `Date.parse` alone turns `2026-02-30` into March 2, so each parsed instant
+// must give back exactly the calendar fields it was written with.
+//
 // FAILS CLOSED and is PURE: no I/O, no network, no clock, no timers. Anything
 // it cannot place, any contradiction, any tie at the top is UNKNOWN - never
 // "no CI run" - and no input makes it throw.
@@ -55,14 +62,52 @@ export { UNKNOWN };
 /** The event that runs the repository's CI. */
 export const CI_EVENT = "pull_request";
 
-/** GitHub's timestamp form: UTC, to the second, with an optional fraction. */
-const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+/** GitHub's returned-timestamp form: UTC (`Z`, no offset), to the second, with an optional fraction. */
+const TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?Z$/;
 
 const isId = (v) => Number.isSafeInteger(v) && v > 0;
 const isSha = (v) => typeof v === "string" && /^[0-9a-f]{40}$/.test(v);
 const isStr = (v) => typeof v === "string";
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-const instant = (v) => (isStr(v) && TIMESTAMP.test(v) ? Date.parse(v) : NaN);
+
+/**
+ * A REAL calendar instant in milliseconds, or NaN. The form is necessary but
+ * not sufficient: the instant built from the fields must give back exactly
+ * those fields, so February 30, a 13th month, day 00, hour 24 or second 60 -
+ * all of which date arithmetic would quietly roll over - are NaN.
+ */
+function instant(v) {
+  const m = isStr(v) ? TIMESTAMP.exec(v) : null;
+  if (!m) return NaN;
+  const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, 0);
+  const real =
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second;
+  if (!real) return NaN;
+  return date.getTime() + (m[7] ? Math.floor(Number(`0${m[7]}`) * 1000) : 0);
+}
+
+/**
+ * The entries of a DENSE array, read index by index - or null for anything
+ * else: not an array, or an array with a hole. `every` and `for...of` would
+ * skip or invent entries for holes; this never does.
+ */
+function denseEntries(xs) {
+  if (!Array.isArray(xs)) return null;
+  const out = [];
+  for (let i = 0; i < xs.length; i++) {
+    if (!Object.prototype.hasOwnProperty.call(xs, i)) return null;
+    out.push(xs[i]);
+  }
+  return out;
+}
 const ascending = (a, b) => a - b;
 const unknown = (reason) => evidence(UNKNOWN, { completeness: UNKNOWN, authority: UNKNOWN, reason });
 const known = (value, reason) => evidence(value, { completeness: COMPLETE, authority: AUTHORIZED, reason });
@@ -85,11 +130,17 @@ const sameState = (a, b) => a.at === b.at && a.status === b.status && a.conclusi
  * as a WHOLE before anything is selected. Returns `{ executions }` - one
  * canonical latest attempt per CI run, in run-id order - or `{ reason }`. A
  * function of the multiset alone: no part of the answer depends on listing
- * order. Expects placeable snapshots; the selectors check that first.
+ * order. It re-checks its own input, so it never handles a hole or an
+ * unplaceable snapshot whoever calls it.
  */
 export function canonicalize(snapshots, workflowId) {
+  const list = denseEntries(snapshots);
+  if (list === null) return { reason: "the snapshots are not a dense array" };
+  for (let i = 0; i < list.length; i++) {
+    if (!placeable(list[i])) return { reason: "a snapshot has no usable run id, workflow_id, event or head sha" };
+  }
   const byRun = new Map();
-  for (const s of snapshots) {
+  for (const s of list) {
     if (!byRun.has(s.id)) byRun.set(s.id, []);
     byRun.get(s.id).push(s);
   }
@@ -148,9 +199,11 @@ export function canonicalize(snapshots, workflowId) {
  * none) or `{ reason }`.
  */
 export function latestOf(executions) {
+  const list = denseEntries(executions);
+  if (list === null) return { reason: "the executions are not a dense array" };
   let top = -Infinity;
-  for (const e of executions) top = Math.max(top, Date.parse(e.startedAt));
-  const atTop = executions.filter((e) => Date.parse(e.startedAt) === top);
+  for (const e of list) top = Math.max(top, Date.parse(e.startedAt));
+  const atTop = list.filter((e) => Date.parse(e.startedAt) === top);
   if (atTop.length === 0) return { execution: null };
   if (atTop.length > 1) {
     return { reason: `runs ${atTop.map((e) => e.id).join(", ")} all started at ${atTop[0].startedAt}; nothing documented orders them` };
@@ -167,10 +220,15 @@ export function selectHeadExecution(input) {
   const { snapshots, head, workflowId } = isObject(input) ? input : {};
   if (!isId(workflowId)) return unknown("no usable CI workflow id");
   if (!isSha(head)) return unknown("the head is not a commit sha");
-  if (!Array.isArray(snapshots)) return unknown("no run listing for this head");
-  if (!snapshots.every(placeable)) return unknown("a snapshot has no usable run id, workflow_id, event or head sha");
-  if (snapshots.some((s) => s.head_sha !== head)) return unknown("a snapshot listed for this head names another commit");
-  const canonical = canonicalize(snapshots, workflowId);
+  const list = denseEntries(snapshots);
+  if (list === null) return unknown("the run listing for this head is not a dense array");
+  for (let i = 0; i < list.length; i++) {
+    if (!placeable(list[i])) return unknown("a snapshot has no usable run id, workflow_id, event or head sha");
+  }
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].head_sha !== head) return unknown("a snapshot listed for this head names another commit");
+  }
+  const canonical = canonicalize(list, workflowId);
   if (canonical.reason) return unknown(canonical.reason);
   const pick = latestOf(canonical.executions);
   if (pick.reason) return unknown(pick.reason);
@@ -187,13 +245,20 @@ export function selectHeadExecution(input) {
 export function selectStreakExecutions(input) {
   const { snapshots, heads, workflowId } = isObject(input) ? input : {};
   if (!isId(workflowId)) return unknown("no usable CI workflow id");
-  if (!Array.isArray(heads) || !heads.every(isSha)) return unknown("the heads are not commit shas");
-  if (!Array.isArray(snapshots)) return unknown("no run history");
-  if (!snapshots.every(placeable)) return unknown("a snapshot has no usable run id, workflow_id, event or head sha");
-  const canonical = canonicalize(snapshots, workflowId);
+  const headList = denseEntries(heads);
+  if (headList === null) return unknown("the heads are not a dense array");
+  for (let i = 0; i < headList.length; i++) {
+    if (!isSha(headList[i])) return unknown("the heads are not commit shas");
+  }
+  const list = denseEntries(snapshots);
+  if (list === null) return unknown("the run history is not a dense array");
+  for (let i = 0; i < list.length; i++) {
+    if (!placeable(list[i])) return unknown("a snapshot has no usable run id, workflow_id, event or head sha");
+  }
+  const canonical = canonicalize(list, workflowId);
   if (canonical.reason) return unknown(canonical.reason);
   const out = [];
-  for (const head of heads) {
+  for (const head of headList) {
     const pick = latestOf(canonical.executions.filter((e) => e.headSha === head));
     if (pick.reason) return unknown(`head ${head.slice(0, 10)}: ${pick.reason}`);
     out.push(Object.freeze({ head, execution: pick.execution }));

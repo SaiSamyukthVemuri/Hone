@@ -16,7 +16,10 @@ import { CI_EVENT, UNKNOWN, canonicalize, latestOf, selectHeadExecution, selectS
 // in another. The operator's architecture: group by run, validate each run as
 // a WHOLE, then compare different runs by start time alone. What is proved:
 //
-//   1. inputs that cannot be placed fail CLOSED, and nothing throws;
+//   1. inputs that cannot be placed fail CLOSED, and nothing throws - a
+//      collection must be a DENSE array (holes are UNKNOWN, never skipped),
+//      and a start time must be a REAL calendar instant in GitHub's
+//      documented form (`2026-02-30T12:00:00Z` is UNKNOWN, not March 2);
 //   2. one run, many copies: identical copies agree; conflicting copies of one
 //      attempt, or attempts out of chronological order, are UNKNOWN; three or
 //      more copies and attempts listed out of order resolve to the one latest
@@ -167,6 +170,177 @@ describe("1. what cannot be placed fails closed, and nothing throws", () => {
       completeness: "COMPLETE",
       reason: `no ${CI_EVENT} run of workflow ${CI_ID} at this head`,
     });
+  });
+});
+
+describe("1b. a start time is evidence only if it is a REAL calendar instant in GitHub's documented form", () => {
+  /** The selection for one CI run started at `t`: COMPLETE with that instant, or UNKNOWN. */
+  const one = (t: Json) => head([snap(100, { run_started_at: t })]);
+
+  it("real instants are accepted - leap days included - and keep their fractional seconds", () => {
+    for (const t of ["2028-02-29T12:00:00Z", "2024-02-29T00:00:00Z", "2000-02-29T23:59:59Z", "2026-12-31T23:59:59Z", "2026-01-01T00:00:00Z"]) {
+      expect({ t, startedAt: one(t).value?.startedAt }).toEqual({ t, startedAt: new Date(Date.parse(t)).toISOString() });
+    }
+    expect(one("2026-10-05T12:30:00.5Z").value.startedAt).toBe("2026-10-05T12:30:00.500Z");
+    // A fraction orders two runs started in the same second...
+    expect(pick(headInAnyOrder([snap(100, { run_started_at: "2026-10-05T12:30:00.750Z" }), snap(101, { run_started_at: "2026-10-05T12:30:00.250Z" })]))).toEqual([100, 1, "success"]);
+    // ...and one instant written with and without a fraction is still one instant: a tie.
+    expect(headInAnyOrder([snap(100, { run_started_at: "2026-10-05T12:30:00.500Z" }), snap(101, { run_started_at: "2026-10-05T12:30:00.5Z" })]).value).toBe(UNKNOWN);
+  });
+
+  it("impossible calendar dates and times are UNKNOWN - never rolled over into a real one", () => {
+    const impossible = [
+      "2026-02-30T12:00:00Z", // February 30 (Date.parse says March 2)
+      "2026-02-29T12:00:00Z", // February 29 in a non-leap year
+      "2100-02-29T12:00:00Z", // a century that is not a leap year
+      "2026-04-31T12:00:00Z", // April 31
+      "2026-13-01T12:00:00Z", // month 13
+      "2026-00-10T12:00:00Z", // month 00
+      "2026-01-00T12:00:00Z", // day 00
+      "2026-01-32T12:00:00Z", // day 32
+      "2026-10-05T24:00:00Z", // hour 24
+      "2026-10-05T12:60:00Z", // minute 60
+      "2026-10-05T12:30:60Z", // second 60 - GitHub's form has no leap second
+    ];
+    for (const t of impossible) {
+      const env = one(t);
+      expect({ t, value: env.value, completeness: env.completeness }).toEqual({ t, value: UNKNOWN, completeness: UNKNOWN });
+    }
+  });
+
+  it("only GitHub's documented returned-timestamp form - UTC with `Z` - is read: offsets and other shapes are UNKNOWN", () => {
+    // "All timestamps return in UTC time, ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ" (GitHub REST docs).
+    for (const t of ["2026-10-05T12:30:00+00:00", "2026-10-05T12:30:00+05:30", "2026-10-05T12:30:00-07:00", "2026-10-05T12:30:00z", "2026-10-05T12:30:00", "2026-10-05 12:30:00Z", "2026-10-5T12:30:00Z", "+002026-10-05T12:30:00Z", "2026-10-05T12:30Z"]) {
+      expect({ t, value: one(t).value }).toEqual({ t, value: UNKNOWN });
+    }
+  });
+
+  it("a malformed start can never be selected as the newest run: the whole answer is UNKNOWN", () => {
+    // Read as March 2, the impossible date would have outranked February 28.
+    const env = headInAnyOrder([snap(100, { run_started_at: "2026-02-28T12:00:00Z", conclusion: "failure" }), snap(101, { run_started_at: "2026-02-30T12:00:00Z" })]);
+    expect({ value: env.value, authority: env.authority, reason: env.reason }).toEqual({
+      value: UNKNOWN,
+      authority: UNKNOWN,
+      reason: "run 101: a copy carries no usable attempt, start time, status or conclusion",
+    });
+  });
+
+  it("over 4,000 seeded calendar field combinations, a start is accepted exactly when the date is real", () => {
+    const r = seeded(4189669635 % 2 ** 31);
+    const leap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+    const days = (y: number, m: number) => [31, leap(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+    const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+    const wrong: string[] = [];
+    let real = 0;
+    let unreal = 0;
+    for (let k = 0; k < 4000; k++) {
+      const y = r.pick([1999, 2000, 2024, 2025, 2026, 2028, 2100]);
+      const mo = Math.floor(r.rand() * 15);
+      const d = Math.floor(r.rand() * 34);
+      const h = Math.floor(r.rand() * 26);
+      const mi = Math.floor(r.rand() * 62);
+      const se = Math.floor(r.rand() * 62);
+      const t = `${pad(y, 4)}-${pad(mo)}-${pad(d)}T${pad(h)}:${pad(mi)}:${pad(se)}Z`;
+      // Restated: a real calendar instant, by the Gregorian rules alone.
+      const isReal = mo >= 1 && mo <= 12 && d >= 1 && d <= days(y, mo) && h <= 23 && mi <= 59 && se <= 59;
+      if (isReal) real += 1;
+      else unreal += 1;
+      const accepted = one(t).value !== UNKNOWN;
+      if (accepted !== isReal) wrong.push(`${t}: accepted=${accepted}, real=${isReal}`);
+    }
+    expect(wrong).toEqual([]);
+    // Anti-vacuity: both kinds were tried in bulk.
+    expect(real).toBeGreaterThan(500);
+    expect(unreal).toBeGreaterThan(500);
+  });
+});
+
+describe("1c. a collection must be a DENSE array, read index by index: a hole is never skipped and never throws", () => {
+  const valid = () => snap(100);
+  const sparseCases: Array<[string, () => Json[]]> = [
+    ["new Array(1)", () => new Array(1)],
+    ["[, valid]", () => [, valid()]],
+    ["[valid, , valid]", () => [valid(), , snap(101)]],
+    ["a deleted index", () => {
+      const xs = [valid(), snap(101), snap(102)];
+      delete xs[1];
+      return xs;
+    }],
+    ["length beyond the entries", () => {
+      const xs = [valid()];
+      xs.length = 3;
+      return xs;
+    }],
+  ];
+
+  const settle = (fn: () => Json): Json => {
+    try {
+      return fn();
+    } catch (err) {
+      return { threw: String(err) };
+    }
+  };
+
+  it("holes make every selector, and canonicalize itself, UNKNOWN - and nothing throws", () => {
+    for (const [label, make] of sparseCases) {
+      expect({ label, head: settle(() => head(make())).value }).toEqual({ label, head: UNKNOWN });
+      expect({ label, streak: settle(() => selectStreakExecutions({ snapshots: make(), heads: [H], workflowId: CI_ID })).value }).toEqual({ label, streak: UNKNOWN });
+      expect({ label, canonical: settle(() => canonicalize(make(), CI_ID)) }).toEqual({ label, canonical: { reason: "the snapshots are not a dense array" } });
+      expect({ label, latest: settle(() => latestOf(make())) }).toEqual({ label, latest: { reason: "the executions are not a dense array" } });
+    }
+  });
+
+  it("an explicit undefined, or any malformed element, is UNKNOWN - present is not the same as valid", () => {
+    for (const bad of [undefined, null, 0, "run", [], {}, { id: 100 }]) {
+      expect({ bad, head: settle(() => head([valid(), bad])).value }).toEqual({ bad, head: UNKNOWN });
+      expect({ bad, canonical: settle(() => canonicalize([valid(), bad], CI_ID)).reason }).toEqual({ bad, canonical: "a snapshot has no usable run id, workflow_id, event or head sha" });
+    }
+  });
+
+  it("the streak's heads are held to the same rule: a hole or an undefined head is UNKNOWN, never a head with no CI run", () => {
+    const heads: Array<[string, Json]> = [
+      ["new Array(1)", new Array(1)],
+      ["[, H]", [, H]],
+      ["[H, , H1]", [H, , H1]],
+      ["[H, undefined]", [H, undefined]],
+    ];
+    for (const [label, hs] of heads) {
+      expect({ label, value: settle(() => selectStreakExecutions({ snapshots: [valid()], heads: hs, workflowId: CI_ID })).value }).toEqual({ label, value: UNKNOWN });
+    }
+  });
+
+  it("a dense valid array is read in full, exactly as before", () => {
+    expect(pick(head([snap(100), snap(101)]))).toEqual([101, 1, "success"]);
+    expect(pick(head([]))).toBeNull();
+    const streak = selectStreakExecutions({ snapshots: [snap(100, { head_sha: H1 }), snap(101, { head_sha: H2 })], heads: [H2, H1], workflowId: CI_ID });
+    expect(streak.value.map((x: Json) => x.execution.id)).toEqual([101, 100]);
+  });
+
+  it("over 300 seeded histories, punching any hole into the collection gives UNKNOWN - never a throw, never an answer", () => {
+    const r = seeded(4189669644 % 2 ** 31);
+    const wrong: string[] = [];
+    for (let k = 0; k < 300; k++) {
+      const dense = randomMultiset(r, [H], 1 + Math.floor(r.rand() * 6));
+      const holed = [...dense];
+      delete holed[Math.floor(r.rand() * holed.length)];
+      for (const [label, value] of [
+        ["head", settle(() => head(holed)).value],
+        ["streak", settle(() => selectStreakExecutions({ snapshots: holed, heads: [H], workflowId: CI_ID })).value],
+      ]) {
+        if (value !== UNKNOWN) wrong.push(`k=${k} ${label}: ${JSON.stringify(value)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("no structural check relies on `every`, `some` or `for...of` over a caller's collection", () => {
+    const code = readFileSync(path.resolve(__dirname, "../../scripts/eng/workflow-runs.mjs"), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+    // Callers' collections are only ever read through denseEntries.
+    for (const name of ["snapshots", "heads", "executions"]) {
+      expect({ name, misuse: code.match(new RegExp(`(?<![.\\w])${name}\\.(every|some|forEach|map|filter)\\(|of ${name}\\)`, "g")) }).toEqual({ name, misuse: null });
+    }
+    expect(code).toMatch(/function denseEntries/);
+    expect(code).toMatch(/Object\.prototype\.hasOwnProperty\.call\(xs, i\)/);
   });
 });
 
@@ -451,7 +625,7 @@ describe("5. exact-head CI and the failure streak share the one canonical result
     const code = readFileSync(path.resolve(__dirname, "../../scripts/eng/workflow-runs.mjs"), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
     const body = (name: string) => code.slice(code.indexOf(`export function ${name}`), code.indexOf("\n}\n", code.indexOf(`export function ${name}`)));
     for (const selector of ["selectHeadExecution", "selectStreakExecutions"]) {
-      expect(body(selector)).toMatch(/canonicalize\(snapshots, workflowId\)/);
+      expect(body(selector)).toMatch(/canonicalize\(list, workflowId\)/);
       expect(body(selector)).toMatch(/latestOf\(/);
       expect(body(selector)).not.toMatch(/\.attempt\s*[<>=]|run_attempt|run_started_at|Date\.parse/);
     }
