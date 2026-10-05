@@ -149,8 +149,8 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(app)/clients/[id]/images/page.tsx",
     purpose: "Authenticated practitioner server action/query.",
-    why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
+    why: "Service-role write/read-through after the caller's studio is resolved via requirePractitionerWithStudio(); every query is scoped to that studio.id.",
+    scopeGuard: "requirePractitionerWithStudio",
   },
   {
     path: "app/(app)/clients/[id]/intake/actions.ts",
@@ -216,8 +216,8 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(app)/settings/payments/return/page.tsx",
     purpose: "Authenticated practitioner server action/query.",
-    why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
+    why: "Service-role write/read-through after the caller's studio is resolved via requirePractitionerWithStudio(); every query is scoped to that studio.id.",
+    scopeGuard: "requirePractitionerWithStudio",
   },
   {
     path: "app/(auth)/login/actions.ts",
@@ -762,7 +762,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(app)/settings/tracking/page.tsx",
     purpose: "Authenticated OWNER settings page (redacted status read).",
-    why: "Owner-gated via getCurrentPractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
+    why: "Owner-gated via requirePractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
+    scopeGuard: "requirePractitionerWithStudio",
   },
 ];

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { CONSENT_SETTINGS_HREF } from "@/lib/consent/launch-readiness";
 import {
@@ -72,7 +72,7 @@ function nonEmpty(s: string | null | undefined): boolean {
 }
 
 export default async function LaunchChecklistPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   // ONB-02: ask the predicate the BOOKING PATH enforces, not a second copy of
   // it. `s.modality === "consultation"` missed `isConsultationService`'s
   // name fallback, so a studio whose service is named "New Client

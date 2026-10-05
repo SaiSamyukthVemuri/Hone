@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { SectionLabel } from "@/components/ui/section-label";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { todayInTz } from "@/lib/booking/tz";
 import {
@@ -33,7 +33,7 @@ import type { PractitionerNotification } from "@/lib/types/database";
 const NOTIFICATION_LIST_LIMIT = 100;
 
 export default async function NotificationsPage() {
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("practitioner_notifications")

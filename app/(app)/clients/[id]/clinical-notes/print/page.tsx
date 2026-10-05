@@ -9,7 +9,7 @@
 
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getClientById } from "@/lib/supabase/queries";
 import { getClinicalNotesForExport } from "@/lib/clinical-notes/queries";
 import type { ClinicalNoteKind, ClinicalNoteWithAuthor } from "@/lib/types/database";
@@ -48,7 +48,7 @@ export default async function ClinicalNotesPrintPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
   const data = await getClientById(studio.id, id);
   if (!data) notFound();
   const { client } = data;

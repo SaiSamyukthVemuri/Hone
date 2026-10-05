@@ -118,6 +118,7 @@ describe("the report schema is closed", () => {
     ["pathGate", "categories", 0],
     ["generator", "exitCode"],
     ["generator", "outputSha256"],
+    ["generator", "retryReason"],
     ["generated", "changed"],
     ["discarded", 0, "path"],
     ["discarded", 0, "status"],
@@ -162,6 +163,17 @@ describe("the report schema is closed", () => {
       expect(report.withheld, joined).toBeGreaterThan(0);
       expect(leaks(report), joined).toEqual([]);
     }
+  });
+
+  it("generator.retryReason keeps exactly the two retry reasons, and nothing else", () => {
+    for (const retryReason of ["generator_exit_nonzero", "interrupted_generation"]) {
+      const report: Report = persistableReport({ generator: { attempts: 2, retried: true, retryReason }, reasons: { code: "KILL_SWITCH" } });
+      expect(report.withheld, retryReason).toBe(0);
+      expect(report.generator.retryReason).toBe(retryReason);
+    }
+    const report: Report = persistableReport({ generator: { attempts: 2, retried: true, retryReason: "LAST_UPDATE_INVALID" }, reasons: { code: "KILL_SWITCH" } });
+    expect(report.withheld).toBe(1);
+    expect(report.generator.retryReason).toBeUndefined();
   });
 
   it("a pathname is kept only if this run's gate cleared it, or it is the runner's own", () => {

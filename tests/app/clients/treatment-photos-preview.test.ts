@@ -27,7 +27,7 @@ const ACTIONS = read("app/(app)/clients/[id]/images/actions.ts");
 
 describe("server-side preview signing (short-lived, ownership-checked)", () => {
   it("the page signs preview URLs with the service-role client after the studio-scoped load", () => {
-    expect(PAGE).toMatch(/getCurrentPractitionerWithStudio/);
+    expect(PAGE).toMatch(/requirePractitionerWithStudio/);
     expect(PAGE).toMatch(/\.eq\("studio_id", studio\.id\)/);
     expect(PAGE).toMatch(/createAdminClient/);
     expect(PAGE).toMatch(/\.createSignedUrl\(/);

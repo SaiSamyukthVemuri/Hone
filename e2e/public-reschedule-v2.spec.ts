@@ -129,6 +129,17 @@ test.describe("public reschedule v2", () => {
     const { appointmentId, token } = await bookAndTokenise(page, seed);
     const before = await appointmentRow(appointmentId);
 
+    // OPT IN TO ACCEPTANCE. The lane's fake default is `reject`, reproducing
+    // what the dummy Resend key used to do for every send, so a spec that needs
+    // the provider to ACCEPT asks for it by recipient. Explicit in both
+    // directions: this test says "accept", B7 says "refuse", and no other spec
+    // changes behaviour because of either.
+    const b1ClientId = (await getClientIdByEmail(seed.studioId, seed.clientEmail))!;
+    await sql(`update public.clients set email = $2 where id = $1`, [
+      b1ClientId,
+      `success+${b1ClientId}@harness.local`,
+    ]);
+
     await openReschedule(page, token);
     await pickAnyOfferedSlot(page);
     // The policy card is rendered, so the checkbox is required.
@@ -137,11 +148,18 @@ test.describe("public reschedule v2", () => {
 
     await expect(page.getByText(/You.re rescheduled\./i)).toBeVisible({ timeout: 20_000 });
 
-    // B7 — PROVIDER FAILURE AFTER COMMIT, in the browser. The local stack has
-    // no valid Resend key, so the confirmation genuinely FAILS. The page must
-    // say so rather than claiming an email is on its way, and must still hand
-    // the client a working management link.
-    await expect(page.getByText(/couldn.t send the confirmation email/i)).toBeVisible();
+    // RESCHEDULE-E2E-01: THE PROVIDER-ACCEPTED PATH, deterministically.
+    //
+    // This used to assert the FAILURE copy, and was right only while
+    // api.resend.com kept rejecting the lane's dummy key promptly. The lane now
+    // arms the server-only fake transport, whose default mode is `success`, so
+    // this seeded recipient carries no mode prefix and the provider accepts.
+    // The refusal half is its own test (B7) rather than a side effect here.
+    await expect(
+      page.getByText(/confirmation email has been sent/i),
+    ).toBeVisible();
+    await expect(page.getByText(/couldn.t send the confirmation email/i)).toHaveCount(0);
+    // Legacy copy that must never return in ANY state.
     await expect(page.getByText(/on its way/i)).toHaveCount(0);
     const manage = page.getByRole("link", { name: /manage new appointment/i });
     await expect(manage).toBeVisible();
@@ -190,18 +208,15 @@ test.describe("public reschedule v2", () => {
     expect(acks[0].appointment_id).toBe(appointmentId);
     expect(acks[0].action).toBe("reschedule");
 
-    // B7 (PROVIDER FAILURE AFTER COMMIT). The local stack has no valid Resend
-    // key, so the confirmation email genuinely FAILS on every run — and the
-    // browser above still saw success. That is the post-commit contract: the
-    // attempt is recorded truthfully (attempts incremented, sent_at NOT
-    // stamped) and the reschedule is not reported as failed.
+    // The accepted send is recorded truthfully: the attempt is counted AND
+    // sent_at is stamped. `sent` is only ever written when the provider said so.
     const send = await sql<{ attempts: number; sent_at: string | null }>(
       `select confirmation_send_attempts as attempts, confirmation_sent_at as sent_at
          from public.appointments where id = $1`,
       [succ.id],
     );
     expect(Number(send[0].attempts)).toBeGreaterThanOrEqual(1);
-    expect(send[0].sent_at).toBeNull();
+    expect(send[0].sent_at).not.toBeNull();
 
     // The reservation moved.
     const res = await sql<{ source_id: string }>(
@@ -218,6 +233,68 @@ test.describe("public reschedule v2", () => {
     await expect(
       page.getByRole("heading", { name: /manage appointment/i }),
     ).toBeVisible();
+  });
+
+  // B7 ---------------------------------------------------------------------
+  test("B7 a provider REFUSAL after commit is reported truthfully, not as failure", async ({
+    page,
+  }) => {
+    // THE DEFECT THIS REPLACES. This contract used to be asserted inside B1,
+    // and the refusal came from the REAL Resend API rejecting the lane's dummy
+    // key. That made the verdict a third party's to decide: the same tree
+    // passed, then failed repeatedly, with no code change. The refusal is now
+    // produced by the server-only fake transport, chosen PER RECIPIENT, so it
+    // is identical on every run and on every machine.
+    const seed = await seedE2eStudio();
+    await setStudioPolicy(seed.studioId, "Cancel at least 24 hours ahead.");
+    const { appointmentId, token } = await bookAndTokenise(page, seed);
+
+    // Drive the refusal by the RECIPIENT, not by a global switch: the fake
+    // reads the local-part prefix at send time, so one running server serves
+    // the accepted case (B1) and this refused case in the same suite, with no
+    // restart and nothing leaking between tests.
+    const clientId = (await getClientIdByEmail(seed.studioId, seed.clientEmail))!;
+    await sql(`update public.clients set email = $2 where id = $1`, [
+      clientId,
+      `reject+${clientId}@harness.local`,
+    ]);
+
+    await openReschedule(page, token);
+    await pickAnyOfferedSlot(page);
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: /confirm new time/i }).click();
+
+    // THE COMMIT STILL SUCCEEDED. A provider refusal after commit may not be
+    // reported as a failed reschedule.
+    await expect(page.getByText(/You.re rescheduled\./i)).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(
+      page.getByText(/couldn.t send the confirmation email/i),
+    ).toBeVisible();
+    // And it must NOT claim the email was sent.
+    await expect(page.getByText(/confirmation email has been sent/i)).toHaveCount(0);
+    await expect(page.getByText(/on its way/i)).toHaveCount(0);
+
+    // The management link is the client's guaranteed path and does not depend
+    // on the provider.
+    const manage = page.getByRole("link", { name: /manage new appointment/i });
+    await expect(manage).toBeVisible();
+
+    // The successor exists and is confirmed: the refusal touched nothing else.
+    const successors = await successorOf(appointmentId);
+    expect(successors).toHaveLength(1);
+    const succ = successors[0];
+    expect(succ.status).toBe("confirmed");
+
+    // Recorded truthfully: attempted, NOT sent.
+    const send = await sql<{ attempts: number; sent_at: string | null }>(
+      `select confirmation_send_attempts as attempts, confirmation_sent_at as sent_at
+         from public.appointments where id = $1`,
+      [succ.id],
+    );
+    expect(Number(send[0].attempts)).toBeGreaterThanOrEqual(1);
+    expect(send[0].sent_at).toBeNull();
   });
 
   // B11 ---------------------------------------------------------------------

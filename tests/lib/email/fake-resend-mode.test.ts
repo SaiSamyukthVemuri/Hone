@@ -64,6 +64,63 @@ describe("fakeResendModeForRecipient — prefix parsing", () => {
   });
 });
 
+describe("the HOST default, and the precedence around it", () => {
+  // RESCHEDULE-E2E-01. Arming the fake for a whole lane changes what every
+  // recipient that asks for nothing gets. The browser lane therefore sets a
+  // DEFAULT of `reject`, reproducing what the dummy Resend key used to produce
+  // for every send; three specs had silently lost their degraded-path scenario
+  // when the fallback was `success`, and none of them went red, because each
+  // asserts what is absent on a refusal -- also absent on success.
+
+  it("applies the host default when the recipient asks for nothing", () => {
+    expect(
+      fakeResendModeForRecipient(
+        "e2e-client-1@harness.local",
+        env({ HONE_E2E_FAKE_RESEND_DEFAULT_MODE: "reject" }),
+      ),
+    ).toBe("reject");
+  });
+
+  it("a recipient PREFIX still wins over the host default", () => {
+    // The property the lane depends on: a spec that needs acceptance can opt in
+    // while every other recipient keeps the host default. If the default won
+    // here, per-recipient control would be dead and B1 could not exist.
+    expect(
+      fakeResendModeForRecipient(
+        "success+abc@harness.local",
+        env({ HONE_E2E_FAKE_RESEND_DEFAULT_MODE: "reject" }),
+      ),
+    ).toBe("success");
+  });
+
+  it("the global FORCE still wins over both", () => {
+    expect(
+      fakeResendModeForRecipient(
+        "success+abc@harness.local",
+        env({
+          HONE_E2E_FAKE_RESEND_MODE: "throw",
+          HONE_E2E_FAKE_RESEND_DEFAULT_MODE: "reject",
+        }),
+      ),
+    ).toBe("throw");
+  });
+
+  it("an invalid host default is ignored, falling back to success", () => {
+    expect(
+      fakeResendModeForRecipient(
+        "e2e-client-1@harness.local",
+        env({ HONE_E2E_FAKE_RESEND_DEFAULT_MODE: "nonsense" }),
+      ),
+    ).toBe("success");
+  });
+
+  it("the LIBRARY default is unchanged, so non-lane consumers are unaffected", () => {
+    expect(fakeResendModeForRecipient("e2e-client-1@harness.local", env({}))).toBe(
+      "success",
+    );
+  });
+});
+
 describe("fake-Resend fail-closed guards", () => {
   it("is disabled unless the explicit marker is set", () => {
     expect(isE2eFakeResendEnabled(env({}))).toBe(false);

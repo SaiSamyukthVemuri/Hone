@@ -429,6 +429,8 @@ const REPORT_FIELDS = shape({
   generator: shape({
     attempts: oneOf([1, 2]),
     retried: flag,
+    // Why the single retry ran: WIKI-RETRY-01 or WIKI-INTERRUPTED-RETRY-01.
+    retryReason: oneOf(["generator_exit_nonzero", "interrupted_generation"]),
     finalExitCode: integer,
     timedOut: flag,
     outputBytes: count,

@@ -1,4 +1,4 @@
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
 import {
@@ -69,7 +69,7 @@ export default async function BookingSettingsPage({
     (Array.isArray(savedParam) ? savedParam[0] : savedParam) === "1";
   const errorMessage = Array.isArray(errorParam) ? errorParam[0] : errorParam;
 
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   // The studio-owned mode, from the one authority that owns it. UNKNOWN is
   // rendered as its own state below rather than pre-selecting a choice the
   // owner did not make.
