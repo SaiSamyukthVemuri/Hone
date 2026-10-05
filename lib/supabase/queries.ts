@@ -196,8 +196,8 @@ export async function listActiveStudioMemberships(): Promise<
 // practitioner saw. The middleware's gate narrows that window but cannot close
 // it: a membership deactivated after the middleware admits a request is first
 // seen by this read. tests/app/authenticated-pages-identity-sweep.test.ts
-// renders every authenticated page in each identity state and proves it
-// redirects; tests/source-guards/server-render-identity-guard.test.ts is the
+// renders every authenticated page and layout in each identity state and
+// proves it redirects; tests/source-guards/server-render-identity-guard.test.ts is the
 // fast syntactic hint that keeps server-rendered modules off this function.
 export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWithStudio> {
   // PERF-01A: same three outcomes, resolved from this request's single

@@ -28,8 +28,9 @@ import ts from "typescript";
 // handed a removed practitioner the new-client form.
 //
 // THE AUTHORITY IS BEHAVIOURAL. tests/app/authenticated-pages-identity-sweep.test.ts
-// renders EVERY authenticated page through the real resolvers in each identity
-// state and asserts the controlled redirect, whatever syntax the page uses;
+// renders EVERY authenticated page and layout/template through the real
+// resolvers in each identity state and asserts the controlled redirect,
+// whatever syntax the module uses;
 // tests/app/calendar/appointment-detail-identity-boundary.test.ts covers the
 // incident page in depth. This file is the FAST SYNTACTIC HINT that names the
 // offending line before a render is needed, in both directions: nothing

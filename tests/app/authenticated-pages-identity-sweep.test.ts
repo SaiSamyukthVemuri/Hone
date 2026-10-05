@@ -9,8 +9,8 @@ import {
 } from "next/dist/client/components/http-access-fallback/http-access-fallback";
 
 // ===========================================================================
-// SENTRY-IDENTITY-01 — the identity boundary of EVERY authenticated page,
-// proved by behaviour.
+// SENTRY-IDENTITY-01 — the identity boundary of EVERY authenticated page AND
+// layout, proved by behaviour.
 // ===========================================================================
 //
 // The Sentry group "No active practitioner found for the signed-in user." on
@@ -18,11 +18,14 @@ import {
 // Next renders a route's layouts and its page in parallel, and a soft
 // navigation does not re-render the shell layout at all, so no layout guard
 // protects a page: each page must turn every identity state it cannot serve
-// into a controlled navigation ITSELF.
+// into a controlled navigation ITSELF. The same holds for every layout (and
+// template): it renders beside its page, so a layout that throws on an expected
+// identity state is the same failure, reached from the other side.
 //
-// This sweep renders every page under app/(app)/ for real — its own module, its
-// own imports, and the REAL resolvers in lib/supabase/queries.ts — against a
-// fake Supabase client, in each identity state, and asserts what the page DID:
+// This sweep renders every page and every layout/template under app/(app)/ for
+// real — its own module, its own imports, and the REAL resolvers in
+// lib/supabase/queries.ts — against a fake Supabase client, in each identity
+// state, and asserts what the module DID:
 //
 //   no active membership           -> redirect("/no-access")
 //   2+ memberships, no selection   -> redirect("/no-access?reason=multiple-studios")
@@ -30,12 +33,12 @@ import {
 //   the membership read FAILS      -> a loud error (never a quiet "no access")
 //
 // and that nothing but the identity read itself ran first: no domain table, no
-// RPC, no service-role client. Because it observes behaviour, the syntax a page
-// uses to reach identity does not matter — an aliased, parenthesised,
+// RPC, no service-role client. Because it observes behaviour, the syntax a
+// module uses to reach identity does not matter — an aliased, parenthesised,
 // forwarded or wrapped call to the throwing backstop still throws here, and a
-// page that resolves no identity at all still renders or reads here; either
+// module that resolves no identity at all still renders or reads here; either
 // fails the expectation. tests/source-guards/server-render-identity-guard.test.ts
-// is the fast syntactic hint; this file is the authority for pages.
+// is the fast syntactic hint; this file is the authority for pages and layouts.
 
 const ROOT = path.resolve(__dirname, "../..");
 const APP_GROUP = path.join(ROOT, "app", "(app)");
@@ -137,27 +140,37 @@ async function outcomeOf(render: () => Promise<unknown>): Promise<Outcome> {
   }
 }
 
-// Any route param reads as a well-formed id; no search params.
+// Any route param reads as a well-formed id; no search params. A layout or
+// template is handed no children: everything it renders after its own identity
+// read is beside the point here.
 const PARAMS = new Proxy({}, { get: (_t, key) => (typeof key === "string" ? ANY_ID : undefined) });
 
-type PageModule = {
-  default: (props: { params: Promise<unknown>; searchParams: Promise<unknown> }) => unknown;
+type SegmentModule = {
+  default: (props: {
+    params: Promise<unknown>;
+    searchParams: Promise<unknown>;
+    children: null;
+  }) => unknown;
 };
-const loaded = new Map<string, PageModule>();
+const loaded = new Map<string, SegmentModule>();
 
-async function renderPage(rel: string): Promise<Outcome> {
+async function render(rel: string): Promise<Outcome> {
   const mod = loaded.get(rel);
-  if (!mod) throw new Error(`page module was not loaded: ${rel}`);
+  if (!mod) throw new Error(`module was not loaded: ${rel}`);
   return outcomeOf(async () =>
-    mod.default({ params: Promise.resolve(PARAMS), searchParams: Promise.resolve({}) }),
+    mod.default({
+      params: Promise.resolve(PARAMS),
+      searchParams: Promise.resolve({}),
+      children: null,
+    }),
   );
 }
 
-function walkPages(dir: string, out: string[] = []): string[] {
+function walk(dir: string, file: RegExp, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walkPages(full, out);
-    else if (/^page\.(tsx|ts|jsx|js)$/.test(entry.name)) {
+    if (entry.isDirectory()) walk(full, file, out);
+    else if (file.test(entry.name)) {
       out.push(path.relative(ROOT, full).split(path.sep).join("/"));
     }
   }
@@ -168,14 +181,16 @@ function walkPages(dir: string, out: string[] = []): string[] {
 // its server-only activation marker is set; with it set, it is an ordinary
 // authenticated page. Both halves are asserted below.
 const E2E_FIXTURE = "app/(app)/e2e-fault/[case]/page.tsx";
-const PAGES = walkPages(APP_GROUP).sort();
+const PAGES = walk(APP_GROUP, /^page\.(tsx|ts|jsx|js)$/).sort();
+// The segments that WRAP a page and render beside it.
+const LAYOUTS = walk(APP_GROUP, /^(layout|template)\.(tsx|ts|jsx|js)$/).sort();
 
-// Load every page module ONCE, up front: importing a page pulls in its whole
-// module graph, and that one-time cost must not be charged to whichever
-// identity assertion happens to run first.
+// Load every module ONCE, up front: importing one pulls in its whole module
+// graph, and that one-time cost must not be charged to whichever identity
+// assertion happens to run first.
 beforeAll(async () => {
-  for (const rel of PAGES) {
-    loaded.set(rel, (await import(path.join(ROOT, rel))) as PageModule);
+  for (const rel of [...PAGES, ...LAYOUTS]) {
+    loaded.set(rel, (await import(path.join(ROOT, rel))) as SegmentModule);
   }
 }, 180_000);
 
@@ -209,16 +224,16 @@ beforeEach(() => {
 
 const onlyTheIdentityRead = () => expect(state.touched.filter((t) => t !== "practitioners")).toEqual([]);
 
-describe.each(PAGES)("%s", (rel) => {
+describe.each([...PAGES, ...LAYOUTS])("%s", (rel) => {
   it("no active membership -> /no-access, before reading anything else", async () => {
     state.rows = [];
-    expect(await renderPage(rel)).toEqual({ kind: "redirect", url: "/no-access" });
+    expect(await render(rel)).toEqual({ kind: "redirect", url: "/no-access" });
     onlyTheIdentityRead();
   });
 
   it("2+ memberships with no selection -> the chooser, never an auto-picked studio", async () => {
     state.rows = [membership("s1"), membership("s2", "practitioner")];
-    expect(await renderPage(rel)).toEqual({
+    expect(await render(rel)).toEqual({
       kind: "redirect",
       url: "/no-access?reason=multiple-studios",
     });
@@ -227,13 +242,13 @@ describe.each(PAGES)("%s", (rel) => {
 
   it("no auth user -> /login, having read nothing", async () => {
     state.user = null;
-    expect(await renderPage(rel)).toEqual({ kind: "redirect", url: "/login" });
+    expect(await render(rel)).toEqual({ kind: "redirect", url: "/login" });
     expect(state.touched).toEqual([]);
   });
 
   it("a FAILED membership read stays loud", async () => {
     state.membershipError = { message: "connection terminated" };
-    expect(await renderPage(rel)).toEqual({
+    expect(await render(rel)).toEqual({
       kind: "error",
       message: "Failed to load practitioner: connection terminated",
     });
@@ -245,7 +260,7 @@ describe("the E2E fault fixture without its activation marker", () => {
   it("is a plain 404 that reads nothing, whatever the identity state", async () => {
     vi.unstubAllEnvs();
     state.rows = [];
-    expect(await renderPage(E2E_FIXTURE)).toEqual({ kind: "notFound" });
+    expect(await render(E2E_FIXTURE)).toEqual({ kind: "notFound" });
     expect(state.touched).toEqual([]);
   });
 });
@@ -258,9 +273,22 @@ describe("anti-vacuity: the sweep can see what it rules out", () => {
     expect(PAGES).toContain(E2E_FIXTURE);
   });
 
+  it("covers the authenticated app's layouts, including the shell", () => {
+    // Floors, not pins: adding a layout must not red this file.
+    expect(LAYOUTS).toContain("app/(app)/layout.tsx");
+    expect(LAYOUTS).toContain("app/(app)/settings/layout.tsx");
+  });
+
+  it("with a usable identity the shell layout goes on to read past identity (layout reads are seen)", async () => {
+    state.rows = [membership("s1")];
+    const outcome = await render("app/(app)/layout.tsx");
+    expect(outcome).toEqual({ kind: "rendered" });
+    expect(state.touched.filter((t) => t !== "practitioners").length).toBeGreaterThan(0);
+  });
+
   it("with a usable identity a page goes on to read its domain data (the recorder works)", async () => {
     state.rows = [membership("s1")];
-    const outcome = await renderPage("app/(app)/calendar/[id]/page.tsx");
+    const outcome = await render("app/(app)/calendar/[id]/page.tsx");
     // The fake answers every domain read with nothing, so the appointment is
     // not found — but only AFTER identity resolved and the page read on.
     expect(outcome).toEqual({ kind: "notFound" });
