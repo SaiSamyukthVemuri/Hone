@@ -15,17 +15,16 @@
 //   npm run eng -- status 613
 //   npm run eng -- status 613 --json
 //
-// ENG-LOOP-01: `npm run eng -- shepherd <pr> [--json] [--watch]`
+// ENG-LOOP-01: `npm run eng -- shepherd <pr> [--json]`
 //
-// Interprets the same facts into one next step. The interpretation lives in
-// shepherd.mjs and the bounded loop in watch.mjs; this file only parses
-// arguments and wires them to the process.
+// Interprets the same facts into one next step, from ONE read. The
+// interpretation lives in shepherd.mjs; this file only parses arguments and
+// wires them to the process.
 // ---------------------------------------------------------------------------
 
 import { collectFacts, collectShepherdFacts, UNKNOWN } from "./github-facts.mjs";
 import { reviewCompletionAtHead, ciAtHead, summarize } from "./review-provenance.mjs";
-import { SHEPHERD_USAGE, interpret, renderShepherd, renderTransition } from "./shepherd.mjs";
-import { WATCH_DEFAULTS, WATCH_LIMITS, describeWatchEnd, watchExitCode, watchPr } from "./watch.mjs";
+import { SHEPHERD_USAGE, interpret, renderShepherd } from "./shepherd.mjs";
 
 const DIM = "[2m";
 const RESET = "[0m";
@@ -43,66 +42,32 @@ ${SHEPHERD_USAGE}`);
 
 /** `shepherd` arguments. Anything unrecognized is an error, never ignored. */
 export function parseShepherdArgs(argv) {
-  const opts = {
-    pr: null,
-    json: false,
-    watch: false,
-    tier: null,
-    intervalMs: WATCH_DEFAULTS.intervalMs,
-    maxMs: WATCH_DEFAULTS.maxMs,
-  };
-  const watchOnly = [];
+  const opts = { pr: null, json: false, tier: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--json") opts.json = true;
-    else if (arg === "--watch") opts.watch = true;
     else if (arg === "--tier") {
       const tier = argv[++i];
       if (!["T0", "T1", "T2", "T3"].includes(tier)) return { error: "--tier takes T0, T1, T2 or T3" };
       opts.tier = tier;
-    } else if (arg === "--interval" || arg === "--max-minutes") {
-      const value = Number(argv[++i]);
-      const [lo, hi] = arg === "--interval" ? WATCH_LIMITS.intervalSeconds : WATCH_LIMITS.maxMinutes;
-      if (!Number.isInteger(value) || value < lo || value > hi) return { error: `${arg} takes a whole number from ${lo} to ${hi}` };
-      if (arg === "--interval") opts.intervalMs = value * 1000;
-      else opts.maxMs = value * 60_000;
-      watchOnly.push(arg);
     } else if (/^[1-9]\d*$/.test(arg) && opts.pr === null) opts.pr = Number(arg);
     else return { error: `unrecognized argument "${arg}"` };
   }
   if (opts.pr === null) return { error: "a pull request number is required" };
-  if (!opts.watch && watchOnly.length) return { error: `${watchOnly.join(" and ")} only apply with --watch` };
   return opts;
 }
 
-async function shepherdCommand(argv) {
+/** One read, one answer. There is no watch mode (decision record §8; ENG-LOOP-02). */
+function shepherdCommand(argv) {
   const opts = parseShepherdArgs(argv);
   if (opts.error) {
     console.error(`eng shepherd: ${opts.error}`);
     usage();
     return 2;
   }
-  const observe = (now) => interpret(collectShepherdFacts({ pr: opts.pr }), { now, tier: opts.tier });
-  if (!opts.watch) {
-    const result = observe(Date.now());
-    console.log(opts.json ? JSON.stringify(result, null, 2) : renderShepherd(result));
-    return result.exitCode;
-  }
-  const ended = await watchPr({
-    observe,
-    intervalMs: opts.intervalMs,
-    maxMs: opts.maxMs,
-    onChange: (result, at) => {
-      if (!opts.json) console.log(renderTransition(result, at));
-    },
-  });
-  if (opts.json) {
-    console.log(JSON.stringify({ ...ended.result, watch: ended.watch }, null, 2));
-  } else {
-    if (ended.result) console.log(renderShepherd(ended.result));
-    console.log(describeWatchEnd(ended));
-  }
-  return watchExitCode(ended);
+  const result = interpret(collectShepherdFacts({ pr: opts.pr }), { now: Date.now(), tier: opts.tier });
+  console.log(opts.json ? JSON.stringify(result, null, 2) : renderShepherd(result));
+  return result.exitCode;
 }
 
 function renderHuman(facts) {
@@ -186,7 +151,7 @@ function renderHuman(facts) {
 }
 
 if (process.argv[1] && process.argv[1].endsWith("cli.mjs") && process.argv[2] === "shepherd") {
-  process.exitCode = await shepherdCommand(process.argv.slice(3));
+  process.exitCode = shepherdCommand(process.argv.slice(3));
 } else if (process.argv[1] && process.argv[1].endsWith("cli.mjs")) {
   const argv = process.argv.slice(2);
   const json = argv.includes("--json");

@@ -180,11 +180,12 @@ Only repeated, evidenced pain earns new process or tooling.
 
 ## 8. Delivering a pull request
 
-`npm run eng -- shepherd <pr>` OBSERVES a pull request at its exact head and
-recommends one next step - CANDIDATE_READY_FOR_HUMAN_REVIEW, WAITING,
-ACTION_RECOMMENDED, BLOCKED, ESCALATE or CLOSED; `--watch` polls, bounded, until
-that changes. Read it instead of reconstructing delivery state from screenshots,
-but its output is **advisory** until an explicit authority re-entry decision
+`npm run eng -- shepherd <pr>` OBSERVES a pull request ONCE, at its exact head,
+and recommends one next step - CANDIDATE_READY_FOR_HUMAN_REVIEW, WAITING,
+ACTION_RECOMMENDED, BLOCKED, ESCALATE or CLOSED. It is single-shot: it does not
+poll or watch (a bounded watch is ENG-LOOP-02, not shipped). Read it instead of
+reconstructing delivery state from screenshots, but its output is **advisory**
+until an explicit authority re-entry decision
 (`docs/decisions/eng-loop-01-observation-only.md`). The delivery rules stay with
 people and the existing release procedure:
 

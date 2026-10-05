@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // prettier-ignore
@@ -14,9 +14,6 @@ import { CANDIDATE_POINT, CODES, DOMAINS, EXIT_CODE, LAW, STATE, decide, interpr
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { renderHuman } from "../../scripts/eng/cli.mjs";
-// prettier-ignore
-// @ts-expect-error - .mjs utility ships without type declarations
-import { stillPending } from "../../scripts/eng/watch.mjs";
 import {
   ACTIONS,
   CI_WORKFLOW,
@@ -77,7 +74,8 @@ import {
 //   8. Fault injection BY CONSTRUCTION: the requests and response leaves that
 //      are failed, corrupted or truncated are the ones the collector actually
 //      made and read, recorded at run time.
-//   9. Read-only by construction, and advisory in every word it emits.
+//   9. Read-only and single-shot by construction, and advisory in every word it
+//      emits. There is no watch mode (decision record §8; ENG-LOOP-02).
 
 const R = (w: World): Json => w.responses;
 const threadsOf = (w: World): Json => R(w).threads[0].data.repository.pullRequest.reviewThreads;
@@ -1066,12 +1064,11 @@ describe("external head checks are NEGATIVE-ONLY: they can hold a PR back, never
     }
   });
 
-  it("latest Actions run green + Vercel pending: WAITING for it, and a watch keeps watching", () => {
+  it("latest Actions run green + Vercel pending: WAITING for it", () => {
     const r = run(build(SCENARIOS["Vercel's commit status is still pending"].mutate));
     expect(r.signals).toMatchObject({ ci: "GREEN", external: "PENDING" });
     expect(r.state).toBe(STATE.WAITING);
     expect(r.waits[0].text).toMatch(/still pending: Vercel \(status\)/);
-    expect(stillPending(r)).toBe(true);
   });
 
   it("latest Actions run green + Vercel green: the pass grants nothing - a trusted exact-head review is still required", () => {
@@ -1455,10 +1452,10 @@ describe("fault injection and corruption: what was read is what is attacked", ()
 });
 
 // ---------------------------------------------------------------------------
-// 9. read-only by construction, and advisory in every word
+// 9. read-only and single-shot by construction, and advisory in every word
 // ---------------------------------------------------------------------------
 
-describe("the shepherd is read-only by construction, and advisory in what it says", () => {
+describe("the shepherd is read-only and single-shot by construction, and advisory in what it says", () => {
   it("REST reads are bare `gh api <path>`: no method and no fields, so they are GETs", () => {
     const argv: string[][] = [];
     const exec = (bin: string, args: string[]) => {
@@ -1510,16 +1507,28 @@ describe("the shepherd is read-only by construction, and advisory in what it say
     const dir = path.resolve(__dirname, "../../scripts/eng");
     const strip = (src: string) => src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
     const code = (f: string) => strip(readFileSync(path.join(dir, f), "utf8"));
-    for (const f of ["shepherd.mjs", "watch.mjs", "cli.mjs", "github-facts.mjs", "review-provenance.mjs", "evidence.mjs"]) {
+    for (const f of ["shepherd.mjs", "cli.mjs", "github-facts.mjs", "review-provenance.mjs", "evidence.mjs"]) {
       const src = code(f);
       expect(src, f).not.toMatch(/gh\s+pr\s+merge|mergePullRequest|enablePullRequestAutoMerge|\/merges?\b|merge_method/);
       expect(src, f).not.toMatch(/\bgit\s+[a-z]/);
       expect(src, f).not.toMatch(/--amend|--force|--squash|-X\s|--method/);
       expect(src, f).not.toMatch(/writeFileSync|appendFileSync|createWriteStream|mkdirSync|renameSync|unlinkSync|rmSync/);
     }
-    for (const f of ["shepherd.mjs", "watch.mjs", "cli.mjs"]) expect(code(f), f).not.toMatch(/child_process|execFile|spawn/);
+    for (const f of ["shepherd.mjs", "cli.mjs"]) expect(code(f), f).not.toMatch(/child_process|execFile|spawn/);
     expect(code("github-facts.mjs").match(/exec\(/g)).toEqual(["exec("]);
     expect(code("github-facts.mjs")).toMatch(/exec\("gh", args/);
+  });
+
+  it("is single-shot by construction: no watch module, timer or polling loop ships (decision record §8)", () => {
+    const dir = path.resolve(__dirname, "../../scripts/eng");
+    const strip = (src: string) => src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+    const sources = readdirSync(dir).filter((f) => f.endsWith(".mjs"));
+    // Anti-vacuity: the scan reaches the command and the interpreter.
+    expect(sources).toEqual(expect.arrayContaining(["cli.mjs", "shepherd.mjs", "github-facts.mjs"]));
+    expect(existsSync(path.join(dir, "watch.mjs"))).toBe(false);
+    for (const f of sources) {
+      expect(strip(readFileSync(path.join(dir, f), "utf8")), f).not.toMatch(/\bsetTimeout\b|\bsetInterval\b|\bsleep\(|--watch|--interval|--max-minutes/);
+    }
   });
 
   it("every recommendation is phrased as one, and none rewrites history, merges or forces a push", () => {
@@ -1546,14 +1555,18 @@ describe("the shepherd is read-only by construction, and advisory in what it say
     const standards = readFileSync(path.join(root, "ENGINEERING_STANDARDS.md"), "utf8");
     const section8 = standards.slice(standards.indexOf("## 8."));
     expect(decision).toMatch(/OBSERVATION-ONLY/);
+    expect(decision).toMatch(/is SINGLE-SHOT and OBSERVATION-ONLY/);
     expect(decision).toMatch(/\*\*Status\*\* \| \*\*ACCEPTED\*\*/);
     expect(decision).toMatch(/external head checks are NEGATIVE-ONLY/);
+    expect(decision).toMatch(/SINGLE-SHOT — watch mode moves to ENG-LOOP-02/);
     expect(section8).toMatch(/advisory/);
+    expect(section8).toMatch(/single-shot: it does not\s+poll or watch/);
+    expect(section8).not.toMatch(/--watch/);
     expect(section8).toMatch(/External checks can only hold a PR back/);
     expect(section8).toContain("docs/decisions/eng-loop-01-observation-only.md");
     for (const state of Object.values(STATE)) expect(section8).toContain(state);
     // The superseded authority vocabulary survives only as history in the decision record.
-    for (const f of ["shepherd.mjs", "watch.mjs", "cli.mjs", "github-facts.mjs"]) {
+    for (const f of ["shepherd.mjs", "cli.mjs", "github-facts.mjs"]) {
       expect(readFileSync(path.join(root, "scripts/eng", f), "utf8"), f).not.toMatch(/READY_FOR_HUMAN_MERGE|ACTION_REQUIRED/);
     }
     expect(section8).not.toMatch(/READY_FOR_HUMAN_MERGE|ACTION_REQUIRED/);

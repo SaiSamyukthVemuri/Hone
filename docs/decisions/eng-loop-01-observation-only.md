@@ -1,13 +1,13 @@
-# Decision — the PR shepherd (ENG-LOOP-01) is OBSERVATION-ONLY
+# Decision — the PR shepherd (ENG-LOOP-01) is SINGLE-SHOT and OBSERVATION-ONLY
 
 | Field | Value |
 |---|---|
-| **Decision** | `npm run eng -- shepherd <pr>` v1 observes and recommends. It is not release authority, and nothing it reports authorizes anything. |
+| **Decision** | `npm run eng -- shepherd <pr>` v1 reads a pull request ONCE, observes and recommends. It is not release authority, and nothing it reports authorizes anything. It does not poll: watch mode moved to ENG-LOOP-02 (§8). |
 | **Date** | 2026-10-05 |
 | **Status** | **ACCEPTED** |
-| **Decided by** | Sam (operator), after the §7.4 stop law fired on PR #795 |
-| **Scope** | `scripts/eng/shepherd.mjs`, `scripts/eng/watch.mjs`, the shepherd collector in `scripts/eng/github-facts.mjs`, and every document that describes their output. `npm run eng -- status` (CP-005a) is unchanged. |
-| **Enforced by** | The code and `tests/eng/shepherd.test.ts` / `tests/eng/shepherd-watch.test.ts` — see section 5. |
+| **Decided by** | Sam (operator), after the §7.4 stop law fired on PR #795; amended by the operator in §6 (external checks) and §8 (single-shot) |
+| **Scope** | `scripts/eng/shepherd.mjs`, the shepherd collector in `scripts/eng/github-facts.mjs`, the one-shot `shepherd` command in `scripts/eng/cli.mjs`, and every document that describes their output. `npm run eng -- status` (CP-005a) is unchanged. `scripts/eng/watch.mjs` was in scope until §8 removed it. |
+| **Enforced by** | The code and `tests/eng/shepherd.test.ts` / `tests/eng/shepherd-cli.test.ts` — see section 5. |
 | **Supersedes** | The authority-bearing model #795 first proposed: `READY_FOR_HUMAN_MERGE`, review-request inference, and "the shepherd's rules are the delivery rules". |
 
 ---
@@ -19,7 +19,7 @@ ENG-LOOP-01 v1 is **observation-only**. It may:
 - collect deterministic GitHub / CI / review facts for one pull request at its exact head;
 - normalize them into one state;
 - **recommend** a next action;
-- watch for transitions, within bounds;
+- ~~watch for transitions, within bounds;~~ removed by §8 — ENG-LOOP-01 reads once;
 - report **candidate** readiness.
 
 It may **not**:
@@ -83,6 +83,7 @@ authority vehicles (#617–#623). The answer is a smaller model, not a third pat
 | Exact-head binding | a verdict naming any other commit, or a near-miss prefix, is not a verdict for the head |
 | Latest applicable run only | earlier runs at the same sha, other workflows and other events change nothing; run order does not matter |
 | External checks are negative-only | a failed or pending external check holds a PR back; adding a passing one, in any situation, changes nothing |
+| Single-shot (§8) | the watch flags are refused, never ignored; no watch module, timer or polling loop exists in the eng sources |
 | No malformed or partial answer produces a candidate | request, answer, leaf and truncation fault sweeps derived from what the collector actually reads |
 | Never merges / writes | the fetcher's exact argv, the refused GraphQL documents, and a source scan |
 
@@ -116,3 +117,32 @@ An explicit operator decision recorded here, satisfying §16.5 in full: mechanic
 completeness, an independent falsifier by construction, and fault injection at every authority
 boundary — plus a role-based authority model for operators (not "anyone who is not Codex") and
 event-bound head evidence (not timestamps).
+
+## 8. Amendment (2026-10-05): SINGLE-SHOT — watch mode moves to ENG-LOOP-02
+
+Codex's exact-head review of `a8c874bb` raised one P2, in watch mode only: the watch's progress
+fingerprint named pending external checks without their status, so a check moving from `queued`
+to `in_progress` did not count as progress, and `NO_PROGRESS` could end a watch moments after
+real progress began. Under §6's final-repair rule it was not patched on #795. Decided by the
+operator: a **scope removal, not another repair round**.
+
+**ENG-LOOP-01 is SINGLE-SHOT and OBSERVATION-ONLY.** It reads a pull request once, at its exact
+head, and recommends. It keeps:
+
+- exact-head GitHub facts collection, and production drift facts;
+- the latest applicable Actions run, and external checks as negative-only signals (§6);
+- trusted exact-head Codex evidence, through the one actor-authority gate;
+- deterministic single-shot interpretation, with the advisory `CANDIDATE_READY_FOR_HUMAN_REVIEW`;
+- the observation-only boundary and the never-merge invariant;
+- JSON output and the one-shot command line.
+
+**Removed from the shipped contract:** `--watch` and its `--interval` / `--max-minutes` flags,
+`scripts/eng/watch.mjs`, the no-progress timer, the transition fingerprint, repeated polling,
+and the tests and documentation whose only purpose was watch mode. Nothing in the single-shot
+core depended on the watch, so the collector and every derivation are unchanged. The flags are
+now refused, never ignored.
+
+**ENG-LOOP-02 — a bounded watch controller — owns:** polling; transition fingerprints, including
+recognising `queued` → `in_progress` as progress; no-progress timers; bounded termination; and
+notifications later, if separately authorized. It re-enters as its own pull request, under its
+own review, and stays observation-only.

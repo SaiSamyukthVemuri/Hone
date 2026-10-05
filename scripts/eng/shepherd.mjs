@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// ENG-LOOP-01: `npm run eng -- shepherd <pr> [--json] [--watch]`
+// ENG-LOOP-01: `npm run eng -- shepherd <pr> [--json]`
 //
-// OBSERVATION ONLY (docs/decisions/eng-loop-01-observation-only.md). The
-// shepherd reads a pull request's exact-head facts from GitHub, normalizes them
-// into one state, and RECOMMENDS a next step. It is not release authority:
+// SINGLE-SHOT and OBSERVATION ONLY (docs/decisions/eng-loop-01-observation-only.md).
+// The shepherd reads a pull request's exact-head facts from GitHub ONCE,
+// normalizes them into one state, and RECOMMENDS a next step. It does not poll
+// - a bounded watch is ENG-LOOP-02 - and it is not release authority:
 //
 //   * it never merges, rebases, amends, squashes, force-pushes or refreshes a
 //     branch, never writes to GitHub, and persists nothing - every answer is
@@ -723,14 +724,11 @@ export const LAW =
 
 export const SHEPHERD_USAGE = `
   npm run eng -- shepherd <pr> [--json] [--tier T0|T1|T2|T3]
-  npm run eng -- shepherd <pr> --watch [--interval <seconds>] [--max-minutes <minutes>] [--json]
 
-Observes a pull request at its exact head and recommends one next step:
+Observes a pull request once, at its exact head, and recommends one next step:
 CANDIDATE_READY_FOR_HUMAN_REVIEW, WAITING, ACTION_RECOMMENDED, BLOCKED, ESCALATE
 or CLOSED (exit 0/10/20/30/40/50). Every state is advisory.
 --tier may raise the classifier's baseline tier, never lower it.
---watch polls until the state settles, the head changes, nothing progresses,
-or the time bound is reached.
 
 ${LAW}
 `;
@@ -800,10 +798,4 @@ export function renderShepherd(result) {
   out.push(`${DIM}${LAW}${RESET}`);
   out.push("");
   return out.join("\n");
-}
-
-/** One line per observed change while watching. */
-export function renderTransition(result, at) {
-  const s = result.signals;
-  return `${new Date(at).toISOString().slice(11, 19)} ${result.state.padEnd(33)} head ${short(result.head)}  ci=${s.ci} external=${s.external} review=${s.review} findings=${s.findings} branch=${s.branch}`;
 }
