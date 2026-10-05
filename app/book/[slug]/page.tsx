@@ -32,12 +32,15 @@ export default async function PublicBookingPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  // null means the read SUCCEEDED and found no studio: a 404. A read that
+  // FAILED throws instead and lands in ./error.tsx as a retryable 500, so an
+  // unreadable studio is never reported as one that does not exist.
   const studio = await getStudioBySlug(slug);
   if (!studio) notFound();
 
   // Service-role read since this is public.
   const admin = createAdminClient();
-  const [{ data: servicesData }, { data: availabilityData }] =
+  const [servicesRes, availabilityRes] =
     await Promise.all([
       // THE canonical visible order: (sort_order, name, id), byte-identical to
       // the ordering inside migration 0161's reorder_studio_service RPC and to
@@ -62,8 +65,23 @@ export default async function PublicBookingPage({
         .eq("studio_id", studio.id)
         .eq("is_open", true),
     ]);
-  const services = (servicesData ?? []) as Service[];
-  const openAvailabilityDaysCount = (availabilityData ?? []).filter(
+  // Same rule for the readiness inputs. These errors used to be dropped, so a
+  // failed read became "no active services" or "no open day" and an open studio
+  // was shown to its visitors as UNAVAILABLE_PUBLIC_BOOKING_MESSAGE ("not
+  // available for this studio yet"). A read that did not complete says nothing
+  // about the studio's setup. It fails the whole page, not just the booking
+  // form, because the existing-client path depends on both reads in EVERY
+  // admission mode; only the new-client waitlist journey could do without them.
+  if (servicesRes.error) {
+    throw new Error(`Failed to load services: ${servicesRes.error.message}`);
+  }
+  if (availabilityRes.error) {
+    throw new Error(
+      `Failed to load availability: ${availabilityRes.error.message}`,
+    );
+  }
+  const services = (servicesRes.data ?? []) as Service[];
+  const openAvailabilityDaysCount = (availabilityRes.data ?? []).filter(
     (d) =>
       d.is_open === true &&
       typeof d.open_time === "string" &&
