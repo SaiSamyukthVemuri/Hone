@@ -73,7 +73,10 @@ test.describe("operator creates a studio + owner invitation", () => {
 
     const runId = randomUUID().slice(0, 8);
     const slug = `e2e-wizard-${runId}`;
-    const ownerEmail = `e2e-wizard-owner-${runId}@harness.local`;
+    // `success+` ASKS the fake transport to accept: the lane default is
+    // `reject` so degraded-path specs get a real refusal, and this flow's
+    // welcome email is expected to be sent.
+    const ownerEmail = `success+e2e-wizard-owner-${runId}@harness.local`;
 
     await page.locator("#name").fill(`E2E Wizard Studio ${runId}`);
     await page.locator("#slug").fill(slug);
@@ -117,7 +120,9 @@ test.describe("operator creates a studio + owner invitation", () => {
 
     const runId = randomUUID().slice(0, 8);
     const slug = `e2e-welcome-${runId}`;
-    const ownerEmail = `e2e-welcome-owner-${runId}@harness.local`;
+    // `success+`: this test asserts welcome_email_status === "sent", so it asks
+    // the fake to accept rather than inheriting the lane's `reject` default.
+    const ownerEmail = `success+e2e-welcome-owner-${runId}@harness.local`;
     await page.locator("#name").fill(`E2E Welcome Studio ${runId}`);
     await page.locator("#slug").fill(slug);
     await page.locator("#owner_display_name").fill(`E2E Welcome Owner ${runId}`);
