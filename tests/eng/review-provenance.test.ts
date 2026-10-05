@@ -31,7 +31,8 @@ import { ciAtHead, classifyInlineComment, collectVerdicts, reviewCompletionAtHea
 // collection whose failure is on page 2, and look-alike verdicts.
 //
 // This vehicle REPORTS. No findings state, no stop law, no release decision,
-// no merge - CP-005b/CP-005c.
+// no merge. Interpreting these facts is shepherd.mjs (ENG-LOOP-01), proved in
+// tests/eng/shepherd.test.ts; the boundary below still holds for the facts layer.
 
 const FIXTURES = path.resolve(__dirname, "fixtures");
 const FIX = (pr: number) => JSON.parse(readFileSync(path.join(FIXTURES, `pr-${pr}.json`), "utf8"));
