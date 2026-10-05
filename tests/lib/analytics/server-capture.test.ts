@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Behavioral tests for the safe server-side analytics dispatch
 // (P1/P2-ANALYTICS-03 + Correction 2 + scenarios 15-16): product success never
-// depends on analytics; dispatch is post-response + bounded; properties are
-// allowlisted; distinctIds are UUID-validated fail-closed; identify carries an
-// opaque id + validated role only.
+// depends on analytics; dispatch is off the request path (a promise handed to
+// after(), SENTRY-AFTER-01) + bounded; properties are allowlisted; distinctIds
+// are UUID-validated fail-closed; identify carries an opaque id + validated
+// role only.
 
 const afterMock = vi.fn();
 const captureMock = vi.fn();
@@ -12,7 +13,7 @@ const identifyMock = vi.fn();
 const flushMock = vi.fn();
 
 vi.mock("next/server", () => ({
-  after: (work: () => Promise<void>) => afterMock(work),
+  after: (task: Promise<void>) => afterMock(task),
 }));
 
 vi.mock("@/lib/posthog-server", () => ({
@@ -28,14 +29,21 @@ import { captureServerEvent, identifyServerUser } from "@/lib/analytics/server";
 const UID = "11111111-1111-4111-8111-111111111111";
 const SID = "22222222-2222-4222-8222-222222222222";
 
+// The scheduled work starts by itself on a later macrotask; after() only keeps
+// it alive. Waiting for every handed-over task is how a test lets it finish.
 async function runScheduled(): Promise<void> {
-  for (const call of afterMock.mock.calls) await call[0]();
+  for (const call of afterMock.mock.calls) await call[0];
   afterMock.mockClear();
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
   flushMock.mockResolvedValue(undefined);
+});
+
+// No test's dispatch may land in the next test's mocks.
+afterEach(async () => {
+  await runScheduled();
 });
 
 describe("captureServerEvent — dispatch discipline (scenario 15)", () => {
@@ -47,6 +55,20 @@ describe("captureServerEvent — dispatch discipline (scenario 15)", () => {
     });
     expect(afterMock).toHaveBeenCalledTimes(1);
     expect(captureMock).not.toHaveBeenCalled();
+  });
+
+  it("hands after() a promise, never a callback (SENTRY-AFTER-01)", () => {
+    // A callback enrols the request with after() and makes Next flip the whole
+    // request into the after phase when its response closes; a promise does
+    // not. tests/lib/analytics/server-after-phase.test.ts proves the
+    // difference against Next's own runtime.
+    captureServerEvent({ actor: { kind: "user", id: UID }, event: "client_created" });
+    identifyServerUser({ id: UID, role: "owner" });
+    expect(afterMock).toHaveBeenCalledTimes(2);
+    for (const [task] of afterMock.mock.calls) {
+      expect(typeof task).not.toBe("function");
+      expect(task).toBeInstanceOf(Promise);
+    }
   });
 
   it("sends the resolved distinctId for a user and a studio actor", async () => {
@@ -117,7 +139,7 @@ describe("captureServerEvent — never affects product (scenario 16)", () => {
     try {
       flushMock.mockReturnValue(new Promise(() => {}));
       captureServerEvent({ actor: { kind: "user", id: UID }, event: "payment_charge_executed" });
-      const scheduled = afterMock.mock.calls[0][0]() as Promise<void>;
+      const scheduled = afterMock.mock.calls[0][0] as Promise<void>;
       let settled = false;
       void scheduled.then(() => {
         settled = true;
