@@ -334,7 +334,16 @@ export function deriveReview(sf, { now, policy = POLICY, budget }) {
     // An unbound request only counts if it was made after this head existed.
     return headCommit !== null && Date.parse(c.createdAt) >= Date.parse(headCommit.committedAt);
   });
-  const latestRequest = requestsAtHead.length ? Math.max(...requestsAtHead.map((c) => Date.parse(c.createdAt))) : null;
+  // Opening a pull request asks Codex for a review with no comment at all
+  // ("Reviews are triggered when you open a pull request for review"). That
+  // implicit ask covers the head the PR was opened with - one committed before
+  // the PR existed. Without it, every freshly opened PR would be told to
+  // request a review Codex is already running.
+  const p = mayAssertPositive(sf.pull) ? sf.pull.value : null;
+  const askedByOpening =
+    p !== null && !p.draft && headCommit !== null && Date.parse(headCommit.committedAt) <= Date.parse(p.createdAt);
+  const askedAt = [...requestsAtHead.map((c) => Date.parse(c.createdAt)), ...(askedByOpening ? [Date.parse(p.createdAt)] : [])];
+  const latestRequest = askedAt.length ? Math.max(...askedAt) : null;
   let review;
   if (usableAtHead.length) {
     // A trusted verdict that states neither a clean result nor any finding is
@@ -392,6 +401,7 @@ export function deriveReview(sf, { now, policy = POLICY, budget }) {
       verdictsAtHead: usableAtHead.length,
       cleanAtHead: usableAtHead.some((v) => v.clean === true),
       requestsAtHead: requestsAtHead.length,
+      askedByOpening,
       latestRequestAgeMinutes: latestRequest === null ? null : Math.floor((now - latestRequest) / 60_000),
       lastReviewedHead: lastReviewedIndex >= 0 ? commits[lastReviewedIndex].sha : null,
       commitsSinceReview: since.length,
@@ -511,6 +521,7 @@ export function deriveSignals(sf, { now, tier = null, policy = POLICY } = {}) {
 // ---------------------------------------------------------------------------
 
 const short = (sha) => (typeof sha === "string" && sha !== UNKNOWN ? sha.slice(0, 10) : UNKNOWN);
+const askedHow = (d) => (d.review.askedByOpening && d.review.requestsAtHead === 0 ? " (by opening the PR)" : "");
 const n = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 const list = (xs, max = 6) => (xs.length > max ? `${xs.slice(0, max).join(", ")}, +${xs.length - max} more` : xs.join(", "));
 
@@ -532,8 +543,8 @@ const TEXT = {
     "A head that was reviewed, or that carries a finding, is no longer in this PR's history: the branch was rewritten after review. " +
     "Exact-head evidence cannot be trusted across that; an operator must decide.",
   REVIEW_UNANSWERED: (d, h) =>
-    `A review was requested for ${short(h)} ${d.review.latestRequestAgeMinutes} min ago and no trusted verdict has arrived ` +
-    `(bound ${POLICY.reviewAnswerMs / 60_000} min). Re-request once, or ask the operator.`,
+    `A review was requested for ${short(h)}${askedHow(d)} ${d.review.latestRequestAgeMinutes} min ago and no trusted verdict ` +
+    `has arrived (bound ${POLICY.reviewAnswerMs / 60_000} min). Re-request once, or ask the operator.`,
   REPAIR_BUDGET_UNKNOWN: (d) =>
     `Fresh P0-P2 findings need repair, but the review-round history cannot be read, so the stop law cannot be checked. ` +
     `Do not repair until it can (${d.rounds.reason ?? "rounds UNKNOWN"}).`,
@@ -583,7 +594,8 @@ const TEXT = {
     const parts = [c.running.length ? `${c.running.length} running: ${list(c.running, 4)}` : "", c.queued.length ? `${c.queued.length} queued: ${list(c.queued, 4)}` : ""];
     return `CI at ${short(h)}: ${parts.filter(Boolean).join("; ")}.`;
   },
-  WAIT_REVIEW: (d, h) => `A review was requested for ${short(h)} ${d.review.latestRequestAgeMinutes} min ago; waiting for a trusted verdict.`,
+  WAIT_REVIEW: (d, h) =>
+    `A review was requested for ${short(h)}${askedHow(d)} ${d.review.latestRequestAgeMinutes} min ago; waiting for a trusted verdict.`,
   WAIT_MERGEABILITY: () => "GitHub has not finished computing mergeability. Read again.",
 };
 

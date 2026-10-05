@@ -205,6 +205,25 @@ const SCENARIOS: Record<string, Scenario> = {
     state: "WAITING",
     codes: ["WAIT_REVIEW"],
   },
+  "a PR was just opened: Codex reviews it unasked, so the shepherd waits instead of re-asking": {
+    mutate: (w) => {
+      dropIssue(w, 6002);
+      dropIssue(w, 6003);
+      // The head (committed 40 minutes ago) is the head the PR was opened with.
+      R(w).pull.created_at = ago(10);
+    },
+    state: "WAITING",
+    codes: ["WAIT_REVIEW"],
+  },
+  "a PR opened 39 minutes ago that Codex never answered": {
+    mutate: (w) => {
+      dropIssue(w, 6002);
+      dropIssue(w, 6003);
+      R(w).pull.created_at = ago(39);
+    },
+    state: "BLOCKED",
+    codes: ["REVIEW_UNANSWERED"],
+  },
   "an unbound request made before this head existed does not count for it": {
     mutate: (w) => {
       dropIssue(w, 6002);
@@ -584,6 +603,12 @@ describe("delivery situations map to the state and step the rules require", () =
     expect(r.actions[0].text).toContain(`last trusted verdict was for ${short(sha("c2"))}`);
   });
 
+  it("a review asked for by opening the PR says so", () => {
+    const r = run(build(SCENARIOS["a PR was just opened: Codex reviews it unasked, so the shepherd waits instead of re-asking"].mutate));
+    expect(r.detail.review).toMatchObject({ askedByOpening: true, requestsAtHead: 0, latestRequestAgeMinutes: 10 });
+    expect(r.waits[0].text).toContain("(by opening the PR) 10 min ago");
+  });
+
   it("Codex's own comments are never counted as review requests", () => {
     const r = run(build((w) => dropIssue(w, 6002)));
     // 6003 (Codex) and 6000 (Codex summary) both say "@codex review"; neither asks.
@@ -636,6 +661,7 @@ describe("the §7.4 review-round stop law, replayed on #786", () => {
       number: 786,
       state: "open",
       draft: false,
+      created_at: fx.commits[0].commit.committer.date,
       merged_at: null,
       mergeable: true,
       commits: k + 1,

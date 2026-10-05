@@ -143,6 +143,8 @@ export function readyWorld(): World {
     number: 900,
     state: "open",
     draft: false,
+    // Opened before every commit on it, so opening asked for no review of H.
+    created_at: ago(240),
     merged_at: null,
     merge_commit_sha: null,
     mergeable: true,
