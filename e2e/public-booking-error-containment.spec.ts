@@ -1,5 +1,14 @@
 import { test, expect, type Page } from "@playwright/test";
 import { seedE2eStudio } from "./helpers/seed";
+import {
+  errorEvents,
+  eventTexts,
+  markSentryEgress,
+  readSentryEgress,
+  waitForSentryEgress,
+  type EgressMark,
+  type EgressRecord,
+} from "./helpers/sentry-egress";
 
 // SENTRY-BOOKING-ERR-01. The public booking page's own error boundary
 // (app/book/[slug]/error.tsx), proved in a real browser against the real
@@ -21,40 +30,54 @@ import { seedE2eStudio } from "./helpers/seed";
 // complete, is proved at the page level in
 // tests/app/book/public-booking-read-failure.test.ts.
 //
-// SENTRY. The boundary reports browser-raised errors, so these cases produce
-// real Sentry envelopes. Every request to the same-origin tunnel is FULFILLED
-// HERE and never forwarded: synthetic failures stay out of the production
-// project, and the captured envelopes let the spec assert what the boundary
-// actually reported.
+// SENTRY. What these cases report is read back from the lane's egress guard
+// (e2e/helpers/sentry-egress.ts): it travels the real path, browser SDK ->
+// same-origin /monitoring tunnel -> this server, and the guard holds it there,
+// so nothing reaches the operational project.
 
-const SENTRY_TUNNEL = "**/monitoring**";
 // React's fixed stand-in for a server error message in a production build. It
 // would only appear here if a server-raised error were reported a second time.
 const REACT_ELISION = "The specific message is omitted in production builds";
+
+// The id-less message Next throws for a multipart POST that carries NO
+// Next-Action header (SENTRY-BOOKING-ERR-01 group A). A stale tab never sends
+// that shape, so it must never raise this server-side.
+const MPA_ACTION_NOT_FOUND =
+  "Failed to find Server Action. This request might be from an older or newer deployment.";
 
 function boundary(page: Page) {
   return page.getByTestId("public-booking-error-boundary");
 }
 
-/** Capture every exception the browser would have sent to Sentry. */
-async function captureSentry(page: Page): Promise<() => string[]> {
-  const reported: string[] = [];
-  await page.route(SENTRY_TUNNEL, async (route) => {
-    for (const line of (route.request().postData() ?? "").split("\n")) {
-      try {
-        const item = JSON.parse(line) as {
-          exception?: { values?: Array<{ type?: string; value?: string }> };
-        };
-        for (const v of item.exception?.values ?? []) {
-          reported.push(`${v.type}: ${v.value}`);
-        }
-      } catch {
-        // Envelope headers and non-JSON lines carry no exception.
-      }
-    }
-    await route.fulfill({ status: 200, body: "{}" });
-  });
-  return () => [...reported];
+/** Browser-raised events of one exception type. */
+function browserEventsOfType(records: EgressRecord[], type: string) {
+  return errorEvents(records).filter(
+    (e) =>
+      e.item.platform === "javascript" &&
+      (e.item.exceptions ?? []).some((x) => x.type === type),
+  );
+}
+
+/** Server-raised events whose message contains `text`. */
+function serverEventsCarrying(records: EgressRecord[], text: string) {
+  return errorEvents(records).filter(
+    (e) => e.item.platform === "node" && eventTexts(e.item).some((t) => t.includes(text)),
+  );
+}
+
+/**
+ * The boundary reports from the browser exactly once. Waits for the event,
+ * then gives a late duplicate time to arrive before counting.
+ */
+async function expectReportedOnceFromBrowser(page: Page, since: EgressMark, type: string) {
+  await waitForSentryEgress((records) => browserEventsOfType(records, type)[0], { since });
+  await page.waitForTimeout(2_000);
+  const records = readSentryEgress(since);
+  expect(browserEventsOfType(records, type), `${type} reported from the browser`).toHaveLength(1);
+  expect(
+    errorEvents(records).filter((e) => eventTexts(e.item).some((t) => t.includes(REACT_ELISION))),
+    "a server error was reported a second time from the browser",
+  ).toEqual([]);
 }
 
 /**
@@ -125,41 +148,52 @@ test.describe("public booking error containment", () => {
     page,
   }) => {
     const seed = await seedE2eStudio();
-    const reported = await captureSentry(page);
     const injected = await breakFirstServerAction(page, "drop-connection");
 
     await page.goto(`/book/${seed.slug}`);
     await expect(page.getByRole("heading", { name: seed.studioName, level: 1 })).toBeVisible();
+    const since = markSentryEgress();
     await chooseNewClient(page);
 
     await expectContainedInBookingBoundary(page);
     expect(injected().broken, "the injected failure never fired").toBe(1);
-
     // Reported from the browser exactly because onRequestError never saw it.
-    await expect.poll(() => reported().some((r) => r.startsWith("TypeError"))).toBe(true);
-    expect(reported().some((r) => r.includes(REACT_ELISION))).toBe(false);
+    await expectReportedOnceFromBrowser(page, since, "TypeError");
 
     await expectTryAgainRecovers(page, seed.studioName);
   });
 
-  test("a stale Server Action id after a deploy lands in the same boundary and recovers", async ({
+  test("a stale Server Action id after a deploy lands in the same boundary, raises nothing server-side, and recovers", async ({
     page,
   }) => {
     const seed = await seedE2eStudio();
-    const reported = await captureSentry(page);
     const injected = await breakFirstServerAction(page, "unrecognised-id");
 
     await page.goto(`/book/${seed.slug}`);
     await expect(page.getByRole("heading", { name: seed.studioName, level: 1 })).toBeVisible();
+    const since = markSentryEgress();
     await chooseNewClient(page);
 
     await expectContainedInBookingBoundary(page);
     // The server's half of deployment skew: a 404 the client router recognises,
     // NOT a thrown "Failed to find Server Action" 500.
     expect(injected()).toEqual({ broken: 1, status: 404, notFoundHeader: "1" });
-    await expect
-      .poll(() => reported().some((r) => r.startsWith("UnrecognizedActionError")))
-      .toBe(true);
+    await expectReportedOnceFromBrowser(page, since, "UnrecognizedActionError");
+    expect(
+      serverEventsCarrying(readSentryEgress(since), "Failed to find Server Action"),
+      "a stale tab raised a server-side Sentry event",
+    ).toEqual([]);
+
+    // CONTROL for the absence above: the guard does record the id-less server
+    // event, and a raw multipart POST with no Next-Action header is what makes
+    // it. That is the shape SENTRY-BOOKING-ERR-01 group A turned out to be.
+    const control = markSentryEgress();
+    const raw = await page.request.post(`/book/${seed.slug}`, { multipart: { probe: "a" } });
+    expect(raw.status()).toBe(500);
+    await waitForSentryEgress(
+      (records) => serverEventsCarrying(records, MPA_ACTION_NOT_FOUND)[0],
+      { since: control },
+    );
 
     await expectTryAgainRecovers(page, seed.studioName);
   });
