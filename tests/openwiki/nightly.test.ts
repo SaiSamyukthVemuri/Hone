@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import {
@@ -13,13 +13,14 @@ import {
   readOwnerOnlySecret,
   runOpenWikiProcess,
   isolatedChildEnv,
+  oauthStatePaths,
   runNightly,
   // @ts-expect-error - .mjs utility ships without type declarations
 } from "../../scripts/openwiki/nightly.mjs";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { renderReasons } from "../../scripts/openwiki/report.mjs";
 // @ts-expect-error - .mjs utility ships without type declarations
-import { MAX_TIMER_MS, parseRunLimit } from "../../scripts/openwiki/environment.mjs";
+import { ENV_VALUE_RULES, MAX_TIMER_MS, parseRunLimit } from "../../scripts/openwiki/environment.mjs";
 import {
   AGENTS_AUTHORED,
   AGENTS_TEMPLATE_REWRITE,
@@ -57,9 +58,25 @@ type GitHubBehavior = {
   beforeComment?: () => Promise<void>;
 };
 
+type Cfg = { stateDir: string };
+
 const IDENTITY = { name: "hone-wiki-runner[bot]", email: "runner@users.noreply.example.com" };
 
+/**
+ * The ChatGPT login as openwiki@0.6.1 leaves it: dir 0700, `.env` 0600, the
+ * OAuth keys it writes. Values are fixtures — nothing reads them.
+ */
+function writeOauthState(config: { stateDir: string }, mode = 0o600, body?: string): string {
+  const { dir, envFile } = oauthStatePaths(config);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(envFile, body ?? "OPENAI_CHATGPT_ACCESS_TOKEN=fixture-access\nOPENAI_CHATGPT_REFRESH_TOKEN=fixture-refresh\n");
+  chmodSync(dir, 0o700);
+  chmodSync(envFile, mode);
+  return envFile;
+}
+
 function setup(fx: Fx, overrides: Record<string, unknown> = {}) {
+  const { oauthState = true, ...configOverrides } = overrides;
   const host = path.join(fx.root, "host");
   mkdirSync(path.join(host, "openwiki", "dist", "cli"), { recursive: true });
   writeFileSync(path.join(host, "openwiki", "package.json"), JSON.stringify({ name: "openwiki", version: "0.6.1" }));
@@ -73,9 +90,8 @@ function setup(fx: Fx, overrides: Record<string, unknown> = {}) {
     subjectDir: path.join(host, "subject"),
     stateDir: path.join(host, "state"),
     openwikiDir: path.join(host, "openwiki"),
-    anthropicKeyFile: writePrivate(path.join(host, "anthropic-key"), "fixture-key\n"),
     denylistFile: writePrivate(path.join(host, "denylist"), "Synthetic Person\n"),
-    modelId: "claude-fixture",
+    modelId: ENV_VALUE_RULES.OPENWIKI_MODEL_ID,
     identity: IDENTITY,
     minFreeBytes: 1,
     timeoutMs: 60_000,
@@ -83,8 +99,9 @@ function setup(fx: Fx, overrides: Record<string, unknown> = {}) {
     requiredEnv: [],
     // CI runs these tests on node 20; the host runs the runner on 22.x.
     nodeVersion: "22.23.2",
-    ...overrides,
+    ...configOverrides,
   };
+  if (oauthState) writeOauthState(config);
   const prs: Array<Record<string, string>> = [];
   const comments: Array<{ number: number; body: string }> = [];
   const closes: number[] = [];
@@ -207,7 +224,7 @@ function expectNowhere(stateDir: string, result: Result, literals: string[]) {
 describe("startup no-op", () => {
   it("a live wiki ends before OpenWiki runs and before any run prerequisite is checked", async () => {
     const fx = createFixture();
-    const { result, generator } = await run(fx, openWikiLike(), { anthropicKeyFile: "/nonexistent" });
+    const { result, generator } = await run(fx, openWikiLike(), { oauthState: false });
     expect(result.outcome, result.reason).toBe("NOOP");
     expect(result.reasonCode).toBe("WIKI_LIVE");
     expect(result.report.liveness.state).toBe("live");
@@ -1094,6 +1111,63 @@ describe("optional run limits: one parser, validated before conversion", () => {
   });
 });
 
+describe("WIKI-AUTO-OAUTH-01: the model is billed through a ChatGPT login, not an API key", () => {
+  it.each([
+    ["never logged in", (c: Cfg) => rmSync(oauthStatePaths(c).envFile), "MODEL_OAUTH_STATE_MISSING"],
+    ["login state another local account can read", (c: Cfg) => writeOauthState(c, 0o644), "MODEL_OAUTH_STATE_NOT_OWNER_ONLY"],
+    ["a config directory another local account can read", (c: Cfg) => chmodSync(oauthStatePaths(c).dir, 0o755), "MODEL_OAUTH_STATE_NOT_OWNER_ONLY"],
+    ["a login that cannot refresh itself", (c: Cfg) => writeOauthState(c, 0o600, "OPENAI_CHATGPT_ACCESS_TOKEN=only-an-access-token\n"), "MODEL_OAUTH_STATE_INCOMPLETE"],
+    ["an empty refresh token", (c: Cfg) => writeOauthState(c, 0o600, "OPENAI_CHATGPT_REFRESH_TOKEN=\n"), "MODEL_OAUTH_STATE_INCOMPLETE"],
+  ])("%s: PRECONDITION before OpenWiki runs", async (_label: string, breakIt: (c: Cfg) => void, code: string) => {
+    const fx = createFixture();
+    makeStale(fx);
+    const ctx = setup(fx);
+    breakIt(ctx.config);
+    const generator = vi.fn();
+    const result = await pass(ctx.config, { generator, github: ctx.github });
+    expect(result.outcome, result.reason).toBe("PRECONDITION");
+    expect(result.reasonCode).toBe(code);
+    expect(generator).not.toHaveBeenCalled();
+  });
+
+  // The control for the five above: the same fixture, logged in and private,
+  // reaches the generator. Without this each refusal could be passing for an
+  // unrelated reason.
+  it("an owner-only login that can refresh reaches the generator", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const ctx = setup(fx);
+    expect(statSync(oauthStatePaths(ctx.config).envFile).mode & 0o077).toBe(0);
+    const generator = vi.fn(openWikiLike());
+    const result = await pass(ctx.config, { generator, github: ctx.github });
+    expect(result.outcome, result.reason).not.toBe("PRECONDITION");
+    expect(generator).toHaveBeenCalled();
+  });
+
+  it("the OAuth tokens are read by nobody: not the child environment, not any report sink", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const ctx = setup(fx);
+    const SECRETS = ["zzUniqueAccessTokenValue0123456789", "zzUniqueRefreshTokenValue0123456789"];
+    writeOauthState(ctx.config, 0o600, `OPENAI_CHATGPT_ACCESS_TOKEN=${SECRETS[0]}\nOPENAI_CHATGPT_REFRESH_TOKEN=${SECRETS[1]}\n`);
+
+    // The child is told WHERE the login is and nothing about what is in it.
+    const invocation = buildGeneratorInvocation(ctx.config);
+    expect(invocation.env.OPENWIKI_CONFIG_DIR).toBe(oauthStatePaths(ctx.config).dir);
+    for (const value of Object.values(invocation.env)) for (const secret of SECRETS) expect(String(value)).not.toContain(secret);
+
+    const result = await pass(ctx.config, { generator: openWikiLike(), github: ctx.github });
+    expectNowhere(ctx.config.stateDir, result, SECRETS);
+  });
+
+  it("a hand-copied OAuth token in the host environment is refused by name, never by value", () => {
+    const env = Object.fromEntries(REQUIRED_ENV.map((n: string) => [n, ENV_VALUE_RULES[n] ?? "1"]));
+    const problems = checkEnvironment({ ...env, OPENAI_CHATGPT_REFRESH_TOKEN: "zzHandCopiedTokenValue0123456789" });
+    expect(problems).toEqual([{ code: "FORBIDDEN_ENV_PRESENT", details: { name: "OPENAI_CHATGPT_REFRESH_TOKEN" } }]);
+    expect(renderReasons(problems)).not.toContain("zzHandCopiedTokenValue0123456789");
+  });
+});
+
 describe("generator output is never persisted or printed (#786 review of 3644d2fb)", () => {
   const LITERALS = [
     "Quillon Vantablack",
@@ -1246,22 +1320,22 @@ describe("fail-closed preflight", () => {
     expect(result.reason).toMatch(/not in production history/u);
   });
 
-  it("an OpenWiki pin other than 0.6.1, a key file others can read, or a node below 22.22", async () => {
+  it("an OpenWiki pin other than 0.6.1, login state others can read, or a node below 22.22", async () => {
     const fx = createFixture();
     makeStale(fx);
     const ctx = setup(fx, { nodeVersion: "20.20.2" });
     writeFileSync(path.join(ctx.config.openwikiDir, "package.json"), JSON.stringify({ name: "openwiki", version: "0.6.2" }));
-    chmodSync(ctx.config.anthropicKeyFile, 0o644);
+    chmodSync(oauthStatePaths(ctx.config).envFile, 0o644);
     const generator = vi.fn();
     const result = await pass(ctx.config, { generator, github: ctx.github });
     expect(result.outcome, result.reason).toBe("PRECONDITION");
     expect(result.reason).toContain("openwiki@0.6.1");
-    expect(result.reason).toContain("readable by its owner only");
+    expect(result.reason).toContain("readable by their owner only");
     expect(result.reason).toContain("node >= 22.22.0");
     expect([result.reasonCode, ...result.report.additionalReasons.map((r: { reasonCode: string }) => r.reasonCode)]).toEqual([
       "OPENWIKI_VERSION_MISMATCH",
       "NODE_TOO_OLD",
-      "MODEL_KEY_FILE_NOT_OWNER_ONLY",
+      "MODEL_OAUTH_STATE_NOT_OWNER_ONLY",
     ]);
     expect(generator).not.toHaveBeenCalled();
   });
@@ -1294,7 +1368,6 @@ describe("#786 review: credentials stay out of repository code, tokens stay fres
     HONE_WIKI_APP_ID: "4242",
     HONE_WIKI_APP_INSTALLATION_ID: "4343",
     HONE_WIKI_APP_PRIVATE_KEY_FILE: "/host/secrets/github-app.pem",
-    HONE_WIKI_ANTHROPIC_API_KEY_FILE: "/host/secrets/anthropic-key",
   };
 
   it("P1: no code from the subject repository runs while the runner holds credentials", async () => {
@@ -1439,9 +1512,11 @@ describe("environment and generator contract", () => {
     const text = renderReasons(problems);
     expect(text).toContain("forbidden GH_TOKEN is set");
     expect(text).toContain("forbidden STRIPE_* variable is set (2 of them)");
-    expect(text).toContain("OPENWIKI_PROVIDER must be anthropic");
+    expect(text).toContain("OPENWIKI_PROVIDER must be openai-chatgpt");
     for (const literal of ["secret-value", "STRIPE_SECRET_KEY", "SYNTHETIC_PERSON"]) expect(text).not.toContain(literal);
-    expect(checkEnvironment(Object.fromEntries(REQUIRED_ENV.map((n: string) => [n, n === "OPENWIKI_PROVIDER" ? "anthropic" : "1"])))).toEqual([]);
+    expect(checkEnvironment(Object.fromEntries(REQUIRED_ENV.map((n: string) => [n, ENV_VALUE_RULES[n] ?? "1"])))).toEqual([]);
+    // Billing moved to a ChatGPT login: no model key file is named any more.
+    expect(REQUIRED_ENV).not.toContain("HONE_WIKI_ANTHROPIC_API_KEY_FILE");
   });
 
   it("invokes only `openwiki code --update --print`, with an allowlisted environment", () => {
@@ -1452,7 +1527,6 @@ describe("environment and generator contract", () => {
     expect(invocation.args).not.toContain("--init");
     expect(Object.keys(invocation.env).sort()).toEqual(
       [
-        "ANTHROPIC_API_KEY",
         "DO_NOT_TRACK",
         "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_NOSYSTEM",
@@ -1466,8 +1540,10 @@ describe("environment and generator contract", () => {
         "TZ",
       ].sort(),
     );
-    expect(invocation.env).toMatchObject({ ANTHROPIC_API_KEY: "fixture-key", OPENWIKI_PROVIDER: "anthropic", OPENWIKI_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1" });
-    for (const name of FORBIDDEN_ENV.filter((n: string) => n !== "ANTHROPIC_API_KEY")) expect(invocation.env).not.toHaveProperty(name);
+    expect(invocation.env).toMatchObject({ OPENWIKI_PROVIDER: "openai-chatgpt", OPENWIKI_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1" });
+    // No model API key of any provider reaches the child; the login does the billing.
+    for (const name of FORBIDDEN_ENV) expect(invocation.env).not.toHaveProperty(name);
+    expect(invocation.env.OPENWIKI_CONFIG_DIR).toBe(oauthStatePaths(config).dir);
   });
 
   it("the runbook names every required environment variable", () => {

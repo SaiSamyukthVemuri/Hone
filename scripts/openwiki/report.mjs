@@ -333,8 +333,15 @@ export const REASONS = Object.freeze({
   OPENWIKI_VERSION_MISMATCH: fixed("PRECONDITION", `pinned OpenWiki must be openwiki@${OPENWIKI_VERSION}`),
   OPENWIKI_CLI_MISSING: fixed("PRECONDITION", "OpenWiki CLI entry point is missing"),
   NODE_TOO_OLD: fixed("PRECONDITION", `node >= 22.22.0 is required by openwiki@${OPENWIKI_VERSION}`),
-  MODEL_KEY_FILE_NOT_OWNER_ONLY: fixed("PRECONDITION", "HONE_WIKI_ANTHROPIC_API_KEY_FILE must exist and be readable by its owner only"),
-  MODEL_KEY_FILE_EMPTY: fixed("PRECONDITION", "HONE_WIKI_ANTHROPIC_API_KEY_FILE is empty"),
+  MODEL_OAUTH_STATE_MISSING: fixed(
+    "PRECONDITION",
+    "no ChatGPT login found for OPENWIKI_PROVIDER=openai-chatgpt; run `openwiki auth openai-chatgpt` once as the runner user",
+  ),
+  MODEL_OAUTH_STATE_NOT_OWNER_ONLY: fixed("PRECONDITION", "the OpenWiki config directory and its login state must be readable by their owner only"),
+  MODEL_OAUTH_STATE_INCOMPLETE: fixed(
+    "PRECONDITION",
+    "the ChatGPT login holds no refresh token, so an unattended run cannot outlive one access token; log in again",
+  ),
   DENYLIST_FILE_NOT_OWNER_ONLY: fixed("PRECONDITION", "HONE_WIKI_DENYLIST_FILE must exist and be readable by its owner only"),
   DENYLIST_EMPTY: fixed("PRECONDITION", "HONE_WIKI_DENYLIST_FILE holds no terms, so the name scan would check nothing"),
   TENANT_REGISTER_UNREADABLE: fixed(
