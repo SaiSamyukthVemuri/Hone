@@ -39,8 +39,10 @@ export function isE2eFakeResendEnabled(
 }
 
 // success  -> provider accepts (error: null)
-// reject   -> provider returns an error object (deliverWelcomeEmail -> 'failed')
-// throw    -> provider throws (network exception -> 'failed')
+// reject   -> provider returns a TERMINAL error object: retryable === false,
+//             the shape a provider uses for a payload it will never accept
+//             (deliverWelcomeEmail -> 'failed')
+// throw    -> provider throws (network exception -> 'failed', retryable)
 // failonce -> throws the FIRST time per recipient, then succeeds (proves retry)
 // hold     -> succeeds, but only after HOLD_MS. The send is genuinely IN FLIGHT
 //             for that window, which is the only way to observe what a surface
@@ -110,7 +112,14 @@ export type MinimalEmailTransport = {
       attachments?: ReadonlyArray<{ filename: string; content: Buffer }>;
     }) => Promise<{
       data?: { id?: string } | null;
-      error: { message: string } | null;
+      // The error envelope carries what `classifyResendError` in
+      // lib/email/send-appointment.ts actually READS -- `statusCode` and
+      // `name`, not just a message. An envelope narrowed to `message` cannot
+      // express a TERMINAL provider refusal at all: the classifier falls
+      // through to `retryable: true` for an unfamiliar shape, so a fake
+      // "rejection" would be indistinguishable from a transient blip and the
+      // terminal-refusal bookkeeping would never be exercised.
+      error: { message: string; name?: string; statusCode?: number } | null;
     }>;
   };
 };
@@ -144,7 +153,18 @@ export function createFakeResendTransport(): MinimalEmailTransport {
           throw new Error("fake resend network exception");
         }
         if (mode === "reject") {
-          return { error: { message: "fake resend rejected" } };
+          // A TERMINAL refusal, the kind a provider returns for a payload it
+          // will never accept. Both fields are independently terminal under
+          // `classifyResendError` (422 is a 4xx, and `validation_error` is one
+          // of its named terminal cases), so the classification does not depend
+          // on which branch it checks first.
+          return {
+            error: {
+              message: "fake resend rejected",
+              name: "validation_error",
+              statusCode: 422,
+            },
+          };
         }
         if (mode === "failonce") {
           if (!failedOnceRecipients.has(to)) {

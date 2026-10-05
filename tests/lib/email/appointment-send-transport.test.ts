@@ -47,6 +47,13 @@ describe("the fake transport decides the outcome, per recipient", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toMatch(/fake resend rejected/i);
+    // TERMINAL, not retryable. Exact-head #793 P2: the fake's error envelope
+    // used to carry only `message`, so `classifyResendError` fell through to
+    // its unfamiliar-shape default and a "refusal" was classified as a
+    // transient blip -- which meant B7 exercised the retry path, not the
+    // terminal-refusal bookkeeping, and the final-failure ops alert was never
+    // reached. The envelope now carries what the classifier reads.
+    expect(result.ok === false && result.retryable).toBe(false);
   });
 
   it("a `throw+` recipient surfaces a provider EXCEPTION, not a silent success", async () => {
@@ -57,6 +64,10 @@ describe("the fake transport decides the outcome, per recipient", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toMatch(/network exception/i);
+    // A thrown network error IS retryable, and must stay distinguishable from
+    // the terminal refusal above -- otherwise one fake mode could stand in for
+    // the other and neither branch would be proven.
+    expect(result.ok === false && result.retryable).toBe(true);
   });
 
   it("the refusal is NOT an artifact of the recipient being invalid", async () => {
