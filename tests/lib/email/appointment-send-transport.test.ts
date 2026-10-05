@@ -1,7 +1,19 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FAKE_MESSAGE_ID } from "@/lib/email/e2e-fake-resend";
+import {
+  FAKE_MESSAGE_ID,
+  type FakeResendMode,
+} from "@/lib/email/e2e-fake-resend";
+
+/** The modes the fake actually implements, for pinning prefix spellings. */
+const KNOWN_FAKE_MODES: FakeResendMode[] = [
+  "success",
+  "reject",
+  "throw",
+  "failonce",
+  "hold",
+];
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 
 // ===========================================================================
@@ -142,5 +154,46 @@ describe("the bypass cannot return", () => {
   it("sends through the resolved transport, not a module-level client", () => {
     expect(source).toMatch(/transport\.emails\.send\(/);
     expect(source).not.toMatch(/\bresend\.emails\.send\(/);
+  });
+});
+
+describe("the lane default and the acceptance seam are ONE contract", () => {
+  // THE OSCILLATION THIS STOPS. Arming the fake for the whole lane has two
+  // halves that must move together, and changing either alone broke the suite
+  // twice in this PR: with `success` as the lane default every documented
+  // degraded path silently became an accepted send, and with `reject` as the
+  // lane default every welcome-email acceptance case silently became a failure.
+  // Neither direction produced a red test in the lane that caused it -- the
+  // first because those specs assert what is absent either way, the second only
+  // in a browser job. So the coupling is asserted here, in the unit lane, where
+  // it is cheap and always runs.
+  const laneEnv = readFileSync(
+    path.resolve(__dirname, "../../../e2e/helpers/local-env.ts"),
+    "utf8",
+  );
+  const seedSource = readFileSync(
+    path.resolve(__dirname, "../../../e2e/helpers/seed.ts"),
+    "utf8",
+  );
+
+  it("the lane refuses by default, so a degraded-path spec gets a real refusal", () => {
+    expect(laneEnv).toMatch(
+      /HONE_E2E_FAKE_RESEND_DEFAULT_MODE:\s*"reject"/,
+    );
+  });
+
+  it("and the welcome-email seam opts IN to acceptance, so success coverage survives", () => {
+    // `insertBareStudio` is the welcome-email contracts' only seam. If the lane
+    // default is refusal, its unprefixed default MUST ask for acceptance, or
+    // every success / in-progress / retry-then-send case inverts.
+    expect(seedSource).toMatch(/ownerEmail \?\? `success\+owner-\$\{runId\}@harness\.local`/);
+  });
+
+  it("the mode vocabulary the lane and seeds use is the one the fake implements", () => {
+    // A typo in either prefix would silently fall through to the library
+    // default rather than failing, so the spelling is pinned against the fake.
+    for (const mode of ["success", "reject"]) {
+      expect(KNOWN_FAKE_MODES).toContain(mode);
+    }
   });
 });

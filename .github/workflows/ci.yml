@@ -641,11 +641,19 @@ jobs:
             npx playwright test ${{ needs.changes.outputs.browser_specs }} --shard=${{ matrix.shard }}/${SHARD_TOTAL}
           fi
         env:
-          # Enables the guarded fake-Resend transport for the welcome-email
-          # contracts (success / provider-rejection / provider-exception /
-          # retry / in-progress, selected per-recipient by owner_email prefix).
-          # Server-only marker, refused in any deployed runtime; only the welcome
-          # path uses getResendTransport, so all other emails are unaffected.
+          # Enables the guarded fake-Resend transport (success /
+          # provider-rejection / provider-exception / retry / in-progress,
+          # selected per-recipient by the recipient's local-part prefix).
+          # Server-only marker, refused in any deployed runtime.
+          #
+          # RESCHEDULE-E2E-01: now REDUNDANT but harmless --
+          # e2e/helpers/local-env.ts arms the marker for every run of this lane,
+          # because webServer.env REPLACES process.env and the appointment send
+          # path needs the fake too. The note here used to say "only the welcome
+          # path uses getResendTransport, so all other emails are unaffected";
+          # that stopped being true when sendEmailSafely was routed through the
+          # resolver, which is what made the reschedule confirmation
+          # deterministic.
           HONE_E2E_FAKE_RESEND: "1"
 
       - name: Upload Playwright traces on failure
