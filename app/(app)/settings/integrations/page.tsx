@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { GoogleCalendarCard } from "../profile/GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
@@ -20,7 +20,7 @@ import {
 // re-authorizes (active practitioner + studio flag) and never trusts a browser id.
 
 export default async function IntegrationsSettingsPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
 
   // Owner-only. Non-owners are sent to their profile (where the per-practitioner
   // connection card lives). Direct-URL access by a non-owner never renders here.

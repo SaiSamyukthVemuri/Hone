@@ -1,6 +1,6 @@
 import {
   getClientsForStudio,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
 import {
   getActiveServices,
@@ -78,7 +78,7 @@ export default async function CalendarPage({
 }) {
   // Measurement only (perf/route-timing-baseline).
   const { practitioner, studio } = await timed("calendar.identity", () =>
-    getCurrentPractitionerWithStudio(),
+    requirePractitionerWithStudio(),
   );
   const timeFormat = resolveTimeFormat(studio); // 0109: 12h/24h display pref
   const isOwner = practitioner.role === "owner"; // PR C: owner-only block editing

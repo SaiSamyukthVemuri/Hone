@@ -58,7 +58,7 @@ describe("entry points + protection", () => {
   });
 
   it("the print route lives under the authenticated (app) layout and resolves the studio server-side", () => {
-    expect(PRINT).toMatch(/getCurrentPractitionerWithStudio/);
+    expect(PRINT).toMatch(/requirePractitionerWithStudio/);
     expect(PRINT).not.toMatch(/"use client"/);
     // Same auth posture as /records: anonymous hits redirect via the
     // (app) layout; there is no parallel public route.

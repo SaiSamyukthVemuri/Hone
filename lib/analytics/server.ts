@@ -10,8 +10,13 @@
 // Guarantees:
 //   * product success NEVER depends on analytics, nothing here throws into a
 //     caller; every failure mode is caught;
-//   * dispatch runs AFTER the response via Next's stable `after()` (caught
-//     fire-and-forget fallback when out of request scope);
+//   * dispatch is OFF the request path: it starts on a later macrotask, nothing
+//     the response depends on awaits it, and Next's stable `after()` keeps the
+//     invocation alive until it settles (caught fire-and-forget fallback when
+//     out of request scope). Call sites that say "post-response" rely on
+//     exactly this: the response never waits for analytics;
+//   * scheduling never changes the request: work is handed to `after()` as a
+//     PROMISE, never as a callback (SENTRY-AFTER-01, see `schedule()`);
 //   * bounded execution time (DISPATCH_TIMEOUT_MS race);
 //   * distinctIds are opaque, UUID-validated actors (lib/analytics/ids.ts),
 //     an email/phone/token/free-text id fails closed (event dropped) and is
@@ -106,21 +111,47 @@ async function boundedDispatch(
   }
 }
 
-/** Schedule work post-response; never let scheduling itself throw. */
+/**
+ * Hand work to the platform without letting it change the request.
+ *
+ * The work is registered with `after()` as a PROMISE, never as a callback, and
+ * in Next 15.5 the two forms are not equivalent (SENTRY-AFTER-01):
+ *
+ *   * A CALLBACK enrols the request's own work-unit store with the after()
+ *     context. When the HTTP response closes, Next sets that SHARED store's
+ *     phase to "after" and only then runs the callbacks. A response closes
+ *     early whenever the client goes away mid-render (a navigation away, a
+ *     cancelled RSC fetch, a closed tab), and the render keeps going. Every
+ *     `cookies()` or `headers()` it makes from then on throws `Route ... used
+ *     "cookies" inside "after(...)"`, though nothing ran inside a callback at
+ *     all. The (app) layout identifies on every authenticated render, so one
+ *     call here armed that failure for every route beneath it; a Server Action
+ *     that re-renders after `revalidatePath` was exposed the same way.
+ *   * A PROMISE is waitUntil only: it keeps the invocation alive until the
+ *     work settles and never touches the request's phase.
+ *
+ * The work starts on a later macrotask, so nothing here, not even building the
+ * PostHog client, runs on the caller's synchronous path, and nothing the
+ * response depends on awaits it.
+ */
 function schedule(work: () => Promise<void>): void {
+  const task = new Promise<void>((resolve) => setTimeout(resolve, 0))
+    .then(work)
+    .catch(() => {
+      // `work` is written never to reject; this keeps that a guarantee.
+    });
   try {
-    after(work);
+    after(task);
   } catch {
-    // Out of request scope (or after() unavailable): caught fire-and-forget.
-    void work();
+    // Out of request scope (or after() unavailable): the task is already
+    // queued and simply runs fire-and-forget.
   }
 }
 
 /**
  * Fire a product analytics event from the server. Non-blocking, bounded, never
  * throws, never affects the caller's result. The actor's id is UUID-validated
- * inside the post-response work: a non-UUID id drops the event (no value
- * logged).
+ * inside the scheduled work: a non-UUID id drops the event (no value logged).
  */
 export function captureServerEvent(args: {
   actor: AnalyticsActor;

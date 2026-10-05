@@ -40,7 +40,7 @@ import {
   addWaitlistEntryFormAction,
   importLegacyWaitlistEntryFormAction,
 } from "./profile-actions";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { localLongDate } from "@/lib/booking/tz";
 // `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
 // deliberately NOT imported. Both still exist, are still tested and still reach
@@ -284,7 +284,7 @@ export default async function WaitlistSettingsPage({
   // validation immediately below.
   searchParams?: Promise<{ section?: string | string[]; page?: string | string[] }>;
 }) {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
     return <DenialCard>Only studio owners can see the new-client waitlist.</DenialCard>;

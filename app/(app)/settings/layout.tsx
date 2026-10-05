@@ -1,4 +1,4 @@
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
 import { createClient } from "@/lib/supabase/server";
@@ -27,7 +27,7 @@ export default async function SettingsLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   // WAIT-02. The durable waitlist tab appears for an owner whose studio is
   // BOTH waitlisting new clients AND recording those requests durably — the

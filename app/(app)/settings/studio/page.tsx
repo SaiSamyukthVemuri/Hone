@@ -1,4 +1,4 @@
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { resolveTimeFormat } from "@/lib/booking/tz";
 import { StudioSettingsForm } from "./StudioSettingsForm";
 import { EmailSettingsForm } from "./EmailSettingsForm";
@@ -8,7 +8,7 @@ import { EmailSettingsForm } from "./EmailSettingsForm";
 // still owner-gated server-side via updateStudioPostcareAction.
 
 export default async function StudioSettingsPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
     return (

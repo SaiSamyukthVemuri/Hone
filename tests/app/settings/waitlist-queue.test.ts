@@ -219,12 +219,19 @@ vi.mock("next/cache", () => ({
   revalidatePath: (p: string) => revalidated.push(p),
 }));
 
-vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({
+vi.mock("@/lib/supabase/queries", () => {
+  // ONE identity under both names: the page and the settings layout resolve it
+  // through the redirecting guard, server actions through the throwing
+  // backstop (SENTRY-IDENTITY-01).
+  const identity = async () => ({
     practitioner: { id: "prac-1", role: scenario.role, user_id: scenario.userId },
     studio: { id: STUDIO_ID, slug: SLUG, name: "Queue Studio", timezone: "America/Toronto" },
-  }),
-}));
+  });
+  return {
+    getCurrentPractitionerWithStudio: identity,
+    requirePractitionerWithStudio: identity,
+  };
+});
 
 // A minimal PostgREST-shaped builder that RECORDS the question rather than
 // answering a pre-baked one, so the assertions are about the query the page

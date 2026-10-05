@@ -125,21 +125,43 @@ export function withSentryEgressGuard(existing: string | undefined): string {
 // CI lane's dummy/test-safe values, with Supabase pointed at the
 // LOCAL stack. Nothing here is a real secret.
 export const E2E_WEB_SERVER_ENV: Record<string, string> = {
-  // Explicitly propagate the fake-Resend marker to the Next server when the
-  // browser-e2e job requests it (the webServer.env replaces process.env, so it
-  // must be listed here — same pattern as the fake-Stripe lane). Only the
-  // welcome/invitation path reads getResendTransport, so other emails are
-  // unaffected. Server-only marker; the module's own guard refuses it in any
-  // deployed runtime.
-  // The fake transport's MODE travels with the switch that enables it, so a spec
-  // can drive a provider REFUSAL as well as an acceptance. Same guard, same
-  // fail-closed posture: absent the "1" switch neither variable is forwarded,
-  // and the fake refuses to exist in any deployed environment regardless.
-  ...(process.env.HONE_E2E_FAKE_RESEND === "1" && process.env.HONE_E2E_FAKE_RESEND_MODE
+  // RESCHEDULE-E2E-01: THE FAKE EMAIL TRANSPORT IS ARMED FOR EVERY RUN OF THIS
+  // LANE, not only when the outer job opts in.
+  //
+  // It used to be conditional, so an ordinary lane run sent appointment mail
+  // through the REAL Resend SDK carrying `RESEND_API_KEY: re_dummy_resend_key`
+  // below. The public-reschedule spec then asserted the failure copy and was
+  // correct only for as long as api.resend.com kept rejecting that key
+  // promptly: the same tree passed, then failed repeatedly, with no code
+  // change. A test whose verdict is decided by a third party is not a test.
+  //
+  // Armed unconditionally for the same reason HONE_E2E_ROUTE_FAULT is below:
+  // this lane is hardcoded to 127.0.0.1, the marker is server-only and never
+  // NEXT_PUBLIC_*, and the module's own guard (lib/email/e2e-fake-resend.ts)
+  // REFUSES to exist in any deployed runtime — so it cannot reach production.
+  // Default mode is `success`; a spec drives a refusal per-recipient with a
+  // `reject+`/`throw+` local-part, needing no restart and no global switch.
+  HONE_E2E_FAKE_RESEND: "1",
+  // AND THE DEFAULT IS REFUSAL, because that is what this lane already did.
+  //
+  // Every send here used to go through the real SDK with the dummy key above
+  // and be refused. Arming the fake with `success` as the fallback silently
+  // converted every documented degraded-path scenario in the suite into an
+  // accepted send -- portal-rebook's degraded acknowledgement, the dashboard
+  // card's safe-failure copy, the waitlist spec's refused notifications -- and
+  // all of them kept PASSING, because each asserts what is absent on a refusal,
+  // which is also absent on success. Three separate specs lost their scenario
+  // without a single red test.
+  //
+  // So the lane default reproduces the old behaviour exactly, and a spec that
+  // needs ACCEPTANCE opts in with a `success+` recipient. New coverage is
+  // explicit; existing coverage is untouched.
+  HONE_E2E_FAKE_RESEND_DEFAULT_MODE: "reject",
+  // A global MODE override, when the outer process sets one, forces every
+  // recipient. Specs do NOT rely on it (it would apply to the whole server);
+  // it exists for a deliberate whole-run refusal sweep.
+  ...(process.env.HONE_E2E_FAKE_RESEND_MODE
     ? { HONE_E2E_FAKE_RESEND_MODE: process.env.HONE_E2E_FAKE_RESEND_MODE }
-    : {}),
-  ...(process.env.HONE_E2E_FAKE_RESEND === "1"
-    ? { HONE_E2E_FAKE_RESEND: "1" }
     : {}),
   // SESSION-START-01 slice 2 measurement. webServer.env REPLACES process.env,
   // so the timing switch has to be listed here to reach the server — same

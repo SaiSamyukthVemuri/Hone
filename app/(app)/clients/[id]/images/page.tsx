@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
   getSessionBlockAreasByBlockIds,
 } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
@@ -37,7 +37,7 @@ export default async function ClientImagesPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
 
   const supabase = await createClient();
   const { data: client, error: clientErr } = await supabase
