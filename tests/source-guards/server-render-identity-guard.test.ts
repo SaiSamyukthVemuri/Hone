@@ -28,8 +28,11 @@ import ts from "typescript";
 // The behaviour is proved against the real page in
 // tests/app/calendar/appointment-detail-identity-boundary.test.ts. This file is
 // the architectural tripwire that keeps every OTHER server-rendered module on
-// the same side of the line. Calls are found with the TypeScript parser, so a
-// comment or a string that names the backstop is never mistaken for a call.
+// the same side of the line, in both directions: nothing server-rendered calls
+// the backstop, and every authenticated page calls the guard itself (a page
+// that resolves NO identity is exposed to the same race). Calls are found with
+// the TypeScript parser, so a comment or a string that names either function is
+// never mistaken for a call.
 
 const ROOT = path.resolve(__dirname, "../..");
 const BACKSTOP = "getCurrentPractitionerWithStudio";
@@ -109,6 +112,63 @@ function serverRenderedModules(): Module[] {
 const MODULES = serverRenderedModules();
 const byRel = new Map(MODULES.map((m) => [m.rel, m]));
 
+/** Does the module render any JSX at all? */
+function rendersJsx(sf: ts.SourceFile): boolean {
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node) || ts.isJsxFragment(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/** Every module specifier this file imports from. */
+function importsFrom(sf: ts.SourceFile): string[] {
+  return sf.statements.flatMap((s) =>
+    ts.isImportDeclaration(s) && ts.isStringLiteral(s.moduleSpecifier)
+      ? [s.moduleSpecifier.text]
+      : [],
+  );
+}
+
+// The ONLY authenticated pages allowed to skip the guard, each with the property
+// that makes skipping it safe. The property is re-proved on every run, so an
+// exemption that stops being true fails here instead of quietly widening.
+const GUARD_EXEMPT_PAGES: Record<
+  string,
+  { why: string; stillTrue: (sf: ts.SourceFile) => boolean }
+> = {
+  "app/(app)/settings/calendar/page.tsx": {
+    why: "legacy bookmark route that only redirects: it renders nothing and reads nothing",
+    stillTrue: (sf) =>
+      callLines(sf, "redirect").length > 0 &&
+      !rendersJsx(sf) &&
+      importsFrom(sf).every((m) => m === "next/navigation"),
+  },
+  "app/(app)/e2e-fault/[case]/page.tsx": {
+    why: "E2E failure-injection fixture that is notFound() in every deployed build",
+    stillTrue: (sf) =>
+      callLines(sf, "notFound").length > 0 &&
+      importsFrom(sf).includes("@/lib/reliability/e2e-route-fault"),
+  },
+};
+
+const isAuthenticatedPage = (rel: string) =>
+  rel.startsWith("app/(app)/") && /\/page\.(tsx|ts|jsx|js)$/.test(rel);
+
+/** Authenticated pages that resolve no identity of their own. */
+function pagesMissingGuard(modules: Module[]): string[] {
+  return modules
+    .filter(({ rel }) => isAuthenticatedPage(rel) && !(rel in GUARD_EXEMPT_PAGES))
+    .filter(({ sf }) => callLines(sf, GUARD).length === 0)
+    .map(({ rel }) => rel);
+}
+
 describe("server-rendered modules use the redirecting identity guard", () => {
   it("no page, layout or server component calls the throwing backstop", () => {
     const offenders = MODULES.flatMap(({ rel, sf }) =>
@@ -128,6 +188,24 @@ describe("server-rendered modules use the redirecting identity guard", () => {
       const layout = byRel.get(rel);
       expect(layout, `the scan must reach ${rel}`).toBeDefined();
       expect(callLines(layout!.sf, GUARD).length, rel).toBeGreaterThan(0);
+    }
+  });
+
+  it("every authenticated page resolves identity ITSELF with the guard", () => {
+    // Not calling the backstop is not enough. A layout's guard does not run on
+    // a soft navigation, so a page that resolves nothing renders for a
+    // practitioner whose membership was removed after the middleware admitted
+    // the request: /clients/new handed exactly that user the new-client form.
+    expect(pagesMissingGuard(MODULES)).toEqual([]);
+  });
+
+  it("each exemption from the guard still holds the property that makes it safe", () => {
+    for (const [rel, { why, stillTrue }] of Object.entries(GUARD_EXEMPT_PAGES)) {
+      const page = byRel.get(rel);
+      expect(page, `exempt page no longer exists: ${rel}`).toBeDefined();
+      expect(stillTrue(page!.sf), `${rel} is exempt as a ${why}; that no longer holds`).toBe(
+        true,
+      );
     }
   });
 });
@@ -164,6 +242,26 @@ describe("anti-vacuity: the scan sees what it claims to rule out", () => {
       ].join("\n"),
     );
     expect(callLines(mutant, BACKSTOP)).toEqual([4]);
+  });
+
+  it("a page that renders without the guard is flagged; a guarded one is not", () => {
+    const bare = parse("page.tsx", "export default function P() { return <p>form</p>; }");
+    const guarded = parse(
+      "page.tsx",
+      "export default async function P() { await requirePractitionerWithStudio(); return <p />; }",
+    );
+    expect(
+      pagesMissingGuard([
+        { rel: "app/(app)/bare/page.tsx", sf: bare },
+        { rel: "app/(app)/guarded/page.tsx", sf: guarded },
+        // Outside the authenticated group the rule does not apply.
+        { rel: "app/book/[slug]/page.tsx", sf: bare },
+      ]),
+    ).toEqual(["app/(app)/bare/page.tsx"]);
+    // ...and neither exemption's safety property accepts a page that renders a form.
+    for (const { stillTrue } of Object.values(GUARD_EXEMPT_PAGES)) {
+      expect(stillTrue(bare)).toBe(false);
+    }
   });
 
   it("client components and server-action modules are excluded by their directive", () => {
