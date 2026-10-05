@@ -68,8 +68,10 @@ The runner documents the **source head**: the newest first-parent commit on the 
 change touched a source path. Generated-only commits after it, such as a merged nightly PR, do not move it.
 
 The wiki is **live** when `openwiki/.last-update.json` records the source head (or a commit between it and the
-tip), with `status: complete`. A live wiki ends the pass as `NOOP` before any model credential is read. A
-recorded `gitHead` outside production history, an interrupted status or an abbreviated SHA is `PRECONDITION`.
+tip), with `status: complete`. A live wiki ends the pass as `NOOP` before the ChatGPT login is even checked —
+though not before every credential: the GitHub App key is read earlier, to mint the token that fetches the
+subject. A recorded `gitHead` outside production history, an interrupted status or an abbreviated SHA is
+`PRECONDITION`.
 
 ### One pass
 
@@ -189,7 +191,7 @@ recorded `gitHead` outside production history, an interrupted status or an abbre
 
 ### Trust boundary
 
-The runner holds the GitHub App key and the model key. Any process it starts runs as the same unix user, and
+The runner holds the GitHub App key and OpenWiki's ChatGPT login. Any process it starts runs as the same unix user, and
 such a process can read the runner's `/proc/$PPID/environ` and the key files named there. Cleaning a child's
 environment does not change that.
 
@@ -238,10 +240,9 @@ environment does not change that.
 | `HONE_WIKI_GIT_AUTHOR_NAME` | runner identity for the publish commit |
 | `HONE_WIKI_GIT_AUTHOR_EMAIL` | runner identity for the publish commit |
 | `HONE_WIKI_OPENWIKI_DIR` | pinned `openwiki@0.6.1` package directory, separate from any operator install |
-| `HONE_WIKI_ANTHROPIC_API_KEY_FILE` | path to the model key (owner-only file); passed only to the OpenWiki child |
 | `HONE_WIKI_DENYLIST_FILE` | path to the privacy denylist, one term per line (owner-only file, never committed) |
-| `OPENWIKI_PROVIDER` | must be `anthropic` |
-| `OPENWIKI_MODEL_ID` | the pinned model id |
+| `OPENWIKI_PROVIDER` | must be `openai-chatgpt` |
+| `OPENWIKI_MODEL_ID` | must be `gpt-5.6-terra` (pinned like the OpenWiki version; a model change is its own reviewed change) |
 | `OPENWIKI_TELEMETRY_DISABLED` | must be `1` |
 | `DO_NOT_TRACK` | must be `1` |
 
@@ -257,10 +258,42 @@ The two limits share one parser, applied before any conversion to bytes or milli
 
 Must be absent (preflight fails otherwise):
 - `GITHUB_TOKEN` and `GH_TOKEN`;
-- a raw `ANTHROPIC_API_KEY` (the key arrives as a file);
-- other provider keys;
+- a raw `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, and other provider keys — **no model API key exists**; the
+  model is billed through a ChatGPT login (below);
+- `OPENAI_CHATGPT_ACCESS_TOKEN` and `OPENAI_CHATGPT_REFRESH_TOKEN` — these are OpenWiki's to write and
+  refresh, so a value here is necessarily a stale hand-copy;
 - LangSmith/LangChain tracing variables;
 - anything starting `SUPABASE_`, `STRIPE_`, `TWILIO_`, `VERCEL_` or `SENTRY_`.
+
+## Model access: a ChatGPT login, not an API key
+
+The model is billed against a ChatGPT plan, so there is **no model API key and no key file**. OpenWiki holds
+the OAuth credentials itself.
+
+One-time, as the runner user, on a machine with a browser or with the browser step completed and the
+resulting state copied into place:
+
+```
+OPENWIKI_CONFIG_DIR=$HONE_WIKI_STATE_DIR/home/.openwiki <pinned node> <tools>/node_modules/.bin/openwiki auth openai-chatgpt
+```
+
+That writes `$HONE_WIKI_STATE_DIR/home/.openwiki/.env` (dir `0700`, file `0600`, both created by OpenWiki),
+holding `OPENAI_CHATGPT_ACCESS_TOKEN`, `OPENAI_CHATGPT_REFRESH_TOKEN` and the account's non-secret
+descriptors. `OPENWIKI_CONFIG_DIR` is the same path the runner passes to the child, so the login the operator
+performs is the login the nightly pass uses.
+
+- **The refresh token is a secret**, and a longer-lived one than an access token: it is what lets an
+  unattended 03:30 run keep working. Treat the whole directory as credential material — never commit it, copy
+  it into the host env file, or include it in a report or a paste.
+- **The runner never reads that file's values.** Preflight checks three things by name and mode only: the
+  file exists (`MODEL_OAUTH_STATE_MISSING`), the directory and file are owner-only
+  (`MODEL_OAUTH_STATE_NOT_OWNER_ONLY`), and a non-empty `OPENAI_CHATGPT_REFRESH_TOKEN=` line is present
+  (`MODEL_OAUTH_STATE_INCOMPLETE`, which is the "this login cannot survive the night" case). No token value
+  is ever read out, logged or reported.
+- **Plan limits apply, and they are not the runner's to manage.** A ChatGPT plan rate-limits or exhausts; the
+  pass then ends `FAILED` on the generator like any other generator failure, and the next night tries again.
+  Nothing here retries against a quota or escalates to a paid API path.
+- Re-run the same `openwiki auth` command when the login is revoked or expires beyond refresh.
 
 ## GitHub App
 
@@ -276,11 +309,12 @@ never has `workflows` or `administration`.
 
 ## Host setup: blocked on credentials, not done
 
-These steps need a GitHub App, its private key, a dedicated model key and the denylist file. None exists yet.
+These steps need a GitHub App, its private key, a ChatGPT login for OpenWiki and the denylist file.
 
 1. Create a runner-owned state directory, a separate clone location, and a pinned
    `npm install --prefix <tools> openwiki@0.6.1` (its install scripts are required for `better-sqlite3`).
-2. Place the three secret files with mode `0600`, and write the host env file with the names above.
+2. Place the App private key and the denylist file with mode `0600`, and write the host env file with the
+   names above. No model key file: complete the ChatGPT login described above instead.
 3. **Mandatory:** run a dry run first (`HONE_WIKI_PUBLISH` unset) and read `last-run.json`. Publishing is
    enabled only after a dry run on this host has passed.
 4. Install the units below, `systemctl --user daemon-reload`, then enable the timer.
@@ -314,4 +348,5 @@ WantedBy=timers.target
 **Stop:**
 - soft: `touch $HONE_WIKI_STATE_DIR/DISABLED`;
 - hard: `systemctl --user disable --now hone-wiki-nightly.timer`;
-- revoke: uninstall the App, or rotate its key and the model key.
+- revoke: uninstall the App or rotate its key; for the model, sign the ChatGPT session out and delete
+  `$HONE_WIKI_STATE_DIR/home/.openwiki/.env`.

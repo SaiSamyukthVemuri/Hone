@@ -20,7 +20,6 @@ export const REQUIRED_ENV = Object.freeze([
   "HONE_WIKI_GIT_AUTHOR_NAME",
   "HONE_WIKI_GIT_AUTHOR_EMAIL",
   "HONE_WIKI_OPENWIKI_DIR",
-  "HONE_WIKI_ANTHROPIC_API_KEY_FILE",
   "HONE_WIKI_DENYLIST_FILE",
   "OPENWIKI_PROVIDER",
   "OPENWIKI_MODEL_ID",
@@ -35,6 +34,10 @@ export const OPTIONAL_ENV = Object.freeze(["HONE_WIKI_PUBLISH", "HONE_WIKI_MIN_F
  * own environment would reach every child, not only OpenWiki; it arrives as a
  * file. Tracing would ship repository content to LangSmith. The runner holds
  * no production credential.
+ *
+ * The two OPENAI_CHATGPT_* tokens are forbidden for a different reason: they
+ * are not the host's to set. OpenWiki mints and refreshes them itself inside
+ * its private config dir, so a value here is necessarily a stale hand-copy.
  */
 export const FORBIDDEN_ENV = Object.freeze([
   "GITHUB_TOKEN",
@@ -48,11 +51,22 @@ export const FORBIDDEN_ENV = Object.freeze([
   "LANGCHAIN_API_KEY",
   "LANGCHAIN_TRACING_V2",
   "OPENWIKI_LANGSMITH_API_KEY",
+  "OPENAI_CHATGPT_ACCESS_TOKEN",
+  "OPENAI_CHATGPT_REFRESH_TOKEN",
 ]);
 export const FORBIDDEN_ENV_PREFIXES = Object.freeze(["SUPABASE_", "STRIPE_", "TWILIO_", "VERCEL_", "SENTRY_"]);
 
-/** Required names whose value is fixed. */
-export const ENV_VALUE_RULES = Object.freeze({ OPENWIKI_PROVIDER: "anthropic", OPENWIKI_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1" });
+/**
+ * Required names whose value is fixed. OPENWIKI_MODEL_ID is pinned the same
+ * way openwiki@0.6.1 is: a model change is its own reviewed change, not a
+ * quiet host edit, because the generator's output is what this runner gates.
+ */
+export const ENV_VALUE_RULES = Object.freeze({
+  OPENWIKI_PROVIDER: "openai-chatgpt",
+  OPENWIKI_MODEL_ID: "gpt-5.6-terra",
+  OPENWIKI_TELEMETRY_DISABLED: "1",
+  DO_NOT_TRACK: "1",
+});
 
 /** The optional run limits, by name, with their documented defaults (GB of free disk; minutes per run). */
 export const RUN_LIMIT_DEFAULTS = Object.freeze({ HONE_WIKI_MIN_FREE_GB: 10, HONE_WIKI_RUN_TIMEOUT_MIN: 90 });

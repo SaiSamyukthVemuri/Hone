@@ -178,6 +178,35 @@ function runnerHome(config) {
 }
 
 /**
+ * Where OpenWiki keeps the ChatGPT login this runner bills against.
+ * openwiki@0.6.1 resolves OPENWIKI_CONFIG_DIR to its home dir and writes the
+ * OAuth tokens to `.env` inside it (config/openwiki-home.js, config/env.js),
+ * creating the dir 0700 and the file 0600 itself. The runner never reads that
+ * file: OpenWiki mints and refreshes those tokens, and nothing here needs
+ * their values. Declared once so the precondition and the child environment
+ * cannot drift onto two different directories.
+ */
+export function oauthStatePaths(config) {
+  const dir = path.join(config.stateDir, "home", ".openwiki");
+  return { dir, envFile: path.join(dir, ".env") };
+}
+
+/**
+ * Is the ChatGPT login present, private, and able to outlive one access
+ * token? Checked by NAME presence only — the keys OpenWiki writes are a fixed
+ * vocabulary, so finding one proves a login happened without the value ever
+ * being read out, logged or returned. The refresh key specifically, because an
+ * unattended nightly run must survive its access token expiring.
+ */
+function oauthStateProblem(config) {
+  const { dir, envFile } = oauthStatePaths(config);
+  if (!existsSync(envFile)) return "MODEL_OAUTH_STATE_MISSING";
+  if (!privateFile(dir) || !privateFile(envFile)) return "MODEL_OAUTH_STATE_NOT_OWNER_ONLY";
+  if (!/^\s*OPENAI_CHATGPT_REFRESH_TOKEN\s*=\s*\S/mu.test(readFileSync(envFile, "utf8"))) return "MODEL_OAUTH_STATE_INCOMPLETE";
+  return null;
+}
+
+/**
  * The base environment for the one child the runner starts besides git: the
  * pinned OpenWiki CLI, from the runner's tools directory, never from the
  * subject. It holds no GitHub credential, no credential path and no App
@@ -246,12 +275,12 @@ export function buildGeneratorInvocation(config) {
     args: [path.join(config.openwikiDir, "dist", "cli", "cli.js"), "code", "--update", "--print"],
     env: {
       ...base,
-      OPENWIKI_CONFIG_DIR: path.join(base.HOME, ".openwiki"),
-      OPENWIKI_PROVIDER: "anthropic",
+      // The login lives here; no model API key is passed, and none exists.
+      OPENWIKI_CONFIG_DIR: oauthStatePaths(config).dir,
+      OPENWIKI_PROVIDER: "openai-chatgpt",
       OPENWIKI_MODEL_ID: config.modelId,
       OPENWIKI_TELEMETRY_DISABLED: "1",
       DO_NOT_TRACK: "1",
-      ANTHROPIC_API_KEY: readOwnerOnlySecret(config.anthropicKeyFile, "HONE_WIKI_ANTHROPIC_API_KEY_FILE").trim(),
     },
   };
 }
@@ -389,8 +418,8 @@ function runPrerequisites(config, subject) {
   // exercise the rule; the CLI never sets it.
   const [major, minor] = String(config.nodeVersion ?? process.versions.node).split(".").map(Number);
   if (major < 22 || (major === 22 && minor < 22)) reasons.push(reason("NODE_TOO_OLD"));
-  if (!privateFile(config.anthropicKeyFile)) reasons.push(reason("MODEL_KEY_FILE_NOT_OWNER_ONLY"));
-  else if (!readFileSync(config.anthropicKeyFile, "utf8").trim()) reasons.push(reason("MODEL_KEY_FILE_EMPTY"));
+  const oauthProblem = oauthStateProblem(config);
+  if (oauthProblem) reasons.push(reason(oauthProblem));
   let denylistTerms = [];
   if (!privateFile(config.denylistFile)) reasons.push(reason("DENYLIST_FILE_NOT_OWNER_ONLY"));
   else {
@@ -861,7 +890,6 @@ export function configFromEnv(env, argv = []) {
     subjectDir: env.HONE_WIKI_SUBJECT_DIR,
     stateDir: env.HONE_WIKI_STATE_DIR,
     openwikiDir: env.HONE_WIKI_OPENWIKI_DIR,
-    anthropicKeyFile: env.HONE_WIKI_ANTHROPIC_API_KEY_FILE,
     denylistFile: env.HONE_WIKI_DENYLIST_FILE,
     modelId: env.OPENWIKI_MODEL_ID,
     identity: { name: env.HONE_WIKI_GIT_AUTHOR_NAME, email: env.HONE_WIKI_GIT_AUTHOR_EMAIL },
