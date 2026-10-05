@@ -7,6 +7,7 @@ import {
   runSchemaPreflight,
   SCHEMA_FINGERPRINT_ENV,
 } from "./helpers/schema-preflight";
+import { markSentryEgress, SENTRY_EGRESS_MARK_ENV } from "./helpers/sentry-egress";
 
 // ===========================================================================
 // Playwright globalSetup — ONE hook, shared by every browser lane
@@ -69,6 +70,11 @@ function checkoutIdentity(): { branch: string; sha: string } {
 }
 
 export default async function globalSetup(config: FullConfig): Promise<void> {
+  // SENTRY-E2E-NOISE-02. Where this run's egress records begin, so
+  // globalTeardown can report what the Sentry egress guard held. First, and
+  // independent of the preflight below.
+  process.env[SENTRY_EGRESS_MARK_ENV] = String(markSentryEgress().offset);
+
   const lane = laneFor(config.configFile);
   const context = checkoutIdentity();
 
