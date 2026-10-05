@@ -19,25 +19,31 @@
 //
 // So identity is the integer. The configured file is resolved ONCE per read -
 // GitHub itself turns `ci.yml` into its workflow id - and ONE predicate,
-// `isConfiguredRun`, decides membership for every selection.
+// `isConfiguredRun`, decides membership for every selection. The event it
+// pairs with must be one GitHub DOCUMENTS as a workflow trigger: a name that
+// merely looks like one (`pull_requset`) is not an event.
 //
 // LATEST MEANS THE LATEST EXECUTION. A re-run keeps its run id and increments
-// `run_attempt`, and `run_started_at` "resets on re-run". So an older run
-// re-run after a newer one holds the most recent result, and "highest run id"
-// would report a stale one - a false GREEN when the re-run failed. Among the
-// runs the identity admits, the latest is the one whose latest attempt started
-// last; then the higher attempt; then the higher run id, as the final
-// deterministic tie-breaker. The same run listed twice - a listing read while
-// it changed - resolves to its later attempt, and contradictory copies make the
-// answer UNKNOWN. `latestExecution` is that rule, written once; the failure
-// streak's selection IS the exact-head selection, applied to each head, so the
-// two cannot drift apart. A run's `path` is carried for display only.
+// `run_attempt`, and `run_started_at` "resets on re-run", so the highest run id
+// is not the newest result. Two different kinds of comparison are needed, and
+// they are never mixed:
 //
-// FAILS CLOSED. A workflow override that is not a complete file + event, an
-// identity that cannot be read or reads malformed, an applicable run without a
-// usable attempt, start time, status or conclusion: each is UNKNOWN, and so is
-// every selection made with it. "Could not tell which runs are CI" is never
-// reported as "no CI run exists", and no input makes this module throw.
+//   * copies of ONE run (a listing read while the run changed): its attempt
+//     numbers order them - attempt numbers mean nothing across runs;
+//   * DIFFERENT runs: only when each latest attempt started orders them. A run
+//     id is identity, never recency. When the latest start is shared by more
+//     than one run, no documented field orders them, and the answer is UNKNOWN.
+//
+// `latestExecution` is that rule, written once; the failure streak's selection
+// IS the exact-head selection, applied to each head, so the two cannot drift
+// apart. A run's `path` is carried for display only.
+//
+// FAILS CLOSED. A workflow override that is not a complete file + documented
+// event, an identity that cannot be read or reads malformed, an applicable run
+// without a usable attempt, start time, status or conclusion, contradictory
+// copies of a run, a tie at the latest start: each is UNKNOWN, and so is every
+// selection made with it. "Could not tell" is never reported as "no CI run
+// exists", and no input makes this module throw.
 //
 // READ-ONLY. One GET through the injected fetcher. Nothing here writes, merges,
 // polls, waits or retries, and it reads no check runs or commit statuses -
@@ -51,10 +57,24 @@ export { UNKNOWN };
 /** The repository's CI: the pull-request workflow's file, and the event that runs it. */
 export const CI_WORKFLOW = Object.freeze({ file: ".github/workflows/ci.yml", event: "pull_request" });
 
+/**
+ * The events GitHub DOCUMENTS as workflow triggers - a CLOSED set, one per
+ * section of "Events that trigger workflows"
+ * (docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows),
+ * retrieved 2026-10-05: 33 events. A trigger GitHub adds later reads UNKNOWN
+ * here until this list is refreshed from that page - the safe direction.
+ */
+export const DOCUMENTED_EVENTS = Object.freeze([
+  "branch_protection_rule", "check_run", "check_suite", "create", "delete", "deployment", "deployment_status",
+  "discussion", "discussion_comment", "fork", "gollum", "image_version", "issue_comment", "issues", "label",
+  "merge_group", "milestone", "page_build", "public", "pull_request", "pull_request_review",
+  "pull_request_review_comment", "pull_request_target", "push", "registry_package", "release",
+  "repository_dispatch", "schedule", "status", "watch", "workflow_call", "workflow_dispatch", "workflow_run",
+]);
+const KNOWN_EVENT = new Set(DOCUMENTED_EVENTS);
+
 /** A workflow file GitHub runs: directly under .github/workflows/, .yml or .yaml, never ref-qualified. */
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/\s@]+\.ya?ml$/;
-/** A GitHub event name: lowercase words joined by underscores (`pull_request`, `workflow_dispatch`). */
-const EVENT_NAME = /^[a-z]+(?:_[a-z]+)*$/;
 /** GitHub's timestamp form: UTC, to the second, with an optional fraction. */
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 
@@ -63,11 +83,12 @@ const isSha = (v) => typeof v === "string" && /^[0-9a-f]{40}$/.test(v);
 const isStr = (v) => typeof v === "string";
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const isTime = (v) => isStr(v) && TIMESTAMP.test(v) && Number.isFinite(Date.parse(v));
-const isEvent = (v) => isStr(v) && EVENT_NAME.test(v);
+/** A documented workflow-trigger event - not merely a string shaped like one. */
+const isEvent = (v) => isStr(v) && KNOWN_EVENT.has(v);
 const unknown = (reason) => evidence(UNKNOWN, { completeness: UNKNOWN, authority: UNKNOWN, reason });
 const known = (value, reason) => evidence(value, { completeness: COMPLETE, authority: AUTHORIZED, reason });
 
-/** A complete workflow configuration: a runnable workflow file, and the event that runs it. */
+/** A complete workflow configuration: a runnable workflow file, and the documented event that runs it. */
 const isWorkflowConfig = (w) => isObject(w) && isStr(w.file) && WORKFLOW_FILE.test(w.file) && isEvent(w.event);
 /** An identity as `resolveWorkflowIdentity` produces it. */
 const isIdentity = (v) => isObject(v) && isId(v.id) && isEvent(v.event);
@@ -84,7 +105,7 @@ export function resolveWorkflowIdentity(input) {
   const { fetcher, workflow = CI_WORKFLOW } = isObject(input) ? input : {};
   if (typeof fetcher !== "function") return unknown("no fetcher to resolve the workflow with");
   if (!isWorkflowConfig(workflow)) {
-    return unknown("the workflow is not a complete configuration: a .github/workflows/<name>.yml file and an event name");
+    return unknown("the workflow is not a complete configuration: a .github/workflows/<name>.yml file and a documented trigger event");
   }
   const name = workflow.file.slice(workflow.file.lastIndexOf("/") + 1);
   let res;
@@ -104,7 +125,7 @@ export function resolveWorkflowIdentity(input) {
  * in must carry these, or it cannot even be told apart from the CI workflow.
  */
 function placeRun(r) {
-  // Any string event places a run: only the CONFIGURED event is held to GitHub's name form.
+  // Any string event places a run: only the CONFIGURED event must be a documented trigger.
   if (!isObject(r) || !isId(r.id) || !isId(r.workflow_id) || !isStr(r.event) || !isSha(r.head_sha)) return null;
   return Object.freeze({ id: r.id, workflowId: r.workflow_id, event: r.event, headSha: r.head_sha, raw: r });
 }
@@ -137,19 +158,29 @@ export function isConfiguredRun(run, identity) {
   return run.workflowId === identity.id && run.event === identity.event;
 }
 
-/** Recency of an EXECUTION: when its latest attempt started, then its attempt number, then its run id. */
-function isNewer(a, b) {
-  const ta = Date.parse(a.startedAt);
-  const tb = Date.parse(b.startedAt);
-  if (ta !== tb) return ta > tb;
-  if (a.attempt !== b.attempt) return a.attempt > b.attempt;
-  return a.id > b.id;
+/**
+ * Two copies of ONE run: its attempt numbers - and only its own - say which is
+ * newer. A later attempt cannot have started earlier, and one attempt cannot be
+ * in two states; either contradiction is a reason, not an answer.
+ */
+function laterAttempt(a, b) {
+  const [lo, hi] = a.attempt <= b.attempt ? [a, b] : [b, a];
+  if (lo.attempt === hi.attempt) {
+    const same = lo.startedAt === hi.startedAt && lo.status === hi.status && lo.conclusion === hi.conclusion;
+    return same ? { run: hi } : { reason: `run ${a.id} attempt ${a.attempt} was read twice in different states` };
+  }
+  if (Date.parse(hi.startedAt) < Date.parse(lo.startedAt)) {
+    return { reason: `run ${a.id}: attempt ${hi.attempt} started before attempt ${lo.attempt}` };
+  }
+  return { run: hi };
 }
 
 /**
  * THE selection rule: among the placed runs the identity admits, the latest
- * EXECUTION, in any listing order. Returns `{ run }` (null when none applies),
- * or `{ reason }` when the runs cannot decide it.
+ * EXECUTION, in any listing order. Copies of one run resolve by its attempts;
+ * different runs are ordered ONLY by when their latest attempt started, and a
+ * latest start shared by more than one run is UNKNOWN. Returns `{ run }` (null
+ * when none applies), or `{ reason }` when the runs cannot decide it.
  */
 export function latestExecution(placed, identity) {
   const byRun = new Map();
@@ -162,21 +193,25 @@ export function latestExecution(placed, identity) {
       byRun.set(e.id, e);
       continue;
     }
-    // The same run listed twice: a listing read while the run changed.
-    const [lo, hi] = seen.attempt <= e.attempt ? [seen, e] : [e, seen];
-    if (lo.attempt === hi.attempt) {
-      const same = lo.startedAt === hi.startedAt && lo.status === hi.status && lo.conclusion === hi.conclusion;
-      if (!same) return { reason: `run ${e.id} attempt ${e.attempt} was read twice in different states` };
-      continue;
-    }
-    if (Date.parse(hi.startedAt) < Date.parse(lo.startedAt)) {
-      return { reason: `run ${e.id}: attempt ${hi.attempt} started before attempt ${lo.attempt}` };
-    }
-    byRun.set(e.id, hi);
+    const resolved = laterAttempt(seen, e);
+    if (resolved.reason) return resolved;
+    byRun.set(e.id, resolved.run);
   }
   let latest = null;
+  let tied = [];
   for (const e of byRun.values()) {
-    if (latest === null || isNewer(e, latest)) latest = e;
+    const t = Date.parse(e.startedAt);
+    const top = latest === null ? -Infinity : Date.parse(latest.startedAt);
+    if (t > top) {
+      latest = e;
+      tied = [];
+    } else if (t === top) {
+      tied.push(e.id);
+    }
+  }
+  if (tied.length) {
+    const ids = [latest.id, ...tied].sort((x, y) => x - y).join(", ");
+    return { reason: `runs ${ids} all started at ${latest.startedAt}; nothing documented orders them` };
   }
   return { run: latest };
 }

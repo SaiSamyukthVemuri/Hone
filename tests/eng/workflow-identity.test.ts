@@ -8,7 +8,7 @@ import path from "node:path";
 import { AUTHORIZED, COMPLETE, INCOMPLETE, UNKNOWN, evidence, mayAssertPositive } from "../../scripts/eng/evidence.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { CI_WORKFLOW, isConfiguredRun, latestExecution, resolveWorkflowIdentity, selectHeadRun, selectStreakRuns } from "../../scripts/eng/workflow-identity.mjs";
+import { CI_WORKFLOW, DOCUMENTED_EVENTS, isConfiguredRun, latestExecution, resolveWorkflowIdentity, selectHeadRun, selectStreakRuns } from "../../scripts/eng/workflow-identity.mjs";
 
 // ===========================================================================
 // ENG-LOOP-03 acceptance: the repository's CI workflow is a workflow ID, and
@@ -17,22 +17,25 @@ import { CI_WORKFLOW, isConfiguredRun, latestExecution, resolveWorkflowIdentity,
 //
 // PR #795 matched CI runs by string equality on `path`, which GitHub documents
 // only as "the full path of the workflow" - with ref-qualified examples. A valid
-// CI run could be missed and read as "no CI yet". This lane's first review then
-// showed that "latest" by highest run id is wrong too: a re-run keeps its id.
-// What is proved here:
+// CI run could be missed and read as "no CI yet". Its reviews then showed that
+// "latest" by highest run id is wrong (a re-run keeps its id), that attempt
+// numbers cannot order DIFFERENT runs, and that an event name must be a real,
+// documented one. What is proved here:
 //
 //   1. the configured ci.yml is resolved ONCE, by GitHub, to its workflow id;
-//      a malformed or partial workflow override, or a missing or malformed
-//      identity, fails CLOSED - UNKNOWN, never "no CI" - and nothing throws;
+//      a malformed or partial workflow override - including any event GitHub
+//      does not document as a trigger - or a missing or malformed identity,
+//      fails CLOSED: UNKNOWN, never "no CI", and nothing throws;
 //   2. every path form of the configured workflow - plain, ref-qualified,
 //      owner-qualified, renamed under the same id - selects the same run;
 //   3. a similarly named workflow with another id never matches, not even one
 //      whose path is byte-identical;
 //   4. unrelated workflows and events never affect the result: a seeded
 //      property test against the rule restated independently;
-//   5. exact-head selection is the latest EXECUTION at the exact head: by the
-//      latest attempt's start, then the attempt, then the run id - in any
-//      listing order, and a re-run of an older run counts as the newest;
+//   5. exact-head selection is the latest EXECUTION at the exact head: copies
+//      of one run are ordered by its attempts; different runs ONLY by when
+//      their latest attempt started, and a tie at the latest start is UNKNOWN -
+//      never broken by another run's attempt number or by a run id;
 //   6. the failure streak's selection IS the exact-head selection, per head;
 //   7. read-only, single-shot, and blind to external checks by construction.
 
@@ -155,24 +158,24 @@ function randomRuns(r: ReturnType<typeof seeded>, heads: string[]): Json[] {
       status,
       conclusion,
       run_attempt: 1 + Math.floor(r.rand() * 3),
-      run_started_at: at(Math.floor(r.rand() * 12)),
+      run_started_at: at(Math.floor(r.rand() * 20)),
       head_sha: r.pick(heads),
     });
   });
   return runs.sort(() => r.rand() - 0.5);
 }
 
-/** The rule, restated independently of the code under test (ids unique). */
-const expectedAt = (runs: Json[], head: string): number | null => {
+/**
+ * The rule, restated independently of the code under test (ids unique): the
+ * applicable run that started last - and UNKNOWN when more than one shares
+ * that latest start. Attempt numbers and run ids play no part across runs.
+ */
+const expectedAt = (runs: Json[], head: string): number | null | string => {
   const ok = runs.filter((x) => x.head_sha === head && x.workflow_id === CI_ID && x.event === "pull_request");
   if (!ok.length) return null;
-  const key = (x: Json) => [Date.parse(x.run_started_at), x.run_attempt, x.id];
-  const later = (a: Json, b: Json) => {
-    const [ka, kb] = [key(a), key(b)];
-    for (let i = 0; i < 3; i++) if (ka[i] !== kb[i]) return ka[i] > kb[i];
-    return false;
-  };
-  return ok.reduce((best, x) => (later(x, best) ? x : best)).id;
+  const top = Math.max(...ok.map((x) => Date.parse(x.run_started_at)));
+  const atTop = ok.filter((x) => Date.parse(x.run_started_at) === top);
+  return atTop.length === 1 ? atTop[0].id : UNKNOWN;
 };
 
 const permutations = <T>(xs: T[]): T[][] =>
@@ -281,6 +284,65 @@ describe("1b. a workflow override is validated in full before any lookup, and fa
   it("malformed event type or value", () => {
     const events: Json[] = [1, null, false, ["pull_request"], {}, "", " ", "Pull Request", "pull-request", "pull_request ", "PULL_REQUEST", "pull__request"];
     for (const event of events) expectClosed(`event ${JSON.stringify(event)}`, { file: CI_PATH, event });
+  });
+
+  it("an event-SHAPED name that GitHub does not document is not an event: `pull_requset` and its kin are UNKNOWN", () => {
+    // A typo; a plausible-sounding non-trigger (pull-request comments arrive as
+    // issue_comment); and the event GitHub stamps on its own managed runs.
+    for (const event of ["pull_requset", "pull_request_comment", "dynamic", "pull_requests", "pullrequest", "on_push"]) {
+      expectClosed(`event ${event}`, { file: CI_PATH, event });
+    }
+  });
+
+  it("over thousands of event-shaped strings - random words and every one-edit typo of every documented event - only documented events resolve", () => {
+    const r = seeded(4189166708 % 2 ** 31);
+    const letters = [..."abcdefghijklmnopqrstuvwxyz"];
+    const word = () => Array.from({ length: 1 + Math.floor(r.rand() * 9) }, () => r.pick(letters)).join("");
+    const candidates = new Set<string>(["pull_requset", "pull_request_comment", "dynamic"]);
+    for (let k = 0; k < 2000; k++) candidates.add(Array.from({ length: 1 + Math.floor(r.rand() * 3) }, word).join("_"));
+    for (const e of DOCUMENTED_EVENTS as string[]) {
+      for (let i = 0; i < e.length; i++) {
+        candidates.add(e.slice(0, i) + e.slice(i + 1)); // a letter dropped
+        candidates.add(e.slice(0, i) + e[i] + e.slice(i)); // a letter doubled
+        candidates.add(e.slice(0, i) + r.pick(letters) + e.slice(i + 1)); // a letter replaced
+        if (i + 1 < e.length) candidates.add(e.slice(0, i) + e[i + 1] + e[i] + e.slice(i + 2)); // two swapped
+      }
+      for (const variant of [`${e}s`, e.toUpperCase(), e.replace(/_/g, ""), e.replace(/_/g, "-")]) candidates.add(variant);
+    }
+    let outside = 0;
+    const wrong: string[] = [];
+    for (const event of candidates) {
+      const calls: Json[] = [];
+      let identity: Json;
+      try {
+        identity = resolveWorkflowIdentity({ fetcher: fetcherFor(workflowAnswer(), calls), workflow: { file: CI_PATH, event } });
+      } catch {
+        wrong.push(`${event} (threw)`);
+        continue;
+      }
+      const documented = (DOCUMENTED_EVENTS as string[]).includes(event);
+      if (!documented) outside += 1;
+      const ok = documented
+        ? mayAssertPositive(identity) && calls.length === 1
+        : identity.value === UNKNOWN && !mayAssertPositive(identity) && calls.length === 0;
+      if (!ok) wrong.push(event);
+    }
+    expect(wrong).toEqual([]);
+    // Anti-vacuity: the sweep really tried thousands of undocumented names (2,749 with this seed).
+    expect(outside).toBeGreaterThan(2500);
+  });
+
+  it("every documented trigger is accepted, and the closed set is the documented one", () => {
+    expect(DOCUMENTED_EVENTS).toHaveLength(33);
+    expect(Object.isFrozen(DOCUMENTED_EVENTS)).toBe(true);
+    expect([...DOCUMENTED_EVENTS]).toEqual([...new Set(DOCUMENTED_EVENTS)].sort());
+    expect(DOCUMENTED_EVENTS).toEqual(expect.arrayContaining(["pull_request", "push", "schedule", "workflow_dispatch", "merge_group", "pull_request_target"]));
+    expect(DOCUMENTED_EVENTS).toContain(CI_WORKFLOW.event);
+    for (const event of DOCUMENTED_EVENTS as string[]) {
+      const calls: Json[] = [];
+      const identity = resolveWorkflowIdentity({ fetcher: fetcherFor(workflowAnswer(), calls), workflow: { file: CI_PATH, event } });
+      expect({ event, positive: mayAssertPositive(identity), requests: calls.length }).toEqual({ event, positive: true, requests: 1 });
+    }
   });
 
   it("an override that is not a workflow object at all", () => {
@@ -505,20 +567,8 @@ describe("5. exact-head selection: the latest applicable pull_request run at the
   });
 });
 
-describe("5b. latest means the latest EXECUTION, not the highest run id (re-runs keep their id)", () => {
-  it("a newer run id that executed earlier loses to an older run id re-run later - whichever way it went", () => {
-    // Run 101 passed first; run 100 was then re-run, later, and FAILED.
-    // Highest-id would say GREEN from a stale execution.
-    const failedRerun = [run(101, { run_started_at: at(20) }), run(100, { run_attempt: 2, run_started_at: at(30), conclusion: "failure" })];
-    expect(pick(failedRerun)).toEqual([100, 2]);
-    // And the other way: the re-run of the older run passed after the newer one failed.
-    const passedRerun = [run(101, { run_started_at: at(20), conclusion: "failure" }), run(100, { run_attempt: 2, run_started_at: at(30) })];
-    expect(pick(passedRerun)).toEqual([100, 2]);
-    // Once the newer run is itself re-run later still, it is the newest again.
-    expect(pick([run(101, { run_attempt: 2, run_started_at: at(40) }), run(100, { run_attempt: 2, run_started_at: at(30) })])).toEqual([101, 2]);
-  });
-
-  it("the same run id listed twice: the later attempt wins, in either order", () => {
+describe("5b. latest means the latest EXECUTION: attempts order one run; only start times order different runs", () => {
+  it("a re-run of the SAME run id, started later, wins - in either listing order", () => {
     const first = run(100, { run_attempt: 1, run_started_at: at(10), conclusion: "failure" });
     const second = run(100, { run_attempt: 2, run_started_at: at(30), conclusion: "success" });
     expect(pick([first, second])).toEqual([100, 2]);
@@ -529,24 +579,56 @@ describe("5b. latest means the latest EXECUTION, not the highest run id (re-runs
     expect(pick([second, { ...second }])).toEqual([100, 2]);
   });
 
-  it("listing order is irrelevant: every permutation of a re-run history selects the same execution", () => {
-    const history = [
+  it("distinct runs with different start times: the later start wins - whichever way it went", () => {
+    // Run 101 passed first; run 100 was then re-run, later, and FAILED: highest-id would say GREEN.
+    expect(pick([run(101, { run_started_at: at(20) }), run(100, { run_attempt: 2, run_started_at: at(30), conclusion: "failure" })])).toEqual([100, 2]);
+    // The other way: the re-run passed after the newer run failed - highest-id would say RED.
+    expect(pick([run(101, { run_started_at: at(20), conclusion: "failure" }), run(100, { run_attempt: 2, run_started_at: at(30) })])).toEqual([100, 2]);
+    // Once the newer run is itself re-run later still, it is the newest again.
+    expect(pick([run(101, { run_attempt: 2, run_started_at: at(40) }), run(100, { run_attempt: 2, run_started_at: at(30) })])).toEqual([101, 2]);
+  });
+
+  it("distinct runs with IDENTICAL start times are UNKNOWN - neither a stale pass nor a stale failure is chosen", () => {
+    const t = at(30);
+    // Would-be false GREEN: a pass and a failure that started in the same second.
+    expect(pick([run(100, { run_attempt: 2, run_started_at: t, conclusion: "success" }), run(101, { run_started_at: t, conclusion: "failure" })])).toBe(UNKNOWN);
+    // Would-be false RED: the same, outcomes swapped.
+    expect(pick([run(100, { run_attempt: 2, run_started_at: t, conclusion: "failure" }), run(101, { run_started_at: t, conclusion: "success" })])).toBe(UNKNOWN);
+    // Neither another run's attempt number nor a run id breaks the tie.
+    expect(pick([run(100, { run_attempt: 3, run_started_at: t }), run(101, { run_attempt: 1, run_started_at: t })])).toBe(UNKNOWN);
+    expect(pick([run(100, { run_started_at: t }), run(101, { run_started_at: t })])).toBe(UNKNOWN);
+    expect(pick([run(100, { run_started_at: t }), run(101, { run_started_at: t }), run(102, { run_started_at: t })])).toBe(UNKNOWN);
+    // One instant written two ways is still one instant.
+    expect(pick([run(100, { run_started_at: "2026-10-05T12:30:00Z" }), run(101, { run_started_at: "2026-10-05T12:30:00.000Z" })])).toBe(UNKNOWN);
+    // And it says why.
+    expect(selectHeadRun({ identity: ID, runs: [run(101, { run_started_at: t }), run(100, { run_started_at: t })], head: H }).reason).toBe(
+      `runs 100, 101 all started at ${t}; nothing documented orders them`,
+    );
+  });
+
+  it("a tie BELOW the latest start decides nothing: a strictly later execution is still the latest", () => {
+    const runs = [run(100, { run_started_at: at(10) }), run(101, { run_started_at: at(10) }), run(102, { run_started_at: at(20) })];
+    for (const order of permutations(runs)) expect(pick(order)).toEqual([102, 1]);
+  });
+
+  it("run_attempt compares the attempts of ONE run, never two runs", () => {
+    // Within one run the attempt decides, even when its starts tie.
+    expect(pick([run(100, { run_attempt: 1, run_started_at: at(30) }), run(100, { run_attempt: 2, run_started_at: at(30) })])).toEqual([100, 2]);
+    // Across runs a far higher attempt that started earlier still loses to the later start.
+    expect(pick([run(100, { run_attempt: 5, run_started_at: at(10) }), run(101, { run_attempt: 1, run_started_at: at(11) })])).toEqual([101, 1]);
+  });
+
+  it("listing order is irrelevant: every permutation selects the same execution - or is UNKNOWN every time", () => {
+    const decided = [
       run(100, { run_attempt: 3, run_started_at: at(50), conclusion: "failure" }),
       run(101, { run_started_at: at(20) }),
       run(102, { run_attempt: 2, run_started_at: at(45), conclusion: "cancelled" }),
       run(100, { run_attempt: 2, run_started_at: at(35), conclusion: "success" }),
       run(9001, { workflow_id: OTHER_ID, run_started_at: at(99), conclusion: "success" }),
     ];
-    const seen = new Set(permutations(history).map((order) => JSON.stringify(pick(order))));
-    expect([...seen]).toEqual([JSON.stringify([100, 3])]);
-  });
-
-  it("a tie in start time is broken deterministically: the higher attempt, then the higher run id", () => {
-    const t = at(30);
-    expect(pick([run(100, { run_attempt: 2, run_started_at: t }), run(101, { run_attempt: 1, run_started_at: t })])).toEqual([100, 2]);
-    expect(pick([run(101, { run_attempt: 1, run_started_at: t }), run(100, { run_attempt: 2, run_started_at: t })])).toEqual([100, 2]);
-    expect(pick([run(100, { run_started_at: t }), run(101, { run_started_at: t })])).toEqual([101, 1]);
-    expect(pick([run(101, { run_started_at: t }), run(100, { run_started_at: t })])).toEqual([101, 1]);
+    expect([...new Set(permutations(decided).map((order) => JSON.stringify(pick(order))))]).toEqual([JSON.stringify([100, 3])]);
+    const tiedAtTop = [...decided.slice(0, 4), run(103, { run_started_at: at(50) })];
+    expect([...new Set(permutations(tiedAtTop).map((order) => JSON.stringify(pick(order))))]).toEqual([JSON.stringify(UNKNOWN)]);
   });
 
   it("copies of one run that contradict each other make the answer UNKNOWN", () => {
@@ -557,16 +639,22 @@ describe("5b. latest means the latest EXECUTION, not the highest run id (re-runs
     expect(pick([run(100, { run_attempt: 2, run_started_at: at(30) }), run(100, { run_attempt: 2, run_started_at: at(31) })])).toBe(UNKNOWN);
   });
 
-  it("over 500 seeded histories with re-runs and tied start times, the selection is exactly the rule restated", () => {
-    const r = seeded(4188883055 % 2 ** 31);
+  it("over 500 seeded histories with re-runs and tied start times, exactly the rule restated", () => {
+    const r = seeded(4189166724 % 2 ** 31);
     const mismatches: string[] = [];
+    const outcomes = { decided: 0, tied: 0, none: 0 };
     for (let k = 0; k < 500; k++) {
       const runs = randomRuns(r, [H]);
       const want = expectedAt(runs, H);
       const got = headId(runs);
+      outcomes[want === UNKNOWN ? "tied" : want === null ? "none" : "decided"] += 1;
       if (got !== want) mismatches.push(`${JSON.stringify(runs.map((x) => [x.id, x.workflow_id, x.event, x.run_attempt, x.run_started_at]))}: ${got} vs ${want}`);
     }
     expect(mismatches).toEqual([]);
+    // Anti-vacuity: the histories exercised every branch of the rule.
+    expect(outcomes.decided).toBeGreaterThan(100);
+    expect(outcomes.tied).toBeGreaterThan(10);
+    expect(outcomes.none).toBeGreaterThan(10);
   });
 });
 
@@ -612,18 +700,41 @@ describe("6. failure-streak selection uses exactly the exact-head rule", () => {
     const r = seeded(795);
     const heads = [H3, H2, H1];
     const disagreements: string[] = [];
+    const seen = { decided: 0, undecidable: 0 };
     for (let k = 0; k < 300; k++) {
       const runs = randomRuns(r, heads);
       const streak = selectStreakRuns({ identity: ID, runs, heads });
+      const expected = heads.map((head) => expectedAt(runs, head));
+      if (expected.includes(UNKNOWN)) {
+        // A head that cannot be decided makes the streak undecidable as a whole.
+        seen.undecidable += 1;
+        if (streak.value !== UNKNOWN) disagreements.push(`k=${k}: a tied head, yet the streak decided`);
+        continue;
+      }
+      seen.decided += 1;
       heads.forEach((head, i) => {
         const alone = selectHeadRun({ identity: ID, runs: runs.filter((x) => x.head_sha === head), head });
         const viaStreak = streak.value[i];
-        if (viaStreak.head !== head || JSON.stringify(viaStreak.run) !== JSON.stringify(alone.value) || (alone.value?.id ?? null) !== expectedAt(runs, head)) {
+        if (viaStreak.head !== head || JSON.stringify(viaStreak.run) !== JSON.stringify(alone.value) || (alone.value?.id ?? null) !== expected[i]) {
           disagreements.push(`k=${k} head=${head.slice(0, 7)}`);
         }
       });
     }
     expect(disagreements).toEqual([]);
+    // Anti-vacuity: both branches ran (with this seed, 6 histories had a tied head).
+    expect(seen.decided).toBeGreaterThan(50);
+    expect(seen.undecidable).toBeGreaterThan(3);
+  });
+
+  it("a head whose latest start is tied between two runs makes the whole streak UNKNOWN", () => {
+    const runs = [
+      run(303, { head_sha: H3, run_started_at: at(40) }),
+      run(202, { head_sha: H2, run_started_at: at(30), conclusion: "failure" }),
+      run(201, { head_sha: H2, run_attempt: 2, run_started_at: at(30) }),
+    ];
+    const streak = selectStreakRuns({ identity: ID, runs, heads: [H3, H2] });
+    expect(streak.value).toBe(UNKNOWN);
+    expect(streak.reason).toMatch(/runs 201, 202 all started at/);
   });
 
   it("one head that cannot be decided makes the whole streak selection UNKNOWN", () => {
@@ -632,17 +743,23 @@ describe("6. failure-streak selection uses exactly the exact-head rule", () => {
     expect(selectStreakRuns({ identity: ID, runs: [], heads: [H3, "not-a-sha"] }).value).toBe(UNKNOWN);
   });
 
-  it("each rule is written once: one id comparison, one recency order, and the streak is built FROM the exact-head selection", () => {
+  it("each rule is written once: one id comparison, attempts compared only within a run, and no run id used as recency", () => {
     const src = readFileSync(path.resolve(__dirname, "../../scripts/eng/workflow-identity.mjs"), "utf8");
     const code = src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
     expect(code).toContain("export function isConfiguredRun");
     expect(code.match(/workflowId ===/g)).toEqual(["workflowId ==="]);
     expect(code.match(/isConfiguredRun\(/g)).toHaveLength(2); // its definition, and latestExecution
-    expect(code.match(/isNewer\(/g)).toHaveLength(2); // its definition, and latestExecution
+    expect(code.match(/laterAttempt\(/g)).toHaveLength(2); // its definition, and latestExecution
     expect(code.match(/latestExecution\(/g)).toHaveLength(2); // its definition, and selectHeadRun
+    // Attempt numbers are compared in ONE place - the copies of a single run.
+    const sameRun = code.slice(code.indexOf("function laterAttempt"), code.indexOf("export function latestExecution"));
+    expect(sameRun).toMatch(/\.attempt\s*(<=|===)/);
+    expect(code.replace(sameRun, "")).not.toMatch(/\.attempt\s*(<|>|<=|>=|===|!==)\s*\w/);
+    // A run id is identity, never recency: no run id is ever ordered.
+    expect(code).not.toMatch(/\.id\s*(<|>|<=|>=)\s*\w|\.id\s*-\s*\w+\.id/);
     const streakBody = code.slice(code.indexOf("export function selectStreakRuns"));
     expect(streakBody).toMatch(/selectHeadRun\(\{/);
-    expect(streakBody).not.toMatch(/latestExecution\(|isConfiguredRun\(|isNewer\(/);
+    expect(streakBody).not.toMatch(/latestExecution\(|isConfiguredRun\(|laterAttempt\(/);
     // A run's path is projected for display and read nowhere else.
     const projection = code.slice(code.indexOf("function projectExecution"), code.indexOf("export function isConfiguredRun"));
     expect(code.replace(projection, "")).not.toMatch(/\.path\b/);
