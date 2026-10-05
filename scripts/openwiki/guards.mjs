@@ -186,6 +186,10 @@ export function findConflictMarkers(text) {
 
 const FACTUAL_PAGE_EXCLUDED = new Set(["index.md", "log.md", "INSTRUCTIONS.md"]);
 
+const isClaimSidecar = (p) => p.startsWith("openwiki/.claims/") && p.endsWith(".json");
+/** The page a Claim sidecar describes: openwiki/.claims/<x>.json -> openwiki/<x>.md. */
+const sidecarPage = (p) => `openwiki/${p.slice("openwiki/.claims/".length, -".json".length)}.md`;
+
 function isFactualPage(p) {
   return (
     p.startsWith("openwiki/") &&
@@ -287,8 +291,8 @@ export function checkProvenance(root, generatedChanges, manifestPages) {
   for (const change of generatedChanges) {
     const p = normalizePath(change.path);
     if (isFactualPage(p)) touched.set(p, p);
-    else if (p.startsWith("openwiki/.claims/") && p.endsWith(".json")) {
-      const page = `openwiki/${p.slice("openwiki/.claims/".length, -".json".length)}.md`;
+    else if (isClaimSidecar(p)) {
+      const page = sidecarPage(p);
       if (!touched.has(page)) touched.set(page, p);
     }
   }
@@ -488,6 +492,71 @@ export function checkPageManifest(state) {
     }
   }
   return MANIFEST_PROBLEMS.filter((code) => problems.has(code));
+}
+
+/** The run-metadata problems an interrupted openwiki@0.6.1 update leaves, and only those. */
+const INTERRUPTED_LAST_UPDATE_PROBLEMS = Object.freeze(["status-not-complete", "git-head-mismatch"]);
+
+const canonicalJson = (value) =>
+  isPlainObject(value)
+    ? `{${Object.keys(value)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+        .join(",")}}`
+    : JSON.stringify(value);
+
+/**
+ * WIKI-INTERRUPTED-RETRY-01. Whether one generator attempt ended in the single
+ * state openwiki@0.6.1 leaves when its process ran to completion but it
+ * SKIPPED page jobs. Read from the pinned package:
+ *
+ *   - a page worker that throws before submitting is restored and skipped
+ *     (agent/repository-runner.js -> generation/repository-run.js
+ *     skipRepositoryPage); OpenWiki's own notice says the page "will be
+ *     reconsidered on the next update";
+ *   - finish keeps a skipped page's PREVIOUS manifest entry verbatim
+ *     (generation/page-manifest.js replaceRepositoryPageManifest,
+ *     preservePages), while finalization may still rewrite the page bytes and
+ *     its Claim sidecar;
+ *   - finish then writes .last-update.json with `status: "interrupted"` and
+ *     the gitHead the run STARTED from (baseGitHead), removes
+ *     openwiki/.run.json as its last step, and the CLI exits 0
+ *     (cli/runners.js runPrintCommand).
+ *
+ * So the state is exactly: strict-schema run metadata whose only problems
+ * are status-not-complete and git-head-mismatch, with status "interrupted"
+ * and gitHead equal to the committed cursor the pass started from; and every
+ * provenance finding a manifest-page-version-mismatch whose manifest entry is
+ * the committed one, unchanged (a skipped page's preserved entry). Anything
+ * else wrong (a manifest outside its schema, a broken-link stamp, a conflict
+ * marker, a privacy hit, any other metadata or provenance finding) means it is
+ * not this state. The caller has already required a clean exit, no timeout,
+ * no run state left behind, a clean path gate and no write outside scope.
+ *
+ * Pure: `lastUpdate` and `checks` are what validation read and found;
+ * `manifestPages` and `basePages` are the attempt's and the committed
+ * manifest `pages` maps.
+ */
+export function isInterruptedGeneration({ lastUpdate, baseGitHead, checks, manifestPages, basePages }) {
+  if (lastUpdate?.state !== "present-valid" || !isPlainObject(lastUpdate.value)) return false;
+  if (lastUpdate.value.status !== "interrupted") return false;
+  if (typeof baseGitHead !== "string" || !COMMIT_SHA.test(baseGitHead) || lastUpdate.value.gitHead !== baseGitHead) return false;
+  if (checks.lastUpdate.length !== INTERRUPTED_LAST_UPDATE_PROBLEMS.length) return false;
+  if (!INTERRUPTED_LAST_UPDATE_PROBLEMS.every((code) => checks.lastUpdate.includes(code))) return false;
+  for (const found of [checks.manifest, checks.brokenLinkStamps, checks.conflictMarkers, checks.privacyHits]) {
+    if (found.length > 0) return false;
+  }
+  if (!isPlainObject(manifestPages) || !isPlainObject(basePages)) return false;
+  return checks.provenance.every((finding) => {
+    if (finding.problem !== "manifest-page-version-mismatch") return false;
+    const file = normalizePath(finding.file);
+    const key = `/${isClaimSidecar(file) ? sidecarPage(file) : file}`;
+    return (
+      Object.hasOwn(basePages, key) &&
+      Object.hasOwn(manifestPages, key) &&
+      canonicalJson(manifestPages[key]) === canonicalJson(basePages[key])
+    );
+  });
 }
 
 /**

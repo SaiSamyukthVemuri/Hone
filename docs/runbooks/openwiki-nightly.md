@@ -208,14 +208,45 @@ be told apart from any other failure, and the contract is deliberately narrow:
 - **A clean restart.** Before the retry, the subject is reset to the production tip and cleaned, so nothing the
   failed attempt wrote survives, its `openwiki/.run.json` included. `HEAD` is then pinned to the source head
   again. If that reset fails, the pass fails; it never retries on a tree it could not restore.
-- **Nothing else is retried:**
-  - the path gate, scope, run metadata, provenance or privacy checks;
-  - a run OpenWiki itself records as `interrupted` while exiting 0 (it fails as `LAST_UPDATE_INVALID`);
+- **One more reason may spend that same retry:** OpenWiki's interrupted state, below. Nothing else is retried:
+  - the path gate, scope, any other run metadata finding, or a manifest, provenance, broken-link,
+    conflict-marker or privacy finding;
   - anything involving GitHub or publishing.
 - **Reporting.** The report's `generator` holds `attempts` (1 or 2), `retried`, `finalExitCode`, `timedOut`,
-  and the final attempt's output size and SHA-256. When a failed first attempt is not retried, it also holds
-  `noRetryReason` (`timed-out` or `insufficient-time`). No attempt's output is ever kept. A failure that
-  survives both attempts is `GENERATOR_EXIT_NONZERO` with `attempts: 2`.
+  and the final attempt's output size and SHA-256. A retried pass also holds `retryReason`
+  (`generator_exit_nonzero` or `interrupted_generation`). When a first attempt is not retried for lack of time
+  or because it timed out, it holds `noRetryReason` (`timed-out` or `insufficient-time`). No attempt's output is
+  ever kept. A failure that survives both attempts is `GENERATOR_EXIT_NONZERO` with `attempts: 2`.
+
+### Interrupted-generation retry (WIKI-INTERRUPTED-RETRY-01)
+
+Every acceptance pass on the host failed `LAST_UPDATE_INVALID` this way (2026-10-05). It was not host state: the
+committed wiki, its manifest and its Claim sidecars were consistent, and no `.run.json` was left anywhere. Read
+from the pinned `openwiki@0.6.1`:
+
+- a page worker that throws before submitting is restored and **skipped**. OpenWiki's own notice says the page
+  "will be reconsidered on the next update";
+- finish keeps a skipped page's **previous manifest entry verbatim**, while finalization can still rewrite the
+  page and its Claim sidecar. That is the host's `manifest-page-version-mismatch` with an agreeing sidecar;
+- finish then writes `.last-update.json` with `status: "interrupted"` and the **gitHead the run started from**,
+  removes `openwiki/.run.json` as its last step, and the CLI exits 0.
+
+That state, and only that state, may spend the pass's single retry. The runner requires all of these:
+
+- a clean exit, no timeout, and no `openwiki/.run.json` left behind;
+- a clean path gate and no write outside the generated scope (an authored input included);
+- run metadata in OpenWiki's strict schema whose **only** problems are `status-not-complete` and
+  `git-head-mismatch`, with `status` exactly `interrupted` and `gitHead` exactly the committed cursor the pass
+  started from;
+- no manifest schema problem, broken-link stamp, conflict marker or privacy hit;
+- every provenance finding a `manifest-page-version-mismatch` whose manifest entry is **identical to the
+  committed one** (a skipped page's preserved entry).
+
+The interrupted attempt is never published or reused, and nothing it put in the report survives. The retry is
+the one above: the same clean restart, 60-second wait, budget checks and single budget. If the retry was
+already spent on a non-zero exit, the interrupted state fails the pass. A second interrupted attempt fails the
+pass closed as `LAST_UPDATE_INVALID` with `attempts: 2` and `retryReason: interrupted_generation`. Publishing
+and the timer are unaffected by any of this.
 
 ### Trust boundary
 
