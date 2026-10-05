@@ -30,6 +30,7 @@ import {
   createFixture,
   git,
   isolateGitConfig,
+  pageVersion,
   read,
   restoreGitConfig,
   stampProvenance,
@@ -1227,7 +1228,7 @@ describe("WIKI-RETRY-01: at most one generator retry, for generation only", () =
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(60_000);
     expect(seen).toEqual({ head: source2, runState: false, agents: AGENTS_AUTHORED, keptPage: "# Kept page\n\nFeature is 1.\n" });
-    expect(result.report.generator).toMatchObject({ attempts: 2, retried: true, finalExitCode: 0, timedOut: false });
+    expect(result.report.generator).toMatchObject({ attempts: 2, retried: true, retryReason: "generator_exit_nonzero", finalExitCode: 0, timedOut: false });
     expect(result.report.generator.noRetryReason).toBeUndefined();
     expect(prs).toHaveLength(1);
   });
@@ -1322,7 +1323,9 @@ describe("WIKI-RETRY-01: at most one generator retry, for generation only", () =
       "PATH_PRIVACY_REJECTED",
     ],
     [
-      "a run OpenWiki records as interrupted while exiting 0 (state validation)",
+      // Not openwiki@0.6.1's interrupted state: that keeps the BASE gitHead
+      // (see WIKI-INTERRUPTED-RETRY-01 below), so this is arbitrary state.
+      "an interrupted status recorded against the source head (state validation)",
       () =>
         openWikiLike({
           after: (cwd) => write(cwd, "openwiki/.last-update.json", lastUpdateJson(git(cwd, ["rev-parse", "HEAD"]), { status: "interrupted" })),
@@ -1397,7 +1400,8 @@ describe("WIKI-RETRY-01: at most one generator retry, for generation only", () =
       { sleep: async () => {} },
     );
     expect(result.outcome, result.reason).toBe("DRY_RUN");
-    expect(Object.keys(result.report.generator).sort()).toEqual(["attempts", "finalExitCode", "outputBytes", "outputSha256", "retried", "timedOut"]);
+    expect(Object.keys(result.report.generator).sort()).toEqual(["attempts", "finalExitCode", "outputBytes", "outputSha256", "retried", "retryReason", "timedOut"]);
+    expect(result.report.generator.retryReason).toBe("generator_exit_nonzero");
     expectNowhere(config.stateDir, result, LITERALS);
     const stateFiles = readdirSync(config.stateDir, { recursive: true }).map(String).filter((p) => !p.startsWith("home/"));
     for (const file of stateFiles) {
@@ -1406,6 +1410,297 @@ describe("WIKI-RETRY-01: at most one generator retry, for generation only", () =
       const text = readFileSync(full, "utf8");
       for (const literal of LITERALS) expect(text.includes(literal), `${literal} in ${file}`).toBe(false);
     }
+  });
+});
+
+describe("WIKI-INTERRUPTED-RETRY-01: one clean retry for openwiki@0.6.1's interrupted state, and nothing else", () => {
+  const SKIP_NOTICE = "openwiki/topic/kept-page.md was restored after its worker exited without submitting. It was skipped for this update and will be reconsidered on the next update.";
+  const COMMITTED_LAST_UPDATE = (fx: Fx) => git(fx.work, ["show", "HEAD:openwiki/.last-update.json"]);
+  const codes = (result: Result) => [result.reasonCode, ...((result.report.additionalReasons ?? []) as Array<{ reasonCode: string }>).map((r) => r.reasonCode)];
+  const recordingSleep = () =>
+    vi.fn(async (ms: number) => {
+      void ms;
+    });
+
+  /**
+   * openwiki@0.6.1 when a page worker throws before submitting, as read from
+   * the pinned package (guards.mjs isInterruptedGeneration): run state is
+   * written, the page is restored and SKIPPED, finalization still rewrites it
+   * and refreshes its Claim sidecar while finish keeps its PREVIOUS manifest
+   * entry verbatim, the update is recorded `interrupted` with the gitHead the
+   * run STARTED from, run state is removed last, and the CLI exits 0. A page
+   * the attempt did complete (`residue.md`) must never reach a later attempt.
+   */
+  function interruptedLike(baseGitHead: string, opts: { pages?: (cwd: string) => void; after?: (cwd: string) => void } = {}): Gen {
+    return async ({ cwd }) => {
+      write(cwd, "openwiki/.run.json", JSON.stringify({ phase: "pages" }));
+      write(cwd, "openwiki/topic/residue.md", "# Residue\n\nCompleted by the interrupted attempt.\n");
+      stampProvenance(cwd, ["openwiki/topic/residue.md"]);
+      write(cwd, "openwiki/topic/kept-page.md", "# Kept page\n\nFeature is 1.\n\nFinalized.\n");
+      const sidecar = JSON.parse(read(cwd, "openwiki/.claims/topic/kept-page.json"));
+      sidecar.pageVersion = pageVersion(cwd, "openwiki/topic/kept-page.md");
+      write(cwd, "openwiki/.claims/topic/kept-page.json", `${JSON.stringify(sidecar, null, 2)}\n`);
+      opts.pages?.(cwd);
+      write(cwd, "openwiki/.last-update.json", lastUpdateJson(baseGitHead, { status: "interrupted" }));
+      write(cwd, "AGENTS.md", AGENTS_TEMPLATE_REWRITE);
+      rmSync(path.join(cwd, "openwiki/.run.json"));
+      opts.after?.(cwd);
+      return { exitCode: 0, output: SKIP_NOTICE };
+    };
+  }
+
+  /** A new page with valid provenance, so a variant fails for exactly one reason. */
+  const addPage = (file: string, body: string) => (cwd: string) => {
+    write(cwd, file, body);
+    stampProvenance(cwd, [file]);
+  };
+
+  it("the interrupted state is exactly what openwiki@0.6.1 leaves: the runner names it, and it is the host's failure", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const { result } = await run(fx, interruptedLike(fx.source1), { publish: false });
+    expect(result.reasonCode).toBe("LAST_UPDATE_INVALID");
+    expect(result.report.checks.lastUpdate).toEqual(["status-not-complete", "git-head-mismatch"]);
+    // The host's signature: a manifest mismatch for the skipped page, its sidecar agreeing with the bytes.
+    expect(result.report.checks.provenance).toEqual([{ file: "openwiki/topic/kept-page.md", problem: "manifest-page-version-mismatch" }]);
+    expect(codes(result)).toEqual(["LAST_UPDATE_INVALID", "PROVENANCE_INVALID"]);
+  });
+
+  it("retries once, from a clean pinned tree, and a clean second attempt publishes nothing of the first", async () => {
+    const fx = createFixture();
+    const source2 = makeStale(fx);
+    const tip = git(fx.work, ["rev-parse", "HEAD"]);
+    const sleep = recordingSleep();
+    const generate = openWikiLike();
+    let seen: Record<string, unknown> | undefined;
+    let calls = 0;
+    const { result, generator, prs } = await run(
+      fx,
+      async (args) => {
+        calls += 1;
+        if (calls === 1) return interruptedLike(fx.source1)(args);
+        seen = {
+          head: git(args.cwd, ["rev-parse", "HEAD"]),
+          status: git(args.cwd, ["status", "--porcelain", "--untracked-files=all"]),
+          runState: existsSync(path.join(args.cwd, "openwiki/.run.json")),
+          residue: existsSync(path.join(args.cwd, "openwiki/topic/residue.md")),
+          keptPage: read(args.cwd, "openwiki/topic/kept-page.md"),
+          lastUpdate: read(args.cwd, "openwiki/.last-update.json"),
+          agents: read(args.cwd, "AGENTS.md"),
+          instructions: read(args.cwd, "openwiki/INSTRUCTIONS.md"),
+        };
+        return generate(args);
+      },
+      RETRY_ENABLED,
+      {},
+      { sleep },
+    );
+    expect(result.outcome, result.reason).toBe("PUBLISHED");
+    expect(generator).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(60_000);
+    expect(seen).toEqual({
+      head: source2,
+      status: "",
+      runState: false,
+      residue: false,
+      keptPage: "# Kept page\n\nFeature is 1.\n",
+      lastUpdate: `${COMMITTED_LAST_UPDATE(fx)}\n`,
+      agents: AGENTS_AUTHORED,
+      instructions: "# Instructions\n\nAuthored.\n",
+    });
+    expect(result.report.generator).toMatchObject({ attempts: 2, retried: true, retryReason: "interrupted_generation", finalExitCode: 0, timedOut: false });
+    expect(result.report.generator.noRetryReason).toBeUndefined();
+    // The report describes the attempt that was published, and only it.
+    expect(result.report.checks.lastUpdate).toEqual([]);
+    expect(result.report.checks.provenance).toEqual([]);
+    expect((result.report.discarded as Array<{ path: string }>).map((d) => d.path).sort()).toEqual([".github/workflows/openwiki-update.yml", "AGENTS.md"]);
+    // Exactly the clean run's change set: nothing the interrupted attempt wrote.
+    expect(prs).toHaveLength(1);
+    const head = originRef(fx, result.report.publish.branch)!;
+    expect(git(fx.origin, ["diff", "--name-status", "--no-renames", tip, head]).split("\n").sort()).toEqual([
+      "A\topenwiki/.claims/topic/new-page.json",
+      "A\topenwiki/topic/new-page.md",
+      "D\topenwiki/.claims/topic/old-page.json",
+      "D\topenwiki/topic/old-page.md",
+      "M\topenwiki/.claims/topic/kept-page.json",
+      "M\topenwiki/.last-update.json",
+      "M\topenwiki/.page-manifest.json",
+      "M\topenwiki/topic/kept-page.md",
+    ]);
+    expect(git(fx.origin, ["show", `${head}:openwiki/topic/kept-page.md`])).toBe("# Kept page\n\nFeature is 2.");
+    expect(git(fx.origin, ["show", `${head}:openwiki/INSTRUCTIONS.md`])).toBe("# Instructions\n\nAuthored.");
+    expect(JSON.parse(git(fx.origin, ["show", `${head}:openwiki/.last-update.json`])).gitHead).toBe(source2);
+    expect(git(fx.origin, ["rev-parse", "refs/heads/main"])).toBe(tip); // never merged
+  });
+
+  it("a second interrupted attempt fails closed after exactly two, publishing nothing", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const { result, generator, prs, config } = await run(fx, interruptedLike(fx.source1), RETRY_ENABLED, {}, { sleep });
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(result.reasonCode).toBe("LAST_UPDATE_INVALID");
+    expect(result.report.generator).toMatchObject({ attempts: 2, retried: true, retryReason: "interrupted_generation", finalExitCode: 0 });
+    expect(generator).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(prs).toEqual([]);
+    expect(originBranches(fx)).toEqual(["main"]);
+    expect(git(config.subjectDir as string, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
+  });
+
+  it.each<[string, (fx: Fx) => Gen, string]>([
+    ["metadata recorded against the source head, not the base", (fx) => interruptedLike(fx.source1, { after: (cwd) => write(cwd, "openwiki/.last-update.json", lastUpdateJson(git(cwd, ["rev-parse", "HEAD"]), { status: "interrupted" })) }), "LAST_UPDATE_INVALID"],
+    ["metadata recorded against another commit in history", (fx) => interruptedLike(fx.wiki1), "LAST_UPDATE_INVALID"],
+    ["a status other than interrupted", (fx) => interruptedLike(fx.source1, { after: (cwd) => write(cwd, "openwiki/.last-update.json", lastUpdateJson(fx.source1, { status: "running" })) }), "LAST_UPDATE_INVALID"],
+    ["complete metadata that never moved off the base", (fx) => interruptedLike(fx.source1, { after: (cwd) => write(cwd, "openwiki/.last-update.json", lastUpdateJson(fx.source1)) }), "LAST_UPDATE_INVALID"],
+    ["interrupted metadata with a key outside OpenWiki's schema", (fx) => interruptedLike(fx.source1, { after: (cwd) => write(cwd, "openwiki/.last-update.json", lastUpdateJson(fx.source1, { status: "interrupted", phase: "pages" })) }), "LAST_UPDATE_INVALID"],
+    ["interrupted metadata for an init run", (fx) => interruptedLike(fx.source1, { after: (cwd) => write(cwd, "openwiki/.last-update.json", lastUpdateJson(fx.source1, { status: "interrupted", command: "init" })) }), "LAST_UPDATE_INVALID"],
+    ["unparseable metadata", (fx) => interruptedLike(fx.source1, { after: (cwd) => write(cwd, "openwiki/.last-update.json", "{ interrupted\n") }), "LAST_UPDATE_INVALID"],
+    ["run state left behind", (fx) => interruptedLike(fx.source1, { after: (cwd) => write(cwd, "openwiki/.run.json", "{}") }), "RUN_STATE_LEFT_BEHIND"],
+  ])("arbitrary LAST_UPDATE_INVALID is never retried: %s", async (_label: string, gen: (fx: Fx) => Gen, reasonCode: string) => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const { result, generator, prs } = await run(fx, gen(fx), RETRY_ENABLED, {}, { sleep });
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(result.reasonCode).toBe(reasonCode);
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(result.report.generator).toMatchObject({ attempts: 1, retried: false, finalExitCode: 0 });
+    expect(result.report.generator.retryReason).toBeUndefined();
+    expect(prs).toEqual([]);
+  });
+
+  it.each<[string, (fx: Fx) => Gen, string]>([
+    ["a manifest outside OpenWiki's schema", (fx) => interruptedLike(fx.source1, { after: (cwd) => write(cwd, "openwiki/.page-manifest.json", JSON.stringify({ schemaVersion: 2, pages: {} })) }), "MANIFEST_INVALID"],
+    ["a path the privacy gate rejects", (fx) => interruptedLike(fx.source1, { pages: addPage("openwiki/topic/synthetic-person.md", "# Topic\n\nx.\n") }), "PATH_PRIVACY_REJECTED"],
+    ["a privacy hit in page content", (fx) => interruptedLike(fx.source1, { pages: addPage("openwiki/topic/notes.md", "# Notes\n\nSynthetic Person said so.\n") }), "CONTENT_PRIVACY_HITS"],
+    ["a provenance finding a skipped page cannot leave: the sidecar disagrees", (fx) => interruptedLike(fx.source1, { pages: (cwd) => {
+      const sidecar = JSON.parse(read(cwd, "openwiki/.claims/topic/kept-page.json"));
+      sidecar.pageVersion = `sha256:${"0".repeat(64)}`;
+      write(cwd, "openwiki/.claims/topic/kept-page.json", JSON.stringify(sidecar));
+    } }), "PROVENANCE_INVALID"],
+    ["a manifest mismatch whose entry is not the committed one", (fx) => interruptedLike(fx.source1, { pages: (cwd) => {
+      const manifest = JSON.parse(read(cwd, "openwiki/.page-manifest.json"));
+      manifest.pages["/openwiki/topic/kept-page.md"] = { pageVersion: `sha256:${"1".repeat(64)}` };
+      write(cwd, "openwiki/.page-manifest.json", JSON.stringify(manifest));
+    } }), "PROVENANCE_INVALID"],
+    ["a broken-link stamp", (fx) => interruptedLike(fx.source1, { pages: addPage("openwiki/topic/stamped.md", "# Stamped\n\n<!-- openwiki: broken internal link missing.md -->\n") }), "BROKEN_LINK_STAMPS"],
+    ["a conflict marker", (fx) => interruptedLike(fx.source1, { pages: addPage("openwiki/topic/merged.md", "# Merged\n\n<<<<<<< HEAD\na\n=======\nb\n>>>>>>> other\n") }), "CONFLICT_MARKERS"],
+    ["a write outside the generated scope", (fx) => interruptedLike(fx.source1, { pages: (cwd) => write(cwd, "lib/feature.ts", "export const feature = 3;\n") }), "UNEXPECTED_GENERATOR_WRITE"],
+    ["a write to the authored openwiki/INSTRUCTIONS.md", (fx) => interruptedLike(fx.source1, { pages: (cwd) => write(cwd, "openwiki/INSTRUCTIONS.md", "# Instructions\n\nRewritten.\n") }), "UNEXPECTED_GENERATOR_WRITE"],
+  ])("beside the interrupted marker, %s is never retried", async (_label: string, gen: (fx: Fx) => Gen, failure: string) => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const { result, generator, prs } = await run(fx, gen(fx), RETRY_ENABLED, {}, { sleep });
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(codes(result)).toContain(failure);
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(result.report.generator).toMatchObject({ attempts: 1, retried: false });
+    expect(result.report.generator.retryReason).toBeUndefined();
+    expect(prs).toEqual([]);
+  });
+
+  it("a non-interrupted provenance failure is never retried", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const gen = openWikiLike({ after: (cwd) => write(cwd, "openwiki/topic/kept-page.md", "# Kept page\n\nEdited after its provenance.\n") });
+    const { result, generator } = await run(fx, gen, RETRY_ENABLED, {}, { sleep });
+    expect(result.reasonCode).toBe("PROVENANCE_INVALID");
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("a timeout is never retried, whatever state it left", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const interrupted = interruptedLike(fx.source1);
+    const { result, generator } = await run(fx, async (args) => ({ ...(await interrupted(args)), exitCode: 1, timedOut: true }), RETRY_ENABLED, {}, { sleep });
+    expect(result.reasonCode).toBe("GENERATOR_EXIT_NONZERO");
+    expect(result.report.generator).toMatchObject({ attempts: 1, retried: false, timedOut: true, noRetryReason: "timed-out" });
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("no retry without enough of the one run budget, before the wait or after it", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    // 10 minutes of budget, less the 60 s delay, is under the 15-minute minimum a retry needs.
+    const before = await run(fx, interruptedLike(fx.source1), { timeoutMs: 600_000 }, {}, { sleep });
+    expect(before.result.reasonCode).toBe("LAST_UPDATE_INVALID");
+    expect(before.result.report.generator).toMatchObject({ attempts: 1, retried: false, noRetryReason: "insufficient-time" });
+    expect(before.generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+
+    const fx2 = createFixture();
+    makeStale(fx2);
+    const realNow = Date.now;
+    let skew = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
+    try {
+      const late = vi.fn(async () => {
+        skew = 580_000; // the timer fires 9 m 40 s late, leaving about 20 s
+      });
+      const after = await run(fx2, interruptedLike(fx2.source1), { timeoutMs: 600_000, minRetryBudgetMs: 60_000 }, {}, { sleep: late });
+      expect(late).toHaveBeenCalledTimes(1);
+      expect(after.generator).toHaveBeenCalledTimes(1);
+      expect(after.result.reasonCode).toBe("LAST_UPDATE_INVALID");
+      expect(after.result.report.generator).toMatchObject({ attempts: 1, retried: false, noRetryReason: "insufficient-time" });
+      expect(git(after.config.subjectDir as string, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("the single retry is shared: an interrupted second attempt after a non-zero first is not retried again", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const interrupted = interruptedLike(fx.source1);
+    let calls = 0;
+    const { result, generator } = await run(
+      fx,
+      async (args) => {
+        calls += 1;
+        return calls === 1 ? { exitCode: 1, output: "Our servers are currently overloaded. Please try again later." } : interrupted(args);
+      },
+      RETRY_ENABLED,
+      {},
+      { sleep },
+    );
+    expect(result.reasonCode).toBe("LAST_UPDATE_INVALID");
+    expect(result.report.generator).toMatchObject({ attempts: 2, retried: true, retryReason: "generator_exit_nonzero" });
+    expect(generator).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("a dry run records the retry facts and none of either attempt's provider output", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const LITERALS = [SKIP_NOTICE, "Quillon Vantablack", "sk-ant-uniquekeyvalue0123456789"];
+    const interrupted = interruptedLike(fx.source1);
+    const generate = openWikiLike();
+    let calls = 0;
+    const { result, config } = await run(
+      fx,
+      async (args) => {
+        calls += 1;
+        return calls === 1 ? { ...(await interrupted(args)), output: LITERALS.slice(0, 2).join("\n") } : { ...(await generate(args)), output: LITERALS[2] };
+      },
+      { ...RETRY_ENABLED, publish: false },
+      {},
+      { sleep: async () => {} },
+    );
+    expect(result.outcome, result.reason).toBe("DRY_RUN");
+    expect(Object.keys(result.report.generator).sort()).toEqual(["attempts", "finalExitCode", "outputBytes", "outputSha256", "retried", "retryReason", "timedOut"]);
+    expect(result.report.generator).toMatchObject({ attempts: 2, retried: true, retryReason: "interrupted_generation" });
+    expectNowhere(config.stateDir, result, LITERALS);
   });
 });
 
@@ -1422,7 +1717,7 @@ describe("generator output is never persisted or printed (#786 review of 3644d2f
 
   it.each([
     ["a passing run (dry run)", 0, "DRY_RUN", { attempts: 1, retried: false }],
-    ["a failing run, retried once", 1, "FAILED", { attempts: 2, retried: true }],
+    ["a failing run, retried once", 1, "FAILED", { attempts: 2, retried: true, retryReason: "generator_exit_nonzero" }],
   ])("%s keeps only safe diagnostics", async (_label: string, exitCode: number, outcome: string, attempts: Record<string, unknown>) => {
     const fx = createFixture();
     makeStale(fx);
