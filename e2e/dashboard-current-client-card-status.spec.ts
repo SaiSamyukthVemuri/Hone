@@ -355,9 +355,12 @@ test.describe("Today row: current client, card status, one-tap actions", () => {
           { timeout: T },
         )
         .toBe("1");
-      // Local stacks have no outbound email transport, so the practitioner
-      // gets the action's own SAFE failure copy. What must never appear is a
-      // raw link or token.
+      // The practitioner gets the action's own SAFE failure copy: the lane's
+      // fake email transport defaults to `reject`
+      // (HONE_E2E_FAKE_RESEND_DEFAULT_MODE in e2e/helpers/local-env.ts), which
+      // reproduces what a local stack with no usable outbound transport
+      // produced before the fake was armed. What must never appear is a raw
+      // link or token.
       await expect(row(page, noCard.name)).not.toContainText("/portal/verify/");
       const rowText = (await row(page, noCard.name).innerText()).toLowerCase();
       expect(rowText).not.toMatch(/pm_|cus_|seti_|acct_/);

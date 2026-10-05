@@ -341,12 +341,17 @@ test.describe("practitioner-assisted intake", () => {
     //
     // NECESSARY BUT NOT SUFFICIENT, and measured rather than assumed. A
     // negative control that flipped send_email to true left this test GREEN:
-    // this lane runs with a dummy RESEND_API_KEY, so the send is genuinely
-    // attempted, fails ("API key is invalid"), and the column is never
+    // the send is genuinely attempted, REFUSED, and the column is never
     // stamped either way. The load-bearing proof that this path cannot email
     // lives in the unit lane — tests/app/clients/start-intake-with-client.ts
     // asserts the sender is never called and the client-email rate limiter is
     // never even consulted, and those DO go red on that mutation.
+    //
+    // The refusal used to come from a dummy RESEND_API_KEY reaching the real
+    // provider. It now comes from the lane's fake transport defaulting to
+    // `reject` (HONE_E2E_FAKE_RESEND_DEFAULT_MODE in e2e/helpers/local-env.ts),
+    // so the reasoning above is unchanged and no longer depends on a third
+    // party answering the way it used to.
     expect(rows[0].intake_link_last_sent_at).toBeNull();
 
     // --- the row is a blank draft: nothing submitted, nothing acknowledged
