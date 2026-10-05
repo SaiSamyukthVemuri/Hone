@@ -147,7 +147,7 @@ describe("placement + page", () => {
   });
 
   it("the route is a protected server page resolving the studio", () => {
-    expect(PAGE).toMatch(/getCurrentPractitionerWithStudio/);
+    expect(PAGE).toMatch(/requirePractitionerWithStudio/);
     expect(PAGE).not.toMatch(/"use client"/);
   });
 

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getIntakeById, getLatestIntakeForClient } from "@/lib/intake/queries";
 import { PRACTITIONER_ENTERABLE_STEPS } from "@/lib/intake/questions";
 import { AssistedIntakeEditor } from "./AssistedIntakeEditor";
@@ -30,7 +30,7 @@ export default async function AssistedIntakePage({
   const requestedIntakeId =
     typeof sp.intake === "string" && sp.intake ? sp.intake : null;
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
 
   const supabase = await createClient();
   const { data: client, error: clientErr } = await supabase

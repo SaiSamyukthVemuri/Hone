@@ -2,7 +2,7 @@ import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { SectionLabel } from "@/components/ui/section-label";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   excludedResources,
   exportedResources,
@@ -46,7 +46,7 @@ function fmt(n: number): string {
 }
 
 export default async function DataSettingsPage() {
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
   const { clientCount, sessionCount, entryCount } = await loadCounts(studio.id);
 
   // One source for what this page claims and what the ZIP contains.

@@ -521,7 +521,7 @@ function endInactiveSentrySpan(span: { end?: () => void } | null): void {
  * so wrapping a call is behaviour-preserving:
  *
  *   const { studio } = await timed("clients.identity", () =>
- *     getCurrentPractitionerWithStudio(),
+ *     requirePractitionerWithStudio(),
  *   );
  */
 export async function timed<T>(

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { addDays, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
 import type { Appointment, Client, Service } from "@/lib/types/database";
@@ -11,7 +11,7 @@ type Row = Appointment & {
 };
 
 export default async function UpcomingPage() {
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
   const today = todayInTz(studio.timezone);
   const end = addDays(today, 14);
 

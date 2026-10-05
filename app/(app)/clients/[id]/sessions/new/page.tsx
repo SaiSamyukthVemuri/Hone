@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   getClientById,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
 import { localLongDate } from "@/lib/booking/tz";
 import {
@@ -40,7 +40,7 @@ export default async function NewSessionPage({
 }) {
   const { id } = await params;
   const sp = (await searchParams) ?? {};
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
   const data = await getClientById(studio.id, id);
   if (!data) notFound();
 

@@ -1,4 +1,4 @@
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { templateText } from "@/lib/import/quick-import";
 import {
   isImportOperator,
@@ -21,7 +21,7 @@ export const metadata = {
 };
 
 export default async function ImportPage() {
-  const { practitioner } = await getCurrentPractitionerWithStudio();
+  const { practitioner } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
     return (
