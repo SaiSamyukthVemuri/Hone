@@ -25,6 +25,8 @@
 // See scripts/worktree-resources.mjs.
 // @ts-expect-error - .mjs utility ships without type declarations
 import { resolveResources } from "../../scripts/worktree-resources.mjs";
+import os from "node:os";
+import path from "node:path";
 
 const LOCAL_SUPABASE_URL = "http://127.0.0.1:54321";
 const LOCAL_DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -89,6 +91,36 @@ export const E2E_DB_URL = LOCAL_DB_URL;
 export const E2E_MAILPIT_URL = LOCAL_MAILPIT_URL;
 export const E2E_SERVICE_ROLE_KEY = LOCAL_SERVICE_ROLE_KEY;
 
+// SENTRY-E2E-NOISE-02. The preload that keeps every browser lane out of the
+// operational Sentry project, and the file it records to. The guard answers
+// each request bound for *.sentry.io from a loopback sink and writes what would
+// have been sent here, so a spec can assert on the real runtime path. Keyed by
+// worktree and port so two worktrees never read each other's records; a spec
+// filters by time, so records from earlier runs are inert.
+// See e2e/helpers/sentry-egress-guard.cjs.
+export const E2E_SENTRY_EGRESS_GUARD = path.join(__dirname, "sentry-egress-guard.cjs");
+export const E2E_SENTRY_EGRESS_LOG = path.join(
+  os.tmpdir(),
+  "hone-e2e-sentry-egress",
+  `${path.basename(E2E_WORKTREE)}-${E2E_APP_PORT}.jsonl`,
+);
+
+/**
+ * NODE_OPTIONS carrying the guard, COMPOSED with whatever the caller already
+ * set. This environment is applied over the inherited one, so assigning the
+ * guard alone would silently discard an operator's or CI's own options.
+ * Idempotent, and quoted only when the path needs it (NODE_OPTIONS splits on
+ * spaces outside double quotes).
+ */
+export function withSentryEgressGuard(existing: string | undefined): string {
+  const current = (existing ?? "").trim();
+  if (current.includes(E2E_SENTRY_EGRESS_GUARD)) return current;
+  const target = /[\s"\\]/.test(E2E_SENTRY_EGRESS_GUARD)
+    ? `"${E2E_SENTRY_EGRESS_GUARD.replace(/(["\\])/g, "\\$1")}"`
+    : E2E_SENTRY_EGRESS_GUARD;
+  return [current, `--require ${target}`].filter(Boolean).join(" ");
+}
+
 // Environment for the Next dev server under test. Mirrors the fast
 // CI lane's dummy/test-safe values, with Supabase pointed at the
 // LOCAL stack. Nothing here is a real secret.
@@ -121,6 +153,16 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // this hardcoded-to-127.0.0.1 lane. Set here rather than passed through from
   // the outer process because webServer.env REPLACES process.env.
   HONE_E2E_ROUTE_FAULT: "1",
+  // SENTRY-E2E-NOISE-02. Nothing this lane's server sends may reach the
+  // operational Sentry project: not the deliberate faults above, not a real
+  // failure raised during a run, not the browser envelopes the /monitoring
+  // tunnel forwards. The guard is a NODE_OPTIONS preload rather than an app
+  // setting so that the Sentry runtime wiring stays byte-identical and no
+  // NEXT_PUBLIC_* input is involved. An inherited deployed-runtime signal
+  // (AWS_REGION, VERCEL_ENV, ...) makes it refuse to start, failing the lane
+  // before any spec runs rather than letting it send.
+  NODE_OPTIONS: withSentryEgressGuard(process.env.NODE_OPTIONS),
+  HONE_E2E_SENTRY_EGRESS_LOG: E2E_SENTRY_EGRESS_LOG,
   // `next start` reads PORT when no -p flag is given (commander `.env("PORT")`),
   // so the derived port reaches the server without any shell interpolation in
   // package.json - which also keeps the npm script portable.
