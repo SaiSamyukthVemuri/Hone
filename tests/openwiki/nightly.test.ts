@@ -1271,6 +1271,27 @@ describe("WIKI-RETRY-01: at most one generator retry, for generation only", () =
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("the budget is checked again after the wait: a late timer never starts a retry (#792 review of 9f1073e8)", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const realNow = Date.now;
+    let skew = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
+    try {
+      // Enough budget before the wait (10 min, minus 60 s, over the 1-minute minimum)...
+      const sleep = vi.fn(async () => {
+        skew = 580_000; // ...but the timer fires 9 m 40 s late, leaving about 20 s.
+      });
+      const { result, generator } = await run(fx, failingAttempt, { timeoutMs: 600_000, minRetryBudgetMs: 60_000 }, {}, { sleep });
+      expect(sleep).toHaveBeenCalledTimes(1);
+      expect(generator).toHaveBeenCalledTimes(1);
+      expect(result.reasonCode).toBe("GENERATOR_EXIT_NONZERO");
+      expect(result.report.generator).toMatchObject({ attempts: 1, retried: false, noRetryReason: "insufficient-time" });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("the retry gets only what is left of the run budget, never a fresh one", async () => {
     const fx = createFixture();
     makeStale(fx);

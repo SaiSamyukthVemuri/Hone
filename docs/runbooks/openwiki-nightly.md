@@ -200,7 +200,9 @@ be told apart from any other failure, and the contract is deliberately narrow:
 - **At most two attempts:** the first, and exactly one retry. There is never a loop.
 - **Only after a prompt non-zero exit.** A run that hit the timeout is never retried.
 - **Only if time remains.** The retry waits 60 seconds. It starts only if at least 15 minutes of the run
-  budget remain after that wait.
+  budget remain after that wait. The budget is checked before the wait and again after it, because a timer
+  can fire late (a suspended host, a blocked event loop), so a late wake-up skips the retry as
+  `insufficient-time`.
 - **One budget.** `HONE_WIKI_RUN_TIMEOUT_MIN` covers both attempts and the wait together. The retry gets only
   what is left of it, never a fresh budget.
 - **A clean restart.** Before the retry, the subject is reset to the production tip and cleaned, so nothing the

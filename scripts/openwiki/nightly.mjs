@@ -347,7 +347,8 @@ export function generatorDiagnostics(result) {
  *   - a retry only after a PROMPT non-zero exit, never after a timeout;
  *   - GENERATOR_RETRY_DELAY_MS before it, and only if at least
  *     GENERATOR_MIN_RETRY_BUDGET_MS of the run budget remains after the
- *     delay. The run budget (HONE_WIKI_RUN_TIMEOUT_MIN) covers every attempt
+ *     delay, checked before the wait and again after it (a timer can fire
+ *     late). The run budget (HONE_WIKI_RUN_TIMEOUT_MIN) covers every attempt
  *     and the delay together, and the retry gets only what is left of it;
  *   - the retry starts from the same pinned state as the first attempt;
  *     nothing the failed attempt wrote survives.
@@ -405,6 +406,14 @@ async function runGenerator({ subject, tip, sourceHead, config, deps }) {
     }
     repinForRetry(subject, tip, sourceHead);
     await sleep(delayMs);
+    // The timer can fire late (a suspended host, a blocked event loop), so the
+    // budget is checked again after the wait: a retry never starts without
+    // the minimum left, or with the deadline already gone.
+    const remaining = deadline - Date.now();
+    if (remaining <= 0 || remaining < minBudgetMs) {
+      noRetryReason = "insufficient-time";
+      break;
+    }
   }
   return { result, attempts, noRetryReason };
 }
