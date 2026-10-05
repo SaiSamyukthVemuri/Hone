@@ -17,9 +17,18 @@ const WAITLIST_SLUG = "e2e-waitlist-p0";
 
 // WHAT THIS PROVES, AND WHAT IT DELIBERATELY DOES NOT.
 //
-// This lane runs with RESEND_API_KEY="re_dummy_resend_key" (see
-// e2e/helpers/local-env.ts), so the provider genuinely refuses every send.
-// THAT IS NOW THE MOST VALUABLE SETTING THIS SPEC COULD HAVE. Under WAIT-01 a
+// THE PROVIDER REFUSES EVERY SEND IN THIS SPEC, AND IT IS NOW ASKED TO.
+//
+// This used to rely on RESEND_API_KEY="re_dummy_resend_key" being rejected by
+// the real Resend API. RESCHEDULE-E2E-01 arms the server-only fake transport for
+// the whole lane, whose default mode ACCEPTS -- which would have left this spec
+// documenting a refusal it no longer exercised, and passing anyway, because its
+// durable-commit assertions render the same result either way. So the refusal is
+// now explicit: `seedWaitlistStudio` gives the studio a `reject+` owner address,
+// and the fake refuses that recipient deterministically on every run and every
+// machine. Nothing here depends on a third party any more.
+//
+// THAT IS THE MOST VALUABLE SETTING THIS SPEC COULD HAVE. Under WAIT-01 a
 // refused provider meant the visitor was told they had NOT joined, because the
 // email WAS the record. Under WAIT-02 the record is a committed row, so the
 // same refusal must produce:
@@ -53,6 +62,18 @@ async function seedWaitlistStudio() {
     [WAITLIST_SLUG],
   );
   await sql(`update public.studios set slug = $2 where id = $1`, [seed.studioId, WAITLIST_SLUG]);
+
+  // THE STUDIO NOTIFICATION MUST BE REFUSED, and asked to be rather than
+  // inheriting an accident. `app/book/[slug]/waitlist-actions.ts` sends the
+  // studio notice to `studios.owner_email`, and the fake transport reads the
+  // recipient's local-part, so a `reject+` owner address refuses that send on
+  // every run. Only the STUDIOS row is changed: the auth user and practitioner
+  // row keep the seeded address, so owner sign-in elsewhere is unaffected.
+  // `owner_email` carries no unique constraint (see lib/email/new-client-waitlist-send.ts).
+  await sql(`update public.studios set owner_email = $2 where id = $1`, [
+    seed.studioId,
+    `reject+waitlist-${seed.runId}@harness.local`,
+  ]);
 
   // RETURN THE STUDIO TO THE PRE-0204 UNSTAMPED SHAPE, which is the only state
   // the legacy env bridge governs.
