@@ -4,6 +4,7 @@ import {
   asRouteFaultCase,
   assertRouteFaultNotRequestedInDeployment,
   E2E_ROUTE_FAULT_CANARY,
+  E2E_ROUTE_FAULT_UNMARKED_MESSAGE,
   isE2eRouteFaultEnabled,
   shouldFailOnceForToken,
 } from "@/lib/reliability/e2e-route-fault";
@@ -62,6 +63,10 @@ export default async function E2eFaultPage({
 
   if (faultCase === "server-throw") {
     throw new Error(faultMessage);
+  }
+
+  if (faultCase === "unmarked-throw") {
+    throw new Error(E2E_ROUTE_FAULT_UNMARKED_MESSAGE);
   }
 
   if (faultCase === "once") {

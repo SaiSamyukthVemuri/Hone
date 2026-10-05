@@ -55,7 +55,14 @@ import { scrubErrorEvent } from "@/lib/observability/sentry-scrub";
 // shipped to every visitor, and a deployable bypass able to silence client-side
 // Sentry in production. Per the fail-open rule, an unprovable harness identity
 // keeps the event. Server-side synthetic noise (server-throw, once) is
-// suppressed; the client-throw case stays visible in the local lane.
+// suppressed here; the client-throw event is still SENT by the browser SDK.
+//
+// SENTRY-E2E-NOISE-02 contains it without changing that: the browser posts
+// through the same-origin /monitoring tunnel, which the local E2E server
+// itself forwards, and e2e/helpers/sentry-egress-guard.cjs answers everything
+// that server would send to Sentry. So nothing from the local lanes - this
+// event, a real failure during a run, sessions, transactions - reaches the
+// operational project, and this predicate is no longer the only line.
 
 // WHY ONLY THE NODE SERVER RUNTIME IS WIRED, AND NOT EDGE.
 // The harness throws inside a Node Server Component (`app/(app)/e2e-fault/
