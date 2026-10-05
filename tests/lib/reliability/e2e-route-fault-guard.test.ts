@@ -1,12 +1,17 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { ErrorEvent } from "@sentry/nextjs";
 import {
   asRouteFaultCase,
   assertRouteFaultNotRequestedInDeployment,
   E2E_ROUTE_FAULT_CANARY,
   E2E_ROUTE_FAULT_CASES,
+  E2E_ROUTE_FAULT_UNMARKED_MESSAGE,
   isE2eRouteFaultEnabled,
   shouldFailOnceForToken,
 } from "@/lib/reliability/e2e-route-fault";
+import { isDeliberateE2eFaultEvent } from "@/lib/observability/sentry-e2e-fault";
 
 // The failure-injection route must be unreachable in every deployed build.
 // Same matrix as tests/lib/google-calendar/e2e/fake-google-guard.test.ts and
@@ -138,5 +143,41 @@ describe("the canary is shaped like real leaked database text", () => {
     // about the strings that would actually leak.
     expect(E2E_ROUTE_FAULT_CANARY).toContain('relation "clients" does not exist');
     expect(E2E_ROUTE_FAULT_CANARY).toContain("HONE-LEAK-CANARY-9f3c1d");
+  });
+});
+
+describe("unmarked-throw is the positive control, so it must stay unmarked", () => {
+  // SENTRY-E2E-NOISE-02. The browser spec proves the marked fault is dropped at
+  // runtime by showing that an UNMARKED throw on the same route is still sent.
+  // That proof is only as good as this case staying outside SENTRY-NOISE-01's
+  // predicate, even with the harness active.
+  it("carries no part of the canary, so the suppression predicate keeps it", () => {
+    expect(E2E_ROUTE_FAULT_CASES).toContain("unmarked-throw");
+    expect(E2E_ROUTE_FAULT_UNMARKED_MESSAGE).not.toContain("HONE-LEAK-CANARY");
+    expect(E2E_ROUTE_FAULT_UNMARKED_MESSAGE).not.toContain('relation "clients" does not exist');
+
+    const unmarked = {
+      exception: { values: [{ type: "Error", value: E2E_ROUTE_FAULT_UNMARKED_MESSAGE }] },
+    } as ErrorEvent;
+    expect(isDeliberateE2eFaultEvent(unmarked, env(ON))).toBe(false);
+    // Non-vacuity: the same event WITH the canary is dropped in the same context.
+    const marked = {
+      exception: {
+        values: [
+          { type: "Error", value: `${E2E_ROUTE_FAULT_UNMARKED_MESSAGE} ${E2E_ROUTE_FAULT_CANARY}` },
+        ],
+      },
+    } as ErrorEvent;
+    expect(isDeliberateE2eFaultEvent(marked, env(ON))).toBe(true);
+  });
+
+  it("the browser spec asserts on exactly this text", () => {
+    const spec = readFileSync(
+      join(process.cwd(), "e2e/authenticated-route-error-containment.spec.ts"),
+      "utf8",
+    );
+    expect(spec).toContain(
+      `const UNMARKED = ${JSON.stringify(E2E_ROUTE_FAULT_UNMARKED_MESSAGE)};`,
+    );
   });
 });
