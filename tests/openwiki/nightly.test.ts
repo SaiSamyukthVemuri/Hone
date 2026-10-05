@@ -48,7 +48,7 @@ type Fx = ReturnType<typeof createFixture>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Report = Record<string, any>;
 type Result = { outcome: string; reasonCode: string; reason: string; report: Report };
-type Gen = (args: { cwd: string }) => Promise<{ exitCode: number; output?: string }>;
+type Gen = (args: { cwd: string; timeoutMs?: number }) => Promise<{ exitCode: number; output?: string }>;
 type GitHubBehavior = {
   headSha?: string;
   createFails?: boolean;
@@ -184,6 +184,14 @@ function commitForced(fx: Fx, files: Record<string, string>, message: string): v
   git(fx.work, ["commit", "--quiet", "-m", message]);
 }
 
+/**
+ * Retry tests run with a budget that leaves room for the retry. The default
+ * test budget (60 s, under the 15-minute minimum) means the retry is always
+ * skipped as `insufficient-time` elsewhere in this file. The sleep is injected
+ * per test, so no test ever waits the real 60 s.
+ */
+const RETRY_ENABLED = { timeoutMs: 600_000, minRetryBudgetMs: 0 };
+
 /** A source change after the recorded gitHead makes the wiki stale. */
 function makeStale(fx: Fx): string {
   const source2 = fx.commit({ "lib/feature.ts": "export const feature = 2;\n" }, "source: feature 2");
@@ -198,11 +206,11 @@ async function pass(config: Record<string, unknown>, deps: Record<string, unknow
   return result;
 }
 
-async function run(fx: Fx, generator: Gen, overrides: Record<string, unknown> = {}, behavior: GitHubBehavior = {}) {
+async function run(fx: Fx, generator: Gen, overrides: Record<string, unknown> = {}, behavior: GitHubBehavior = {}, deps: Record<string, unknown> = {}) {
   const ctx = setup(fx, overrides);
   Object.assign(ctx.behavior, behavior);
   const spy = vi.fn(generator);
-  const result = await pass(ctx.config, { generator: spy, github: ctx.github, now: () => Date.UTC(2026, 9, 5) });
+  const result = await pass(ctx.config, { generator: spy, github: ctx.github, now: () => Date.UTC(2026, 9, 5), ...deps });
   return { ...ctx, result, generator: spy };
 }
 
@@ -1168,6 +1176,218 @@ describe("WIKI-AUTO-OAUTH-01: the model is billed through a ChatGPT login, not a
   });
 });
 
+// ---------------------------------------------------------------------------
+// WIKI-RETRY-01: one bounded retry around generation only. The 2026-10-05
+// host diagnostic showed OpenWiki exiting 1 on "Our servers are currently
+// overloaded"; openwiki@0.6.1 exits 0 or 1 and records no error class, so the
+// runner retries once after a prompt non-zero exit, and nothing else.
+// ---------------------------------------------------------------------------
+
+describe("WIKI-RETRY-01: at most one generator retry, for generation only", () => {
+  const OVERLOADED = "Our servers are currently overloaded. Please try again later.";
+  const recordingSleep = () =>
+    vi.fn(async (ms: number) => {
+      void ms; // recorded by the mock; the retry tests never really wait
+    });
+
+  /** A first attempt that fails the way the host did, after leaving the debris a failed OpenWiki run leaves. */
+  const failingAttempt = async ({ cwd }: { cwd: string }) => {
+    write(cwd, "openwiki/.run.json", JSON.stringify({ phase: "planning" }));
+    write(cwd, "AGENTS.md", AGENTS_TEMPLATE_REWRITE);
+    write(cwd, "openwiki/topic/kept-page.md", "# Half-written page\n");
+    return { exitCode: 1, output: OVERLOADED };
+  };
+
+  it("a prompt transient failure, then success: two attempts, 60 s apart, the second from a clean pinned tree", async () => {
+    const fx = createFixture();
+    const source2 = makeStale(fx);
+    const sleep = recordingSleep();
+    let seen: Record<string, unknown> | undefined;
+    const generate = openWikiLike();
+    let calls = 0;
+    const { result, generator, prs } = await run(
+      fx,
+      async (args) => {
+        calls += 1;
+        if (calls === 1) return failingAttempt(args);
+        seen = {
+          head: git(args.cwd, ["rev-parse", "HEAD"]),
+          runState: existsSync(path.join(args.cwd, "openwiki/.run.json")),
+          agents: read(args.cwd, "AGENTS.md"),
+          keptPage: read(args.cwd, "openwiki/topic/kept-page.md"),
+        };
+        return generate(args);
+      },
+      RETRY_ENABLED,
+      {},
+      { sleep },
+    );
+    expect(result.outcome, result.reason).toBe("PUBLISHED");
+    expect(generator).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(60_000);
+    expect(seen).toEqual({ head: source2, runState: false, agents: AGENTS_AUTHORED, keptPage: "# Kept page\n\nFeature is 1.\n" });
+    expect(result.report.generator).toMatchObject({ attempts: 2, retried: true, finalExitCode: 0, timedOut: false });
+    expect(result.report.generator.noRetryReason).toBeUndefined();
+    expect(prs).toHaveLength(1);
+  });
+
+  it("both attempts fail: FAILED after exactly two, and nothing is published", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const { result, generator, prs } = await run(fx, failingAttempt, RETRY_ENABLED, {}, { sleep });
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(result.reasonCode).toBe("GENERATOR_EXIT_NONZERO");
+    expect(result.report.safeDetails).toEqual({ exitCode: 1, timedOut: false, attempts: 2 });
+    expect(result.reason).toBe("OpenWiki exited 1 (2 attempts)");
+    expect(generator).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(prs).toEqual([]);
+    expect(originBranches(fx)).toEqual(["main"]);
+    expect(git(path.join(fx.root, "host", "subject"), ["status", "--porcelain", "--untracked-files=all"])).toBe("");
+  });
+
+  it("a timeout is never retried", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const { result, generator } = await run(fx, async () => ({ exitCode: 1, timedOut: true }), RETRY_ENABLED, {}, { sleep });
+    expect(result.reasonCode).toBe("GENERATOR_EXIT_NONZERO");
+    expect(result.report.safeDetails).toEqual({ exitCode: 1, timedOut: true, attempts: 1 });
+    expect(result.report.generator).toMatchObject({ attempts: 1, retried: false, timedOut: true, noRetryReason: "timed-out" });
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("no retry is started without enough of the run budget left; the budget covers every attempt", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    // 10 minutes of budget, less the 60 s delay, is under the 15-minute minimum a retry needs.
+    const { result, generator } = await run(fx, failingAttempt, { timeoutMs: 600_000 }, {}, { sleep });
+    expect(result.report.generator).toMatchObject({ attempts: 1, retried: false, noRetryReason: "insufficient-time" });
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("the retry gets only what is left of the run budget, never a fresh one", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const budgets: number[] = [];
+    const generate = openWikiLike();
+    await run(
+      fx,
+      async (args) => {
+        budgets.push(args.timeoutMs ?? 0);
+        return budgets.length === 1 ? failingAttempt(args) : generate(args);
+      },
+      RETRY_ENABLED,
+      {},
+      // A short real wait, so time visibly passes between the two attempts.
+      { sleep: () => new Promise((resolve) => setTimeout(resolve, 25)) },
+    );
+    expect(budgets).toHaveLength(2);
+    expect(budgets[0]).toBeLessThanOrEqual(600_000);
+    expect(budgets[1]).toBeGreaterThan(0);
+    expect(budgets[1]).toBeLessThan(budgets[0] - 20);
+  });
+
+  it.each([
+    [
+      "a path the privacy gate rejects",
+      () => openWikiLike({ pages: (cwd) => write(cwd, "docs/Synthetic-Person.md", "x\n") }),
+      {},
+      "PATH_PRIVACY_REJECTED",
+    ],
+    [
+      "a run OpenWiki records as interrupted while exiting 0 (state validation)",
+      () =>
+        openWikiLike({
+          after: (cwd) => write(cwd, "openwiki/.last-update.json", lastUpdateJson(git(cwd, ["rev-parse", "HEAD"]), { status: "interrupted" })),
+        }),
+      {},
+      "LAST_UPDATE_INVALID",
+    ],
+    ["a failed pull request (publishing)", () => openWikiLike(), { createFails: true }, "PULL_REQUEST_CREATE_FAILED"],
+  ])("%s is never retried: the generator runs exactly once", async (_label: string, gen: () => Gen, behavior: GitHubBehavior, reasonCode: string) => {
+    const fx = createFixture();
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const { result, generator } = await run(fx, gen(), RETRY_ENABLED, behavior, { sleep });
+    expect(result.outcome, result.reason).toBe("FAILED");
+    expect(result.reasonCode).toBe(reasonCode);
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(result.report.generator).toMatchObject({ attempts: 1, retried: false, finalExitCode: 0 });
+  });
+
+  it("a GitHub failure (the publish-time token) is never retried", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const ctx = setup(fx, RETRY_ENABLED);
+    const sleep = recordingSleep();
+    const generator = vi.fn(openWikiLike());
+    let minted = 0;
+    const result = await pass(ctx.config, {
+      getGitToken: async () => {
+        minted += 1;
+        if (minted > 1) throw Object.assign(new Error("installation token request failed: HTTP 502"), { tokenCause: "http-status", httpStatus: 502 });
+        return "token-1";
+      },
+      generator,
+      github: ctx.github,
+      sleep,
+    });
+    expect(result.reasonCode).toBe("APP_TOKEN_UNAVAILABLE");
+    expect(generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("a successful first attempt runs the generator exactly once, and a live wiki not at all", async () => {
+    const fx = createFixture();
+    const live = await run(fx, openWikiLike(), RETRY_ENABLED, {}, { sleep: recordingSleep() });
+    expect(live.result.outcome, live.result.reason).toBe("NOOP");
+    expect(live.generator).toHaveBeenCalledTimes(0);
+    makeStale(fx);
+    const sleep = recordingSleep();
+    const fresh = await run(fx, openWikiLike(), RETRY_ENABLED, {}, { sleep });
+    expect(fresh.result.outcome, fresh.result.reason).toBe("PUBLISHED");
+    expect(fresh.generator).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(fresh.result.report.generator).toMatchObject({ attempts: 1, retried: false, finalExitCode: 0 });
+  });
+
+  it("neither attempt's raw provider output reaches a report, the CLI line or the run state", async () => {
+    const fx = createFixture();
+    makeStale(fx);
+    const LITERALS = [OVERLOADED, "Quillon Vantablack", "zz.unique.person@hone.example.org", "sk-ant-uniquekeyvalue0123456789", "ghs_UniqueTokenValue0123456789abcdefghijkl"];
+    const generate = openWikiLike();
+    let calls = 0;
+    const { result, config } = await run(
+      fx,
+      async (args) => {
+        calls += 1;
+        if (calls === 1) return { ...(await failingAttempt(args)), output: `${OVERLOADED}\n${LITERALS.slice(1, 3).join("\n")}` };
+        return { ...(await generate(args)), output: LITERALS.slice(3).join("\n") };
+      },
+      { ...RETRY_ENABLED, publish: false },
+      {},
+      { sleep: async () => {} },
+    );
+    expect(result.outcome, result.reason).toBe("DRY_RUN");
+    expect(Object.keys(result.report.generator).sort()).toEqual(["attempts", "finalExitCode", "outputBytes", "outputSha256", "retried", "timedOut"]);
+    expectNowhere(config.stateDir, result, LITERALS);
+    const stateFiles = readdirSync(config.stateDir, { recursive: true }).map(String).filter((p) => !p.startsWith("home/"));
+    for (const file of stateFiles) {
+      const full = path.join(config.stateDir, file);
+      if (!statSync(full).isFile()) continue;
+      const text = readFileSync(full, "utf8");
+      for (const literal of LITERALS) expect(text.includes(literal), `${literal} in ${file}`).toBe(false);
+    }
+  });
+});
+
 describe("generator output is never persisted or printed (#786 review of 3644d2fb)", () => {
   const LITERALS = [
     "Quillon Vantablack",
@@ -1180,20 +1400,22 @@ describe("generator output is never persisted or printed (#786 review of 3644d2f
   const noisy = LITERALS.map((value) => `openwiki: ${value}`).join("\n");
 
   it.each([
-    ["a passing run (dry run)", 0, "DRY_RUN"],
-    ["a failing run", 1, "FAILED"],
-  ])("%s keeps only safe diagnostics", async (_label: string, exitCode: number, outcome: string) => {
+    ["a passing run (dry run)", 0, "DRY_RUN", { attempts: 1, retried: false }],
+    ["a failing run, retried once", 1, "FAILED", { attempts: 2, retried: true }],
+  ])("%s keeps only safe diagnostics", async (_label: string, exitCode: number, outcome: string, attempts: Record<string, unknown>) => {
     const fx = createFixture();
     makeStale(fx);
-    const ctx = setup(fx, { publish: false, denylistFile: writePrivate(path.join(fx.root, "denylist-unique"), "Quillon Vantablack\n") });
+    const ctx = setup(fx, { publish: false, ...RETRY_ENABLED, denylistFile: writePrivate(path.join(fx.root, "denylist-unique"), "Quillon Vantablack\n") });
     const generate = openWikiLike();
     const result = await pass(ctx.config, {
       generator: async (args: { cwd: string }) => ({ ...(await generate(args)), exitCode, output: noisy }),
       github: ctx.github,
+      sleep: async () => {},
     });
     expect(result.outcome, result.reason).toBe(outcome);
     expect(result.report.generator).toEqual({
-      exitCode,
+      ...attempts,
+      finalExitCode: exitCode,
       timedOut: false,
       outputBytes: Buffer.byteLength(noisy),
       outputSha256: createHash("sha256").update(noisy).digest("hex"),

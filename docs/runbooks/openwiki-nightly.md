@@ -108,6 +108,7 @@ subject. A recorded `gitHead` outside production history, an interrupted status 
 5. **Pin the run.** `HEAD` moves to the source head (OpenWiki records it as `gitHead`), and the working tree
    stays the production tip (the newest wiki is the baseline). The runner then executes
    `openwiki code --update --print` with an allowlisted environment and its own `HOME`. It never runs `init`.
+   Generation alone may be retried once; see "Generator retry" below.
 6. **Path gate, then scope.**
    - **Path gate first.** Before any changed path is recorded, reported or interpolated anywhere, the runner
      takes every path the run changed. That means generated files, OpenWiki's known side effects and unexpected
@@ -189,6 +190,31 @@ subject. A recorded `gitHead` outside production history, an interrupted status 
      incomplete, the next pass reports `SKIP` on the leftover branch until a human closes or deletes it; it
      never treats that state as success.
 
+### Generator retry (WIKI-RETRY-01)
+
+On 2026-10-05 a host diagnostic showed OpenWiki exiting 1 on the provider's "Our servers are currently
+overloaded. Please try again later." `openwiki@0.6.1` exits only 0 or 1 and records no error class. The runner
+also never holds the generator's output. So a transient provider failure (overload, 429, a provider 5xx) cannot
+be told apart from any other failure, and the contract is deliberately narrow:
+
+- **At most two attempts:** the first, and exactly one retry. There is never a loop.
+- **Only after a prompt non-zero exit.** A run that hit the timeout is never retried.
+- **Only if time remains.** The retry waits 60 seconds. It starts only if at least 15 minutes of the run
+  budget remain after that wait.
+- **One budget.** `HONE_WIKI_RUN_TIMEOUT_MIN` covers both attempts and the wait together. The retry gets only
+  what is left of it, never a fresh budget.
+- **A clean restart.** Before the retry, the subject is reset to the production tip and cleaned, so nothing the
+  failed attempt wrote survives, its `openwiki/.run.json` included. `HEAD` is then pinned to the source head
+  again. If that reset fails, the pass fails; it never retries on a tree it could not restore.
+- **Nothing else is retried:**
+  - the path gate, scope, run metadata, provenance or privacy checks;
+  - a run OpenWiki itself records as `interrupted` while exiting 0 (it fails as `LAST_UPDATE_INVALID`);
+  - anything involving GitHub or publishing.
+- **Reporting.** The report's `generator` holds `attempts` (1 or 2), `retried`, `finalExitCode`, `timedOut`,
+  and the final attempt's output size and SHA-256. When a failed first attempt is not retried, it also holds
+  `noRetryReason` (`timed-out` or `insufficient-time`). No attempt's output is ever kept. A failure that
+  survives both attempts is `GENERATOR_EXIT_NONZERO` with `attempts: 2`.
+
 ### Trust boundary
 
 The runner holds the GitHub App key and OpenWiki's ChatGPT login. Any process it starts runs as the same unix user, and
@@ -247,7 +273,8 @@ environment does not change that.
 | `DO_NOT_TRACK` | must be `1` |
 
 Optional: `HONE_WIKI_PUBLISH` (`on` to publish; default off), `HONE_WIKI_MIN_FREE_GB` (default 10),
-`HONE_WIKI_RUN_TIMEOUT_MIN` (default 90).
+`HONE_WIKI_RUN_TIMEOUT_MIN` (default 90). The run timeout is the total generation budget, covering both
+attempts and the retry wait.
 
 The two limits share one parser, applied before any conversion to bytes or milliseconds:
 - unset, or blank and whitespace-only, means the default;
