@@ -14,6 +14,7 @@ import {
   findConflictMarkers,
   gateChangedPaths,
   inspectWorkflow,
+  isInterruptedGeneration,
   isValidEvidenceVersion,
   loadTenantSlugs,
   metadataPrivacyItems,
@@ -225,6 +226,62 @@ describe("state files: existence is not parse success", () => {
     expect(readWorktreeState(root, "dir.json")).toEqual({ state: "present-invalid" });
     expect(readWorktreeState(root, "link.json")).toEqual({ state: "present-invalid" });
     expect(readWorktreeFile(root, "broken.json")).toEqual({ state: "present-valid", text: "{ not json" });
+  });
+});
+
+describe("isInterruptedGeneration: exactly openwiki@0.6.1's interrupted state (WIKI-INTERRUPTED-RETRY-01)", () => {
+  const BASE = "a".repeat(40);
+  const SOURCE = "b".repeat(40);
+  const ENTRY = { pageVersion: `sha256:${"c".repeat(64)}`, gitHead: BASE };
+  type Input = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  /** The state as the host left it: one skipped page whose preserved manifest entry no longer matches its bytes. */
+  const interrupted = (over: Input = {}): Input => ({
+    lastUpdate: { state: "present-valid", value: { updatedAt: "2026-10-05T17:54:00.000Z", command: "update", gitHead: BASE, model: "m", status: "interrupted", language: "en" } },
+    baseGitHead: BASE,
+    checks: {
+      lastUpdate: ["status-not-complete", "git-head-mismatch"],
+      manifest: [],
+      brokenLinkStamps: [],
+      conflictMarkers: [],
+      privacyHits: [],
+      provenance: [{ file: "openwiki/security/routes.md", problem: "manifest-page-version-mismatch" }],
+    },
+    manifestPages: { "/openwiki/security/routes.md": { gitHead: BASE, pageVersion: ENTRY.pageVersion } },
+    basePages: { "/openwiki/security/routes.md": ENTRY },
+    ...over,
+  });
+  const withChecks = (checks: Input) => interrupted({ checks: { ...interrupted().checks, ...checks } });
+  const withValue = (value: Input) => interrupted({ lastUpdate: { state: "present-valid", value: { ...interrupted().lastUpdate.value, ...value } } });
+
+  it("holds for the state the host recorded, a preserved entry in any key order", () => {
+    expect(isInterruptedGeneration(interrupted())).toBe(true);
+  });
+
+  it("holds with no provenance finding at all, and through a Claim sidecar's path", () => {
+    expect(isInterruptedGeneration(withChecks({ provenance: [] }))).toBe(true);
+    expect(isInterruptedGeneration(withChecks({ provenance: [{ file: "openwiki/.claims/security/routes.json", problem: "manifest-page-version-mismatch" }] }))).toBe(true);
+  });
+
+  it.each<[string, Input]>([
+    ["metadata absent", interrupted({ lastUpdate: { state: "absent" } })],
+    ["metadata unparseable", interrupted({ lastUpdate: { state: "present-invalid" } })],
+    ["a status other than interrupted", withValue({ status: "running" })],
+    ["a gitHead other than the base", withValue({ gitHead: SOURCE })],
+    ["no gitHead at all", withValue({ gitHead: undefined })],
+    ["a base that is not a full SHA", interrupted({ baseGitHead: "a".repeat(7) })],
+    ["only one of the two metadata problems", withChecks({ lastUpdate: ["status-not-complete"] })],
+    ["a further metadata problem", withChecks({ lastUpdate: ["unknown-key", "status-not-complete", "git-head-mismatch"] })],
+    ["a manifest outside its schema", withChecks({ manifest: ["schema-version"] })],
+    ["a broken-link stamp", withChecks({ brokenLinkStamps: [{ file: "openwiki/a.md", line: 3 }] })],
+    ["a conflict marker", withChecks({ conflictMarkers: [{ file: "openwiki/a.md", line: 3 }] })],
+    ["a privacy hit", withChecks({ privacyHits: [{ file: "openwiki/a.md", category: "denylist" }] })],
+    ["any other provenance finding", withChecks({ provenance: [{ file: "openwiki/security/routes.md", problem: "sidecar-page-version-mismatch" }] })],
+    ["a manifest entry that differs from the committed one", interrupted({ manifestPages: { "/openwiki/security/routes.md": { ...ENTRY, pageVersion: `sha256:${"d".repeat(64)}` } } })],
+    ["a page the committed manifest never had", interrupted({ basePages: {} })],
+    ["a page missing from the attempt's manifest", interrupted({ manifestPages: {} })],
+    ["no manifest to compare", interrupted({ manifestPages: undefined })],
+  ])("does not hold for %s", (_label: string, input: Input) => {
+    expect(isInterruptedGeneration(input)).toBe(false);
   });
 });
 

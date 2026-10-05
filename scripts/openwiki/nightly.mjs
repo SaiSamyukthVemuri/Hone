@@ -69,6 +69,7 @@ import {
   findConflictMarkers,
   gateChangedPaths,
   inspectWorkflow,
+  isInterruptedGeneration,
   metadataPrivacyItems,
   parseDenylist,
   parseTenantRegister,
@@ -353,10 +354,18 @@ export function generatorDiagnostics(result) {
  *   - the retry starts from the same pinned state as the first attempt;
  *     nothing the failed attempt wrote survives.
  *
- * Nothing the runner checks after generation is ever retried: the path gate,
- * scope, run metadata, provenance and privacy checks, GitHub and publishing.
- * A run OpenWiki itself records as `interrupted` while exiting 0 is caught
- * by those checks (LAST_UPDATE_INVALID), so it is not retried either.
+ * WIKI-INTERRUPTED-RETRY-01 may spend that same single retry on ONE state that
+ * is not a failed process: openwiki@0.6.1 exiting 0 after it skipped page
+ * jobs and recorded the update as interrupted (guards.mjs
+ * isInterruptedGeneration holds the exact predicate and where in the pinned
+ * package it was read). That attempt is examined like any other and never
+ * published. The subject goes back to the pinned starting state, and
+ * generation runs once more under the same budget, delay and minimum. Two
+ * attempts remain the ceiling, whichever reason spent the retry.
+ *
+ * Nothing else the runner checks after generation is ever retried: the path
+ * gate, scope, any other run metadata, manifest, provenance, broken-link,
+ * conflict-marker or privacy finding, GitHub and publishing.
  */
 export const GENERATOR_MAX_ATTEMPTS = 2;
 export const GENERATOR_RETRY_DELAY_MS = 60_000;
@@ -378,52 +387,60 @@ function repinForRetry(subject, tip, sourceHead) {
 }
 
 /**
- * Run the generator under the retry contract above. Returns the final
- * attempt's result, how many attempts ran, and why a failed first attempt was
- * not retried, if it was not. `config.retryDelayMs` and
- * `config.minRetryBudgetMs` exist so tests can shorten the wait; the CLI never
- * sets them.
+ * The one generation budget a pass has, shared by every attempt and the retry
+ * delay. `config.retryDelayMs` and `config.minRetryBudgetMs` exist so tests
+ * can shorten the wait; the CLI never sets them.
  */
-async function runGenerator({ subject, tip, sourceHead, config, deps }) {
-  const deadline = Date.now() + config.timeoutMs;
-  const delayMs = config.retryDelayMs ?? GENERATOR_RETRY_DELAY_MS;
-  const minBudgetMs = config.minRetryBudgetMs ?? GENERATOR_MIN_RETRY_BUDGET_MS;
-  const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  let attempts = 0;
-  let result;
-  let noRetryReason;
-  for (;;) {
-    attempts += 1;
-    result = await deps.generator({ cwd: subject, timeoutMs: Math.max(1, deadline - Date.now()) });
-    if (result.exitCode === 0 || attempts >= GENERATOR_MAX_ATTEMPTS) break;
-    if (result.timedOut) {
-      noRetryReason = "timed-out";
-      break;
-    }
-    if (deadline - Date.now() - delayMs < minBudgetMs) {
-      noRetryReason = "insufficient-time";
-      break;
-    }
-    repinForRetry(subject, tip, sourceHead);
-    await sleep(delayMs);
-    // The timer can fire late (a suspended host, a blocked event loop), so the
-    // budget is checked again after the wait: a retry never starts without
-    // the minimum left, or with the deadline already gone.
-    const remaining = deadline - Date.now();
-    if (remaining <= 0 || remaining < minBudgetMs) {
-      noRetryReason = "insufficient-time";
-      break;
-    }
-  }
-  return { result, attempts, noRetryReason };
+function generatorBudget(config, deps) {
+  return {
+    deadline: Date.now() + config.timeoutMs,
+    delayMs: config.retryDelayMs ?? GENERATOR_RETRY_DELAY_MS,
+    minBudgetMs: config.minRetryBudgetMs ?? GENERATOR_MIN_RETRY_BUDGET_MS,
+    sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+  };
+}
+
+/** One generator attempt, given only what is left of the budget. */
+function runAttempt({ subject, budget, deps }) {
+  return deps.generator({ cwd: subject, timeoutMs: Math.max(1, budget.deadline - Date.now()) });
+}
+
+/**
+ * The retry window, whichever reason opens it: true only when a retry may
+ * start now. The budget must hold the delay and the minimum before the wait;
+ * the subject is then restored to the pinned starting state, and after the
+ * wait the budget is checked again: the timer can fire late (a suspended host,
+ * a blocked event loop), so a retry never starts without the minimum left, or
+ * with the deadline already gone.
+ */
+async function prepareRetry({ subject, tip, sourceHead, budget }) {
+  if (budget.deadline - Date.now() - budget.delayMs < budget.minBudgetMs) return false;
+  repinForRetry(subject, tip, sourceHead);
+  await budget.sleep(budget.delayMs);
+  const remaining = budget.deadline - Date.now();
+  return remaining > 0 && remaining >= budget.minBudgetMs;
+}
+
+/**
+ * Run the generator under the retry contract above, for a non-zero exit.
+ * Returns the final attempt's result, how many attempts ran, why the retry
+ * ran, and why a failed first attempt was not retried, if it was not.
+ */
+async function runGenerator({ subject, tip, sourceHead, budget, deps }) {
+  const first = await runAttempt({ subject, budget, deps });
+  if (first.exitCode === 0) return { result: first, attempts: 1 };
+  if (first.timedOut) return { result: first, attempts: 1, noRetryReason: "timed-out" };
+  if (!(await prepareRetry({ subject, tip, sourceHead, budget }))) return { result: first, attempts: 1, noRetryReason: "insufficient-time" };
+  return { result: await runAttempt({ subject, budget, deps }), attempts: 2, retryReason: "generator_exit_nonzero" };
 }
 
 /** The persisted generator facts: attempt count and the final attempt's diagnostics, never its output. */
-function generatorReport({ result, attempts, noRetryReason }) {
+function generatorReport({ result, attempts, noRetryReason, retryReason }) {
   const final = generatorDiagnostics(result);
   return {
     attempts,
     retried: attempts > 1,
+    ...(retryReason ? { retryReason } : {}),
     finalExitCode: final.exitCode,
     timedOut: final.timedOut,
     outputBytes: final.outputBytes,
@@ -626,7 +643,48 @@ function validateGenerated(subject, generated, sourceHead, terms) {
     const categories = PRIVACY_CATEGORIES.filter((category) => checks.privacyHits.some((hit) => hit.category === category));
     reasons.push(reason("CONTENT_PRIVACY_HITS", { hits: checks.privacyHits.length, categories }));
   }
-  return { reasons, checks };
+  return { reasons, checks, lastUpdate, manifest };
+}
+
+/**
+ * Everything the runner checks on one generator attempt that exited 0, in the
+ * pass's order: leftover run state, THE PATH GATE (before any changed path is
+ * recorded, reported or interpolated), scope, then the generated checks. It
+ * records into `report` as it goes and resets nothing; the caller decides
+ * between finishing, publishing and the single interrupted-generation retry.
+ */
+function examineAttempt({ subject, tip, ignore, sourceHead, baseGitHead, terms, report, clear, at }) {
+  if (worktreePathExists(subject, "openwiki/.run.json")) return { failure: reason("RUN_STATE_LEFT_BEHIND"), interrupted: false };
+
+  at("scope");
+  const changes = diffTrees(subject, tip, snapshotWorktree(subject, tip));
+  const gate = gateChangedPaths(changes, terms);
+  report.pathGate = { scanned: gate.scanned, rejected: gate.rejected, categories: gate.categories };
+  if (gate.rejected > 0) return { failure: reason("PATH_PRIVACY_REJECTED", { paths: gate.rejected, categories: gate.categories }), interrupted: false };
+  clear(gate.cleared);
+  const scope = enforceScope(subject, tip, changes, ignore, report);
+  if (scope.unexpected.length > 0) return { failure: reason("UNEXPECTED_GENERATOR_WRITE", { paths: scope.unexpected.length }), interrupted: false };
+  report.generated = summarize(scope.generated);
+  // A run that changed only run metadata still processed a new source head.
+  // Repository state is the cursor, so it is validated and published like any
+  // other run; discarding it would make every later pass regenerate the same
+  // source. (No output at all fails the gitHead equality check below.)
+  const metadataOnly = scope.generated.every((c) => RUN_METADATA_PATHS.has(c.path));
+  report.metadataOnly = metadataOnly;
+
+  at("validate");
+  const validation = validateGenerated(subject, scope.generated, sourceHead, terms);
+  report.checks = validation.checks;
+  if (validation.reasons.length === 0) return { failure: null, interrupted: false, scope, metadataOnly };
+  const base = readCommittedState(subject, tip, "openwiki/.page-manifest.json");
+  const interrupted = isInterruptedGeneration({
+    lastUpdate: validation.lastUpdate,
+    baseGitHead,
+    checks: validation.checks,
+    manifestPages: validation.manifest.value?.pages,
+    basePages: base.state === "present-valid" ? base.value?.pages : undefined,
+  });
+  return { failure: validation.reasons, interrupted };
 }
 
 function summarize(generated) {
@@ -885,50 +943,53 @@ export async function runNightly(config, deps) {
     // HEAD = source head (OpenWiki records it as gitHead); tree = production tip.
     at("generate");
     git(subject, ["reset", "--quiet", "--soft", head.sourceHead]);
-    const generation = await runGenerator({ subject, tip, sourceHead: head.sourceHead, config, deps });
+    const budget = generatorBudget(config, deps);
+    const pinned = { subject, tip, sourceHead: head.sourceHead, budget };
+    let generation = await runGenerator({ ...pinned, deps });
     report.generator = generatorReport(generation);
+    const examine = () =>
+      examineAttempt({
+        subject,
+        tip,
+        ignore,
+        sourceHead: head.sourceHead,
+        baseGitHead: liveness.gitHead,
+        terms: prerequisites.terms,
+        report,
+        clear: (cleared) => {
+          clearedPaths = cleared;
+        },
+        at,
+      });
+    let attempt = generation.result.exitCode === 0 ? examine() : null;
+    // WIKI-INTERRUPTED-RETRY-01: the single retry, if it is still unspent, for
+    // exactly the interrupted-generation state and nothing else.
+    if (attempt?.interrupted && generation.attempts < GENERATOR_MAX_ATTEMPTS) {
+      at("generate");
+      if (await prepareRetry(pinned)) {
+        // The interrupted attempt is gone from the subject; so is everything
+        // it put in the report. The report describes the final attempt.
+        for (const field of ["pathGate", "generated", "metadataOnly", "checks"]) delete report[field];
+        report.discarded = [];
+        clearedPaths = new Set();
+        generation = { result: await runAttempt({ subject, budget, deps }), attempts: generation.attempts + 1, retryReason: "interrupted_generation" };
+        attempt = generation.result.exitCode === 0 ? examine() : null;
+      } else {
+        generation = { ...generation, noRetryReason: "insufficient-time" };
+      }
+      report.generator = generatorReport(generation);
+    }
     if (generation.result.exitCode !== 0) {
       resetSubject(subject, tip);
       return finish(
         reason("GENERATOR_EXIT_NONZERO", { exitCode: report.generator.finalExitCode, timedOut: report.generator.timedOut, attempts: report.generator.attempts }),
       );
     }
-    if (worktreePathExists(subject, "openwiki/.run.json")) {
+    if (attempt.failure) {
       resetSubject(subject, tip);
-      return finish(reason("RUN_STATE_LEFT_BEHIND"));
+      return finish(attempt.failure);
     }
-
-    // THE PATH GATE, before any changed path is recorded, reported or
-    // interpolated: every path the run changed, whatever its owner or status.
-    at("scope");
-    const changes = diffTrees(subject, tip, snapshotWorktree(subject, tip));
-    const gate = gateChangedPaths(changes, prerequisites.terms);
-    report.pathGate = { scanned: gate.scanned, rejected: gate.rejected, categories: gate.categories };
-    if (gate.rejected > 0) {
-      resetSubject(subject, tip);
-      return finish(reason("PATH_PRIVACY_REJECTED", { paths: gate.rejected, categories: gate.categories }));
-    }
-    clearedPaths = gate.cleared;
-    const scope = enforceScope(subject, tip, changes, ignore, report);
-    if (scope.unexpected.length > 0) {
-      resetSubject(subject, tip);
-      return finish(reason("UNEXPECTED_GENERATOR_WRITE", { paths: scope.unexpected.length }));
-    }
-    report.generated = summarize(scope.generated);
-    // A run that changed only run metadata still processed a new source head.
-    // Repository state is the cursor, so it is validated and published like any
-    // other run; discarding it would make every later pass regenerate the same
-    // source. (No output at all fails the gitHead equality check below.)
-    const metadataOnly = scope.generated.every((c) => RUN_METADATA_PATHS.has(c.path));
-    report.metadataOnly = metadataOnly;
-
-    at("validate");
-    const checks = validateGenerated(subject, scope.generated, head.sourceHead, prerequisites.terms);
-    report.checks = checks.checks;
-    if (checks.reasons.length > 0) {
-      resetSubject(subject, tip);
-      return finish(checks.reasons);
-    }
+    const { scope, metadataOnly } = attempt;
 
     if (!config.publish) {
       resetSubject(subject, tip);
