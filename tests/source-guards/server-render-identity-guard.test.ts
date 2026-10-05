@@ -27,9 +27,12 @@ import ts from "typescript";
 // A page that resolves NO identity is exposed to the same race: /clients/new
 // handed a removed practitioner the new-client form.
 //
-// The behaviour is proved against the real page in
-// tests/app/calendar/appointment-detail-identity-boundary.test.ts. This file is
-// the architectural tripwire for every OTHER route, in both directions: nothing
+// THE AUTHORITY IS BEHAVIOURAL. tests/app/authenticated-pages-identity-sweep.test.ts
+// renders EVERY authenticated page through the real resolvers in each identity
+// state and asserts the controlled redirect, whatever syntax the page uses;
+// tests/app/calendar/appointment-detail-identity-boundary.test.ts covers the
+// incident page in depth. This file is the FAST SYNTACTIC HINT that names the
+// offending line before a render is needed, in both directions: nothing
 // server-rendered calls the backstop, and every authenticated page calls the
 // guard itself — no exemptions.
 //
@@ -40,14 +43,16 @@ import ts from "typescript";
 // shares a resolver's name resolves to nothing, and an aliased backstop is still
 // the backstop. Shapes this resolution cannot see through are REPORTED, never
 // guessed at: a local declaration that shadows or impersonates a resolver, a
-// dynamic import of the queries module, and any re-export of either resolver
-// (forbidden everywhere, so every import of one names lib/supabase/queries).
+// dynamic import of the queries module, and an `export … from` re-export of
+// either resolver.
 //
-// STATED LIMIT. The tripwire follows import bindings, not values or call
-// graphs: a helper in another module that itself calls the backstop, or that
-// hands a resolver on as a value, is outside its reach. That shape is owned by
-// the resolver contract in lib/supabase/queries.ts and by the behavioural test
-// above, not by this file.
+// STATED LIMITS, deliberately not chased here (SENTRY-IDENTITY-01, section 7.4
+// stop law, owner ruling): a parenthesised or comma callee (`(fn)()`,
+// `(0, fn)()`), `fn.call()` / `fn.apply()`, a module that forwards an imported
+// resolver with a local `export { fn }`, a resolver carried as a value
+// (`const f = fn`), and a wrapper that calls the backstop from another module.
+// A syntactic tripwire can always be walked around by one more shape; the
+// behavioural sweep cannot, which is why it, not this file, owns the property.
 
 const ROOT = path.resolve(__dirname, "../..");
 const QUERIES = "lib/supabase/queries";
@@ -192,7 +197,10 @@ function unresolvableShapes(rel: string, sf: ts.SourceFile): string[] {
   return found;
 }
 
-/** A re-export of either resolver (or of the whole queries module). */
+/**
+ * An `export … from` re-export of either resolver (or of the whole queries
+ * module). A local `export { fn }` of an imported binding is a stated limit.
+ */
 function resolverReExports(rel: string, sf: ts.SourceFile): string[] {
   const found: string[] = [];
   for (const s of sf.statements) {
@@ -274,7 +282,7 @@ describe("server-rendered modules resolve identity through the redirecting guard
     expect(MODULES.flatMap(({ rel, sf }) => unresolvableShapes(rel, sf))).toEqual([]);
   });
 
-  it("nothing re-exports a resolver, so every import of one names lib/supabase/queries", () => {
+  it("no module re-exports a resolver with `export … from`", () => {
     const offenders = ALL.filter(({ rel }) => rel !== `${QUERIES}.ts`).flatMap(({ rel, sf }) =>
       resolverReExports(rel, sf),
     );
