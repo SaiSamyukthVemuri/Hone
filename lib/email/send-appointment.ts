@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { FROM_ADDRESS, resend } from "@/lib/email/client";
+import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
 import {
   buildFromHeader,
   resolveReplyTo,
@@ -47,6 +47,12 @@ export type EmailSendResult =
   | { ok: false; error: string; retryable: boolean };
 
 const RESEND_TIMEOUT_MS = 15_000;
+
+/** The send payload, derived from the transport itself so the real client and
+ *  the E2E fake cannot drift apart from what this path actually builds. */
+type EmailPayload = Parameters<
+  NonNullable<ReturnType<typeof getResendTransport>>["emails"]["send"]
+>[0];
 
 type RawResendError = {
   statusCode?: number;
@@ -101,7 +107,16 @@ export async function sendEmailSafely(opts: {
    */
   studioIdentity?: StudioEmailIdentity;
 }): Promise<EmailSendResult> {
-  if (!resend) {
+  // RESCHEDULE-E2E-01. The transport is RESOLVED, not imported: in production
+  // `getResendTransport()` returns the same real Resend client this used to
+  // import directly, so delivery, the From header, Reply-To, the 15s timeout
+  // and the retryable/terminal classification are byte-identical. Under the
+  // E2E lane's server-only fake marker it returns the fake instead, which is
+  // what makes a refusal deterministic rather than a live-provider accident.
+  // Reading the raw `resend` export here was the bypass: the onboarding path
+  // already used this resolver, the appointment path never did.
+  const transport = getResendTransport();
+  if (!transport) {
     return {
       ok: false,
       error: "Resend not configured (RESEND_API_KEY missing)",
@@ -120,7 +135,7 @@ export async function sendEmailSafely(opts: {
   // The From header is built in ONE place. `buildFromHeader` sanitises the
   // studio name, so an operator-supplied name cannot inject a header here, and
   // an absent/unsafe name yields exactly FROM_ADDRESS.
-  const payload: Parameters<typeof resend.emails.send>[0] = {
+  const payload: EmailPayload = {
     from: opts.studioIdentity
       ? buildFromHeader(opts.studioIdentity.displayName)
       : FROM_ADDRESS,
@@ -159,7 +174,7 @@ export async function sendEmailSafely(opts: {
     // The Resend SDK doesn't accept an AbortSignal directly, so we race
     // its promise against a manually-rejected timer. Whichever resolves
     // first wins; the loser is ignored.
-    const sendPromise = resend.emails.send(payload);
+    const sendPromise = transport.emails.send(payload);
     const timeoutPromise = new Promise<never>((_, reject) => {
       controller.signal.addEventListener("abort", () =>
         reject(new Error("__timeout__")),

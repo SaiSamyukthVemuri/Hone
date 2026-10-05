@@ -88,8 +88,16 @@ export function fakeResendModeForRecipient(
   return asMode(prefix) ?? "success";
 }
 
-// Structural shape both the real Resend client and the fake satisfy (the send
-// path only reads `error`).
+// Structural shape both the real Resend client and the fake satisfy.
+//
+// RESCHEDULE-E2E-01 widened this to the FULL payload the appointment send path
+// builds (`lib/email/send-appointment.ts`), and to the full result it reads.
+// Before, the type covered only the onboarding fields, which is why
+// `sendEmailSafely` could not be typed against it and reached for the raw
+// `resend` client instead -- taking the appointment and public-reschedule
+// confirmations outside the fake entirely. The optional members keep every
+// existing caller compatible: the narrower onboarding payload still satisfies
+// it, and the real Resend client still satisfies it structurally.
 export type MinimalEmailTransport = {
   emails: {
     send: (args: {
@@ -98,7 +106,12 @@ export type MinimalEmailTransport = {
       subject: string;
       html: string;
       text: string;
-    }) => Promise<{ error: { message: string } | null }>;
+      replyTo?: string;
+      attachments?: ReadonlyArray<{ filename: string; content: Buffer }>;
+    }) => Promise<{
+      data?: { id?: string } | null;
+      error: { message: string } | null;
+    }>;
   };
 };
 
@@ -108,6 +121,10 @@ export type MinimalEmailTransport = {
 // getResendTransport() constructs a fresh transport per send. Holds only the
 // mode-prefixed harness address (never real recipient content).
 const failedOnceRecipients = new Set<string>();
+
+/** Stand-in provider message id. A caller that records a message id records
+ *  this, so a fake success is never mistaken for a real provider receipt. */
+export const FAKE_MESSAGE_ID = "fake-resend-message-id";
 
 export function createFakeResendTransport(): MinimalEmailTransport {
   return {
@@ -121,7 +138,7 @@ export function createFakeResendTransport(): MinimalEmailTransport {
           // GENUINELY IN FLIGHT for HOLD_MS. Bounded and self-releasing: no test
           // can leave a request hanging, and nothing outside the fake changes.
           await new Promise((resolve) => setTimeout(resolve, HOLD_MS));
-          return { error: null };
+          return { data: { id: FAKE_MESSAGE_ID }, error: null };
         }
         if (mode === "throw") {
           throw new Error("fake resend network exception");
@@ -134,9 +151,9 @@ export function createFakeResendTransport(): MinimalEmailTransport {
             failedOnceRecipients.add(to);
             throw new Error("fake resend network exception (first attempt)");
           }
-          return { error: null };
+          return { data: { id: FAKE_MESSAGE_ID }, error: null };
         }
-        return { error: null };
+        return { data: { id: FAKE_MESSAGE_ID }, error: null };
       },
     },
   };
