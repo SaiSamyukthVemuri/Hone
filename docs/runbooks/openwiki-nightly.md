@@ -68,8 +68,10 @@ The runner documents the **source head**: the newest first-parent commit on the 
 change touched a source path. Generated-only commits after it, such as a merged nightly PR, do not move it.
 
 The wiki is **live** when `openwiki/.last-update.json` records the source head (or a commit between it and the
-tip), with `status: complete`. A live wiki ends the pass as `NOOP` before any credential is read. A
-recorded `gitHead` outside production history, an interrupted status or an abbreviated SHA is `PRECONDITION`.
+tip), with `status: complete`. A live wiki ends the pass as `NOOP` before the ChatGPT login is even checked —
+though not before every credential: the GitHub App key is read earlier, to mint the token that fetches the
+subject. A recorded `gitHead` outside production history, an interrupted status or an abbreviated SHA is
+`PRECONDITION`.
 
 ### One pass
 
