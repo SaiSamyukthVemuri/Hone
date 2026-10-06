@@ -118,13 +118,14 @@ per snapshot. Then, for each candidate:
    - `headSha` = the run's `head_sha` = `workflow_run.head_sha`; `headRef` = the run's `head_branch` =
      `workflow_run.head_branch`; `headRepositoryId` = the run's `head_repository.id` = `workflow_run.head_repository_id`;
    - `baseRepositoryId` = `repositoryId`.
-4. **Classify** against the current PR (`E.pr`) and production (`E.production`):
+4. **Classify** against the current PR (`E.pr`; `E.pr.base` is its current base ref, read in the same snapshot) and
+   production (`E.production`):
 
 | Attestation | Class | Effect |
 |---|---|---|
-| `prNumber` = `E.pr.number`; `headSha`, `headRef`, `headRepositoryId` = the PR's head; `baseRef` = the configured production ref; `baseSha` = `E.production.head` | **DESIGNATED** | takes part in ARCH-01's CI rules; its result is the run's `status` and `conclusion` |
+| `prNumber` = `E.pr.number`; `headSha`, `headRef`, `headRepositoryId` = the PR's head; `baseRef` = the PR's **current** base `E.pr.base`, which is the configured production ref; `baseSha` = `E.production.head` | **DESIGNATED** | takes part in ARCH-01's CI rules; its result is the run's `status` and `conclusion` |
 | `prNumber` ≠ `E.pr.number` | **UNRELATED** | excluded: never grants success, never creates a failure or a pending state |
-| `prNumber` = `E.pr.number` and the head matches, but `baseRef` or `baseSha` differs | **STALE** | excluded: the run tested another base and cannot satisfy CI for the current PR |
+| `prNumber` = `E.pr.number` and the head matches, but `baseRef` ≠ `E.pr.base`, or `E.pr.base` ≠ the configured production ref, or `baseSha` ≠ `E.production.head` | **STALE** | excluded: the run tested another base, or the PR no longer targets production, and the run cannot satisfy CI for the current PR |
 | `prNumber` = `E.pr.number` but any head field differs | **INVALID** | `UNKNOWN(ci_attestation_invalid)` |
 
 Any failure in steps 1–3 is **INVALID**. One INVALID candidate makes the **whole snapshot**
@@ -132,8 +133,15 @@ Any failure in steps 1–3 is **INVALID**. One INVALID candidate makes the **who
 ARCH-01 decides `CI_NOT_STARTED`. Classification depends on no ordering of the candidates.
 
 **Why STALE excludes rather than fails.** A run against an older production head must leave ARCH-01's `NEEDS_REFRESH`
-(§7 row 3) free to decide; `UNKNOWN` would hide it. A base edit without a new execution (E2) is STALE: the current PR base
-differs from the attested base, so the old run can never satisfy CI for the edited PR, whatever GitHub's current views say.
+(§7 row 3) free to decide; `UNKNOWN` would hide it.
+
+**Base edits.** A base edit without a new execution (E2) is STALE in **either direction**, because the attested base no
+longer equals the PR's current base `E.pr.base`:
+- production → another branch: the attested `baseRef` is production but `E.pr.base` is not. The PR is also
+  `UNKNOWN(wrong_base)` in ARCH-01 §13, but this rule does not rely on that.
+- another branch → production: the attested `baseRef` is the old branch.
+
+Either way, the old run can never satisfy CI for the edited PR, whatever GitHub's current views say.
 
 ## 6. Attempts and re-runs (frozen)
 
@@ -215,7 +223,7 @@ OIDC claims (`base_ref`, `workflow_sha`, `run_id`) are the escalation path if th
 | 2 | a valid attestation naming another PR | UNRELATED — excluded |
 | 3 | another PR's run at the same head SHA; the target PR has no run of its own | UNRELATED — `CI_NOT_STARTED`, never an inherited success |
 | 4 | a run of the same commit bytes from a fork; and a forged attestation claiming the target PR from that run | UNRELATED; the forgery fails metadata agreement (head repository id) → `UNKNOWN(ci_attestation_invalid)`. Never an inherited success |
-| 5 | the PR's base edited after its run | STALE — excluded |
+| 5 | the PR's base edited after its run, in both directions: production → another branch, and another branch → production | STALE — excluded |
 | 6 | a malformed artifact: bad JSON, an extra or missing key, a wrong type, two zip entries, a wrong entry name, a digest mismatch | `UNKNOWN(ci_attestation_invalid)` |
 | 7 | no `ci-attest-v1` artifact, or an expired one | `UNKNOWN(ci_attestation_invalid)` |
 | 8 | two `ci-attest-v1` artifacts in one run | `UNKNOWN(ci_attestation_invalid)` |
@@ -254,7 +262,7 @@ A proof that contradicts this record returns to architecture: it is amended here
 
 ARCH-01 gains two closed reasons from this record: `ci_attestation_invalid` and `ci_attestation_untrusted`. The
 narrowing keeps the reads this binding consumes:
-- the PR's number, head SHA, head ref and head repository id;
+- the PR's number, head SHA, head ref, head repository id and **current base ref**;
 - the production head and the target repository id;
 - the compare read's `merge_base_commit`;
 - the run metadata §5 compares against.
@@ -269,6 +277,11 @@ One legitimate semantic repair round is allowed. A second fresh, legitimate sema
 Families: the artifact contract, binding classes, trust, attempts and re-runs, retention, closed PRs.
 
 Pure prose, formatting or non-normative feedback does not consume the budget.
+
+**Spent in round 1** (Codex review of `8d20b1a3f3`): the **binding classes** family. P1 `4190932205` found that the
+DESIGNATED row never compared the attested base with the PR's current base. A PR retargeted from production without a new
+run could keep a designated run. Repaired: designation requires `baseRef` = `E.pr.base` = the production ref, and every
+other base outcome is STALE. A further semantic finding in binding classes stops this record's patch loop.
 
 ## 14. Non-goals
 
