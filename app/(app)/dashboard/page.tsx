@@ -1226,7 +1226,7 @@ function AppointmentRow({
                   // `hasHistory` is false here for the same reason it is false
                   // for a first-visit client, so a branch that reads it first
                   // cannot tell the two apart — which is precisely how a failed
-                  // read used to print "No watch/plan note." and "Latest setup:
+                  // read used to print "No watch/plan note." and "Latest recorded setup:
                   // Not recorded" over a client with live charted history.
                   //
                   // ONE line, in the row's own voice, reusing the profile's
@@ -1299,10 +1299,10 @@ function AppointmentRow({
                         No watch/plan note.
                       </span>
                     )}
-                    {/* Latest setup, once. The brief's duplicate "Last
+                    {/* Latest recorded setup, once. The brief's duplicate "Last
                         recorded:" line is gone. */}
                     <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
-                      Latest setup: {workflow.setup ?? "Not recorded"}
+                      Latest recorded setup: {workflow.setup ?? "Not recorded"}
                     </span>
                   </>
                 )}

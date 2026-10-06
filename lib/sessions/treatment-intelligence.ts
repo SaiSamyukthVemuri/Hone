@@ -36,6 +36,13 @@ export type IntelligenceSessionInput = {
 
 export type IntelligenceBlockInput = {
   session_id: string;
+  // Position WITHIN its session. The session date alone cannot order two blocks
+  // recorded in the same session, and `a.latest` is chosen last-wins — so
+  // without this the database's return order decided which same-area block was
+  // presented as the area's latest recorded setup. OPTIONAL: a caller that does
+  // not select it keeps the previous (input-order) behaviour rather than
+  // silently reordering.
+  sort_order?: number | null;
   primary_area: string | null;
   side?: string | null;
   // Migration 0128: the structured treated areas for this block. When present the
@@ -50,6 +57,11 @@ export type IntelligenceBlockInput = {
   energy_level: number | null;
   machine_frequency: string | null;
   probe_label: string | null;
+  // Probe traceability. OPTIONAL so a caller that does not read these columns
+  // keeps exactly the behaviour it had; absent is "no confirmed lot", never
+  // "confirmed".
+  probe_lot_number?: string | null;
+  probe_lot_confirmed?: boolean | null;
   minutes_performed: number | null;
   tolerance_rating: number | null;
   reaction_type: string | null;
@@ -76,6 +88,11 @@ export type AreaIntelligence = {
   latestProbe: string | null;
   latestModeLabel: string | null;
   latestEnergyLevel: number | null;
+  // The latest block's probe lot, and ONLY when the practitioner confirmed it.
+  // `probeLotDraftPatch` never marks an autofilled lot confirmed -- confirmation
+  // means someone checked the physical package -- so an unconfirmed number is a
+  // suggestion that may never have been verified.
+  latestConfirmedProbeLot: string | null;
   commonReactionLabel: string | null;
   latestWatchNote: string | null;
 };
@@ -186,6 +203,63 @@ function commonReaction(
   return top;
 }
 
+/**
+ * THE one answer to "what setup was recorded for this area?".
+ *
+ * BROWSER-FINDING-01. This question had TWO derivations: `buildBeforeToday`
+ * computed it for the newest area (feeding Dashboard Today and the Overview
+ * briefing) and `treatment-intelligence-card` recomputed it per area. Same four
+ * fields, same `" · "` join, same `EL n`, same empty-state fallback -- the only
+ * difference was which areas each one asked about, which is iteration scope, not
+ * semantics. Both therefore answered "Not recorded" for a historical block whose
+ * only recorded setup was a confirmed probe lot, while the full session rendered
+ * `Lot #… (confirmed)` correctly.
+ *
+ * `recorded` is derived from the SAME parts the line is built from, so the
+ * predicate and the display can never disagree. That divergence is the defect
+ * class itself: a fact added to one and not the other is exactly how "Not
+ * recorded" outlived the record.
+ *
+ * Reported, never invented: a parameter the block did not record stays null and
+ * contributes nothing. A note or observation is not setup and never appears here.
+ */
+export type RecordedSetup = {
+  frequency: string | null;
+  probe: string | null;
+  modeLabel: string | null;
+  energyLevel: number | null;
+  confirmedProbeLot: string | null;
+  areaName: string | null;
+  /** Display form. "" exactly when nothing was recorded. */
+  line: string;
+  /** True when at least one setup fact exists. The ONLY "Not recorded" gate. */
+  recorded: boolean;
+};
+
+export function recordedSetupForArea(area: AreaIntelligence): RecordedSetup {
+  const confirmedProbeLot = area.latestConfirmedProbeLot?.trim() || null;
+  const parts = [
+    area.latestFrequency,
+    area.latestProbe,
+    area.latestModeLabel,
+    area.latestEnergyLevel != null ? `EL ${area.latestEnergyLevel}` : null,
+    // Same wording the before-today card uses for a lot, so one fact reads one
+    // way wherever it appears.
+    confirmedProbeLot ? `Lot ${confirmedProbeLot}` : null,
+  ].filter((part): part is string => !!part);
+
+  return {
+    frequency: area.latestFrequency,
+    probe: area.latestProbe,
+    modeLabel: area.latestModeLabel,
+    energyLevel: area.latestEnergyLevel,
+    confirmedProbeLot,
+    areaName: area.name?.trim() || null,
+    line: parts.join(" · "),
+    recorded: parts.length > 0,
+  };
+}
+
 export function buildTreatmentIntelligence(input: {
   sessionsNewestFirst: ReadonlyArray<IntelligenceSessionInput>;
   blocks: ReadonlyArray<IntelligenceBlockInput>;
@@ -235,7 +309,15 @@ export function buildTreatmentIntelligence(input: {
   const blocksOldestFirst = [...blocks].sort((a, b) => {
     const da = sessionDate.get(a.session_id) ?? "";
     const db = sessionDate.get(b.session_id) ?? "";
-    return da < db ? -1 : da > db ? 1 : 0;
+    if (da !== db) return da < db ? -1 : 1;
+    // SAME SESSION: order by position within it. Returning 0 here left the
+    // comparison to Array.sort's stability, i.e. to the order the database
+    // happened to return — so two same-area blocks with different lots could
+    // present either one as "latest recorded setup". A missing `sort_order`
+    // sorts last, so a caller that does not select it is unchanged.
+    const sa = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+    const sb = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+    return sa === sb ? 0 : sa < sb ? -1 : 1;
   });
 
   // Overall totals. Hairs come from entries (via blocks) PLUS legacy
@@ -324,6 +406,10 @@ export function buildTreatmentIntelligence(input: {
         latestProbe: a.latest.probe_label,
         latestModeLabel: modeLabelFor(a.latest),
         latestEnergyLevel: a.latest.energy_level,
+        latestConfirmedProbeLot:
+          a.latest.probe_lot_confirmed === true
+            ? (a.latest.probe_lot_number?.trim() || null)
+            : null,
         commonReactionLabel: commonReaction(a.reactionsOldestFirst),
         latestWatchNote: a.latestWatchNote,
       };

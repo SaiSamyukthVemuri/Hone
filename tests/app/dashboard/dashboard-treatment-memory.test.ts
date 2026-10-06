@@ -270,7 +270,7 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
       "DashboardTreatmentMemory must not be a descendant of the row-body link",
     ).not.toContain("<DashboardTreatmentMemory");
     // Self-check: the span really is the row body and not an empty slice.
-    expect(link).toContain("Latest setup:");
+    expect(link).toContain("Latest recorded setup:");
     // ...and it is still rendered on the page, as a sibling.
     expect(DASH).toContain("<DashboardTreatmentMemory");
     expect(DASH.indexOf("<DashboardTreatmentMemory")).toBeGreaterThan(
@@ -285,7 +285,7 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
     // control someone adds cannot recreate this.
     const children = rowBodyLinkChildren();
     // Self-check first: an empty or mis-sliced string would pass every guard.
-    expect(children).toContain("Latest setup:");
+    expect(children).toContain("Latest recorded setup:");
     expect(children, "no nested link").not.toMatch(/<Link\b|<a\b/);
     expect(children, "no nested button").not.toMatch(/<button\b/);
     expect(children, "no click handler inside the link body").not.toMatch(
