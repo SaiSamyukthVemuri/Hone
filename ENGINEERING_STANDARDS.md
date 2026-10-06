@@ -177,3 +177,42 @@ repeatedly miss? Which process steps added little value? Did low-risk PRs get
 faster? Did high-risk PRs keep the right safeguards?
 
 Only repeated, evidenced pain earns new process or tooling.
+
+## 8. Engineering-loop evidence and authority
+
+`docs/decisions/arch-01-eng-loop-v2.md` (ARCH-01) is canonical for ENG-LOOP V2 and
+is not restated here. This section is the standing law that every
+engineering-loop component — and every change to one — must satisfy.
+
+- **One evidence boundary.** Raw external data — GitHub REST and GraphQL
+  payloads, comments, pagination, dates, API quirks — crosses exactly one strict
+  validation and normalization boundary. Everything downstream receives
+  normalized `Evidence` or `UNKNOWN(reason)`: never a raw payload, and never
+  partial Evidence.
+- **Ambiguity is UNKNOWN.** Required evidence that is missing, malformed,
+  truncated, unrecognized or inconsistent makes the whole snapshot
+  `UNKNOWN(reason)`. It is never defaulted, guessed or narrowed into a positive.
+- **No raw GitHub in the decision core, and no history reconstruction.** The
+  decision core never parses a GitHub representation and never orders GitHub
+  Actions runs by time, run id or attempt: every designated run at the exact
+  head must have passed.
+- **Text is never sufficient authority.** Authority is a trusted numeric actor
+  id, plus the expected account type, an accepted artifact channel, an
+  exact-head binding and the configured marker shape. Logins are display-only.
+  Codex evidence has exactly two channels — a PR review object (findings) and a
+  clean-verdict issue comment — and a clean verdict never clears an open trusted
+  finding.
+- **External checks are negative-only.** They can hold or block candidacy; they
+  never grant it.
+- **The human keeps merge authority.** `CANDIDATE_READY_FOR_HUMAN_REVIEW` is
+  advisory (CANONICAL_ROADMAP §16.2). No engineering-loop component merges, and
+  bounded actions need CANONICAL_ROADMAP §16.5 re-entry as well as ARCH-01's
+  shadow gate.
+- **The adapter / decision boundary is mechanical.** Build-failing guard tests
+  keep the evidence adapter (05A) free of decisions and the decision engine
+  (05B) free of GitHub knowledge.
+- **Semantics change in the architecture first.** A fix that would change
+  ARCH-01's semantics stops implementation and returns to an ARCH amendment and
+  review; semantics never evolve through review-repair rounds. A policy change
+  starts a new `policyHash` measurement series, and an architecture change a
+  new `archVersion`.
