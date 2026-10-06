@@ -156,8 +156,8 @@ and G4 check it statically.
 | `readCompare` | base SHA, head SHA | behind and ahead counts, and the merge-base SHA | ARCH-01 drift; CI-ATTEST-01 trust anchor |
 | `readFileBlob` | file path, commit SHA | the git blob SHA of that file at that commit | CI-ATTEST-01 trust anchor |
 
-**The candidate-run record** (CAP-01-READER-STATE-01, §15). `readCandidateRuns` reads its one fixed route once per
-pass — one listing, paginated if needed — and returns two kinds of field for every run it lists:
+**The candidate-run record** (CAP-01-READER-STATE-01, §15). `readCandidateRuns` returns two kinds of field for every
+run in its listing:
 
 | Kind | Fields | Nature |
 |---|---|---|
@@ -167,8 +167,8 @@ pass — one listing, paginated if needed — and returns two kinds of field for
 - **Not identity, not ordering.** Execution state is not part of `PrSnapshotKey` (PR-SNAPSHOT-01), not part of a CI
   attestation's identity, and not a run ordering: `run_number` alone orders runs, and `run_attempt` only bounds an
   attestation within its own run.
-- **One read per pass.** The state arrives in the same listing as the candidates, so a pass reads each run's state
-  exactly once and never combines two reads of it.
+- **One complete response per pass.** Each collection pass obtains candidate metadata and execution state from one
+  complete GitHub API response (the listing law below).
 - **Covered by the bounded re-read, not a new one.** Across passes, execution state is mutable evidence under ARCH-01's
   bounded full re-read, which PR-SNAPSHOT-01 §8 already lists as covering CI status. If the first collection sees the
   run that governs CI `in_progress` and the second sees it `completed`, the normalized evidence changed, and the
@@ -180,6 +180,42 @@ pass — one listing, paginated if needed — and returns two kinds of field for
 - **G3.** The frozen output schema of `readCandidateRuns` now includes `status`, `conclusion` and `run_attempt`
   alongside its candidate metadata, and G3's golden pins them; any change is fixture N9. This remains architectural
   lint, not a runtime proof (§8).
+
+**The single-response listing law (V1).** `readCandidateRuns` makes exactly **one** workflow-runs request per
+collection pass, filtered to the authoritative workflow, the exact head SHA and `event=pull_request`, with
+`per_page=100`, the maximum page size. It never requests a second page, loops over pages or reconciles cursors. The
+response must prove that the whole filtered candidate set is in it:
+- `total_count` is a non-negative integer, and `workflow_runs` is an array of run records with no gaps;
+- `total_count` equals the array's length, and is at most 100;
+- every record has the candidate-run schema above;
+- no two records share a run id or a `run_number`.
+
+If the response shows that more candidates exist than it holds — a `total_count` above 100, a count that differs from
+the array's length, or an explicit next-page link — the whole evidence snapshot is
+`UNKNOWN(ci_candidate_listing_too_large)`. Any other failure of the list above is `UNKNOWN(malformed)`. The reader never
+inspects only the first page. ARCH-01's closed reason set gains `ci_candidate_listing_too_large` from this amendment.
+
+A head needing more than 100 `pull_request` runs is exceptional: across all 2,829 of this repository's `ci.yml` runs, no
+head SHA has more than two (Appendix). Failing closed there is cheaper and safer than cross-page deduplication,
+shifting-page reconstruction, page timestamps, missing-run inference or snapshot reconciliation, none of which V1 has.
+
+**Order.** The response's order means nothing. The CI binding record (CI-ATTEST-01) orders the validated candidates by
+`run_number` alone and applies its current-run frontier. No timestamp, run-id or cross-run `run_attempt` ordering is
+used.
+
+Required listing fixtures, for the transport's implementation tests:
+
+| # | Response | Required result |
+|---|---|---|
+| L1 | no runs, `total_count` 0 | a valid, complete, empty listing |
+| L2 | N ≤ 100 runs, `total_count` N | a valid, complete listing |
+| L3 | 100 runs, `total_count` 101 | `UNKNOWN(ci_candidate_listing_too_large)` |
+| L4 | a `total_count` different from the number of runs returned | `UNKNOWN(ci_candidate_listing_too_large)` |
+| L5 | two records with the same run id | `UNKNOWN(malformed)` |
+| L6 | two records with the same `run_number` | `UNKNOWN(malformed)` |
+| L7 | any reordering of a valid response of at most 100 runs | the same normalized listing, and the same frontier result after `run_number` ordering |
+| L8 | an explicit next-page link | `UNKNOWN(ci_candidate_listing_too_large)` |
+| L9 | a non-integer or negative `total_count`, a missing or non-array `workflow_runs`, or a record outside the schema | `UNKNOWN(malformed)` |
 
 ## 5. What crosses outward
 
@@ -435,16 +471,16 @@ no process, network or credential isolation at the current authority level; §11
 
 | | |
 |---|---|
-| **Decision** | `readCandidateRuns` returns each candidate run's mutable execution state — `status`, `conclusion` and `run_attempt` — together with its candidate metadata, from the same listing (§4). |
+| **Decision** | `readCandidateRuns` returns each candidate run's mutable execution state — `status`, `conclusion` and `run_attempt` — together with its candidate metadata, from one complete response to a single request; a listing that cannot fit one response fails closed (§4). |
 | **Date** | 2026-10-06 |
 | **Decided by** | Sam (operator), after Codex's ready-triggered review of PR #802 found the gap (P1 `4200685968`). |
 | **Why** | `readCandidateRuns` was frozen to immutable run metadata only, and no reader returned a workflow run's current state. The CI binding record (CI-ATTEST-01) needs the state of the one run that governs CI, and ARCH-01's run rule needed the same, so neither could be implemented under this record. |
 | **Not added** | No new reader, GitHub client, transport capability or network authority, and no edge in §3. No timestamp, recency field, run-id ordering, second run ordering or cross-run `run_attempt` logic. No CI-specific re-read. |
 
-**Why one reader, not a second `readRunState`.** The route `readCandidateRuns` already lists returns every run's
-state in the same listing. Reading it there gives one moment, and one read of each run's state per pass. A second
-reader would add a second, competing read of the same mutable fact at a different moment, and a second CI reader,
-without any capability the first lacks. No concrete reason requires one.
+**Why one reader, not a second `readRunState`.** The response `readCandidateRuns` already receives carries every
+run's state, so each pass obtains candidate metadata and execution state from one complete GitHub API response. A
+second reader would add a second, competing read of the same mutable fact, and a second CI reader, without any
+capability the first lacks. No concrete reason requires one.
 
 **Why `run_attempt` as well.** It is a run's third mutable field. The CI binding record bounds an attestation's recorded
 attempt by the run's current `run_attempt`, within that one run; without it, that frozen check has no reader. It never
@@ -462,6 +498,11 @@ orders runs.
 **Review budget.** This amendment gets one exact-head review round. A legitimate semantic problem with the reader's
 ownership or mutability model may be repaired once. A second P0–P2 in the same family → **stop**, with no patch loop.
 
+**Spent.** Codex's review of `89a24199d6` raised P2 `4201214343`: a paginated listing is several requests, not one
+read, so a run can be dropped or duplicated between pages. By operator decision, the one repair is the single-response
+listing law (§4), which removes paging instead of reconciling it. A further P0–P2 in the candidate-listing or
+reader-state family → **stop**.
+
 ---
 
 ## Appendix — evidence (2026-10-06, read only)
@@ -478,3 +519,4 @@ ownership or mutability model may be repaired once. A second P0–P2 in the same
 | `gh auth status` on the authoring host | token scopes `gist`, `read:org`, `repo`, `workflow` |
 | REST `workflow-run` schema (OpenAPI), for §15 | `status` and `conclusion` are required, nullable strings; `run_attempt` is an optional integer; `run_number` is a required integer. The workflow-runs list returns them for every run, in one response. |
 | PR #802, ready-triggered review `5434850896`, for §15 | P1 `4200685968`: no reader exposed the governing run's current `status` or `conclusion` |
+| All 2,829 `ci.yml` runs (workflow `289443461`), for §4's listing law | no head SHA has more than two `pull_request` runs |
