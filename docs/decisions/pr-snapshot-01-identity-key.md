@@ -143,11 +143,16 @@ between the two passes is `pr_key_moved` (§4), not `unstable_snapshot`.
 
 - **One value.** The normalized PR contract exposes `PrSnapshotKey` as one immutable value. No exported helper reads,
   refreshes or re-validates an individual PR field.
-- **One reader.** Exactly one internal 05A module issues the key query. A build-failing guard test proves three things:
-  - the pull-request identity fields `headRefOid`, `headRefName`, `headRepository`, `baseRefName`, `baseRef` and
-    `baseRepository` appear in no other module;
-  - no other module selects the pull request's own `state`;
-  - `baseRefOid` appears in **no** module, the reader included, so the stale recorded base (§2) is unusable everywhere.
+- **One reader.** Exactly one internal 05A module reads the key. A build-failing guard test is defined over **reads of
+  GitHub** — the GraphQL documents and REST requests in 05A's source — never over property names. 05A keeps every GraphQL
+  document in a form the guard can parse. The guard proves three things:
+  - no GraphQL document outside the key reader selects, on a `PullRequest`, any of `state`, `headRefOid`,
+    `headRefName`, `headRepository`, `baseRefName`, `baseRef` or `baseRepository`;
+  - no GraphQL document anywhere selects `baseRefOid`, and no module requests the REST pull-request resource
+    (`GET /repos/{owner}/{repo}/pulls/{number}`) or list (`GET /repos/{owner}/{repo}/pulls`), so the stale recorded
+    base (§2) is unusable everywhere;
+  - reading a property of the normalized key (`K0.baseRef`, `K0.headSha`, …) is not a read of GitHub. Consumers use it
+    freely.
 - **`K0` is passed in.** Code that binds evidence — CI candidates, the CI-ATTEST-01 comparison, review binding, drift,
   contexts — receives `K0` as a parameter. It cannot read the PR.
 - **05B** receives only normalized Evidence and never reads GitHub.
@@ -170,6 +175,7 @@ between the two passes is `pr_key_moved` (§4), not `unstable_snapshot`.
 | 12 | both passes unstable | `UNKNOWN(pr_key_moved)`, never a candidate |
 | 13 | the recorded base SHA (`baseRefOid`, REST `base.sha`) is stale while the base branch has advanced | the key reads the live tip, so drift sees the advance (live: #800) |
 | 14 | a closed or merged PR whose head repository was deleted | a valid terminal key, with `null` allowed → `NOT_OPEN` |
+| 15 | the guard (§9): a module outside the reader selecting `headRefOid` on a `PullRequest`; any selection of `baseRefOid`; a REST pull-request request; a consumer reading `K0.baseRef` | the first three fail the build; the last passes |
 
 ## 11. Re-entry sequence
 
@@ -199,6 +205,12 @@ Families: the key's fields and sources; the boundary and retry; open-pass bindin
 boundary.
 
 Pure prose, formatting or non-normative feedback does not consume the budget.
+
+**Spent in round 1** (Codex review of `3fe8b09b84`): the **mechanical boundary** family. P2 `4195064808` found that the
+guard banned the identifier `baseRef`, which the key's own normalized property shares, so required consumers would fail
+it. Repaired: the guard is defined over reads of GitHub — GraphQL selections on a `PullRequest` and REST pull-request
+requests — never over property names. Fixture 15 proves it in both directions. A further semantic finding in the
+mechanical boundary stops this record's patch loop.
 
 ## 14. Non-goals
 
