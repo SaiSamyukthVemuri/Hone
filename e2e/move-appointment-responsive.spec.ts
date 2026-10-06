@@ -6,6 +6,12 @@ import {
   type E2eSeed,
 } from "./helpers/seed";
 import { bookAppointment, loginAsOwner } from "./helpers/flows";
+import {
+  errorEvents,
+  eventTexts,
+  markSentryEgress,
+  waitForSentryEgress,
+} from "./helpers/sentry-egress";
 
 // Practitioner Move appointment — the ONE shared responsive workflow (migration
 // 0133), exercised end-to-end on mobile, tablet, and desktop against the LOCAL
@@ -173,4 +179,82 @@ test("move appointment: shared responsive workflow preserves the same record", a
     expect(instant(after.find((a) => a.id === apptId)!.starts_at)).toBe(instant(prevStart));
     await ctx.close();
   });
+});
+
+// SENTRY-CALENDAR-FETCH-01. Opening the dialog READS the available times through
+// a Server Action, and a Server Action is a POST that can be lost in transit: the
+// browser then rejects it with its own `TypeError: Failed to fetch`. Uncaught in
+// the dialog's loading transition, that rejection reached the route error
+// boundary, which replaced the whole Appointment Detail page and reported the
+// loss to Sentry, for a read that changes nothing and that the dialog already
+// has a failure state for. This pins that a lost read lands in that state, and
+// that "Try again" then loads the times.
+//
+// Only the read's own POST is failed (route.abort, which Chrome reports as
+// "Failed to fetch"). The page, its RSC requests and the Sentry tunnel keep
+// working, which is the only shape whose event can reach Sentry at all. The
+// tunnel's envelopes are read back from the lane's egress guard, so this sees
+// exactly what WOULD have been reported, and nothing leaves the host.
+test("move appointment: a read of available times lost in transit stays in the dialog", async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const own = await seedE2eStudio();
+  await bookAppointment(page, own);
+  const ownClientId = (await getClientIdByEmail(own.studioId, own.clientEmail))!;
+  const [appt] = await getAppointmentsForClient(own.studioId, ownClientId);
+  expect(appt?.status).toBe("confirmed");
+
+  await loginAsOwner(page, own);
+  const uncaught: string[] = [];
+  page.on("pageerror", (e) => uncaught.push(`${e.name}: ${e.message}`));
+  await page.goto(`/calendar/${appt.id}`);
+
+  // Lose exactly one request: the dialog's read of the times for a date.
+  let lost = 0;
+  await page.route("**/*", async (route) => {
+    const req = route.request();
+    if (
+      lost === 0 &&
+      req.method() === "POST" &&
+      req.headers()["next-action"] &&
+      (req.postData() ?? "").includes("localDate")
+    ) {
+      lost += 1;
+      return route.abort("failed");
+    }
+    return route.fallback();
+  });
+
+  const since = markSentryEgress();
+  await page.getByRole("button", { name: "Move appointment" }).click();
+  const dialog = page.getByRole("dialog", { name: "Move appointment" });
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => lost, { message: "the read of available times was never sent" }).toBe(1);
+
+  // The loss lands in the dialog's own failure state, and the Appointment
+  // Detail page behind it survives.
+  await expect(dialog.getByText("Could not load available times.")).toBeVisible();
+  await expect(page.getByTestId("route-error-boundary")).toHaveCount(0);
+  expect(uncaught).toEqual([]);
+
+  // ANTI-VACUITY: the tunnel really carries what the page reports. A deliberate
+  // unhandled rejection must arrive, or the empty list below proves nothing.
+  await page.evaluate(() => {
+    void Promise.reject(new Error("calendar move capture probe"));
+  });
+  const reported = await waitForSentryEgress(
+    (records) => {
+      const texts = errorEvents(records).flatMap(({ item }) => eventTexts(item));
+      return texts.includes("calendar move capture probe") ? texts : undefined;
+    },
+    { since },
+  );
+  expect(reported.filter((text) => /Failed to fetch/.test(text))).toEqual([]);
+
+  // RECOVERY: with the transport back, "Try again" loads the times.
+  await dialog.getByRole("button", { name: "Try again" }).click();
+  await expect(dialog.getByRole("button", { name: SLOT }).first()).toBeVisible({ timeout: 15_000 });
+  await ctx.close();
 });

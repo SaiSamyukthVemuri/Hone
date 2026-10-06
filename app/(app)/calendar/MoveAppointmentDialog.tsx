@@ -15,6 +15,7 @@ import {
   type MovePractitionerOption,
 } from "./move-appointment-actions";
 import { moveConfirmState } from "./move-confirm-state";
+import { isServerActionTransportFailure } from "@/lib/reliability/server-action-transport";
 
 // Practitioner Move appointment, ONE shared responsive dialog + state machine used by
 // mobile, tablet, and desktop (responsive by Tailwind; no separate mobile/desktop paths).
@@ -115,11 +116,26 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       setLoadError(null);
       const req = ++loadReq.current;
       startLoad(async () => {
-        const res = await loadMoveSlotsAction({
-          appointmentId: appointment.id,
-          localDate: forDate,
-          targetPractitionerId: forTarget,
-        });
+        let res: Awaited<ReturnType<typeof loadMoveSlotsAction>>;
+        try {
+          res = await loadMoveSlotsAction({
+            appointmentId: appointment.id,
+            localDate: forDate,
+            targetPractitionerId: forTarget,
+          });
+        } catch (error) {
+          // SENTRY-CALENDAR-FETCH-01. A POST lost in transit rejects with the
+          // browser's own TypeError. This is a READ, so nothing changed: the loss
+          // belongs in the same failure state as a refused load, with Try again,
+          // not in the route error boundary, which would replace the whole page
+          // and blame the server. Anything else still reaches the boundary.
+          if (!isServerActionTransportFailure(error)) throw error;
+          if (req !== loadReq.current) return;
+          setSlots([]);
+          setLoadError("Could not load available times.");
+          setSelected(null);
+          return;
+        }
         if (req !== loadReq.current) return; // stale: a newer load superseded this
         if (!res.ok) {
           setSlots([]);
