@@ -5,7 +5,7 @@
 | **Decision** | ENG-LOOP V2's core is a **stateless pipeline**: an **evidence adapter** (05A: GitHub → `Evidence` \| `UNKNOWN(reason)`), a **pure decision engine** (05B: `Evidence` → `Decision`) and a **stateless render** of the exact-head outcome (05C). Raw GitHub data crosses exactly one validation boundary. The human keeps merge authority. ARCH-01 owns **no durable state** (§28). |
 | **Date** | 2026-10-06 |
 | **Status** | **PROPOSED** in the ARCH-01 pull request; **ACCEPTED** when merged. |
-| **Decided by** | Sam (operator): the ENG-LOOP V2 architecture contract, including the two-channel Codex evidence decision (§17) and, after the §36 stop law fired, the cut that moved all durable state to ARCH-02 (§28). |
+| **Decided by** | Sam (operator): the ENG-LOOP V2 architecture contract, including the two-channel Codex evidence decision (§17) and, after the §36 stop law fired, the cut that moved all durable state to ARCH-02 (§28) and the CI-run-to-PR binding law (§8.1). |
 | **archVersion** | `ARCH-01` |
 | **Scope** | ENG-LOOP-05A, 05B and 05C's stateless render; every later ENG-LOOP component consumes this pipeline and its laws. Durable state is out of scope (§28). Standing law: ENGINEERING_STANDARDS §8. |
 | **Supersedes** | The ENG-LOOP-01/03/04 implementations — PRs #795, #798 and #799 — which stay frozen as draft **evidence** branches (§27). |
@@ -86,10 +86,10 @@ readiness decision and has no decision vocabulary (§25).
 
 | Fact | Source | Keyed by |
 |---|---|---|
-| PR number, state, draft, base, head; review objects; PR issue comments; review threads; external contexts | **one GraphQL snapshot** (§15), every page | PR number |
+| PR number, state, draft, base, head, head ref and head repository id; review objects; PR issue comments; review threads; external contexts | **one GraphQL snapshot** (§15), every page | PR number |
 | Production head | REST `git/ref/heads/<configured production ref>` | the configured ref (§13) |
 | Drift | REST `compare/{production_head}...{H}` | `H` = the snapshot's head (§14, §16) |
-| CI runs | REST `actions/workflows/ci.yml/runs?head_sha={H}&event=pull_request`, every page | `H` = the snapshot's head (§8, §9, §16) |
+| CI runs, each with its `pull_requests` association | REST `actions/workflows/ci.yml/runs?head_sha={H}&event=pull_request`, every page | `H` = the snapshot's head (§8, §8.1, §9, §16) |
 
 Every read is a **read**. 05A never writes to GitHub. One **collection** is every read in this table; §15 requires two
 complete collections that agree.
@@ -122,13 +122,15 @@ or check JSON, or compare syntax. It implements only the precedence law (§7).
 
 ## 8. Run selection rule
 
-**Designated runs** for head `H` are exactly the runs the configured workflow endpoint returns for `head_sha=H` and
+**Candidate runs** for head `H` are exactly the runs the configured workflow endpoint returns for `head_sha=H` and
 `event=pull_request` (§9): the endpoint ∩ the exact head ∩ the authoritative event. Push-event runs at the same sha are
-**not** designated. No other event is authoritative unless policy is explicitly changed (§32).
+**not** candidates. No other event is authoritative unless policy is explicitly changed (§32). **Designated runs** are the
+candidates whose PR association binds them, unambiguously, to this PR (§8.1). Head sha and event alone are **not** PR
+identity: two PRs may share a commit.
 
 Default policy: **`ALL_DESIGNATED_RUNS`** — every designated run must be completed with conclusion `success`.
 
-Each run's **current** state is normalized by a closed table (05A):
+Each designated run's **current** state is normalized by a closed table (05A):
 
 | Run `status` | Run `conclusion` | Normalized outcome |
 |---|---|---|
@@ -139,8 +141,8 @@ Each run's **current** state is normalized by a closed table (05A):
 | `queued`, `in_progress`, `waiting`, `requested`, `pending` | (any) | `PENDING` |
 | any other status | (any) | `UNKNOWN(unrecognized_ci_status)` |
 
-Then (05B): any `FAILED` → `CI_FAILED`; zero runs → `CI_NOT_STARTED`; any `PENDING` → `CI_PENDING`; all `SUCCEEDED` →
-CI acceptable — in §7's order.
+Then (05B): any `FAILED` → `CI_FAILED`; zero designated runs → `CI_NOT_STARTED`; any `PENDING` → `CI_PENDING`;
+all `SUCCEEDED` → CI acceptable — in §7's order.
 
 **No timestamp ordering. No run-id ordering. No `run_attempt` ordering. No inferred "latest execution."** A re-run keeps
 its run id, and the run's current state already reflects its latest attempt; `run_attempt` is never read for a decision.
@@ -149,6 +151,51 @@ its run id, and the run's current state already reflects its latest attempt; `ru
 §28) shows false blocking caused by legitimate duplicate runs at one head; defined solely as *the designated run with the
 highest `run_number`*. Enabling it is a policy change (§32). No other ordering field may be introduced without
 an architecture change (§35).
+
+### 8.1 CI-run-to-PR binding
+
+**Designated CI run = workflow + head + event + unambiguous PR association.** 05A classifies **every** candidate run by
+its GitHub `pull_requests` association, after §9's and §23's integrity checks and before any run's state is normalized.
+The association is **valid and unambiguous** only when all hold:
+
+1. `pull_requests` is an array with **exactly one** structurally valid entry;
+2. that entry carries a well-typed `number`, `head.sha`, `head.ref`, `head.repo.id`, `base.ref` and `base.repo.id`
+   (positive integers for the number and both repository ids, 40 lowercase hex for `head.sha`, non-empty refs);
+3. the run's own head evidence agrees with it: `run.head_sha == head.sha`, `run.head_branch == head.ref` and
+   `run.head_repository.id == head.repo.id`.
+
+| Candidate run's association | Class | Effect |
+|---|---|---|
+| valid and unambiguous, and equal to **every** current-PR identity field: `number` = `E.pr.number`, `head.sha` = `E.pr.head`, `head.ref` = `E.pr.headRef`, `head.repo.id` = `E.pr.headRepoId`, `base.ref` = the configured production ref, `base.repo.id` = the target repository id (§32) | **A — designated** | takes part under `ALL_DESIGNATED_RUNS` |
+| valid and unambiguous, naming **another** PR (`number` ≠ `E.pr.number`) | **B — unrelated** | excluded from this PR's CI set: it never grants success and never creates a failure or a pending state |
+| valid and unambiguous, naming this PR's number, but any other identity field differs | — | `UNKNOWN(ci_pr_binding_ambiguous)` |
+| empty, more than one entry, malformed, or inconsistent with the run | **C** | `UNKNOWN(ci_pr_binding_ambiguous)` |
+
+An `UNKNOWN` here is for the **whole** snapshot. 05A never guesses whether a run belongs to this PR: a fork PR or an
+unusual representation that does not expose enough association evidence reads `UNKNOWN`, not ready. Run id, timestamps
+and `run_attempt` are never PR identity, and neither is the runs endpoint's `branch` query parameter (GitHub documents it
+only for `push`). The classification does not depend on the order in which the endpoint lists candidates.
+
+### 8.2 CI-run binding fixtures
+
+**Positive fixture** — the real #800 run `37398647168`, read 2026-10-06; class A against #800 at that head:
+
+| Field | Value |
+|---|---|
+| `workflow_id`; `event` | `289443461`; `pull_request` |
+| `head_sha` | `aeb18aaedc1b11294ef67ebf7425266b66c5c235` |
+| `head_branch`; `head_repository.id` | `docs/arch-01-eng-loop-v2`; `1240764106` (`SaiSamyukthVemuri/Hone`) |
+| `pull_requests` | exactly one entry: #800, with `head.sha`, `head.ref` and `head.repo.id` as above, `base.ref` `claude/build-hone-saas-hOex7` and `base.repo.id` `1240764106` |
+
+**Required negative fixtures:**
+
+1. same workflow and sha, associated with **another** PR → ignored, never designated;
+2. the target PR's run plus an unrelated run at the same sha → only the target-associated run takes part;
+3. empty `pull_requests` → `UNKNOWN(ci_pr_binding_ambiguous)`;
+4. more than one `pull_requests` entry → `UNKNOWN(ci_pr_binding_ambiguous)`;
+5. the association's PR number matches but its head repository differs → `UNKNOWN(ci_pr_binding_ambiguous)`;
+6. number and head match but the base differs → `UNKNOWN(ci_pr_binding_ambiguous)`;
+7. the run's own head fields disagree with the association → `UNKNOWN(ci_pr_binding_ambiguous)`.
 
 ## 9. CI source of truth
 
@@ -159,7 +206,8 @@ GET /repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=<H>&event=pull_
 ```
 
 Every page is read; the stated `total_count` must equal the number of runs collected (else `UNKNOWN(incomplete)`). Every
-returned run must carry `head_sha == H` and `event == pull_request` (else `UNKNOWN(malformed)`).
+returned run must carry `head_sha == H` and `event == pull_request` (else `UNKNOWN(malformed)`). Every returned run is a
+**candidate**; it is designated only through §8.1.
 
 `statusCheckRollup` is **not** authoritative for Actions CI. It is read only for external contexts (§10).
 
@@ -382,9 +430,10 @@ Required negative fixtures, each proven inert or not-current:
 
 ## 23. Workflow membership
 
-The workflow **endpoint selects membership**. V2 never fetches arbitrary repository runs and decides which belong.
+The workflow **endpoint selects the candidates** (§8, §9). V2 never fetches arbitrary repository runs; within the
+endpoint's candidates, only the PR association decides designation (§8.1).
 
-`workflow_id` is kept as fixture evidence, a consistency assertion and an anti-drift check: every returned designated run
+`workflow_id` is kept as fixture evidence, a consistency assertion and an anti-drift check: every returned candidate run
 must carry the policy's expected workflow id, `289443461` (live `GET actions/workflows/ci.yml` on 2026-10-05). A mismatch →
 `UNKNOWN(workflow_identity_mismatch)`. `workflow_id` is **never** used to select from arbitrary runs, to order runs or to
 establish recency. `path` is display/debug metadata only: no matching on it, in any form (#798's `ci.yml@main` lesson).
@@ -395,10 +444,14 @@ Immutable, constructed only by 05A through validating constructors (`Sha` is exa
 
 ```ts
 interface Evidence {
-  readonly pr: { number: number; head: Sha; state: "OPEN" | "CLOSED" | "MERGED"; draft: boolean; base: string };
+  readonly pr: {
+    number: number; head: Sha; headRef: string; headRepoId: number;
+    state: "OPEN" | "CLOSED" | "MERGED"; draft: boolean; base: string;
+  };
   readonly production: { ref: string; head: Sha; behindBy: number; aheadBy: number /* metadata */ };
   readonly ci: {
     readonly workflowId: number;
+    // Designated runs only (§8.1): an unrelated run never reaches Evidence.
     readonly runs: ReadonlyArray<{ outcome: "SUCCEEDED" | "FAILED" | "PENDING"; runNumber: number /* metadata */ }>;
   };
   readonly external: ReadonlyArray<{ source: string /* display */; state: "pending" | "success" | "failure" }>;
@@ -501,6 +554,7 @@ The policy — every value that can affect evidence or decision semantics — in
 | production ref | `claude/build-hone-saas-hOex7` |
 | authoritative workflow, expected workflow id | `.github/workflows/ci.yml`, `289443461` |
 | authoritative event | `pull_request` |
+| target repository (id) | `SaiSamyukthVemuri/Hone`, `1240764106` |
 | CI run-selection mode | `ALL_DESIGNATED_RUNS` (`LATEST_CREATED` off) |
 | trusted Codex reviewers (id, type) | `199175422`, `Bot` |
 | human resolvers (id, type) | `26781116`, `User` |
@@ -555,6 +609,12 @@ third semantic patch — and its three findings stay open as ARCH-02's requireme
 fresh exact-head review, to prove the removal left no dangling dependency in the stateless core; a new semantic finding
 in an already-converged family stops it.
 
+**Round 3 stopped** (Codex review of `aeb18aaedc`): the removal left no dangling dependency, but P1 `4190617309`
+found that designated CI runs were not bound to the PR. **Re-entry** (operator decision, not a patch round): the
+CI-run-to-PR binding law (§8.1, §8.2). One fresh exact-head review follows; another semantic finding in the CI-authority
+/ run-binding family stops it, and the REST association approach is then non-converged — the next discussion considers
+an explicit PR attestation rather than another parser rule.
+
 ## 37. Standing engineering law
 
 ENGINEERING_STANDARDS §8 carries the standing law in the same change: raw external evidence crosses exactly one
@@ -576,7 +636,7 @@ ARCH-01 is complete only if 05A/05B need to invent none of the following. Each i
 
 | Must not be invented | Where |
 |---|---|
-| which runs count; workflow membership; `workflow_id`'s role | §8, §9, §23 |
+| which runs count; CI-run-to-PR binding and its fixtures; workflow membership; `workflow_id`'s role | §8, §8.1, §8.2, §9, §23 |
 | run success / failure / pending mapping | §8 |
 | CI source of truth | §9 |
 | external source of truth; external collapse mapping | §10, §11 |
@@ -606,7 +666,8 @@ Every `UNKNOWN` names exactly one reason:
 | `wrong_base` | the PR's base is not the configured production ref |
 | `head_moved` | the snapshot head assertion failed twice, or the second collection (§15) saw another head |
 | `unstable_snapshot` | two complete collections at the same head normalize to different `Evidence` (§15) |
-| `workflow_identity_mismatch` | a designated run carries another workflow id |
+| `workflow_identity_mismatch` | a candidate run carries another workflow id |
+| `ci_pr_binding_ambiguous` | a candidate run's PR association is empty, multiple, malformed or inconsistent with the run, or names this PR's number with another identity (§8.1) |
 | `unrecognized_ci_status` | a run status outside §8's table |
 | `unrecognized_ci_conclusion` | a completed run's conclusion outside §8's table |
 | `unrecognized_context_state` | an external context value outside §11's table |
@@ -626,6 +687,13 @@ Every `UNKNOWN` names exactly one reason:
   two executions, the agreed `Evidence` is the true state at the moment between the two collections. A change made and
   then reverted inside that window is invisible, and only such a reversal can let a combination that never existed
   survive. Recorded so policy can address it deliberately.
+- **A run's PR association is GitHub's current view, not a record of what started the run.** `pull_requests` lists the
+  PRs open *now* whose head sha or head branch matches the run, with each PR's current head and base: #800's run
+  `37396356200`, made at `5982d7d025`, now reports #800's later head `aeb18aaedc`. A run started by an earlier PR from the
+  same head repository, branch and sha, or before this PR's base was edited (a base edit starts no run under `ci.yml`'s
+  default `pull_request` activity types), can therefore satisfy §8.1 for the current PR. When the head is behind
+  production, §14 already holds such a PR at `NEEDS_REFRESH`. Recorded so a stronger, run-side PR attestation can
+  address it deliberately.
 
 ---
 
