@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| **Decision** | ENG-LOOP V2 is built as an **evidence adapter** (05A: GitHub → `Evidence` \| `UNKNOWN(reason)`), a **pure decision engine** (05B: `Evidence` → `Decision`) and an **advisory shepherd CLI** with a shadow ledger (05C). Raw GitHub data crosses exactly one validation boundary. The human keeps merge authority. |
+| **Decision** | ENG-LOOP V2's core is a **stateless pipeline**: an **evidence adapter** (05A: GitHub → `Evidence` \| `UNKNOWN(reason)`), a **pure decision engine** (05B: `Evidence` → `Decision`) and a **stateless render** of the exact-head outcome (05C). Raw GitHub data crosses exactly one validation boundary. The human keeps merge authority. ARCH-01 owns **no durable state** (§28). |
 | **Date** | 2026-10-06 |
 | **Status** | **PROPOSED** in the ARCH-01 pull request; **ACCEPTED** when merged. |
-| **Decided by** | Sam (operator): the ENG-LOOP V2 architecture contract, including the two-channel Codex evidence decision (§17). |
+| **Decided by** | Sam (operator): the ENG-LOOP V2 architecture contract, including the two-channel Codex evidence decision (§17) and, after the §36 stop law fired, the cut that moved all durable state to ARCH-02 (§28). |
 | **archVersion** | `ARCH-01` |
-| **Scope** | ENG-LOOP-05A, 05B and 05C, and every later ENG-LOOP component (06 bounded actions, 02 watcher). Standing law: ENGINEERING_STANDARDS §8. |
+| **Scope** | ENG-LOOP-05A, 05B and 05C's stateless render; every later ENG-LOOP component consumes this pipeline and its laws. Durable state is out of scope (§28). Standing law: ENGINEERING_STANDARDS §8. |
 | **Supersedes** | The ENG-LOOP-01/03/04 implementations — PRs #795, #798 and #799 — which stay frozen as draft **evidence** branches (§27). |
 | **Enforced by** | ENGINEERING_STANDARDS §8 now; the 05A/05B guard tests (§25), test law (§26) and fixture corpus (§22) when those lanes land. |
 | **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0` (#788). Every pinned value below was read from the live GitHub API on 2026-10-05/06. |
@@ -29,13 +29,10 @@ system prepares a release-clean candidate
 human retains production merge authority
 ```
 
-ENG-LOOP is **not** an autonomous merge system. This is CANONICAL_ROADMAP §16.2 (*Phase 1: Sam merges all PRs*). 05A, 05B and
-05C's rendering of an outcome are **observation-only** reporting under §16.5's observation clause: they keep no durable
-state and change nothing. The **shadow ledger** (§28) is different: it is a **durable component**, and its rows are the
-evidence for the gate in front of any authority (§33). §16.5's re-entry gate therefore applies to it **in full** —
-mechanical completeness, an independent falsifier and the fault-injection precondition — before 05C writes a single row
-(§28.1). ENG-LOOP-06 (bounded actions) is an authority component: it needs §16.5's three re-entry conditions **and** the
-shadow gate (§33) — neither substitutes for the other.
+ENG-LOOP is **not** an autonomous merge system. This is CANONICAL_ROADMAP §16.2 (*Phase 1: Sam merges all PRs*). Everything
+ARCH-01 specifies — 05A, 05B and 05C's stateless render — is **observation-only** reporting under §16.5's observation
+clause: it keeps no durable state and changes nothing. Durable components and authority components (ENG-LOOP-06 bounded
+actions) are outside ARCH-01, and §16.5's re-entry gate governs them (§28).
 
 ## 2. Root cause learned from #795 / #798 / #799
 
@@ -65,11 +62,11 @@ Ambiguous or unrecognized **required** evidence → `UNKNOWN(reason)` for the wh
 ```
 collect(pr, policy, github)  →  Evidence | Unknown(reason)          (05A)
 decide(evidence, policy)     →  Decision                             (05B)
-shepherd CLI                 →  renders the advisory outcome; records it once §28.1 holds (05C)
+shepherd CLI                 →  renders the exact-head outcome; persists nothing (05C)
 ```
 
 `decide()` is called **only** with valid `Evidence`; collection failure returns `Unknown` before 05B runs. `UNKNOWN` is
-**not** a member of `Decision`. The shepherd and the ledger record an outcome union:
+**not** a member of `Decision`. The shepherd renders an outcome union:
 
 ```ts
 type ObservationOutcome =
@@ -77,7 +74,8 @@ type ObservationOutcome =
   | { kind: "unknown"; reason: UnknownReason };
 ```
 
-Later, separately and **not** in 05A/05B/05C: the **orchestrator** and the **watcher** (ENG-LOOP-06, ENG-LOOP-02).
+Later, separately and **not** in 05A/05B/05C: the **orchestrator** and the **watcher** (ENG-LOOP-06, ENG-LOOP-02), and
+any durable state (§28).
 
 ## 5. 05A — evidence adapter
 
@@ -147,9 +145,9 @@ CI acceptable — in §7's order.
 **No timestamp ordering. No run-id ordering. No `run_attempt` ordering. No inferred "latest execution."** A re-run keeps
 its run id, and the run's current state already reflects its latest attempt; `run_attempt` is never read for a decision.
 
-**The only permitted future relaxation — `LATEST_CREATED`:** OFF by default; enabled only after shadow evidence shows
-false blocking caused by legitimate duplicate runs at one head; defined solely as *the designated run with the highest
-`run_number`*. Enabling it is a policy change (new `policyHash`, §32). No other ordering field may be introduced without
+**The only permitted future relaxation — `LATEST_CREATED`:** OFF by default; enabled only after shadow evidence (ARCH-02,
+§28) shows false blocking caused by legitimate duplicate runs at one head; defined solely as *the designated run with the
+highest `run_number`*. Enabling it is a policy change (§32). No other ordering field may be introduced without
 an architecture change (§35).
 
 ## 9. CI source of truth
@@ -210,7 +208,7 @@ If the PR's base ≠ the configured production ref → `UNKNOWN(wrong_base)`.
 ## 14. Compare direction
 
 Drift comparison is frozen as `compare/{production_head}...{pr_head}` — **base** = the production head, **head** = the
-exact PR head. Refresh predicate: `behind_by > 0` → `NEEDS_REFRESH`. `ahead_by` may be recorded and **never** drives a
+exact PR head. Refresh predicate: `behind_by > 0` → `NEEDS_REFRESH`. `ahead_by` is metadata only and **never** drives a
 decision. Swapping the direction is an implementation defect.
 
 ## 15. Snapshot consistency
@@ -317,8 +315,8 @@ The **clean verdict pattern** (policy value): the body **begins** with the exact
 `Codex Review: Didn't find any major issues.` (ASCII apostrophe). The cheer phrase that follows varies and is ignored. All
 21 real clean artifacts match it, and no real findings body does.
 
-If Codex changes either representation, the current policy fails closed to `REVIEW_MISSING`; the policy is updated
-deliberately; the `policyHash` changes; a new measurement series begins (§32).
+If Codex changes either representation, the current policy fails closed to `REVIEW_MISSING`, and the policy is updated
+deliberately (§32).
 
 ## 18. CHANGES_REQUESTED
 
@@ -419,7 +417,7 @@ interface Evidence {
     resolver: { id: number; type: string } | null;
     outdated: boolean; // metadata, never readiness authority
   }>;
-  readonly capturedAt: string; // may be recorded; decide() never reads it
+  readonly capturedAt: string; // metadata; decide() never reads it
 }
 ```
 
@@ -474,61 +472,29 @@ no-throw boundary.
 
 #795, #798 and #799 remain historical evidence branches. **Do not rehabilitate them as implementation PRs.**
 
-## 28. Shadow ledger
+## 28. Durable measurement — out of scope (ARCH-02 handoff)
 
-Every shadow observation records:
+ARCH-01 owns **no durable state**. After the §36 stop law fired on the shadow-metrics family, the whole durable family left
+this record: the shadow ledger, its validator and falsifier, the ledger's CANONICAL_ROADMAP §16.5 durable-state gate,
+`false_ready`, `false_block`, `human_override`, `time_in_state` and the other shadow metrics, measurement-series grouping
+and its `policyHash` / `archVersion` partitioning, the shadow graduation gate, and authority graduation to ENG-LOOP-06.
 
-```ts
-{ pr, head, evidenceHash, outcome: ObservationOutcome, policyHash, archVersion, capturedAt }
-```
+Durable measurement begins only under a **separate architecture record, ARCH-02**. ARCH-02 starts from the three findings
+left open on this record's pull request (#800), as requirements:
 
-`evidenceHash` is the SHA-256 of the canonical JSON (sorted keys, no whitespace) of the `Evidence` for a decision outcome,
-and of `{ pr, head, unknown: reason }` for an unknown outcome (`head` is `null` when it could not be read). Unknown outcomes
-are persisted with all fields and take part in transitions and time-in-state reporting.
+| Finding | Requirement |
+|---|---|
+| `4190459605` | `UNKNOWN` must not make the gate appear clean |
+| `4190459613` | a terminal `NOT_OPEN` must not erase pre-merge blocking history |
+| `4190459619` | metric series must account for the architecture version |
 
-### 28.1 Durable-component gate (CANONICAL_ROADMAP §16.5)
+Until ARCH-02 is accepted, nothing ARCH-01 specifies persists an outcome, and CANONICAL_ROADMAP §16.5 governs any durable
+component proposed later. Sections 29–31 and 33 are intentionally vacant: they held the metric definitions that moved, and
+the numbers are kept so #800's review record still resolves.
 
-The ledger is **durable**, and its rows are the evidence for the gate in front of authority (§33). CANONICAL_ROADMAP §16.5
-therefore applies to it in full: 05C writes no row until all three conditions are proven for the ledger at its exact head.
+## 32. Policy
 
-- **Mechanical completeness:** a row is accepted only by a validator derived mechanically from the row's declared shape
-  (the record above, `ObservationOutcome`, the closed `UnknownReason` set) — never a hand-written list of remembered
-  cases.
-- **Independent falsifier:** a falsifier independent of the builder runs against the exact head before merge; the
-  builder cannot declare its own validation complete.
-- **Fault injection:** malformed, unreadable, partial, interrupted and concurrent states fail without data loss or
-  permissive defaults:
-  - a row that fails validation is not written, and the existing ledger is preserved byte for byte;
-  - an interrupted write leaves either the prior ledger byte for byte or the complete new row — never a torn row;
-  - concurrent writers never lose or tear a row;
-  - a ledger that is unreadable, partial or fails validation is never read as complete: every metric computed from it
-    (§29–§33) is unavailable, never zero, so it can never satisfy `false_ready == 0`.
-
-Until then, 05C may render an outcome but records nothing, and the real-PR shadow period (§34) does not begin.
-
-## 29. false_ready
-
-Computed mechanically over **decision** outcomes only (unknown rows are skipped). `false_ready` exists when
-`CANDIDATE_READY_FOR_HUMAN_REVIEW` at exact head `H` is followed by a later decision **at the same head** `H` of
-`CI_FAILED`, `EXTERNAL_BLOCKED`, `FINDINGS_OPEN` or `REVIEW_MISSING`. `NEEDS_REFRESH` after candidacy at the same head is
-**not** `false_ready` — production may move after a valid candidate decision. No manual classification participates.
-
-## 30. false_block
-
-Computed mechanically over **decision** outcomes only. `false_block` exists when the **last decision** at exact head `H`
-is `CI_FAILED`, `EXTERNAL_BLOCKED`, `FINDINGS_OPEN`, `REVIEW_MISSING` or `CI_NOT_STARTED`, **and** GitHub later records
-the PR as merged with merged head == `H`. Every `false_block` is surfaced automatically as `{ pr, head, lastDecision }` for
-policy review. A `false_block` **never** weakens 05B policy automatically.
-
-## 31. human_override
-
-Reported, not gating. `human_override` exists when the PR merged at `H` and **no** `CANDIDATE_READY_FOR_HUMAN_REVIEW`
-decision was ever recorded at `H`. It may overlap `false_block`; they answer different questions.
-
-## 32. Policy versioning
-
-The policy, and `policyHash` over a canonical serialization of **every** value that can affect evidence or decision
-semantics, includes at least:
+The policy — every value that can affect evidence or decision semantics — includes at least:
 
 | Policy value | Current value |
 |---|---|
@@ -542,24 +508,7 @@ semantics, includes at least:
 | Reviewed-commit marker | §17b: the literal `**Reviewed commit:**` then 10 lowercase hex in backticks; exactly once; equal to the head's first 10 hex |
 | clean verdict pattern | body begins `Codex Review: Didn't find any major issues.` |
 
-Any later decision-affecting value joins this table and the hash. A policy change → a new `policyHash` → a new
-measurement series; historical entries remain, but old-policy outcomes neither count for nor against the current gate.
-`archVersion` identifies this contract (`ARCH-01`); an architecture-semantic change → a new `archVersion` and, as
-appropriate, a fresh measurement series.
-
-## 33. Shadow gate metrics
-
-**Formal and automatic** (only automatically reproducible metrics take part in the gate): `false_ready`, `false_block`,
-`production_refresh_count`, decision transitions, `time_in_state`, `time_to_candidate_ready`, mechanically identifiable
-unnecessary CI re-runs. All are computed per `policyHash` (§32).
-
-**Manual / contextual** (may be collected; missing tags never block graduation): human touches, review rounds,
-qualitative interventions, operator rationale.
-
-Minimum safety condition before any bounded action authority: **`false_ready == 0`**, and every `false_block` surfaced and
-reviewed individually — computed only from a ledger that has passed §28.1 and reads complete; otherwise every metric is
-unavailable, never zero. ARCH-01 sets no sample-size or time threshold without evidence. Meeting the gate is necessary for
-ENG-LOOP-06, not sufficient: CANONICAL_ROADMAP §16.5 still applies.
+Any later evidence- or decision-affecting value joins this table. `archVersion` identifies this contract (`ARCH-01`).
 
 ## 34. Delivery sequence
 
@@ -570,16 +519,11 @@ ENG-LOOP-05A    GitHub → Evidence | Unknown            (no decisions)
    ↓
 ENG-LOOP-05B    Evidence → Decision                    (no GitHub knowledge)
    ↓
-ENG-LOOP-05C    shepherd CLI + shadow ledger           (the ledger: §16.5 gate, §28.1)
-   ↓
-real-PR shadow period (once the ledger passes §28.1) → automatic metrics gate (§33)
-   ↓
-ENG-LOOP-06     bounded actions                        (also §16.5)
-   ↓
-ENG-LOOP-02     watcher
+ENG-LOOP-05C    shepherd CLI: stateless render         (persists nothing)
 ```
 
-05A does not start until ARCH-01 is merged.
+Everything after 05C — durable measurement, any shadow period and graduation gate, ENG-LOOP-06 (bounded actions) and
+ENG-LOOP-02 (watcher) — is outside ARCH-01 (§28). 05A does not start until ARCH-01 is merged.
 
 ## 35. Policy-change rule for 05A / 05B
 
@@ -603,23 +547,27 @@ Pure prose, formatting, typo or non-normative feedback does not consume the sema
 resolution. A further semantic finding in **review authority** stops this document's patch loop.
 
 **Spent in round 1** (Codex review of `789d470d6b`): the **evidence boundary** family — §15's bounded full re-read — and
-the **shadow metrics** family — §28.1's durable-component gate for the ledger the metrics are computed from — each spent
-their first semantic resolution. A further semantic finding in either of them, or in review authority, stops this
-document's patch loop.
+the **shadow metrics** family — the shadow ledger's §16.5 gate — each spent their first semantic resolution.
+
+**Round 2 stopped** (Codex review of `5982d7d025`): three semantic findings in the shadow-metrics family. After the
+stop-law architecture discussion the operator **removed the whole durable family** from ARCH-01 (§28) — a removal, not a
+third semantic patch — and its three findings stay open as ARCH-02's requirements. The narrowed record takes **one**
+fresh exact-head review, to prove the removal left no dangling dependency in the stateless core; a new semantic finding
+in an already-converged family stops it.
 
 ## 37. Standing engineering law
 
 ENGINEERING_STANDARDS §8 carries the standing law in the same change: raw external evidence crosses exactly one
 validation boundary; downstream receives normalized evidence only; ambiguous evidence → `UNKNOWN`; no raw GitHub
 representation and no temporal Actions-history reconstruction in the decision core; text is never sufficient authority
-(the two Codex channels); human merge authority; durable loop state — the shadow ledger included — passes §16.5's
-re-entry gate before it ships; a mechanically enforced 05A/05B import boundary; semantic changes require architecture
+(the two Codex channels); human merge authority; durable state deferred to ARCH-02, with CANONICAL_ROADMAP §16.5
+governing any durable component; a mechanically enforced 05A/05B import boundary; semantic changes require architecture
 review first.
 
 ## 38. Non-goals
 
-ARCH-01 adds **no** runtime feature code, `collect()` or `decide()` implementation, watcher, orchestrator, shadow-ledger
-implementation, merge automation, autonomous repair, LangGraph, CrewAI, state-machine framework, Redis, database, event
+ARCH-01 adds **no** runtime feature code, `collect()` or `decide()` implementation, watcher, orchestrator, durable state
+of any kind (§28), merge automation, autonomous repair, LangGraph, CrewAI, state-machine framework, Redis, database, event
 store, or arbitrary GitHub event reconstruction. It is documentation and normative engineering standards only.
 
 ## 39. Completion test
@@ -639,13 +587,12 @@ ARCH-01 is complete only if 05A/05B need to invent none of the following. Each i
 | accepted review states and channels; marker policy; marker failure behaviour | §17, §17b, §21 |
 | `CHANGES_REQUESTED` behaviour; finding-open semantics; severity semantics | §18, §19 |
 | marker fixtures for both the real clean and findings forms | §22, Appendix A |
-| `false_ready`, `false_block`, `human_override` calculation | §29, §30, §31 |
-| policy-series and architecture-series partitioning | §32 |
-| the ledger's durable-component obligations, and what 05C may do before they hold | §1, §28.1 |
 | unknown reasons; the outcome union | §4, §40 |
 | 05A/05B module dependency direction | §25 |
 
-If any of these turns out to be an implementation choice, **stop** and amend ARCH-01 before 05A.
+If any of these turns out to be an implementation choice, **stop** and amend ARCH-01 before 05A. The completion items for
+`false_ready`, `false_block` and `human_override` calculation and for policy- and architecture-series partitioning moved
+with the durable family to ARCH-02 (§28).
 
 ## 40. UnknownReason — closed set
 

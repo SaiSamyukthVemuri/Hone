@@ -180,8 +180,8 @@ Only repeated, evidenced pain earns new process or tooling.
 
 ## 8. Engineering-loop evidence and authority
 
-`docs/decisions/arch-01-eng-loop-v2.md` (ARCH-01) is canonical for ENG-LOOP V2 and
-is not restated here. This section is the standing law that every
+`docs/decisions/arch-01-eng-loop-v2.md` (ARCH-01) is canonical for ENG-LOOP V2's
+stateless pipeline and is not restated here. This section is the standing law that every
 engineering-loop component — and every change to one — must satisfy.
 
 - **One evidence boundary.** Raw external data — GitHub REST and GraphQL
@@ -207,19 +207,15 @@ engineering-loop component — and every change to one — must satisfy.
   never grant it.
 - **The human keeps merge authority.** `CANDIDATE_READY_FOR_HUMAN_REVIEW` is
   advisory (CANONICAL_ROADMAP §16.2). No engineering-loop component merges, and
-  bounded actions need CANONICAL_ROADMAP §16.5 re-entry as well as ARCH-01's
-  shadow gate.
-- **Durable loop state passes the re-entry gate first.** Any durable
-  engineering-loop state — ARCH-01's shadow ledger included — meets
-  CANONICAL_ROADMAP §16.5 (mechanical completeness, an independent falsifier,
-  fault injection) before it ships. A row that fails validation is never
-  written, and a metric over an unreadable, partial or invalid ledger is
-  unavailable, never zero.
+  bounded actions need CANONICAL_ROADMAP §16.5 re-entry.
+- **Durable state is deferred to ARCH-02.** ARCH-01 specifies no durable
+  state. A shadow ledger, its metrics and any graduation gate exist only under
+  a separate architecture record, ARCH-02. CANONICAL_ROADMAP §16.5 (mechanical
+  completeness, an independent falsifier, fault injection) governs any durable
+  engineering-loop component before it ships.
 - **The adapter / decision boundary is mechanical.** Build-failing guard tests
   keep the evidence adapter (05A) free of decisions and the decision engine
   (05B) free of GitHub knowledge.
 - **Semantics change in the architecture first.** A fix that would change
   ARCH-01's semantics stops implementation and returns to an ARCH amendment and
-  review; semantics never evolve through review-repair rounds. A policy change
-  starts a new `policyHash` measurement series, and an architecture change a
-  new `archVersion`.
+  review; semantics never evolve through review-repair rounds.
