@@ -5,11 +5,11 @@
 | **Decision** | A CI execution names the PR, head and base it ran for in **one immutable artifact** that the authoritative workflow emits from the triggering event, before any PR code runs. ENG-LOOP binds a CI run to a PR **only** through that attestation. |
 | **Date** | 2026-10-06 |
 | **Status** | **PROPOSED** in this pull request; **ACCEPTED** when merged. |
-| **Decided by** | Sam (operator): CI-ATTEST-01 is the re-entry architecture after ARCH-01's CI-authority stop law fired on PR #800; re-entered **by removal** after PR-SNAPSHOT-01 (PR #803) and CAP-01 (PR #804) merged. |
+| **Decided by** | Sam (operator): CI-ATTEST-01 is the re-entry architecture after ARCH-01's CI-authority stop law fired on PR #800; re-entered **by removal** after PR-SNAPSHOT-01 (PR #803) and CAP-01 (PR #804) merged; the two-step emitter and the `run_number` current-run frontier by operator decision after the ready-gate stop on `557ed2ce96`. |
 | **Purpose** | Exactly one fact: *"This trusted CI execution ran for PR N, at head H, against base B, under authoritative workflow W."* |
 | **Consumed by** | ARCH-01 (`docs/decisions/arch-01-eng-loop-v2.md`, PR #800). ARCH-01 **consumes** this fact; it never derives it (§12). |
 | **Depends on** | PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`, merged) for the coherent key `K0`; CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`, merged) for GitHub-access architectural lint. |
-| **Scope** | The artifact contract, binding against `K0`, the trust anchor, attempts and re-runs, retention, terminal PRs, fixtures. |
+| **Scope** | The artifact contract, binding against `K0`, the current-run frontier, the trust anchor, attempts and re-runs, retention, terminal PRs, fixtures. |
 | **Not in scope** | The `ci.yml` change (a separate implementation PR, §11); any edit to #800; 05A; 05B; ARCH-02; reading or re-validating the PR, which PR-SNAPSHOT-01 owns; GitHub-access lint, which CAP-01 owns. |
 | **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0`; re-entered at production `9402c21718f31dd72016ed0c4d421bb00f9551ee`, where PR-SNAPSHOT-01 and CAP-01 are merged. Live evidence read on 2026-10-06. |
 
@@ -21,19 +21,20 @@
 ## 1. The fact, and what it is not
 
 The attestation supplies **identity only**: PR number, head, base, repository and run. It never grants CI success and never
-creates a failure or a pending state. Whether a run succeeded, failed or is pending is decided, as before, by the run's own
-`status` and `conclusion` (ARCH-01 §8). An attestation can only make a candidate run **designated** for a PR, or exclude it.
+creates a failure or a pending state. CI state is the current `status` and `conclusion` of one run, the **current-run
+frontier** (§5), never the attestation. An attestation can only make a candidate run the frontier for a PR, or exclude
+it.
 
 **Never PR identity:** a run's or check run's `pull_requests`, a run's `display_title` or `run-name`, a job or check name,
 a commit status, a check run, a timestamp, a run id ordering, a `run_attempt` ordering, or the runs endpoint's `branch`
-filter.
+filter. `run_number` orders candidate runs (§5); it never identifies a PR.
 
 **Ownership — no overlap.**
 
 | Record | Owns |
 |---|---|
 | PR-SNAPSHOT-01 | the PR's current state, head, base and repositories, as one coherent `PrSnapshotKey`; `K0`/`K1` coherence; the bounded retry |
-| CI-ATTEST-01 (this record) | immutable CI execution identity, and its comparison with `K0` |
+| CI-ATTEST-01 (this record) | immutable CI execution identity, its comparison with `K0`, and candidate and frontier membership: which one run supplies CI state (§5) |
 | CAP-01 | declared, static GitHub capability architecture lint |
 
 This record receives `K0` from PR-SNAPSHOT-01 and never reads the pull request itself.
@@ -68,6 +69,7 @@ requirements.
 | E11 | Artifact retention defaults to 90 days and can be set from 1 to 90 days per upload. | `actions/upload-artifact` README. |
 | E12 | In a PR from a fork, `GITHUB_TOKEN` is read-only. | Docs. |
 | E13 | The compare read returns `merge_base_commit`; the contents read returns a file's git blob `sha`. | GitHub's API description. Live: #800 against production gives `behind_by` 0 and merge base `7134239097`; `ci.yml` has blob `e69cefa9013b` at both. |
+| E14 | A workflow's `run_number` begins at 1 for its first run, increments with each **new** run, and does not change when the run is re-run; `run_attempt` increments only within one run. | Docs, variables and contexts reference; REST: a required integer, *"the auto incrementing run number"*. Live, all 2,829 `ci.yml` runs: `run_number` 1–2829, unique and gap-free, shared by `push` and `pull_request`, in creation order without exception; re-run runs keep their `run_number` and id. Five head SHAs carry two `pull_request` runs, one of them cancelled by the PR-scoped `cancel-in-progress` before any step ran; for PR #686, both created in one second, GitHub cancelled the higher number (1897) and kept 1896. |
 
 ## 4. The artifact contract — schema v1 (frozen)
 
@@ -75,8 +77,16 @@ requirements.
 
 - **Workflow:** the authoritative CI workflow, `.github/workflows/ci.yml` (workflow id `289443461`, ARCH-01 §23).
 - **Event:** `pull_request` only.
-- **Position:** the **first step of the first job** (today `changes`), before `actions/checkout` and before any repository
-  or PR code executes. Every job that runs repository code depends on that job.
+- **Position:** the **first two steps of the first job** (today `changes`), both before `actions/checkout` and before any
+  repository or PR code executes. Every job that runs repository code depends on that job.
+  1. **Generate.** A trusted inline `run` step writes exactly `ci-attest.json`, reading only the GitHub-provided event
+     payload and default variables the schema needs (§4.3).
+  2. **Upload.** Immediately afterwards, the repository's SHA-pinned `actions/upload-artifact` uploads exactly that
+     file, under §4.2's name, representation and options.
+
+  Only after both steps may `actions/checkout` run. No composite repository action, repository script or checked-out
+  helper takes part. One step cannot do both, because a step is either a `run` or a `uses` and the upload needs an
+  existing file. The split makes the model implementable without changing its trust (§7).
 - **Self-contained:** inline in `ci.yml` plus the repository's SHA-pinned `actions/upload-artifact`; it reads no repository
   file.
 - **Copied, never computed:** every value comes from `$GITHUB_EVENT_PATH` or a default variable (E10).
@@ -112,11 +122,15 @@ A missing key, an extra key or a wrong type makes the artifact malformed. A nume
 job (E10), so workflow W is taken from GitHub's run metadata (`workflow_id`, §5); `workflowRef` is recorded and its path is
 checked.
 
-## 5. Binding — one candidate run (05A)
+## 5. Binding — candidates and the current-run frontier (05A)
 
-This section applies to an **open** pass; a terminal pass reads no CI (§9). Candidates are ARCH-01's: the `ci.yml`
-endpoint ∩ the exact head `K0.headSha` ∩ `event=pull_request`. Trust (§7) is settled first, once per pass. Then, for each
-candidate:
+This section applies to an **open** pass; a terminal pass reads no CI (§9). Trust (§7) is settled first, once per pass.
+
+**Candidates** are the configured authoritative workflow's runs ∩ the exact head `K0.headSha` ∩ `event=pull_request`,
+from one complete listing of the workflow endpoint. Every candidate's `run_number` must be a positive integer, and no
+two candidates may share one; a missing, malformed or duplicated `run_number` makes the pass `UNKNOWN(malformed)`.
+
+The walk below classifies each candidate it examines in four steps:
 
 1. **Locate.** The run's artifact list, filtered by the exact name `ci-attest-v1`, holds exactly one artifact; it is not
    expired, and its `workflow_run.id` equals the run's id.
@@ -135,14 +149,38 @@ candidate:
 
 | Attestation | Class | Effect |
 |---|---|---|
-| `prNumber`, `headSha`, `headRef`, `headRepositoryId`, `baseRef`, `baseRepositoryId` and `baseSha` equal `K0`'s `prNumber`, `headSha`, `headRef`, `headRepoId`, `baseRef`, `baseRepoId` and `baseSha`; and `K0.baseRef` is the configured production ref, so `K0.baseSha` is the production head | **DESIGNATED** | takes part in ARCH-01's CI rules; its result is the run's `status` and `conclusion` |
-| `prNumber` ≠ `K0.prNumber` | **UNRELATED** | excluded: never grants success, never creates a failure or a pending state |
-| `prNumber` = `K0.prNumber`, and the head fields and `baseRepositoryId` match, but `baseRef` ≠ `K0.baseRef`, or `K0.baseRef` is not the configured production ref, or `baseSha` ≠ `K0.baseSha` | **STALE** | excluded: the run tested another base, or the PR no longer targets production, and the run cannot satisfy CI for the current PR |
-| `prNumber` = `K0.prNumber` but any head field, or `baseRepositoryId`, differs from `K0` | **INVALID** | `UNKNOWN(ci_attestation_invalid)` |
+| `prNumber`, `headSha`, `headRef`, `headRepositoryId`, `baseRef`, `baseRepositoryId` and `baseSha` equal `K0`'s `prNumber`, `headSha`, `headRef`, `headRepoId`, `baseRef`, `baseRepoId` and `baseSha`; and `K0.baseRef` is the configured production ref, so `K0.baseSha` is the production head | **DESIGNATED** | it is the **current-run frontier**; the walk stops |
+| `prNumber` ≠ `K0.prNumber` | **UNRELATED** | excluded, granting and blocking nothing; the walk continues |
+| `prNumber` = `K0.prNumber`, and the head fields and `baseRepositoryId` match, but `baseRef` ≠ `K0.baseRef`, or `K0.baseRef` is not the configured production ref, or `baseSha` ≠ `K0.baseSha` | **STALE** | excluded: the run tested another base, or the PR no longer targets production, so it cannot grant CI for `K0`; the walk continues |
+| `prNumber` = `K0.prNumber` but any head field, or `baseRepositoryId`, differs from `K0` | **INVALID** | the walk stops: `UNKNOWN(ci_attestation_invalid)` |
 
-Any failure in steps 1–3 is **INVALID**. One INVALID candidate makes the **whole snapshot**
-`UNKNOWN(ci_attestation_invalid)`. Otherwise ARCH-01's designated runs are exactly the DESIGNATED candidates; with none,
-ARCH-01 decides `CI_NOT_STARTED`. Classification depends on no ordering of the candidates.
+Any failure in steps 1–3 — a missing, expired, duplicated, malformed or disagreeing attestation — is **INVALID**.
+
+**The current-run frontier.** `run_number` is the **only** cross-run ordering (E14): no timestamp, run id, cross-run
+`run_attempt` or event history. The walk examines candidates from the highest `run_number` down; GitHub's listing order
+does not matter.
+- **INVALID before a frontier stops the walk** with `UNKNOWN(ci_attestation_invalid)`. It never falls back to an older
+  run: this newer run may be the PR's own replacement execution, and nothing proves otherwise.
+- **The first DESIGNATED candidate is the current-run frontier.** Every candidate with a lower `run_number` is
+  superseded: it is not read, and it can neither grant nor block anything.
+- **No frontier.** With zero candidates, or when every candidate is UNRELATED or STALE, there is no frontier, and
+  ARCH-01 decides `CI_NOT_STARTED`.
+
+**Frontier state.** The frontier's **current** run `status` and `conclusion` alone supply CI state; older runs never
+override it.
+
+| Run `status` | Run `conclusion` | Normalized outcome |
+|---|---|---|
+| `completed` | `success` | `SUCCEEDED` |
+| `completed` | `failure`, `cancelled`, `timed_out`, `action_required`, `neutral`, `skipped`, `stale`, `startup_failure` | `FAILED` |
+| `completed` | any other string | `UNKNOWN(unrecognized_ci_conclusion)` |
+| `completed` | `null` or not a string | `UNKNOWN(malformed)` |
+| `queued`, `in_progress`, `waiting`, `requested`, `pending` | (any) | `PENDING` |
+| any other status | (any) | `UNKNOWN(unrecognized_ci_status)` |
+
+This record supplies ARCH-01 one normalized CI result: the frontier's outcome, no frontier, or `UNKNOWN` with a closed
+reason. 05B maps it in ARCH-01's precedence order — `FAILED` → `CI_FAILED`, `PENDING` → `CI_PENDING`, `SUCCEEDED` → CI
+acceptable, no frontier → `CI_NOT_STARTED` — and holds no `run_number` logic of its own.
 
 **Why STALE excludes rather than fails.** A run against an older production head must leave ARCH-01's `NEEDS_REFRESH`
 (ARCH-01 §7 row 3) free to decide; `UNKNOWN` would hide it.
@@ -165,6 +203,9 @@ record never re-reads or re-validates the base.
 - **Identity does not depend on the attempt.** Every attempt replays the original event (E3), so whichever attempt
   emitted the surviving attestation, it names the same PR, head and base. `runAttempt` is recorded and bounded, never used
   to select.
+- **A re-run never moves the frontier.** A re-run keeps its `run_number` (E14), so the frontier stays the same run and
+  its current state is its latest attempt's. A changed `run_attempt` is never a reason to look for another run, and
+  re-running a superseded run changes nothing.
 
 | Situation | GitHub behaviour | Result |
 |---|---|---|
@@ -174,8 +215,8 @@ record never re-reads or re-validates the base.
 | partial re-run that re-executes the emitter's job | the moved artifact plus a second upload of the same name | the upload is refused (E4), the emitter fails and so does the run → `CI_FAILED`; or two are listed → `UNKNOWN(ci_attestation_invalid)`. Never a false ready. |
 
 **Why one fixed name.** GitHub moves earlier artifacts into later attempts (E5) and offers no attempt filter (E7), so
-per-attempt names would require choosing between attempts — an ordering ARCH-01 forbids. Recovery from any fail-closed row:
-re-run all jobs, or push.
+per-attempt names would require choosing between attempts — an attempt ordering this record never uses (§5). Recovery
+from any fail-closed row: re-run all jobs, a close and reopen, or a push.
 
 ## 7. Trust (frozen)
 
@@ -215,11 +256,14 @@ OIDC claims (`base_ref`, `workflow_sha`, `run_id`) are the escalation path if th
 ## 8. Retention (frozen)
 
 - **Period:** `retention-days: 90`, the per-upload maximum without a repository-setting change (E11).
-- **Expired or unreadable:** an expired, removed or unreadable attestation is `UNKNOWN(ci_attestation_invalid)`. It is
-  never a CI failure, never a CI success, and never permission to infer identity elsewhere.
-- **Operational requirement:** an open PR's current head needs a CI run younger than 90 days. An idle PR needs a new
-  execution: a re-run within 30 days (E3), a push, or a close and reopen.
-- **Rollout:** runs created before the emitter ships carry no attestation and are `UNKNOWN` until their next run.
+- **Expired or unreadable:** an expired, removed or unreadable attestation makes its run INVALID. Above any frontier
+  that is `UNKNOWN(ci_attestation_invalid)` (§5); below the frontier the run is superseded and never read. It is never a
+  CI failure, never a CI success, and never permission to infer identity elsewhere.
+- **Operational requirement:** an open PR's frontier needs an attestation that has not expired. Recovery is a newer run
+  that becomes the frontier — a close and reopen, or a push — or, within 30 days (E3), a re-run of the frontier run.
+- **Rollout:** runs created before the emitter ships carry no attestation. A head whose newest run predates the emitter
+  is `UNKNOWN` until a newer run, from a close and reopen or a push, becomes its frontier. Re-running a pre-emitter run
+  cannot help, because it replays the old workflow (E3).
 
 ## 9. Closed and merged PRs (frozen)
 
@@ -233,7 +277,7 @@ OIDC claims (`base_ref`, `workflow_sha`, `run_id`) are the escalation path if th
 
 | # | Fixture | Required result |
 |---|---|---|
-| 1 | a real, valid attested run of a current Hone PR (§11) | DESIGNATED |
+| 1 | a real, valid attested run of a current Hone PR (§11) | DESIGNATED — the frontier |
 | 2 | a valid attestation naming another PR | UNRELATED — excluded |
 | 3 | another PR's run at the same head SHA; the target PR has no run of its own | UNRELATED — `CI_NOT_STARTED`, never an inherited success |
 | 4 | a run of the same commit bytes from a fork; and a forged attestation claiming the target PR from that run | UNRELATED; the forgery fails metadata agreement (head repository id) → `UNKNOWN(ci_attestation_invalid)`. Never an inherited success |
@@ -247,6 +291,22 @@ OIDC claims (`base_ref`, `workflow_sha`, `run_id`) are the escalation path if th
 | 12 | re-run failed jobs only | the moved attestation → DESIGNATED; with none listed → `UNKNOWN(ci_attestation_invalid)`; one that re-executes the emitter's job → `CI_FAILED` or `UNKNOWN(ci_attestation_invalid)` |
 | 13 | a closed or a merged PR | `NOT_OPEN`, with no artifact read |
 | 14 | a PR whose head repository is a fork | `UNKNOWN(ci_attestation_untrusted)` |
+| 15 | an old pre-emitter run with no attestation, and a newer valid run for the current `K0` | the newer run is the frontier |
+| 16 | an old run whose attestation expired, and a newer valid run for the current `K0` | the newer run is the frontier |
+| 17 | an old valid run that failed, and a newer valid run that succeeded | the newer run governs: CI succeeds |
+| 18 | an old valid run that succeeded, and a newer valid run that failed | the newer run governs: `CI_FAILED` |
+| 19 | an older successful run for the current `K0`, and a newer INVALID run — for example one cancelled before any step ran, as PR #686's run 1897 was | `UNKNOWN(ci_attestation_invalid)`; never the older success |
+| 20 | a newer valid run attested for another PR, and an older valid run for the current `K0` | the unrelated run is skipped; the older run is the frontier |
+| 21 | a newer STALE run, and a lower run matching the current `K0` exactly | the STALE run is excluded; the lower run is the frontier |
+| 22 | one head used by two PRs | each PR's frontier comes only from runs attested for that PR |
+| 23 | a re-run of the frontier | `run_number` unchanged; the same frontier, with its latest attempt's state |
+| 24 | zero candidate runs | `CI_NOT_STARTED` |
+| 25 | candidates, none of which establishes a safe frontier: an INVALID run above any match; or only UNRELATED and STALE runs | `UNKNOWN(ci_attestation_invalid)`; or `CI_NOT_STARTED`. Never readiness |
+| 26 | any permutation of the same candidate records; and a duplicated or malformed `run_number` | the same frontier and result in every order; `UNKNOWN(malformed)` in every order |
+| 27 | the frontier `queued` or `in_progress`; an unrecognized status or conclusion | `PENDING`; `UNKNOWN(unrecognized_ci_status)` or `UNKNOWN(unrecognized_ci_conclusion)` |
+
+Fixtures 6–9, and fixture 4's forgery, classify one run as INVALID. That run makes the pass `UNKNOWN` only when it lies
+above any frontier; below a frontier it is never read (§5).
 
 ## 11. Implementation-lane proof obligations
 
@@ -257,7 +317,9 @@ The `ci.yml` implementation PR proves the following live on real Hone runs, befo
 - **Partial re-run:** one that does not re-execute the emitter's job leaves the earlier artifact listed. If it does not,
   §6's fail-closed row is the recorded outcome.
 - **Integrity:** the zip holds one entry, and its SHA-256 equals `digest` (already observed in general, E8).
-- **Emitter:** first step, before checkout, with §4.2's options.
+- **Emitter:** the two steps of §4.1 — generate, then upload — both before checkout, with §4.2's options.
+- **Replacement:** a close and reopen at an unchanged head creates a run with a higher `run_number`, which becomes the
+  frontier (§5).
 
 A proof that contradicts this record returns to architecture: it is amended here first and never patched into a parser.
 
@@ -267,9 +329,12 @@ A proof that contradicts this record returns to architecture: it is amended here
 2. **This record re-enters by removal and merges.**
 3. **#800 is narrowed by removal:**
    - delete the mutable `pull_requests` association law and the reason `ci_pr_binding_ambiguous`;
-   - add one normative pointer: *"Designated CI membership requires a valid immutable CI-ATTEST-01 run-side
-     attestation."*;
+   - delete its run-selection rule — `ALL_DESIGNATED_RUNS`, the `LATEST_CREATED` relaxation and its run-state table —
+     and consume this record's normalized frontier result (§5) instead. CI-ATTEST-01 owns candidate and frontier
+     membership;
+   - add one normative pointer: *"CI state is CI-ATTEST-01's current-run frontier result."*;
    - consume PR-SNAPSHOT-01's `K0` and its terminal handling;
+   - keep 05B free of `run_number` logic: it decides from normalized CI evidence only;
    - add no parser and no reconstruction mechanism, and do not copy this record's specification into ARCH-01.
 4. **The emitter ships.** A separate implementation PR adds it to `ci.yml` — shared CI infrastructure, so the full CI
    matrix runs — and discharges §11.
@@ -280,7 +345,7 @@ binding consumes:
 - `K0`, from PR-SNAPSHOT-01;
 - the target repository id;
 - the `merge_base_commit` of the compare read bound to `K0`;
-- the run metadata §5 compares against.
+- the run metadata §5 compares against, and each candidate's `run_number`.
 
 Until step 3, #800 stays a frozen draft; its open CI-binding findings are this record's origin.
 
@@ -289,7 +354,7 @@ Until step 3, #800 stays a frozen draft; its open CI-binding findings are this r
 One legitimate semantic repair round is allowed. A second fresh, legitimate semantic P0–P2 in the **same** family →
 **stop**: no third patch, and a return to architecture discussion.
 
-Families: the artifact contract, binding classes, trust, attempts and re-runs, retention, closed PRs.
+Families: the artifact contract, binding classes and run selection, trust, attempts and re-runs, retention, closed PRs.
 
 Pure prose, formatting or non-normative feedback does not consume the budget.
 
@@ -307,11 +372,22 @@ own reads and re-validation of the PR were **removed rather than extended**. It 
 only, and PR-SNAPSHOT-01's `K1 == K0` discards any pass in which the base moved. No base re-read, guard or other
 mechanism was added. A fresh semantic P0–P2 affecting CI attestation correctness → **stop**, with no automatic patch.
 
+**Ready-gate review** (Codex review of `557ed2ce96`, triggered by marking the PR ready). P1 `4199398920`, in the
+artifact contract: the emitter cannot be one step. P2 `4199398926`, in binding classes: an older INVALID run poisoned
+the head even after a valid replacement run existed, so §8's recovery paths could not work. The binding-classes budget
+was already spent, and the stop law fired.
+
+**Architecture re-entry** (operator decision after that stop; not a repair round). §4.1 now specifies the two-step
+pre-checkout emitter, and §5 replaces the all-candidates rule with the `run_number` current-run frontier. Nothing else
+changed. One fresh exact-head review and the ready-for-review gate follow. Any further P0–P2 in run selection, frontier
+semantics, attestation binding, or replacement and recovery → **stop**, with no patch.
+
 ## 14. Non-goals
 
 This record adds no `ci.yml` change, no 05A, no 05B, no edit to #800 or ARCH-01, no ARCH-02, no OIDC (escalation only),
 no use of GitHub's current PR views, no read or re-validation of the PR (PR-SNAPSHOT-01 owns it), no GitHub-access
-guard (CAP-01 owns that lint), no status or check emission, no attempt ordering and no history reconstruction.
+guard (CAP-01 owns that lint), no status or check emission, no timestamp, run-id or cross-run `run_attempt` ordering
+(`run_number` is the only cross-run order, §5), and no history reconstruction.
 
 ---
 
@@ -320,10 +396,14 @@ guard (CAP-01 owns that lint), no status or check emission, no attempt ordering 
 - GitHub Docs: [Events that trigger workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows) ·
   [Re-running workflows and jobs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs) ·
   [Variables reference](https://docs.github.com/en/actions/reference/workflows-and-actions/variables) ·
+  [Contexts reference](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts) ·
+  [REST: workflow runs](https://docs.github.com/en/rest/actions/workflow-runs) ·
   [REST: artifacts](https://docs.github.com/en/rest/actions/artifacts) ·
   [OpenID Connect reference](https://docs.github.com/en/actions/reference/security/oidc)
 - [`actions/upload-artifact`](https://github.com/actions/upload-artifact) README and v7.0.0 release notes;
   [non-zipped artifacts changelog, 2026-02-26](https://github.blog/changelog/2026-02-26-github-actions-now-supports-uploading-and-downloading-non-zipped-artifacts/)
 - GitHub Support on artifacts and re-runs, quoted in [community discussion #17854](https://github.com/orgs/community/discussions/17854)
 - Live reads, 2026-10-06: #800 runs `37395019207`, `37396356200`, `37398647168`, `37400917099`; #788 run `37387844240`;
-  #660 run `33328302918`; re-run attempts of runs `37362604831`, `37345932970` and `36713945166`; artifact `11357189201`.
+  #660 run `33328302918`; re-run attempts of runs `37362604831`, `37345932970` and `36713945166`; artifact `11357189201`;
+  all 2,829 `ci.yml` runs and the attempts of 12 re-run runs (E14); the five same-head pairs, including PR #686's runs
+  `34289324265` (1896) and `34289324311` (1897).
