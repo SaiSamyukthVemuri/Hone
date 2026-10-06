@@ -185,7 +185,7 @@ export default function ElectrolysisSoftwarePage() {
                     baked-in provenance label. */}
                 <Image
                   src={posterFrame}
-                  alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing what was recorded for two treated areas &mdash; midline upper lip and bilateral chin &mdash; each with machine frequency, probe and lot number, mode, energy, timing and minutes."
+                  alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing two treated areas &mdash; midline upper lip and bilateral chin &mdash; and, for each, the machine frequency, probe and lot number, mode, energy, timing and minutes carried from the settings block it was charted under."
                   sizes="(min-width: 1024px) 52vw, 92vw"
                   className="block aspect-video w-full object-cover"
                 />
@@ -261,8 +261,9 @@ export default function ElectrolysisSoftwarePage() {
               <Title className="mt-4">Built around returning-client memory.</Title>
               <Lede className="mt-5">
                 Generic scheduling tools record that an appointment happened. Electrolysis is a
-                course of treatment, so what matters next time is what was done to each area
-                and how it responded. Hone keeps that, per area, and brings it forward.
+                course of treatment, so what matters next time is what was done and how it was
+                tolerated. Hone keeps every treated area findable, carrying the settings and
+                response from the block it was charted under, and brings it forward.
               </Lede>
             </Reveal>
             <Reveal delay={80}>

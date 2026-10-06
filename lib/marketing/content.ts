@@ -191,14 +191,24 @@ export const FILM = {
   width: 1920,
   height: 1080,
   hasAudioTrack: false,
+  /**
+   * THE BYTES THIS TRANSCRIPT DESCRIBES.
+   *
+   * The transcript is the film's text alternative, so equivalence is a claim
+   * about one specific artefact. Pinning the digest means the alternative
+   * cannot drift from the asset silently: swap the file and the assertion in
+   * tests/app/marketing-homepage-film.test.ts fails, forcing the transcript to
+   * be re-verified against the new frames rather than inherited.
+   */
+  sha256: "a86b7b821769ba8e800dc8e818e0070923469dc04053db8532c08e4c2466023d",
   // Accessible name for the play control and the player. States the running
   // time and that there is no sound, so nobody waits for narration.
   accessibleName: "Hone treatment-memory product film, 25 seconds, silent",
   transcript: [
     "Monday, Sep 14. Your next client has a history. — the studio calendar, week view.",
     "Hone. Treatment memory for electrologists. — title card.",
-    "Treatment memory: see what happened last time. Areas treated, how she responded, and the note left for this visit. — the Last Treatment card: areas treated, response and tolerance per area, a Watch Today caution, setup used per area, consultation and skin/hair.",
-    "Treatment memory: the exact setup you used. — the Setup Used card: two areas, each with frequency, probe and lot, modality, level, timing, percentage, pulses, duration and a numbing note.",
+    "Treatment memory: see what happened last time. Areas treated, how she responded, and the note left for this visit. — the Last Treatment card: areas treated, response and tolerance for each settings block, a Watch Today caution, the setup used, consultation and skin/hair.",
+    "Treatment memory: the exact setup you used. — the Setup Used card: two settings blocks, each covering a single treated area, with frequency, probe and lot, modality, level, timing, percentage, pulses, duration and a numbing note.",
     "Charting: record today's treatment. — the appointment page: confirmed session, pinned notes, allergies, client summary.",
     "One client record: appointments, records, and treatment history together. — the client profile with its tabs and pinned notes marked visible on every appointment.",
     "Hone. Pick up where you left off. hone.care — end card.",
@@ -463,7 +473,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/electrolysis-software",
     title: "Electrolysis software built around the treatment record | Hone",
     description:
-      "Practice software for electrologists. Modality, settings, probe and lot recorded per treated area, with booking, intake and consent connected to the same record.",
+      "Practice software for electrologists. Modality, settings, probe and lot recorded with each treatment block, with booking, intake and consent connected to the same record.",
     indexable: true,
   },
   {
@@ -491,7 +501,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/features/charting-records",
     title: "Electrolysis charting and records | Hone",
     description:
-      "Charting built around treatments, not generic notes: mode, modality, energy, frequency, pulses, probe and lot, laterality, tolerance and skin response, per area.",
+      "Charting built around treatments, not generic notes: mode, modality, energy, frequency, pulses, probe and lot, per-area laterality, and tolerance and skin response recorded on the settings block that covers them.",
     indexable: true,
   },
   {
