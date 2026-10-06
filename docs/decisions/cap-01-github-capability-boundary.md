@@ -25,6 +25,9 @@
 
 - **Capability is granted, not available.** Code does not get GitHub or network access because it can import a
   generic client; it gets it only by being a named node in the graph of §3.
+- **Capability is also a value.** A capability-bearing value — the transport entry's exports, the readers object and
+  its methods — is confined as strictly as the imports that produce it (§6, G4). An allowed edge never carries it
+  further.
 - **Outside the transport, only values.** Outside the transport package (§4), ENG-LOOP code receives only normalized
   values and narrow interfaces.
 - **Positive enforcement.** The guards (§8) prove that every dependency is a declared edge. They do **not** enumerate
@@ -78,6 +81,9 @@ These edges are excluded **by not being listed**:
 `node:zlib`, `node:crypto` and `node:buffer` give the transport decompression, hashing and byte handling. None of them
 reaches the network.
 
+**Edges are necessary, not sufficient.** A capability-bearing value could still travel across allowed edges — as a
+re-export, a returned function, an argument or a captured closure. §6 confines it, and G4 and G3 enforce that.
+
 ## 4. The transport package — who owns raw GitHub
 
 - **One primitive.** `primitive.mjs` is the only module that can reach GitHub: it runs `gh api` with the operator's `gh`
@@ -90,14 +96,14 @@ reaches the network.
     file path. No reader accepts query text, a route, a branch name or a ref name;
   - it returns a normalized record typed in `contract/**`. Raw responses — for example a workflow run's
     `pull_requests` — never leave the transport package;
-  - exactly one reader reads a pull request's current **identity and lifecycle** (its state, head, base and their
-    repositories). No other reader's output carries them.
+  - exactly one reader, `readPrKey`, reads a pull request's current **identity and lifecycle** — its state, draft flag,
+    head, base and their repositories — all from **one request**. No other reader's output carries any of them.
 - **The V1 reader set.** Adding, removing or changing a reader is an amendment to this record first.
 
 | Reader | Parameters | Returns | Consumer |
 |---|---|---|---|
-| `readPrKey` | PR number | the PR identity and lifecycle value | PR-SNAPSHOT-01 |
-| `readReviewEvidence` | PR number | reviews, issue comments, review threads, the draft flag | ARCH-01 review authority |
+| `readPrKey` | PR number | the PR identity and lifecycle value, including the draft flag, from one request | PR-SNAPSHOT-01; ARCH-01 draft hold |
+| `readReviewEvidence` | PR number | reviews, issue comments, review threads | ARCH-01 review authority |
 | `readCommitRollup` | commit SHA | that commit's external status contexts | ARCH-01 external checks |
 | `readCandidateRuns` | head SHA | the designated workflow's `pull_request` runs at that SHA, with immutable run metadata only | ARCH-01 CI; CI-ATTEST-01 |
 | `readRunAttestation` | run id | that run's attestation record and artifact metadata | CI-ATTEST-01 |
@@ -113,9 +119,14 @@ values; this record fixes only their nature.
 
 ## 6. How 05A consumes the capability
 
-- **`collect.mjs` is the only module holding readers.** It calls `createReaders()`, calls readers with values (a PR
-  number, SHAs, ids) and receives records. It passes those records, with the PR identity value, to pure binders, and
-  builds evidence or `UNKNOWN` through `contract/**` constructors.
+- **`collect.mjs` is the only module holding readers.** It calls readers with values (a PR number, SHAs, ids) and
+  receives records. It passes those records, with the PR identity value, to pure binders, and builds evidence or
+  `UNKNOWN` through `contract/**` constructors.
+- **The readers never leave `collect`'s body.** `createReaders()` is called once, as the initializer of one `const`
+  in the body of the exported `collect` function. That binding is used only as the object of a dotted call to a reader
+  name of §4 (`readers.readCompare(…)`). It is never exported, re-exported, returned, passed as an argument, assigned
+  or destructured into another binding or property, spread, or captured by a nested function. The imported
+  `createReaders` binding is used only in that one call. The only value leaving a reader call is a record.
 - **No capability parameter.** `collect` takes no readers, client or transport argument. A caller cannot inject a
   self-built reader backed by its own network access. Tests replace the transport package by module mocking.
 - **Binders hold nothing.** They import only `contract/**` and `bind/**`, and they receive values.
@@ -147,12 +158,23 @@ vacuously.
   The guard runs as a test, not as an ESLint flat-config block, because flat config **replaces** a rule's options for
   overlapping file sets. This repository has already lost guards that way (`eslint.config.mjs`, UI-05 and FIN-01A).
 - **G3 — frozen surface.** Checked-in golden files hold:
-  - the transport entry's exports and the reader names `createReaders()` returns;
+  - the export surface of every module with an importer outside its own package — `github/index.mjs`, `collect.mjs`,
+    `adapter/index.mjs`, `decision/index.mjs`, `cli.mjs` and the contract entry — so a new export, such as a
+    re-exported `createReaders` or a function that returns readers, fails;
+  - the reader names `createReaders()` returns;
   - each reader's GraphQL document or REST route template, and its parameter types;
   - each reader's output schema;
   - the entry shim's content.
 
   Any difference fails until this record and the goldens are amended in the same change.
+- **G4 — capability flow (allowlist of uses).** Scope analysis of `collect.mjs` allows exactly the uses of §6 for the
+  imported `createReaders` binding and the binding it initializes:
+  - one call of `createReaders()`, as a `const` initializer in the body of the exported `collect` function;
+  - dotted calls `readers.<reader name of §4>(…)` in that same function body.
+
+  Every other reference fails: an export or re-export, a return, an argument, an assignment, a destructuring, a
+  property value, a spread, or a capture by any nested function. A reference from any other module is already a G1
+  failure. Like G2, G4 lists what is allowed, never what is forbidden.
 
 ## 9. Fixtures
 
@@ -163,6 +185,7 @@ vacuously.
 | P3 | `primitive.mjs` importing `node:child_process` | passes |
 | P4 | `decision/**` importing `contract/**` | passes |
 | P5 | the entry shim importing `v2/cli.mjs` | passes |
+| P6 | `collect` calling `readers.readCommitRollup(sha)` and `readers.readPrKey(n)` in its own body, inside `Promise.all` | passes |
 | N1 | a binder importing `node:child_process`, `node:https`, `node:http2`, `node:net`, `node:tls`, `node:vm`, `node:module` or `node:worker_threads` | G1 fails |
 | N2 | an npm package imported anywhere in `v2/`, or a network built-in in a transport file other than `primitive.mjs` | G1 fails |
 | N3 | `collect.mjs` importing `primitive.mjs` directly; a binder importing the transport entry | G1 fails |
@@ -174,6 +197,11 @@ vacuously.
 | N9 | a new or renamed reader, a changed query or route, or a changed output schema, without a golden and record amendment | G3 fails |
 | N10 | a runtime module outside `v2/`, other than the shim, importing any `v2/` module | G1 fails |
 | N11 | a non-transport module re-exporting `primitive.mjs` | G1 fails |
+| N12 | `collect.mjs` re-exporting `createReaders`, or `adapter/index.mjs` re-exporting it again for `cli.mjs` | G4 and G3 fail |
+| N13 | `collect` returning the readers, passing them to a binder, or storing them in a property | G4 fails |
+| N14 | a nested function in `collect.mjs` capturing the readers binding (`(sha) => readers.readCandidateRuns(sha)` handed onward) | G4 fails |
+| N15 | destructuring a reader out of the binding (`const { readPrKey } = readers`) | G4 fails |
+| N16 | any reader other than `readPrKey` returning the draft flag, state, head, base or their repositories | G3 fails (frozen output schema) |
 | R1 | a runtime-computed or reflective property path that reaches the `Function` constructor | **not rejected** — the accepted residual (§10). It is recorded as undetected, never claimed as covered. |
 
 ## 10. The accepted residual (recorded exactly)
@@ -236,6 +264,16 @@ Families: the dependency graph; the transport and its readers; the enforcement g
 trigger.
 
 Pure prose, formatting or non-normative feedback does not consume the budget.
+
+**Spent in round 1** (Codex review of `3e242b78cc`), one finding in each of two families:
+- **enforcement guards** — P1 `4196347828`. Module edges alone let the readers escape as a value across allowed edges:
+  `collect` re-exports them, the adapter entry re-exports them again, and the CLI calls them. Repaired: §6 confines the
+  readers to `collect`'s body; G4 allowlists their only uses; G3 freezes every cross-package export surface; fixtures
+  N12–N15 and P6 cover it.
+- **transport and its readers** — P2 `4196347838`. `readReviewEvidence` returned the draft flag, a second reader of PR
+  lifecycle. Repaired: the draft flag moved into `readPrKey`'s single request; fixture N16 covers it.
+
+A further semantic finding in either family stops this record's patch loop.
 
 ## 14. Non-goals
 
