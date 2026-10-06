@@ -1,4 +1,11 @@
-import { test, expect, type Browser, type Page, type BrowserContext } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Browser,
+  type Page,
+  type BrowserContext,
+  type Request as PlaywrightRequest,
+} from "@playwright/test";
 import {
   seedE2eStudio,
   getClientIdByEmail,
@@ -10,6 +17,7 @@ import {
   errorEvents,
   eventTexts,
   markSentryEgress,
+  readSentryEgress,
   waitForSentryEgress,
 } from "./helpers/sentry-egress";
 
@@ -200,6 +208,14 @@ test("move appointment: a read of available times lost in transit stays in the d
 }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
+  // Every report the page sends goes through the same-origin tunnel. Tracked
+  // from the start, so a report still in flight can be waited for below.
+  const tunnelInFlight = new Set<PlaywrightRequest>();
+  page.on("request", (r) => {
+    if (new URL(r.url()).pathname === "/monitoring") tunnelInFlight.add(r);
+  });
+  page.on("requestfinished", (r) => tunnelInFlight.delete(r));
+  page.on("requestfailed", (r) => tunnelInFlight.delete(r));
   const own = await seedE2eStudio();
   await bookAppointment(page, own);
   const ownClientId = (await getClientIdByEmail(own.studioId, own.clientEmail))!;
@@ -244,13 +260,19 @@ test("move appointment: a read of available times lost in transit stays in the d
   await page.evaluate(() => {
     void Promise.reject(new Error("calendar move capture probe"));
   });
-  const reported = await waitForSentryEgress(
-    (records) => {
-      const texts = errorEvents(records).flatMap(({ item }) => eventTexts(item));
-      return texts.includes("calendar move capture probe") ? texts : undefined;
-    },
+  await waitForSentryEgress(
+    (records) =>
+      errorEvents(records).some(({ item }) => eventTexts(item).includes("calendar move capture probe"))
+        ? true
+        : undefined,
     { since },
   );
+  // Envelopes can land out of order, so a report of the lost read could still
+  // be in flight behind the probe. The egress guard records an envelope before
+  // it answers the request, so once no tunnel request is outstanding, every
+  // report the page has sent is in the record. Re-read all of it.
+  await expect.poll(() => tunnelInFlight.size, { message: "a report is still in flight" }).toBe(0);
+  const reported = errorEvents(readSentryEgress(since)).flatMap(({ item }) => eventTexts(item));
   expect(reported.filter((text) => /Failed to fetch/.test(text))).toEqual([]);
 
   // RECOVERY: with the transport back, "Try again" loads the times.
