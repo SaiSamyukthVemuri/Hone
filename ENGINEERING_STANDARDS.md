@@ -190,7 +190,8 @@ engineering-loop component — and every change to one — must satisfy.
   normalized `Evidence` or `UNKNOWN(reason)`: never a raw payload, and never
   partial Evidence.
 - **Ambiguity is UNKNOWN.** Required evidence that is missing, malformed,
-  truncated, unrecognized or inconsistent makes the whole snapshot
+  truncated, unrecognized or inconsistent — including evidence that changes
+  under ARCH-01's bounded full re-read — makes the whole snapshot
   `UNKNOWN(reason)`. It is never defaulted, guessed or narrowed into a positive.
 - **No raw GitHub in the decision core, and no history reconstruction.** The
   decision core never parses a GitHub representation and never orders GitHub
@@ -208,6 +209,12 @@ engineering-loop component — and every change to one — must satisfy.
   advisory (CANONICAL_ROADMAP §16.2). No engineering-loop component merges, and
   bounded actions need CANONICAL_ROADMAP §16.5 re-entry as well as ARCH-01's
   shadow gate.
+- **Durable loop state passes the re-entry gate first.** Any durable
+  engineering-loop state — ARCH-01's shadow ledger included — meets
+  CANONICAL_ROADMAP §16.5 (mechanical completeness, an independent falsifier,
+  fault injection) before it ships. A row that fails validation is never
+  written, and a metric over an unreadable, partial or invalid ledger is
+  unavailable, never zero.
 - **The adapter / decision boundary is mechanical.** Build-failing guard tests
   keep the evidence adapter (05A) free of decisions and the decision engine
   (05B) free of GitHub knowledge.

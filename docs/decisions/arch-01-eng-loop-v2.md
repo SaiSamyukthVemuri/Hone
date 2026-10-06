@@ -30,8 +30,12 @@ human retains production merge authority
 ```
 
 ENG-LOOP is **not** an autonomous merge system. This is CANONICAL_ROADMAP §16.2 (*Phase 1: Sam merges all PRs*). 05A, 05B and
-05C are **observation-only** reporting under §16.5's observation clause. ENG-LOOP-06 (bounded actions) is an authority
-component: it needs §16.5's three re-entry conditions **and** the shadow gate (§33) — neither substitutes for the other.
+05C's rendering of an outcome are **observation-only** reporting under §16.5's observation clause: they keep no durable
+state and change nothing. The **shadow ledger** (§28) is different: it is a **durable component**, and its rows are the
+evidence for the gate in front of any authority (§33). §16.5's re-entry gate therefore applies to it **in full** —
+mechanical completeness, an independent falsifier and the fault-injection precondition — before 05C writes a single row
+(§28.1). ENG-LOOP-06 (bounded actions) is an authority component: it needs §16.5's three re-entry conditions **and** the
+shadow gate (§33) — neither substitutes for the other.
 
 ## 2. Root cause learned from #795 / #798 / #799
 
@@ -61,7 +65,7 @@ Ambiguous or unrecognized **required** evidence → `UNKNOWN(reason)` for the wh
 ```
 collect(pr, policy, github)  →  Evidence | Unknown(reason)          (05A)
 decide(evidence, policy)     →  Decision                             (05B)
-shepherd CLI                 →  renders and records the advisory outcome (05C)
+shepherd CLI                 →  renders the advisory outcome; records it once §28.1 holds (05C)
 ```
 
 `decide()` is called **only** with valid `Evidence`; collection failure returns `Unknown` before 05B runs. `UNKNOWN` is
@@ -89,7 +93,8 @@ readiness decision and has no decision vocabulary (§25).
 | Drift | REST `compare/{production_head}...{H}` | `H` = the snapshot's head (§14, §16) |
 | CI runs | REST `actions/workflows/ci.yml/runs?head_sha={H}&event=pull_request`, every page | `H` = the snapshot's head (§8, §9, §16) |
 
-Every read is a **read**. 05A never writes to GitHub.
+Every read is a **read**. 05A never writes to GitHub. One **collection** is every read in this table; §15 requires two
+complete collections that agree.
 
 ## 6. 05B — pure decision engine
 
@@ -210,7 +215,8 @@ decision. Swapping the direction is an implementation defect.
 
 ## 15. Snapshot consistency
 
-`collect()` produces **one** internally consistent snapshot, or `UNKNOWN`.
+`collect()` produces **one** internally consistent snapshot, or `UNKNOWN`. A **collection** is every required read in
+§5.1: every page of the GraphQL snapshot and every head-keyed REST read.
 
 - **Head assertion:** the GraphQL snapshot's `headRefOid` must equal `commits(last: 1)`'s `oid`. Every page of the
   snapshot query re-reads `headRefOid`, and every page must agree with the first.
@@ -219,6 +225,21 @@ decision. Swapping the direction is an implementation defect.
 - **Completeness:** every paginated connection is read to its last page; a stated `totalCount` that disagrees with what
   was collected, or that changes between pages → `UNKNOWN(incomplete)`.
 - **Any** required read, parse or authorization failure → the whole snapshot is `UNKNOWN(reason)`. No partial Evidence.
+  A collection stops at its first failure, and that failure names the reason.
+- **Stability — one bounded full re-read.** The assertions above cannot see a change that keeps the head and every
+  count: a thread resolved or reopened, a body edited, a run or a context changing state while later pages and reads
+  are still being fetched. Reads taken at different moments could then combine into a state that never existed. So once
+  one complete, head-consistent collection exists, 05A performs the **whole collection once more**, immediately, and
+  normalizes both. `Evidence` is emitted only if the second collection is also complete, every one of its pages carries
+  the first collection's head, and both normalize to **identical** `Evidence` — compared as values, `capturedAt`
+  excluded, and the arrays whose order is irrelevant (§26: runs, external contexts, reviews, threads) compared as
+  multisets:
+  - the second collection fails a read, parse, authorization or completeness check → that reason;
+  - it sees another head on any page → `UNKNOWN(head_moved)` (the one re-read above is not repeated);
+  - any other difference → `UNKNOWN(unstable_snapshot)`.
+
+  There is no third collection and no loop: a later invocation is the retry. What the re-read does and does not
+  guarantee is stated in §41.
 
 ## 16. Head-keyed REST reads
 
@@ -430,7 +451,10 @@ internals. A violation fails CI.
 
 **Adapter domain (05A):** raw response strings and realistic API payloads → `Evidence | Unknown`. It never throws; the
 schema is strict and positive; unknown enums, truncated bodies, malformed bodies and missing required fields → `UNKNOWN`.
-Use mutated **realistic** GitHub responses, not impossible GitHub histories.
+Use mutated **realistic** GitHub responses, not impossible GitHub histories. Stability (§15) is proven with paired
+collections: a second collection that differs only in the order of an order-irrelevant array yields the same `Evidence`;
+one that differs in any normalized value — a thread resolved or reopened, a run or a context changing state — yields
+`UNKNOWN(unstable_snapshot)`; another head yields `UNKNOWN(head_moved)`.
 
 **Core domain (05B):** valid normalized `Evidence` → a deterministic `Decision`. It is total and deterministic;
 permutation-invariant wherever array order is semantically irrelevant (runs, external contexts, reviews, threads);
@@ -461,6 +485,26 @@ Every shadow observation records:
 `evidenceHash` is the SHA-256 of the canonical JSON (sorted keys, no whitespace) of the `Evidence` for a decision outcome,
 and of `{ pr, head, unknown: reason }` for an unknown outcome (`head` is `null` when it could not be read). Unknown outcomes
 are persisted with all fields and take part in transitions and time-in-state reporting.
+
+### 28.1 Durable-component gate (CANONICAL_ROADMAP §16.5)
+
+The ledger is **durable**, and its rows are the evidence for the gate in front of authority (§33). CANONICAL_ROADMAP §16.5
+therefore applies to it in full: 05C writes no row until all three conditions are proven for the ledger at its exact head.
+
+- **Mechanical completeness:** a row is accepted only by a validator derived mechanically from the row's declared shape
+  (the record above, `ObservationOutcome`, the closed `UnknownReason` set) — never a hand-written list of remembered
+  cases.
+- **Independent falsifier:** a falsifier independent of the builder runs against the exact head before merge; the
+  builder cannot declare its own validation complete.
+- **Fault injection:** malformed, unreadable, partial, interrupted and concurrent states fail without data loss or
+  permissive defaults:
+  - a row that fails validation is not written, and the existing ledger is preserved byte for byte;
+  - an interrupted write leaves either the prior ledger byte for byte or the complete new row — never a torn row;
+  - concurrent writers never lose or tear a row;
+  - a ledger that is unreadable, partial or fails validation is never read as complete: every metric computed from it
+    (§29–§33) is unavailable, never zero, so it can never satisfy `false_ready == 0`.
+
+Until then, 05C may render an outcome but records nothing, and the real-PR shadow period (§34) does not begin.
 
 ## 29. false_ready
 
@@ -513,7 +557,8 @@ unnecessary CI re-runs. All are computed per `policyHash` (§32).
 qualitative interventions, operator rationale.
 
 Minimum safety condition before any bounded action authority: **`false_ready == 0`**, and every `false_block` surfaced and
-reviewed individually. ARCH-01 sets no sample-size or time threshold without evidence. Meeting the gate is necessary for
+reviewed individually — computed only from a ledger that has passed §28.1 and reads complete; otherwise every metric is
+unavailable, never zero. ARCH-01 sets no sample-size or time threshold without evidence. Meeting the gate is necessary for
 ENG-LOOP-06, not sufficient: CANONICAL_ROADMAP §16.5 still applies.
 
 ## 34. Delivery sequence
@@ -525,9 +570,9 @@ ENG-LOOP-05A    GitHub → Evidence | Unknown            (no decisions)
    ↓
 ENG-LOOP-05B    Evidence → Decision                    (no GitHub knowledge)
    ↓
-ENG-LOOP-05C    shepherd CLI + shadow ledger
+ENG-LOOP-05C    shepherd CLI + shadow ledger           (the ledger: §16.5 gate, §28.1)
    ↓
-real-PR shadow period → automatic metrics gate (§33)
+real-PR shadow period (once the ledger passes §28.1) → automatic metrics gate (§33)
    ↓
 ENG-LOOP-06     bounded actions                        (also §16.5)
    ↓
@@ -557,13 +602,19 @@ Pure prose, formatting, typo or non-normative feedback does not consume the sema
 **Spent before review:** the two-channel Codex evidence model (§17, §17b) is the review-authority family's first semantic
 resolution. A further semantic finding in **review authority** stops this document's patch loop.
 
+**Spent in round 1** (Codex review of `789d470d6b`): the **evidence boundary** family — §15's bounded full re-read — and
+the **shadow metrics** family — §28.1's durable-component gate for the ledger the metrics are computed from — each spent
+their first semantic resolution. A further semantic finding in either of them, or in review authority, stops this
+document's patch loop.
+
 ## 37. Standing engineering law
 
 ENGINEERING_STANDARDS §8 carries the standing law in the same change: raw external evidence crosses exactly one
 validation boundary; downstream receives normalized evidence only; ambiguous evidence → `UNKNOWN`; no raw GitHub
 representation and no temporal Actions-history reconstruction in the decision core; text is never sufficient authority
-(the two Codex channels); human merge authority; a mechanically enforced 05A/05B import boundary; semantic changes require
-architecture review first.
+(the two Codex channels); human merge authority; durable loop state — the shadow ledger included — passes §16.5's
+re-entry gate before it ships; a mechanically enforced 05A/05B import boundary; semantic changes require architecture
+review first.
 
 ## 38. Non-goals
 
@@ -583,13 +634,14 @@ ARCH-01 is complete only if 05A/05B need to invent none of the following. Each i
 | external source of truth; external collapse mapping | §10, §11 |
 | Actions-vs-external discriminator | §12 |
 | production ref; compare direction; refresh predicate | §13, §14 |
-| head-consistency behaviour; exact-head REST binding | §15, §16 |
+| head-consistency and snapshot-stability behaviour; exact-head REST binding | §15, §16 |
 | trusted reviewer identity; resolver authority | §20 |
 | accepted review states and channels; marker policy; marker failure behaviour | §17, §17b, §21 |
 | `CHANGES_REQUESTED` behaviour; finding-open semantics; severity semantics | §18, §19 |
 | marker fixtures for both the real clean and findings forms | §22, Appendix A |
 | `false_ready`, `false_block`, `human_override` calculation | §29, §30, §31 |
 | policy-series and architecture-series partitioning | §32 |
+| the ledger's durable-component obligations, and what 05C may do before they hold | §1, §28.1 |
 | unknown reasons; the outcome union | §4, §40 |
 | 05A/05B module dependency direction | §25 |
 
@@ -605,7 +657,8 @@ Every `UNKNOWN` names exactly one reason:
 | `malformed` | a required answer does not fit the strict positive schema, including a `null` conclusion on a completed run and a `CheckRun` without an app slug |
 | `incomplete` | a required collection is truncated, or its stated total disagrees with what was collected or changes between pages |
 | `wrong_base` | the PR's base is not the configured production ref |
-| `head_moved` | the snapshot head assertion failed twice |
+| `head_moved` | the snapshot head assertion failed twice, or the second collection (§15) saw another head |
+| `unstable_snapshot` | two complete collections at the same head normalize to different `Evidence` (§15) |
 | `workflow_identity_mismatch` | a designated run carries another workflow id |
 | `unrecognized_ci_status` | a run status outside §8's table |
 | `unrecognized_ci_conclusion` | a completed run's conclusion outside §8's table |
@@ -621,6 +674,11 @@ Every `UNKNOWN` names exactly one reason:
   verdict in this repository has taken that form (§17).
 - **`ALL_DESIGNATED_RUNS` can false-block** a head with legitimate duplicate runs, such as a cancelled superseded run.
   `LATEST_CREATED` is the only pre-approved relaxation, gated by shadow evidence (§8).
+- **Two agreeing collections are not a transaction.** GitHub documents no snapshot isolation across requests. Every read
+  of §15's first collection precedes every read of its second, so if nothing a read returns changed between that read's
+  two executions, the agreed `Evidence` is the true state at the moment between the two collections. A change made and
+  then reverted inside that window is invisible, and only such a reversal can let a combination that never existed
+  survive. Recorded so policy can address it deliberately.
 
 ---
 
