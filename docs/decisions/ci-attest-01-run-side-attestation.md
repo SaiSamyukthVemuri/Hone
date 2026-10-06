@@ -5,12 +5,13 @@
 | **Decision** | A CI execution names the PR, head and base it ran for in **one immutable artifact** that the authoritative workflow emits from the triggering event, before any PR code runs. ENG-LOOP binds a CI run to a PR **only** through that attestation. |
 | **Date** | 2026-10-06 |
 | **Status** | **PROPOSED** in this pull request; **ACCEPTED** when merged. |
-| **Decided by** | Sam (operator): CI-ATTEST-01 is the re-entry architecture after ARCH-01's CI-authority stop law fired on PR #800. |
+| **Decided by** | Sam (operator): CI-ATTEST-01 is the re-entry architecture after ARCH-01's CI-authority stop law fired on PR #800; re-entered **by removal** after PR-SNAPSHOT-01 (PR #803) and CAP-01 (PR #804) merged. |
 | **Purpose** | Exactly one fact: *"This trusted CI execution ran for PR N, at head H, against base B, under authoritative workflow W."* |
 | **Consumed by** | ARCH-01 (`docs/decisions/arch-01-eng-loop-v2.md`, PR #800). ARCH-01 **consumes** this fact; it never derives it (§12). |
-| **Scope** | The artifact contract, binding classes, trust anchor, attempts and re-runs, retention, closed and merged PRs, fixtures. |
-| **Not in scope** | The `ci.yml` change (a separate implementation PR, §11); any edit to #800; 05A; ARCH-02. |
-| **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0`. Live evidence read on 2026-10-06. |
+| **Depends on** | PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`, merged) for the coherent key `K0`; CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`, merged) for GitHub-access architectural lint. |
+| **Scope** | The artifact contract, binding against `K0`, the trust anchor, attempts and re-runs, retention, terminal PRs, fixtures. |
+| **Not in scope** | The `ci.yml` change (a separate implementation PR, §11); any edit to #800; 05A; 05B; ARCH-02; reading or re-validating the PR, which PR-SNAPSHOT-01 owns; GitHub-access lint, which CAP-01 owns. |
+| **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0`; re-entered at production `9402c21718f31dd72016ed0c4d421bb00f9551ee`, where PR-SNAPSHOT-01 and CAP-01 are merged. Live evidence read on 2026-10-06. |
 
 > **Normative.** Where an implementation and this record disagree, the implementation is wrong. A change to these semantics
 > is proposed, reviewed and merged **here first**; it never evolves through review-repair rounds.
@@ -26,6 +27,16 @@ creates a failure or a pending state. Whether a run succeeded, failed or is pend
 **Never PR identity:** a run's or check run's `pull_requests`, a run's `display_title` or `run-name`, a job or check name,
 a commit status, a check run, a timestamp, a run id ordering, a `run_attempt` ordering, or the runs endpoint's `branch`
 filter.
+
+**Ownership — no overlap.**
+
+| Record | Owns |
+|---|---|
+| PR-SNAPSHOT-01 | the PR's current state, head, base and repositories, as one coherent `PrSnapshotKey`; `K0`/`K1` coherence; the bounded retry |
+| CI-ATTEST-01 (this record) | immutable CI execution identity, and its comparison with `K0` |
+| CAP-01 | declared, static GitHub capability architecture lint |
+
+This record receives `K0` from PR-SNAPSHOT-01 and never reads the pull request itself.
 
 ## 2. Why — GitHub's current views cannot bind a run to a PR
 
@@ -103,8 +114,9 @@ checked.
 
 ## 5. Binding — one candidate run (05A)
 
-Candidates are ARCH-01's: the `ci.yml` endpoint ∩ the exact head ∩ `event=pull_request`. Trust (§7) is settled first, once
-per snapshot. Then, for each candidate:
+This section applies to an **open** pass; a terminal pass reads no CI (§9). Candidates are ARCH-01's: the `ci.yml`
+endpoint ∩ the exact head `K0.headSha` ∩ `event=pull_request`. Trust (§7) is settled first, once per pass. Then, for each
+candidate:
 
 1. **Locate.** The run's artifact list, filtered by the exact name `ci-attest-v1`, holds exactly one artifact; it is not
    expired, and its `workflow_run.id` equals the run's id.
@@ -118,30 +130,32 @@ per snapshot. Then, for each candidate:
    - `headSha` = the run's `head_sha` = `workflow_run.head_sha`; `headRef` = the run's `head_branch` =
      `workflow_run.head_branch`; `headRepositoryId` = the run's `head_repository.id` = `workflow_run.head_repository_id`;
    - `baseRepositoryId` = `repositoryId`.
-4. **Classify** against the current PR (`E.pr`; `E.pr.base` is its current base ref, read in the same snapshot) and
-   production (`E.production`):
+4. **Classify** against `K0`, the coherent key that PR-SNAPSHOT-01 supplies for this pass. This record reads nothing
+   about the PR itself:
 
 | Attestation | Class | Effect |
 |---|---|---|
-| `prNumber` = `E.pr.number`; `headSha`, `headRef`, `headRepositoryId` = the PR's head; `baseRef` = the PR's **current** base `E.pr.base`, which is the configured production ref; `baseSha` = `E.production.head` | **DESIGNATED** | takes part in ARCH-01's CI rules; its result is the run's `status` and `conclusion` |
-| `prNumber` ≠ `E.pr.number` | **UNRELATED** | excluded: never grants success, never creates a failure or a pending state |
-| `prNumber` = `E.pr.number` and the head matches, but `baseRef` ≠ `E.pr.base`, or `E.pr.base` ≠ the configured production ref, or `baseSha` ≠ `E.production.head` | **STALE** | excluded: the run tested another base, or the PR no longer targets production, and the run cannot satisfy CI for the current PR |
-| `prNumber` = `E.pr.number` but any head field differs | **INVALID** | `UNKNOWN(ci_attestation_invalid)` |
+| `prNumber`, `headSha`, `headRef`, `headRepositoryId`, `baseRef`, `baseRepositoryId` and `baseSha` equal `K0`'s `prNumber`, `headSha`, `headRef`, `headRepoId`, `baseRef`, `baseRepoId` and `baseSha`; and `K0.baseRef` is the configured production ref, so `K0.baseSha` is the production head | **DESIGNATED** | takes part in ARCH-01's CI rules; its result is the run's `status` and `conclusion` |
+| `prNumber` ≠ `K0.prNumber` | **UNRELATED** | excluded: never grants success, never creates a failure or a pending state |
+| `prNumber` = `K0.prNumber`, and the head fields and `baseRepositoryId` match, but `baseRef` ≠ `K0.baseRef`, or `K0.baseRef` is not the configured production ref, or `baseSha` ≠ `K0.baseSha` | **STALE** | excluded: the run tested another base, or the PR no longer targets production, and the run cannot satisfy CI for the current PR |
+| `prNumber` = `K0.prNumber` but any head field, or `baseRepositoryId`, differs from `K0` | **INVALID** | `UNKNOWN(ci_attestation_invalid)` |
 
 Any failure in steps 1–3 is **INVALID**. One INVALID candidate makes the **whole snapshot**
 `UNKNOWN(ci_attestation_invalid)`. Otherwise ARCH-01's designated runs are exactly the DESIGNATED candidates; with none,
 ARCH-01 decides `CI_NOT_STARTED`. Classification depends on no ordering of the candidates.
 
 **Why STALE excludes rather than fails.** A run against an older production head must leave ARCH-01's `NEEDS_REFRESH`
-(§7 row 3) free to decide; `UNKNOWN` would hide it.
+(ARCH-01 §7 row 3) free to decide; `UNKNOWN` would hide it.
 
-**Base edits.** A base edit without a new execution (E2) is STALE in **either direction**, because the attested base no
-longer equals the PR's current base `E.pr.base`:
-- production → another branch: the attested `baseRef` is production but `E.pr.base` is not. The PR is also
+**Base edits.** A base edit completed before the pass, without a new execution (E2), is STALE in **either
+direction**, because the attested base no longer equals `K0.baseRef`:
+- production → another branch: the attested `baseRef` is production, but `K0.baseRef` is not. The PR is also
   `UNKNOWN(wrong_base)` in ARCH-01 §13, but this rule does not rely on that.
 - another branch → production: the attested `baseRef` is the old branch.
 
-Either way, the old run can never satisfy CI for the edited PR, whatever GitHub's current views say.
+Either way, the old run can never satisfy CI for the edited PR, whatever GitHub's current views say. A base edit
+**during** the pass changes the key, so PR-SNAPSHOT-01 discards the whole pass (`K1 ≠ K0`) and retries it once. This
+record never re-reads or re-validates the base.
 
 ## 6. Attempts and re-runs (frozen)
 
@@ -172,9 +186,10 @@ emitter. The fact that a file is named `ci.yml` proves nothing.
 
 ### 7.2 The anchor
 
-05A trusts attestations in a snapshot only when **`.github/workflows/ci.yml` at the PR head `H` has the same git blob
-`sha` as at the merge base** of production and `H` — the `merge_base_commit` of ARCH-01's existing compare read (E13).
-Otherwise the whole snapshot is `UNKNOWN(ci_attestation_untrusted)`, and no artifact is read.
+05A trusts attestations in a pass only when **`.github/workflows/ci.yml` at the PR head `H` = `K0.headSha` has the
+same git blob `sha` as at the merge base** of `K0.baseSha` and `H` — the `merge_base_commit` of the compare read bound
+to `K0` (E13; PR-SNAPSHOT-01 §5). If the two blobs differ, the whole snapshot is `UNKNOWN(ci_attestation_untrusted)`,
+and no artifact is read. For a PR that targets production, `K0.baseSha` is the production head.
 
 - **The anchor asks whether the PR changed CI.** Comparing against the merge base, not the current production head,
   keeps a later production change to `ci.yml` from hiding `NEEDS_REFRESH`.
@@ -184,8 +199,8 @@ Otherwise the whole snapshot is `UNKNOWN(ci_attestation_untrusted)`, and no arti
   production-authored: `H` did not change `ci.yml` since it left production, so the tested merge takes production's
   version. Candidacy also requires `H` to contain the production head (ARCH-01 §14, before every CI row), and then the
   tested merge has `H`'s tree, whose `ci.yml` is production's.
-- **Forks.** An open PR whose head repository is not the target repository is `UNKNOWN(ci_attestation_untrusted)`. No
-  fork attestation is trusted in schema v1: fork code is not a trusted writer (E12). A closed fork PR is §9's.
+- **Forks.** An open pass whose `K0.headRepoId` is not the target repository is `UNKNOWN(ci_attestation_untrusted)`.
+  No fork attestation is trusted in schema v1: fork code is not a trusted writer (E12). A closed fork PR is §9's.
 
 ### 7.3 Residuals (writer class: recorded, not closed)
 
@@ -206,14 +221,13 @@ OIDC claims (`base_ref`, `workflow_sha`, `run_id`) are the escalation path if th
   execution: a re-run within 30 days (E3), a push, or a close and reopen.
 - **Rollout:** runs created before the emitter ships carry no attestation and are `UNKNOWN` until their next run.
 
-## 9. Closed and merged PRs (frozen separately from binding)
+## 9. Closed and merged PRs (frozen)
 
-- **State first.** Collection reads the PR's lifecycle state first. If it is not `OPEN`, 05A returns a normalized
-  terminal Evidence shape — the PR's number, head and state — and 05B returns `NOT_OPEN`.
-- **No CI read.** No candidate, artifact or anchor is read, so an expired attestation, a removed artifact or an emptied
-  GitHub association can never make a closed or merged PR `UNKNOWN`.
-- **Snapshot rules still apply.** ARCH-01's head assertion and bounded re-read still cover the PR read.
-- **Ownership.** ARCH-01 owns the Evidence model and adopts this terminal shape when it is narrowed (§12).
+- **Terminal handling is PR-SNAPSHOT-01's.** When `K0.state` is not `OPEN`, the pass is terminal; its key, `K1 == K0`
+  and `NOT_OPEN` are PR-SNAPSHOT-01 §7's.
+- **No CI read.** A terminal pass makes none of this record's reads: no candidate, artifact or anchor. An expired
+  attestation, a removed artifact or an emptied GitHub association therefore can never make a closed or merged PR
+  `UNKNOWN`, and a terminal PR needs no historical artifact.
 
 ## 10. Required fixtures and negative controls
 
@@ -223,7 +237,7 @@ OIDC claims (`base_ref`, `workflow_sha`, `run_id`) are the escalation path if th
 | 2 | a valid attestation naming another PR | UNRELATED — excluded |
 | 3 | another PR's run at the same head SHA; the target PR has no run of its own | UNRELATED — `CI_NOT_STARTED`, never an inherited success |
 | 4 | a run of the same commit bytes from a fork; and a forged attestation claiming the target PR from that run | UNRELATED; the forgery fails metadata agreement (head repository id) → `UNKNOWN(ci_attestation_invalid)`. Never an inherited success |
-| 5 | the PR's base edited after its run, in both directions: production → another branch, and another branch → production | STALE — excluded |
+| 5 | the PR's base edited after its run and before the pass, in both directions: production → another branch, and another branch → production | STALE — excluded |
 | 6 | a malformed artifact: bad JSON, an extra or missing key, a wrong type, two zip entries, a wrong entry name, a digest mismatch | `UNKNOWN(ci_attestation_invalid)` |
 | 7 | no `ci-attest-v1` artifact, or an expired one | `UNKNOWN(ci_attestation_invalid)` |
 | 8 | two `ci-attest-v1` artifacts in one run | `UNKNOWN(ci_attestation_invalid)` |
@@ -249,22 +263,23 @@ A proof that contradicts this record returns to architecture: it is amended here
 
 ## 12. Sequence, and what ARCH-01 consumes
 
-1. **This record merges.**
-2. **The emitter ships.** A separate implementation PR adds it to `ci.yml` — shared CI infrastructure, so the full CI
-   matrix runs — and discharges §11.
+1. **PR-SNAPSHOT-01 and CAP-01** are merged.
+2. **This record re-enters by removal and merges.**
 3. **#800 is narrowed by removal:**
    - delete the mutable `pull_requests` association law and the reason `ci_pr_binding_ambiguous`;
    - add one normative pointer: *"Designated CI membership requires a valid immutable CI-ATTEST-01 run-side
      attestation."*;
-   - preserve terminal-PR handling, adopting §9;
+   - consume PR-SNAPSHOT-01's `K0` and its terminal handling;
    - add no parser and no reconstruction mechanism, and do not copy this record's specification into ARCH-01.
-4. **05A starts only after steps 1–3.**
+4. **The emitter ships.** A separate implementation PR adds it to `ci.yml` — shared CI infrastructure, so the full CI
+   matrix runs — and discharges §11.
+5. **05A, then 05B,** only after steps 1–4. ARCH-02 remains later.
 
-ARCH-01 gains two closed reasons from this record: `ci_attestation_invalid` and `ci_attestation_untrusted`. The
-narrowing keeps the reads this binding consumes:
-- the PR's number, head SHA, head ref, head repository id and **current base ref**;
-- the production head and the target repository id;
-- the compare read's `merge_base_commit`;
+ARCH-01 gains two closed reasons from this record: `ci_attestation_invalid` and `ci_attestation_untrusted`. This
+binding consumes:
+- `K0`, from PR-SNAPSHOT-01;
+- the target repository id;
+- the `merge_base_commit` of the compare read bound to `K0`;
 - the run metadata §5 compares against.
 
 Until step 3, #800 stays a frozen draft; its open CI-binding findings are this record's origin.
@@ -278,15 +293,25 @@ Families: the artifact contract, binding classes, trust, attempts and re-runs, r
 
 Pure prose, formatting or non-normative feedback does not consume the budget.
 
-**Spent in round 1** (Codex review of `8d20b1a3f3`): the **binding classes** family. P1 `4190932205` found that the
-DESIGNATED row never compared the attested base with the PR's current base. A PR retargeted from production without a new
-run could keep a designated run. Repaired: designation requires `baseRef` = `E.pr.base` = the production ref, and every
-other base outcome is STALE. A further semantic finding in binding classes stops this record's patch loop.
+**Round 1** (Codex review of `8d20b1a3f3`): the **binding classes** family. P1 `4190932205` found that the DESIGNATED
+row never compared the attested base with the PR's current base. A PR retargeted from production without a new run could
+keep a designated run. Repaired at `907699df66`: designation required the attested base to equal the PR's current base,
+which had to be the production ref; every other base outcome was STALE.
+
+**Round 2** (Codex review of `907699df66`): a second **binding classes** finding. P1 `4190972680` showed that the
+current base was read once and never re-validated, so a retarget concurrent with collection could still designate the
+old production attestation. The stop law fired, and no patch was made.
+
+**Re-entry by removal** (operator decision after PR-SNAPSHOT-01 and CAP-01 merged; not a repair round). This record's
+own reads and re-validation of the PR were **removed rather than extended**. It compares the attestation with `K0`
+only, and PR-SNAPSHOT-01's `K1 == K0` discards any pass in which the base moved. No base re-read, guard or other
+mechanism was added. A fresh semantic P0–P2 affecting CI attestation correctness → **stop**, with no automatic patch.
 
 ## 14. Non-goals
 
-This record adds no `ci.yml` change, no 05A, no edit to #800 or ARCH-01, no ARCH-02, no OIDC (escalation only), no use of
-GitHub's current PR views, no status or check emission, no attempt ordering and no history reconstruction.
+This record adds no `ci.yml` change, no 05A, no 05B, no edit to #800 or ARCH-01, no ARCH-02, no OIDC (escalation only),
+no use of GitHub's current PR views, no read or re-validation of the PR (PR-SNAPSHOT-01 owns it), no GitHub-access
+guard (CAP-01 owns that lint), no status or check emission, no attempt ordering and no history reconstruction.
 
 ---
 
