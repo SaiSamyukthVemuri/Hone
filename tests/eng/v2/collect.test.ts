@@ -176,6 +176,50 @@ describe("collect: #800 end to end (recorded answers)", () => {
   });
 });
 
+describe("collect: options outside the contract fail closed before any request", () => {
+  it("null options, missing or partial local CI, incomplete readers or a bad clock: malformed, zero requests, no throw", () => {
+    const gh = fakeGitHub(routes800());
+    const readers = createReaders({ request: gh.request });
+    const base = { prNumber: 800, readers, local: LOCAL, now: () => NOW };
+    const variants: Array<[string, any]> = [
+      ["null options", null],
+      ["no options", undefined],
+      ["prNumber 0", { ...base, prNumber: 0 }],
+      ["no local", { ...base, local: undefined }],
+      ["local without blobs", { ...base, local: { classify, tablePinned: true } }],
+      ["local with a short blob", { ...base, local: { ...LOCAL, blobs: { ...LOCAL.blobs, "scripts/classify-changes.mjs": "abc" } } }],
+      ["local without tablePinned", { ...base, local: { classify, blobs: LOCAL.blobs } }],
+      ["readers missing one", { ...base, readers: { ...readers, readFileBlob: undefined } }],
+      ["clock not a function", { ...base, now: 5 }],
+      ["clock without a time", { ...base, now: () => Number.NaN }],
+      ["clock returning a non-time string", { ...base, now: () => "not a time" }],
+      ["clock returning an invalid Date", { ...base, now: () => new Date("x") }],
+      ["clock returning a boolean", { ...base, now: () => true }],
+      ["clock that throws", { ...base, now: () => { throw new Error("no clock"); } }],
+    ];
+    for (const [label, args] of variants) {
+      expect(() => collect(args), label).not.toThrow();
+      expect(collect(args), label).toMatchObject({ ok: false, reason: "malformed", stage: "collect" });
+    }
+    expect(gh.log).toHaveLength(0);
+    // A clock may read as milliseconds, a Date, or an ISO-8601 UTC string: all three are the same time.
+    for (const now of [() => NOW, () => new Date(NOW), () => "2026-10-07T21:00:00Z"]) {
+      expect(collect({ ...base, readers: createReaders({ request: fakeGitHub(routes800()).request }), now }).evidence.observedAt).toBe(
+        "2026-10-07T21:00:00Z",
+      );
+    }
+  });
+
+  it("the evidence hash covers the local CI definition the rows were bound with", () => {
+    const a = run(routes800()).result;
+    const other = { ...LOCAL, blobs: { ...LOCAL.blobs, "scripts/classify-changes.mjs": "1".repeat(40) } };
+    const b = run(routes800(), { local: other }).result;
+    expect(b.evidence.rows.ci).toMatchObject({ ok: false, reason: "ci_definition_mismatch" });
+    expect(b.evidenceHash).not.toBe(a.evidenceHash);
+    expect(run(routes800(), { local: { ...LOCAL, tablePinned: false } }).result.evidenceHash).not.toBe(a.evidenceHash);
+  });
+});
+
 describe("collect: fault injection at every request of both passes", () => {
   const positions = Array.from({ length: 30 }, (_, i) => i + 1);
 

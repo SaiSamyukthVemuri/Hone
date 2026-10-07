@@ -307,8 +307,9 @@ repository(owner,name){ pullRequest(number:N){ number
 
 ### 4.2 `bindReviews({ key, evidence, policy })`
 
-ARCH-01 §17–§21. Policy: the Codex bot `{ id: 199175422, type: "Bot" }`, trusted human resolvers
-`[{ id: 26781116, type: "User" }]`, and the clean verdict prefix `Codex Review: Didn't find any major issues.`.
+ARCH-01 §17–§21. `policy` is required and is exactly `{ cleanPrefix }`, a non-empty string; the collector passes
+`{ cleanPrefix: "Codex Review: Didn't find any major issues." }`. A missing, empty or extended policy is `malformed`.
+Whom to trust — the Codex bot and the human resolvers — is 05B's policy (SPEC-05B §3), never 05A's.
 
 - A review whose `state` is outside GitHub's `PENDING`, `COMMENTED`, `APPROVED`, `CHANGES_REQUESTED`, `DISMISSED` →
   `malformed`.
@@ -393,7 +394,10 @@ request and returns its §2–§4 parser's result for the request it made. A tra
   `GH_CONFIG_DIR`, `GH_TOKEN` set to the dedicated token, and fixed non-interactive settings. No credential is
   inherited.
 - The token is never an argument, a result, a detail or a statistic. An echo of it, or of anything shaped like a
-  GitHub token, is redacted.
+  GitHub token, is redacted — in a successful answer's body (before it is parsed) as much as in a detail or a
+  request label.
+- A request must be exactly one of the two shapes — `{ label, rest }` or `{ label, graphql, variables }`, with string
+  or integer variables — or it is refused as `malformed` before anything is spawned.
 - REST is `GET` with fixed `Accept` and API-version headers. GraphQL sends numbers with `-F` and strings with `-f`.
 - Exit 0 with JSON is the body. A non-zero exit is `read_failed`, with the reader's label and `gh`'s first stderr line
   as the detail (for example `candidate-runs: gh: … (HTTP 403)`), which names a missing permission. Non-JSON output
@@ -412,6 +416,11 @@ that `ci.yml`. The CI row is `ci_definition_mismatch` when either local blob dif
 
 `adapter/collect.mjs`: `collect({ prNumber, readers, local, now, policy })`.
 
+0. Before the first request, every option is checked: a positive PR number, all eleven readers, a complete local
+   CI definition (§5.2: a classifier, a 40-hex blob for each path, the pin flag) and a clock that returns a time —
+   milliseconds, a valid `Date`, or an ISO-8601 UTC string.
+   Anything else is `{ ok: false, reason: "malformed", stage: "collect" }` with no request made, never a throw.
+
 1. The first coherent pass (§1): `K0 = readPrKey`, then the body, then `K1`. The pass gets one retry if the key
    moved.
 2. The body, for an OPEN key, in this fixed order: compare, PR context, head-branch PRs, branch rules, activity
@@ -429,9 +438,12 @@ that `ci.yml`. The CI row is `ci_definition_mismatch` when either local blob dif
 Success: `{ ok: true, evidence, evidenceHash, diagnostics }`:
 - `evidence`: `{ schema: "eng-loop-v1/evidence@1", observedAt, key, terminal, rows }`;
 - `rows`: `null` for a terminal key; otherwise `{ base, ci, reviews, external }`, each a closed result;
-- `evidenceHash`: SHA-256 of the canonical JSON of `{ schema, key, body }`, where `body` holds the first pass's
-  normalized records. The observation time is reported, never hashed. GitHub's listing order cannot change it,
-  because every record is canonically ordered;
+- `evidenceHash`: SHA-256 of the canonical JSON of `{ schema, key, body, localCi: { blobs, tablePinned } }`, where
+  `body` holds the first pass's normalized records. It names everything the rows were bound from except the clock.
+  GitHub's listing order cannot change it, because every record is canonically ordered. The observation time is
+  reported, never hashed: it enters the rows only through rule 8's 360-day window, so two collections with equal
+  hashes bind equal rows unless an applicable run crosses that window between them (verifier pass 3). Never key a
+  cache or an "unchanged since" check on the hash without the observation time;
 - `diagnostics`: `{ observedAt, attempts, confirmed: true }`.
 
 Failure: `{ ok: false, reason, detail, stage: "collect" | "confirm", diagnostics }`, never partial evidence.
@@ -459,18 +471,27 @@ Each is a stated limit, not a hidden assumption. None can make a candidate out o
   because `classify([])` selects the full matrix.
 - **A9 — drift is 05B's rule.** `bindCi` can return `SUCCEEDED` for a PR that is behind production. Requiring
   `behindBy == 0` is 05B's precedence (`NEEDS_REFRESH` before every CI rule), and 05B's tests must prove it.
+- **R-ECHO-Q — no REST answer echoes its query parameters.** `per_page=100`, `state=all`, `time_period=year`,
+  `event=pull_request` and `filter=latest` are pinned only by route construction (the collector's strict-fake tests
+  pin every route), and the `length >= 100` caps assume `per_page=100`.
 - **R-ECHO — four answers do not echo every request parameter.** The compare (§2.1) echoes its base but not its
   head; the PR context's `associatedPullRequests` (§2.2) does not echo the commit it was read for; the branch rules
   (§2.4) echo nothing, not even the branch, so only rule 6 rests on them while rule 8 uses echoed activity; and a
   file blob (§5.1) echoes its path but not its commit. The collector (§5) passes `K0.headSha`, `K0.baseSha` and the
   policy's production ref, and its strict-fake tests pin every route and variable.
-- **R5-DELETE — a deleted finding (writer-class).** Anyone with write access, including an agent using the operator's
+- **R5-DELETE — a deleted finding (writer-class; verifier pass 3 confirmed it is a real false-ready path inside
+  ARCH-01 §41's scope).** Anyone with write access, including an agent using the operator's
   credential, can delete Codex's thread-opening comment or its whole thread. Then the thread's opener is the next
   comment's author, or the thread is gone, and FINDINGS_OPEN cannot see it. GitHub's GraphQL `replyTo` of a reply
   whose parent was deleted is not proven to reveal the deletion, so V1 does not try. This is ARCH-01 §41's scope: V1
   does not defend against a deliberately malicious same-repository writer. The mitigation is policy, added to `CLAUDE.md`
   with the shepherd (05C): agents never edit, delete or hide a Codex review comment or thread, and resolve one only on
   the operator's explicit instruction for that thread.
+- **R-STACK — a stacked pull request blocks the one beneath it (liveness, not safety).** A PR stacked on another
+  contains the lower PR's head commit, so `associatedPullRequests(H)` lists both (live: `[810, 815]` while #815 is
+  stacked on #810), and rule 5 makes the lower PR `shared_head` until the upper one closes. The associated-PR clause
+  is part of the operator's V1 profile, so it is not relaxed here; whether rule 5's head-branch list and rule 7's
+  branch and repository filters already bind a run without it is an operator decision.
 - **R-WORKFLOWS — other pull-request workflows.** EXT-CONTEXT-01 excludes every GitHub Actions check run from the
   external contexts, so a failing check from a second PR-triggered workflow would block nothing. Today `ci.yml` is
   the only PR-triggered workflow (`nightly.yml` is schedule-only). Adding one requires deciding its authority first.

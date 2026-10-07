@@ -117,6 +117,49 @@ describe("primitive: the dedicated credential", () => {
   });
 });
 
+describe("primitive: the token never leaves, even when GitHub echoes it", () => {
+  const make = (result: any) => {
+    const f = fakeSpawn(result);
+    const p = createPrimitive(deps({ env: { PATH: "/usr/bin", [TOKEN_ENV]: DEDICATED }, spawn: f.spawn }));
+    return { p, calls: f.calls };
+  };
+
+  it("a successful answer that echoes the token — a token pasted into a comment, say — comes back redacted", () => {
+    const body = { comments: [{ body: `oops ${DEDICATED} pasted`, other: "ghp_abcdefghijklmnopqrstuvwxyz0123" }] };
+    const r = make({ stdout: JSON.stringify(body) }).p.request({ label: "review-evidence", rest: "r" });
+    expect(r.ok).toBe(true);
+    expect(JSON.stringify(r.body)).not.toContain(DEDICATED);
+    expect(r.body.comments[0].body).toBe("oops [redacted] pasted");
+    expect(r.body.comments[0].other).toBe("[redacted]");
+  });
+
+  it("a token-shaped label is redacted in the statistics as well as in the detail", () => {
+    const { p } = make({ status: 1, stderr: "gh: boom\n" });
+    p.request({ label: `x-${DEDICATED}`, rest: "r" });
+    expect(JSON.stringify(p.stats())).not.toContain(DEDICATED);
+  });
+
+  it("a request that is neither exactly REST nor exactly GraphQL is refused before anything is spawned", () => {
+    const { p, calls } = make({ stdout: "{}" });
+    const bad: any[] = [
+      undefined,
+      null,
+      {},
+      { label: "x" },
+      { label: "x", rest: "" },
+      { label: "x", graphql: "" },
+      { label: "x", rest: "r", graphql: "query{x}" },
+      { label: "", rest: "r" },
+      { rest: "r" },
+      { label: "x", graphql: "query{x}", variables: [] },
+      { label: "x", graphql: "query{x}", variables: { n: 1.5 } },
+      { label: "x", graphql: "query{x}", variables: { o: { a: 1 } } },
+    ];
+    for (const req of bad) expect(p.request(req), JSON.stringify(req) ?? "undefined").toMatchObject({ ok: false, reason: "malformed" });
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("primitive: one request, one closed result", () => {
   const make = (result: any) => {
     const f = fakeSpawn(result);

@@ -90,10 +90,11 @@ The runtime does **not** claim to implement the records below unchanged. These a
    - **Parameters.** Three readers take a branch or ref name, which CAP-01 forbids: the head-branch PR list
      (`pulls?head=<owner>:<headRef>`), the production rules (`rules/branches/<productionRef>`) and production
      history (`activity?ref=refs/heads/<productionRef>`). Each value comes from the coherent key (`K0.headRef`) or
-     from fixed policy (`productionRef`), never from a caller, and each answer must echo it.
+     from fixed policy (`productionRef`), never from a caller. The pulls and activity answers echo it; the rules
+     answer echoes nothing (SPEC-05A §7, R-ECHO).
    - **Added readers.** PR context (creation time, changed-file count, base-change events, associated PRs), the
      head-branch PR list, branch rules, activity (three types) and run jobs. The compare also returns its changed
-     files. V1 does not use `readRunAttestation` or `readFileBlob`.
+     files. V1 uses `readFileBlob` for the CI-definition binding (SPEC-05A §5.2) but not `readRunAttestation`.
    - **No G1–G4.** V1 ships without CAP-01's static lints. The confinement they would check — one network primitive,
      reached only through the readers — is a code-review obligation in V1.
 8. **Row-scoped UNKNOWN in 05B.** ARCH-01 §8 makes any UNKNOWN the whole snapshot's. V1 keeps that for a collection
