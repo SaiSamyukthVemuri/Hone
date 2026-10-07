@@ -872,11 +872,6 @@ describe("0172 — no trigger or function drift", () => {
       "appointments_enforce_buffer_trg",
       // B6 / 0175: refuses illegal lifecycle edges. Writes no audit row.
       "appointments_enforce_transition_trg",
-      // SMS-00 / 0206: when starts_at actually changes, returns the 24h/2h
-      // reminder slots (email and SMS) to unsent. Touches only those
-      // delivery-mechanics columns of the row being updated; writes no audit
-      // row, reads no other table and grants nothing.
-      "appointments_rearm_reminders_trg",
       "appointments_set_capacity_enabled_trg",
       // B6 / 0175: DB-authoritative updated_at. Writes no audit row.
       "appointments_set_updated_at_trg",
@@ -886,7 +881,7 @@ describe("0172 — no trigger or function drift", () => {
       "appointments_zzz_outbound_enqueue_delete_trg",
       "appointments_zzz_outbound_enqueue_trg",
     ]);
-    expect(byTable.appointments, "appointments non-internal triggers").toBe(10);
+    expect(byTable.appointments, "appointments non-internal triggers").toBe(9);
     // B5/0174 added EXACTLY TWO triggers to appointment_audit, and they are
     // named here rather than counted loosely so a third one cannot arrive
     // unnoticed. Neither writes an audit EVENT — one derives trusted FIELDS at

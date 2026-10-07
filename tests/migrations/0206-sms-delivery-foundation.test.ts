@@ -8,13 +8,14 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 // Migration 0206 — SMS-00 delivery foundation. SOURCE CONTRACT.
 //
 // The behaviour (claims, settles, forward-only statuses, the once-per-
-// invitation rule, the re-arm trigger through the real move command, privilege
-// closure measured by has_*_privilege) is proved against a real database in
+// invitation rule and its row lock, privilege closure measured by
+// has_*_privilege) is proved against a real database in
 // tests/db/sms-delivery-foundation.db.test.ts. This file pins what a database
 // test cannot see from the inside: that the migration grants nothing to a
 // browser role BY NAME, re-asserts every revoke Supabase's default privileges
-// would otherwise undo, writes no rows outside its own commands, and re-arms
-// exactly the start-keyed reminder slots.
+// would otherwise undo, writes no rows outside its own commands, and touches no
+// existing table beyond one studios column -- in particular, no trigger on
+// appointments and no change to the email or SMS reminder claim pairs.
 // ===========================================================================
 
 const VERSION = "0206";
@@ -36,7 +37,6 @@ const COMMANDS = [
 const TRIGGER_FUNCTIONS = [
   "sms_outbound_messages_server_timestamps()",
   "sms_outbound_messages_identity_guard()",
-  "appointments_rearm_reminders_on_start_change()",
 ] as const;
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -118,54 +118,38 @@ describe("0206 writes no rows of its own and leaves the 0049 commands alone", ()
     expect(TOP_LEVEL).not.toMatch(/\btruncate\b/i);
   });
 
-  it("does not redefine claim_sms_send or record_sms_result", () => {
-    expect(CODE).not.toMatch(/function public\.claim_sms_send/);
-    expect(CODE).not.toMatch(/function public\.record_sms_result/);
+  it("does not redefine either reminder claim pair (SMS 0049, email 0080)", () => {
+    for (const fn of ["claim_sms_send", "record_sms_result", "claim_email_send", "record_email_result"]) {
+      expect(CODE, fn).not.toMatch(new RegExp(`function public\\.${fn}\\b`));
+    }
   });
 
-  it("the only existing tables it alters are studios (one column) and appointments (one trigger)", () => {
+  it("the only existing table it alters is studios, by one column, and it adds no trigger to any existing table", () => {
     const altered = [...TOP_LEVEL.matchAll(/alter table (public\.[a-z_]+)/g)].map((m) => m[1]);
     expect(new Set(altered)).toEqual(new Set(["public.studios", "public.sms_outbound_messages"]));
     expect(TOP_LEVEL).toMatch(
       /alter table public\.studios\s+add column if not exists send_waitlist_invitation_sms boolean not null default false;/,
     );
-    const triggersOnExisting = [...TOP_LEVEL.matchAll(/create trigger [a-z_]+\s+[^;]*?\bon (public\.[a-z_]+)/g)]
-      .map((m) => m[1])
-      .filter((t) => t !== "public.sms_outbound_messages");
-    expect(triggersOnExisting).toEqual(["public.appointments"]);
+    const triggerTargets = [...TOP_LEVEL.matchAll(/create trigger [a-z_]+\s+[^;]*?\bon (public\.[a-z_]+)/g)].map(
+      (m) => m[1],
+    );
+    // Anti-vacuity: the parser does find this migration's own triggers.
+    expect(triggerTargets.length).toBe(2);
+    expect(new Set(triggerTargets)).toEqual(new Set(["public.sms_outbound_messages"]));
+    // SMS-03 is the specified follow-up for reminders after a move; nothing in
+    // this migration re-arms a reminder slot.
+    expect(CODE).not.toMatch(/on public\.appointments/);
   });
 });
 
-describe("0206 re-arms exactly the start-keyed reminder slots", () => {
-  const body = (() => {
-    const start = CODE.indexOf(
-      "create or replace function public.appointments_rearm_reminders_on_start_change()",
-    );
+describe("0206 the invitation claim cannot race a lifecycle command", () => {
+  it("holds the invitation row FOR SHARE through the claim", () => {
+    const start = CODE.indexOf("create or replace function public.claim_waitlist_invitation_sms(");
     expect(start).toBeGreaterThan(-1);
-    const end = CODE.indexOf("$$;", start);
-    return CODE.slice(start, end);
-  })();
-
-  it("fires before an update of starts_at, on appointments only", () => {
-    expect(TOP_LEVEL).toMatch(
-      /create trigger appointments_rearm_reminders_trg\s+before update of starts_at on public\.appointments\s+for each row execute function public\.appointments_rearm_reminders_on_start_change\(\);/,
+    const body = CODE.slice(start, CODE.indexOf("$$;", start));
+    expect(body).toMatch(
+      /from public\.new_client_waitlist_invitations i\s+where i\.id = p_invitation_id\s+and i\.studio_id = p_studio_id\s+for share;/,
     );
-  });
-
-  it("acts only when the start actually changes", () => {
-    expect(body).toMatch(/if new\.starts_at is distinct from old\.starts_at then/);
-  });
-
-  it("resets the twelve 24h/2h email and SMS reminder columns, and nothing else", () => {
-    const assigned = [...body.matchAll(/new\.([a-z0-9_]+)\s*:=/g)].map((m) => m[1]).sort();
-    const expected = ["reminder_24h", "reminder_2h", "sms_reminder_24h", "sms_reminder_2h"]
-      .flatMap((p) => [`${p}_sent_at`, `${p}_claimed_at`, `${p}_send_attempts`])
-      .sort();
-    expect(assigned).toEqual(expected);
-    // Anti-vacuity: the parser does reach assignments, and confirmation slots
-    // (not keyed to the start) are not among them.
-    expect(assigned.length).toBe(12);
-    expect(assigned.some((c) => c.includes("confirmation"))).toBe(false);
   });
 });
 
