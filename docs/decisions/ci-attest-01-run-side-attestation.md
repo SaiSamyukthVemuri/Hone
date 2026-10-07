@@ -8,10 +8,10 @@
 | **Decided by** | Sam (operator): CI-ATTEST-01 is the re-entry architecture after ARCH-01's CI-authority stop law fired on PR #800; re-entered **by removal** after PR-SNAPSHOT-01 (PR #803) and CAP-01 (PR #804) merged; the two-step emitter and the `run_number` current-run frontier by operator decision after the ready-gate stop on `557ed2ce96`. |
 | **Purpose** | Exactly one fact: *"This trusted CI execution ran for PR N, at head H, against base B, under authoritative workflow W."* |
 | **Consumed by** | ARCH-01 (`docs/decisions/arch-01-eng-loop-v2.md`, PR #800). ARCH-01 **consumes** this fact; it never derives it (§12). |
-| **Depends on** | PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`, merged) for the coherent key `K0`; CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`, merged) for GitHub-access architectural lint. |
+| **Depends on** | PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`, merged) for the coherent key `K0`; CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`, merged) for GitHub-access architectural lint and its reader contract, including `readCandidateRuns` as amended by CAP-01-READER-STATE-01 (PR #805). |
 | **Scope** | The artifact contract, binding against `K0`, the current-run frontier, the trust anchor, attempts and re-runs, retention, terminal PRs, fixtures. |
 | **Not in scope** | The `ci.yml` change (a separate implementation PR, §11); any edit to #800; 05A; 05B; ARCH-02; reading or re-validating the PR, which PR-SNAPSHOT-01 owns; GitHub-access lint, which CAP-01 owns. |
-| **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0`; re-entered at production `9402c21718f31dd72016ed0c4d421bb00f9551ee`, where PR-SNAPSHOT-01 and CAP-01 are merged. Live evidence read on 2026-10-06. |
+| **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0`; re-entered at production `9402c21718f31dd72016ed0c4d421bb00f9551ee`, where PR-SNAPSHOT-01 and CAP-01 are merged; refreshed onto production `da15f1785ec11adfcfaaf0176b19780fcacc268d`, where CAP-01-READER-STATE-01 is merged. Live evidence read on 2026-10-06. |
 
 > **Normative.** Where an implementation and this record disagree, the implementation is wrong. A change to these semantics
 > is proposed, reviewed and merged **here first**; it never evolves through review-repair rounds.
@@ -127,8 +127,11 @@ checked.
 This section applies to an **open** pass; a terminal pass reads no CI (§9). Trust (§7) is settled first, once per pass.
 
 **Candidates** are the configured authoritative workflow's runs ∩ the exact head `K0.headSha` ∩ `event=pull_request`,
-from one complete listing of the workflow endpoint. Every candidate's `run_number` must be a positive integer, and no
-two candidates may share one; a missing, malformed or duplicated `run_number` makes the pass `UNKNOWN(malformed)`.
+as CAP-01's `readCandidateRuns` returns them from one complete response. Its single-response listing law (CAP-01 §4)
+makes a listing that cannot prove completeness `UNKNOWN(ci_candidate_listing_too_large)`. Every candidate's
+`run_number` must be a positive integer, and no two candidates may share one; a missing, malformed or duplicated
+`run_number` makes the pass `UNKNOWN(malformed)`. The same response supplies each candidate's `status`, `conclusion`
+and `run_attempt`, which CAP-01 §4 defines as mutable evidence — not identity, and not an ordering.
 
 The walk below classifies each candidate it examines in four steps:
 
@@ -166,8 +169,8 @@ does not matter.
 - **No frontier.** With zero candidates, or when every candidate is UNRELATED or STALE, there is no frontier, and
   ARCH-01 decides `CI_NOT_STARTED`.
 
-**Frontier state.** The frontier's **current** run `status` and `conclusion` alone supply CI state; older runs never
-override it.
+**Frontier state.** The frontier's **current** run `status` and `conclusion`, as `readCandidateRuns` returned them in
+this pass, alone supply CI state; older runs never override it.
 
 | Run `status` | Run `conclusion` | Normalized outcome |
 |---|---|---|
@@ -345,7 +348,8 @@ binding consumes:
 - `K0`, from PR-SNAPSHOT-01;
 - the target repository id;
 - the `merge_base_commit` of the compare read bound to `K0`;
-- the run metadata §5 compares against, and each candidate's `run_number`.
+- from CAP-01's `readCandidateRuns`, each candidate's run metadata, `run_number`, `status`, `conclusion` and
+  `run_attempt`.
 
 Until step 3, #800 stays a frozen draft; its open CI-binding findings are this record's origin.
 
@@ -381,6 +385,11 @@ was already spent, and the stop law fired.
 pre-checkout emitter, and §5 replaces the all-candidates rule with the `run_number` current-run frontier. Nothing else
 changed. One fresh exact-head review and the ready-for-review gate follow. Any further P0–P2 in run selection, frontier
 semantics, attestation binding, or replacement and recovery → **stop**, with no patch.
+
+**CAP-01 dependency.** The ready-gate review of `9480ce37c0` (P1 `4200685968`) found that no CAP-01 reader exposed the
+frontier's `status` and `conclusion`. The owning record was amended first: CAP-01-READER-STATE-01 (PR #805, merged as
+`da15f178`) makes `readCandidateRuns` return each run's execution state from one complete response, with no new reader
+or capability. This record now cites that reader; its frontier semantics did not change.
 
 ## 14. Non-goals
 
