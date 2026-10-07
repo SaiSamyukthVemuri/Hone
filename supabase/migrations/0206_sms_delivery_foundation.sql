@@ -4,7 +4,7 @@
 --
 -- The shared server-side ground under two P0 features: SMS-01 (a waitlist
 -- invitation also goes out by text) and SMS-02 (appointment reminder texts).
--- Four things, all additive:
+-- Three things, all additive:
 --
 --   1. public.sms_outbound_messages — ONE ROW PER OUTBOUND SMS ATTEMPT. It is
 --      claimed BEFORE the provider is called, settled with what the provider
@@ -18,21 +18,20 @@
 --        settle_sms_message              record what the provider answered
 --        record_sms_delivery_status      apply a delivery-status callback
 --
---   3. A trigger that RE-ARMS appointment reminders when an appointment's
---      start moves in place. The practitioner move
---      (move_or_reassign_appointment, live text in 0174) rewrites starts_at
---      on the SAME row and reset no reminder state, so a client whose 24h or
---      2h reminder (email or SMS) had already gone out was never reminded of
---      the NEW time. The client reschedule link is unaffected: it inserts a
---      successor row (0171), whose reminder columns start empty.
---
---   4. public.studios.send_waitlist_invitation_sms (default false), the
+--   3. public.studios.send_waitlist_invitation_sms (default false), the
 --      studio-level switch for SMS-01, beside the 0049 send_*_sms switches.
 --
--- WHAT THIS IS NOT. No provider effect, no customer send, no change to
--- claim_sms_send / record_sms_result (0049), to any waitlist lifecycle
--- command, or to any existing grant. Nothing is backfilled. Until SMS-01 and
--- SMS-02 call these commands the table stays empty and the switch stays off.
+-- WHAT THIS IS NOT. No provider effect, no customer send, no trigger on any
+-- existing table, no change to claim_sms_send / record_sms_result (0049) or
+-- the email claim pair (0080), to any waitlist lifecycle command, or to any
+-- existing grant. Nothing is backfilled. Until SMS-01 and SMS-02 call these
+-- commands the table stays empty and the switch stays off.
+--
+-- DELIBERATELY NOT HERE: sending a fresh reminder after a practitioner moves
+-- an appointment whose reminder already went out. Doing that safely needs the
+-- claim/record pairs to be bound to the start they remind about (a reminder
+-- generation), which changes the email path too. It is the specified
+-- follow-up SMS-03 (docs/13_BACKLOG_AND_DECISIONS.md, "SMS-03").
 --
 -- WHY THE CLAIM PRECEDES THE PROVIDER CALL. Twilio's Messages API has no
 -- idempotency key, so an ambiguous answer (a timeout, a dropped connection)
@@ -221,7 +220,7 @@ alter table public.sms_outbound_messages enable row level security;
 -- an attempt may happen at all, and still owns the attempt counter. This row
 -- is created only after that claim succeeds, so a delivery-status callback
 -- has an attempt to land on. One appointment can therefore own several rows:
--- one per real attempt, plus new ones after a move re-arms a reminder.
+-- one per real attempt.
 
 create or replace function public.begin_appointment_sms_message(
   p_studio_id      uuid,
@@ -305,12 +304,17 @@ begin
     return;
   end if;
 
+  -- FOR SHARE, held to commit: a lifecycle command (redeem, decline,
+  -- release, expire, close) that is mid-flight is waited for and then seen,
+  -- and one that arrives later waits for this claim. "claimed" therefore
+  -- always means the invitation was live when the claim committed.
   select i.id, i.entry_id, i.expires_at, i.redeemed_at, i.expired_at,
          i.released_at, i.declined_at, i.closed_at
     into v_inv
     from public.new_client_waitlist_invitations i
    where i.id = p_invitation_id
-     and i.studio_id = p_studio_id;
+     and i.studio_id = p_studio_id
+     for share;
 
   if not found then
     return query select 'not_found'::text, null::uuid, null::text,
@@ -558,52 +562,6 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 7. Re-arm appointment reminders when the start moves in place
--- ---------------------------------------------------------------------------
---
--- A reminder answers "when is my appointment?". Once the start moves, a
--- reminder sent for the old start no longer answers it, so every reminder
--- slot keyed to the start -- email and SMS, 24h and 2h -- returns to "not yet
--- sent", with its attempt budget restored and any claim released. The
--- reminder cron then sends for the new start when its window arrives.
---
--- Confirmation slots are NOT keyed to the start and are left alone. A reassign
--- that keeps the start (a practitioner change only) re-arms nothing.
---
--- An attempt already in flight when the start moves is the cron's business:
--- it re-reads the start after the provider call and refuses to record a
--- message carrying the old start as the reminder for the new one.
-
-create or replace function public.appointments_rearm_reminders_on_start_change()
-returns trigger
-language plpgsql
-set search_path = pg_catalog, pg_temp
-as $$
-begin
-  if new.starts_at is distinct from old.starts_at then
-    new.reminder_24h_sent_at           := null;
-    new.reminder_24h_claimed_at        := null;
-    new.reminder_24h_send_attempts     := 0;
-    new.reminder_2h_sent_at            := null;
-    new.reminder_2h_claimed_at         := null;
-    new.reminder_2h_send_attempts      := 0;
-    new.sms_reminder_24h_sent_at       := null;
-    new.sms_reminder_24h_claimed_at    := null;
-    new.sms_reminder_24h_send_attempts := 0;
-    new.sms_reminder_2h_sent_at        := null;
-    new.sms_reminder_2h_claimed_at     := null;
-    new.sms_reminder_2h_send_attempts  := 0;
-  end if;
-  return new;
-end;
-$$;
-
-drop trigger if exists appointments_rearm_reminders_trg on public.appointments;
-create trigger appointments_rearm_reminders_trg
-  before update of starts_at on public.appointments
-  for each row execute function public.appointments_rearm_reminders_on_start_change();
-
--- ---------------------------------------------------------------------------
 -- Privileges
 -- ---------------------------------------------------------------------------
 --
@@ -644,8 +602,6 @@ revoke all privileges on function public.sms_outbound_messages_server_timestamps
   from public, anon, authenticated, service_role;
 revoke all privileges on function public.sms_outbound_messages_identity_guard()
   from public, anon, authenticated, service_role;
-revoke all privileges on function public.appointments_rearm_reminders_on_start_change()
-  from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- Comments
@@ -664,12 +620,10 @@ comment on column public.sms_outbound_messages.skip_reason is
 comment on function public.begin_appointment_sms_message(uuid, uuid, text) is
   'Create the ledger row for one appointment SMS attempt, after claim_sms_send (0049) has claimed it. Returns the row id, or null when the input is invalid or the appointment is not the studio''s. Does not decide whether a send may happen. service_role only.';
 comment on function public.claim_waitlist_invitation_sms(uuid, uuid) is
-  'The once-per-invitation SMS claim (SMS-01). Checks tenancy, invitation liveness and the studio switch, and returns the prospect''s phone, consent, opt-out and verification fields for the application''s prospectMayReceiveSms decision. Returns claimed | already_claimed | not_found | not_live | studio_disabled | invalid_input; only claimed writes a row. service_role only.';
+  'The once-per-invitation SMS claim (SMS-01). Holds the invitation row FOR SHARE to commit, so liveness cannot change under it. Checks tenancy, invitation liveness and the studio switch, and returns the prospect''s phone, consent, opt-out and verification fields for the application''s prospectMayReceiveSms decision. Returns claimed | already_claimed | not_found | not_live | studio_disabled | invalid_input; only claimed writes a row. service_role only.';
 comment on function public.settle_sms_message(uuid, text, text, integer, text) is
   'Record what the provider answered for a claimed attempt: accepted (with SID) | refused | unknown | skipped (with reason). Only a claimed row settles. Returns settled | already_settled | not_found | not_claimed | invalid_input. service_role only.';
 comment on function public.record_sms_delivery_status(uuid, text, text, integer) is
   'Apply one signature-verified Twilio delivery-status callback to the attempt it names. Forward-only; the three end states are terminal; an unknown settle is resolved by the provider''s own report. Returns (result, studio_id, purpose, status, appointment_id) with result updated | stale | unknown_message | sid_mismatch | not_sent | invalid_input. service_role only.';
-comment on function public.appointments_rearm_reminders_on_start_change() is
-  'BEFORE UPDATE OF starts_at on appointments: when the start actually changes, return the 24h and 2h reminder slots (email and SMS) to unsent with a restored attempt budget and no claim, so the client is reminded of the new start.';
 
 commit;

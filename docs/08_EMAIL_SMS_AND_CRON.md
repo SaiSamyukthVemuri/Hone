@@ -133,25 +133,22 @@ The row exists **before** the provider call because Twilio's Messages API takes 
 
 **Status endpoint:** `/api/twilio/message-status`. Same security model as the STOP webhook — the raw body and the full URL (which carries the row id) are verified against `X-Twilio-Signature` before any database work; a bad signature is a 403 with zero writes. `middleware.ts` allows the exact path unauthenticated. An `undelivered` or `failed` end state raises **one** `sms_delivery_failed` warning ops alert, attributed to the studio and (for appointment SMS) the appointment, carrying the purpose, the status and Twilio's error code — never a phone number.
 
-### Reminder re-arm on a moved start (migration 0206)
-
-A reminder answers "when is my appointment?", so a reminder sent for an old start does not answer it once the start moves. `appointments_rearm_reminders_trg` (`before update of starts_at`) returns the 24h and 2h reminder slots — **email and SMS** — to unsent, with a fresh attempt budget and no claim, whenever an appointment's start **actually** changes on the same row. That is the practitioner move (`move_or_reassign_appointment`), which rewrites `starts_at` in place. The client reschedule link already behaved correctly: it inserts a successor appointment, whose reminder columns start empty. Confirmation slots are not keyed to the start and are never re-armed; a reassign that keeps the start re-arms nothing.
-
 ### Reminder SMS send discipline (SMS-02)
 
-The 24h / 2h reminder SMS (`send24hReminderSmsToClient` / `send2hReminderSmsToClient`, called only by the reminder cron) keep the consent gate, the deployment fence and `claim_sms_send`, and add three rules a scheduled send needs:
+The 24h / 2h reminder SMS (`send24hReminderSmsToClient` / `send2hReminderSmsToClient`, called only by the reminder cron) keep the consent gate, the deployment fence and `claim_sms_send`, and add two rules a scheduled send needs:
 
-1. **Re-validated after the claim.** The claim does not re-check the appointment, so the helper reads status and start again *after* `claim_sms_send`. A cancelled appointment, or one moved out of this cron window, releases the claim and sends nothing. The message — and its `/manage/<token>` link, whose token expires at the start — is built from the start read there, never from the window query's.
-2. **A move during the send is not "sent".** If the start changes while the message is in flight, the attempt is recorded as *not sent*: the move already re-armed the slot (migration 0206), and stamping it would leave the new start with no reminder.
-3. **An ambiguous attempt is not retried automatically.** Twilio takes no idempotency key, so a timeout, a dropped connection, a 5xx or a success reply without a SID may already have reached the client. Such an attempt is recorded as sent (no duplicate), its ledger row stays `unknown` until a delivery callback reports, and a failure report raises `sms_delivery_failed`. A **definite** refusal — a 4xx, or a connection that never opened — is recorded unsent and retried on a later fire within the 3-attempt budget, as before.
+1. **Re-validated after the claim.** The claim does not re-check the appointment, so the helper reads status and start again *after* `claim_sms_send`. A cancelled appointment, or one moved out of this cron window, releases the claim and sends nothing. The message — and its `/manage/<token>` link, whose token expires at the start — is built from the start read there, never from the window query's. A move made **before** the reminder goes out is therefore reminded at its new start.
+2. **An ambiguous attempt is not retried automatically.** Twilio takes no idempotency key, so a timeout, a dropped connection, a 5xx or a success reply without a SID may already have reached the client. Such an attempt is recorded as sent (no duplicate), its ledger row stays `unknown` until a delivery callback reports, and a failure report raises `sms_delivery_failed`. A **definite** refusal — a 4xx, or a connection that never opened — is recorded unsent and retried on a later fire within the 3-attempt budget, as before.
 
 The cron's own pre-claim "still confirmed?" read remains as a cheap pre-filter, so a cancelled row costs no intake read and no claim.
+
+**Not in this slice:** a practitioner move *after* a reminder already went out leaves that slot sent, so no reminder names the new start — for email and SMS alike, exactly as before SMS-02. That is the specified follow-up **SMS-03** in [13_BACKLOG_AND_DECISIONS.md](./13_BACKLOG_AND_DECISIONS.md).
 
 ### Waitlist invitation SMS (SMS-01)
 
 A new waitlist invitation is **also texted** to an eligible prospect, beside its email and in the **same request** (`lib/waitlist/invite-to-book-adapter.ts` → `lib/waitlist/delivery/sms.ts`): the raw link token exists only in that request, so there is no later send and no "resend".
 
-- **Whether at all — the database.** `claim_waitlist_invitation_sms` (0206) admits **one claim per invitation**, only for the studio's own **live** invitation, and only when `studios.send_waitlist_invitation_sms` is on (default off). A claim that cannot be taken means no text (fail closed).
+- **Whether at all — the database.** `claim_waitlist_invitation_sms` (0206) admits **one claim per invitation**, only for the studio's own **live** invitation (it holds the invitation row while it decides, so a racing release, decline or redemption is seen), and only when `studios.send_waitlist_invitation_sms` is on (default off). A claim that cannot be taken means no text (fail closed).
 - **To whom — `prospectMayReceiveSms`.** STOP wins, then an unverified number is not a channel, then consent decides. Each "no" is recorded in the ledger as `skipped` with its reason (`opted_out`, `mobile_unverified`, `no_consent`, `invalid_phone`, `non_production_deployment`).
 - **What it says.** The studio name, an invitation to book a consultation, the deadline **exactly as the email renders it** (`invitationExpiryLabel`), the `/invitation/<token>` link and the STOP disclosure. No held-slot or queue-position promise.
 - **Retries.** An ambiguous answer is never repeated. A definite, retryable refusal (rate limited, or a connection that never opened) is tried once more after 750 ms, inside the request.

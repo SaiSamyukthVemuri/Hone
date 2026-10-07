@@ -37,13 +37,10 @@ select has_table_privilege('authenticated','public.sms_outbound_messages','SELEC
        has_table_privilege('service_role','public.sms_outbound_messages','SELECT');        -- false, false
 select has_function_privilege('authenticated','public.settle_sms_message(uuid,text,text,integer,text)','EXECUTE'),
        has_function_privilege('service_role','public.settle_sms_message(uuid,text,text,integer,text)','EXECUTE'); -- false, true
-select tgname from pg_trigger where tgname = 'appointments_rearm_reminders_trg';            -- 1 row
 select count(*) filter (where send_waitlist_invitation_sms) from public.studios;            -- 0
 ```
 
 4. In the **same change**, record the apply: `docs/production/migration-state.json` (`hosted_migration_max` → `0206`) and the ledger's current block.
-
-**The trigger is live the moment `0206` is applied.** That is intended: a practitioner move re-arms the moved appointment's 24h/2h reminders. If it ever misbehaves, `alter table public.appointments disable trigger appointments_rearm_reminders_trg;` removes the effect without a migration.
 
 ## 2. Configuration check (read-only; names, never values)
 
@@ -62,7 +59,7 @@ Use a controlled studio, never Willow, and an operator-owned client and phone wi
 |---|---|
 | Confirmation | Book on production → one SMS → ledger row `accepted` → `delivered` |
 | 24h reminder | An appointment ~24h out; the next cron fire sends **one** reminder in the studio's local time, and its manage link opens |
-| Move | Move the reminded appointment → its slots re-arm → **one** new reminder naming the new time when its window comes |
+| Move before the send | Move an appointment whose reminder has **not** gone out yet → its next reminder names the **new** time (the helper re-reads the start after the claim) |
 | Cancel | Cancel before the window → no reminder |
 | STOP | Reply STOP → `clients.sms_opted_out_at` stamped → no further SMS |
 | Waitlist (only if §5 is armed) | Invite a verified, consenting test prospect → **one** text with the secure link and the email's deadline |
@@ -122,13 +119,12 @@ select id, purpose, studio_id, claimed_at
 ## 7. Rollback
 
 - **Per studio, immediate:** turn the switches off (§4 with `false`). The next cron fire, or the next invitation, sends nothing.
-- **Reminder re-arm only:** disable the trigger (§1).
-- **No data rollback is needed.** `0206` is additive, and the ledger holds no body or phone number.
+- **No data rollback is needed.** `0206` is additive (no trigger on any existing table), and the ledger holds no body or phone number.
 
 ## 8. Willow acceptance (real device, the Willow owner)
 
 - [ ] A 24h and a 2h reminder arrive for a real appointment, in Willow's local time, with a working manage link.
-- [ ] Moving that appointment produces a reminder naming the new time. Cancelling it stops the reminders.
+- [ ] Moving an appointment **before** its reminder goes out produces a reminder naming the new time. Cancelling it stops the reminders.
 - [ ] STOP stops texts. Email reminders continue.
 - [ ] (After §5) an invited prospect receives exactly one text. Its link opens the invitation, and its deadline matches the email.
 - [ ] No duplicate text in any of the above (ledger: one `accepted` per message).
@@ -136,6 +132,7 @@ select id, purpose, studio_id, claimed_at
 
 ## Known limitations (deliberate, follow-ups)
 
+- **A move after a reminder already went out gets no new reminder** (email and SMS, unchanged from before SMS-02). Specified follow-up **SMS-03** in `docs/13_BACKLOG_AND_DECISIONS.md`, with its design, required tests and acceptance criteria. Willow acceptance should not move an already-reminded appointment and expect a second reminder.
 - **No owner UI for the SMS switches:** SQL only (§4).
 - **The practitioner's invitation result shows the email's disposition.** The text's outcome lives in the ledger.
 - **An attempt Twilio never reports on stays `unknown`** (§6 query).

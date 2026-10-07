@@ -9,25 +9,21 @@
 //   * a settle records what the provider answered and nothing settles twice;
 //   * delivery-status callbacks only move forward, never cross attempts, and
 //     resolve an ambiguous settle into the provider's own answer;
-//   * moving an appointment's start re-arms its 24h/2h reminders (email and
-//     SMS) through the real practitioner move command, and nothing else
-//     re-arms them.
+//   * the invitation claim holds the invitation row, so a lifecycle command
+//     racing it is either seen (not_live) or waits for it -- never missed.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { Client } from "pg";
 import {
   adminQuery,
   asRole,
   closePool,
+  resolveLocalDbUrl,
   seedStudio,
   type SeededStudio,
 } from "./helpers/harness";
-import {
-  dropSynthStudio,
-  seedStudioWideOpenAllWeek,
-  seedSynthStudioB,
-  type SynthStudio,
-} from "./helpers/synth-fleet";
+import { waitUntilBlocked } from "./helpers/waitlist-concurrency";
 
 const q = async <T = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<T[]> =>
   (await adminQuery(text, params)).rows as T[];
@@ -509,113 +505,58 @@ describe("identity is write-once even for the table owner", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Reminder re-arm, through the REAL practitioner move command.
+// The claim cannot race a lifecycle command (Codex P2 4211982451).
 // ---------------------------------------------------------------------------
 
-describe("moving an appointment's start re-arms its reminders", () => {
-  let S: SynthStudio;
-  let serviceId: string;
-  const T = (hhmm: string) => `2031-09-15T${hhmm}:00.000Z`;
-  const REMINDER_COLUMNS = [
-    "reminder_24h_sent_at",
-    "reminder_2h_sent_at",
-    "sms_reminder_24h_sent_at",
-    "sms_reminder_2h_sent_at",
-  ] as const;
-
-  beforeAll(async () => {
-    S = await seedSynthStudioB();
-    await adminQuery(
-      `update public.studios set practitioner_capacity_enabled = true,
-         practitioner_capacity_booking_enabled = true, timezone = 'UTC', buffer_minutes = 0 where id = $1`,
-      [S.studioId],
-    );
-    await seedStudioWideOpenAllWeek(S.studioId);
-    const svc = await q<{ id: string }>(
-      `insert into public.services (id, studio_id, name, default_duration_minutes, price_cents, active)
-       values ($1,$2,'Consult',30,0,true) returning id`,
-      [randomUUID(), S.studioId],
-    );
-    serviceId = svc[0]!.id;
-  });
-  afterAll(async () => {
-    if (S) await dropSynthStudio(S);
+describe("claim_waitlist_invitation_sms waits for, then sees, a racing lifecycle command", () => {
+  afterEach(async () => {
+    await setWaitlistSms(A, false);
   });
 
-  const owner = () => S.practitioners.find((p) => p.role === "owner")!.practitionerId;
-  const other = () => S.practitioners.find((p) => p.role !== "owner")!.practitionerId;
-
-  /** A confirmed appointment whose every start-keyed reminder has been sent,
-   *  and whose confirmations have been sent too. */
-  async function seedRemindedAppointment(start: string) {
-    const end = new Date(new Date(start).getTime() + 30 * 60_000).toISOString();
-    const r = await q<{ id: string; s: string; e: string }>(
-      `insert into public.appointments
-         (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
-          duration_minutes, status, cancellation_token_hash)
-       values (gen_random_uuid(),$1,$2,$3,$4,$5::timestamptz,$6::timestamptz,30,'confirmed',$7)
-       returning id, starts_at::text s, ends_at::text e`,
-      [S.studioId, owner(), S.clientId, serviceId, start, end, hash64()],
-    );
-    const a = r[0]!;
-    await adminQuery(
-      `update public.appointments set
-         reminder_24h_sent_at = now(), reminder_24h_send_attempts = 1,
-         reminder_2h_sent_at = now(), reminder_2h_send_attempts = 1,
-         sms_reminder_24h_sent_at = now(), sms_reminder_24h_send_attempts = 2,
-         sms_reminder_2h_sent_at = now(), sms_reminder_2h_send_attempts = 1,
-         confirmation_sent_at = now(), sms_confirmation_sent_at = now()
-       where id = $1`,
-      [a.id],
-    );
-    return a;
+  async function connect(): Promise<Client> {
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    return c;
   }
 
-  const move = (id: string, target: string, expStart: string, expEnd: string, newStart: string) =>
-    q<{ result: string }>(
-      `select * from public.move_or_reassign_appointment($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7::timestamptz)`,
-      [id, S.studioId, owner(), target, expStart, expEnd, newStart],
-    ).then((r) => r[0]!.result);
+  /** Hold the invitation row the way a lifecycle command does: an uncommitted
+   *  write to it. Then claim from a second session. */
+  async function raceClaimAgainst(outcome: "commit" | "rollback") {
+    await setWaitlistSms(A, true);
+    const { invitationId } = await seedInvitation(A);
+    const lifecycle = await connect();
+    const claimer = await connect();
+    try {
+      await lifecycle.query("begin");
+      await lifecycle.query(
+        `update public.new_client_waitlist_invitations set released_at = now() where id = $1`,
+        [invitationId],
+      );
+      const pid = (await claimer.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+      const pending = claimer.query(`select * from public.claim_waitlist_invitation_sms($1,$2)`, [
+        A.studioId,
+        invitationId,
+      ]);
+      // The claim must PARK on the lifecycle write rather than read past it.
+      expect(await waitUntilBlocked(pid), "the claim did not wait for the lifecycle write").not.toBeNull();
+      await lifecycle.query(outcome);
+      const r = (await pending).rows[0] as ClaimRow;
+      const [n] = await q<{ n: number }>(
+        `select count(*)::int as n from public.sms_outbound_messages where waitlist_invitation_id = $1`,
+        [invitationId],
+      );
+      return { result: r.result, rows: n!.n };
+    } finally {
+      await lifecycle.end().catch(() => undefined);
+      await claimer.end().catch(() => undefined);
+    }
+  }
 
-  const state = (id: string) =>
-    q<Record<string, string | number | null>>(
-      `select reminder_24h_sent_at, reminder_24h_send_attempts, reminder_24h_claimed_at,
-              reminder_2h_sent_at, reminder_2h_send_attempts,
-              sms_reminder_24h_sent_at, sms_reminder_24h_send_attempts, sms_reminder_24h_claimed_at,
-              sms_reminder_2h_sent_at, sms_reminder_2h_send_attempts,
-              confirmation_sent_at, sms_confirmation_sent_at
-         from public.appointments where id = $1`,
-      [id],
-    ).then((r) => r[0]!);
-
-  it("a time move returns every start-keyed reminder to unsent with a fresh budget", async () => {
-    const a = await seedRemindedAppointment(T("09:00"));
-    expect(await move(a.id, owner(), a.s, a.e, T("13:00"))).toBe("moved");
-    const st = await state(a.id);
-    for (const col of REMINDER_COLUMNS) expect(st[col], col).toBeNull();
-    expect(st.reminder_24h_send_attempts).toBe(0);
-    expect(st.reminder_2h_send_attempts).toBe(0);
-    expect(st.sms_reminder_24h_send_attempts).toBe(0);
-    expect(st.sms_reminder_2h_send_attempts).toBe(0);
-    expect(st.reminder_24h_claimed_at).toBeNull();
-    expect(st.sms_reminder_24h_claimed_at).toBeNull();
-    // Confirmations are not keyed to the start and stay sent.
-    expect(st.confirmation_sent_at).not.toBeNull();
-    expect(st.sms_confirmation_sent_at).not.toBeNull();
+  it("a release that commits first is SEEN: not_live, and no row", async () => {
+    expect(await raceClaimAgainst("commit")).toEqual({ result: "not_live", rows: 0 });
   });
 
-  it("a reassign that keeps the start re-arms nothing", async () => {
-    const a = await seedRemindedAppointment(T("15:00"));
-    expect(await move(a.id, other(), a.s, a.e, a.s)).toBe("reassigned");
-    const st = await state(a.id);
-    for (const col of REMINDER_COLUMNS) expect(st[col], col).not.toBeNull();
-    expect(st.sms_reminder_24h_send_attempts).toBe(2);
-  });
-
-  it("writing the same start again re-arms nothing", async () => {
-    const a = await seedRemindedAppointment(T("17:00"));
-    await adminQuery(`update public.appointments set starts_at = starts_at where id = $1`, [a.id]);
-    const st = await state(a.id);
-    for (const col of REMINDER_COLUMNS) expect(st[col], col).not.toBeNull();
+  it("a lifecycle write that rolls back leaves the invitation live: claimed (the control)", async () => {
+    expect(await raceClaimAgainst("rollback")).toEqual({ result: "claimed", rows: 1 });
   });
 });
