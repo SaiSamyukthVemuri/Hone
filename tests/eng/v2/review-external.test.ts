@@ -236,6 +236,27 @@ describe("bindReviews: trusted review artifacts at the exact head", () => {
     }
   });
 
+  it("the review policy is required and is exactly { cleanPrefix }: never defaulted, never empty", () => {
+    const evidence = ok(parseReviewEvidence(load("review/review-809.json"), P809));
+    const policies: any[] = [
+      undefined,
+      null,
+      {},
+      { cleanPrefix: "" },
+      { cleanPrefix: "   " },
+      { cleanPrefix: 5 },
+      { cleanPrefix: REVIEW_POLICY.cleanPrefix, humanResolvers: "anyone" },
+    ];
+    for (const policy of policies) {
+      expect(bindReviews({ key: key(HEAD_809), evidence, policy }), JSON.stringify(policy) ?? "undefined").toMatchObject({
+        ok: false,
+        reason: "malformed",
+      });
+    }
+    expect(bindReviews({ key: key(HEAD_809), evidence })).toMatchObject({ ok: false, reason: "malformed" });
+    expect(Object.keys(REVIEW_POLICY)).toEqual(["cleanPrefix"]);
+  });
+
   it("every binder refuses an input outside its contract — null, a partial key — as malformed, never throwing", () => {
     const evidence = ok(parseReviewEvidence(load("review/review-809.json"), P809));
     for (const input of [null, undefined, {}, { key: { headSha: HEAD_809 }, evidence }, { key: key(HEAD_809), evidence: { reviews: [] } }]) {
