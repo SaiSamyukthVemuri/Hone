@@ -253,6 +253,10 @@ Act only on its bounded `nextAction`, inside your own task's authorization:
 | `UNKNOWN` | escalate with its reason — never read it as green |
 | `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission |
 
+Never edit, delete or hide a Codex review comment or thread, and resolve one
+only on the operator's explicit instruction for that thread: the shepherd cannot
+tell your credential's actions from the operator's (SPEC-05A §7, R5-DELETE).
+
 It needs the dedicated read-only token in `HONE_ENG_READ_TOKEN`; without it,
 every answer is `UNKNOWN(read_failed)`. Until ENG-LOOP V1 is declared LIVE, its
 output is shadow evidence beside the existing checks, never a replacement for
