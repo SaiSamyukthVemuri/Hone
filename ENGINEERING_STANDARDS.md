@@ -177,3 +177,35 @@ repeatedly miss? Which process steps added little value? Did low-risk PRs get
 faster? Did high-risk PRs keep the right safeguards?
 
 Only repeated, evidenced pain earns new process or tooling.
+
+## 8. Delivering a pull request
+
+`npm run eng -- shepherd <pr>` OBSERVES a pull request ONCE, at its exact head,
+and recommends one next step - CANDIDATE_READY_FOR_HUMAN_REVIEW, WAITING,
+ACTION_RECOMMENDED, BLOCKED, ESCALATE or CLOSED. It is single-shot: it does not
+poll or watch (a bounded watch is ENG-LOOP-02, not shipped). Read it instead of
+reconstructing delivery state from screenshots, but its output is **advisory**
+until an explicit authority re-entry decision
+(`docs/decisions/eng-loop-01-observation-only.md`). The delivery rules stay with
+people and the existing release procedure:
+
+- **History is only ever added to.** New commits go on top; production comes in
+  with a normal merge commit. Never rebase, amend, squash or force-push, and
+  never merge a PR from a loop. The shepherd only reads.
+- **New commits invalidate exact-head review.** Only a trusted Codex verdict for
+  the current exact head counts; one for any other head - including the head
+  before a production refresh - is stale.
+- **No state the shepherd reports is authorization.**
+  CANDIDATE_READY_FOR_HUMAN_REVIEW means every mechanical check holds at the
+  head; the merge decision stays the operator's. Neither green CI nor that state
+  authorizes a merge.
+- **UNKNOWN never counts as clean.** A surface that cannot be read, or reads
+  malformed, keeps a PR from candidacy; it is reported, never defaulted.
+- **External checks can only hold a PR back.** CI is the latest Actions run for
+  the exact head; an external check or status (Vercel's, say) that fails or is
+  pending holds the PR, but a passing one never makes it a candidate.
+- **The §7.4 stop law binds people, not the tool.** The shepherd recommends
+  ESCALATE when consecutive P0-P2 review rounds or red CI heads pass the tier's
+  repair budget; the operator decides what follows.
+- **Root-cause families stay a human judgement.** With two or more fresh
+  findings, that check is owed before any patch; no tool makes it.

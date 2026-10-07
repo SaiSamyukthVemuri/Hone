@@ -27,11 +27,21 @@
 // "there is none" are different answers and never collapse into each other.
 //
 // It FETCHES and PROJECTS. It does not decide release readiness, apply a stop
-// law, record findings state, or merge. Those are CP-005b and CP-005c.
+// law, record findings state, or merge. Interpretation lives in shepherd.mjs
+// (ENG-LOOP-01), which consumes these facts; no findings ledger exists.
 // ---------------------------------------------------------------------------
 
 import { execFileSync } from "node:child_process";
-import { collectionEvidence, evidence, verdictEvidence, UNKNOWN } from "./evidence.mjs";
+import {
+  AUTHORIZED,
+  COMPLETE,
+  INCOMPLETE,
+  collectionEvidence,
+  evidence,
+  mayAssertPositive,
+  verdictEvidence,
+  UNKNOWN,
+} from "./evidence.mjs";
 
 export { UNKNOWN };
 
@@ -73,13 +83,29 @@ const SHA_IN_TEXT = /`([0-9a-f]{7,40})`/;
  * Returns `{ ok, data }` or `{ ok: false, reason }`. It never throws: a missing
  * surface must reach the caller as UNKNOWN, not as an exception someone might
  * catch and treat as "nothing there".
+ *
+ * READ-ONLY BY CONSTRUCTION. A REST request is only ever `gh api <path>`: no
+ * method and no fields, so it is a GET. GraphQL is the one request sent with
+ * fields, and only a read QUERY is ever sent; any other document is refused
+ * here rather than trusted to the caller. `exec` is injectable so a test can
+ * see the exact argv.
  */
-export function ghFetcher({ repo = DEFAULT_REPO } = {}) {
-  return (path, { paginate = false } = {}) => {
+export function ghFetcher({ repo = DEFAULT_REPO, exec = execFileSync } = {}) {
+  return (path, { paginate = false, graphql = null } = {}) => {
     const args = ["api", path.replace("{repo}", repo)];
     if (paginate) args.push("--paginate", "--slurp");
+    if (graphql !== null) {
+      if (path !== "graphql" || !isReadQuery(graphql.query)) {
+        return { ok: false, reason: "refused: only a read-only GraphQL query may be sent" };
+      }
+      for (const [key, value] of Object.entries(graphql.variables ?? {})) {
+        // `-F` types integers; strings go raw so a leading "@" is never a file.
+        args.push(Number.isInteger(value) ? "-F" : "-f", `${key}=${value}`);
+      }
+      args.push("-f", `query=${graphql.query}`);
+    }
     try {
-      const out = execFileSync("gh", args, {
+      const out = exec("gh", args, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         maxBuffer: 64 * 1024 * 1024,
@@ -290,6 +316,437 @@ export function collectFacts({ pr, fetcher, repo = DEFAULT_REPO }) {
     inlineComments,
     issueComments,
     unavailable,
+  };
+}
+
+// ===========================================================================
+// ENG-LOOP-01: what `shepherd` reads, and how STRICTLY.
+// ===========================================================================
+//
+// `collectFacts` above serves `status` and is unchanged. The shepherd has its
+// own collector because it holds GitHub's answers to a stricter contract.
+// CP-005's retired vehicles (#617-#623) failed one way, repeatedly: an
+// unreadable or malformed answer fell through a permissive default into a
+// positive state. Here nothing malformed is coerced:
+//
+//   * every item is checked against the SHAPE of the fields the shepherd reads,
+//     and one failing item invalidates its whole collection - it is never
+//     skipped, because a skipped failing job is a missing failure;
+//   * a collection that advertises a total is COMPLETE only when every page
+//     states the same non-negative integer total and exactly that many items
+//     arrived; one that advertises none is checked against the count the pull
+//     request itself states (`commits`, `changed_files`);
+//   * an item in a by-sha (or by-run) collection that names another sha (or
+//     run) makes the collection invalid, not "foreign" and quietly dropped.
+//
+// This collector decides nothing about AUTHORSHIP. Comments come back raw and
+// shape-checked; which of them count as evidence is decided once, by the
+// authority gate in shepherd.mjs (docs/decisions/eng-loop-01-observation-only.md).
+//
+// The shape lists are hand-written, which is precisely the weakness the
+// roadmap's re-entry gate names (CANONICAL_ROADMAP §16.5): a validator is
+// authoritative only over the fields someone remembered to list. They are
+// therefore NOT trusted to be complete. tests/eng/shepherd.test.ts corrupts
+// every leaf of every recorded answer, one at a time, and requires that no
+// corruption turns a pull request that is not a candidate into one.
+
+/** A read QUERY, never a mutation or subscription. */
+function isReadQuery(query) {
+  return typeof query === "string" && /^\s*query\b/.test(query) && !/\b(mutation|subscription)\b/.test(query);
+}
+
+const SHA40 = /^[0-9a-f]{40}$/;
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** Field checks. A shape is an object of checks or nested shapes. */
+const is = {
+  int: (v) => Number.isInteger(v),
+  count: (v) => Number.isInteger(v) && v >= 0,
+  str: (v) => typeof v === "string",
+  bool: (v) => typeof v === "boolean",
+  sha: (v) => typeof v === "string" && SHA40.test(v),
+  time: (v) => typeof v === "string" && ISO_TIME.test(v),
+};
+
+/** A shape compiled once into one predicate, so a read does not re-walk it. */
+const compiled = new WeakMap();
+function compile(shape) {
+  if (typeof shape === "function") return shape;
+  if (!compiled.has(shape)) {
+    const fields = Object.entries(shape).map(([key, s]) => [key, compile(s)]);
+    compiled.set(shape, (v) =>
+      v !== null && typeof v === "object" && !Array.isArray(v) && fields.every(([key, check]) => check(v[key])),
+    );
+  }
+  return compiled.get(shape);
+}
+const nullable = (shape) => {
+  const check = compile(shape);
+  return (v) => v === null || check(v);
+};
+const optional = (shape) => {
+  const check = compile(shape);
+  return (v) => v === undefined || v === null || check(v);
+};
+const listOf = (shape, min = 0) => {
+  const check = compile(shape);
+  return (v) => Array.isArray(v) && v.length >= min && v.every(check);
+};
+
+export function conforms(value, shape) {
+  return compile(shape)(value);
+}
+
+const ACTOR = { id: is.int, login: is.str, type: is.str };
+
+/** Only the fields the shepherd reads; anything else in an answer is ignored. */
+export const SHAPES = Object.freeze({
+  pull: {
+    number: is.int,
+    state: is.str,
+    draft: is.bool,
+    merged_at: nullable(is.time),
+    mergeable: nullable(is.bool),
+    commits: is.count,
+    changed_files: is.count,
+    head: { sha: is.sha, ref: is.str },
+    base: { ref: is.str, repo: { default_branch: is.str } },
+  },
+  review: { id: is.int, user: ACTOR, body: is.str, commit_id: nullable(is.sha) },
+  inlineComment: { id: is.int, user: ACTOR, body: is.str, original_commit_id: is.sha, in_reply_to_id: optional(is.int) },
+  issueComment: { id: is.int, user: ACTOR, body: is.str },
+  workflowRun: { id: is.int, path: is.str, event: is.str, status: is.str, conclusion: nullable(is.str), head_sha: is.sha },
+  job: { id: is.int, run_id: is.int, name: is.str, status: is.str, conclusion: nullable(is.str), head_sha: is.sha },
+  checkRun: { name: is.str, status: is.str, conclusion: nullable(is.str), head_sha: is.sha, app: { slug: is.str } },
+  commitStatus: { context: is.str, state: is.str },
+  // No commit time: nothing is inferred from when a commit was made or pushed.
+  commit: { sha: is.sha, parents: listOf({ sha: is.sha }, 1) },
+  file: { filename: is.str, previous_filename: optional(is.str) },
+  thread: { isResolved: is.bool, isOutdated: is.bool, comments: { nodes: listOf({ databaseId: is.int }, 1) } },
+  ref: { object: { sha: is.sha, type: is.str } },
+  comparison: { status: is.str, ahead_by: is.count, behind_by: is.count, base_commit: { sha: is.sha } },
+});
+
+const invalid = (reason) => evidence(UNKNOWN, { completeness: UNKNOWN, authority: UNKNOWN, reason });
+
+/** One object, held to its shape (and an optional cross-field check). */
+function strictObject(res, shape, project, check = () => null) {
+  if (!res.ok) return invalid(`could not be read: ${res.reason}`);
+  if (!conforms(res.data, shape)) return invalid("malformed: the answer does not have the expected shape");
+  const problem = check(res.data);
+  if (problem) return invalid(`inconsistent: ${problem}`);
+  return evidence(project(res.data), { completeness: COMPLETE, authority: AUTHORIZED, reason: "read in full" });
+}
+
+/**
+ * An array endpoint read with `--paginate --slurp`: an array of pages, each an
+ * array. REST list endpoints state no total, so `expected` - a count the pull
+ * request states about itself - is what makes completeness checkable.
+ */
+function strictList(res, shape, { expected = null, project = (x) => x } = {}) {
+  if (!res.ok) return invalid(`could not be read: ${res.reason}`);
+  if (!Array.isArray(res.data) || !res.data.every(Array.isArray)) return invalid("malformed: expected an array of pages");
+  const raw = res.data.flat();
+  if (!raw.every((x) => conforms(x, shape))) return invalid("malformed: an item does not have the expected shape");
+  const items = raw.map(project);
+  if (expected === null) {
+    return evidence(items, { completeness: COMPLETE, authority: AUTHORIZED, reason: `collected ${items.length} item(s)` });
+  }
+  if (!is.count(expected)) return invalid("no usable count to check this list against");
+  if (items.length > expected) return invalid(`collected ${items.length}, more than the ${expected} stated`);
+  return evidence(items, {
+    completeness: items.length === expected ? COMPLETE : INCOMPLETE,
+    authority: AUTHORIZED,
+    reason: `collected ${items.length} of ${expected} stated by the pull request`,
+  });
+}
+
+/**
+ * A paged endpoint whose pages each state a total. With `single`, the answer is
+ * one page read without `--paginate`, so a larger total is reported as
+ * INCOMPLETE and the reader must treat what it has as a lower bound.
+ */
+function strictPaged(res, { items, total, shape, bind = () => null, bindPage = () => null, project = (x) => x, single = false }) {
+  if (!res.ok) return invalid(`could not be read: ${res.reason}`);
+  const pages = single ? [res.data] : res.data;
+  if (!Array.isArray(pages) || pages.length === 0) return invalid("malformed: expected at least one page");
+  let stated = null;
+  const out = [];
+  for (const page of pages) {
+    if (page === null || typeof page !== "object" || Array.isArray(page)) return invalid("malformed: a page is not an object");
+    if (Array.isArray(page.errors) && page.errors.length > 0) return invalid("the API reported errors in its answer");
+    const foreignPage = bindPage(page);
+    if (foreignPage) return invalid(foreignPage);
+    const t = total(page);
+    const xs = items(page);
+    if (!is.count(t)) return invalid("malformed: a page does not state a non-negative integer total");
+    if (stated !== null && t !== stated) return invalid("malformed: pages disagree about the total");
+    stated = t;
+    if (!Array.isArray(xs)) return invalid("malformed: a page carries no item list");
+    for (const x of xs) {
+      if (!conforms(x, shape)) return invalid("malformed: an item does not have the expected shape");
+      const foreign = bind(x);
+      if (foreign) return invalid(foreign);
+      out.push(project(x));
+    }
+  }
+  if (out.length > stated) return invalid(`collected ${out.length}, more than the stated total ${stated}`);
+  return evidence(out, {
+    completeness: out.length === stated ? COMPLETE : INCOMPLETE,
+    authority: AUTHORIZED,
+    reason: `collected ${out.length} of ${stated} stated by the API`,
+  });
+}
+
+const bindHead = (head) => (x) =>
+  x.head_sha === head ? null : `an item names ${shortSha(x.head_sha)}, not the head this collection was requested for`;
+
+const projectRun = (r) => ({ id: r.id, path: r.path, event: r.event, status: r.status, conclusion: r.conclusion, headSha: r.head_sha });
+
+/** compare/{base}...{head}: every combination GitHub can state, held consistent. */
+function comparisonProblem(d, base) {
+  if (d.base_commit.sha !== base) return "the comparison is not against the production head that was read";
+  const expected = {
+    identical: d.ahead_by === 0 && d.behind_by === 0,
+    ahead: d.ahead_by > 0 && d.behind_by === 0,
+    behind: d.ahead_by === 0 && d.behind_by > 0,
+    diverged: d.ahead_by > 0 && d.behind_by > 0,
+  };
+  if (!(d.status in expected)) return `unrecognized comparison status "${d.status}"`;
+  return expected[d.status] ? null : `status "${d.status}" contradicts ahead ${d.ahead_by} / behind ${d.behind_by}`;
+}
+
+const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { isResolved isOutdated comments(first: 1) { nodes { databaseId } } }
+      }
+    }
+  }
+}`;
+
+const threadsOf = (page) => page.data?.repository?.pullRequest?.reviewThreads;
+
+/**
+ * Review threads carry the only TOTAL the inline comments have: each thread
+ * opens with one root comment, so the thread roots and the root comments must
+ * be exactly the same set - whoever wrote them - or one of the two reads is
+ * short. This is completeness, not authority: no comment's content is read.
+ */
+function threadsMatchComments(threads, inline) {
+  if (!mayAssertPositive(threads) || !mayAssertPositive(inline)) return threads;
+  const isRoot = (c) => c.in_reply_to_id === undefined || c.in_reply_to_id === null;
+  const rootIds = new Set(inline.value.filter(isRoot).map((c) => c.id));
+  const threadRoots = new Set(threads.value.map((t) => t.rootCommentId));
+  const same =
+    threadRoots.size === threads.value.length &&
+    threadRoots.size === rootIds.size &&
+    [...rootIds].every((id) => threadRoots.has(id));
+  return same ? threads : invalid("review threads and inline comments do not describe the same root comments");
+}
+
+/** The workflow whose runs are a pull request's CI, and the event that runs it. */
+export const PR_WORKFLOW = Object.freeze({ path: ".github/workflows/ci.yml", event: "pull_request" });
+
+/**
+ * The app GitHub Actions reports its jobs as. Its check runs are NOT external:
+ * the latest applicable run already speaks for Actions, and its older runs at
+ * the same sha are history.
+ */
+export const ACTIONS_APP = "github-actions";
+
+/**
+ * The run whose answer IS the head's CI: the LATEST run of the pull-request
+ * workflow, triggered by a pull request, at exactly this sha. Other workflows
+ * (the nightly), other events, and EARLIER runs at the same sha are history,
+ * not the head's CI: a failed run superseded by a passing one at the same sha
+ * reads as passing, and the reverse as failing. Run ids only grow, so "latest"
+ * is the highest id in whatever order the API lists them.
+ */
+export function latestApplicableRun(runs, workflow = PR_WORKFLOW) {
+  let latest = null;
+  for (const r of runs) {
+    if (r.path !== workflow.path || r.event !== workflow.event) continue;
+    if (latest === null || r.id > latest.id) latest = r;
+  }
+  return latest;
+}
+
+/**
+ * Collect everything `shepherd` reads for one PR, bound to ONE head: the head
+ * is read first, every surface is bound to it, and it is read again at the end.
+ * If it moved, the answers are not one snapshot and the caller is told so,
+ * rather than handed a CI run for one head and review threads for another.
+ */
+export function collectShepherdFacts({ pr, fetcher, repo = DEFAULT_REPO, workflow = PR_WORKFLOW }) {
+  const fetch = fetcher ?? ghFetcher({ repo });
+  const unavailable = [];
+  const read = (surface, path, opts) => {
+    const r = fetch(path, opts);
+    if (!r.ok) unavailable.push({ surface, reason: r.reason });
+    return r;
+  };
+
+  const prPath = `repos/{repo}/pulls/${pr}`;
+  const pull = strictObject(
+    read("pull_request", prPath),
+    SHAPES.pull,
+    (d) => ({
+      number: d.number,
+      state: d.state,
+      draft: d.draft,
+      merged: d.merged_at !== null,
+      head: d.head.sha,
+      headRef: d.head.ref,
+      baseRef: d.base.ref,
+      productionBranch: d.base.repo.default_branch,
+      mergeable: d.mergeable,
+      commitCount: d.commits,
+      changedFiles: d.changed_files,
+    }),
+    (d) => (d.number === Number(pr) ? null : `the answer is for #${d.number}, not #${pr}`),
+  );
+  const p = mayAssertPositive(pull) ? pull.value : null;
+  const head = p ? p.head : UNKNOWN;
+
+  // Comment-derived surfaces, RAW and shape-checked. Who wrote them is not
+  // judged here: the shepherd's authority gate does that, once, for all three.
+  const comments = {
+    reviews: strictList(read("reviews", `repos/{repo}/pulls/${pr}/reviews`, { paginate: true }), SHAPES.review),
+    inline: strictList(read("inline_comments", `repos/{repo}/pulls/${pr}/comments`, { paginate: true }), SHAPES.inlineComment),
+    issues: strictList(read("issue_comments", `repos/{repo}/issues/${pr}/comments`, { paginate: true }), SHAPES.issueComment),
+  };
+
+  const none = invalid("the pull request could not be read strictly, so nothing can be bound to its head");
+  if (!p) {
+    return {
+      repo, pr: Number(pr), head, pull, comments,
+      ciRun: none, externalChecks: none, commitStatuses: none, production: none, comparison: none,
+      commits: none, files: none, threads: none, branchRuns: none, headAfter: UNKNOWN, unavailable,
+    };
+  }
+
+  // CI: every run at the head (to find the latest applicable one), then that
+  // run's own jobs. The run's status and conclusion are the authority; its jobs
+  // name the lanes. A job of another run, or of another sha, is not this run's.
+  const runs = strictPaged(read("workflow_runs", `repos/{repo}/actions/runs?head_sha=${head}&per_page=100`, { paginate: true }), {
+    items: (pg) => pg.workflow_runs,
+    total: (pg) => pg.total_count,
+    shape: SHAPES.workflowRun,
+    bind: bindHead(head),
+    project: projectRun,
+  });
+  let ciRun;
+  if (!mayAssertPositive(runs)) {
+    ciRun = invalid(`the runs at this head: ${runs.reason}`);
+  } else {
+    const run = latestApplicableRun(runs.value, workflow);
+    if (run === null) {
+      ciRun = evidence(null, {
+        completeness: COMPLETE,
+        authority: AUTHORIZED,
+        reason: `no ${workflow.event} run of ${workflow.path} exists at this head`,
+      });
+    } else {
+      const jobs = strictPaged(read("run_jobs", `repos/{repo}/actions/runs/${run.id}/jobs?per_page=100`, { paginate: true }), {
+        items: (pg) => pg.jobs,
+        total: (pg) => pg.total_count,
+        shape: SHAPES.job,
+        bind: (j) => (j.run_id !== run.id ? `a job belongs to run ${j.run_id}, not run ${run.id}` : bindHead(head)(j)),
+        project: (j) => ({ name: j.name, status: j.status, conclusion: j.conclusion }),
+      });
+      ciRun = mayAssertPositive(jobs)
+        ? evidence({ run, jobs: jobs.value }, { completeness: COMPLETE, authority: AUTHORIZED, reason: `run ${run.id} and its jobs` })
+        : invalid(`the jobs of run ${run.id}: ${jobs.reason}`);
+    }
+  }
+
+  // EXTERNAL checks at the exact head, read separately from Actions and kept
+  // apart from it (docs/decisions/eng-loop-01-observation-only.md, amendment):
+  // check runs from any app but GitHub Actions, and commit statuses. The reader
+  // may only let them hold a PR back - never make CI green or a PR a candidate.
+  const checkRuns = strictPaged(read("check_runs", `repos/{repo}/commits/${head}/check-runs`, { paginate: true }), {
+    items: (pg) => pg.check_runs,
+    total: (pg) => pg.total_count,
+    shape: SHAPES.checkRun,
+    bind: bindHead(head),
+    project: (c) => ({ name: c.name, app: c.app.slug, status: c.status, conclusion: c.conclusion }),
+  });
+  // Actions' own check runs leave HOWEVER the read went: a partial read keeps
+  // its completeness, but is never where an Actions failure becomes external.
+  const externalChecks = Array.isArray(checkRuns.value)
+    ? evidence(
+        checkRuns.value.filter((c) => c.app !== ACTIONS_APP),
+        { completeness: checkRuns.completeness, authority: checkRuns.authority, reason: checkRuns.reason },
+      )
+    : checkRuns;
+  const commitStatuses = strictPaged(read("commit_statuses", `repos/{repo}/commits/${head}/status?per_page=100`, { paginate: true }), {
+    items: (pg) => pg.statuses,
+    total: (pg) => pg.total_count,
+    shape: SHAPES.commitStatus,
+    // The combined status names its commit; it must name ours.
+    bindPage: (pg) => (pg.sha === head ? null : "the statuses answered describe another commit than the head"),
+    project: (s) => ({ context: s.context, state: s.state }),
+  });
+
+  const branchPath = p.productionBranch.split("/").map(encodeURIComponent).join("/");
+  const production = strictObject(
+    read("production_ref", `repos/{repo}/git/ref/heads/${branchPath}`),
+    SHAPES.ref,
+    (d) => ({ branch: p.productionBranch, head: d.object.sha }),
+    (d) => (d.object.type === "commit" ? null : `the production ref points at a ${d.object.type}, not a commit`),
+  );
+  const productionHead = mayAssertPositive(production) ? production.value.head : null;
+  const comparison = productionHead
+    ? strictObject(
+        read("comparison", `repos/{repo}/compare/${productionHead}...${head}?per_page=1`),
+        SHAPES.comparison,
+        (d) => ({ status: d.status, aheadBy: d.ahead_by, behindBy: d.behind_by }),
+        (d) => comparisonProblem(d, productionHead),
+      )
+    : invalid("the production head is unknown, so the branch cannot be compared with it");
+
+  const commits = strictList(read("commits", `repos/{repo}/pulls/${pr}/commits`, { paginate: true }), SHAPES.commit, {
+    expected: p.commitCount,
+    project: (c) => ({ sha: c.sha, parents: c.parents.map((x) => x.sha) }),
+  });
+  const files = strictList(read("files", `repos/{repo}/pulls/${pr}/files`, { paginate: true }), SHAPES.file, {
+    expected: p.changedFiles,
+    project: (f) => (f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]),
+  });
+  const [owner, name] = repo.split("/");
+  const threadsRead = strictPaged(
+    read("review_threads", "graphql", {
+      paginate: true,
+      graphql: { query: THREADS_QUERY, variables: { owner, name, number: Number(pr) } },
+    }),
+    {
+      items: (pg) => threadsOf(pg)?.nodes,
+      total: (pg) => threadsOf(pg)?.totalCount,
+      shape: SHAPES.thread,
+      project: (t) => ({ rootCommentId: t.comments.nodes[0].databaseId, isResolved: t.isResolved, isOutdated: t.isOutdated }),
+    },
+  );
+  const threads = threadsMatchComments(threadsRead, comments.inline);
+  // The newest 100 runs of this branch. Older history is deliberately not
+  // paged in: the reader needs the last few heads, and treats a page that does
+  // not reach back far enough as a lower bound, never as a clean history.
+  const branchRuns = strictPaged(
+    read("branch_runs", `repos/{repo}/actions/runs?branch=${encodeURIComponent(p.headRef)}&event=${workflow.event}&per_page=100`),
+    { items: (pg) => pg.workflow_runs, total: (pg) => pg.total_count, shape: SHAPES.workflowRun, project: projectRun, single: true },
+  );
+
+  // Read last, so a push that landed during the read is seen.
+  const after = read("pull_request_reread", prPath);
+  const headAfter = after.ok && is.sha(after.data?.head?.sha) ? after.data.head.sha : UNKNOWN;
+
+  return {
+    repo, pr: Number(pr), head, pull, comments,
+    ciRun, externalChecks, commitStatuses, production, comparison, commits, files, threads, branchRuns,
+    headAfter, unavailable,
   };
 }
 

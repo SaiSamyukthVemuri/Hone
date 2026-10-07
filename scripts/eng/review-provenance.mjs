@@ -4,7 +4,9 @@
 //
 // Pure. Every function takes the projection from github-facts.mjs and answers a
 // question about WHAT IS TRUE AT ONE EXACT HEAD. Nothing here decides release
-// readiness, applies a stop law, or records a finding state - CP-005b/CP-005c.
+// readiness, applies a stop law, or records a finding state: the stateless
+// interpretation of these facts is shepherd.mjs (ENG-LOOP-01), and no findings
+// ledger exists.
 //
 // EVERY POSITIVE FACT PASSES THROUGH ONE GATE. `mayAssertPositive` in
 // evidence.mjs is the only way GREEN or CLEAN is reachable, and it requires the

@@ -1,0 +1,874 @@
+{
+  "_provenance": {
+    "source": "GitHub REST + GraphQL for SaiSamyukthVemuri/Hone#786 (WIKI-AUTO-01), recorded 2026-10-05",
+    "why": "operator PAUSE at 2ba37643 after the 3-consecutive-round trigger was crossed at 3644d2fb and patching continued (CANONICAL_ROADMAP section 7.4)",
+    "shape": "raw API objects pruned to the fields scripts/eng reads; thread resolution is as recorded, not as it was at each historical head"
+  },
+  "inline": [
+    {
+      "id": 4178781281,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Sanitize the environment passed to repository scripts**\n\nWhen publishing is enabled, `config.prepushCommand` executes code from the mutable production-tip checkout with the runner's complete host environment. That environment includes `HONE_WIKI_APP_PRIVATE_KEY_FILE`, the App/installation IDs, and `HONE_WIKI_ANTHROPIC_API_KEY_FILE`; because the files are readable by the runner user, a modified `verify:prepush` script can read or exfiltrate both private keys and mint a token without the one-repository/exact-permission restrictions enforced here. Run this command with a minimal allowlisted environment that omits all credential paths and App identifiers.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "0080ea7b0dce394e9707ca419eaceae1ed92172b",
+      "original_commit_id": "0080ea7b0dce394e9707ca419eaceae1ed92172b",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 466,
+      "created_at": "2026-10-04T18:23:11Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4178781284,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Mint a fresh installation token before publishing**\n\nThe installation token is minted before fetching, source-head discovery, the OpenWiki run, and pre-push verification, but the configured generator timeout defaults to 90 minutes. GitHub states that installation tokens [expire one hour after creation](https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28#create-an-installation-access-token-for-an-app), so a valid run lasting over an hour will deterministically fail its push or subsequent PR calls with an expired token after paying the full generation cost. Retain or mint a short-lived token for initial reads, then refresh it immediately before the publishing operations.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "1af828a36ffb018204a8eceef243e495321c8748",
+      "original_commit_id": "0080ea7b0dce394e9707ca419eaceae1ed92172b",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": 721,
+      "original_line": 535,
+      "created_at": "2026-10-04T18:23:11Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4178781286,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Validate the GitHub App private-key file permissions**\n\nWhen `HONE_WIKI_APP_PRIVATE_KEY_FILE` exists but is group- or world-readable, the runner reads and uses it without applying the owner-only check used for the Anthropic key and denylist. This silently proceeds despite the runbook's requirement that all three secret files be mode `0600`, allowing another local account to steal the App identity and mint its own tokens. Check this file with `privateFile` before reading it and fail as a precondition when its permissions are unsafe.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "0080ea7b0dce394e9707ca419eaceae1ed92172b",
+      "original_commit_id": "0080ea7b0dce394e9707ca419eaceae1ed92172b",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 671,
+      "created_at": "2026-10-04T18:23:11Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4178855061,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Isolate repository scripts from the runner process**\n\nOn the documented Linux systemd host, the allowlisted child environment does not prevent repository-controlled code from reading `/proc/$PPID/environ`; the child runs under the runner's UID, so it can recover the parent's `HONE_WIKI_*_FILE` paths and App identifiers, read the owner-only key files, and mint or exfiltrate credentials. Fresh evidence in this head is that `spawnSync` still executes the mutable production script as a same-UID direct child of the credential-bearing runner, so the earlier exposure remains despite replacing `env: process.env`; this code needs a process/account/container boundary that cannot inspect the parent.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "2b6b28a23a05f222cda08fd29a90a8ef7909b38d",
+      "original_commit_id": "2b6b28a23a05f222cda08fd29a90a8ef7909b38d",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 495,
+      "created_at": "2026-10-04T18:46:41Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4178855066,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Preserve the new source head on metadata-only runs**\n\nWhen a source commit does not require prose changes and OpenWiki updates only `.last-update.json` and `.page-manifest.json`, this branch resets those updates and reports `NOOP` before validating or publishing them. Production therefore keeps the old `gitHead`, so the next nightly pass still assesses the wiki as stale and repeats the model run indefinitely; either the refreshed metadata must be persisted or liveness needs another durable record of the successfully processed source head.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "2b6b28a23a05f222cda08fd29a90a8ef7909b38d",
+      "original_commit_id": "2b6b28a23a05f222cda08fd29a90a8ef7909b38d",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 621,
+      "created_at": "2026-10-04T18:46:41Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4178855071,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Revalidate the base branch before pushing**\n\nIf the production branch advances after `syncSubject` fetches it—particularly during the configured 90-minute generator window—this push still publishes a commit based on the old `tip` without refetching or comparing the current remote base. A disjoint source change can therefore yield a cleanly mergeable PR whose wiki and `.last-update.json` omit commits already on production; refetch and abort/restart when `origin/<base>` no longer equals `tip` immediately before publishing.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "2b6b28a23a05f222cda08fd29a90a8ef7909b38d",
+      "original_commit_id": "2b6b28a23a05f222cda08fd29a90a8ef7909b38d",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 497,
+      "created_at": "2026-10-04T18:46:41Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179036263,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Recover when post-creation PR setup fails**\n\nIf the PR is created but the head-SHA check or `github.comment` fails (for example, a transient issue-comment API error), the outer handler reports `FAILED` while leaving the pushed branch and open PR behind. The next pass then sees that branch as an unmerged nightly and skips indefinitely, and the PR may never receive the required exact-head review request. Apply cleanup or a retryable reconciliation path to failures after PR creation, not only to `createPullRequest` failures.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "3644d2fb3ced860a2ad770bdb73daf1c065f3c7c",
+      "original_commit_id": "3644d2fb3ced860a2ad770bdb73daf1c065f3c7c",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 589,
+      "created_at": "2026-10-04T19:42:01Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179036270,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Redact privacy terms before persisting generator output**\n\nWhen OpenWiki writes a denylisted name, tenant slug, email, or other privacy match to stdout/stderr, this stores that text verbatim in both JSON reports because `redactSecrets` covers only four credential shapes and does not apply the later privacy/denylist scan. This contradicts the report contract that matched privacy text is never persisted; omit the output tail or sanitize it with the same host denylist, tenant-slug, and privacy rules before assigning it to the report.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "3644d2fb3ced860a2ad770bdb73daf1c065f3c7c",
+      "original_commit_id": "3644d2fb3ced860a2ad770bdb73daf1c065f3c7c",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 668,
+      "created_at": "2026-10-04T19:42:01Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179139227,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Guard cleanup deletion with the verified head**\n\nIf the nightly branch advances after this runner pushes it—for example, between PR creation and a failed review comment—this unconditional delete removes the newer remote ref, even though it no longer belongs to the failed publish. Git documents that `--delete` deletes the listed remote ref, whereas an explicit `--force-with-lease=<ref>:<expect>` fails when the ref no longer has the expected value ([git-push documentation](https://git-scm.com/docs/git-push#Documentation/git-push.txt---force-with-leaseltrefnamegtltexpectgt)); pass `head` into cleanup and condition deletion on that exact SHA.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "61c9496a93cfadca5f51b25023b331ecd34c434e",
+      "original_commit_id": "61c9496a93cfadca5f51b25023b331ecd34c434e",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 649,
+      "created_at": "2026-10-04T20:11:51Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179139232,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Scan generated pathnames for privacy terms**\n\nWhen OpenWiki places a denylisted name, tenant slug, email address, or credential-shaped value only in a generated filename, this adds only the file's contents to the privacy scan: `privacyItemsFor` retains the path as metadata but `scanPrivacy` tests only its `lines`. Such a page and its matching sidecar/manifest can therefore pass validation and publish the sensitive value in repository-visible pathnames. The new output-redaction regression covers stdout values but not this remaining generator-output channel, so include normalized generated paths in the privacy checks before publishing.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "1af828a36ffb018204a8eceef243e495321c8748",
+      "original_commit_id": "61c9496a93cfadca5f51b25023b331ecd34c434e",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": 475,
+      "original_line": 510,
+      "created_at": "2026-10-04T20:11:51Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179245804,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Scan unexpected paths before recording them**\n\nWhen the generator writes an unexpected path containing a denylisted value, such as `docs/Jane-Doe.md`, this failure reason persists the literal pathname, and `enforceScope` has already copied it into `report.discarded`. The new privacy-path check never runs because this branch returns before `validateGenerated`, and it only receives generated paths anyway, so both JSON reports violate the contract that matched privacy text is never persisted. Scan all changed pathnames before recording or reporting unexpected writes, and emit only a redacted/category-only failure.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "2ba37643c44b128bd12c741f1660fb8f85bb3365",
+      "original_commit_id": "2ba37643c44b128bd12c741f1660fb8f85bb3365",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 769,
+      "created_at": "2026-10-04T20:44:27Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179245808,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Reject malformed committed run state**\n\nWhen production contains `openwiki/.run.json` with malformed JSON, `readJsonAtCommit` returns `undefined`, which is indistinguishable here from the file being absent. The runner therefore bypasses the documented fail-closed precondition and invokes OpenWiki with committed resumable run state; depending on how the CLI handles that state, this wastes each pass or resumes from invalid data. Check the path's existence at `tip` independently of JSON parsing.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "2ba37643c44b128bd12c741f1660fb8f85bb3365",
+      "original_commit_id": "2ba37643c44b128bd12c741f1660fb8f85bb3365",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 403,
+      "created_at": "2026-10-04T20:44:27Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179245816,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Validate the manifest on metadata-only runs**\n\nWhen OpenWiki changes only `.last-update.json` and `.page-manifest.json`, `touched` is empty and this return skips parsing the manifest entirely. A malformed or otherwise unreadable manifest can therefore pass `validateGenerated` and be published by the explicitly supported metadata-only path, leaving committed generator state that a later update cannot reliably consume. Parse and validate the changed manifest even when no factual page or Claim sidecar changed.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "2ba37643c44b128bd12c741f1660fb8f85bb3365",
+      "original_commit_id": "2ba37643c44b128bd12c741f1660fb8f85bb3365",
+      "path": "scripts/openwiki/guards.mjs",
+      "line": null,
+      "original_line": 153,
+      "created_at": "2026-10-04T20:44:27Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179510079,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Scan generated metadata for privacy-sensitive values**\n\nWhen generated run metadata contains a denylisted value in an accepted string field—for example `.page-manifest.json`'s `completedBy`, or an extra property in `.last-update.json`—this returns no privacy-scan items. `checkPageManifest` accepts any nonblank `completedBy`, while `checkLastUpdate` ignores extra keys, so a metadata-only run can pass validation and publish the literal value without producing `CONTENT_PRIVACY_HITS`; scan permissible textual metadata fields or enforce schemas that cannot carry untrusted text.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "826eea45cb7fb63e53755b0e9fc4c8c7672a9b7e",
+      "original_commit_id": "826eea45cb7fb63e53755b0e9fc4c8c7672a9b7e",
+      "path": "scripts/openwiki/guards.mjs",
+      "line": null,
+      "original_line": 553,
+      "created_at": "2026-10-04T22:02:42Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179510083,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Reject invalid numeric runner limits**\n\nWhen either optional limit is empty, malformed, non-finite, zero, or negative, `Number()` silently produces an unsafe value instead of a precondition failure: a `NaN` disk threshold makes the low-disk comparison always false, while an invalid/non-positive timeout causes the generator timer to fire effectively immediately. Validate both environment values as finite positive numbers (or apply the documented defaults for empty values) before constructing the configuration.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "826eea45cb7fb63e53755b0e9fc4c8c7672a9b7e",
+      "original_commit_id": "826eea45cb7fb63e53755b0e9fc4c8c7672a9b7e",
+      "path": "scripts/openwiki/nightly.mjs",
+      "line": null,
+      "original_line": 854,
+      "created_at": "2026-10-04T22:02:42Z",
+      "reactions": {
+        "total_count": 0
+      }
+    },
+    {
+      "id": 4179647212,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Validate evidence versions before exempting them**\n\nWhen a changed Claim sidecar contains a privacy-sensitive value in an evidence `version` field, this branch drops the value from the scan solely because its key is named `version`; neither `privacyItemsFor` nor the provenance checks verify that it has OpenWiki's expected digest format. For example, an evidence object with `\"version\": \"private.person@corp.test\"` produces no privacy hit and can be published. Validate the evidence-version grammar before exempting it, and scan or reject any nonconforming value.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "663f86a3132b2566d8450068a6d18ab460c55205",
+      "original_commit_id": "663f86a3132b2566d8450068a6d18ab460c55205",
+      "path": "scripts/openwiki/guards.mjs",
+      "line": null,
+      "original_line": 617,
+      "created_at": "2026-10-04T22:42:31Z",
+      "reactions": {
+        "total_count": 0
+      }
+    }
+  ],
+  "reviews": [
+    {
+      "id": 5407514894,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `0080ea7b0d`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+      "state": "COMMENTED",
+      "commit_id": "0080ea7b0dce394e9707ca419eaceae1ed92172b",
+      "submitted_at": "2026-10-04T18:23:11Z"
+    },
+    {
+      "id": 5407650865,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `2b6b28a23a`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+      "state": "COMMENTED",
+      "commit_id": "2b6b28a23a05f222cda08fd29a90a8ef7909b38d",
+      "submitted_at": "2026-10-04T18:46:41Z"
+    },
+    {
+      "id": 5407841389,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `3644d2fb3c`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+      "state": "COMMENTED",
+      "commit_id": "3644d2fb3ced860a2ad770bdb73daf1c065f3c7c",
+      "submitted_at": "2026-10-04T19:42:01Z"
+    },
+    {
+      "id": 5407949027,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `61c9496a93`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+      "state": "COMMENTED",
+      "commit_id": "61c9496a93cfadca5f51b25023b331ecd34c434e",
+      "submitted_at": "2026-10-04T20:11:51Z"
+    },
+    {
+      "id": 5408113790,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `2ba37643c4`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+      "state": "COMMENTED",
+      "commit_id": "2ba37643c44b128bd12c741f1660fb8f85bb3365",
+      "submitted_at": "2026-10-04T20:44:27Z"
+    },
+    {
+      "id": 5408431621,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `826eea45cb`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+      "state": "COMMENTED",
+      "commit_id": "826eea45cb7fb63e53755b0e9fc4c8c7672a9b7e",
+      "submitted_at": "2026-10-04T22:02:42Z"
+    },
+    {
+      "id": 5408594601,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `663f86a313`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+      "state": "COMMENTED",
+      "commit_id": "663f86a3132b2566d8450068a6d18ab460c55205",
+      "submitted_at": "2026-10-04T22:42:30Z"
+    }
+  ],
+  "issues": [
+    {
+      "id": 5982816813,
+      "user": {
+        "login": "vercel[bot]",
+        "id": 35613825,
+        "type": "Bot"
+      },
+      "body": "[vc]: #78s6iTK6rSdISJ0NLmgTbOnupDSRacyuodjFU+SBO+w=:eyJpc01vbm9yZXBvIjp0cnVlLCJ0eXBlIjoiZ2l0aHViIiwicHJvamVjdHMiOlt7Im5hbWUiOiJob25lLXoydWYiLCJwcm9qZWN0SWQiOiJwcmpfcEpVanM2SW1QMDFGQlBxclp5aUpScGJwSjJtayIsImluc3BlY3RvclVybCI6Imh0dHBzOi8vdmVyY2VsLmNvbS9zYW15dWt0aHNzdi00ODQxcy1wcm9qZWN0cy9ob25lLXoydWYvOUt0QnFrM3cxWUNhdVZLVzQ4Q3lnMWQzVGV4ZyIsInByZXZpZXdVcmwiOiJob25lLXoydWYtZ2l0LWZlYXQtd2lraS1hdXRvLTAxLXNhbXl1a3Roc3N2LTQ4NDFzLXByb2plY3RzLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiREVQTE9ZRUQiLCJsaXZlRmVlZGJhY2siOnsicmVzb2x2ZWQiOjAsInVucmVzb2x2ZWQiOjAsInRvdGFsIjowLCJsaW5rIjoiaG9uZS16MnVmLWdpdC1mZWF0LXdpa2ktYXV0by0wMS1zYW15dWt0aHNzdi00ODQxcy1wcm9qZWN0cy52ZXJjZWwuYXBwIn0sInJvb3REaXJlY3RvcnkiOm51bGx9XSwicmVxdWVzdFJldmlld1VybCI6Imh0dHBzOi8vdmVyY2VsLmNvbS92ZXJjZWwtYWdlbnQvcmVxdWVzdC1yZXZpZXc/b3duZXI9U2FpU2FteXVrdGhWZW11cmkmcmVwbz1Ib25lJnByPTc4NiJ9\nThe latest updates on your projects. Learn more about [Vercel for GitHub](https://vercel.link/github-learn-more).\n\n| Project | Deployment | Actions | Updated |\n| :--- | :----- | :------ | :------ |\n| <a href=\"https://vercel.com/samyukthssv-4841s-projects/hone-z2uf\"><sup><img src=\"https://vercel.com/api/www/avatar?projectId=prj_pJUjs6ImP01FBPqrZyiJRpbpJ2mk&teamId=team_Pwj27KsmnBKe3ZUBfKLcFczf&s=32\" width=\"16\" height=\"16\" align=\"middle\" alt=\"\" /></sup></a> [hone-z2uf](https://vercel.com/samyukthssv-4841s-projects/hone-z2uf) | ![Ready](https://vercel.com/static/status/ready.svg) [Ready](https://vercel.com/samyukthssv-4841s-projects/hone-z2uf/9KtBqk3w1YCauVKW48Cyg1d3Texg) | [Preview](https://hone-z2uf-git-feat-wiki-auto-01-samyukthssv-4841s-projects.vercel.app) | <relative-time datetime=\"2026-10-04T23:06:04.866Z\">Oct 4, 2026 11:06pm UTC</relative-time> |\n\n<a href=\"https://vercel.com/vercel-agent/request-review?owner=SaiSamyukthVemuri&repo=Hone&pr=786\" rel=\"noreferrer\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://agents-vade-review.vercel.sh/request-review-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://agents-vade-review.vercel.sh/request-review-light.svg\"><img src=\"https://agents-vade-review.vercel.sh/request-review-light.svg\" alt=\"Request Review\"></picture></a>\n\n",
+      "created_at": "2026-10-04T17:58:29Z"
+    },
+    {
+      "id": 5982817459,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "To use Codex here, [create an environment for this repo](https://chatgpt.com/codex/cloud/settings/environments).",
+      "created_at": "2026-10-04T17:58:34Z"
+    },
+    {
+      "id": 5982991309,
+      "user": {
+        "login": "SaiSamyukthVemuri",
+        "id": 26781116,
+        "type": "User"
+      },
+      "body": "@codex review\n\nExact head `0080ea7b0dce394e9707ca419eaceae1ed92172b`. Base: `claude/build-hone-saas-hOex7` @ `615ae92f1f1f9807f27cf4990c95b8e7e3b04afe` (the #784 merge), brought into this branch by a normal merge (`0080ea7b`): no rebase, no force-push, behind 0. CI is green at this head (run 37223523049).\n\nThis is the repository side of WIKI-AUTO-01 only. Relative to production, the diff is the 15 files in the PR description, byte-identical to the pre-merge PR diff. The runner never merges, publishing defaults off, and no host is configured.\n\nAreas worth adversarial review:\n- `scripts/openwiki/source-head.mjs`: source-head discovery (first-parent, wiki-only and `.openwikiignore`'d commits skipped) and liveness.\n- `scripts/openwiki/nightly.mjs`: the fail-closed ordering, the startup no-op before any credential is read, the HEAD-at-source-head / tree-at-tip pinning, discard of writes outside the generated scope, and replace-not-overlay publishing through the CLAUDE.md eight-step sequence.\n- `scripts/openwiki/guards.mjs`: scope sorting, the A3 workflow inspection, and the privacy scan (findings must never carry matched text).\n- `scripts/openwiki/github-app.mjs`: exact token permissions on one repository, with no `workflows` permission.\n",
+      "created_at": "2026-10-04T18:19:41Z"
+    },
+    {
+      "id": 5983020442,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary\n\nThis comment shows the latest Codex review activity on this pull request.\n\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ✅ **Completed** <relative-time datetime=\"2026-10-04T23:13:52.514683Z\">2026-10-04T23:13:52.514683Z</relative-time> | `1af828a` | Manual request |\n\n\n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\" or \"@codex security review\".\n\nCodex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.\n\n</details>",
+      "created_at": "2026-10-04T18:23:15Z"
+    },
+    {
+      "id": 5983180525,
+      "user": {
+        "login": "SaiSamyukthVemuri",
+        "id": 26781116,
+        "type": "User"
+      },
+      "body": "@codex review\n\nExact head `2b6b28a23a05f222cda08fd29a90a8ef7909b38d`. Base: `claude/build-hone-saas-hOex7` @ `615ae92f1f1f9807f27cf4990c95b8e7e3b04afe`, behind 0. This head is a fast-forward of `0080ea7b`, with no rebase or force-push. CI is green at this head (run 37225055797).\n\nThis head addresses the three findings from the review of `0080ea7b` in one commit (`2b6b28a2`):\n\n- **P1, sanitize the environment passed to repository scripts.** `npm run verify:prepush` now runs with `repositoryScriptEnv(config)`: `PATH`, a private `HOME`, `LANG`, `TZ`, `GIT_CONFIG_NOSYSTEM` and `GIT_CONFIG_GLOBAL`, and nothing else. No credential, credential path or App id reaches it. The OpenWiki child shares that base environment plus its model key.\n- **P2, mint a fresh installation token before publishing.** A second token is minted immediately before the push and the PR calls. If that mint fails, nothing is published (`PRECONDITION`).\n- **P2, validate the App private-key file permissions.** `createAppTokenSource` reads the key through `readOwnerOnlySecret` on every mint. A key that is not owner-only is refused before any network call, and the runner reports `PRECONDITION`.\n\nEach fix has a test in `tests/openwiki/nightly.test.ts`, and reverting any one fix turns its test red. `tests/openwiki` passes 111/111 on node 20 and node 22.\n",
+      "created_at": "2026-10-04T18:42:40Z"
+    },
+    {
+      "id": 5983662508,
+      "user": {
+        "login": "SaiSamyukthVemuri",
+        "id": 26781116,
+        "type": "User"
+      },
+      "body": "@codex review\n\nExact head `3644d2fb3ced860a2ad770bdb73daf1c065f3c7c`. Base: `claude/build-hone-saas-hOex7` @ `615ae92f1f1f9807f27cf4990c95b8e7e3b04afe`, behind 0. This head is a fast-forward of `2b6b28a2`, with no rebase or force-push. CI is green at this head (run 37228603610).\n\nThis head addresses the three findings from the review of `2b6b28a2`:\n\n- **P1 (4178855061), isolate repository scripts from the runner process.** The runner no longer executes **any** code from the subject repository. `npm run verify:prepush`, the configurable pre-push command and the environment-sanitised child are all gone. CLAUDE.md delivery step 7 is replaced by trusted structural checks on the commit as data:\n  - clean worktree, and HEAD/index/worktree identity;\n  - `git diff --check`;\n  - single child of the tip, generated-only scope, replace-not-overlay equality, runner authorship;\n  - conflict markers and provenance.\n\n  Commit and push use `--no-verify`, and the runner refuses to run from inside the subject clone. Repository-controlled verification stays in PR CI, where the runner's credentials are absent. A regression commits a hostile subject package (`verify:prepush`, `prepush`, `postinstall` and `test` all read `/proc/$PPID/environ` into a sentinel) and asserts that the sentinel never appears.\n- **P2 (4178855066), preserve the new source head on metadata-only runs.** A metadata-only result is no longer discarded as NOOP. It is validated and published (`DRY_RUN` when publishing is off), so the processed source head becomes durable in repository state. A two-pass regression publishes, merges as a human would, and asserts that the next pass is a startup NOOP that never invokes OpenWiki.\n- **P2 (4178855071), revalidate the base branch before pushing.** Immediately before the push, with the freshly minted publish token, the runner reads the exact remote SHA of `refs/heads/<base>`. If it differs from the pinned tip, nothing is published (`FAILED`, retried from the new tip). A deterministic regression advances production from inside the generator.\n",
+      "created_at": "2026-10-04T19:38:42Z"
+    },
+    {
+      "id": 5983916512,
+      "user": {
+        "login": "SaiSamyukthVemuri",
+        "id": 26781116,
+        "type": "User"
+      },
+      "body": "@codex review\n\nExact head `61c9496a93cfadca5f51b25023b331ecd34c434e`. Base: `claude/build-hone-saas-hOex7` @ `615ae92f1f1f9807f27cf4990c95b8e7e3b04afe`, behind 0. This head is a fast-forward of `3644d2fb`, with no rebase or force-push. CI is green at this head (run 37230548673).\n\nThis head addresses the two findings from the review of `3644d2fb`:\n\n- **P2 (4179036263), recover when post-creation PR setup fails.** Once a pull request exists, the pass is `PUBLISHED` only if the PR head is exactly the verified commit **and** the exact-head `@codex review` request was posted. Any failure before that (`head-mismatch` or `review-request-failed`) runs `cleanUpCreatedPullRequest`. That closes the PR and deletes its branch, always attempting both, and records each step's state (`closed`/`close-failed`, `deleted`/`delete-failed`) with the PR number, branch and head. The pass then ends `FAILED`. If cleanup is incomplete, the next pass reports `SKIP` on the leftover branch. The GitHub client gains `closePullRequest` only; there is still no merge call. Six regressions cover:\n  - a head mismatch;\n  - a failed comment;\n  - a failed branch delete, where the close is still attempted and the next pass is `SKIP`;\n  - a failed close, where the delete is still attempted;\n  - full success, with no cleanup;\n  - no `PUBLISHED`, or any recorded outcome, until the review request has resolved.\n- **P2 (4179036270), redact privacy terms before persisting generator output.** Generator output is no longer persisted at all. `runOpenWikiProcess` drains stdout/stderr into a byte count and a SHA-256 and keeps no text. Reports hold only `exitCode`, `timedOut`, `outputBytes` and `outputSha256`, and the CLI prints a fixed `cliSummary`. A regression emits a denylist term, a tenant slug, an email address, a phone number and two credential-shaped strings, then checks `last-run.json`, every `runs/*.json` and the CLI summary for none of them, on both a dry run and a failed run.\n",
+      "created_at": "2026-10-04T20:09:04Z"
+    },
+    {
+      "id": 5984177952,
+      "user": {
+        "login": "SaiSamyukthVemuri",
+        "id": 26781116,
+        "type": "User"
+      },
+      "body": "@codex review\n\nExact head `2ba37643c44b128bd12c741f1660fb8f85bb3365`. Base: `claude/build-hone-saas-hOex7` @ `615ae92f1f1f9807f27cf4990c95b8e7e3b04afe`, behind 0. This head is a fast-forward of `61c9496a`, with no rebase or force-push. CI is green at this head (run 37232695968).\n\nThis head addresses the two findings from the review of `61c9496a`:\n\n- **P2 (4179139227), guard cleanup deletion with the verified head.** `deleteOwnBranch` deletes `refs/heads/<branch>` only under a `--force-with-lease=refs/heads/<branch>:<head>` lease. If the branch moved after the runner pushed it, the delete is refused and reported as `delete-failed`, and the newer commit stays. The PR close is still attempted. Both cleanup paths (a failed PR creation, and a failure after creation) use it. Regression: another commit lands on the nightly branch before cleanup and survives it, while the PR is still closed.\n- **P2 (4179139232), scan generated pathnames for privacy terms.** `privacyItemsForPaths` adds every added or modified generated path to the privacy scan, as written and with separators read as spaces, so `people/jane-doe.md` matches \"Jane Doe\". A path hit fails the run before any other check, so no other finding names that path. Regressions: a tenant slug and a hyphenated denylisted name in a filename fail the run, and no persisted report contains them.\n\nIt also fixes the cause of an intermittent local test failure, diagnosed through the reason-annotated assertions. `snapshotWorktree` copied the real index, which carried its stat cache under a newer mtime and could miss a same-size rewrite made within the same second. The scratch index is now seeded with `git read-tree <base>`, so every file is compared by content. A deterministic regression marks a file `assume-unchanged` in the real index; the snapshot must still see the change.\n",
+      "created_at": "2026-10-04T20:40:57Z"
+    },
+    {
+      "id": 5984829764,
+      "user": {
+        "login": "SaiSamyukthVemuri",
+        "id": 26781116,
+        "type": "User"
+      },
+      "body": "@codex review\n\nExact head `826eea45cb7fb63e53755b0e9fc4c8c7672a9b7e`. Base: `claude/build-hone-saas-hOex7` @ `615ae92f1f1f9807f27cf4990c95b8e7e3b04afe`, behind 0. This head is a fast-forward of `2ba37643`, with no rebase or force-push. CI is green at this head (run 37237730415).\n\nThis head is one consolidated repair after an architecture review of the validation and reporting pipeline. The earlier rounds hardened individual producers, but the shared persistent/reporting sink still accepted arbitrary strings derived from untrusted state. This head closes that family once. It covers the three findings on `2ba37643`:\n\n- **P2 (4179245804), scan unexpected paths before recording them.** A common path gate (`guards.mjs gateChangedPaths`) now runs before any changed path is recorded.\n  - It covers every path the run changed: generated, known side effect or unexpected; added, modified, deleted or type-changed.\n  - Each path is scanned as written and humanized, and must fit a reportable grammar.\n  - Any hit fails the run with `PATH_PRIVACY_REJECTED`, keeping categories and a count only.\n  - The sink (`report.mjs persistableReport`) accepts no pathname the gate did not clear.\n  - So `docs/Jane-Doe.md` as an unexpected write fails with the name in no report, reason, discarded entry, check or CLI line.\n- **P2 (4179245808), reject malformed committed run state.** Committed state is read as `absent` / `present-valid` / `present-invalid`.\n  - `openwiki/.run.json` is detected from the git tree alone (`committedPathExists`). Committed at all (malformed, valid or a directory) is `PRECONDITION`, and OpenWiki never runs.\n  - The same distinction covers `.last-update.json`, Claim sidecars, the run lock, the OpenWiki `package.json` and the tenant register.\n- **P2 (4179245816), validate the manifest on metadata-only runs.** `.page-manifest.json` is a state invariant on every run: it must exist, parse, and hold the strict schema openwiki@0.6.1 enforces, ported exactly. Provenance for changed pages and deleted-page leftovers is then checked against the validated manifest.\n\nThe sink is now the single boundary:\n- **Coded reasons.** `finish()` takes catalog codes only. Every report field is checked against a closed schema, and every sentence (reports, CLI, commit message, PR title, body and review request) is rendered from validated values.\n- **External identifiers.** Only nightly branch names in the runner's own format reach a report, API errors keep their HTTP status only, and no error message is read anywhere.\n\nTests: 291 in `tests/openwiki`, passing on node 20 and node 22. They include defect-family regressions G1–G10 across every sink, and a direct attack on the sink's API. Nineteen mutants were run against the commit, and all were killed.\n",
+      "created_at": "2026-10-04T21:57:36Z"
+    },
+    {
+      "id": 5985226514,
+      "user": {
+        "login": "SaiSamyukthVemuri",
+        "id": 26781116,
+        "type": "User"
+      },
+      "body": "@codex review\n\nExact head `663f86a3132b2566d8450068a6d18ab460c55205`. Base: `claude/build-hone-saas-hOex7` @ `615ae92f1f1f9807f27cf4990c95b8e7e3b04afe`, behind 0. This head is a fast-forward of `826eea45`, with no rebase or force-push. CI is green at this head (run 37240376091).\n\nThis head addresses the two findings from the review of `826eea45`. The consolidated safe-sink and state-validation boundary is unchanged.\n\n- **P2 (4179510079), scan generated metadata for privacy-sensitive values.**\n  - **`.last-update.json` is strict.** It is held to the exact schema `openwiki@0.6.1` writes (`agent/utils.js writeLastUpdateMetadata`, `generation/run-state.js UpdateMetadataSchema`): `{updatedAt, command, gitHead, model, status, language}` and no other key, so an extra key cannot carry text. `updatedAt` must be an ISO instant, `model` non-blank, and `language` a canonical locale OpenWiki's `resolveLanguage` would record.\n  - **Manifest fields match what OpenWiki writes.** A nonblank `completedBy` is no longer enough. It must be an OpenWiki producer id: `openwiki/<semver>` (`OPENWIKI_PRODUCER_ACTOR`) or a host id (`HOST_ID_PATTERN`). `gitHead` must be a full commit SHA.\n  - **Every free-text metadata value is scanned.** Any value a strict grammar does not pin down goes through the same privacy scan before publish, as written and humanized: `model`, `language`, each manifest page key and each `completedBy`. Digests, SHAs, UUIDs, timestamps and enums are format-checked instead.\n  - **Sidecars and other generated files.** Changed Claim sidecars are scanned by every key and string, except the `pageVersion` and evidence `version` digests. Generated files of any other type are scanned whole.\n  - **On a hit.** The run ends `CONTENT_PRIVACY_HITS`, recording a category, the metadata file and a line count, never the value.\n- **P2 (4179510083), reject invalid numeric runner limits.**\n  - **One parser.** `HONE_WIKI_MIN_FREE_GB` and `HONE_WIKI_RUN_TIMEOUT_MIN` share it (`environment.mjs parseRunLimit` / `runLimits`), applied before any conversion to bytes or milliseconds.\n  - **Accepted values.** Unset or blank means the documented default (10 / 90). Anything else must be a plain positive decimal.\n  - **Refused values.** `0`, negatives, `NaN`, `Infinity`, exponents, junk, and a timeout too long for a Node timer are `PRECONDITION RUN_LIMIT_INVALID`. The report names only the variable.\n  - **Re-check.** The prerequisites re-check that the config holds a finite positive disk floor and timeout, whatever built it.\n\nTests: 362 in `tests/openwiki`, passing on node 20 and node 22. They include a regression for each case above, each checking that no persisted report or CLI line holds the value. The repository's own committed metadata stays valid and scans clean. Fourteen mutants, one for each part of both fixes, were run against the commit, and all were killed.\n",
+      "created_at": "2026-10-04T22:38:59Z"
+    },
+    {
+      "id": 5985456275,
+      "user": {
+        "login": "SaiSamyukthVemuri",
+        "id": 26781116,
+        "type": "User"
+      },
+      "body": "@codex review\n\nExact head `1af828a36ffb018204a8eceef243e495321c8748`. Base: `claude/build-hone-saas-hOex7` @ `615ae92f1f1f9807f27cf4990c95b8e7e3b04afe`, behind 0. This head is a fast-forward of `663f86a3`, with no rebase or force-push. CI is green at this head (run 37242393881).\n\nThis head addresses the one finding from the review of `663f86a3`:\n\n- **P2 (4179647212), validate evidence versions before exempting them.**\n  - **One shared validator.** `guards.mjs isValidEvidenceVersion` implements the exact grammar of `openwiki@0.6.1`'s only evidence resolver (`claims/evidence/repository/resolver.js`):\n    - `repo-file-v1:sha256:<64 hex>` (`createHashedVersion`);\n    - `repo-lines-v1:sha256:<64 hex>:<base64url>` (`formatLineRangeVersion`).\n  - **The whole value is checked, not only its prefix.** For a line range, the payload must decode and parse to exactly the seven fields `isLineRangeVersionMetadata` accepts: `selectedLineCount >= 1`, two context counts in 0..3, and four lowercase sha256 line hashes. It must also re-encode to the same text. So malformed, truncated, non-canonical and text-bearing values are refused.\n  - **Exemption needs position and grammar.** The privacy scan skips only the top-level `pageVersion` and each `claims[i].evidence[j].version`, and only when the value has its exact grammar. A `version` key anywhere else, or a nonconforming value, is scanned like any other string.\n  - **A nonconforming evidence version is also rejected.** `checkProvenance` reports `evidence-version-invalid` (`PROVENANCE_INVALID`), naming only the changed path, because base64 can hide text from a scanner. So `\"version\": \"private.person@corp.test\"` fails the run twice, as invalid Claim state and as a privacy hit, and no report, reason, check or CLI line holds it.\n  - **The current baseline is unchanged.** All 1,300 evidence versions this repository commits validate, and a test checks that.\n\nTests: 393 in `tests/openwiki`, passing on node 20 and node 22. They use evidence versions copied verbatim from production sidecars. They cover 24 rejected forms, the JWT-shaped false positive a valid version must not raise, other `version` keys being scanned, the provenance rejection, and an end-to-end run. Six mutants were run against the commit and all were killed. The first drops the value check and keeps the exemption by position.\n",
+      "created_at": "2026-10-04T23:10:07Z"
+    },
+    {
+      "id": 5985483754,
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "type": "Bot"
+      },
+      "body": "Codex Review: Didn't find any major issues. You're on a roll.\n\n**Reviewed commit:** `1af828a36f`\n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+      "created_at": "2026-10-04T23:13:51Z"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "7d1e7dd40ab48e32547d2be64defa779b3885342",
+      "parents": [
+        {
+          "sha": "39b6afbce85666f609bf4af6cd09ace044175551"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T17:57:33Z"
+        }
+      }
+    },
+    {
+      "sha": "e9cd5d1022d781844a9ab9b13c69a30bd4712fbd",
+      "parents": [
+        {
+          "sha": "7d1e7dd40ab48e32547d2be64defa779b3885342"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T18:08:03Z"
+        }
+      }
+    },
+    {
+      "sha": "0080ea7b0dce394e9707ca419eaceae1ed92172b",
+      "parents": [
+        {
+          "sha": "e9cd5d1022d781844a9ab9b13c69a30bd4712fbd"
+        },
+        {
+          "sha": "615ae92f1f1f9807f27cf4990c95b8e7e3b04afe"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T18:11:08Z"
+        }
+      }
+    },
+    {
+      "sha": "2b6b28a23a05f222cda08fd29a90a8ef7909b38d",
+      "parents": [
+        {
+          "sha": "0080ea7b0dce394e9707ca419eaceae1ed92172b"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T18:35:54Z"
+        }
+      }
+    },
+    {
+      "sha": "3644d2fb3ced860a2ad770bdb73daf1c065f3c7c",
+      "parents": [
+        {
+          "sha": "2b6b28a23a05f222cda08fd29a90a8ef7909b38d"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T19:31:24Z"
+        }
+      }
+    },
+    {
+      "sha": "61c9496a93cfadca5f51b25023b331ecd34c434e",
+      "parents": [
+        {
+          "sha": "3644d2fb3ced860a2ad770bdb73daf1c065f3c7c"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T20:02:05Z"
+        }
+      }
+    },
+    {
+      "sha": "2ba37643c44b128bd12c741f1660fb8f85bb3365",
+      "parents": [
+        {
+          "sha": "61c9496a93cfadca5f51b25023b331ecd34c434e"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T20:35:28Z"
+        }
+      }
+    },
+    {
+      "sha": "826eea45cb7fb63e53755b0e9fc4c8c7672a9b7e",
+      "parents": [
+        {
+          "sha": "2ba37643c44b128bd12c741f1660fb8f85bb3365"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T21:45:09Z"
+        }
+      }
+    },
+    {
+      "sha": "663f86a3132b2566d8450068a6d18ab460c55205",
+      "parents": [
+        {
+          "sha": "826eea45cb7fb63e53755b0e9fc4c8c7672a9b7e"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T22:26:19Z"
+        }
+      }
+    },
+    {
+      "sha": "1af828a36ffb018204a8eceef243e495321c8748",
+      "parents": [
+        {
+          "sha": "663f86a3132b2566d8450068a6d18ab460c55205"
+        }
+      ],
+      "commit": {
+        "committer": {
+          "date": "2026-10-04T23:00:24Z"
+        }
+      }
+    }
+  ],
+  "threads": [
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4178781281
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": false,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4178781284
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4178781286
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4178855061
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4178855066
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4178855071
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179036263
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179036270
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179139227
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": false,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179139232
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179245804
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179245808
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179245816
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179510079
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179510083
+          }
+        ]
+      }
+    },
+    {
+      "isResolved": false,
+      "isOutdated": true,
+      "comments": {
+        "nodes": [
+          {
+            "databaseId": 4179647212
+          }
+        ]
+      }
+    }
+  ],
+  "files": [
+    {
+      "filename": ".gitignore"
+    },
+    {
+      "filename": ".openwikiignore"
+    },
+    {
+      "filename": "docs/runbooks/openwiki-nightly.md"
+    },
+    {
+      "filename": "scripts/openwiki/environment.mjs"
+    },
+    {
+      "filename": "scripts/openwiki/github-app.mjs"
+    },
+    {
+      "filename": "scripts/openwiki/guards.mjs"
+    },
+    {
+      "filename": "scripts/openwiki/nightly.mjs"
+    },
+    {
+      "filename": "scripts/openwiki/paths.mjs"
+    },
+    {
+      "filename": "scripts/openwiki/report.mjs"
+    },
+    {
+      "filename": "scripts/openwiki/source-head.mjs"
+    },
+    {
+      "filename": "tests/docs/canonical-production-facts.test.ts"
+    },
+    {
+      "filename": "tests/openwiki/github-app.test.ts"
+    },
+    {
+      "filename": "tests/openwiki/guards.test.ts"
+    },
+    {
+      "filename": "tests/openwiki/helpers.ts"
+    },
+    {
+      "filename": "tests/openwiki/nightly.test.ts"
+    },
+    {
+      "filename": "tests/openwiki/paths.test.ts"
+    },
+    {
+      "filename": "tests/openwiki/report.test.ts"
+    },
+    {
+      "filename": "tests/openwiki/source-head.test.ts"
+    }
+  ]
+}
