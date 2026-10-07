@@ -135,12 +135,21 @@ const REPAIR_BLOCK = (() => {
 })();
 
 describe("0205 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. The "nothing above me" tripwire is served centrally for
-    // every older migration, which is why none of them repeats it.
-    expect(isRepoMax(VERSION), "0205 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0205").toEqual([]);
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
+    // `isRepoMax`, and that claim now lives in the current max's own test.
+    // Keeping it here is precisely the "trip on the next one" pin §2 forbids.
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, NOT PINNED. Two facts about an older migration hold forever and
+    // for every future head: something sits above it, and everything above it
+    // is greater. A literal list of what sits above would be the same
+    // forbidden pin wearing different clothes.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once", () => {

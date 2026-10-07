@@ -8,6 +8,7 @@ import {
 import {
   maskedPhone,
   normalizePhoneForSms,
+  outboundSmsFence,
   sendSmsSafely,
 } from "./twilio";
 
@@ -374,6 +375,15 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   });
   if (!gate.ok) {
     return { ok: false, skipped: true, reason: gate.reason };
+  }
+
+  // SMS-00: a deployment that may not send (a Vercel preview) skips BEFORE the
+  // claim, so it neither spends an attempt nor reports a provider failure --
+  // and an ops alert -- for a message it was never allowed to send.
+  // sendSmsSafely refuses as well; this keeps that refusal silent here.
+  const fence = outboundSmsFence();
+  if (!fence.allowed) {
+    return { ok: false, skipped: true, reason: fence.reason };
   }
 
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);

@@ -91,6 +91,7 @@ The double-send gap is closed. The reminder cron now claims each row via `claim_
 - **Default off.** `studios.send_*_sms` columns default `false`. Toggling on requires a SQL update (the practitioner UI does not toggle this yet).
 - **Per-client consent required.** `clients.sms_consent_at` must be set AND `clients.sms_opted_out_at` must be null.
 - **Per-environment gate.** Missing `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` makes the SMS helper return `ok: false` cleanly; the booking continues.
+- **Non-production fence (SMS-00).** Vercel preview deployments carry the live Twilio credentials and run against the production database, so `sendSmsSafely` refuses to send from any Vercel environment other than `production` (`outboundSmsFence`, `lib/sms/twilio.ts`) — before any credential is read and without a provider request. An operator can deliberately open a non-production deployment with `HONE_SMS_NON_PRODUCTION_SENDS=allow`; no other value opens it. Local and CI runs (no `VERCEL_ENV`) are not fenced here: they hold no live credentials.
 - **Test exposure.** SMS is not exercised in this pilot beyond manual smoke. Real production SMS would need real Twilio test runs.
 
 ### Outgoing message types
@@ -116,6 +117,25 @@ This endpoint is **not** a cron endpoint and does **not** use `CRON_SECRET`. It 
 **Twilio Console wiring** (carried over from the retired `CRON_SETUP.md`, PR OPS-01): Messaging → Services → (your service) → Inbound Settings → *Process inbound messages* → **Send a webhook**; Webhook URL `https://hone.care/api/twilio/inbound-sms`; Method `HTTP POST`; Save. Set `TWILIO_WEBHOOK_BASE_URL=https://hone.care` in the Vercel production env so the signature validator builds the canonical URL deterministically regardless of which internal Vercel hostname the runtime sees.
 
 STOP keywords (`STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`) opt out every Hone client whose stored phone normalizes to the inbound `From` digits, writing one `audit_logs` row per matched client. Non-STOP inbound messages are acknowledged with empty TwiML and not persisted (v1 is opt-out only, not conversational). After STOP, **email** reminders for that client continue; only SMS sends are blocked.
+
+### Delivery ledger and status callbacks (SMS-00, migration 0206)
+
+`public.sms_outbound_messages` holds **one row per outbound SMS attempt** — purpose, subject (an appointment or a waitlist invitation), status, Twilio's message SID and numeric error code. **No message body and no phone number.** It has RLS on, no policy and no table grant to any role; its only writers are four `service_role` commands (`lib/sms/delivery-ledger.ts` wraps them):
+
+| Command | Role |
+|---|---|
+| `begin_appointment_sms_message` | Creates the row for one appointment SMS attempt, **after** `claim_sms_send` has claimed it. It does not decide whether a send may happen. |
+| `claim_waitlist_invitation_sms` | The **once-per-invitation** claim: tenancy, invitation liveness and `studios.send_waitlist_invitation_sms` are checked in the database, and a unique index makes a second claim impossible. Returns the prospect's phone, consent, opt-out and verification facts; `prospectMayReceiveSms` stays the one authority on whether they may be texted. |
+| `settle_sms_message` | Records what the provider answered: `accepted` (with SID), `refused`, `unknown` (an attempt whose answer was lost) or `skipped` (no request; a reason slug says why). |
+| `record_sms_delivery_status` | Applies a Twilio status callback. Forward-only (`queued → sending → sent → delivered / undelivered / failed`); the three end states are terminal; a callback also resolves an `unknown` settle. |
+
+The row exists **before** the provider call because Twilio's Messages API takes no idempotency key: an attempt whose answer is lost may still have sent the message, and a later status callback is what tells Hone so. Each attempt is sent with `StatusCallback = TWILIO_WEBHOOK_BASE_URL + /api/twilio/message-status?m=<row id>`; without `TWILIO_WEBHOOK_BASE_URL` no callback is requested and the attempt is settled from the provider's synchronous answer alone.
+
+**Status endpoint:** `/api/twilio/message-status`. Same security model as the STOP webhook — the raw body and the full URL (which carries the row id) are verified against `X-Twilio-Signature` before any database work; a bad signature is a 403 with zero writes. `middleware.ts` allows the exact path unauthenticated. An `undelivered` or `failed` end state raises **one** `sms_delivery_failed` warning ops alert, attributed to the studio and (for appointment SMS) the appointment, carrying the purpose, the status and Twilio's error code — never a phone number.
+
+### Reminder re-arm on a moved start (migration 0206)
+
+A reminder answers "when is my appointment?", so a reminder sent for an old start does not answer it once the start moves. `appointments_rearm_reminders_trg` (`before update of starts_at`) returns the 24h and 2h reminder slots — **email and SMS** — to unsent, with a fresh attempt budget and no claim, whenever an appointment's start **actually** changes on the same row. That is the practitioner move (`move_or_reassign_appointment`), which rewrites `starts_at` in place. The client reschedule link already behaved correctly: it inserts a successor appointment, whose reminder columns start empty. Confirmation slots are not keyed to the start and are never re-armed; a reassign that keeps the start re-arms nothing.
 
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 

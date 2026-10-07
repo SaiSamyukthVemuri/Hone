@@ -148,7 +148,12 @@ export async function updateSession(request: NextRequest) {
     // for the same reason as Stripe: do NOT broaden to /api/twilio/*
     // because any future Twilio endpoint (status callbacks, etc.)
     // should remain explicitly gated.
-    pathname === "/api/twilio/inbound-sms";
+    pathname === "/api/twilio/inbound-sms" ||
+    // SMS-00 delivery-status callback. Same model as the inbound webhook:
+    // X-Twilio-Signature over the full URL (the ledger row id rides in its
+    // query) plus sorted POST fields, validated before any DB write. Exact
+    // path, for the reason above.
+    pathname === "/api/twilio/message-status";
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
