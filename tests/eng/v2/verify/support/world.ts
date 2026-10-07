@@ -10,6 +10,9 @@
 //   tests/eng/v2/verify/fixtures/real/runs-6cdd830b-push.json               (verifier, real)
 //   tests/eng/v2/verify/fixtures/real/jobs-810-run-latest.json              (verifier, real)
 //   tests/eng/v2/verify/fixtures/real/activity-pr-merge-week.json           (verifier, real)
+//   tests/eng/v2/verify/fixtures/real/activity-branch-creation-year.json    (verifier, real)
+//   tests/eng/v2/verify/fixtures/builder-real/review-*.json, rollup-*.json  (builder-recorded real answers,
+//     copied from feat/eng-loop-v1-05a@203ed1f4; their `number` / `oid` echo is part of the amended query)
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -58,12 +61,14 @@ export const JOB = {
 const BASE_FIXTURES = path.join(__dirname, "..", "..", "fixtures", "base");
 const PR_KEY_FIXTURES = path.join(__dirname, "..", "..", "fixtures", "pr-key");
 const VERIFY_FIXTURES = path.join(__dirname, "..", "fixtures", "real");
+const BUILDER_FIXTURES = path.join(__dirname, "..", "fixtures", "builder-real");
 const load = (dir: string, f: string) => JSON.parse(readFileSync(path.join(dir, f), "utf8"));
 
 export const REAL = {
   base: (f: string) => load(BASE_FIXTURES, f),
   prKey: (f: string) => load(PR_KEY_FIXTURES, f),
   verify: (f: string) => load(VERIFY_FIXTURES, f),
+  builder: (f: string) => load(BUILDER_FIXTURES, f),
 };
 
 // --- The world ---------------------------------------------------------------
@@ -132,8 +137,7 @@ export interface World {
   activity: {
     forcePush: ActivityEvent[];
     branchDeletion: ActivityEvent[];
-    /** recorded GitHub history the V1 profile has no input for (adversarial notes only) */
-    branchCreation?: ActivityEvent[];
+    branchCreation: ActivityEvent[];
   };
   runs: RunSpec[];
   /** total_count override for the runs listing */
@@ -173,6 +177,11 @@ export function realJobs(): JobSpec[] {
     status: j.status,
     conclusion: j.conclusion,
   }));
+}
+
+/** Production's real creation event, as recorded for the year on 2026-10-07. */
+export function realCreation(): ActivityEvent[] {
+  return REAL.verify("activity-branch-creation-year.json").map((e: any) => ({ timestamp: e.timestamp, before: e.before, after: e.after }));
 }
 
 export function ownRun(over: Partial<RunSpec> = {}): RunSpec {
@@ -225,7 +234,8 @@ export function golden(): World {
     },
     headBranchPrs: [{ number: 810, state: "open" }],
     rules: ["deletion", "non_fast_forward"],
-    activity: { forcePush: [], branchDeletion: [] },
+    // Real (2026-10-07): no force push, no deletion, and production's one creation (2026-05-16).
+    activity: { forcePush: [], branchDeletion: [], branchCreation: realCreation() },
     runs: [ownRun()],
     jobs: { [RUN_810]: allGreenJobs() },
     classification: { ...APPLICATION_ONLY },

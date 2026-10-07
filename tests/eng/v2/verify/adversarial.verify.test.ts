@@ -54,10 +54,16 @@ describe("adversarial: sequences against the §3.4 binding argument", () => {
     });
   }
 
-  it("every CONFIRMED HOLE row is a positive CI outcome: the unsafe sequence really is accepted", () => {
+  it("every CONFIRMED HOLE row is still accepted (the demonstration), and every CLOSED row is now refused", () => {
     for (const a of ADVERSARIAL.filter((x) => x.verdict === "CONFIRMED HOLE")) {
       const r = evaluate(a.world(), IMPL).result;
       expect(r.ok && r.outcome === "SUCCEEDED", a.id).toBe(true);
+    }
+    const closed = ADVERSARIAL.filter((x) => x.verdict === "CLOSED");
+    expect(closed.map((x) => x.id)).toEqual(expect.arrayContaining(["A1-merge-before-created-at", "A8a-creation-recorded-after-run"]));
+    for (const a of closed) {
+      const r = evaluate(a.world(), IMPL).result;
+      expect(r.ok && r.outcome === "SUCCEEDED", `${a.id} is still accepted`).toBe(false);
     }
   });
 });

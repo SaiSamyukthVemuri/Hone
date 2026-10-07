@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { KEY_FIELDS, keysEqual, parsePrKey } from "../../../../scripts/eng/v2/contract/pr-key.mjs";
+import { KEY_FIELDS, isPrKey, keysEqual, parsePrKey } from "../../../../scripts/eng/v2/contract/pr-key.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { UNKNOWN_REASONS, isUnknownReason } from "../../../../scripts/eng/v2/contract/reasons.mjs";
@@ -11,7 +11,7 @@ import { clone, noThrow, permuteKeys } from "./support/deep";
 import { NINE, rawKey } from "./support/key-oracle";
 import { exactFieldMutations } from "./support/parser-props";
 import { rng } from "./support/prng";
-import { keyCorpusViolations, keyPurityViolations, keysEqualViolations } from "./support/row1-properties";
+import { isPrKeyViolations, keyCorpusViolations, keyPurityViolations, keysEqualViolations } from "./support/row1-properties";
 import { REAL } from "./support/world";
 
 // ===========================================================================
@@ -92,19 +92,20 @@ describe("row 1 verify: parsePrKey against an independent oracle", () => {
     }
   });
 
-  it("a missing or null request parameter fails closed instead of accepting an unchecked PR number", () => {
-    // SPEC §0: "A parser takes the raw response and the request parameters"; nothing
-    // throws. A key whose number was never compared with the requested one is not a
-    // key for the requested PR.
+  it("a missing or invalid expectedNumber is malformed, never an unchecked key (§0 request parameters are required; §1)", () => {
     for (const [label, params] of [
       ["no parameters", undefined],
       ["{}", {}],
       ["{ expectedNumber: undefined }", { expectedNumber: undefined }],
       ["null", null],
+      ["{ expectedNumber: '800' }", { expectedNumber: "800" }],
+      ["{ expectedNumber: 0 }", { expectedNumber: 0 }],
+      ["{ expectedNumber: 800.5 }", { expectedNumber: 800.5 }],
     ] as const) {
       const out = noThrow(() => (params === undefined ? parsePrKey(rawKey(OPEN_800)) : parsePrKey(rawKey(OPEN_800), params)));
       expect(out.threw, `${label}: threw ${(out as any).error}`).toBe(false);
       expect((out as any).value?.ok, `${label}: accepted a key whose number was never checked`).toBe(false);
+      expect((out as any).value?.reason, label).toBe("malformed");
     }
   });
 
@@ -160,6 +161,7 @@ describe("row 1 verify: parsePrKey against an independent oracle", () => {
       const out = noThrow(() => parsePrKey(raw, { expectedNumber: 800 }));
       expect(out.threw, `${label}: ${(out as any).error}`).toBe(false);
       expect((out as any).value?.ok, label).toBe(false);
+      expect((out as any).value?.reason, `${label} (§0: exotic input is malformed)`).toBe("malformed");
     }
   });
 
@@ -187,6 +189,7 @@ describe("row 1 verify: parsePrKey against an independent oracle", () => {
       const res = (out as any).value;
       expect(res?.ok, label).toBe(false);
       expect(isUnknownReason(res?.reason), `${label}: ${res?.reason}`).toBe(true);
+      expect(res?.reason, `${label} (§0: exotic input is malformed)`).toBe("malformed");
     }
     // A null-prototype copy of a valid answer carries the same values: it may parse or
     // fail closed, but it must not throw and must never yield a different key.
@@ -194,6 +197,12 @@ describe("row 1 verify: parsePrKey against an independent oracle", () => {
     expect(np.threw).toBe(false);
     const npv = (np as any).value;
     if (npv.ok) expect(NINE.map((f) => npv.key[f])).toEqual(NINE.map((f) => parsePrKey(rawKey(OPEN_800), { expectedNumber: 800 }).key[f]));
+  });
+});
+
+describe("row 1 verify: isPrKey (§1, amended)", () => {
+  it("is true exactly for values parsePrKey could return as a key: every field rule, OPEN and terminal, and nothing extra", () => {
+    expect(isPrKeyViolations(isPrKey, parsePrKey, { n: 1500, seed: 0x15c0 })).toEqual([]);
   });
 });
 

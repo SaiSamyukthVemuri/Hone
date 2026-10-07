@@ -162,6 +162,82 @@ export function keysEqualViolations(keysEqual: KeysEqual, parse: Parse, opts: { 
 }
 
 // ---------------------------------------------------------------------------
+// isPrKey (SPEC-05A §1, amended): true exactly for a value parsePrKey could return
+// as a key — the nine fields and nothing else; OPEN: positive headRepoId and a
+// 40-hex baseSha; terminal: baseSha null and headRepoId null or positive.
+// ---------------------------------------------------------------------------
+export function isPrKeyViolations(isPrKey: (k: unknown) => boolean, parse: Parse, opts: { n?: number; seed?: number } = {}): string[] {
+  const { n = 1500, seed = 0x15c0 } = opts;
+  const r = rng(seed);
+  const v: string[] = [];
+  const safe = (k: unknown) => {
+    const out = noThrow(() => isPrKey(k));
+    return out.threw ? "THREW" : out.value;
+  };
+  let open = 0;
+  let terminal = 0;
+  for (let i = 0; i < n; i++) {
+    const g = genRaw(r);
+    if (!oracleKey(g.raw, g.expectedNumber).valid) continue;
+    const k = parse(g.raw, { expectedNumber: g.expectedNumber }).key;
+    if (k.state === "OPEN") open++;
+    else terminal++;
+    if (safe(k) !== true) push(v, `#${i} a parsed key is not isPrKey`);
+    if (safe({ ...k }) !== true) push(v, `#${i} a plain copy of a parsed key is not isPrKey`);
+    const bad: Array<[string, any]> = [
+      ["an extra field", { ...k, extra: 1 }],
+      ...NINE.map((f): [string, any] => {
+        const c: any = { ...k };
+        delete c[f];
+        return [`missing ${f}`, c];
+      }),
+      ["prNumber 0", { ...k, prNumber: 0 }],
+      ["prNumber '1'", { ...k, prNumber: String(k.prNumber) }],
+      ["state 'open'", { ...k, state: "open" }],
+      ["isDraft 'false'", { ...k, isDraft: "false" }],
+      ["headSha upper-case", { ...k, headSha: k.headSha.toUpperCase() }],
+      ["headSha 39 hex", { ...k, headSha: k.headSha.slice(1) }],
+      ["headRef ''", { ...k, headRef: "" }],
+      ["baseRef null", { ...k, baseRef: null }],
+      ["baseRepoId 0", { ...k, baseRepoId: 0 }],
+      ["headRepoId 0", { ...k, headRepoId: 0 }],
+      ["headRepoId '1'", { ...k, headRepoId: "1" }],
+    ];
+    if (k.state === "OPEN") {
+      bad.push(["OPEN with a null headRepoId", { ...k, headRepoId: null }]);
+      bad.push(["OPEN with a null baseSha", { ...k, baseSha: null }]);
+      bad.push(["OPEN with an upper-case baseSha", { ...k, baseSha: String(k.baseSha).toUpperCase() }]);
+    } else {
+      bad.push(["terminal with a baseSha", { ...k, baseSha: "a".repeat(40) }]);
+      if (safe({ ...k, headRepoId: null }) !== true) push(v, `#${i} a terminal key with a null headRepoId is not isPrKey`);
+    }
+    for (const [label, x] of bad) if (safe(x) !== false) push(v, `#${i} ${k.state} key with ${label} is isPrKey (${safe(x)})`);
+  }
+  const hostile = new Proxy(
+    {},
+    {
+      get: () => {
+        throw new Error("g");
+      },
+      ownKeys: () => {
+        throw new Error("k");
+      },
+    },
+  );
+  for (const [label, x] of [
+    ["null", null],
+    ["undefined", undefined],
+    ["a number", 5],
+    ["a string", "key"],
+    ["an array", []],
+    ["a throwing proxy", hostile],
+  ] as const)
+    if (safe(x) !== false) push(v, `${label} is isPrKey (${safe(x)})`);
+  if (open < 50 || terminal < 50) push(v, `corpus too thin: ${open} open, ${terminal} terminal keys`);
+  return v;
+}
+
+// ---------------------------------------------------------------------------
 // collectCoherent against the pass-boundary model, over random scripts
 // ---------------------------------------------------------------------------
 export function keyPool(parse: Parse): any[][] {

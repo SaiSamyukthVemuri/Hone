@@ -72,6 +72,7 @@ const edit =
 const SUCCEEDED_OWN: Expect = { outcome: "SUCCEEDED", runs: [RUN_810] };
 const reason = (r: string): Expect => ({ reason: r });
 const fp = (timestamp: string): ActivityEvent => ({ timestamp, before: sha40(0xdead0001), after: P0 });
+const creation = (timestamp: string): ActivityEvent => ({ timestamp, before: "0".repeat(40), after: P0 });
 const OTHER_PR_RUN = 37_500_000_702;
 const FORK_REPO = 777_000_111;
 
@@ -419,15 +420,29 @@ export const SCENARIOS: Scenario[] = [
   },
   ...UNRELATED_RUN_ROWS(),
 
-  // --- rule 8 (NC2) ------------------------------------------------------------
+  // --- rule 8 (NC2, A1), as amended at 203ed1f4 -----------------------------------
+  // Any force push or deletion in the recorded year blocks, whatever its time. A creation
+  // blocks unless strictly before the earliest applicable created_at (an unparseable time
+  // included). A listing that is not provably complete blocks. The window is 360 days.
   {
     id: "NC2-force-push-after",
     title: "production was force-pushed after the run while current rules look fine",
-    source: "synthetic activity; real activity shows 0 force pushes and 0 deletions",
+    source: "synthetic activity; real activity (2026-10-07) shows 0 force pushes and 0 deletions",
     nc: "NC2",
     rule: 8,
     world: edit((w) => {
       w.activity.forcePush = [fp(hoursAfter(RUN_810_CREATED, 1))];
+    }),
+    expect: reason("base_history_unverified"),
+  },
+  {
+    id: "NC2-force-push-before",
+    title: "production was force-pushed a month BEFORE the run's record (NC2: before or after)",
+    source: "synthetic activity",
+    nc: "NC2",
+    rule: 8,
+    world: edit((w) => {
+      w.activity.forcePush = [fp(daysBefore(RUN_810_CREATED, 30))];
     }),
     expect: reason("base_history_unverified"),
   },
@@ -443,8 +458,19 @@ export const SCENARIOS: Scenario[] = [
     expect: reason("base_history_unverified"),
   },
   {
+    id: "NC2-deletion-before",
+    title: "production was deleted a month before the run (any deletion in the year blocks)",
+    source: "synthetic activity",
+    nc: "NC2",
+    rule: 8,
+    world: edit((w) => {
+      w.activity.branchDeletion = [{ timestamp: daysBefore(RUN_810_CREATED, 31), before: P0, after: "0".repeat(40) }];
+    }),
+    expect: reason("base_history_unverified"),
+  },
+  {
     id: "R8-equal-instant",
-    title: "a rewrite at exactly the run's created_at counts (>=)",
+    title: "a force push at exactly the run's created_at blocks",
     source: "synthetic",
     rule: 8,
     world: edit((w) => {
@@ -454,28 +480,27 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "R8-one-second-before",
-    title: "a rewrite one second before the earliest applicable run is irrelevant",
+    title: "a force push one second before the earliest applicable run blocks (the A1 window)",
     source: "synthetic",
     rule: 8,
     world: edit((w) => {
       w.activity.forcePush = [fp(secondsAfter(RUN_810_CREATED, -1))];
     }),
-    expect: SUCCEEDED_OWN,
+    expect: reason("base_history_unverified"),
   },
   {
-    id: "R8-long-before",
-    title: "rewrites a month before the run are irrelevant",
+    id: "R8-force-push-300-days-ago",
+    title: "a force push 300 days ago, long before every run, still blocks",
     source: "synthetic",
     rule: 8,
     world: edit((w) => {
-      w.activity.forcePush = [fp(daysBefore(RUN_810_CREATED, 30))];
-      w.activity.branchDeletion = [{ timestamp: daysBefore(RUN_810_CREATED, 31), before: P0, after: "0".repeat(40) }];
+      w.activity.forcePush = [fp(daysBefore(w.observedAt, 300))];
     }),
-    expect: SUCCEEDED_OWN,
+    expect: reason("base_history_unverified"),
   },
   {
     id: "R8-between-own-runs",
-    title: "a rewrite after the EARLIEST applicable run fires, even if before a later one",
+    title: "a force push between two applicable runs blocks",
     source: "synthetic (a close/reopen gives a second pull_request run at the same head)",
     rule: 8,
     world: edit((w) => {
@@ -484,17 +509,6 @@ export const SCENARIOS: Scenario[] = [
       w.activity.forcePush = [fp("2026-10-07T00:00:00Z")];
     }),
     expect: reason("base_history_unverified"),
-  },
-  {
-    id: "R8-ignored-run-is-no-anchor",
-    title: "only applicable runs anchor history: a rewrite after an ignored push run but before the PR run is fine",
-    source: "real run shapes; synthetic activity",
-    rule: 8,
-    world: edit((w) => {
-      w.runs.unshift(ownRun({ id: 37672136569, runNumber: 2853, event: "push", headBranch: PRODUCTION_REF, createdAt: "2026-10-07T19:07:49Z", template: "push" }));
-      w.activity.forcePush = [fp("2026-10-07T19:30:00Z")];
-    }),
-    expect: SUCCEEDED_OWN,
   },
   {
     id: "R8-force-push-capped",
@@ -521,33 +535,168 @@ export const SCENARIOS: Scenario[] = [
     expect: reason("base_history_unverified"),
   },
   {
-    id: "R8-window-360",
-    title: "an earliest applicable run exactly 360 days old is inside the window",
+    id: "R8-creation-capped",
+    title: "a creation listing that hit 100 cannot prove the history, even if every event is old",
     source: "synthetic",
     rule: 8,
     world: edit((w) => {
+      w.activity.branchCreation = Array.from({ length: 100 }, (_, i) => ({
+        timestamp: daysBefore(RUN_810_CREATED, 200 - i),
+        before: "0".repeat(40),
+        after: P0,
+      }));
+    }),
+    expect: reason("base_history_unverified"),
+  },
+  {
+    id: "R8-creation-real-before",
+    title: "production's real creation (2026-05-16) precedes every applicable run: benign",
+    source: "real: activity?activity_type=branch_creation&time_period=year, recorded 2026-10-07",
+    rule: 8,
+    world: golden,
+    expect: SUCCEEDED_OWN,
+  },
+  {
+    id: "R8-creation-after-run",
+    title: "production (re)created an hour after the run: the branch was replaced while a merge was in flight",
+    source: "synthetic",
+    rule: 8,
+    world: edit((w) => {
+      w.activity.branchCreation.push(creation(hoursAfter(RUN_810_CREATED, 1)));
+    }),
+    expect: reason("base_history_unverified"),
+  },
+  {
+    id: "R8-creation-at-run",
+    title: "a creation at exactly the earliest created_at is not strictly before it",
+    source: "synthetic",
+    rule: 8,
+    world: edit((w) => {
+      w.activity.branchCreation.push(creation(RUN_810_CREATED));
+    }),
+    expect: reason("base_history_unverified"),
+  },
+  {
+    id: "R8-creation-1s-before",
+    title: "a creation one second before the earliest applicable run is benign",
+    source: "synthetic",
+    rule: 8,
+    world: edit((w) => {
+      w.activity.branchCreation = [creation(secondsAfter(RUN_810_CREATED, -1))];
+    }),
+    expect: SUCCEEDED_OWN,
+  },
+  {
+    id: "R8-creation-between-own-runs",
+    title: "a creation after the earliest applicable run blocks, even if before a later one",
+    source: "synthetic",
+    rule: 8,
+    world: edit((w) => {
+      w.runs.unshift(ownRun({ id: 37_600_002_840, runNumber: 2840, createdAt: "2026-10-06T10:00:00Z" }));
+      w.jobs[37_600_002_840] = allGreenJobs();
+      w.activity.branchCreation.push(creation("2026-10-07T00:00:00Z"));
+    }),
+    expect: reason("base_history_unverified"),
+  },
+  {
+    id: "R8-creation-after-ignored-run",
+    title: "only applicable runs anchor a creation: one after an ignored push run but before the PR run is benign",
+    source: "real run shapes; synthetic activity",
+    rule: 8,
+    world: edit((w) => {
+      w.runs.unshift(ownRun({ id: 37672136569, runNumber: 2853, event: "push", headBranch: PRODUCTION_REF, createdAt: "2026-10-07T19:07:49Z", template: "push" }));
+      w.activity.branchCreation = [creation("2026-10-07T19:30:00Z")];
+    }),
+    expect: SUCCEEDED_OWN,
+  },
+  {
+    id: "R8-creation-tz-offset",
+    title: "a creation written with -01:00 is AFTER the run in time, though earlier as a string",
+    source: "synthetic",
+    rule: 8,
+    world: edit((w) => {
+      w.observedAt = "2026-10-07T22:00:00Z";
+      w.activity.branchCreation.push(creation("2026-10-07T20:00:00-01:00"));
+    }),
+    expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
+    note: "ISO-8601 admits offsets; time is compared as instants. A parser that rejects offsets is also safe.",
+  },
+  {
+    id: "R8-creation-fractional",
+    title: "a creation half a second after created_at is after it",
+    source: "synthetic",
+    rule: 8,
+    world: edit((w) => {
+      w.activity.branchCreation.push(creation("2026-10-07T20:16:44.500Z"));
+    }),
+    expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
+    note: "String comparison would put '.500Z' before 'Z'.",
+  },
+  {
+    id: "R8-creation-tz-offset-run",
+    title: "a run created_at written with +01:00 is compared as an instant",
+    source: "synthetic",
+    rule: 8,
+    world: edit((w) => {
+      w.runs = [ownRun({ createdAt: "2026-10-07T21:16:44+01:00" })];
+      w.activity.branchCreation.push(creation("2026-10-07T20:30:00Z"));
+    }),
+    expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
+    note: "20:30Z is after 21:16:44+01:00 (= 20:16:44Z), though earlier as a string.",
+  },
+  {
+    id: "R8-creation-leap-second",
+    title: "a creation stamped 23:59:60Z (ISO-8601, but NaN to Date.parse) is not 'strictly before' anything",
+    source: "synthetic",
+    rule: 8,
+    world: edit((w) => {
+      w.observedAt = "2026-10-08T01:00:00Z";
+      w.activity.branchCreation.push(creation("2026-10-07T23:59:60Z"));
+    }),
+    expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
+    note: "SPEC §3.4 step 8: 'an unparseable timestamp included'.",
+  },
+  {
+    id: "R8-force-push-odd-format",
+    title: "a force push in any time format blocks (here -01:00, before the run in time)",
+    source: "synthetic",
+    rule: 8,
+    world: edit((w) => {
+      w.activity.forcePush = [fp("2026-10-07T18:00:00-01:00")];
+    }),
+    expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
+  },
+  {
+    id: "R8-window-360",
+    title: "an earliest applicable run exactly 360 days old is inside the window",
+    source: "synthetic (production older than the recorded year: no creation event)",
+    rule: 8,
+    world: edit((w) => {
       w.runs = [ownRun({ createdAt: daysBefore(w.observedAt, 360) })];
+      w.activity.branchCreation = [];
     }),
     expect: SUCCEEDED_OWN,
   },
   {
     id: "R8-window-360-plus-1s",
     title: "one second beyond 360 days is outside the window",
-    source: "synthetic",
+    source: "synthetic (production older than the recorded year: no creation event)",
     rule: 8,
     world: edit((w) => {
       w.runs = [ownRun({ createdAt: secondsAfter(daysBefore(w.observedAt, 360), -1) })];
+      w.activity.branchCreation = [];
     }),
     expect: reason("base_history_unverified"),
   },
   {
     id: "R8-window-earliest-governs",
     title: "a 400-day-old applicable run puts the whole set outside the window",
-    source: "synthetic",
+    source: "synthetic (production older than the recorded year: no creation event)",
     rule: 8,
     world: edit((w) => {
       w.runs.unshift(ownRun({ id: 37_000_000_001, runNumber: 1200, createdAt: daysBefore(w.observedAt, 400) }));
       w.jobs[37_000_000_001] = allGreenJobs();
+      w.activity.branchCreation = [];
     }),
     expect: reason("base_history_unverified"),
   },
@@ -562,60 +711,12 @@ export const SCENARIOS: Scenario[] = [
     expect: SUCCEEDED_OWN,
   },
   {
-    id: "R8-tz-offset-event",
-    title: "a force push written with a -01:00 offset is AFTER the run in time, though earlier as a string",
-    source: "synthetic",
-    rule: 8,
-    world: edit((w) => {
-      w.observedAt = "2026-10-07T22:00:00Z";
-      w.activity.forcePush = [fp("2026-10-07T20:00:00-01:00")];
-    }),
-    expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
-    note: "ISO-8601 (§2.5) admits offsets; time must be compared as instants. A parser that rejects offsets is also safe.",
-  },
-  {
-    id: "R8-fractional-event",
-    title: "a force push half a second after created_at is after it",
-    source: "synthetic",
-    rule: 8,
-    world: edit((w) => {
-      w.activity.forcePush = [fp("2026-10-07T20:16:44.500Z")];
-    }),
-    expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
-    note: "Fractional seconds are ISO-8601; string comparison would put '.500Z' before 'Z'.",
-  },
-  {
-    id: "R8-tz-offset-run",
-    title: "a run created_at written with +01:00 is compared as an instant",
-    source: "synthetic",
-    rule: 8,
-    world: edit((w) => {
-      w.runs = [ownRun({ createdAt: "2026-10-07T21:16:44+01:00" })];
-      w.activity.forcePush = [fp("2026-10-07T20:30:00Z")];
-    }),
-    expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
-    note: "20:30Z is after 21:16:44+01:00 (= 20:16:44Z), though earlier as a string.",
-  },
-  {
-    id: "R8-leap-second-event",
-    title: "a force push stamped 23:59:60Z (valid ISO-8601, but NaN to Date.parse) must not be silently ordered before the run",
-    source: "synthetic",
-    rule: 8,
-    world: edit((w) => {
-      w.observedAt = "2026-10-08T01:00:00Z";
-      w.activity.forcePush = [fp("2026-10-07T23:59:60Z")];
-    }),
-    expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
-    note: "NaN >= t is false: a parser that accepts it and a binder that compares with >= would ignore a real rewrite.",
-  },
-  {
     id: "R8-invalid-created-at",
-    title: "a run created_at that is not a real instant cannot anchor the history window",
+    title: "a run created_at that is not a real instant cannot anchor the window",
     source: "synthetic",
     rule: 8,
     world: edit((w) => {
       w.runs = [ownRun({ createdAt: "2026-13-07T20:16:44Z" })];
-      w.activity.forcePush = [fp(hoursAfter(RUN_810_CREATED, 1))];
     }),
     expect: { anyOf: [reason("base_history_unverified"), reason("malformed")] },
   },
@@ -944,8 +1045,8 @@ function REQUIRED_JOB_ROWS(): Scenario[] {
       "NC5-no-listing",
       "no job listing at all for the succeeded run",
       (w) => delete w.jobs[RUN_810],
-      { anyOf: [{ outcome: "INCOMPLETE", runs: [RUN_810] }, reason("malformed"), reason("ci_candidate_listing_too_large")] },
-      "The spec does not name the reason for an absent listing; it must not be SUCCEEDED.",
+      reason("ci_candidate_listing_too_large"),
+      "SPEC §3.4 step 10 (amended): a SUCCEEDED run with no job listing in jobsByRunId.",
     ],
     [
       "NC5-unrequired-failure",
@@ -1062,14 +1163,15 @@ export function orderScenarios(): Scenario[] {
 // demonstration, and closing the hole must flip it.
 // ---------------------------------------------------------------------------
 export interface Adversarial extends Scenario {
-  verdict: "CONFIRMED HOLE" | "SPEC AMBIGUITY" | "NO HOLE";
+  /** CLOSED: a hole the first pass confirmed, which the amended spec now refuses */
+  verdict: "CONFIRMED HOLE" | "CLOSED" | "SPEC AMBIGUITY" | "NO HOLE";
   sequence: string;
 }
 
 export const ADVERSARIAL: Adversarial[] = [
   {
     id: "A1-merge-before-created-at",
-    verdict: "CONFIRMED HOLE",
+    verdict: "CLOSED",
     title: "a production rewrite between GitHub computing the test merge and creating the run record is invisible",
     sequence:
       "push to the PR head at t0; GitHub computes refs/pull/N/merge = merge(P_old, H) (GITHUB_SHA is fixed then, and a conflicting PR gets no run at all, so the merge precedes the run); an admin force-pushes production from P_old to P_new (an ancestor of H, dropping commit X) at t0+5s; the run record is created at t0+7s and tests merge(P_old, H), which contains X; behind_by(P_new...H) = 0; rule 8 only looks at events >= created_at, so the rewrite 2s before created_at is ignored. The tested tree is not H's tree.",
@@ -1078,23 +1180,20 @@ export const ADVERSARIAL: Adversarial[] = [
     world: edit((w) => {
       w.activity.forcePush = [{ timestamp: secondsAfter(RUN_810_CREATED, -2), before: sha40(0x0001d), after: P0 }];
     }),
-    expect: SUCCEEDED_OWN,
-    note: "SPEC §3.4 rule 8: 'A rewrite before the earliest run is irrelevant: that run tested a base taken after it.' The base is taken when the merge is computed, which is BEFORE created_at.",
+    expect: reason("base_history_unverified"),
+    note: "First pass (b5f3affb): the spec mandated SUCCEEDED here. Amended step 8 blocks any force push in the year.",
   },
   {
     id: "A1b-reopen-on-a-stale-merge-ref",
     verdict: "SPEC AMBIGUITY",
-    title: "a reopen days after a production rewrite, if GitHub replays the merge ref it computed before the close",
+    title: "a reopened run on a merge computed before a rewrite that has aged out of the recorded year",
     sequence:
-      "#810 is closed at t0 with refs/pull/810/merge = merge(P_old, H); production is force-pushed to P_new (an ancestor of H) at t0+1d while the PR is closed; the PR is reopened at t0+2d. If the 'reopened' run's GITHUB_SHA is the pre-close merge (undocumented either way), it tests merge(P_old, H); its created_at is after the rewrite, so rule 8 calls the rewrite irrelevant. Same premise as A1, with an unbounded window.",
-    source: "synthetic",
+      "A PR closed for over a year with refs/pull/N/merge = merge(P_old, H); production rewritten while it was closed, more than a year ago; reopened now. If the 'reopened' run reuses the pre-close merge (undocumented either way), it tests merge(P_old, H). The rewrite is outside time_period=year, so the activity listing is empty and every step-8 condition holds. Any rewrite INSIDE the year now blocks (the amended rule), so only the aged-out case remains: SPEC §6 residual A1b.",
+    source: "synthetic: the aged-out rewrite is, by construction, absent from every listing",
     rule: 8,
-    world: edit((w) => {
-      w.runs = [ownRun({ createdAt: "2026-10-07T20:16:44Z" })];
-      w.activity.forcePush = [{ timestamp: "2026-10-06T12:00:00Z", before: sha40(0x0001d), after: P0 }];
-    }),
+    world: golden,
     expect: SUCCEEDED_OWN,
-    note: "Unsafe exactly when GitHub does not recompute the test merge commit before a 'reopened' run.",
+    note: "Residual: no 05A rule can see a rewrite that the year-long listing no longer holds.",
   },
   {
     id: "A2-head-rename-closes-pr",
@@ -1168,6 +1267,7 @@ export const ADVERSARIAL: Adversarial[] = [
     rule: 8,
     world: edit((w) => {
       w.runs = [ownRun({ createdAt: daysBefore(w.observedAt, 361) })];
+      w.activity.branchCreation = [];
     }),
     expect: reason("base_history_unverified"),
     note: "Whether GitHub retains a full year of activity, and what 'year' spans, is unverified (reported as an ambiguity).",
@@ -1186,16 +1286,27 @@ export const ADVERSARIAL: Adversarial[] = [
     expect: { outcome: "NO_RUN", runs: [] },
   },
   {
-    id: "A8-branch-creation-unread",
-    verdict: "SPEC AMBIGUITY",
-    title: "production was (re)created after the run with no recorded deletion or force push",
+    id: "A8a-creation-recorded-after-run",
+    verdict: "CLOSED",
+    title: "production (re)created after the run, with no recorded deletion or force push",
     sequence:
-      "e.g. the production branch renamed away and another branch renamed to its name: whether GitHub records a rename as branch_deletion/force_push on refs/heads/<productionRef> is undocumented. bindCi's activity input carries only force_push and branch_deletion, so a recorded branch_creation after the run cannot even be expressed.",
+      "First pass: bindCi did not read branch_creation, so a recreation recorded without its deletion (aged out, or a rename-in) was invisible. The amended step 8 reads branch_creation and blocks one that is not strictly before the earliest applicable run.",
     source: "synthetic",
     rule: 8,
     world: edit((w) => {
-      w.activity.branchCreation = [{ timestamp: hoursAfter(RUN_810_CREATED, 1), before: "0".repeat(40), after: P0 }];
+      w.activity.branchCreation.push(creation(hoursAfter(RUN_810_CREATED, 1)));
     }),
+    expect: reason("base_history_unverified"),
+  },
+  {
+    id: "A8b-rename-unrecorded",
+    verdict: "SPEC AMBIGUITY",
+    title: "a rename of or into the production name that GitHub records as no activity at all",
+    sequence:
+      "Whether renaming production away, or another branch into its name, produces any branch_deletion, branch_creation or force_push event on refs/heads/<productionRef> is undocumented. If it produces none, every listing is clean and nothing in 05A can see it (SPEC §6 residual A8).",
+    source: "synthetic: the unrecorded rename is, by construction, absent from every listing",
+    rule: 8,
+    world: golden,
     expect: SUCCEEDED_OWN,
   },
   {

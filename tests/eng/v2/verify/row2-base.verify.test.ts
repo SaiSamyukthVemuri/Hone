@@ -13,10 +13,10 @@ import { parseActivity, parseBranchRules, parseCompare, parseHeadBranchPrs, pars
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { bindBase } from "../../../../scripts/eng/v2/adapter/internal/bind/base.mjs";
-import { clone, deepFreeze, isDeepFrozen, noThrow } from "./support/deep";
+import { canon, clone, deepFreeze, isDeepFrozen, noThrow } from "./support/deep";
 import { exactFieldMutations, pick, purityViolations, sprinkle } from "./support/parser-props";
+import { rng } from "./support/prng";
 import {
-  H810,
   P0,
   PROD_REF_FULL,
   PRODUCTION_REF,
@@ -169,7 +169,7 @@ describe("row 2 verify: parseCompare (§2.1)", () => {
 // §2.2 parsePrContext — GraphQL, exact fields; the totalCount trap
 // ---------------------------------------------------------------------------
 describe("row 2 verify: parsePrContext (§2.2)", () => {
-  const params = { expectedNumber: 810, headSha: H810 };
+  const params = { expectedNumber: 810 };
   const spec810 = () => rawPrContextFor(golden());
   const withEvents = (n: number, hasNext = false) => {
     const raw = spec810();
@@ -381,6 +381,7 @@ describe("row 2 verify: parseBranchRules (§2.4)", () => {
 describe("row 2 verify: parseActivity (§2.5)", () => {
   const p = (activityType: string) => ({ activityType, ref: PROD_REF_FULL });
   const realMerges = () => REAL.verify("activity-pr-merge-week.json");
+  const realCreation = () => REAL.verify("activity-branch-creation-year.json");
 
   it("real answers: no force push and no deletion on production this year", () => {
     for (const [file, t] of [
@@ -393,15 +394,32 @@ describe("row 2 verify: parseActivity (§2.5)", () => {
     }
   });
 
-  it("real non-empty answer: production's three pr_merge events of the week, as recorded (verifier fixture)", () => {
-    const r = parseActivity(realMerges(), p("pr_merge"));
+  it("real non-empty answer: production's one branch_creation of the year (2026-05-16), as recorded", () => {
+    const r = parseActivity(realCreation(), p("branch_creation"));
+    expect(r.ok).toBe(true);
+    expect(r.record).toMatchObject({ capped: false });
+    expect(r.record.events).toEqual([
+      { timestamp: "2026-05-16T14:46:37Z", before: "0".repeat(40), after: "b04f26e5ff7a3c8ac77d800c968996974238ad60" },
+    ]);
+  });
+
+  it("only force_push, branch_deletion and branch_creation may be requested: the real pr_merge answer is refused (§2.5)", () => {
+    failsWith(parseActivity(realMerges(), p("pr_merge")), ["malformed"], "pr_merge");
+    failsWith(parseActivity([], p("push")), ["malformed"], "push, empty answer");
+  });
+
+  it("real pr_merge events, re-labelled as branch_creation, keep their timestamps and SHAs", () => {
+    const r = parseActivity(realMerges().map((e: any) => ({ ...e, activity_type: "branch_creation" })), p("branch_creation"));
     expect(r.ok).toBe(true);
     expect(r.record.capped).toBe(false);
-    expect(r.record.events.map((e: any) => [e.timestamp, e.before.slice(0, 8), e.after.slice(0, 8)])).toEqual([
-      ["2026-10-07T19:07:46Z", "c26bbdec", "6cdd830b"],
-      ["2026-10-07T15:24:34Z", "5fb25c8c", "c26bbdec"],
-      ["2026-10-07T12:30:53Z", "583f9334", "5fb25c8c"],
-    ]);
+    // §0 fixes the order but does not name it: compare as a set.
+    expect(r.record.events.map((e: any) => `${e.timestamp} ${e.before.slice(0, 8)} ${e.after.slice(0, 8)}`).sort()).toEqual(
+      [
+        "2026-10-07T19:07:46Z c26bbdec 6cdd830b",
+        "2026-10-07T15:24:34Z 5fb25c8c c26bbdec",
+        "2026-10-07T12:30:53Z 583f9334 5fb25c8c",
+      ].sort(),
+    );
   });
 
   it("an event of another activity type than requested is malformed (the real merges read as force pushes)", () => {
@@ -441,14 +459,14 @@ describe("row 2 verify: parseActivity (§2.5)", () => {
   });
 
   it("REST: stripped to consumed fields or sprinkled with new ones, the record is the same", () => {
-    const full = parseActivity(realMerges(), p("pr_merge"));
+    const full = parseActivity(realCreation(), p("branch_creation"));
     const shape = [{ activity_type: true, ref: true, timestamp: true, before: true, after: true }];
-    expect(parseActivity(pick(realMerges(), shape), p("pr_merge"))).toEqual(full);
-    expect(parseActivity(sprinkle(realMerges()), p("pr_merge"))).toEqual(full);
+    expect(parseActivity(pick(realCreation(), shape), p("branch_creation"))).toEqual(full);
+    expect(parseActivity(sprinkle(realCreation()), p("branch_creation"))).toEqual(full);
   });
 
   it("is pure and returns a deeply frozen record", () => {
-    expect(purityViolations(parseActivity, realMerges(), p("pr_merge"))).toEqual([]);
+    expect(purityViolations(parseActivity, realCreation(), p("branch_creation"))).toEqual([]);
   });
 });
 
@@ -457,13 +475,13 @@ describe("row 2 verify: parseActivity (§2.5)", () => {
 // ---------------------------------------------------------------------------
 describe("row 2 verify: bindBase (§2.6)", () => {
   const key810 = () => parsePrKey(rawKeyFor(golden()), { expectedNumber: 810 }).key;
-  const ctx = (raw = rawPrContextFor(golden())) => parsePrContext(raw, { expectedNumber: 810, headSha: H810 }).record;
+  const ctx = (raw = rawPrContextFor(golden())) => parsePrContext(raw, { expectedNumber: 810 }).record;
   /** a spec-shaped context answer for another PR (same values otherwise) */
   const ctxFor = (key: any) => {
     const w = golden();
     w.pr.number = key.prNumber;
     w.prContext.associated = [key.prNumber];
-    return parsePrContext(rawPrContextFor(w), { expectedNumber: key.prNumber, headSha: key.headSha }).record;
+    return parsePrContext(rawPrContextFor(w), { expectedNumber: key.prNumber }).record;
   };
   const cmp = (file: string, baseSha: string) => parseCompare(REAL.base(file), { baseSha }).record;
 
@@ -530,6 +548,132 @@ describe("row 2 verify: bindBase (§2.6)", () => {
       const out = noThrow(() => bindBase(bad));
       expect(out.threw, label).toBe(false);
       expect((out as any).value?.ok, label).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §0 as amended at 203ed1f4: required parameters, canonical order, malformed wins,
+// exotic input is malformed.
+// ---------------------------------------------------------------------------
+describe("row 2 verify: §0 request parameters are required (even for an empty answer)", () => {
+  const cmp = () => REAL.base("compare-810.json");
+  const ctx = () => rawPrContextFor(golden());
+  const cases: Array<[string, (raw: any, p: any) => any, () => any, unknown[]]> = [
+    ["parseCompare", parseCompare, cmp, [undefined, null, {}, { baseSha: P0.toUpperCase() }, { baseSha: P0.slice(1) }, { baseSha: 5 }]],
+    ["parsePrContext", parsePrContext, ctx, [undefined, null, {}, { expectedNumber: "810" }, { expectedNumber: 0 }, { expectedNumber: -810 }]],
+    ["parseHeadBranchPrs (empty answer)", parseHeadBranchPrs, () => [], [undefined, null, {}, { headRef: "" }, { headRef: 5 }]],
+    [
+      "parseActivity (empty answer)",
+      parseActivity,
+      () => [],
+      [
+        undefined,
+        null,
+        {},
+        { activityType: "force_push" },
+        { ref: PROD_REF_FULL },
+        { activityType: "force_push", ref: PRODUCTION_REF },
+        { activityType: "FORCE_PUSH", ref: PROD_REF_FULL },
+        { activityType: "pr_merge", ref: PROD_REF_FULL },
+        { activityType: "force_push", ref: "" },
+      ],
+    ],
+  ];
+  for (const [name, parse, raw, bads] of cases) {
+    it(`${name}: a missing or invalid parameter is malformed and never throws`, () => {
+      for (const params of bads) {
+        const out = noThrow(() => (params === undefined ? (parse as any)(raw()) : parse(raw(), params)));
+        expect(out.threw, `${name} ${JSON.stringify(params)}: threw`).toBe(false);
+        failsWith((out as any).value, ["malformed"], `${name} ${JSON.stringify(params)}`);
+      }
+    });
+  }
+
+  it("parseActivity accepts each of the three types with the full ref on an empty answer", () => {
+    for (const t of ["force_push", "branch_deletion", "branch_creation"])
+      expect(parseActivity([], { activityType: t, ref: PROD_REF_FULL })).toMatchObject({ ok: true, record: { events: [], capped: false } });
+  });
+});
+
+describe("row 2 verify: §0 canonical order — any reordering of the same answer gives the identical record", () => {
+  const shuffleTwice = <T,>(xs: T[], seed: number) => {
+    const r = rng(seed);
+    return [r.shuffle(xs), r.shuffle(xs)];
+  };
+
+  it("parseCompare: files in any order", () => {
+    const raw = REAL.base("compare-810.json");
+    const want = canon(parseCompare(raw, { baseSha: P0 }));
+    for (const files of shuffleTwice(raw.files, 1)) expect(canon(parseCompare({ ...clone(raw), files }, { baseSha: P0 }))).toBe(want);
+  });
+
+  it("parsePrContext: associated PRs and base-change nodes in any order", () => {
+    const w = golden();
+    w.prContext.associated = [810, 811, 812];
+    w.prContext.baseRefEvents = 3;
+    const raw = rawPrContextFor(w);
+    const want = canon(parsePrContext(raw, { expectedNumber: 810 }));
+    for (const nodes of shuffleTwice(raw.data.repository.object.associatedPullRequests.nodes, 2)) {
+      const r2 = clone(raw);
+      r2.data.repository.object.associatedPullRequests.nodes = nodes;
+      expect(canon(parsePrContext(r2, { expectedNumber: 810 }))).toBe(want);
+    }
+  });
+
+  it("parseHeadBranchPrs: PRs in any order", () => {
+    const el = (n: number, state: string) => ({ ...clone(REAL.base("head-branch-prs-810.json")[0]), number: n, state });
+    const raw = [el(810, "open"), el(702, "closed"), el(650, "closed")];
+    const want = canon(parseHeadBranchPrs(raw, { headRef: "feat/eng-loop-v1-05a" }));
+    for (const xs of shuffleTwice(raw, 3)) expect(canon(parseHeadBranchPrs(xs, { headRef: "feat/eng-loop-v1-05a" }))).toBe(want);
+  });
+
+  it("parseBranchRules: rules in any order", () => {
+    const raw = [{ type: "pull_request" }, { type: "deletion" }, { type: "non_fast_forward" }, { type: "required_linear_history" }];
+    const want = canon(parseBranchRules(raw));
+    for (const xs of shuffleTwice(raw, 4)) expect(canon(parseBranchRules(xs))).toBe(want);
+  });
+
+  it("parseActivity: events in any order", () => {
+    const raw = REAL.verify("activity-pr-merge-week.json").map((e: any) => ({ ...e, activity_type: "branch_creation" }));
+    const p = { activityType: "branch_creation", ref: PROD_REF_FULL };
+    const want = canon(parseActivity(raw, p));
+    for (const xs of shuffleTwice(raw, 5)) expect(canon(parseActivity(xs, p))).toBe(want);
+  });
+});
+
+describe("row 2 verify: §0 malformed wins, and exotic input is malformed", () => {
+  it("parsePrContext: base changes beyond one page AND a malformed node is malformed, not 'too_many'", () => {
+    const raw = rawPrContextFor(golden());
+    raw.data.repository.pullRequest.baseRefChanges = { pageInfo: { hasNextPage: true }, nodes: [{ __typename: "HeadRefForcePushedEvent" }] };
+    failsWith(parsePrContext(raw, { expectedNumber: 810 }), ["malformed"]);
+  });
+
+  it("parseActivity: a capped listing (100) holding one malformed event is malformed", () => {
+    const one = REAL.verify("activity-pr-merge-week.json")[0];
+    const raw = Array.from({ length: 100 }, (_, i) => ({ ...clone(one), id: i, activity_type: "force_push" }));
+    raw[57].timestamp = "yesterday";
+    failsWith(parseActivity(raw, { activityType: "force_push", ref: PROD_REF_FULL }), ["malformed"]);
+  });
+
+  it("every row-2 parser and bindBase: a throwing getter, a Proxy and null options are malformed (§0)", () => {
+    const getter = Object.defineProperty({}, "files", { enumerable: true, get: () => { throw new Error("getter"); } });
+    const hostile = new Proxy([], { get: () => { throw new Error("get"); }, ownKeys: () => { throw new Error("keys"); }, has: () => { throw new Error("has"); } });
+    const calls: Array<[string, () => any]> = [
+      ["parseCompare getter", () => parseCompare(getter, { baseSha: P0 })],
+      ["parseCompare proxy", () => parseCompare(hostile, { baseSha: P0 })],
+      ["parsePrContext proxy", () => parsePrContext(hostile, { expectedNumber: 810 })],
+      ["parseHeadBranchPrs proxy", () => parseHeadBranchPrs(hostile, { headRef: "x" })],
+      ["parseBranchRules proxy", () => parseBranchRules(hostile)],
+      ["parseActivity proxy", () => parseActivity(hostile, { activityType: "force_push", ref: PROD_REF_FULL })],
+      ["bindBase(null)", () => bindBase(null)],
+      ["bindBase(undefined)", () => bindBase(undefined)],
+      ["bindBase(proxy)", () => bindBase(hostile)],
+    ];
+    for (const [label, f] of calls) {
+      const out = noThrow(f);
+      expect(out.threw, `${label}: ${(out as any).error}`).toBe(false);
+      failsWith((out as any).value, ["malformed"], label);
     }
   });
 });

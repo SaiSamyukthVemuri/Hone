@@ -1,23 +1,20 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- records cross between the functions under test untyped */
 // Independent verifier support: World -> raw GitHub answers -> the REAL parsers ->
 // the REAL binders. The verifier never builds a normalized record itself: every
-// record bindBase/bindCi receive was produced by the implementation's own parser,
-// so only the composition below is assumed.
+// record bindBase/bindCi receive was produced by the implementation's own parser.
 //
-// ASSUMED COMPOSITION (SPEC-05A §3.4 names these inputs; where the spec is silent
-// the choice is recorded here, and nowhere else):
-//   base            = bindBase(...).value                                  (spec: "the §2.6 value")
-//   headBranchPrs   = parseHeadBranchPrs(...).record                       (spec: "the §2.3 record")
-//   rules           = parseBranchRules(...).record                         (spec: "the §2.4 record")
-//   activity        = { forcePush: parseActivity(...).record,
-//                       branchDeletion: parseActivity(...).record }        (spec: "each a §2.5 record")
-//   requiredJobNames= requiredJobs(classification)                         (spec: "the §3.3 set")
-//   runs            = parseWorkflowRuns(...).record                        (spec: silent; read as "the §3.1 record")
-//   jobsByRunId     = { [runId]: parseRunJobs(...).record }, and for a listing that cannot be complete, the
-//                     failed parser result in its place. The spec is silent; a black-box probe of the builder's
-//                     bindCi (7bf0d05c) showed it takes §3.2 RECORDS in a plain object keyed by run id and reads
-//                     anything else (absent, a Map, a parser result) as an unavailable listing.
-//   parseActivity's `ref` parameter = "refs/heads/<productionRef>", the request's own `ref` value.
+// COMPOSITION, from SPEC-05A §3.4 "Inputs" (amended at 203ed1f4):
+//   base            = bindBase(...).value                         (§2.6 value)
+//   headBranchPrs   = parseHeadBranchPrs(...).record              (§2.3 record)
+//   runs            = parseWorkflowRuns(raw).record = { runs }    (§3.1; the parser takes no parameters)
+//   jobsByRunId     = plain object, run id -> parseRunJobs(...).record (§3.2). A listing that cannot be
+//                     complete (ci_candidate_listing_too_large) leaves the run WITHOUT an entry ("a run with
+//                     no entry has no available listing"); any other parser failure ends the pipeline.
+//   requiredJobNames= requiredJobs(classification)                (§3.3)
+//   rules           = parseBranchRules(raw).record                (§2.4)
+//   activity        = { forcePush, branchDeletion, branchCreation }, each parseActivity(...).record (§2.5),
+//                     requested with the FULL ref refs/heads/<productionRef>
+//   parsePrContext's parameters are { expectedNumber } (§2.2 as amended).
 
 import { noThrow } from "./deep";
 import type { Result } from "./spec-model";
@@ -40,11 +37,11 @@ import {
 export interface Impl {
   parsePrKey: (raw: unknown, p: { expectedNumber: number }) => any;
   parseCompare: (raw: unknown, p: { baseSha: string }) => any;
-  parsePrContext: (raw: unknown, p: { expectedNumber: number; headSha: string }) => any;
+  parsePrContext: (raw: unknown, p: { expectedNumber: number }) => any;
   parseHeadBranchPrs: (raw: unknown, p: { headRef: string }) => any;
   parseBranchRules: (raw: unknown) => any;
   parseActivity: (raw: unknown, p: { activityType: string; ref: string }) => any;
-  parseWorkflowRuns: (raw: unknown, p: { workflowId: number; headSha: string }) => any;
+  parseWorkflowRuns: (raw: unknown) => any;
   parseRunJobs: (raw: unknown, p: { runId: number }) => any;
   bindBase: (a: any) => any;
   requiredJobs: (c: any) => any;
@@ -66,6 +63,12 @@ export function evaluate(w: World, impl: Impl): Evaluation {
   return run.value;
 }
 
+export const ACTIVITY_TYPES = [
+  ["forcePush", "force_push"],
+  ["branchDeletion", "branch_deletion"],
+  ["branchCreation", "branch_creation"],
+] as const;
+
 function evaluateUnsafe(w: World, impl: Impl): Evaluation {
   const keyR = impl.parsePrKey(rawKeyFor(w), { expectedNumber: w.pr.number });
   if (!keyR?.ok) throw new Error(`test setup: the scenario's key does not parse (${keyR?.reason})`);
@@ -73,7 +76,7 @@ function evaluateUnsafe(w: World, impl: Impl): Evaluation {
 
   const compare = impl.parseCompare(rawCompareFor(w), { baseSha: key.baseSha });
   if (!compare?.ok) return failed(compare, "parseCompare");
-  const prContext = impl.parsePrContext(rawPrContextFor(w), { expectedNumber: w.pr.number, headSha: key.headSha });
+  const prContext = impl.parsePrContext(rawPrContextFor(w), { expectedNumber: w.pr.number });
   if (!prContext?.ok) return failed(prContext, "parsePrContext");
   const base = impl.bindBase({ key, productionRef: PRODUCTION_REF, compare: compare.record, prContext: prContext.record });
   if (!base?.ok) return failed(base, "bindBase");
@@ -82,22 +85,19 @@ function evaluateUnsafe(w: World, impl: Impl): Evaluation {
   if (!headBranchPrs?.ok) return failed(headBranchPrs, "parseHeadBranchPrs");
   const rules = impl.parseBranchRules(rawRulesFor(w.rules));
   if (!rules?.ok) return failed(rules, "parseBranchRules");
-  const forcePush = impl.parseActivity(rawActivityFor("force_push", w.activity.forcePush), {
-    activityType: "force_push",
-    ref: PROD_REF_FULL,
-  });
-  if (!forcePush?.ok) return failed(forcePush, "parseActivity(force_push)");
-  const branchDeletion = impl.parseActivity(rawActivityFor("branch_deletion", w.activity.branchDeletion), {
-    activityType: "branch_deletion",
-    ref: PROD_REF_FULL,
-  });
-  if (!branchDeletion?.ok) return failed(branchDeletion, "parseActivity(branch_deletion)");
-  const runs = impl.parseWorkflowRuns(rawRunsFor(w), { workflowId: WORKFLOW_ID, headSha: key.headSha });
+  const activity: Record<string, unknown> = {};
+  for (const [field, type] of ACTIVITY_TYPES) {
+    const r = impl.parseActivity(rawActivityFor(type, w.activity[field]), { activityType: type, ref: PROD_REF_FULL });
+    if (!r?.ok) return failed(r, `parseActivity(${type})`);
+    activity[field] = r.record;
+  }
+  const runs = impl.parseWorkflowRuns(rawRunsFor(w));
   if (!runs?.ok) return failed(runs, "parseWorkflowRuns");
   const jobsByRunId: Record<number, unknown> = {};
   for (const [id, spec] of Object.entries(w.jobs)) {
     const parsed = impl.parseRunJobs(rawJobsFor(Number(id), spec), { runId: Number(id) });
-    jobsByRunId[Number(id)] = parsed?.ok ? parsed.record : parsed;
+    if (parsed?.ok) jobsByRunId[Number(id)] = parsed.record;
+    else if (parsed?.reason !== "ci_candidate_listing_too_large") return failed(parsed, `parseRunJobs(${id})`);
   }
   const requiredJobNames = impl.requiredJobs(w.classification);
 
@@ -109,7 +109,7 @@ function evaluateUnsafe(w: World, impl: Impl): Evaluation {
     jobsByRunId,
     requiredJobNames,
     rules: rules.record,
-    activity: { forcePush: forcePush.record, branchDeletion: branchDeletion.record },
+    activity,
     observedAt: w.observedAt,
     workflowId: WORKFLOW_ID,
     targetRepoId: TARGET_REPO_ID,

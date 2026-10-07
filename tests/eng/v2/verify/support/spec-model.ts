@@ -48,6 +48,12 @@ export interface Mutations {
   noCiDefinition?: boolean;
   /** an unparseable timestamp is let through, and compared as NaN */
   acceptInvalidTime?: boolean;
+  /** the PRE-AMENDMENT step 8 (b5f3affb): only rewrites at or after the earliest run count; creation unread (hole A1) */
+  oldStep8?: boolean;
+  /** branch_creation events are not read */
+  ignoreCreation?: boolean;
+  /** "at or after" computed as t >= earliest, so an unparseable (NaN) time counts as before */
+  geqNotStrict?: boolean;
 }
 
 const DAY = 86_400_000;
@@ -69,7 +75,8 @@ export function specModel(w: World, m: Mutations = {}): Result {
   const instant = (s: string) => !Number.isNaN(Date.parse(s));
   if (!m.acceptInvalidTime) {
     if (!w.runs.every((r) => instant(r.createdAt))) return fail("malformed");
-    if (![...w.activity.forcePush, ...w.activity.branchDeletion].every((e) => instant(e.timestamp))) return fail("malformed");
+    const events = [...w.activity.forcePush, ...w.activity.branchDeletion, ...w.activity.branchCreation];
+    if (!events.every((e) => instant(e.timestamp))) return fail("malformed");
   }
   // Parse stage, §2.1: the compare answer must report the base it was requested with (K0.baseSha).
   // bindBase consumes the parsed record, so this precedes every bindBase rule.
@@ -123,18 +130,28 @@ export function specModel(w: World, m: Mutations = {}): Result {
     .reduce((a, b) => (m.stringTimeCompare ? (b < a ? b : a) : at(b) < at(a) ? b : a));
   if (!m.noWindow && at(w.observedAt) - at(earliest) > 360 * DAY) return fail("base_history_unverified");
   if (!m.ignoreActivity) {
-    if (w.activity.forcePush.length >= 100 || w.activity.branchDeletion.length >= 100)
+    const { forcePush, branchDeletion, branchCreation } = w.activity;
+    if (forcePush.length >= 100 || branchDeletion.length >= 100 || (!m.oldStep8 && branchCreation.length >= 100))
       return fail("base_history_unverified");
-    const after = (t: string) =>
+    // "at or after the earliest applicable run": >= (or > under the strictlyAfter mutant)
+    const notBefore = (t: string) =>
       m.stringTimeCompare
         ? m.strictlyAfter
           ? t > earliest
           : t >= earliest
         : m.strictlyAfter
           ? at(t) > at(earliest)
-          : at(t) >= at(earliest);
-    if ([...w.activity.forcePush, ...w.activity.branchDeletion].some((e) => after(e.timestamp)))
-      return fail("base_history_unverified");
+          : m.geqNotStrict
+            ? at(t) >= at(earliest)
+            : !(at(t) < at(earliest)); // an unparseable time is not "strictly before"
+    if (m.oldStep8) {
+      if ([...forcePush, ...branchDeletion].some((e) => notBefore(e.timestamp))) return fail("base_history_unverified");
+    } else {
+      // amended (203ed1f4): any force push or deletion in the listing blocks, whatever its time
+      if (forcePush.length > 0 || branchDeletion.length > 0) return fail("base_history_unverified");
+      // a creation blocks unless strictly before the earliest applicable created_at
+      if (!m.ignoreCreation && branchCreation.some((e) => notBefore(e.timestamp))) return fail("base_history_unverified");
+    }
   }
   // rule 9
   const considered = m.newestRunOnly
@@ -155,14 +172,12 @@ export function specModel(w: World, m: Mutations = {}): Result {
   if (states.includes("FAILED")) return value("FAILED");
   if (states.includes("PENDING")) return value("PENDING");
   const required = modelRequiredJobs(w.classification);
+  // amended step 10: a SUCCEEDED run with no (complete) job listing -> ci_candidate_listing_too_large
+  if (considered.some((r) => !Array.isArray(w.jobs[r.id]))) return fail("ci_candidate_listing_too_large");
   let incomplete = false;
   for (const r of considered) {
     const listing = w.jobs[r.id];
-    if (listing === undefined) {
-      incomplete = true;
-      continue;
-    }
-    if (!Array.isArray(listing)) return fail("ci_candidate_listing_too_large");
+    if (!Array.isArray(listing)) continue;
     for (const name of required) {
       const named = listing.filter((j) => j.name === name);
       const good = (j: { status: string; conclusion: string | null }) =>

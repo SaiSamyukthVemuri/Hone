@@ -83,55 +83,86 @@ describe("row 1 verify: collectCoherent against the pass-boundary model", () => 
   });
 });
 
-describe("row 1 verify: readers outside their contract fail closed (§0: nothing throws; reasons are closed)", () => {
-  const OUT_OF_CONTRACT: Array<[string, unknown]> = [
-    ["undefined", undefined],
-    ["null", null],
-    ["{}", {}],
-    ["{ ok: true } without a key", { ok: true }],
-    ["{ ok: true, key: null }", { ok: true, key: null }],
-    ['{ ok: "true" }', { ok: "true", key: null }],
-    ["{ ok: false } without a reason", { ok: false }],
-    ['{ ok: false, reason: "banana" }', { ok: false, reason: "banana" }],
-    ["a Promise", Promise.resolve({ ok: true, key: null })],
-    ["a number", 42],
+describe("row 1 verify: every reader result is re-checked (§1 as amended; §0 nothing throws)", () => {
+  // [label, answer, reason when returned by readKey, reason when returned by readBody]
+  // §1: a key result whose key fails isPrKey -> malformed, even repeated; a body result
+  // without an own, defined value -> read_failed; a failure naming a reason outside the
+  // closed set, or anything that is not a result -> read_failed.
+  const inherited = Object.assign(Object.create({ value: 1 }), { ok: true });
+  const CASES: Array<[string, unknown, string, string]> = [
+    ["undefined", undefined, "read_failed", "read_failed"],
+    ["null", null, "read_failed", "read_failed"],
+    ["{}", {}, "read_failed", "read_failed"],
+    ["{ ok: true } with no key or value", { ok: true }, "malformed", "read_failed"],
+    ["{ ok: true, key: null }", { ok: true, key: null }, "malformed", "read_failed"],
+    ["{ ok: true, value: undefined }", { ok: true, value: undefined }, "malformed", "read_failed"],
+    ["{ ok: true } with an inherited value", inherited, "malformed", "read_failed"],
+    ['{ ok: "true" }', { ok: "true", key: null, value: 1 }, "read_failed", "read_failed"],
+    ["{ ok: false } without a reason", { ok: false }, "read_failed", "read_failed"],
+    ['{ ok: false, reason: "banana" }', { ok: false, reason: "banana" }, "read_failed", "read_failed"],
+    ["a Promise", Promise.resolve({ ok: true, key: null }), "read_failed", "read_failed"],
+    ["a number", 42, "read_failed", "read_failed"],
   ];
 
-  it("an out-of-contract readKey answer never yields a pass, never throws, and never leaks an open-set reason", () => {
-    for (const [label, bad] of OUT_OF_CONTRACT) {
+  it("readKey: each out-of-contract answer gives exactly the §1 reason, and nothing throws", () => {
+    for (const [label, bad, asKey] of CASES) {
       const out = noThrow(() => collectCoherent({ readKey: () => bad, readBody: () => ({ ok: true, value: 1 }) }));
       expect(out.threw, `${label}: ${(out as any).error}`).toBe(false);
       const r = (out as any).value;
       expect(r?.ok, label).toBe(false);
-      expect(isUnknownReason(r?.reason), `${label}: reason ${JSON.stringify(r?.reason)}`).toBe(true);
+      expect(r?.reason, label).toBe(asKey);
     }
   });
 
-  it("an out-of-contract readBody answer never yields a pass, never throws, and never leaks an open-set reason", () => {
-    for (const [label, bad] of OUT_OF_CONTRACT) {
+  it("readBody: each out-of-contract answer gives exactly the §1 reason, and nothing throws", () => {
+    for (const [label, bad, , asBody] of CASES) {
       let k = 0;
       const out = noThrow(() => collectCoherent({ readKey: () => ({ ok: true, key: BASE[k++ % 3] }), readBody: () => bad }));
       expect(out.threw, `${label}: ${(out as any).error}`).toBe(false);
       const r = (out as any).value;
       expect(r?.ok, label).toBe(false);
-      expect(isUnknownReason(r?.reason), `${label}: reason ${JSON.stringify(r?.reason)}`).toBe(true);
+      expect(r?.reason, label).toBe(asBody);
     }
   });
 
-  it("defense in depth: a readKey that returns the same NON-key twice is not a coherent pass", () => {
-    // Out of contract (readKey is parsePrKey over readPrKey), but PR-SNAPSHOT-01 §2 makes
-    // any value outside the nine-field key UNKNOWN(malformed); coherence of garbage proves nothing.
+  it("a closed failure reason from a reader passes through unchanged", () => {
+    for (const reason of ["malformed", "review_evidence_too_large", "external_contexts_too_large", "read_failed"]) {
+      let k = 0;
+      const r = collectCoherent({ readKey: () => ({ ok: true, key: BASE[k++ % 3] }), readBody: () => ({ ok: false, reason }) });
+      expect(r).toMatchObject({ ok: false, reason });
+    }
+  });
+
+  it("a NON-key returned twice is malformed, never a coherent pass", () => {
     for (const [label, junk] of [
       ["{ prNumber: 800 }", { prNumber: 800 }],
       ["{}", {}],
       ["an OPEN key missing headSha", { ...BASE[0], headSha: undefined }],
+      ["a key with an extra field", { ...BASE[0], extra: true }],
+      ["an OPEN key with a null baseSha", { ...BASE[0], baseSha: null }],
     ] as const) {
       const out = noThrow(() =>
         collectCoherent({ readKey: () => ({ ok: true, key: junk }), readBody: () => ({ ok: true, value: "evidence" }) }),
       );
       expect(out.threw, label).toBe(false);
-      expect((out as any).value?.ok, `${label}: ${canon((out as any).value)}`).toBe(false);
+      expect((out as any).value, `${label}: ${canon((out as any).value)}`).toMatchObject({ ok: false, reason: "malformed" });
     }
+  });
+
+  it("a valid K0 followed by a non-key K1 is malformed, not pr_key_moved", () => {
+    const keys = [{ ok: true, key: BASE[0] }, { ok: true, key: { prNumber: 800 } }];
+    let i = 0;
+    const r = collectCoherent({ readKey: () => keys[Math.min(i++, 1)], readBody: () => ({ ok: true, value: 1 }) });
+    expect(r).toMatchObject({ ok: false, reason: "malformed" });
+  });
+
+  it("the confirming pass re-checks its readers too", () => {
+    const first = { key: BASE[0], body: { reviews: 1 } };
+    const same = (a: unknown, b: unknown) => canon(a) === canon(b);
+    expect(confirmPass({ first, readKey: () => ({ ok: true, key: { prNumber: 800 } }), readBody: () => ({ ok: true, value: { reviews: 1 } }), sameEvidence: same })).toMatchObject({ ok: false, reason: "malformed" });
+    let k = 0;
+    expect(confirmPass({ first, readKey: () => ({ ok: true, key: BASE[k++ % 3] }), readBody: () => ({ ok: true }), sameEvidence: same })).toMatchObject({ ok: false, reason: "read_failed" });
+    expect(confirmPass({ first, readKey: () => ({ ok: false, reason: "banana" }), readBody: () => ({ ok: true, value: 1 }), sameEvidence: same })).toMatchObject({ ok: false, reason: "read_failed" });
   });
 });
 

@@ -47,17 +47,19 @@ describe("mutation detection A: the scenario table against the spec reading", ()
   const MUTANTS: Array<[string, Mutations, string[]]> = [
     // [name, mutation, rows that MUST detect it — the spec-named negative controls]
     ["(a) any successful run at the head SHA counts, regardless of event/branch/workflow/repository", { anyRunAtHead: true }, ["NC3-push-run", "NC6-other-workflow", "NC1-other-branch"]],
-    ["(b) the activity history is ignored (accepts after a force push or deletion)", { ignoreActivity: true }, ["NC2-force-push-after", "NC2-deletion-after"]],
+    ["(b) the activity history is ignored (accepts after a force push, deletion or recreation)", { ignoreActivity: true }, ["NC2-force-push-after", "NC2-deletion-after", "R8-creation-after-run"]],
     ["(c) base changes counted from the unfiltered timelineItems totalCount", { useTotalCount: true }, ["G-golden", "R4-totalcount-trap"]],
-    ["timestamps compared as strings, not instants", { stringTimeCompare: true }, ["R8-tz-offset-event", "R8-fractional-event"]],
-    ["'>' instead of '>=' against the earliest applicable run", { strictlyAfter: true }, ["R8-equal-instant"]],
+    ["the PRE-AMENDMENT step 8: rewrites before the earliest run ignored, creation unread (hole A1)", { oldStep8: true }, ["A1-merge-before-created-at", "NC2-force-push-before", "R8-one-second-before", "R8-creation-after-run"]],
+    ["branch_creation not read", { ignoreCreation: true }, ["R8-creation-after-run", "A8a-creation-recorded-after-run"]],
+    ["timestamps compared as strings, not instants", { stringTimeCompare: true }, ["R8-creation-tz-offset", "R8-creation-fractional"]],
+    ["a creation at the earliest instant treated as before it ('>' instead of 'not strictly before')", { strictlyAfter: true }, ["R8-creation-at-run"]],
+    ["an unparseable time let through and compared with '>=' (NaN reads as before)", { acceptInvalidTime: true, geqNotStrict: true }, ["R8-creation-leap-second"]],
     ["only the newest applicable run is aggregated", { newestRunOnly: true }, ["R10-failed-and-succeeded"]],
     ["a skipped required job counts as success", { skippedIsSuccess: true }, ["NC5-validate-skipped"]],
     ["rule 5 (shared head) omitted", { noSharedHead: true }, ["NC1-same-branch"]],
     ["rule 4 (base change) omitted", { noBaseRefChanged: true }, ["NC4-one-event"]],
     ["the 360-day window omitted", { noWindow: true }, ["R8-window-360-plus-1s"]],
     ["rule 3 (CI definition changed) omitted", { noCiDefinition: true }, ["R3-ci.yml"]],
-    ["an unparseable timestamp is accepted and compared as NaN", { acceptInvalidTime: true }, ["R8-leap-second-event"]],
   ];
 
   for (const [name, m, mustDetect] of MUTANTS) {

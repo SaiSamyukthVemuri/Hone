@@ -63,19 +63,18 @@ const realPushRuns = () => REAL.verify("runs-6cdd830b-push.json");
 const realJobsRaw = () => REAL.verify("jobs-810-run-latest.json");
 const runsOf = (runs: any[], total = runs.length) => ({ total_count: total, workflow_runs: runs });
 const runN = (i: number, over: any = {}) => ({ ...clone(realRuns().workflow_runs[0]), id: 40_000_000_000 + i, run_number: 5000 + i, ...over });
-const P = { workflowId: WORKFLOW_ID, headSha: H810 };
 
 // ---------------------------------------------------------------------------
 // §3.1 parseWorkflowRuns — CAP-01 single-response listing law
 // ---------------------------------------------------------------------------
 describe("row 3 verify: parseWorkflowRuns (§3.1, CAP-01 L1-L9)", () => {
   it("real answers parse: #810's pull_request run and production's push run (the parser does not filter)", () => {
-    expect(parseWorkflowRuns(realRuns(), P).ok).toBe(true);
-    expect(parseWorkflowRuns(realPushRuns(), { workflowId: WORKFLOW_ID, headSha: "6cdd830b0bcc5e3532016bc612bd0298db3533fb" }).ok).toBe(true);
+    expect(parseWorkflowRuns(realRuns()).ok).toBe(true);
+    expect(parseWorkflowRuns(realPushRuns()).ok).toBe(true);
   });
 
   it("the record never carries pull_requests, display_title or head_commit (CAP-01 §4: raw fields stay in the transport)", () => {
-    const r = parseWorkflowRuns(realRuns(), P);
+    const r = parseWorkflowRuns(realRuns());
     const s = canon(r.record);
     for (const leak of ["pull_requests", "pullRequests", "display_title", "displayTitle", "head_commit", "headCommit", "/pulls/810"])
       expect(s.includes(leak), leak).toBe(false);
@@ -83,29 +82,48 @@ describe("row 3 verify: parseWorkflowRuns (§3.1, CAP-01 L1-L9)", () => {
   });
 
   it("L1/L2: an empty listing and a full one of 100 are complete", () => {
-    expect(parseWorkflowRuns(runsOf([]), P).ok).toBe(true);
-    expect(parseWorkflowRuns(runsOf(Array.from({ length: 100 }, (_, i) => runN(i))), P).ok).toBe(true);
+    expect(parseWorkflowRuns(runsOf([])).ok).toBe(true);
+    expect(parseWorkflowRuns(runsOf(Array.from({ length: 100 }, (_, i) => runN(i)))).ok).toBe(true);
   });
 
   it("L3: 100 runs with total_count 101 is ci_candidate_listing_too_large", () => {
-    failsWith(parseWorkflowRuns(runsOf(Array.from({ length: 100 }, (_, i) => runN(i)), 101), P), ["ci_candidate_listing_too_large"]);
+    failsWith(parseWorkflowRuns(runsOf(Array.from({ length: 100 }, (_, i) => runN(i)), 101)), ["ci_candidate_listing_too_large"]);
   });
 
-  it("L4: a total_count that differs from the runs returned fails closed (SPEC says malformed, CAP-01 L4 says too_large)", () => {
-    failsWith(parseWorkflowRuns(runsOf([runN(1)], 2), P), ["ci_candidate_listing_too_large", "malformed"], "1 of 2");
-    failsWith(parseWorkflowRuns(runsOf([runN(1), runN(2)], 1), P), ["ci_candidate_listing_too_large", "malformed"], "2 of 1");
+  it("L4: a total_count that differs from the runs returned is ci_candidate_listing_too_large (§3.1 as amended)", () => {
+    failsWith(parseWorkflowRuns(runsOf([runN(1)], 2)), ["ci_candidate_listing_too_large"], "1 of 2");
+    failsWith(parseWorkflowRuns(runsOf([runN(1), runN(2)], 1)), ["ci_candidate_listing_too_large"], "2 of 1");
+  });
+
+  it("malformed wins: an incomplete listing that also breaks the schema is malformed (§0, §3.1)", () => {
+    failsWith(parseWorkflowRuns(runsOf([runN(1, { run_attempt: 0 }), ...Array.from({ length: 99 }, (_, i) => runN(i + 2))], 101)), ["malformed"], "101 with a bad run");
+    failsWith(parseWorkflowRuns(runsOf([runN(1), runN(2, { id: runN(1).id })], 5)), ["malformed"], "count mismatch and a duplicate id");
+  });
+
+  it("status is any string, the empty string included: the parser accepts it (step 9 classifies it)", () => {
+    for (const status of ["", "exploded", "COMPLETED"]) expect(parseWorkflowRuns(runsOf([runN(1, { status })])).ok, JSON.stringify(status)).toBe(true);
+  });
+
+  it("the record is { runs } sorted by ascending runNumber, with exactly the §3.1 fields", () => {
+    const r = rng(0x31);
+    const runs = r.shuffle(Array.from({ length: 9 }, (_, i) => runN(i, { run_number: 7000 - i * 13 })));
+    const rec = parseWorkflowRuns(runsOf(runs)).record;
+    const nums = rec.runs.map((x: any) => x.runNumber);
+    expect(nums).toEqual([...nums].sort((a: number, b: number) => a - b));
+    const FIELDS = ["id", "runNumber", "workflowId", "event", "headSha", "headBranch", "headRepoId", "status", "conclusion", "runAttempt", "createdAt"];
+    for (const x of rec.runs) expect(Object.keys(x).sort()).toEqual([...FIELDS].sort());
   });
 
   it("L5/L6: a duplicated run id or run_number is malformed", () => {
-    failsWith(parseWorkflowRuns(runsOf([runN(1), runN(2, { id: runN(1).id })]), P), ["malformed"], "same id");
-    failsWith(parseWorkflowRuns(runsOf([runN(1), runN(2, { run_number: runN(1).run_number })]), P), ["malformed"], "same run_number");
+    failsWith(parseWorkflowRuns(runsOf([runN(1), runN(2, { id: runN(1).id })])), ["malformed"], "same id");
+    failsWith(parseWorkflowRuns(runsOf([runN(1), runN(2, { run_number: runN(1).run_number })])), ["malformed"], "same run_number");
   });
 
   it("L7: any reordering of a valid listing gives the same normalized listing", () => {
     const runs = Array.from({ length: 7 }, (_, i) => runN(i));
-    const a = parseWorkflowRuns(runsOf(runs), P);
+    const a = parseWorkflowRuns(runsOf(runs));
     const r = rng(0x17);
-    for (let k = 0; k < 10; k++) expect(canon(parseWorkflowRuns(runsOf(r.shuffle(runs)), P))).toBe(canon(a));
+    for (let k = 0; k < 10; k++) expect(canon(parseWorkflowRuns(runsOf(r.shuffle(runs))))).toBe(canon(a));
   });
 
   it("L9: a bad total_count, a missing or non-array workflow_runs, or a run outside the schema is malformed", () => {
@@ -120,7 +138,7 @@ describe("row 3 verify: parseWorkflowRuns (§3.1, CAP-01 L1-L9)", () => {
       ["a null run", { total_count: 1, workflow_runs: [null] }],
       ["an array answer", [runN(1)]],
     ];
-    for (const [label, raw] of envelopes) failsWith(parseWorkflowRuns(raw, P), ["malformed"], label);
+    for (const [label, raw] of envelopes) failsWith(parseWorkflowRuns(raw), ["malformed"], label);
     const fields: Array<[string, any]> = [
       ["id 0", { id: 0 }],
       ["id '1'", { id: "1" }],
@@ -147,11 +165,11 @@ describe("row 3 verify: parseWorkflowRuns (§3.1, CAP-01 L1-L9)", () => {
       ["created_at month 13", { created_at: "2026-13-07T20:16:44Z" }],
       ["created_at 23:59:60 (NaN to Date.parse)", { created_at: "2026-10-07T23:59:60Z" }],
     ];
-    for (const [label, over] of fields) failsWith(parseWorkflowRuns(runsOf([runN(1, over)]), P), ["malformed"], label);
+    for (const [label, over] of fields) failsWith(parseWorkflowRuns(runsOf([runN(1, over)])), ["malformed"], label);
   });
 
   it("null head_branch, null head_repository and null conclusion are allowed", () => {
-    expect(parseWorkflowRuns(runsOf([runN(1, { head_branch: null, head_repository: null, conclusion: null, status: "queued" })]), P).ok).toBe(true);
+    expect(parseWorkflowRuns(runsOf([runN(1, { head_branch: null, head_repository: null, conclusion: null, status: "queued" })])).ok).toBe(true);
   });
 
   it("REST: stripped to consumed fields or sprinkled with new ones, the record is the same", () => {
@@ -173,13 +191,13 @@ describe("row 3 verify: parseWorkflowRuns (§3.1, CAP-01 L1-L9)", () => {
         },
       ],
     };
-    const full = parseWorkflowRuns(realRuns(), P);
-    expect(parseWorkflowRuns(pick(realRuns(), shape), P)).toEqual(full);
-    expect(parseWorkflowRuns(sprinkle(realRuns()), P)).toEqual(full);
+    const full = parseWorkflowRuns(realRuns());
+    expect(parseWorkflowRuns(pick(realRuns(), shape))).toEqual(full);
+    expect(parseWorkflowRuns(sprinkle(realRuns()))).toEqual(full);
   });
 
   it("is pure and returns a deeply frozen record", () => {
-    expect(purityViolations(parseWorkflowRuns, realRuns(), P)).toEqual([]);
+    expect(purityViolations(parseWorkflowRuns, realRuns())).toEqual([]);
   });
 });
 
@@ -197,9 +215,47 @@ describe("row 3 verify: parseRunJobs (§3.2)", () => {
     failsWith(parseRunJobs(realJobsRaw(), { runId: RUN_810 + 1 }), ["malformed"]);
   });
 
-  it("101 jobs is ci_candidate_listing_too_large; a count that differs fails closed", () => {
+  it("101 jobs, or a count that differs from the jobs returned, is ci_candidate_listing_too_large (§3.2 as amended)", () => {
     failsWith(parseRunJobs({ total_count: 101, jobs: Array.from({ length: 100 }, (_, i) => job(i)) }, { runId: RUN_810 }), ["ci_candidate_listing_too_large"]);
-    failsWith(parseRunJobs({ ...realJobsRaw(), total_count: 9 }, { runId: RUN_810 }), ["ci_candidate_listing_too_large", "malformed"], "9 vs 8");
+    failsWith(parseRunJobs({ ...realJobsRaw(), total_count: 9 }, { runId: RUN_810 }), ["ci_candidate_listing_too_large"], "9 vs 8");
+  });
+
+  it("malformed wins: a count mismatch that also holds a malformed job is malformed (§0)", () => {
+    const raw = { ...realJobsRaw(), total_count: 9 };
+    raw.jobs[2] = { ...raw.jobs[2], name: "" };
+    failsWith(parseRunJobs(raw, { runId: RUN_810 }), ["malformed"]);
+  });
+
+  it("runId is required: a missing or invalid runId is malformed, even for an empty listing (§0, §3.2)", () => {
+    for (const params of [undefined, null, {}, { runId: 0 }, { runId: -1 }, { runId: String(RUN_810) }, { runId: 1.5 }]) {
+      const out = noThrow(() => (params === undefined ? (parseRunJobs as any)({ total_count: 0, jobs: [] }) : parseRunJobs({ total_count: 0, jobs: [] }, params)));
+      expect(out.threw, JSON.stringify(params)).toBe(false);
+      failsWith((out as any).value, ["malformed"], JSON.stringify(params));
+    }
+  });
+
+  it("a job status is any string, the empty string included", () => {
+    expect(parseRunJobs({ total_count: 1, jobs: [job(1, { status: "", conclusion: null })] }, { runId: RUN_810 }).ok).toBe(true);
+  });
+
+  it("the record is { jobs: [{ name, status, conclusion }] } sorted by name, then status, then conclusion (null first)", () => {
+    const listing = [
+      job(1, { name: "beta", status: "completed", conclusion: "success" }),
+      job(2, { name: "alpha", status: "queued", conclusion: null }),
+      job(3, { name: "alpha", status: "completed", conclusion: "failure" }),
+      job(4, { name: "alpha", status: "completed", conclusion: null }),
+    ];
+    const want = [
+      { name: "alpha", status: "completed", conclusion: null },
+      { name: "alpha", status: "completed", conclusion: "failure" },
+      { name: "alpha", status: "queued", conclusion: null },
+      { name: "beta", status: "completed", conclusion: "success" },
+    ];
+    const r = rng(0x32);
+    for (let k = 0; k < 6; k++) {
+      const rec = parseRunJobs({ total_count: 4, jobs: r.shuffle(listing) }, { runId: RUN_810 }).record;
+      expect(rec.jobs).toEqual(want);
+    }
   });
 
   it("violations are malformed", () => {
@@ -359,20 +415,38 @@ describe("row 3 verify: bindCi metamorphic properties", () => {
     expect(bad).toEqual([]);
   });
 
-  it("adding rewrites strictly before the earliest applicable run never changes the result", () => {
+  it("adding a branch CREATION strictly before every run never changes the result (step 8 as amended)", () => {
     const bad: string[] = [];
     for (const s of SCENARIOS) {
       const w0 = s.world();
-      if (w0.activity.forcePush.length > 90 || w0.activity.branchDeletion.length > 90) continue;
+      if (w0.activity.branchCreation.length > 90) continue;
       const times = w0.runs.map((x) => Date.parse(x.createdAt)).filter((t) => !Number.isNaN(t));
       if (times.length === 0) continue;
       const before = new Date(Math.min(...times) - 3_600_000).toISOString().replace(".000Z", "Z");
       const want = canon(outcome(w0));
       const w = s.world();
-      w.activity.forcePush.push({ timestamp: before, before: sha40(1), after: sha40(2) });
-      w.activity.branchDeletion.push({ timestamp: before, before: sha40(3), after: "0".repeat(40) });
+      w.activity.branchCreation.push({ timestamp: before, before: "0".repeat(40), after: sha40(2) });
       const got = canon(outcome(w));
       if (got !== want) bad.push(`${s.id}: ${want} became ${got}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("adding ANY force push or deletion, at any time in the year, turns every applicable-run result into base_history_unverified", () => {
+    const bad: string[] = [];
+    for (const s of SCENARIOS) {
+      const r0 = evaluate(s.world(), IMPL);
+      // only worlds whose pipeline reaches step 8 with applicable runs: rules 1-7 passed
+      if (!r0.result.ok || r0.result.outcome === "NO_RUN") continue;
+      for (const [field, ev] of [
+        ["forcePush", { timestamp: "2026-01-02T03:04:05Z", before: sha40(5), after: sha40(6) }],
+        ["branchDeletion", { timestamp: "2026-01-02T03:04:05Z", before: sha40(7), after: "0".repeat(40) }],
+      ] as const) {
+        const w = s.world();
+        w.activity[field].push(ev);
+        const got = outcome(w);
+        if (got.ok || (got as any).reason !== "base_history_unverified") bad.push(`${s.id} + ${field}: ${canon(got)}`);
+      }
     }
     expect(bad).toEqual([]);
   });
@@ -395,14 +469,91 @@ describe("row 3 verify: bindCi metamorphic properties", () => {
     expect(bad).toEqual([]);
   });
 
-  it("missing inputs fail closed with a closed reason and never throw", () => {
+  it("a missing input is malformed, never a pass, and nothing throws (§3.4 'An input outside these shapes is malformed')", () => {
     const e = evaluate(SCENARIOS[0].world(), IMPL);
     const args = e.bindCiArgs;
+    expect(e.result).toMatchObject({ ok: true, outcome: "SUCCEEDED" });
     for (const k of Object.keys(args)) {
       const out = noThrow(() => bindCi({ ...args, [k]: undefined }));
       expect(out.threw, `${k} undefined: threw ${(out as any).error}`).toBe(false);
-      const v = (out as any).value;
-      expect(v?.ok === true && v.value?.outcome === "SUCCEEDED", `${k} undefined still SUCCEEDED`).toBe(false);
+      expect((out as any).value, `${k} undefined`).toMatchObject({ ok: false, reason: "malformed" });
     }
   });
+});
+
+describe("row 3 verify: bindCi input shapes (§3.4 'Inputs', as amended)", () => {
+  const golden0 = () => evaluate(SCENARIOS[0].world(), IMPL).bindCiArgs;
+  const with_ = (f: (a: any) => any) => {
+    const a = golden0();
+    return f({ ...a, activity: { ...a.activity }, jobsByRunId: { ...a.jobsByRunId } });
+  };
+  const STRICT: Array<[string, () => any]> = [
+    ["jobsByRunId as a Map", () => with_((a) => ({ ...a, jobsByRunId: new Map(Object.entries(a.jobsByRunId)) }))],
+    ["a jobsByRunId value that is a parser failure, not a §3.2 record", () => with_((a) => ({ ...a, jobsByRunId: { [RUN_810]: { ok: false, reason: "ci_candidate_listing_too_large" } } }))],
+    ["jobsByRunId null", () => with_((a) => ({ ...a, jobsByRunId: null }))],
+    ["runs as a bare array (not { runs })", () => with_((a) => ({ ...a, runs: a.runs.runs }))],
+    ["runs.runs not an array", () => with_((a) => ({ ...a, runs: { runs: "x" } }))],
+    ["requiredJobNames a string", () => with_((a) => ({ ...a, requiredJobNames: JOB.changes }))],
+    ["observedAt not a time", () => with_((a) => ({ ...a, observedAt: "yesterday" }))],
+    ["a key with an extra field", () => with_((a) => ({ ...a, key: { ...a.key, extra: 1 } }))],
+    ["a key that is not OPEN-shaped (null baseSha)", () => with_((a) => ({ ...a, key: { ...a.key, baseSha: null } }))],
+    ["base {}", () => with_((a) => ({ ...a, base: {} }))],
+    ["headBranchPrs without capped", () => with_((a) => ({ ...a, headBranchPrs: { numbers: [810] } }))],
+    ["rules without its flags", () => with_((a) => ({ ...a, rules: { types: ["deletion", "non_fast_forward"] } }))],
+    ["workflowId 0", () => with_((a) => ({ ...a, workflowId: 0 }))],
+    ["workflowId a string", () => with_((a) => ({ ...a, workflowId: String(WORKFLOW_ID) }))],
+    ["targetRepoId 0", () => with_((a) => ({ ...a, targetRepoId: 0 }))],
+    ["requiredJobNames the empty string", () => with_((a) => ({ ...a, requiredJobNames: "" }))],
+    ["headBranchPrs.capped the string 'false'", () => with_((a) => ({ ...a, headBranchPrs: { ...a.headBranchPrs, capped: "false" } }))],
+    ["headBranchPrs.capped 0", () => with_((a) => ({ ...a, headBranchPrs: { ...a.headBranchPrs, capped: 0 } }))],
+    [
+      "base without filesCapped",
+      () =>
+        with_((a) => {
+          const base = { ...a.base };
+          delete base.filesCapped;
+          return { ...a, base };
+        }),
+    ],
+    ["null arguments", () => null],
+  ];
+
+  // §3.3 always requires changed-path detection and the aggregator, so an empty required
+  // set can never be "the §3.3 set": whatever its reason, it must never be a pass.
+  for (const [label, names] of [
+    ["an empty array", []],
+    ["an empty Set", new Set()],
+  ] as const) {
+    it(`requiredJobNames as ${label} is never SUCCEEDED (no required job would be checked)`, () => {
+      const out = noThrow(() => bindCi(with_((a) => ({ ...a, requiredJobNames: names }))));
+      expect(out.threw, label).toBe(false);
+      const v = (out as any).value;
+      expect(v?.ok === true && v.value?.outcome === "SUCCEEDED", `${label}: ${JSON.stringify(v)}`).toBe(false);
+    });
+  }
+  for (const [label, args] of STRICT) {
+    it(`${label} is malformed, never a pass`, () => {
+      const out = noThrow(() => bindCi(args()));
+      expect(out.threw, `${label}: ${(out as any).error}`).toBe(false);
+      expect((out as any).value).toMatchObject({ ok: false, reason: "malformed" });
+    });
+  }
+
+  // These two sit between "an input outside these shapes is malformed" and step 8's
+  // "events is not an array / capped is not false -> base_history_unverified":
+  // the spec does not say which wins, so either closed reason is accepted — never a pass.
+  const HISTORY: Array<[string, () => any]> = [
+    ["activity without branchCreation (the pre-amendment shape)", () => with_((a) => ({ ...a, activity: { forcePush: a.activity.forcePush, branchDeletion: a.activity.branchDeletion } }))],
+    ["a listing whose events is not an array", () => with_((a) => ({ ...a, activity: { ...a.activity, forcePush: { events: null, capped: false } } }))],
+    ["a listing whose capped is not false", () => with_((a) => ({ ...a, activity: { ...a.activity, branchDeletion: { events: [], capped: "false" } } }))],
+  ];
+  for (const [label, args] of HISTORY) {
+    it(`${label} is never a pass (malformed or base_history_unverified)`, () => {
+      const out = noThrow(() => bindCi(args()));
+      expect(out.threw, label).toBe(false);
+      const v = (out as any).value;
+      expect(v?.ok, label).toBe(false);
+      expect(["malformed", "base_history_unverified"], `${label}: ${v?.reason}`).toContain(v?.reason);
+    });
+  }
 });

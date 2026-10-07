@@ -51,12 +51,12 @@ const MUTANTS: Array<[string, MutantFactory, string[]]> = [
     "(a) any successful run at the head SHA counts, regardless of event/branch/workflow/repository",
     (w) => ({
       ...REAL_IMPL,
-      parseWorkflowRuns: (raw: any, p: any) => {
+      parseWorkflowRuns: (raw: any) => {
         const r = clone(raw);
         for (const run of r?.workflow_runs ?? [])
           if (run?.head_sha === w.pr.headSha)
             Object.assign(run, { event: "pull_request", workflow_id: WORKFLOW_ID, head_branch: w.pr.headRef, head_repository: { ...(run.head_repository ?? {}), id: w.pr.headRepoId } });
-        return REAL_IMPL.parseWorkflowRuns(r, p);
+        return REAL_IMPL.parseWorkflowRuns(r);
       },
     }),
     ["NC3-push-run", "NC6-other-workflow", "NC1-other-branch"],
@@ -110,6 +110,43 @@ const MUTANTS: Array<[string, MutantFactory, string[]]> = [
       },
     }),
     ["NC5-validate-missing"],
+  ],
+  [
+    "the PRE-AMENDMENT step 8 (b5f3affb): rewrites before the earliest applicable run ignored, creation unread (hole A1)",
+    () => ({
+      ...REAL_IMPL,
+      bindCi: (a: any) => {
+        // the record shapes are SPEC §3.1 / §2.5 as amended: { runs: [...] }, { events, capped }
+        const applicable = (a?.runs?.runs ?? []).filter(
+          (r: any) =>
+            r.workflowId === a.workflowId &&
+            r.event === "pull_request" &&
+            r.headSha === a.key.headSha &&
+            r.headRepoId === a.key.headRepoId &&
+            r.headBranch === a.key.headRef,
+        );
+        if (applicable.length === 0) return REAL_IMPL.bindCi(a);
+        const earliest = Math.min(...applicable.map((r: any) => Date.parse(r.createdAt)));
+        const keepAfter = (l: any) => ({ ...l, events: l.events.filter((e: any) => !(Date.parse(e.timestamp) < earliest)) });
+        return REAL_IMPL.bindCi({
+          ...a,
+          activity: {
+            forcePush: keepAfter(a.activity.forcePush),
+            branchDeletion: keepAfter(a.activity.branchDeletion),
+            branchCreation: { events: [], capped: false },
+          },
+        });
+      },
+    }),
+    ["A1-merge-before-created-at", "NC2-force-push-before", "R8-one-second-before", "R8-creation-after-run"],
+  ],
+  [
+    "branch_creation unread",
+    () => ({
+      ...REAL_IMPL,
+      bindCi: (a: any) => REAL_IMPL.bindCi({ ...a, activity: { ...a.activity, branchCreation: { events: [], capped: false } } }),
+    }),
+    ["R8-creation-after-run", "R8-creation-at-run", "A8a-creation-recorded-after-run"],
   ],
   [
     "rules in force trusted as history (no activity, no window)",
