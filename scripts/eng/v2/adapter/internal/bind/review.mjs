@@ -6,14 +6,17 @@
 //   A — a PR review object: `commit_id == K0.headSha` AND exactly one 10-hex
 //       Reviewed-commit marker equal to the head's first 10 characters;
 //   B — a PR issue comment whose body BEGINS with the clean verdict, with the
-//       same single-marker rule. Channel B is a 10-hex V1 binding, not a
-//       full-SHA binding (ARCH-01 §17 channel B, §41).
+//       same single-marker rule, that has NEVER BEEN EDITED: a writer can edit
+//       another account's comment while its author stays the same (R4-EDIT).
+//       Channel B is a 10-hex V1 binding, not a full-SHA binding (ARCH-01 §17
+//       channel B, §41).
 // 05A computes `qualifiesAtHead`; it does not decide trust. The actor's
 // numeric id and type travel with every artifact, and 05B checks them against
 // policy. Logins never enter the evidence.
 // ---------------------------------------------------------------------------
 
-import { fail, okValue } from "../../../contract/strict.mjs";
+import { fail, isObject, okValue } from "../../../contract/strict.mjs";
+import { isOpenKey, isReviewEvidenceRecord } from "./shapes.mjs";
 
 export const REVIEW_POLICY = Object.freeze({
   codex: Object.freeze({ id: 199175422, type: "Bot" }),
@@ -35,8 +38,13 @@ function markerQualifies(body, headSha) {
   return m !== null && m[1] === headSha.slice(0, 10);
 }
 
-export function bindReviews({ key, evidence, policy = REVIEW_POLICY }) {
+export function bindReviews(input) {
   try {
+    if (!isObject(input)) return fail("malformed", "bindReviews received an input outside its contract");
+    const { key, evidence, policy = REVIEW_POLICY } = input;
+    if (!isOpenKey(key) || !isReviewEvidenceRecord(evidence) || !isObject(policy) || typeof policy.cleanPrefix !== "string") {
+      return fail("malformed", "bindReviews received an input outside its contract");
+    }
     const reviews = [];
     for (const r of evidence.reviews) {
       if (!REVIEW_STATES.includes(r.state)) return fail("malformed", `review state ${r.state} is outside GitHub's set`);
@@ -55,7 +63,7 @@ export function bindReviews({ key, evidence, policy = REVIEW_POLICY }) {
         channel: "CLEAN_COMMENT",
         actor: c.author,
         verdict: "CLEAN",
-        qualifiesAtHead: markerQualifies(c.body, key.headSha),
+        qualifiesAtHead: !c.edited && markerQualifies(c.body, key.headSha),
       });
     }
     const threads = evidence.threads.map((t) => ({

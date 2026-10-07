@@ -261,6 +261,23 @@ describe("every row-2 parser: the request is required, and nothing throws", () =
     expect(parseActivity([], { activityType: "force_push", ref: ACT })).toMatchObject({ ok: true });
   });
 
+  it("bindBase refuses null, a partial key or a partial record as malformed, never throwing", () => {
+    const k = key("pr-810-open-draft.json", 810);
+    const compare = parseCompare(load("base/compare-810.json"), { baseSha: BASE_TIP }).record;
+    const prContext = parsePrContext(load("base/pr-context-810.json"), { expectedNumber: 810 }).record;
+    for (const input of [
+      null,
+      undefined,
+      { key: { headSha: k.headSha }, productionRef: PROD, compare, prContext },
+      { key: k, productionRef: PROD, compare: { ...compare, files: "x" }, prContext },
+      { key: k, productionRef: PROD, compare, prContext: { ...prContext, changedFiles: -1 } },
+      { key: k, productionRef: "", compare, prContext },
+    ]) {
+      expect(() => bindBase(input as any)).not.toThrow();
+      expect(bindBase(input as any)).toMatchObject({ ok: false, reason: "malformed" });
+    }
+  });
+
   it.each(cases)("%s: an exotic answer is malformed, never an exception", (_n, parse, _raw, good) => {
     expect(() => parse(hostile(), good)).not.toThrow();
     expect(parse(hostile(), good)).toMatchObject({ ok: false, reason: "malformed" });
@@ -269,6 +286,38 @@ describe("every row-2 parser: the request is required, and nothing throws", () =
   it("parseBranchRules: an exotic answer is malformed, never an exception", () => {
     expect(() => parseBranchRules(hostile())).not.toThrow();
     expect(parseBranchRules(hostile())).toMatchObject({ ok: false, reason: "malformed" });
+  });
+});
+
+describe("row-2 records come out in a canonical order (SPEC-05A §0)", () => {
+  it("reordered compare files, associated PRs, head-branch PRs, rule types and activity events normalize identically", () => {
+    const compare = load("base/compare-810.json");
+    const reversedCompare = { ...clone(compare), files: [...clone(compare.files)].reverse() };
+    expect(parseCompare(reversedCompare, { baseSha: BASE_TIP })).toEqual(parseCompare(compare, { baseSha: BASE_TIP }));
+
+    const ctx = load("base/pr-context-810.json");
+    const twoAssociated = clone(ctx);
+    twoAssociated.data.repository.object.associatedPullRequests.nodes = [{ number: 900 }, { number: 810 }];
+    const swapped = clone(twoAssociated);
+    swapped.data.repository.object.associatedPullRequests.nodes.reverse();
+    expect(parsePrContext(swapped, { expectedNumber: 810 })).toEqual(parsePrContext(twoAssociated, { expectedNumber: 810 }));
+    expect(parsePrContext(twoAssociated, { expectedNumber: 810 }).record.associatedPrNumbers).toEqual([810, 900]);
+
+    const prs = load("base/head-branch-prs-810.json");
+    const morePrs = [...clone(prs), { ...clone(prs[0]), number: 5 }];
+    expect(parseHeadBranchPrs([...morePrs].reverse(), { headRef: "feat/eng-loop-v1-05a" })).toEqual(
+      parseHeadBranchPrs(morePrs, { headRef: "feat/eng-loop-v1-05a" }),
+    );
+
+    const rules = [{ type: "non_fast_forward" }, { type: "deletion" }, { type: "pull_request" }];
+    expect(parseBranchRules([...rules].reverse())).toEqual(parseBranchRules(rules));
+
+    const ACT = `refs/heads/${PROD}`;
+    const event = (t: string, b: string) => ({ activity_type: "force_push", ref: ACT, timestamp: t, before: b.repeat(40), after: "f".repeat(40) });
+    const events = [event("2026-01-01T00:00:00Z", "a"), event("2026-02-01T00:00:00Z", "b"), event("2026-02-01T00:00:00Z", "a")];
+    expect(parseActivity([...events].reverse(), { activityType: "force_push", ref: ACT })).toEqual(
+      parseActivity(events, { activityType: "force_push", ref: ACT }),
+    );
   });
 });
 

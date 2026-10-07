@@ -17,6 +17,7 @@ import {
   fail,
   graphqlData,
   hasExactly,
+  isIsoUtc,
   isNonNegInt,
   isObject,
   isPosInt,
@@ -31,7 +32,7 @@ const LIMIT = 100;
 export const REVIEW_EVIDENCE_QUERY =
   "query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){pullRequest(number:$n){number " +
   `reviews(first:100){totalCount pageInfo{hasNextPage} nodes{databaseId state body commit{oid} ${ACTOR}}} ` +
-  `comments(first:100){totalCount pageInfo{hasNextPage} nodes{databaseId body ${ACTOR}}} ` +
+  `comments(first:100){totalCount pageInfo{hasNextPage} nodes{databaseId body lastEditedAt ${ACTOR}}} ` +
   "reviewThreads(first:100){totalCount pageInfo{hasNextPage} nodes{isResolved isOutdated " +
   "resolvedBy{__typename login databaseId} " +
   `comments(first:100){totalCount pageInfo{hasNextPage} nodes{databaseId ${ACTOR}}}}}}}}`;
@@ -121,9 +122,12 @@ function parse(raw, opts) {
     });
 
     const comments = connection(p.comments, state).map((c) => {
-      if (!isObject(c) || !hasExactly(c, ["databaseId", "body", "author"])) throw new Malformed("comment");
+      if (!isObject(c) || !hasExactly(c, ["databaseId", "body", "lastEditedAt", "author"])) throw new Malformed("comment");
       if (!isPosInt(c.databaseId) || typeof c.body !== "string") throw new Malformed("comment");
-      return { id: c.databaseId, body: c.body, author: actorOf(c.author) };
+      if (!(c.lastEditedAt === null || isIsoUtc(c.lastEditedAt))) throw new Malformed("comment edit time");
+      // Anyone with write access can edit another account's comment while its author stays the same,
+      // so an edited body is no longer that author's own statement (SPEC-05A §4.2, R4-EDIT).
+      return { id: c.databaseId, body: c.body, edited: c.lastEditedAt !== null, author: actorOf(c.author) };
     });
 
     const threads = connection(p.reviewThreads, state).map((t) => {
