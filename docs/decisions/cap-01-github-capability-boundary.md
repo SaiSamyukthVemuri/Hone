@@ -9,7 +9,7 @@
 | **Scope** | Every runtime module under `scripts/eng/v2/`, the V2 entry shim, and every other runtime module's static imports into them. |
 | **Not in scope** | Runtime implementation; edits to #800, #802 or #803; `ci.yml`; 05A; 05B; ARCH-02. |
 | **Authored at** | production `4eccefd2fff7efa1abc1a9048531e8046865027d`. |
-| **Amended** | CAP-01-READER-STATE-01, 2026-10-06 (§15): `readCandidateRuns` also returns each candidate run's mutable execution state. CAP-01-ATTEST-READER-01, 2026-10-07 (§16): `readRunAttestation` has one frozen two-operation request plan. CAP-01-READER-COMPLETENESS-01, 2026-10-07 (§17): `readReviewEvidence` and `readCommitRollup` return complete evidence from one response, or UNKNOWN. |
+| **Amended** | CAP-01-READER-STATE-01, 2026-10-06 (§15); CAP-01-ATTEST-READER-01, 2026-10-07 (§16); CAP-01-READER-COMPLETENESS-01, 2026-10-07 (§17). This row is an index only: each amendment's behaviour is defined in its own section. |
 
 > **What this record is — and is not.** It provides **Goal B, accidental architecture-drift protection**, through static
 > architectural lint. It does **not** provide **Goal C, hostile in-process capability containment**, and Goal B does not
