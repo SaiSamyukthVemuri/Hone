@@ -356,7 +356,8 @@ nothing fails its own negative fixtures.
   - the entry shim's content.
 
   Any difference fails until this record and the goldens are amended in the same change. G3 compares what the source
-  declares; it does not observe what a module does at run time.
+  declares; it does not observe what a module does at run time. In particular, it freezes neither the HTTP method nor
+  the primitive's `gh api` invocation, so it does not prove that a reader stays read-only at run time (§10).
 - **G4 — static capability-use lint in `collect.mjs` (allowlist of uses).** Scope analysis of `collect.mjs` allows
   exactly the uses of §6 for the imported `createReaders` binding and the binding it initializes:
   - one call of `createReaders()`, as a `const` initializer in the body of the exported `collect` function;
@@ -434,9 +435,15 @@ its workflow runs, a compare, a file at a commit, commit statuses, check runs, r
 list all return `200` (Appendix). Credential isolation alone therefore does not establish exclusive read authority.
 
 **Whose credential.** The primitive inherits the `gh` session of whoever runs V2 (§4). At authoring, the operator's
-session carries the `repo`, `workflow`, `gist` and `read:org` scopes, write scopes among them (Appendix). The V1 readers
-are fixed reads (§4, G3), but nothing in this record limits what same-process code could do with that session. §11
-governs this.
+session carries the `repo`, `workflow`, `gist` and `read:org` scopes, write scopes among them (Appendix). Nothing in
+this record limits what same-process code could do with a credential it reaches. §11 governs this.
+
+**Read-only is a credential property, not a G3 guarantee.** §4 declares every V1 reader a read, and G3 statically
+freezes that declared surface: reader names, GraphQL documents or REST route templates, parameter types, output schemas
+and export surfaces. That is architectural lint against accidental drift. It does **not** prove that a reader stays
+read-only over HTTP at run time, because G3 freezes neither the HTTP method nor the primitive's `gh api` invocation.
+Before its first live collection, 05A uses the separate read-only GitHub credential already decided (§11). A reader
+changed into a write would therefore fail at that credential's permission boundary; G3 does not guarantee it.
 
 **Accepted only at the advisory level.** This residual is accepted only while:
 - ENG-LOOP is advisory and observation-oriented;
@@ -469,6 +476,11 @@ not first settle isolation is incomplete by this record.
 **At authoring.** V2 does not run yet. Its primitive will inherit the `gh` session of whoever runs it (§4). The
 operator's session at authoring carries write scopes (§10), and a controller running under it would hold write-scoped
 credentials — a condition listed above.
+
+**Operator decision, 2026-10-06.** 05A will not run under that session. Before its first live GitHub collection it
+uses a separate read-only GitHub credential suited to the frozen reader set of §4. The 05A work derives and documents
+that credential's minimum permissions from the exact GitHub operations it uses; none are guessed here. The
+write-scoped session stays for human and operator work. The threat model above is unchanged.
 
 ## 12. Re-entry order
 
@@ -523,6 +535,11 @@ Goals A and B now, not Goal C — and directed this record narrowed, with no gua
 - The broad transport-to-transport edge is removed. The graph itself now makes `collect.mjs` the only module that may
   import the reader factory: primitive → reader modules → `index.mjs` → `collect.mjs` (§3, fixture N17). No new guard
   and no capability-flow parser was added.
+
+**Post-merge clarification — wording only, by operator decision.** Codex's review of `e5395dc044`, the one that
+marking the PR ready triggered (review `5430905644`, P1), found that G3 freezes neither the HTTP method nor the
+`gh api` invocation. §10's "fixed reads (§4, G3)" therefore claimed more than G3 checks. The claim was narrowed in §8
+(G3), §10 and §11. No guard, AST rule or method denylist was added, and the security claim was not expanded.
 
 If a fresh review finds that this record still overclaims its enforcement, **stop**: no further static escape detector
 is added.
