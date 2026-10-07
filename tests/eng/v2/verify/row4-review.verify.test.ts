@@ -39,7 +39,7 @@ import {
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — ENG-LOOP V1 05A rows 4-5: trusted review provenance and
-// review threads. Oracle: SPEC-05A §0, §4.1, §4.2 (203ed1f4, amended f75ca255); ARCH-01 §17-§22, §24
+// review threads. Oracle: SPEC-05A §0, §4.1, §4.2 (203ed1f4, amended f75ca255 and 63bd3b6e); ARCH-01 §17-§22, §24
 // (05A computes qualifiesAtHead and carries identities; trust is 05B's); CAP-01 §17.
 // ===========================================================================
 
@@ -50,11 +50,16 @@ const failsWith = (r: any, reasons: string[], label = "") => {
   expect(isUnknownReason(r?.reason)).toBe(true);
 };
 
-describe("rows 4-5 verify: the policy values are the spec's", () => {
-  it("the Codex bot, the human resolver and the clean prefix equal SPEC §4.2 / ARCH-01 §20, §17b", () => {
-    expect(REVIEW_POLICY.codex).toEqual({ id: CODEX_ID, type: "Bot" });
-    expect(REVIEW_POLICY.humanResolvers).toEqual([{ id: OPERATOR_ID, type: "User" }]);
-    expect(REVIEW_POLICY.cleanPrefix).toBe(CLEAN_PREFIX);
+describe("rows 4-5 verify: 05A's review policy is the spec's (§4.2, amended 63bd3b6e)", () => {
+  // §4.2: "`policy` is required and is exactly `{ cleanPrefix }`, a non-empty string; the collector passes
+  // `{ cleanPrefix: \"Codex Review: Didn't find any major issues.\" }` … Whom to trust — the Codex bot and the human
+  // resolvers — is 05B's policy (SPEC-05B §3), never 05A's." The ids (Codex 199175422, resolver 26781116) are 05B's.
+  it("REVIEW_POLICY is exactly { cleanPrefix } with the §4.2 prefix, frozen, and carries no trust ids", () => {
+    expect(REVIEW_POLICY).toEqual({ cleanPrefix: CLEAN_PREFIX });
+    expect(Object.keys(REVIEW_POLICY)).toEqual(["cleanPrefix"]);
+    expect(Object.isFrozen(REVIEW_POLICY)).toBe(true);
+    expect(JSON.stringify(REVIEW_POLICY)).not.toContain(String(CODEX_ID));
+    expect(JSON.stringify(REVIEW_POLICY)).not.toContain(String(OPERATOR_ID));
   });
 });
 
@@ -141,17 +146,24 @@ describe("rows 4-5 verify: parseReviewEvidence properties (§0, §4.1)", () => {
 describe("rows 4-5 verify: bindReviews properties (§4.2; ARCH-01 §24)", () => {
   const evidence = (n: 800 | 809) => parseReviewEvidence(reviewAnswer(n), { expectedNumber: n }).record;
 
-  it("trust is 05B's: changing the policy's Codex id and resolvers changes nothing 05A emits", () => {
+  it("trust is 05B's: 05A takes no trust input — a policy extended with a Codex id, resolvers or review states is malformed", () => {
     for (const [n, head] of [
       [809, H809],
       [800, "fe62f51f0fd95fc97d2e21eef71d179e2e701358"],
     ] as const) {
       const key = keyAt(IMPL, n, head);
-      const a = bindReviews({ key, evidence: evidence(n), policy: REVIEW_POLICY });
-      const b = bindReviews({ key, evidence: evidence(n), policy: { ...REVIEW_POLICY, codex: { id: 1, type: "Bot" }, humanResolvers: [] } });
-      expect(a.ok && b.ok, `#${n}`).toBe(true);
-      expect(canon(b.value), `#${n}`).toBe(canon(a.value));
+      expect(bindReviews({ key, evidence: evidence(n), policy: REVIEW_POLICY }).ok, `#${n}`).toBe(true);
+      for (const extra of [{ codex: { id: CODEX_ID, type: "Bot" } }, { humanResolvers: [{ id: OPERATOR_ID, type: "User" }] }, { acceptedReviewStates: ["COMMENTED"] }]) {
+        const v = bindReviews({ key, evidence: evidence(n), policy: { ...REVIEW_POLICY, ...extra } });
+        expect(v, `#${n} ${Object.keys(extra)[0]}`).toMatchObject({ ok: false, reason: "malformed" });
+      }
     }
+  });
+
+  it("trust is 05B's: every actor's artifact is emitted with its identity, whoever it is (05A never filters by actor)", () => {
+    const v = bindReviews({ key: keyAt(IMPL, 809, H809), evidence: evidence(809), policy: REVIEW_POLICY });
+    const actors = new Set(artifactSummary(v.value).map((s: string) => s.split("|")[3]));
+    expect([...actors].sort()).toEqual([`Bot:${CODEX_ID}`, `User:${OPERATOR_ID}`].sort());
   });
 
   it("the clean prefix is the POLICY's value, never a hard-coded string (ARCH-01 §21)", () => {
@@ -168,7 +180,8 @@ describe("rows 4-5 verify: bindReviews properties (§4.2; ARCH-01 §24)", () => 
   });
 
   // §0 "Binders check their inputs first … An input outside them — null, a partial key, a Map where a plain
-  // object is specified, a missing flag — is malformed, never a pass"; §4.2 names policy as an input.
+  // object is specified, a missing flag — is malformed, never a pass"; §4.2 (63bd3b6e): "A missing, empty or
+  // extended policy is malformed".
   const key809 = () => keyAt(IMPL, 809, H809);
   for (const [label, args] of [
     ["null arguments", () => null],
@@ -176,6 +189,12 @@ describe("rows 4-5 verify: bindReviews properties (§4.2; ARCH-01 §24)", () => 
     ["no policy", () => ({ key: key809(), evidence: evidence(809) })],
     ["policy undefined", () => ({ key: key809(), evidence: evidence(809), policy: undefined })],
     ["policy null", () => ({ key: key809(), evidence: evidence(809), policy: null })],
+    ["an empty policy {}", () => ({ key: key809(), evidence: evidence(809), policy: {} })],
+    ["an empty clean prefix", () => ({ key: key809(), evidence: evidence(809), policy: { cleanPrefix: "" } })],
+    ["a clean prefix that is not a string", () => ({ key: key809(), evidence: evidence(809), policy: { cleanPrefix: 5 } })],
+    ["a clean prefix in an array", () => ({ key: key809(), evidence: evidence(809), policy: { cleanPrefix: [CLEAN_PREFIX] } })],
+    ["a policy that is a Map", () => ({ key: key809(), evidence: evidence(809), policy: new Map([["cleanPrefix", CLEAN_PREFIX]]) })],
+    ["an extended policy (an unknown field)", () => ({ key: key809(), evidence: evidence(809), policy: { cleanPrefix: CLEAN_PREFIX, zz: 1 } })],
     ["no evidence", () => ({ key: key809(), policy: REVIEW_POLICY })],
     ["no key", () => ({ evidence: evidence(809), policy: REVIEW_POLICY })],
     ["a partial key", () => ({ key: { headSha: H809 }, evidence: evidence(809), policy: REVIEW_POLICY })],

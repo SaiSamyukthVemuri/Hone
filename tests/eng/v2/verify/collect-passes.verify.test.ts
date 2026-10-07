@@ -470,8 +470,23 @@ describe("collector §5.4: evidenceHash", () => {
     }
   });
 
-  // A consequence §5.4 mandates, pinned so 05B/05C cannot miss it: the hash identifies GitHub's answers only.
-  it("equal hashes do NOT imply equal rows: observedAt (step 8's 360-day window) and the local CI definition are outside the hash", async () => {
+  // §5.4 (63bd3b6e): the hash is SHA-256 of { schema, key, body, localCi: { blobs, tablePinned } }; "the observation
+  // time … enters the rows only through rule 8's 360-day window, so two collections with equal hashes bind equal rows
+  // unless an applicable run crosses that window between them".
+  it("the local CI definition is in the hash: the pin flag and either local blob change it", async () => {
+    const a = (await run(goldenC())).r;
+    const unpinned = (await run(goldenC(), {}, { local: { ...LOCAL(), tablePinned: false } })).r;
+    expect(unpinned.evidence.rows.ci).toMatchObject({ ok: false, reason: "ci_definition_mismatch" });
+    expect(unpinned.evidenceHash).not.toBe(a.evidenceHash);
+    for (const p of [BLOB_CI, BLOB_CLASSIFY]) {
+      const local = { ...LOCAL(), blobs: { ...(LOCAL().blobs as Record<string, string>), [p]: sha40(0x10ca1) } };
+      const b = (await run(goldenC(), {}, { local })).r;
+      expect(b.evidence.rows.ci, p).toMatchObject({ ok: false, reason: "ci_definition_mismatch" });
+      expect(b.evidenceHash, p).not.toBe(a.evidenceHash);
+    }
+  });
+
+  it("the clock is the one input outside the hash: an applicable run crossing the 360-day window binds a different row under an equal hash (as §5.4 states)", async () => {
     const w = goldenC();
     w.base.activity.branchCreation = []; // production older than the recorded year
     w.base.runs = [ownRun({ createdAt: "2025-10-13T09:00:00Z" })];
@@ -480,11 +495,29 @@ describe("collector §5.4: evidenceHash", () => {
     expect(a.evidence.rows.ci).toMatchObject({ ok: true, value: { outcome: "SUCCEEDED" } });
     expect(b.evidence.rows.ci).toMatchObject({ ok: false, reason: "base_history_unverified" });
     expect(b.evidenceHash).toBe(a.evidenceHash);
-    const c = (await run(goldenC(), {}, { local: { ...LOCAL(), tablePinned: false } })).r;
-    const d = (await run(goldenC())).r;
-    expect(c.evidence.rows.ci).toMatchObject({ ok: false, reason: "ci_definition_mismatch" });
-    expect(d.evidence.rows.ci).toMatchObject({ ok: true, value: { outcome: "SUCCEEDED" } });
-    expect(c.evidenceHash).toBe(d.evidenceHash);
+  });
+
+  it("away from the window, equal hashes bind equal rows (the clock changes nothing else)", async () => {
+    const a = (await run(goldenC(), {}, { now: () => "2026-10-07T21:00:00Z" })).r;
+    const b = (await run(goldenC(), {}, { now: () => "2026-10-09T03:00:00Z" })).r;
+    expect(b.evidenceHash).toBe(a.evidenceHash);
+    expect(JSON.stringify(b.evidence.rows)).toBe(JSON.stringify(a.evidence.rows));
+  });
+
+  // NEW FINDING (pass 4, low): step 0 does not list the policy, and the hash does not cover it. A collect policy
+  // whose targetRepoId differs from the readers' binds fork_head under the golden hash, so §5.4's "it names everything
+  // the rows were bound from except the clock" does not hold for the policy. Strict known-failure: when 63bd3b6e's
+  // behaviour changes (the policy checked at step 0 or hashed), this row fails and must be re-derived.
+  it.fails("[known deviation at 63bd3b6e] a collection whose policy differs is refused at step 0 or hashes differently", async () => {
+    const a = (await run(goldenC())).r;
+    const fake = fakeTransport(goldenC());
+    const readers = createReaders({ request: fake.request, policy: POLICY });
+    const b = await collect({ prNumber: 810, readers, local: LOCAL(), now: () => NOW, policy: { ...POLICY, repoId: 1 } });
+    if (b.ok === false) {
+      expect(b).toMatchObject({ reason: "malformed", stage: "collect" });
+      return;
+    }
+    expect(b.evidenceHash === a.evidenceHash && JSON.stringify(b.evidence.rows) !== JSON.stringify(a.evidence.rows)).toBe(false);
   });
 
   it("terminal: equal keys hash equal; a different draft flag hashes differently", async () => {
@@ -496,56 +529,121 @@ describe("collector §5.4: evidenceHash", () => {
   });
 });
 
-describe("collector: inputs outside the contract fail closed before any request, and collect never throws", () => {
-  for (const [label, prNumber] of [
-    ["a string PR number", "810"],
-    ["zero", 0],
-    ["a fraction", 810.5],
-  ] as const) {
-    it(`${label}: refused before any request`, async () => {
-      const { r, fake } = await run(goldenC(), {}, { prNumber });
-      expect(r.THREW, String(r.THREW)).toBeUndefined();
-      expect(r.ok).toBe(false);
-      expect(r.reason).toBe("malformed");
-      expect(fake.log.length).toBe(0);
-    });
-  }
+// ---------------------------------------------------------------------------
+// §5.3 step 0 (amended 63bd3b6e): "Before the first request, every option is checked: a positive PR number, all
+// eleven readers, a complete local CI definition (§5.2: a classifier, a 40-hex blob for each path, the pin flag)
+// and a clock that returns a time — milliseconds, a valid Date, or an ISO-8601 UTC string. Anything else is
+// { ok: false, reason: "malformed", stage: "collect" } with no request made, never a throw."
+// ---------------------------------------------------------------------------
+describe("collector §5.3 step 0: every option is checked before the first request", () => {
+  const READER_NAMES = [
+    "readPrKey",
+    "readCompare",
+    "readPrContext",
+    "readHeadBranchPrs",
+    "readBranchRules",
+    "readActivity",
+    "readCandidateRuns",
+    "readRunJobs",
+    "readReviewEvidence",
+    "readCommitRollup",
+    "readFileBlob",
+  ];
+  /** collect with one option replaced; counts the requests the fake saw */
+  const attempt = async (over: (o: any) => any) => {
+    const fake = fakeTransport(goldenC());
+    const readers = createReaders({ request: fake.request, policy: POLICY });
+    const out = noThrow(() => collect(over({ prNumber: 810, readers, local: LOCAL(), now: () => NOW, policy: POLICY })));
+    if (out.threw) return { r: { THREW: String((out as any).error) } as any, n: fake.log.length };
+    const v: any = (out as any).value;
+    return { r: v && typeof v.then === "function" ? await v : v, n: fake.log.length };
+  };
+  const refused = (r: any, n: number, label: string) => {
+    expect(r.THREW, `${label}: threw ${r.THREW}`).toBeUndefined();
+    expect(r, label).toMatchObject({ ok: false, reason: "malformed", stage: "collect" });
+    for (const k of Object.keys(r)) expect(["ok", "reason", "detail", "stage", "diagnostics"], `${label}: carries ${k}`).toContain(k);
+    expect(n, `${label}: requests made`).toBe(0);
+  };
 
-  it("missing or empty readers fail closed (read_failed) without throwing", async () => {
-    for (const [label, readers] of [
-      ["no readers", undefined],
-      ["empty readers", {}],
-      ["null readers", null],
-    ] as const) {
-      const out = noThrow(() => collect({ prNumber: 810, readers, local: LOCAL(), now: () => NOW, policy: POLICY }));
-      expect(out.threw, `${label}: ${(out as any).error}`).toBe(false);
-      const v = (out as any).value;
-      const res = v && typeof v.then === "function" ? await v : v;
-      expect(res?.ok, label).toBe(false);
-      expect(isUnknownReason(res?.reason), `${label}: ${res?.reason}`).toBe(true);
-    }
-  });
-
-  // §5.4 defines failure as a result ({ ok: false, reason, detail, stage, diagnostics }) and §0 says nothing
-  // throws. A clock that is not a function, a clock that returns no time, and null options are caller misuse,
-  // but each must still fail closed rather than throw.
-  const fresh = () => createReaders({ request: fakeTransport(goldenC()).request, policy: POLICY });
-  for (const [label, args] of [
-    ["a clock that is a string, not a function", () => ({ prNumber: 810, readers: fresh(), local: LOCAL(), now: NOW, policy: POLICY })],
-    ["a clock that returns no time", () => ({ prNumber: 810, readers: fresh(), local: LOCAL(), now: () => "not a time", policy: POLICY })],
+  const L = () => LOCAL();
+  const blobs = () => L().blobs as Record<string, string>;
+  const CASES: Array<[string, (o: any) => any]> = [
+    // the PR number
+    ["a string PR number", (o) => ({ ...o, prNumber: "810" })],
+    ["PR number zero", (o) => ({ ...o, prNumber: 0 })],
+    ["a negative PR number", (o) => ({ ...o, prNumber: -810 })],
+    ["a fractional PR number", (o) => ({ ...o, prNumber: 810.5 })],
+    ["no PR number", (o) => ({ ...o, prNumber: undefined })],
+    // the readers
+    ["no readers", (o) => ({ ...o, readers: undefined })],
+    ["null readers", (o) => ({ ...o, readers: null })],
+    ["empty readers", (o) => ({ ...o, readers: {} })],
+    ...READER_NAMES.map((name): [string, (o: any) => any] => [
+      `readers without ${name}`,
+      (o) => {
+        const r = { ...o.readers };
+        delete r[name];
+        return { ...o, readers: r };
+      },
+    ]),
+    ["a reader that is not a function", (o) => ({ ...o, readers: { ...o.readers, readCompare: "compare" } })],
+    // the local CI definition (§5.2)
+    ["no local CI definition", (o) => ({ ...o, local: undefined })],
+    ["a null local CI definition", (o) => ({ ...o, local: null })],
+    ["a local CI definition without a classifier", (o) => ({ ...o, local: { blobs: blobs(), tablePinned: true } })],
+    ["a classifier that is not a function", (o) => ({ ...o, local: { ...L(), classify: "classify" } })],
+    ["a local CI definition without blobs", (o) => ({ ...o, local: { classify, tablePinned: true } })],
+    ["no blob for ci.yml", (o) => ({ ...o, local: { ...L(), blobs: { [BLOB_CLASSIFY]: blobs()[BLOB_CLASSIFY] } } })],
+    ["no blob for the classifier", (o) => ({ ...o, local: { ...L(), blobs: { [BLOB_CI]: blobs()[BLOB_CI] } } })],
+    ["a 39-hex blob", (o) => ({ ...o, local: { ...L(), blobs: { ...blobs(), [BLOB_CI]: "a".repeat(39) } } })],
+    ["a blob that is not hex", (o) => ({ ...o, local: { ...L(), blobs: { ...blobs(), [BLOB_CI]: "z".repeat(40) } } })],
+    ["no pin flag", (o) => ({ ...o, local: { classify, blobs: blobs() } })],
+    ["a pin flag that is the string 'true'", (o) => ({ ...o, local: { ...L(), tablePinned: "true" } })],
+    // the clock
+    ["a clock that is a string, not a function", (o) => ({ ...o, now: NOW })],
+    ["no clock", (o) => ({ ...o, now: undefined })],
+    ["a clock that returns prose", (o) => ({ ...o, now: () => "not a time" })],
+    ["a clock that returns an ISO time with an offset (not UTC)", (o) => ({ ...o, now: () => "2026-10-07T22:00:00+01:00" })],
+    ["a clock that returns an ISO time without a zone", (o) => ({ ...o, now: () => "2026-10-07T21:00:00" })],
+    ["a clock that returns a date only", (o) => ({ ...o, now: () => "2026-10-07" })],
+    ["a clock that returns an invalid Date", (o) => ({ ...o, now: () => new Date("not a time") })],
+    ["a clock that returns NaN", (o) => ({ ...o, now: () => NaN })],
+    ["a clock that returns Infinity", (o) => ({ ...o, now: () => Infinity })],
+    ["a clock that returns milliseconds as a string", (o) => ({ ...o, now: () => String(Date.parse(NOW)) })],
+    ["a clock that returns nothing", (o) => ({ ...o, now: () => undefined })],
+    ["a clock that throws", (o) => ({ ...o, now: () => { throw new Error("clock exploded"); } })],
+    // the options themselves
     ["null options", () => null],
-    ["no local CI definition", () => ({ prNumber: 810, readers: fresh(), local: undefined, now: () => NOW, policy: POLICY })],
-    ["a local CI definition without blobs", () => ({ prNumber: 810, readers: fresh(), local: { classify, tablePinned: true }, now: () => NOW, policy: POLICY })],
-  ] as const) {
-    it(`${label}: collect fails closed and never throws`, async () => {
-      const out = noThrow(() => collect(args()));
-      expect(out.threw, `${label}: ${(out as any).error}`).toBe(false);
-      const v = (out as any).value;
-      const res = v && typeof v.then === "function" ? await v : v;
-      expect(res?.ok, label).toBe(false);
-      expect(isUnknownReason(res?.reason), `${label}: ${res?.reason}`).toBe(true);
+    ["undefined options", () => undefined],
+    ["options that are a string", () => "810"],
+  ];
+  for (const [label, over] of CASES)
+    it(`${label}: malformed at stage collect, no request, no throw`, async () => {
+      const { r, n } = await attempt(over);
+      refused(r, n, label);
     });
-  }
+
+  for (const [label, clock] of [
+    ["milliseconds", () => Date.parse(NOW)],
+    ["a valid Date", () => new Date(NOW)],
+    ["an ISO-8601 UTC string", () => NOW],
+    ["an ISO-8601 UTC string with milliseconds", () => "2026-10-07T21:00:00.000Z"],
+  ] as const)
+    it(`a clock returning ${label} is accepted, and observedAt is that instant as ISO-8601`, async () => {
+      const { r, n } = await attempt((o) => ({ ...o, now: clock }));
+      expect(r.ok, JSON.stringify(r).slice(0, 200)).toBe(true);
+      expect(n).toBe(30);
+      expect(typeof r.evidence.observedAt).toBe("string");
+      expect(r.evidence.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
+      expect(Date.parse(r.evidence.observedAt)).toBe(Date.parse(NOW));
+      expect(r.diagnostics.observedAt).toBe(r.evidence.observedAt);
+    });
+
+  it("a pin flag that is false is a complete definition: the collection succeeds and the CI row is ci_definition_mismatch", async () => {
+    const { r, n } = await attempt((o) => ({ ...o, local: { ...LOCAL(), tablePinned: false } }));
+    expect(n).toBe(30);
+    expect(r.evidence.rows.ci).toMatchObject({ ok: false, reason: "ci_definition_mismatch" });
+  });
 });
 
 void keyOf;

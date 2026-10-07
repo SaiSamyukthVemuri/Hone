@@ -66,6 +66,10 @@ function rollupBeforeReview(opts: any) {
   };
   return Object.freeze(out);
 }
+/** A reader that builds a different route (§7 R-ECHO-Q: no REST answer echoes its query parameters). */
+const rewriteRoutes = (f: (rest: string) => string) => (opts: any) =>
+  createReaders({ ...opts, request: (req: any) => opts.request(req && typeof req.rest === "string" ? { ...req, rest: f(req.rest) } : req) });
+
 const MUTANTS: Array<[string, CollectSut, string[]]> = [
   [
     "the confirming pass is skipped: its reads are served from the first pass",
@@ -152,6 +156,11 @@ const MUTANTS: Array<[string, CollectSut, string[]]> = [
     ["jobs-too-large"],
   ],
   ["the precedence is inverted: the commit rollup is read before the review evidence", { collect, createReaders: rollupBeforeReview }, ["precedence-review-before-rollup"]],
+  ["R-ECHO-Q: listing routes lose per_page=100 (GitHub's default page is 30)", { collect, createReaders: rewriteRoutes((r) => r.replace(/[&?]per_page=100/, "")) }, ["golden"]],
+  ["R-ECHO-Q: the head-branch PR list loses state=all (open PRs only)", { collect, createReaders: rewriteRoutes((r) => r.replace("&state=all", "")) }, ["golden"]],
+  ["R-ECHO-Q: the activity log is read for a week, not a year", { collect, createReaders: rewriteRoutes((r) => r.replace("time_period=year", "time_period=week")) }, ["golden"]],
+  ["R-ECHO-Q: candidate runs lose event=pull_request", { collect, createReaders: rewriteRoutes((r) => r.replace("&event=pull_request", "")) }, ["golden"]],
+  ["R-ECHO-Q: run jobs lose filter=latest", { collect, createReaders: rewriteRoutes((r) => r.replace("filter=latest&", "")) }, ["golden"]],
 ];
 
 describe("collector mutation detection: the real collector, mutated, is rejected by named rows", () => {

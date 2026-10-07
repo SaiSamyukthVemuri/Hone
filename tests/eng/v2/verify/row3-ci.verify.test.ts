@@ -597,10 +597,40 @@ describe("row 3 verify: LIVE stacked PR (read-only GraphQL, 2026-10-07)", () => 
   // associatedPullRequests(f75ca255) = [810, 815]: #815 (05B, draft) is stacked on #810's branch, so every 05A
   // commit belongs to both PRs. §3.4 rule 5 then reads #810 as shared_head for as long as #815 is open. Safe
   // (never a pass), but the bottom PR of every stack is UNKNOWN in V1 — a liveness consequence of rule 5.
-  it("a PR whose head commit is also in a stacked PR's branch is shared_head, whatever its CI says", () => {
+  it("a PR whose head commit is also in a stacked PR's branch is shared_head, whatever its CI says (§7 R-STACK)", () => {
     const w = SCENARIOS[0].world();
     w.prContext.associated = [810, 815];
     const e = evaluate(w, IMPL);
     expect(matches(e.result, { reason: "shared_head" }), JSON.stringify(e.result)).toBe(true);
+  });
+
+  // R-STACK's safety half (an operator decision): with the associated-PR clause satisfied, as if it were absent,
+  // do rule 5's head-branch list and rule 7's filters still keep every foreign run from granting? Facts used
+  // (read-only, 2026-10-07): GitHub's schema describes Commit.associatedPullRequests as "The merged Pull Request
+  // that introduced the commit to the repository. If the commit is not present in the default branch,
+  // additionally returns open Pull Requests associated with the commit" (so a closed, unmerged PR is never in it);
+  // closed PRs whose head branch was deleted stay in pulls?head=<owner>:<ref>&state=all (#601, #596); and GitHub's
+  // docs say renaming the head branch of an open PR closes that PR.
+  const noClause = () => {
+    const w = SCENARIOS[0].world();
+    w.prContext.associated = [810];
+    return w;
+  };
+  it("R-STACK binding: a stacked PR's GREEN run at our head SHA, on its own branch, cannot grant — rule 7 ignores it (NO_RUN)", () => {
+    const w = noClause();
+    w.runs = [ownRun({ id: 37_800_000_001, runNumber: 2900, headBranch: "feat/eng-loop-v1-05b" })];
+    expect(matches(evaluate(w, IMPL).result, { outcome: "NO_RUN", runs: [] }), JSON.stringify(evaluate(w, IMPL).result)).toBe(true);
+  });
+  it("R-STACK binding: a GREEN run at our SHA and branch name from another head repository cannot grant — rule 7 ignores it (NO_RUN)", () => {
+    const w = noClause();
+    w.runs = [ownRun({ id: 37_800_000_002, runNumber: 2901, headRepoId: 4242 })];
+    expect(matches(evaluate(w, IMPL).result, { outcome: "NO_RUN", runs: [] }), JSON.stringify(evaluate(w, IMPL).result)).toBe(true);
+  });
+  it("R-STACK binding: another PR on OUR head branch (any base, open or closed) is caught by the head-branch list alone — shared_head", () => {
+    for (const state of ["open", "closed"] as const) {
+      const w = noClause();
+      w.headBranchPrs.push({ number: 702, state });
+      expect(matches(evaluate(w, IMPL).result, { reason: "shared_head" }), `${state}: ${JSON.stringify(evaluate(w, IMPL).result)}`).toBe(true);
+    }
   });
 });

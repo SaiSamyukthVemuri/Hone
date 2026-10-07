@@ -135,7 +135,7 @@ const SEQUENCES: Seq[] = [
   {
     id: "R5-DELETE-opener",
     verdict: "RECORDED RESIDUAL",
-    layer: "SPEC-05A §7 R5-DELETE; ARCH-01 §41 (writer-class, credential-based authority); mitigation = a 05C CLAUDE.md policy not yet written",
+    layer: "SPEC-05A §7 R5-DELETE (confirmed in pass 3; recorded at 63bd3b6e); ARCH-01 §41 (writer-class, credential-based authority); mitigation = the 05C CLAUDE.md policy",
     sequence:
       "A REAL false-ready path, inside §41's accepted scope. Codex reviews H and opens finding threads (FINDINGS_OPEN blocks). Anyone with write access — including an agent using the operator's credential — deletes the thread-opening Codex comment. With no reply the whole thread is gone; with a reply the opener becomes the reply's author (unverified which). Codex's findings REVIEW at H stays (COMMENTED, qualifiesAtHead true: review present), FINDINGS_OPEN no longer fires, and with green CI the PR reads ready at H with Codex's findings never resolved by the allowlisted human. No 05A query can see a deleted thread. Live (2026-10-07): 248 review threads on #770-#815, all Codex-opened, none starting with a reply or empty — it has never happened here. §41 already accepts that an agent using the operator's credential is indistinguishable from the operator, so this is the same class; the only mitigation is the policy §7 promises with 05C.",
     row: {
@@ -282,31 +282,20 @@ const SEQUENCES: Seq[] = [
   },
   {
     id: "R4-POLICY-EMPTY-PREFIX",
-    verdict: "SPEC AMBIGUITY",
-    layer: "05A input shapes (§0 'Binders check their inputs first'; §4.2 names the policy but not its shape)",
+    verdict: "CLOSED",
+    layer: "05A input shapes (SPEC §4.2 as amended at 63bd3b6e: policy is exactly { cleanPrefix }, a non-empty string)",
     sequence:
-      "A caller passes a policy whose clean prefix is the empty string. Every comment body 'begins with' it, so every comment becomes a CLEAN_COMMENT artifact (the Vercel bot's, the operator's '@codex review', Codex's summary). Only the marker rule and 05B's actor check stand between that and a pass. Unreachable from GitHub data (the collector passes REVIEW_POLICY), but §0's input check does not cover the policy because §4.2 never defines its shape; f75ca255 also accepts a missing policy (the row-4 'no policy' rows) and a non-array humanResolvers.",
-    policy: { ...REVIEW_POLICY, cleanPrefix: "" },
+      "Pass 3: a caller's policy with an empty clean prefix made every comment a channel-B artifact, because every body 'begins with' the empty string. §4.2 now defines the policy's shape — required, exactly { cleanPrefix }, non-empty — and a missing, empty or extended policy is malformed. Whom to trust moved out of 05A entirely (SPEC-05B §3).",
+    policy: { cleanPrefix: "" },
     row: {
       id: "R4-EMPTY-PREFIX",
-      title: "an empty clean prefix makes every comment a channel-B artifact (literal §4.2)",
+      title: "an empty clean prefix is a malformed policy: binding refuses it",
       source: "real #809 answer; synthetic policy",
-      clause: "SPEC §4.2 channel B 'body begins with the clean prefix'",
+      clause: "SPEC §4.2 'A missing, empty or extended policy is malformed'",
       number: 809,
       headSha: H809,
       raw: () => reviewAnswer(809),
-      expect: {
-        artifacts: [
-          `${CODEX_REVIEW_809}|PR_REVIEW|COMMENTED|${BOT}|false`,
-          `5446958797|PR_REVIEW|COMMENTED|User:${OPERATOR_ID}|false`,
-          `6044590012|CLEAN_COMMENT|CLEAN|Bot:35613825|false`,
-          `6044590545|CLEAN_COMMENT|CLEAN|User:${OPERATOR_ID}|false`,
-          `6044597377|CLEAN_COMMENT|CLEAN|${BOT}|false`,
-          `${OLD_CLEAN_COMMENT_809}|CLEAN_COMMENT|CLEAN|${BOT}|false`,
-          `6044763749|CLEAN_COMMENT|CLEAN|User:${OPERATOR_ID}|false`,
-          `${CLEAN_COMMENT_809}|CLEAN_COMMENT|CLEAN|${BOT}|true`,
-        ].sort(),
-      },
+      expect: { reason: "malformed", stage: "bind" },
     },
   },
 ];

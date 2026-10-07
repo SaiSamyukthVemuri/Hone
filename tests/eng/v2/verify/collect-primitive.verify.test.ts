@@ -39,6 +39,10 @@ beforeAll(() => {
     `process.stderr.write("gh: rejected github_pat_11ABCDEFG0_${"q".repeat(59)} and ghs_${"S".repeat(36)} and ghu_${"U".repeat(36)} (HTTP 403)\\n"); process.exit(4);`,
   );
   PATHS.echoBody = kit.make("echo-body", `process.stdout.write(JSON.stringify({ body: "token " + process.env.GH_TOKEN }));`);
+  PATHS.shapesBody = kit.make(
+    "shapes-body",
+    `process.stdout.write(JSON.stringify({ a: "ghp_${"A".repeat(36)}", b: "see github_pat_11ABCDEFG0_${"q".repeat(59)} here", c: ["gho_${"C".repeat(36)}"], d: { e: "ghs_${"S".repeat(36)}" }, ["ghr_${"R".repeat(36)}"]: 1, n: 7 }));`,
+  );
 });
 afterAll(() => kit?.cleanup());
 
@@ -268,6 +272,15 @@ describe("§5.1 primitive: the token is never an argument, a result, a detail or
     expect(JSON.stringify(r)).not.toContain(DEDICATED);
   });
 
+  it("anything shaped like a GitHub token is redacted from a successful body, before it is parsed (63bd3b6e)", () => {
+    const r = open(PATHS.shapesBody).request(REST);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    const text = JSON.stringify(r);
+    expect(TOKEN_SHAPES.test(text), text).toBe(false);
+    expect(r.body.n).toBe(7);
+    expect(Object.keys(r.body).length).toBe(6);
+  });
+
   it("every request is counted and timed as exactly { label, ms, ok } — never a body", () => {
     const p = open(PATHS.json);
     p.request(REST);
@@ -295,15 +308,60 @@ describe("§5.1 primitive: the token is never an argument, a result, a detail or
   });
 });
 
-describe("§5.1 primitive: requests outside the two shapes", () => {
-  it("a request that is neither REST nor GraphQL is never sent, fails closed, and nothing throws", () => {
-    clearRecords();
-    const p = open(PATHS.json);
-    for (const req of [{ label: "neither" }, null, undefined, "repos/x"] as any[]) {
+describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e)", () => {
+  // "A request must be exactly one of the two shapes — { label, rest } or { label, graphql, variables }, with string
+  // or integer variables — or it is refused as malformed before anything is spawned."
+  const G = "query($n:Int!){ repository(owner:\"o\",name:\"n\"){ pullRequest(number:$n){ number } } }";
+  const REFUSED: Array<[string, unknown]> = [
+    ["neither shape", { label: "neither" }],
+    ["both shapes", { label: "both", rest: "repos/x", graphql: G, variables: { n: 1 } }],
+    ["no label", { rest: "repos/x" }],
+    ["an empty label", { label: "", rest: "repos/x" }],
+    ["a label that is not a string", { label: 5, rest: "repos/x" }],
+    ["a route that is not a string", { label: "x", rest: 5 }],
+    ["a document that is not a string", { label: "x", graphql: 5, variables: {} }],
+    ["variables that are an array", { label: "x", graphql: G, variables: [] }],
+    ["a fractional variable", { label: "x", graphql: G, variables: { n: 1.5 } }],
+    ["an unsafe integer variable", { label: "x", graphql: G, variables: { n: 2 ** 60 } }],
+    ["a boolean variable", { label: "x", graphql: G, variables: { b: true } }],
+    ["a null variable", { label: "x", graphql: G, variables: { z: null } }],
+    ["an object variable", { label: "x", graphql: G, variables: { o: { a: 1 } } }],
+    ["an array variable", { label: "x", graphql: G, variables: { a: ["x"] } }],
+    ["null", null],
+    ["undefined", undefined],
+    ["a bare route string", "repos/x"],
+  ];
+  for (const [label, req] of REFUSED)
+    it(`${label}: malformed, refused before anything is spawned, and nothing throws`, () => {
+      clearRecords();
+      const p = open(PATHS.json);
       let r: any;
       expect(() => (r = p.request(req))).not.toThrow();
       expect(r?.ok, JSON.stringify(req)).toBe(false);
-    }
-    expect(records(), "gh was invoked for a request with no endpoint").toEqual([]);
+      expect(r?.reason).toBe("malformed");
+      expect(records(), "gh was spawned").toEqual([]);
+    });
+
+  it("the two shapes, with string and integer variables, are sent", () => {
+    clearRecords();
+    const p = open(PATHS.json);
+    expect(p.request({ label: "rest", rest: "repos/x" }).ok).toBe(true);
+    expect(p.request({ label: "gql", graphql: G, variables: { n: 810, s: "a", neg: -3 } }).ok).toBe(true);
+    expect(records().length).toBe(2);
+  });
+
+  // NEW FINDINGS (pass 4, low; unreachable through the readers, which never add a key or omit variables). Strict
+  // known-failures: each fails, and must be re-derived, once 63bd3b6e's behaviour is brought to "exactly".
+  it.fails("[known deviation at 63bd3b6e] a REST request with an extra key is not exactly { label, rest }: refused before spawning", () => {
+    clearRecords();
+    const r = open(PATHS.json).request({ label: "x", rest: "repos/x", method: "POST" });
+    expect(r.ok).toBe(false);
+    expect(records()).toEqual([]);
+  });
+  it.fails("[known deviation at 63bd3b6e] a GraphQL request without variables is not { label, graphql, variables }: refused before spawning", () => {
+    clearRecords();
+    const r = open(PATHS.json).request({ label: "x", graphql: G });
+    expect(r.ok).toBe(false);
+    expect(records()).toEqual([]);
   });
 });
