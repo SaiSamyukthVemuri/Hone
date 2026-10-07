@@ -71,7 +71,19 @@ function repoIdOf(v) {
  * @param {{ expectedNumber?: number }} [opts] the PR that was asked for
  * @returns {{ ok: true, key: object } | { ok: false, reason: "malformed" | "read_failed", detail: string }}
  */
-export function parsePrKey(raw, { expectedNumber } = {}) {
+export function parsePrKey(raw, opts) {
+  try {
+    return parse(raw, opts);
+  } catch {
+    // Nothing throws: a getter, a Proxy or any other exotic input fails closed.
+    return malformed("the answer could not be validated");
+  }
+}
+
+function parse(raw, opts) {
+  // The number that was asked for is required: a key never compared with it is not this PR's key.
+  const expectedNumber = opts === null || opts === undefined ? undefined : opts.expectedNumber;
+  if (!isPosInt(expectedNumber)) return malformed("the requested pull request number is required");
   if (!isObject(raw)) return malformed("the answer is not a JSON object");
   if (!Object.keys(raw).every((k) => k === "data" || k === "errors")) {
     return malformed("the answer has a top-level field other than data and errors");
@@ -98,7 +110,7 @@ export function parsePrKey(raw, { expectedNumber } = {}) {
     return malformed("the pull request does not carry exactly the nine key fields");
   }
   if (!isPosInt(p.number)) return malformed("number is not a positive integer");
-  if (expectedNumber !== undefined && p.number !== expectedNumber) {
+  if (p.number !== expectedNumber) {
     return malformed(`the answer names pull request ${p.number}, not ${expectedNumber}`);
   }
   if (!STATES.includes(p.state)) return malformed("state is not OPEN, CLOSED or MERGED");
@@ -153,6 +165,24 @@ export function parsePrKey(raw, { expectedNumber } = {}) {
       baseSha,
     }),
   });
+}
+
+/**
+ * Is `k` a well-formed key — exactly the nine fields, each satisfying §2? The
+ * coherence pass re-checks every key a reader hands it, so even an
+ * out-of-contract reader can never make a non-key coherent.
+ */
+export function isPrKey(k) {
+  try {
+    if (!isObject(k) || !hasExactly(k, KEY_FIELDS)) return false;
+    if (!isPosInt(k.prNumber) || !STATES.includes(k.state) || typeof k.isDraft !== "boolean") return false;
+    if (!isSha40(k.headSha) || !isNonEmptyString(k.headRef) || !isNonEmptyString(k.baseRef)) return false;
+    if (!isPosInt(k.baseRepoId)) return false;
+    if (k.state === "OPEN") return isPosInt(k.headRepoId) && isSha40(k.baseSha);
+    return (k.headRepoId === null || isPosInt(k.headRepoId)) && k.baseSha === null;
+  } catch {
+    return false;
+  }
 }
 
 /** Structural equality over all nine fields; `null` equals only `null`. */

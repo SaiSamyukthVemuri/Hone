@@ -17,36 +17,50 @@
 // closed shape, fails closed: nothing here can turn an exception into a key.
 // ---------------------------------------------------------------------------
 
-import { keysEqual } from "../../contract/pr-key.mjs";
+import { isPrKey, keysEqual } from "../../contract/pr-key.mjs";
 import { isUnknownReason } from "../../contract/reasons.mjs";
 
 const isTerminal = (key) => key.state !== "OPEN";
 
-/** Call a reader; an exception or an out-of-contract result becomes a closed failure. */
-function call(reader, ...args) {
+/**
+ * Call a reader and accept only an in-contract result. An exception is
+ * `read_failed`; a failure must name a closed reason; a key result must carry
+ * a well-formed nine-field key (else `malformed`); a body result must carry a
+ * value. Nothing a reader returns can become a pass by accident.
+ */
+function call(kind, reader, ...args) {
   let r;
   try {
     r = reader(...args);
   } catch {
     return { ok: false, reason: "read_failed" };
   }
-  if (r && r.ok === true) return r;
-  if (r && r.ok === false && isUnknownReason(r.reason)) return { ok: false, reason: r.reason };
+  try {
+    if (r && r.ok === true) {
+      if (kind === "key") return isPrKey(r.key) ? { ok: true, key: r.key } : { ok: false, reason: "malformed" };
+      return Object.hasOwn(r, "value") && r.value !== undefined
+        ? { ok: true, value: r.value }
+        : { ok: false, reason: "read_failed" };
+    }
+    if (r && r.ok === false && isUnknownReason(r.reason)) return { ok: false, reason: r.reason };
+  } catch {
+    // An exotic result object (a throwing getter, a Proxy) is out of contract.
+  }
   return { ok: false, reason: "read_failed" };
 }
 
 function onePass({ readKey, readBody }) {
-  const k0 = call(readKey);
+  const k0 = call("key", readKey);
   if (!k0.ok) return { kind: "failed", reason: k0.reason };
 
   let body = null;
   if (!isTerminal(k0.key)) {
-    const b = call(readBody, k0.key);
+    const b = call("body", readBody, k0.key);
     if (!b.ok) return { kind: "failed", reason: b.reason };
     body = b.value;
   }
 
-  const k1 = call(readKey);
+  const k1 = call("key", readKey);
   if (!k1.ok) return { kind: "failed", reason: k1.reason };
   if (!keysEqual(k0.key, k1.key)) return { kind: "incoherent" };
   return { kind: "coherent", key: k0.key, body };

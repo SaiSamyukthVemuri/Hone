@@ -26,11 +26,15 @@ The package layout follows CAP-01 §2:
 |---|---|
 | PR, head and draft identity | **Done at fixture level**: `contract/pr-key.mjs` (strict nine-field key) and `adapter/internal/coherence.mjs` (K0..K1, one retry, confirming pass). Live reading waits on the read-only credential. |
 | Live production drift | **Done at fixture level**: `adapter/internal/github/parse-base.mjs` and `adapter/internal/bind/base.mjs` (SPEC-05A §2). |
-| Applicable CI evidence | **Done at fixture level**: `adapter/internal/github/parse-ci.mjs` and `adapter/internal/bind/ci.mjs` (SPEC-05A §3). Positive CI evidence still needs the production ruleset (Option A) and the independent verifier's review of the binding argument. |
+| Applicable CI evidence | **Done at fixture level**: `adapter/internal/github/parse-ci.mjs` and `adapter/internal/bind/ci.mjs` (SPEC-05A §3). The independent verifier's first pass found one hole (A1, a rewrite between GitHub's test merge and the run record), now closed by SPEC-05A §3.4 step 8. Positive CI evidence still needs the production ruleset (Option A), independently verified. |
 | Trusted Codex review provenance | **Done at fixture level**: `adapter/internal/github/parse-review.mjs` (one complete GraphQL response) and `adapter/internal/bind/review.mjs` (ARCH-01 §17-§21; channel B as the 10-hex V1 binding). |
 | Unresolved trusted review threads | **Done at fixture level**: thread opener and resolver by numeric id and type, from the same complete response. 05B applies FINDINGS_OPEN. |
 | External contexts | **Done at fixture level**: `adapter/internal/github/parse-rollup.mjs` and `adapter/internal/bind/external.mjs` (EXT-CONTEXT-01's closed tables). |
-| Completeness and read failures | Every reader is complete-or-UNKNOWN with closed reasons. The collector that runs them inside coherent passes, with the confirming pass, is next. |
+| Completeness and read failures | Every parser is complete-or-UNKNOWN with closed reasons, requires the request it answers, and never throws. The collector that runs them inside coherent passes, with the confirming pass, is next. |
+
+Independent verification (CANONICAL_ROADMAP §16.5) lives under `tests/eng/v2/verify/`, written from SPEC-05A and the
+records alone. Rows 1–3 have had one pass; rows 4–6 have not been independently verified yet. SPEC-05A §6 lists what
+V1 does not prove.
 
 Run the tests with `npx vitest run tests/eng/v2`.
 
@@ -55,9 +59,10 @@ The runtime does **not** claim to implement the records below unchanged. These a
    - base-change events;
    - the head branch's PR list (`state=all`) and the head's associated-PR list, each exactly this PR;
    - the production rules in force now (force push and deletion blocked) — necessary, never treated as history;
-   - production's **recorded history** from the repository activity log: no force push or branch deletion since
-     the earliest applicable run. Current settings and an operator-supplied activation date are never used as
-     history.
+   - production's **recorded history** from the repository activity log: no force push or branch deletion anywhere
+     in the recorded year, and production created before every applicable run. A run's `created_at` cannot bound a
+     rewrite, because GitHub fixes the run's base when it computes the test merge, before the record exists
+     (SPEC-05A §3.4 step 8). Current settings and an operator-supplied activation date are never used as history.
 
    This is a **hypothesis**. CI evidence stays fail-closed until an independent verifier proves the combination is
    sufficient for the PR/base execution identity it claims.
@@ -75,6 +80,17 @@ The runtime does **not** claim to implement the records below unchanged. These a
    - A fork head is `fork_head`.
    - A changed-file list that cannot be proven complete is `diff_too_large`.
    - Every applicable run counts, as in the operator's V1 profile, rather than CI-ATTEST-01's `run_number` frontier.
+7. **CAP-01 §4 readers.** V1's readers differ from CAP-01's frozen reader set, and this list is that difference;
+   CAP-01 itself is not amended:
+   - **Parameters.** Three readers take a branch or ref name, which CAP-01 forbids: the head-branch PR list
+     (`pulls?head=<owner>:<headRef>`), the production rules (`rules/branches/<productionRef>`) and production
+     history (`activity?ref=refs/heads/<productionRef>`). Each value comes from the coherent key (`K0.headRef`) or
+     from fixed policy (`productionRef`), never from a caller, and each answer must echo it.
+   - **Added readers.** PR context (creation time, changed-file count, base-change events, associated PRs), the
+     head-branch PR list, branch rules, activity (three types) and run jobs. The compare also returns its changed
+     files. V1 does not use `readRunAttestation` or `readFileBlob`.
+   - **No G1–G4.** V1 ships without CAP-01's static lints. The confinement they would check — one network primitive,
+     reached only through the readers — is a code-review obligation in V1.
 
 ## Credential
 

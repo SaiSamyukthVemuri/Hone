@@ -5,6 +5,11 @@
 // slug are `malformed` here, so EXT-CONTEXT-01's binder only ever sees
 // schema-valid records (EXT-CONTEXT-01 §3). A `null` rollup is a complete,
 // empty set of contexts.
+//
+// The answer must echo the requested commit oid, so contexts can never be
+// attributed to a commit they were not read for. Contexts come out in a
+// canonical order, so any reordering normalizes to the same listing
+// (CAP-01 L7). Nothing throws.
 // ---------------------------------------------------------------------------
 
 import {
@@ -14,6 +19,7 @@ import {
   isNonEmptyString,
   isNonNegInt,
   isObject,
+  isSha40,
   okRecord,
 } from "../../../contract/strict.mjs";
 
@@ -21,7 +27,7 @@ const LIMIT = 100;
 
 export const ROLLUP_QUERY =
   "query($owner:String!,$name:String!,$h:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$h){" +
-  "__typename ... on Commit{statusCheckRollup{contexts(first:100){totalCount pageInfo{hasNextPage} nodes{" +
+  "__typename ... on Commit{oid statusCheckRollup{contexts(first:100){totalCount pageInfo{hasNextPage} nodes{" +
   "__typename ... on CheckRun{name status conclusion checkSuite{app{slug}}} ... on StatusContext{context state}}}}}}}}";
 
 function context(n) {
@@ -49,7 +55,27 @@ function context(n) {
   return null;
 }
 
-export function parseRollup(raw) {
+const canonical = (a, b) => {
+  const x = JSON.stringify(a);
+  const y = JSON.stringify(b);
+  return x < y ? -1 : x > y ? 1 : 0;
+};
+
+/**
+ * @param {unknown} raw the parsed GraphQL answer to ROLLUP_QUERY
+ * @param {{ headSha: string }} opts the commit that was asked for (required)
+ */
+export function parseRollup(raw, opts) {
+  try {
+    return parse(raw, opts);
+  } catch {
+    return fail("malformed", "the rollup could not be validated");
+  }
+}
+
+function parse(raw, opts) {
+  const headSha = opts === null || opts === undefined ? undefined : opts.headSha;
+  if (!isSha40(headSha)) return fail("malformed", "the requested commit is required");
   const env = graphqlData(raw);
   if (env.failure) return env.failure;
   const data = env.data;
@@ -60,9 +86,10 @@ export function parseRollup(raw) {
   }
   const o = data.repository.object;
   if (o === null) return fail("read_failed", "the head commit is not readable");
-  if (!isObject(o) || !hasExactly(o, ["__typename", "statusCheckRollup"]) || o.__typename !== "Commit") {
+  if (!isObject(o) || !hasExactly(o, ["__typename", "oid", "statusCheckRollup"]) || o.__typename !== "Commit") {
     return fail("malformed", "the head object is not a Commit with a rollup");
   }
+  if (o.oid !== headSha) return fail("malformed", "the answer names another commit");
   if (o.statusCheckRollup === null) return okRecord({ contexts: [] });
   const r = o.statusCheckRollup;
   if (!isObject(r) || !hasExactly(r, ["contexts"])) return fail("malformed", "the rollup is not exactly { contexts }");
@@ -81,5 +108,5 @@ export function parseRollup(raw) {
   if (c.pageInfo.hasNextPage || c.totalCount > LIMIT || c.totalCount !== c.nodes.length) {
     return fail("external_contexts_too_large", "the rollup's contexts do not fit one complete response");
   }
-  return okRecord({ contexts });
+  return okRecord({ contexts: contexts.sort(canonical) });
 }

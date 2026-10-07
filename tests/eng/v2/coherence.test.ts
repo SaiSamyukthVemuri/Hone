@@ -153,6 +153,41 @@ describe("collectCoherent: one coherent pass", () => {
     ).toEqual({ ok: false, reason: "read_failed", attempts: 1 });
   });
 
+  it("a reader result outside the contract never becomes a pass", () => {
+    // A key result without a key, or with a non-key, is malformed: even repeated, it is never coherent.
+    for (const notAKey of [undefined, null, { prNumber: 800 }, { ...OPEN(), isDraft: "true" }]) {
+      const result = notAKey === undefined ? { ok: true } : { ok: true, key: notAKey };
+      expect(
+        collectCoherent({ readKey: scriptedKeys([result as any, result as any]), readBody: scriptedBody([body(1)]) }),
+        JSON.stringify(notAKey),
+      ).toEqual({ ok: false, reason: "malformed", attempts: 1 });
+    }
+    // A body result without a value is read_failed, never a pass carrying nothing.
+    for (const noValue of [{ ok: true }, { ok: true, value: undefined }]) {
+      expect(
+        collectCoherent({ readKey: scriptedKeys([ok(OPEN()), ok(OPEN())]), readBody: scriptedBody([noValue as any]) }),
+      ).toEqual({ ok: false, reason: "read_failed", attempts: 1 });
+    }
+    // A failure naming an open-set reason, or a result that is not a result, is read_failed.
+    for (const odd of [{ ok: false, reason: "rate_limited" }, { ok: "true", key: OPEN() }, "ok", 1]) {
+      expect(
+        collectCoherent({ readKey: scriptedKeys([odd as any]), readBody: scriptedBody([]) }),
+        JSON.stringify(odd),
+      ).toEqual({ ok: false, reason: "read_failed", attempts: 1 });
+    }
+    // A hostile result object fails closed rather than throwing.
+    const hostile = new Proxy({ ok: true }, {
+      get() {
+        throw new Error("hostile result");
+      },
+    });
+    expect(() => collectCoherent({ readKey: () => hostile, readBody: scriptedBody([]) })).not.toThrow();
+    expect(collectCoherent({ readKey: () => hostile, readBody: scriptedBody([]) })).toMatchObject({
+      ok: false,
+      reason: "read_failed",
+    });
+  });
+
   it("is deterministic: the same script gives the same result", () => {
     const run = () =>
       collectCoherent({

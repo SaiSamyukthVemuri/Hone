@@ -11,7 +11,15 @@ architecture record. Where it differs from a merged record, `README.md` lists th
 - A parser takes the raw response and the request parameters. It returns
   `{ ok: true, record }` or `{ ok: false, reason, detail }`. A binder returns `{ ok: true, value }` or
   `{ ok: false, reason, detail }`.
-- `reason` is always a member of `contract/reasons.mjs`. Nothing throws. Every returned record is frozen.
+- `reason` is always a member of `contract/reasons.mjs`. Nothing throws: an exotic input (a throwing getter, a
+  Proxy, `null` options) is `malformed`. Every returned record is frozen.
+- **Request parameters are required.** A parser checks the answer against what was asked for: the PR number, the
+  base SHA, the head branch, the run id, the activity type and ref, the commit. A missing or invalid parameter is
+  `malformed`, even when the answer is empty, because an unchecked answer is not evidence for the request.
+- **Malformed wins.** A schema violation is `malformed` even when the collection is also incomplete, so the reason
+  never depends on the order of the checks.
+- **Canonical order.** A record's lists come out in a fixed order, so any reordering of the same answer normalizes to
+  the identical record (CAP-01 L7).
 - **GraphQL** answers must carry exactly the requested fields. **REST** answers must carry each *consumed* field with
   the right type. Other REST fields are ignored, because GitHub adds REST fields over time.
 - A collection is either complete in one response or it fails closed. Nothing pages across requests.
@@ -21,11 +29,19 @@ architecture record. Where it differs from a merged record, `README.md` lists th
 
 ## 1. Row 1 — PR identity (implemented)
 
-`contract/pr-key.mjs`: `parsePrKey(raw, { expectedNumber })` and `keysEqual(a, b)`.
+`contract/pr-key.mjs`: `parsePrKey(raw, { expectedNumber })`, `isPrKey(k)` and `keysEqual(a, b)`.
 `adapter/internal/coherence.mjs`: `collectCoherent({ readKey, readBody })` and
 `confirmPass({ first, readKey, readBody, sameEvidence })`.
 
 The rules are PR-SNAPSHOT-01 §2–§7 (nine fields, with `isDraft` included) and ARCH-01 §15 (the confirming pass).
+
+- `expectedNumber` is required (§0): without it, `parsePrKey` is `malformed`.
+- `isPrKey(k)` is true exactly for a value `parsePrKey` could return as a key: the nine fields and nothing else; an
+  OPEN key has a positive `headRepoId` and a 40-hex `baseSha`; a terminal key has `baseSha: null` and a `headRepoId`
+  that is `null` or positive.
+- The coherence passes re-check every reader result. A key result whose `key` fails `isPrKey` is `malformed`, even
+  when it repeats. A body result without an own, defined `value` is `read_failed`. A failure naming a reason outside
+  `contract/reasons.mjs`, or anything that is not a result, is `read_failed`.
 
 ## 2. Row 2 — production base, drift and PR context
 
@@ -44,7 +60,7 @@ The rules are PR-SNAPSHOT-01 §2–§7 (nine fields, with `isDraft` included) an
 Record: `{ status, behindBy, aheadBy, baseSha, mergeBaseSha, files: [filenames], filesCapped }`. `filesCapped` is
 `files.length >= 300`, because GitHub truncates a compare's file list at 300.
 
-### 2.2 `parsePrContext(raw, { expectedNumber, headSha })` — GraphQL, exact fields
+### 2.2 `parsePrContext(raw, { expectedNumber })` — GraphQL, exact fields
 
 ```
 repository(owner,name){
@@ -81,9 +97,14 @@ only the *current* prevention, never history (§3).
 
 ### 2.5 `parseActivity(raw, { activityType, ref })` — REST `activity?ref=refs/heads/<productionRef>&activity_type=<t>&time_period=year&per_page=100`
 
-The answer is an array. Each element has `activity_type` equal to the requested type, `ref` equal to
-`refs/heads/<productionRef>`, an ISO-8601 `timestamp`, and `before`/`after` that are 40-hex strings.
+`activityType` is one of `force_push`, `branch_deletion` or `branch_creation`. `ref` is the **full** ref,
+`refs/heads/<productionRef>`; a bare branch name is refused (§0).
+The answer is an array. Each element has `activity_type` equal to the requested type, `ref` equal to the requested
+`ref`, an ISO-8601 `timestamp`, and `before`/`after` that are 40-hex strings.
 Record: `{ events: [{ timestamp, before, after }], capped: length >= 100 }`.
+
+Live (2026-10-07): production has no `force_push` and no `branch_deletion` event, and one `branch_creation`
+(2026-05-16T14:46:37Z, `before` all zeros).
 
 ### 2.6 `bindBase({ key, productionRef, compare, prContext })`
 
@@ -101,13 +122,14 @@ The 05B precedence puts `behindBy > 0` → `NEEDS_REFRESH` before every CI rule.
 V1 has **no run-side attestation** (no `ci.yml` change). It proves the execution context from GitHub-computed evidence
 instead. **Policy:** `workflowId = 289443461` (`.github/workflows/ci.yml`); accepted event `pull_request` only.
 
-### 3.1 `parseWorkflowRuns(raw, { workflowId, headSha })`
+### 3.1 `parseWorkflowRuns(raw)`
 
-The source is REST `actions/workflows/{workflowId}/runs?head_sha=H&event=pull_request&per_page=100`. The listing law
-is CAP-01 §4/§15:
-- `total_count` is a non-negative integer, ≤ 100, equal to `workflow_runs.length`;
-- run ids and `run_number`s are unique;
-- otherwise `total_count > 100` → `ci_candidate_listing_too_large`, and any other violation → `malformed`.
+The source is REST `actions/workflows/{workflowId}/runs?head_sha=H&event=pull_request&per_page=100`. The request's
+filters are never trusted: §3.4 step 7 re-applies them to every run. The listing law is CAP-01 §4/§15:
+- `total_count` is a non-negative integer and `workflow_runs` an array, else `malformed`;
+- every run satisfies the schema below, and run ids and `run_number`s are unique, else `malformed`;
+- then `total_count > 100`, or `total_count !== workflow_runs.length`, → `ci_candidate_listing_too_large` (CAP-01 L4:
+  the listing is not provably complete). A schema violation wins (§0).
 
 Each run carries:
 - `id` and `run_number`: positive integers;
@@ -116,18 +138,22 @@ Each run carries:
 - `head_sha`: 40 hex;
 - `head_branch`: a string or `null`;
 - `head_repository`: `{ id: positive integer }` or `null`;
-- `status`: a string;
+- `status`: any string, the empty string included. An unknown status is §3.4 step 9's `unrecognized_ci_status`;
 - `conclusion`: a string or `null`;
 - `run_attempt`: a positive integer;
 - `created_at`: ISO-8601.
 
-The record keeps these fields only, never `pull_requests`.
+Record: `{ runs: [{ id, runNumber, workflowId, event, headSha, headBranch, headRepoId, status, conclusion,
+runAttempt, createdAt }] }`, sorted by ascending `runNumber`. It never keeps `pull_requests`.
 
 ### 3.2 `parseRunJobs(raw, { runId })` — REST `actions/runs/{runId}/jobs?filter=latest&per_page=100`
 
-- `total_count` equals `jobs.length` and is ≤ 100; otherwise `ci_candidate_listing_too_large` or `malformed`.
-- Each job has a non-empty `name`, `run_id` equal to `runId`, a string `status`, and a `conclusion` that is a string
-  or `null`.
+- `runId` is required (§0).
+- Each job has a non-empty `name`, `run_id` equal to `runId`, a `status` that is any string, and a `conclusion` that
+  is a string or `null`. Otherwise `malformed`.
+- Then `total_count > 100`, or `total_count !== jobs.length`, → `ci_candidate_listing_too_large`.
+- Record: `{ jobs: [{ name, status, conclusion }] }`, sorted by `name`, then `status`, then `conclusion` (`null`
+  first).
 
 ### 3.3 Required jobs — `requiredJobs(classification)`
 
@@ -149,8 +175,17 @@ there turns CI red rather than leaving the table stale.
 
 ### 3.4 `bindCi({ key, base, headBranchPrs, runs, jobsByRunId, requiredJobNames, rules, activity, observedAt, workflowId, targetRepoId })`
 
-`base` is the §2.6 value, `headBranchPrs` the §2.3 record, `requiredJobNames` the §3.3 set, `rules` the §2.4 record,
-`activity` `{ forcePush, branchDeletion }` (each a §2.5 record), and `observedAt` an ISO-8601 time from 05A.
+Inputs:
+- `base`: the §2.6 value;
+- `headBranchPrs`: the §2.3 record;
+- `runs`: the §3.1 record, `{ runs: [...] }`;
+- `jobsByRunId`: a plain object from run id to that run's §3.2 record. A run with no entry has no available listing;
+- `requiredJobNames`: the §3.3 set;
+- `rules`: the §2.4 record;
+- `activity`: `{ forcePush, branchDeletion, branchCreation }`, each a §2.5 record;
+- `observedAt`: an ISO-8601 time from 05A.
+
+An input outside these shapes is `malformed`, never a pass.
 
 Rules apply in this order. The first that fires decides.
 
@@ -174,10 +209,21 @@ Rules apply in this order. The first that fires decides.
 8. **History.** The production history window must cover every applicable run, as recorded fact rather than settings.
    Any of these → `base_history_unverified`:
    - the earliest applicable `created_at` is more than 360 days before `observedAt`;
-   - either activity listing is `capped`;
-   - any `force_push` or `branch_deletion` event has `timestamp` ≥ the earliest applicable `created_at`.
+   - any of the three activity listings is not provably complete: `capped` is not `false`, or `events` is not an
+     array;
+   - **any** `force_push` or `branch_deletion` event in the listing, whatever its time;
+   - any `branch_creation` event whose `timestamp` is not strictly before the earliest applicable `created_at` (an
+     unparseable timestamp included).
 
-   A rewrite before the earliest run is irrelevant: that run tested a base taken after it.
+   **Why any rewrite in the year blocks (verifier finding A1).** A `pull_request` run's base is fixed when GitHub
+   computes the test merge, which happens *before* the run record exists: a PR with a merge conflict gets no run at
+   all. So `created_at` cannot bound a rewrite. The unsafe sequence is: GitHub computes merge(P_old, H); a force push
+   moves production to P_new, an ancestor of H; the run record is created. The run then tested code that is not H's
+   tree, while `behind_by` is 0 and the force push predates `created_at`. Blocking on any rewrite in the recorded year
+   closes it, at no cost today: production's recorded year has none.
+
+   Production's creation is benign only when it precedes every applicable run. A creation at or after one means the
+   branch was replaced while a run's merge was in flight, and the deletion before it may have aged out of a listing.
 9. Each applicable run's state, as a closed table:
    - `status: "completed"`:
      - `conclusion` `success` → SUCCEEDED;
@@ -186,10 +232,14 @@ Rules apply in this order. The first that fires decides.
      - any other string → `unrecognized_ci_conclusion`;
      - `null` → `malformed`.
    - `status` `queued`, `in_progress`, `waiting`, `requested` or `pending` → PENDING.
-   - Any other status → `unrecognized_ci_status`.
+   - Any other status, the empty string included → `unrecognized_ci_status`.
+
+   Step 9 classifies every applicable run before step 10 aggregates, so one unrecognized run is UNKNOWN even beside
+   a FAILED one.
 10. Aggregate over **every** applicable run. Any FAILED → `FAILED`; otherwise any PENDING → `PENDING`. Otherwise, every
     SUCCEEDED run's latest-attempt jobs must include each required job with `completed`/`success`. A missing or
-    non-success required job → `INCOMPLETE`; otherwise `SUCCEEDED`. A required job's listing that cannot be complete →
+    non-success required job → `INCOMPLETE`, and so is a required name that appears more than once when any of its
+    jobs is not `completed`/`success`; otherwise `SUCCEEDED`. A SUCCEEDED run with no job listing in `jobsByRunId` →
     `ci_candidate_listing_too_large`.
 
 Value: `{ outcome: "SUCCEEDED" | "FAILED" | "PENDING" | "NO_RUN" | "INCOMPLETE", applicableRunIds: [...] }`.
@@ -197,7 +247,8 @@ Value: `{ outcome: "SUCCEEDED" | "FAILED" | "PENDING" | "NO_RUN" | "INCOMPLETE",
 **Why this binds the execution context** (the claim the verifier must try to break):
 - The run's PR is the one PR whose head branch is `key.headRef`, by steps 5 and 7.
 - The run's base was always production, because this PR has no base change (step 4).
-- Production has not been rewritten since the run (step 8). So the run's base tip B is an ancestor of today's tip.
+- Production has no recorded force push or deletion in the year, and it existed before every applicable run (step 8).
+  So the base tip B that GitHub merged for the run is an ancestor of today's tip.
 - `behindBy == 0` makes today's tip an ancestor of H. So B is an ancestor of H, and the tested merge's tree is H's
   tree.
 
@@ -206,21 +257,114 @@ Value: `{ outcome: "SUCCEEDED" | "FAILED" | "PENDING" | "NO_RUN" | "INCOMPLETE",
 | # | Case | Expected | Source |
 |---|---|---|---|
 | NC1 | An older same-SHA run belonged to another PR that is now closed | `shared_head` (same branch), or ignored at step 7 (other branch) | synthetic: no Hone head branch has had two PRs in the last 400 |
-| NC2 | Production was rewritten after a run, while current rules look fine | `base_history_unverified` (step 8) | synthetic activity; real activity shows 0 force pushes |
+| NC2 | Production was rewritten — before or after a run's record — while current rules look fine | `base_history_unverified` (step 8) | synthetic activity; real activity shows 0 force pushes |
+| A1 | A force push lands between GitHub's test merge and the run record | `base_history_unverified` (step 8) | synthetic; verifier finding A1 |
 | NC3 | A successful **push** run at H did not run PR validation | ignored at step 7 → `NO_RUN` | real run shape, synthetic pairing |
 | NC4 | The PR was retargeted without a fresh run | `base_ref_changed` | **real**: #720 (`feat/ui-r02-product-polish` → production), #716, #721–#723, #727, #764 |
 | NC5 | A required job was skipped, missing or incomplete | `INCOMPLETE`, or `NO_RUN`, or `ci_candidate_listing_too_large` | real job shapes from #810's run, synthetic skips |
 | NC6 | An unrelated successful run exists at the same head SHA | ignored at step 7 | synthetic |
 
-## 4. Rows 4–6 (to follow)
+## 4. Rows 4–6 — review evidence, threads and external contexts
 
-- **Review evidence and threads:** one GraphQL `readReviewEvidence` (CAP-01 §17 completeness).
-  - The semantics are ARCH-01 §17–§21: two channels, the marker policy, `CHANGES_REQUESTED`, and trusted openers and
-    resolvers.
-  - Channel B is a 10-hex V1 binding (ARCH-01 §41).
-- **External contexts:** one GraphQL `readCommitRollup(H)`, normalized by EXT-CONTEXT-01.
+### 4.1 `parseReviewEvidence(raw, { expectedNumber })` — GraphQL, exact fields, one response (CAP-01 §17)
+
+```
+repository(owner,name){ pullRequest(number:N){ number
+  reviews(first:100){ totalCount pageInfo{hasNextPage}
+    nodes{ databaseId state body commit{oid} author{__typename login ... on Bot{databaseId} ... on User{databaseId}} } }
+  comments(first:100){ totalCount pageInfo{hasNextPage} nodes{ databaseId body author{…same…} } }
+  reviewThreads(first:100){ totalCount pageInfo{hasNextPage}
+    nodes{ isResolved isOutdated resolvedBy{__typename login databaseId}
+      comments(first:100){ totalCount pageInfo{hasNextPage} nodes{ databaseId author{…same…} } } } } } }
+```
+
+- `number` must equal `expectedNumber`, which is required.
+- A connection is complete when `hasNextPage` is false and `totalCount` is ≤ 100 and equals `nodes.length`. If any
+  connection — each thread's own comments included — is not, the result is `review_evidence_too_large`.
+- `malformed` wins over incompleteness. Malformed means: a field missing, extra or of the wrong type; a `commit`
+  that is neither `null` nor `{ oid: <40 hex> }`; an actor that is not `null`, a `User` or `Bot` with exactly
+  `{ __typename, login, databaseId }` (positive id), or another type with exactly `{ __typename, login }`; a
+  resolver that is not `null` or exactly `{ __typename, login, databaseId }`; or a review or comment id that repeats.
+- A GitHub error, an invisible repository or a missing pull request → `read_failed`.
+- Record: `{ reviews: [{ id, state, body, commitOid, author }], comments: [{ id, body, author }],
+  threads: [{ isResolved, isOutdated, resolver, opener }] }`.
+  - `author`, `resolver` and `opener` are `{ id, type }`, with `id: null` for a non-User, non-Bot actor, or `null`
+    when deleted.
+  - `opener` is the author of the thread's first comment, or `null` when it has none.
+  - Reviews and comments are sorted by `id`; threads in a fixed content order.
+  - Logins never enter the record.
+
+### 4.2 `bindReviews({ key, evidence, policy })`
+
+ARCH-01 §17–§21. Policy: the Codex bot `{ id: 199175422, type: "Bot" }`, trusted human resolvers
+`[{ id: 26781116, type: "User" }]`, and the clean verdict prefix `Codex Review: Didn't find any major issues.`.
+
+- A review whose `state` is outside GitHub's `PENDING`, `COMMENTED`, `APPROVED`, `CHANGES_REQUESTED`, `DISMISSED` →
+  `malformed`.
+- Channel A: every review becomes `{ id, channel: "PR_REVIEW", actor, verdict: state, qualifiesAtHead }`.
+  `qualifiesAtHead` is `commitOid === key.headSha` **and** the marker rule.
+- Channel B: a comment whose body **begins** with the clean prefix becomes
+  `{ id, channel: "CLEAN_COMMENT", actor, verdict: "CLEAN", qualifiesAtHead }`, with `qualifiesAtHead` the marker rule
+  alone. That is a 10-hex V1 binding (ARCH-01 §41). Other comments are not artifacts.
+- Marker rule: the body contains `**Reviewed commit:**` exactly once, and that marker is followed by `` `x` `` where x
+  is 10 lowercase hex equal to `key.headSha.slice(0, 10)`.
+- Threads become `{ opener, resolved, resolver, outdated }`.
+- 05A computes `qualifiesAtHead` and carries identities. Trust — whether an actor is Codex or a trusted resolver —
+  is 05B's decision against the policy.
+
+### 4.3 `parseRollup(raw, { headSha })` — GraphQL, exact fields, one response
+
+```
+repository(owner,name){ object(oid:H){ __typename ... on Commit{ oid statusCheckRollup{
+  contexts(first:100){ totalCount pageInfo{hasNextPage} nodes{ __typename
+    ... on CheckRun{ name status conclusion checkSuite{app{slug}} } ... on StatusContext{ context state } } } } } } }
+```
+
+- `oid` must equal `headSha`, which is required.
+- A `null` object → `read_failed`. A `null` rollup is a complete, empty set.
+- Schema (else `malformed`):
+  - a CheckRun has a string `name`, a non-empty string `status`, a `conclusion` that is a string or `null`, and
+    `checkSuite.app` that is `null` or `{ slug: <non-empty string> }`;
+  - a StatusContext has a string `context` and a non-empty string `state`;
+  - any other node type is malformed.
+- Then `hasNextPage`, a `totalCount` over 100, or one that differs from `nodes.length` → `external_contexts_too_large`.
+- Record: `{ contexts: [{ kind: "CheckRun", name, status, conclusion, appSlug } | { kind: "StatusContext", context,
+  state }] }`, in a fixed content order.
+
+### 4.4 `bindExternal(record)` — EXT-CONTEXT-01's closed tables
+
+- Every StatusContext is external: `SUCCESS` → success; `PENDING` and `EXPECTED` → pending; `ERROR` and `FAILURE` →
+  failure.
+- A CheckRun with app slug `github-actions` is excluded, whatever its state.
+- A CheckRun with no app (`appSlug: null`) → `malformed`.
+- For any other CheckRun:
+  - status `REQUESTED`, `QUEUED`, `IN_PROGRESS`, `WAITING` or `PENDING` → pending;
+  - status `COMPLETED` → by conclusion: `SUCCESS`, `NEUTRAL` and `SKIPPED` → success; `FAILURE`, `CANCELLED`,
+    `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE` and `STALE` → failure.
+- Any other value → `unrecognized_context_state`. `malformed` wins over it.
+- Value: `{ external: [{ source, state }] }`, where `source` is the CheckRun `name` or the StatusContext `context`.
 
 ## 5. Reasons this spec adds to the V1 closed set
 
 `fork_head`, `diff_too_large`, `ci_definition_changed`, and the profile's `base_ref`, `base_ref_changed`,
 `shared_head` and `base_history_unverified`.
+
+## 6. Residuals: what V1 does not prove
+
+Each is a stated limit, not a hidden assumption. None can make a candidate out of evidence the rules above refuse.
+
+- **A1b — a reopened run's merge.** If a `reopened` run reused a merge GitHub computed before the PR was closed, its
+  base could predate the recorded year. GitHub does not document either way. Step 8's window bounds the run, not the
+  merge.
+- **A8 — activity-log completeness.** That the activity log records every rewrite is GitHub's claim, not proved
+  here. Open questions: renaming production, or renaming another branch into its name; forced ref updates made
+  through the API; whether a full year is always retained.
+- **A5 — browser-group completeness.** The browser aggregator selects groups from the run's own diff against its
+  own older base. If H reverts a change production made after that base, a group production would select may not
+  have run, and the aggregator still succeeds. Named lanes are safe (`INCOMPLETE`). An empty `changed.txt` is safe
+  because `classify([])` selects the full matrix.
+- **A9 — drift is 05B's rule.** `bindCi` can return `SUCCEEDED` for a PR that is behind production. Requiring
+  `behindBy == 0` is 05B's precedence (`NEEDS_REFRESH` before every CI rule), and 05B's tests must prove it.
+- **R-ECHO — two answers do not echo their head.** The compare (§2.1) echoes its base but not its head, and the
+  PR context's `associatedPullRequests` (§2.2) does not echo the commit it was read for. The collector passes
+  `K0.headSha` to both, and its tests pin that.

@@ -221,6 +221,57 @@ describe("parseActivity (REST activity, filtered by ref and type)", () => {
   });
 });
 
+describe("every row-2 parser: the request is required, and nothing throws", () => {
+  const ACT = `refs/heads/${PROD}`;
+  const hostile = () =>
+    new Proxy([], {
+      get() {
+        throw new Error("hostile proxy");
+      },
+      ownKeys() {
+        throw new Error("hostile proxy");
+      },
+    });
+  // [label, parser, a real answer, the valid request, requests that must be refused]
+  const cases: Array<[string, (raw: any, opts?: any) => any, any, object, any[]]> = [
+    ["parseCompare", parseCompare, load("base/compare-810.json"), { baseSha: BASE_TIP },
+      [undefined, null, {}, { baseSha: BASE_TIP.slice(1) }, { baseSha: BASE_TIP.toUpperCase() }]],
+    ["parsePrContext", parsePrContext, load("base/pr-context-810.json"), { expectedNumber: 810 },
+      [undefined, null, {}, { expectedNumber: "810" }, { expectedNumber: 0 }]],
+    ["parseHeadBranchPrs", parseHeadBranchPrs, load("base/head-branch-prs-810.json"), { headRef: "feat/eng-loop-v1-05a" },
+      [undefined, null, {}, { headRef: "" }]],
+    ["parseActivity", parseActivity, load("base/activity-branch-creation-initial.json"),
+      { activityType: "branch_creation", ref: ACT },
+      [undefined, null, {}, { activityType: "branch_creation" }, { activityType: "push", ref: ACT },
+        { activityType: "branch_creation", ref: PROD }, { activityType: "branch_creation", ref: "refs/heads/" }]],
+  ];
+
+  it.each(cases)("%s: the real answer parses only with its request; a missing or invalid one is malformed", (_n, parse, raw, good, bad) => {
+    expect(parse(raw, good).ok).toBe(true);
+    for (const opts of bad) {
+      expect(() => parse(raw, opts)).not.toThrow();
+      expect(parse(raw, opts), JSON.stringify(opts) ?? "undefined").toMatchObject({ ok: false, reason: "malformed" });
+    }
+  });
+
+  it("an EMPTY activity answer is refused without its request too: no history is never assumed from a bare []", () => {
+    for (const opts of [undefined, null, {}, { activityType: "force_push" }]) {
+      expect(parseActivity([], opts as any)).toMatchObject({ ok: false, reason: "malformed" });
+    }
+    expect(parseActivity([], { activityType: "force_push", ref: ACT })).toMatchObject({ ok: true });
+  });
+
+  it.each(cases)("%s: an exotic answer is malformed, never an exception", (_n, parse, _raw, good) => {
+    expect(() => parse(hostile(), good)).not.toThrow();
+    expect(parse(hostile(), good)).toMatchObject({ ok: false, reason: "malformed" });
+  });
+
+  it("parseBranchRules: an exotic answer is malformed, never an exception", () => {
+    expect(() => parseBranchRules(hostile())).not.toThrow();
+    expect(parseBranchRules(hostile())).toMatchObject({ ok: false, reason: "malformed" });
+  });
+});
+
 describe("bindBase", () => {
   const ok = (r: any) => {
     if (!r.ok) throw new Error(`fixture did not parse: ${r.reason} ${r.detail}`);

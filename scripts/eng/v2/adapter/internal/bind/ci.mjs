@@ -9,7 +9,8 @@
 //   * that head branch has only ever had this PR, and H is associated with
 //     this PR alone;
 //   * this PR's base never changed;
-//   * production's RECORDED history has no force push or deletion since the
+//   * production's RECORDED history has no force push or deletion anywhere in
+//     the recorded year, and production was created before every applicable
 //     run (current rules alone are never treated as history);
 //   * required jobs come from production's own classifier, and a PR that
 //     changes CI's definition is never evaluated by its own definition.
@@ -85,6 +86,8 @@ function runState(run) {
   return { unknown: "unrecognized_ci_status" };
 }
 
+const provablyComplete = (listing) => listing.capped === false && Array.isArray(listing.events);
+
 const onlyThisPr = (list, prNumber) => Array.isArray(list) && list.length === 1 && list[0] === prNumber;
 
 export function bindCi({
@@ -143,20 +146,26 @@ export function bindCi({
     if (applicable.length === 0) return okValue({ outcome: "NO_RUN", applicableRunIds: [] });
     const ids = applicable.map((r) => r.id);
 
-    // 8. Recorded production history must show no rewrite since the earliest applicable run.
+    // 8. Recorded production history. A run's base is fixed when GitHub computes the test
+    //    merge, which happens BEFORE the run record exists, so `created_at` cannot bound a
+    //    rewrite: any force push or deletion in the recorded year blocks. Production's
+    //    creation is benign only when it precedes every applicable run.
     const observed = Date.parse(observedAt);
     const earliest = Math.min(...applicable.map((r) => Date.parse(r.createdAt)));
     if (!Number.isFinite(observed) || !Number.isFinite(earliest)) return fail("malformed", "a time is not a time");
     if (observed - earliest > HISTORY_WINDOW_MS) {
       return fail("base_history_unverified", "a run is older than the recorded production history covers");
     }
-    if (activity.forcePush.capped === true || activity.branchDeletion.capped === true) {
+    const { forcePush, branchDeletion, branchCreation } = activity;
+    if (![forcePush, branchDeletion, branchCreation].every(provablyComplete)) {
       return fail("base_history_unverified", "production history does not fit one response");
     }
-    const rewrite = [...activity.forcePush.events, ...activity.branchDeletion.events].some(
-      (e) => !(Date.parse(e.timestamp) < earliest),
-    );
-    if (rewrite) return fail("base_history_unverified", "production was rewritten after an applicable run");
+    if (forcePush.events.length !== 0 || branchDeletion.events.length !== 0) {
+      return fail("base_history_unverified", "production's recorded year contains a force push or a deletion");
+    }
+    if (branchCreation.events.some((e) => !(Date.parse(e.timestamp) < earliest))) {
+      return fail("base_history_unverified", "production was created at or after an applicable run");
+    }
 
     // 9. Each applicable run's state, from the closed table.
     const states = [];

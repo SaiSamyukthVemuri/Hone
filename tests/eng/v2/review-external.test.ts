@@ -37,10 +37,23 @@ const HEAD_800 = "fe62f51f0fd95fc97d2e21eef71d179e2e701358";
 const HEAD_809 = "9dbbdb808748023d8b835d9d3875552cd81d18e0";
 const STALE_809 = "b54e4382847a909dbd448f7c1b175e2ba49866e0";
 const key = (headSha: string) => ({ headSha });
+const HEAD_810_RECORDED = "958b9d536e055e746499262cdc1a740e13501bf2";
+const HEAD_776_RECORDED = "7d25459de1fe63a7fd4ed3348ecb11ab35ab6338";
+/** The PR or commit each fixture was requested for: the parsers require it. */
+const REQUESTED: Record<string, any> = {
+  "review/review-800.json": { expectedNumber: 800 },
+  "review/review-809.json": { expectedNumber: 809 },
+  "review/review-776.json": { expectedNumber: 776 },
+  "rollup/rollup-800.json": { headSha: HEAD_800 },
+  "rollup/rollup-810.json": { headSha: HEAD_810_RECORDED },
+  "rollup/rollup-776.json": { headSha: HEAD_776_RECORDED },
+};
+const P809 = REQUESTED["review/review-809.json"];
+const P800_ROLLUP = REQUESTED["rollup/rollup-800.json"];
 
 describe("parseReviewEvidence: one complete response or a typed failure", () => {
   it("reads #800's reviews, comments and threads in full", () => {
-    const r = ok(parseReviewEvidence(load("review/review-800.json")));
+    const r = ok(parseReviewEvidence(load("review/review-800.json"), { expectedNumber: 800 }));
     expect(r.reviews).toHaveLength(21);
     expect(r.comments).toHaveLength(11);
     expect(r.threads).toHaveLength(13);
@@ -56,7 +69,7 @@ describe("parseReviewEvidence: one complete response or a typed failure", () => 
   const edit = (f: (pr: any) => void) => {
     const raw = clone(load("review/review-809.json"));
     f(raw.data.repository.pullRequest);
-    return parseReviewEvidence(raw);
+    return parseReviewEvidence(raw, P809);
   };
 
   it.each([
@@ -78,19 +91,58 @@ describe("parseReviewEvidence: one complete response or a typed failure", () => 
     expect(edit(f)).toMatchObject({ ok: false, reason: "malformed" });
   });
 
+  it("the answer must echo the requested pull request; a missing request is malformed", () => {
+    expect(REVIEW_EVIDENCE_QUERY).toMatch(/pullRequest\(number:\$n\)\{number /);
+    const raw = load("review/review-809.json");
+    for (const opts of [undefined, null, {}, { expectedNumber: "809" }, { expectedNumber: 0 }]) {
+      expect(parseReviewEvidence(raw, opts as any), JSON.stringify(opts)).toMatchObject({ ok: false, reason: "malformed" });
+    }
+    expect(parseReviewEvidence(raw, { expectedNumber: 800 })).toMatchObject({ ok: false, reason: "malformed" });
+    const unechoed = clone(raw);
+    delete unechoed.data.repository.pullRequest.number;
+    expect(parseReviewEvidence(unechoed, P809)).toMatchObject({ ok: false, reason: "malformed" });
+  });
+
+  it("a repeated review or comment id is malformed: one id is one artifact", () => {
+    expect(edit((p) => p.reviews.nodes.push(clone(p.reviews.nodes[0])) && (p.reviews.totalCount += 1))).toMatchObject({
+      reason: "malformed",
+    });
+    expect(edit((p) => p.comments.nodes.push(clone(p.comments.nodes[0])) && (p.comments.totalCount += 1))).toMatchObject({
+      reason: "malformed",
+    });
+  });
+
+  it("any reordering of the same answer normalizes to the same evidence (CAP-01 L7)", () => {
+    const raw = load("review/review-800.json");
+    const reversed = clone(raw);
+    const p = reversed.data.repository.pullRequest;
+    for (const c of [p.reviews, p.comments, p.reviewThreads]) c.nodes.reverse();
+    expect(parseReviewEvidence(reversed, { expectedNumber: 800 })).toEqual(parseReviewEvidence(raw, { expectedNumber: 800 }));
+  });
+
+  it("an exotic input is malformed, never an exception", () => {
+    const hostile = new Proxy(clone(load("review/review-809.json")), {
+      ownKeys() {
+        throw new Error("hostile proxy");
+      },
+    });
+    expect(() => parseReviewEvidence(hostile, P809)).not.toThrow();
+    expect(parseReviewEvidence(hostile, P809)).toMatchObject({ ok: false, reason: "malformed" });
+  });
+
   it("a GitHub error or a missing pull request is read_failed", () => {
     const err = clone(load("review/review-809.json"));
     err.errors = [{ message: "boom" }];
-    expect(parseReviewEvidence(err)).toMatchObject({ reason: "read_failed" });
+    expect(parseReviewEvidence(err, P809)).toMatchObject({ reason: "read_failed" });
     const gone = clone(load("review/review-809.json"));
     gone.data.repository.pullRequest = null;
-    expect(parseReviewEvidence(gone)).toMatchObject({ reason: "read_failed" });
+    expect(parseReviewEvidence(gone, P809)).toMatchObject({ reason: "read_failed" });
   });
 });
 
 describe("bindReviews: trusted review artifacts at the exact head", () => {
   const bind = (fixture: string, headSha: string) =>
-    ok(bindReviews({ key: key(headSha), evidence: ok(parseReviewEvidence(load(fixture))), policy: REVIEW_POLICY }));
+    ok(bindReviews({ key: key(headSha), evidence: ok(parseReviewEvidence(load(fixture), REQUESTED[fixture])), policy: REVIEW_POLICY }));
 
   it("#809: the clean comment naming the head qualifies (channel B); the one naming the earlier head does not", () => {
     const v = bind("review/review-809.json", HEAD_809);
@@ -126,7 +178,7 @@ describe("bindReviews: trusted review artifacts at the exact head", () => {
     const raw = clone(load("review/review-809.json"));
     raw.data.repository.pullRequest.comments.nodes.push({ databaseId: 1, body, author });
     raw.data.repository.pullRequest.comments.totalCount += 1;
-    return ok(bindReviews({ key: key(HEAD_809), evidence: ok(parseReviewEvidence(raw)), policy: REVIEW_POLICY }));
+    return ok(bindReviews({ key: key(HEAD_809), evidence: ok(parseReviewEvidence(raw, P809)), policy: REVIEW_POLICY }));
   };
   const CODEX = { __typename: "Bot", login: "chatgpt-codex-connector", databaseId: 199175422 };
   const marker = (h: string) => `**Reviewed commit:** \`${h}\``;
@@ -160,7 +212,7 @@ describe("bindReviews: trusted review artifacts at the exact head", () => {
   it("a review state outside GitHub's closed set is malformed", () => {
     const raw = clone(load("review/review-809.json"));
     raw.data.repository.pullRequest.reviews.nodes[0].state = "SORT_OF";
-    expect(bindReviews({ key: key(HEAD_809), evidence: ok(parseReviewEvidence(raw)), policy: REVIEW_POLICY })).toMatchObject({
+    expect(bindReviews({ key: key(HEAD_809), evidence: ok(parseReviewEvidence(raw, P809)), policy: REVIEW_POLICY })).toMatchObject({
       ok: false,
       reason: "malformed",
     });
@@ -168,7 +220,7 @@ describe("bindReviews: trusted review artifacts at the exact head", () => {
 });
 
 describe("parseRollup and bindExternal (EXT-CONTEXT-01)", () => {
-  const ext = (fixture: string) => bindExternal(ok(parseRollup(load(fixture))));
+  const ext = (fixture: string) => bindExternal(ok(parseRollup(load(fixture), REQUESTED[fixture])));
 
   it("asks for the rollup's contexts at first:100 with their completeness fields", () => {
     expect(ROLLUP_QUERY.replace(/\s+/g, "")).toContain("contexts(first:100){totalCountpageInfo{hasNextPage}");
@@ -195,6 +247,7 @@ describe("parseRollup and bindExternal (EXT-CONTEXT-01)", () => {
     f(raw.data.repository.object.statusCheckRollup.contexts.nodes);
     return raw;
   };
+  const parse800 = (raw: any) => parseRollup(raw, P800_ROLLUP);
   const nonActions = (nodes: any[]) => nodes.find((n) => n.__typename === "CheckRun" && n.checkSuite.app?.slug !== "github-actions");
   const status = (nodes: any[]) => nodes.find((n) => n.__typename === "StatusContext");
 
@@ -205,26 +258,26 @@ describe("parseRollup and bindExternal (EXT-CONTEXT-01)", () => {
     ["WAITING", "pending"],
     ["PENDING", "pending"],
   ])("an external check run %s is %s", (s, expected) => {
-    const v = ok(bindExternal(ok(parseRollup(mutate((n) => Object.assign(nonActions(n), { status: s, conclusion: null }))))));
+    const v = ok(bindExternal(ok(parse800(mutate((n) => Object.assign(nonActions(n), { status: s, conclusion: null }))))));
     expect(v.external.some((e: any) => e.state === expected)).toBe(true);
   });
 
   it.each(["SUCCESS", "NEUTRAL", "SKIPPED"])("completed + %s is success", (c) => {
-    const v = ok(bindExternal(ok(parseRollup(mutate((n) => Object.assign(nonActions(n), { conclusion: c }))))));
+    const v = ok(bindExternal(ok(parse800(mutate((n) => Object.assign(nonActions(n), { conclusion: c }))))));
     expect(v.external.every((e: any) => e.state === "success")).toBe(true);
   });
 
   it.each(["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"])(
     "completed + %s is failure",
     (c) => {
-      const v = ok(bindExternal(ok(parseRollup(mutate((n) => Object.assign(nonActions(n), { conclusion: c }))))));
+      const v = ok(bindExternal(ok(parse800(mutate((n) => Object.assign(nonActions(n), { conclusion: c }))))));
       expect(v.external.some((e: any) => e.state === "failure")).toBe(true);
     },
   );
 
   it("unknown status or conclusion strings, and a completed run with a null conclusion, are unrecognized_context_state", () => {
     for (const patch of [{ status: "PAUSED" }, { conclusion: "MAYBE" }, { conclusion: null }]) {
-      expect(bindExternal(ok(parseRollup(mutate((n) => Object.assign(nonActions(n), patch)))))).toMatchObject({
+      expect(bindExternal(ok(parse800(mutate((n) => Object.assign(nonActions(n), patch)))))).toMatchObject({
         reason: "unrecognized_context_state",
       });
     }
@@ -232,47 +285,74 @@ describe("parseRollup and bindExternal (EXT-CONTEXT-01)", () => {
 
   it("status-context states map by the closed table; unknown is unrecognized", () => {
     for (const [s, e] of [["SUCCESS", "success"], ["PENDING", "pending"], ["EXPECTED", "pending"], ["ERROR", "failure"], ["FAILURE", "failure"]]) {
-      const v = ok(bindExternal(ok(parseRollup(mutate((n) => (status(n).state = s))))));
+      const v = ok(bindExternal(ok(parse800(mutate((n) => (status(n).state = s))))));
       expect(v.external.find((x: any) => x.source === "Vercel")?.state).toBe(e);
     }
-    expect(bindExternal(ok(parseRollup(mutate((n) => (status(n).state = "MAYBE")))))).toMatchObject({
+    expect(bindExternal(ok(parse800(mutate((n) => (status(n).state = "MAYBE")))))).toMatchObject({
       reason: "unrecognized_context_state",
     });
   });
 
   it("a check run with no app is malformed, and malformed wins over an unrecognized state in either order", () => {
-    expect(bindExternal(ok(parseRollup(mutate((n) => (nonActions(n).checkSuite.app = null)))))).toMatchObject({
+    expect(bindExternal(ok(parse800(mutate((n) => (nonActions(n).checkSuite.app = null)))))).toMatchObject({
       reason: "malformed",
     });
     const both = mutate((n) => {
       nonActions(n).checkSuite.app = null;
       status(n).state = "MAYBE";
     });
-    expect(bindExternal(ok(parseRollup(both)))).toMatchObject({ reason: "malformed" });
+    expect(bindExternal(ok(parseRollup(both, P800_ROLLUP)))).toMatchObject({ reason: "malformed" });
     const reversed = clone(both);
     reversed.data.repository.object.statusCheckRollup.contexts.nodes.reverse();
-    expect(bindExternal(ok(parseRollup(reversed)))).toMatchObject({ reason: "malformed" });
+    expect(bindExternal(ok(parseRollup(reversed, P800_ROLLUP)))).toMatchObject({ reason: "malformed" });
   });
 
   it("a null or non-string state is the reader's malformed, never reclassified (EXT-CONTEXT-01 §3)", () => {
-    expect(parseRollup(mutate((n) => (status(n).state = null)))).toMatchObject({ reason: "malformed" });
-    expect(parseRollup(mutate((n) => (nonActions(n).status = 3)))).toMatchObject({ reason: "malformed" });
+    expect(parse800(mutate((n) => (status(n).state = null)))).toMatchObject({ reason: "malformed" });
+    expect(parse800(mutate((n) => (nonActions(n).status = 3)))).toMatchObject({ reason: "malformed" });
   });
 
   it("a rollup that cannot be complete in one response is external_contexts_too_large; null is an empty set", () => {
     const more = clone(load("rollup/rollup-800.json"));
     more.data.repository.object.statusCheckRollup.contexts.pageInfo.hasNextPage = true;
-    expect(parseRollup(more)).toMatchObject({ reason: "external_contexts_too_large" });
+    expect(parseRollup(more, P800_ROLLUP)).toMatchObject({ reason: "external_contexts_too_large" });
     const none = clone(load("rollup/rollup-800.json"));
     none.data.repository.object.statusCheckRollup = null;
-    expect(ok(bindExternal(ok(parseRollup(none)))).external).toEqual([]);
+    expect(ok(bindExternal(ok(parseRollup(none, P800_ROLLUP)))).external).toEqual([]);
+  });
+
+  it("the answer must echo the requested commit; a missing request is malformed", () => {
+    expect(ROLLUP_QUERY).toContain("... on Commit{oid statusCheckRollup{");
+    const raw = load("rollup/rollup-800.json");
+    for (const opts of [undefined, null, {}, { headSha: HEAD_800.slice(0, 10) }, { headSha: HEAD_800.toUpperCase() }]) {
+      expect(parseRollup(raw, opts as any), JSON.stringify(opts)).toMatchObject({ ok: false, reason: "malformed" });
+    }
+    expect(parseRollup(raw, { headSha: HEAD_810_RECORDED })).toMatchObject({ ok: false, reason: "malformed" });
+    const unechoed = clone(raw);
+    delete unechoed.data.repository.object.oid;
+    expect(parseRollup(unechoed, P800_ROLLUP)).toMatchObject({ ok: false, reason: "malformed" });
+  });
+
+  it("any reordering of the contexts gives the identical record (CAP-01 L7), and nothing throws", () => {
+    const raw = load("rollup/rollup-776.json");
+    const reversed = clone(raw);
+    reversed.data.repository.object.statusCheckRollup.contexts.nodes.reverse();
+    const p776 = REQUESTED["rollup/rollup-776.json"];
+    expect(parseRollup(reversed, p776)).toEqual(parseRollup(raw, p776));
+    const hostile = new Proxy(clone(raw), {
+      ownKeys() {
+        throw new Error("hostile proxy");
+      },
+    });
+    expect(() => parseRollup(hostile, p776)).not.toThrow();
+    expect(parseRollup(hostile, p776)).toMatchObject({ ok: false, reason: "malformed" });
   });
 
   it("permutation of the contexts gives the same normalized multiset", () => {
     const a = ok(ext("rollup/rollup-776.json")).external;
     const raw = clone(load("rollup/rollup-776.json"));
     raw.data.repository.object.statusCheckRollup.contexts.nodes.reverse();
-    const b = ok(bindExternal(ok(parseRollup(raw)))).external;
+    const b = ok(bindExternal(ok(parseRollup(raw, REQUESTED["rollup/rollup-776.json"])))).external;
     const key = (e: any) => `${e.source}|${e.state}`;
     expect(b.map(key).sort()).toEqual(a.map(key).sort());
   });

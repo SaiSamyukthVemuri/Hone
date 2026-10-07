@@ -5,7 +5,7 @@ import path from "node:path";
 
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { PR_KEY_QUERY, keysEqual, parsePrKey } from "../../../scripts/eng/v2/contract/pr-key.mjs";
+import { PR_KEY_QUERY, isPrKey, keysEqual, parsePrKey } from "../../../scripts/eng/v2/contract/pr-key.mjs";
 import {
   ENVELOPE_CASES,
   keyViolation,
@@ -159,6 +159,80 @@ describe("PrSnapshotKey: the contract, mutation by mutation", () => {
 
   it("seeded fuzzing never yields an invalid key, an exception or an open-set reason", () => {
     expect(fuzzFailures(parsePrKey, 3000, 20261007)).toEqual([]);
+  });
+});
+
+describe("PrSnapshotKey: the request is required, and nothing throws", () => {
+  const raw = () => load("pr-800-open-draft.json");
+
+  it("a key never compared with the requested number is malformed, however the number is omitted", () => {
+    for (const opts of [undefined, null, {}, { expectedNumber: undefined }, { expectedNumber: null }, { expectedNumber: 0 }, { expectedNumber: "800" }]) {
+      expect(parsePrKey(raw(), opts as any), JSON.stringify(opts)).toMatchObject({ ok: false, reason: "malformed" });
+    }
+    expect(parsePrKey(raw())).toMatchObject({ ok: false, reason: "malformed" });
+    expect(parsePrKey(raw(), { expectedNumber: 800 }).ok).toBe(true);
+  });
+
+  it("an exotic input — a throwing getter, a hostile Proxy, throwing options — is malformed, never an exception", () => {
+    const getter = raw();
+    Object.defineProperty(getter.data.repository.pullRequest, "state", {
+      enumerable: true,
+      get() {
+        throw new Error("hostile getter");
+      },
+    });
+    const proxy = new Proxy(raw(), {
+      ownKeys() {
+        throw new Error("hostile proxy");
+      },
+    });
+    const opts = Object.defineProperty({}, "expectedNumber", {
+      get() {
+        throw new Error("hostile options");
+      },
+    });
+    for (const [input, o] of [
+      [getter, { expectedNumber: 800 }],
+      [proxy, { expectedNumber: 800 }],
+      [raw(), opts],
+    ] as const) {
+      expect(() => parsePrKey(input, o)).not.toThrow();
+      expect(parsePrKey(input, o)).toMatchObject({ ok: false, reason: "malformed" });
+    }
+  });
+
+  it("isPrKey accepts exactly the parser's keys", () => {
+    for (const [file, n] of [
+      ["pr-800-open-draft.json", 800],
+      ["pr-809-merged.json", 809],
+      ["pr-623-closed-unmerged.json", 623],
+      ["pr-776-open-feature-base.json", 776],
+    ] as const) {
+      expect(isPrKey(parsePrKey(load(file), { expectedNumber: n }).key), file).toBe(true);
+    }
+    const k = parsePrKey(raw(), { expectedNumber: 800 }).key;
+    const bad: Array<[string, unknown]> = [
+      ["null", null],
+      ["a number", 800],
+      ["a fragment", { prNumber: 800 }],
+      ["an extra field", { ...k, extra: 1 }],
+      ["a missing field", Object.fromEntries(Object.entries(k).filter(([f]) => f !== "isDraft"))],
+      ["isDraft as a string", { ...k, isDraft: "false" }],
+      ["an unknown state", { ...k, state: "DRAFT" }],
+      ["a short head", { ...k, headSha: k.headSha.slice(1) }],
+      ["an open key without a base tip", { ...k, baseSha: null }],
+      ["an open key without a head repository", { ...k, headRepoId: null }],
+      ["a terminal key with a base tip", { ...k, state: "MERGED" }],
+      ["an empty head ref", { ...k, headRef: "" }],
+      ["a zero base repository", { ...k, baseRepoId: 0 }],
+    ];
+    for (const [label, v] of bad) expect(isPrKey(v), label).toBe(false);
+    const hostile = new Proxy(k, {
+      ownKeys() {
+        throw new Error("hostile proxy");
+      },
+    });
+    expect(isPrKey(hostile)).toBe(false);
   });
 });
 

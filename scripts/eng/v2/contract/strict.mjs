@@ -30,6 +30,31 @@ export function deepFreeze(v) {
 }
 
 export const fail = (reason, detail) => Object.freeze({ ok: false, reason, detail });
+
+/**
+ * Wrap a parser or binder body so that nothing escapes it: an exception from an
+ * exotic input (a throwing getter, a Proxy) is `malformed`, never a throw.
+ */
+export function guarded(body) {
+  return (...args) => {
+    try {
+      return body(...args);
+    } catch {
+      return fail("malformed", "the input could not be validated");
+    }
+  };
+}
+
+/**
+ * One REQUIRED request parameter: the value, or `undefined` when the options are
+ * absent or the value fails `valid`. A parser never skips an identity check
+ * because its caller forgot to say what was asked for.
+ */
+export function requested(opts, name, valid) {
+  if (opts === null || typeof opts !== "object") return undefined;
+  const v = opts[name];
+  return valid(v) ? v : undefined;
+}
 export const okRecord = (record) => Object.freeze({ ok: true, record: deepFreeze(record) });
 export const okValue = (value) => Object.freeze({ ok: true, value: deepFreeze(value) });
 

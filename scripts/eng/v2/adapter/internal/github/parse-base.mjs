@@ -1,7 +1,9 @@
 // ---------------------------------------------------------------------------
 // ENG-LOOP V1 05A, row 2: strict parsers for the production base and the PR's
 // context (SPEC-05A §2.1–§2.5). Pure; every result is a closed, frozen record
-// or a closed failure, and nothing throws.
+// or a closed failure, and nothing throws. Every request parameter is
+// required: without it the answer cannot be checked against the request, so
+// it is `malformed`.
 //
 // Live trap (2026-10-07): a filtered `timelineItems(itemTypes:[...])` reports a
 // `totalCount` of EVERY timeline item — #720 says 36 for its one base change.
@@ -12,6 +14,7 @@
 import {
   fail,
   graphqlData,
+  guarded,
   hasExactly,
   isIsoUtc,
   isNonEmptyString,
@@ -20,6 +23,7 @@ import {
   isPosInt,
   isSha40,
   okRecord,
+  requested,
 } from "../../../contract/strict.mjs";
 
 const COMPARE_STATUSES = ["ahead", "behind", "diverged", "identical"];
@@ -36,14 +40,16 @@ export const PR_CONTEXT_QUERY =
   "object(oid:$h){__typename ... on Commit{associatedPullRequests(first:100){pageInfo{hasNextPage} nodes{number}}}}}}";
 
 /** REST compare/{baseSha}...{headSha}: drift, merge base and changed files. */
-export function parseCompare(raw, { baseSha } = {}) {
+export const parseCompare = guarded((raw, opts) => {
+  const baseSha = requested(opts, "baseSha", isSha40);
+  if (baseSha === undefined) return fail("malformed", "the requested base is required");
   if (!isObject(raw)) return fail("malformed", "the compare is not an object");
   if (!COMPARE_STATUSES.includes(raw.status)) return fail("malformed", "status is not a known compare status");
   if (!isNonNegInt(raw.behind_by) || !isNonNegInt(raw.ahead_by)) {
     return fail("malformed", "behind_by and ahead_by must be non-negative integers");
   }
   if (!isObject(raw.base_commit) || !isSha40(raw.base_commit.sha)) return fail("malformed", "base_commit.sha");
-  if (baseSha !== undefined && raw.base_commit.sha !== baseSha) {
+  if (raw.base_commit.sha !== baseSha) {
     return fail("malformed", "the compare is for another base than the one requested");
   }
   if (!isObject(raw.merge_base_commit) || !isSha40(raw.merge_base_commit.sha)) {
@@ -64,7 +70,7 @@ export function parseCompare(raw, { baseSha } = {}) {
     files,
     filesCapped: files.length >= COMPARE_FILE_CAP,
   });
-}
+});
 
 function connection(conn, nodeOk) {
   if (!isObject(conn) || !hasExactly(conn, ["pageInfo", "nodes"])) return null;
@@ -75,7 +81,9 @@ function connection(conn, nodeOk) {
 }
 
 /** GraphQL PR context: creation time, file count, base changes, associated PRs. */
-export function parsePrContext(raw, { expectedNumber } = {}) {
+export const parsePrContext = guarded((raw, opts) => {
+  const expectedNumber = requested(opts, "expectedNumber", isPosInt);
+  if (expectedNumber === undefined) return fail("malformed", "the requested pull request number is required");
   const env = graphqlData(raw);
   if (env.failure) return env.failure;
   const data = env.data;
@@ -92,7 +100,7 @@ export function parsePrContext(raw, { expectedNumber } = {}) {
   if (!isObject(p) || !hasExactly(p, ["number", "createdAt", "changedFiles", "baseRefChanges"])) {
     return fail("malformed", "the pull request does not carry exactly the requested fields");
   }
-  if (!isPosInt(p.number) || (expectedNumber !== undefined && p.number !== expectedNumber)) {
+  if (p.number !== expectedNumber) {
     return fail("malformed", "the answer names another pull request");
   }
   if (!isIsoUtc(p.createdAt)) return fail("malformed", "createdAt is not an ISO-8601 UTC timestamp");
@@ -116,10 +124,12 @@ export function parsePrContext(raw, { expectedNumber } = {}) {
     baseRefChanges: changes.pageInfo.hasNextPage ? "too_many" : changes.nodes.length,
     associatedPrNumbers: assoc.pageInfo.hasNextPage ? "too_many" : assoc.nodes.map((n) => n.number),
   });
-}
+});
 
 /** REST pulls?head=<owner>:<headRef>&state=all: every PR ever opened from this head branch. */
-export function parseHeadBranchPrs(raw, { headRef } = {}) {
+export const parseHeadBranchPrs = guarded((raw, opts) => {
+  const headRef = requested(opts, "headRef", isNonEmptyString);
+  if (headRef === undefined) return fail("malformed", "the requested head branch is required");
   if (!Array.isArray(raw)) return fail("malformed", "the pull request list is not a list");
   const numbers = [];
   for (const p of raw) {
@@ -132,10 +142,10 @@ export function parseHeadBranchPrs(raw, { headRef } = {}) {
     numbers.push(p.number);
   }
   return okRecord({ numbers, capped: raw.length >= PAGE });
-}
+});
 
 /** REST rules/branches/{branch}: the rules in force on the branch now. Proves nothing about history. */
-export function parseBranchRules(raw) {
+export const parseBranchRules = guarded((raw) => {
   if (!Array.isArray(raw)) return fail("malformed", "the rules answer is not a list");
   const types = [];
   for (const r of raw) {
@@ -143,10 +153,18 @@ export function parseBranchRules(raw) {
     types.push(r.type);
   }
   return okRecord({ types, nonFastForward: types.includes("non_fast_forward"), deletion: types.includes("deletion") });
-}
+});
 
 /** REST activity?ref=...&activity_type=...: recorded history of one activity type on one ref. */
-export function parseActivity(raw, { activityType, ref } = {}) {
+const ACTIVITY_TYPES = Object.freeze(["force_push", "branch_deletion", "branch_creation"]);
+const isBranchRef = (v) => typeof v === "string" && v.startsWith("refs/heads/") && v.length > "refs/heads/".length;
+
+export const parseActivity = guarded((raw, opts) => {
+  const activityType = requested(opts, "activityType", (v) => ACTIVITY_TYPES.includes(v));
+  const ref = requested(opts, "ref", isBranchRef);
+  if (activityType === undefined || ref === undefined) {
+    return fail("malformed", "the requested activity type and full branch ref are required");
+  }
   if (!Array.isArray(raw)) return fail("malformed", "the activity answer is not a list");
   const events = [];
   for (const e of raw) {
@@ -158,4 +176,4 @@ export function parseActivity(raw, { activityType, ref } = {}) {
     events.push({ timestamp: e.timestamp, before: e.before, after: e.after });
   }
   return okRecord({ events, capped: raw.length >= PAGE });
-}
+});

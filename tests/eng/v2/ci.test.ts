@@ -43,10 +43,14 @@ const ok = (r: any) => {
 const PROTECTED = ok(parseBranchRules([{ type: "non_fast_forward" }, { type: "deletion" }])); // synthetic: Option A
 const UNPROTECTED = ok(parseBranchRules(load("base/rules-production-unprotected.json"))); // real, today
 const ACT_REF = `refs/heads/${PROD}`;
+/** Real production history, 2026-10-07: no force push, no deletion, and one creation in May. */
 const NO_HISTORY = {
   forcePush: ok(parseActivity(load("base/activity-force-push-none.json"), { activityType: "force_push", ref: ACT_REF })),
   branchDeletion: ok(
     parseActivity(load("base/activity-branch-deletion-none.json"), { activityType: "branch_deletion", ref: ACT_REF }),
+  ),
+  branchCreation: ok(
+    parseActivity(load("base/activity-branch-creation-initial.json"), { activityType: "branch_creation", ref: ACT_REF }),
   ),
 };
 
@@ -108,9 +112,18 @@ describe("parseWorkflowRuns and parseRunJobs (single-response listings)", () => 
     const over = clone(raw);
     over.total_count = 101;
     expect(parseWorkflowRuns(over, { workflowId: WORKFLOW })).toMatchObject({ reason: "ci_candidate_listing_too_large" });
+    // CAP-01 L4: a count that differs from what came back cannot prove completeness.
     const short = clone(raw);
     short.total_count = 2;
-    expect(parseWorkflowRuns(short, { workflowId: WORKFLOW })).toMatchObject({ reason: "malformed" });
+    expect(parseWorkflowRuns(short, { workflowId: WORKFLOW })).toMatchObject({ reason: "ci_candidate_listing_too_large" });
+    const long = clone(raw);
+    long.workflow_runs.push({ ...clone(long.workflow_runs[0]), id: 1, run_number: 1 });
+    expect(parseWorkflowRuns(long, { workflowId: WORKFLOW })).toMatchObject({ reason: "ci_candidate_listing_too_large" });
+    // A schema violation wins over an incomplete listing, so the reason never depends on which is checked first.
+    const both = clone(raw);
+    both.total_count = 101;
+    both.workflow_runs[0].head_sha = "main";
+    expect(parseWorkflowRuns(both, { workflowId: WORKFLOW })).toMatchObject({ reason: "malformed" });
     const dup = clone(raw);
     dup.workflow_runs.push(clone(dup.workflow_runs[0]));
     dup.total_count = 2;
@@ -124,7 +137,58 @@ describe("parseWorkflowRuns and parseRunJobs (single-response listings)", () => 
     expect(parseRunJobs(raw, { runId: runId + 1 })).toMatchObject({ reason: "malformed" });
     const short = clone(raw);
     short.total_count = 11;
-    expect(parseRunJobs(short, { runId })).toMatchObject({ reason: "malformed" });
+    expect(parseRunJobs(short, { runId })).toMatchObject({ reason: "ci_candidate_listing_too_large" });
+  });
+
+  it("any reordering of the same answer normalizes to the same listing (CAP-01 L7)", () => {
+    const runsRaw = load("ci/runs-810.json");
+    const second = { ...clone(runsRaw.workflow_runs[0]), id: 1, run_number: 1, status: "queued", conclusion: null };
+    const forward = { ...clone(runsRaw), total_count: 2, workflow_runs: [runsRaw.workflow_runs[0], second] };
+    const backward = { ...clone(runsRaw), total_count: 2, workflow_runs: [second, runsRaw.workflow_runs[0]] };
+    expect(parseWorkflowRuns(backward, {})).toEqual(parseWorkflowRuns(forward, {}));
+    expect(ok(parseWorkflowRuns(forward, {})).runs.map((r: any) => r.runNumber)).toEqual([1, 2855]);
+
+    const jobsRaw = load("ci/jobs-776.json");
+    const runId = jobsRaw.jobs[0].run_id;
+    const reversed = { ...clone(jobsRaw), jobs: [...clone(jobsRaw.jobs)].reverse() };
+    expect(parseRunJobs(reversed, { runId })).toEqual(parseRunJobs(jobsRaw, { runId }));
+  });
+
+  it("parseRunJobs needs the run it asked for: a missing or invalid run id is malformed, even for an empty listing", () => {
+    const jobs = load("ci/jobs-810.json");
+    const runId = jobs.jobs[0].run_id;
+    for (const opts of [undefined, null, {}, { runId: String(runId) }, { runId: 0 }]) {
+      for (const raw of [jobs, { total_count: 0, jobs: [] }]) {
+        expect(() => parseRunJobs(raw, opts as any)).not.toThrow();
+        expect(parseRunJobs(raw, opts as any), JSON.stringify(opts) ?? "undefined").toMatchObject({ ok: false, reason: "malformed" });
+      }
+    }
+    expect(parseRunJobs(jobs, { runId }).ok).toBe(true);
+  });
+
+  it("an exotic listing is malformed, never an exception", () => {
+    const hostile = new Proxy({}, {
+      get() {
+        throw new Error("hostile proxy");
+      },
+    });
+    for (const parse of [() => parseWorkflowRuns(hostile), () => parseRunJobs(hostile, { runId: 1 })]) {
+      expect(parse).not.toThrow();
+      expect(parse()).toMatchObject({ ok: false, reason: "malformed" });
+    }
+  });
+
+  it("any status string parses; an unknown one is the binder's unrecognized_ci_status, not a parse failure", () => {
+    const raw = load("ci/runs-810.json");
+    for (const status of ["", "paused", "COMPLETED"]) {
+      const r = clone(raw);
+      r.workflow_runs[0].status = status;
+      expect(ok(parseWorkflowRuns(r, {})).runs[0].status, status).toBe(status);
+    }
+    const jobs = load("ci/jobs-776.json");
+    const odd = clone(jobs);
+    odd.jobs[0].status = "";
+    expect(parseRunJobs(odd, { runId: jobs.jobs[0].run_id }).ok).toBe(true);
   });
 });
 
@@ -195,10 +259,63 @@ describe("bindCi: provenance negative controls (SPEC-05A §3.5)", () => {
     });
   });
 
-  it("NC2 (synthetic): a force push BEFORE the run does not block (the run tested a later base)", () => {
+  it("A1 (synthetic): a force push BEFORE the run record still blocks — the test merge predates the record", () => {
+    // GitHub fixes a pull_request run's base when it computes the test merge, before the run
+    // record exists. A rewrite in that gap leaves behind_by 0 and an earlier created_at, so no
+    // run timestamp can bound it: any force push or deletion in the recorded year blocks.
     const c = realCase(800);
-    const before = { events: [{ timestamp: "2026-09-01T00:00:00Z", before: "a".repeat(40), after: "b".repeat(40) }], capped: false };
-    expect(outcome({ ...c, activity: { ...c.activity, forcePush: before } })).toMatchObject({ value: { outcome: "SUCCEEDED" } });
+    const created = c.runs.runs[0].createdAt;
+    const secondsBefore = new Date(Date.parse(created) - 5_000).toISOString().replace(".000Z", "Z");
+    for (const timestamp of [secondsBefore, "2026-09-01T00:00:00Z", "2025-10-20T00:00:00Z"]) {
+      const forced = { events: [{ timestamp, before: "a".repeat(40), after: "b".repeat(40) }], capped: false };
+      expect(outcome({ ...c, activity: { ...c.activity, forcePush: forced } }), timestamp).toMatchObject({
+        ok: false,
+        reason: "base_history_unverified",
+      });
+      const deleted = { events: [{ timestamp, before: "a".repeat(40), after: "0".repeat(40) }], capped: false };
+      expect(outcome({ ...c, activity: { ...c.activity, branchDeletion: deleted } }), timestamp).toMatchObject({
+        ok: false,
+        reason: "base_history_unverified",
+      });
+    }
+  });
+
+  it("A1 (real): production's one creation, in May, precedes every run and does not block", () => {
+    const c = realCase(800);
+    expect(c.activity.branchCreation.events).toHaveLength(1);
+    expect(outcome(c)).toMatchObject({ ok: true, value: { outcome: "SUCCEEDED" } });
+  });
+
+  it("A1 (synthetic): production (re-)created at or after the earliest run, or a capped creation listing, blocks", () => {
+    const c = realCase(800);
+    const created = c.runs.runs[0].createdAt;
+    const later = new Date(Date.parse(created) + 60_000).toISOString().replace(".000Z", "Z");
+    for (const timestamp of [created, later, "not a time"]) {
+      const recreated = {
+        events: [...c.activity.branchCreation.events, { timestamp, before: "0".repeat(40), after: "b".repeat(40) }],
+        capped: false,
+      };
+      expect(outcome({ ...c, activity: { ...c.activity, branchCreation: recreated } }), timestamp).toMatchObject({
+        ok: false,
+        reason: "base_history_unverified",
+      });
+    }
+    expect(
+      outcome({ ...c, activity: { ...c.activity, branchCreation: { events: [], capped: true } } }),
+    ).toMatchObject({ reason: "base_history_unverified" });
+  });
+
+  it("A1: a history input outside the contract never passes as clean history", () => {
+    const c = realCase(800);
+    const withoutCreation: any = { ...c.activity };
+    delete withoutCreation.branchCreation;
+    expect(outcome({ ...c, activity: withoutCreation })).toMatchObject({ ok: false, reason: "malformed" });
+    for (const listing of [{ events: [] }, { events: [], capped: "false" }, { events: {}, capped: false }, { capped: false }]) {
+      expect(
+        outcome({ ...c, activity: { ...c.activity, forcePush: listing } }),
+        JSON.stringify(listing),
+      ).toMatchObject({ ok: false, reason: "base_history_unverified" });
+    }
   });
 
   it("NC2: a branch deletion after the run, or a capped history, is base_history_unverified", () => {
@@ -313,6 +430,7 @@ describe("bindCi: rule order and the closed run-state table", () => {
 
   it("an unknown status, an unknown conclusion, or a completed run with no conclusion fails closed", () => {
     expect(withRun({ status: "paused" })).toMatchObject({ reason: "unrecognized_ci_status" });
+    expect(withRun({ status: "" })).toMatchObject({ reason: "unrecognized_ci_status" });
     expect(withRun({ conclusion: "kinda" })).toMatchObject({ reason: "unrecognized_ci_conclusion" });
     expect(withRun({ conclusion: null })).toMatchObject({ reason: "malformed" });
   });
