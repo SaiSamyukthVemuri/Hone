@@ -133,7 +133,13 @@ makes a listing that cannot prove completeness `UNKNOWN(ci_candidate_listing_too
 `run_number` makes the pass `UNKNOWN(malformed)`. The same response supplies each candidate's `status`, `conclusion`
 and `run_attempt`, which CAP-01 §4 defines as mutable evidence — not identity, and not an ordering.
 
-The walk below classifies each candidate it examines in four steps. Steps 1 and 2 are performed by CAP-01's
+**Head-repository disproof, before any attestation is read.** A candidate whose immutable `head_repository.id`, from
+`readCandidateRuns`, differs from `K0.headRepoId` is provably not this PR's execution. It is UNRELATED: its attestation
+is not read, and it grants nothing, blocks nothing and cannot become the frontier. No other run metadata disproves a
+candidate. In particular, `head_branch` does not: a branch can be renamed after a valid run, so a branch mismatch proves
+nothing, and a same-repository candidate is always classified by its attestation.
+
+The walk below classifies every other candidate it examines in four steps. Steps 1 and 2 are performed by CAP-01's
 `readRunAttestation(runId)`, through its frozen LOCATE → DOWNLOAD plan (CAP-01 §4 and CAP-01 §16); an *unavailable*
 result from it is INVALID:
 
@@ -164,8 +170,11 @@ Any failure in steps 1–3 — a missing, expired, duplicated, malformed or disa
 **The current-run frontier.** `run_number` is the **only** cross-run ordering (E14): no timestamp, run id, cross-run
 `run_attempt` or event history. The walk examines candidates from the highest `run_number` down; GitHub's listing order
 does not matter.
+- **A head-repository mismatch is UNRELATED before any read** (above), and the walk continues.
 - **INVALID before a frontier stops the walk** with `UNKNOWN(ci_attestation_invalid)`. It never falls back to an older
-  run: this newer run may be the PR's own replacement execution, and nothing proves otherwise.
+  run: this newer run may be the PR's own replacement execution, and nothing proves otherwise. That includes a
+  same-repository run on a different or renamed branch whose attestation is missing or invalid: the branch name proves
+  nothing, so that ambiguity stays fail-closed in V1.
 - **The first DESIGNATED candidate is the current-run frontier.** Every candidate with a lower `run_number` is
   superseded: it is not read, and it can neither grant nor block anything.
 - **No frontier.** With zero candidates, or when every candidate is UNRELATED or STALE, there is no frontier, and
@@ -287,7 +296,7 @@ OIDC claims (`base_ref`, `workflow_sha`, `run_id`) are the escalation path if th
 | 1 | a real, valid attested run of a current Hone PR (§11) | DESIGNATED — the frontier |
 | 2 | a valid attestation naming another PR | UNRELATED — excluded |
 | 3 | another PR's run at the same head SHA; the target PR has no run of its own | UNRELATED — `CI_NOT_STARTED`, never an inherited success |
-| 4 | a run of the same commit bytes from a fork; and a forged attestation claiming the target PR from that run | UNRELATED; the forgery fails metadata agreement (head repository id) → `UNKNOWN(ci_attestation_invalid)`. Never an inherited success |
+| 4 | a run of the same commit bytes from a fork; and a forged attestation claiming the target PR from that run | UNRELATED by the head-repository disproof, before any attestation is read: the forgery is never consulted (fixture 31). Never an inherited success |
 | 5 | the PR's base edited after its run and before the pass, in both directions: production → another branch, and another branch → production | STALE — excluded |
 | 6 | a malformed artifact: bad JSON, an extra or missing key, a wrong type, two zip entries, a wrong entry name, a digest mismatch | `UNKNOWN(ci_attestation_invalid)` |
 | 7 | no `ci-attest-v1` artifact, or an expired one | `UNKNOWN(ci_attestation_invalid)` |
@@ -311,8 +320,13 @@ OIDC claims (`base_ref`, `workflow_sha`, `run_id`) are the escalation path if th
 | 25 | candidates, none of which establishes a safe frontier: an INVALID run above any match; or only UNRELATED and STALE runs | `UNKNOWN(ci_attestation_invalid)`; or `CI_NOT_STARTED`. Never readiness |
 | 26 | any permutation of the same candidate records; and a duplicated or malformed `run_number` | the same frontier and result in every order; `UNKNOWN(malformed)` in every order |
 | 27 | the frontier `queued` or `in_progress`; an unrecognized status or conclusion | `PENDING`; `UNKNOWN(unrecognized_ci_status)` or `UNKNOWN(unrecognized_ci_conclusion)` |
+| 28 | a newer run at the same SHA from a different head repository, with no artifact, and an older valid run for the current `K0` | the newer run is UNRELATED with no artifact read; the older run is the frontier |
+| 29 | a newer run at the same SHA from the same repository on a different branch, with no artifact, and an older valid run for the current `K0` | `UNKNOWN(ci_attestation_invalid)`; no fallback |
+| 30 | the target PR's branch renamed after an older valid run | that run is never skipped for its branch name; its attestation is read and classified by the table above, so a stale branch name makes it INVALID |
+| 31 | a run from a different head repository carrying a forged or malformed attestation | UNRELATED; its attestation is never consulted |
+| 32 | any input order of the candidates in fixtures 28–31 | the same result after `run_number` ordering |
 
-Fixtures 6–9, and fixture 4's forgery, classify one run as INVALID. That run makes the pass `UNKNOWN` only when it lies
+Fixtures 6–9 classify one run as INVALID. That run makes the pass `UNKNOWN` only when it lies
 above any frontier; below a frontier it is never read (§5).
 
 ## 11. Implementation-lane proof obligations
@@ -402,6 +416,12 @@ reader one route, while reading an attestation takes two GitHub operations. The 
 CAP-01-ATTEST-READER-01 (PR #806, merged as `d84dc00b`) gives `readRunAttestation(runId)` a frozen LOCATE → DOWNLOAD
 plan. The artifact id is derived inside the transport, and duplicate same-name artifacts are deliberately
 *unavailable*. This record now cites that reader; its frontier and semantic validation did not change.
+
+**Head-repository disproof** (operator decision, Option B; an explicit re-entry, not a repair round). The plain review
+of `9070a9be10` (P2 `4202084900`) showed that another PR's newer unattested run at the same SHA could block this PR's
+frontier. A head-repository mismatch is now a pre-attestation disproof: UNRELATED, with no read (§5). `head_branch`
+is deliberately not used, because a renamed branch would open a fallback hole, so same-repository ambiguity stays
+fail-closed. A further P0–P2 in frontier selection or candidate disproof → **stop**, with no patch.
 
 ## 14. Non-goals
 
