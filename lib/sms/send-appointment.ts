@@ -370,28 +370,29 @@ function inWindow(startsAt: Date, window: ReminderWindow): boolean {
 
 /**
  * SMS-02 — one appointment reminder SMS: gated, claimed, re-validated, sent,
- * settled. Beyond sendOne's gate and claim it closes the three gaps the
+ * settled. Beyond sendOne's gate and claim it closes the two gaps the
  * reminder path had:
  *
  *  1. CANCELLED OR MOVED AFTER THE WINDOW QUERY. The claim does not
  *     re-validate the appointment, so it is read again AFTER the claim -- the
  *     earlier re-check ran before it, leaving the claim-to-send interval open.
  *     A cancelled appointment, or one moved out of this window, releases the
- *     claim and sends nothing; the message is built from the start read here.
+ *     claim and sends nothing; the message and its manage link are built from
+ *     the start read here, so a move made before the send is reminded at its
+ *     new start.
  *
- *  2. MOVED DURING THE SEND. Migration 0206 re-arms the reminder slot the
- *     moment a start moves. Recording this attempt as sent would stamp that
- *     re-armed slot for a start the message no longer names, so the new
- *     start would never be reminded. A start that changed while the message
- *     was in flight is recorded as NOT sent.
- *
- *  3. AN ANSWER THAT WAS LOST. Twilio takes no idempotency key, so an
+ *  2. AN ANSWER THAT WAS LOST. Twilio takes no idempotency key, so an
  *     ambiguous attempt may already have reached the client, and retrying it
  *     could send the reminder twice. It is recorded as sent -- no automatic
  *     retry -- and the ledger keeps it `unknown` until a delivery callback
  *     says what happened; a failure then raises an ops alert. A definite
  *     refusal (including a connection that never opened) is retried on a
  *     later fire, within the 3-attempt budget, as before.
+ *
+ * NOT HERE: a fresh reminder after a move whose reminder already went out.
+ * The slot is recorded exactly as the provider answered; re-arming it safely
+ * needs start-bound claims for email and SMS alike (follow-up SMS-03,
+ * docs/13_BACKLOG_AND_DECISIONS.md).
  */
 async function sendReminder(
   smsType: "reminder_24h" | "reminder_2h",
@@ -455,27 +456,15 @@ async function sendReminder(
     result = { ok: false, error: "sms_render_failed", retryable: false, attempt: "none" };
   }
 
-  // (2) A move while the message was in flight.
-  const after = await readAppointmentTiming(args.admin, args.appointmentId);
-  const movedDuringSend =
-    after !== "unreadable" &&
-    after !== null &&
-    after.startsAt.getTime() !== before.startsAt.getTime();
-
-  // (3) Sent, or possibly sent, counts as sent -- unless the start it named
-  // has already been replaced.
+  // (2) Sent, or possibly sent, counts as sent: an ambiguous attempt is
+  // never retried automatically.
   const providerMayHaveIt = result.ok || result.attempt === "ambiguous";
-  await recordSmsResult(
-    args.admin,
-    args.appointmentId,
-    smsType,
-    providerMayHaveIt && !movedDuringSend,
-  );
+  await recordSmsResult(args.admin, args.appointmentId, smsType, providerMayHaveIt);
 
   if (result.ok) {
     console.log(
       JSON.stringify({
-        event: movedDuringSend ? "sms_sent_superseded_by_move" : "sms_sent",
+        event: "sms_sent",
         appointmentId: args.appointmentId,
         smsType,
         messageSid: result.messageSid,

@@ -12,12 +12,13 @@ import {
 // Real: the consent gate, the deployment fence, the templates (and so the
 // studio-timezone rendering), the transport's answer classification and the
 // ledger mapping. Substituted: the database (claim, record, ledger commands and
-// the two appointment reads) and the network.
+// the post-claim appointment read) and the network.
 //
-// The cases are the P0 acceptance list: duplicates, cancellation, rescheduling
-// (before the claim, after it, and DURING the send), missing consent and
-// opt-out, provider failure (refused, unreachable, ambiguous) and the studio's
-// timezone.
+// The cases are the P0 acceptance list: duplicates, cancellation, moves made
+// before the reminder is sent (before the claim and between the claim and the
+// send), missing consent and opt-out, provider failure (refused, unreachable,
+// ambiguous) and the studio's timezone. A move AFTER the send is the specified
+// follow-up SMS-03 and is deliberately not exercised here.
 // ===========================================================================
 
 const alerts: Array<Record<string, unknown>> = [];
@@ -37,9 +38,10 @@ type Read = { status: string; starts_at: string } | null | "error";
 const h: {
   claim: boolean;
   reads: Read[];
+  readCount: number;
   begin: { data: unknown; error: unknown };
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
-} = { claim: true, reads: [], begin: { data: LEDGER_ROW, error: null }, rpcs: [] };
+} = { claim: true, reads: [], readCount: 0, begin: { data: LEDGER_ROW, error: null }, rpcs: [] };
 
 function admin(): SupabaseClient {
   return {
@@ -56,6 +58,7 @@ function admin(): SupabaseClient {
         select: () => ({
           eq: () => ({
             maybeSingle: () => {
+              h.readCount += 1;
               const next = h.reads.length > 0 ? h.reads.shift()! : { status: "confirmed", starts_at: START };
               return Promise.resolve(
                 next === "error" ? { data: null, error: { message: "boom" } } : { data: next, error: null },
@@ -113,6 +116,7 @@ beforeEach(() => {
   process.env.TWILIO_WEBHOOK_BASE_URL = "https://hone.care";
   h.claim = true;
   h.reads = [];
+  h.readCount = 0;
   h.begin = { data: LEDGER_ROW, error: null };
   h.rpcs = [];
   alerts.length = 0;
@@ -269,14 +273,15 @@ describe("cancellation and rescheduling", () => {
     expect(recorded()).toEqual([true]);
   });
 
-  it("moved DURING the send: recorded as NOT sent, so the new start is still reminded", async () => {
-    h.reads = [
-      { status: "confirmed", starts_at: START },
-      { status: "confirmed", starts_at: "2026-10-10T19:00:00.000Z" },
-    ];
+  it("the start is read exactly ONCE after the claim, and the slot records what the provider answered", async () => {
+    // SMS-02 is bounded to moves BEFORE the send. A move after the send is
+    // the specified follow-up SMS-03; nothing here re-reads the start after
+    // the provider call or second-guesses the recorded outcome.
+    h.reads = [{ status: "confirmed", starts_at: START }];
     const r = await send24hReminderSmsToClient(input());
-    expect(r.ok).toBe(true); // the provider did take the (now stale) message
-    expect(recorded()).toEqual([false]);
+    expect(r.ok).toBe(true);
+    expect(h.readCount, "exactly one appointment read, after the claim").toBe(1);
+    expect(recorded()).toEqual([true]);
   });
 
   it("an unreadable appointment after the claim is retried later, never sent blind", async () => {
