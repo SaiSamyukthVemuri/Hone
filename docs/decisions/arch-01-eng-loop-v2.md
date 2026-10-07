@@ -280,11 +280,27 @@ A GitHub PR **issue comment** where **all** hold:
 - the actor's numeric id is in the trusted Codex allowlist (§20);
 - the actor's account type is `Bot`;
 - the body satisfies the configured **clean verdict pattern** (§17b);
-- the body satisfies the Reviewed-commit marker policy (§17b), and the marker identifies the exact current head.
+- the body satisfies the Reviewed-commit marker policy (§17b): exactly one marker, equal to the first 10 lowercase hex
+  of `K0.headSha`.
 
 It counts as `TRUSTED_REVIEW_AT_HEAD` although GitHub exposes no review object or `commit_id` for a clean verdict.
 It does **not** clear `FINDINGS_OPEN`: a clean comment at head plus an unresolved trusted finding remains
 `FINDINGS_OPEN`.
+
+**A 10-hex V1 binding, not a full-SHA binding.** Channel A binds the full 40-hex `review.commit_id` to `K0.headSha`.
+Channel B binds only the marker's 10 hex, a 40-bit prefix, because a clean verdict carries no other reviewed-commit
+evidence. The two bindings are not equivalent. Channel B's binding is sufficient for V1 only: for advisory candidacy,
+under the writer trust model accepted in §41. This limitation must be revisited, and a full-head review attestation
+mechanism required, before any of the following holds:
+
+- ENG-LOOP gains merge authority;
+- human merge ceases to be mandatory;
+- untrusted same-repository contributors become part of the threat model;
+- channel B begins to authorize a write or an action rather than advisory candidacy;
+- Codex starts exposing a trustworthy full reviewed SHA;
+- repository scale makes a short-prefix collision an operational concern.
+
+The 10-hex assumption never carries silently into stronger authority.
 
 ### Not artifacts
 
@@ -663,6 +679,22 @@ Every `UNKNOWN` names exactly one of these reasons, and no other reason exists:
 - **Reaction verdicts are not artifacts.** Codex's own boilerplate says it may "react with 👍" instead of commenting. A
   reaction carries no body and no head binding, so it is neither channel and the PR reads `REVIEW_MISSING`. No real clean
   verdict in this repository has taken that form (§17).
+- **Channel-B short-SHA binding (writer-class, adversarial).** GitHub's clean Codex verdict currently exposes only the
+  first 10 hex characters of the reviewed commit and no full `commit_id`. So a same-repository writer who deliberately
+  manufactures a later commit whose SHA-1 shares that 40-bit prefix with an earlier clean-reviewed head could make the
+  old clean comment satisfy channel B's marker test (§17, channel B). This is a writer-class, adversarial limitation:
+  channel B is not treated as protection against a malicious same-repository writer. V1 accepts it by operator
+  decision, after the §36 review-authority stop on finding `4207435342`, because:
+  - V1 of this pipeline is advisory only (§1, §7);
+  - human merge authority remains mandatory;
+  - fork PRs already fail closed under CI-ATTEST-01's trust rule (CI-ATTEST-01 §7.2);
+  - CAP-01 explicitly provides no hostile-code containment (CAP-01 §10);
+  - V1's architecture aims at correct evidence handling and accidental drift, not at defending the controller from a
+    deliberately malicious, trusted same-repository writer;
+  - ordinary accidental SHA-prefix collision risk at Hone's scale is accepted;
+  - no prefix is treated as authority for a fork or untrusted run.
+
+  The upgrade trigger is normative and stated with the binding (§17, channel B).
 - **Two agreeing passes are not a transaction.** GitHub documents no snapshot isolation across requests. Every read of
   §15's first pass precedes every read of its confirming pass. So if nothing a read returns changed between that read's
   two executions, the agreed `Evidence` is the true state at the moment between the two passes. A change made and then
