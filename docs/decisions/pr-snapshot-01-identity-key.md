@@ -10,6 +10,7 @@
 | **Scope** | The key, the pass boundary, the retry, open and terminal passes, fixtures, and the dependency on CAP-01 (§9). |
 | **Not in scope** | Edits to #800 or #802; `ci.yml`; 05A; 05B; ARCH-02; GitHub-access architectural lint, which CAP-01 owns (§9). |
 | **Authored at** | production `4eccefd2fff7efa1abc1a9048531e8046865027d`; re-entered at production `f0ba03b446eeda9917e9b504061a6ddb421bcee9`, where CAP-01 is merged. API evidence read on 2026-10-06 (Appendix). |
+| **Amended** | PR-SNAPSHOT-DRAFT-01, 2026-10-07 (§15). This row is an index only: the amendment's behaviour is defined in its own section. |
 
 > **Normative and self-contained.** This record states every correctness rule it relies on. Its one dependency, CAP-01,
 > is merged on production (§9). ARCH-01 and CI-ATTEST-01 are not on production; they consume this record. A semantic
@@ -36,6 +37,7 @@ All fields come from **one** GraphQL request, `repository.pullRequest(number: N)
 |---|---|---|
 | `prNumber` | positive integer | `number` |
 | `state` | `OPEN`, `CLOSED` or `MERGED` | `state` |
+| `isDraft` | boolean (PR-SNAPSHOT-DRAFT-01, §15) | `isDraft` |
 | `headSha` | 40 lowercase hex | `headRefOid` |
 | `headRef` | non-empty string | `headRefName` |
 | `headRepoId` | positive integer; `null` only when `state` ≠ `OPEN` | `headRepository.databaseId` |
@@ -45,7 +47,7 @@ All fields come from **one** GraphQL request, `repository.pullRequest(number: N)
 
 - **Strict.** Any other value — missing, the wrong type, `null` where not allowed — makes the pass
   `UNKNOWN(malformed)`. That is a read failure, not a key change.
-- **Equality** is structural over all eight fields; `null` equals only `null`.
+- **Equality** is structural over all nine fields; `null` equals only `null`.
 - **`baseSha` is the live base tip, never `baseRefOid` or REST `base.sha`.** Those report the base SHA GitHub recorded
   when the PR last changed. Live: open #800 reports `baseRefOid` = REST `base.sha` = `7134239097` while its base branch
   tip, `baseRef.target.oid`, is the production head `4eccefd2`. #802's `baseRefOid` moved to `4eccefd2` only after #802
@@ -54,8 +56,9 @@ All fields come from **one** GraphQL request, `repository.pullRequest(number: N)
   tie a terminal snapshot to unrelated production movement. Merged #788's base branch tip says nothing about #788.
 - **`headRepoId` may be `null` for a closed or merged PR.** A head repository can be deleted after the PR closes; an open
   PR needs it.
-- **Not in the key:** a field that decides neither *what* is collected nor *how* evidence binds — for example `isDraft`,
-  which is only a decision input. Such fields are ordinary evidence (§8), never binding anchors.
+- **`isDraft` is a coherence field** (PR-SNAPSHOT-DRAFT-01, §15). It decides readiness directly, so its movement
+  invalidates a pass like any other key movement. It is not CI identity, attestation identity, run ordering or
+  review-head identity, and it adds no read.
 
 ## 3. The pass boundary (frozen)
 
@@ -115,6 +118,8 @@ relation:
   `headRepositoryId`, `baseRef`, `baseRepositoryId` and `baseSha` with `K0`'s corresponding fields (`prNumber`,
   `headSha`, `headRef`, `headRepoId`, `baseRef`, `baseRepoId`, `baseSha`). `baseSha` is compared with `K0.baseSha`, the
   live base tip.
+- **Not every key field is an attestation field.** `isDraft` (§15) is a coherence field only. CI-ATTEST-01's attestation
+  schema does not gain it, and CI-ATTEST-01 still compares only the seven execution-identity fields above.
 - **No PR reads of its own.** CI-ATTEST-01 must not read the PR's head, base, repositories or state itself. That removes
   #802's open P1 by construction: the base it compares with is `K0`'s, and the pass is discarded if the key moved.
 
@@ -135,7 +140,7 @@ When `K0.state` is not `OPEN`:
 | | PR-SNAPSHOT-01 | ARCH-01's bounded full re-read |
 |---|---|---|
 | **Proves** | one pass used one coherent key | non-key evidence did not change between passes |
-| **Covers** | identity and lifecycle | reviews, threads, CI status, external contexts, `isDraft` |
+| **Covers** | identity, lifecycle and the draft flag (`isDraft`, §15) | reviews, threads, CI status, external contexts |
 | **Mechanism** | `K1 == K0` within a pass | identical normalized Evidence across two passes |
 
 Both stay. The key is part of the normalized Evidence, so it also takes part in ARCH-01's equality. A key difference
@@ -147,9 +152,9 @@ between the two passes is `pr_key_moved` (§4), not `unstable_snapshot`.
   `docs/decisions/cap-01-github-capability-boundary.md`, owns the **declared, static GitHub capability architecture
   lint**: which modules may read GitHub, and how that is checked. This record does not restate CAP-01 and adds no guard
   of its own.
-- **The key reader.** `readKey()` (§3) is CAP-01's reader `readPrKey`. The key is the eight fields of §2 from its one
-  request. The draft flag returned with them is not part of the key. The pass's draft evidence is the flag returned with
-  `K0`, the read that every other piece of evidence in the pass is bound to (§2, §8).
+- **The key reader.** `readKey()` (§3) is CAP-01's reader `readPrKey`. The key is the nine fields of §2, all from its
+  one request; `readPrKey` already returns the draft flag (CAP-01 §4), so CAP-01's reader surface is unchanged (§15). A
+  consumer's draft evidence is the coherent key's `isDraft`.
 - **No access claim.** This record does not by itself prevent any read of GitHub. Its correctness laws assume the
   collection code follows CAP-01's architecture, which CAP-01 checks as static architectural lint, not as a sandbox.
 - **05B** receives only normalized Evidence.
@@ -172,6 +177,8 @@ between the two passes is `pr_key_moved` (§4), not `unstable_snapshot`.
 | 12 | both passes unstable | `UNKNOWN(pr_key_moved)`, never a candidate |
 | 13 | the recorded base SHA (`baseRefOid`, REST `base.sha`) is stale while the base branch has advanced | the key reads the live tip, so drift sees the advance (live: #800) |
 | 14 | a closed or merged PR whose head repository was deleted | a valid terminal key, with `null` allowed → `NOT_OPEN` |
+
+Fixtures D1–D9 (§15) extend this table for `isDraft`.
 
 ## 11. Re-entry sequence
 
@@ -223,6 +230,58 @@ This record adds no edit to #800 or #802, no `ci.yml` change, no 05A, no 05B, no
 history reconstruction, and no GitHub-access guard — CAP-01 owns that lint. The key never uses `baseRefOid` or REST
 `base.sha` (§2).
 
+## 15. Amendment PR-SNAPSHOT-DRAFT-01 — `isDraft` participates in key coherence
+
+| | |
+|---|---|
+| **Decision** | `PrSnapshotKey` gains `isDraft`, from the same `readPrKey` request. Key equality is structural over nine fields, so a draft change during a pass, or between a consumer's two passes, is a key movement (§3, §4). |
+| **Date** | 2026-10-07 |
+| **Decided by** | Sam (operator), after Codex's exact-head review of ARCH-01 (PR #800 at `c6ebab6d8b`) found the gap (P2 `4208438605`). An explicit architecture amendment, chosen over accepting a V1 limitation; not a patch to this record's earlier review. |
+| **Authored at** | production `5fb25c8c26ccd882e4fac930ea31d874f5d4370b`, where CAP-01, this record and CI-ATTEST-01 are merged. |
+| **Why** | The earlier rule kept `isDraft` out of the key as ordinary evidence, because it decides neither what is collected nor how evidence binds, and took a pass's draft evidence from `K0` alone. That was incomplete. A draft toggle between a pass's `K0` and `K1` was observed by `K1` and discarded: the key still matched, and ARCH-01's two passes could agree on `draft: false` after the closing read had returned `true`. `isDraft` decides readiness directly (`isDraft` → ARCH-01's `DRAFT_HOLD`), and a stable advisory engine must not report a candidate when its own closing read observed a draft. |
+| **Not added** | No GitHub read, reader, parameter or CAP-01 change; no draft re-read and no draft comparison outside structural key equality; no new `UNKNOWN` reason; no terminal-specific rule; no CI-ATTEST-01 schema change. |
+
+**A coherence field.** `isDraft` is in the key because its movement must invalidate the whole pass, and the key is the
+mechanism for exactly those facts. It is not CI identity, attestation identity, run ordering or review-head identity,
+and it is not a new external read: CAP-01's `readPrKey` already returns it from its one request (CAP-01 §4). CAP-01's
+reader surface is unchanged; only this record's key construction and equality change.
+
+**Pass semantics are unchanged** (§3, §4). `K0 = readKey()`; every other read is keyed by `K0`; `K1 = readKey()`; the
+pass is coherent iff `K1 == K0`. Draft movement now falls under that one structural test:
+- **within a pass** (`K1.isDraft` ≠ `K0.isDraft`): the pass is discarded whole. A first collection uses the one bounded
+  retry, and a second incoherent pass → `UNKNOWN(pr_key_moved)`. A consumer's confirming pass has no retry, so it ends
+  `UNKNOWN(pr_key_moved)`;
+- **between a consumer's first coherent pass and its confirming pass:** the keys differ → `UNKNOWN(pr_key_moved)`, never
+  `unstable_snapshot` (§4, §8). The consumer's evidence-equality rule still covers only non-key evidence.
+
+A consumer's draft evidence is the coherent key's `isDraft`, which `K0` and `K1` both carry.
+
+**Terminal passes are unchanged** (§7). Their key carries `isDraft` like every other field, and it has no precedence
+effect: a terminal pass decides `NOT_OPEN` first (ARCH-01). There is no terminal-specific draft rule.
+
+**CI-ATTEST-01 is unchanged** (§6). A key field is not thereby an attestation field. The attestation schema does not
+gain `isDraft`, and CI-ATTEST-01 compares only the execution-identity fields it owns.
+
+**Fixtures** (extending §10):
+
+| # | Fixture | Required result |
+|---|---|---|
+| D1 | an open, non-draft PR throughout the pass | coherent |
+| D2 | an open draft PR throughout the pass | coherent; downstream `DRAFT_HOLD` (ARCH-01) |
+| D3 | `isDraft` goes `false` → `true` between `K0` and `K1` | pass rejected |
+| D4 | `isDraft` goes `true` → `false` between `K0` and `K1` | pass rejected |
+| D5 | the first pass's draft value moves; the retry is stable | the retry's coherent pass is used |
+| D6 | the draft value moves in both passes | `UNKNOWN(pr_key_moved)` |
+| D7 | the first coherent pass has `isDraft` `false`; the confirming pass is coherent with `isDraft` `true` | `UNKNOWN(pr_key_moved)` |
+| D8 | a stable closed or merged PR | `NOT_OPEN`, exactly as fixture 8 |
+| D9 | a CI attestation | schema v1's 13 keys, with no `isDraft` (CI-ATTEST-01 §4.3) |
+
+**ARCH-01 consequence.** After this amendment merges, #800 takes its draft evidence from the coherent key and makes no
+other change. Its open P2 `4208438605` resolves by pointing here.
+
+**Review budget.** One plain exact-head review round. One semantic repair is allowed. A second P0–P2 in the same family
+→ **stop**, with no patch loop.
+
 ---
 
 ## Appendix — API evidence (2026-10-06)
@@ -235,3 +294,15 @@ history reconstruction, and no GitHub-access guard — CAP-01 owns that lint. Th
 
 Production (`claude/build-hone-saas-hOex7`) was `4eccefd2ff` at the time of reading. For these same-repository PRs,
 `headRepository.databaseId` = `baseRepository.databaseId` = the repository's `databaseId`, `1240764106`.
+
+### PR-SNAPSHOT-DRAFT-01 (2026-10-07)
+
+One `repository.pullRequest(number: N)` request returns `isDraft` together with the eight earlier key fields:
+
+| Pull request | `state` | `isDraft` | `headRefOid` | `baseRef.target.oid` |
+|---|---|---|---|---|
+| #800 | `OPEN` | `true` | `c6ebab6d8b` | `5fb25c8c26` |
+| #795 | `OPEN` | `true` | `555d200615` | `5fb25c8c26` |
+| #807 | `MERGED` | `false` | `2459dc1c4f` | `5fb25c8c26` (ignored: a terminal key's `baseSha` is `null`, §2) |
+
+Production was `5fb25c8c26` at the time of reading.
