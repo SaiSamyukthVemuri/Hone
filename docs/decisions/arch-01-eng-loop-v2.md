@@ -8,7 +8,7 @@
 | **Decided by** | Sam (operator): the ENG-LOOP V2 architecture contract, including the two-channel Codex evidence decision (§17). After the §36 stop law fired, the operator moved all durable state to ARCH-02 (§28). Once CAP-01, PR-SNAPSHOT-01 and CI-ATTEST-01 had merged, the operator made the final re-entry by removal that consumes them (§36). |
 | **archVersion** | `ARCH-01` |
 | **Scope** | ENG-LOOP-05A, 05B and 05C's stateless render; every later ENG-LOOP component consumes this pipeline and its laws. Durable state is out of scope (§28). Standing law: ENGINEERING_STANDARDS §8. |
-| **Depends on** | Three merged records, consumed and not restated (§4a): CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`), PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`) and CI-ATTEST-01 (`docs/decisions/ci-attest-01-run-side-attestation.md`). |
+| **Depends on** | Four merged records, consumed and not restated (§4a): CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`), PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`), CI-ATTEST-01 (`docs/decisions/ci-attest-01-run-side-attestation.md`) and EXT-CONTEXT-01 (`docs/decisions/ext-context-01-external-check-normalization.md`). |
 | **Supersedes** | The ENG-LOOP-01/03/04 implementations — PRs #795, #798 and #799 — which stay frozen as draft **evidence** branches (§27). |
 | **Enforced by** | ENGINEERING_STANDARDS §8 now. When those lanes land, also CAP-01's static architecture lint, the test law (§26) and the fixture corpus (§22). |
 | **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0` (#788); re-entered at production `5fb25c8c26ccd882e4fac930ea31d874f5d4370b`, where CAP-01, PR-SNAPSHOT-01 and CI-ATTEST-01 are merged. Every pinned value below was read from the live GitHub API on 2026-10-05/06. |
@@ -101,9 +101,10 @@ any durable state (§28).
 | CAP-01 | the GitHub capability graph; the readers, their typed results and their completeness; static architecture lint | each reader's complete result; a typed failure becomes `UNKNOWN` in `collect` |
 | PR-SNAPSHOT-01 | the coherent `PrSnapshotKey`; the `K0`/`K1` pass boundary; the bounded key retry; terminal passes | `K0` and its coherence |
 | CI-ATTEST-01 | immutable run-side CI identity; attestation trust; the `run_number` current-run frontier; the normalized CI result | one normalized CI fact (§8) |
-| ARCH-01 | the evidence boundary; the bounded full confirming re-read; review-authority and external-context semantics; the drift decision input; 05B's precedence; the pure 05A/05B contract; stateless rendering and human merge authority | — |
+| EXT-CONTEXT-01 | which checks are external; the GitHub Actions discriminator; the closed external-check normalization; the normalized external state | the normalized external facts (§10) |
+| ARCH-01 | the evidence boundary; the bounded full confirming re-read; review-authority semantics; the decision effect of external facts; the drift decision input; 05B's precedence; the pure 05A/05B contract; stateless rendering and human merge authority | — |
 
-ARCH-01 restates none of the three records. Where they meet this record, it points to them.
+ARCH-01 restates none of the four records. Where they meet this record, it points to them.
 
 ## 5. 05A — evidence adapter
 
@@ -180,43 +181,31 @@ identity. The numbers are kept so #800's review record still resolves.
 GitHub Actions CI state comes **only** from CI-ATTEST-01's normalized result (§8). `statusCheckRollup` is **not**
 authoritative for Actions CI; it is read only for external contexts (§10).
 
-## 10. External context domain
+## 10. External contexts — consumed from EXT-CONTEXT-01
 
-External contexts are the head commit's `statusCheckRollup.contexts`, read by CAP-01's `readCommitRollup(K0.headSha)`.
-That reader returns one complete response or a typed failure, and `collect` turns *incomplete* into
-`UNKNOWN(external_contexts_too_large)` and *malformed* into `UNKNOWN(malformed)` (CAP-01 §4, §17). The domain is
-restricted to:
+ARCH-01 consumes only EXT-CONTEXT-01's normalized external facts
+(`docs/decisions/ext-context-01-external-check-normalization.md`). Each fact's `state` is `pending`, `success` or
+`failure`; otherwise the collection has already failed closed, as `UNKNOWN`, before 05B runs. ARCH-01 restates none of
+the owners:
 
-- every `StatusContext`; and
-- every `CheckRun` whose check suite's app is **not** GitHub Actions (§12).
+| Owner | Owns |
+|---|---|
+| CAP-01 | the complete, typed rollup read for `K0.headSha` |
+| EXT-CONTEXT-01 | which checks are external, the GitHub Actions discriminator, and the closed GitHub enum normalization |
+| ARCH-01 (05B) | decision precedence only |
+| CI-ATTEST-01 | GitHub Actions CI authority |
 
-GitHub Actions `CheckRun`s in the rollup are ignored for the external domain — the Actions domain is §8's — which
-prevents double-counting. The rollup's own aggregate `state` is never read.
+ARCH-01 keeps only the decision effect, in §7's order:
+- any external `failure` → `EXTERNAL_BLOCKED`;
+- any external `pending` → `EXTERNAL_PENDING`;
+- external `success` is inert.
 
-## 11. External context collapse table
+External success can **never** grant candidacy. 05B never sees `StatusContext.state`, `CheckRun.status`,
+`CheckRun.conclusion`, `checkSuite.app.slug` or any GitHub enum string. The rollup's own aggregate `state` is never
+read: CAP-01's `readCommitRollup` returns only the contexts (CAP-01 §4).
 
-Normalized external state is exactly `{ pending, success, failure }`.
-
-| Source | Value | Normalized |
-|---|---|---|
-| `StatusContext.state` | `SUCCESS` | `success` |
-| | `PENDING`, `EXPECTED` | `pending` |
-| | `ERROR`, `FAILURE` | `failure` |
-| non-Actions `CheckRun` | `status` ≠ `COMPLETED` | `pending` |
-| | `COMPLETED` + `SUCCESS`, `NEUTRAL`, `SKIPPED` | `success` |
-| | `COMPLETED` + `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE`, `STALE` | `failure` |
-
-Any value outside these closed enums → `UNKNOWN(unrecognized_context_state)` for the **whole** snapshot. No context-name
-heuristics.
-
-External checks are **negative-only**: `success` is inert; `pending` may hold; `failure` may block. External success can
-**never** grant candidacy.
-
-## 12. Actions discriminator
-
-A `CheckRun` belongs to GitHub Actions **iff** `checkSuite.app.slug == "github-actions"`. That is the only
-discriminator. Never classify by check name, workflow name, context name, `detailsUrl` or naming convention. A `CheckRun`
-without a readable `checkSuite.app.slug` cannot be classified → `UNKNOWN(malformed)`.
+§11 and §12 are vacant. They held the raw external-check tables and the GitHub Actions discriminator, which
+EXT-CONTEXT-01 now owns. The numbers are kept so #800's review record still resolves.
 
 ## 13. Production ref
 
@@ -448,6 +437,7 @@ interface OpenEvidence {       // key.state is OPEN and key.baseRef is the confi
   readonly draft: boolean;     // = K0.isDraft, the coherent key's flag (PR-SNAPSHOT-01 §2, §15); never read separately
   readonly drift: { behindBy: number; aheadBy: number /* metadata */ };
   readonly ci: { outcome: "SUCCEEDED" | "FAILED" | "PENDING" | "NO_FRONTIER" }; // §8
+  // EXT-CONTEXT-01's normalized external facts (§10)
   readonly external: ReadonlyArray<{ source: string /* display */; state: "pending" | "success" | "failure" }>;
   readonly reviews: ReadonlyArray<{
     channel: "PR_REVIEW" | "CLEAN_COMMENT";
@@ -481,7 +471,7 @@ adds no guard family. It keeps the **semantic** separation that the lint protect
 | | 05A — evidence adapter (`collect`) | 05B — decision engine (`decide`) |
 |---|---|---|
 | Produces | `Evidence` or `UNKNOWN(reason)` | `Decision` |
-| Knows | GitHub, only through CAP-01's readers; PR-SNAPSHOT-01's key; CI-ATTEST-01's binding | normalized `Evidence` and policy only |
+| Knows | GitHub, only through CAP-01's readers; PR-SNAPSHOT-01's key; CI-ATTEST-01's binding; EXT-CONTEXT-01's normalization | normalized `Evidence` and policy only |
 | Never | defines `Decision`, names a §7 decision state, or encodes readiness precedence | imports GitHub transport or adapter internals; sees a raw response, pagination, attestation parsing or the `run_number` frontier |
 
 Permitted direction, never reversed:
@@ -686,8 +676,8 @@ automatic patch.
 ENGINEERING_STANDARDS §8 carries the standing principles: one evidence boundary; normalized evidence downstream; fail
 closed; a pure decision core; human merge authority; authority-bearing components — stateless normalized validity and
 readiness included — gated by CANONICAL_ROADMAP §16.5; durable state deferred to ARCH-02; and architecture changes
-before implementation. It points to this record and to CAP-01, PR-SNAPSHOT-01 and CI-ATTEST-01 for their mechanisms
-rather than restating them.
+before implementation. It points to this record and to CAP-01, PR-SNAPSHOT-01, CI-ATTEST-01 and EXT-CONTEXT-01 for
+their mechanisms rather than restating them.
 
 ## 38. Non-goals
 
@@ -710,7 +700,8 @@ ARCH-01 is complete only if 05A/05B need to invent nothing. Each question has on
 | the evidence boundary; the outcome union; the closed reason set | ARCH-01 §3, §4, §40 |
 | the bounded full confirming re-read | ARCH-01 §15 |
 | what the CI fact means for decisions | ARCH-01 §7, §8 |
-| the external source and collapse mapping; the Actions discriminator | ARCH-01 §10–§12 |
+| which checks are external; the Actions discriminator; the closed external-check normalization | EXT-CONTEXT-01 (§4–§8) |
+| what external facts mean for decisions | ARCH-01 §7, §10 |
 | the production ref, compare direction and refresh predicate | ARCH-01 §13, §14 |
 | review authority: identities, channels, states, marker and verdict policy, marker failure, `CHANGES_REQUESTED`, open findings | ARCH-01 §17–§21 |
 | artifact fixtures for both real forms | ARCH-01 §22, Appendix A |
@@ -729,7 +720,7 @@ Every `UNKNOWN` names exactly one of these reasons, and no other reason exists:
 | Reason | When | Produced by |
 |---|---|---|
 | `read_failed` | a required read failed, was refused or was unauthorized | any read (PR-SNAPSHOT-01, CAP-01) |
-| `malformed` | a required answer does not fit its strict positive schema — including a *malformed* reader result, a `null` conclusion on a completed frontier run and a `CheckRun` without an app slug (§12) | CAP-01, CI-ATTEST-01, ARCH-01 |
+| `malformed` | a required answer does not fit its strict positive schema — including a *malformed* reader result, a `null` conclusion on a completed frontier run and a check run that EXT-CONTEXT-01 cannot classify (EXT-CONTEXT-01 §4) | CAP-01, CI-ATTEST-01, EXT-CONTEXT-01 |
 | `wrong_base` | an open pass's `K0.baseRef` is not the configured production ref (§13) | ARCH-01 |
 | `pr_key_moved` | the key moved in both passes, or the confirming pass's key differs from the first (§15) | PR-SNAPSHOT-01, ARCH-01 |
 | `unstable_snapshot` | the confirming pass normalizes to different `Evidence` (§15) | ARCH-01 |
@@ -740,7 +731,7 @@ Every `UNKNOWN` names exactly one of these reasons, and no other reason exists:
 | `external_contexts_too_large` | the external contexts cannot be complete in one response | CAP-01 §4, §17 |
 | `unrecognized_ci_status` | the frontier run's status is outside CI-ATTEST-01's run-state table | CI-ATTEST-01 |
 | `unrecognized_ci_conclusion` | the frontier run's conclusion is outside that table | CI-ATTEST-01 |
-| `unrecognized_context_state` | an external context value is outside §11's table | ARCH-01 |
+| `unrecognized_context_state` | a validly typed external-check value is outside EXT-CONTEXT-01's closed tables (EXT-CONTEXT-01 §5–§8) | EXT-CONTEXT-01 |
 
 ## 41. Known limitations (non-normative)
 

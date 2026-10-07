@@ -181,7 +181,7 @@ Only repeated, evidenced pain earns new process or tooling.
 ## 8. Engineering-loop evidence and authority
 
 `docs/decisions/arch-01-eng-loop-v2.md` (ARCH-01) is canonical for ENG-LOOP V2's
-stateless pipeline. Its mechanisms belong to ARCH-01 and to the three records it
+stateless pipeline. Its mechanisms belong to ARCH-01 and to the four records it
 depends on, and none of them is restated here:
 
 - CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`) owns the GitHub
@@ -189,7 +189,10 @@ depends on, and none of them is restated here:
 - PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`) owns the
   coherent pull-request identity of each collection pass;
 - CI-ATTEST-01 (`docs/decisions/ci-attest-01-run-side-attestation.md`) owns
-  which CI run speaks for a pull request.
+  which CI run speaks for a pull request;
+- EXT-CONTEXT-01
+  (`docs/decisions/ext-context-01-external-check-normalization.md`) owns the
+  closed normalization of external checks.
 
 This section is the standing law that every engineering-loop component — and
 every change to one — must satisfy.
