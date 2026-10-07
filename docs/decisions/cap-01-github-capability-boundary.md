@@ -150,8 +150,8 @@ and G4 check it statically.
 | Reader | Parameters | Returns | Consumer |
 |---|---|---|---|
 | `readPrKey` | PR number | the PR identity and lifecycle value, including the draft flag, from one request | PR-SNAPSHOT-01; ARCH-01 draft hold |
-| `readReviewEvidence` | PR number | reviews, issue comments and review threads with their comments — complete from one response, or UNKNOWN (below) | ARCH-01 review authority |
-| `readCommitRollup` | commit SHA | that commit's status-check rollup contexts, from which ARCH-01 takes its external contexts — complete from one response, or UNKNOWN (below) | ARCH-01 external checks |
+| `readReviewEvidence` | PR number | a typed reader result: *complete* reviews, issue comments and review threads with their comments, from one response; or *incomplete* or *malformed* (below) | ARCH-01 review authority |
+| `readCommitRollup` | commit SHA | a typed reader result: *complete* status-check rollup contexts for that commit, from one response, from which ARCH-01 takes its external contexts; or *incomplete* or *malformed* (below) | ARCH-01 external checks |
 | `readCandidateRuns` | head SHA | the designated workflow's `pull_request` runs at that SHA, each with its candidate metadata **and** its mutable execution state (below) | ARCH-01 CI; CI-ATTEST-01 |
 | `readRunAttestation` | run id | that run's normalized attestation record and artifact metadata, by its fixed two-operation plan (below) | CI-ATTEST-01 |
 | `readCompare` | base SHA, head SHA | behind and ahead counts, and the merge-base SHA | ARCH-01 drift; CI-ATTEST-01 trust anchor |
@@ -283,11 +283,16 @@ Required attestation-reader fixtures, for the transport's implementation tests:
 | A12 | malformed JSON, or JSON outside the schema | *unavailable* |
 | A13 | a real attested run (CI-ATTEST-01's fixture 1, pinned by the `ci.yml` implementation lane) | the normalized attestation record |
 
-**Review evidence and rollup contexts: one response, or UNKNOWN** (CAP-01-READER-COMPLETENESS-01, §17). V1 never pages
-mutable evidence across GitHub requests. `readReviewEvidence(prNumber)` and `readCommitRollup(headSha)` each make
-exactly one fixed GraphQL request per collection pass. Each returns either the complete normalized record or UNKNOWN,
-never partial evidence. There is no cursor loop, page reconciliation, deduplication across requests or timestamp
-reconstruction.
+**Review evidence and rollup contexts: one complete response, or a typed failure** (CAP-01-READER-COMPLETENESS-01,
+§17). V1 never pages mutable evidence across GitHub requests. `readReviewEvidence(prNumber)` and
+`readCommitRollup(headSha)` each make exactly one fixed GraphQL request per collection pass. Like every reader (§6),
+each returns a record, never partial evidence and never UNKNOWN. The record is a typed, immutable reader result:
+- *complete*, carrying the normalized evidence;
+- *incomplete*, carrying the closed reader reason `review_evidence_too_large` (from `readReviewEvidence`) or
+  `external_contexts_too_large` (from `readCommitRollup`);
+- *malformed*, carrying `malformed`.
+
+There is no cursor loop, page reconciliation, deduplication across requests or timestamp reconstruction.
 
 Every connection that contributes to the normalized record is requested with the frozen size `first: 100`, the most
 GitHub allows per connection:
@@ -306,12 +311,18 @@ Each of these connections exposes both `pageInfo` and `totalCount` (Appendix). A
 commit with no status or check, is a complete, empty set of contexts.
 
 If any connection shows that more exists than the response holds — `hasNextPage` true, a `totalCount` above 100, or a
-`totalCount` that differs from the nodes returned — the whole evidence snapshot is `UNKNOWN(review_evidence_too_large)`
-for `readReviewEvidence`, or `UNKNOWN(external_contexts_too_large)` for `readCommitRollup`. Any other malformed or
-inconsistent response is `UNKNOWN(malformed)`. A thread whose own comments connection is incomplete makes the whole
-review evidence too large: a thread is never truncated, and there is no second reader for thread comments. A trusted
-review, a clean Codex comment or an unresolved thread therefore never disappears because it fell onto another page.
-ARCH-01's closed reason set gains `review_evidence_too_large` and `external_contexts_too_large` from this amendment.
+`totalCount` that differs from the nodes returned — the reader returns *incomplete*, carrying
+`review_evidence_too_large` or `external_contexts_too_large`. Any other malformed or inconsistent response returns
+*malformed*. A thread whose own comments connection is incomplete makes the whole review evidence *incomplete*: a
+thread is never truncated, and there is no second reader for thread comments. A trusted review, a clean Codex comment
+or an unresolved thread therefore never disappears because it fell onto another page.
+
+**`collect` owns UNKNOWN** (§6). It maps an *incomplete* or *malformed* reader result, through the contract
+constructors, to `UNKNOWN(review_evidence_too_large)`, `UNKNOWN(external_contexts_too_large)` or `UNKNOWN(malformed)`
+for the whole snapshot, and no partial evidence survives. This is the same pattern as the attestation reader's
+*unavailable* result (§16). ARCH-01's closed reason set gains `review_evidence_too_large` and
+`external_contexts_too_large` from this amendment. G3 freezes both readers' typed result schemas, and a reader result
+has no UNKNOWN variant.
 
 **Why fail closed.** More than 100 reviews, issue comments, threads or comments in one thread on a pull request, or more
 than 100 status and check contexts on one commit, is exceptional for Hone V1. Across Hone's busiest recent pull
@@ -324,22 +335,23 @@ re-read proves stability between complete passes: either identical normalized ev
 `UNKNOWN(unstable_snapshot)`. Neither reader retries or re-reads. PR-SNAPSHOT-01 still owns the pull request's identity
 coherence.
 
-Required completeness fixtures, for the transport's implementation tests:
+Required completeness fixtures, for the implementation tests. Each proves both layers: the reader's result, then what
+`collect` builds from it.
 
-| # | Response | Required result |
-|---|---|---|
-| C1 | every review-evidence connection complete | the normalized review evidence |
-| C2 | `reviews` with `hasNextPage` true | `UNKNOWN(review_evidence_too_large)` |
-| C3 | issue `comments` with `hasNextPage` true | `UNKNOWN(review_evidence_too_large)` |
-| C4 | `reviewThreads` with `hasNextPage` true | `UNKNOWN(review_evidence_too_large)` |
-| C5 | one thread's `comments` with `hasNextPage` true | `UNKNOWN(review_evidence_too_large)` |
-| C6 | a review-evidence `totalCount` that differs from the nodes returned | `UNKNOWN(review_evidence_too_large)` |
-| C7 | a malformed review, comment or thread node | `UNKNOWN(malformed)` |
-| C8 | a complete rollup of at most 100 contexts, or a `null` rollup | the normalized contexts (empty for `null`) |
-| C9 | rollup `contexts` with `hasNextPage` true | `UNKNOWN(external_contexts_too_large)` |
-| C10 | a rollup `totalCount` that differs from the contexts returned | `UNKNOWN(external_contexts_too_large)` |
-| C11 | a malformed context node | `UNKNOWN(malformed)` |
-| C12 | any reordering of the reviews, issue comments, threads or contexts in a complete response | the same normalized evidence wherever order is irrelevant (ARCH-01 says which orders matter) |
+| # | Response | Reader result | `collect` |
+|---|---|---|---|
+| C1 | every review-evidence connection complete | *complete*: the normalized review evidence | the evidence; no UNKNOWN |
+| C2 | `reviews` with `hasNextPage` true | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C3 | issue `comments` with `hasNextPage` true | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C4 | `reviewThreads` with `hasNextPage` true | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C5 | one thread's `comments` with `hasNextPage` true | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C6 | a review-evidence `totalCount` that differs from the nodes returned | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C7 | a malformed review, comment or thread node | *malformed* | `UNKNOWN(malformed)` |
+| C8 | a complete rollup of at most 100 contexts, or a `null` rollup | *complete*: the normalized contexts (empty for `null`) | the evidence; no UNKNOWN |
+| C9 | rollup `contexts` with `hasNextPage` true | *incomplete* (`external_contexts_too_large`) | `UNKNOWN(external_contexts_too_large)` |
+| C10 | a rollup `totalCount` that differs from the contexts returned | *incomplete* (`external_contexts_too_large`) | `UNKNOWN(external_contexts_too_large)` |
+| C11 | a malformed context node | *malformed* | `UNKNOWN(malformed)` |
+| C12 | any reordering of the reviews, issue comments, threads or contexts in a complete response | the same *complete* result wherever order is irrelevant (ARCH-01 says which orders matter) | the same evidence |
 
 ## 5. What crosses outward
 
@@ -674,7 +686,7 @@ re-run-artifact family → **stop**.
 
 | | |
 |---|---|
-| **Decision** | `readReviewEvidence` and `readCommitRollup` each return complete evidence from one GraphQL response, or UNKNOWN; neither ever pages (§4). |
+| **Decision** | `readReviewEvidence` and `readCommitRollup` each return a typed reader result: *complete* evidence from one GraphQL response, or *incomplete* or *malformed*. Neither ever pages, and `collect` turns a failure into UNKNOWN (§4, §6). |
 | **Date** | 2026-10-07 |
 | **Decided by** | Sam (operator), closing a completeness gap that a read-only audit of this record's readers found before ARCH-01's re-entry. |
 | **Why** | Both readers read GraphQL connections that GitHub pages at 100 items, and this record did not say what V1 does when a result exceeds one response. The candidate listing (§15) and the attestation reader (§16) were already single-response; these two were not. |
@@ -684,16 +696,24 @@ re-run-artifact family → **stop**.
 
 | Owner | Owns |
 |---|---|
-| CAP-01 | each reader's fixed query, its frozen connection sizes, the completeness checks, the normalized output, and the closed too-large results |
+| CAP-01 | each reader's fixed query, its frozen connection sizes, the completeness checks, and the typed reader-result records with their closed reasons |
+| `collect` (§6) | constructing UNKNOWN from an *incomplete* or *malformed* reader result, for the whole snapshot |
 | ARCH-01 | evidence consistency between passes, review-authority semantics, and external-context collapse and decision semantics |
 | 05B | decisions over normalized evidence only; it never sees GraphQL paging |
 
 **ARCH-01 consequence.** When #800 re-enters by removal, it deletes its own paging language: "every page", head
 assertions repeated on each page, cross-page `totalCount` reconciliation, and raw GraphQL paging mechanics. It
-consumes these two readers as a *complete normalized record, or UNKNOWN*. Paging never reaches 05B.
+consumes these two readers through `collect`: complete normalized evidence, or the UNKNOWN that `collect` builds
+from a reader's typed failure. Paging never reaches 05B.
 
 **Review budget.** One exact-head review round. One semantic repair is allowed. A second P0–P2 in the same family →
 **stop**, with no patch loop.
+
+**Spent.** Codex's ready-triggered review of `571c5c8f6c` raised P1 `4202359952`: the readers were said to return
+UNKNOWN themselves, which contradicts §6. By operator decision, the one repair makes both readers return typed
+*complete*, *incomplete* or *malformed* records, with `collect` alone constructing UNKNOWN, following §16's precedent.
+The one-response completeness model is unchanged. A further P0–P2 in the reader-result or completeness-ownership family
+→ **stop**.
 
 ---
 
