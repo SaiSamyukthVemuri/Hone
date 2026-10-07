@@ -41,7 +41,7 @@ The rules are PR-SNAPSHOT-01 §2–§7 (nine fields, with `isDraft` included) an
 | `merge_base_commit.sha` | 40 lowercase hex |
 | `files` | an array, each element with a non-empty string `filename`. An absent `files` is `malformed` |
 
-Record: `{ status, behindBy, aheadBy, mergeBaseSha, files: [filenames], filesCapped }`. `filesCapped` is
+Record: `{ status, behindBy, aheadBy, baseSha, mergeBaseSha, files: [filenames], filesCapped }`. `filesCapped` is
 `files.length >= 300`, because GitHub truncates a compare's file list at 300.
 
 ### 2.2 `parsePrContext(raw, { expectedNumber, headSha })` — GraphQL, exact fields
@@ -91,7 +91,7 @@ Called for OPEN keys only.
 
 1. `key.baseRef !== productionRef` → `base_ref`.
 2. The compare was requested with `key.baseSha`. If the record's base disagrees → `malformed`.
-3. Value: `{ drift: { behindBy, aheadBy }, mergeBaseSha, files, filesCapped, changedFiles, baseRefChanges,
+3. Value: `{ drift: { behindBy, aheadBy }, mergeBaseSha, files, filesCapped, changedFiles, createdAt, baseRefChanges,
    associatedPrNumbers }`.
 
 The 05B precedence puts `behindBy > 0` → `NEEDS_REFRESH` before every CI rule.
