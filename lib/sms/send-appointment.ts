@@ -334,38 +334,57 @@ export async function send2hReminderSmsToClient(
   return sendReminder("reminder_2h", input);
 }
 
-type AppointmentTiming = { status: string; startsAt: Date };
+type ReminderClaim =
+  | { result: "claimed"; startsAt: Date }
+  | { result: "not_claimed" | "not_confirmed" | "outside_window" | "not_found" | "invalid_input" }
+  /** The command could not be reached or answered unreadably. It is one
+   *  transaction, so nothing was claimed and no attempt was spent. */
+  | { result: "unavailable" };
+
+const REMINDER_CLAIM_REFUSALS = new Set([
+  "not_claimed",
+  "not_confirmed",
+  "outside_window",
+  "not_found",
+  "invalid_input",
+]);
 
 /**
- * The appointment's status and start, read now. `unreadable` is a failed or
- * malformed read and is never confused with "the appointment is gone".
+ * claim_reminder_sms_send (0206): under the appointment row lock, refuse
+ * unless the appointment is confirmed and starts inside this cron window, then
+ * claim with claim_sms_send -- one transaction. The start it returns is the one
+ * the reminder names.
  */
-async function readAppointmentTiming(
+async function claimReminderSmsSend(
   admin: SupabaseClient,
   appointmentId: string,
-): Promise<AppointmentTiming | null | "unreadable"> {
+  smsType: "reminder_24h" | "reminder_2h",
+  window: ReminderWindow,
+): Promise<ReminderClaim> {
   try {
-    const { data, error } = await admin
-      .from("appointments")
-      .select("status, starts_at")
-      .eq("id", appointmentId)
-      .maybeSingle();
-    if (error) return "unreadable";
-    if (!data) return null;
-    const row = data as { status?: unknown; starts_at?: unknown };
-    const startsAt = new Date(String(row.starts_at));
-    if (typeof row.status !== "string" || Number.isNaN(startsAt.getTime())) {
-      return "unreadable";
+    const { data, error } = await admin.rpc("claim_reminder_sms_send", {
+      p_appointment_id: appointmentId,
+      p_sms_type: smsType,
+      p_window_start: window.startIso,
+      p_window_end: window.endIso,
+    });
+    if (error) return { result: "unavailable" };
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | { result?: unknown; starts_at?: unknown }
+      | null;
+    if (row?.result === "claimed") {
+      const startsAt = new Date(String(row.starts_at));
+      return Number.isNaN(startsAt.getTime())
+        ? { result: "unavailable" }
+        : { result: "claimed", startsAt };
     }
-    return { status: row.status, startsAt };
+    if (typeof row?.result === "string" && REMINDER_CLAIM_REFUSALS.has(row.result)) {
+      return { result: row.result } as ReminderClaim;
+    }
+    return { result: "unavailable" };
   } catch {
-    return "unreadable";
+    return { result: "unavailable" };
   }
-}
-
-function inWindow(startsAt: Date, window: ReminderWindow): boolean {
-  const t = startsAt.getTime();
-  return t >= Date.parse(window.startIso) && t <= Date.parse(window.endIso);
 }
 
 /**
@@ -373,13 +392,14 @@ function inWindow(startsAt: Date, window: ReminderWindow): boolean {
  * settled. Beyond sendOne's gate and claim it closes the two gaps the
  * reminder path had:
  *
- *  1. CANCELLED OR MOVED AFTER THE WINDOW QUERY. The claim does not
- *     re-validate the appointment, so it is read again AFTER the claim -- the
- *     earlier re-check ran before it, leaving the claim-to-send interval open.
- *     A cancelled appointment, or one moved out of this window, releases the
- *     claim and sends nothing; the message and its manage link are built from
- *     the start read here, so a move made before the send is reminded at its
- *     new start.
+ *  1. CANCELLED OR MOVED AFTER THE WINDOW QUERY. claim_sms_send validates
+ *     nothing, and the old re-check ran before it. The claim now goes through
+ *     claim_reminder_sms_send, which checks status and window under the
+ *     appointment row lock and claims in the same transaction: a cancelled
+ *     appointment, or one moved out of this window, is refused without
+ *     spending an attempt, and the message and its manage link are built from
+ *     the start the claim returns -- so a move made before the send is
+ *     reminded at its new start.
  *
  *  2. AN ANSWER THAT WAS LOST. Twilio takes no idempotency key, so an
  *     ambiguous attempt may already have reached the client, and retrying it
@@ -412,34 +432,33 @@ async function sendReminder(
     return { ok: false, skipped: true, reason: fence.reason };
   }
 
-  const claimed = await claimSmsSend(args.admin, args.appointmentId, smsType);
-  if (!claimed) {
-    return { ok: false, skipped: true, reason: "not_claimed" };
+  // (1) Validate and claim in ONE transaction. A refusal spends no attempt;
+  // an unreachable command spends none either (it rolled back), and is
+  // retried on a later fire.
+  const claim = await claimReminderSmsSend(args.admin, args.appointmentId, smsType, args.window);
+  if (claim.result === "unavailable") {
+    logSmsFailure({
+      appointmentId: args.appointmentId,
+      smsType,
+      error: "reminder_claim_unavailable",
+      retryable: true,
+      studioId: args.studio.id,
+    });
+    return { ok: false, error: "reminder_claim_unavailable", retryable: true };
   }
-
-  // (1) The appointment as it is NOW, after the claim.
-  const before = await readAppointmentTiming(args.admin, args.appointmentId);
-  if (before === "unreadable") {
-    await recordSmsResult(args.admin, args.appointmentId, smsType, false);
-    return { ok: false, error: "appointment_unreadable", retryable: true };
+  if (claim.result !== "claimed") {
+    return { ok: false, skipped: true, reason: claim.result };
   }
-  if (!before || before.status !== "confirmed") {
-    await recordSmsResult(args.admin, args.appointmentId, smsType, false);
-    return { ok: false, skipped: true, reason: "not_confirmed" };
-  }
-  if (!inWindow(before.startsAt, args.window)) {
-    await recordSmsResult(args.admin, args.appointmentId, smsType, false);
-    return { ok: false, skipped: true, reason: "outside_window" };
-  }
+  const startsAt = claim.startsAt;
 
   let result: SendSmsResult;
   try {
     const build = smsType === "reminder_24h" ? build24hReminderSms : build2hReminderSms;
     const body = build({
       studioName: args.studio.name,
-      startsAt: before.startsAt,
+      startsAt,
       timezone: args.timezone,
-      manageUrl: args.manageUrlFor(before.startsAt),
+      manageUrl: args.manageUrlFor(startsAt),
       intakeUrl: args.intakeUrl ?? null,
     });
     result = await deliverWithLedger({
