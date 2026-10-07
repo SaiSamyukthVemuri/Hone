@@ -18,7 +18,7 @@ The package layout follows CAP-01 §2:
 |---|---|
 | `contract/` | Normalized, immutable, capability-free types and their validating constructors |
 | `adapter/internal/` | 05A: transport, collection passes and binders |
-| `decision/` | 05B: the pure decision engine (not yet written) |
+| `decision/` | 05B: the pure decision engine (`SPEC-05B.md`) |
 
 ## Status by evidence row
 
@@ -32,6 +32,8 @@ The package layout follows CAP-01 §2:
 | External contexts | **Done at fixture level**: `adapter/internal/github/parse-rollup.mjs` and `adapter/internal/bind/external.mjs` (EXT-CONTEXT-01's closed tables). |
 | Completeness and read failures | Every parser is complete-or-UNKNOWN with closed reasons, requires the request it answers, and never throws. |
 | Collector | **Done at fixture level**: `adapter/internal/github/primitive.mjs` (the one transport, dedicated token only), `adapter/internal/github/index.mjs` (narrow readers), `adapter/local-ci.mjs` (the shepherd's own classifier proven to be production's) and `adapter/collect.mjs` (coherent pass, confirming pass, Evidence and its hash; SPEC-05A §5). Fault injection covers every request of both passes. Live collection waits on the read-only token. |
+
+| Decision engine (05B) | **Done at fixture level**: `decision/decide.mjs` (SPEC-05B), with `decision/policy.mjs` and the closed `decision/next-action.mjs`. All 21,600 evidence combinations agree with a precedence oracle written from the directive; 14 of 14 unsafe mutants are caught. Not yet independently verified. |
 
 Independent verification (CANONICAL_ROADMAP §16.5) lives under `tests/eng/v2/verify/`, written from SPEC-05A and the
 records alone. Rows 1–3 have had one pass; rows 4–6 and the collector have not been independently verified yet.
@@ -92,6 +94,14 @@ The runtime does **not** claim to implement the records below unchanged. These a
      files. V1 does not use `readRunAttestation` or `readFileBlob`.
    - **No G1–G4.** V1 ships without CAP-01's static lints. The confinement they would check — one network primitive,
      reached only through the readers — is a code-review obligation in V1.
+8. **Row-scoped UNKNOWN in 05B.** ARCH-01 §8 makes any UNKNOWN the whole snapshot's. V1 keeps that for a collection
+   failure, but a binder's closed failure is one row's result: it decides `UNKNOWN(reason)` only when the precedence
+   table reaches that row. Every row is consulted before candidacy, so an UNKNOWN can never be skipped on the way to
+   `CANDIDATE_READY_FOR_HUMAN_REVIEW`. A draft PR still reads `DRAFT_HOLD`, and a PR behind production still reads
+   `NEEDS_REFRESH`, while production's history is unverified (SPEC-05B §2).
+9. **Missing required CI.** The operator's row 6 is "missing required CI → `CI_NOT_STARTED` / `CI_INCOMPLETE`". V1
+   decides `CI_NOT_STARTED` for `NO_RUN` (ARCH-01's `NO_FRONTIER`) and `CI_INCOMPLETE` for `INCOMPLETE`, a
+   successful run in which a required job did not succeed.
 
 ## Credential
 
