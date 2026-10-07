@@ -245,6 +245,20 @@ order, and nothing else: no loop, no second page, and no caller-selected route, 
 
    Any failure, including a `410 Gone`, returns the *unavailable* result.
 
+- **Re-runs — a deliberate V1 liveness limitation.** A re-run that re-executes the attestation emitter may leave more
+  than one `ci-attest-v1` artifact on the same workflow run: GitHub has been observed listing one such artifact per
+  attempt (Appendix). V1 fails closed. LOCATE never chooses among duplicates; the run's result is *unavailable*, and
+  the CI binding record treats it as UNKNOWN. This affects liveness only. It cannot grant CI success, choose an older
+  or a newer attestation by any heuristic, or make a pull request ready. Recovery is a **new** workflow run — a push,
+  a close and reopen that starts a fresh `pull_request` run, or any other legitimate new run with a higher
+  `run_number` — which can become the CI binding record's current-run frontier; there is no selection within the
+  ambiguous run. A re-run of failed jobs that does not re-execute the upstream emitter keeps its one attestation and is
+  unaffected. A "re-run all jobs" that leaves duplicates may stay UNKNOWN, and V1 accepts that.
+- **Producer unchanged.** The CI binding record's emitter keeps `overwrite: false` and produces one artifact per
+  executed attempt; the reader requires one unambiguous artifact for the run. V1 does not assume that `overwrite: true`
+  deletes an earlier attempt's artifact; that is unproven. An artifact record exposes no documented attempt selector,
+  and neither `created_at` nor the artifact id is attempt identity. Downloading every duplicate to choose by the
+  payload's `runAttempt` would add a loop and move attempt selection into the transport.
 - **What crosses the boundary.** Only the normalized attestation record with its frozen artifact metadata, or the
   *unavailable* result. The raw list response, the artifact id, the redirect URL and the zip bytes never leave the
   transport package. The CI binding record classifies an *unavailable* result (CI-ATTEST-01: INVALID).
@@ -257,7 +271,7 @@ Required attestation-reader fixtures, for the transport's implementation tests:
 |---|---|---|
 | A1 | exactly one valid `ci-attest-v1` artifact | DOWNLOAD runs |
 | A2 | no `ci-attest-v1` artifact | *unavailable*; no download |
-| A3 | two `ci-attest-v1` artifacts | *unavailable*; no download |
+| A3 | two or more valid-looking `ci-attest-v1` artifacts for one run id — for example after a re-run that re-executed the emitter | *unavailable*; no download and no selection |
 | A4 | the one artifact is expired | *unavailable*; no download |
 | A5 | a `total_count` different from the number of artifacts returned | *unavailable*; no download |
 | A6 | more than 100 matching artifacts, so paging would be required | *unavailable*; no second page and no download |
@@ -575,6 +589,12 @@ reader-state family → **stop**.
 **Review budget.** One exact-head review round. One semantic repair is allowed. A second P0–P2 in the same family →
 **stop**, with no patch loop.
 
+**Spent.** Codex's review of `2aa208c678` raised P1 `4201892749`: a re-run can leave several same-name artifacts on one
+run, which LOCATE's exactly-one rule makes *unavailable*. By operator decision (Option A), this is accepted as a
+documented V1 liveness limitation (§4). Duplicates are deliberately *unavailable*, recovery is a new run, and no
+attempt-selection rule, extra request or ordering was added. A further P0–P2 in the attestation-reader or
+re-run-artifact family → **stop**.
+
 ---
 
 ## Appendix — evidence (2026-10-06, read only)
@@ -595,3 +615,4 @@ reader-state family → **stop**.
 | REST `actions/list-workflow-run-artifacts` (OpenAPI), for §16 | query `name`, `per_page` and `page`; the response holds `total_count` and `artifacts`; an artifact's `digest` is a nullable string |
 | REST `actions/download-artifact` (OpenAPI), for §16 | `GET …/actions/artifacts/{artifact_id}/{archive_format}`, where the format must be `zip`; it answers `302` with a `Location` URL that expires after one minute, or `410` |
 | PR #802, ready-triggered review `5436100752`, for §16 | P1 `4201792798`: reading an attestation takes two GitHub operations, and §4 allowed one |
+| GitHub CLI issue `cli/cli#12437` (open, 2026-01-07), for §4's re-run note | after a re-run, one run's name-filtered artifact list returned two same-name artifacts, one per attempt (`pmd/pmd` run `20775770442`; those artifacts have since expired) |
