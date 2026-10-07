@@ -1,1 +1,1 @@
-{"data":{"repository":{"pullRequest":{"createdAt":"2026-10-07T20:16:40Z","changedFiles":11,"baseRefChanges":{"totalCount":4}},"object":{"associatedPullRequests":{"totalCount":1,"nodes":[{"number":810}]}}}}}
+{"data":{"repository":{"pullRequest":{"number":810,"createdAt":"2026-10-07T20:16:40Z","changedFiles":11,"baseRefChanges":{"pageInfo":{"hasNextPage":false},"nodes":[]}},"object":{"__typename":"Commit","associatedPullRequests":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":810}]}}}}}
