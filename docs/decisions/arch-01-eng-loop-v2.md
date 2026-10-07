@@ -102,7 +102,7 @@ Every read goes through a CAP-01 reader, and every revision-specific read is key
 
 | Fact | CAP-01 reader | Keyed by |
 |---|---|---|
-| the PR's identity and lifecycle (`K0`, `K1`) and its draft flag | `readPrKey` | PR number |
+| the PR's identity and lifecycle, including its draft flag: the nine-field key (`K0`, `K1`) | `readPrKey` | PR number |
 | review objects, PR issue comments, review threads | `readReviewEvidence` | PR number |
 | external contexts | `readCommitRollup` | `K0.headSha` |
 | drift, and the merge base that CI-ATTEST-01's trust anchor uses | `readCompare` | `K0.baseSha`, `K0.headSha` (§14) |
@@ -231,16 +231,20 @@ metadata only and **never** drives a decision. Swapping the direction is an impl
 - **Any** required read, parse or authorization failure → the whole snapshot is `UNKNOWN(reason)`. No partial Evidence.
   A pass stops at its first failure, and that failure names the reason.
 - **Stability: one bounded full confirming pass (ARCH-01).** Pass coherence cannot see a change that keeps the key: a
-  thread resolved or reopened, a body edited, the frontier run or a context changing state, the draft flag toggled. So
-  once one coherent pass has produced normalized `Evidence`, 05A immediately performs **one more complete pass** and
-  normalizes it too. `Evidence` is emitted only if the confirming pass:
+  thread resolved or reopened, a body edited, the frontier run or a context changing state. So once one coherent pass
+  has produced normalized `Evidence`, 05A immediately performs **one more complete pass** and normalizes it too.
+  `Evidence` is emitted only if the confirming pass:
   - is itself coherent (`K1 == K0`) and has the **same** key as the first coherent pass, with no retry — otherwise
     `UNKNOWN(pr_key_moved)` (PR-SNAPSHOT-01 §4);
   - normalizes to **identical** `Evidence`, compared as values with `capturedAt` excluded and the order-irrelevant
     arrays (§26: external contexts, reviews, threads) compared as multisets — otherwise `UNKNOWN(unstable_snapshot)`.
 
-  A read, parse or completeness failure in the confirming pass → that reason. There is no third pass and no loop: a
-  later invocation is the retry. What the re-read does and does not guarantee is stated in §41.
+  A key difference between the two passes is `pr_key_moved`, never `unstable_snapshot` (PR-SNAPSHOT-01 §8). Because
+  `isDraft` is a key field (PR-SNAPSHOT-01 §2, §15), a draft toggle is a key movement like any other: inside a pass it
+  makes that pass incoherent (with the bounded retry above for the first collection only), and between the two passes
+  it is `pr_key_moved`. Draft is never read or compared separately. A read, parse or completeness failure in the
+  confirming pass → that reason. There is no third pass and no loop: a later invocation is the retry. What the re-read
+  does and does not guarantee is stated in §41.
 - **Terminal passes** read only the key (PR-SNAPSHOT-01 §7). Their confirming pass is another terminal pass, whose key
   must be equal. No CI candidate, artifact, attestation, trust anchor, compare, review or context is read, so historical
   artifact expiry or a cleared GitHub association can never make a stable terminal PR `UNKNOWN`.
@@ -427,7 +431,7 @@ interface TerminalEvidence {   // a terminal pass (§15): key.state is CLOSED or
 interface OpenEvidence {       // key.state is OPEN and key.baseRef is the configured production ref (§13)
   readonly kind: "open";
   readonly key: PrSnapshotKey; // K0 (PR-SNAPSHOT-01 §2)
-  readonly draft: boolean;     // the flag read with K0 (PR-SNAPSHOT-01 §9); ordinary evidence, not part of the key
+  readonly draft: boolean;     // = K0.isDraft, the coherent key's flag (PR-SNAPSHOT-01 §2, §15); never read separately
   readonly drift: { behindBy: number; aheadBy: number /* metadata */ };
   readonly ci: { outcome: "SUCCEEDED" | "FAILED" | "PENDING" | "NO_FRONTIER" }; // §8
   readonly external: ReadonlyArray<{ source: string /* display */; state: "pending" | "success" | "failure" }>;
