@@ -17,12 +17,16 @@
 --        claim_waitlist_invitation_sms   the once-per-invitation claim
 --        settle_sms_message              record what the provider answered
 --        record_sms_delivery_status      apply a delivery-status callback
+--      and one more for the reminder cron, which writes no ledger row:
+--        claim_reminder_sms_send         validate status and window, then
+--                                        claim, in one transaction
 --
 --   3. public.studios.send_waitlist_invitation_sms (default false), the
 --      studio-level switch for SMS-01, beside the 0049 send_*_sms switches.
 --
 -- WHAT THIS IS NOT. No provider effect, no customer send, no trigger on any
--- existing table, no change to claim_sms_send / record_sms_result (0049) or
+-- existing table, no change to claim_sms_send / record_sms_result (0049) --
+-- claim_reminder_sms_send CALLS claim_sms_send unchanged -- or
 -- the email claim pair (0080), to any waitlist lifecycle command, or to any
 -- existing grant. Nothing is backfilled. Until SMS-01 and SMS-02 call these
 -- commands the table stays empty and the switch stays off.
@@ -562,6 +566,80 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- 7. claim_reminder_sms_send — validate AND claim, in one transaction
+-- ---------------------------------------------------------------------------
+--
+-- claim_sms_send (0049) counts an attempt and checks nothing about the
+-- appointment. A reminder must not go to a cancelled appointment and must name
+-- the start the appointment has NOW, so the cron used to re-check status and
+-- start in a separate read after the claim -- and a read that failed then
+-- spent an attempt that never reached the provider. This wrapper takes the
+-- appointment row lock that a cancel or a move also needs, checks status and
+-- the cron window under it, and only then calls the UNCHANGED claim_sms_send:
+--
+--   * nothing can commit between the check and the claim;
+--   * a refusal (not confirmed, outside the window, already sent or held)
+--     spends no attempt;
+--   * an error rolls the whole call back, so the budget is never spent on a
+--     call that could not validate.
+--
+-- The start it returns is the one the reminder names. It writes no ledger row.
+-- Results: claimed | not_claimed | not_confirmed | outside_window | not_found
+-- | invalid_input.
+
+create or replace function public.claim_reminder_sms_send(
+  p_appointment_id uuid,
+  p_sms_type       text,
+  p_window_start   timestamptz,
+  p_window_end     timestamptz
+) returns table (
+  result    text,
+  starts_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_status text;
+  v_starts timestamptz;
+begin
+  if p_appointment_id is null or p_window_start is null or p_window_end is null
+     or p_sms_type is null or p_sms_type not in ('reminder_24h', 'reminder_2h') then
+    return query select 'invalid_input'::text, null::timestamptz;
+    return;
+  end if;
+
+  select a.status, a.starts_at
+    into v_status, v_starts
+    from public.appointments a
+   where a.id = p_appointment_id
+     for no key update;
+
+  if not found then
+    return query select 'not_found'::text, null::timestamptz;
+    return;
+  end if;
+
+  if v_status is distinct from 'confirmed' then
+    return query select 'not_confirmed'::text, v_starts;
+    return;
+  end if;
+
+  if v_starts < p_window_start or v_starts > p_window_end then
+    return query select 'outside_window'::text, v_starts;
+    return;
+  end if;
+
+  if public.claim_sms_send(p_appointment_id, p_sms_type) then
+    return query select 'claimed'::text, v_starts;
+  else
+    return query select 'not_claimed'::text, v_starts;
+  end if;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Privileges
 -- ---------------------------------------------------------------------------
 --
@@ -598,6 +676,12 @@ grant execute on function public.claim_waitlist_invitation_sms(uuid, uuid) to se
 grant execute on function public.settle_sms_message(uuid, text, text, integer, text) to service_role;
 grant execute on function public.record_sms_delivery_status(uuid, text, text, integer) to service_role;
 
+revoke execute on function public.claim_reminder_sms_send(uuid, text, timestamptz, timestamptz) from public;
+revoke execute on function public.claim_reminder_sms_send(uuid, text, timestamptz, timestamptz) from anon;
+revoke execute on function public.claim_reminder_sms_send(uuid, text, timestamptz, timestamptz) from authenticated;
+revoke execute on function public.claim_reminder_sms_send(uuid, text, timestamptz, timestamptz) from service_role;
+grant execute on function public.claim_reminder_sms_send(uuid, text, timestamptz, timestamptz) to service_role;
+
 revoke all privileges on function public.sms_outbound_messages_server_timestamps()
   from public, anon, authenticated, service_role;
 revoke all privileges on function public.sms_outbound_messages_identity_guard()
@@ -625,5 +709,7 @@ comment on function public.settle_sms_message(uuid, text, text, integer, text) i
   'Record what the provider answered for a claimed attempt: accepted (with SID) | refused | unknown | skipped (with reason). Only a claimed row settles. Returns settled | already_settled | not_found | not_claimed | invalid_input. service_role only.';
 comment on function public.record_sms_delivery_status(uuid, text, text, integer) is
   'Apply one signature-verified Twilio delivery-status callback to the attempt it names. Forward-only; the three end states are terminal; an unknown settle is resolved by the provider''s own report. Returns (result, studio_id, purpose, status, appointment_id) with result updated | stale | unknown_message | sid_mismatch | not_sent | invalid_input. service_role only.';
+comment on function public.claim_reminder_sms_send(uuid, text, timestamptz, timestamptz) is
+  'SMS-02 reminder claim: under the appointment row lock, refuses unless the appointment is confirmed and starts inside the cron window, then calls claim_sms_send (0049) unchanged. One transaction, so a refusal or an error spends no attempt and no cancel or move can land between the check and the claim. Returns (result, starts_at); result is claimed | not_claimed | not_confirmed | outside_window | not_found | invalid_input. Writes no ledger row. service_role only.';
 
 commit;

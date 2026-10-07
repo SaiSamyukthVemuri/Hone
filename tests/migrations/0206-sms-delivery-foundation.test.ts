@@ -32,6 +32,7 @@ const COMMANDS = [
   "claim_waitlist_invitation_sms(uuid, uuid)",
   "settle_sms_message(uuid, text, text, integer, text)",
   "record_sms_delivery_status(uuid, text, text, integer)",
+  "claim_reminder_sms_send(uuid, text, timestamptz, timestamptz)",
 ] as const;
 
 const TRIGGER_FUNCTIONS = [
@@ -150,6 +151,31 @@ describe("0206 the invitation claim cannot race a lifecycle command", () => {
     expect(body).toMatch(
       /from public\.new_client_waitlist_invitations i\s+where i\.id = p_invitation_id\s+and i\.studio_id = p_studio_id\s+for share;/,
     );
+  });
+});
+
+describe("0206 the reminder claim validates and claims in ONE transaction", () => {
+  const body = (() => {
+    const start = CODE.indexOf("create or replace function public.claim_reminder_sms_send(");
+    expect(start).toBeGreaterThan(-1);
+    return CODE.slice(start, CODE.indexOf("$$;", start));
+  })();
+
+  it("locks the appointment row before deciding", () => {
+    expect(body).toMatch(/from public\.appointments a\s+where a\.id = p_appointment_id\s+for no key update;/);
+  });
+
+  it("checks status and window BEFORE calling the unchanged claim_sms_send", () => {
+    const status = body.indexOf("if v_status is distinct from 'confirmed' then");
+    const window = body.indexOf("if v_starts < p_window_start or v_starts > p_window_end then");
+    const claim = body.indexOf("public.claim_sms_send(p_appointment_id, p_sms_type)");
+    expect(status).toBeGreaterThan(-1);
+    expect(window).toBeGreaterThan(status);
+    expect(claim).toBeGreaterThan(window);
+  });
+
+  it("accepts only the two reminder types", () => {
+    expect(body).toMatch(/p_sms_type not in \('reminder_24h', 'reminder_2h'\)/);
   });
 });
 
