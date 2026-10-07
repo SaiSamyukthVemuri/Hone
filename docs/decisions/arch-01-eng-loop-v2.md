@@ -3,14 +3,15 @@
 | Field | Value |
 |---|---|
 | **Decision** | ENG-LOOP V2's core is a **stateless pipeline**: an **evidence adapter** (05A: GitHub → `Evidence` \| `UNKNOWN(reason)`), a **pure decision engine** (05B: `Evidence` → `Decision`) and a **stateless render** of the exact-head outcome (05C). Raw GitHub data crosses exactly one validation boundary. The human keeps merge authority. ARCH-01 owns **no durable state** (§28). |
-| **Date** | 2026-10-06 |
+| **Date** | 2026-10-06; final re-entry by removal 2026-10-07 |
 | **Status** | **PROPOSED** in the ARCH-01 pull request; **ACCEPTED** when merged. |
-| **Decided by** | Sam (operator): the ENG-LOOP V2 architecture contract, including the two-channel Codex evidence decision (§17) and, after the §36 stop law fired, the cut that moved all durable state to ARCH-02 (§28) and the CI-run-to-PR binding law (§8.1). |
+| **Decided by** | Sam (operator): the ENG-LOOP V2 architecture contract, including the two-channel Codex evidence decision (§17). After the §36 stop law fired, the operator moved all durable state to ARCH-02 (§28). Once CAP-01, PR-SNAPSHOT-01 and CI-ATTEST-01 had merged, the operator made the final re-entry by removal that consumes them (§36). |
 | **archVersion** | `ARCH-01` |
 | **Scope** | ENG-LOOP-05A, 05B and 05C's stateless render; every later ENG-LOOP component consumes this pipeline and its laws. Durable state is out of scope (§28). Standing law: ENGINEERING_STANDARDS §8. |
+| **Depends on** | Three merged records, consumed and not restated (§4a): CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`), PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`) and CI-ATTEST-01 (`docs/decisions/ci-attest-01-run-side-attestation.md`). |
 | **Supersedes** | The ENG-LOOP-01/03/04 implementations — PRs #795, #798 and #799 — which stay frozen as draft **evidence** branches (§27). |
-| **Enforced by** | ENGINEERING_STANDARDS §8 now; the 05A/05B guard tests (§25), test law (§26) and fixture corpus (§22) when those lanes land. |
-| **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0` (#788). Every pinned value below was read from the live GitHub API on 2026-10-05/06. |
+| **Enforced by** | ENGINEERING_STANDARDS §8 now. When those lanes land, also CAP-01's static architecture lint, the test law (§26) and the fixture corpus (§22). |
+| **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0` (#788); re-entered at production `5fb25c8c26ccd882e4fac930ea31d874f5d4370b`, where CAP-01, PR-SNAPSHOT-01 and CI-ATTEST-01 are merged. Every pinned value below was read from the live GitHub API on 2026-10-05/06. |
 
 > **Normative.** Where an implementation and this document disagree, the implementation is wrong. A change to these
 > semantics is proposed, reviewed and merged **here first** (§35); semantics never evolve through review-repair rounds.
@@ -43,8 +44,9 @@ actions) are outside ARCH-01, and §16.5's re-entry gate governs them (§28).
 - "latest execution" was reconstructed although GitHub already exposes each run's **current** state;
 - temporal ordering brought timestamp, run-id and attempt complexity that the question never needed.
 
-We keep the invariants, not the implementation. **Retired premise:** ENG-LOOP reconstructs "latest execution". V2 reads
-each designated run's current state and never orders runs (§8).
+We keep the invariants, not the implementation. **Retired premise:** ENG-LOOP reconstructs "latest execution" from
+timestamps, run ids or attempts. V2 takes CI state from CI-ATTEST-01's current-run frontier, which orders runs only by
+GitHub's documented `run_number` (§8).
 
 ## 3. Evidence-boundary law
 
@@ -60,13 +62,14 @@ Ambiguous or unrecognized **required** evidence → `UNKNOWN(reason)` for the wh
 ## 4. Components
 
 ```
-collect(pr, policy, github)  →  Evidence | Unknown(reason)          (05A)
+collect(pr, policy)          →  Evidence | Unknown(reason)          (05A)
 decide(evidence, policy)     →  Decision                             (05B)
 shepherd CLI                 →  renders the exact-head outcome; persists nothing (05C)
 ```
 
-`decide()` is called **only** with valid `Evidence`; collection failure returns `Unknown` before 05B runs. `UNKNOWN` is
-**not** a member of `Decision`. The shepherd renders an outcome union:
+`collect` takes no GitHub client, reader or transport argument: its readers come only from CAP-01's transport (CAP-01
+§6). `decide()` is called **only** with valid `Evidence`; collection failure returns `Unknown` before 05B runs. `UNKNOWN`
+is **not** a member of `Decision`. The shepherd renders an outcome union:
 
 ```ts
 type ObservationOutcome =
@@ -77,28 +80,43 @@ type ObservationOutcome =
 Later, separately and **not** in 05A/05B/05C: the **orchestrator** and the **watcher** (ENG-LOOP-06, ENG-LOOP-02), and
 any durable state (§28).
 
+### 4a. Governing records
+
+| Record | Owns | ARCH-01 consumes |
+|---|---|---|
+| CAP-01 | the GitHub capability graph; the readers, their typed results and their completeness; static architecture lint | each reader's complete result; a typed failure becomes `UNKNOWN` in `collect` |
+| PR-SNAPSHOT-01 | the coherent `PrSnapshotKey`; the `K0`/`K1` pass boundary; the bounded key retry; terminal passes | `K0` and its coherence |
+| CI-ATTEST-01 | immutable run-side CI identity; attestation trust; the `run_number` current-run frontier; the normalized CI result | one normalized CI fact (§8) |
+| ARCH-01 | the evidence boundary; the bounded full confirming re-read; review-authority and external-context semantics; the drift decision input; 05B's precedence; the pure 05A/05B contract; stateless rendering and human merge authority | — |
+
+ARCH-01 restates none of the three records. Where they meet this record, it points to them.
+
 ## 5. 05A — evidence adapter
 
-05A owns GitHub → validated normalized facts → `Evidence | UNKNOWN`. It knows GitHub. It makes **no** release or
-readiness decision and has no decision vocabulary (§25).
+05A owns GitHub → validated normalized facts → `Evidence | UNKNOWN`. It knows GitHub only through CAP-01's readers. It
+makes **no** release or readiness decision and has no decision vocabulary (§25).
 
 ### 5.1 Required reads — the only sources of truth
 
-| Fact | Source | Keyed by |
-|---|---|---|
-| PR number, state, draft, base, head, head ref and head repository id; review objects; PR issue comments; review threads; external contexts | **one GraphQL snapshot** (§15), every page | PR number |
-| Production head | REST `git/ref/heads/<configured production ref>` | the configured ref (§13) |
-| Drift | REST `compare/{production_head}...{H}` | `H` = the snapshot's head (§14, §16) |
-| CI runs, each with its `pull_requests` association | REST `actions/workflows/ci.yml/runs?head_sha={H}&event=pull_request`, every page | `H` = the snapshot's head (§8, §8.1, §9, §16) |
+Every read goes through a CAP-01 reader, and every revision-specific read is keyed by `K0` (PR-SNAPSHOT-01 §5):
 
-Every read is a **read**. 05A never writes to GitHub. One **collection** is every read in this table; §15 requires two
-complete collections that agree.
+| Fact | CAP-01 reader | Keyed by |
+|---|---|---|
+| the PR's identity and lifecycle (`K0`, `K1`) and its draft flag | `readPrKey` | PR number |
+| review objects, PR issue comments, review threads | `readReviewEvidence` | PR number |
+| external contexts | `readCommitRollup` | `K0.headSha` |
+| drift, and the merge base that CI-ATTEST-01's trust anchor uses | `readCompare` | `K0.baseSha`, `K0.headSha` (§14) |
+| CI: candidates, attestations and the trust anchor, as CI-ATTEST-01 uses them | `readCandidateRuns`, `readRunAttestation`, `readFileBlob` | `K0.headSha`; run id; file path and commit SHA |
+
+A terminal pass reads only `readPrKey` (§15). Every read is a **read**: 05A never writes to GitHub. One **pass** is
+PR-SNAPSHOT-01's `K0` → reads → `K1`. §15 adds one confirming pass.
 
 ## 6. 05B — pure decision engine
 
 05B receives only normalized `Evidence` and policy. It knows **nothing** about REST vs GraphQL, GitHub URLs, workflow
 paths, `statusCheckRollup` structure, `checkSuite.app.slug`, timestamp or `run_attempt` parsing, pagination, raw review
-or check JSON, or compare syntax. It implements only the precedence law (§7).
+or check JSON, compare syntax, attestation parsing or the `run_number` frontier. It implements only the precedence law
+(§7).
 
 ## 7. Advisory decision precedence
 
@@ -106,119 +124,59 @@ or check JSON, or compare syntax. It implements only the precedence law (§7).
 
 | # | Condition over `Evidence` E and policy P | Decision |
 |---|---|---|
-| 1 | `E.pr.state` ≠ `OPEN` | `NOT_OPEN` |
-| 2 | `E.pr.draft` | `DRAFT_HOLD` |
-| 3 | `E.production.behindBy > 0` | `NEEDS_REFRESH` |
-| 4 | any CI run outcome is `FAILED` | `CI_FAILED` |
+| 1 | `E.kind` is `terminal`: the key's `state` is `CLOSED` or `MERGED` | `NOT_OPEN` |
+| 2 | `E.draft` | `DRAFT_HOLD` |
+| 3 | `E.drift.behindBy > 0` | `NEEDS_REFRESH` |
+| 4 | `E.ci.outcome` is `FAILED` | `CI_FAILED` |
 | 5 | any external context is `failure` | `EXTERNAL_BLOCKED` |
-| 6 | there are **zero** designated CI runs | `CI_NOT_STARTED` |
-| 7 | any CI run outcome is `PENDING` | `CI_PENDING` |
+| 6 | `E.ci.outcome` is `NO_FRONTIER` | `CI_NOT_STARTED` |
+| 7 | `E.ci.outcome` is `PENDING` | `CI_PENDING` |
 | 8 | any external context is `pending` | `EXTERNAL_PENDING` |
 | 9 | not `TRUSTED_REVIEW_AT_HEAD` (§17) | `REVIEW_MISSING` |
 | 10 | `FINDINGS_OPEN` (§18, §19) | `FINDINGS_OPEN` |
 | 11 | otherwise | `CANDIDATE_READY_FOR_HUMAN_REVIEW` |
 
-`CANDIDATE_READY_FOR_HUMAN_REVIEW` is **advisory only**. The human retains merge authority.
+Row 1 takes every terminal `Evidence`, so rows 2–11 read only open `Evidence` (§24). `E.ci.outcome` `SUCCEEDED` does
+not block. `CANDIDATE_READY_FOR_HUMAN_REVIEW` is **advisory only**. The human retains merge authority.
 
-## 8. Run selection rule
+## 8. CI evidence — one normalized fact from CI-ATTEST-01
 
-**Candidate runs** for head `H` are exactly the runs the configured workflow endpoint returns for `head_sha=H` and
-`event=pull_request` (§9): the endpoint ∩ the exact head ∩ the authoritative event. Push-event runs at the same sha are
-**not** candidates. No other event is authoritative unless policy is explicitly changed (§32). **Designated runs** are the
-candidates whose PR association binds them, unambiguously, to this PR (§8.1). Head sha and event alone are **not** PR
-identity: two PRs may share a commit.
+**CI state is CI-ATTEST-01's current-run frontier result.** CI-ATTEST-01 owns which run speaks for this pull request:
+the candidates, the immutable run-side attestation, trust, the head-repository disproof, and the `run_number` current-run
+frontier with its run-state table (CI-ATTEST-01 §5). ARCH-01 adds no run-selection rule. It consumes exactly one
+normalized fact:
 
-Default policy: **`ALL_DESIGNATED_RUNS`** — every designated run must be completed with conclusion `success`.
-
-Each designated run's **current** state is normalized by a closed table (05A):
-
-| Run `status` | Run `conclusion` | Normalized outcome |
-|---|---|---|
-| `completed` | `success` | `SUCCEEDED` |
-| `completed` | `failure`, `cancelled`, `timed_out`, `action_required`, `neutral`, `skipped`, `stale`, `startup_failure` | `FAILED` |
-| `completed` | any other string | `UNKNOWN(unrecognized_ci_conclusion)` |
-| `completed` | `null` or not a string | `UNKNOWN(malformed)` |
-| `queued`, `in_progress`, `waiting`, `requested`, `pending` | (any) | `PENDING` |
-| any other status | (any) | `UNKNOWN(unrecognized_ci_status)` |
-
-Then (05B): any `FAILED` → `CI_FAILED`; zero designated runs → `CI_NOT_STARTED`; any `PENDING` → `CI_PENDING`;
-all `SUCCEEDED` → CI acceptable — in §7's order.
-
-**No timestamp ordering. No run-id ordering. No `run_attempt` ordering. No inferred "latest execution."** A re-run keeps
-its run id, and the run's current state already reflects its latest attempt; `run_attempt` is never read for a decision.
-
-**The only permitted future relaxation — `LATEST_CREATED`:** OFF by default; enabled only after shadow evidence (ARCH-02,
-§28) shows false blocking caused by legitimate duplicate runs at one head; defined solely as *the designated run with the
-highest `run_number`*. Enabling it is a policy change (§32). No other ordering field may be introduced without
-an architecture change (§35).
-
-### 8.1 CI-run-to-PR binding
-
-**Designated CI run = workflow + head + event + unambiguous PR association.** 05A classifies **every** candidate run by
-its GitHub `pull_requests` association, after §9's and §23's integrity checks and before any run's state is normalized.
-The association is **valid and unambiguous** only when all hold:
-
-1. `pull_requests` is an array with **exactly one** structurally valid entry;
-2. that entry carries a well-typed `number`, `head.sha`, `head.ref`, `head.repo.id`, `base.ref` and `base.repo.id`
-   (positive integers for the number and both repository ids, 40 lowercase hex for `head.sha`, non-empty refs);
-3. the run's own head evidence agrees with it: `run.head_sha == head.sha`, `run.head_branch == head.ref` and
-   `run.head_repository.id == head.repo.id`.
-
-| Candidate run's association | Class | Effect |
-|---|---|---|
-| valid and unambiguous, and equal to **every** current-PR identity field: `number` = `E.pr.number`, `head.sha` = `E.pr.head`, `head.ref` = `E.pr.headRef`, `head.repo.id` = `E.pr.headRepoId`, `base.ref` = the configured production ref, `base.repo.id` = the target repository id (§32) | **A — designated** | takes part under `ALL_DESIGNATED_RUNS` |
-| valid and unambiguous, naming **another** PR (`number` ≠ `E.pr.number`) | **B — unrelated** | excluded from this PR's CI set: it never grants success and never creates a failure or a pending state |
-| valid and unambiguous, naming this PR's number, but any other identity field differs | — | `UNKNOWN(ci_pr_binding_ambiguous)` |
-| empty, more than one entry, malformed, or inconsistent with the run | **C** | `UNKNOWN(ci_pr_binding_ambiguous)` |
-
-An `UNKNOWN` here is for the **whole** snapshot. 05A never guesses whether a run belongs to this PR: a fork PR or an
-unusual representation that does not expose enough association evidence reads `UNKNOWN`, not ready. Run id, timestamps
-and `run_attempt` are never PR identity, and neither is the runs endpoint's `branch` query parameter (GitHub documents it
-only for `push`). The classification does not depend on the order in which the endpoint lists candidates.
-
-### 8.2 CI-run binding fixtures
-
-**Positive fixture** — the real #800 run `37398647168`, read 2026-10-06; class A against #800 at that head:
-
-| Field | Value |
+| CI-ATTEST-01 result | `E.ci.outcome` |
 |---|---|
-| `workflow_id`; `event` | `289443461`; `pull_request` |
-| `head_sha` | `aeb18aaedc1b11294ef67ebf7425266b66c5c235` |
-| `head_branch`; `head_repository.id` | `docs/arch-01-eng-loop-v2`; `1240764106` (`SaiSamyukthVemuri/Hone`) |
-| `pull_requests` | exactly one entry: #800, with `head.sha`, `head.ref` and `head.repo.id` as above, `base.ref` `claude/build-hone-saas-hOex7` and `base.repo.id` `1240764106` |
+| a frontier whose state is `SUCCEEDED` | `SUCCEEDED` |
+| a frontier whose state is `FAILED` | `FAILED` |
+| a frontier whose state is `PENDING` | `PENDING` |
+| no frontier | `NO_FRONTIER` |
+| `UNKNOWN(reason)` | the whole snapshot is `UNKNOWN(reason)`, and 05B never runs |
 
-**Required negative fixtures:**
+05B maps the fact in §7's order. No run, `run_number`, attempt, artifact id, attestation payload or `pull_requests`
+association reaches `Evidence` or 05B.
 
-1. same workflow and sha, associated with **another** PR → ignored, never designated;
-2. the target PR's run plus an unrelated run at the same sha → only the target-associated run takes part;
-3. empty `pull_requests` → `UNKNOWN(ci_pr_binding_ambiguous)`;
-4. more than one `pull_requests` entry → `UNKNOWN(ci_pr_binding_ambiguous)`;
-5. the association's PR number matches but its head repository differs → `UNKNOWN(ci_pr_binding_ambiguous)`;
-6. number and head match but the base differs → `UNKNOWN(ci_pr_binding_ambiguous)`;
-7. the run's own head fields disagree with the association → `UNKNOWN(ci_pr_binding_ambiguous)`.
+§8.1 and §8.2 are vacant. They held a CI-run-to-PR binding through GitHub's mutable `pull_requests` association, which
+was removed: PR-SNAPSHOT-01 now owns the current PR identity, and CI-ATTEST-01 owns the immutable triggering execution
+identity. The numbers are kept so #800's review record still resolves.
 
 ## 9. CI source of truth
 
-GitHub Actions CI state comes **only** from REST, for the configured designated workflow and the exact head:
-
-```
-GET /repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=<H>&event=pull_request
-```
-
-Every page is read; the stated `total_count` must equal the number of runs collected (else `UNKNOWN(incomplete)`). Every
-returned run must carry `head_sha == H` and `event == pull_request` (else `UNKNOWN(malformed)`). Every returned run is a
-**candidate**; it is designated only through §8.1.
-
-`statusCheckRollup` is **not** authoritative for Actions CI. It is read only for external contexts (§10).
+GitHub Actions CI state comes **only** from CI-ATTEST-01's normalized result (§8). `statusCheckRollup` is **not**
+authoritative for Actions CI; it is read only for external contexts (§10).
 
 ## 10. External context domain
 
-External contexts are the head commit's `statusCheckRollup.contexts` (every page), restricted to:
+External contexts are the head commit's `statusCheckRollup.contexts`, read by CAP-01's `readCommitRollup(K0.headSha)`.
+That reader returns one complete response or a typed failure, and `collect` turns *incomplete* into
+`UNKNOWN(external_contexts_too_large)` and *malformed* into `UNKNOWN(malformed)` (CAP-01 §4, §17). The domain is
+restricted to:
 
 - every `StatusContext`; and
 - every `CheckRun` whose check suite's app is **not** GitHub Actions (§12).
 
-GitHub Actions `CheckRun`s in the rollup are ignored for the external domain — the Actions domain is §9's — which
+GitHub Actions `CheckRun`s in the rollup are ignored for the external domain — the Actions domain is §8's — which
 prevents double-counting. The rollup's own aggregate `state` is never read.
 
 ## 11. External context collapse table
@@ -251,51 +209,52 @@ without a readable `checkSuite.app.slug` cannot be classified → `UNKNOWN(malfo
 Production is **explicit configuration**: `claude/build-hone-saas-hOex7`. Never infer it from the repository default
 branch, `defaultBranchRef`, the latest deployment or PR heuristics.
 
-If the PR's base ≠ the configured production ref → `UNKNOWN(wrong_base)`.
+For an open pass, if `K0.baseRef` ≠ the configured production ref → `UNKNOWN(wrong_base)`. When it is equal, `K0.baseSha`
+**is** the live production tip for that pass (PR-SNAPSHOT-01 §5): there is no separate production-head read.
 
 ## 14. Compare direction
 
-Drift comparison is frozen as `compare/{production_head}...{pr_head}` — **base** = the production head, **head** = the
-exact PR head. Refresh predicate: `behind_by > 0` → `NEEDS_REFRESH`. `ahead_by` is metadata only and **never** drives a
-decision. Swapping the direction is an implementation defect.
+Drift comparison is frozen as `compare/{K0.baseSha}...{K0.headSha}`, read by CAP-01's `readCompare`: **base** = the
+production tip, **head** = the exact PR head. Refresh predicate: `behind_by > 0` → `NEEDS_REFRESH`. `ahead_by` is
+metadata only and **never** drives a decision. Swapping the direction is an implementation defect.
 
-## 15. Snapshot consistency
+## 15. Pass coherence and the bounded full re-read
 
-`collect()` produces **one** internally consistent snapshot, or `UNKNOWN`. A **collection** is every required read in
-§5.1: every page of the GraphQL snapshot and every head-keyed REST read.
+`collect()` produces **one** coherent, confirmed snapshot, or `UNKNOWN`.
 
-- **Head assertion:** the GraphQL snapshot's `headRefOid` must equal `commits(last: 1)`'s `oid`. Every page of the
-  snapshot query re-reads `headRefOid`, and every page must agree with the first.
-- **On a head mismatch:** (1) discard the partial collection; (2) re-read once; (3) a second mismatch →
-  `UNKNOWN(head_moved)`. No loop.
-- **Completeness:** every paginated connection is read to its last page; a stated `totalCount` that disagrees with what
-  was collected, or that changes between pages → `UNKNOWN(incomplete)`.
+- **Pass coherence is PR-SNAPSHOT-01's** (§3, §4). `K0 = readPrKey()` comes first; every other read of an open pass is
+  keyed by `K0`, and a terminal pass makes none; `K1 = readPrKey()` comes last, and `K1 == K0` structurally. A moved key
+  discards the whole pass, with exactly one retry, and a second move → `UNKNOWN(pr_key_moved)`. There is no head
+  assertion, head-only re-read or field-specific check.
+- **Reader completeness is CAP-01's.** Each reader returns one complete response or a typed failure, which `collect`
+  turns into `UNKNOWN` (CAP-01 §4, §15–§17). Nothing pages.
 - **Any** required read, parse or authorization failure → the whole snapshot is `UNKNOWN(reason)`. No partial Evidence.
-  A collection stops at its first failure, and that failure names the reason.
-- **Stability — one bounded full re-read.** The assertions above cannot see a change that keeps the head and every
-  count: a thread resolved or reopened, a body edited, a run or a context changing state while later pages and reads
-  are still being fetched. Reads taken at different moments could then combine into a state that never existed. So once
-  one complete, head-consistent collection exists, 05A performs the **whole collection once more**, immediately, and
-  normalizes both. `Evidence` is emitted only if the second collection is also complete, every one of its pages carries
-  the first collection's head, and both normalize to **identical** `Evidence` — compared as values, `capturedAt`
-  excluded, and the arrays whose order is irrelevant (§26: runs, external contexts, reviews, threads) compared as
-  multisets:
-  - the second collection fails a read, parse, authorization or completeness check → that reason;
-  - it sees another head on any page → `UNKNOWN(head_moved)` (the one re-read above is not repeated);
-  - any other difference → `UNKNOWN(unstable_snapshot)`.
+  A pass stops at its first failure, and that failure names the reason.
+- **Stability: one bounded full confirming pass (ARCH-01).** Pass coherence cannot see a change that keeps the key: a
+  thread resolved or reopened, a body edited, the frontier run or a context changing state, the draft flag toggled. So
+  once one coherent pass has produced normalized `Evidence`, 05A immediately performs **one more complete pass** and
+  normalizes it too. `Evidence` is emitted only if the confirming pass:
+  - is itself coherent (`K1 == K0`) and has the **same** key as the first coherent pass, with no retry — otherwise
+    `UNKNOWN(pr_key_moved)` (PR-SNAPSHOT-01 §4);
+  - normalizes to **identical** `Evidence`, compared as values with `capturedAt` excluded and the order-irrelevant
+    arrays (§26: external contexts, reviews, threads) compared as multisets — otherwise `UNKNOWN(unstable_snapshot)`.
 
-  There is no third collection and no loop: a later invocation is the retry. What the re-read does and does not
-  guarantee is stated in §41.
+  A read, parse or completeness failure in the confirming pass → that reason. There is no third pass and no loop: a
+  later invocation is the retry. What the re-read does and does not guarantee is stated in §41.
+- **Terminal passes** read only the key (PR-SNAPSHOT-01 §7). Their confirming pass is another terminal pass, whose key
+  must be equal. No CI candidate, artifact, attestation, trust anchor, compare, review or context is read, so historical
+  artifact expiry or a cleared GitHub association can never make a stable terminal PR `UNKNOWN`.
 
-## 16. Head-keyed REST reads
+## 16. Reads keyed by K0
 
-Every revision-specific REST read is keyed by the **head oid from the GraphQL snapshot** — workflow runs
-(`head_sha=<H>`) and compare (`<production_head>...<H>`) — never by a moving branch name, the PR number, or an
-independently discovered "latest" sha. If the branch moves after collection, the result is a stale but internally
-consistent snapshot about the old immutable head; that is acceptable. **Two heads are never mixed in one snapshot.**
-Rendered output always names the exact sha it describes.
+Every revision-specific read is keyed by `K0` (PR-SNAPSHOT-01 §5), never by a moving branch name or an independently
+discovered "latest" sha. Two heads are never mixed in one pass. Rendered output always names the exact head it describes.
 
 ## 17. Trusted Codex artifact at head
+
+Review evidence comes from CAP-01's `readReviewEvidence(prNumber)`: one complete response or a typed failure, which
+`collect` turns into `UNKNOWN(review_evidence_too_large)` or `UNKNOWN(malformed)` (CAP-01 §4, §17). "The exact head"
+below is `K0.headSha`; review binding never re-reads the PR.
 
 `TRUSTED_REVIEW_AT_HEAD` is satisfied by **either** of two explicit artifact forms. Live evidence (2026-10-05): every
 **clean** Codex verdict is a PR **issue comment** — 21 of 21 across 12 PRs (#782–#797), none a review object — while
@@ -308,7 +267,7 @@ A GitHub PR **review object** where **all** hold:
 
 - the actor's numeric id is in the trusted Codex allowlist (§20);
 - the actor's account type is `Bot`;
-- `review.commit_id` == the exact PR head;
+- `review.commit_id` == `K0.headSha`;
 - `review.state` ∈ { `COMMENTED`, `APPROVED`, `CHANGES_REQUESTED` } — `DISMISSED` and `PENDING` never count;
 - the body satisfies the Reviewed-commit marker policy (§17b), and the marker identifies the exact current head.
 
@@ -352,8 +311,8 @@ The **Reviewed-commit marker** (policy value) is exactly the observed form:
 ```
 
 - the body contains this marker **exactly once** — zero or several occurrences → the artifact does not qualify;
-- the captured 10 hex must equal the **first 10 characters** of the exact 40-hex PR head;
-- for channel A it must also agree with `review.commit_id`, which must equal the head.
+- the captured 10 hex must equal the **first 10 characters** of `K0.headSha`;
+- for channel A it must also agree with `review.commit_id`, which must equal `K0.headSha`.
 
 The default is deliberately narrow: not "any 7–40 hex". Evidence (2026-10-05): all 21 real clean artifacts and all 27
 non-empty real findings artifacts carry exactly one 10-lowercase-hex marker; on every findings artifact it equals
@@ -428,40 +387,41 @@ Required negative fixtures, each proven inert or not-current:
 - a trusted clean comment does **not** clear an unresolved trusted thread;
 - the real empty-body Codex review (#795 review `5419722295`) → not an artifact.
 
-## 23. Workflow membership
+## 23. Workflow identity
 
-The workflow **endpoint selects the candidates** (§8, §9). V2 never fetches arbitrary repository runs; within the
-endpoint's candidates, only the PR association decides designation (§8.1).
-
-`workflow_id` is kept as fixture evidence, a consistency assertion and an anti-drift check: every returned candidate run
-must carry the policy's expected workflow id, `289443461` (live `GET actions/workflows/ci.yml` on 2026-10-05). A mismatch →
-`UNKNOWN(workflow_identity_mismatch)`. `workflow_id` is **never** used to select from arbitrary runs, to order runs or to
-establish recency. `path` is display/debug metadata only: no matching on it, in any form (#798's `ci.yml@main` lesson).
+The authoritative workflow, its expected id (`.github/workflows/ci.yml`, `289443461`, live `GET actions/workflows/ci.yml`
+on 2026-10-05) and the authoritative event are policy values (§32). CAP-01's candidate listing is filtered by them
+(CAP-01 §4), and a run that CI-ATTEST-01 examines and that disagrees with them is INVALID (CI-ATTEST-01 §5). A run's
+`path` field is display and debug metadata only: no matching on it, in any form (#798's `ci.yml@main` lesson). ARCH-01
+adds no workflow rule of its own.
 
 ## 24. Minimal normalized Evidence model
 
-Immutable, constructed only by 05A through validating constructors (`Sha` is exactly 40 lowercase hex):
+Immutable, constructed only by 05A through validating constructors:
 
 ```ts
-interface Evidence {
-  readonly pr: {
-    number: number; head: Sha; headRef: string; headRepoId: number;
-    state: "OPEN" | "CLOSED" | "MERGED"; draft: boolean; base: string;
-  };
-  readonly production: { ref: string; head: Sha; behindBy: number; aheadBy: number /* metadata */ };
-  readonly ci: {
-    readonly workflowId: number;
-    // Designated runs only (§8.1): an unrelated run never reaches Evidence.
-    readonly runs: ReadonlyArray<{ outcome: "SUCCEEDED" | "FAILED" | "PENDING"; runNumber: number /* metadata */ }>;
-  };
+type Evidence = TerminalEvidence | OpenEvidence;
+
+interface TerminalEvidence {   // a terminal pass (§15): key.state is CLOSED or MERGED
+  readonly kind: "terminal";
+  readonly key: PrSnapshotKey; // PR-SNAPSHOT-01 §2; a terminal pass's Evidence is its key (PR-SNAPSHOT-01 §7)
+  readonly capturedAt: string; // display metadata; decide() never reads it
+}
+
+interface OpenEvidence {       // key.state is OPEN and key.baseRef is the configured production ref (§13)
+  readonly kind: "open";
+  readonly key: PrSnapshotKey; // K0 (PR-SNAPSHOT-01 §2)
+  readonly draft: boolean;     // the flag read with K0 (PR-SNAPSHOT-01 §9); ordinary evidence, not part of the key
+  readonly drift: { behindBy: number; aheadBy: number /* metadata */ };
+  readonly ci: { outcome: "SUCCEEDED" | "FAILED" | "PENDING" | "NO_FRONTIER" }; // §8
   readonly external: ReadonlyArray<{ source: string /* display */; state: "pending" | "success" | "failure" }>;
   readonly reviews: ReadonlyArray<{
     channel: "PR_REVIEW" | "CLEAN_COMMENT";
     actor: { id: number; type: string };
     verdict: "COMMENTED" | "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED" | "PENDING" | "CLEAN";
-    // Validated construction: the head binding and the marker policy hold for the exact head
-    // (A: commit_id == head and the single marker == head[0:10]; B: the clean pattern and the single
-    // marker == head[0:10]). The actor and the state are NOT folded in: 05B checks them against policy.
+    // Validated construction: the head binding and the marker policy hold for K0.headSha
+    // (A: commit_id == K0.headSha and the single marker == its first 10 hex; B: the clean pattern and the single
+    // marker == its first 10 hex). The actor and the state are NOT folded in: 05B checks them against policy.
     qualifiesAtHead: boolean;
   }>;
   readonly threads: ReadonlyArray<{
@@ -470,47 +430,46 @@ interface Evidence {
     resolver: { id: number; type: string } | null;
     outdated: boolean; // metadata, never readiness authority
   }>;
-  readonly capturedAt: string; // metadata; decide() never reads it
+  readonly capturedAt: string; // display metadata; decide() never reads it
 }
 ```
 
 `TRUSTED_REVIEW_AT_HEAD` (05B) ⇔ some review has `qualifiesAtHead`, an actor in the trusted allowlist with type `Bot`,
 and verdict `COMMENTED`, `APPROVED` or `CHANGES_REQUESTED` (channel A) or `CLEAN` (channel B). 05A computes
-`qualifiesAtHead`; 05B never sees a marker, a body or a `commit_id`.
+`qualifiesAtHead`; 05B never sees a marker, a body or a `commit_id`. `Evidence` carries no CI run list, `run_number`,
+artifact id, attestation payload, `pull_requests` association, pagination or raw GitHub representation.
 
-## 25. 05A / 05B mechanical module boundary
+## 25. 05A / 05B boundary
 
-Enforced by **build-failing** guard tests. V2 lives under `scripts/eng/v2/`, apart from the shipped CP-005a `status`
-modules in `scripts/eng/` (including `scripts/eng/evidence.mjs`), which V2 neither imports nor changes.
+CAP-01 owns the module graph, the readers and the static architecture lint that enforces them (CAP-01 §3, §8). ARCH-01
+adds no guard family. It keeps the **semantic** separation that the lint protects:
 
-| | 05A — `scripts/eng/v2/adapter/` | 05B — `scripts/eng/v2/decision/` |
+| | 05A — evidence adapter (`collect`) | 05B — decision engine (`decide`) |
 |---|---|---|
-| Public surface | `collect(...)`, `Evidence`, `Unknown(reason)`, the normalized fact types, the collection-policy types — through `scripts/eng/v2/adapter/index.mjs` only | `Decision` and its state vocabulary, `decide()` — through `scripts/eng/v2/decision/index.mjs` |
-| Private | everything under `scripts/eng/v2/adapter/internal/` | — |
-| Must not | define `Decision`, import 05B, name any §7 decision state, contain `decide()`, encode readiness precedence | import a GitHub REST or GraphQL client, raw response schemas, JSON parsers, endpoint helpers, compare, workflow, review or `statusCheckRollup` parsers, or anything under `scripts/eng/v2/adapter/internal/` |
+| Produces | `Evidence` or `UNKNOWN(reason)` | `Decision` |
+| Knows | GitHub, only through CAP-01's readers; PR-SNAPSHOT-01's key; CI-ATTEST-01's binding | normalized `Evidence` and policy only |
+| Never | defines `Decision`, names a §7 decision state, or encodes readiness precedence | imports GitHub transport or adapter internals; sees a raw response, pagination, attestation parsing or the `run_number` frontier |
 
 Permitted direction, never reversed:
 
 ```
-raw GitHub  →  05A internals  →  normalized Evidence contract  →  05B
+raw GitHub  →  CAP-01 readers  →  collect (05A)  →  normalized Evidence contract  →  decide (05B)
 ```
-
-**Guard test A:** 05A cannot import or name 05B decision concepts. **Guard test B:** 05B cannot import raw or adapter
-internals. A violation fails CI.
 
 ## 26. Test law
 
 **Adapter domain (05A):** raw response strings and realistic API payloads → `Evidence | Unknown`. It never throws; the
 schema is strict and positive; unknown enums, truncated bodies, malformed bodies and missing required fields → `UNKNOWN`.
-Use mutated **realistic** GitHub responses, not impossible GitHub histories. Stability (§15) is proven with paired
-collections: a second collection that differs only in the order of an order-irrelevant array yields the same `Evidence`;
-one that differs in any normalized value — a thread resolved or reopened, a run or a context changing state — yields
-`UNKNOWN(unstable_snapshot)`; another head yields `UNKNOWN(head_moved)`.
+Use mutated **realistic** GitHub responses, not impossible GitHub histories. Stability (§15) is proven with paired passes:
+a confirming pass that differs only in the order of an order-irrelevant array yields the same `Evidence`; one that
+differs in any normalized value — a thread resolved or reopened, the frontier run or a context changing state — yields
+`UNKNOWN(unstable_snapshot)`; another key yields `UNKNOWN(pr_key_moved)`. The fixtures that the merged records require
+are specified there (CAP-01 §9, PR-SNAPSHOT-01 §10, CI-ATTEST-01 §10) and not restated.
 
 **Core domain (05B):** valid normalized `Evidence` → a deterministic `Decision`. It is total and deterministic;
-permutation-invariant wherever array order is semantically irrelevant (runs, external contexts, reviews, threads);
-`Unknown` never reaches candidacy; a stale review is inert; an untrusted actor is inert; external success is inert;
-explicit failures dominate according to §7; irrelevant evidence cannot change the state.
+permutation-invariant wherever array order is semantically irrelevant (external contexts, reviews, threads); `Unknown`
+never reaches candidacy; a stale review is inert; an untrusted actor is inert; external success is inert; explicit
+failures dominate according to §7; irrelevant evidence cannot change the state.
 
 The independent falsifier inherits #799's lessons (§27): permutation invariance, malformed boundary inputs, and the
 no-throw boundary.
@@ -532,8 +491,8 @@ this record: the shadow ledger, its validator and falsifier, the ledger's CANONI
 `false_ready`, `false_block`, `human_override`, `time_in_state` and the other shadow metrics, measurement-series grouping
 and its `policyHash` / `archVersion` partitioning, the shadow graduation gate, and authority graduation to ENG-LOOP-06.
 
-Durable measurement begins only under a **separate architecture record, ARCH-02**. ARCH-02 starts from the three findings
-left open on this record's pull request (#800), as requirements:
+Durable measurement begins only under a **separate architecture record, ARCH-02**. ARCH-02 starts from three findings
+raised on this record's pull request (#800) — resolved there as transferred, not fixed — as requirements:
 
 | Finding | Requirement |
 |---|---|
@@ -555,19 +514,23 @@ The policy — every value that can affect evidence or decision semantics — in
 | authoritative workflow, expected workflow id | `.github/workflows/ci.yml`, `289443461` |
 | authoritative event | `pull_request` |
 | target repository (id) | `SaiSamyukthVemuri/Hone`, `1240764106` |
-| CI run-selection mode | `ALL_DESIGNATED_RUNS` (`LATEST_CREATED` off) |
 | trusted Codex reviewers (id, type) | `199175422`, `Bot` |
 | human resolvers (id, type) | `26781116`, `User` |
 | accepted channel-A review states | `COMMENTED`, `APPROVED`, `CHANGES_REQUESTED` |
 | Reviewed-commit marker | §17b: the literal `**Reviewed commit:**` then 10 lowercase hex in backticks; exactly once; equal to the head's first 10 hex |
 | clean verdict pattern | body begins `Codex Review: Didn't find any major issues.` |
 
-Any later evidence- or decision-affecting value joins this table. `archVersion` identifies this contract (`ARCH-01`).
+Any later evidence- or decision-affecting value joins this table. CI-ATTEST-01's artifact and frontier semantics are
+frozen in that record and are not policy switches. `archVersion` identifies this contract (`ARCH-01`).
 
 ## 34. Delivery sequence
 
 ```
-ARCH-01         architecture + ENGINEERING_STANDARDS §8
+ARCH-01         this record + ENGINEERING_STANDARDS §8
+   ↓
+ci.yml          CI-ATTEST-01's emitter: the first two steps (generate, upload), before checkout — a separate PR
+   ↓
+live proof      the attestation path on real runs (CI-ATTEST-01 §11)
    ↓
 ENG-LOOP-05A    GitHub → Evidence | Unknown            (no decisions)
    ↓
@@ -576,8 +539,15 @@ ENG-LOOP-05B    Evidence → Decision                    (no GitHub knowledge)
 ENG-LOOP-05C    shepherd CLI: stateless render         (persists nothing)
 ```
 
-Everything after 05C — durable measurement, any shadow period and graduation gate, ENG-LOOP-06 (bounded actions) and
-ENG-LOOP-02 (watcher) — is outside ARCH-01 (§28). 05A does not start until ARCH-01 is merged.
+Later, and outside ARCH-01: ARCH-02 (durable measurement), the watcher (ENG-LOOP-02), bounded actions (ENG-LOOP-06) and
+any stronger authority. No durable state exists before ARCH-02 (§28). 05A does not start until ARCH-01 is merged and the
+attestation path is proven.
+
+**05A credential precondition (operator decision; CAP-01 §11).** 05A must not use the operator's current write-scoped,
+interactive `gh` credential. Before its first live GitHub collection, 05A uses a separate read-only GitHub credential
+suited to CAP-01's frozen reader set, and the 05A work derives and documents that credential's minimum read permissions
+from the exact GitHub operations it uses. ARCH-01 creates no credential and guesses no permission. The operator's
+write-scoped session remains for human and operator work. This does not make CAP-01 a sandbox (CAP-01 §10).
 
 ## 35. Policy-change rule for 05A / 05B
 
@@ -605,72 +575,85 @@ the **shadow metrics** family — the shadow ledger's §16.5 gate — each spent
 
 **Round 2 stopped** (Codex review of `5982d7d025`): three semantic findings in the shadow-metrics family. After the
 stop-law architecture discussion the operator **removed the whole durable family** from ARCH-01 (§28) — a removal, not a
-third semantic patch — and its three findings stay open as ARCH-02's requirements. The narrowed record takes **one**
-fresh exact-head review, to prove the removal left no dangling dependency in the stateless core; a new semantic finding
-in an already-converged family stops it.
+third semantic patch — and its three findings became ARCH-02's requirements.
 
-**Round 3 stopped** (Codex review of `aeb18aaedc`): the removal left no dangling dependency, but P1 `4190617309`
-found that designated CI runs were not bound to the PR. **Re-entry** (operator decision, not a patch round): the
-CI-run-to-PR binding law (§8.1, §8.2). One fresh exact-head review follows; another semantic finding in the CI-authority
-/ run-binding family stops it, and the REST association approach is then non-converged — the next discussion considers
-an explicit PR attestation rather than another parser rule.
+**Round 3 stopped** (Codex review of `aeb18aaedc`): P1 `4190617309` found that designated CI runs were not bound to the
+PR. The re-entry added a CI-run-to-PR binding through the `pull_requests` association.
+
+**Round 4 stopped** (Codex review of `01421d0b17`): two more CI-authority findings — P1 `4190741980` (after a base
+edit, a run created for the old base could still count) and P2 `4190741986` (a terminal PR must reach `NOT_OPEN`). The
+REST association approach was non-converged. Its replacement was built and merged as separate records: CAP-01 with its
+reader amendments, PR-SNAPSHOT-01 and CI-ATTEST-01.
+
+**Final re-entry by removal** (operator decision after those records merged; consolidation, not new architecture). The
+following are removed:
+- the `pull_requests` association model;
+- `ALL_DESIGNATED_RUNS` and `LATEST_CREATED`;
+- the per-page head assertion and the head re-read;
+- the paging language;
+- the separate production-head read;
+- the bespoke guard tests.
+
+ARCH-01 consumes the merged records instead (§4a, §5, §8, §13–§16, §25). The shadow-metrics findings are transferred to
+ARCH-02 (§28), and the CI-association findings are resolved by the removal. Any fresh semantic P0–P2 → **stop**, with no
+automatic patch.
 
 ## 37. Standing engineering law
 
-ENGINEERING_STANDARDS §8 carries the standing law in the same change: raw external evidence crosses exactly one
-validation boundary; downstream receives normalized evidence only; ambiguous evidence → `UNKNOWN`; no raw GitHub
-representation and no temporal Actions-history reconstruction in the decision core; text is never sufficient authority
-(the two Codex channels); human merge authority; durable state deferred to ARCH-02, with CANONICAL_ROADMAP §16.5
-governing any durable component; a mechanically enforced 05A/05B import boundary; semantic changes require architecture
-review first.
+ENGINEERING_STANDARDS §8 carries the standing principles: one evidence boundary; normalized evidence downstream; fail
+closed; a pure decision core; human merge authority; durable state deferred to ARCH-02; and architecture changes before
+implementation. It points to this record and to CAP-01, PR-SNAPSHOT-01 and CI-ATTEST-01 for their mechanisms rather than
+restating them.
 
 ## 38. Non-goals
 
-ARCH-01 adds **no** runtime feature code, `collect()` or `decide()` implementation, watcher, orchestrator, durable state
-of any kind (§28), merge automation, autonomous repair, LangGraph, CrewAI, state-machine framework, Redis, database, event
-store, or arbitrary GitHub event reconstruction. It is documentation and normative engineering standards only.
+ARCH-01 adds **no** runtime feature code, no `collect()` or `decide()` implementation, no `ci.yml` change, watcher,
+orchestrator or durable state of any kind (§28). It adds no merge automation, autonomous repair, LangGraph, CrewAI,
+state-machine framework, Redis, database, event store or arbitrary GitHub event reconstruction. It adds no CI
+run-selection rule of its own (§8) and no GitHub-access guard (CAP-01). It is documentation and normative engineering
+standards only.
 
 ## 39. Completion test
 
-ARCH-01 is complete only if 05A/05B need to invent none of the following. Each is answered here:
+ARCH-01 is complete only if 05A/05B need to invent nothing. Each question has one owner:
 
-| Must not be invented | Where |
+| Must not be invented | Owner |
 |---|---|
-| which runs count; CI-run-to-PR binding and its fixtures; workflow membership; `workflow_id`'s role | §8, §8.1, §8.2, §9, §23 |
-| run success / failure / pending mapping | §8 |
-| CI source of truth | §9 |
-| external source of truth; external collapse mapping | §10, §11 |
-| Actions-vs-external discriminator | §12 |
-| production ref; compare direction; refresh predicate | §13, §14 |
-| head-consistency and snapshot-stability behaviour; exact-head REST binding | §15, §16 |
-| trusted reviewer identity; resolver authority | §20 |
-| accepted review states and channels; marker policy; marker failure behaviour | §17, §17b, §21 |
-| `CHANGES_REQUESTED` behaviour; finding-open semantics; severity semantics | §18, §19 |
-| marker fixtures for both the real clean and findings forms | §22, Appendix A |
-| unknown reasons; the outcome union | §4, §40 |
-| 05A/05B module dependency direction | §25 |
+| which GitHub reads exist, their parameters, typed results and completeness; the capability graph and its lint | CAP-01 (§3, §4, §6, §8, §15–§17) |
+| the PR identity key; pass coherence; the key retry; terminal-pass handling | PR-SNAPSHOT-01 (§2–§7) |
+| which CI run speaks for the PR; the attestation, trust and re-runs; the run-state table; the normalized CI result | CI-ATTEST-01 (§4–§9) |
+| the evidence boundary; the outcome union; the closed reason set | ARCH-01 §3, §4, §40 |
+| the bounded full confirming re-read | ARCH-01 §15 |
+| what the CI fact means for decisions | ARCH-01 §7, §8 |
+| the external source and collapse mapping; the Actions discriminator | ARCH-01 §10–§12 |
+| the production ref, compare direction and refresh predicate | ARCH-01 §13, §14 |
+| review authority: identities, channels, states, marker and verdict policy, marker failure, `CHANGES_REQUESTED`, open findings | ARCH-01 §17–§21 |
+| artifact fixtures for both real forms | ARCH-01 §22, Appendix A |
+| the Evidence model; 05B's precedence; the 05A/05B semantic split | ARCH-01 §24, §7, §25 |
 
-If any of these turns out to be an implementation choice, **stop** and amend ARCH-01 before 05A. The completion items for
-`false_ready`, `false_block` and `human_override` calculation and for policy- and architecture-series partitioning moved
-with the durable family to ARCH-02 (§28).
+If any of these turns out to be an implementation choice, **stop** and amend the owning record before 05A. The completion
+items for `false_ready`, `false_block` and `human_override` calculation and for policy- and architecture-series
+partitioning moved with the durable family to ARCH-02 (§28).
 
 ## 40. UnknownReason — closed set
 
-Every `UNKNOWN` names exactly one reason:
+Every `UNKNOWN` names exactly one of these reasons, and no other reason exists:
 
-| Reason | When |
-|---|---|
-| `read_failed` | a required read failed, was refused or was unauthorized |
-| `malformed` | a required answer does not fit the strict positive schema, including a `null` conclusion on a completed run and a `CheckRun` without an app slug |
-| `incomplete` | a required collection is truncated, or its stated total disagrees with what was collected or changes between pages |
-| `wrong_base` | the PR's base is not the configured production ref |
-| `head_moved` | the snapshot head assertion failed twice, or the second collection (§15) saw another head |
-| `unstable_snapshot` | two complete collections at the same head normalize to different `Evidence` (§15) |
-| `workflow_identity_mismatch` | a candidate run carries another workflow id |
-| `ci_pr_binding_ambiguous` | a candidate run's PR association is empty, multiple, malformed or inconsistent with the run, or names this PR's number with another identity (§8.1) |
-| `unrecognized_ci_status` | a run status outside §8's table |
-| `unrecognized_ci_conclusion` | a completed run's conclusion outside §8's table |
-| `unrecognized_context_state` | an external context value outside §11's table |
+| Reason | When | Produced by |
+|---|---|---|
+| `read_failed` | a required read failed, was refused or was unauthorized | any read (PR-SNAPSHOT-01, CAP-01) |
+| `malformed` | a required answer does not fit its strict positive schema — including a *malformed* reader result, a `null` conclusion on a completed frontier run and a `CheckRun` without an app slug (§12) | CAP-01, CI-ATTEST-01, ARCH-01 |
+| `wrong_base` | an open pass's `K0.baseRef` is not the configured production ref (§13) | ARCH-01 |
+| `pr_key_moved` | the key moved in both passes, or the confirming pass's key differs from the first (§15) | PR-SNAPSHOT-01, ARCH-01 |
+| `unstable_snapshot` | the confirming pass normalizes to different `Evidence` (§15) | ARCH-01 |
+| `ci_candidate_listing_too_large` | the CI candidate listing cannot prove completeness in one response | CAP-01 §4, §15 |
+| `ci_attestation_invalid` | a candidate examined before the frontier is INVALID (CI-ATTEST-01 §5) | CI-ATTEST-01 |
+| `ci_attestation_untrusted` | the trust anchor fails, or an open PR's head repository is not the target repository (CI-ATTEST-01 §7.2) | CI-ATTEST-01 |
+| `review_evidence_too_large` | review evidence cannot be complete in one response | CAP-01 §4, §17 |
+| `external_contexts_too_large` | the external contexts cannot be complete in one response | CAP-01 §4, §17 |
+| `unrecognized_ci_status` | the frontier run's status is outside CI-ATTEST-01's run-state table | CI-ATTEST-01 |
+| `unrecognized_ci_conclusion` | the frontier run's conclusion is outside that table | CI-ATTEST-01 |
+| `unrecognized_context_state` | an external context value is outside §11's table | ARCH-01 |
 
 ## 41. Known limitations (non-normative)
 
@@ -680,20 +663,18 @@ Every `UNKNOWN` names exactly one reason:
 - **Reaction verdicts are not artifacts.** Codex's own boilerplate says it may "react with 👍" instead of commenting. A
   reaction carries no body and no head binding, so it is neither channel and the PR reads `REVIEW_MISSING`. No real clean
   verdict in this repository has taken that form (§17).
-- **`ALL_DESIGNATED_RUNS` can false-block** a head with legitimate duplicate runs, such as a cancelled superseded run.
-  `LATEST_CREATED` is the only pre-approved relaxation, gated by shadow evidence (§8).
-- **Two agreeing collections are not a transaction.** GitHub documents no snapshot isolation across requests. Every read
-  of §15's first collection precedes every read of its second, so if nothing a read returns changed between that read's
-  two executions, the agreed `Evidence` is the true state at the moment between the two collections. A change made and
-  then reverted inside that window is invisible, and only such a reversal can let a combination that never existed
-  survive. Recorded so policy can address it deliberately.
-- **A run's PR association is GitHub's current view, not a record of what started the run.** `pull_requests` lists the
-  PRs open *now* whose head sha or head branch matches the run, with each PR's current head and base: #800's run
-  `37396356200`, made at `5982d7d025`, now reports #800's later head `aeb18aaedc`. A run started by an earlier PR from the
-  same head repository, branch and sha, or before this PR's base was edited (a base edit starts no run under `ci.yml`'s
-  default `pull_request` activity types), can therefore satisfy §8.1 for the current PR. When the head is behind
-  production, §14 already holds such a PR at `NEEDS_REFRESH`. Recorded so a stronger, run-side PR attestation can
-  address it deliberately.
+- **Two agreeing passes are not a transaction.** GitHub documents no snapshot isolation across requests. Every read of
+  §15's first pass precedes every read of its confirming pass. So if nothing a read returns changed between that read's
+  two executions, the agreed `Evidence` is the true state at the moment between the two passes. A change made and then
+  reverted inside that window is invisible, and only such a reversal can let a combination that never existed survive.
+  Recorded so policy can address it deliberately.
+- **Limitations owned elsewhere** are recorded in their owning records and not restated here:
+  - the single-response caps and their fail-closed outcomes (CAP-01 §4, §15–§17);
+  - change-and-revert inside one pass (PR-SNAPSHOT-01 §12);
+  - V1's CI fail-closed cases — a run examined before the frontier whose attestation is missing, expired, duplicated or
+    unreadable, including a run that predates the emitter or stopped before it, and same-repository ambiguity
+    (CI-ATTEST-01 §5, §6, §8 and §10; CAP-01 §16);
+  - the CI trust residuals of the writer class (CI-ATTEST-01 §7.3).
 
 ---
 

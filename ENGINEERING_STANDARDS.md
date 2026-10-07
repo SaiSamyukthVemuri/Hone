@@ -181,37 +181,31 @@ Only repeated, evidenced pain earns new process or tooling.
 ## 8. Engineering-loop evidence and authority
 
 `docs/decisions/arch-01-eng-loop-v2.md` (ARCH-01) is canonical for ENG-LOOP V2's
-stateless pipeline and is not restated here. This section is the standing law that every
-engineering-loop component — and every change to one — must satisfy.
+stateless pipeline. Its mechanisms belong to ARCH-01 and to the three records it
+depends on, and none of them is restated here:
 
-- **One evidence boundary.** Raw external data — GitHub REST and GraphQL
-  payloads, comments, pagination, dates, API quirks — crosses exactly one strict
-  validation and normalization boundary. Everything downstream receives
+- CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`) owns the GitHub
+  readers and their completeness;
+- PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`) owns the
+  coherent pull-request identity of each collection pass;
+- CI-ATTEST-01 (`docs/decisions/ci-attest-01-run-side-attestation.md`) owns
+  which CI run speaks for a pull request.
+
+This section is the standing law that every engineering-loop component — and
+every change to one — must satisfy.
+
+- **One evidence boundary.** Raw external data crosses exactly one strict
+  validation and normalization boundary, the evidence adapter (05A).
+- **Normalized evidence downstream.** Everything after that boundary receives
   normalized `Evidence` or `UNKNOWN(reason)`: never a raw payload, and never
   partial Evidence.
-- **Ambiguity is UNKNOWN.** Required evidence that is missing, malformed,
-  truncated, unrecognized or inconsistent — including evidence that changes
-  under ARCH-01's bounded full re-read — makes the whole snapshot
-  `UNKNOWN(reason)`. It is never defaulted, guessed or narrowed into a positive.
-- **No raw GitHub in the decision core, and no history reconstruction.** The
-  decision core never parses a GitHub representation and never orders GitHub
-  Actions runs by time, run id or attempt: every designated run at the exact
-  head must have passed.
-- **A CI run counts only when it is bound to this PR.** Head SHA and event are
-  not PR identity. A run is designated only when the workflow, the exact head,
-  the `pull_request` event and an unambiguous PR association all agree with the
-  current PR (ARCH-01 §8.1). A run associated with another PR is ignored; an
-  empty, multiple, malformed or inconsistent association makes the whole
-  snapshot `UNKNOWN`. Fixtures pin the real positive run and every negative
-  class (ARCH-01 §8.2).
-- **Text is never sufficient authority.** Authority is a trusted numeric actor
-  id, plus the expected account type, an accepted artifact channel, an
-  exact-head binding and the configured marker shape. Logins are display-only.
-  Codex evidence has exactly two channels — a PR review object (findings) and a
-  clean-verdict issue comment — and a clean verdict never clears an open trusted
-  finding.
-- **External checks are negative-only.** They can hold or block candidacy; they
-  never grant it.
+- **Fail closed.** Required evidence that is missing, malformed, incomplete,
+  unrecognized or unstable makes the whole snapshot `UNKNOWN(reason)`, with a
+  reason from ARCH-01's closed set. It is never defaulted, guessed or narrowed
+  into a positive.
+- **A pure decision core.** The decision engine (05B) is a total, deterministic
+  function of normalized `Evidence` and policy. It has no GitHub knowledge and
+  no state.
 - **The human keeps merge authority.** `CANDIDATE_READY_FOR_HUMAN_REVIEW` is
   advisory (CANONICAL_ROADMAP §16.2). No engineering-loop component merges, and
   bounded actions need CANONICAL_ROADMAP §16.5 re-entry.
@@ -220,9 +214,7 @@ engineering-loop component — and every change to one — must satisfy.
   a separate architecture record, ARCH-02. CANONICAL_ROADMAP §16.5 (mechanical
   completeness, an independent falsifier, fault injection) governs any durable
   engineering-loop component before it ships.
-- **The adapter / decision boundary is mechanical.** Build-failing guard tests
-  keep the evidence adapter (05A) free of decisions and the decision engine
-  (05B) free of GitHub knowledge.
-- **Semantics change in the architecture first.** A fix that would change
-  ARCH-01's semantics stops implementation and returns to an ARCH amendment and
-  review; semantics never evolve through review-repair rounds.
+- **Architecture before implementation.** A fix that would change the semantics
+  of ARCH-01, or of a record it depends on, stops implementation and returns to
+  an amendment of the owning record and its review. Semantics never evolve
+  through review-repair rounds.
