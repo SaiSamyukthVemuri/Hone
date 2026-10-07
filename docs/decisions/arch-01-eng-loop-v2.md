@@ -30,10 +30,24 @@ system prepares a release-clean candidate
 human retains production merge authority
 ```
 
-ENG-LOOP is **not** an autonomous merge system. This is CANONICAL_ROADMAP §16.2 (*Phase 1: Sam merges all PRs*). Everything
-ARCH-01 specifies — 05A, 05B and 05C's stateless render — is **observation-only** reporting under §16.5's observation
-clause: it keeps no durable state and changes nothing. Durable components and authority components (ENG-LOOP-06 bounded
-actions) are outside ARCH-01, and §16.5's re-entry gate governs them (§28).
+ENG-LOOP is **not** an autonomous merge system. This is CANONICAL_ROADMAP §16.2 (*Phase 1: Sam merges all PRs*): the
+human is the only merge and release authority in Phase 1, and `CANDIDATE_READY_FOR_HUMAN_REVIEW` is advice to the human,
+never merge permission (§7).
+
+**Authority classification** (CANONICAL_ROADMAP §16.4, §16.5):
+
+- **ARCH-01 itself** is an architecture record. It activates no runtime authority.
+- **05A** owns normalized evidence validity: the fail-closed `Evidence` or `UNKNOWN(reason)` outcome.
+- **05B** owns finding and readiness disposition, including `CANDIDATE_READY_FOR_HUMAN_REVIEW`.
+- 05A and 05B are therefore **authority-bearing control-plane components** under CANONICAL_ROADMAP §16.4 and §16.5.
+  Persisting nothing and merging nothing does not make them observation-only, and neither does the human's merge
+  authority: removing durable state from this record was a scope reduction, and §16.5 allows no re-entry by scope
+  reduction. The §16.5 re-entry gate governs them (§34.1).
+- **05C**'s stateless render is **observation-only**.
+
+CP-005a already owns shipped, read-only fact provenance (CANONICAL_ROADMAP §16.3). ENG-LOOP V2 does not rebuild it, and
+a "facts-only" V2 is not a way around the gate. Durable state (§28), bounded actions (ENG-LOOP-06) and any stronger
+authority are outside ARCH-01, and §16.5 governs them too.
 
 ## 2. Root cause learned from #795 / #798 / #799
 
@@ -498,7 +512,7 @@ no-throw boundary.
 
 | Branch | Lane, frozen head | Open findings | Disposition |
 |---|---|---|---|
-| **#795** | ENG-LOOP-01, `555d200615` | P1 4188450896 (ref-qualified workflow path) | **Keep:** the single-shot CLI concept, the observation-only posture, advisory candidacy, the exact-head law, stop laws, the external-negative-only rule, the trusted-actor concept. **Rewrite:** trusted actors against numeric ids and normalized evidence. **Delete:** workflow-path selection, latest-applicable-run reconstruction, review-request inference. **Defer:** watch behaviour (ENG-LOOP-02). |
+| **#795** | ENG-LOOP-01, `555d200615` | P1 4188450896 (ref-qualified workflow path) | **Keep:** the single-shot CLI concept, the observation-only posture of the render (05C, §1), advisory candidacy, the exact-head law, stop laws, the external-negative-only rule, the trusted-actor concept. **Rewrite:** trusted actors against numeric ids and normalized evidence. **Delete:** workflow-path selection, latest-applicable-run reconstruction, review-request inference. **Defer:** watch behaviour (ENG-LOOP-02). |
 | **#798** | ENG-LOOP-03, `314f118f78` | P2 4189402172 (order-dependent snapshot reconciliation) | **Keep, as fixtures:** the workflow-identity lessons, the `@main` path fixture, documented event and schema knowledge. **Delete:** run-id recency, cross-run attempt comparison, `run_started_at` selection, pairwise reconciliation. |
 | **#799** | ENG-LOOP-04, `52d5daadcd` | P2 4189779531, P2 4189779535 | **Delete from production design:** the snapshot canonicalization system, calendar validation, dense-array defensive decision helpers, fractional-timestamp ordering. **Move to the falsifier:** permutation invariance, malformed boundary inputs, the no-throw boundary. |
 
@@ -546,22 +560,71 @@ frozen in that record and are not policy switches. `archVersion` identifies this
 ## 34. Delivery sequence
 
 ```
-ARCH-01         this record + ENGINEERING_STANDARDS §8
+ARCH-01               architecture only, with ENGINEERING_STANDARDS §8; activates no runtime authority
    ↓
-ci.yml          CI-ATTEST-01's emitter: the first two steps (generate, upload), before checkout — a separate PR
+ci.yml + live proof   CI-ATTEST-01's emitter — its first two steps (generate, upload), before checkout; a separate
+                      PR — and the live attestation proof (CI-ATTEST-01 §11). Supporting evidence; no readiness verdict
    ↓
-live proof      the attestation path on real runs (CI-ATTEST-01 §11)
+§16.5 re-entry gate   part A (§34.1): the mechanical-completeness mechanism, the independent falsifier and the
+                      fault-injection plan and harness, accepted BEFORE 05A or 05B implementation starts
    ↓
-ENG-LOOP-05A    GitHub → Evidence | Unknown            (no decisions)
+ENG-LOOP-05A          GitHub → Evidence | Unknown: authority-bearing normalized validity; must pass the re-entry
+                      proofs (§34.1 part B)
    ↓
-ENG-LOOP-05B    Evidence → Decision                    (no GitHub knowledge)
+ENG-LOOP-05B          Evidence → Decision: authority-bearing readiness and finding disposition; must pass the
+                      re-entry proofs (§34.1 part B)
    ↓
-ENG-LOOP-05C    shepherd CLI: stateless render         (persists nothing)
+ENG-LOOP-05C          shepherd CLI: stateless render only (observation)
+   ↓
+human                 merge and release
 ```
 
 Later, and outside ARCH-01: ARCH-02 (durable measurement), the watcher (ENG-LOOP-02), bounded actions (ENG-LOOP-06) and
-any stronger authority. No durable state exists before ARCH-02 (§28). 05A does not start until ARCH-01 is merged and the
-attestation path is proven.
+any stronger authority. No durable state exists before ARCH-02 (§28). 05A does not start until ARCH-01 is merged, the
+attestation path is proven and the gate's part A is accepted.
+
+The `ci.yml` emitter may proceed before the re-entry gate: it records execution evidence and issues no readiness or
+finding disposition.
+
+### 34.1 The CANONICAL_ROADMAP §16.5 re-entry gate (normative)
+
+05A and 05B are authority-bearing (§1). CANONICAL_ROADMAP §16.5 requires a **changed verification process** before
+authority-bearing implementation proceeds. The gate has two parts.
+
+**Part A — before 05A or 05B implementation starts.** The verification process is designed, reviewed and accepted for
+all three §16.5 requirements:
+
+1. **Mechanical completeness.** 05A and 05B use mechanically bounded, total shapes rather than hand-written permissive
+   enumeration. ARCH-01 already intends strict positive constructors, closed unions and enums, a total 05B decision
+   function, and the fixture obligations of CAP-01, PR-SNAPSHOT-01 and CI-ATTEST-01. Intent is not proof: the re-entry
+   plan names exactly which mechanism proves completeness for 05A and for 05B.
+2. **Independent falsifier by construction.** The falsifier is independent of the builder and of the runtime
+   implementation. It runs against the exact head, tries to **disprove** evidence and readiness correctness, includes
+   negative controls that must fire, and does not use the implementation's decision logic as its oracle. Exact-head
+   Codex review remains an additional independent layer, but passing it is not the falsifier.
+3. **Fault injection.** The process exercises the authority boundary with:
+   - malformed input;
+   - unreadable or refused input;
+   - partial or incomplete evidence;
+   - interrupted collection or execution;
+   - concurrent invocations;
+   - unexpected enum or state values;
+   - evidence that is unstable between passes.
+
+   Every failure leads to `UNKNOWN` or safe non-candidacy, never to a permissive readiness default. 05A and 05B write
+   no durable state, so §16.5's durable-write preservation rules do not apply to them. The process proves instead that
+   they make no GitHub mutation and share no state across invocations.
+
+**Part B — before either component merges as authoritative V1 readiness machinery.** Its implementation head passes
+those three proofs.
+
+**Design accepted ≠ authority proven.** The accepted process must exist before implementation begins; passing it is a
+later, separate fact about a specific implementation head. Until 05A and 05B pass, authoritative readiness remains
+**NOT_NOW** (CANONICAL_ROADMAP §16.5). No PR description, documentation status or roadmap status may call it shipped.
+
+**No facts-only workaround.** CP-005a already owns shipped, read-only fact provenance (CANONICAL_ROADMAP §16.3). A
+"facts-only V2" would duplicate it and evade the lesson of Cycle 2 (CANONICAL_ROADMAP §16.4), so ENG-LOOP V2 builds
+none.
 
 **05A credential precondition (operator decision; CAP-01 §11).** 05A must not use the operator's current write-scoped,
 interactive `gh` credential. Before its first live GitHub collection, 05A uses a separate read-only GitHub credential
@@ -621,17 +684,19 @@ automatic patch.
 ## 37. Standing engineering law
 
 ENGINEERING_STANDARDS §8 carries the standing principles: one evidence boundary; normalized evidence downstream; fail
-closed; a pure decision core; human merge authority; durable state deferred to ARCH-02; and architecture changes before
-implementation. It points to this record and to CAP-01, PR-SNAPSHOT-01 and CI-ATTEST-01 for their mechanisms rather than
-restating them.
+closed; a pure decision core; human merge authority; authority-bearing components — stateless normalized validity and
+readiness included — gated by CANONICAL_ROADMAP §16.5; durable state deferred to ARCH-02; and architecture changes
+before implementation. It points to this record and to CAP-01, PR-SNAPSHOT-01 and CI-ATTEST-01 for their mechanisms
+rather than restating them.
 
 ## 38. Non-goals
 
 ARCH-01 adds **no** runtime feature code, no `collect()` or `decide()` implementation, no `ci.yml` change, watcher,
 orchestrator or durable state of any kind (§28). It adds no merge automation, autonomous repair, LangGraph, CrewAI,
 state-machine framework, Redis, database, event store or arbitrary GitHub event reconstruction. It adds no CI
-run-selection rule of its own (§8) and no GitHub-access guard (CAP-01). It is documentation and normative engineering
-standards only.
+run-selection rule of its own (§8) and no GitHub-access guard (CAP-01). It activates no runtime authority and does not
+itself satisfy the §16.5 re-entry gate (§1, §34.1), and it builds no facts-only duplicate of CP-005a. It is
+documentation and normative engineering standards only.
 
 ## 39. Completion test
 
@@ -650,6 +715,8 @@ ARCH-01 is complete only if 05A/05B need to invent nothing. Each question has on
 | review authority: identities, channels, states, marker and verdict policy, marker failure, `CHANGES_REQUESTED`, open findings | ARCH-01 §17–§21 |
 | artifact fixtures for both real forms | ARCH-01 §22, Appendix A |
 | the Evidence model; 05B's precedence; the 05A/05B semantic split | ARCH-01 §24, §7, §25 |
+| the authority classification of 05A, 05B and 05C | ARCH-01 §1 |
+| the verification process that must prove 05A and 05B: mechanical completeness, the independent falsifier, fault injection | the §16.5 re-entry plan, accepted before 05A or 05B implementation starts (§34.1 part A) |
 
 If any of these turns out to be an implementation choice, **stop** and amend the owning record before 05A. The completion
 items for `false_ready`, `false_block` and `human_override` calculation and for policy- and architecture-series

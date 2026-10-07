@@ -207,13 +207,19 @@ every change to one — must satisfy.
   function of normalized `Evidence` and policy. It has no GitHub knowledge and
   no state.
 - **The human keeps merge authority.** `CANDIDATE_READY_FOR_HUMAN_REVIEW` is
-  advisory (CANONICAL_ROADMAP §16.2). No engineering-loop component merges, and
-  bounded actions need CANONICAL_ROADMAP §16.5 re-entry.
+  advisory (CANONICAL_ROADMAP §16.2). No engineering-loop component merges.
+  Human merge authority does not make a component observation-only.
+- **Authority-bearing components are gated by CANONICAL_ROADMAP §16.5.** This
+  includes normalized evidence validity and readiness or finding disposition
+  even when stateless, as ARCH-01's 05A and 05B are (ARCH-01 §1). The changed
+  verification process (mechanical completeness, an independent falsifier,
+  fault injection) is accepted before such a component is implemented, and its
+  implementation passes it before merging as authoritative; until then that
+  authority is NOT_NOW (ARCH-01 §34). Bounded actions and any stronger
+  authority are gated the same way.
 - **Durable state is deferred to ARCH-02.** ARCH-01 specifies no durable
   state. A shadow ledger, its metrics and any graduation gate exist only under
-  a separate architecture record, ARCH-02. CANONICAL_ROADMAP §16.5 (mechanical
-  completeness, an independent falsifier, fault injection) governs any durable
-  engineering-loop component before it ships.
+  a separate architecture record, ARCH-02, and §16.5 governs them too.
 - **Architecture before implementation.** A fix that would change the semantics
   of ARCH-01, or of a record it depends on, stops implementation and returns to
   an amendment of the owning record and its review. Semantics never evolve
