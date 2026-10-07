@@ -18,12 +18,14 @@
 import { fail, isObject, okValue } from "../../../contract/strict.mjs";
 import { isOpenKey, isReviewEvidenceRecord } from "./shapes.mjs";
 
-export const REVIEW_POLICY = Object.freeze({
-  codex: Object.freeze({ id: 199175422, type: "Bot" }),
-  humanResolvers: Object.freeze([Object.freeze({ id: 26781116, type: "User" })]),
-  acceptedReviewStates: Object.freeze(["COMMENTED", "APPROVED", "CHANGES_REQUESTED"]),
-  cleanPrefix: "Codex Review: Didn't find any major issues.",
-});
+/**
+ * 05A's review policy is the clean verdict's prefix and nothing else: whom to
+ * trust is 05B's policy (SPEC-05B §3), never 05A's. Required, never defaulted.
+ */
+export const REVIEW_POLICY = Object.freeze({ cleanPrefix: "Codex Review: Didn't find any major issues." });
+
+const isReviewPolicy = (p) =>
+  isObject(p) && Object.keys(p).length === 1 && typeof p.cleanPrefix === "string" && p.cleanPrefix.trim() !== "";
 
 /** GitHub's PullRequestReviewState, closed. */
 const REVIEW_STATES = ["PENDING", "COMMENTED", "APPROVED", "CHANGES_REQUESTED", "DISMISSED"];
@@ -41,8 +43,8 @@ function markerQualifies(body, headSha) {
 export function bindReviews(input) {
   try {
     if (!isObject(input)) return fail("malformed", "bindReviews received an input outside its contract");
-    const { key, evidence, policy = REVIEW_POLICY } = input;
-    if (!isOpenKey(key) || !isReviewEvidenceRecord(evidence) || !isObject(policy) || typeof policy.cleanPrefix !== "string") {
+    const { key, evidence, policy } = input;
+    if (!isOpenKey(key) || !isReviewEvidenceRecord(evidence) || !isReviewPolicy(policy)) {
       return fail("malformed", "bindReviews received an input outside its contract");
     }
     const reviews = [];

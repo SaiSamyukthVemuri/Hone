@@ -43,6 +43,23 @@ function redactor(token) {
   };
 }
 
+const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+/** Exactly one of the two request shapes (SPEC-05A §5.1), or null. */
+function shapeOf(req) {
+  if (!isPlainObject(req) || typeof req.label !== "string" || req.label === "") return null;
+  const isRest = typeof req.rest === "string" && req.rest !== "";
+  const isGraphql = typeof req.graphql === "string" && req.graphql !== "";
+  if (isRest === isGraphql) return null;
+  if (isGraphql) {
+    if (req.variables !== undefined && !isPlainObject(req.variables)) return null;
+    for (const v of Object.values(req.variables ?? {})) {
+      if (!(typeof v === "string" || (typeof v === "number" && Number.isSafeInteger(v)))) return null;
+    }
+  }
+  return isRest ? "rest" : "graphql";
+}
+
 /** `gh api` arguments for one request. No argument ever carries the token. */
 function argsFor(req) {
   if (typeof req.rest === "string") {
@@ -101,8 +118,11 @@ export function createPrimitive({
   let closed = false;
 
   function request(req) {
-    const label = typeof req?.label === "string" ? req.label : "unlabelled";
     if (closed) return readFailed("the transport is closed");
+    if (shapeOf(req) === null) {
+      return Object.freeze({ ok: false, reason: "malformed", detail: "refused before any request: not a REST or GraphQL request" });
+    }
+    const label = redact(req.label);
     const started = now();
     const done = (result) => {
       log.push(Object.freeze({ label, ms: Math.max(0, now() - started), ok: result.ok }));
@@ -130,7 +150,9 @@ export function createPrimitive({
       return done(readFailed(redact(`${label}: ${first}`)));
     }
     try {
-      return done(Object.freeze({ ok: true, body: JSON.parse(r.stdout) }));
+      // An answer can echo the token (pasted into a comment, say): it never leaves this module. The token is
+      // [A-Za-z0-9_] only, so replacing it inside the JSON text cannot break the JSON.
+      return done(Object.freeze({ ok: true, body: JSON.parse(redact(String(r.stdout))) }));
     } catch {
       return done(Object.freeze({ ok: false, reason: "malformed", detail: `${label}: the answer is not JSON` }));
     }

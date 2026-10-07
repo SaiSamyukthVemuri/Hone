@@ -18,11 +18,11 @@
 
 import { createHash } from "node:crypto";
 
-import { canonicalJson, deepFreeze, fail } from "../contract/strict.mjs";
+import { canonicalJson, deepFreeze, fail, isIsoUtc, isObject, isPosInt } from "../contract/strict.mjs";
 import { bindBase } from "./internal/bind/base.mjs";
 import { bindCi, isApplicableRun, requiredJobs } from "./internal/bind/ci.mjs";
 import { bindExternal } from "./internal/bind/external.mjs";
-import { bindReviews } from "./internal/bind/review.mjs";
+import { REVIEW_POLICY, bindReviews } from "./internal/bind/review.mjs";
 import { collectCoherent, confirmPass } from "./internal/coherence.mjs";
 import { BLOB_PATHS, POLICY } from "./internal/github/index.mjs";
 
@@ -44,6 +44,49 @@ const STEPS = Object.freeze([
 ]);
 
 const isoSeconds = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+/** A clock reading: milliseconds, a valid Date, or an ISO-8601 UTC string (SPEC-05A §5.3). Else null. */
+function msOf(t) {
+  if (typeof t === "number") return Number.isFinite(t) ? t : null;
+  if (t instanceof Date) return Number.isFinite(t.getTime()) ? t.getTime() : null;
+  if (typeof t === "string" && isIsoUtc(t)) return Date.parse(t);
+  return null;
+}
+
+const READERS = [
+  "readPrKey",
+  "readCompare",
+  "readPrContext",
+  "readHeadBranchPrs",
+  "readBranchRules",
+  "readActivity",
+  "readCandidateRuns",
+  "readRunJobs",
+  "readReviewEvidence",
+  "readCommitRollup",
+  "readFileBlob",
+];
+const SHA40 = /^[0-9a-f]{40}$/;
+
+/** The local CI definition §5.2 needs: a classifier, a blob per BLOB_PATHS entry, and the table-pin flag. */
+const isLocalCi = (l) =>
+  isObject(l) &&
+  typeof l.classify === "function" &&
+  isObject(l.blobs) &&
+  BLOB_PATHS.every((p) => typeof l.blobs[p] === "string" && SHA40.test(l.blobs[p])) &&
+  typeof l.tablePinned === "boolean";
+
+/** Every option checked before the first request (SPEC-05A §5.3): misuse is a closed failure, never a throw. */
+function invalidOptions(args) {
+  if (!isObject(args)) return "collect needs its options";
+  if (!isPosInt(args.prNumber)) return "the pull request number is not a positive integer";
+  if (!isObject(args.readers) || !READERS.every((r) => typeof args.readers[r] === "function")) {
+    return "the readers are incomplete";
+  }
+  if (!isLocalCi(args.local)) return "the local CI definition is incomplete";
+  if (typeof args.now !== "function") return "the clock is not a function";
+  return null;
+}
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 
 /** Every normalized record the pass read for an OPEN K0, or the first failure. */
@@ -129,8 +172,19 @@ function changedFields(a, b) {
  *           now: () => number, policy?: object }} args
  * @returns {{ ok: true, evidence, evidenceHash, diagnostics } | { ok: false, reason, detail, stage, diagnostics }}
  */
-export function collect({ prNumber, readers, local, now, policy = POLICY }) {
-  const observedAt = isoSeconds(now());
+export function collect(args) {
+  let observedAt;
+  try {
+    const invalid = invalidOptions(args);
+    if (invalid !== null) throw new Error(invalid);
+    const ms = msOf(args.now());
+    if (ms === null) throw new Error("the clock returned no time");
+    observedAt = isoSeconds(ms);
+  } catch (e) {
+    const detail = e instanceof Error && e.message ? e.message : "collect received options outside its contract";
+    return deepFreeze({ ok: false, reason: "malformed", detail, stage: "collect", diagnostics: { observedAt: null } });
+  }
+  const { prNumber, readers, local, policy = POLICY } = args;
   let lastFailure = null;
   let lastBody = null;
   const remember = (r) => {
@@ -185,7 +239,7 @@ export function collect({ prNumber, readers, local, now, policy = POLICY }) {
     rows = {
       base,
       ci: ciRow({ key, base, body, local, observedAt, policy }),
-      reviews: bindReviews({ key, evidence: body.reviewEvidence }),
+      reviews: bindReviews({ key, evidence: body.reviewEvidence, policy: REVIEW_POLICY }),
       external: bindExternal(body.rollup),
     };
   }
@@ -193,8 +247,16 @@ export function collect({ prNumber, readers, local, now, policy = POLICY }) {
   return deepFreeze({
     ok: true,
     evidence,
-    // The hash names the normalized evidence itself, not the moment it was read.
-    evidenceHash: sha256(canonicalJson({ schema: EVIDENCE_SCHEMA, key, body: terminal ? null : firstBody })),
+    // The hash names everything the rows were bound from except the clock: GitHub's normalized records and the
+    // local CI definition (§5.2). Time enters the rows only through rule 8's window (SPEC-05A §5.4).
+    evidenceHash: sha256(
+      canonicalJson({
+        schema: EVIDENCE_SCHEMA,
+        key,
+        body: terminal ? null : firstBody,
+        localCi: { blobs: local.blobs, tablePinned: local.tablePinned },
+      }),
+    ),
     diagnostics: { observedAt, attempts: first.attempts, confirmed: true },
   });
 }
