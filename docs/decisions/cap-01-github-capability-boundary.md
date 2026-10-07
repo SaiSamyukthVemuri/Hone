@@ -9,7 +9,7 @@
 | **Scope** | Every runtime module under `scripts/eng/v2/`, the V2 entry shim, and every other runtime module's static imports into them. |
 | **Not in scope** | Runtime implementation; edits to #800, #802 or #803; `ci.yml`; 05A; 05B; ARCH-02. |
 | **Authored at** | production `4eccefd2fff7efa1abc1a9048531e8046865027d`. |
-| **Amended** | CAP-01-READER-STATE-01, 2026-10-06 (§15): `readCandidateRuns` also returns each candidate run's mutable execution state. CAP-01-ATTEST-READER-01, 2026-10-07 (§16): `readRunAttestation` has one frozen two-operation request plan. |
+| **Amended** | CAP-01-READER-STATE-01, 2026-10-06 (§15); CAP-01-ATTEST-READER-01, 2026-10-07 (§16); CAP-01-READER-COMPLETENESS-01, 2026-10-07 (§17). This row is an index only: each amendment's behaviour is defined in its own section. |
 
 > **What this record is — and is not.** It provides **Goal B, accidental architecture-drift protection**, through static
 > architectural lint. It does **not** provide **Goal C, hostile in-process capability containment**, and Goal B does not
@@ -150,8 +150,8 @@ and G4 check it statically.
 | Reader | Parameters | Returns | Consumer |
 |---|---|---|---|
 | `readPrKey` | PR number | the PR identity and lifecycle value, including the draft flag, from one request | PR-SNAPSHOT-01; ARCH-01 draft hold |
-| `readReviewEvidence` | PR number | reviews, issue comments, review threads | ARCH-01 review authority |
-| `readCommitRollup` | commit SHA | that commit's external status contexts | ARCH-01 external checks |
+| `readReviewEvidence` | PR number | a typed reader result: *complete* reviews, issue comments and review threads with their comments, from one response; or *incomplete* or *malformed* (below) | ARCH-01 review authority |
+| `readCommitRollup` | commit SHA | a typed reader result: *complete* status-check rollup contexts for that commit, from one response, from which ARCH-01 takes its external contexts; or *incomplete* or *malformed* (below) | ARCH-01 external checks |
 | `readCandidateRuns` | head SHA | the designated workflow's `pull_request` runs at that SHA, each with its candidate metadata **and** its mutable execution state (below) | ARCH-01 CI; CI-ATTEST-01 |
 | `readRunAttestation` | run id | that run's normalized attestation record and artifact metadata, by its fixed two-operation plan (below) | CI-ATTEST-01 |
 | `readCompare` | base SHA, head SHA | behind and ahead counts, and the merge-base SHA | ARCH-01 drift; CI-ATTEST-01 trust anchor |
@@ -282,6 +282,76 @@ Required attestation-reader fixtures, for the transport's implementation tests:
 | A11 | an entry not named exactly `ci-attest.json` | *unavailable* |
 | A12 | malformed JSON, or JSON outside the schema | *unavailable* |
 | A13 | a real attested run (CI-ATTEST-01's fixture 1, pinned by the `ci.yml` implementation lane) | the normalized attestation record |
+
+**Review evidence and rollup contexts: one complete response, or a typed failure** (CAP-01-READER-COMPLETENESS-01,
+§17). V1 never pages mutable evidence across GitHub requests. `readReviewEvidence(prNumber)` and
+`readCommitRollup(headSha)` each make exactly one fixed GraphQL request per collection pass. Like every reader (§6),
+each returns a record, never partial evidence and never UNKNOWN. The record is a typed, immutable reader result:
+- *complete*, carrying the normalized evidence;
+- *incomplete*, carrying the closed reader reason `review_evidence_too_large` (from `readReviewEvidence`) or
+  `external_contexts_too_large` (from `readCommitRollup`);
+- *malformed*, carrying `malformed`.
+
+There is no cursor loop, page reconciliation, deduplication across requests or timestamp reconstruction.
+
+Every connection that contributes to the normalized record is requested with the frozen size `first: 100`, the most
+GitHub allows per connection:
+
+| Reader | Connections |
+|---|---|
+| `readReviewEvidence` | `reviews`; `comments` (the pull request's issue comments, which carry clean Codex verdicts); `reviewThreads`; and, inside each thread, `comments` |
+| `readCommitRollup` | `statusCheckRollup.contexts`, whose nodes are `CheckRun` or `StatusContext` |
+
+For **every** such connection, nested thread comments included, the response must show:
+- `nodes` with the expected schema, and `pageInfo` present;
+- `pageInfo.hasNextPage` is `false`;
+- `totalCount` is a non-negative integer, equals the number of nodes returned, and is at most 100.
+
+Each of these connections exposes both `pageInfo` and `totalCount` (Appendix). A `null` `statusCheckRollup`, meaning a
+commit with no status or check, is a complete, empty set of contexts.
+
+If any connection shows that more exists than the response holds — `hasNextPage` true, a `totalCount` above 100, or a
+`totalCount` that differs from the nodes returned — the reader returns *incomplete*, carrying
+`review_evidence_too_large` or `external_contexts_too_large`. Any other malformed or inconsistent response returns
+*malformed*. A thread whose own comments connection is incomplete makes the whole review evidence *incomplete*: a
+thread is never truncated, and there is no second reader for thread comments. A trusted review, a clean Codex comment
+or an unresolved thread therefore never disappears because it fell onto another page.
+
+**`collect` owns UNKNOWN** (§6). It maps an *incomplete* or *malformed* reader result, through the contract
+constructors, to `UNKNOWN(review_evidence_too_large)`, `UNKNOWN(external_contexts_too_large)` or `UNKNOWN(malformed)`
+for the whole snapshot, and no partial evidence survives. This is the same pattern as the attestation reader's
+*unavailable* result (§16). ARCH-01's closed reason set gains `review_evidence_too_large` and
+`external_contexts_too_large` from this amendment. G3 freezes both readers' typed result schemas, and a reader result
+has no UNKNOWN variant.
+
+**Why fail closed.** More than 100 reviews, issue comments, threads or comments in one thread on a pull request, or more
+than 100 status and check contexts on one commit, is exceptional for Hone V1. Across Hone's busiest recent pull
+requests, the largest counts are 24 reviews, 13 issue comments, 26 threads and 3 comments in one thread; commits carry
+10 to 12 contexts (Appendix). Failing closed is simpler and safer than cross-page deduplication, cursor reconciliation
+or snapshot reconstruction. If real use later hits these limits, paging is a separate architecture decision.
+
+**Stability.** Both readers run once per collection pass, and their output is mutable evidence. ARCH-01's bounded full
+re-read proves stability between complete passes: either identical normalized evidence, or
+`UNKNOWN(unstable_snapshot)`. Neither reader retries or re-reads. PR-SNAPSHOT-01 still owns the pull request's identity
+coherence.
+
+Required completeness fixtures, for the implementation tests. Each proves both layers: the reader's result, then what
+`collect` builds from it.
+
+| # | Response | Reader result | `collect` |
+|---|---|---|---|
+| C1 | every review-evidence connection complete | *complete*: the normalized review evidence | the evidence; no UNKNOWN |
+| C2 | `reviews` with `hasNextPage` true | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C3 | issue `comments` with `hasNextPage` true | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C4 | `reviewThreads` with `hasNextPage` true | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C5 | one thread's `comments` with `hasNextPage` true | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C6 | a review-evidence `totalCount` that differs from the nodes returned | *incomplete* (`review_evidence_too_large`) | `UNKNOWN(review_evidence_too_large)` |
+| C7 | a malformed review, comment or thread node | *malformed* | `UNKNOWN(malformed)` |
+| C8 | a complete rollup of at most 100 contexts, or a `null` rollup | *complete*: the normalized contexts (empty for `null`) | the evidence; no UNKNOWN |
+| C9 | rollup `contexts` with `hasNextPage` true | *incomplete* (`external_contexts_too_large`) | `UNKNOWN(external_contexts_too_large)` |
+| C10 | a rollup `totalCount` that differs from the contexts returned | *incomplete* (`external_contexts_too_large`) | `UNKNOWN(external_contexts_too_large)` |
+| C11 | a malformed context node | *malformed* | `UNKNOWN(malformed)` |
+| C12 | any reordering of the reviews, issue comments, threads or contexts in a complete response | the same *complete* result wherever order is irrelevant (ARCH-01 says which orders matter) | the same evidence |
 
 ## 5. What crosses outward
 
@@ -612,6 +682,39 @@ documented V1 liveness limitation (§4). Duplicates are deliberately *unavailabl
 attempt-selection rule, extra request or ordering was added. A further P0–P2 in the attestation-reader or
 re-run-artifact family → **stop**.
 
+## 17. Amendment CAP-01-READER-COMPLETENESS-01 — review evidence and rollup contexts are one response or fail closed
+
+| | |
+|---|---|
+| **Decision** | `readReviewEvidence` and `readCommitRollup` each return a typed reader result: *complete* evidence from one GraphQL response, or *incomplete* or *malformed*. Neither ever pages, and `collect` turns a failure into UNKNOWN (§4, §6). |
+| **Date** | 2026-10-07 |
+| **Decided by** | Sam (operator), closing a completeness gap that a read-only audit of this record's readers found before ARCH-01's re-entry. |
+| **Why** | Both readers read GraphQL connections that GitHub pages at 100 items, and this record did not say what V1 does when a result exceeds one response. The candidate listing (§15) and the attestation reader (§16) were already single-response; these two were not. |
+| **Not added** | No new reader, parameter, §3 edge or network capability. No cursor loop, page reconciliation, cross-request deduplication, timestamp reconstruction, or reader-specific retry or re-read. |
+
+**Ownership — no overlap.**
+
+| Owner | Owns |
+|---|---|
+| CAP-01 | each reader's fixed query, its frozen connection sizes, the completeness checks, and the typed reader-result records with their closed reasons |
+| `collect` (§6) | constructing UNKNOWN from an *incomplete* or *malformed* reader result, for the whole snapshot |
+| ARCH-01 | evidence consistency between passes, review-authority semantics, and external-context collapse and decision semantics |
+| 05B | decisions over normalized evidence only; it never sees GraphQL paging |
+
+**ARCH-01 consequence.** When #800 re-enters by removal, it deletes its own paging language: "every page", head
+assertions repeated on each page, cross-page `totalCount` reconciliation, and raw GraphQL paging mechanics. It
+consumes these two readers through `collect`: complete normalized evidence, or the UNKNOWN that `collect` builds
+from a reader's typed failure. Paging never reaches 05B.
+
+**Review budget.** One exact-head review round. One semantic repair is allowed. A second P0–P2 in the same family →
+**stop**, with no patch loop.
+
+**Spent.** Codex's ready-triggered review of `571c5c8f6c` raised P1 `4202359952`: the readers were said to return
+UNKNOWN themselves, which contradicts §6. By operator decision, the one repair makes both readers return typed
+*complete*, *incomplete* or *malformed* records, with `collect` alone constructing UNKNOWN, following §16's precedent.
+The one-response completeness model is unchanged. A further P0–P2 in the reader-result or completeness-ownership family
+→ **stop**.
+
 ---
 
 ## Appendix — evidence (2026-10-06, read only)
@@ -633,3 +736,6 @@ re-run-artifact family → **stop**.
 | REST `actions/download-artifact` (OpenAPI), for §16 | `GET …/actions/artifacts/{artifact_id}/{archive_format}`, where the format must be `zip`; it answers `302` with a `Location` URL that expires after one minute, or `410` |
 | PR #802, ready-triggered review `5436100752`, for §16 | P1 `4201792798`: reading an attestation takes two GitHub operations, and §4 allowed one |
 | GitHub CLI issue `cli/cli#12437` (open, 2026-01-07), for §4's re-run note | after a re-run, one run's name-filtered artifact list returned two same-name artifacts, one per attempt (`pmd/pmd` run `20775770442`; those artifacts have since expired) |
+| GraphQL schema (introspection, 2026-10-07), for §17 | `PullRequestReviewConnection`, `IssueCommentConnection`, `PullRequestReviewThreadConnection`, `PullRequestReviewCommentConnection` and `StatusCheckRollupContextConnection` each expose `pageInfo` (with `hasNextPage`) and `totalCount`; a rollup context is a `CheckRun` or a `StatusContext` |
+| Hone review sizes (live, 2026-10-07), for §17 | across #658, #668, #737 and #795–#806: at most 24 reviews, 13 issue comments, 26 review threads, and 3 comments in one thread |
+| Hone rollup sizes (live, 2026-10-07), for §17 | 10 to 12 contexts per commit (9–11 check runs and 1 status context) on recent production and PR heads, with `hasNextPage` false |
