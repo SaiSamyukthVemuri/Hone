@@ -23,6 +23,10 @@ export const UNKNOWN_REASONS = Object.freeze([
   "base_ref_changed",
   "shared_head",
   "base_history_unverified",
+  // V1 CI applicability (SPEC-05A §3.4)
+  "fork_head",
+  "diff_too_large",
+  "ci_definition_changed",
   // single-response completeness (CAP-01 §4, §15, §17)
   "ci_candidate_listing_too_large",
   "review_evidence_too_large",
