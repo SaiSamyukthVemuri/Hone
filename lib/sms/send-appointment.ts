@@ -10,7 +10,15 @@ import {
   normalizePhoneForSms,
   outboundSmsFence,
   sendSmsSafely,
+  type SendSmsResult,
 } from "./twilio";
+import {
+  beginAppointmentSmsMessage,
+  settleOutcomeForSend,
+  settleSmsMessage,
+  smsStatusCallbackUrl,
+  type AppointmentSmsPurpose,
+} from "./delivery-ledger";
 
 // SMS send helpers used by the booking, reschedule, and reminder cron
 // paths. Each top-level function follows the strict claim-then-send-
@@ -31,6 +39,11 @@ import {
 // after 5 minutes the next claim_sms_send call can reclaim. That is
 // the intended fallback for hard crashes; ordinary failures are
 // covered by the finally block.
+//
+// SMS-00/SMS-02: every provider attempt also gets a row in the delivery
+// ledger (lib/sms/delivery-ledger.ts), named in its StatusCallback so
+// Twilio's delivery reports land on it. The ledger records; it never
+// decides. claim_sms_send stays the authority on whether a send happens.
 //
 // Every send path also checks the studio toggle, the client's
 // sms_consent_at / sms_opted_out_at, that we have a normalizable
@@ -272,15 +285,22 @@ export async function sendBookingConfirmationSmsToClient(
   });
 }
 
-type SendReminderInput = {
+/** A cron reminder window, as reminderWindowIso returns it. */
+export type ReminderWindow = { startIso: string; endIso: string };
+
+export type SendReminderInput = {
   admin: SupabaseClient;
   appointmentId: string;
-  startsAt: Date;
+  /**
+   * The cron window this reminder belongs to (reminderWindowIso). The start is
+   * RE-READ after the claim and must still fall inside it.
+   */
+  window: ReminderWindow;
   timezone: string;
   // A FRESH secure intake link, or null. The cron passes non-null ONLY when
   // send_intake_reminders is on, this window's SMS toggle is on, and the LIVE
-  // intake read after the appointment re-check said in_progress. The consent
-  // gate, the claim and the Twilio contract below are untouched by it.
+  // intake read said in_progress. The consent gate, the claim and the Twilio
+  // contract below are untouched by it.
   intakeUrl?: string | null;
   studio: Pick<
     Studio,
@@ -293,52 +313,233 @@ type SendReminderInput = {
     | "send_2h_sms_reminders"
   >;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
-  // Reminder SMS carry the same neutral /manage/<token> link as
-  // confirmation. The manage landing page surfaces both reschedule
-  // and cancel options after the studio's policies.
-  manageUrl: string | null;
+  /**
+   * The neutral /manage/<token> link for a start, or null. A BUILDER rather
+   * than a URL: the token expires at the appointment's start, so it is minted
+   * from the start read after the claim -- never from the one the window
+   * query saw, which a move may already have replaced.
+   */
+  manageUrlFor: (startsAt: Date) => string | null;
 };
 
 export async function send24hReminderSmsToClient(
   input: SendReminderInput,
 ): Promise<SmsSendResult> {
-  return sendOne({
-    admin: input.admin,
-    appointmentId: input.appointmentId,
-    smsType: "reminder_24h",
-    studio: input.studio,
-    client: input.client,
-    buildBody: () =>
-      build24hReminderSms({
-        studioName: input.studio.name,
-        startsAt: input.startsAt,
-        timezone: input.timezone,
-        manageUrl: input.manageUrl,
-        intakeUrl: input.intakeUrl ?? null,
-      }),
-    to: (normalizedPhone) => normalizedPhone,
-  });
+  return sendReminder("reminder_24h", input);
 }
 
 export async function send2hReminderSmsToClient(
   input: SendReminderInput,
 ): Promise<SmsSendResult> {
-  return sendOne({
-    admin: input.admin,
-    appointmentId: input.appointmentId,
-    smsType: "reminder_2h",
-    studio: input.studio,
-    client: input.client,
-    buildBody: () =>
-      build2hReminderSms({
-        studioName: input.studio.name,
-        startsAt: input.startsAt,
-        timezone: input.timezone,
-        manageUrl: input.manageUrl,
-        intakeUrl: input.intakeUrl ?? null,
-      }),
-    to: (normalizedPhone) => normalizedPhone,
+  return sendReminder("reminder_2h", input);
+}
+
+type AppointmentTiming = { status: string; startsAt: Date };
+
+/**
+ * The appointment's status and start, read now. `unreadable` is a failed or
+ * malformed read and is never confused with "the appointment is gone".
+ */
+async function readAppointmentTiming(
+  admin: SupabaseClient,
+  appointmentId: string,
+): Promise<AppointmentTiming | null | "unreadable"> {
+  try {
+    const { data, error } = await admin
+      .from("appointments")
+      .select("status, starts_at")
+      .eq("id", appointmentId)
+      .maybeSingle();
+    if (error) return "unreadable";
+    if (!data) return null;
+    const row = data as { status?: unknown; starts_at?: unknown };
+    const startsAt = new Date(String(row.starts_at));
+    if (typeof row.status !== "string" || Number.isNaN(startsAt.getTime())) {
+      return "unreadable";
+    }
+    return { status: row.status, startsAt };
+  } catch {
+    return "unreadable";
+  }
+}
+
+function inWindow(startsAt: Date, window: ReminderWindow): boolean {
+  const t = startsAt.getTime();
+  return t >= Date.parse(window.startIso) && t <= Date.parse(window.endIso);
+}
+
+/**
+ * SMS-02 — one appointment reminder SMS: gated, claimed, re-validated, sent,
+ * settled. Beyond sendOne's gate and claim it closes the three gaps the
+ * reminder path had:
+ *
+ *  1. CANCELLED OR MOVED AFTER THE WINDOW QUERY. The claim does not
+ *     re-validate the appointment, so it is read again AFTER the claim -- the
+ *     earlier re-check ran before it, leaving the claim-to-send interval open.
+ *     A cancelled appointment, or one moved out of this window, releases the
+ *     claim and sends nothing; the message is built from the start read here.
+ *
+ *  2. MOVED DURING THE SEND. Migration 0206 re-arms the reminder slot the
+ *     moment a start moves. Recording this attempt as sent would stamp that
+ *     re-armed slot for a start the message no longer names, so the new
+ *     start would never be reminded. A start that changed while the message
+ *     was in flight is recorded as NOT sent.
+ *
+ *  3. AN ANSWER THAT WAS LOST. Twilio takes no idempotency key, so an
+ *     ambiguous attempt may already have reached the client, and retrying it
+ *     could send the reminder twice. It is recorded as sent -- no automatic
+ *     retry -- and the ledger keeps it `unknown` until a delivery callback
+ *     says what happened; a failure then raises an ops alert. A definite
+ *     refusal (including a connection that never opened) is retried on a
+ *     later fire, within the 3-attempt budget, as before.
+ */
+async function sendReminder(
+  smsType: "reminder_24h" | "reminder_2h",
+  args: SendReminderInput,
+): Promise<SmsSendResult> {
+  const gate = passesConsentGate({
+    studio: args.studio,
+    client: args.client,
+    smsType,
   });
+  if (!gate.ok) {
+    return { ok: false, skipped: true, reason: gate.reason };
+  }
+
+  const fence = outboundSmsFence();
+  if (!fence.allowed) {
+    return { ok: false, skipped: true, reason: fence.reason };
+  }
+
+  const claimed = await claimSmsSend(args.admin, args.appointmentId, smsType);
+  if (!claimed) {
+    return { ok: false, skipped: true, reason: "not_claimed" };
+  }
+
+  // (1) The appointment as it is NOW, after the claim.
+  const before = await readAppointmentTiming(args.admin, args.appointmentId);
+  if (before === "unreadable") {
+    await recordSmsResult(args.admin, args.appointmentId, smsType, false);
+    return { ok: false, error: "appointment_unreadable", retryable: true };
+  }
+  if (!before || before.status !== "confirmed") {
+    await recordSmsResult(args.admin, args.appointmentId, smsType, false);
+    return { ok: false, skipped: true, reason: "not_confirmed" };
+  }
+  if (!inWindow(before.startsAt, args.window)) {
+    await recordSmsResult(args.admin, args.appointmentId, smsType, false);
+    return { ok: false, skipped: true, reason: "outside_window" };
+  }
+
+  let result: SendSmsResult;
+  try {
+    const build = smsType === "reminder_24h" ? build24hReminderSms : build2hReminderSms;
+    const body = build({
+      studioName: args.studio.name,
+      startsAt: before.startsAt,
+      timezone: args.timezone,
+      manageUrl: args.manageUrlFor(before.startsAt),
+      intakeUrl: args.intakeUrl ?? null,
+    });
+    result = await deliverWithLedger({
+      admin: args.admin,
+      studioId: args.studio.id,
+      appointmentId: args.appointmentId,
+      smsType,
+      to: gate.normalizedPhone,
+      body,
+    });
+  } catch {
+    // sendSmsSafely and the ledger never throw, so an exception here came from
+    // building the message: nothing reached the provider.
+    result = { ok: false, error: "sms_render_failed", retryable: false, attempt: "none" };
+  }
+
+  // (2) A move while the message was in flight.
+  const after = await readAppointmentTiming(args.admin, args.appointmentId);
+  const movedDuringSend =
+    after !== "unreadable" &&
+    after !== null &&
+    after.startsAt.getTime() !== before.startsAt.getTime();
+
+  // (3) Sent, or possibly sent, counts as sent -- unless the start it named
+  // has already been replaced.
+  const providerMayHaveIt = result.ok || result.attempt === "ambiguous";
+  await recordSmsResult(
+    args.admin,
+    args.appointmentId,
+    smsType,
+    providerMayHaveIt && !movedDuringSend,
+  );
+
+  if (result.ok) {
+    console.log(
+      JSON.stringify({
+        event: movedDuringSend ? "sms_sent_superseded_by_move" : "sms_sent",
+        appointmentId: args.appointmentId,
+        smsType,
+        messageSid: result.messageSid,
+        toMasked: maskedPhone(gate.normalizedPhone),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: true, messageSid: result.messageSid };
+  }
+
+  const ambiguous = result.attempt === "ambiguous";
+  logSmsFailure({
+    appointmentId: args.appointmentId,
+    smsType,
+    error: ambiguous ? `${result.error}:outcome_unknown` : result.error,
+    // An ambiguous attempt is never retried automatically, so it is final.
+    retryable: ambiguous ? false : result.retryable,
+    studioId: args.studio.id,
+  });
+  return {
+    ok: false,
+    error: result.error,
+    retryable: ambiguous ? false : result.retryable,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Ledger plumbing shared by every appointment SMS (SMS-00 / SMS-02)
+// ---------------------------------------------------------------------------
+
+const LEDGER_PURPOSE: Record<SmsType, AppointmentSmsPurpose> = {
+  confirmation: "appointment_confirmation",
+  reminder_24h: "appointment_reminder_24h",
+  reminder_2h: "appointment_reminder_2h",
+};
+
+/**
+ * One provider attempt with its ledger row: created after the claim, named
+ * in the StatusCallback so delivery reports land on it, settled with the
+ * provider's answer. FAIL-SOFT: without a row the message is sent exactly as
+ * before, only without delivery reports. Never throws.
+ */
+async function deliverWithLedger(args: {
+  admin: SupabaseClient;
+  studioId: string;
+  appointmentId: string;
+  smsType: SmsType;
+  to: string;
+  body: string;
+}): Promise<SendSmsResult> {
+  const messageId = await beginAppointmentSmsMessage(args.admin, {
+    studioId: args.studioId,
+    appointmentId: args.appointmentId,
+    purpose: LEDGER_PURPOSE[args.smsType],
+  });
+  const result = await sendSmsSafely({
+    to: args.to,
+    body: args.body,
+    statusCallbackUrl: messageId ? smsStatusCallbackUrl(messageId) : null,
+  });
+  if (messageId) {
+    await settleSmsMessage(args.admin, messageId, settleOutcomeForSend(result));
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -356,16 +557,16 @@ type SendOneArgs = {
 };
 
 /**
- * The single send execution path all three public helpers funnel
- * through. Encapsulates:
- *   - consent gate
+ * The confirmation send path (the reminders use sendReminder, which adds
+ * the post-claim re-validation a scheduled send needs). Encapsulates:
+ *   - consent gate and deployment fence
  *   - claim
- *   - Twilio POST (with timeout, in twilio.ts)
+ *   - Twilio POST with its ledger row (deliverWithLedger)
  *   - record_sms_result in finally
  *   - structured failure log
  *
  * Returns ok / skipped / error in a shape the caller can ignore
- * without breaking the booking, reschedule, or cron flow.
+ * without breaking the booking or reschedule flow.
  */
 async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   const gate = passesConsentGate({
@@ -401,7 +602,14 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   try {
     const body = args.buildBody(gate.normalizedPhone);
     const to = args.to(gate.normalizedPhone);
-    const result = await sendSmsSafely({ to, body });
+    const result = await deliverWithLedger({
+      admin: args.admin,
+      studioId: args.studio.id,
+      appointmentId: args.appointmentId,
+      smsType: args.smsType,
+      to,
+      body,
+    });
     success = result.ok;
     if (result.ok) {
       outcome = { ok: true, messageSid: result.messageSid };

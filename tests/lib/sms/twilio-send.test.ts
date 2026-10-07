@@ -172,6 +172,29 @@ describe("what the provider's answer means", () => {
     expect(await send()).toMatchObject({ error: "twilio_network", attempt: "ambiguous" });
   });
 
+  it("a connection that never opened carried no request: refused, and safe to retry", async () => {
+    for (const code of ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT"]) {
+      fetchMock.mockImplementationOnce(() =>
+        Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code } })),
+      );
+      expect(await send(), code).toEqual({
+        ok: false,
+        error: "twilio_unreachable",
+        retryable: true,
+        attempt: "refused",
+      });
+    }
+  });
+
+  it("a connection broken MID-request stays ambiguous", async () => {
+    for (const code of ["ECONNRESET", "UND_ERR_SOCKET", "EPIPE"]) {
+      fetchMock.mockImplementationOnce(() =>
+        Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code } })),
+      );
+      expect(await send(), code).toMatchObject({ error: "twilio_network", attempt: "ambiguous" });
+    }
+  });
+
   it("a non-numeric error code is not carried", async () => {
     fetchMock.mockImplementationOnce(() => answer(400, { code: "21211" }));
     const r = (await send()) as { attempt?: string; providerErrorCode?: number };

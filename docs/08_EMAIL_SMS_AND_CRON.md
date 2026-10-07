@@ -137,6 +137,16 @@ The row exists **before** the provider call because Twilio's Messages API takes 
 
 A reminder answers "when is my appointment?", so a reminder sent for an old start does not answer it once the start moves. `appointments_rearm_reminders_trg` (`before update of starts_at`) returns the 24h and 2h reminder slots — **email and SMS** — to unsent, with a fresh attempt budget and no claim, whenever an appointment's start **actually** changes on the same row. That is the practitioner move (`move_or_reassign_appointment`), which rewrites `starts_at` in place. The client reschedule link already behaved correctly: it inserts a successor appointment, whose reminder columns start empty. Confirmation slots are not keyed to the start and are never re-armed; a reassign that keeps the start re-arms nothing.
 
+### Reminder SMS send discipline (SMS-02)
+
+The 24h / 2h reminder SMS (`send24hReminderSmsToClient` / `send2hReminderSmsToClient`, called only by the reminder cron) keep the consent gate, the deployment fence and `claim_sms_send`, and add three rules a scheduled send needs:
+
+1. **Re-validated after the claim.** The claim does not re-check the appointment, so the helper reads status and start again *after* `claim_sms_send`. A cancelled appointment, or one moved out of this cron window, releases the claim and sends nothing. The message — and its `/manage/<token>` link, whose token expires at the start — is built from the start read there, never from the window query's.
+2. **A move during the send is not "sent".** If the start changes while the message is in flight, the attempt is recorded as *not sent*: the move already re-armed the slot (migration 0206), and stamping it would leave the new start with no reminder.
+3. **An ambiguous attempt is not retried automatically.** Twilio takes no idempotency key, so a timeout, a dropped connection, a 5xx or a success reply without a SID may already have reached the client. Such an attempt is recorded as sent (no duplicate), its ledger row stays `unknown` until a delivery callback reports, and a failure report raises `sms_delivery_failed`. A **definite** refusal — a 4xx, or a connection that never opened — is recorded unsent and retried on a later fire within the 3-attempt budget, as before.
+
+The cron's own pre-claim "still confirmed?" read remains as a cheap pre-filter, so a cancelled row costs no intake read and no claim.
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.

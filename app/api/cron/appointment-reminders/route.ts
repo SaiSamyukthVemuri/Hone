@@ -497,6 +497,10 @@ async function sendSmsReminderPass(opts: {
 
     // PR #258: same cancellation-race re-check as the email pass, never SMS a
     // reminder for an appointment cancelled/no-showed after the window query.
+    // A cheap PRE-FILTER, so a cancelled row costs no intake read and no
+    // claim. SMS-02: the authoritative re-check (status AND start) runs inside
+    // the send helper AFTER claim_sms_send, where nothing can slip between it
+    // and the provider call.
     const { data: freshSms } = await admin
       .from("appointments")
       .select("status")
@@ -531,15 +535,20 @@ async function sendSmsReminderPass(opts: {
     // HMAC token so the SMS manage link resolves (/manage accepts it). Null
     // only if minting fails (unparseable start); the SMS template then drops
     // the manage line and still sends the moment-only reminder.
-    let manageToken: string | null;
-    try {
-      manageToken = generateCancellationToken(appt.id, new Date(appt.starts_at));
-    } catch {
-      manageToken = null;
-    }
-    const manageUrl = manageToken
-      ? `${smsAppOrigin}/manage/${manageToken}`
-      : null;
+    //
+    // SMS-02: a BUILDER, called by the helper with the start it re-read after
+    // the claim. The token expires at the start, so a link minted from the
+    // window query's start would be wrong for an appointment moved since.
+    const appointmentId = appt.id;
+    const manageUrlFor = (startsAt: Date): string | null => {
+      let manageToken: string | null;
+      try {
+        manageToken = generateCancellationToken(appointmentId, startsAt);
+      } catch {
+        manageToken = null;
+      }
+      return manageToken ? `${smsAppOrigin}/manage/${manageToken}` : null;
+    };
 
     const sendFn =
       opts.kind === "24h"
@@ -548,7 +557,7 @@ async function sendSmsReminderPass(opts: {
     const result = await sendFn({
       admin,
       appointmentId: appt.id,
-      startsAt: new Date(appt.starts_at),
+      window: { startIso: opts.windowStartIso, endIso: opts.windowEndIso },
       timezone: appt.studio.timezone,
       studio: appt.studio,
       client: {
@@ -556,7 +565,7 @@ async function sendSmsReminderPass(opts: {
         sms_consent_at: appt.client.sms_consent_at,
         sms_opted_out_at: appt.client.sms_opted_out_at,
       },
-      manageUrl,
+      manageUrlFor,
       intakeUrl: smsIntakeUrl,
     });
     if (result.ok) {
