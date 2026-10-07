@@ -54,8 +54,12 @@ set local lock_timeout = '5s';
 alter table public.studios
   add column if not exists send_waitlist_invitation_sms boolean not null default false;
 
-comment on column public.studios.send_waitlist_invitation_sms is
-  'SMS-01 studio switch: whether a new waitlist invitation is ALSO sent by text to an eligible prospect. Default false. Checked by claim_waitlist_invitation_sms inside the database, so a false value means no claim row and no provider call. It authorises nothing on its own: the prospect must still pass prospectMayReceiveSms (consent, verified mobile, not opted out) and the deployment must be allowed to send.';
+-- No `comment on column` here: the commented-column inventory of
+-- public.studios is an approved set (tests/db/new-studio-admission-default),
+-- and this switch is documented in docs/08 and the header above instead.
+-- It authorises nothing on its own: claim_waitlist_invitation_sms checks it,
+-- the prospect must still pass prospectMayReceiveSms, and the deployment must
+-- be allowed to send.
 
 -- ---------------------------------------------------------------------------
 -- 2. The ledger
