@@ -151,6 +151,34 @@ Fields that could not be established are `null`, never guessed.
 
 **Claude Code** runs the shepherd at the points `CLAUDE.md` §4 names, and acts only on its bounded next action.
 
+Each checkout writes to its own `.eng/receipts/`, so lanes in several worktrees should share one directory through
+`HONE_ENG_RECEIPTS_DIR` for the shadow evaluation.
+
+### Shadow evaluation — measurement definitions (frozen 2026-10-07)
+
+The directive (§9) requires these definitions to be frozen before any conclusion is drawn. A change to any of them
+needs the operator's decision, and takes effect only for receipts recorded after it.
+
+- **Evaluable receipt.** A receipt that `readReceipts` accepts, from a read that reported `complete: true`. A
+  conclusion over an incomplete read must say so and count the missing data as unknown, never as clean.
+- **false_ready.** An evaluable receipt deciding `CANDIDATE_READY_FOR_HUMAN_REVIEW` for `(pr, head)` while,
+  at `observed_at`, at least one candidacy condition of SPEC-05B §2 was false at that exact head. A human
+  adjudicates each one from GitHub's record. **Primary safety condition: `false_ready == 0` on evaluable, complete
+  evidence.** One recorded false_ready that the one reserved fix PR cannot close triggers the kill condition:
+  freeze readiness output, fall back to facts-only reporting, preserve the evidence, and stop.
+- **false_block.** An evaluable receipt deciding a definite non-candidate state whose stated blocking condition was
+  false at `observed_at` (for example `CI_FAILED` when every applicable run had succeeded). Each is reviewed
+  individually. `UNKNOWN` is never a false_block; it is counted separately.
+- **UNKNOWN frequency.** UNKNOWN receipts divided by evaluable receipts, overall and per reason, over a stated
+  window. It is never computed over an incomplete read without saying so.
+- **Human interventions.** Each time a person had to read GitHub directly to establish a lane's next step, as
+  recorded by the operator.
+- **Time reconstructing GitHub state.** The operator-recorded minutes spent on those interventions.
+- **Push to review request.** From the time a head was pushed to the first receipt at that head deciding
+  `CANDIDATE_READY_FOR_HUMAN_REVIEW`, or to the human review request if that came first.
+
+Receipts are diagnostic. Neither they nor any figure computed from them grants readiness.
+
 **Not live yet.** Live use needs:
 - the dedicated token;
 - the production ruleset, independently verified (until then every open PR's CI row is `base_history_unverified`);
