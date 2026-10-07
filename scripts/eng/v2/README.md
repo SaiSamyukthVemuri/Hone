@@ -30,11 +30,12 @@ The package layout follows CAP-01 §2:
 | Trusted Codex review provenance | **Done at fixture level**: `adapter/internal/github/parse-review.mjs` (one complete GraphQL response) and `adapter/internal/bind/review.mjs` (ARCH-01 §17-§21; channel B as the 10-hex V1 binding). |
 | Unresolved trusted review threads | **Done at fixture level**: thread opener and resolver by numeric id and type, from the same complete response. 05B applies FINDINGS_OPEN. |
 | External contexts | **Done at fixture level**: `adapter/internal/github/parse-rollup.mjs` and `adapter/internal/bind/external.mjs` (EXT-CONTEXT-01's closed tables). |
-| Completeness and read failures | Every parser is complete-or-UNKNOWN with closed reasons, requires the request it answers, and never throws. The collector that runs them inside coherent passes, with the confirming pass, is next. |
+| Completeness and read failures | Every parser is complete-or-UNKNOWN with closed reasons, requires the request it answers, and never throws. |
+| Collector | **Done at fixture level**: `adapter/internal/github/primitive.mjs` (the one transport, dedicated token only), `adapter/internal/github/index.mjs` (narrow readers), `adapter/local-ci.mjs` (the shepherd's own classifier proven to be production's) and `adapter/collect.mjs` (coherent pass, confirming pass, Evidence and its hash; SPEC-05A §5). Fault injection covers every request of both passes. Live collection waits on the read-only token. |
 
 Independent verification (CANONICAL_ROADMAP §16.5) lives under `tests/eng/v2/verify/`, written from SPEC-05A and the
-records alone. Rows 1–3 have had one pass; rows 4–6 have not been independently verified yet. SPEC-05A §6 lists what
-V1 does not prove.
+records alone. Rows 1–3 have had one pass; rows 4–6 and the collector have not been independently verified yet.
+SPEC-05A §7 lists what V1 does not prove.
 
 Run the tests with `npx vitest run tests/eng/v2`.
 
@@ -95,7 +96,9 @@ The runtime does **not** claim to implement the records below unchanged. These a
 ## Credential
 
 Live collection uses a **separate, read-only, fine-grained GitHub token**, never the operator's interactive
-write-scoped `gh` session. Its minimum permissions are derived from the exact operations the readers use and recorded
+write-scoped `gh` session. The token is read from `HONE_ENG_READ_TOKEN` and handed to `gh` as `GH_TOKEN` in a child
+environment whose `HOME` and `GH_CONFIG_DIR` are a fresh empty directory, so the stored session cannot be reached;
+without the variable, the collector makes no request (SPEC-05A §5.1). Its minimum permissions are derived from the exact operations the readers use and recorded
 here as each reader lands. A read the token cannot perform is an UNKNOWN that names the missing capability. A
 separate read-only token limits write authority. It does not make the collector the only reader of GitHub, and it
 does not make CAP-01 a sandbox.
@@ -114,6 +117,7 @@ a classic OAuth token, so its responses carry no fine-grained permission headers
 | workflow runs and jobs | REST `actions/workflows/{id}/runs`, `actions/runs/{id}/jobs` | Actions |
 | production rules in force | REST `rules/branches/{branch}` | Metadata |
 | production history | REST `activity` | Contents |
+| production CI definition blobs | REST `contents/{path}?ref=` | Contents |
 | commit statuses (external contexts) | GraphQL `statusCheckRollup` | Commit statuses |
 
 **Token:** a fine-grained personal access token whose resource owner is `SaiSamyukthVemuri`, scoped only to

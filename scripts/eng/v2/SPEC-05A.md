@@ -344,12 +344,88 @@ repository(owner,name){ object(oid:H){ __typename ... on Commit{ oid statusCheck
 - Any other value → `unrecognized_context_state`. `malformed` wins over it.
 - Value: `{ external: [{ source, state }] }`, where `source` is the CheckRun `name` or the StatusContext `context`.
 
-## 5. Reasons this spec adds to the V1 closed set
+## 5. The collector — readers, transport, passes and Evidence
 
-`fork_head`, `diff_too_large`, `ci_definition_changed`, and the profile's `base_ref`, `base_ref_changed`,
-`shared_head` and `base_history_unverified`.
+### 5.1 Readers and transport
 
-## 6. Residuals: what V1 does not prove
+`adapter/internal/github/index.mjs`: `createReaders({ request, policy })`. Each reader takes typed scalars only and
+refuses anything else **before any request** (`malformed`, detail "refused before any request"). It makes exactly one
+request and returns its §2–§4 parser's result for the request it made. A transport failure passes through unchanged.
+
+| Reader | Parameters | Request |
+|---|---|---|
+| `readPrKey` | PR number | GraphQL `PR_KEY_QUERY` |
+| `readCompare` | base SHA, head SHA | REST `compare/{base}...{head}` |
+| `readPrContext` | PR number, head SHA | GraphQL `PR_CONTEXT_QUERY` |
+| `readHeadBranchPrs` | head branch | REST `pulls?head=<encodeURIComponent(owner:headRef)>&state=all&per_page=100` |
+| `readBranchRules` | none (policy) | REST `rules/branches/<productionRef>` |
+| `readActivity` | `force_push`, `branch_deletion` or `branch_creation` | REST `activity?ref=<encoded full ref>&activity_type=<t>&time_period=year&per_page=100` |
+| `readCandidateRuns` | head SHA | REST `actions/workflows/<workflowId>/runs?head_sha=H&event=pull_request&per_page=100` |
+| `readRunJobs` | run id | REST `actions/runs/<id>/jobs?filter=latest&per_page=100` |
+| `readReviewEvidence` | PR number | GraphQL `REVIEW_EVIDENCE_QUERY` |
+| `readCommitRollup` | head SHA | GraphQL `ROLLUP_QUERY` |
+| `readFileBlob` | one of `.github/workflows/ci.yml`, `scripts/classify-changes.mjs`; commit SHA | REST `contents/<path>?ref=<sha>` |
+
+`parseFileBlob(raw, { path })`: an object with `type: "file"`, `path` equal to the requested path and a 40-hex
+`sha`; else `malformed`. Record `{ path, sha }`.
+
+`adapter/internal/github/primitive.mjs`: `createPrimitive({ env, … })` is the only module that reaches GitHub.
+
+- It requires the dedicated read-only token in `HONE_ENG_READ_TOKEN`. Without it, it makes no request and the result
+  is `read_failed`. The operator's `gh` session is never a fallback.
+- It runs `gh api` in a child environment built from nothing: `PATH`, a fresh empty directory as both `HOME` and
+  `GH_CONFIG_DIR`, `GH_TOKEN` set to the dedicated token, and fixed non-interactive settings. No credential is
+  inherited.
+- The token is never an argument, a result, a detail or a statistic. An echo of it, or of anything shaped like a
+  GitHub token, is redacted.
+- REST is `GET` with fixed `Accept` and API-version headers. GraphQL sends numbers with `-F` and strings with `-f`.
+- Exit 0 with JSON is the body. A non-zero exit is `read_failed`, with the reader's label and `gh`'s first stderr line
+  as the detail (for example `candidate-runs: gh: … (HTTP 403)`), which names a missing permission. Non-JSON output
+  is `malformed`. A timeout is `read_failed`.
+- Every request is counted and timed: `{ label, ms, ok }`, never a body.
+
+### 5.2 The CI definition the shepherd executes
+
+Required lanes come from production's classifier (§3.3), but the shepherd runs the classifier in its own checkout.
+`adapter/local-ci.mjs` hashes this checkout's `scripts/classify-changes.mjs` and `.github/workflows/ci.yml` exactly
+as git does (`sha1("blob <size>\0" + bytes)`), and checks that every required-job name appears as `name: <job>` in
+that `ci.yml`. The CI row is `ci_definition_mismatch` when either local blob differs from production's at
+`K0.baseSha` (`readFileBlob`), when the table is not pinned to the local `ci.yml`, or when the classifier throws.
+
+### 5.3 Passes
+
+`adapter/collect.mjs`: `collect({ prNumber, readers, local, now, policy })`.
+
+1. The first coherent pass (§1): `K0 = readPrKey`, then the body, then `K1`. The pass gets one retry if the key
+   moved.
+2. The body, for an OPEN key, in this fixed order: compare, PR context, head-branch PRs, branch rules, activity
+   (`force_push`, `branch_deletion`, `branch_creation`), candidate runs, review evidence, commit rollup, then the
+   two file blobs. Then jobs, for exactly the runs that are applicable (§3.4 step 7) and `completed`/`success`.
+   **The first failure ends the pass with its reason.** That order is the precedence among reader failures. A
+   terminal key reads nothing but the key.
+3. The confirming pass (ARCH-01 §15) runs once, with no retry. A different key is `pr_key_moved`. A body whose
+   canonical JSON differs is `unstable_snapshot`, and the diagnostics name the body fields that changed.
+4. Binding is pure and comes after both passes. A binder's closed failure is a **row result**, not a collection
+   failure, so 05B can apply its own precedence (A9).
+
+### 5.4 Evidence
+
+Success: `{ ok: true, evidence, evidenceHash, diagnostics }`:
+- `evidence`: `{ schema: "eng-loop-v1/evidence@1", observedAt, key, terminal, rows }`;
+- `rows`: `null` for a terminal key; otherwise `{ base, ci, reviews, external }`, each a closed result;
+- `evidenceHash`: SHA-256 of the canonical JSON of `{ schema, key, body }`, where `body` holds the first pass's
+  normalized records. The observation time is reported, never hashed. GitHub's listing order cannot change it,
+  because every record is canonically ordered;
+- `diagnostics`: `{ observedAt, attempts, confirmed: true }`.
+
+Failure: `{ ok: false, reason, detail, stage: "collect" | "confirm", diagnostics }`, never partial evidence.
+
+## 6. Reasons this spec adds to the V1 closed set
+
+`fork_head`, `diff_too_large`, `ci_definition_changed`, `ci_definition_mismatch`, and the profile's `base_ref`,
+`base_ref_changed`, `shared_head` and `base_history_unverified`.
+
+## 7. Residuals: what V1 does not prove
 
 Each is a stated limit, not a hidden assumption. None can make a candidate out of evidence the rules above refuse.
 
@@ -365,6 +441,10 @@ Each is a stated limit, not a hidden assumption. None can make a candidate out o
   because `classify([])` selects the full matrix.
 - **A9 — drift is 05B's rule.** `bindCi` can return `SUCCEEDED` for a PR that is behind production. Requiring
   `behindBy == 0` is 05B's precedence (`NEEDS_REFRESH` before every CI rule), and 05B's tests must prove it.
-- **R-ECHO — two answers do not echo their head.** The compare (§2.1) echoes its base but not its head, and the
-  PR context's `associatedPullRequests` (§2.2) does not echo the commit it was read for. The collector passes
-  `K0.headSha` to both, and its tests pin that.
+- **R-ECHO — three answers do not echo every request parameter.** The compare (§2.1) echoes its base but not its
+  head, the PR context's `associatedPullRequests` (§2.2) does not echo the commit it was read for, and a file blob
+  (§5.1) echoes its path but not its commit. The collector passes `K0.headSha` and `K0.baseSha`, and its strict-fake
+  tests pin every route and variable.
+- **R-TABLE — a new lane.** §5.2 proves the table's names exist in production's `ci.yml`, not that the table names
+  every lane. A lane added to production's `ci.yml` and skipped by its own condition is outside V1's required set
+  until the table is updated.

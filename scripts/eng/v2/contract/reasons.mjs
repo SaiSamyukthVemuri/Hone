@@ -27,6 +27,8 @@ export const UNKNOWN_REASONS = Object.freeze([
   "fork_head",
   "diff_too_large",
   "ci_definition_changed",
+  // the shepherd's own classifier or ci.yml is not production's (SPEC-05A §5.2)
+  "ci_definition_mismatch",
   // single-response completeness (CAP-01 §4, §15, §17)
   "ci_candidate_listing_too_large",
   "review_evidence_too_large",

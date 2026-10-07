@@ -20,6 +20,20 @@ export const isNonEmptyString = (v) => typeof v === "string" && v.length > 0;
 export const isSha40 = (v) => typeof v === "string" && SHA40.test(v);
 export const isIsoUtc = (v) => typeof v === "string" && ISO_UTC.test(v) && Number.isFinite(Date.parse(v));
 
+/**
+ * Canonical JSON: object keys sorted at every depth, arrays kept in order. Two
+ * values with equal canonical JSON are the same evidence; it is the input to
+ * the confirming pass's comparison and to the evidence hash.
+ */
+export function canonicalJson(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  return `{${Object.keys(v)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${canonicalJson(v[k])}`)
+    .join(",")}}`;
+}
+
 /** Freeze a plain value and everything inside it. */
 export function deepFreeze(v) {
   if (v !== null && typeof v === "object" && !Object.isFrozen(v)) {

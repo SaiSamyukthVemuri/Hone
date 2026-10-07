@@ -86,6 +86,21 @@ function runState(run) {
   return { unknown: "unrecognized_ci_status" };
 }
 
+/**
+ * SPEC-05A §3.4 step 7: is this run the authoritative workflow's pull_request
+ * run at the key's head, from the PR's own repository and head branch? The
+ * collector reads jobs for exactly these runs, so the two cannot drift.
+ */
+export function isApplicableRun(run, key, workflowId) {
+  return (
+    run.workflowId === workflowId &&
+    run.event === "pull_request" &&
+    run.headSha === key.headSha &&
+    run.headRepoId === key.headRepoId &&
+    run.headBranch === key.headRef
+  );
+}
+
 const provablyComplete = (listing) => listing.capped === false && Array.isArray(listing.events);
 
 const onlyThisPr = (list, prNumber) => Array.isArray(list) && list.length === 1 && list[0] === prNumber;
@@ -135,14 +150,7 @@ export function bindCi({
     }
 
     // 7. Applicable runs; every other run neither grants nor blocks.
-    const applicable = runs.runs.filter(
-      (r) =>
-        r.workflowId === workflowId &&
-        r.event === "pull_request" &&
-        r.headSha === key.headSha &&
-        r.headRepoId === key.headRepoId &&
-        r.headBranch === key.headRef,
-    );
+    const applicable = runs.runs.filter((r) => isApplicableRun(r, key, workflowId));
     if (applicable.length === 0) return okValue({ outcome: "NO_RUN", applicableRunIds: [] });
     const ids = applicable.map((r) => r.id);
 
