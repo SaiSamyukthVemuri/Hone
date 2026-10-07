@@ -11,14 +11,14 @@ import {
 //
 // Real: the consent gate, the deployment fence, the templates (and so the
 // studio-timezone rendering), the transport's answer classification and the
-// ledger mapping. Substituted: the database (claim, record, ledger commands and
-// the post-claim appointment read) and the network.
+// ledger mapping. Substituted: the database (the atomic reminder claim, record
+// and ledger commands) and the network.
 //
 // The cases are the P0 acceptance list: duplicates, cancellation, moves made
-// before the reminder is sent (before the claim and between the claim and the
-// send), missing consent and opt-out, provider failure (refused, unreachable,
-// ambiguous) and the studio's timezone. A move AFTER the send is the specified
-// follow-up SMS-03 and is deliberately not exercised here.
+// before the reminder is sent (decided inside the atomic claim), missing
+// consent and opt-out, provider failure (refused, unreachable, ambiguous) and
+// the studio's timezone. A move AFTER the send is the specified follow-up
+// SMS-03 and is deliberately not exercised here.
 // ===========================================================================
 
 const alerts: Array<Record<string, unknown>> = [];
@@ -34,39 +34,34 @@ const SID = `SM${"3c".repeat(16)}`;
 const START = "2026-10-09T17:00:00.000Z"; // 10:00 AM in Vancouver (PDT)
 const WINDOW = { startIso: "2026-10-09T16:00:00.000Z", endIso: "2026-10-09T18:00:00.000Z" };
 
-type Read = { status: string; starts_at: string } | null | "error";
+type ClaimAnswer = { result: string; starts_at?: string | null } | "error";
 const h: {
-  claim: boolean;
-  reads: Read[];
-  readCount: number;
+  claim: ClaimAnswer;
   begin: { data: unknown; error: unknown };
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
-} = { claim: true, reads: [], readCount: 0, begin: { data: LEDGER_ROW, error: null }, rpcs: [] };
+} = {
+  claim: { result: "claimed", starts_at: START },
+  begin: { data: LEDGER_ROW, error: null },
+  rpcs: [],
+};
 
 function admin(): SupabaseClient {
   return {
     rpc(fn: string, args: Record<string, unknown>) {
       h.rpcs.push({ fn, args });
-      if (fn === "claim_sms_send") return Promise.resolve({ data: h.claim, error: null });
+      if (fn === "claim_reminder_sms_send") {
+        return Promise.resolve(
+          h.claim === "error"
+            ? { data: null, error: { message: "boom" } }
+            : { data: [h.claim], error: null },
+        );
+      }
       if (fn === "begin_appointment_sms_message") return Promise.resolve(h.begin);
       if (fn === "settle_sms_message") return Promise.resolve({ data: "settled", error: null });
       return Promise.resolve({ data: null, error: null });
     },
-    from(table: string) {
-      expect(table).toBe("appointments");
-      return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: () => {
-              h.readCount += 1;
-              const next = h.reads.length > 0 ? h.reads.shift()! : { status: "confirmed", starts_at: START };
-              return Promise.resolve(
-                next === "error" ? { data: null, error: { message: "boom" } } : { data: next, error: null },
-              );
-            },
-          }),
-        }),
-      };
+    from() {
+      throw new Error("the reminder path must not read the appointment outside its claim");
     },
   } as unknown as SupabaseClient;
 }
@@ -114,9 +109,7 @@ beforeEach(() => {
   process.env.TWILIO_AUTH_TOKEN = "token";
   process.env.TWILIO_FROM_NUMBER = "+15550001111";
   process.env.TWILIO_WEBHOOK_BASE_URL = "https://hone.care";
-  h.claim = true;
-  h.reads = [];
-  h.readCount = 0;
+  h.claim = { result: "claimed", starts_at: START };
   h.begin = { data: LEDGER_ROW, error: null };
   h.rpcs = [];
   alerts.length = 0;
@@ -184,7 +177,7 @@ describe("a reminder that sends", () => {
 
 describe("duplicates", () => {
   it("a slot another run holds (or already sent) is skipped with no provider call", async () => {
-    h.claim = false;
+    h.claim = { result: "not_claimed", starts_at: START };
     expect(await send24hReminderSmsToClient(input())).toEqual({
       ok: false,
       skipped: true,
@@ -243,56 +236,56 @@ describe("missing consent, opt-out and the studio switch: no claim at all", () =
   });
 });
 
-describe("cancellation and rescheduling", () => {
-  it("cancelled after the window query: the claim is released and nothing is sent", async () => {
-    h.reads = [{ status: "cancelled", starts_at: START }];
+describe("cancellation and moves before the send", () => {
+  it("the claim receives this cron window and the reminder type", async () => {
+    await send24hReminderSmsToClient(input());
+    expect(calls("claim_reminder_sms_send")[0]?.args).toEqual({
+      p_appointment_id: "appt-1",
+      p_sms_type: "reminder_24h",
+      p_window_start: WINDOW.startIso,
+      p_window_end: WINDOW.endIso,
+    });
+  });
+
+  it("cancelled: refused by the claim, nothing sent, nothing recorded (no attempt spent)", async () => {
+    h.claim = { result: "not_confirmed", starts_at: START };
     expect(await send24hReminderSmsToClient(input())).toEqual({
       ok: false,
       skipped: true,
       reason: "not_confirmed",
     });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(recorded()).toEqual([false]);
+    expect(recorded()).toEqual([]);
   });
 
-  it("moved OUT of this window after the query: released, nothing sent", async () => {
-    h.reads = [{ status: "confirmed", starts_at: "2026-10-12T17:00:00.000Z" }];
+  it("moved OUT of this window: refused by the claim, nothing sent, nothing recorded", async () => {
+    h.claim = { result: "outside_window", starts_at: "2026-10-12T17:00:00.000Z" };
     expect(await send24hReminderSmsToClient(input())).toMatchObject({ skipped: true, reason: "outside_window" });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(recorded()).toEqual([false]);
+    expect(recorded()).toEqual([]);
   });
 
-  it("moved WITHIN the window: the message names the NEW start, and so does its manage link", async () => {
-    h.reads = [
-      { status: "confirmed", starts_at: "2026-10-09T17:30:00.000Z" },
-      { status: "confirmed", starts_at: "2026-10-09T17:30:00.000Z" },
-    ];
+  it("moved WITHIN the window: the message names the start the claim returned, and so does its manage link", async () => {
+    h.claim = { result: "claimed", starts_at: "2026-10-09T17:30:00.000Z" };
     await send24hReminderSmsToClient(input());
     expect(sentForm().get("Body")).toContain("10:30");
     expect(manageFor.map((d) => d.toISOString())).toEqual(["2026-10-09T17:30:00.000Z"]);
     expect(recorded()).toEqual([true]);
   });
 
-  it("the start is read exactly ONCE after the claim, and the slot records what the provider answered", async () => {
-    // SMS-02 is bounded to moves BEFORE the send. A move after the send is
-    // the specified follow-up SMS-03; nothing here re-reads the start after
-    // the provider call or second-guesses the recorded outcome.
-    h.reads = [{ status: "confirmed", starts_at: START }];
-    const r = await send24hReminderSmsToClient(input());
-    expect(r.ok).toBe(true);
-    expect(h.readCount, "exactly one appointment read, after the claim").toBe(1);
-    expect(recorded()).toEqual([true]);
-  });
-
-  it("an unreadable appointment after the claim is retried later, never sent blind", async () => {
-    h.reads = ["error"];
+  it("an unreachable claim spends NOTHING: no send, no record, retried on a later fire", async () => {
+    h.claim = "error";
     expect(await send24hReminderSmsToClient(input())).toEqual({
       ok: false,
-      error: "appointment_unreadable",
+      error: "reminder_claim_unavailable",
       retryable: true,
     });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(recorded()).toEqual([false]);
+    expect(recorded(), "nothing was claimed, so nothing is released").toEqual([]);
+  });
+
+  it("the appointment is never read outside the claim (the mock throws if it is)", async () => {
+    expect((await send24hReminderSmsToClient(input())).ok).toBe(true);
   });
 });
 

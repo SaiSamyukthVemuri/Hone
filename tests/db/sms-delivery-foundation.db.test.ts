@@ -10,7 +10,10 @@
 //   * delivery-status callbacks only move forward, never cross attempts, and
 //     resolve an ambiguous settle into the provider's own answer;
 //   * the invitation claim holds the invitation row, so a lifecycle command
-//     racing it is either seen (not_live) or waits for it -- never missed.
+//     racing it is either seen (not_live) or waits for it -- never missed;
+//   * the reminder claim validates status and window and claims in one
+//     transaction: a refusal spends no attempt, and a cancel or move racing
+//     it is waited for and then seen.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -191,6 +194,7 @@ const COMMANDS = [
   "public.claim_waitlist_invitation_sms(uuid,uuid)",
   "public.settle_sms_message(uuid,text,text,integer,text)",
   "public.record_sms_delivery_status(uuid,text,text,integer)",
+  "public.claim_reminder_sms_send(uuid,text,timestamptz,timestamptz)",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -219,7 +223,7 @@ describe("privilege closure", () => {
     expect(p!.n).toBe(0);
   });
 
-  it("only service_role may execute the four commands", async () => {
+  it("only service_role may execute the five commands", async () => {
     for (const fn of COMMANDS) {
       for (const [role, expected] of [
         ["service_role", true],
@@ -558,5 +562,142 @@ describe("claim_waitlist_invitation_sms waits for, then sees, a racing lifecycle
 
   it("a lifecycle write that rolls back leaves the invitation live: claimed (the control)", async () => {
     expect(await raceClaimAgainst("rollback")).toEqual({ result: "claimed", rows: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// claim_reminder_sms_send: validate and claim in one transaction (Codex P2
+// 4212576115 on #813 -- a failed post-claim read used to spend an attempt).
+// ---------------------------------------------------------------------------
+
+describe("claim_reminder_sms_send", () => {
+  type Rc = { result: string; starts_at: string | null };
+  const window = async (apptId: string, beforeH: number, afterH: number) => {
+    const [r] = await q<{ ws: string; we: string }>(
+      `select (starts_at - make_interval(hours => $2))::text ws,
+              (starts_at + make_interval(hours => $3))::text we
+         from public.appointments where id = $1`,
+      [apptId, beforeH, afterH],
+    );
+    return [r!.ws, r!.we] as const;
+  };
+  const rclaim = (apptId: string, type: string, ws: string, we: string) =>
+    q<Rc>(`select * from public.claim_reminder_sms_send($1,$2,$3::timestamptz,$4::timestamptz)`, [
+      apptId,
+      type,
+      ws,
+      we,
+    ]).then((r) => r[0]!);
+  const slot = (apptId: string) =>
+    q<{ attempts: number; claimed: boolean; sent: boolean }>(
+      `select sms_reminder_24h_send_attempts as attempts,
+              sms_reminder_24h_claimed_at is not null as claimed,
+              sms_reminder_24h_sent_at is not null as sent
+         from public.appointments where id = $1`,
+      [apptId],
+    ).then((r) => r[0]!);
+
+  it("claims a confirmed appointment inside the window and returns its start", async () => {
+    const appt = await seedAppointment(A);
+    const [ws, we] = await window(appt, 1, 1);
+    const r = await rclaim(appt, "reminder_24h", ws, we);
+    expect(r.result).toBe("claimed");
+    expect(r.starts_at).not.toBeNull();
+    expect(await slot(appt)).toEqual({ attempts: 1, claimed: true, sent: false });
+    // A second claim while the first is fresh is refused and spends nothing.
+    expect((await rclaim(appt, "reminder_24h", ws, we)).result).toBe("not_claimed");
+    expect((await slot(appt)).attempts).toBe(1);
+  });
+
+  it("a cancelled appointment is refused and spends NO attempt", async () => {
+    const appt = await seedAppointment(A);
+    const [ws, we] = await window(appt, 1, 1);
+    await adminQuery(
+      `update public.appointments set status = 'cancelled', cancelled_at = now() where id = $1`,
+      [appt],
+    );
+    expect((await rclaim(appt, "reminder_24h", ws, we)).result).toBe("not_confirmed");
+    expect(await slot(appt)).toEqual({ attempts: 0, claimed: false, sent: false });
+  });
+
+  it("a start outside the window is refused, spends NO attempt, and reports the start", async () => {
+    const appt = await seedAppointment(A);
+    const [ws, we] = await window(appt, -2, 4); // the window begins after the start
+    const r = await rclaim(appt, "reminder_24h", ws, we);
+    expect(r.result).toBe("outside_window");
+    expect(r.starts_at).not.toBeNull();
+    expect((await slot(appt)).attempts).toBe(0);
+  });
+
+  it("refuses a confirmation type, a missing window and an unknown appointment", async () => {
+    const appt = await seedAppointment(A);
+    const [ws, we] = await window(appt, 1, 1);
+    expect((await rclaim(appt, "confirmation", ws, we)).result).toBe("invalid_input");
+    expect(
+      (await q<Rc>(`select * from public.claim_reminder_sms_send($1,'reminder_2h',null,null)`, [appt]))[0]!
+        .result,
+    ).toBe("invalid_input");
+    expect((await rclaim(randomUUID(), "reminder_24h", ws, we)).result).toBe("not_found");
+    expect((await slot(appt)).attempts).toBe(0);
+  });
+
+  describe("a cancel or move racing the claim is waited for, then seen", () => {
+    async function connect(): Promise<Client> {
+      const c = new Client({ connectionString: resolveLocalDbUrl() });
+      await c.connect();
+      return c;
+    }
+
+    async function raceAgainst(change: string, outcome: "commit" | "rollback") {
+      const appt = await seedAppointment(A);
+      const [ws, we] = await window(appt, 1, 1);
+      const writer = await connect();
+      const claimer = await connect();
+      try {
+        await writer.query("begin");
+        await writer.query(change, [appt]);
+        const pid = (await claimer.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+        const pending = claimer.query(
+          `select * from public.claim_reminder_sms_send($1,'reminder_24h',$2::timestamptz,$3::timestamptz)`,
+          [appt, ws, we],
+        );
+        expect(await waitUntilBlocked(pid), "the claim did not wait for the racing write").not.toBeNull();
+        await writer.query(outcome);
+        const r = (await pending).rows[0] as Rc;
+        return { result: r.result, attempts: (await slot(appt)).attempts };
+      } finally {
+        await writer.end().catch(() => undefined);
+        await claimer.end().catch(() => undefined);
+      }
+    }
+
+    it("a cancellation that commits first is SEEN: not_confirmed, no attempt", async () => {
+      expect(
+        await raceAgainst(
+          `update public.appointments set status = 'cancelled', cancelled_at = now() where id = $1`,
+          "commit",
+        ),
+      ).toEqual({ result: "not_confirmed", attempts: 0 });
+    });
+
+    it("a move out of the window that commits first is SEEN: outside_window, no attempt", async () => {
+      expect(
+        await raceAgainst(
+          `update public.appointments
+              set starts_at = starts_at + interval '5 hours', ends_at = ends_at + interval '5 hours'
+            where id = $1`,
+          "commit",
+        ),
+      ).toEqual({ result: "outside_window", attempts: 0 });
+    });
+
+    it("a racing write that rolls back leaves the claim to proceed (the control)", async () => {
+      expect(
+        await raceAgainst(
+          `update public.appointments set status = 'cancelled', cancelled_at = now() where id = $1`,
+          "rollback",
+        ),
+      ).toEqual({ result: "claimed", attempts: 1 });
+    });
   });
 });
