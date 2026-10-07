@@ -27,9 +27,10 @@ The package layout follows CAP-01 §2:
 | PR, head and draft identity | **Done at fixture level**: `contract/pr-key.mjs` (strict nine-field key) and `adapter/internal/coherence.mjs` (K0..K1, one retry, confirming pass). Live reading waits on the read-only credential. |
 | Live production drift | **Done at fixture level**: `adapter/internal/github/parse-base.mjs` and `adapter/internal/bind/base.mjs` (SPEC-05A §2). |
 | Applicable CI evidence | **Done at fixture level**: `adapter/internal/github/parse-ci.mjs` and `adapter/internal/bind/ci.mjs` (SPEC-05A §3). Positive CI evidence still needs the production ruleset (Option A) and the independent verifier's review of the binding argument. |
-| Trusted Codex review provenance | Not started; it will reuse `scripts/eng/evidence.mjs` and `github-facts.mjs` projections |
-| Unresolved trusted review threads | Not started |
-| Completeness and read failures | Row 1's reads are complete-or-UNKNOWN; the other rows follow as they land |
+| Trusted Codex review provenance | **Done at fixture level**: `adapter/internal/github/parse-review.mjs` (one complete GraphQL response) and `adapter/internal/bind/review.mjs` (ARCH-01 §17-§21; channel B as the 10-hex V1 binding). |
+| Unresolved trusted review threads | **Done at fixture level**: thread opener and resolver by numeric id and type, from the same complete response. 05B applies FINDINGS_OPEN. |
+| External contexts | **Done at fixture level**: `adapter/internal/github/parse-rollup.mjs` and `adapter/internal/bind/external.mjs` (EXT-CONTEXT-01's closed tables). |
+| Completeness and read failures | Every reader is complete-or-UNKNOWN with closed reasons. The collector that runs them inside coherent passes, with the confirming pass, is next. |
 
 Run the tests with `npx vitest run tests/eng/v2`.
 
