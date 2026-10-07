@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import { fail, okValue } from "../../../contract/strict.mjs";
+import { isRollupRecord } from "./shapes.mjs";
 
 const ACTIONS = "github-actions";
 
@@ -41,6 +42,7 @@ const lookup = (table, value) => (typeof value === "string" && Object.hasOwn(tab
 
 export function bindExternal(record) {
   try {
+    if (!isRollupRecord(record)) return fail("malformed", "bindExternal received an input outside its contract");
     let malformed = false;
     let unrecognized = false;
     const external = [];

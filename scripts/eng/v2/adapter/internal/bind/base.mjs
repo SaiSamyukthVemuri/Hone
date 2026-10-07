@@ -3,11 +3,16 @@
 // (SPEC-05A §2.6). Pure. Called for OPEN keys only.
 // ---------------------------------------------------------------------------
 
-import { fail, okValue } from "../../../contract/strict.mjs";
+import { fail, isNonEmptyString, okValue } from "../../../contract/strict.mjs";
+import { isCompareRecord, isOpenKey, isPrContextRecord } from "./shapes.mjs";
 
-export function bindBase({ key, productionRef, compare, prContext }) {
+export function bindBase(input) {
   try {
-    if (!key || key.state !== "OPEN") return fail("malformed", "bindBase binds open pull requests only");
+    const { key, productionRef, compare, prContext } = input;
+    if (!isOpenKey(key)) return fail("malformed", "bindBase binds open pull requests only");
+    if (!isNonEmptyString(productionRef) || !isCompareRecord(compare) || !isPrContextRecord(prContext)) {
+      return fail("malformed", "bindBase received an input outside its contract");
+    }
     if (key.baseRef !== productionRef) {
       return fail("base_ref", `the pull request targets ${key.baseRef}, not the production ref`);
     }

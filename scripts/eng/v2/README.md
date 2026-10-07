@@ -55,7 +55,7 @@ The runtime does **not** claim to implement the records below unchanged. These a
    attestation. V1 proposes a profile built from GitHub-computed evidence instead:
    - the authoritative workflow id, the exact head SHA and an explicitly accepted event, with `pull_request` and
      `push` kept separate;
-   - required validation actually executed;
+   - required validation actually executed (for browser groups: the aggregator's own selection, SPEC-05A §7 A5);
    - production drift;
    - base-change events;
    - the head branch's PR list (`state=all`) and the head's associated-PR list, each exactly this PR;

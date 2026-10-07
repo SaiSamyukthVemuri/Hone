@@ -36,7 +36,18 @@ const ok = (r: any) => {
 const HEAD_800 = "fe62f51f0fd95fc97d2e21eef71d179e2e701358";
 const HEAD_809 = "9dbbdb808748023d8b835d9d3875552cd81d18e0";
 const STALE_809 = "b54e4382847a909dbd448f7c1b175e2ba49866e0";
-const key = (headSha: string) => ({ headSha });
+/** An OPEN key at `headSha`: the binder accepts nothing less (SPEC-05A §0). */
+const key = (headSha: string) => ({
+  prNumber: 809,
+  state: "OPEN",
+  isDraft: false,
+  headSha,
+  headRef: "feat/x",
+  headRepoId: 1240764106,
+  baseRef: "claude/build-hone-saas-hOex7",
+  baseRepoId: 1240764106,
+  baseSha: "6cdd830b0bcc5e3532016bc612bd0298db3533fb",
+});
 const HEAD_810_RECORDED = "958b9d536e055e746499262cdc1a740e13501bf2";
 const HEAD_776_RECORDED = "7d25459de1fe63a7fd4ed3348ecb11ab35ab6338";
 /** The PR or commit each fixture was requested for: the parsers require it. */
@@ -174,9 +185,9 @@ describe("bindReviews: trusted review artifacts at the exact head", () => {
     expect(JSON.stringify(v)).not.toContain("chatgpt-codex-connector");
   });
 
-  const withComment = (body: string, author: object) => {
+  const withComment = (body: string, author: object, lastEditedAt: string | null = null) => {
     const raw = clone(load("review/review-809.json"));
-    raw.data.repository.pullRequest.comments.nodes.push({ databaseId: 1, body, author });
+    raw.data.repository.pullRequest.comments.nodes.push({ databaseId: 1, body, lastEditedAt, author });
     raw.data.repository.pullRequest.comments.totalCount += 1;
     return ok(bindReviews({ key: key(HEAD_809), evidence: ok(parseReviewEvidence(raw, P809)), policy: REVIEW_POLICY }));
   };
@@ -202,6 +213,39 @@ describe("bindReviews: trusted review artifacts at the exact head", () => {
       databaseId: 5,
     });
     expect(v.reviews.find((r: any) => r.id === 1)?.actor).toEqual({ id: 5, type: "User" });
+  });
+
+  it("R4-EDIT: a Codex clean comment someone edited never qualifies, however its marker reads", () => {
+    // A writer can edit another account's comment while its author stays Codex. Real Codex clean verdicts are never
+    // edited (#802-#809: 12 of 12); only its running "Codex Review Summary" comment is.
+    const body = `Codex Review: Didn't find any major issues.\n\n${marker(HEAD_809.slice(0, 10))}`;
+    expect(withComment(body, CODEX).reviews.find((r: any) => r.id === 1)).toMatchObject({ qualifiesAtHead: true });
+    expect(withComment(body, CODEX, "2026-10-07T21:00:00Z").reviews.find((r: any) => r.id === 1)).toMatchObject({
+      channel: "CLEAN_COMMENT",
+      qualifiesAtHead: false,
+    });
+  });
+
+  it("the real clean verdicts are unedited, and the real edited Codex comment is only its review summary", () => {
+    for (const f of ["review/review-800.json", "review/review-809.json", "review/review-776.json"]) {
+      for (const c of load(f).data.repository.pullRequest.comments.nodes) {
+        if (c.author?.databaseId !== 199175422) continue;
+        if (c.body.startsWith("Codex Review: Didn't find any major issues.")) expect(c.lastEditedAt, f).toBeNull();
+        else if (c.lastEditedAt !== null) expect(c.body.startsWith("<!-- codex-pull-request-review-summary -->"), f).toBe(true);
+      }
+    }
+  });
+
+  it("every binder refuses an input outside its contract — null, a partial key — as malformed, never throwing", () => {
+    const evidence = ok(parseReviewEvidence(load("review/review-809.json"), P809));
+    for (const input of [null, undefined, {}, { key: { headSha: HEAD_809 }, evidence }, { key: key(HEAD_809), evidence: { reviews: [] } }]) {
+      expect(() => bindReviews(input as any)).not.toThrow();
+      expect(bindReviews(input as any)).toMatchObject({ ok: false, reason: "malformed" });
+    }
+    for (const input of [null, undefined, {}, { contexts: [{ kind: "CheckRun", name: "x" }] }]) {
+      expect(() => bindExternal(input as any)).not.toThrow();
+      expect(bindExternal(input as any)).toMatchObject({ ok: false, reason: "malformed" });
+    }
   });
 
   it("synthetic: a comment that does not BEGIN with the clean verdict is not a channel-B artifact", () => {

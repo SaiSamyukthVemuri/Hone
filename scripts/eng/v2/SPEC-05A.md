@@ -19,7 +19,15 @@ architecture record. Where it differs from a merged record, `README.md` lists th
 - **Malformed wins.** A schema violation is `malformed` even when the collection is also incomplete, so the reason
   never depends on the order of the checks.
 - **Canonical order.** A record's lists come out in a fixed order, so any reordering of the same answer normalizes to
-  the identical record (CAP-01 L7).
+  the identical record (CAP-01 L7):
+  - compare `files`, rule `types`: by string;
+  - `associatedPrNumbers`, head-branch `numbers`: by number;
+  - activity `events`: by `timestamp`, then `before`, then `after`;
+  - runs: by `runNumber`; jobs: by `name`, `status`, `conclusion`;
+  - reviews and comments: by `id`; threads and rollup contexts: by their canonical JSON.
+- **Binders check their inputs first.** Every binder validates every input against the record shapes this spec
+  defines before any rule runs. An input outside them — `null`, a partial key, a `Map` where a plain object is
+  specified, a missing flag — is `malformed`, never a pass and never another rule's reason.
 - **GraphQL** answers must carry exactly the requested fields. **REST** answers must carry each *consumed* field with
   the right type. Other REST fields are ignored, because GitHub adds REST fields over time.
 - A collection is either complete in one response or it fails closed. Nothing pages across requests.
@@ -185,7 +193,9 @@ Inputs:
 - `activity`: `{ forcePush, branchDeletion, branchCreation }`, each a §2.5 record;
 - `observedAt`: an ISO-8601 time from 05A.
 
-An input outside these shapes is `malformed`, never a pass.
+An input outside these shapes is `malformed`, never a pass. The shapes are checked **before** rule 1, so `malformed`
+wins over every rule below. `requiredJobNames` must be a non-empty list of distinct §3.3 job names that includes
+both always-required jobs (`changed-path detection` and `browser e2e (local stack)`).
 
 Rules apply in this order. The first that fires decides.
 
@@ -209,8 +219,8 @@ Rules apply in this order. The first that fires decides.
 8. **History.** The production history window must cover every applicable run, as recorded fact rather than settings.
    Any of these → `base_history_unverified`:
    - the earliest applicable `created_at` is more than 360 days before `observedAt`;
-   - any of the three activity listings is not provably complete: `capped` is not `false`, or `events` is not an
-     array;
+   - any of the three activity listings is `capped` (a listing whose `capped` or `events` is malformed never gets
+     here: it is `malformed` before rule 1);
    - **any** `force_push` or `branch_deletion` event in the listing, whatever its time;
    - any `branch_creation` event whose `timestamp` is not strictly before the earliest applicable `created_at` (an
      unparseable timestamp included).
@@ -272,7 +282,7 @@ Value: `{ outcome: "SUCCEEDED" | "FAILED" | "PENDING" | "NO_RUN" | "INCOMPLETE",
 repository(owner,name){ pullRequest(number:N){ number
   reviews(first:100){ totalCount pageInfo{hasNextPage}
     nodes{ databaseId state body commit{oid} author{__typename login ... on Bot{databaseId} ... on User{databaseId}} } }
-  comments(first:100){ totalCount pageInfo{hasNextPage} nodes{ databaseId body author{…same…} } }
+  comments(first:100){ totalCount pageInfo{hasNextPage} nodes{ databaseId body lastEditedAt author{…same…} } }
   reviewThreads(first:100){ totalCount pageInfo{hasNextPage}
     nodes{ isResolved isOutdated resolvedBy{__typename login databaseId}
       comments(first:100){ totalCount pageInfo{hasNextPage} nodes{ databaseId author{…same…} } } } } } }
@@ -286,8 +296,9 @@ repository(owner,name){ pullRequest(number:N){ number
   `{ __typename, login, databaseId }` (positive id), or another type with exactly `{ __typename, login }`; a
   resolver that is not `null` or exactly `{ __typename, login, databaseId }`; or a review or comment id that repeats.
 - A GitHub error, an invisible repository or a missing pull request → `read_failed`.
-- Record: `{ reviews: [{ id, state, body, commitOid, author }], comments: [{ id, body, author }],
-  threads: [{ isResolved, isOutdated, resolver, opener }] }`.
+- A comment's `lastEditedAt` is `null` or an ISO-8601 UTC time, else `malformed`.
+- Record: `{ reviews: [{ id, state, body, commitOid, author }], comments: [{ id, body, edited, author }],
+  threads: [{ isResolved, isOutdated, resolver, opener }] }`, where `edited` is `lastEditedAt !== null`.
   - `author`, `resolver` and `opener` are `{ id, type }`, with `id: null` for a non-User, non-Bot actor, or `null`
     when deleted.
   - `opener` is the author of the thread's first comment, or `null` when it has none.
@@ -304,11 +315,16 @@ ARCH-01 §17–§21. Policy: the Codex bot `{ id: 199175422, type: "Bot" }`, tru
 - Channel A: every review becomes `{ id, channel: "PR_REVIEW", actor, verdict: state, qualifiesAtHead }`.
   `qualifiesAtHead` is `commitOid === key.headSha` **and** the marker rule.
 - Channel B: a comment whose body **begins** with the clean prefix becomes
-  `{ id, channel: "CLEAN_COMMENT", actor, verdict: "CLEAN", qualifiesAtHead }`, with `qualifiesAtHead` the marker rule
-  alone. That is a 10-hex V1 binding (ARCH-01 §41). Other comments are not artifacts.
+  `{ id, channel: "CLEAN_COMMENT", actor, verdict: "CLEAN", qualifiesAtHead }`. `qualifiesAtHead` is `edited: false`
+  **and** the marker rule. Anyone with write access can edit another account's comment while its author stays the
+  same, so an edited body is no longer its author's statement (verifier finding R4-EDIT). Codex does not edit its
+  clean verdicts (#802–#809: 12 of 12 unedited); it edits only its running "Codex Review Summary" comment, which is
+  not a channel-B artifact. Channel B is a 10-hex V1 binding (ARCH-01 §41). Other comments are not artifacts.
 - Marker rule: the body contains `**Reviewed commit:**` exactly once, and that marker is followed by `` `x` `` where x
   is 10 lowercase hex equal to `key.headSha.slice(0, 10)`.
 - Threads become `{ opener, resolved, resolver, outdated }`.
+- Value: `{ reviews: [...], threads: [...] }` (ARCH-01 §24's two lists).
+- The marker pattern is fixed here. ARCH-01 §21 calls the marker a policy value; V1 does not make it configurable.
 - 05A computes `qualifiesAtHead` and carries identities. Trust — whether an actor is Codex or a trusted resolver —
   is 05B's decision against the policy.
 
@@ -434,17 +450,30 @@ Each is a stated limit, not a hidden assumption. None can make a candidate out o
   merge.
 - **A8 — activity-log completeness.** That the activity log records every rewrite is GitHub's claim, not proved
   here. Open questions: renaming production, or renaming another branch into its name; forced ref updates made
-  through the API; whether a full year is always retained.
-- **A5 — browser-group completeness.** The browser aggregator selects groups from the run's own diff against its
+  through the API; whether a full year is always retained; and a force push that restores the same tip inside the
+  log's write delay before the read, which would not change the key either.
+- **A5 — browser-group completeness.** This qualifies README difference 2's "required validation actually executed":
+  for browser groups it means the aggregator's own selection, not production's. The browser aggregator selects groups from the run's own diff against its
   own older base. If H reverts a change production made after that base, a group production would select may not
   have run, and the aggregator still succeeds. Named lanes are safe (`INCOMPLETE`). An empty `changed.txt` is safe
   because `classify([])` selects the full matrix.
 - **A9 — drift is 05B's rule.** `bindCi` can return `SUCCEEDED` for a PR that is behind production. Requiring
   `behindBy == 0` is 05B's precedence (`NEEDS_REFRESH` before every CI rule), and 05B's tests must prove it.
-- **R-ECHO — three answers do not echo every request parameter.** The compare (§2.1) echoes its base but not its
-  head, the PR context's `associatedPullRequests` (§2.2) does not echo the commit it was read for, and a file blob
-  (§5.1) echoes its path but not its commit. The collector passes `K0.headSha` and `K0.baseSha`, and its strict-fake
-  tests pin every route and variable.
+- **R-ECHO — four answers do not echo every request parameter.** The compare (§2.1) echoes its base but not its
+  head; the PR context's `associatedPullRequests` (§2.2) does not echo the commit it was read for; the branch rules
+  (§2.4) echo nothing, not even the branch, so only rule 6 rests on them while rule 8 uses echoed activity; and a
+  file blob (§5.1) echoes its path but not its commit. The collector (§5) passes `K0.headSha`, `K0.baseSha` and the
+  policy's production ref, and its strict-fake tests pin every route and variable.
+- **R5-DELETE — a deleted finding (writer-class).** Anyone with write access, including an agent using the operator's
+  credential, can delete Codex's thread-opening comment or its whole thread. Then the thread's opener is the next
+  comment's author, or the thread is gone, and FINDINGS_OPEN cannot see it. GitHub's GraphQL `replyTo` of a reply
+  whose parent was deleted is not proven to reveal the deletion, so V1 does not try. This is ARCH-01 §41's scope: V1
+  does not defend against a deliberately malicious same-repository writer. The mitigation is policy, added to `CLAUDE.md`
+  with the shepherd (05C): agents never edit, delete or hide a Codex review comment or thread, and resolve one only on
+  the operator's explicit instruction for that thread.
+- **R-WORKFLOWS — other pull-request workflows.** EXT-CONTEXT-01 excludes every GitHub Actions check run from the
+  external contexts, so a failing check from a second PR-triggered workflow would block nothing. Today `ci.yml` is
+  the only PR-triggered workflow (`nightly.yml` is schedule-only). Adding one requires deciding its authority first.
 - **R-TABLE — a new lane.** §5.2 proves the table's names exist in production's `ci.yml`, not that the table names
   every lane. A lane added to production's `ci.yml` and skipped by its own condition is outside V1's required set
   until the table is updated.

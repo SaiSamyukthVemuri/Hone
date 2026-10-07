@@ -290,7 +290,7 @@ describe("bindCi: provenance negative controls (SPEC-05A §3.5)", () => {
     const c = realCase(800);
     const created = c.runs.runs[0].createdAt;
     const later = new Date(Date.parse(created) + 60_000).toISOString().replace(".000Z", "Z");
-    for (const timestamp of [created, later, "not a time"]) {
+    for (const timestamp of [created, later]) {
       const recreated = {
         events: [...c.activity.branchCreation.events, { timestamp, before: "0".repeat(40), after: "b".repeat(40) }],
         capped: false,
@@ -305,16 +305,56 @@ describe("bindCi: provenance negative controls (SPEC-05A §3.5)", () => {
     ).toMatchObject({ reason: "base_history_unverified" });
   });
 
-  it("A1: a history input outside the contract never passes as clean history", () => {
+  it("A1: a history input outside the contract is malformed — never clean history, and checked before any rule", () => {
     const c = realCase(800);
     const withoutCreation: any = { ...c.activity };
     delete withoutCreation.branchCreation;
     expect(outcome({ ...c, activity: withoutCreation })).toMatchObject({ ok: false, reason: "malformed" });
-    for (const listing of [{ events: [] }, { events: [], capped: "false" }, { events: {}, capped: false }, { capped: false }]) {
+    const listings = [
+      { events: [] },
+      { events: [], capped: "false" },
+      { events: {}, capped: false },
+      { capped: false },
+      { events: [{ timestamp: "not a time", before: "a".repeat(40), after: "b".repeat(40) }], capped: false },
+    ];
+    for (const listing of listings) {
       expect(
         outcome({ ...c, activity: { ...c.activity, forcePush: listing } }),
         JSON.stringify(listing),
-      ).toMatchObject({ ok: false, reason: "base_history_unverified" });
+      ).toMatchObject({ ok: false, reason: "malformed" });
+    }
+  });
+
+  it("every bindCi input outside SPEC-05A §3.4's shapes is malformed, whatever the rules would say", () => {
+    const c = realCase(800);
+    const runId = c.runs.runs[0].id;
+    const parseFailure = { ok: false, reason: "read_failed", detail: "x" };
+    const variants: Array<[string, any]> = [
+      ["no input", null],
+      ["requiredJobNames ''", { requiredJobNames: "" }],
+      ["requiredJobNames []", { requiredJobNames: [] }],
+      ["requiredJobNames as a Set", { requiredJobNames: new Set(c.requiredJobNames) }],
+      ["requiredJobNames without the browser aggregator", { requiredJobNames: ["changed-path detection"] }],
+      ["requiredJobNames with an unknown job", { requiredJobNames: [...c.requiredJobNames, "deploy"] }],
+      ["requiredJobNames repeated", { requiredJobNames: [...c.requiredJobNames, c.requiredJobNames[0]] }],
+      ["a key with an extra field", { key: { ...c.key, extra: 1 } }],
+      ["an open key without its base tip", { key: { ...c.key, baseSha: null } }],
+      ["headBranchPrs.capped missing", { headBranchPrs: { numbers: [800] } }],
+      ["headBranchPrs.capped 'false'", { headBranchPrs: { numbers: [800], capped: "false" } }],
+      ["headBranchPrs.capped 0", { headBranchPrs: { numbers: [800], capped: 0 } }],
+      ["base without filesCapped", { base: Object.fromEntries(Object.entries(c.base).filter(([k]) => k !== "filesCapped")) }],
+      ["jobsByRunId as a Map", { jobsByRunId: new Map([[runId, c.jobsByRunId[runId]]]) }],
+      ["a parser failure in jobsByRunId", { jobsByRunId: { [runId]: parseFailure } }],
+      ["rules without flags", { rules: { types: ["non_fast_forward", "deletion"] } }],
+      ["workflowId 0", { workflowId: 0 }],
+      ["workflowId as a string", { workflowId: "289443461" }],
+      ["targetRepoId missing", { targetRepoId: undefined }],
+      ["observedAt not a time", { observedAt: "now" }],
+    ];
+    for (const [label, over] of variants) {
+      const input = over === null ? null : { ...c, ...over };
+      expect(() => outcome(input), label).not.toThrow();
+      expect(outcome(input), label).toMatchObject({ ok: false, reason: "malformed" });
     }
   });
 

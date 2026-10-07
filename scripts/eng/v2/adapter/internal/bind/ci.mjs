@@ -17,7 +17,16 @@
 // The rules apply in a fixed order; the first that fires decides.
 // ---------------------------------------------------------------------------
 
-import { fail, okValue } from "../../../contract/strict.mjs";
+import { fail, isIsoUtc, isObject, isPosInt, okValue } from "../../../contract/strict.mjs";
+import {
+  isActivityRecord,
+  isBaseValue,
+  isHeadBranchPrsRecord,
+  isJobsByRunId,
+  isOpenKey,
+  isRulesRecord,
+  isRunsRecord,
+} from "./shapes.mjs";
 
 /** Job names come from production's ci.yml; a test pins them against it. */
 export const REQUIRED_JOB_TABLE = Object.freeze([
@@ -101,29 +110,60 @@ export function isApplicableRun(run, key, workflowId) {
   );
 }
 
-const provablyComplete = (listing) => listing.capped === false && Array.isArray(listing.events);
+/** The floor of every required set: what even a docs-only diff requires (SPEC-05A §3.3). */
+const ALWAYS_REQUIRED = Object.freeze(
+  requiredJobs({
+    docs_only: true,
+    database: false,
+    security: false,
+    payment: false,
+    mobile: false,
+    google_calendar: false,
+    full_matrix_required: false,
+  }),
+);
+const TABLE_NAMES = REQUIRED_JOB_TABLE.map((row) => row.name);
+
+/** A required-job set: a non-empty list of distinct table names that includes every always-required job. */
+const isRequiredJobNames = (names) =>
+  Array.isArray(names) &&
+  names.length > 0 &&
+  new Set(names).size === names.length &&
+  names.every((n) => TABLE_NAMES.includes(n)) &&
+  ALWAYS_REQUIRED.every((n) => names.includes(n));
+
+/** SPEC-05A §3.4: every input has its specified shape, or the result is `malformed` before any rule runs. */
+function inputsValid({ key, base, headBranchPrs, runs, jobsByRunId, requiredJobNames, rules, activity, observedAt, workflowId, targetRepoId }) {
+  return (
+    isOpenKey(key) &&
+    isBaseValue(base) &&
+    isHeadBranchPrsRecord(headBranchPrs) &&
+    isRunsRecord(runs) &&
+    isJobsByRunId(jobsByRunId) &&
+    isRequiredJobNames(requiredJobNames) &&
+    isRulesRecord(rules) &&
+    isObject(activity) &&
+    isActivityRecord(activity.forcePush) &&
+    isActivityRecord(activity.branchDeletion) &&
+    isActivityRecord(activity.branchCreation) &&
+    isIsoUtc(observedAt) &&
+    isPosInt(workflowId) &&
+    isPosInt(targetRepoId)
+  );
+}
 
 const onlyThisPr = (list, prNumber) => Array.isArray(list) && list.length === 1 && list[0] === prNumber;
 
-export function bindCi({
-  key,
-  base,
-  headBranchPrs,
-  runs,
-  jobsByRunId,
-  requiredJobNames,
-  rules,
-  activity,
-  observedAt,
-  workflowId,
-  targetRepoId,
-}) {
+export function bindCi(input) {
   try {
+    if (!isObject(input) || !inputsValid(input)) return fail("malformed", "bindCi received an input outside its contract");
+    const { key, base, headBranchPrs, runs, jobsByRunId, requiredJobNames, rules, activity, observedAt, workflowId, targetRepoId } =
+      input;
     // 1. A fork's head is not a trusted writer in V1.
     if (key.headRepoId !== targetRepoId) return fail("fork_head", "the head repository is not the target repository");
 
     // 2. The changed files must be provably complete, or the required lanes are unknowable.
-    if (base.filesCapped === true || base.files.length !== base.changedFiles) {
+    if (base.filesCapped || base.files.length !== base.changedFiles) {
       return fail("diff_too_large", "the changed-file list cannot be proven complete");
     }
 
@@ -137,7 +177,7 @@ export function bindCi({
 
     // 5. The head branch and the head commit belong to this PR alone.
     if (
-      headBranchPrs.capped === true ||
+      headBranchPrs.capped ||
       !onlyThisPr(headBranchPrs.numbers, key.prNumber) ||
       !onlyThisPr(base.associatedPrNumbers, key.prNumber)
     ) {
@@ -145,7 +185,7 @@ export function bindCi({
     }
 
     // 6. Production must prevent rewrites now. This is necessary, never sufficient: history is step 8.
-    if (rules.nonFastForward !== true || rules.deletion !== true) {
+    if (!rules.nonFastForward || !rules.deletion) {
       return fail("base_history_unverified", "production does not currently block force pushes and deletion");
     }
 
@@ -165,7 +205,7 @@ export function bindCi({
       return fail("base_history_unverified", "a run is older than the recorded production history covers");
     }
     const { forcePush, branchDeletion, branchCreation } = activity;
-    if (![forcePush, branchDeletion, branchCreation].every(provablyComplete)) {
+    if (forcePush.capped || branchDeletion.capped || branchCreation.capped) {
       return fail("base_history_unverified", "production history does not fit one response");
     }
     if (forcePush.events.length !== 0 || branchDeletion.events.length !== 0) {
@@ -187,8 +227,8 @@ export function bindCi({
     if (states.some((s) => s.state === "FAILED")) return okValue({ outcome: "FAILED", applicableRunIds: ids });
     if (states.some((s) => s.state === "PENDING")) return okValue({ outcome: "PENDING", applicableRunIds: ids });
     for (const { run } of states) {
-      const listing = jobsByRunId[run.id];
-      if (!listing || !Array.isArray(listing.jobs)) {
+      const listing = Object.hasOwn(jobsByRunId, run.id) ? jobsByRunId[run.id] : undefined;
+      if (listing === undefined) {
         return fail("ci_candidate_listing_too_large", `the jobs of run ${run.id} are not available`);
       }
       for (const name of requiredJobNames) {

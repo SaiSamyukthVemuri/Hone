@@ -32,6 +32,11 @@ const COMPARE_FILE_CAP = 300;
 /** One REST page; a full page cannot prove it is the whole list. */
 const PAGE = 100;
 
+// Canonical order (SPEC-05A §0): a reordered answer normalizes to the identical record.
+const byString = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const byNumber = (a, b) => a - b;
+const byEvent = (a, b) => byString(a.timestamp, b.timestamp) || byString(a.before, b.before) || byString(a.after, b.after);
+
 /** The PR-context request (SPEC-05A §2.2). Exactly these fields. */
 export const PR_CONTEXT_QUERY =
   "query($owner:String!,$name:String!,$n:Int!,$h:GitObjectID!){repository(owner:$owner,name:$name){" +
@@ -67,7 +72,7 @@ export const parseCompare = guarded((raw, opts) => {
     aheadBy: raw.ahead_by,
     baseSha: raw.base_commit.sha,
     mergeBaseSha: raw.merge_base_commit.sha,
-    files,
+    files: [...files].sort(byString),
     filesCapped: files.length >= COMPARE_FILE_CAP,
   });
 });
@@ -122,7 +127,7 @@ export const parsePrContext = guarded((raw, opts) => {
     createdAt: p.createdAt,
     changedFiles: p.changedFiles,
     baseRefChanges: changes.pageInfo.hasNextPage ? "too_many" : changes.nodes.length,
-    associatedPrNumbers: assoc.pageInfo.hasNextPage ? "too_many" : assoc.nodes.map((n) => n.number),
+    associatedPrNumbers: assoc.pageInfo.hasNextPage ? "too_many" : assoc.nodes.map((n) => n.number).sort(byNumber),
   });
 });
 
@@ -141,7 +146,7 @@ export const parseHeadBranchPrs = guarded((raw, opts) => {
     }
     numbers.push(p.number);
   }
-  return okRecord({ numbers, capped: raw.length >= PAGE });
+  return okRecord({ numbers: numbers.sort(byNumber), capped: raw.length >= PAGE });
 });
 
 /** REST rules/branches/{branch}: the rules in force on the branch now. Proves nothing about history. */
@@ -152,7 +157,11 @@ export const parseBranchRules = guarded((raw) => {
     if (!isObject(r) || !isNonEmptyString(r.type)) return fail("malformed", "a rule has no type");
     types.push(r.type);
   }
-  return okRecord({ types, nonFastForward: types.includes("non_fast_forward"), deletion: types.includes("deletion") });
+  return okRecord({
+    types: types.sort(byString),
+    nonFastForward: types.includes("non_fast_forward"),
+    deletion: types.includes("deletion"),
+  });
 });
 
 /** REST activity?ref=...&activity_type=...: recorded history of one activity type on one ref. */
@@ -175,5 +184,5 @@ export const parseActivity = guarded((raw, opts) => {
     if (!isSha40(e.before) || !isSha40(e.after)) return fail("malformed", "an activity before/after is not 40 hex");
     events.push({ timestamp: e.timestamp, before: e.before, after: e.after });
   }
-  return okRecord({ events, capped: raw.length >= PAGE });
+  return okRecord({ events: events.sort(byEvent), capped: raw.length >= PAGE });
 });
