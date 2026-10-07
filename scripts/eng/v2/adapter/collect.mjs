@@ -85,6 +85,11 @@ function invalidOptions(args) {
   }
   if (!isLocalCi(args.local)) return "the local CI definition is incomplete";
   if (typeof args.now !== "function") return "the clock is not a function";
+  // V1 reads one repository under one fixed policy (SPEC-05A §2-§3); any other policy is refused, so the evidence
+  // hash, which does not repeat the policy, still names everything the rows were bound from except the clock.
+  if (args.policy !== undefined && canonicalJson(args.policy) !== canonicalJson(POLICY)) {
+    return "the policy is not V1's fixed policy";
+  }
   return null;
 }
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
@@ -184,7 +189,8 @@ export function collect(args) {
     const detail = e instanceof Error && e.message ? e.message : "collect received options outside its contract";
     return deepFreeze({ ok: false, reason: "malformed", detail, stage: "collect", diagnostics: { observedAt: null } });
   }
-  const { prNumber, readers, local, policy = POLICY } = args;
+  const { prNumber, readers, local } = args;
+  const policy = POLICY;
   let lastFailure = null;
   let lastBody = null;
   const remember = (r) => {

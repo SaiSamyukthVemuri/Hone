@@ -45,19 +45,21 @@ function redactor(token) {
 
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
-/** Exactly one of the two request shapes (SPEC-05A §5.1), or null. */
+const keysAre = (o, keys) => {
+  const own = Object.keys(o).sort();
+  return own.length === keys.length && own.every((k, i) => k === keys[i]);
+};
+
+/** Exactly one of the two request shapes (SPEC-05A §5.1) — no other key, nothing missing — or null. */
 function shapeOf(req) {
   if (!isPlainObject(req) || typeof req.label !== "string" || req.label === "") return null;
-  const isRest = typeof req.rest === "string" && req.rest !== "";
-  const isGraphql = typeof req.graphql === "string" && req.graphql !== "";
-  if (isRest === isGraphql) return null;
-  if (isGraphql) {
-    if (req.variables !== undefined && !isPlainObject(req.variables)) return null;
-    for (const v of Object.values(req.variables ?? {})) {
-      if (!(typeof v === "string" || (typeof v === "number" && Number.isSafeInteger(v)))) return null;
-    }
+  if (keysAre(req, ["label", "rest"])) return typeof req.rest === "string" && req.rest !== "" ? "rest" : null;
+  if (!keysAre(req, ["graphql", "label", "variables"])) return null;
+  if (typeof req.graphql !== "string" || req.graphql === "" || !isPlainObject(req.variables)) return null;
+  for (const v of Object.values(req.variables)) {
+    if (!(typeof v === "string" || (typeof v === "number" && Number.isSafeInteger(v)))) return null;
   }
-  return isRest ? "rest" : "graphql";
+  return "graphql";
 }
 
 /** `gh api` arguments for one request. No argument ever carries the token. */

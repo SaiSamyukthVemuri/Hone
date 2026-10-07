@@ -154,6 +154,9 @@ describe("primitive: the token never leaves, even when GitHub echoes it", () => 
       { label: "x", graphql: "query{x}", variables: [] },
       { label: "x", graphql: "query{x}", variables: { n: 1.5 } },
       { label: "x", graphql: "query{x}", variables: { o: { a: 1 } } },
+      { label: "x", graphql: "query{x}" },
+      { label: "x", rest: "r", method: "POST" },
+      { label: "x", graphql: "query{x}", variables: {}, extra: 1 },
     ];
     for (const req of bad) expect(p.request(req), JSON.stringify(req) ?? "undefined").toMatchObject({ ok: false, reason: "malformed" });
     expect(calls).toHaveLength(0);

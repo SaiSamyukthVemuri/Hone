@@ -396,8 +396,9 @@ request and returns its §2–§4 parser's result for the request it made. A tra
 - The token is never an argument, a result, a detail or a statistic. An echo of it, or of anything shaped like a
   GitHub token, is redacted — in a successful answer's body (before it is parsed) as much as in a detail or a
   request label.
-- A request must be exactly one of the two shapes — `{ label, rest }` or `{ label, graphql, variables }`, with string
-  or integer variables — or it is refused as `malformed` before anything is spawned.
+- A request must be exactly one of the two shapes — `{ label, rest }` or `{ label, graphql, variables }` with no other
+  key, a non-empty `rest` or `graphql`, and `variables` a plain object of strings and integers — or it is refused as
+  `malformed` before anything is spawned.
 - REST is `GET` with fixed `Accept` and API-version headers. GraphQL sends numbers with `-F` and strings with `-f`.
 - Exit 0 with JSON is the body. A non-zero exit is `read_failed`, with the reader's label and `gh`'s first stderr line
   as the detail (for example `candidate-runs: gh: … (HTTP 403)`), which names a missing permission. Non-JSON output
@@ -418,7 +419,8 @@ that `ci.yml`. The CI row is `ci_definition_mismatch` when either local blob dif
 
 0. Before the first request, every option is checked: a positive PR number, all eleven readers, a complete local
    CI definition (§5.2: a classifier, a 40-hex blob for each path, the pin flag) and a clock that returns a time —
-   milliseconds, a valid `Date`, or an ISO-8601 UTC string.
+   milliseconds, a valid `Date`, or an ISO-8601 UTC string. `policy` may be omitted; if given, it must equal V1's
+   fixed policy (§2, §3: the owner, name, repository id, production ref and workflow id) exactly.
    Anything else is `{ ok: false, reason: "malformed", stage: "collect" }` with no request made, never a throw.
 
 1. The first coherent pass (§1): `K0 = readPrKey`, then the body, then `K1`. The pass gets one retry if the key
@@ -439,7 +441,8 @@ Success: `{ ok: true, evidence, evidenceHash, diagnostics }`:
 - `evidence`: `{ schema: "eng-loop-v1/evidence@1", observedAt, key, terminal, rows }`;
 - `rows`: `null` for a terminal key; otherwise `{ base, ci, reviews, external }`, each a closed result;
 - `evidenceHash`: SHA-256 of the canonical JSON of `{ schema, key, body, localCi: { blobs, tablePinned } }`, where
-  `body` holds the first pass's normalized records. It names everything the rows were bound from except the clock.
+  `body` holds the first pass's normalized records. With V1's policy fixed by step 0, it names everything the rows
+  were bound from except the clock.
   GitHub's listing order cannot change it, because every record is canonically ordered. The observation time is
   reported, never hashed: it enters the rows only through rule 8's 360-day window, so two collections with equal
   hashes bind equal rows unless an applicable run crosses that window between them (verifier pass 3). Never key a
