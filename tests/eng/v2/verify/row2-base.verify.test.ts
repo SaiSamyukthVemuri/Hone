@@ -29,7 +29,7 @@ import {
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — ENG-LOOP V1 05A row 2: production base, drift, PR context.
-// Oracle: SPEC-05A §0 and §2 (b5f3affb). Real answers are named "real"; every
+// Oracle: SPEC-05A §0 and §2 (b5f3affb; re-derived at 203ed1f4 and f75ca255). Real answers are named "real"; every
 // edit of one is "synthetic". Expected values are read off the recorded answers
 // and the spec text, never off the implementation.
 // ===========================================================================
@@ -199,10 +199,25 @@ describe("row 2 verify: parsePrContext (§2.2)", () => {
     for (const n of [0, 1, 100]) expect(parsePrContext(withEvents(n, true), params).record.baseRefChanges).toBe("too_many");
   });
 
-  it("TRAP: the real recorded #810 context answer carries an unfiltered totalCount 4 and no nodes — malformed, never 4", () => {
-    // tests/eng/v2/fixtures/base/pr-context-810.json as recorded at b5f3affb: baseRefChanges { totalCount: 4 },
-    // no number, no pageInfo, no nodes, no __typename. It is not the §2.2 shape.
-    const r = parsePrContext(REAL.base("pr-context-810.json"), params);
+  it("REAL (verifier, read-only GraphQL with §2.2's exact query, 2026-10-07): #810 at 958b9d53 — 0 base changes, and #815 (stacked on #810) shares the commit", () => {
+    // fixtures/real/pr-context-810-at-958b9d53.json. changedFiles is the PR's count at the time of the read (61),
+    // not at that head. associatedPullRequests lists every PR whose head branch contains the commit: #815 is the
+    // 05B draft stacked on #810, so §3.4 rule 5 reads #810 as shared_head (see row 3, "LIVE stacked PR").
+    const r = parsePrContext(REAL.verify("pr-context-810-at-958b9d53.json"), params);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(r.record).toEqual({ createdAt: "2026-10-07T20:16:40Z", changedFiles: 61, baseRefChanges: 0, associatedPrNumbers: [810, 815] });
+  });
+
+  it("REAL (verifier, read-only GraphQL): #720's single BaseRefChangedEvent is counted from the filtered nodes — 1", () => {
+    const r = parsePrContext(REAL.verify("pr-context-720.json"), { expectedNumber: 720 });
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(r.record).toMatchObject({ baseRefChanges: 1, associatedPrNumbers: [720] });
+  });
+
+  it("TRAP: the builder's #810 context answer as recorded at b5f3affb carries an unfiltered totalCount 4 and no nodes — malformed, never 4", () => {
+    // fixtures/builder-real/pr-context-810-b5f3affb.json (the builder re-recorded it at 203ed1f4): baseRefChanges
+    // { totalCount: 4 }, no number, no pageInfo, no nodes, no __typename. It is not the §2.2 shape.
+    const r = parsePrContext(REAL.builder("pr-context-810-b5f3affb.json"), params);
     expect(r.ok && r.record.baseRefChanges === 4).toBe(false);
     failsWith(r, ["malformed"], "recorded #810 answer");
   });
@@ -294,7 +309,8 @@ describe("row 2 verify: parseHeadBranchPrs (§2.3)", () => {
 
   it("closed and merged PRs (state closed) count; a deleted head repository (null) is allowed", () => {
     const raw = [element(), element({ number: 702, state: "closed", head: { ...element().head, repo: null } })];
-    expect(parseHeadBranchPrs(raw, { headRef: ref }).record.numbers).toEqual([810, 702]);
+    // §0 canonical order: head-branch numbers by number
+    expect(parseHeadBranchPrs(raw, { headRef: ref }).record.numbers).toEqual([702, 810]);
   });
 
   it("100 entries are capped, 99 are not; an empty list is valid", () => {

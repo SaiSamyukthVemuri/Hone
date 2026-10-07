@@ -50,6 +50,15 @@ type Mutant = { name: string; impl: Partial<Impl456>; mustCatch: string[] };
 
 const MUTANTS: Mutant[] = [
   {
+    name: "the edited flag is ignored (R4-EDIT reopened)",
+    impl: wrapBind((a) => {
+      const ev = clone(a.evidence);
+      for (const c of ev?.comments ?? []) if (c && typeof c === "object") c.edited = false;
+      return { ...a, evidence: ev };
+    }),
+    mustCatch: ["RV-B-edited-at-head", "RV-B-forged-old-verdict"],
+  },
+  {
     name: "a marker accepted twice",
     impl: wrapBind((a) => ({
       ...a,

@@ -39,7 +39,7 @@ import {
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — ENG-LOOP V1 05A rows 4-5: trusted review provenance and
-// review threads. Oracle: SPEC-05A §0, §4.1, §4.2 (203ed1f4); ARCH-01 §17-§22, §24
+// review threads. Oracle: SPEC-05A §0, §4.1, §4.2 (203ed1f4, amended f75ca255); ARCH-01 §17-§22, §24
 // (05A computes qualifiesAtHead and carries identities; trust is 05B's); CAP-01 §17.
 // ===========================================================================
 
@@ -167,23 +167,33 @@ describe("rows 4-5 verify: bindReviews properties (§4.2; ARCH-01 §24)", () => 
     expect(artifactSummary(v2.value)).toContain(`${CLEAN_COMMENT_809}|CLEAN_COMMENT|CLEAN|Bot:${CODEX_ID}|true`);
   });
 
-  it("a missing or invalid policy, key or evidence fails closed and never throws", () => {
-    const key = keyAt(IMPL, 809, H809);
-    for (const [label, args] of [
-      ["null", null],
-      ["no policy", { key, evidence: evidence(809) }],
-      ["no evidence", { key, policy: REVIEW_POLICY }],
-      ["no key", { evidence: evidence(809), policy: REVIEW_POLICY }],
-      ["a non-key", { key: { headSha: H809 }, evidence: evidence(809), policy: REVIEW_POLICY }],
-      ["evidence of the wrong shape", { key, evidence: { reviews: "x" }, policy: REVIEW_POLICY }],
-    ] as const) {
-      const out = noThrow(() => bindReviews(args));
+  // §0 "Binders check their inputs first … An input outside them — null, a partial key, a Map where a plain
+  // object is specified, a missing flag — is malformed, never a pass"; §4.2 names policy as an input.
+  const key809 = () => keyAt(IMPL, 809, H809);
+  for (const [label, args] of [
+    ["null arguments", () => null],
+    ["undefined arguments", () => undefined],
+    ["no policy", () => ({ key: key809(), evidence: evidence(809) })],
+    ["policy undefined", () => ({ key: key809(), evidence: evidence(809), policy: undefined })],
+    ["policy null", () => ({ key: key809(), evidence: evidence(809), policy: null })],
+    ["no evidence", () => ({ key: key809(), policy: REVIEW_POLICY })],
+    ["no key", () => ({ evidence: evidence(809), policy: REVIEW_POLICY })],
+    ["a partial key", () => ({ key: { headSha: H809 }, evidence: evidence(809), policy: REVIEW_POLICY })],
+    ["evidence of the wrong shape", () => ({ key: key809(), evidence: { reviews: "x" }, policy: REVIEW_POLICY })],
+    ["evidence comments without the edited flag (the pre-f75ca255 record)", () => {
+      const e = clone(evidence(809));
+      for (const c of e.comments) delete c.edited;
+      return { key: key809(), evidence: e, policy: REVIEW_POLICY };
+    }],
+  ] as const) {
+    it(`${label}: fails closed (malformed) and never throws`, () => {
+      const out = noThrow(() => bindReviews((args as () => any)()));
       expect(out.threw, label).toBe(false);
       const v = (out as any).value;
       expect(v?.ok, label).toBe(false);
-      expect(isUnknownReason(v?.reason), `${label}: ${v?.reason}`).toBe(true);
-    }
-  });
+      expect(v?.reason, label).toBe("malformed");
+    });
+  }
 
   it("is pure over deep-frozen arguments and returns a deeply frozen value", () => {
     const key = keyAt(IMPL, 800, "fe62f51f0fd95fc97d2e21eef71d179e2e701358");
@@ -192,5 +202,91 @@ describe("rows 4-5 verify: bindReviews properties (§4.2; ARCH-01 §24)", () => 
     const b = bindReviews(deepFreeze(clone(args)));
     expect(canon(b)).toBe(canon(a));
     expect(isDeepFrozen(a.value)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// f75ca255 §4.1/§4.2: a comment's lastEditedAt, the record's `edited`, and R4-EDIT
+// ---------------------------------------------------------------------------
+describe("rows 4-5 verify: comment edits (§4.1 lastEditedAt, §4.2 channel B requires edited: false)", () => {
+  const commentNode = (raw: any, id: number) => raw.data.repository.pullRequest.comments.nodes.find((x: any) => x.databaseId === id);
+
+  it("REAL: for every comment of #776, #800 and #809, edited === (lastEditedAt !== null); edited Vercel and summary comments exist", () => {
+    let editedSeen = 0;
+    for (const n of [776, 800, 809] as const) {
+      const raw = reviewAnswer(n);
+      const r = parseReviewEvidence(raw, { expectedNumber: n });
+      expect(r.ok, `#${n}`).toBe(true);
+      for (const c of r.record.comments) {
+        const node = commentNode(raw, c.id);
+        expect(c.edited, `#${n} comment ${c.id}`).toBe(node.lastEditedAt !== null);
+        if (c.edited) editedSeen++;
+      }
+    }
+    expect(editedSeen).toBeGreaterThanOrEqual(5);
+  });
+
+  it("a record comment is exactly { id, body, edited, author }: lastEditedAt itself never enters the record", () => {
+    const r = parseReviewEvidence(reviewAnswer(809), { expectedNumber: 809 });
+    for (const c of r.record.comments) {
+      expect(Object.keys(c).sort()).toEqual(["author", "body", "edited", "id"]);
+      expect(typeof c.edited).toBe("boolean");
+    }
+  });
+
+  for (const [label, value] of [
+    ["a date without a time", "2026-10-07"],
+    ["a non-UTC offset", "2026-10-07T20:00:00+01:00"],
+    ["a space instead of T", "2026-10-07 20:00:00Z"],
+    ["prose", "yesterday"],
+    ["the empty string", ""],
+    ["an epoch number", 1759867200],
+    ["a boolean", true],
+    ["an object", { at: "2026-10-07T20:00:00Z" }],
+    ["an impossible date", "2026-13-07T20:00:00Z"],
+  ] as const) {
+    it(`a comment whose lastEditedAt is ${label} is malformed`, () => {
+      const raw = reviewAnswer(809);
+      commentNode(raw, CLEAN_COMMENT_809).lastEditedAt = value;
+      failsWith(parseReviewEvidence(raw, { expectedNumber: 809 }), ["malformed"], label);
+    });
+  }
+
+  it("a comment without the lastEditedAt field is malformed (GraphQL exact fields)", () => {
+    const raw = reviewAnswer(809);
+    delete commentNode(raw, CLEAN_COMMENT_809).lastEditedAt;
+    failsWith(parseReviewEvidence(raw, { expectedNumber: 809 }), ["malformed"], "missing lastEditedAt");
+  });
+
+  it("an ISO-8601 UTC lastEditedAt marks the comment edited; null marks it unedited", () => {
+    for (const [value, edited] of [
+      ["2026-10-07T20:00:00Z", true],
+      [null, false],
+    ] as const) {
+      const raw = reviewAnswer(809);
+      commentNode(raw, CLEAN_COMMENT_809).lastEditedAt = value;
+      const r = parseReviewEvidence(raw, { expectedNumber: 809 });
+      expect(r.ok, String(value)).toBe(true);
+      expect(r.record.comments.find((c: any) => c.id === CLEAN_COMMENT_809).edited).toBe(edited);
+    }
+  });
+
+  it("R4-EDIT closed: Codex's clean comment at the head no longer qualifies once it carries an edit, whoever edited it", () => {
+    const at = (lastEditedAt: string | null) => {
+      const raw = reviewAnswer(809);
+      commentNode(raw, CLEAN_COMMENT_809).lastEditedAt = lastEditedAt;
+      const v = bindReviews({ key: keyAt(IMPL, 809, H809), evidence: parseReviewEvidence(raw, { expectedNumber: 809 }).record, policy: REVIEW_POLICY });
+      expect(v.ok).toBe(true);
+      return artifactSummary(v.value).find((x: string) => x.startsWith(`${CLEAN_COMMENT_809}|`));
+    };
+    expect(at(null)).toBe(`${CLEAN_COMMENT_809}|CLEAN_COMMENT|CLEAN|Bot:${CODEX_ID}|true`);
+    expect(at("2026-10-07T21:30:00Z")).toBe(`${CLEAN_COMMENT_809}|CLEAN_COMMENT|CLEAN|Bot:${CODEX_ID}|false`);
+  });
+
+  it("an edit does not touch channel A: a review's qualification is commit and marker only", () => {
+    // reviews carry no lastEditedAt in §4.1's query; an edited review body is still bound by its immutable commit
+    const raw = reviewAnswer(809);
+    const r = parseReviewEvidence(raw, { expectedNumber: 809 });
+    for (const rev of r.record.reviews) expect(Object.keys(rev).sort()).toEqual(["author", "body", "commitOid", "id", "state"]);
   });
 });

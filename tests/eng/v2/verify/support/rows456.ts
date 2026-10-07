@@ -120,6 +120,31 @@ export const REVIEW_ROWS: ReviewRow[] = [
     raw: () => reviewAnswer(809),
     expect: { artifacts: base809({}), threads: EXPECTED_809_THREADS },
   },
+  // --- f75ca255 §4.1/§4.2: an edited comment is no longer its author's statement (R4-EDIT) ---------------
+  {
+    id: "RV-B-edited-at-head",
+    title: "Codex's clean comment at the head, once edited (lastEditedAt set), does not qualify",
+    source: "real #809 answer (f75ca255 recording); synthetic lastEditedAt",
+    clause: "SPEC §4.1 'edited is lastEditedAt !== null'; §4.2 channel B 'edited: false and the marker rule'",
+    number: 809,
+    headSha: H809,
+    raw: withClean((c) => (c.lastEditedAt = "2026-10-07T21:30:00Z")),
+    expect: { artifacts: base809({ [CLEAN_COMMENT_809]: B(CLEAN_COMMENT_809, BOT, false) }), threads: EXPECTED_809_THREADS },
+  },
+  {
+    id: "RV-B-forged-old-verdict",
+    title: "R4-EDIT: an OLD clean comment edited to name the current head does not qualify (the edit is recorded)",
+    source: "real #809 answer; synthetic edit as GitHub records it",
+    clause: "SPEC §4.2 channel B (f75ca255); verifier finding R4-EDIT",
+    number: 809,
+    headSha: H809,
+    raw: edit809((raw) => {
+      const c = commentOf(raw, OLD_CLEAN_COMMENT_809);
+      c.body = c.body.replace("`b54e438284`", "`9dbbdb8087`");
+      c.lastEditedAt = "2026-10-07T22:00:00Z";
+    }),
+    expect: { artifacts: base809({}), threads: EXPECTED_809_THREADS },
+  },
   {
     id: "RV-real-809-at-older-head",
     title: "the same evidence keyed to #809's earlier head b54e4382 flips every qualification",

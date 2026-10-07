@@ -49,10 +49,12 @@ const BOT = `Bot:${CODEX_ID}`;
 
 interface Seq {
   id: string;
-  verdict: "NO HOLE" | "SPEC AMBIGUITY" | "CONFIRMED HOLE";
+  verdict: "NO HOLE" | "SPEC AMBIGUITY" | "CONFIRMED HOLE" | "CLOSED" | "RECORDED RESIDUAL";
   layer: string;
   sequence: string;
   row: ReviewRow | RollupRow;
+  /** evaluate with another policy (default: REVIEW_POLICY) */
+  policy?: any;
 }
 
 const edit809 = (f: (pr: any) => void) => () => {
@@ -69,20 +71,42 @@ const base809 = [
 const SEQUENCES: Seq[] = [
   {
     id: "R4-EDIT-forged-clean-verdict",
-    verdict: "SPEC AMBIGUITY",
-    layer: "05A (the §4.1 query carries no edit evidence; 05B never sees bodies)",
+    verdict: "CLOSED",
+    layer: "05A (f75ca255 §4.1 lastEditedAt, §4.2 channel B requires edited: false)",
     sequence:
-      "A writer edits Codex's OLD clean comment 6044636744 (it reviewed b54e438284) so its marker reads the current head 9dbbdb8087. GitHub keeps Codex as the author. 05A then emits a channel-B CLEAN artifact from Codex's numeric id with qualifiesAtHead true, so 05B would see TRUSTED_REVIEW_AT_HEAD for a head Codex never reviewed. No SHA-prefix collision is needed. This is writer-class — the threat model ARCH-01 §41 accepts for V1 — but it is far cheaper than the recorded 10-hex residual and is recorded nowhere (SPEC §6, ARCH-01 §41). Channel A is immune: commit_id cannot be edited.",
+      "Pass 2 found it: a writer edits Codex's OLD clean comment 6044636744 (it reviewed b54e438284) so its marker reads the current head 9dbbdb8087; GitHub keeps Codex as the author. GitHub also sets the comment's lastEditedAt on every edit, by any editor, and keeps it when the edit history's content is deleted (docs, read 2026-10-07). So the forged comment now arrives edited and does not qualify. Live (2026-10-07, #770-#815): 53 Codex clean verdicts, 0 edited; all 43 summary comments edited — so requiring edited: false costs no real verdict.",
     row: {
       id: "R4-EDIT",
-      title: "an edited old Codex clean comment qualifies at the new head",
-      source: "real #809 answer; synthetic edit (as a writer could make it)",
-      clause: "SPEC §4.2 channel B and marker rule",
+      title: "an edited old Codex clean comment does NOT qualify at the new head",
+      source: "real #809 answer (f75ca255 recording, with lastEditedAt); synthetic edit as GitHub would record it",
+      clause: "SPEC §4.1 lastEditedAt; §4.2 channel B 'edited: false and the marker rule'",
       number: 809,
       headSha: H809,
       raw: edit809((pr) => {
         const c = pr.comments.nodes.find((x: any) => x.databaseId === OLD_CLEAN_COMMENT_809);
         c.body = c.body.replace("`b54e438284`", "`9dbbdb8087`");
+        c.lastEditedAt = "2026-10-07T22:00:00Z";
+      }),
+      expect: { artifacts: [...base809, `${OLD_CLEAN_COMMENT_809}|CLEAN_COMMENT|CLEAN|${BOT}|false`].sort() },
+    },
+  },
+  {
+    id: "R4-EDIT-premise-unrecorded-edit",
+    verdict: "NO HOLE",
+    layer: "GitHub (the closure rests on lastEditedAt being set for every edit)",
+    sequence:
+      "The same forged body with lastEditedAt null — an edit GitHub did not record — would still qualify. No GitHub path is known that changes a comment body without setting lastEditedAt; this row pins the premise the closure rests on.",
+    row: {
+      id: "R4-EDIT-premise",
+      title: "a forged marker on an UNEDITED comment would qualify: the closure depends on GitHub recording the edit",
+      source: "real #809 answer; synthetic (not producible through GitHub's edit paths)",
+      clause: "SPEC §4.2 channel B",
+      number: 809,
+      headSha: H809,
+      raw: edit809((pr) => {
+        const c = pr.comments.nodes.find((x: any) => x.databaseId === OLD_CLEAN_COMMENT_809);
+        c.body = c.body.replace("`b54e438284`", "`9dbbdb8087`");
+        c.lastEditedAt = null;
       }),
       expect: { artifacts: [...base809, `${OLD_CLEAN_COMMENT_809}|CLEAN_COMMENT|CLEAN|${BOT}|true`].sort() },
     },
@@ -110,10 +134,10 @@ const SEQUENCES: Seq[] = [
   },
   {
     id: "R5-DELETE-opener",
-    verdict: "SPEC AMBIGUITY",
-    layer: "05A opener derivation (SPEC §4.1) and 05B FINDINGS_OPEN (ARCH-01 §19)",
+    verdict: "RECORDED RESIDUAL",
+    layer: "SPEC-05A §7 R5-DELETE; ARCH-01 §41 (writer-class, credential-based authority); mitigation = a 05C CLAUDE.md policy not yet written",
     sequence:
-      "A writer who is NOT an allowlisted resolver deletes Codex's thread-opening review comment. If GitHub keeps the thread with its human reply (behaviour unverified), the opener becomes the reply's author; if it keeps no comment, the opener is null. Either way 05B no longer sees a Codex-opened thread, so FINDINGS_OPEN cannot fire — the human-resolver allowlist (only 26781116 may clear a Codex finding) is bypassed by deletion instead of resolution. Writer-class and unrecorded. A first remaining comment that is a reply (GraphQL replyTo) would reveal it, but §4.1 does not request replyTo.",
+      "A REAL false-ready path, inside §41's accepted scope. Codex reviews H and opens finding threads (FINDINGS_OPEN blocks). Anyone with write access — including an agent using the operator's credential — deletes the thread-opening Codex comment. With no reply the whole thread is gone; with a reply the opener becomes the reply's author (unverified which). Codex's findings REVIEW at H stays (COMMENTED, qualifiesAtHead true: review present), FINDINGS_OPEN no longer fires, and with green CI the PR reads ready at H with Codex's findings never resolved by the allowlisted human. No 05A query can see a deleted thread. Live (2026-10-07): 248 review threads on #770-#815, all Codex-opened, none starting with a reply or empty — it has never happened here. §41 already accepts that an agent using the operator's credential is indistinguishable from the operator, so this is the same class; the only mitigation is the policy §7 promises with 05C.",
     row: {
       id: "R5-DELETE",
       title: "a thread whose Codex opening comment was deleted is opened by the human reply",
@@ -256,13 +280,43 @@ const SEQUENCES: Seq[] = [
       expect: { external: ["Vercel Preview Comments=success", "Vercel=success", "ci/all-green=success"].sort() },
     },
   },
+  {
+    id: "R4-POLICY-EMPTY-PREFIX",
+    verdict: "SPEC AMBIGUITY",
+    layer: "05A input shapes (§0 'Binders check their inputs first'; §4.2 names the policy but not its shape)",
+    sequence:
+      "A caller passes a policy whose clean prefix is the empty string. Every comment body 'begins with' it, so every comment becomes a CLEAN_COMMENT artifact (the Vercel bot's, the operator's '@codex review', Codex's summary). Only the marker rule and 05B's actor check stand between that and a pass. Unreachable from GitHub data (the collector passes REVIEW_POLICY), but §0's input check does not cover the policy because §4.2 never defines its shape; f75ca255 also accepts a missing policy (the row-4 'no policy' rows) and a non-array humanResolvers.",
+    policy: { ...REVIEW_POLICY, cleanPrefix: "" },
+    row: {
+      id: "R4-EMPTY-PREFIX",
+      title: "an empty clean prefix makes every comment a channel-B artifact (literal §4.2)",
+      source: "real #809 answer; synthetic policy",
+      clause: "SPEC §4.2 channel B 'body begins with the clean prefix'",
+      number: 809,
+      headSha: H809,
+      raw: () => reviewAnswer(809),
+      expect: {
+        artifacts: [
+          `${CODEX_REVIEW_809}|PR_REVIEW|COMMENTED|${BOT}|false`,
+          `5446958797|PR_REVIEW|COMMENTED|User:${OPERATOR_ID}|false`,
+          `6044590012|CLEAN_COMMENT|CLEAN|Bot:35613825|false`,
+          `6044590545|CLEAN_COMMENT|CLEAN|User:${OPERATOR_ID}|false`,
+          `6044597377|CLEAN_COMMENT|CLEAN|${BOT}|false`,
+          `${OLD_CLEAN_COMMENT_809}|CLEAN_COMMENT|CLEAN|${BOT}|false`,
+          `6044763749|CLEAN_COMMENT|CLEAN|User:${OPERATOR_ID}|false`,
+          `${CLEAN_COMMENT_809}|CLEAN_COMMENT|CLEAN|${BOT}|true`,
+        ].sort(),
+      },
+    },
+  },
 ];
 
-describe("adversarial: rows 4-6 sequences (verdicts: SPEC AMBIGUITY = unrecorded residual, NO HOLE = safe or owned by 05B)", () => {
+describe("adversarial: rows 4-6 sequences (verdicts: SPEC AMBIGUITY = unrecorded or undefined, RECORDED RESIDUAL = accepted in §7, CLOSED = fixed, NO HOLE = safe or owned by 05B)", () => {
   for (const s of SEQUENCES) {
     it(`${s.id} [${s.verdict}; ${s.layer}]`, () => {
+      const impl = s.policy ? { ...IMPL, policy: s.policy } : IMPL;
       const why =
-        "number" in s.row ? checkReview(s.row, evaluateReview(s.row, IMPL)) : checkRollup(s.row as RollupRow, evaluateRollup(s.row as RollupRow, IMPL));
+        "number" in s.row ? checkReview(s.row, evaluateReview(s.row, impl)) : checkRollup(s.row as RollupRow, evaluateRollup(s.row as RollupRow, impl));
       expect(why, `${why}\nsequence: ${s.sequence}`).toBe("");
     });
   }

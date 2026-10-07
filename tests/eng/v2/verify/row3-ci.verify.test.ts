@@ -518,17 +518,47 @@ describe("row 3 verify: bindCi input shapes (§3.4 'Inputs', as amended)", () =>
     ["null arguments", () => null],
   ];
 
-  // §3.3 always requires changed-path detection and the aggregator, so an empty required
-  // set can never be "the §3.3 set": whatever its reason, it must never be a pass.
-  for (const [label, names] of [
+  // f75ca255 §3.4: "requiredJobNames must be a non-empty list of distinct §3.3 job names that includes both
+  // always-required jobs", and §0 "Binders check their inputs first … a Map where a plain object is specified".
+  const ALL7 = [JOB.changes, JOB.aggregator, JOB.validate, JOB.db, JOB.payment, JOB.mobile, JOB.google];
+  const NAMES: Array<[string, unknown]> = [
     ["an empty array", []],
     ["an empty Set", new Set()],
-  ] as const) {
-    it(`requiredJobNames as ${label} is never SUCCEEDED (no required job would be checked)`, () => {
+    ["a Set of the two always-required names", new Set([JOB.changes, JOB.aggregator])],
+    ["a list without the aggregator", [JOB.changes, JOB.validate]],
+    ["a list without changed-path detection", [JOB.aggregator, JOB.validate]],
+    ["a list with a duplicate", [JOB.changes, JOB.aggregator, JOB.changes]],
+    ["a list with a name outside §3.3", [JOB.changes, JOB.aggregator, "unit tests"]],
+    ["a list with a browser shard name (shards are covered by the aggregator)", [JOB.changes, JOB.aggregator, "browser e2e (local stack) (1)"]],
+    ["a list with a non-string entry", [JOB.changes, JOB.aggregator, 7]],
+  ];
+  for (const [label, names] of NAMES) {
+    it(`requiredJobNames as ${label} is malformed, never a pass`, () => {
       const out = noThrow(() => bindCi(with_((a) => ({ ...a, requiredJobNames: names }))));
       expect(out.threw, label).toBe(false);
-      const v = (out as any).value;
-      expect(v?.ok === true && v.value?.outcome === "SUCCEEDED", `${label}: ${JSON.stringify(v)}`).toBe(false);
+      expect((out as any).value, label).toMatchObject({ ok: false, reason: "malformed" });
+    });
+  }
+  it("requiredJobNames as all seven §3.3 names (in any order) is a valid input", () => {
+    for (const names of [ALL7, [...ALL7].reverse()]) {
+      const v = bindCi(with_((a) => ({ ...a, requiredJobNames: names })));
+      expect(v.ok === false && v.reason === "malformed", JSON.stringify(v)).toBe(false);
+    }
+  });
+
+  // f75ca255 §3.4: "The shapes are checked BEFORE rule 1, so malformed wins over every rule below."
+  const WINS: Array<[string, (a: any) => any]> = [
+    ["a fork key (rule 1) with an empty requiredJobNames", (a) => ({ ...a, key: { ...a.key, headRepoId: 4242 }, requiredJobNames: [] })],
+    ["a capped diff (rule 2) with jobsByRunId as a Map", (a) => ({ ...a, base: { ...a.base, filesCapped: true }, jobsByRunId: new Map() })],
+    ["a base change (rule 4) with a listing whose capped is the string 'false'", (a) => ({ ...a, base: { ...a.base, baseRefChanges: 1 }, activity: { ...a.activity, forcePush: { events: [], capped: "false" } } })],
+    ["a shared head (rule 5) with rules missing their flags", (a) => ({ ...a, headBranchPrs: { numbers: [702, 810], capped: false }, rules: { types: [] } })],
+    ["no applicable run (rule 7) with observedAt not a time", (a) => ({ ...a, runs: { runs: [] }, observedAt: "yesterday" })],
+  ];
+  for (const [label, f] of WINS) {
+    it(`malformed wins over every rule: ${label}`, () => {
+      const out = noThrow(() => bindCi(with_(f)));
+      expect(out.threw, label).toBe(false);
+      expect((out as any).value, label).toMatchObject({ ok: false, reason: "malformed" });
     });
   }
   for (const [label, args] of STRICT) {
@@ -539,21 +569,38 @@ describe("row 3 verify: bindCi input shapes (§3.4 'Inputs', as amended)", () =>
     });
   }
 
-  // These two sit between "an input outside these shapes is malformed" and step 8's
-  // "events is not an array / capped is not false -> base_history_unverified":
-  // the spec does not say which wins, so either closed reason is accepted — never a pass.
+  // f75ca255 step 8: "a listing whose capped or events is malformed never gets here: it is malformed before
+  // rule 1" — the pass-2 ambiguity is resolved, so these are strictly malformed.
   const HISTORY: Array<[string, () => any]> = [
     ["activity without branchCreation (the pre-amendment shape)", () => with_((a) => ({ ...a, activity: { forcePush: a.activity.forcePush, branchDeletion: a.activity.branchDeletion } }))],
     ["a listing whose events is not an array", () => with_((a) => ({ ...a, activity: { ...a.activity, forcePush: { events: null, capped: false } } }))],
-    ["a listing whose capped is not false", () => with_((a) => ({ ...a, activity: { ...a.activity, branchDeletion: { events: [], capped: "false" } } }))],
+    ["a listing whose capped is not a boolean", () => with_((a) => ({ ...a, activity: { ...a.activity, branchDeletion: { events: [], capped: "false" } } }))],
+    ["a listing whose event is not a §2.5 event", () => with_((a) => ({ ...a, activity: { ...a.activity, branchCreation: { events: [{ timestamp: "2026-05-16T14:46:37Z" }], capped: false } } }))],
+    ["activity as a Map", () => with_((a) => ({ ...a, activity: new Map(Object.entries(a.activity)) }))],
   ];
   for (const [label, args] of HISTORY) {
-    it(`${label} is never a pass (malformed or base_history_unverified)`, () => {
+    it(`${label} is malformed (before rule 1), never base_history_unverified or a pass`, () => {
       const out = noThrow(() => bindCi(args()));
       expect(out.threw, label).toBe(false);
-      const v = (out as any).value;
-      expect(v?.ok, label).toBe(false);
-      expect(["malformed", "base_history_unverified"], `${label}: ${v?.reason}`).toContain(v?.reason);
+      expect((out as any).value, label).toMatchObject({ ok: false, reason: "malformed" });
     });
   }
+  it("a well-formed CAPPED listing is base_history_unverified (step 8), not malformed", () => {
+    for (const k of ["forcePush", "branchDeletion", "branchCreation"]) {
+      const v = bindCi(with_((a) => ({ ...a, activity: { ...a.activity, [k]: { ...a.activity[k], capped: true } } })));
+      expect(v, k).toMatchObject({ ok: false, reason: "base_history_unverified" });
+    }
+  });
+});
+
+describe("row 3 verify: LIVE stacked PR (read-only GraphQL, 2026-10-07)", () => {
+  // associatedPullRequests(f75ca255) = [810, 815]: #815 (05B, draft) is stacked on #810's branch, so every 05A
+  // commit belongs to both PRs. §3.4 rule 5 then reads #810 as shared_head for as long as #815 is open. Safe
+  // (never a pass), but the bottom PR of every stack is UNKNOWN in V1 — a liveness consequence of rule 5.
+  it("a PR whose head commit is also in a stacked PR's branch is shared_head, whatever its CI says", () => {
+    const w = SCENARIOS[0].world();
+    w.prContext.associated = [810, 815];
+    const e = evaluate(w, IMPL);
+    expect(matches(e.result, { reason: "shared_head" }), JSON.stringify(e.result)).toBe(true);
+  });
 });
