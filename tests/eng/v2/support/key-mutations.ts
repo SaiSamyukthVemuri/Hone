@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- this harness mutates raw, untyped GitHub JSON on purpose */
 // ---------------------------------------------------------------------------
 // ENG-LOOP V1 05A: spec-derived mutations of a raw PR-key GraphQL answer.
 //
