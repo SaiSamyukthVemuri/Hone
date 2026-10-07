@@ -45,6 +45,12 @@ The input is CAP-01's *complete* `readCommitRollup` result for `K0.headSha` (PR-
 EXT-CONTEXT-01 reads nothing from GitHub. It consumes the context records only. Each is a `StatusContext` or a
 `CheckRun`, the two members of GitHub's `StatusCheckRollupContext` union (Appendix).
 
+**The records arrive schema-valid.** A context node that does not match GitHub's schema is CAP-01's *malformed* reader
+result (CAP-01 §17, fixture C11), which `collect` turns into `UNKNOWN(malformed)` before this record runs. That
+includes a `null` or non-string `StatusContext.state` or `CheckRun.status`, a non-string `CheckRun.conclusion`, and a
+missing or non-string `App.slug`. This record never reclassifies such a value. `CheckRun.conclusion` and
+`CheckSuite.app` are the nullable fields it reads (Appendix); §4 and §7 say what their `null` means.
+
 ## 4. The external domain and the GitHub Actions discriminator
 
 - **Every `StatusContext` is external.**
@@ -53,8 +59,9 @@ EXT-CONTEXT-01 reads nothing from GitHub. It consumes the context records only. 
 - **GitHub Actions check runs are excluded from the external domain.** Whatever their status or conclusion, they never
   grant or block through external-context semantics. GitHub Actions CI authority is CI-ATTEST-01's alone.
 - **Every other `CheckRun` is external.**
-- **A `CheckRun` that cannot be classified** — its check suite has no app, or no readable `slug` — makes the collection
-  `UNKNOWN(malformed)`. GitHub's schema allows `CheckSuite.app` to be `null` (Appendix).
+- **A `CheckRun` whose check suite has no app** cannot be classified and makes the collection `UNKNOWN(malformed)`.
+  GitHub's schema allows `CheckSuite.app` to be `null` (Appendix). A missing or non-string slug is already CAP-01's
+  *malformed* result (§3), so a `CheckRun` without a valid readable slug always ends `UNKNOWN(malformed)`.
 
 ## 5. `StatusContext.state` — closed table
 
@@ -63,7 +70,7 @@ EXT-CONTEXT-01 reads nothing from GitHub. It consumes the context records only. 
 | `SUCCESS` | `success` |
 | `PENDING`, `EXPECTED` | `pending` |
 | `ERROR`, `FAILURE` | `failure` |
-| any other value | `UNKNOWN(unrecognized_context_state)` |
+| any other string | `UNKNOWN(unrecognized_context_state)` |
 
 ## 6. External `CheckRun.status` — closed table
 
@@ -71,7 +78,7 @@ EXT-CONTEXT-01 reads nothing from GitHub. It consumes the context records only. 
 |---|---|
 | `REQUESTED`, `QUEUED`, `IN_PROGRESS`, `WAITING`, `PENDING` | `pending` |
 | `COMPLETED` | the conclusion table (§7) |
-| any other value | `UNKNOWN(unrecognized_context_state)` |
+| any other string | `UNKNOWN(unrecognized_context_state)` |
 
 These five are exactly the non-completed values of GitHub's `CheckStatusState` at authoring (Appendix). There is no rule
 of the form `status` ≠ `COMPLETED`. The conclusion of a check run that is not `COMPLETED` is not read.
@@ -82,7 +89,7 @@ of the form `status` ≠ `COMPLETED`. The conclusion of a check run that is not 
 |---|---|
 | `SUCCESS`, `NEUTRAL`, `SKIPPED` | `success` |
 | `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE`, `STALE` | `failure` |
-| `null`, a malformed value, or any other value | `UNKNOWN(unrecognized_context_state)` |
+| `null`, or any other string | `UNKNOWN(unrecognized_context_state)` |
 
 ## 8. Normalized output and the negative-only law
 
@@ -93,10 +100,11 @@ The binding yields either a multiset of normalized external facts, one per exter
 ```
 
 or exactly one closed reason for the whole collection:
-- `unrecognized_context_state` — a `StatusContext.state`, an external `CheckRun.status` or a completed external
-  `CheckRun.conclusion` that is not a value its table lists, `null` and non-string values included (§5–§7);
-- `malformed` — a context that cannot be placed in the domain: a `CheckRun` that §4 cannot classify, or a context that
-  is neither a `StatusContext` nor a `CheckRun`.
+- `unrecognized_context_state` — a validly typed value that its table does not list: a `StatusContext.state` or an
+  external `CheckRun.status` string outside §5 or §6, or a completed external `CheckRun.conclusion` that is `null` or a
+  string outside §7;
+- `malformed` — a `CheckRun` that §4 cannot classify because its check suite has no app. Every other malformed node is
+  CAP-01's *malformed* result before this record runs (§3).
 
 `collect` turns the reason into `UNKNOWN(reason)` for the whole snapshot (CAP-01 §6), and no partial set survives. When
 several contexts fail, the reason does not depend on their order: `malformed` if any context is malformed, otherwise
@@ -121,7 +129,7 @@ External success can **never** grant candidacy. Where these effects fall in the 
 | 1 | `StatusContext` `SUCCESS` | `success` |
 | 2 | `StatusContext` `PENDING`; `StatusContext` `EXPECTED` | `pending` |
 | 3 | `StatusContext` `ERROR`; `StatusContext` `FAILURE` | `failure` |
-| 4 | `StatusContext` with an unknown state | `UNKNOWN(unrecognized_context_state)` |
+| 4 | `StatusContext` with an unknown state string | `UNKNOWN(unrecognized_context_state)` |
 | 5 | external `CheckRun` `REQUESTED` | `pending` |
 | 6 | external `CheckRun` `QUEUED` | `pending` |
 | 7 | external `CheckRun` `IN_PROGRESS` | `pending` |
@@ -131,15 +139,16 @@ External success can **never** grant candidacy. Where these effects fall in the 
 | 11 | `COMPLETED` + `NEUTRAL` | `success` |
 | 12 | `COMPLETED` + `SKIPPED` | `success` |
 | 13 | `COMPLETED` + each of `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE`, `STALE` | `failure`, for each |
-| 14 | external `CheckRun` with an unknown status | `UNKNOWN(unrecognized_context_state)` |
-| 15 | `COMPLETED` + an unknown conclusion | `UNKNOWN(unrecognized_context_state)` |
+| 14 | external `CheckRun` with an unknown status string | `UNKNOWN(unrecognized_context_state)` |
+| 15 | `COMPLETED` + an unknown conclusion string | `UNKNOWN(unrecognized_context_state)` |
 | 16 | `COMPLETED` + a `null` conclusion | `UNKNOWN(unrecognized_context_state)` |
 | 17 | a GitHub Actions `CheckRun`, with any status or conclusion — `FAILURE` included | excluded from the external domain |
-| 18 | a `CheckRun` whose check suite has no app, or no readable slug | `UNKNOWN(malformed)` |
+| 18 | a `CheckRun` whose check suite has no app | `UNKNOWN(malformed)` |
 | 19 | a permutation of the same contexts | the same normalized multiset |
 | 20 | only external successes | never sufficient for readiness |
-| 21 | one malformed and one unrecognized context, in either order | `UNKNOWN(malformed)` |
+| 21 | one `CheckRun` with no app and one unrecognized value, in either order | `UNKNOWN(malformed)` |
 | 22 | the recorded real rollup of `390e12af8d` (Appendix) | two `success` facts: the `vercel` app's `CheckRun` and the `Vercel` `StatusContext` |
+| 23 | a `null` or non-string `StatusContext.state` or `CheckRun.status`, a non-string conclusion, or a missing slug | CAP-01's *malformed* result (fixture C11) → `UNKNOWN(malformed)`; this record never sees it |
 
 ## 10. Schema change
 
@@ -163,6 +172,12 @@ no patch loop. Families: the external domain and the Actions discriminator; the 
 output and its reasons.
 
 Pure prose, formatting or non-normative feedback does not consume the budget.
+
+**Spent.** Codex's ready-triggered review of `b54e438284` raised P2 `4210760855`. A `null` or non-string state, status
+or conclusion — values CAP-01 already returns as *malformed* (fixture C11) — was reclassified here as
+`unrecognized_context_state`. The one repair limits this record to schema-valid records: `unrecognized_context_state`
+covers only validly typed values that a table does not list, plus the nullable conclusion's `null`, and malformed
+payloads stay CAP-01's (§3). A further P0–P2 in the normalized-output family → **stop**.
 
 ## 13. Non-goals
 
