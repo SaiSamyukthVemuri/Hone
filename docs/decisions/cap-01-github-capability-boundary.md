@@ -9,7 +9,7 @@
 | **Scope** | Every runtime module under `scripts/eng/v2/`, the V2 entry shim, and every other runtime module's static imports into them. |
 | **Not in scope** | Runtime implementation; edits to #800, #802 or #803; `ci.yml`; 05A; 05B; ARCH-02. |
 | **Authored at** | production `4eccefd2fff7efa1abc1a9048531e8046865027d`. |
-| **Amended** | CAP-01-READER-STATE-01, 2026-10-06 (§15): `readCandidateRuns` also returns each candidate run's mutable execution state. |
+| **Amended** | CAP-01-READER-STATE-01, 2026-10-06 (§15): `readCandidateRuns` also returns each candidate run's mutable execution state. CAP-01-ATTEST-READER-01, 2026-10-07 (§16): `readRunAttestation` has one frozen two-operation request plan. |
 
 > **What this record is — and is not.** It provides **Goal B, accidental architecture-drift protection**, through static
 > architectural lint. It does **not** provide **Goal C, hostile in-process capability containment**, and Goal B does not
@@ -136,9 +136,10 @@ and G4 check it statically.
 - **One entry, one export.** `index.mjs` assembles the reader modules and exports `createReaders()`, which returns a
   frozen object of narrow readers. No general request function is exported from the package.
 - **Reader rules (frozen):**
-  - each reader has one fixed GraphQL document or one fixed REST route template;
-  - its parameters are typed scalars only — a PR number, a 40-hex commit SHA, a numeric run or artifact id, a repository
-    file path. No reader accepts query text, a route, a branch name or a ref name;
+  - each reader has one fixed GraphQL document or one fixed REST route template, with exactly one frozen exception:
+    `readRunAttestation`, whose fixed two-operation request plan is below;
+  - its parameters are typed scalars only — a PR number, a 40-hex commit SHA, a numeric run id, a repository file path.
+    No reader accepts query text, a route, a URL, an artifact id, a branch name or a ref name;
   - it returns a normalized record typed in `contract/**`. Raw responses — for example a workflow run's
     `pull_requests` — must never leave the transport package;
   - exactly one reader, `readPrKey`, reads a pull request's current **identity and lifecycle** — its state, draft flag,
@@ -152,7 +153,7 @@ and G4 check it statically.
 | `readReviewEvidence` | PR number | reviews, issue comments, review threads | ARCH-01 review authority |
 | `readCommitRollup` | commit SHA | that commit's external status contexts | ARCH-01 external checks |
 | `readCandidateRuns` | head SHA | the designated workflow's `pull_request` runs at that SHA, each with its candidate metadata **and** its mutable execution state (below) | ARCH-01 CI; CI-ATTEST-01 |
-| `readRunAttestation` | run id | that run's attestation record and artifact metadata | CI-ATTEST-01 |
+| `readRunAttestation` | run id | that run's normalized attestation record and artifact metadata, by its fixed two-operation plan (below) | CI-ATTEST-01 |
 | `readCompare` | base SHA, head SHA | behind and ahead counts, and the merge-base SHA | ARCH-01 drift; CI-ATTEST-01 trust anchor |
 | `readFileBlob` | file path, commit SHA | the git blob SHA of that file at that commit | CI-ATTEST-01 trust anchor |
 
@@ -216,6 +217,71 @@ Required listing fixtures, for the transport's implementation tests:
 | L7 | any reordering of a valid response of at most 100 runs | the same normalized listing, and the same frontier result after `run_number` ordering |
 | L8 | an explicit next-page link | `UNKNOWN(ci_candidate_listing_too_large)` |
 | L9 | a non-integer or negative `total_count`, a missing or non-array `workflow_runs`, or a record outside the schema | `UNKNOWN(malformed)` |
+
+**The attestation reader's request plan** (CAP-01-ATTEST-READER-01, §16). `readRunAttestation(runId)` is one semantic
+reader. Its caller supplies only the workflow run id. Internally it performs exactly two fixed read operations, in this
+order, and nothing else: no loop, no second page, and no caller-selected route, URL or artifact id.
+
+1. **LOCATE.** One request to the run's artifact list, `GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts`,
+   with the fixed query `name=ci-attest-v1` and `per_page=100`, and never a second page. The complete filtered response
+   must show:
+   - `total_count` is a non-negative integer, equals the length of `artifacts`, and is at most 100;
+   - exactly one artifact, whose `id` is a positive integer and whose `name` is exactly `ci-attest-v1`;
+   - `expired` is `false`, and `digest` is present, as `sha256:` followed by 64 lowercase hex characters;
+   - `workflow_run.id` equals the input run id, and the rest of the artifact metadata the CI binding record compares
+     is well formed.
+
+   Any failure — no artifact, several, a count mismatch, paging required, malformed metadata or an expired artifact —
+   returns the reader's normalized *unavailable* result, and **no download happens**.
+2. **DOWNLOAD.** Only after LOCATE succeeds: one request to
+   `GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip`, for the artifact id taken from LOCATE's validated
+   response. The transport follows only the redirect this operation documents. The redirect URL stays inside the
+   transport: it is never accepted from a caller, exposed downstream or reused. The downloaded bytes must:
+   - have a SHA-256 equal to the listed `digest`;
+   - form a valid zip with exactly one entry, named exactly `ci-attest.json`, within the size limit the CI binding
+     record freezes;
+   - parse into the normalized attestation record, whose contract constructor enforces the schema the CI binding
+     record defines (CI-ATTEST-01).
+
+   Any failure, including a `410 Gone`, returns the *unavailable* result.
+
+- **Re-runs — a deliberate V1 liveness limitation.** A re-run that re-executes the attestation emitter may leave more
+  than one `ci-attest-v1` artifact on the same workflow run: GitHub has been observed listing one such artifact per
+  attempt (Appendix). V1 fails closed. LOCATE never chooses among duplicates; the run's result is *unavailable*, and
+  the CI binding record treats it as UNKNOWN. This affects liveness only. It cannot grant CI success, choose an older
+  or a newer attestation by any heuristic, or make a pull request ready. Recovery is a **new** workflow run — a push,
+  a close and reopen that starts a fresh `pull_request` run, or any other legitimate new run with a higher
+  `run_number` — which can become the CI binding record's current-run frontier; there is no selection within the
+  ambiguous run. A re-run of failed jobs that does not re-execute the upstream emitter keeps its one attestation and is
+  unaffected. A "re-run all jobs" that leaves duplicates may stay UNKNOWN, and V1 accepts that.
+- **Producer unchanged.** The CI binding record's emitter keeps `overwrite: false` and produces one artifact per
+  executed attempt; the reader requires one unambiguous artifact for the run. V1 does not assume that `overwrite: true`
+  deletes an earlier attempt's artifact; that is unproven. An artifact record exposes no documented attempt selector,
+  and neither `created_at` nor the artifact id is attempt identity. Downloading every duplicate to choose by the
+  payload's `runAttempt` would add a loop and move attempt selection into the transport.
+- **What crosses the boundary.** Only the normalized attestation record with its frozen artifact metadata, or the
+  *unavailable* result. The raw list response, the artifact id, the redirect URL and the zip bytes never leave the
+  transport package. The CI binding record classifies an *unavailable* result (CI-ATTEST-01: INVALID).
+- **G3.** The golden pins both operations: each route template, its fixed query, and their order. Changing either
+  operation is an amendment to this record first (fixture N9). This remains architectural lint, not a runtime proof.
+
+Required attestation-reader fixtures, for the transport's implementation tests:
+
+| # | Situation | Required result |
+|---|---|---|
+| A1 | exactly one valid `ci-attest-v1` artifact | DOWNLOAD runs |
+| A2 | no `ci-attest-v1` artifact | *unavailable*; no download |
+| A3 | two or more valid-looking `ci-attest-v1` artifacts for one run id — for example after a re-run that re-executed the emitter | *unavailable*; no download and no selection |
+| A4 | the one artifact is expired | *unavailable*; no download |
+| A5 | a `total_count` different from the number of artifacts returned | *unavailable*; no download |
+| A6 | more than 100 matching artifacts, so paging would be required | *unavailable*; no second page and no download |
+| A7 | a caller tries to supply an artifact id | impossible: the public signature takes only a run id, and a second parameter fails G3 (N9) |
+| A8 | the downloaded bytes' SHA-256 differs from `digest` | *unavailable* |
+| A9 | a malformed zip | *unavailable* |
+| A10 | a zip with more than one entry | *unavailable* |
+| A11 | an entry not named exactly `ci-attest.json` | *unavailable* |
+| A12 | malformed JSON, or JSON outside the schema | *unavailable* |
+| A13 | a real attested run (CI-ATTEST-01's fixture 1, pinned by the `ci.yml` implementation lane) | the normalized attestation record |
 
 ## 5. What crosses outward
 
@@ -520,6 +586,32 @@ read, so a run can be dropped or duplicated between pages. By operator decision,
 listing law (§4), which removes paging instead of reconciling it. A further P0–P2 in the candidate-listing or
 reader-state family → **stop**.
 
+## 16. Amendment CAP-01-ATTEST-READER-01 — the attestation reader's request plan
+
+| | |
+|---|---|
+| **Decision** | `readRunAttestation(runId)` stays one semantic reader, with one frozen two-operation plan: LOCATE, then DOWNLOAD (§4). The caller supplies only the run id. |
+| **Date** | 2026-10-07 |
+| **Decided by** | Sam (operator), after Codex's ready-triggered review of PR #802 found the gap (P1 `4201792798`). |
+| **Why** | §4 allowed each reader one fixed route, but reading an attestation takes two GitHub operations: listing the run's artifacts, then downloading one by artifact id. The reader could not be implemented under this record. |
+| **Not added** | No new reader, parameter, §3 edge or network capability: the graph stays primitive → reader modules → index → collect. No artifact-list or download reader, no artifact-id or URL input, and no loop or paging. The download's documented redirect is followed inside that same operation and adds no route or input. Every other V1 reader keeps its single fixed query or route. |
+
+**Ownership — no overlap.**
+
+| Owner | Owns |
+|---|---|
+| CAP-01 | reader existence, reader parameters, each reader's fixed request plan, and its normalized output |
+| CI-ATTEST-01 | the attestation's semantic validation, frontier classification, and run identity comparison |
+
+**Review budget.** One exact-head review round. One semantic repair is allowed. A second P0–P2 in the same family →
+**stop**, with no patch loop.
+
+**Spent.** Codex's review of `2aa208c678` raised P1 `4201892749`: a re-run can leave several same-name artifacts on one
+run, which LOCATE's exactly-one rule makes *unavailable*. By operator decision (Option A), this is accepted as a
+documented V1 liveness limitation (§4). Duplicates are deliberately *unavailable*, recovery is a new run, and no
+attempt-selection rule, extra request or ordering was added. A further P0–P2 in the attestation-reader or
+re-run-artifact family → **stop**.
+
 ---
 
 ## Appendix — evidence (2026-10-06, read only)
@@ -537,3 +629,7 @@ reader-state family → **stop**.
 | REST `workflow-run` schema (OpenAPI), for §15 | `status` and `conclusion` are required, nullable strings; `run_attempt` is an optional integer; `run_number` is a required integer. The workflow-runs list returns them for every run, in one response. |
 | PR #802, ready-triggered review `5434850896`, for §15 | P1 `4200685968`: no reader exposed the governing run's current `status` or `conclusion` |
 | All 2,829 `ci.yml` runs (workflow `289443461`), for §4's listing law | no head SHA has more than two `pull_request` runs |
+| REST `actions/list-workflow-run-artifacts` (OpenAPI), for §16 | query `name`, `per_page` and `page`; the response holds `total_count` and `artifacts`; an artifact's `digest` is a nullable string |
+| REST `actions/download-artifact` (OpenAPI), for §16 | `GET …/actions/artifacts/{artifact_id}/{archive_format}`, where the format must be `zip`; it answers `302` with a `Location` URL that expires after one minute, or `410` |
+| PR #802, ready-triggered review `5436100752`, for §16 | P1 `4201792798`: reading an attestation takes two GitHub operations, and §4 allowed one |
+| GitHub CLI issue `cli/cli#12437` (open, 2026-01-07), for §4's re-run note | after a re-run, one run's name-filtered artifact list returned two same-name artifacts, one per attempt (`pmd/pmd` run `20775770442`; those artifacts have since expired) |
