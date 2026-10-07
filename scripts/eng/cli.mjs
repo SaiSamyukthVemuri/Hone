@@ -30,6 +30,13 @@ eng - read delivery state for one pull request, at its exact head
 
 Reports GitHub facts only. It does not decide release readiness, does not
 record findings, and cannot merge.
+
+  npm run --silent eng -- shepherd <pr> [--json] [--no-receipt]
+
+ENG-LOOP V1: one advisory decision at the exact head, read-only, with the
+dedicated token in HONE_ENG_READ_TOKEN. Exit 0 candidate (advisory; a human
+merges), 4 not a candidate, 3 UNKNOWN, 2 usage, 1 internal error.
+See scripts/eng/v2/README.md.
 `);
 }
 
@@ -113,7 +120,12 @@ function renderHuman(facts) {
   return out.join("\n");
 }
 
-if (process.argv[1] && process.argv[1].endsWith("cli.mjs")) {
+if (process.argv[1] && process.argv[1].endsWith("cli.mjs") && process.argv[2] === "shepherd") {
+  // ENG-LOOP V1 05C (scripts/eng/v2/README.md). JSON mode writes only JSON to
+  // stdout; exitCode rather than exit() so a piped report is never truncated.
+  const { runShepherdCli } = await import("./v2/cli-shepherd.mjs");
+  process.exitCode = runShepherdCli({ argv: process.argv.slice(2), env: process.env, out: process.stdout, err: process.stderr });
+} else if (process.argv[1] && process.argv[1].endsWith("cli.mjs")) {
   const argv = process.argv.slice(2);
   const json = argv.includes("--json");
   const args = argv.filter((a) => !a.startsWith("--"));

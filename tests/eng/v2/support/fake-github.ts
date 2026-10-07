@@ -2,6 +2,19 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+// prettier-ignore
+// @ts-expect-error - .mjs utility ships without type declarations
+import { PR_KEY_QUERY } from "../../../../scripts/eng/v2/contract/pr-key.mjs";
+// prettier-ignore
+// @ts-expect-error - .mjs utility ships without type declarations
+import { PR_CONTEXT_QUERY } from "../../../../scripts/eng/v2/adapter/internal/github/parse-base.mjs";
+// prettier-ignore
+// @ts-expect-error - .mjs utility ships without type declarations
+import { REVIEW_EVIDENCE_QUERY } from "../../../../scripts/eng/v2/adapter/internal/github/parse-review.mjs";
+// prettier-ignore
+// @ts-expect-error - .mjs utility ships without type declarations
+import { ROLLUP_QUERY } from "../../../../scripts/eng/v2/adapter/internal/github/parse-rollup.mjs";
+
 // ---------------------------------------------------------------------------
 // A STRICT fake of the transport's `request` function for the 05A collector.
 //
@@ -96,4 +109,41 @@ export function routes800({ rules = PROTECTED_RULES as unknown }: { rules?: unkn
 /** #809, merged: a terminal key reads nothing else. */
 export function routes809(): Routes {
   return { [gql("pr-key", { n: 809 })]: () => load("pr-key/pr-809-merged.json") };
+}
+
+const LABEL_BY_QUERY: Record<string, string> = {
+  [PR_KEY_QUERY]: "pr-key",
+  [PR_CONTEXT_QUERY]: "pr-context",
+  [REVIEW_EVIDENCE_QUERY]: "review-evidence",
+  [ROLLUP_QUERY]: "commit-rollup",
+};
+
+/**
+ * A fake `gh` at the PROCESS level, for the real primitive: it decodes the exact
+ * argument vector `gh api` would receive back into a request identity and
+ * answers from the same routes. An unscripted request is gh's 404.
+ */
+export function fakeGhSpawn(routes: Routes) {
+  const calls: Array<{ args: string[]; env: Record<string, string> }> = [];
+  const counts: Record<string, number> = {};
+  const spawn = (_cmd: string, args: string[], opts: any) => {
+    calls.push({ args, env: opts.env });
+    let id: string;
+    if (args[1] === "graphql") {
+      const label = LABEL_BY_QUERY[args[3].slice("query=".length)] ?? "unknown-query";
+      const vars: Record<string, unknown> = {};
+      for (let i = 4; i < args.length; i += 2) {
+        const [name, ...rest] = args[i + 1].split("=");
+        vars[name] = args[i] === "-F" ? Number(rest.join("=")) : rest.join("=");
+      }
+      id = `${label} ${canonical(vars)}`;
+    } else {
+      id = args[args.length - 1];
+    }
+    const answer = routes[id];
+    if (!answer) return { status: 1, stdout: '{"message":"Not Found"}', stderr: "gh: Not Found (HTTP 404)\n", signal: null };
+    counts[id] = (counts[id] ?? 0) + 1;
+    return { status: 0, stdout: JSON.stringify(answer(counts[id])), stderr: "", signal: null };
+  };
+  return { spawn, calls };
 }

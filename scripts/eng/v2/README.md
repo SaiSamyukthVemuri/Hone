@@ -35,6 +35,8 @@ The package layout follows CAP-01 §2:
 
 | Decision engine (05B) | **Done at fixture level**: `decision/decide.mjs` (SPEC-05B), with `decision/policy.mjs` and the closed `decision/next-action.mjs`. All 21,600 evidence combinations agree with a precedence oracle written from the directive; 14 of 14 unsafe mutants are caught. Not yet independently verified. |
 
+| Shepherd (05C) | **Done at fixture level**: `npm run --silent eng -- shepherd <pr> [--json] [--no-receipt]` (`cli-shepherd.mjs`, `shepherd.mjs`, `receipts.mjs`). Not live: see "Shepherd" below. |
+
 Independent verification (CANONICAL_ROADMAP §16.5) lives under `tests/eng/v2/verify/`, written from SPEC-05A and the
 records alone. Rows 1–3 have had one pass; rows 4–6 and the collector have not been independently verified yet.
 SPEC-05A §7 lists what V1 does not prove.
@@ -102,6 +104,57 @@ The runtime does **not** claim to implement the records below unchanged. These a
 9. **Missing required CI.** The operator's row 6 is "missing required CI → `CI_NOT_STARTED` / `CI_INCOMPLETE`". V1
    decides `CI_NOT_STARTED` for `NO_RUN` (ARCH-01's `NO_FRONTIER`) and `CI_INCOMPLETE` for `INCOMPLETE`, a
    successful run in which a required job did not succeed.
+
+## Shepherd
+
+```
+npm run --silent eng -- shepherd <pr> --json     # one JSON report on stdout, nothing else
+npm run --silent eng -- shepherd <pr>            # the same facts as text
+```
+
+It reads one PR at its exact head through the dedicated read-only token (05A), decides once (05B), prints the report,
+and writes one diagnostic receipt. It performs no GitHub mutation: every request is a REST `GET` or a GraphQL
+`query`.
+
+**Report** (`eng-loop-v1/shepherd@1`):
+- `pr`, `headSha`, `baseRef`, and `production: { ref, tip }`;
+- `observedAt`, `toolVersion` (`eng-loop-v1@<checkout HEAD>`, with `+dirty` when the tool or its CI inputs differ
+  from that commit) and `evidenceHash`;
+- `decision`, `reasonCodes`, `blocking`, `nextAction` and `humanMergeRequired: true`;
+- `sourceReferences`: links built only from normalized ids and SHAs;
+- `instrumentation`: request count, failed requests, latency, attempts, whether the confirming pass ran, and where
+  an UNKNOWN arose;
+- `receipt`: `written`, `failed` or `disabled`.
+
+Fields that could not be established are `null`, never guessed.
+
+**Exit codes.** A successful read is not READY.
+
+| Code | Meaning |
+|---|---|
+| 0 | `CANDIDATE_READY_FOR_HUMAN_REVIEW`: advisory; a human authorizes the merge at the exact head |
+| 4 | a definite non-candidate decision |
+| 3 | `UNKNOWN`: the evidence could not be established; never treat it as green |
+| 2 | usage error. In `--json` mode, stdout is still one JSON document |
+| 1 | internal error |
+
+**Diagnostic receipts** live in `.eng/receipts/` (gitignored, non-shipping), or `HONE_ENG_RECEIPTS_DIR`.
+- **Contents.** Each receipt is one write-once file: `pr`, `head`, `evidenceHash`, `decision`, `reasons`,
+  `observed_at`, `tool_version` and a checksum. The schema is closed, so no credential, login, detail or URL can
+  enter.
+- **Writing.** Each receipt is written to an exclusive temporary file, fsynced, then renamed into place. A reader
+  therefore never sees a torn record, and concurrent writers cannot collide.
+- **Reading.** An interrupted write, an invalid file or an unreadable directory makes the read `complete: false`. No
+  data is never proof of no failures.
+- **Authority.** `decide()` never reads receipts. They are diagnostic evidence for the shadow evaluation, not a
+  release ledger.
+
+**Claude Code** runs the shepherd at the points `CLAUDE.md` §4 names, and acts only on its bounded next action.
+
+**Not live yet.** Live use needs:
+- the dedicated token;
+- the production ruleset, independently verified (until then every open PR's CI row is `base_history_unverified`);
+- independent verification of the collector, 05B and 05C.
 
 ## Credential
 

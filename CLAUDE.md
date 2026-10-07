@@ -230,6 +230,34 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
   containment, deployment success where applicable, and a clean tree.
 - **Green CI is not merge authorization.**
 
+### ENG-LOOP shepherd — advisory and read-only
+
+`npm run --silent eng -- shepherd <pr> --json` reads one PR at its exact head
+and returns one advisory decision (`scripts/eng/v2/README.md`). It never writes
+to GitHub and never merges. Run it:
+
+- after pushing a PR head;
+- after that head's CI run or a requested review settles — wait with the single
+  watcher above, never a new loop;
+- before asking for human merge authorization, quoting its `decision`,
+  `headSha` and `evidenceHash`.
+
+Act only on its bounded `nextAction`, inside your own task's authorization:
+
+| Decision | Do |
+|---|---|
+| `CI_PENDING`, `CI_NOT_STARTED`, `EXTERNAL_PENDING` | wait, then re-run once |
+| `NEEDS_REFRESH` | normal-merge production |
+| `CI_FAILED`, `CI_INCOMPLETE`, `FINDINGS_OPEN` | fix |
+| `REVIEW_MISSING` | request a review of the exact head |
+| `UNKNOWN` | escalate with its reason — never read it as green |
+| `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission |
+
+It needs the dedicated read-only token in `HONE_ENG_READ_TOKEN`; without it,
+every answer is `UNKNOWN(read_failed)`. Until ENG-LOOP V1 is declared LIVE, its
+output is shadow evidence beside the existing checks, never a replacement for
+them.
+
 **A hard timeout must always EXCEED its performance target.** Run
 `30767725631` set both to 10 minutes, so two extended shards were *cancelled*
 at exactly their target — shard 2 had completed 72/90 tests with **zero
