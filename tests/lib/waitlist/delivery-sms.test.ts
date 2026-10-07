@@ -6,6 +6,14 @@ import {
 } from "@/lib/waitlist/delivery/sms";
 import { invitationExpiryLabel } from "@/lib/waitlist/delivery/policy";
 
+const alerts: Array<Record<string, unknown>> = [];
+vi.mock("@/lib/ops/alerts", () => ({
+  recordOpsAlert: (input: Record<string, unknown>) => {
+    alerts.push(input);
+    return Promise.resolve();
+  },
+}));
+
 // ===========================================================================
 // SMS-01 — the waitlist invitation's text.
 //
@@ -82,6 +90,7 @@ beforeEach(() => {
   h.claim = { data: [target()], error: null };
   h.rpcs = [];
   sleeps.length = 0;
+  alerts.length = 0;
   logs = [];
   fetchMock = vi.fn(() => answer(201, { sid: SID }));
   vi.stubGlobal("fetch", fetchMock);
@@ -196,6 +205,47 @@ describe("provider failures", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sleeps).toEqual([]);
     expect(settled()).toEqual([expect.objectContaining({ p_outcome: "unknown" })]);
+  });
+});
+
+describe("a text that did not go raises ONE ops alert; every other outcome raises none", () => {
+  it("refused: one sms_send_failed warning with the provider code and no secret", async () => {
+    fetchMock.mockImplementationOnce(() => answer(400, { code: 21211 }));
+    await send();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      severity: "warning",
+      event: "sms_send_failed",
+      studioId: "studio-1",
+      safeDetails: { purpose: "waitlist_invitation", sms_message_id: ROW, outcome: "refused", provider_error_code: 21211 },
+    });
+    const text = JSON.stringify(alerts[0]);
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toMatch(/6045550199|\/invitation\//);
+  });
+
+  it("an answer that was lost: one warning with outcome unknown", async () => {
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+    );
+    await send();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ safeDetails: { outcome: "unknown", error: "twilio_timeout" } });
+  });
+
+  it("rate-limited twice (the one retry spent): one warning", async () => {
+    fetchMock.mockImplementationOnce(() => answer(429, { code: 20429 })).mockImplementationOnce(() => answer(429, { code: 20429 }));
+    expect(await send()).toEqual({ state: "refused" });
+    expect(alerts).toHaveLength(1);
+  });
+
+  it("accepted, skipped and unclaimed raise nothing", async () => {
+    await send();
+    h.claim = { data: [target({ mobile_verified_at: null })], error: null };
+    await send();
+    h.claim = { data: [{ result: "studio_disabled" }], error: null };
+    await send();
+    expect(alerts).toEqual([]);
   });
 });
 

@@ -11,6 +11,7 @@ import {
 } from "@/lib/sms/delivery-ledger";
 import { prospectMayReceiveSms } from "@/lib/waitlist/prospect-sms-consent";
 import { invitationExpiryLabel } from "./policy";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 
 // SMS-01 — a waitlist invitation's SMS, sent beside its email.
 //
@@ -36,7 +37,10 @@ import { invitationExpiryLabel } from "./policy";
 // no outcome here can turn an issued invitation into a failed one.
 //
 // LOGGING. One structured line per invitation: ids, the outcome word and a
-// reason slug. Never the phone number, the link, the token or the body.
+// reason slug. Never the phone number, the link, the token or the body. A
+// text the provider refused, or whose answer was lost, also raises ONE
+// `sms_send_failed` warning: this path has no later retry, a refusal will never
+// produce a delivery callback, and an unresolved answer may never get one.
 
 export type WaitlistInvitationSmsOutcome =
   | { state: "accepted" }
@@ -129,5 +133,24 @@ export async function sendWaitlistInvitationSms(args: {
     ...(result.ok ? {} : { error: result.error }),
   });
   if (settle.outcome === "skipped") return { state: "skipped", reason: settle.skipReason };
+  if (settle.outcome === "refused" || settle.outcome === "unknown") {
+    await recordOpsAlert({
+      severity: "warning",
+      event: "sms_send_failed",
+      message:
+        settle.outcome === "refused"
+          ? "A waitlist invitation text was refused by the provider; the invitation email is unaffected."
+          : "A waitlist invitation text may not have been sent (the provider's answer was lost); the invitation email is unaffected.",
+      studioId: args.studio.id,
+      route: "lib/waitlist/delivery/sms",
+      safeDetails: {
+        purpose: "waitlist_invitation",
+        sms_message_id: claim.messageId,
+        outcome: settle.outcome,
+        error: result.ok ? null : result.error,
+        provider_error_code: result.ok ? null : (result.providerErrorCode ?? null),
+      },
+    });
+  }
   return { state: settle.outcome };
 }

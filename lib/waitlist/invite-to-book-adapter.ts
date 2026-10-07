@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { addDays, localDateString } from "@/lib/booking/tz";
@@ -397,10 +398,12 @@ async function deliverInvitation(args: {
 
 /**
  * SMS-01. The invitation's text, beside its email and in the SAME request --
- * the raw token exists nowhere else, so there is no later send. Whether it
- * goes at all is decided by the database claim (the studio switch, liveness,
- * once per invitation) and by prospectMayReceiveSms; its outcome lives in the
- * SMS ledger. It never changes the admission, the invitation or the email's
+ * the raw token exists nowhere else, so there is no later send. It runs AFTER
+ * the practitioner's response (schedulePostResponse), so a stalled provider
+ * can never hold the Invite to book action open. Whether it goes at all is
+ * decided by the database claim (the studio switch, liveness, once per
+ * invitation) and by prospectMayReceiveSms; its outcome lives in the SMS
+ * ledger. It never changes the admission, the invitation or the email's
  * disposition, and it never throws.
  */
 async function deliverInvitationSms(args: {
@@ -424,6 +427,20 @@ async function deliverInvitationSms(args: {
         at: new Date().toISOString(),
       }),
     );
+  }
+}
+
+/**
+ * Run work AFTER the response has been sent. Mirrors schedulePostResponse in
+ * app/book/[slug]/waitlist-actions.ts: outside a request scope, or where
+ * after() is unavailable, it falls back to fire-and-forget rather than letting
+ * scheduling itself throw. The work is never awaited by the caller.
+ */
+function schedulePostResponse(work: () => Promise<void>): void {
+  try {
+    after(work);
+  } catch {
+    void work();
   }
 }
 
@@ -593,21 +610,19 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     // invitationUrlFor builds, and into nothing else: not stored, not logged,
     // not returned, not attached to an error.
     //
-    // SMS-01: the email and, for an eligible prospect, the text go out side by
-    // side -- one opportunity, one deadline, two channels. The text never
-    // delays, changes or fails the email, and its outcome is not this
-    // function's `delivery` (that remains the email's recorded disposition).
-    const [attempt] = await Promise.all([
-      deliverInvitation({
-        studio,
-        invitationId,
-        recipientEmail,
-        rawToken,
-        issuedAt: new Date(issuedAt),
-        expiresAt: new Date(expiresAt),
-      }),
-      deliverInvitationSms({ studio, invitationId, rawToken }),
-    ]);
+    // SMS-01: one opportunity, one deadline, two channels. The text is
+    // scheduled to run AFTER the response, so it never delays the practitioner
+    // or the email; its outcome is not this function's `delivery` (that
+    // remains the email's recorded disposition).
+    schedulePostResponse(() => deliverInvitationSms({ studio, invitationId, rawToken }));
+    const attempt = await deliverInvitation({
+      studio,
+      invitationId,
+      recipientEmail,
+      rawToken,
+      issuedAt: new Date(issuedAt),
+      expiresAt: new Date(expiresAt),
+    });
     const delivery = attempt.state;
 
     // WRITE THE OUTCOME DOWN (0196), so it survives the practitioner navigating

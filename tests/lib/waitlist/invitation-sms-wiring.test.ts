@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ===========================================================================
-// SMS-01 — the invitation SMS is wired beside the email, in the SAME request.
+// SMS-01 — the invitation SMS is wired beside the email, in the SAME request,
+// and runs AFTER the practitioner's response.
 //
 // The raw token exists only in the request that minted the invitation, so the
 // text can only be sent here. These cases drive the real adapter
 // (`admissionCommandAdapter.inviteToBook`) with the database, the session and
-// both channel senders substituted, and pin:
+// both channel senders substituted, and `after()` replaced by a queue the test
+// drains, and pin:
 //
+//   * the action answers BEFORE the text runs, so a stalled provider can never
+//     hold it open, and the text still runs once the response is out;
 //   * both channels receive the SAME invitation id and the SAME secure link;
 //   * the practitioner's outcome is still the EMAIL's disposition -- the text
 //     can neither improve nor spoil it, even when it throws;
@@ -36,6 +40,19 @@ const sessionActor = vi.fn();
 vi.mock("@/lib/booking/session-actor", () => ({ sessionActor: () => sessionActor() }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://hone.care" }));
 
+// after(): queued, so "answered before the text ran" is an assertion.
+const deferred: Array<() => Promise<void>> = [];
+const scheduling = { throws: false };
+vi.mock("next/server", () => ({
+  after: (work: () => Promise<void>) => {
+    if (scheduling.throws) throw new Error("after() called outside a request scope");
+    deferred.push(work);
+  },
+}));
+async function flushPostResponse(): Promise<void> {
+  for (const work of deferred.splice(0, deferred.length)) await work();
+}
+
 const sendWaitlistInvitationEmail = vi.fn();
 vi.mock("@/lib/waitlist/delivery/send", () => ({ sendWaitlistInvitationEmail }));
 const sendWaitlistInvitationSms = vi.fn();
@@ -58,6 +75,8 @@ beforeEach(() => {
   sendWaitlistInvitationEmail.mockReset();
   sendWaitlistInvitationSms.mockReset();
   errors = [];
+  deferred.length = 0;
+  scheduling.throws = false;
   vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => void errors.push(a.join(" ")));
 
   getCurrentPractitionerWithStudio.mockResolvedValue({
@@ -80,11 +99,13 @@ beforeEach(() => {
 });
 
 describe("both channels, one invitation, one link", () => {
-  it("the email and the text receive the same invitation id and the same secure link", async () => {
+  it("the action answers before the text runs; then both channels get the same invitation and link", async () => {
     const out = await invite();
     expect(out).toEqual({ state: "committed", expiresAt: ADMITTED.expires_at, delivery: "accepted" });
-
     expect(sendWaitlistInvitationEmail).toHaveBeenCalledTimes(1);
+    expect(sendWaitlistInvitationSms, "the text ran inside the response path").not.toHaveBeenCalled();
+
+    await flushPostResponse();
     expect(sendWaitlistInvitationSms).toHaveBeenCalledTimes(1);
     const email = sendWaitlistInvitationEmail.mock.calls[0]![0] as Record<string, unknown>;
     const sms = sendWaitlistInvitationSms.mock.calls[0]![0] as Record<string, unknown>;
@@ -93,6 +114,22 @@ describe("both channels, one invitation, one link", () => {
     expect(sms.invitationUrl).toBe(`https://hone.care/invitation/${RAW}`);
     expect(sms.invitationUrl).toBe(email.invitationUrl);
     expect(sms.studio).toMatchObject({ id: "studio-1", name: "Willow" });
+  });
+});
+
+describe("the text never holds the response open", () => {
+  it("a text that never finishes cannot delay the answer", async () => {
+    sendWaitlistInvitationSms.mockImplementation(() => new Promise(() => undefined));
+    const out = await invite();
+    expect(out).toMatchObject({ state: "committed", delivery: "accepted" });
+    expect(deferred).toHaveLength(1); // scheduled, not awaited
+  });
+
+  it("outside a request scope the text still runs, fire-and-forget", async () => {
+    scheduling.throws = true;
+    await invite();
+    await Promise.resolve();
+    expect(sendWaitlistInvitationSms).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -107,6 +144,7 @@ describe("the text never changes the practitioner's outcome", () => {
   it("a text path that THROWS is contained and logged without the token", async () => {
     sendWaitlistInvitationSms.mockRejectedValueOnce(new Error(`boom ${RAW}`));
     expect(await invite()).toEqual({ state: "committed", expiresAt: ADMITTED.expires_at, delivery: "accepted" });
+    await flushPostResponse();
     const all = errors.join("\n");
     expect(all).toContain("waitlist_invitation_sms_failed");
     expect(all).not.toContain(RAW);
@@ -116,6 +154,7 @@ describe("the text never changes the practitioner's outcome", () => {
     sendWaitlistInvitationEmail.mockRejectedValueOnce(new Error("resend down"));
     const out = await invite();
     expect(out).toMatchObject({ state: "committed", delivery: "unknown" });
+    await flushPostResponse();
     expect(sendWaitlistInvitationSms).toHaveBeenCalledTimes(1);
   });
 });
@@ -124,6 +163,7 @@ describe("no admission, no text", () => {
   it("a refused admission texts nobody", async () => {
     rpc.mockImplementation(() => Promise.resolve({ data: [{ result: "round_full" }], error: null }));
     await invite();
+    await flushPostResponse();
     expect(sendWaitlistInvitationSms).not.toHaveBeenCalled();
     expect(sendWaitlistInvitationEmail).not.toHaveBeenCalled();
   });
@@ -131,6 +171,7 @@ describe("no admission, no text", () => {
   it("a lost answer (transport error) texts nobody", async () => {
     rpc.mockImplementation(() => Promise.resolve({ data: null, error: { message: "socket hang up" } }));
     await invite();
+    await flushPostResponse();
     expect(sendWaitlistInvitationSms).not.toHaveBeenCalled();
   });
 
@@ -139,6 +180,7 @@ describe("no admission, no text", () => {
       Promise.resolve({ data: [{ ...ADMITTED, raw_token: null }], error: null }),
     );
     await invite();
+    await flushPostResponse();
     expect(sendWaitlistInvitationSms).not.toHaveBeenCalled();
   });
 });
