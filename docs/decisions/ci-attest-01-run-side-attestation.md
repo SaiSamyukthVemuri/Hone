@@ -8,10 +8,10 @@
 | **Decided by** | Sam (operator): CI-ATTEST-01 is the re-entry architecture after ARCH-01's CI-authority stop law fired on PR #800; re-entered **by removal** after PR-SNAPSHOT-01 (PR #803) and CAP-01 (PR #804) merged; the two-step emitter and the `run_number` current-run frontier by operator decision after the ready-gate stop on `557ed2ce96`. |
 | **Purpose** | Exactly one fact: *"This trusted CI execution ran for PR N, at head H, against base B, under authoritative workflow W."* |
 | **Consumed by** | ARCH-01 (`docs/decisions/arch-01-eng-loop-v2.md`, PR #800). ARCH-01 **consumes** this fact; it never derives it (§12). |
-| **Depends on** | PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`, merged) for the coherent key `K0`; CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`, merged) for GitHub-access architectural lint and its reader contract, including `readCandidateRuns` as amended by CAP-01-READER-STATE-01 (PR #805). |
+| **Depends on** | PR-SNAPSHOT-01 (`docs/decisions/pr-snapshot-01-identity-key.md`, merged) for the coherent key `K0`; CAP-01 (`docs/decisions/cap-01-github-capability-boundary.md`, merged) for GitHub-access architectural lint and its reader contract, including `readCandidateRuns` as amended by CAP-01-READER-STATE-01 (PR #805) and `readRunAttestation`'s two-operation plan from CAP-01-ATTEST-READER-01 (PR #806). |
 | **Scope** | The artifact contract, binding against `K0`, the current-run frontier, the trust anchor, attempts and re-runs, retention, terminal PRs, fixtures. |
 | **Not in scope** | The `ci.yml` change (a separate implementation PR, §11); any edit to #800; 05A; 05B; ARCH-02; reading or re-validating the PR, which PR-SNAPSHOT-01 owns; GitHub-access lint, which CAP-01 owns. |
-| **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0`; re-entered at production `9402c21718f31dd72016ed0c4d421bb00f9551ee`, where PR-SNAPSHOT-01 and CAP-01 are merged; refreshed onto production `da15f1785ec11adfcfaaf0176b19780fcacc268d`, where CAP-01-READER-STATE-01 is merged. Live evidence read on 2026-10-06. |
+| **Authored at** | production `7134239097908a8780aef7fd8fe9b3505d0f4ae0`; re-entered at production `9402c21718f31dd72016ed0c4d421bb00f9551ee`, where PR-SNAPSHOT-01 and CAP-01 are merged; refreshed onto production `da15f1785ec11adfcfaaf0176b19780fcacc268d`, where CAP-01-READER-STATE-01 is merged, and onto `d84dc00b06d7c876072af197dee165ce10727f09`, where CAP-01-ATTEST-READER-01 is merged. Live evidence read on 2026-10-06. |
 
 > **Normative.** Where an implementation and this record disagree, the implementation is wrong. A change to these semantics
 > is proposed, reviewed and merged **here first**; it never evolves through review-repair rounds.
@@ -60,7 +60,7 @@ requirements.
 | E2 | `pull_request` runs by default only on `opened`, `synchronize` and `reopened`; editing a PR's base starts **no** run. | Docs; `ci.yml` declares `pull_request:` with no `types`. |
 | E3 | A re-run uses the same `GITHUB_SHA` and `GITHUB_REF` as the original event; a run can be re-run for 30 days. | Docs, "Re-running workflows and jobs". |
 | E4 | Artifact names are unique within a run, and an uploaded artifact cannot be modified (*"each created artifact is idempotent"*). | `actions/upload-artifact` README. |
-| E5 | "Re-run all jobs" removes a run's earlier artifacts; re-running a subset of jobs moves them into the new attempt. | GitHub Support, quoted in GitHub community discussion #17854. **Not** in GitHub's documentation — proven live in the implementation PR (§11). |
+| E5 | "Re-run all jobs" removes a run's earlier artifacts; re-running a subset of jobs moves them into the new attempt. | GitHub Support, quoted in GitHub community discussion #17854. **Not** in GitHub's documentation — proven live in the implementation PR (§11). A contrary report exists: after a re-run, one run listed two same-name artifacts, one per attempt (CAP-01 §4's re-run note); such a run is INVALID here (§6). |
 | E6 | A partial re-run lists the jobs it did not re-execute in the new attempt, with new job ids and the earlier attempt's timestamps. | Live: all 10 Hone re-runs since 2026-09-28 were partial. Run `37362604831`'s `changed-path detection` job shows 19:19:52–19:20:05Z in both attempts; attempt 2 began at 19:37Z. |
 | E7 | The run-artifact list has no attempt filter; an artifact carries `workflow_run` `{id, repository_id, head_repository_id, head_branch, head_sha}`, `expired`, `expires_at` and a SHA-256 `digest`, and no attempt. | GitHub's API description. |
 | E8 | The REST download is a zip (`archive_format` must be `zip`; a redirect valid for 1 minute), and its SHA-256 equals `digest`. | Docs. Live: artifact `11357189201` downloaded as 1,796,526 bytes with a `PK` header and a SHA-256 equal to its `digest`. |
@@ -133,7 +133,9 @@ makes a listing that cannot prove completeness `UNKNOWN(ci_candidate_listing_too
 `run_number` makes the pass `UNKNOWN(malformed)`. The same response supplies each candidate's `status`, `conclusion`
 and `run_attempt`, which CAP-01 §4 defines as mutable evidence — not identity, and not an ordering.
 
-The walk below classifies each candidate it examines in four steps:
+The walk below classifies each candidate it examines in four steps. Steps 1 and 2 are performed by CAP-01's
+`readRunAttestation(runId)`, through its frozen LOCATE → DOWNLOAD plan (CAP-01 §4 and CAP-01 §16); an *unavailable*
+result from it is INVALID:
 
 1. **Locate.** The run's artifact list, filtered by the exact name `ci-attest-v1`, holds exactly one artifact; it is not
    expired, and its `workflow_run.id` equals the run's id.
@@ -213,13 +215,14 @@ record never re-reads or re-validates the base.
 | Situation | GitHub behaviour | Result |
 |---|---|---|
 | first attempt | one upload | binds |
-| re-run all jobs | earlier artifacts removed (E5); the emitter uploads again | one artifact → binds |
+| re-run all jobs | earlier artifacts removed (E5); the emitter uploads again | one artifact → binds; if GitHub kept the earlier attempt's artifact, two are listed → `UNKNOWN(ci_attestation_invalid)` (CAP-01 §16) |
 | partial re-run that does not re-execute the emitter's job | the earlier artifact moves into the new attempt (E5) | one artifact → binds; if GitHub did not keep it, none → `UNKNOWN(ci_attestation_invalid)` |
 | partial re-run that re-executes the emitter's job | the moved artifact plus a second upload of the same name | the upload is refused (E4), the emitter fails and so does the run → `CI_FAILED`; or two are listed → `UNKNOWN(ci_attestation_invalid)`. Never a false ready. |
 
 **Why one fixed name.** GitHub moves earlier artifacts into later attempts (E5) and offers no attempt filter (E7), so
 per-attempt names would require choosing between attempts — an attempt ordering this record never uses (§5). Recovery
-from any fail-closed row: re-run all jobs, a close and reopen, or a push.
+from any fail-closed row is a new run — a close and reopen, or a push — which becomes the frontier (§5). A re-run of the
+same run recovers only where it leaves exactly one attestation.
 
 ## 7. Trust (frozen)
 
@@ -263,7 +266,8 @@ OIDC claims (`base_ref`, `workflow_sha`, `run_id`) are the escalation path if th
   that is `UNKNOWN(ci_attestation_invalid)` (§5); below the frontier the run is superseded and never read. It is never a
   CI failure, never a CI success, and never permission to infer identity elsewhere.
 - **Operational requirement:** an open PR's frontier needs an attestation that has not expired. Recovery is a newer run
-  that becomes the frontier — a close and reopen, or a push — or, within 30 days (E3), a re-run of the frontier run.
+  that becomes the frontier — a close and reopen, or a push — or, within 30 days (E3), a re-run of the frontier run
+  that leaves it exactly one attestation (CAP-01 §16).
 - **Rollout:** runs created before the emitter ships carry no attestation. A head whose newest run predates the emitter
   is `UNKNOWN` until a newer run, from a close and reopen or a push, becomes its frontier. Re-running a pre-emitter run
   cannot help, because it replays the old workflow (E3).
@@ -349,7 +353,9 @@ binding consumes:
 - the target repository id;
 - the `merge_base_commit` of the compare read bound to `K0`;
 - from CAP-01's `readCandidateRuns`, each candidate's run metadata, `run_number`, `status`, `conclusion` and
-  `run_attempt`.
+  `run_attempt`;
+- from CAP-01's `readRunAttestation`, each examined run's normalized attestation record and artifact metadata, or
+  *unavailable*.
 
 Until step 3, #800 stays a frozen draft; its open CI-binding findings are this record's origin.
 
@@ -390,6 +396,12 @@ semantics, attestation binding, or replacement and recovery → **stop**, with n
 frontier's `status` and `conclusion`. The owning record was amended first: CAP-01-READER-STATE-01 (PR #805, merged as
 `da15f178`) makes `readCandidateRuns` return each run's execution state from one complete response, with no new reader
 or capability. This record now cites that reader; its frontier semantics did not change.
+
+**CAP-01 attestation reader.** The ready-gate review of `c0726a37d3` (P1 `4201792798`) found that CAP-01 allowed each
+reader one route, while reading an attestation takes two GitHub operations. The owning record was amended first:
+CAP-01-ATTEST-READER-01 (PR #806, merged as `d84dc00b`) gives `readRunAttestation(runId)` a frozen LOCATE → DOWNLOAD
+plan. The artifact id is derived inside the transport, and duplicate same-name artifacts are deliberately
+*unavailable*. This record now cites that reader; its frontier and semantic validation did not change.
 
 ## 14. Non-goals
 
