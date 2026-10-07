@@ -7,6 +7,7 @@ import {
   sendWaitlistInvitationEmail,
   type DeliveryStudio,
 } from "@/lib/waitlist/delivery/send";
+import { sendWaitlistInvitationSms } from "@/lib/waitlist/delivery/sms";
 import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import {
   type BookingScope,
@@ -348,6 +349,15 @@ export type DeliveryAttempt = {
   providerAttempted: boolean;
 };
 
+/**
+ * The invitation's public link. The raw token is spent into this URL, and the
+ * URL is handed only to the two message constructors -- the email and, for an
+ * eligible prospect, its SMS. It is never stored, logged or returned.
+ */
+function invitationUrlFor(rawToken: string): string {
+  return `${getRequiredAppOrigin()}/invitation/${rawToken}`;
+}
+
 async function deliverInvitation(args: {
   studio: DeliveryStudio;
   invitationId: string;
@@ -357,14 +367,12 @@ async function deliverInvitation(args: {
   expiresAt: Date;
 }): Promise<DeliveryAttempt> {
   try {
-    const origin = getRequiredAppOrigin();
     const result = await sendWaitlistInvitationEmail({
       studio: args.studio,
       invitationId: args.invitationId,
       recipientEmail: args.recipientEmail,
-      // The token appears in exactly one place: the URL handed to the mail
-      // constructor. It is built here and held nowhere else.
-      invitationUrl: `${origin}/invitation/${args.rawToken}`,
+      // The token reaches the mail constructor only inside this URL.
+      invitationUrl: invitationUrlFor(args.rawToken),
       issuedAt: args.issuedAt,
       expiresAt: args.expiresAt,
     });
@@ -384,6 +392,38 @@ async function deliverInvitation(args: {
     // result is genuinely undetermined; it just must not be WRITTEN DOWN as an
     // observed provider outcome.
     return { state: "unknown", providerAttempted: false };
+  }
+}
+
+/**
+ * SMS-01. The invitation's text, beside its email and in the SAME request --
+ * the raw token exists nowhere else, so there is no later send. Whether it
+ * goes at all is decided by the database claim (the studio switch, liveness,
+ * once per invitation) and by prospectMayReceiveSms; its outcome lives in the
+ * SMS ledger. It never changes the admission, the invitation or the email's
+ * disposition, and it never throws.
+ */
+async function deliverInvitationSms(args: {
+  studio: DeliveryStudio;
+  invitationId: string;
+  rawToken: string;
+}): Promise<void> {
+  try {
+    await sendWaitlistInvitationSms({
+      admin: createAdminClient(),
+      studio: args.studio,
+      invitationId: args.invitationId,
+      invitationUrl: invitationUrlFor(args.rawToken),
+    });
+  } catch {
+    // Structural only, like recordFailed: no recipient, token or identity.
+    console.error(
+      JSON.stringify({
+        event: "waitlist_invitation_sms_failed",
+        shape: "threw",
+        at: new Date().toISOString(),
+      }),
+    );
   }
 }
 
@@ -549,16 +589,25 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     // THE RAW TOKEN EXISTS EXACTLY ONCE, IN MEMORY, HERE. Only its digest is
     // persisted, so if this function returns without spending it the invitation
     // can never be delivered by any later process. It is passed straight into
-    // #680's reviewed send path and into nothing else: not stored, not logged,
+    // #680's reviewed email path and SMS-01's text path, inside the one URL
+    // invitationUrlFor builds, and into nothing else: not stored, not logged,
     // not returned, not attached to an error.
-    const attempt = await deliverInvitation({
-      studio,
-      invitationId,
-      recipientEmail,
-      rawToken,
-      issuedAt: new Date(issuedAt),
-      expiresAt: new Date(expiresAt),
-    });
+    //
+    // SMS-01: the email and, for an eligible prospect, the text go out side by
+    // side -- one opportunity, one deadline, two channels. The text never
+    // delays, changes or fails the email, and its outcome is not this
+    // function's `delivery` (that remains the email's recorded disposition).
+    const [attempt] = await Promise.all([
+      deliverInvitation({
+        studio,
+        invitationId,
+        recipientEmail,
+        rawToken,
+        issuedAt: new Date(issuedAt),
+        expiresAt: new Date(expiresAt),
+      }),
+      deliverInvitationSms({ studio, invitationId, rawToken }),
+    ]);
     const delivery = attempt.state;
 
     // WRITE THE OUTCOME DOWN (0196), so it survives the practitioner navigating

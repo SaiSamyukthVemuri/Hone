@@ -147,6 +147,17 @@ The 24h / 2h reminder SMS (`send24hReminderSmsToClient` / `send2hReminderSmsToCl
 
 The cron's own pre-claim "still confirmed?" read remains as a cheap pre-filter, so a cancelled row costs no intake read and no claim.
 
+### Waitlist invitation SMS (SMS-01)
+
+A new waitlist invitation is **also texted** to an eligible prospect, beside its email and in the **same request** (`lib/waitlist/invite-to-book-adapter.ts` → `lib/waitlist/delivery/sms.ts`): the raw link token exists only in that request, so there is no later send and no "resend".
+
+- **Whether at all — the database.** `claim_waitlist_invitation_sms` (0206) admits **one claim per invitation**, only for the studio's own **live** invitation, and only when `studios.send_waitlist_invitation_sms` is on (default off). A claim that cannot be taken means no text (fail closed).
+- **To whom — `prospectMayReceiveSms`.** STOP wins, then an unverified number is not a channel, then consent decides. Each "no" is recorded in the ledger as `skipped` with its reason (`opted_out`, `mobile_unverified`, `no_consent`, `invalid_phone`, `non_production_deployment`).
+- **What it says.** The studio name, an invitation to book a consultation, the deadline **exactly as the email renders it** (`invitationExpiryLabel`), the `/invitation/<token>` link and the STOP disclosure. No held-slot or queue-position promise.
+- **Retries.** An ambiguous answer is never repeated. A definite, retryable refusal (rate limited, or a connection that never opened) is tried once more after 750 ms, inside the request.
+- **Independence.** The text runs in parallel with the email; it never delays, changes or fails the email or the invitation, and the practitioner's result is still the email's disposition.
+- **Activation.** Needs `send_waitlist_invitation_sms` **and** verified prospect mobiles, which are dormant today — until mobile verification is armed every invitation text is recorded `skipped` / `mobile_unverified`. See [runbooks/sms-p0-activation.md](./runbooks/sms-p0-activation.md).
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.
