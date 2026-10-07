@@ -133,10 +133,6 @@ The row exists **before** the provider call because Twilio's Messages API takes 
 
 **Status endpoint:** `/api/twilio/message-status`. Same security model as the STOP webhook — the raw body and the full URL (which carries the row id) are verified against `X-Twilio-Signature` before any database work; a bad signature is a 403 with zero writes. `middleware.ts` allows the exact path unauthenticated. An `undelivered` or `failed` end state raises **one** `sms_delivery_failed` warning ops alert, attributed to the studio and (for appointment SMS) the appointment, carrying the purpose, the status and Twilio's error code — never a phone number.
 
-### Reminder re-arm on a moved start (migration 0206)
-
-A reminder answers "when is my appointment?", so a reminder sent for an old start does not answer it once the start moves. `appointments_rearm_reminders_trg` (`before update of starts_at`) returns the 24h and 2h reminder slots — **email and SMS** — to unsent, with a fresh attempt budget and no claim, whenever an appointment's start **actually** changes on the same row. That is the practitioner move (`move_or_reassign_appointment`), which rewrites `starts_at` in place. The client reschedule link already behaved correctly: it inserts a successor appointment, whose reminder columns start empty. Confirmation slots are not keyed to the start and are never re-armed; a reassign that keeps the start re-arms nothing.
-
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.

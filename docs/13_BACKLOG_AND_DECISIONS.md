@@ -19,6 +19,40 @@
 
 This section **is** maintained as current. Everything under "Decision log" below is history.
 
+### SMS-03 — a fresh reminder after a practitioner moves an already-reminded appointment — `Open, specified, not started`
+
+**Status (2026-10-07): OPEN. Deliberately left out of the SMS P0 slice (SMS-00 #812, SMS-02 #813, SMS-01 #814) by operator decision, to keep that slice bounded.** Needs a migration of its own; derive its number with `npm run migration:state` at the moment of claim.
+
+*What is true today.* The 24h and 2h reminder slots (email and SMS) live on the appointment row and are keyed only to the appointment. The client reschedule link inserts a successor appointment, whose slots start empty, so it is reminded correctly. A practitioner move (`move_or_reassign_appointment`) rewrites `starts_at` on the same row:
+
+* a move **before** the reminder goes out is handled — the cron selects by the current start, and SMS-02 re-reads status and start after `claim_sms_send` and builds the message and its manage link from that read;
+* a move **after** a reminder went out leaves that slot "sent", so no reminder names the new start.
+
+*Why it was not shipped with SMS-00.* The first SMS-00 head reset the slots in a `before update of starts_at` trigger. Codex P1s 4211982441, 4212063885 and 4212063896 showed the one root cause: the claim/record pairs (`claim_sms_send`/`record_sms_result`, 0049; `claim_email_send`/`record_email_result`, 0080) are blind to which start they serve. A send in flight across a move could stamp the re-armed slot as sent with the old time (suppressing the new reminder), or run concurrently with a fresh claim for the same new start (a duplicate). The trigger was removed from 0206 before any apply.
+
+*Design (bounded, one migration).*
+
+1. `appointments.reminder_generation bigint not null default 0`, bumped only when `starts_at` actually changes. The same change returns the start-keyed slots to unsent with a fresh attempt budget but **keeps an in-flight claim**, so no second claim can start while one is out.
+2. v2 claim functions (SMS and email) return the generation they claimed under; v2 record functions take the expected generation and stamp `sent_at` only while it still matches — a stale settle only releases its claim.
+3. Both reminder passes in `app/api/cron/appointment-reminders/route.ts` use the v2 pairs, and the post-claim re-check compares the generation as well as status and window.
+4. The 0049/0080 functions stay for deploy skew and are retired in a later change once no caller remains.
+
+*Tests required before merge.*
+
+* DB: a move during an in-flight email **and** SMS reminder — the stale settle stamps nothing, and the next fire sends exactly one reminder naming the new start.
+* DB: claim, then move, then a second claim attempt — refused while the first claim is fresh (no concurrent send for one generation).
+* DB: a reassign that keeps the start, and a same-value `starts_at` write, do not bump the generation.
+* DB concurrency: two runs racing for the new generation — exactly one sends.
+* Unit: both passes carry the generation from claim to record; a mismatch records nothing as sent.
+* Negative controls: removing the generation check from record reds the stale-stamp test; clearing the in-flight claim on a move reds the concurrent-claim test.
+
+*Acceptance criteria.*
+
+* A client whose 24h or 2h reminder was sent, and whose appointment a practitioner then moves, receives exactly one reminder naming the new start in its window, per channel and per that channel's studio switch.
+* No reminder is ever sent twice for the same start, and a stale in-flight send never suppresses the new start's reminder.
+* Email reminders are otherwise unchanged: the existing email suites stay green without edits.
+* DB lane green, exact-head Codex clean, migration applied migration-first and recorded.
+
 ### Whole-session copy does not carry the probe lot/batch — `Open, migration-scoped`
 
 **Status (2026-07-31, amended 2026-08-01): OPEN. Needs a NEW migration. `0162` is now ALLOCATED to the intake review transition integrity fix (written, not applied), so this work must take the next free number — expected 0163.
