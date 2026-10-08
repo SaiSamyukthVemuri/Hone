@@ -16,7 +16,7 @@ test.describe("public agent readiness", () => {
   });
 
   test("unknown URL is a genuine 404 in both representations", async ({ request }) => {
-    const route = "/not-a-real-hone-page-agent-test";
+    for (const route of ["/not-a-real-hone-page-agent-test", "/features/not-a-real-feature"]) {
     for (const [accept, type] of [
       ["text/markdown", "text/markdown"],
       ["text/html", "text/html"],
@@ -31,6 +31,7 @@ test.describe("public agent readiness", () => {
       const body = await response.text();
       expect(body.length).toBeGreaterThan(20);
       expect(body).toContain("/llms.txt");
+    }
     }
   });
 

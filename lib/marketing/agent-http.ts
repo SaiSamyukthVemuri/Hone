@@ -90,9 +90,23 @@ const SINGLE_PAGE_ROOTS = new Set([
   "icon", "apple-icon", "opengraph-image",
 ]);
 
+// The feature namespace has a closed set of pages. It must not be an
+// unbounded anonymous login redirect for routes that were never shipped.
+// The WAIT invitation feature path exists in the repository but is not a
+// public marketing allowlist entry; leave it to the existing auth boundary.
+const KNOWN_FEATURE_ROUTES = new Set([
+  "/features/treatment-memory",
+  "/features/booking-calendar",
+  "/features/charting-records",
+  "/features/waitlist-invitation",
+]);
+
 export function isUnknownPublicPath(pathname: string): boolean {
   if (!pathname.startsWith("/") || pathname === "/") return false;
   const first = pathname.split("/")[1] ?? "";
+  // Unlike /book/:slug, /features is a *finite* namespace. Treat missing
+  // children and the nonexistent feature-index route as genuine 404s.
+  if (first === "features") return !KNOWN_FEATURE_ROUTES.has(pathname);
   if (!ROUTE_ROOTS.has(first)) return true;
   // A static page cannot have a child route; don't redirect its typo to login.
   return SINGLE_PAGE_ROOTS.has(first) && pathname !== "/" + first;

@@ -102,6 +102,14 @@ describe("unknown route protection", () => {
     expect(await r.text()).toContain("<h1");
     const head = await middleware(new NextRequest(url, { method: "HEAD" }));
     expect(head.status).toBe(404);
+
+    const feature = await middleware(new NextRequest(
+      "https://hone.care/features/unshipped-resource",
+      { headers: { accept: "text/markdown" } },
+    ));
+    expect(feature.status).toBe(404);
+    expect(feature.headers.get("Content-Type")).toMatch(/^text\/markdown/);
+    expect(await feature.text()).toContain("/llms.txt");
   });
   it("does not intercept existing private, API or token route families", () => {
     for (const route of [
@@ -111,6 +119,10 @@ describe("unknown route protection", () => {
       "/reschedule/secret", "/calendar-feed/test.ics",
     ]) expect(isUnknownPublicPath(route)).toBe(false);
     expect(isUnknownPublicPath("/new-unknown-root")).toBe(true);
+    expect(isUnknownPublicPath("/features")).toBe(true);
+    expect(isUnknownPublicPath("/features/not-a-feature")).toBe(true);
+    expect(isUnknownPublicPath("/features/treatment-memory")).toBe(false);
+    expect(isUnknownPublicPath("/features/waitlist-invitation")).toBe(false);
     expect(isUnknownPublicPath("/privacy/typo")).toBe(true);
     expect(isUnknownPublicPath("/")).toBe(false);
   });
