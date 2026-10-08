@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  LEDGER_STEP_BOUND_MS,
   sendBookingConfirmationSmsToClient,
   send24hReminderSmsToClient,
   send2hReminderSmsToClient,
@@ -38,7 +39,7 @@ const WINDOW = { startIso: "2026-10-09T16:00:00.000Z", endIso: "2026-10-09T18:00
 type ClaimAnswer = { result: string; starts_at?: string | null } | "error";
 const h: {
   claim: ClaimAnswer;
-  begin: { data: unknown; error: unknown };
+  begin: { data: unknown; error: unknown } | "hang";
   /** "hang": settle_sms_message never answers (a stalled or killed request). */
   settle: "ok" | "hang";
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
@@ -62,7 +63,9 @@ function admin(): SupabaseClient {
       }
       // The confirmation path's plain claim (0049).
       if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
-      if (fn === "begin_appointment_sms_message") return Promise.resolve(h.begin);
+      if (fn === "begin_appointment_sms_message") {
+        return h.begin === "hang" ? new Promise(() => undefined) : Promise.resolve(h.begin);
+      }
       if (fn === "settle_sms_message") {
         return h.settle === "hang"
           ? new Promise(() => undefined)
@@ -131,6 +134,7 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   for (const k of ENV_KEYS) {
@@ -407,6 +411,71 @@ describe("the slot is recorded before the ledger is settled", () => {
       "record_sms_result",
       "settle_sms_message",
     ]);
+    expect(recorded()).toEqual([true]);
+  });
+});
+
+// ===========================================================================
+// THE LEDGER CAN NEVER HOLD UP A REMINDER (Codex P1 4224110912, P2 4224110922).
+// Each ledger step is bounded well inside the five-minute claim lease:
+// - a ledger row that stalls cannot keep this worker paused until another run
+//   reclaims the stale slot and sends it too;
+// - a settle that stalls cannot keep the cron's sequential batch from moving
+//   on and writing its heartbeat.
+// A step that runs out of time is abandoned: the reminder goes, or returns,
+// as it would without a ledger.
+// ===========================================================================
+describe("each ledger step is bounded inside the claim lease", () => {
+  it("the bound is far inside the five-minute lease", () => {
+    expect(LEDGER_STEP_BOUND_MS).toBeGreaterThan(0);
+    expect(LEDGER_STEP_BOUND_MS).toBeLessThanOrEqual(10_000);
+  });
+
+  it("a ledger row that never answers: the reminder still goes once, within the bound, without a StatusCallback", async () => {
+    vi.useFakeTimers();
+    h.begin = "hang";
+    const pending = send24hReminderSmsToClient(input());
+    await vi.advanceTimersByTimeAsync(LEDGER_STEP_BOUND_MS - 1);
+    expect(fetchMock, "not before the bound").not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toEqual({ ok: true, messageSid: SID });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentForm().has("StatusCallback")).toBe(false);
+    expect(recorded()).toEqual([true]);
+    expect(settled(), "no row id came back, so there is nothing to settle").toEqual([]);
+  });
+
+  it("a settle that never answers: the reminder returns within the bound, its slot already recorded", async () => {
+    vi.useFakeTimers();
+    h.settle = "hang";
+    const pending = send24hReminderSmsToClient(input());
+    await vi.advanceTimersByTimeAsync(LEDGER_STEP_BOUND_MS);
+    await expect(pending).resolves.toEqual({ ok: true, messageSid: SID });
+    expect(recorded()).toEqual([true]);
+    expect(settled()).toHaveLength(1);
+  });
+
+  it("the booking confirmation is bounded the same way", async () => {
+    vi.useFakeTimers();
+    h.begin = "hang";
+    const pending = sendBookingConfirmationSmsToClient({
+      admin: admin(),
+      appointmentId: "appt-1",
+      startsAt: new Date(START),
+      timezone: "America/Vancouver",
+      studio: {
+        id: "studio-1",
+        name: "Willow",
+        send_confirmation_sms: true,
+        send_24h_sms_reminders: true,
+        send_2h_sms_reminders: true,
+      },
+      client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null },
+      intakeUrl: null,
+      manageUrl: null,
+    });
+    await vi.advanceTimersByTimeAsync(LEDGER_STEP_BOUND_MS);
+    await expect(pending).resolves.toEqual({ ok: true, messageSid: SID });
     expect(recorded()).toEqual([true]);
   });
 });

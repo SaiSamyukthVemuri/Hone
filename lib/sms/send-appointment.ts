@@ -417,7 +417,10 @@ async function claimReminderSmsSend(
  *     that hangs, or an invocation killed during it, can no longer leave an
  *     accepted (or possibly accepted) reminder holding only its claim, which
  *     goes stale after five minutes and is reclaimed -- a duplicate. What is
- *     left is the one round trip between the answer and that record.
+ *     left is the one round trip between the answer and that record. Each
+ *     ledger step is also bounded (LEDGER_STEP_BOUND_MS), so neither the row
+ *     before the send nor the settle after it can outlast the claim lease or
+ *     stall the cron's batch.
  *
  * A claim that could not be reached is a SKIP: no provider request was made
  * and no attempt spent, so the cron never counts it as an attempt.
@@ -545,13 +548,55 @@ const LEDGER_PURPOSE: Record<SmsType, AppointmentSmsPurpose> = {
 type LedgeredAttempt = { result: SendSmsResult; messageId: string | null };
 
 /**
+ * The ledger is bookkeeping, so it may never hold up an SMS. Each ledger step
+ * is bounded far inside the five-minute claim lease:
+ * - a ledger row that stalls cannot keep this worker paused until another run
+ *   reclaims the stale slot and sends it too;
+ * - a settle that stalls cannot keep the reminder cron's sequential batch from
+ *   moving on and writing its heartbeat.
+ * A step that runs out of time is abandoned, and the send continues exactly
+ * as it does without a ledger. Its request may still land later; a row left
+ * `claimed` is what monitoring surfaces as unresolved.
+ */
+export const LEDGER_STEP_BOUND_MS = 5_000;
+
+async function boundedLedgerStep<T>(
+  step: "begin" | "settle",
+  work: Promise<T>,
+  onTimeout: T,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      console.error(
+        JSON.stringify({
+          event: "sms_ledger_step_timed_out",
+          step,
+          boundMs: LEDGER_STEP_BOUND_MS,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      resolve(onTimeout);
+    }, LEDGER_STEP_BOUND_MS);
+  });
+  try {
+    // The ledger commands never reject (they log and answer null).
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * One provider attempt with its ledger row: created after the claim and named
  * in the StatusCallback, so delivery reports land on it. FAIL-SOFT: without a
  * row the message is sent exactly as before, only without delivery reports.
  * Never throws.
  *
  * It does NOT settle the row. The caller records the authoritative slot
- * (record_sms_result) first and only then calls settleLedgerRow.
+ * (record_sms_result) first and only then calls settleLedgerRow. A row that
+ * does not come back within LEDGER_STEP_BOUND_MS is abandoned and the message
+ * goes without a StatusCallback.
  */
 async function sendWithLedgerRow(args: {
   admin: SupabaseClient;
@@ -561,11 +606,15 @@ async function sendWithLedgerRow(args: {
   to: string;
   body: string;
 }): Promise<LedgeredAttempt> {
-  const messageId = await beginAppointmentSmsMessage(args.admin, {
-    studioId: args.studioId,
-    appointmentId: args.appointmentId,
-    purpose: LEDGER_PURPOSE[args.smsType],
-  });
+  const messageId = await boundedLedgerStep(
+    "begin",
+    beginAppointmentSmsMessage(args.admin, {
+      studioId: args.studioId,
+      appointmentId: args.appointmentId,
+      purpose: LEDGER_PURPOSE[args.smsType],
+    }),
+    null,
+  );
   const result = await sendSmsSafely({
     to: args.to,
     body: args.body,
@@ -576,12 +625,17 @@ async function sendWithLedgerRow(args: {
 
 /**
  * Best-effort: settle the attempt's ledger row with the provider's answer.
- * Call only AFTER record_sms_result. Never throws; a row it never settles
- * stays `claimed`, which monitoring surfaces as unresolved.
+ * Call only AFTER record_sms_result. Never throws, and never waits longer than
+ * LEDGER_STEP_BOUND_MS; a row it never settles stays `claimed`, which
+ * monitoring surfaces as unresolved.
  */
 async function settleLedgerRow(admin: SupabaseClient, attempt: LedgeredAttempt): Promise<void> {
   if (attempt.messageId) {
-    await settleSmsMessage(admin, attempt.messageId, settleOutcomeForSend(attempt.result));
+    await boundedLedgerStep(
+      "settle",
+      settleSmsMessage(admin, attempt.messageId, settleOutcomeForSend(attempt.result)),
+      null,
+    );
   }
 }
 
