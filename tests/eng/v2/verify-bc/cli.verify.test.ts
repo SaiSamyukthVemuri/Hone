@@ -20,10 +20,19 @@ const PARENT_CANARIES = { GITHUB_TOKEN: "ghp_PARENTcanaryGITHUBTOKEN000000000000
 
 type CliRun = { status: number | null; stdout: string; stderr: string; log: any[]; receiptsDir: string; home: string };
 
+/** The spawned CLI reads the real clock, so the recorded run is re-dated to an hour ago: SPEC-05A §3.4 step 8's
+ * 360-day window would otherwise turn every CI-dependent world into base_history_unverified a year after recording. */
+function freshRuns(w: any) {
+  const x = JSON.parse(JSON.stringify(w));
+  const recent = new Date(Date.now() - 3_600_000).toISOString().replace(/\.\d+Z$/, "Z");
+  for (const r of x["candidate-runs"]?.workflow_runs ?? []) r.created_at = recent;
+  return x;
+}
+
 function setup(w: any, opts: any = {}) {
   const t = fs.mkdtempSync(path.join(os.tmpdir(), "vbc-cli-"));
   const bin = path.join(t, "bin");
-  writeGhShim({ dir: bin, world: w, logFile: path.join(t, "gh.log"), nodePath: process.execPath, opts });
+  writeGhShim({ dir: bin, world: freshRuns(w), logFile: path.join(t, "gh.log"), nodePath: process.execPath, opts });
   fs.symlinkSync("/usr/bin/git", path.join(bin, "git"));
   for (const d of ["home", "ghconf", "rc", "tmp"]) fs.mkdirSync(path.join(t, d));
   return t;
