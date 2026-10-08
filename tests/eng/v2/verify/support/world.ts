@@ -123,6 +123,11 @@ export interface World {
     changedFiles: number;
     /** BaseRefChangedEvent nodes returned on the one page */
     baseRefEvents: number;
+    /**
+     * Further base-change nodes after those, by __typename (SPEC §2.2 as amended at 4b0662a2):
+     * "AutomaticBaseChangeSucceededEvent", "AutomaticBaseChangeFailedEvent", or any other type (malformed).
+     */
+    extraBaseEvents?: string[];
     baseRefHasNext: boolean;
     associated: number[];
     associatedHasNext: boolean;
@@ -299,7 +304,10 @@ export function rawPrContextFor(w: World): any {
           changedFiles: w.prContext.changedFiles,
           baseRefChanges: {
             pageInfo: { hasNextPage: w.prContext.baseRefHasNext },
-            nodes: Array.from({ length: w.prContext.baseRefEvents }, () => ({ __typename: "BaseRefChangedEvent" })),
+            nodes: [
+              ...Array.from({ length: w.prContext.baseRefEvents }, () => ({ __typename: "BaseRefChangedEvent" })),
+              ...(w.prContext.extraBaseEvents ?? []).map((t) => ({ __typename: t })),
+            ],
           },
         },
         object: {

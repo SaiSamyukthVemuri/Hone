@@ -279,6 +279,14 @@ describe("collector §5.3: the first failure ends the pass with its reason — a
     }
   }
 
+  it("R-AUTOBASE: an unknown base-change node in the PR context fails the collection as malformed at stage collect (read 3)", async () => {
+    const w = goldenC();
+    w.base.prContext.extraBaseEvents = ["HeadRefDeletedEvent"];
+    const { r, fake } = await run(w);
+    expectFailure(r, "malformed", "collect", "unknown base-change node");
+    expect(fake.log.length).toBe(3);
+  });
+
   it("precedence is the fixed read order: with two failures, the earlier read's reason wins", async () => {
     // runs (position 9) too large, review (position 10) incomplete, rollup (position 11) malformed
     const tooLarge = (b: any) => ({ ...b, total_count: 101 });
@@ -398,6 +406,8 @@ describe("collector §5.3 step 4: a binder's closed failure is a row result, not
     ["a non-production base", (w) => (w.base.pr.baseRef = "release/x"), "base", "base_ref"],
     ["a fork head", (w) => (w.base.pr.headRepoId = 4242), "ci", "fork_head"],
     ["a base change", (w) => (w.base.prContext.baseRefEvents = 1), "ci", "base_ref_changed"],
+    ["an automatic retarget (R-AUTOBASE)", (w) => (w.base.prContext.extraBaseEvents = ["AutomaticBaseChangeSucceededEvent"]), "ci", "base_ref_changed"],
+    ["a failed automatic retarget (R-AUTOBASE)", (w) => (w.base.prContext.extraBaseEvents = ["AutomaticBaseChangeFailedEvent"]), "ci", "base_ref_changed"],
     ["a production with no rules", (w) => (w.base.rules = []), "ci", "base_history_unverified"],
     ["a review state outside GitHub's five", (w) => (w.review.data.repository.pullRequest.reviews.nodes[0].state = "REQUEST_CHANGES"), "reviews", "malformed"],
     ["a CheckRun with no app", (w) => (w.rollup.data.repository.object.statusCheckRollup.contexts.nodes.find((n: any) => n.__typename === "CheckRun").checkSuite = { app: null }), "external", "malformed"],

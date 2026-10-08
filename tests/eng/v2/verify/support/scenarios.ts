@@ -248,6 +248,62 @@ export const SCENARIOS: Scenario[] = [
     }),
     expect: reason("base_ref_changed"),
   },
+  // --- rule 4 as amended at 4b0662a2 (R-AUTOBASE): GitHub's automatic retargeting is a base change -------------
+  {
+    id: "NC4-auto-succeeded",
+    title: "GitHub retargeted the PR automatically (its base branch was merged and deleted): base_ref_changed",
+    source:
+      "real event shape: grafana/grafana #134174 and 4 others carry only an AutomaticBaseChangeSucceededEvent (verifier, R-STACK pass, read-only); synthetic pairing",
+    nc: "NC4",
+    rule: 4,
+    world: edit((w) => {
+      w.prContext.extraBaseEvents = ["AutomaticBaseChangeSucceededEvent"];
+    }),
+    expect: reason("base_ref_changed"),
+  },
+  {
+    id: "NC4-auto-failed",
+    title: "a failed automatic retarget is a base change too: base_ref_changed",
+    source: "synthetic (SPEC §2.2/§3.4 rule 4 as amended at 4b0662a2)",
+    nc: "NC4",
+    rule: 4,
+    world: edit((w) => {
+      w.prContext.extraBaseEvents = ["AutomaticBaseChangeFailedEvent"];
+    }),
+    expect: reason("base_ref_changed"),
+  },
+  {
+    id: "NC4-mixed",
+    title: "a manual edit, then an automatic retarget, then a failed one: base_ref_changed",
+    source: "real shape: grafana/grafana #133976 (a BaseRefChangedEvent, then an AutomaticBaseChangeSucceededEvent); synthetic third event",
+    nc: "NC4",
+    rule: 4,
+    world: edit((w) => {
+      w.prContext.baseRefEvents = 1;
+      w.prContext.extraBaseEvents = ["AutomaticBaseChangeSucceededEvent", "AutomaticBaseChangeFailedEvent"];
+    }),
+    expect: reason("base_ref_changed"),
+  },
+  {
+    id: "R4-unknown-event-type",
+    title: "a base-change node of any other type is malformed (never zero, never a pass)",
+    source: "synthetic (SPEC §2.2 'every node is { __typename } with one of the three')",
+    rule: 4,
+    world: edit((w) => {
+      w.prContext.extraBaseEvents = ["HeadRefDeletedEvent"];
+    }),
+    expect: reason("malformed"),
+  },
+  {
+    id: "R4-unknown-beside-known",
+    title: "an unknown node beside a known automatic one is still malformed (malformed wins)",
+    source: "synthetic",
+    rule: 4,
+    world: edit((w) => {
+      w.prContext.extraBaseEvents = ["AutomaticBaseChangeSucceededEvent", "BaseRefDeletedEvent"];
+    }),
+    expect: reason("malformed"),
+  },
   {
     id: "R4-totalcount-trap",
     title: "a large unfiltered totalCount with no BaseRefChangedEvent nodes is ZERO base changes",

@@ -84,14 +84,33 @@ function tokenize(q: string): string[] {
   }
   return out;
 }
-/** Normalize an argument list: variables become "$", the spec's placeholders compare equal to them. */
+/** Split on commas outside brackets. */
+const topLevel = (s: string): string[] => {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if (ch === "[") depth++;
+    if (ch === "]") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out.filter(Boolean);
+};
+/**
+ * Normalize an argument list: variables become "$", the spec's placeholders compare equal to them, and an enum
+ * list (GraphQL `[A, B]`) compares as a set — `itemTypes:[A,B]` asks for the same filter as `itemTypes:[B,A]`.
+ */
 const normArgs = (a: string) =>
-  a
-    .slice(1, -1)
-    .split(",")
-    .filter(Boolean)
+  topLevel(a.slice(1, -1))
     .map((kv) => {
-      const [k, v] = kv.split(":");
+      const i = kv.indexOf(":");
+      const k = kv.slice(0, i);
+      const v = kv.slice(i + 1);
+      if (v.startsWith("[")) return `${k}:[${topLevel(v.slice(1, -1)).sort().join(",")}]`;
       return `${k}:${v.startsWith("$") || ["N", "H"].includes(v) ? "$" : v}`;
     })
     .sort()
@@ -134,14 +153,16 @@ export function selection(document: string): string {
   return canonTree(parseSelection(tokens, { i: 1 }));
 }
 
-// The spec's queries, written from SPEC-05A §1 (PR-SNAPSHOT-01 §2's nine sources), §2.2, §4.1 and §4.3.
+// The spec's queries, written from SPEC-05A §1 (PR-SNAPSHOT-01 §2's nine sources), §2.2 (as amended at 4b0662a2),
+// §4.1 and §4.3.
 const ACTOR = "author{__typename login ... on Bot{databaseId} ... on User{databaseId}}";
 export const SPEC_QUERIES = {
   key: selection(
     "{repository(owner:$owner,name:$name){pullRequest(number:$n){number state isDraft headRefOid headRefName headRepository{databaseId} baseRefName baseRepository{databaseId} baseRef{target{oid}}}}}",
   ),
   context: selection(
-    "{repository(owner,name){ pullRequest(number:N){ number createdAt changedFiles baseRefChanges: timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT], first:100){ pageInfo{hasNextPage} nodes{__typename} } } object(oid:H){ __typename ... on Commit { associatedPullRequests(first:100){ pageInfo{hasNextPage} nodes{number} } } } }}".replace(
+    // §2.2 as amended at 4b0662a2 (R-AUTOBASE): the three base-change event types
+    "{repository(owner,name){ pullRequest(number:N){ number createdAt changedFiles baseRefChanges: timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT, AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, AUTOMATIC_BASE_CHANGE_FAILED_EVENT], first:100){ pageInfo{hasNextPage} nodes{__typename} } } object(oid:H){ __typename ... on Commit { associatedPullRequests(first:100){ pageInfo{hasNextPage} nodes{number} } } } }}".replace(
       "repository(owner,name)",
       "repository(owner:$owner,name:$name)",
     ),
