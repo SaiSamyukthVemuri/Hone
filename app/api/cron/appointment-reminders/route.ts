@@ -499,8 +499,8 @@ async function sendSmsReminderPass(opts: {
     // reminder for an appointment cancelled/no-showed after the window query.
     // A cheap PRE-FILTER, so a cancelled row costs no intake read and no
     // claim. SMS-02: the authoritative re-check (status AND start) runs inside
-    // the send helper AFTER claim_sms_send, where nothing can slip between it
-    // and the provider call.
+    // the send helper's claim_reminder_sms_send, under the appointment row
+    // lock and in the same transaction as the claim.
     const { data: freshSms } = await admin
       .from("appointments")
       .select("status")
@@ -579,10 +579,10 @@ async function sendSmsReminderPass(opts: {
         stats.intakeCtaIncluded += 1;
       }
     } else if (result.skipped) {
-      // Helper-level skip (toggle race, claim collision, gate miss).
-      // We do not count these as attempted because no Twilio call
-      // was made; the operator wants attempted/succeeded/failed to
-      // reflect actual Twilio invocations.
+      // Helper-level skip (toggle race, claim collision, gate miss, or a
+      // reminder claim that could not be reached). We do not count these
+      // as attempted because no Twilio call was made; the operator wants
+      // attempted/succeeded/failed to reflect actual Twilio invocations.
       stats.skipped += 1;
     } else {
       stats.attempted += 1;

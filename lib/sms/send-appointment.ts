@@ -43,7 +43,10 @@ import {
 // SMS-00/SMS-02: every provider attempt also gets a row in the delivery
 // ledger (lib/sms/delivery-ledger.ts), named in its StatusCallback so
 // Twilio's delivery reports land on it. The ledger records; it never
-// decides. claim_sms_send stays the authority on whether a send happens.
+// decides. claim_sms_send stays the authority on whether a send happens,
+// and record_sms_result is written BEFORE the ledger row is settled: the
+// settle is best-effort and must never stand between the provider's answer
+// and the authoritative record.
 //
 // Every send path also checks the studio toggle, the client's
 // sms_consent_at / sms_opted_out_at, that we have a normalizable
@@ -409,6 +412,16 @@ async function claimReminderSmsSend(
  *     refusal (including a connection that never opened) is retried on a
  *     later fire, within the 3-attempt budget, as before.
  *
+ *  3. THE RECORD BEFORE THE LEDGER. record_sms_result is written as soon as
+ *     the provider answers; only then is the ledger row settled. A settle
+ *     that hangs, or an invocation killed during it, can no longer leave an
+ *     accepted (or possibly accepted) reminder holding only its claim, which
+ *     goes stale after five minutes and is reclaimed -- a duplicate. What is
+ *     left is the one round trip between the answer and that record.
+ *
+ * A claim that could not be reached is a SKIP: no provider request was made
+ * and no attempt spent, so the cron never counts it as an attempt.
+ *
  * NOT HERE: a fresh reminder after a move whose reminder already went out.
  * The slot is recorded exactly as the provider answered; re-arming it safely
  * needs start-bound claims for email and SMS alike (follow-up SMS-03,
@@ -444,14 +457,15 @@ async function sendReminder(
       retryable: true,
       studioId: args.studio.id,
     });
-    return { ok: false, error: "reminder_claim_unavailable", retryable: true };
+    // Logged, but a skip: nothing reached the provider.
+    return { ok: false, skipped: true, reason: "reminder_claim_unavailable" };
   }
   if (claim.result !== "claimed") {
     return { ok: false, skipped: true, reason: claim.result };
   }
   const startsAt = claim.startsAt;
 
-  let result: SendSmsResult;
+  let attempt: LedgeredAttempt;
   try {
     const build = smsType === "reminder_24h" ? build24hReminderSms : build2hReminderSms;
     const body = build({
@@ -461,7 +475,7 @@ async function sendReminder(
       manageUrl: args.manageUrlFor(startsAt),
       intakeUrl: args.intakeUrl ?? null,
     });
-    result = await deliverWithLedger({
+    attempt = await sendWithLedgerRow({
       admin: args.admin,
       studioId: args.studio.id,
       appointmentId: args.appointmentId,
@@ -472,13 +486,20 @@ async function sendReminder(
   } catch {
     // sendSmsSafely and the ledger never throw, so an exception here came from
     // building the message: nothing reached the provider.
-    result = { ok: false, error: "sms_render_failed", retryable: false, attempt: "none" };
+    attempt = {
+      result: { ok: false, error: "sms_render_failed", retryable: false, attempt: "none" },
+      messageId: null,
+    };
   }
+  const result = attempt.result;
 
-  // (2) Sent, or possibly sent, counts as sent: an ambiguous attempt is
-  // never retried automatically.
+  // (2) The AUTHORITATIVE record, first. Sent, or possibly sent, counts as
+  // sent: an ambiguous attempt is never retried automatically.
   const providerMayHaveIt = result.ok || result.attempt === "ambiguous";
   await recordSmsResult(args.admin, args.appointmentId, smsType, providerMayHaveIt);
+
+  // (3) Then the best-effort ledger settle.
+  await settleLedgerRow(args.admin, attempt);
 
   if (result.ok) {
     console.log(
@@ -520,20 +541,26 @@ const LEDGER_PURPOSE: Record<SmsType, AppointmentSmsPurpose> = {
   reminder_2h: "appointment_reminder_2h",
 };
 
+/** One provider attempt and the ledger row that names it (null without one). */
+type LedgeredAttempt = { result: SendSmsResult; messageId: string | null };
+
 /**
- * One provider attempt with its ledger row: created after the claim, named
- * in the StatusCallback so delivery reports land on it, settled with the
- * provider's answer. FAIL-SOFT: without a row the message is sent exactly as
- * before, only without delivery reports. Never throws.
+ * One provider attempt with its ledger row: created after the claim and named
+ * in the StatusCallback, so delivery reports land on it. FAIL-SOFT: without a
+ * row the message is sent exactly as before, only without delivery reports.
+ * Never throws.
+ *
+ * It does NOT settle the row. The caller records the authoritative slot
+ * (record_sms_result) first and only then calls settleLedgerRow.
  */
-async function deliverWithLedger(args: {
+async function sendWithLedgerRow(args: {
   admin: SupabaseClient;
   studioId: string;
   appointmentId: string;
   smsType: SmsType;
   to: string;
   body: string;
-}): Promise<SendSmsResult> {
+}): Promise<LedgeredAttempt> {
   const messageId = await beginAppointmentSmsMessage(args.admin, {
     studioId: args.studioId,
     appointmentId: args.appointmentId,
@@ -544,10 +571,18 @@ async function deliverWithLedger(args: {
     body: args.body,
     statusCallbackUrl: messageId ? smsStatusCallbackUrl(messageId) : null,
   });
-  if (messageId) {
-    await settleSmsMessage(args.admin, messageId, settleOutcomeForSend(result));
+  return { result, messageId };
+}
+
+/**
+ * Best-effort: settle the attempt's ledger row with the provider's answer.
+ * Call only AFTER record_sms_result. Never throws; a row it never settles
+ * stays `claimed`, which monitoring surfaces as unresolved.
+ */
+async function settleLedgerRow(admin: SupabaseClient, attempt: LedgeredAttempt): Promise<void> {
+  if (attempt.messageId) {
+    await settleSmsMessage(admin, attempt.messageId, settleOutcomeForSend(attempt.result));
   }
-  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -569,8 +604,9 @@ type SendOneArgs = {
  * the post-claim re-validation a scheduled send needs). Encapsulates:
  *   - consent gate and deployment fence
  *   - claim
- *   - Twilio POST with its ledger row (deliverWithLedger)
+ *   - Twilio POST with its ledger row (sendWithLedgerRow)
  *   - record_sms_result in finally
+ *   - then the best-effort ledger settle (settleLedgerRow)
  *   - structured failure log
  *
  * Returns ok / skipped / error in a shape the caller can ignore
@@ -606,11 +642,12 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     error: "sms_send_unknown",
     retryable: true,
   };
+  let attempt: LedgeredAttempt | null = null;
 
   try {
     const body = args.buildBody(gate.normalizedPhone);
     const to = args.to(gate.normalizedPhone);
-    const result = await deliverWithLedger({
+    attempt = await sendWithLedgerRow({
       admin: args.admin,
       studioId: args.studio.id,
       appointmentId: args.appointmentId,
@@ -618,6 +655,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       to,
       body,
     });
+    const result = attempt.result;
     success = result.ok;
     if (result.ok) {
       outcome = { ok: true, messageSid: result.messageSid };
@@ -665,6 +703,8 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       success,
     );
   }
+  // Only after the authoritative record: the best-effort ledger settle.
+  if (attempt) await settleLedgerRow(args.admin, attempt);
 
   // Light, log-only side effect so the operator sees masked phone +
   // outcome side by side in production logs. No PII.
