@@ -3,13 +3,17 @@
 // hand-derived world table (support/worlds.mjs) and the oracle.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import { oracle } from "./oracle";
 // @ts-expect-error untyped support module
 import { makeFakeRequest, isReadOnlyQuery, routeRest } from "./support/fake-gh.mjs";
 // @ts-expect-error untyped support module
 import { WORLDS, FAILING_WORLDS, world, HEAD } from "./support/worlds.mjs";
+import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+
+redirectTmpdir();
+afterAll(cleanupTmp);
 
 const V2 = path.resolve(__dirname, "../../../../scripts/eng/v2");
 let collect: any, createReaders: any, POLICY: any, loadLocalCi: any, decide: any;

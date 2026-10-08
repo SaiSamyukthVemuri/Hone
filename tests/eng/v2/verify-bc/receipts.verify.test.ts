@@ -1,7 +1,7 @@
 // Receipt guarantees against the real receipts.mjs exports (black box), plus receipt-layer mutants.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import {
   checkAppend,
@@ -16,6 +16,10 @@ import {
 } from "./checks-receipts";
 // @ts-expect-error untyped support module
 import { receiptsApi, RECEIPT_MUTANTS } from "./support/receipt-mutants.mjs";
+import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+
+redirectTmpdir();
+afterAll(cleanupTmp);
 
 const RECEIPTS = path.resolve(__dirname, "../../../../scripts/eng/v2/receipts.mjs");
 const rows: Record<string, any> = {};

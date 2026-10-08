@@ -2,7 +2,7 @@
 // (README contract: runShepherdCli({ argv, env, out, err, now, spawn, local, toolVersion, receiptsDir })).
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import {
   checkNoToken,
@@ -16,6 +16,10 @@ import {
 } from "./checks-shepherd";
 // @ts-expect-error untyped support module
 import { makeFakeRequest } from "./support/fake-gh.mjs";
+import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+
+redirectTmpdir();
+afterAll(cleanupTmp);
 
 const V2 = path.resolve(__dirname, "../../../../scripts/eng/v2");
 let runShepherdCli: any;

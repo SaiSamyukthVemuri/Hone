@@ -8,9 +8,9 @@ import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import os from "node:os";
 import path from "node:path";
 import { ALL_DECISIONS, CLOSED_REASONS } from "./oracle";
+import { tmp as tmpUnderRoot } from "./support/tmp";
 // @ts-expect-error untyped support module
 import { canon, checksumOf } from "./support/receipt-mutants.mjs";
 
@@ -24,8 +24,8 @@ const KEYS = ["checksum", "decision", "evidenceHash", "head", "observed_at", "pr
 /** The final-name pattern observed from the black box; anything else in the directory is not a receipt. */
 export const FINAL = /^\d{8}T\d{6}Z-pr\d+-\d+-[0-9a-f]{16}\.json$/;
 
-export function tmp(prefix = "vbc-rcpt-") {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+export function tmp(prefix = "rcpt-") {
+  return tmpUnderRoot(prefix);
 }
 
 /** Independent validator: README's closed fields + the observed `schema` and checksum (sha256 of canonical JSON). */

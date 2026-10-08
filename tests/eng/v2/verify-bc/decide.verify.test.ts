@@ -2,14 +2,16 @@
 // Expected outcomes: oracle.ts and hand-table.ts only (SPEC-05B, ARCH-01 §7/§17-§24, the operator's directive).
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { ALL_DECISIONS, CLOSED_REASONS, CODEX, HUMAN, ROW_DECISIONS, oracle } from "./oracle";
 import { HAND_CASES } from "./hand-table";
 import { type RowResult, compatiblePairs, runAllDecideRows } from "./checks-decide";
+import { cleanupTmp, tmp as tmpUnderRoot } from "./support/tmp";
+
+afterAll(cleanupTmp);
 
 const ROOT = path.resolve(__dirname, "../../../..");
 const V2 = path.join(ROOT, "scripts/eng/v2");
@@ -97,7 +99,7 @@ describe("05B rows", () => {
 
 describe("D-GRAPH: the decision module's import graph (black box, via a resolve hook)", () => {
   test("decide.mjs reaches only decision/ and contract/ modules: no adapter/, receipts, shepherd, fs, child_process, network or os", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vbc-graph-"));
+    const tmp = tmpUnderRoot("graph-");
     const log = path.join(tmp, "resolved.log");
     fs.writeFileSync(
       path.join(tmp, "hooks.mjs"),

@@ -3,16 +3,18 @@
 // GH_CONFIG_DIR are empty directories, so no route to the operator's gh session exists.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 // @ts-expect-error untyped support module
 import { writeGhShim, readShimLog, routeRest, isReadOnlyQuery } from "./support/fake-gh.mjs";
 // @ts-expect-error untyped support module
 import { world } from "./support/worlds.mjs";
 import { parseOnlyJson, REQUIRED_FIELDS } from "./checks-shepherd";
+import { cleanupTmp, tmp } from "./support/tmp";
+
+afterAll(cleanupTmp);
 
 const ROOT = path.resolve(__dirname, "../../../..");
 const TOKEN = "ghp_VERIFYbcFakeToken0Canary0000000000000"; // token-shaped, not a credential
@@ -30,7 +32,7 @@ function freshRuns(w: any) {
 }
 
 function setup(w: any, opts: any = {}) {
-  const t = fs.mkdtempSync(path.join(os.tmpdir(), "vbc-cli-"));
+  const t = tmp("cli-");
   const bin = path.join(t, "bin");
   writeGhShim({ dir: bin, world: freshRuns(w), logFile: path.join(t, "gh.log"), nodePath: process.execPath, opts });
   fs.symlinkSync("/usr/bin/git", path.join(bin, "git"));
@@ -151,7 +153,7 @@ describe("CLI: the real process", { timeout: 180_000 }, () => {
 
   test("CLI-RECEIPT-ROOT: by default receipts land under .eng/receipts/, gitignored, and never make the tool +dirty", () => {
     // A git checkout copy of this tree (scripts/, .github/, .gitignore, package.json) committed in a scratch repo.
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "vbc-git-"));
+    const repo = tmp("git-");
     for (const p of ["scripts", ".github", ".gitignore", "package.json"]) fs.cpSync(path.join(ROOT, p), path.join(repo, p), { recursive: true });
     const git = (...a: string[]) => spawnSync("git", ["-c", "user.email=verifier@example.invalid", "-c", "user.name=verifier", ...a], { cwd: repo, encoding: "utf8" });
     git("init", "-q");

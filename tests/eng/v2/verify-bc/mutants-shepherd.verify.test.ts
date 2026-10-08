@@ -3,7 +3,7 @@
 // implementation does not (the real implementation's own failures are the baseline).
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import {
   TOKEN,
@@ -18,6 +18,10 @@ import {
 } from "./checks-shepherd";
 // @ts-expect-error untyped support module
 import { PROD_TIP } from "./support/worlds.mjs";
+import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+
+redirectTmpdir();
+afterAll(cleanupTmp);
 
 const V2 = path.resolve(__dirname, "../../../../scripts/eng/v2");
 type RunCli = (args: any) => any;

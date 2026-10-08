@@ -3,9 +3,9 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { CLOSED_REASONS, ALL_DECISIONS, PRODUCTION_REF } from "./oracle";
+import { tmp } from "./support/tmp";
 // @ts-expect-error untyped support module
 import { makeFakeSpawn, isReadOnlyQuery, routeRest } from "./support/fake-gh.mjs";
 // @ts-expect-error untyped support module
@@ -27,7 +27,7 @@ export type Run = { code: number | undefined; out: string; err: string; log: any
 export type RunCli = (args: any) => any;
 
 export function tmpDir(prefix: string) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return tmp(prefix);
 }
 
 /** One in-process shepherd run against a fake world. */

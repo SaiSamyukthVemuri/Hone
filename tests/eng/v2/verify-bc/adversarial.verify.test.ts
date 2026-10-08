@@ -4,13 +4,17 @@
 //   NO HOLE         — the attempt failed; the test asserts the safe behaviour and passes.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import { CODEX, HUMAN, baseValue, candidate, ciValue, collected, evidence, ext, fail, key, ok, openRows, review, thread } from "./oracle";
 import { malformedReads } from "./checks-decide";
 import { TOKEN, parseOnlyJson, runIn } from "./checks-shepherd";
 // @ts-expect-error untyped support module
 import { world } from "./support/worlds.mjs";
+import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+
+redirectTmpdir();
+afterAll(cleanupTmp);
 
 const V2 = path.resolve(__dirname, "../../../../scripts/eng/v2");
 let decide: any, runShepherdCli: any, exitCodeFor: any, TRUST_POLICY: any, NA: any;
