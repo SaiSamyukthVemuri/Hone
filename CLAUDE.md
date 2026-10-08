@@ -256,9 +256,13 @@ Act only on its bounded `nextAction`, inside your own task's authorization:
 | `UNKNOWN` | follow its `nextAction` when that is a step inside your authorization (retarget, a new branch, split the PR); otherwise escalate with the reason — never read it as green |
 | `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission |
 
-Never edit, delete or hide a Codex review comment or thread, and resolve one
-only on the operator's explicit instruction for that thread: the shepherd cannot
-tell your credential's actions from the operator's (SPEC-05A §7, R5-DELETE).
+**Codex review comments and threads are evidence, not workspace** (operator
+policy, 2026-10-08). Agents never edit, delete, conceal, minimize or otherwise
+manipulate a Codex comment or review thread. Resolving any specific thread
+requires the operator's explicit authorization for that thread. The limitation
+behind this (SPEC-05A §7, R5-DELETE): the shepherd cannot see a deleted finding
+— a thread whose Codex comment was deleted disappears from FINDINGS_OPEN — and
+it cannot tell an agent using the operator's credential from the operator.
 
 It needs the dedicated read-only token in `HONE_ENG_READ_TOKEN`; without it,
 every answer is `UNKNOWN(read_failed)`. Until ENG-LOOP V1 is declared LIVE, its
