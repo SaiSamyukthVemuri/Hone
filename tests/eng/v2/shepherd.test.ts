@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- reports are inspected as raw JSON on purpose */
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -345,6 +345,80 @@ describe("shepherd: exit codes and usage", () => {
       rmSync(blocked, { recursive: true, force: true });
     }
   });
+});
+
+describe("shepherd: a module that cannot load is still one report (Codex P2 on #817, comment 4218801301)", () => {
+  // The bug: cli.mjs awaited import("./v2/cli-shepherd.mjs") outside any guard, and that module statically
+  // imports the checkout's classifier through local-ci.mjs. A classifier that cannot load (a PR under review
+  // leaving it invalid) gave exit 1, a Node stack trace and ZERO stdout bytes in JSON mode.
+  const isolatedCopy = () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-shepherd-load-"));
+    cpSync(path.join(ROOT, "scripts", "eng"), path.join(dir, "scripts", "eng"), { recursive: true });
+    cpSync(path.join(ROOT, "scripts", "classify-changes.mjs"), path.join(dir, "scripts", "classify-changes.mjs"));
+    return dir;
+  };
+  const runCli = (dir: string, argv: string[]) => {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    delete env.HONE_ENG_READ_TOKEN;
+    return spawnSync(process.execPath, [path.join(dir, "scripts/eng/cli.mjs"), ...argv], { cwd: dir, env, encoding: "utf8", timeout: 60_000 });
+  };
+  const breakFile = (dir: string, rel: string) => writeFileSync(path.join(dir, rel), "export function classify( { this is not valid JavaScript\n");
+
+  it("an unloadable classifier: JSON mode prints the common internal-error report, exit 1, one stderr line", () => {
+    const dir = isolatedCopy();
+    try {
+      breakFile(dir, "scripts/classify-changes.mjs");
+      const r = runCli(dir, ["shepherd", "810", "--json", "--no-receipt"]);
+      expect(r.status).toBe(EXIT.INTERNAL);
+      const report = JSON.parse(r.stdout);
+      for (const f of REQUIRED_FIELDS) expect(report, f).toHaveProperty(f);
+      expect(report).toMatchObject({
+        pr: 810,
+        error: "internal",
+        decision: "UNKNOWN",
+        reasonCodes: ["malformed"],
+        headSha: null,
+        evidenceHash: null,
+        humanMergeRequired: true,
+        receipt: "none",
+        blocking: { row: "internal" },
+        production: { ref: "claude/build-hone-saas-hOex7", tip: null },
+      });
+      expect(r.stderr.trim().split("\n")).toEqual(["shepherd: internal error: a module it needs could not load (SyntaxError)"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("text mode: exit 1, nothing on stdout, the same one stderr line", () => {
+    const dir = isolatedCopy();
+    try {
+      breakFile(dir, "scripts/classify-changes.mjs");
+      const r = runCli(dir, ["shepherd", "810", "--no-receipt"]);
+      expect(r.status).toBe(EXIT.INTERNAL);
+      expect(r.stdout).toBe("");
+      expect(r.stderr).toContain("internal error: a module it needs could not load");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("even when the report's own module cannot load, JSON mode prints the same report shape, nothing guessed", () => {
+    const dir = isolatedCopy();
+    try {
+      breakFile(dir, "scripts/classify-changes.mjs");
+      const common = JSON.parse(runCli(dir, ["shepherd", "810", "--json", "--no-receipt"]).stdout);
+      breakFile(dir, "scripts/eng/v2/decision/decide.mjs");
+      const r = runCli(dir, ["shepherd", "810", "--json", "--no-receipt"]);
+      expect(r.status).toBe(EXIT.INTERNAL);
+      const report = JSON.parse(r.stdout);
+      expect(Object.keys(report)).toEqual(Object.keys(common));
+      expect(report).toMatchObject({ pr: 810, error: "internal", decision: "UNKNOWN", reasonCodes: ["malformed"], humanMergeRequired: true });
+      expect(report.production).toEqual({ ref: null, tip: null });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
 
 describe("shepherd: the real CLI, as Claude Code runs it", () => {

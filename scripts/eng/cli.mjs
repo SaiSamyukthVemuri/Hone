@@ -120,11 +120,65 @@ function renderHuman(facts) {
   return out.join("\n");
 }
 
+/**
+ * ENG-LOOP V1 05C: a module the shepherd needs could not load — the checkout's
+ * classifier, say, when a PR under review leaves it invalid. JSON mode still
+ * prints the common internal-error report and the exit code is 1; stderr gets
+ * one line, never a bare stack trace.
+ */
+async function shepherdLoadFailure(argv, e) {
+  process.stderr.write(`shepherd: internal error: a module it needs could not load (${e instanceof Error ? e.name : "error"})\n`);
+  if (argv.includes("--json")) {
+    const prNumber = /^[1-9]\d{0,8}$/.test(argv[1] ?? "") ? Number(argv[1]) : null;
+    const detail = "the shepherd could not load a module it needs";
+    let report;
+    try {
+      // shepherd.mjs does not depend on the classifier, so this report usually still loads.
+      const { buildErrorReport } = await import("./v2/shepherd.mjs");
+      report = buildErrorReport({ kind: "internal", prNumber, detail });
+    } catch {
+      // Not even that: the same shape, built from nothing, with nothing guessed.
+      report = {
+        schema: "eng-loop-v1/shepherd@1",
+        pr: prNumber,
+        headSha: null,
+        baseRef: null,
+        production: { ref: null, tip: null },
+        observedAt: null,
+        toolVersion: null,
+        evidenceHash: null,
+        decision: "UNKNOWN",
+        reasonCodes: ["malformed"],
+        blocking: { row: "internal", detail },
+        sourceReferences: [],
+        nextAction: "Do not act on this result. Re-run once; if it repeats, report the internal error.",
+        humanMergeRequired: true,
+        advisory:
+          "Advisory only. CANDIDATE_READY_FOR_HUMAN_REVIEW is not merge permission: a human authorizes every merge at an exact head.",
+        instrumentation: { requests: 0, failedRequests: 0, latencyMs: 0, attempts: null, confirmed: false, stage: "internal" },
+        error: "internal",
+      };
+    }
+    process.stdout.write(`${JSON.stringify({ ...report, receipt: "none" }, null, 2)}\n`);
+  }
+  return 1;
+}
+
 if (process.argv[1] && process.argv[1].endsWith("cli.mjs") && process.argv[2] === "shepherd") {
   // ENG-LOOP V1 05C (scripts/eng/v2/README.md). JSON mode writes only JSON to
   // stdout; exitCode rather than exit() so a piped report is never truncated.
-  const { runShepherdCli } = await import("./v2/cli-shepherd.mjs");
-  process.exitCode = runShepherdCli({ argv: process.argv.slice(2), env: process.env, out: process.stdout, err: process.stderr });
+  // The import is guarded too: a module that cannot load is an internal error
+  // with the common report, not a stack trace and an empty stdout.
+  const argv = process.argv.slice(2);
+  let runShepherdCli = null;
+  try {
+    ({ runShepherdCli } = await import("./v2/cli-shepherd.mjs"));
+  } catch (e) {
+    process.exitCode = await shepherdLoadFailure(argv, e);
+  }
+  if (runShepherdCli) {
+    process.exitCode = runShepherdCli({ argv, env: process.env, out: process.stdout, err: process.stderr });
+  }
 } else if (process.argv[1] && process.argv[1].endsWith("cli.mjs")) {
   const argv = process.argv.slice(2);
   const json = argv.includes("--json");
