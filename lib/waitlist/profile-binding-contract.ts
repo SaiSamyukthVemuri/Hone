@@ -68,16 +68,15 @@ export type ProfileAdapterCapabilities = {
    * written only by that proof.
    *
    * FALSE IN WAIT-04A AND IN WAIT-04B UNTIL A VERIFICATION MECHANISM EXISTS.
-   * While it is false, `mobile_verified_at` is null for every entry and
-   * `prospectMayReceiveSms` therefore refuses every send — which is the correct
-   * standing behaviour, not a gap to work around.
+   * While it is false, `mobile_verified_at` is null for every entry. Since
+   * Roadmap v1.25 (operator decision D4(2), 2026-10-08) that no longer refuses
+   * sends: `prospectMayReceiveSms` decides on consent and STOP, and
+   * verification is optional strengthening.
    *
-   * THE RULE THIS FLAG EXISTS TO MAKE UNMISSABLE: a binding may STORE a
-   * candidate and may STORE a consent, and doing both still does not make a
-   * destination. Writing `mobile_verified_at` from anything other than a
-   * completed verification — from the candidate's own arrival, from a consent
-   * tick, from an operator's assertion — reintroduces the redirect this whole
-   * shape closes.
+   * THE RULE THIS FLAG STILL MAKES UNMISSABLE: `mobile_verified_at` records a
+   * completed verification and nothing else. Writing it from the candidate's
+   * own arrival, from a consent tick, or from an operator's assertion would
+   * claim a proof that never happened.
    */
   verifiesMobile: boolean;
   /** A capability grant can be issued and redeemed for the completion surface. */

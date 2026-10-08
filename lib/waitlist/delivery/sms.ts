@@ -23,9 +23,16 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 // studio has switched waitlist SMS on.
 //
 // ELIGIBILITY IS NOT DECIDED HERE. prospectMayReceiveSms is the one authority:
-// a STOP wins over everything, a number nobody verified is not a channel, and
-// only then does consent decide. The claim returns the facts; this module
-// applies the authority and records a skip with its reason when it says no.
+// a STOP wins over everything, then recorded consent decides. Verification is
+// optional (Roadmap v1.25, operator decision D4(2)). The claim returns the
+// facts; this module applies the authority and records a skip with its reason
+// when it says no. Three protections stay here:
+// - the claim reads the consent and the phone from the same locked row, and
+//   the database never lets a stored phone change, so the text goes to the
+//   number the consent was recorded with;
+// - a phone that does not normalise is never tried (`invalid_phone`);
+// - a non-production deployment is fenced before any provider call
+//   (`non_production_deployment`).
 //
 // RETRIES. Twilio takes no idempotency key, so an attempt whose answer is lost
 // (`ambiguous`) is never repeated: it may already have reached the prospect.
@@ -68,7 +75,6 @@ function eligibilitySkip(target: {
   if (prospectMayReceiveSms(record)) return null;
   // The authority said no; name why, in the authority's own order.
   if (record.sms_opted_out_at) return "opted_out";
-  if (!record.mobile_verified_at) return "mobile_unverified";
   return "no_consent";
 }
 

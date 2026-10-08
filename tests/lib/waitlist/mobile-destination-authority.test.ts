@@ -148,15 +148,18 @@ describe("a legacy entry with NO mobile may supply a candidate", () => {
   });
 });
 
-describe("a candidate plus consent does NOT authorize SMS", () => {
-  it("consent alone is not enough", () => {
+// D4(2), Roadmap v1.25 (2026-10-08): recorded consent and no STOP decide, and
+// verification is optional strengthening. The number is bound by the database
+// (consent is recorded only beside a phone, and a stored phone never changes).
+describe("consent and no STOP authorize SMS; verification is optional", () => {
+  it("a candidate number with recorded consent IS sendable", () => {
     expect(
       prospectMayReceiveSms({
         sms_consent_at: "2026-09-09T10:00:00.000Z", // they DID agree
         sms_opted_out_at: null,
-        mobile_verified_at: null, // ...to a number nobody has confirmed
+        mobile_verified_at: null, // ...and nobody has confirmed the number
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("a verified number without consent is not enough either", () => {
@@ -169,7 +172,7 @@ describe("a candidate plus consent does NOT authorize SMS", () => {
     ).toBe(false);
   });
 
-  it("NON-VACUITY — verified AND consented AND not opted out DOES send", () => {
+  it("a verified, consented number sends too: verification changes nothing", () => {
     expect(
       prospectMayReceiveSms({
         sms_consent_at: "2026-09-09T10:00:00.000Z",
@@ -188,6 +191,16 @@ describe("a candidate plus consent does NOT authorize SMS", () => {
       }),
     ).toBe(false);
   });
+
+  it("and an unverified, consented one", () => {
+    expect(
+      prospectMayReceiveSms({
+        sms_consent_at: "2026-09-09T10:00:00.000Z",
+        sms_opted_out_at: "2026-09-09T11:00:00.000Z",
+        mobile_verified_at: null,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("a candidate is structurally and visibly unverified", () => {
@@ -201,7 +214,7 @@ describe("a candidate is structurally and visibly unverified", () => {
     expect(storedMobilePresent(ON_FILE)).toBe(true); // present but NOT verified
   });
 
-  it("VISIBLY — the surface says the number will be confirmed first", () => {
+  it("VISIBLY — the surface tells the person agreed texts go to the number they type", () => {
     const html = renderToStaticMarkup(
       createElement(CompleteProfilePanel, { collectsSmsConsent: true,
         studioName: "Willow",
@@ -222,14 +235,10 @@ describe("a candidate is structurally and visibly unverified", () => {
   });
 });
 
-describe("eligibility fails closed until the mobile is verified", () => {
-  it("an SMS-requiring invitation is refused on a candidate", () => {
-    const verdict = invitationEligibility(ON_FILE, { requiresSms: true });
-    expect(verdict.eligible).toBe(false);
-    if (verdict.eligible) return;
-    expect(verdict.reason).toBe("mobile_unverified");
-    if (verdict.reason !== "mobile_unverified") return;
-    expect(verdict.standing).toBe("candidate");
+describe("an SMS invitation asks for nothing beyond a complete profile (D4(2))", () => {
+  it("a complete profile with a candidate number is eligible", () => {
+    expect(mobileStanding(ON_FILE)).toBe("candidate");
+    expect(invitationEligibility(ON_FILE)).toEqual({ eligible: true });
   });
 
   it("but the profile itself is COMPLETE, so they stay invitable by email", () => {
@@ -239,17 +248,14 @@ describe("eligibility fails closed until the mobile is verified", () => {
     expect(invitationEligibility(ON_FILE).eligible).toBe(true);
   });
 
-  it("and a verified number clears the SMS bar", () => {
+  it("and a verified number is eligible exactly the same way", () => {
     expect(
-      invitationEligibility(
-        { ...ON_FILE, mobileVerifiedAt: "2026-09-09T10:00:00.000Z" },
-        { requiresSms: true },
-      ).eligible,
+      invitationEligibility({ ...ON_FILE, mobileVerifiedAt: "2026-09-09T10:00:00.000Z" }).eligible,
     ).toBe(true);
   });
 
   it("incompleteness is reported as incompleteness, never as a phone problem", () => {
-    const verdict = invitationEligibility(LEGACY, { requiresSms: true });
+    const verdict = invitationEligibility(LEGACY);
     expect(verdict.eligible).toBe(false);
     if (verdict.eligible) return;
     expect(verdict.reason).toBe("profile_incomplete");
@@ -350,7 +356,7 @@ describe("an INITIAL PUBLIC JOIN mobile starts unverified", () => {
     expect(Object.keys(candidate).sort()).toEqual(["value", "verifiedAt"]);
   });
 
-  it("and the join form says so, rather than implying a text will follow", () => {
+  it("and the join form says so too", () => {
     const html = renderToStaticMarkup(
       createElement(WaitlistJoinForm, { collectsSmsConsent: true,
         studioName: "Willow",
@@ -366,10 +372,10 @@ describe("an INITIAL PUBLIC JOIN mobile starts unverified", () => {
   });
 });
 
-describe("verified + consent + not suppressed is the ONLY sendable shape", () => {
+describe("a number on file + consent + not suppressed is the sendable shape (verification optional)", () => {
   const STANDINGS: MobileStanding[] = ["absent", "candidate", "verified"];
 
-  it("walks every combination and finds exactly one", () => {
+  it("walks every combination: only a stored number, consented and not suppressed, sends", () => {
     const sendable: string[] = [];
     for (const standing of STANDINGS) {
       for (const smsOperationalConsent of [true, false]) {
@@ -380,7 +386,10 @@ describe("verified + consent + not suppressed is the ONLY sendable shape", () =>
         }
       }
     }
-    expect(sendable).toEqual(["verified/consent=true/suppressed=false"]);
+    expect(sendable).toEqual([
+      "candidate/consent=true/suppressed=false",
+      "verified/consent=true/suppressed=false",
+    ]);
   });
 
   it("the stored-record decision agrees with the profile-level one", () => {
@@ -411,10 +420,8 @@ describe("a legitimately stored, VERIFIED mobile keeps the prior semantics", () 
     expect(prospectMayReceiveSms({ sms_consent_at: C, sms_opted_out_at: C, mobile_verified_at: V })).toBe(false);
   });
 
-  it("and an SMS-requiring invitation is allowed on a verified number", () => {
-    expect(
-      invitationEligibility({ ...ON_FILE, mobileVerifiedAt: V }, { requiresSms: true }).eligible,
-    ).toBe(true);
+  it("and a verified number is invitable, as any complete profile is", () => {
+    expect(invitationEligibility({ ...ON_FILE, mobileVerifiedAt: V }).eligible).toBe(true);
   });
 
   it("declining consent still does not touch profile completeness", () => {

@@ -165,9 +165,12 @@ describe("duplicates, the studio switch and liveness are the DATABASE's answer",
 describe("eligibility is prospectMayReceiveSms's, and every 'no' is recorded with its reason", () => {
   for (const [label, over, reason] of [
     ["STOP wins over consent and verification", { sms_opted_out_at: "2026-09-03T00:00:00Z" }, "opted_out"],
-    ["an unverified number is not a channel", { mobile_verified_at: null }, "mobile_unverified"],
+    ["STOP wins over consent on an unverified number", { sms_opted_out_at: "2026-09-03T00:00:00Z", mobile_verified_at: null }, "opted_out"],
     ["no consent", { sms_consent_at: null }, "no_consent"],
+    ["no consent, whatever the verification", { sms_consent_at: null, mobile_verified_at: null }, "no_consent"],
     ["an unusable phone", { phone: "12345" }, "invalid_phone"],
+    ["an unusable phone, even with consent and no verification", { phone: "12345", mobile_verified_at: null }, "invalid_phone"],
+    ["no phone at all", { phone: null, mobile_verified_at: null }, "invalid_phone"],
   ] as const) {
     it(`${label} -> skipped (${reason})`, async () => {
       h.claim = { data: [target(over)], error: null };
@@ -181,6 +184,43 @@ describe("eligibility is prospectMayReceiveSms's, and every 'no' is recorded wit
     process.env.VERCEL_ENV = "preview";
     expect(await send()).toEqual({ state: "skipped", reason: "non_production_deployment" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // ---- D4(2), Roadmap v1.25: verification is optional; the protections stay ----
+
+  it("VERIFICATION IS OPTIONAL: an unverified number with recorded consent is texted", async () => {
+    h.claim = { data: [target({ mobile_verified_at: null })], error: null };
+    expect(await send()).toEqual({ state: "accepted" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(settled()).toEqual([expect.objectContaining({ p_outcome: "accepted", p_provider_message_sid: SID })]);
+  });
+
+  it("CONSENT BINDING: the text goes only to the number the claim read beside the consent", async () => {
+    // The claim reads phone and consent from one locked row, and the database
+    // never lets a stored phone change, so this is the consented number.
+    h.claim = { data: [target({ phone: "(604) 555-0142", mobile_verified_at: null })], error: null };
+    await send();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(form().get("To")).toBe("+16045550142");
+    expect(form().get("Body")).not.toMatch(/555/);
+  });
+
+  it("THE PRODUCTION FENCE: an eligible, unverified prospect on a preview is never texted", async () => {
+    process.env.VERCEL_ENV = "preview";
+    h.claim = { data: [target({ mobile_verified_at: null })], error: null };
+    expect(await send()).toEqual({ state: "skipped", reason: "non_production_deployment" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(settled()).toEqual([
+      expect.objectContaining({ p_outcome: "skipped", p_skip_reason: "non_production_deployment" }),
+    ]);
+  });
+
+  it("NO mobile_unverified skip is produced any more", async () => {
+    for (const over of [{ mobile_verified_at: null }, {}]) {
+      h.claim = { data: [target(over)], error: null };
+      expect(await send()).toEqual({ state: "accepted" });
+    }
+    expect(settled().map((a) => a.p_skip_reason)).not.toContain("mobile_unverified");
   });
 });
 

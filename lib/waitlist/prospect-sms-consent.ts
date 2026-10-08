@@ -284,28 +284,41 @@ export function buildProspectSmsConsentRecord(input: {
  * The same law as `honeSuppressionAllowsSend` for clients, restated over a
  * prospect record so the answer cannot differ between the two. Opt-out
  * dominates: a person who replied STOP is not textable no matter what a consent
- * column says, because the STOP came later and means more.
+ * column says, because the STOP came later and means more. Then recorded
+ * consent decides.
  *
- * A PHONE NUMBER IS NOT AN ARGUMENT TO THIS FUNCTION. It cannot be: possession
- * is not part of the decision, so it is not part of the signature.
+ * VERIFICATION IS OPTIONAL (Roadmap v1.25; operator decision D4(2),
+ * 2026-10-08). OTP / Twilio Verify is not a normal WAIT launch prerequisite, so
+ * a verified mobile is no longer a condition of sending. The protections that
+ * keep this decision safe sit beside this function:
+ *   - CONSENT IS BOUND TO ONE NUMBER. The database records consent only on a
+ *     row that holds a phone: the join requires one, and a completion requires
+ *     one. It never lets a stored phone be replaced or cleared (0202/0203), so
+ *     a consent can never be carried over to a number it was not given with.
+ *   - THE NUMBER MUST BE USABLE. The send path refuses a phone that does not
+ *     normalise (`invalid_phone`).
+ *   - NON-PRODUCTION NEVER SENDS. The deployment fence refuses before any
+ *     claim.
+ * WHAT THIS ACCEPTS: nobody proved the number reaches the person. A mistyped
+ * number, or a join that pairs someone's name and email with a phone the
+ * submitter controls, receives the text. STOP ends it, phone-wide and for
+ * good.
+ *
+ * A PHONE NUMBER IS NOT AN ARGUMENT TO THIS FUNCTION: possession is not part
+ * of the decision, so it is not part of the signature.
  */
 export function prospectMayReceiveSms(record: {
   sms_consent_at: string | null;
   sms_opted_out_at: string | null;
   /**
-   * REQUIRED, and required for a reason. Making it optional would let every
-   * existing call site keep compiling while silently authorising sends to
-   * unverified numbers — the precise failure this parameter exists to stop.
+   * Proof that the number reaches the person, when a verification flow has
+   * produced one. Accepted so a caller can pass the stored row as it is. NOT
+   * consulted: verification is optional strengthening, never a gate.
    */
-  mobile_verified_at: string | null;
+  mobile_verified_at?: string | null;
 }): boolean {
   // 1. A person who said STOP is not textable, whatever else is true.
   if (record.sms_opted_out_at) return false;
-  // 2. A NUMBER SOMEONE TYPED IS NOT A CHANNEL. A bearer completion link can
-  //    supply a candidate; verification is what makes it a destination. Without
-  //    this line, a candidate paired with a consent tick in the same submission
-  //    would authorise texts to whoever holds the link.
-  if (!record.mobile_verified_at) return false;
-  // 3. And only then does consent decide.
+  // 2. Recorded consent decides.
   return Boolean(record.sms_consent_at);
 }

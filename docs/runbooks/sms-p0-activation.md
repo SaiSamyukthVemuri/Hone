@@ -12,14 +12,13 @@ Related: [migration-first-process.md](./migration-first-process.md) · [../08_EM
 
 | # | Unit | Gate |
 |---|---|---|
-| 1 | #811 (test-only) | Optional. Without it every PR's unit lane carries 62 inherited reds from two invitation suites with a hard-coded `2026-10-07T14:00Z`. |
-| 2 | **SMS-00 (#812)** | **Migration first:** apply `0206` from the exact reviewed head (§1), then merge. |
-| 3 | SMS-02 (#813) | After #812. No migration. |
-| 4 | SMS-01 | After #813. No migration. |
+| 1 | **SMS-00 (#812)** | **Migration first:** apply `0206` from the exact reviewed head (§1), then merge. |
+| 2 | SMS-02: replacement PR for the closed #813 | After #812. A new PR from a new branch, with fresh CI and one exact-head review (operator decision D5(A): a retargeted PR cannot become shepherd-ready). No migration. |
+| 3 | SMS-01: replacement PR for the closed #814 | After SMS-02, the same way. No migration. |
 
 Merging and deploying all three **sends nothing new by itself**:
 - every new path is behind a studio switch that defaults off;
-- every recipient must have consent, plus a verified mobile for prospects;
+- every recipient must have recorded consent and no STOP. For prospects verification is optional (§5);
 - non-production deployments are fenced.
 
 ## 1. Apply `0206` (operator)
@@ -88,15 +87,23 @@ update public.studios set send_waitlist_invitation_sms = true
 
 Each switch only *permits*. Delivery still requires:
 - the recipient's consent;
-- for prospects, a verified mobile (§5);
+- for prospects, consent recorded with their stored number; verification is optional (§5);
 - no STOP;
 - a production deployment.
 
-## 5. SMS-01 needs verified prospect mobiles
+## 5. SMS-01 eligibility: consent and no STOP (verification optional)
 
-`prospectMayReceiveSms` refuses any prospect without `mobile_verified_at`, and **mobile verification is dormant**. So until it is armed, every invitation text is recorded `skipped` / `mobile_unverified`, and the email still goes.
+Since Roadmap v1.25 (operator decision D4(2), 2026-10-08), `prospectMayReceiveSms` allows a text on **recorded consent and no STOP**. A verified mobile is optional strengthening, never a gate, because OTP / Twilio Verify is not a WAIT launch prerequisite. Mobile verification itself stays dormant (`HONE_MOBILE_VERIFICATION_LIVE`, the Twilio Verify service, the WAIT-04B capability flag), and SMS-01 does not need it.
 
-Arming verification is a **separate, explicitly approved activation**: `HONE_MOBILE_VERIFICATION_LIVE`, the Twilio Verify service, and the WAIT-04B capability flag. SMS-01 does not change it.
+**What still protects the prospect:**
+- **Consent bound to one number.** Consent is recorded only beside a phone (the join and the completion both require one), and a stored phone can never be replaced or cleared (0202/0203). The claim reads both from one locked row, so the text goes to the number the consent was given with.
+- **STOP.** It is phone-wide and terminal, and reaches prospect rows through the inbound route.
+- **Phone validation.** A number that does not normalise is recorded `skipped` / `invalid_phone` and never tried.
+- **The production fence.** Previews and other non-production deployments record `skipped` / `non_production_deployment`.
+
+**Accepted residual.** Nobody proves the number reaches the person. A mistyped number, or a join that pairs someone's name and email with a phone the submitter controls, receives the invitation text and its booking link. STOP ends it.
+
+The join form and the completion panel now say: "Check this is your own mobile number. If you agree to texts, they'll go to this number."
 
 ## 6. Monitoring
 
@@ -111,6 +118,16 @@ select purpose, status, skip_reason, count(*)
 select id, purpose, studio_id, claimed_at
   from public.sms_outbound_messages
  where status in ('unknown','claimed') and claimed_at < now() - interval '1 hour';
+
+-- D1(a), the accepted residual duplicate window: more than one attempt that may
+-- have reached the provider for one appointment's reminder. Expect zero rows;
+-- any row is a duplicate, or an attempt whose outcome needs reading.
+select appointment_id, purpose, count(*) as attempts
+  from public.sms_outbound_messages
+ where purpose in ('appointment_reminder_24h', 'appointment_reminder_2h')
+   and status not in ('skipped', 'refused')
+ group by 1, 2
+having count(*) > 1;
 ```
 
 - **`ops_alerts`:** `sms_delivery_failed` (one per undelivered/failed message) and `sms_send_failed` (a send gave up: refused, ambiguous, or out of attempts).
@@ -126,11 +143,16 @@ select id, purpose, studio_id, claimed_at
 - [ ] A 24h and a 2h reminder arrive for a real appointment, in Willow's local time, with a working manage link.
 - [ ] Moving an appointment **before** its reminder goes out produces a reminder naming the new time. Cancelling it stops the reminders.
 - [ ] STOP stops texts. Email reminders continue.
-- [ ] (After §5) an invited prospect receives exactly one text. Its link opens the invitation, and its deadline matches the email.
+- [ ] An invited, consenting prospect receives exactly one text. Its link opens the invitation, and its deadline matches the email.
 - [ ] No duplicate text in any of the above (ledger: one `accepted` per message).
 - [ ] An undelivered text appears as an `sms_delivery_failed` alert.
 
 ## Known limitations (deliberate, follow-ups)
+
+- **Accepted for P0 by operator decision (2026-10-08), carried by SMS-03 (`docs/13`):**
+  - **D1(a), the residual duplicate window.** An invocation that dies, or a `record_sms_result` that errors, in the one round trip after Twilio accepted can lead to one repeat reminder about 15 minutes later. It is monitored by the §6 query.
+  - **D2(a), the in-flight cancel/move window (Codex P1 4224110906).** A cancel or move that commits while the provider call is in flight is not seen. The window is typically under a second, and the email reminder has the same one.
+- **D4(2): prospect numbers are not verified (§5).** This is accepted under Roadmap v1.25.
 
 - **A move after a reminder already went out gets no new reminder** (email and SMS, unchanged from before SMS-02). Specified follow-up **SMS-03** in `docs/13_BACKLOG_AND_DECISIONS.md`, with its design, required tests and acceptance criteria. Willow acceptance should not move an already-reminded appointment and expect a second reminder.
 - **No owner UI for the SMS switches:** SQL only (§4).
