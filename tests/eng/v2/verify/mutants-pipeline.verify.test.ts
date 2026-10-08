@@ -81,6 +81,33 @@ const MUTANTS: Array<[string, MutantFactory, string[]]> = [
     ["G-golden", "R4-totalcount-trap"],
   ],
   [
+    "the PRE-AMENDMENT §2.2 (R-AUTOBASE): automatic base changes dropped before parsing",
+    () => ({
+      ...REAL_IMPL,
+      parsePrContext: (raw: any, p: any) => {
+        const r = clone(raw);
+        const changes = r?.data?.repository?.pullRequest?.baseRefChanges;
+        if (changes && Array.isArray(changes.nodes)) changes.nodes = changes.nodes.filter((n: any) => !/^AutomaticBaseChange/.test(n?.__typename));
+        return REAL_IMPL.parsePrContext(r, p);
+      },
+    }),
+    ["NC4-auto-succeeded", "NC4-auto-failed"],
+  ],
+  [
+    "an unknown base-change node read as a manual edit",
+    () => ({
+      ...REAL_IMPL,
+      parsePrContext: (raw: any, p: any) => {
+        const r = clone(raw);
+        const changes = r?.data?.repository?.pullRequest?.baseRefChanges;
+        const known = ["BaseRefChangedEvent", "AutomaticBaseChangeSucceededEvent", "AutomaticBaseChangeFailedEvent"];
+        if (changes && Array.isArray(changes.nodes)) for (const n of changes.nodes) if (n && !known.includes(n.__typename)) n.__typename = "BaseRefChangedEvent";
+        return REAL_IMPL.parsePrContext(r, p);
+      },
+    }),
+    ["R4-unknown-event-type", "R4-unknown-beside-known"],
+  ],
+  [
     "closed PRs dropped from the head-branch listing (state=open)",
     () => ({
       ...REAL_IMPL,

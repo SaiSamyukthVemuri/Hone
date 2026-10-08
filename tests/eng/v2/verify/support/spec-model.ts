@@ -54,7 +54,12 @@ export interface Mutations {
   ignoreCreation?: boolean;
   /** "at or after" computed as t >= earliest, so an unparseable (NaN) time counts as before */
   geqNotStrict?: boolean;
+  /** the PRE-AMENDMENT §2.2 (before 4b0662a2): only BaseRefChangedEvent counts; GitHub's automatic retargeting is missed (R-AUTOBASE) */
+  manualBaseChangesOnly?: boolean;
 }
+
+/** SPEC §2.2 as amended at 4b0662a2: the three base-change event types. */
+export const BASE_CHANGE_TYPES = ["BaseRefChangedEvent", "AutomaticBaseChangeSucceededEvent", "AutomaticBaseChangeFailedEvent"] as const;
 
 const DAY = 86_400_000;
 
@@ -81,6 +86,10 @@ export function specModel(w: World, m: Mutations = {}): Result {
   // Parse stage, §2.1: the compare answer must report the base it was requested with (K0.baseSha).
   // bindBase consumes the parsed record, so this precedes every bindBase rule.
   if ((w.compare.baseSha ?? w.pr.baseSha) !== w.pr.baseSha) return fail("malformed");
+  // Parse stage, §2.2 (amended 4b0662a2): every base-change node is one of the three event types, else malformed.
+  const extraBaseEvents = w.prContext.extraBaseEvents ?? [];
+  if (extraBaseEvents.some((t) => !(BASE_CHANGE_TYPES as readonly string[]).includes(t))) return fail("malformed");
+  const counted = m.manualBaseChangesOnly ? extraBaseEvents.filter((t) => t === "BaseRefChangedEvent").length : extraBaseEvents.length;
   // §2.6 bindBase
   if (w.pr.baseRef !== PRODUCTION_REF) return fail("base_ref");
   const files = w.compare.files;
@@ -89,7 +98,7 @@ export function specModel(w: World, m: Mutations = {}): Result {
     ? "too_many"
     : m.useTotalCount && w.prContext.timelineTotalCount !== undefined
       ? w.prContext.timelineTotalCount
-      : w.prContext.baseRefEvents;
+      : w.prContext.baseRefEvents + counted;
   const associated: number[] | "too_many" = w.prContext.associatedHasNext ? "too_many" : w.prContext.associated;
 
   // §3.4 rule 1

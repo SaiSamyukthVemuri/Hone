@@ -177,6 +177,16 @@ holds on K0's own evidence) or missing.
 
 ## 7. New finding — rule 4 does not see automatic base changes (base binding)
 
+> **Status: closed at 4b0662a2 (R-AUTOBASE), verified.** §2.2 now asks for `BASE_REF_CHANGED_EVENT`,
+> `AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT` and `AUTOMATIC_BASE_CHANGE_FAILED_EVENT` and counts each, and any other
+> node type is `malformed`. Rule 4 counts all three. Live (2026-10-08, the widened query, read-only): #720 has exactly
+> one `BaseRefChangedEvent`, and #800 and #810 have no base-change event of any kind (`fixtures/real/pr-context-widened-*.json`).
+> Rows: `row2-base` (R-AUTOBASE parse rows), `scenarios` (NC4-auto-succeeded, NC4-auto-failed, NC4-mixed,
+> R4-unknown-*), `collect-readers` (the widened document), `collect-passes` (automatic retargets as row results, an
+> unknown node as a collection failure) and `rstack` (every recorded grafana event list binds `base_ref_changed`).
+> Three mutants are caught: the model's pre-amendment count, a parser that drops automatic events, and a parser that
+> reads an unknown node as a manual edit.
+
 **Observation.** Live: among grafana/grafana's 100 most recently updated PRs, 6 have an
 `AutomaticBaseChangeSucceededEvent`.
 - 5 of them have no `BaseRefChangedEvent` at all.

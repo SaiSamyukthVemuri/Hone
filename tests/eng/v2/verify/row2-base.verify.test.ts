@@ -214,6 +214,71 @@ describe("row 2 verify: parsePrContext (§2.2)", () => {
     expect(r.record).toMatchObject({ baseRefChanges: 1, associatedPrNumbers: [720] });
   });
 
+  // §2.2 as amended at 4b0662a2 (R-AUTOBASE): three base-change event types, each counted; any other type malformed.
+  const withTypes = (types: unknown[], hasNext = false) => {
+    const raw = spec810();
+    raw.data.repository.pullRequest.baseRefChanges = { pageInfo: { hasNextPage: hasNext }, nodes: types.map((t) => (t === undefined ? {} : { __typename: t })) };
+    return raw;
+  };
+  const AUTO_OK = "AutomaticBaseChangeSucceededEvent";
+  const AUTO_FAILED = "AutomaticBaseChangeFailedEvent";
+  for (const [label, types, n] of [
+    ["one succeeded automatic retarget", [AUTO_OK], 1],
+    ["one failed automatic retarget", [AUTO_FAILED], 1],
+    ["a manual edit, then an automatic retarget (grafana #133976's shape)", ["BaseRefChangedEvent", AUTO_OK], 2],
+    ["all three kinds", ["BaseRefChangedEvent", AUTO_OK, AUTO_FAILED], 3],
+    ["100 mixed nodes", Array.from({ length: 100 }, (_, i) => ["BaseRefChangedEvent", AUTO_OK, AUTO_FAILED][i % 3]), 100],
+  ] as const)
+    it(`R-AUTOBASE: ${label} counts ${n} base change(s)`, () => {
+      const r = parsePrContext(withTypes([...types]), params);
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      expect(r.record.baseRefChanges).toBe(n);
+    });
+
+  it("R-AUTOBASE: hasNextPage true is 'too_many' whatever the node types", () => {
+    for (const types of [[AUTO_OK], [AUTO_FAILED, "BaseRefChangedEvent"], []]) expect(parsePrContext(withTypes(types, true), params).record.baseRefChanges).toBe("too_many");
+  });
+
+  for (const [label, types] of [
+    ["a head-ref deletion event", ["HeadRefDeletedEvent"]],
+    ["a base-ref force push event", ["BaseRefForcePushedEvent"]],
+    ["a base-ref deletion event", ["BaseRefDeletedEvent"]],
+    ["a closed event beside a valid one", [AUTO_OK, "ClosedEvent"]],
+    ["the empty typename", [""]],
+    ["a node without a typename", [undefined]],
+    ["a lower-case typename", ["automaticBaseChangeSucceededEvent"]],
+  ] as const)
+    it(`R-AUTOBASE: ${label} is malformed (an unknown event type is never zero and never a pass)`, () => {
+      failsWith(parsePrContext(withTypes([...types]), params), ["malformed"], label);
+    });
+
+  it("R-AUTOBASE: a valid node with an extra field is malformed (GraphQL exact fields)", () => {
+    const raw = withTypes([AUTO_OK]);
+    raw.data.repository.pullRequest.baseRefChanges.nodes[0].oldBase = "feature";
+    failsWith(parsePrContext(raw, params), ["malformed"], "extra field");
+  });
+
+  it("REAL (verifier, read-only GraphQL with the WIDENED §2.2 query, 2026-10-08): #720 one BaseRefChangedEvent; #800 and #810 none of any kind", () => {
+    const r720 = parsePrContext(REAL.verify("pr-context-widened-720.json"), { expectedNumber: 720 });
+    expect(r720.ok, JSON.stringify(r720)).toBe(true);
+    expect(r720.record.baseRefChanges).toBe(1);
+    expect(REAL.verify("pr-context-widened-720.json").data.repository.pullRequest.baseRefChanges.nodes).toEqual([{ __typename: "BaseRefChangedEvent" }]);
+    const r800 = parsePrContext(REAL.verify("pr-context-widened-800.json"), { expectedNumber: 800 });
+    expect(r800.ok, JSON.stringify(r800)).toBe(true);
+    expect(r800.record).toMatchObject({ baseRefChanges: 0, associatedPrNumbers: [800] });
+    const r810 = parsePrContext(REAL.verify("pr-context-widened-810.json"), params);
+    expect(r810.ok, JSON.stringify(r810)).toBe(true);
+    // at #810's pushed head 6e7663c4, two PRs are stacked on it now: #815 and #817 (§7 R-STACK)
+    expect(r810.record).toMatchObject({ createdAt: "2026-10-07T20:16:40Z", baseRefChanges: 0, associatedPrNumbers: [810, 815, 817] });
+  });
+
+  it("the answers recorded with the OLD query are still exact answers of the widened one (no automatic events existed)", () => {
+    const old720 = parsePrContext(REAL.verify("pr-context-720.json"), { expectedNumber: 720 });
+    const new720 = parsePrContext(REAL.verify("pr-context-widened-720.json"), { expectedNumber: 720 });
+    expect(old720.record.baseRefChanges).toBe(new720.record.baseRefChanges);
+    expect(parsePrContext(REAL.verify("pr-context-810-at-958b9d53.json"), params).record.baseRefChanges).toBe(0);
+  });
+
   it("TRAP: the builder's #810 context answer as recorded at b5f3affb carries an unfiltered totalCount 4 and no nodes — malformed, never 4", () => {
     // fixtures/builder-real/pr-context-810-b5f3affb.json (the builder re-recorded it at 203ed1f4): baseRefChanges
     // { totalCount: 4 }, no number, no pageInfo, no nodes, no __typename. It is not the §2.2 shape.

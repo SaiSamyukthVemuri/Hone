@@ -72,6 +72,27 @@ describe("§5.1 readers: the reader set and the policy", () => {
   });
 });
 
+describe("§2.2 as amended at 4b0662a2 (R-AUTOBASE): the widened PR-context document", () => {
+  const itemTypes = (doc: string) => {
+    const m = /itemTypes\s*:\s*\[([^\]]*)\]/.exec(doc);
+    return m ? m[1].split(",").map((x) => x.trim()).filter(Boolean).sort() : null;
+  };
+  it("asks for exactly the three base-change event types — no more, no fewer", () => {
+    expect(itemTypes(PR_CONTEXT_QUERY)).toEqual(["AUTOMATIC_BASE_CHANGE_FAILED_EVENT", "AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT", "BASE_REF_CHANGED_EVENT"]);
+  });
+  it("is not the pre-amendment document (BASE_REF_CHANGED_EVENT only)", () => {
+    const old = selection(
+      "{repository(owner:$owner,name:$name){ pullRequest(number:N){ number createdAt changedFiles baseRefChanges: timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT], first:100){ pageInfo{hasNextPage} nodes{__typename} } } object(oid:H){ __typename ... on Commit { associatedPullRequests(first:100){ pageInfo{hasNextPage} nodes{number} } } } }}",
+    );
+    expect(selection(PR_CONTEXT_QUERY)).not.toBe(old);
+    expect(selection(PR_CONTEXT_QUERY)).toBe(SPEC_QUERIES.context);
+  });
+  it("still requests only the typename of each node and the page flag (no totalCount: SPEC §0)", () => {
+    expect(SPEC_QUERIES.context).toContain("baseRefChanges:timelineItems(");
+    expect(/totalCount/.test(PR_CONTEXT_QUERY.split("associatedPullRequests")[0])).toBe(false);
+  });
+});
+
 describe("§5.1 readers: exactly one request, on the table's route, for the values given", () => {
   const H = H810;
   const cases: Array<[string, any[], (req: any) => string]> = [

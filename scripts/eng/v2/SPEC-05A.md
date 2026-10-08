@@ -73,7 +73,8 @@ Record: `{ status, behindBy, aheadBy, baseSha, mergeBaseSha, files: [filenames],
 ```
 repository(owner,name){
   pullRequest(number:N){ number createdAt changedFiles
-    baseRefChanges: timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT], first:100){ pageInfo{hasNextPage} nodes{__typename} } }
+    baseRefChanges: timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT, AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT,
+        AUTOMATIC_BASE_CHANGE_FAILED_EVENT], first:100){ pageInfo{hasNextPage} nodes{__typename} } }
   object(oid:H){ __typename ... on Commit { associatedPullRequests(first:100){ pageInfo{hasNextPage} nodes{number} } } } }
 ```
 
@@ -82,7 +83,7 @@ repository(owner,name){
 | `number` | equal to `expectedNumber` |
 | `createdAt` | an ISO-8601 UTC timestamp string |
 | `changedFiles` | a non-negative safe integer |
-| `baseRefChanges` | every node is `{ __typename: "BaseRefChangedEvent" }`. `hasNextPage: true` → the record carries `baseRefChanges: "too_many"` |
+| `baseRefChanges` | every node is `{ __typename }` with `BaseRefChangedEvent`, `AutomaticBaseChangeSucceededEvent` or `AutomaticBaseChangeFailedEvent`. `hasNextPage: true` → the record carries `baseRefChanges: "too_many"` |
 | `object` | a `Commit`; `null` → `read_failed` |
 | `associatedPullRequests` | `nodes[].number` positive integers. `hasNextPage: true` → `"too_many"` |
 
@@ -203,7 +204,10 @@ Rules apply in this order. The first that fires decides.
 2. Changed files cannot be proven complete: `filesCapped`, or `files.length !== changedFiles` → `diff_too_large`.
 3. The PR changes CI's own definition — `.github/workflows/ci.yml`, `scripts/classify-changes.mjs` or
    `scripts/browser-groups.mjs` → `ci_definition_changed`. Required lanes would then come from code the PR controls.
-4. `base.baseRefChanges` is not `0` (a count or `"too_many"`) → `base_ref_changed`. Recovery is a new PR.
+4. `base.baseRefChanges` is not `0` (a count or `"too_many"`) → `base_ref_changed`. Recovery is a new PR. A base
+   change is any of the three §2.2 events: a manual edit, or GitHub's automatic retargeting when the base branch is
+   merged and deleted, whether it succeeded or failed. The automatic events carry no `BaseRefChangedEvent`
+   (verifier, R-STACK pass), so counting only manual edits would miss a retargeted stack.
 5. Shared head. Either of these → `shared_head`:
    - `headBranchPrs.numbers` is not exactly `[key.prNumber]`, or `headBranchPrs.capped`;
    - `associatedPrNumbers` is not exactly `[key.prNumber]`, or is `"too_many"`.
@@ -502,13 +506,10 @@ Each is a stated limit, not a hidden assumption. None can make a candidate out o
   removing the associated-PR clause on condition of an independent proof (2026-10-08). The verifier's proof
   (`tests/eng/v2/verify/R-STACK-PROOF.md`, 39 rows) is **NOT PROVEN**, so the clause **stays**: the vectors in
   R-ATTRIBUTION below are not excluded by the remaining rules — nor by the clause.
-- **R-AUTOBASE — rule 4 misses GitHub's automatic retargeting (open; fix in verification).** When a PR's base
-  branch is merged and deleted, GitHub retargets the PR and records `AutomaticBaseChangeSucceededEvent` (or
-  `…FailedEvent`), not `BaseRefChangedEvent` (verifier, R-STACK pass: 5 of 6 such PRs in a large repository carried
-  none). §2.2 counts only `BASE_REF_CHANGED_EVENT`, so "this PR has no base change (step 4)" can be false for a
-  retargeted stack. Reach is narrow — `behindBy == 0` forces a new head and a fresh run in the merge and squash
-  flows — and no PR in Hone's 100 most recently updated carries either event. The fix (count all three events)
-  is implemented and awaits independent verification before it lands.
+- **R-AUTOBASE — closed.** GitHub's automatic retargeting records `AutomaticBaseChange*Event`, never
+  `BaseRefChangedEvent` (verifier, R-STACK pass), so rule 4 now counts all three events (§2.2). The recorded
+  PR-context fixtures stay exact answers under the widened query: live (2026-10-08), #800 and #810 carry no
+  base-change event of any kind, and #720 exactly one `BaseRefChangedEvent`.
 - **R-ATTRIBUTION — three ways a run could be another PR's (writer-class or GitHub-administrative).** Rules 5 and 7
   bind a run to this PR for every vector the verifier could evidence. Three rest on undocumented GitHub behaviour
   that cannot be observed read-only:

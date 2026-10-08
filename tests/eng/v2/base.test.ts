@@ -8,7 +8,7 @@ import path from "node:path";
 import { parsePrKey } from "../../../scripts/eng/v2/contract/pr-key.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { parseActivity, parseBranchRules, parseCompare, parseHeadBranchPrs, parsePrContext } from "../../../scripts/eng/v2/adapter/internal/github/parse-base.mjs";
+import { PR_CONTEXT_QUERY, parseActivity, parseBranchRules, parseCompare, parseHeadBranchPrs, parsePrContext } from "../../../scripts/eng/v2/adapter/internal/github/parse-base.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { bindBase } from "../../../scripts/eng/v2/adapter/internal/bind/base.mjs";
@@ -121,7 +121,7 @@ describe("parsePrContext (GraphQL, exact fields)", () => {
   });
 
   it.each([
-    ["a non-BaseRefChangedEvent node", (r: any) => r.data.repository.pullRequest.baseRefChanges.nodes.push({ __typename: "IssueComment" })],
+    ["a node that is not a base-change event", (r: any) => r.data.repository.pullRequest.baseRefChanges.nodes.push({ __typename: "IssueComment" })],
     ["another PR's number", (r: any) => (r.data.repository.pullRequest.number = 811)],
     ["a non-ISO createdAt", (r: any) => (r.data.repository.pullRequest.createdAt = "yesterday")],
     ["a negative changedFiles", (r: any) => (r.data.repository.pullRequest.changedFiles = -1)],
@@ -286,6 +286,24 @@ describe("every row-2 parser: the request is required, and nothing throws", () =
   it("parseBranchRules: an exotic answer is malformed, never an exception", () => {
     expect(() => parseBranchRules(hostile())).not.toThrow();
     expect(parseBranchRules(hostile())).toMatchObject({ ok: false, reason: "malformed" });
+  });
+});
+
+describe("rule 4 sees every base change, manual or automatic", () => {
+  it("asks for the manual and both automatic base-change events", () => {
+    for (const item of ["BASE_REF_CHANGED_EVENT", "AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT", "AUTOMATIC_BASE_CHANGE_FAILED_EVENT"]) {
+      expect(PR_CONTEXT_QUERY).toContain(item);
+    }
+  });
+
+  it("an automatic retarget, succeeded or failed, counts as a base change; mixed events count each", () => {
+    // Recorded #800 and #810 answers carry no base-change event under either query (live check 2026-10-08), so
+    // the synthetic events below are the only difference.
+    for (const kinds of [["AutomaticBaseChangeSucceededEvent"], ["AutomaticBaseChangeFailedEvent"], ["BaseRefChangedEvent", "AutomaticBaseChangeSucceededEvent"]]) {
+      const raw = clone(load("base/pr-context-810.json"));
+      raw.data.repository.pullRequest.baseRefChanges.nodes = kinds.map((__typename) => ({ __typename }));
+      expect(parsePrContext(raw, { expectedNumber: 810 }).record.baseRefChanges, kinds.join("+")).toBe(kinds.length);
+    }
   });
 });
 
