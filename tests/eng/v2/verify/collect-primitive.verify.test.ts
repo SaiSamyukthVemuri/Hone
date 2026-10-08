@@ -308,7 +308,7 @@ describe("§5.1 primitive: the token is never an argument, a result, a detail or
   });
 });
 
-describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e)", () => {
+describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e and 18d541a5)", () => {
   // "A request must be exactly one of the two shapes — { label, rest } or { label, graphql, variables }, with string
   // or integer variables — or it is refused as malformed before anything is spawned."
   const G = "query($n:Int!){ repository(owner:\"o\",name:\"n\"){ pullRequest(number:$n){ number } } }";
@@ -350,18 +350,41 @@ describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e)", 
     expect(records().length).toBe(2);
   });
 
-  // NEW FINDINGS (pass 4, low; unreachable through the readers, which never add a key or omit variables). Strict
-  // known-failures: each fails, and must be re-derived, once 63bd3b6e's behaviour is brought to "exactly".
-  it.fails("[known deviation at 63bd3b6e] a REST request with an extra key is not exactly { label, rest }: refused before spawning", () => {
-    clearRecords();
-    const r = open(PATHS.json).request({ label: "x", rest: "repos/x", method: "POST" });
-    expect(r.ok).toBe(false);
-    expect(records()).toEqual([]);
-  });
-  it.fails("[known deviation at 63bd3b6e] a GraphQL request without variables is not { label, graphql, variables }: refused before spawning", () => {
-    clearRecords();
-    const r = open(PATHS.json).request({ label: "x", graphql: G });
-    expect(r.ok).toBe(false);
-    expect(records()).toEqual([]);
-  });
+  // 18d541a5: "exactly … { label, rest } or { label, graphql, variables } with no other key, a non-empty rest or
+  // graphql, and variables a plain object of strings and integers".
+  const EXACT: Array<[string, unknown]> = [
+    ["a REST request with an extra key", { label: "x", rest: "repos/x", method: "POST" }],
+    ["a REST request that also carries variables", { label: "x", rest: "repos/x", variables: {} }],
+    ["a GraphQL request with an extra key", { label: "x", graphql: G, variables: { n: 1 }, method: "POST" }],
+    ["a GraphQL request without variables", { label: "x", graphql: G }],
+    ["an extra key whose value is undefined", { label: "x", rest: "repos/x", extra: undefined }],
+    ["an empty route", { label: "x", rest: "" }],
+    ["an empty document", { label: "x", graphql: "", variables: {} }],
+    ["a variable whose value is undefined", { label: "x", graphql: G, variables: { n: undefined } }],
+  ];
+  for (const [label, req] of EXACT)
+    it(`${label}: refused as malformed before anything is spawned`, () => {
+      clearRecords();
+      const r = open(PATHS.json).request(req);
+      expect(r).toMatchObject({ ok: false, reason: "malformed" });
+      expect(records(), "gh was spawned").toEqual([]);
+    });
+
+  // NEW FINDING (pass 5, low; the readers always pass a plain object literal): "variables a plain object" — a Map,
+  // a Date or a class instance is not one, yet each is spawned (with its variables dropped or reshaped). Strict
+  // known-failures: each starts failing, and must be flipped, once 18d541a5's behaviour changes.
+  class Vars {
+    n = 1;
+  }
+  for (const [label, variables] of [
+    ["a Map", new Map([["n", 1]])],
+    ["a Date", new Date("2026-10-07T21:00:00Z")],
+    ["a class instance", new Vars()],
+  ] as const)
+    it.fails(`[known deviation at 18d541a5] variables that are ${label}, not a plain object: refused before spawning`, () => {
+      clearRecords();
+      const r = open(PATHS.json).request({ label: "x", graphql: G, variables });
+      expect(r.ok).toBe(false);
+      expect(records()).toEqual([]);
+    });
 });

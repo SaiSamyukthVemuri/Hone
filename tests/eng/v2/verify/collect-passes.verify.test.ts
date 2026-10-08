@@ -32,7 +32,7 @@ import {
 } from "./support/collector";
 import { clone, noThrow } from "./support/deep";
 import { rng } from "./support/prng";
-import { FAILED_CONCLUSIONS, P0, PRODUCTION_REF, RUN_810, RUN_810_CREATED, ownRun, allGreenJobs, sha40 } from "./support/world";
+import { FAILED_CONCLUSIONS, P0, PRODUCTION_REF, RUN_810, RUN_810_CREATED, ownRun, allGreenJobs, rawRulesFor, sha40 } from "./support/world";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — SPEC-05A §5.3 (passes) and §5.4 (Evidence), f75ca255.
@@ -504,20 +504,14 @@ describe("collector §5.4: evidenceHash", () => {
     expect(JSON.stringify(b.evidence.rows)).toBe(JSON.stringify(a.evidence.rows));
   });
 
-  // NEW FINDING (pass 4, low): step 0 does not list the policy, and the hash does not cover it. A collect policy
-  // whose targetRepoId differs from the readers' binds fork_head under the golden hash, so §5.4's "it names everything
-  // the rows were bound from except the clock" does not hold for the policy. Strict known-failure: when 63bd3b6e's
-  // behaviour changes (the policy checked at step 0 or hashed), this row fails and must be re-derived.
-  it.fails("[known deviation at 63bd3b6e] a collection whose policy differs is refused at step 0 or hashes differently", async () => {
-    const a = (await run(goldenC())).r;
+  // §5.4 (18d541a5): "With V1's policy fixed by step 0, it names everything the rows were bound from except the
+  // clock." The pass-4 counterexample (repoId 1 binding fork_head under the golden hash) now never reaches binding.
+  it("a policy other than V1's never reaches binding, so it cannot bind other rows under the golden hash", async () => {
     const fake = fakeTransport(goldenC());
     const readers = createReaders({ request: fake.request, policy: POLICY });
     const b = await collect({ prNumber: 810, readers, local: LOCAL(), now: () => NOW, policy: { ...POLICY, repoId: 1 } });
-    if (b.ok === false) {
-      expect(b).toMatchObject({ reason: "malformed", stage: "collect" });
-      return;
-    }
-    expect(b.evidenceHash === a.evidenceHash && JSON.stringify(b.evidence.rows) !== JSON.stringify(a.evidence.rows)).toBe(false);
+    expect(b).toMatchObject({ ok: false, reason: "malformed", stage: "collect" });
+    expect(fake.log.length).toBe(0);
   });
 
   it("terminal: equal keys hash equal; a different draft flag hashes differently", async () => {
@@ -533,7 +527,8 @@ describe("collector §5.4: evidenceHash", () => {
 // §5.3 step 0 (amended 63bd3b6e): "Before the first request, every option is checked: a positive PR number, all
 // eleven readers, a complete local CI definition (§5.2: a classifier, a 40-hex blob for each path, the pin flag)
 // and a clock that returns a time — milliseconds, a valid Date, or an ISO-8601 UTC string. Anything else is
-// { ok: false, reason: "malformed", stage: "collect" } with no request made, never a throw."
+// { ok: false, reason: "malformed", stage: "collect" } with no request made, never a throw." (63bd3b6e; the policy
+// clause is 18d541a5's)
 // ---------------------------------------------------------------------------
 describe("collector §5.3 step 0: every option is checked before the first request", () => {
   const READER_NAMES = [
@@ -616,6 +611,26 @@ describe("collector §5.3 step 0: every option is checked before the first reque
     ["null options", () => null],
     ["undefined options", () => undefined],
     ["options that are a string", () => "810"],
+    // the policy (18d541a5): "`policy` may be omitted; if given, it must equal V1's fixed policy (§2, §3: the owner,
+    // name, repository id, production ref and workflow id) exactly."
+    ["a null policy", (o) => ({ ...o, policy: null })],
+    ["an empty policy", (o) => ({ ...o, policy: {} })],
+    ["a policy for another owner", (o) => ({ ...o, policy: { ...POLICY, owner: "someone-else" } })],
+    ["a policy for another repository name", (o) => ({ ...o, policy: { ...POLICY, name: "Other" } })],
+    ["a policy with another repository id", (o) => ({ ...o, policy: { ...POLICY, repoId: 1 } })],
+    ["a policy with the repository id as a string", (o) => ({ ...o, policy: { ...POLICY, repoId: String(POLICY.repoId) } })],
+    ["a policy with another production ref", (o) => ({ ...o, policy: { ...POLICY, productionRef: "main" } })],
+    ["a policy with another workflow id", (o) => ({ ...o, policy: { ...POLICY, workflowId: 1 } })],
+    ["a policy with an extra field", (o) => ({ ...o, policy: { ...POLICY, extra: 1 } })],
+    [
+      "a policy missing a field",
+      (o) => {
+        const p: any = { ...POLICY };
+        delete p.workflowId;
+        return { ...o, policy: p };
+      },
+    ],
+    ["a policy that is a Map", (o) => ({ ...o, policy: new Map(Object.entries(POLICY)) })],
   ];
   for (const [label, over] of CASES)
     it(`${label}: malformed at stage collect, no request, no throw`, async () => {
@@ -639,10 +654,65 @@ describe("collector §5.3 step 0: every option is checked before the first reque
       expect(r.diagnostics.observedAt).toBe(r.evidence.observedAt);
     });
 
+  for (const [label, over] of [
+    ["omitted", (o: any) => {
+      const x = { ...o };
+      delete x.policy;
+      return x;
+    }],
+    ["V1's policy itself", (o: any) => ({ ...o, policy: POLICY })],
+    ["an equal copy with its fields in another order", (o: any) => ({ ...o, policy: Object.fromEntries(Object.entries(POLICY).reverse()) })],
+  ] as const)
+    it(`a policy that is ${label} is accepted`, async () => {
+      const { r, n } = await attempt(over);
+      expect(r.ok, JSON.stringify(r).slice(0, 200)).toBe(true);
+      expect(n).toBe(30);
+    });
+
   it("a pin flag that is false is a complete definition: the collection succeeds and the CI row is ci_definition_mismatch", async () => {
     const { r, n } = await attempt((o) => ({ ...o, local: { ...LOCAL(), tablePinned: false } }));
     expect(n).toBe(30);
     expect(r.evidence.rows.ci).toMatchObject({ ok: false, reason: "ci_definition_mismatch" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NEW FINDING (pass 5, low): readers built with another production ref. Step 0 fixes collect's own policy, but the
+// readers come from their caller (README: the production ref comes "from fixed policy … never from a caller").
+// A §2.5 activity record and a §2.4 rules record carry no branch, so another branch's clean history binds as
+// production's. Strict known-failure: it starts failing, and must be re-derived, once the readers refuse or
+// ignore a policy other than V1's.
+// ---------------------------------------------------------------------------
+describe("collector: readers built for another production ref (pass 5)", () => {
+  const otherRef = "main";
+  const withRewrite = (w: CWorld) => {
+    const fake = fakeTransport(w);
+    // the other branch: protected the same way, no rewrite in its year (empty listings echo nothing)
+    const request = (q: any) => {
+      if (typeof q?.rest === "string" && q.rest.includes(`/rules/branches/${otherRef}`)) return { ok: true, body: rawRulesFor(["deletion", "non_fast_forward"]) };
+      if (typeof q?.rest === "string" && q.rest.includes(`activity?ref=${encodeURIComponent(`refs/heads/${otherRef}`)}`)) return { ok: true, body: [] };
+      return fake.request(q);
+    };
+    return { request, fake };
+  };
+  const forcePushed = () => {
+    const w = goldenC();
+    w.base.activity.forcePush = [{ timestamp: "2026-09-01T00:00:00Z", before: sha40(0xf0), after: sha40(0xf1) }];
+    return w;
+  };
+
+  it("control: production's force push in its recorded year makes V1's readers bind base_history_unverified", async () => {
+    const { r } = await run(forcePushed());
+    expect(r.evidence.rows.ci).toMatchObject({ ok: false, reason: "base_history_unverified" });
+  });
+
+  it.fails("[known deviation at 18d541a5] readers built for another production ref cannot turn production's history into a pass", async () => {
+    const { request } = withRewrite(forcePushed());
+    let readers: any = null;
+    const made = noThrow(() => (readers = createReaders({ request, policy: { ...POLICY, productionRef: otherRef } })));
+    if (made.threw || !readers) return; // refused at creation: nothing to bind
+    const r = await collect({ prNumber: 810, readers, local: LOCAL(), now: () => NOW, policy: POLICY });
+    expect(r.ok === true && r.evidence.rows.ci?.value?.outcome === "SUCCEEDED", JSON.stringify(r.evidence?.rows?.ci)).toBe(false);
   });
 });
 

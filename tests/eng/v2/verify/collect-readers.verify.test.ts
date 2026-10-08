@@ -245,3 +245,46 @@ describe("§5.1 parseFileBlob(raw, { path })", () => {
     expect(parseFileBlob(deepFreeze(clone(raw)), { path: BLOB_CI })).toEqual(parseFileBlob(raw, { path: BLOB_CI }));
   });
 });
+
+describe("§5.1 readers: the policy every route is built from", () => {
+  // README 'Parameters': "Each value comes from the coherent key (K0.headRef) or from fixed policy (productionRef),
+  // never from a caller." Since 18d541a5, §5.3 step 0 refuses any collect policy but V1's — but the readers are
+  // created separately, from the policy their caller gives, and collect cannot see it.
+  const CALLS: Array<(r: any) => unknown> = [
+    (r) => r.readBranchRules(),
+    (r) => r.readActivity("force_push"),
+    (r) => r.readActivity("branch_creation"),
+    (r) => r.readCandidateRuns(H810),
+    (r) => r.readCompare(P0, H810),
+    (r) => r.readHeadBranchPrs("feat/eng-loop-v1-05a"),
+    (r) => r.readPrKey(810),
+    (r) => r.readFileBlob(BLOB_CI, P0),
+  ];
+  const requestsWith = (opts: any) => {
+    const seen: any[] = [];
+    let readers: any = null;
+    const out = noThrow(() => (readers = createReaders({ ...opts, request: (q: any) => (seen.push(q), { ok: false, reason: "read_failed", detail: "spy" }) })));
+    if (!out.threw && readers) for (const c of CALLS) noThrow(() => c(readers));
+    return seen.map((q) => canon({ rest: q.rest, graphql: q.graphql ? selection(q.graphql) : undefined, variables: q.variables }));
+  };
+  const V1 = () => requestsWith({ policy: POLICY });
+
+  it("V1's policy, or no policy, builds every route for V1's owner, repository, production ref and workflow", () => {
+    expect(V1().length).toBe(CALLS.length);
+    expect(requestsWith({})).toEqual(V1());
+  });
+
+  // NEW FINDING (pass 5, low; reachable only through a caller that builds readers with another policy): such readers
+  // read another repository, branch or workflow, and the activity record carries no ref, so bindCi would take another
+  // branch's history for production's. Strict known-failures: each starts failing, and must be flipped, once the
+  // readers refuse (or ignore) any policy but V1's.
+  for (const [label, policy] of [
+    ["another owner", { ...POLICY, owner: "someone-else" }],
+    ["another production ref", { ...POLICY, productionRef: "main" }],
+    ["another workflow", { ...POLICY, workflowId: 1 }],
+  ] as const)
+    it.fails(`[known deviation at 18d541a5] readers given ${label} never request anything outside V1's policy`, () => {
+      const v1 = new Set(V1());
+      for (const q of requestsWith({ policy })) expect(v1.has(q), q).toBe(true);
+    });
+});
