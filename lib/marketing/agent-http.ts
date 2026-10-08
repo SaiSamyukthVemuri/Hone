@@ -92,13 +92,12 @@ const SINGLE_PAGE_ROOTS = new Set([
 
 // The feature namespace has a closed set of pages. It must not be an
 // unbounded anonymous login redirect for routes that were never shipped.
-// The WAIT invitation feature path exists in the repository but is not a
-// public marketing allowlist entry; leave it to the existing auth boundary.
+// Only page/route entrypoints belong here. The waitlist-invitation directory
+// holds a component, not a public route; /invitation/:token stays separate.
 const KNOWN_FEATURE_ROUTES = new Set([
   "/features/treatment-memory",
   "/features/booking-calendar",
   "/features/charting-records",
-  "/features/waitlist-invitation",
 ]);
 
 // Hone intentionally disables Next's automatic trailing-slash redirects.

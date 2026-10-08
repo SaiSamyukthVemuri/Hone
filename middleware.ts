@@ -11,16 +11,16 @@ import { updateSession } from "@/lib/supabase/middleware";
 const PUBLIC_AGENT_ROUTES = new Set(["/about", "/contact", "/llms.txt"]);
 
 export async function middleware(request: NextRequest) {
-  // Only the routing *comparison* is normalized. The actual URL and Next's
-  // route handler continue to receive the original request unchanged.
-  const pathname = normalizePublicPathname(request.nextUrl.pathname);
+  // The classifier accepts a RAW pathname and normalizes one slash itself.
+  // Keep the original request unchanged for the separate auth/route layers.
+  const rawPathname = request.nextUrl.pathname;
   const isRead = request.method === "GET" || request.method === "HEAD";
   const accept = request.headers.get("Accept");
 
   // Without this, unrecognized pages fall through to auth -> /login (final
   // 200), so crawlers infer every resource exists. Known protected roots and
   // bearer-token routes are NEVER handled by this shortcut.
-  if (isRead && isUnknownPublicPath(pathname)) {
+  if (isRead && isUnknownPublicPath(rawPathname)) {
     const choice = preferredPublicRepresentation(accept);
     const markdown = choice === "markdown";
     return new NextResponse(
@@ -36,6 +36,10 @@ export async function middleware(request: NextRequest) {
       },
     );
   }
+
+  // Independently normalize the raw input for representation lookup; never
+  // feed this derived path back into the classifier ("/about//" is unknown).
+  const pathname = normalizePublicPathname(rawPathname);
 
   // Only public marketing pages opt into content negotiation. A browser and
   // Next's RSC requests keep the original HTML route. Protected/token routes

@@ -135,7 +135,7 @@ describe("unknown route protection", () => {
     expect(isUnknownPublicPath("/features")).toBe(true);
     expect(isUnknownPublicPath("/features/not-a-feature")).toBe(true);
     expect(isUnknownPublicPath("/features/treatment-memory")).toBe(false);
-    expect(isUnknownPublicPath("/features/waitlist-invitation")).toBe(false);
+    expect(isUnknownPublicPath("/features/waitlist-invitation")).toBe(true);
     expect(isUnknownPublicPath("/features/treatment-memory/")).toBe(false);
     expect(isUnknownPublicPath("/features/not-a-feature/")).toBe(true);
     expect(isUnknownPublicPath("/about/")).toBe(false);

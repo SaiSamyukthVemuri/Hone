@@ -50,7 +50,7 @@ try {
     await check(path, md, 200, md, [path.includes("about") ? "# About Hone" : "# Contact Hone"], true);
     await check(path, html, 200, html, ["<html", "Hone"], true);
   }
-  for (const path of ["/not-a-real-hone-page-2026", "/features/not-a-real-page", "/features/not-a-real-page/"]) {
+  for (const path of ["/not-a-real-hone-page-2026", "/features/not-a-real-page", "/features/not-a-real-page/", "/features/waitlist-invitation", "/features/waitlist-invitation/"]) {
     await check(path, md, 404, md, ["/llms.txt", "/sitemap.xml"], true);
     await check(path, html, 404, html, ["Page not found"], true);
   }

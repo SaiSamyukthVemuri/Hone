@@ -21,7 +21,7 @@ test.describe("public agent readiness", () => {
   });
 
   test("unknown URL is a genuine 404 in both representations", async ({ request }) => {
-    for (const route of ["/not-a-real-hone-page-agent-test", "/features/not-a-real-feature", "/features/not-a-real-feature/"]) {
+    for (const route of ["/not-a-real-hone-page-agent-test", "/features/not-a-real-feature", "/features/not-a-real-feature/", "/features/waitlist-invitation", "/features/waitlist-invitation/"]) {
     for (const [accept, type] of [
       ["text/markdown", "text/markdown"],
       ["text/html", "text/html"],
