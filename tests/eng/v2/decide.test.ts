@@ -253,6 +253,22 @@ describe("decide: properties no table can show", () => {
     expect(decide({ ok: false, reason: "rate_limited" })).toMatchObject({ decision: "UNKNOWN", reasonCodes: ["malformed"] });
   });
 
+  it("an out-of-enum verdict beside a valid clean verdict is malformed — never 'establishes nothing' and a candidate", () => {
+    const ready = evidenceOf({ terminal: false, draft: false, base: "current", ci: "SUCCEEDED", ext: "success", reviews: "trustedB", threads: "none" });
+    expect(decide(ready).decision).toBe("CANDIDATE_READY_FOR_HUMAN_REVIEW");
+    const odd = {
+      ...ready,
+      evidence: {
+        ...ready.evidence,
+        rows: {
+          ...ready.evidence.rows,
+          reviews: okv({ reviews: [...ready.evidence.rows.reviews.value.reviews, review({ id: 7, verdict: "changes_requested" })], threads: [] }),
+        },
+      },
+    };
+    expect(decide(odd)).toMatchObject({ decision: "UNKNOWN", reasonCodes: ["malformed"] });
+  });
+
   it("evidence outside the contract is UNKNOWN(malformed), never an exception and never a candidate", () => {
     const ready = evidenceOf({ terminal: false, draft: false, base: "current", ci: "SUCCEEDED", ext: "success", reviews: "trustedA", threads: "none" });
     const broken: any[] = [
@@ -271,6 +287,11 @@ describe("decide: properties no table can show", () => {
       { ok: true, evidence: { ...ready.evidence, rows: { ...ready.evidence.rows, reviews: okv({ reviews: [review({ qualifiesAtHead: "yes" })], threads: [] }) } } },
       { ok: true, evidence: { ...ready.evidence, rows: { ...ready.evidence.rows, reviews: okv({ reviews: [review({})], threads: [{ opener: CODEX }] }) } } },
       new Proxy({}, { get() { throw new Error("hostile"); } }),
+      // ARCH-01 §24's closed enums and the evidence schema: anything else is outside the contract.
+      { ok: true, evidence: { ...ready.evidence, schema: "eng-loop-v1/evidence@9" } },
+      { ok: true, evidence: { ...ready.evidence, rows: { ...ready.evidence.rows, ci: okv({ outcome: "SUCCEEDED", applicableRunIds: "1" }) } } },
+      { ok: true, evidence: { ...ready.evidence, rows: { ...ready.evidence.rows, reviews: okv({ reviews: [review({ verdict: "changes_requested" })], threads: [] }) } } },
+      { ok: true, evidence: { ...ready.evidence, rows: { ...ready.evidence.rows, reviews: okv({ reviews: [review({ channel: "REVIEW_THREAD" })], threads: [] }) } } },
     ];
     for (const input of broken) {
       expect(() => decide(input)).not.toThrow();
