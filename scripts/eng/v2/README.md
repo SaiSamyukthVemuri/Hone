@@ -72,9 +72,9 @@ The runtime does **not** claim to implement the records below unchanged. These a
 3. **Reason names from the V1 profile:**
    - `base_ref` is used where ARCH-01 says `wrong_base`;
    - `base_ref_changed`, `shared_head` and `base_history_unverified` are V1-only.
-4. **Base edits.** V1 treats any `BASE_REF_CHANGED_EVENT` on the PR as `base_ref_changed`, so recovery needs a new
-   PR. That is stricter than CI-ATTEST-01's STALE classification, which needs the attestation V1 does not have.
-5. **Counting base changes.** The count is the number of filtered `BaseRefChangedEvent` *nodes*, with
+4. **Base edits.** V1 treats any base-change event on the PR — a manual `BASE_REF_CHANGED_EVENT`, or GitHub's
+   automatic retargeting, succeeded or failed — as `base_ref_changed`, so recovery needs a new PR. That is stricter than CI-ATTEST-01's STALE classification, which needs the attestation V1 does not have.
+5. **Counting base changes.** The count is the number of filtered base-change event *nodes*, with
    `pageInfo.hasNextPage` false. A filtered `timelineItems` `totalCount` counts every timeline item (live: #720 reports
    36 for one base change), so it is never requested.
 6. **Required lanes.**

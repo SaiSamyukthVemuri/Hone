@@ -37,11 +37,23 @@ const byString = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const byNumber = (a, b) => a - b;
 const byEvent = (a, b) => byString(a.timestamp, b.timestamp) || byString(a.before, b.before) || byString(a.after, b.after);
 
+/**
+ * Every timeline event that records a change of the PR's base: a manual edit, and GitHub's automatic retargeting
+ * when a base branch is merged and deleted — succeeded or failed (verifier R-STACK pass: live, 5 of 6 automatically
+ * retargeted PRs in a large repository carried no BaseRefChangedEvent at all).
+ */
+const BASE_CHANGE_EVENTS = Object.freeze([
+  "BaseRefChangedEvent",
+  "AutomaticBaseChangeSucceededEvent",
+  "AutomaticBaseChangeFailedEvent",
+]);
+
 /** The PR-context request (SPEC-05A §2.2). Exactly these fields. */
 export const PR_CONTEXT_QUERY =
   "query($owner:String!,$name:String!,$n:Int!,$h:GitObjectID!){repository(owner:$owner,name:$name){" +
   "pullRequest(number:$n){number createdAt changedFiles " +
-  "baseRefChanges:timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT],first:100){pageInfo{hasNextPage} nodes{__typename}}} " +
+  "baseRefChanges:timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT,AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT," +
+  "AUTOMATIC_BASE_CHANGE_FAILED_EVENT],first:100){pageInfo{hasNextPage} nodes{__typename}}} " +
   "object(oid:$h){__typename ... on Commit{associatedPullRequests(first:100){pageInfo{hasNextPage} nodes{number}}}}}}";
 
 /** REST compare/{baseSha}...{headSha}: drift, merge base and changed files. */
@@ -112,9 +124,9 @@ export const parsePrContext = guarded((raw, opts) => {
   if (!isNonNegInt(p.changedFiles)) return fail("malformed", "changedFiles is not a non-negative integer");
   const changes = connection(
     p.baseRefChanges,
-    (n) => isObject(n) && hasExactly(n, ["__typename"]) && n.__typename === "BaseRefChangedEvent",
+    (n) => isObject(n) && hasExactly(n, ["__typename"]) && BASE_CHANGE_EVENTS.includes(n.__typename),
   );
-  if (!changes) return fail("malformed", "baseRefChanges is not a page of BaseRefChangedEvent nodes");
+  if (!changes) return fail("malformed", "baseRefChanges is not a page of base-change event nodes");
 
   const o = repo.object;
   if (!isObject(o) || !hasExactly(o, ["__typename", "associatedPullRequests"]) || o.__typename !== "Commit") {
