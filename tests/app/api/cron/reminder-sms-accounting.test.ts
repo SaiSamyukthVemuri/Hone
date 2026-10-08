@@ -20,6 +20,10 @@ const h = vi.hoisted(() => {
   const START = "2026-10-09T17:00:00.000Z";
   const state = {
     claim: "error" as "error" | "claimed",
+    /** How many settle_sms_message calls never answer, starting with the first. */
+    settleHangs: 0,
+    /** How many appointments the 24h SMS window returns (1 or 2). */
+    appointments: 1,
     rpcs: [] as string[],
     heartbeat: [] as Array<Record<string, unknown>>,
     alerts: [] as Array<Record<string, unknown>>,
@@ -58,7 +62,8 @@ const h = vi.hoisted(() => {
       // Only the 24h SMS window has a row; every email window and the 2h SMS
       // window are empty.
       const sms24 = filters.some(([op, c]) => op === "is" && c === "sms_reminder_24h_sent_at");
-      return { data: table === "appointments" && sms24 ? [APPT] : [], error: null };
+      const rows = [APPT, { ...APPT, id: "appt-2" }].slice(0, state.appointments);
+      return { data: table === "appointments" && sms24 ? rows : [], error: null };
     };
     const b: Record<string, unknown> = {};
     for (const m of ["select", "order", "limit"]) b[m] = () => b;
@@ -89,7 +94,13 @@ const h = vi.hoisted(() => {
       if (fn === "begin_appointment_sms_message") {
         return Promise.resolve({ data: "0b8f1c1e-6a52-4c0e-9f3e-2f6c3c1a7d10", error: null });
       }
-      if (fn === "settle_sms_message") return Promise.resolve({ data: "settled", error: null });
+      if (fn === "settle_sms_message") {
+        if (state.settleHangs > 0) {
+          state.settleHangs -= 1;
+          return new Promise(() => undefined);
+        }
+        return Promise.resolve({ data: "settled", error: null });
+      }
       return Promise.resolve({ data: null, error: null });
     },
   };
@@ -113,6 +124,7 @@ vi.mock("@/lib/ops/alerts", () => ({
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://hone.care" }));
 
 import { GET } from "@/app/api/cron/appointment-reminders/route";
+import { LEDGER_STEP_BOUND_MS } from "@/lib/sms/send-appointment";
 
 const ENV_KEYS = ["VERCEL_ENV", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"] as const;
 const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
@@ -125,6 +137,8 @@ beforeEach(() => {
   process.env.TWILIO_AUTH_TOKEN = "token";
   process.env.TWILIO_FROM_NUMBER = "+15550001111";
   h.state.claim = "error";
+  h.state.settleHangs = 0;
+  h.state.appointments = 1;
   h.state.rpcs = [];
   h.state.heartbeat = [];
   h.state.alerts = [];
@@ -136,6 +150,7 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   for (const k of ENV_KEYS) {
@@ -178,5 +193,22 @@ describe("the reminder cron counts provider requests, not database misses", () =
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sms24).toEqual({ attempted: 1, succeeded: 0, failed: 1, skipped: 0, intakeCtaIncluded: 0 });
     expect(heartbeat).toMatchObject({ smsAttempted: 1, smsFailed: 1 });
+  });
+});
+
+describe("a stalled ledger settle cannot stall the reminder batch (Codex P2 4224110922)", () => {
+  it("the first reminder's settle never answers; the second is still sent and the heartbeat written", async () => {
+    vi.useFakeTimers();
+    h.state.claim = "claimed";
+    h.state.appointments = 2;
+    h.state.settleHangs = 1;
+    const pending = GET(new Request("https://hone.care/api/cron/appointment-reminders"));
+    await vi.advanceTimersByTimeAsync(LEDGER_STEP_BOUND_MS);
+    const res = await pending;
+    const body = (await res.json()) as Record<string, Record<string, number>>;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(body.sms_reminder_24h).toEqual({ attempted: 2, succeeded: 2, failed: 0, skipped: 0, intakeCtaIncluded: 0 });
+    expect(h.state.heartbeat).toHaveLength(1);
+    expect(h.state.rpcs.filter((fn) => fn === "record_sms_result")).toHaveLength(2);
   });
 });
