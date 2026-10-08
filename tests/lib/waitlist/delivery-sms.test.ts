@@ -46,8 +46,14 @@ const target = (over: Claim = {}): Claim => ({
   ...over,
 });
 
-const h: { claim: { data: unknown; error: unknown }; rpcs: Array<{ fn: string; args: Record<string, unknown> }> } = {
+const h: {
+  claim: { data: unknown; error: unknown };
+  /** "hang": settle_sms_message never answers (a stalled or killed request). */
+  settle: "ok" | "hang";
+  rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
+} = {
   claim: { data: [target()], error: null },
+  settle: "ok",
   rpcs: [],
 };
 
@@ -56,7 +62,11 @@ function admin(): SupabaseClient {
     rpc(fn: string, args: Record<string, unknown>) {
       h.rpcs.push({ fn, args });
       if (fn === "claim_waitlist_invitation_sms") return Promise.resolve(h.claim);
-      if (fn === "settle_sms_message") return Promise.resolve({ data: "settled", error: null });
+      if (fn === "settle_sms_message") {
+        return h.settle === "hang"
+          ? new Promise(() => undefined)
+          : Promise.resolve({ data: "settled", error: null });
+      }
       return Promise.resolve({ data: null, error: { message: `unexpected ${fn}` } });
     },
   } as unknown as SupabaseClient;
@@ -88,6 +98,7 @@ beforeEach(() => {
   process.env.TWILIO_FROM_NUMBER = "+15550001111";
   process.env.TWILIO_WEBHOOK_BASE_URL = "https://hone.care";
   h.claim = { data: [target()], error: null };
+  h.settle = "ok";
   h.rpcs = [];
   sleeps.length = 0;
   alerts.length = 0;
@@ -238,6 +249,23 @@ describe("a text that did not go raises ONE ops alert; every other outcome raise
     expect(await send()).toEqual({ state: "refused" });
     expect(alerts).toHaveLength(1);
   });
+
+  // DURABLE: the alert is the operator's only signal for a text that will never
+  // be retried, so it must not wait on the ledger's best-effort settle. A
+  // settle that stalls, or an invocation killed during it, cannot swallow it.
+  for (const [label, providerAnswer, outcome] of [
+    ["refused", () => answer(400, { code: 21211 }), "refused"],
+    ["lost", () => Promise.reject(Object.assign(new Error("aborted"), { name: "AbortError" })), "unknown"],
+  ] as const) {
+    it(`${label}: the alert is raised even when the ledger settle never answers`, async () => {
+      h.settle = "hang";
+      fetchMock.mockImplementationOnce(providerAnswer);
+      void send();
+      await vi.waitFor(() => expect(settled()).toHaveLength(1));
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]).toMatchObject({ event: "sms_send_failed", safeDetails: { outcome } });
+    });
+  }
 
   it("accepted, skipped and unclaimed raise nothing", async () => {
     await send();

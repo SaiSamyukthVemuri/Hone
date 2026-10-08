@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ===========================================================================
 // SMS-01 — the invitation SMS is wired beside the email, in the SAME request,
@@ -40,18 +40,29 @@ const sessionActor = vi.fn();
 vi.mock("@/lib/booking/session-actor", () => ({ sessionActor: () => sessionActor() }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://hone.care" }));
 
-// after(): queued, so "answered before the text ran" is an assertion.
-const deferred: Array<() => Promise<void>> = [];
+// after(): recorded, so what the adapter hands it is an assertion. Next's real
+// after() semantics are proven in invitation-sms-after-phase.test.ts.
+const deferred: unknown[] = [];
 const scheduling = { throws: false };
 vi.mock("next/server", () => ({
-  after: (work: () => Promise<void>) => {
+  after: (work: unknown) => {
     if (scheduling.throws) throw new Error("after() called outside a request scope");
     deferred.push(work);
   },
 }));
 async function flushPostResponse(): Promise<void> {
-  for (const work of deferred.splice(0, deferred.length)) await work();
+  for (const work of deferred.splice(0, deferred.length)) {
+    await (typeof work === "function" ? (work as () => Promise<void>)() : work);
+  }
 }
+
+const alerts: Array<Record<string, unknown>> = [];
+vi.mock("@/lib/ops/alerts", () => ({
+  recordOpsAlert: (input: Record<string, unknown>) => {
+    alerts.push(input);
+    return Promise.resolve();
+  },
+}));
 
 const sendWaitlistInvitationEmail = vi.fn();
 vi.mock("@/lib/waitlist/delivery/send", () => ({ sendWaitlistInvitationEmail }));
@@ -75,6 +86,7 @@ beforeEach(() => {
   sendWaitlistInvitationEmail.mockReset();
   sendWaitlistInvitationSms.mockReset();
   errors = [];
+  alerts.length = 0;
   deferred.length = 0;
   scheduling.throws = false;
   vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => void errors.push(a.join(" ")));
@@ -98,12 +110,15 @@ beforeEach(() => {
   sendWaitlistInvitationSms.mockResolvedValue({ state: "accepted" });
 });
 
+// The text starts on a later macrotask. Let every text a test started begin
+// before the next test resets the senders, so none leaks into its mocks.
+afterEach(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+
 describe("both channels, one invitation, one link", () => {
-  it("the action answers before the text runs; then both channels get the same invitation and link", async () => {
+  it("the action does not wait for the text; both channels get the same invitation and link", async () => {
     const out = await invite();
     expect(out).toEqual({ state: "committed", expiresAt: ADMITTED.expires_at, delivery: "accepted" });
     expect(sendWaitlistInvitationEmail).toHaveBeenCalledTimes(1);
-    expect(sendWaitlistInvitationSms, "the text ran inside the response path").not.toHaveBeenCalled();
 
     await flushPostResponse();
     expect(sendWaitlistInvitationSms).toHaveBeenCalledTimes(1);
@@ -118,6 +133,15 @@ describe("both channels, one invitation, one link", () => {
 });
 
 describe("the text never holds the response open", () => {
+  it("after() is handed a STARTED PROMISE, never a callback (Next 15.5 keeps the request's phase)", async () => {
+    await invite();
+    expect(deferred).toHaveLength(1);
+    expect(typeof deferred[0], "a callback would enrol the request store").not.toBe("function");
+    expect(typeof (deferred[0] as Promise<void>).then).toBe("function");
+    await flushPostResponse();
+    expect(sendWaitlistInvitationSms).toHaveBeenCalledTimes(1);
+  });
+
   it("a text that never finishes cannot delay the answer", async () => {
     sendWaitlistInvitationSms.mockImplementation(() => new Promise(() => undefined));
     const out = await invite();
@@ -128,8 +152,7 @@ describe("the text never holds the response open", () => {
   it("outside a request scope the text still runs, fire-and-forget", async () => {
     scheduling.throws = true;
     await invite();
-    await Promise.resolve();
-    expect(sendWaitlistInvitationSms).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendWaitlistInvitationSms).toHaveBeenCalledTimes(1));
   });
 });
 
@@ -148,6 +171,29 @@ describe("the text never changes the practitioner's outcome", () => {
     const all = errors.join("\n");
     expect(all).toContain("waitlist_invitation_sms_failed");
     expect(all).not.toContain(RAW);
+  });
+
+  it("a text path that THROWS raises the durable sms_send_failed alert: this text has no later retry", async () => {
+    sendWaitlistInvitationSms.mockRejectedValueOnce(new Error(`boom ${RAW}`));
+    await invite();
+    await flushPostResponse();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      severity: "warning",
+      event: "sms_send_failed",
+      studioId: "studio-1",
+      safeDetails: { purpose: "waitlist_invitation", shape: "threw" },
+    });
+    expect(JSON.stringify(alerts[0])).not.toContain(RAW);
+  });
+
+  it("a text that settles normally raises no alert from the wrapper", async () => {
+    for (const state of [{ state: "accepted" }, { state: "refused" }, { state: "skipped", reason: "mobile_unverified" }]) {
+      sendWaitlistInvitationSms.mockResolvedValueOnce(state);
+      await invite();
+      await flushPostResponse();
+    }
+    expect(alerts, "the sender raises its own outcome alerts; the wrapper only covers a throw").toEqual([]);
   });
 
   it("an email failure does not stop the text", async () => {

@@ -9,6 +9,7 @@ import {
   type DeliveryStudio,
 } from "@/lib/waitlist/delivery/send";
 import { sendWaitlistInvitationSms } from "@/lib/waitlist/delivery/sms";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import {
   type BookingScope,
@@ -398,13 +399,15 @@ async function deliverInvitation(args: {
 
 /**
  * SMS-01. The invitation's text, beside its email and in the SAME request --
- * the raw token exists nowhere else, so there is no later send. It runs AFTER
- * the practitioner's response (schedulePostResponse), so a stalled provider
- * can never hold the Invite to book action open. Whether it goes at all is
- * decided by the database claim (the studio switch, liveness, once per
- * invitation) and by prospectMayReceiveSms; its outcome lives in the SMS
- * ledger. It never changes the admission, the invitation or the email's
- * disposition, and it never throws.
+ * the raw token exists nowhere else, so there is no later send. It runs OFF
+ * the response path (scheduleOffResponsePath): the action never awaits it, so
+ * a stalled provider can never hold the Invite to book action open. Whether it
+ * goes at all is decided by the database claim (the studio switch, liveness,
+ * once per invitation) and by prospectMayReceiveSms; its outcome lives in the
+ * SMS ledger. It never changes the admission, the invitation or the email's
+ * disposition, and it never throws. A throw it contains raises the same
+ * durable `sms_send_failed` warning as a refused or lost text: this text has
+ * no later retry.
  */
 async function deliverInvitationSms(args: {
   studio: DeliveryStudio;
@@ -427,20 +430,43 @@ async function deliverInvitationSms(args: {
         at: new Date().toISOString(),
       }),
     );
+    // recordOpsAlert never throws.
+    await recordOpsAlert({
+      severity: "warning",
+      event: "sms_send_failed",
+      message:
+        "A waitlist invitation text failed with an unexpected error and may not have been sent; the invitation email is unaffected.",
+      studioId: args.studio.id,
+      route: "lib/waitlist/invite-to-book-adapter",
+      safeDetails: { purpose: "waitlist_invitation", shape: "threw" },
+    });
   }
 }
 
 /**
- * Run work AFTER the response has been sent. Mirrors schedulePostResponse in
- * app/book/[slug]/waitlist-actions.ts: outside a request scope, or where
- * after() is unavailable, it falls back to fire-and-forget rather than letting
- * scheduling itself throw. The work is never awaited by the caller.
+ * Run work OFF the response path without touching the request: schedule() in
+ * lib/analytics/server.ts, for the same reason (SENTRY-AFTER-01). The work
+ * starts on a later macrotask and is handed to after() as a STARTED PROMISE,
+ * never as a callback. In Next 15.5 a callback enrols this Server Action's
+ * request store, and if the response closes early -- the practitioner
+ * navigates away while the email is still sending -- Next flips that shared
+ * store to the "after" phase, so the action's revalidatePath and re-render
+ * throw on cookies()/headers(). A promise is waitUntil only: it keeps the
+ * invocation alive until the work settles and never touches the phase.
+ * Outside a request scope, or where after() is unavailable, the started work
+ * simply runs fire-and-forget. The caller never awaits it.
  */
-function schedulePostResponse(work: () => Promise<void>): void {
+function scheduleOffResponsePath(work: () => Promise<void>): void {
+  const task = new Promise<void>((resolve) => setTimeout(resolve, 0))
+    .then(work)
+    .catch(() => {
+      // `work` is written never to reject; this keeps that a guarantee.
+    });
   try {
-    after(work);
+    after(task);
   } catch {
-    void work();
+    // Out of request scope (or after() unavailable): the task is already
+    // queued and runs fire-and-forget.
   }
 }
 
@@ -611,10 +637,10 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     // not returned, not attached to an error.
     //
     // SMS-01: one opportunity, one deadline, two channels. The text is
-    // scheduled to run AFTER the response, so it never delays the practitioner
+    // scheduled off the response path, so it never delays the practitioner
     // or the email; its outcome is not this function's `delivery` (that
     // remains the email's recorded disposition).
-    schedulePostResponse(() => deliverInvitationSms({ studio, invitationId, rawToken }));
+    scheduleOffResponsePath(() => deliverInvitationSms({ studio, invitationId, rawToken }));
     const attempt = await deliverInvitation({
       studio,
       invitationId,

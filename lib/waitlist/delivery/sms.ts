@@ -40,7 +40,9 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 // reason slug. Never the phone number, the link, the token or the body. A
 // text the provider refused, or whose answer was lost, also raises ONE
 // `sms_send_failed` warning: this path has no later retry, a refusal will never
-// produce a delivery callback, and an unresolved answer may never get one.
+// produce a delivery callback, and an unresolved answer may never get one. The
+// warning is DURABLE: it is raised before the ledger's best-effort settle, so a
+// settle that stalls, or an invocation killed during it, cannot swallow it.
 
 export type WaitlistInvitationSmsOutcome =
   | { state: "accepted" }
@@ -125,14 +127,13 @@ export async function sendWaitlistInvitationSms(args: {
   }
 
   const settle = settleOutcomeForSend(result);
-  await settleSmsMessage(args.admin, claim.messageId, settle);
   log({
     ...ids,
     outcome: settle.outcome,
     ...(settle.outcome === "skipped" ? { reason: settle.skipReason } : {}),
     ...(result.ok ? {} : { error: result.error }),
   });
-  if (settle.outcome === "skipped") return { state: "skipped", reason: settle.skipReason };
+  // The durable failure alert first; the ledger settle below is best-effort.
   if (settle.outcome === "refused" || settle.outcome === "unknown") {
     await recordOpsAlert({
       severity: "warning",
@@ -152,5 +153,7 @@ export async function sendWaitlistInvitationSms(args: {
       },
     });
   }
+  await settleSmsMessage(args.admin, claim.messageId, settle);
+  if (settle.outcome === "skipped") return { state: "skipped", reason: settle.skipReason };
   return { state: settle.outcome };
 }
