@@ -38,8 +38,10 @@ The package layout follows CAP-01 §2:
 | Shepherd (05C) | **Done at fixture level**: `npm run --silent eng -- shepherd <pr> [--json] [--no-receipt]` (`cli-shepherd.mjs`, `shepherd.mjs`, `receipts.mjs`). Not live: see "Shepherd" below. |
 
 Independent verification (CANONICAL_ROADMAP §16.5) lives under `tests/eng/v2/verify/`, written from SPEC-05A and the
-records alone. Rows 1–3 have had one pass; rows 4–6 and the collector have not been independently verified yet.
-SPEC-05A §7 lists what V1 does not prove.
+records alone, never from implementation source. Across six passes it covered rows 1–6 and the collector, and
+converged at 992af0b5: 1,016 verifier rows and 262 builder rows, all passing, with no known-failure row left. Every
+finding is either fixed (A1, R4-EDIT and the input, order, redaction and policy deviations) or recorded in SPEC-05A
+§7, which lists what V1 does not prove.
 
 Run the tests with `npx vitest run tests/eng/v2`.
 
