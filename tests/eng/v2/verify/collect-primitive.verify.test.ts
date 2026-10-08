@@ -308,7 +308,7 @@ describe("§5.1 primitive: the token is never an argument, a result, a detail or
   });
 });
 
-describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e and 18d541a5)", () => {
+describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e, 18d541a5 and 14522609)", () => {
   // "A request must be exactly one of the two shapes — { label, rest } or { label, graphql, variables }, with string
   // or integer variables — or it is refused as malformed before anything is spawned."
   const G = "query($n:Int!){ repository(owner:\"o\",name:\"n\"){ pullRequest(number:$n){ number } } }";
@@ -370,21 +370,20 @@ describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e and
       expect(records(), "gh was spawned").toEqual([]);
     });
 
-  // NEW FINDING (pass 5, low; the readers always pass a plain object literal): "variables a plain object" — a Map,
-  // a Date or a class instance is not one, yet each is spawned (with its variables dropped or reshaped). Strict
-  // known-failures: each starts failing, and must be flipped, once 18d541a5's behaviour changes.
+  // 14522609 §5.1: '"Plain" means an object literal: an array, a Map, a Date or any class instance is refused.'
   class Vars {
     n = 1;
   }
   for (const [label, variables] of [
+    ["an array", [["n", 1]]],
     ["a Map", new Map([["n", 1]])],
     ["a Date", new Date("2026-10-07T21:00:00Z")],
     ["a class instance", new Vars()],
   ] as const)
-    it.fails(`[known deviation at 18d541a5] variables that are ${label}, not a plain object: refused before spawning`, () => {
+    it(`variables that are ${label}, not an object literal: refused as malformed before spawning`, () => {
       clearRecords();
       const r = open(PATHS.json).request({ label: "x", graphql: G, variables });
-      expect(r.ok).toBe(false);
+      expect(r).toMatchObject({ ok: false, reason: "malformed" });
       expect(records()).toEqual([]);
     });
 });
