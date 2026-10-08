@@ -255,7 +255,9 @@ Rules apply in this order. The first that fires decides.
 Value: `{ outcome: "SUCCEEDED" | "FAILED" | "PENDING" | "NO_RUN" | "INCOMPLETE", applicableRunIds: [...] }`.
 
 **Why this binds the execution context** (the claim the verifier must try to break):
-- The run's PR is the one PR whose head branch is `key.headRef`, by steps 5 and 7.
+- The run's PR is the one PR whose head branch is `key.headRef`, by steps 5 and 7 — **except** for the GitHub
+  behaviours §7 R-ATTRIBUTION lists (a renamed head branch, an archived PR, a permanently deleted PR), which are
+  undocumented and not observable read-only. Step 5's associated-PR clause does not exclude them either.
 - The run's base was always production, because this PR has no base change (step 4).
 - Production has no recorded force push or deletion in the year, and it existed before every applicable run (step 8).
   So the base tip B that GitHub merged for the run is an ancestor of today's tip.
@@ -496,9 +498,34 @@ Each is a stated limit, not a hidden assumption. None can make a candidate out o
   the operator's explicit instruction for that thread.
 - **R-STACK — a stacked pull request blocks the one beneath it (liveness, not safety).** A PR stacked on another
   contains the lower PR's head commit, so `associatedPullRequests(H)` lists both (live: `[810, 815]` while #815 is
-  stacked on #810), and rule 5 makes the lower PR `shared_head` until the upper one closes. The associated-PR clause
-  is part of the operator's V1 profile, so it is not relaxed here; whether rule 5's head-branch list and rule 7's
-  branch and repository filters already bind a run without it is an operator decision.
+  stacked on #810), and rule 5 makes the lower PR `shared_head` until the upper one closes. The operator approved
+  removing the associated-PR clause on condition of an independent proof (2026-10-08). The verifier's proof
+  (`tests/eng/v2/verify/R-STACK-PROOF.md`, 39 rows) is **NOT PROVEN**, so the clause **stays**: the vectors in
+  R-ATTRIBUTION below are not excluded by the remaining rules — nor by the clause.
+- **R-AUTOBASE — rule 4 misses GitHub's automatic retargeting (open; fix in verification).** When a PR's base
+  branch is merged and deleted, GitHub retargets the PR and records `AutomaticBaseChangeSucceededEvent` (or
+  `…FailedEvent`), not `BaseRefChangedEvent` (verifier, R-STACK pass: 5 of 6 such PRs in a large repository carried
+  none). §2.2 counts only `BASE_REF_CHANGED_EVENT`, so "this PR has no base change (step 4)" can be false for a
+  retargeted stack. Reach is narrow — `behindBy == 0` forces a new head and a fresh run in the merge and squash
+  flows — and no PR in Hone's 100 most recently updated carries either event. The fix (count all three events)
+  is implemented and awaits independent verification before it lands.
+- **R-ATTRIBUTION — three ways a run could be another PR's (writer-class or GitHub-administrative).** Rules 5 and 7
+  bind a run to this PR for every vector the verifier could evidence. Three rest on undocumented GitHub behaviour
+  that cannot be observed read-only:
+  - **B1, a renamed head branch.** GitHub closes the open PR whose head branch is renamed; whether that closed PR
+    keeps its old head label, and its runs their old `head_branch`, is undocumented. No rename exists in Hone to
+    observe.
+  - **B2, an archived PR.** GitHub's moderation archive hides a PR from non-administrators; whether a read-only
+    token still sees it in `pulls?head=…&state=all`, and its runs stay listed, is unobserved.
+  - **B3, a permanently deleted PR.** What happens to its runs is undocumented.
+
+  `associatedPullRequests` never lists a closed, archived or deleted PR, so step 5's clause does not exclude them.
+  The harm is bounded: every applicable run counts (step 10), so a foreign green run can make CI `SUCCEEDED` only
+  when this PR's own runs at H are all green already or missing — and with `behindBy == 0` a run is missing only if
+  Actions did not run it. Candidate closures, for the operator: an operator-run write experiment in a scratch
+  repository; run-side attestation (CI-ATTEST-01); or the partial rule "an applicable run's `created_at` is at or
+  after the PR's `createdAt`", which closes B1 and the single-PR forms of B2 and B3 (live, no run precedes its PR in
+  Hone's 40 most recent PRs).
 - **R-WORKFLOWS — other pull-request workflows.** EXT-CONTEXT-01 excludes every GitHub Actions check run from the
   external contexts, so a failing check from a second PR-triggered workflow would block nothing. Today `ci.yml` is
   the only PR-triggered workflow (`nightly.yml` is schedule-only). Adding one requires deciding its authority first.
