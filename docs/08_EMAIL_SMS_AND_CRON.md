@@ -143,7 +143,9 @@ The 24h / 2h reminder SMS (`send24hReminderSmsToClient` / `send2hReminderSmsToCl
 
 The cron's own pre-claim "still confirmed?" read remains as a cheap pre-filter, so a cancelled row costs no intake read and no claim.
 
-**Not in this slice:** a practitioner move *after* a reminder already went out leaves that slot sent, so no reminder names the new start — for email and SMS alike, exactly as before SMS-02. Likewise, a cancellation or move that commits *after* the claim but before the provider has the message (at most the bounded ledger step plus the 15-second provider request) is not seen: that reminder names the start the claim returned. The email reminder has the same in-flight window. Closing it needs cancel and move to coordinate with an in-flight claim, which is a design decision for SMS-03's start-bound claims, not a patch here. That is the specified follow-up **SMS-03** in [13_BACKLOG_AND_DECISIONS.md](./13_BACKLOG_AND_DECISIONS.md).
+**Not in this slice:** a practitioner move *after* a reminder already went out leaves that slot sent, so no reminder names the new start — for email and SMS alike, exactly as before SMS-02. Likewise, a cancellation or move that commits *after* the claim but before the provider has the message is not seen: that reminder names the start the claim returned. The window is at most the bounded ledger step plus the 15-second provider request, and the email reminder has the same window. Both residual windows are **accepted for P0 by operator decision (2026-10-08) and carried by SMS-03**:
+- D2(a) is this in-flight window (Codex P1 4224110906).
+- D1(a) is rule 3's one-round-trip duplicate window, which is monitored. That is the specified follow-up **SMS-03** in [13_BACKLOG_AND_DECISIONS.md](./13_BACKLOG_AND_DECISIONS.md).
 
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
