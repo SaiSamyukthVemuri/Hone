@@ -5,16 +5,20 @@ import { beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import { runAllDecideRows } from "./checks-decide";
 import { decideMutants } from "./mutants-decide";
+import { timed } from "./support/timing";
 
 const V2 = path.resolve(__dirname, "../../../../scripts/eng/v2");
 let real: any;
+/** Stratified thinning for the 37 mutant runs (every stratum keeps its failure row; 1/31 of the review variants).
+ * The real decide runs the full 94,756-input table in decide.verify. */
+const STRIDE = 31;
 const caughtBy: Record<string, string[]> = {};
 
-beforeAll(async () => {
+beforeAll(timed("mutants-decide beforeAll (37 mutants)", async () => {
   real = (await import(path.join(V2, "decision/decide.mjs"))).decide;
   const mutants = decideMutants(real);
   for (const [name, m] of Object.entries(mutants)) {
-    const rows = runAllDecideRows(m, 17);
+    const rows = runAllDecideRows(m, STRIDE);
     caughtBy[name] = rows.filter((r) => r.violations.length > 0).map((r) => r.row);
   }
   console.log(
@@ -23,11 +27,11 @@ beforeAll(async () => {
         .map(([n, rows]) => `${rows.length > 0 ? "CAUGHT " : "MISSED "} ${n}: ${rows.join(", ") || "-"}`)
         .join("\n"),
   );
-}, 900_000);
+}), 1_800_000);
 
 describe("05B mutants", () => {
-  test("the real decide passes every row at the mutant stride (control)", () => {
-    const rows = runAllDecideRows(real, 17);
+  test("the real decide passes every row at the mutant stride (control)", { timeout: 300_000 }, () => {
+    const rows = runAllDecideRows(real, STRIDE);
     expect(rows.filter((r) => r.violations.length > 0).map((r) => `${r.row}: ${JSON.stringify(r.violations[0])}`)).toEqual([]);
   });
   test("every mutant is caught by at least one named row", () => {

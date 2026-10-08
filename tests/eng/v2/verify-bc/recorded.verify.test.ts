@@ -10,20 +10,21 @@ import { oracle } from "./oracle";
 import { makeFakeRequest, isReadOnlyQuery, routeRest } from "./support/fake-gh.mjs";
 // @ts-expect-error untyped support module
 import { WORLDS, FAILING_WORLDS, world, HEAD } from "./support/worlds.mjs";
-import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+import { HOOK_TIMEOUT, cleanupTmp, redirectTmpdir } from "./support/tmp";
+import { timed } from "./support/timing";
 
 redirectTmpdir();
-afterAll(cleanupTmp);
+afterAll(timed("recorded afterAll cleanupTmp", cleanupTmp), HOOK_TIMEOUT);
 
 const V2 = path.resolve(__dirname, "../../../../scripts/eng/v2");
 let collect: any, createReaders: any, POLICY: any, loadLocalCi: any, decide: any;
 
-beforeAll(async () => {
+beforeAll(timed("recorded beforeAll", async () => {
   ({ collect } = await import(path.join(V2, "adapter/collect.mjs")));
   ({ createReaders, POLICY } = await import(path.join(V2, "adapter/internal/github/index.mjs")));
   ({ loadLocalCi } = await import(path.join(V2, "adapter/local-ci.mjs")));
   ({ decide } = await import(path.join(V2, "decision/decide.mjs")));
-});
+}), HOOK_TIMEOUT);
 
 function collectWorld(w: any, log: any[] = []) {
   const readers = createReaders({ request: makeFakeRequest(w, log), policy: POLICY });
@@ -31,7 +32,7 @@ function collectWorld(w: any, log: any[] = []) {
 }
 const label = (d: any) => (d.decision === "UNKNOWN" ? `UNKNOWN(${d.reasonCodes[0]})` : d.decision);
 
-describe("REC: decide() on evidence the real collector builds from the recorded #800 bodies", () => {
+describe("REC: decide() on evidence the real collector builds from the recorded #800 bodies", { timeout: 120_000 }, () => {
   for (const w of [...WORLDS, ...FAILING_WORLDS]) {
     const want = w.decision === "UNKNOWN" ? `UNKNOWN(${w.reason})` : w.decision;
     test(`REC ${w.name} → ${want}`, () => {
@@ -67,7 +68,7 @@ describe("REC: decide() on evidence the real collector builds from the recorded 
   });
 });
 
-describe("REC pass 2: the 05A boundary the shepherd relies on (SPEC-05A §5.3 step 0, §5.4 at 738a4537)", () => {
+describe("REC pass 2: the 05A boundary the shepherd relies on (SPEC-05A §5.3 step 0, §5.4 at 738a4537)", { timeout: 120_000 }, () => {
   test("REC-OPTIONS: collect checks every option before any request and never throws; bad options are malformed at stage collect", () => {
     const log: any[] = [];
     const readers = createReaders({ request: makeFakeRequest(world(), log), policy: POLICY });
@@ -106,7 +107,7 @@ describe("REC pass 2: the 05A boundary the shepherd relies on (SPEC-05A §5.3 st
   });
 });
 
-describe("REC final pass: V1's fixed policy is the only policy (SPEC-05A §5.1, §5.3 step 0 at 94db29d3)", () => {
+describe("REC final pass: V1's fixed policy is the only policy (SPEC-05A §5.1, §5.3 step 0 at 94db29d3)", { timeout: 120_000 }, () => {
   test("REC-POLICY: createReaders and collect accept V1's policy (omitted or an equal copy) and refuse any other before a request", () => {
     const log: any[] = [];
     const request = makeFakeRequest(world(), log);

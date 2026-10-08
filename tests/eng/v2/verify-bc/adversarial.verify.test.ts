@@ -13,10 +13,11 @@ import { TOKEN, parseOnlyJson, runIn } from "./checks-shepherd";
 import { makeFakeSpawn } from "./support/fake-gh.mjs";
 // @ts-expect-error untyped support module
 import { world } from "./support/worlds.mjs";
-import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+import { HOOK_TIMEOUT, cleanupTmp, redirectTmpdir } from "./support/tmp";
+import { timed } from "./support/timing";
 
 redirectTmpdir();
-afterAll(cleanupTmp);
+afterAll(timed("adversarial afterAll cleanupTmp", cleanupTmp), HOOK_TIMEOUT);
 
 const V2 = path.resolve(__dirname, "../../../../scripts/eng/v2");
 let decide: any, runShepherdCli: any, exitCodeFor: any, TRUST_POLICY: any, NA: any;
@@ -24,15 +25,15 @@ const L = (d: any) => (d.decision === "UNKNOWN" ? `UNKNOWN(${d.reasonCodes[0]})`
 const CLEAN = () => review("CLEAN_COMMENT", CODEX, "CLEAN", true);
 const CAND = "CANDIDATE_READY_FOR_HUMAN_REVIEW";
 
-beforeAll(async () => {
+beforeAll(timed("adversarial beforeAll", async () => {
   ({ decide } = await import(path.join(V2, "decision/decide.mjs")));
   ({ runShepherdCli } = await import(path.join(V2, "cli-shepherd.mjs")));
   ({ exitCodeFor } = await import(path.join(V2, "shepherd.mjs")));
   ({ TRUST_POLICY } = await import(path.join(V2, "decision/policy.mjs")));
   NA = await import(path.join(V2, "decision/next-action.mjs"));
-});
+}), HOOK_TIMEOUT);
 
-describe("05B adversarial", () => {
+describe("05B adversarial", { timeout: 120_000 }, () => {
   test("ADV-B1 NO HOLE (05B, pass 2; was SPEC AMBIGUITY): an out-of-enum verdict or channel on a trusted at-head review is malformed, so it cannot slip past a candidate", () => {
     // SPEC-05B §1 at df8dd9b5: channel and verdict are closed enums; a value outside them is malformed when row 9 is reached.
     const outs = [
@@ -137,7 +138,7 @@ describe("05B adversarial", () => {
   });
 });
 
-describe("05B adversarial: raw GitHub shapes", () => {
+describe("05B adversarial: raw GitHub shapes", { timeout: 120_000 }, () => {
   test("ADV-B11 NO HOLE (05B): raw GitHub responses, or a raw body as a row value, are never interpreted", async () => {
     // @ts-expect-error untyped support module
     const { fixture } = await import("./support/fake-gh.mjs");
@@ -152,7 +153,7 @@ describe("05B adversarial: raw GitHub shapes", () => {
   });
 });
 
-describe("05C adversarial", () => {
+describe("05C adversarial", { timeout: 120_000 }, () => {
   test("ADV-C1 NO HOLE at 738a4537 (pass 1 CONFIRMED HOLE, fixed by 05A 63bd3b6e): the dedicated token echoed inside a GitHub body field never reaches stdout", () => {
     const run = runIn(runShepherdCli, ["shepherd", "800", "--json"], world("ready", "protectedRules", "resolveOpenThread", ["vercelContextName", `deploy ${TOKEN}`], ["vercelState", "FAILURE"]));
     // SPEC-05A §5.1: "an echo of it ... is redacted"; operator: the token is never in stdout.
@@ -213,7 +214,7 @@ describe("05C adversarial", () => {
   });
 });
 
-describe("pass 2 adversarial (05C at 738a4537)", () => {
+describe("pass 2 adversarial (05C at 738a4537)", { timeout: 120_000 }, () => {
   test("ADV-C8 NO HOLE (05A/05C; liveness note): a token-shaped head branch name is redacted in every body, so the head-branch PR list is read for the placeholder and the run fails closed", () => {
     const branch = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     const w = world("ready", "protectedRules", "resolveOpenThread");

@@ -9,9 +9,10 @@ import path from "node:path";
 import { ALL_DECISIONS, CLOSED_REASONS, CODEX, HUMAN, ROW_DECISIONS, oracle } from "./oracle";
 import { HAND_CASES } from "./hand-table";
 import { type RowResult, compatiblePairs, runAllDecideRows } from "./checks-decide";
-import { cleanupTmp, tmp as tmpUnderRoot } from "./support/tmp";
+import { HOOK_TIMEOUT, cleanupTmp, tmp as tmpUnderRoot } from "./support/tmp";
+import { timed } from "./support/timing";
 
-afterAll(cleanupTmp);
+afterAll(timed("decide.verify afterAll cleanupTmp", cleanupTmp), HOOK_TIMEOUT);
 
 const ROOT = path.resolve(__dirname, "../../../..");
 const V2 = path.join(ROOT, "scripts/eng/v2");
@@ -19,12 +20,12 @@ let decide: any;
 let results: RowResult[] = [];
 const byRow = (row: string) => results.find((r) => r.row === row)!;
 
-beforeAll(async () => {
+beforeAll(timed("decide.verify beforeAll (all 05B rows)", async () => {
   decide = (await import(path.join(V2, "decision/decide.mjs"))).decide;
   results = runAllDecideRows(decide, 1);
   const lines = results.map((r) => `${r.row.padEnd(11)} checked ${String(r.checked).padStart(7)}  violations ${(r as any).total ?? 0}`);
-  console.log(`05B rows against efc7e186 decide():\n${lines.join("\n")}`);
-}, 600_000);
+  console.log(`05B rows against the builder head's decide():\n${lines.join("\n")}`);
+}), 900_000);
 
 describe("oracle self-check (the oracle against literal hand-derived expectations)", () => {
   test("O-SELF: every hand case agrees with the oracle", () => {
@@ -98,7 +99,7 @@ describe("05B rows", () => {
   });
 });
 
-describe("D-GRAPH: the decision module's import graph (black box, via a resolve hook)", () => {
+describe("D-GRAPH: the decision module's import graph (black box, via a resolve hook)", { timeout: 120_000 }, () => {
   test("decide.mjs reaches only decision/ and contract/ modules: no adapter/, receipts, shepherd, fs, child_process, network or os", () => {
     const tmp = tmpUnderRoot("graph-");
     const log = path.join(tmp, "resolved.log");

@@ -23,17 +23,18 @@ import {
 } from "./checks-shepherd";
 // @ts-expect-error untyped support module
 import { makeFakeRequest } from "./support/fake-gh.mjs";
-import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+import { HOOK_TIMEOUT, cleanupTmp, inScope, redirectTmpdir } from "./support/tmp";
+import { timed } from "./support/timing";
 import { headlessRoot, headlessRunShepherdCli } from "./support/headless";
 
 redirectTmpdir();
-afterAll(cleanupTmp);
+afterAll(timed("shepherd afterAll cleanupTmp", cleanupTmp), HOOK_TIMEOUT);
 
 const V2 = path.resolve(__dirname, "../../../../scripts/eng/v2");
 let runShepherdCli: any;
 const rows: Record<string, any> = {};
 
-beforeAll(async () => {
+beforeAll(timed("shepherd beforeAll (all 05C rows)", async () => {
   ({ runShepherdCli } = await import(path.join(V2, "cli-shepherd.mjs")));
   const { collect } = await import(path.join(V2, "adapter/collect.mjs"));
   const { createReaders, POLICY } = await import(path.join(V2, "adapter/internal/github/index.mjs"));
@@ -43,14 +44,15 @@ beforeAll(async () => {
     return c.ok ? c.evidenceHash : null;
   };
   const scen = scenarios(hashOf);
-  for (const r of [...checkShepherd(runShepherdCli, scen), checkText(runShepherdCli, scen), checkUsage(runShepherdCli), checkUsageExit(runShepherdCli), checkNoToken(runShepherdCli), checkTokenEcho(runShepherdCli), checkReceiptModes(runShepherdCli), checkInternal(runShepherdCli), checkToolVersionNull(await headlessRunShepherdCli(), headlessRoot()), checkTextEscape(runShepherdCli), checkTimer(runShepherdCli), checkClaudeTable(), checkClaudePolicy(), checkLeftover(runShepherdCli, (await import(path.join(V2, "receipts.mjs"))).readReceipts)]) rows[r.row] = r;
+  const all = await inScope("shepherd-rows", async () => [...checkShepherd(runShepherdCli, scen), checkText(runShepherdCli, scen), checkUsage(runShepherdCli), checkUsageExit(runShepherdCli), checkNoToken(runShepherdCli), checkTokenEcho(runShepherdCli), checkReceiptModes(runShepherdCli), checkInternal(runShepherdCli), checkToolVersionNull(await headlessRunShepherdCli(), headlessRoot()), checkTextEscape(runShepherdCli), checkTimer(runShepherdCli), checkClaudeTable(), checkClaudePolicy(), checkLeftover(runShepherdCli, (await import(path.join(V2, "receipts.mjs"))).readReceipts)]);
+  for (const r of all) rows[r.row] = r;
   console.log(
     "05C rows against efc7e186 runShepherdCli():\n" +
       Object.values(rows)
         .map((r: any) => `${r.row.padEnd(16)} checked ${String(r.checked).padStart(4)}  violations ${r.total}${r.total ? "  e.g. " + JSON.stringify(r.violations[0]) : ""}${r.notes?.length ? "\n                 notes: " + r.notes.join(" | ") : ""}`)
         .join("\n"),
   );
-}, 600_000);
+}), 600_000);
 
 describe("05C rows (in process)", () => {
   for (const row of ["C-JSON", "C-FIELDS", "C-DECISION", "C-VALUES", "C-EXIT", "C-NOMUT", "C-ENV", "C-TOKEN", "C-RECEIPT", "C-TEXT", "C-USAGE", "C-USAGE-EXIT", "C-NOTOKEN", "C-TOKEN-ECHO", "C-RECEIPT-MODES", "C-INTERNAL", "C-TOOLVERSION", "C-TEXT-ESCAPE", "C-TIMER", "C-DOC", "C-DOC-POLICY", "C-LEFTOVER"]) {
