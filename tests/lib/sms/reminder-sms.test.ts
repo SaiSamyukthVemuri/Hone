@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  sendBookingConfirmationSmsToClient,
   send24hReminderSmsToClient,
   send2hReminderSmsToClient,
   type SendReminderInput,
@@ -38,10 +39,13 @@ type ClaimAnswer = { result: string; starts_at?: string | null } | "error";
 const h: {
   claim: ClaimAnswer;
   begin: { data: unknown; error: unknown };
+  /** "hang": settle_sms_message never answers (a stalled or killed request). */
+  settle: "ok" | "hang";
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
 } = {
   claim: { result: "claimed", starts_at: START },
   begin: { data: LEDGER_ROW, error: null },
+  settle: "ok",
   rpcs: [],
 };
 
@@ -56,8 +60,14 @@ function admin(): SupabaseClient {
             : { data: [h.claim], error: null },
         );
       }
+      // The confirmation path's plain claim (0049).
+      if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
       if (fn === "begin_appointment_sms_message") return Promise.resolve(h.begin);
-      if (fn === "settle_sms_message") return Promise.resolve({ data: "settled", error: null });
+      if (fn === "settle_sms_message") {
+        return h.settle === "hang"
+          ? new Promise(() => undefined)
+          : Promise.resolve({ data: "settled", error: null });
+      }
       return Promise.resolve({ data: null, error: null });
     },
     from() {
@@ -111,6 +121,7 @@ beforeEach(() => {
   process.env.TWILIO_WEBHOOK_BASE_URL = "https://hone.care";
   h.claim = { result: "claimed", starts_at: START };
   h.begin = { data: LEDGER_ROW, error: null };
+  h.settle = "ok";
   h.rpcs = [];
   alerts.length = 0;
   manageFor.length = 0;
@@ -275,13 +286,21 @@ describe("cancellation and moves before the send", () => {
 
   it("an unreachable claim spends NOTHING: no send, no record, retried on a later fire", async () => {
     h.claim = "error";
+    // A SKIP, not a failure: no provider request was made, so the cron must
+    // not count it as an attempt (Codex P2 4212849211). It is still logged.
     expect(await send24hReminderSmsToClient(input())).toEqual({
       ok: false,
-      error: "reminder_claim_unavailable",
-      retryable: true,
+      skipped: true,
+      reason: "reminder_claim_unavailable",
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(recorded(), "nothing was claimed, so nothing is released").toEqual([]);
+    expect(
+      vi.mocked(console.error).mock.calls.some((c) => String(c[0]).includes("reminder_claim_unavailable")),
+      "the unreachable claim is still logged for the operator",
+    ).toBe(true);
+    await flush();
+    expect(alerts, "a retryable miss raises no alert").toEqual([]);
   });
 
   it("the appointment is never read outside the claim (the mock throws if it is)", async () => {
@@ -314,5 +333,80 @@ describe("provider failure", () => {
     });
     expect(recorded()).toEqual([false]);
     expect(settled()).toEqual([expect.objectContaining({ p_outcome: "refused" })]);
+  });
+});
+
+// ===========================================================================
+// THE AUTHORITATIVE RECORD COMES BEFORE THE BEST-EFFORT SETTLE (Codex P1
+// 4212849205). record_sms_result decides whether a reminder may be sent again;
+// settle_sms_message is bookkeeping. If the settle hangs, or the invocation is
+// killed during it, an accepted or possibly-accepted reminder must already be
+// stamped sent. Otherwise only its claim remains, the claim goes stale after
+// five minutes, and a later fire sends the reminder again.
+// ===========================================================================
+describe("the slot is recorded before the ledger is settled", () => {
+  it("in order: claim, ledger row, provider, slot record, ledger settle", async () => {
+    await send24hReminderSmsToClient(input());
+    expect(h.rpcs.map((c) => c.fn)).toEqual([
+      "claim_reminder_sms_send",
+      "begin_appointment_sms_message",
+      "record_sms_result",
+      "settle_sms_message",
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  for (const [label, answer, outcome] of [
+    ["an accepted", () => twilioAnswer(201, { sid: SID }), "accepted"],
+    [
+      "an AMBIGUOUS",
+      () => Promise.reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+      "unknown",
+    ],
+  ] as const) {
+    it(`a settle that never answers cannot leave ${label} reminder unrecorded`, async () => {
+      h.settle = "hang";
+      fetchMock.mockImplementationOnce(answer);
+      void send24hReminderSmsToClient(input());
+      await vi.waitFor(() => expect(settled()).toHaveLength(1));
+      expect(recorded(), "stamped sent before the settle was even started").toEqual([true]);
+      expect(settled()[0]).toMatchObject({ p_outcome: outcome });
+    });
+  }
+
+  it("a refusal is released before the settle as well, so it stays retryable", async () => {
+    h.settle = "hang";
+    fetchMock.mockImplementationOnce(() => twilioAnswer(400, { code: 21211 }));
+    void send24hReminderSmsToClient(input());
+    await vi.waitFor(() => expect(settled()).toHaveLength(1));
+    expect(recorded()).toEqual([false]);
+  });
+
+  it("the booking confirmation follows the same order (one send discipline)", async () => {
+    h.settle = "hang";
+    void sendBookingConfirmationSmsToClient({
+      admin: admin(),
+      appointmentId: "appt-1",
+      startsAt: new Date(START),
+      timezone: "America/Vancouver",
+      studio: {
+        id: "studio-1",
+        name: "Willow",
+        send_confirmation_sms: true,
+        send_24h_sms_reminders: true,
+        send_2h_sms_reminders: true,
+      },
+      client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null },
+      intakeUrl: null,
+      manageUrl: null,
+    });
+    await vi.waitFor(() => expect(settled()).toHaveLength(1));
+    expect(h.rpcs.map((c) => c.fn)).toEqual([
+      "claim_sms_send",
+      "begin_appointment_sms_message",
+      "record_sms_result",
+      "settle_sms_message",
+    ]);
+    expect(recorded()).toEqual([true]);
   });
 });
