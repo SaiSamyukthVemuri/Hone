@@ -27,18 +27,23 @@ A collection failure (`ok: false`) decides `UNKNOWN(reason)` with `blocking: { r
 
 Otherwise, from `evidence`:
 
+- `schema`, which must be `"eng-loop-v1/evidence@1"`;
 - `key` (`state`, `isDraft`, `headSha`, `baseSha`) and `terminal`, which must equal `key.state !== "OPEN"`;
 - for an open key, `rows`: `base`, `ci`, `external` and `reviews`. Each is a closed result: `{ ok: true, value }`
   or `{ ok: false, reason, detail }`.
   - `base.value.drift.behindBy` is a non-negative integer.
   - `ci.value.outcome` is one of `SUCCEEDED`, `FAILED`, `PENDING`, `NO_RUN` or `INCOMPLETE`, with optional
-    `applicableRunIds` and `missingJob`.
+    `applicableRunIds` (when present, a list of positive integers) and `missingJob`.
   - `external.value.external` is a list of `{ source: string, state: "success" | "pending" | "failure" }`.
-  - `reviews.value.reviews` is a list of `{ channel, actor, verdict, qualifiesAtHead: boolean }`.
+  - `reviews.value.reviews` is a list of `{ channel, actor, verdict, qualifiesAtHead: boolean }`, where `channel` is
+    `PR_REVIEW` or `CLEAN_COMMENT` and `verdict` is one of `COMMENTED`, `APPROVED`, `CHANGES_REQUESTED`, `DISMISSED`,
+    `PENDING` or `CLEAN` (ARCH-01 §24's closed enums). A value outside them is outside the contract.
   - `reviews.value.threads` is a list of `{ opener, resolved: boolean, resolver, outdated }`.
   - An actor is `null` or `{ id: integer | null, type: string }`.
 
-A value of the wrong type anywhere 05B reads decides `UNKNOWN(malformed)`.
+A value of the wrong type, or outside these closed sets, anywhere 05B reads decides `UNKNOWN(malformed)` — when the
+table reaches the row that reads it (§2). Within the closed sets, §3 says which values establish trust; the rest
+establish nothing.
 
 ## 2. Precedence
 
@@ -69,8 +74,8 @@ or a `null` id matches nothing. Logins are not evidence.
 
 - **TRUSTED_REVIEW_AT_HEAD** holds when some review has `qualifiesAtHead: true`, an actor in `policy.codex`, and
   either channel `PR_REVIEW` with verdict `COMMENTED`, `APPROVED` or `CHANGES_REQUESTED`, or channel
-  `CLEAN_COMMENT` with verdict `CLEAN`. Any other verdict or channel — `DISMISSED`, `PENDING`, `CLEAN` on
-  `PR_REVIEW`, `COMMENTED` on `CLEAN_COMMENT` — establishes nothing.
+  `CLEAN_COMMENT` with verdict `CLEAN`. Any other combination of the closed values — `DISMISSED`, `PENDING`, `CLEAN`
+  on `PR_REVIEW`, `COMMENTED` on `CLEAN_COMMENT` — establishes nothing.
 - **FINDINGS_OPEN** holds when either:
   - a `PR_REVIEW` with verdict `CHANGES_REQUESTED`, `qualifiesAtHead: true` and an actor in `policy.codex` exists
     (ARCH-01 §18); or

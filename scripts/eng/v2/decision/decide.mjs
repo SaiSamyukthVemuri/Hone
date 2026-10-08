@@ -39,7 +39,12 @@ export const DECISIONS = Object.freeze([
   "UNKNOWN",
 ]);
 
+const EVIDENCE_SCHEMA = "eng-loop-v1/evidence@1";
 const CI_OUTCOMES = ["SUCCEEDED", "FAILED", "PENDING", "NO_RUN", "INCOMPLETE"];
+/** ARCH-01 §24's closed enums: any other channel or verdict is outside the contract, never "establishes nothing". */
+const CHANNELS = ["PR_REVIEW", "CLEAN_COMMENT"];
+const VERDICTS = ["COMMENTED", "APPROVED", "CHANGES_REQUESTED", "DISMISSED", "PENDING", "CLEAN"];
+const isRunIds = (v) => v === undefined || (Array.isArray(v) && v.every((id) => Number.isSafeInteger(id) && id > 0));
 const EXTERNAL_STATES = ["success", "pending", "failure"];
 const TRUSTED_VERDICTS = Object.freeze({ PR_REVIEW: ["COMMENTED", "APPROVED", "CHANGES_REQUESTED"], CLEAN_COMMENT: ["CLEAN"] });
 
@@ -112,8 +117,8 @@ function decideOpen(e, policy) {
   // 4. CI failure.
   const ci = rowValue(rows.ci, "ci");
   if (ci.failure) return ci.failure;
-  need(CI_OUTCOMES.includes(ci.value.outcome), "ci outcome");
-  const runIds = Array.isArray(ci.value.applicableRunIds) ? [...ci.value.applicableRunIds] : [];
+  need(CI_OUTCOMES.includes(ci.value.outcome) && isRunIds(ci.value.applicableRunIds), "ci outcome");
+  const runIds = [...(ci.value.applicableRunIds ?? [])];
   if (ci.value.outcome === "FAILED") return result("CI_FAILED", ["CI_FAILED"], { runIds });
 
   // 5. External failure.
@@ -143,7 +148,7 @@ function decideOpen(e, policy) {
   const { reviews, threads } = rv.value;
   need(Array.isArray(reviews) && Array.isArray(threads), "reviews and threads");
   for (const r of reviews) {
-    need(isObj(r) && typeof r.channel === "string" && typeof r.verdict === "string" && isActor(r.actor), "review");
+    need(isObj(r) && CHANNELS.includes(r.channel) && VERDICTS.includes(r.verdict) && isActor(r.actor), "review");
     need(typeof r.qualifiesAtHead === "boolean", "review head binding");
   }
   for (const t of threads) {
@@ -168,7 +173,7 @@ export function decide(collected, policy = TRUST_POLICY) {
     need(isObj(collected) && typeof collected.ok === "boolean", "collection result");
     if (!collected.ok) return unknown(collected.reason, "collection", collected.detail);
     const e = collected.evidence;
-    need(isObj(e) && isObj(e.key) && typeof e.terminal === "boolean", "evidence");
+    need(isObj(e) && e.schema === EVIDENCE_SCHEMA && isObj(e.key) && typeof e.terminal === "boolean", "evidence");
     // 1. Terminal: the key's state decides, and nothing else is read.
     need(["OPEN", "CLOSED", "MERGED"].includes(e.key.state) && e.terminal === (e.key.state !== "OPEN"), "key state");
     if (e.terminal) return result("NOT_OPEN", ["NOT_OPEN"], { state: e.key.state });
