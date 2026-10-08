@@ -20,7 +20,7 @@ export default function AboutHonePage() {
       <SkipLink />
       <SiteHeader />
       <Breadcrumbs items={[{ name: "Home", path: "/" }, { name: "About", path: "/about" }]} />
-      <main id="main-content">
+      <main id="main-content" className="scroll-mt-16">
         <Section>
           <Container size="prose">
             <Eyebrow>Company</Eyebrow>

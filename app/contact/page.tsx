@@ -20,7 +20,7 @@ export default function ContactHonePage() {
       <SkipLink />
       <SiteHeader />
       <Breadcrumbs items={[{ name: "Home", path: "/" }, { name: "Contact", path: "/contact" }]} />
-      <main id="main-content">
+      <main id="main-content" className="scroll-mt-16">
         <Section>
           <Container size="prose">
             <Eyebrow>Company</Eyebrow>
