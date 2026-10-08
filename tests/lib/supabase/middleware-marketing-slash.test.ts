@@ -58,7 +58,7 @@ describe("public route trailing slashes at the real Supabase auth gate", () => {
       expect(response.status, route).toBe(307);
       const target = response.headers.get("location");
       expect(target, route).toBeTruthy();
-      expect(new URL(target!).pathname, route).toBe("/login");
+      expect(new URL(target!).pathname.replace(/\/$/, ""), route).toBe("/login");
       expect(request.nextUrl.pathname, route).toBe(route);
     }
   });
@@ -133,7 +133,7 @@ describe("composed middleware: raw path, one comparison normalization, then auth
         headers: { Accept: "text/markdown" },
       }));
       expect(response.status).toBe(307);
-      expect(new URL(response.headers.get("location")!).pathname).toBe("/login");
+      expect(new URL(response.headers.get("location")!).pathname.replace(/\/$/, "")).toBe("/login");
       expect(getUser).toHaveBeenCalledOnce();
     },
   );

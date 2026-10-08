@@ -67,58 +67,45 @@ export function appendVaryAccept(headers: Headers): void {
   }
 }
 
-// A top-level route not in the actual application is otherwise redirected
-// by the auth middleware to /login (final 200). These are the known roots in
-// app/, app/(app), app/(auth), the documented marketing routes and infrastructure.
-// Newly introduced roots fail closed as 404 until intentionally registered.
-// Existing known/private/token roots continue through their existing guards.
-const ROUTE_ROOTS = new Set([
-  "about", "contact", "llms.txt",
+// Reuse Hone's existing published marketing route inventory. Do not maintain
+// another marketing route list in the 404 handler. The only separate list is
+// route *families* that must continue through existing auth/token handling.
+// An undeclared new route fails as a 404 rather than silently bypassing auth.
+import { SITEMAP_PATHS } from "./content";
+
+const PUBLIC_ENTRYPOINTS = new Set([
+  ...SITEMAP_PATHS,
+  "/llms.txt", "/robots.txt", "/sitemap.xml",
+  "/icon", "/apple-icon", "/opengraph-image", "/login",
+]);
+
+const AUTH_OR_DYNAMIC_FAMILIES = new Set([
   "dashboard", "calendar", "clients", "financials", "getting-started",
-  "notifications", "records", "settings", "e2e-fault",
-  "accept-invitation", "auth", "login", "no-access", "admin", "api",
-  "apple-icon", "book", "calendar-feed", "cancel", "demo", "electrolysis-software",
-  "features", "icon", "ingest", "intake", "invitation", "manage", "monitoring",
-  "opengraph-image", "portal", "pricing", "privacy", "reschedule", "resources",
-  "robots.txt", "sitemap.xml", "terms", "film", "fonts",
-  "_next", "_vercel", ".well-known", "__nextjs_original-stack-frame",
+  "notifications", "records", "settings", "e2e-fault", "admin",
+  "auth", "accept-invitation", "no-access", "api",
+  "book", "cancel", "reschedule", "manage", "intake", "invitation",
+  "portal", "calendar-feed", "resources", "ingest", "monitoring",
+  "film", "fonts", "_next", "_vercel", ".well-known",
+  "__nextjs_original-stack-frame",
 ]);
 
-const SINGLE_PAGE_ROOTS = new Set([
-  "about", "contact", "llms.txt", "demo", "electrolysis-software",
-  "pricing", "privacy", "terms", "robots.txt", "sitemap.xml",
-  "icon", "apple-icon", "opengraph-image",
-]);
-
-// The feature namespace has a closed set of pages. It must not be an
-// unbounded anonymous login redirect for routes that were never shipped.
-// Only page/route entrypoints belong here. The waitlist-invitation directory
-// holds a component, not a public route; /invitation/:token stays separate.
-const KNOWN_FEATURE_ROUTES = new Set([
-  "/features/treatment-memory",
-  "/features/booking-calendar",
-  "/features/charting-records",
-]);
-
-// Hone intentionally disables Next's automatic trailing-slash redirects.
-// Remove ONE terminal slash for comparison; do not normalize multiple slashes
-// or rewrite the actual URL. That preserves the deployed page's original path.
+// Next normalizes repeated slashes to a canonical URL BEFORE middleware.
+// This helper removes at most ONE trailing slash for route comparisons.
+// It does not rewrite, decode, or authorize any URL.
 export function normalizePublicPathname(pathname: string): string {
   return pathname.length > 1 && pathname.endsWith("/")
     ? pathname.slice(0, -1)
     : pathname;
 }
 
-export function isUnknownPublicPath(pathname: string): boolean {
-  if (!pathname.startsWith("/") || pathname === "/") return false;
-  const normalized = normalizePublicPathname(pathname);
-  const first = normalized.split("/")[1] ?? "";
-  // Unlike /book/:slug, /features is a *finite* namespace. Treat missing
-  // children and the nonexistent feature-index route as genuine 404s.
-  if (first === "features") return !KNOWN_FEATURE_ROUTES.has(normalized);
-  if (!ROUTE_ROOTS.has(first)) return true;
-  // A static page cannot have a child route; don't redirect its typo to login.
-  return SINGLE_PAGE_ROOTS.has(first) && normalized !== "/" + first;
+export function isUnknownPublicPath(rawPathname: string): boolean {
+  if (!rawPathname.startsWith("/")) return false;
+  const pathname = normalizePublicPathname(rawPathname);
+  if (PUBLIC_ENTRYPOINTS.has(pathname)) return false;
+  const root = pathname.split("/")[1] ?? "";
+  // Dynamic and protected families retain their own existing authorization
+  // and not-found semantics. Unknown public paths return a real 404.
+  return !AUTH_OR_DYNAMIC_FAMILIES.has(root);
 }
 
 export const NOT_FOUND_HTML = [

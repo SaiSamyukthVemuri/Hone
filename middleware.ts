@@ -11,20 +11,16 @@ import { updateSession } from "@/lib/supabase/middleware";
 const PUBLIC_AGENT_ROUTES = new Set(["/about", "/contact", "/llms.txt"]);
 
 export async function middleware(request: NextRequest) {
-  // The classifier accepts a RAW pathname and normalizes one slash itself.
-  // Keep the original request unchanged for the separate auth/route layers.
   const rawPathname = request.nextUrl.pathname;
   const isRead = request.method === "GET" || request.method === "HEAD";
   const accept = request.headers.get("Accept");
 
-  // Without this, unrecognized pages fall through to auth -> /login (final
-  // 200), so crawlers infer every resource exists. Known protected roots and
-  // bearer-token routes are NEVER handled by this shortcut.
+  // Do not send unknown anonymous public paths to /login (a soft-404).
+  // Protected and token-bearing families still run their existing handlers.
   if (isRead && isUnknownPublicPath(rawPathname)) {
-    const choice = preferredPublicRepresentation(accept);
-    const markdown = choice === "markdown";
+    const markdown = preferredPublicRepresentation(accept) === "markdown";
     return new NextResponse(
-      request.method === "HEAD" ? null : (markdown ? NOT_FOUND_MARKDOWN : NOT_FOUND_HTML),
+      request.method === "HEAD" ? null : markdown ? NOT_FOUND_MARKDOWN : NOT_FOUND_HTML,
       {
         status: 404,
         headers: {
@@ -37,56 +33,36 @@ export async function middleware(request: NextRequest) {
     );
   }
 
-  // Independently normalize the raw input for representation lookup; never
-  // feed this derived path back into the classifier ("/about//" is unknown).
+  // Only three explicitly public company pages participate in Markdown
+  // negotiation; no patient, authenticated or token route can enter here.
   const pathname = normalizePublicPathname(rawPathname);
-
-  // Only public marketing pages opt into content negotiation. A browser and
-  // Next's RSC requests keep the original HTML route. Protected/token routes
-  // never traverse this branch and cannot be rendered as public Markdown.
-  if (isRead && Object.prototype.hasOwnProperty.call(PUBLIC_MARKDOWN, pathname)) {
-    const choice = preferredPublicRepresentation(accept);
-    if (choice === "markdown") {
+  const negotiated = isRead && Object.prototype.hasOwnProperty.call(PUBLIC_MARKDOWN, pathname);
+  if (negotiated) {
+    const chosen = preferredPublicRepresentation(accept);
+    if (chosen !== "html") {
+      const markdown = chosen === "markdown";
       return new NextResponse(
-        request.method === "HEAD" ? null : PUBLIC_MARKDOWN[pathname],
+        request.method === "HEAD"
+          ? null
+          : markdown ? PUBLIC_MARKDOWN[pathname] : "Available representations: text/html, text/markdown.",
         {
-          status: 200,
+          status: markdown ? 200 : 406,
           headers: {
-            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Type": markdown ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8",
             "Vary": "Accept",
-            "Cache-Control": "public, s-maxage=300",
-          },
-        },
-      );
-    }
-    if (choice === "not-acceptable") {
-      return new NextResponse(
-        request.method === "HEAD" ? null : "Supported representations: text/html and text/markdown.",
-        {
-          status: 406,
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Vary": "Accept",
-            "Cache-Control": "no-store",
+            "Cache-Control": markdown ? "public, s-maxage=300" : "no-store",
           },
         },
       );
     }
   }
 
-  if (isRead && PUBLIC_AGENT_ROUTES.has(pathname)) {
-    // Vercel applies a final response-header transform for these exact public
-    // paths. This middleware header is useful locally, but Next 15.5 can
-    // overwrite it when generating the HTML response.
-    const response = NextResponse.next({ request });
-    if (Object.prototype.hasOwnProperty.call(PUBLIC_MARKDOWN, pathname)) {
-      appendVaryAccept(response.headers);
-    }
-    return response;
-  }
-
-  const response = await updateSession(request);
-  if (isRead && pathname === "/") appendVaryAccept(response.headers);
+  const response = isRead && PUBLIC_AGENT_ROUTES.has(pathname)
+    ? NextResponse.next({ request })
+    : await updateSession(request);
+  // Next 15.5 may replace Vary on rendered HTML; Vercel's narrow
+  // post-render response transform provides final Vary: Accept there.
+  if (negotiated) appendVaryAccept(response.headers);
   return response;
 }
 

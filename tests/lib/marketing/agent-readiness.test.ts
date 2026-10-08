@@ -145,6 +145,23 @@ describe("unknown route protection", () => {
     expect(normalizePublicPathname("/")).toBe("/");
     expect(isUnknownPublicPath("/privacy/typo")).toBe(true);
     expect(isUnknownPublicPath("/")).toBe(false);
+    // A public page is declared once, in the marketing sitemap inventory.
+    for (const marketing of MARKETING_PAGES) {
+      expect(isUnknownPublicPath(marketing.path), marketing.path).toBe(false);
+      if (marketing.path !== "/") {
+        expect(isUnknownPublicPath(marketing.path + "/"), marketing.path).toBe(false);
+      }
+    }
+    // These are not route entrypoints, and must not become auth redirects.
+    for (const bogus of ["/about/not-real", "/features/no-such-page",
+      "/features/waitlist-invitation", "/login/not-real", "/pricing/no-such-plan"]) {
+      expect(isUnknownPublicPath(bogus), bogus).toBe(true);
+    }
+    // Keep sensitive and token-bearing routes under their existing guards.
+    for (const guarded of ["/dashboard", "/clients/synthetic",
+      "/portal/verify/synthetic", "/api/cron/synthetic", "/invitation/synthetic"]) {
+      expect(isUnknownPublicPath(guarded), guarded).toBe(false);
+    }
   });
 });
 
