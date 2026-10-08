@@ -17,6 +17,7 @@ import { parseRunJobs, parseWorkflowRuns } from "../../../../scripts/eng/v2/adap
 import { bindCi, requiredJobs } from "../../../../scripts/eng/v2/adapter/internal/bind/ci.mjs";
 import { evaluate, type Impl } from "./support/pipeline";
 import { ADVERSARIAL, matches, show } from "./support/scenarios";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — adversarial sequences against SPEC-05A §3.4
@@ -67,3 +68,5 @@ describe("adversarial: sequences against the §3.4 binding argument", () => {
     }
   });
 });
+
+budgetGuard("adversarial.verify.test.ts");

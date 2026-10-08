@@ -26,6 +26,7 @@ import {
   rawKeyFor,
   rawPrContextFor,
 } from "./support/world";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — ENG-LOOP V1 05A row 2: production base, drift, PR context.
@@ -758,3 +759,5 @@ describe("row 2 verify: §0 malformed wins, and exotic input is malformed", () =
     }
   });
 });
+
+budgetGuard("row2-base.verify.test.ts");

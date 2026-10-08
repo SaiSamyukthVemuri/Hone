@@ -33,6 +33,7 @@ import {
 import { clone, noThrow } from "./support/deep";
 import { rng } from "./support/prng";
 import { FAILED_CONCLUSIONS, P0, PRODUCTION_REF, RUN_810, RUN_810_CREATED, ownRun, allGreenJobs, sha40 } from "./support/world";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — SPEC-05A §5.3 (passes) and §5.4 (Evidence), f75ca255.
@@ -717,3 +718,5 @@ describe("collector: readers for another production ref cannot be built (§5.1, 
 void keyOf;
 void RUN_810_CREATED;
 void BLOB_CLASSIFY;
+
+budgetGuard("collect-passes.verify.test.ts");

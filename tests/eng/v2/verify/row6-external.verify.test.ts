@@ -23,6 +23,7 @@ import { canon, clone, deepFreeze, isDeepFrozen, noThrow, permuteKeys } from "./
 import { exactFieldMutations, purityViolations } from "./support/parser-props";
 import { rng } from "./support/prng";
 import { H810, ROLLUP_ROWS, checkRollup, evaluateRollup, externalSummary, rollupAnswer, type Impl456 } from "./support/rows456";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — ENG-LOOP V1 05A row 6: external contexts.
@@ -128,3 +129,5 @@ describe("row 6 verify: bindExternal properties (§4.4; EXT-CONTEXT-01 §8)", ()
     expect(isDeepFrozen(a.value)).toBe(true);
   });
 });
+
+budgetGuard("row6-external.verify.test.ts");
