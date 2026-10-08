@@ -97,12 +97,12 @@ The runtime does **not** claim to implement the records below unchanged. These a
      files. V1 uses `readFileBlob` for the CI-definition binding (SPEC-05A §5.2) but not `readRunAttestation`.
    - **No G1–G4.** V1 ships without CAP-01's static lints. The confinement they would check — one network primitive,
      reached only through the readers — is a code-review obligation in V1.
-8. **Row-scoped UNKNOWN in 05B.** ARCH-01 §8 makes any UNKNOWN the whole snapshot's. V1 keeps that for a collection
+8. **Row-scoped UNKNOWN in 05B** (approved by the operator, 2026-10-08, exactly as SPEC-05B defines it). ARCH-01 §8 makes any UNKNOWN the whole snapshot's. V1 keeps that for a collection
    failure, but a binder's closed failure is one row's result: it decides `UNKNOWN(reason)` only when the precedence
    table reaches that row. Every row is consulted before candidacy, so an UNKNOWN can never be skipped on the way to
    `CANDIDATE_READY_FOR_HUMAN_REVIEW`. A draft PR still reads `DRAFT_HOLD`, and a PR behind production still reads
    `NEEDS_REFRESH`, while production's history is unverified (SPEC-05B §2).
-9. **Missing required CI.** The operator's row 6 is "missing required CI → `CI_NOT_STARTED` / `CI_INCOMPLETE`". V1
+9. **Missing required CI** (approved by the operator, 2026-10-08, exactly as SPEC-05B defines it). The operator's row 6 is "missing required CI → `CI_NOT_STARTED` / `CI_INCOMPLETE`". V1
    decides `CI_NOT_STARTED` for `NO_RUN` (ARCH-01's `NO_FRONTIER`) and `CI_INCOMPLETE` for `INCOMPLETE`, a
    successful run in which a required job did not succeed.
 
