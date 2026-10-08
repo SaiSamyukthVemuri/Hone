@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist";
 
@@ -47,6 +47,13 @@ const INVITED_EMAIL = "chloe@example.test";
 const INVITED_HASH = createHash("sha256").update(INVITED_EMAIL, "utf8").digest("hex");
 
 const START = new Date("2026-10-07T14:00:00.000Z");
+// Every instant this suite books is ABSOLUTE, and the booking action refuses a
+// start at or before the WALL CLOCK. Left unpinned, START expired as the
+// calendar caught up with it: from 2026-10-07T14:00Z this suite failed on every
+// branch, production included -- the same defect #794 fixed in
+// invitation-fail-closed.test.ts. `now` is a fixture fact, before every
+// instant below and inside the 2026-10-01..31 offer window.
+const FROZEN_NOW = new Date("2026-10-01T12:00:00.000Z");
 const START_ISO = START.toISOString();
 
 type RpcCall = { fn: string; args: Record<string, unknown> };
@@ -502,6 +509,10 @@ const ordinaryBookings = () =>
 const indexOfCall = (fn: string) => rpcCalls.findIndex((c) => c.fn === fn);
 
 beforeEach(() => {
+  // Only `Date` is faked. The action awaits real promises, and faking timers
+  // wholesale would stall them.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FROZEN_NOW);
   process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = SLUG;
   rpcCalls.length = 0;
   logLines.length = 0;
@@ -526,6 +537,9 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     logLines.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
   });
+});
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 // ===========================================================================
