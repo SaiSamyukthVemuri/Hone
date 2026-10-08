@@ -11,7 +11,7 @@ import path from "node:path";
 import { writeGhShim, readShimLog, routeRest, isReadOnlyQuery } from "./support/fake-gh.mjs";
 // @ts-expect-error untyped support module
 import { world } from "./support/worlds.mjs";
-import { parseOnlyJson, REQUIRED_FIELDS } from "./checks-shepherd";
+import { errorReportViolations, parseOnlyJson, REQUIRED_FIELDS } from "./checks-shepherd";
 import { cleanupTmp, tmp } from "./support/tmp";
 
 afterAll(cleanupTmp);
@@ -117,11 +117,17 @@ describe("CLI: the real process", { timeout: 180_000 }, () => {
     expect(t.stdout + t.stderr).not.toContain(TOKEN);
   });
 
-  test("CLI-USAGE: a usage error in --json mode is exit 2 with one JSON document and no request", () => {
+  test("CLI-USAGE: a usage error in --json mode is exit 2, one JSON document in the full report shape, no request (README pass 2)", () => {
     const r = runCli(["abc", "--json"], world());
     expect(r.status).toBe(2);
-    expect(parseOnlyJson(r.stdout).ok).toBe(true);
+    const j = parseOnlyJson(r.stdout);
+    expect(j.ok, j.why).toBe(true);
+    expect(errorReportViolations(j.value, "usage")).toEqual([]);
     expect(r.log).toEqual([]);
+    const t = runCli(["abc"], world());
+    expect(t.status).toBe(2);
+    expect(t.stdout, "text-mode usage goes to stderr").toBe("");
+    expect(t.stderr).toMatch(/usage/);
   });
 
   test("CLI-RECEIPT-FAIL: an unwritable receipts directory leaves stdout JSON-only and the decision's exit code", () => {
@@ -143,12 +149,14 @@ describe("CLI: the real process", { timeout: 180_000 }, () => {
     expect(left, `left behind: ${left.join(", ")}`).toEqual([]);
   });
 
-  test("CLI-TOOLVERSION: a checkout whose HEAD cannot be established reports toolVersion null, never a placeholder (README)", () => {
+  test("CLI-TOOLVERSION: a checkout whose HEAD cannot be established reports toolVersion null, and its receipt tool_version null (README pass 2)", () => {
     const r = runCli(["800", "--json"], world());
     const j = parseOnlyJson(r.stdout);
     expect(j.ok).toBe(true);
-    const v = j.value.toolVersion;
-    expect(v === null || /^eng-loop-v1@[0-9a-f]{40}(\+dirty)?$/.test(v), `toolVersion ${v}`).toBe(true);
+    expect(j.value.toolVersion).toBe(null);
+    const files = fs.readdirSync(r.receiptsDir);
+    expect(files.length).toBe(1);
+    expect(JSON.parse(fs.readFileSync(path.join(r.receiptsDir, files[0]), "utf8")).tool_version).toBe(null);
   });
 
   test("CLI-RECEIPT-ROOT: by default receipts land under .eng/receipts/, gitignored, and never make the tool +dirty", () => {

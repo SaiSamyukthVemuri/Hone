@@ -66,3 +66,42 @@ describe("REC: decide() on evidence the real collector builds from the recorded 
     expect(decide(b)).toEqual(decide(a));
   });
 });
+
+describe("REC pass 2: the 05A boundary the shepherd relies on (SPEC-05A §5.3 step 0, §5.4 at 738a4537)", () => {
+  test("REC-OPTIONS: collect checks every option before any request and never throws; bad options are malformed at stage collect", () => {
+    const log: any[] = [];
+    const readers = createReaders({ request: makeFakeRequest(world(), log), policy: POLICY });
+    const local = loadLocalCi();
+    const cases: [string, any][] = [
+      ["no options", {}],
+      ["PR number 0", { prNumber: 0, readers, local, now: () => "2026-10-07T20:00:00Z" }],
+      ["PR number as string", { prNumber: "800", readers, local, now: () => "2026-10-07T20:00:00Z" }],
+      ["a reader missing", { prNumber: 800, readers: { ...readers, readRunJobs: undefined }, local, now: () => "2026-10-07T20:00:00Z" }],
+      ["local without blobs", { prNumber: 800, readers, local: { classify: local.classify, tablePinned: true }, now: () => "2026-10-07T20:00:00Z" }],
+      ["local blob not 40 hex", { prNumber: 800, readers, local: { ...local, blobs: { ...local.blobs, "scripts/classify-changes.mjs": "abc" } }, now: () => "2026-10-07T20:00:00Z" }],
+      ["clock returns garbage", { prNumber: 800, readers, local, now: () => "yesterday" }],
+      ["clock is a value", { prNumber: 800, readers, local, now: "2026-10-07T20:00:00Z" }],
+      ["clock throws", { prNumber: 800, readers, local, now: () => { throw new Error("clock"); } }],
+    ];
+    for (const [n, opts] of cases) {
+      let c: any;
+      expect(() => (c = collect(opts)), n).not.toThrow();
+      expect(c.ok, n).toBe(false);
+      expect(c.reason, n).toBe("malformed");
+      expect(c.stage, n).toBe("collect");
+    }
+    expect(log, "no request before the options are valid").toEqual([]);
+  });
+
+  test("REC-HASH-LOCAL: the evidence hash covers the local CI definition (two checkouts never share a hash for different rows)", () => {
+    const w = world("ready", "protectedRules", "resolveOpenThread");
+    const local = loadLocalCi();
+    const a = collect({ prNumber: 800, readers: createReaders({ request: makeFakeRequest(w), policy: POLICY }), local, now: () => "2026-10-07T20:00:00Z" });
+    const other = { ...local, blobs: { ...local.blobs, ".github/workflows/ci.yml": "0".repeat(40) } };
+    const b = collect({ prNumber: 800, readers: createReaders({ request: makeFakeRequest(w), policy: POLICY }), local: other, now: () => "2026-10-07T20:00:00Z" });
+    expect(a.ok && b.ok).toBe(true);
+    expect(b.evidenceHash).not.toBe(a.evidenceHash);
+    expect(label(decide(a))).toBe("CANDIDATE_READY_FOR_HUMAN_REVIEW");
+    expect(label(decide(b))).toBe("UNKNOWN(ci_definition_mismatch)");
+  });
+});

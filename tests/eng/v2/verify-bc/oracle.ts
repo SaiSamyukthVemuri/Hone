@@ -2,6 +2,9 @@
 // the operator's V1 directive. Nothing here is imported from, or read from, scripts/eng/v2/decision/.
 //
 // Representation choices the spec leaves open are marked SPEC-SILENT; tests treat them as probes, not as law.
+// Pass 2 (builder head 738a4537, SPEC-05B df8dd9b5): `evidence.schema` must be "eng-loop-v1/evidence@1"; `channel`
+// and `verdict` are closed enums; `applicableRunIds`, when present, is a list of positive integers; and a value
+// outside the contract decides UNKNOWN(malformed) only when the table reaches the row that reads it.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -57,9 +60,11 @@ export const PR_REVIEW_TRUST_VERDICTS = Object.freeze(["COMMENTED", "APPROVED", 
 export const ALL_VERDICTS = Object.freeze(["COMMENTED", "APPROVED", "CHANGES_REQUESTED", "DISMISSED", "PENDING", "CLEAN"]);
 export const CHANNELS = Object.freeze(["PR_REVIEW", "CLEAN_COMMENT"]);
 export const KEY_STATES = Object.freeze(["OPEN", "CLOSED", "MERGED"]);
+export const EVIDENCE_SCHEMA = "eng-loop-v1/evidence@1"; // SPEC-05B §1 (pass 2)
 
 const isObj = (v: any) => v !== null && typeof v === "object" && !Array.isArray(v);
 const isInt = (v: any) => typeof v === "number" && Number.isInteger(v);
+const isPosInt = (v: any) => isInt(v) && v > 0;
 const isActor = (a: any) =>
   a === null || (isObj(a) && (a.id === null || isInt(a.id)) && typeof a.type === "string");
 
@@ -126,7 +131,10 @@ function baseOk(v: any) {
   return isObj(v.drift) && isInt(v.drift.behindBy) && v.drift.behindBy >= 0;
 }
 function ciOk(v: any) {
-  return CI_OUTCOMES.includes(v.outcome) && typeof v.outcome === "string";
+  // SPEC-05B §1: outcome closed; applicableRunIds, when present, a list of positive integers (pass 2). Rows 4, 6
+  // and 7 read `ci`, so the whole value is read when row 4 is reached.
+  const runIdsOk = v.applicableRunIds === undefined || (Array.isArray(v.applicableRunIds) && v.applicableRunIds.every(isPosInt));
+  return CI_OUTCOMES.includes(v.outcome) && typeof v.outcome === "string" && runIdsOk;
 }
 function externalOk(v: any) {
   return (
@@ -142,7 +150,9 @@ function reviewsOk(v: any) {
       (r: any) =>
         isObj(r) &&
         typeof r.channel === "string" &&
+        CHANNELS.includes(r.channel) && // closed enum (pass 2)
         typeof r.verdict === "string" &&
+        ALL_VERDICTS.includes(r.verdict) && // closed enum (pass 2)
         typeof r.qualifiesAtHead === "boolean" &&
         isActor(r.actor),
     ) &&
@@ -160,6 +170,7 @@ export function oracle(collected: any, policy: any = SPEC_POLICY): OracleResult 
   if (collected.ok !== true) return MALFORMED();
   const e = collected.evidence;
   if (!isObj(e) || !isObj(e.key)) return MALFORMED();
+  if (e.schema !== EVIDENCE_SCHEMA) return MALFORMED(); // read before row 1 (pass 2)
   const k = e.key;
   if (!KEY_STATES.includes(k.state) || typeof k.isDraft !== "boolean" || typeof k.headSha !== "string") return MALFORMED();
   if (typeof e.terminal !== "boolean" || e.terminal !== (k.state !== "OPEN")) return MALFORMED();
@@ -318,7 +329,7 @@ export function thread(opener: any, resolved: boolean, resolver: any, outdated =
 
 export function evidence(k: any, rows: any) {
   return {
-    schema: "eng-loop-v1/evidence@1",
+    schema: EVIDENCE_SCHEMA,
     observedAt: "2026-10-07T20:00:00Z",
     key: k,
     terminal: k.state !== "OPEN",

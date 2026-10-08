@@ -12,6 +12,7 @@ import { makeFakeSpawn, isReadOnlyQuery, routeRest } from "./support/fake-gh.mjs
 import { WORLDS, FAILING_WORLDS, world, HEAD, PROD_TIP } from "./support/worlds.mjs";
 
 export const TOKEN = "ghp_VERIFYbcFakeToken0Canary0000000000000"; // token-shaped, not a credential
+export const SHAPED = "github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVW";
 export const NOW = "2026-10-07T20:00:00Z";
 export const TOOL = "eng-loop-v1@efc7e1865d434ed7ea44aba33cd12b0c2703bcd0";
 const CANARIES = {
@@ -265,34 +266,56 @@ export const USAGE_ARGVS: string[][] = [
   ["shepherd", "99999999999999999999", "--json"],
   ["shepherd", "--json", "--no-receipt"],
 ];
+/** The README's error-report shape (pass 2): every report field, decision UNKNOWN, reasonCodes ["malformed"],
+ * blocking { row: kind, detail }, a fixed nextAction, receipt "none" and error kind. */
+export function errorReportViolations(rep: any, kind: "usage" | "internal"): string[] {
+  const v: string[] = [];
+  const missing = REQUIRED_FIELDS.filter(([, has]) => !has(rep)).map(([n]) => n);
+  if (missing.length > 0) v.push(`lacks: ${missing.join("; ")}`);
+  if (rep.decision !== "UNKNOWN") v.push(`decision ${rep.decision}`);
+  if (JSON.stringify(rep.reasonCodes) !== JSON.stringify(["malformed"])) v.push(`reasonCodes ${JSON.stringify(rep.reasonCodes)}`);
+  if (rep.blocking?.row !== kind || typeof rep.blocking?.detail !== "string") v.push(`blocking ${JSON.stringify(rep.blocking)}`);
+  if (rep.receipt !== "none") v.push(`receipt ${rep.receipt}`);
+  if (rep.error !== kind) v.push(`error ${rep.error}`);
+  if (typeof rep.nextAction !== "string" || rep.nextAction.length === 0) v.push("nextAction missing");
+  if (kind === "usage") for (const f of ["headSha", "baseRef", "evidenceHash", "observedAt"]) if (rep[f] !== null) v.push(`${f} is ${rep[f]} although nothing was read`);
+  if (kind === "usage" && rep.production?.tip !== null) v.push(`production.tip ${rep.production?.tip} although nothing was read`);
+  return v;
+}
+
 export function checkUsage(runCli: RunCli) {
-  const r = rowResult("C-USAGE", "README exit 2 = usage error, in --json mode still one JSON document; operator: every required field on every path");
+  const r = rowResult("C-USAGE", "README (pass 2): a usage error prints the same report shape in --json mode — every field, UNKNOWN(malformed), blocking {row: usage}, a fixed nextAction, receipt none, error usage; operator: every required field on every path");
+  const actions = new Set<string>();
   for (const argv of USAGE_ARGVS) {
     r.checked += 1;
     const run = runIn(runCli, argv, world());
     if (run.code !== 2) r.add(argv.join(" "), `exit ${run.code}`);
     if (run.log.length > 0) r.add(argv.join(" "), `${run.log.length} requests on a usage error`);
+    if (fs.existsSync(run.receiptsDir) && fs.readdirSync(run.receiptsDir).length > 0) r.add(argv.join(" "), "a receipt was written for a usage error");
     const j = parseOnlyJson(run.out);
     if (!j.ok) {
       r.add(argv.join(" "), j.why!);
       continue;
     }
-    const missing = REQUIRED_FIELDS.filter(([, has]) => !has(j.value)).map(([n]) => n);
-    if (missing.length > 0) r.add(argv.join(" "), `usage JSON lacks: ${missing.join("; ")}`);
+    for (const v of errorReportViolations(j.value, "usage")) r.add(argv.join(" "), v);
+    if (j.value.pr !== null && !(Number.isSafeInteger(j.value.pr) && j.value.pr > 0)) r.add(argv.join(" "), `pr ${j.value.pr}`);
+    actions.add(j.value.nextAction);
   }
+  if (actions.size > 1) r.add("nextAction", `${actions.size} different nextActions for usage errors (want one fixed string)`);
   return r;
 }
 
-/** C-USAGE-EXIT: the part of C-USAGE the README states unambiguously (exit 2, one JSON document, no request). */
+/** C-USAGE-EXIT: exit 2, no request; --json → one JSON document; text mode → nothing on stdout, usage on stderr. */
 export function checkUsageExit(runCli: RunCli) {
-  const r = rowResult("C-USAGE-EXIT", "README: exit 2 = usage error; in --json mode stdout is still one JSON document");
+  const r = rowResult("C-USAGE-EXIT", "README: exit 2 = usage error; in --json mode stdout is still one JSON document; in text mode a usage error goes to stderr (pass 2)");
   for (const argv of [...USAGE_ARGVS, ["shepherd"], ["shepherd", "abc"]]) {
     r.checked += 1;
     const run = runIn(runCli, argv, world());
     if (run.code !== 2) r.add(argv.join(" "), `exit ${run.code}`);
     if (run.log.length > 0) r.add(argv.join(" "), "requests made");
     if (argv.includes("--json") && !parseOnlyJson(run.out).ok) r.add(argv.join(" "), "stdout is not one JSON document");
-    if (!argv.includes("--json") && run.out.trim().startsWith("{")) r.add(argv.join(" "), "text-mode usage printed JSON");
+    if (!argv.includes("--json") && run.out.length > 0) r.add(argv.join(" "), `text-mode usage wrote to stdout: ${JSON.stringify(run.out.slice(0, 60))}`);
+    if (!argv.includes("--json") && !/usage/i.test(run.err)) r.add(argv.join(" "), "text-mode usage did not go to stderr");
   }
   return r;
 }
@@ -319,13 +342,15 @@ export function checkNoToken(runCli: RunCli) {
 /** C-TOKEN-ECHO: gh echoing the token (stderr on success and failure, non-JSON stdout, a GitHub body) never puts it
  * in stdout, stderr or a receipt. */
 export function checkTokenEcho(runCli: RunCli) {
-  const r = rowResult("C-TOKEN-ECHO", "SPEC-05A §5.1: an echo of the token is redacted; operator: never in stdout, stderr or a receipt");
+  const r = rowResult("C-TOKEN-ECHO", "SPEC-05A §5.1 (pass 2): an echo of the token, or anything token-shaped, is redacted, in a body as in a detail; operator: never in stdout, stderr or a receipt");
   const cases: [string, any, any][] = [
     ["gh stderr echo on every call", world("ready", "protectedRules", "resolveOpenThread"), { echoToken: true }],
     ["gh failure stderr carries the token", { ...world(), "pr-key": { fail: { status: 1, stderr: `gh: HTTP 401: Bad credentials (Authorization: token ${TOKEN})` } } }, {}],
     ["gh non-JSON stdout carries the token", { ...world("ready"), compare: { __raw: `error: token ${TOKEN} rejected\n` } }, {}],
     ["review read fails mid-pass with the token", { ...world("ready"), "review-evidence": { fail: { status: 1, stderr: `${TOKEN}` } } }, {}],
     ["a GitHub body echoes the token into a failing context name", world("ready", "protectedRules", "resolveOpenThread", ["vercelContextName", `deploy ${TOKEN}`], ["vercelState", "FAILURE"]), {}],
+    // Pass 2 (SPEC-05A §5.1 at 738a4537): anything token-shaped in a successful answer's body is redacted too.
+    ["a GitHub body echoes another token-shaped string", world("ready", "protectedRules", "resolveOpenThread", ["vercelContextName", `deploy ${SHAPED}`], ["vercelState", "FAILURE"]), {}],
   ];
   for (const [n, w, spawnOpts] of cases) {
     r.checked += 1;
@@ -334,6 +359,7 @@ export function checkTokenEcho(runCli: RunCli) {
     const where = [run.out.includes(TOKEN) && "stdout", run.err.includes(TOKEN) && "stderr", files.includes(TOKEN) && "receipt"].filter(Boolean);
     if (where.length) r.add(n, `token in ${where.join(", ")}`);
     if (!parseOnlyJson(run.out).ok) r.add(n, "stdout not one JSON document");
+    if (n.includes("token-shaped") && (run.out + run.err + files).includes(SHAPED)) r.add(n, "a token-shaped string from a GitHub body reached stdout, stderr or a receipt");
   }
   return r;
 }
@@ -374,5 +400,140 @@ export function checkReceiptModes(runCli: RunCli) {
     const ja = parseOnlyJson(a.out), jb = parseOnlyJson(b.out);
     if (!ja.ok || !jb.ok || ja.value.decision !== jb.value.decision) r.add("append", "the second run decided differently with receipts present (decide must never read receipts)");
   }
+  return r;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Pass 2 rows (README "Shepherd" at 738a4537).
+
+function direct(runCli: RunCli, args: any): Run {
+  const out: string[] = [];
+  const err: string[] = [];
+  const receiptsDir = args.receiptsDir ?? tmpDir("rc-");
+  let code: number | undefined;
+  let threw: any;
+  try {
+    code = runCli({ out: { write: (c: any) => (out.push(String(c)), true) }, err: { write: (c: any) => (err.push(String(c)), true) }, now: () => NOW, receiptsDir, ...args });
+  } catch (e) {
+    threw = e;
+  }
+  return { code, out: out.join(""), err: err.join(""), log: [], receiptsDir, threw };
+}
+
+/** C-INTERNAL: an internal error prints the same report shape in --json mode, exit 1, receipt none. */
+export function checkInternal(runCli: RunCli) {
+  const r = rowResult("C-INTERNAL", "README (pass 2): an internal error (exit 1) prints the same report shape — UNKNOWN(malformed), blocking {row: internal}, receipt none, error internal");
+  const hostileEnv = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error(`env ${TOKEN}`);
+      },
+      has() {
+        throw new Error(`env ${TOKEN}`);
+      },
+      ownKeys() {
+        throw new Error(`env ${TOKEN}`);
+      },
+    },
+  );
+  for (const [n, args] of [["environment that throws on every access", { argv: ["shepherd", "800", "--json"], env: hostileEnv, spawn: makeFakeSpawn(world(), []) }]] as [string, any][]) {
+    r.checked += 1;
+    const run = direct(runCli, args);
+    if (run.threw) {
+      r.add(n, `runShepherdCli threw ${String(run.threw?.message ?? run.threw).slice(0, 80)}`);
+      continue;
+    }
+    if (run.code !== 1) r.add(n, `exit ${run.code}`);
+    const j = parseOnlyJson(run.out);
+    if (!j.ok) {
+      r.add(n, j.why!);
+      continue;
+    }
+    for (const v of errorReportViolations(j.value, "internal")) r.add(n, v);
+    if ((run.out + run.err).includes(TOKEN)) r.add(n, "token printed");
+    if (fs.existsSync(run.receiptsDir) && fs.readdirSync(run.receiptsDir).length > 0) r.add(n, "a receipt was written for an internal error");
+  }
+  return r;
+}
+
+/** C-TOOLVERSION: no injected toolVersion in a checkout without a git HEAD → toolVersion null, receipt tool_version null. */
+export function checkToolVersionNull(runCli: RunCli) {
+  const r = rowResult("C-TOOLVERSION", "README (pass 2): toolVersion is null when no HEAD can be established; fields that could not be established are null, never guessed");
+  r.checked += 1;
+  const dir = tmpDir("rc-");
+  const run = direct(runCli, { argv: ["shepherd", "800", "--json"], env: { PATH: "/usr/bin:/bin", HONE_ENG_READ_TOKEN: TOKEN }, spawn: makeFakeSpawn(world(), []), receiptsDir: dir });
+  const j = parseOnlyJson(run.out);
+  if (!j.ok) r.add("report", j.why!);
+  else {
+    if (j.value.toolVersion !== null) r.add("report", `toolVersion ${JSON.stringify(j.value.toolVersion)}`);
+    if (j.value.receipt !== "written") r.add("receipt", `receipt ${j.value.receipt}`);
+  }
+  for (const f of fs.readdirSync(dir)) {
+    const rec = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+    if (rec.tool_version !== null) r.add("receipt", `tool_version ${JSON.stringify(rec.tool_version)}`);
+  }
+  return r;
+}
+
+export const TROJAN_BIDI = ["‪", "‫", "‬", "‭", "‮", "⁦", "⁧", "⁨", "⁩"];
+const BIDI_MARKS = ["‎", "‏", "؜"];
+const rawControl = (s: string) => [...s].filter((ch) => (ch.charCodeAt(0) < 0x20 && ch !== "\n" && ch !== "\t") || ch.charCodeAt(0) === 0x7f);
+const cps = (chs: string[]) => [...new Set(chs)].map((ch) => "U+" + ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")).join(" ");
+
+/** C-TEXT-ESCAPE: text mode escapes control and bidi-override characters in anything GitHub supplied. */
+export function checkTextEscape(runCli: RunCli) {
+  const r = rowResult("C-TEXT-ESCAPE", "README (pass 2): text mode escapes control and bidirectional-override characters in anything GitHub supplied");
+  const nasty = `x${TROJAN_BIDI.join("")}${BIDI_MARKS.join("")}\u001b[2J\u0007\r\u0000y`;
+  const baseBidi = (name: string) => {
+    const w = world("ready", "featureBase");
+    w["pr-key"].data.repository.pullRequest.baseRefName = name;
+    return w;
+  };
+  const cases: [string, any][] = [
+    ["a failing context name", world("ready", "protectedRules", "resolveOpenThread", ["vercelContextName", `deploy ${nasty}`], ["vercelState", "FAILURE"])],
+    ["a pending context name", world("ready", "protectedRules", "resolveOpenThread", ["vercelContextName", `deploy ${nasty}`], ["vercelState", "PENDING"])],
+    ["gh's stderr (the detail)", { ...world(), "pr-key": { fail: { status: 1, stderr: `gh: error ${nasty} (HTTP 500)` } } }],
+    ["the PR's base ref name (bidi)", baseBidi(`feat/‮niam⁦x`)],
+    ["the PR's base ref name (controls)", baseBidi(`feat/\u001b[31mred\u0007`)],
+  ];
+  for (const [n, w] of cases) {
+    r.checked += 1;
+    const t = runIn(runCli, ["shepherd", "800"], w);
+    const text = t.out + t.err;
+    const bidi = TROJAN_BIDI.filter((ch) => text.includes(ch));
+    const ctl = rawControl(text);
+    if (bidi.length) r.add(n, `raw bidi-override characters in text output: ${cps(bidi)} — line: ${JSON.stringify((t.out.split("\n").find((l) => bidi.some((b) => l.includes(b))) ?? "").slice(0, 90))}`);
+    if (ctl.length) r.add(n, `raw control characters in text output: ${cps(ctl)}`);
+    const marks = BIDI_MARKS.filter((ch) => text.includes(ch));
+    if (marks.length) r.notes = [...(r.notes ?? []), `${n}: bidi marks passed raw (not overrides): ${cps(marks)}`];
+  }
+  return r;
+}
+
+/** C-TIMER: the documented in-process `timer` option times the requests. */
+export function checkTimer(runCli: RunCli) {
+  const r = rowResult("C-TIMER", "README (pass 2): runShepherdCli `timer` times the requests (milliseconds, Date.now by default)");
+  r.checked += 1;
+  let calls = 0;
+  const run = runIn(runCli, ["shepherd", "800", "--json"], world(), { params: { timer: () => (calls += 1) * 1000 } });
+  const j = parseOnlyJson(run.out);
+  if (!j.ok) r.add("report", j.why!);
+  else {
+    if (calls === 0) r.add("timer", `the injected timer was never called (latencyMs ${j.value.instrumentation?.latencyMs})`);
+    else if (!(j.value.instrumentation?.latencyMs >= 1000)) r.add("timer", `latencyMs ${j.value.instrumentation?.latencyMs} does not come from the injected timer`);
+  }
+  return r;
+}
+
+/** C-DOC: CLAUDE.md §4's shepherd table tells the agent what to do for every one of the 13 decisions. */
+export function checkClaudeTable() {
+  const r = rowResult("C-DOC", "CLAUDE.md §4 (pass 2): the shepherd's action table covers every decision");
+  r.checked += 1;
+  const md = fs.readFileSync(path.resolve(__dirname, "../../../../CLAUDE.md"), "utf8");
+  const sec = md.slice(md.indexOf("### ENG-LOOP shepherd"));
+  const table = sec.slice(0, sec.indexOf("\n\n", sec.indexOf("| Decision |")));
+  const named = new Set([...table.matchAll(/`([A-Z_]+)`/g)].map((m) => m[1]));
+  for (const d of ALL_DECISIONS) if (!named.has(d)) r.add(d, "no row in CLAUDE.md §4's table");
   return r;
 }

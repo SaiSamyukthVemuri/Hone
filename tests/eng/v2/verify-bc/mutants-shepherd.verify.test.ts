@@ -7,6 +7,11 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import {
   TOKEN,
+  checkClaudeTable,
+  checkInternal,
+  checkTextEscape,
+  checkTimer,
+  checkToolVersionNull,
   checkNoToken,
   checkReceiptModes,
   checkShepherd,
@@ -95,6 +100,34 @@ function mutants(real: RunCli): Record<string, RunCli> {
     },
     "C-M14 receipt reported written when disabled": rewriteOut(real, (r) => (r.receipt === "disabled" ? { report: { ...r, receipt: "written" } } : {})),
     "C-M15 token passed as a gh argument": (a) => real({ ...a, spawn: (cmd: string, args: string[], opts: any) => a.spawn(cmd, [...args, "-H", `Authorization: token ${opts?.env?.GH_TOKEN}`], opts) }),
+    // Pass 2 mutants (README "Shepherd" at 738a4537).
+    "C-M17 minimal usage JSON": (a) => {
+      let buf = "";
+      const c = real({ ...a, out: { write: (x: any) => ((buf += String(x)), true) } });
+      a.out.write(c === 2 && a.argv.includes("--json") ? JSON.stringify({ schema: "eng-loop-v1/shepherd@1", error: "usage", usage: "usage: npm run --silent eng -- shepherd <pr> [--json] [--no-receipt]" }) + "\n" : buf);
+      return c;
+    },
+    "C-M18 placeholder tool version instead of null": rewriteOut(real, (r) => (r.toolVersion === null ? { report: { ...r, toolVersion: "eng-loop-v1@unknown" } } : {})),
+    "C-M19 minimal internal-error JSON": (a) => {
+      let buf = "";
+      const c = real({ ...a, out: { write: (x: any) => ((buf += String(x)), true) } });
+      a.out.write(c === 1 && a.argv.includes("--json") ? JSON.stringify({ schema: "eng-loop-v1/shepherd@1", error: "internal", decision: "UNKNOWN", humanMergeRequired: true }) + "\n" : buf);
+      return c;
+    },
+    "C-M20 text mode prints GitHub strings raw": (a) => {
+      if (a.argv.includes("--json")) return real(a);
+      let json = "";
+      real({ ...a, argv: [...a.argv, "--json", "--no-receipt"], out: { write: (x: any) => ((json += String(x)), true) }, err: { write: () => true } });
+      const c = real(a);
+      try {
+        const rep = JSON.parse(json);
+        const raw = [...(rep.blocking?.sources ?? []), rep.blocking?.detail, rep.baseRef].filter((x) => typeof x === "string");
+        if (raw.length) a.out.write(`  raw         ${raw.join(" | ")}\n`);
+      } catch {
+        /* not a report */
+      }
+      return c;
+    },
     "C-M16 decision replaced by a stale one (memoized per PR)": (() => {
       let first: any = null;
       return rewriteOut(real, (r) => {
@@ -106,7 +139,7 @@ function mutants(real: RunCli): Record<string, RunCli> {
 }
 
 function allRows(run: RunCli, scen: any[]) {
-  return [...checkShepherd(run, scen), checkText(run, scen), checkUsage(run), checkUsageExit(run), checkNoToken(run), checkTokenEcho(run), checkReceiptModes(run)];
+  return [...checkShepherd(run, scen), checkText(run, scen), checkUsage(run), checkUsageExit(run), checkNoToken(run), checkTokenEcho(run), checkReceiptModes(run), checkInternal(run), checkToolVersionNull(run), checkTextEscape(run), checkTimer(run), checkClaudeTable()];
 }
 
 const caught: Record<string, string[]> = {};
@@ -125,7 +158,7 @@ beforeAll(async () => {
 describe("05C mutants", () => {
   test("every 05C mutant is caught by at least one row", () => {
     expect(Object.entries(caught).filter(([, rs]) => rs.length === 0).map(([n]) => n)).toEqual([]);
-    expect(Object.keys(caught).length).toBe(16);
+    expect(Object.keys(caught).length).toBe(20);
   });
   const expected: [string, string][] = [
     ["C-M01 exit 0 for any decided read", "C-EXIT"],
@@ -144,6 +177,10 @@ describe("05C mutants", () => {
     ["C-M14 receipt reported written when disabled", "C-RECEIPT-MODES"],
     ["C-M15 token passed as a gh argument", "C-TOKEN"],
     ["C-M16 decision replaced by a stale one (memoized per PR)", "C-DECISION"],
+    ["C-M17 minimal usage JSON", "C-USAGE"],
+    ["C-M18 placeholder tool version instead of null", "C-TOOLVERSION"],
+    ["C-M19 minimal internal-error JSON", "C-INTERNAL"],
+    ["C-M20 text mode prints GitHub strings raw", "C-TEXT-ESCAPE"],
   ];
   for (const [m, row] of expected) test(`${m} is caught by ${row}`, () => expect(caught[m]).toContain(row));
   void TOKEN;

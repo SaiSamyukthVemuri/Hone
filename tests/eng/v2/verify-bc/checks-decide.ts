@@ -102,7 +102,7 @@ export function checkTable(decide: Decide, entries: TableEntry[]) {
 
 // D-HAND: literal, hand-derived expectations.
 export function checkHand(decide: Decide) {
-  const r = rowResult("D-HAND", "hand-derived cases H01-H55 (SPEC-05B §2-§3, README rules 8-9)");
+  const r = rowResult("D-HAND", "hand-derived cases H01-H67 (SPEC-05B §1-§3, README rules 8-9; H56-H67 pass 2)");
   for (const h of HAND_CASES) {
     r.checked += 1;
     const c = call(decide, h.input());
@@ -878,10 +878,12 @@ export function checkTotality(decide: Decide) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// D-MAL: a wrong type in a field 05B reads, at a row the table reaches, decides UNKNOWN(malformed). The baseline is
-// a CANDIDATE input, so every row is reached.
+// D-MAL: a wrong type, or a value outside the closed sets, in a field 05B reads, at a row the table reaches, decides
+// UNKNOWN(malformed). The baseline is a CANDIDATE input, so every row is reached. Each mutation names the row that
+// reads it (SPEC-05B §1, pass 2: "when the table reaches the row that reads it"): "evidence" (schema, key, terminal:
+// read by row 1-2, always reached), "container" (the rows object itself: SPEC-SILENT which row reads it), or 3/4/5/9.
 
-type Mut = { name: string; apply: (x: any) => void };
+type Mut = { name: string; row: number | "evidence" | "container"; apply: (x: any) => void };
 const setAt = (path: string[], v: any) => (x: any) => {
   let o = x;
   for (const k of path.slice(0, -1)) o = o[k];
@@ -890,15 +892,23 @@ const setAt = (path: string[], v: any) => (x: any) => {
 };
 const DELETE = Symbol("delete");
 const fresh = (f: () => any) => Object.assign(f, { __fresh: true });
+const ROW_OF_RESULT: Record<string, number> = { base: 3, ci: 4, external: 5, reviews: 9 };
+function rowOfPath(path: string[]): Mut["row"] {
+  if (path[1] !== "rows") return "evidence";
+  if (path.length === 2) return "container";
+  return ROW_OF_RESULT[path[2]];
+}
+const show = (v: any) => String(v === DELETE ? "<deleted>" : typeof v === "function" ? "<fresh>" : v);
 
 export function malformedReads(): Mut[] {
   const m: Mut[] = [];
-  const add = (name: string, path: string[], v: any) => m.push({ name, apply: setAt(path, v) });
+  const add = (name: string, path: string[], v: any) => m.push({ name, row: rowOfPath(path), apply: setAt(path, v) });
   const K = ["evidence", "key"];
-  for (const v of ["open", "Open", "DRAFT", "", 1, null, fresh(() => ["OPEN"]), fresh(() => new String("OPEN")), DELETE]) add(`key.state=${String(v === DELETE ? "<deleted>" : v)}`, [...K, "state"], v);
-  for (const v of ["false", 0, null, DELETE]) add(`key.isDraft=${String(v === DELETE ? "<deleted>" : v)}`, [...K, "isDraft"], v);
-  for (const v of [null, 123, DELETE]) add(`key.headSha=${String(v === DELETE ? "<deleted>" : v)}`, [...K, "headSha"], v);
-  for (const v of ["false", 0, null, true, DELETE]) add(`terminal=${String(v === DELETE ? "<deleted>" : v)}`, ["evidence", "terminal"], v);
+  for (const v of ["eng-loop-v1/evidence@2", "eng-loop-v1/evidence@1 ", "", null, 1, DELETE]) add(`schema=${show(v)}`, ["evidence", "schema"], v);
+  for (const v of ["open", "Open", "DRAFT", "", 1, null, fresh(() => ["OPEN"]), fresh(() => new String("OPEN")), DELETE]) add(`key.state=${show(v)}`, [...K, "state"], v);
+  for (const v of ["false", 0, null, DELETE]) add(`key.isDraft=${show(v)}`, [...K, "isDraft"], v);
+  for (const v of [null, 123, DELETE]) add(`key.headSha=${show(v)}`, [...K, "headSha"], v);
+  for (const v of ["false", 0, null, true, DELETE]) add(`terminal=${show(v)}`, ["evidence", "terminal"], v);
   add("rows=null", ["evidence", "rows"], null);
   add("rows=[]", ["evidence", "rows"], fresh(() => []));
   for (const row of ["base", "ci", "external", "reviews"]) {
@@ -912,24 +922,31 @@ export function malformedReads(): Mut[] {
   const D = ["evidence", "rows", "base", "value", "drift"];
   add("drift=null", D, null);
   add("drift deleted", D, DELETE);
-  for (const v of [-1, 1.5, "0", null, NaN, Infinity, -Infinity, fresh(() => new Number(0)), DELETE, true, fresh(() => [0])]) add(`behindBy=${String(v === DELETE ? "<deleted>" : v)}`, [...D, "behindBy"], v);
+  for (const v of [-1, 1.5, "0", null, NaN, Infinity, -Infinity, fresh(() => new Number(0)), DELETE, true, fresh(() => [0])]) add(`behindBy=${show(v)}`, [...D, "behindBy"], v);
   const O = ["evidence", "rows", "ci", "value", "outcome"];
-  for (const v of ["succeeded", "SUCCESS", "success", "NO_FRONTIER", "completed", "SUCCEEDED ", "", null, 1, fresh(() => ["SUCCEEDED"]), fresh(() => new String("SUCCEEDED")), DELETE]) add(`ci.outcome=${String(v === DELETE ? "<deleted>" : v)}`, O, v);
+  for (const v of ["succeeded", "SUCCESS", "success", "NO_FRONTIER", "completed", "SUCCEEDED ", "", null, 1, fresh(() => ["SUCCEEDED"]), fresh(() => new String("SUCCEEDED")), DELETE]) add(`ci.outcome=${show(v)}`, O, v);
+  // Pass 2: applicableRunIds, when present, is a list of positive integers (null is SPEC-SILENT: a probe, not here).
+  const RI = ["evidence", "rows", "ci", "value", "applicableRunIds"];
+  for (const v of ["x", fresh(() => [0]), fresh(() => [-1]), fresh(() => [1.5]), fresh(() => ["1"]), fresh(() => [null]), fresh(() => ({})), fresh(() => [NaN]), fresh(() => [Infinity]), 7]) add(`applicableRunIds=${typeof v === "function" ? JSON.stringify((v as any)()) ?? "<fresh>" : show(v)}`, RI, v);
   const E = ["evidence", "rows", "external", "value", "external"];
   add("external=null", E, null);
   add("external={}", E, fresh(() => ({})));
   add("external='[]'", E, "[]");
   for (const st of ["SUCCESS", "Success", "error", "neutral", "skipped", "", null, 1, fresh(() => ["failure"]), fresh(() => new String("success")), DELETE]) {
-    m.push({ name: `external state=${String(st === DELETE ? "<deleted>" : st)}`, apply: (x) => {
-      const c: any = ext("vercel", "success");
-      if (st === DELETE) delete c.state;
-      else c.state = typeof st === "function" && (st as any).__fresh ? (st as any)() : st;
-      x.evidence.rows.external.value.external = [ext("ok-ctx", "success"), c];
-    } });
+    m.push({
+      name: `external state=${show(st)}`,
+      row: 5,
+      apply: (x) => {
+        const c: any = ext("vercel", "success");
+        if (st === DELETE) delete c.state;
+        else c.state = typeof st === "function" && (st as any).__fresh ? (st as any)() : st;
+        x.evidence.rows.external.value.external = [ext("ok-ctx", "success"), c];
+      },
+    });
   }
-  m.push({ name: "external element null", apply: (x) => (x.evidence.rows.external.value.external = [null]) });
-  m.push({ name: "external source number", apply: (x) => (x.evidence.rows.external.value.external = [{ source: 7, state: "success" }]) });
-  m.push({ name: "external source missing", apply: (x) => (x.evidence.rows.external.value.external = [{ state: "success" }]) });
+  m.push({ name: "external element null", row: 5, apply: (x) => (x.evidence.rows.external.value.external = [null]) });
+  m.push({ name: "external source number", row: 5, apply: (x) => (x.evidence.rows.external.value.external = [{ source: 7, state: "success" }]) });
+  m.push({ name: "external source missing", row: 5, apply: (x) => (x.evidence.rows.external.value.external = [{ state: "success" }]) });
   const RV = ["evidence", "rows", "reviews", "value"];
   add("reviews list null", [...RV, "reviews"], null);
   add("reviews list object", [...RV, "reviews"], fresh(() => ({})));
@@ -954,11 +971,22 @@ export function malformedReads(): Mut[] {
     ["channel null", { ...review("CLEAN_COMMENT", CODEX, "CLEAN", true), channel: null }],
     ["verdict null", { ...review("CLEAN_COMMENT", CODEX, "CLEAN", true), verdict: null }],
     ["verdict number", { ...review("CLEAN_COMMENT", CODEX, "CLEAN", true), verdict: 3 }],
+    // Pass 2: channel and verdict are closed enums (ARCH-01 §24).
+    ["channel REVIEW_THREAD", review("REVIEW_THREAD", CODEX, "CHANGES_REQUESTED", true)],
+    ["channel pr_review", review("pr_review", CODEX, "COMMENTED", true)],
+    ["channel 'PR_REVIEW '", review("PR_REVIEW ", CODEX, "COMMENTED", true)],
+    ["channel ''", review("", CODEX, "CLEAN", true)],
+    ["verdict changes_requested", review("PR_REVIEW", CODEX, "changes_requested", true)],
+    ["verdict 'CHANGES_REQUESTED '", review("PR_REVIEW", CODEX, "CHANGES_REQUESTED ", true)],
+    ["verdict APPROVE", review("PR_REVIEW", CODEX, "APPROVE", true)],
+    ["verdict REACTION", review("CLEAN_COMMENT", CODEX, "REACTION", true)],
+    ["verdict ''", review("PR_REVIEW", CODEX, "", true)],
+    ["untrusted actor, verdict outside the enum", review("PR_REVIEW", { id: 4242, type: "User" }, "LGTM", false)],
   ];
   for (const [n, bad] of badReviews) {
     // Both before and after the valid trusted review, so lazy validation cannot skip it.
-    m.push({ name: `review ${n} (first)`, apply: (x) => (x.evidence.rows.reviews.value.reviews = [bad, review("CLEAN_COMMENT", CODEX, "CLEAN", true)]) });
-    m.push({ name: `review ${n} (after a trusted one)`, apply: (x) => (x.evidence.rows.reviews.value.reviews = [review("CLEAN_COMMENT", CODEX, "CLEAN", true), bad]) });
+    m.push({ name: `review ${n} (first)`, row: 9, apply: (x) => (x.evidence.rows.reviews.value.reviews = [bad, review("CLEAN_COMMENT", CODEX, "CLEAN", true)]) });
+    m.push({ name: `review ${n} (after a trusted one)`, row: 9, apply: (x) => (x.evidence.rows.reviews.value.reviews = [review("CLEAN_COMMENT", CODEX, "CLEAN", true), bad]) });
   }
   const badThreads: [string, any][] = [
     ["null thread", null],
@@ -972,14 +1000,14 @@ export function malformedReads(): Mut[] {
     ["resolver string", thread(CODEX, true, "SaiSamyukthVemuri")],
   ];
   for (const [n, bad] of badThreads) {
-    m.push({ name: `thread ${n}`, apply: (x) => (x.evidence.rows.reviews.value.threads = [bad]) });
-    m.push({ name: `thread ${n} (after a closed one)`, apply: (x) => (x.evidence.rows.reviews.value.threads = [thread(CODEX, true, HUMAN), bad]) });
+    m.push({ name: `thread ${n}`, row: 9, apply: (x) => (x.evidence.rows.reviews.value.threads = [bad]) });
+    m.push({ name: `thread ${n} (after a closed one)`, row: 9, apply: (x) => (x.evidence.rows.reviews.value.threads = [thread(CODEX, true, HUMAN), bad]) });
   }
   return m;
 }
 
 export function checkMalformedReads(decide: Decide) {
-  const r = rowResult("D-MAL", "SPEC-05B §1: a value of the wrong type anywhere 05B reads decides UNKNOWN(malformed)");
+  const r = rowResult("D-MAL", "SPEC-05B §1 (pass 2): a wrong type, or a value outside the closed sets, anywhere 05B reads decides UNKNOWN(malformed)");
   for (const mut of malformedReads()) {
     r.checked += 1;
     const x = candidate();
@@ -987,6 +1015,46 @@ export function checkMalformedReads(decide: Decide) {
     const c = call(decide, x);
     if (c.threw) r.add(mut.name, `threw ${errText(c.error)}`);
     else if (label(c.out) !== "UNKNOWN(malformed)") r.add(mut.name, `decided ${label(c.out)}`);
+  }
+  return r;
+}
+
+/** Conditions that decide at an earlier row than the mutated one. `reads` is the row result each one sets. */
+const EARLIER: { name: string; row: number; reads: string; decision: string; apply: (x: any) => void }[] = [
+  { name: "draft", row: 2, reads: "key", decision: "DRAFT_HOLD", apply: (x) => (x.evidence.key.isDraft = true) },
+  { name: "behind 2", row: 3, reads: "base", decision: "NEEDS_REFRESH", apply: (x) => (x.evidence.rows.base = ok(baseValue(2))) },
+  { name: "ci FAILED", row: 4, reads: "ci", decision: "CI_FAILED", apply: (x) => (x.evidence.rows.ci = ok(ciValue("FAILED"))) },
+  { name: "external failure", row: 5, reads: "external", decision: "EXTERNAL_BLOCKED", apply: (x) => (x.evidence.rows.external = ok({ external: [ext("deploy", "failure")] })) },
+  { name: "ci NO_RUN", row: 6, reads: "ci", decision: "CI_NOT_STARTED", apply: (x) => (x.evidence.rows.ci = ok(ciValue("NO_RUN"))) },
+  { name: "ci INCOMPLETE", row: 6, reads: "ci", decision: "CI_INCOMPLETE", apply: (x) => (x.evidence.rows.ci = ok(ciValue("INCOMPLETE"))) },
+  { name: "ci PENDING", row: 7, reads: "ci", decision: "CI_PENDING", apply: (x) => (x.evidence.rows.ci = ok(ciValue("PENDING"))) },
+  { name: "external pending", row: 8, reads: "external", decision: "EXTERNAL_PENDING", apply: (x) => (x.evidence.rows.external = ok({ external: [ext("p", "pending")] })) },
+];
+const RESULT_OF_ROW: Record<number, string> = { 3: "base", 4: "ci", 5: "external", 9: "reviews" };
+
+/** D-MAL-SCOPE (pass 2): malformed decides only when the table reaches the row that reads it, so an earlier row's
+ * decision wins; evidence-level fields (schema, key, terminal) are read at rows 1-2 and always decide malformed. */
+export function checkMalformedScope(decide: Decide) {
+  const r = rowResult("D-MAL-SCOPE", "SPEC-05B §1 (pass 2): malformed 'when the table reaches the row that reads it (§2)'");
+  for (const mut of malformedReads()) {
+    if (mut.row === "container") continue; // SPEC-SILENT
+    for (const cond of EARLIER) {
+      if (mut.row === "evidence") {
+        if (cond.row > 3) continue;
+      } else if (!(cond.row < mut.row && cond.reads !== RESULT_OF_ROW[mut.row])) continue;
+      r.checked += 1;
+      const x = candidate();
+      cond.apply(x);
+      try {
+        mut.apply(x);
+      } catch {
+        continue;
+      }
+      const want = mut.row === "evidence" ? "UNKNOWN(malformed)" : cond.decision;
+      const c = call(decide, x);
+      if (c.threw) r.add(`${cond.name} + ${mut.name}`, `threw ${errText(c.error)}`);
+      else if (label(c.out) !== want) r.add(`${cond.name} + ${mut.name}`, `decided ${label(c.out)}, want ${want}`);
+    }
   }
   return r;
 }
@@ -1071,6 +1139,7 @@ export const ALL_ROWS = [
   "D-PURE",
   "D-TOTAL",
   "D-MAL",
+  "D-MAL-SCOPE",
   "D-POLICY",
 ];
 
@@ -1102,6 +1171,7 @@ export function runAllDecideRows(decide: Decide, stride = 1): RowResult[] {
     checkPurity(decide, inputs),
     checkTotality(decide),
     checkMalformedReads(decide),
+    checkMalformedScope(decide),
     checkPolicy(decide),
   ];
 }

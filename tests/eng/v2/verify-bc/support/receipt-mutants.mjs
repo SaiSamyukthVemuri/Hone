@@ -16,6 +16,32 @@ export function checksumOf(rec) {
   return crypto.createHash("sha256").update(canon(rest)).digest("hex");
 }
 
+const DECISIONS = ["NOT_OPEN", "DRAFT_HOLD", "NEEDS_REFRESH", "CI_FAILED", "EXTERNAL_BLOCKED", "CI_NOT_STARTED", "CI_INCOMPLETE", "CI_PENDING", "EXTERNAL_PENDING", "REVIEW_MISSING", "FINDINGS_OPEN", "CANDIDATE_READY_FOR_HUMAN_REVIEW", "UNKNOWN"];
+const REASONS = ["read_failed", "malformed", "pr_key_moved", "unstable_snapshot", "ci_candidate_listing_too_large", "review_evidence_too_large", "external_contexts_too_large", "unrecognized_ci_status", "unrecognized_ci_conclusion", "unrecognized_context_state", "base_ref", "base_ref_changed", "shared_head", "base_history_unverified", "fork_head", "diff_too_large", "ci_definition_changed", "ci_definition_mismatch"];
+const KEYS = JSON.stringify(["checksum", "decision", "evidenceHash", "head", "observed_at", "pr", "reasons", "schema", "tool_version"]);
+
+/** Independent receipt validator, from README "Diagnostic receipts" (pass 2: schema, checksum and reasons rule are
+ * documented; tool_version is null or the report's toolVersion format). */
+export function receiptProblem(rec) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) return "not an object";
+  if (JSON.stringify(Object.keys(rec).sort()) !== KEYS) return `keys ${Object.keys(rec).sort()}`;
+  if (rec.schema !== "eng-loop-v1/receipt@1") return "schema";
+  if (!Number.isSafeInteger(rec.pr) || rec.pr <= 0) return "pr";
+  if (rec.head !== null && !/^[0-9a-f]{40}$/.test(rec.head)) return "head";
+  if (rec.evidenceHash !== null && !/^[0-9a-f]{64}$/.test(rec.evidenceHash)) return "evidenceHash";
+  if (!DECISIONS.includes(rec.decision)) return "decision";
+  if (!Array.isArray(rec.reasons) || rec.reasons.length !== 1 || (rec.decision === "UNKNOWN" ? !REASONS.includes(rec.reasons[0]) : rec.reasons[0] !== rec.decision)) return "reasons";
+  if (typeof rec.observed_at !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(rec.observed_at)) return "observed_at";
+  if (rec.tool_version !== null && !(typeof rec.tool_version === "string" && /^eng-loop-v1@[0-9a-f]{40}(\+dirty)?$/.test(rec.tool_version))) return "tool_version";
+  if (rec.checksum !== checksumOf(rec)) return "checksum";
+  return null;
+}
+
+/** The publication name observed from the black box: <observed_at compact>-pr<pr>-<pid>-<16 hex>.json */
+function finalName(rec) {
+  return `${String(rec.observed_at).replace(/[-:]/g, "").replace(/\.\d+/, "")}-pr${rec.pr}-${process.pid}-${crypto.randomBytes(8).toString("hex")}.json`;
+}
+
 export const RECEIPT_MUTANTS = {
   "R-M1 accepts a tampered checksum": (real) => ({
     ...real,
@@ -80,6 +106,127 @@ export const RECEIPT_MUTANTS = {
       if (!r.ok) return r;
       const rec = { ...r.receipt, detail: report?.blocking?.detail ?? null };
       return { ok: true, receipt: { ...rec, checksum: checksumOf(rec) } };
+    },
+  }),
+  // Pass 2 mutants (README "Diagnostic receipts" at 738a4537).
+  "R-M7 overwriting publish (rename instead of an exclusive link)": (real) => ({
+    ...real,
+    writeReceipt: (dir, rec) => {
+      const name = finalName(rec);
+      const tmp = path.join(dir, `.tmp-${name}`);
+      const fd = fs.openSync(tmp, "wx", 0o600);
+      fs.writeSync(fd, JSON.stringify(rec) + "\n");
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      fs.renameSync(tmp, path.join(dir, name));
+      return { ok: true, file: name };
+    },
+  }),
+  "R-M8 symlink-following reader": (real) => ({
+    ...real,
+    readReceipts: (dir) => {
+      const r = real.readReceipts(dir);
+      if (r.unreadable) return r;
+      const receipts = [...r.receipts];
+      let followed = 0;
+      for (const f of fs.readdirSync(dir)) {
+        let st;
+        try {
+          st = fs.lstatSync(path.join(dir, f));
+        } catch {
+          continue;
+        }
+        if (!st.isSymbolicLink()) continue;
+        try {
+          const rec = real.parseReceipt(fs.readFileSync(path.join(dir, f), "utf8"));
+          if (rec) {
+            receipts.push(rec);
+            followed += 1;
+          }
+        } catch {
+          /* dangling */
+        }
+      }
+      const invalid = Array.isArray(r.invalid) ? r.invalid.slice(followed) : r.invalid;
+      return { ...r, receipts, invalid, complete: (invalid?.length ?? 0) === 0 && !r.interrupted && !r.unreadable };
+    },
+  }),
+  "R-M9 reasons-consistency rule dropped": (real) => ({
+    ...real,
+    receiptFrom: (report) => {
+      const r = real.receiptFrom(report);
+      if (r.ok || !report || typeof report !== "object") return r;
+      const probe = real.receiptFrom({ ...report, reasonCodes: report.decision === "UNKNOWN" ? ["malformed"] : [report.decision] });
+      if (!probe.ok) return r;
+      const rec = { ...probe.receipt, reasons: report.reasonCodes };
+      delete rec.checksum;
+      return { ok: true, receipt: { ...rec, checksum: checksumOf(rec) } };
+    },
+    writeReceipt: (dir, rec) => {
+      const w = real.writeReceipt(dir, rec);
+      if (w.ok || receiptProblem(rec) !== "reasons") return w;
+      const name = finalName(rec);
+      fs.writeFileSync(path.join(dir, name), JSON.stringify(rec) + "\n", { flag: "wx" });
+      return { ok: true, file: name };
+    },
+    readReceipts: (dir) => {
+      const r = real.readReceipts(dir);
+      if (r.unreadable) return r;
+      const accepted = new Set(r.receipts.map((x) => canon(x)));
+      const receipts = [...r.receipts];
+      let extra = 0;
+      for (const f of fs.readdirSync(dir)) {
+        try {
+          const rec = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+          if (!accepted.has(canon(rec)) && receiptProblem(rec) === "reasons") {
+            receipts.push(rec);
+            extra += 1;
+          }
+        } catch {
+          /* not JSON */
+        }
+      }
+      const invalid = Array.isArray(r.invalid) ? r.invalid.slice(extra) : r.invalid;
+      return { ...r, receipts, invalid, complete: (invalid?.length ?? 0) === 0 && !r.interrupted && !r.unreadable };
+    },
+  }),
+  "R-M10 reader blocks on a FIFO": (real) => ({
+    ...real,
+    readReceipts: (dir) => {
+      try {
+        for (const f of fs.readdirSync(dir)) {
+          const p = path.join(dir, f);
+          if (fs.lstatSync(p).isFIFO()) fs.readFileSync(p);
+        }
+      } catch {
+        /* fall through */
+      }
+      return real.readReceipts(dir);
+    },
+  }),
+  "R-M11 reader accepts files over 4 KB": (real) => ({
+    ...real,
+    readReceipts: (dir) => {
+      const r = real.readReceipts(dir);
+      if (r.unreadable) return r;
+      const receipts = [...r.receipts];
+      let extra = 0;
+      for (const f of fs.readdirSync(dir)) {
+        try {
+          const p = path.join(dir, f);
+          const st = fs.lstatSync(p);
+          if (!st.isFile() || st.size <= 4096) continue;
+          const rec = real.parseReceipt(fs.readFileSync(p, "utf8").trim() + "\n");
+          if (rec) {
+            receipts.push(rec);
+            extra += 1;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      const invalid = Array.isArray(r.invalid) ? r.invalid.slice(extra) : r.invalid;
+      return { ...r, receipts, invalid, complete: (invalid?.length ?? 0) === 0 && !r.interrupted && !r.unreadable };
     },
   }),
   "R-M6 overwriting writer (deterministic name)": (real) => ({

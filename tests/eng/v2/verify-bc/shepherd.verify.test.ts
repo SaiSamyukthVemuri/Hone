@@ -5,6 +5,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import {
+  checkClaudeTable,
+  checkInternal,
+  checkTextEscape,
+  checkTimer,
+  checkToolVersionNull,
   checkNoToken,
   checkReceiptModes,
   checkShepherd,
@@ -35,17 +40,17 @@ beforeAll(async () => {
     return c.ok ? c.evidenceHash : null;
   };
   const scen = scenarios(hashOf);
-  for (const r of [...checkShepherd(runShepherdCli, scen), checkText(runShepherdCli, scen), checkUsage(runShepherdCli), checkUsageExit(runShepherdCli), checkNoToken(runShepherdCli), checkTokenEcho(runShepherdCli), checkReceiptModes(runShepherdCli)]) rows[r.row] = r;
+  for (const r of [...checkShepherd(runShepherdCli, scen), checkText(runShepherdCli, scen), checkUsage(runShepherdCli), checkUsageExit(runShepherdCli), checkNoToken(runShepherdCli), checkTokenEcho(runShepherdCli), checkReceiptModes(runShepherdCli), checkInternal(runShepherdCli), checkToolVersionNull(runShepherdCli), checkTextEscape(runShepherdCli), checkTimer(runShepherdCli), checkClaudeTable()]) rows[r.row] = r;
   console.log(
     "05C rows against efc7e186 runShepherdCli():\n" +
       Object.values(rows)
-        .map((r: any) => `${r.row.padEnd(16)} checked ${String(r.checked).padStart(4)}  violations ${r.total}${r.total ? "  e.g. " + JSON.stringify(r.violations[0]) : ""}`)
+        .map((r: any) => `${r.row.padEnd(16)} checked ${String(r.checked).padStart(4)}  violations ${r.total}${r.total ? "  e.g. " + JSON.stringify(r.violations[0]) : ""}${r.notes?.length ? "\n                 notes: " + r.notes.join(" | ") : ""}`)
         .join("\n"),
   );
 }, 600_000);
 
 describe("05C rows (in process)", () => {
-  for (const row of ["C-JSON", "C-FIELDS", "C-DECISION", "C-VALUES", "C-EXIT", "C-NOMUT", "C-ENV", "C-TOKEN", "C-RECEIPT", "C-TEXT", "C-USAGE", "C-USAGE-EXIT", "C-NOTOKEN", "C-TOKEN-ECHO", "C-RECEIPT-MODES"]) {
+  for (const row of ["C-JSON", "C-FIELDS", "C-DECISION", "C-VALUES", "C-EXIT", "C-NOMUT", "C-ENV", "C-TOKEN", "C-RECEIPT", "C-TEXT", "C-USAGE", "C-USAGE-EXIT", "C-NOTOKEN", "C-TOKEN-ECHO", "C-RECEIPT-MODES", "C-INTERNAL", "C-TOOLVERSION", "C-TEXT-ESCAPE", "C-TIMER", "C-DOC"]) {
     test(row, () => {
       const r = rows[row];
       expect(r, `${row} ran`).toBeTruthy();

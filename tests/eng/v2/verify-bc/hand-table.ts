@@ -178,4 +178,65 @@ export const HAND_CASES: HandCase[] = [
   { id: "H53", clause: "§3 unresolved (resolver irrelevant)", input: () => candidate({ reviews: rv([CLEAN_AT_HEAD()], [thread(CODEX, false, HUMAN)]) }), decision: "FINDINGS_OPEN" },
   { id: "H54", clause: "§2 row 2 before a base failure", input: () => collected(evidence(key("OPEN", true), openRows({ base: fail("read_failed") }))), decision: "DRAFT_HOLD" },
   { id: "H55", clause: "§2 row 4 before a reviews failure", input: () => candidate({ ci: ok(ciValue("FAILED")), reviews: fail("read_failed") }), decision: "CI_FAILED" },
+  // Pass 2 (SPEC-05B df8dd9b5 §1): closed enums, the evidence schema, positive run ids; malformed is row-scoped.
+  {
+    id: "H56",
+    clause: "§1 verdict is a closed enum (pass 2)",
+    input: () => candidate({ reviews: rv([CLEAN_AT_HEAD(), review("PR_REVIEW", CODEX, "changes_requested", true)]) }),
+    decision: "UNKNOWN",
+    reason: "malformed",
+  },
+  {
+    id: "H57",
+    clause: "§1 channel is a closed enum (pass 2)",
+    input: () => candidate({ reviews: rv([CLEAN_AT_HEAD(), review("REVIEW_THREAD", CODEX, "CHANGES_REQUESTED", true)]) }),
+    decision: "UNKNOWN",
+    reason: "malformed",
+  },
+  {
+    id: "H58",
+    clause: "§1 evidence.schema must be eng-loop-v1/evidence@1 (pass 2)",
+    input: () => {
+      const c: any = candidate();
+      c.evidence.schema = "eng-loop-v1/evidence@2";
+      return c;
+    },
+    decision: "UNKNOWN",
+    reason: "malformed",
+  },
+  {
+    id: "H59",
+    clause: "§1 the schema is read before row 1 (pass 2)",
+    input: () => {
+      const c: any = collected(evidence(key("MERGED", false), null));
+      delete c.evidence.schema;
+      return c;
+    },
+    decision: "UNKNOWN",
+    reason: "malformed",
+  },
+  { id: "H60", clause: "§1 applicableRunIds are positive integers (pass 2)", input: () => candidate({ ci: ok(ciValue("FAILED", { applicableRunIds: [0] })) }), decision: "UNKNOWN", reason: "malformed" },
+  {
+    id: "H61",
+    clause: "§1-§2 row 4 reads ci, so a bad applicableRunIds stops a SUCCEEDED path before candidacy (pass 2)",
+    input: () => candidate({ ci: ok(ciValue("SUCCEEDED", { applicableRunIds: ["37673706298"] })) }),
+    decision: "UNKNOWN",
+    reason: "malformed",
+  },
+  {
+    id: "H62",
+    clause: "§1 row-scoped malformed: row 2 decides before row 9 reads the bad verdict (pass 2)",
+    input: () => collected(evidence(key("OPEN", true), openRows({ reviews: rv([review("PR_REVIEW", CODEX, "BOGUS", true)]) }))),
+    decision: "DRAFT_HOLD",
+  },
+  { id: "H63", clause: "§1 row-scoped malformed: row 3 before row 9 (pass 2)", input: () => candidate({ base: ok(baseValue(2)), reviews: rv([review("REVIEW_THREAD", CODEX, "CLEAN", true)]) }), decision: "NEEDS_REFRESH" },
+  { id: "H64", clause: "§1 row-scoped malformed: row 4 before row 5 (pass 2)", input: () => candidate({ ci: ok(ciValue("FAILED")), external: ok({ external: [{ source: "x", state: "BOGUS" }] }) }), decision: "CI_FAILED" },
+  {
+    id: "H65",
+    clause: "§1 row-scoped malformed: row 2 before row 4 (pass 2)",
+    input: () => collected(evidence(key("OPEN", true), openRows({ ci: ok({ outcome: "BOGUS" }) }))),
+    decision: "DRAFT_HOLD",
+  },
+  { id: "H66", clause: "§1 row-scoped malformed: row 5 before row 9 (pass 2)", input: () => candidate({ external: ok({ external: [ext("deploy", "failure")] }), reviews: rv([review("PR_REVIEW", CODEX, "approve", true)]) }), decision: "EXTERNAL_BLOCKED" },
+  { id: "H67", clause: "§1 a closed verdict on the wrong channel still establishes nothing (pass 2)", input: () => candidate({ reviews: rv([review("CLEAN_COMMENT", CODEX, "APPROVED", true)]) }), decision: "REVIEW_MISSING" },
 ];

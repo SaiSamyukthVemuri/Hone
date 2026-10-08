@@ -3,7 +3,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import fs from "node:fs";
-import { CODEX, HUMAN, CLOSED_REASONS, review, deepClone } from "./oracle";
+import { CODEX, HUMAN, CLOSED_REASONS, CHANNELS, ALL_VERDICTS, CI_OUTCOMES, EXTERNAL_STATES, review, deepClone } from "./oracle";
 
 type Decide = (c: any, p?: any) => any;
 
@@ -212,6 +212,32 @@ export function decideMutants(real: Decide): Record<string, Decide> {
       if (d.decision !== "CANDIDATE_READY_FOR_HUMAN_REVIEW") return d;
       counter += 1;
       return counter % 2 === 0 ? { ...d, decision: "REVIEW_MISSING", reasonCodes: ["REVIEW_MISSING"] } : d;
+    },
+    // Pass 2 mutants (SPEC-05B df8dd9b5).
+    "M34 out-of-enum verdict or channel treated as inert": rewrite(real, (x) => {
+      for (const r of rowsOf(x)?.reviews?.value?.reviews ?? []) {
+        if (!isPlain(r)) continue;
+        if (typeof r.channel === "string" && !CHANNELS.includes(r.channel)) Object.assign(r, { channel: "PR_REVIEW", verdict: "DISMISSED" });
+        if (typeof r.verdict === "string" && !ALL_VERDICTS.includes(r.verdict)) r.verdict = "DISMISSED";
+      }
+    }),
+    "M35 evidence.schema not checked": rewrite(real, (x) => {
+      if (isPlain(x?.evidence) && x.evidence.schema !== "eng-loop-v1/evidence@1") x.evidence.schema = "eng-loop-v1/evidence@1";
+    }),
+    "M36 applicableRunIds not checked": rewrite(real, (x) => {
+      const ci = rowsOf(x)?.ci;
+      if (okRow(ci) && "applicableRunIds" in ci.value && !(Array.isArray(ci.value.applicableRunIds) && ci.value.applicableRunIds.every((n: any) => Number.isInteger(n) && n > 0))) ci.value.applicableRunIds = [];
+    }),
+    "M37 malformed anywhere decides malformed (not row-scoped)": (c, p) => {
+      const rows = rowsOf(c);
+      const bad =
+        rows &&
+        ((okRow(rows.base) && !(Number.isInteger(rows.base.value.drift?.behindBy) && rows.base.value.drift.behindBy >= 0)) ||
+          (okRow(rows.ci) && !CI_OUTCOMES.includes(rows.ci.value.outcome)) ||
+          (okRow(rows.external) && !(Array.isArray(rows.external.value.external) && rows.external.value.external.every((e: any) => isPlain(e) && EXTERNAL_STATES.includes(e.state)))) ||
+          (okRow(rows.reviews) && !(Array.isArray(rows.reviews.value.reviews) && rows.reviews.value.reviews.every((r: any) => isPlain(r) && CHANNELS.includes(r.channel) && ALL_VERDICTS.includes(r.verdict)))));
+      const d = call(c, p);
+      return bad ? { ...d, decision: "UNKNOWN", reasonCodes: ["malformed"], blocking: { row: "evidence", detail: "x" }, nextAction: call({ ok: false, reason: "malformed", detail: "x" }, p).nextAction } : d;
     },
     "M32 unknown CI outcome read as success (interprets GitHub enums)": rewrite(real, (x) => {
       const rows = rowsOf(x);

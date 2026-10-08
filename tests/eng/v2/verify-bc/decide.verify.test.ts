@@ -80,6 +80,7 @@ describe("05B rows", () => {
     "D-PURE",
     "D-TOTAL",
     "D-MAL",
+    "D-MAL-SCOPE",
     "D-POLICY",
   ]) {
     test(`${row}`, () => {

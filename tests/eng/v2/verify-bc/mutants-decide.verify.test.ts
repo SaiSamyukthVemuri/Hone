@@ -33,7 +33,7 @@ describe("05B mutants", () => {
   test("every mutant is caught by at least one named row", () => {
     const missed = Object.entries(caughtBy).filter(([, rows]) => rows.length === 0).map(([n]) => n);
     expect(missed).toEqual([]);
-    expect(Object.keys(caughtBy).length).toBeGreaterThanOrEqual(30);
+    expect(Object.keys(caughtBy).length).toBe(37);
   });
   const expectations: [string, string][] = [
     ["M01 drift checked after CI (rows 3/4 swapped)", "D-DRIFT"],
@@ -61,6 +61,10 @@ describe("05B mutants", () => {
     ["M15 order-dependent: only the first review counts", "D-TABLE"],
     ["M27 terminal flag trusted over key.state", "D-MAL"],
     ["M32 unknown CI outcome read as success (interprets GitHub enums)", "D-MAL"],
+    ["M34 out-of-enum verdict or channel treated as inert", "D-MAL"],
+    ["M35 evidence.schema not checked", "D-MAL"],
+    ["M36 applicableRunIds not checked", "D-MAL"],
+    ["M37 malformed anywhere decides malformed (not row-scoped)", "D-MAL-SCOPE"],
   ];
   for (const [mutant, row] of expectations) {
     test(`${mutant} is caught by ${row}`, () => {

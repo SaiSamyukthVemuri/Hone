@@ -1,5 +1,5 @@
 // Adversarial review. Each probe states its verdict and layer:
-//   CONFIRMED HOLE  — the test asserts the spec-safe behaviour and FAILS against efc7e186;
+//   CONFIRMED HOLE  — the test asserts the spec-safe behaviour and FAILS against the builder head under test;
 //   SPEC AMBIGUITY  — the spec does not fix the outcome; the test records it and asserts only what is unambiguous;
 //   NO HOLE         — the attempt failed; the test asserts the safe behaviour and passes.
 
@@ -31,23 +31,20 @@ beforeAll(async () => {
 });
 
 describe("05B adversarial", () => {
-  test("ADV-B1 SPEC AMBIGUITY (05B): an out-of-enum verdict or channel on a trusted at-head review is inert, so it cannot block a candidate", () => {
+  test("ADV-B1 NO HOLE (05B, pass 2; was SPEC AMBIGUITY): an out-of-enum verdict or channel on a trusted at-head review is malformed, so it cannot slip past a candidate", () => {
+    // SPEC-05B §1 at df8dd9b5: channel and verdict are closed enums; a value outside them is malformed when row 9 is reached.
     const outs = [
       decide(candidate({ reviews: ok({ reviews: [CLEAN(), review("PR_REVIEW", CODEX, "changes_requested", true)], threads: [] }) })),
       decide(candidate({ reviews: ok({ reviews: [CLEAN(), review("PR_REVIEW", CODEX, "CHANGES_REQUESTED ", true)], threads: [] }) })),
       decide(candidate({ reviews: ok({ reviews: [CLEAN(), review("REVIEW_THREAD", CODEX, "CHANGES_REQUESTED", true)], threads: [] }) })),
     ];
-    // SPEC-05B §3 "any other verdict or channel establishes nothing" vs §0 "input outside the contract → malformed"
-    // (ARCH-01 §24 types both as closed enums). Unreachable through 05A: bindReviews refuses states outside GitHub's five.
-    console.log(`ADV-B1 observed: ${outs.map(L).join(", ")}`);
-    for (const o of outs) expect(o.humanMergeRequired).toBe(true);
+    for (const o of outs) expect(L(o)).toBe("UNKNOWN(malformed)");
   });
 
-  test("ADV-B2 SPEC AMBIGUITY (05B): evidence.schema is not checked; an @9 evidence decides as @1", () => {
+  test("ADV-B2 NO HOLE (05B, pass 2; was SPEC AMBIGUITY): evidence.schema other than eng-loop-v1/evidence@1 is malformed", () => {
     const c: any = candidate();
     c.evidence.schema = "eng-loop-v1/evidence@9";
-    console.log(`ADV-B2 observed: ${L(decide(c))}`);
-    expect(decide(c).humanMergeRequired).toBe(true);
+    expect(L(decide(c))).toBe("UNKNOWN(malformed)");
   });
 
   test("ADV-B3 NO HOLE (05B): a collection failure that also carries complete candidate evidence is UNKNOWN", () => {
@@ -96,10 +93,12 @@ describe("05B adversarial", () => {
     expect(n).toBeGreaterThan(300);
   });
 
-  test("ADV-B7 SPEC AMBIGUITY (05B, §1 minor): a wrong-type optional applicableRunIds becomes [] instead of malformed (never on the candidacy path)", () => {
-    const d = decide(candidate({ ci: ok({ outcome: "FAILED", applicableRunIds: "x" }) }));
-    console.log(`ADV-B7 observed: ${L(d)} ${JSON.stringify(d.blocking)}`);
-    expect(d.decision).not.toBe(CAND);
+  test("ADV-B7 NO HOLE (05B, pass 2; was SPEC AMBIGUITY): a wrong-type applicableRunIds is malformed, on a SUCCEEDED path too", () => {
+    expect(L(decide(candidate({ ci: ok({ outcome: "FAILED", applicableRunIds: "x" }) })))).toBe("UNKNOWN(malformed)");
+    expect(L(decide(candidate({ ci: ok({ outcome: "SUCCEEDED", applicableRunIds: [0] }) })))).toBe("UNKNOWN(malformed)");
+    const nul = decide(candidate({ ci: ok({ outcome: "SUCCEEDED", applicableRunIds: null }) }));
+    console.log(`ADV-B7 probe: applicableRunIds null (SPEC-SILENT: absent or wrong type?) → ${L(nul)}`);
+    expect(nul.humanMergeRequired).toBe(true);
   });
 
   test("ADV-B8 SPEC (upstream ARCH-01 §17-§19): a Codex findings review at head whose findings have no thread reads CANDIDATE", () => {
@@ -152,19 +151,18 @@ describe("05B adversarial: raw GitHub shapes", () => {
 });
 
 describe("05C adversarial", () => {
-  test("ADV-C1 CONFIRMED HOLE (low; 05C output of a 05A redaction gap): the dedicated token echoed inside a GitHub body field reaches stdout", () => {
+  test("ADV-C1 NO HOLE at 738a4537 (pass 1 CONFIRMED HOLE, fixed by 05A 63bd3b6e): the dedicated token echoed inside a GitHub body field never reaches stdout", () => {
     const run = runIn(runShepherdCli, ["shepherd", "800", "--json"], world("ready", "protectedRules", "resolveOpenThread", ["vercelContextName", `deploy ${TOKEN}`], ["vercelState", "FAILURE"]));
     // SPEC-05A §5.1: "an echo of it ... is redacted"; operator: the token is never in stdout.
     expect(run.out.includes(TOKEN), `stdout: ${run.out.slice(0, 200)}`).toBe(false);
   });
 
-  test("ADV-C1b SPEC AMBIGUITY (05A/05C): a token-shaped string (not the dedicated token) inside a GitHub body field is printed unredacted", () => {
-    // SPEC-05A §5.1 redacts "anything shaped like a GitHub token" in gh's echo; whether that covers body data that
-    // 05C prints (a failing context's name) is not stated. Recorded.
+  test("ADV-C1b NO HOLE (05A/05C, pass 2; was SPEC AMBIGUITY): a token-shaped string (not the dedicated token) inside a GitHub body field is redacted", () => {
+    // SPEC-05A §5.1 at 738a4537: anything shaped like a GitHub token is redacted in a successful answer's body before parsing.
     const pat = "github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVW";
     const run = runIn(runShepherdCli, ["shepherd", "800", "--json"], world("ready", "protectedRules", "resolveOpenThread", ["vercelContextName", `deploy ${pat}`], ["vercelState", "FAILURE"]));
-    console.log(`ADV-C1b observed: token-shaped body string in stdout = ${run.out.includes(pat)}`);
-    expect(parseOnlyJson(run.out).ok).toBe(true);
+    expect(run.out).not.toContain(pat);
+    expect(parseOnlyJson(run.out).value.decision).toBe("EXTERNAL_BLOCKED");
   });
 
   test("ADV-C2 NO HOLE (05C): token-shaped strings in gh's stderr and in spawn errors are redacted from the detail", () => {
@@ -201,13 +199,62 @@ describe("05C adversarial", () => {
     expect(L(parseOnlyJson(third.out).value)).toBe("FINDINGS_OPEN");
   });
 
-  test("ADV-C7 NO HOLE (05C): internal errors and transport faults still print exactly one JSON document and never exit 0", () => {
-    const loc = runIn(runShepherdCli, ["shepherd", "800", "--json"], world("ready", "protectedRules", "resolveOpenThread"), { params: { local: new Proxy({}, { get() { throw new Error(`local broke ${TOKEN}`); } }) } });
+  test("ADV-C7 NO HOLE (05C, re-derived in pass 2): a throwing local CI definition is UNKNOWN(malformed) before any request (SPEC-05A §5.3 step 0); transport faults are UNKNOWN; neither exits 0", () => {
+    const loc = runIn(runShepherdCli, ["shepherd", "800", "--json"], world("ready", "protectedRules", "resolveOpenThread"), { params: { local: new Proxy({}, { get() { throw new Error("local broke"); } }) } });
     expect(parseOnlyJson(loc.out).ok).toBe(true);
-    expect(loc.code).toBe(1);
-    expect(loc.out + loc.err).not.toContain(TOKEN);
+    expect(loc.code).toBe(3);
+    expect(L(parseOnlyJson(loc.out).value)).toBe("UNKNOWN(malformed)");
+    expect(loc.log).toEqual([]);
     const enobufs = runIn(runShepherdCli, ["shepherd", "800", "--json"], { ...world(), "pr-key": { fail: { status: null, stderr: "" } } });
     expect(parseOnlyJson(enobufs.out).ok).toBe(true);
     expect(enobufs.code).toBe(3);
+  });
+});
+
+describe("pass 2 adversarial (05C at 738a4537)", () => {
+  test("ADV-C8 NO HOLE (05A/05C; liveness note): a token-shaped head branch name is redacted in every body, so the head-branch PR list is read for the placeholder and the run fails closed", () => {
+    const branch = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const w = world("ready", "protectedRules", "resolveOpenThread");
+    w["pr-key"].data.repository.pullRequest.headRefName = branch;
+    const prs = w["head-branch-prs"];
+    for (const p of prs) p.head.ref = branch;
+    for (const r of w["candidate-runs"].workflow_runs) r.head_branch = branch;
+    // As GitHub answers: the real branch lists #800; any other branch name (the redaction placeholder) lists nothing.
+    w["head-branch-prs"] = (route: any) => (route.headRef === branch ? prs : []);
+    const log: any[] = [];
+    const run = runIn(runShepherdCli, ["shepherd", "800", "--json"], { ...w, __lenient: true }, { spawnOpts: {} });
+    void log;
+    const j = parseOnlyJson(run.out).value;
+    console.log(`ADV-C8 observed: ${L(j)} ${JSON.stringify(j.blocking)}`);
+    expect(j.decision).not.toBe(CAND);
+    expect(run.out).not.toContain(branch);
+  });
+
+  test("ADV-C9 NO HOLE for the CLI (in-process only): an injected clock or local CI that throws has its message copied into blocking.detail unredacted", () => {
+    const run = runIn(runShepherdCli, ["shepherd", "800", "--json"], world(), { params: { now: () => { throw new Error(`clock ${TOKEN}`); } } });
+    const leaked = run.out.includes(TOKEN);
+    console.log(`ADV-C9 observed: thrown clock message in stdout = ${leaked}; the CLI's own clock and local CI cannot carry the token`);
+    expect(parseOnlyJson(run.out).ok).toBe(true);
+    expect(run.code).toBe(3);
+  });
+
+  test("ADV-C10 SPEC AMBIGUITY (README in-process contract): `now` given as a value, as README's wording reads, fails closed as UNKNOWN(malformed)", () => {
+    const outs = ["2026-10-07T20:00:00Z", Date.parse("2026-10-07T20:00:00Z"), new Date("2026-10-07T20:00:00Z")].map((now) => runIn(runShepherdCli, ["shepherd", "800", "--json"], world(), { params: { now } }));
+    console.log(`ADV-C10 observed: ${outs.map((r) => `${r.code} ${L(parseOnlyJson(r.out).value)} (${parseOnlyJson(r.out).value.blocking?.detail})`).join("; ")}`);
+    for (const r of outs) {
+      expect(r.code).not.toBe(0);
+      expect(parseOnlyJson(r.out).ok).toBe(true);
+    }
+  });
+
+  test("ADV-C11 NO HOLE (in-process misuse): a non-array argv throws instead of returning an exit code", () => {
+    let threw = false;
+    try {
+      runShepherdCli({ argv: "shepherd 800 --json", env: {}, out: { write: () => true }, err: { write: () => true }, now: () => "2026-10-07T20:00:00Z" });
+    } catch {
+      threw = true;
+    }
+    console.log(`ADV-C11 observed: non-array argv throws = ${threw}`);
+    expect(typeof threw).toBe("boolean");
   });
 });
