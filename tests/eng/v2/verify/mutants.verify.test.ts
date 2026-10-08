@@ -60,6 +60,7 @@ describe("mutation detection A: the scenario table against the spec reading", ()
     ["rule 4 (base change) omitted", { noBaseRefChanged: true }, ["NC4-one-event"]],
     ["the 360-day window omitted", { noWindow: true }, ["R8-window-360-plus-1s"]],
     ["rule 3 (CI definition changed) omitted", { noCiDefinition: true }, ["R3-ci.yml"]],
+    ["the PRE-AMENDMENT §2.2: GitHub's automatic retargeting is not a base change (R-AUTOBASE)", { manualBaseChangesOnly: true }, ["NC4-auto-succeeded", "NC4-auto-failed"]],
   ];
 
   for (const [name, m, mustDetect] of MUTANTS) {
