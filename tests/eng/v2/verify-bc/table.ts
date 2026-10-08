@@ -86,7 +86,7 @@ export type TableEntry = { id: string; input: any; dims: Record<string, string> 
  * The open-key product. `keep(comboIndex, reviewIndex)` thins it for mutant runs: comboIndex enumerates
  * (draft, base, ci, external) — 252 combinations — and reviewIndex the 376 review-row variants (0 is the failure).
  */
-export function* openTable(keep: (combo: number, rv: number) => boolean = () => true): Generator<TableEntry> {
+export function* openTable(keep: (combo: number, rv: number, dims: { draft: boolean; base: string; ci: string; external: string }) => boolean = () => true): Generator<TableEntry> {
   let combo = -1;
   for (const draft of [false, true]) {
     for (const [bk, b] of Object.entries(BASE_VARIANTS)) {
@@ -98,7 +98,7 @@ export function* openTable(keep: (combo: number, rv: number) => boolean = () => 
             for (const [tk, t] of Object.entries(THREAD_SETS)) reviewVariants.push([`${rk}/${tk}`, () => ok({ reviews: r(), threads: t() })]);
           }
           for (let ri = 0; ri < reviewVariants.length; ri += 1) {
-            if (!keep(combo, ri)) continue;
+            if (!keep(combo, ri, { draft, base: bk, ci: ck, external: ek })) continue;
             const [vk, v] = reviewVariants[ri];
             const dims = { draft: String(draft), base: bk, ci: ck, external: ek, reviews: vk };
             yield {
@@ -125,8 +125,9 @@ export function* fullTable(): Generator<TableEntry> {
 }
 
 /** Stratified thinning for mutant runs: every (draft, base, ci, external) combination keeps its review-row failure
- * and a rotating 1/stride of the review variants, so each stratum and each variant is still exercised. */
+ * and a rotating 1/stride of the review variants; the combinations where rows 1-8 all pass (where the review rules
+ * decide) keep every review and thread variant. */
 export function* stratifiedTable(stride: number): Generator<TableEntry> {
   yield* terminalTable();
-  yield* openTable((combo, rv) => rv === 0 || (rv + combo * 7) % stride === 0);
+  yield* openTable((combo, rv, d) => rv === 0 || (rv + combo * 7) % stride === 0 || (!d.draft && d.base === "B0" && d.ci === "SUCCEEDED" && (d.external === "none" || d.external === "s")));
 }

@@ -12,10 +12,11 @@ import { writeGhShim, readShimLog, routeRest, isReadOnlyQuery } from "./support/
 // @ts-expect-error untyped support module
 import { world } from "./support/worlds.mjs";
 import { errorReportViolations, parseOnlyJson, REQUIRED_FIELDS } from "./checks-shepherd";
-import { cleanupTmp, tmp } from "./support/tmp";
+import { HOOK_TIMEOUT, cleanupTmp, tmp } from "./support/tmp";
+import { timed } from "./support/timing";
 import { ceiling, headlessRoot } from "./support/headless";
 
-afterAll(cleanupTmp);
+afterAll(timed("cli afterAll cleanupTmp", cleanupTmp), HOOK_TIMEOUT);
 
 const ROOT = path.resolve(__dirname, "../../../..");
 const GIT = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim() || "/usr/bin/git";

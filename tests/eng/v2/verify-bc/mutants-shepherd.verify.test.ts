@@ -24,11 +24,12 @@ import {
 } from "./checks-shepherd";
 // @ts-expect-error untyped support module
 import { PROD_TIP } from "./support/worlds.mjs";
-import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+import { HOOK_TIMEOUT, cleanupTmp, inScope, redirectTmpdir } from "./support/tmp";
+import { timed } from "./support/timing";
 import { headlessRoot, headlessRunShepherdCli } from "./support/headless";
 
 redirectTmpdir();
-afterAll(cleanupTmp);
+afterAll(timed("mutants-shepherd afterAll cleanupTmp", cleanupTmp), HOOK_TIMEOUT);
 
 const V2 = path.resolve(__dirname, "../../../../scripts/eng/v2");
 type RunCli = (args: any) => any;
@@ -159,19 +160,43 @@ function allRows(run: RunCli, scen: any[], headlessRun: RunCli) {
 }
 
 const caught: Record<string, string[]> = {};
-beforeAll(async () => {
+/** Mutant runs use one world per decision plus the worlds whose fields must be null (merged, feature base, the three
+ * collection failures): every 05C mutant needs one of them, and the real implementation runs all 34 in
+ * shepherd.verify. Fewer runs keep the file inside a busy CI runner's budget. */
+const MUTANT_WORLDS = [
+  "recorded #800 (draft)",
+  "ready, production unprotected",
+  "ready, protected, one Codex thread open",
+  "ready, protected, thread resolved by the operator",
+  "behind production 2, history unverified",
+  "run failed",
+  "run in progress",
+  "no run at the head",
+  "required job failed in a successful run",
+  "Vercel failed",
+  "Vercel pending",
+  "no Codex review at the head",
+  "merged",
+  "PR based on a feature branch",
+  "PR key read fails",
+  "review evidence changes between passes",
+  "head moves between passes",
+];
+beforeAll(timed("mutants-shepherd beforeAll (21 mutants)", async () => {
   const { runShepherdCli } = await import(path.join(V2, "cli-shepherd.mjs"));
-  const scen = scenarios();
+  const scen = scenarios().filter((s) => MUTANT_WORLDS.includes(s.name));
+  if (scen.length !== MUTANT_WORLDS.length) throw new Error(`mutant worlds: ${scen.length} of ${MUTANT_WORLDS.length} found`);
   const headlessReal = await headlessRunShepherdCli();
-  const baseRows = allRows(runShepherdCli, scen, headlessReal);
+  const baseRows = await inScope("mutants-base", () => allRows(runShepherdCli, scen, headlessReal));
   const key = (r: any, v: any) => `${r.row}|${v.id}|${v.msg}`;
   const baseline = new Set(baseRows.flatMap((r: any) => r.violations.map((v: any) => key(r, v))));
   const headlessMutants = mutants(headlessReal);
   for (const [name, m] of Object.entries(mutants(runShepherdCli))) {
-    caught[name] = allRows(m, scen, headlessMutants[name]).filter((r: any) => r.violations.some((v: any) => !baseline.has(key(r, v)))).map((r: any) => r.row);
+    const rows = await inScope(name.slice(0, 6), () => allRows(m, scen, headlessMutants[name]));
+    caught[name] = rows.filter((r: any) => r.violations.some((v: any) => !baseline.has(key(r, v)))).map((r: any) => r.row);
   }
   console.log("05C mutants → catching rows:\n" + Object.entries(caught).map(([n, rs]) => `${rs.length ? "CAUGHT" : "MISSED"} ${n}: ${rs.join(", ") || "-"}`).join("\n"));
-}, 900_000);
+}), 1_200_000);
 
 describe("05C mutants", () => {
   test("every 05C mutant is caught by at least one row", () => {

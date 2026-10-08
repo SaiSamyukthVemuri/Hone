@@ -6,7 +6,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { tmp } from "./tmp";
+import { tmpAtRoot } from "./tmp";
 
 const ROOT = path.resolve(__dirname, "../../../../..");
 let copy: string | null = null;
@@ -43,7 +43,7 @@ export function withHeadlessProcessEnv<T>(dir: string, fn: () => T): T {
 
 export function headlessRoot(): string {
   if (copy !== null && fs.existsSync(copy)) return copy;
-  const dir = tmp("headless-");
+  const dir = tmpAtRoot("headless-");
   for (const p of ["scripts", ".github", "package.json"]) fs.cpSync(path.join(ROOT, p), path.join(dir, p), { recursive: true });
   const nm = path.join(ROOT, "node_modules");
   if (fs.existsSync(nm)) fs.symlinkSync(fs.realpathSync(nm), path.join(dir, "node_modules"));

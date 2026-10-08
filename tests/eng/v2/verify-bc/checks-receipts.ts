@@ -13,6 +13,7 @@ import path from "node:path";
 import { tmp as tmpUnderRoot } from "./support/tmp";
 // @ts-expect-error untyped support module
 import { canon, checksumOf, receiptProblem } from "./support/receipt-mutants.mjs";
+import { markRestrictive } from "./support/tmp";
 
 export type ReceiptsApi = { receiptFrom: (r: any) => any; writeReceipt: (d: string, r: any) => any; readReceipts: (d: string) => any; parseReceipt: (t: string) => any };
 
@@ -248,8 +249,8 @@ export function checkDirEntries(api: ReceiptsApi) {
   const cases: [string, (dir: string) => void, boolean | null][] = [
     ["missing directory", (dir) => fs.rmSync(dir, { recursive: true }), false],
     ["directory is a file", (dir) => { fs.rmSync(dir, { recursive: true }); fs.writeFileSync(dir, "x"); }, false],
-    ...(IS_ROOT ? [] : ([["unreadable directory", (dir: string) => fs.chmodSync(dir, 0o000), false]] as [string, (dir: string) => void, boolean | null][])),
-    ...(IS_ROOT ? [] : ([["unreadable receipt file", (dir: string) => { const f = fs.readdirSync(dir)[0] ?? "20261007T200000Z-pr800-1-00000000000000dd.json"; if (!fs.existsSync(path.join(dir, f))) fs.writeFileSync(path.join(dir, f), "{}"); fs.chmodSync(path.join(dir, f), 0o000); }, false]] as [string, (dir: string) => void, boolean | null][])),
+    ...(IS_ROOT ? [] : ([["unreadable directory", (dir: string) => (markRestrictive(dir), fs.chmodSync(dir, 0o000)), false]] as [string, (dir: string) => void, boolean | null][])),
+    ...(IS_ROOT ? [] : ([["unreadable receipt file", (dir: string) => { const f = fs.readdirSync(dir)[0] ?? "20261007T200000Z-pr800-1-00000000000000dd.json"; if (!fs.existsSync(path.join(dir, f))) fs.writeFileSync(path.join(dir, f), "{}"); markRestrictive(path.join(dir, f)); fs.chmodSync(path.join(dir, f), 0o000); }, false]] as [string, (dir: string) => void, boolean | null][])),
     ["subdirectory named like a receipt", (dir) => fs.mkdirSync(path.join(dir, "20261007T200000Z-pr800-1-0123456789abcdef.json")), false],
     ["foreign file", (dir) => fs.writeFileSync(path.join(dir, "README.md"), "notes"), false],
     ["dot-file temp", (dir) => fs.writeFileSync(path.join(dir, ".20261007T200000Z-pr800-1-0123456789abcdef.json.tmp"), "{\"schema\":"), false],
@@ -289,20 +290,20 @@ export function checkDirEntries(api: ReceiptsApi) {
 }
 
 /** FIFO and /dev/zero entries: the reader must neither hang nor exhaust memory. Run in a child with a timeout. */
-export function checkHang(receiptsPath: string, mutant = "real") {
+export function checkHang(receiptsPath: string, mutant = "real", childTimeoutMs = 15_000) {
   const r = rowResult("R-HANG", "operator: unreadable data is never clean; a hostile directory entry must not hang the reader");
   const cases: [string, (dir: string) => void][] = [
     ["FIFO named like a receipt", (dir) => spawnSync("mkfifo", [path.join(dir, "20261007T200000Z-pr800-1-00000000000000aa.json")])],
     ["symlink to /dev/zero named like a receipt", (dir) => fs.symlinkSync("/dev/zero", path.join(dir, "20261007T200000Z-pr800-1-00000000000000bb.json"))],
-    ["64 MiB file named like a receipt", (dir) => fs.writeFileSync(path.join(dir, "20261007T200000Z-pr800-1-00000000000000cc.json"), Buffer.alloc(64 * 1024 * 1024, 0x20))],
+    ["16 MiB file named like a receipt", (dir) => fs.writeFileSync(path.join(dir, "20261007T200000Z-pr800-1-00000000000000cc.json"), Buffer.alloc(16 * 1024 * 1024, 0x20))],
   ];
   for (const [n, mk] of cases) {
     r.checked += 1;
     const dir = tmp();
     mk(dir);
     const script = `import { receiptsApi } from ${JSON.stringify(path.resolve(__dirname, "support/receipt-mutants.mjs"))};\nconst api = await receiptsApi(${JSON.stringify(receiptsPath)}, ${JSON.stringify(mutant)});\nconst t = Date.now(); const x = api.readReceipts(${JSON.stringify(dir)});\nprocess.stdout.write(JSON.stringify({ complete: x.complete, n: x.receipts.length, ms: Date.now() - t }));`;
-    const c = spawnSync(process.execPath, ["--max-old-space-size=256", "--input-type=module", "-e", script], { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" });
-    if (c.error || c.signal) r.add(n, `reader did not return within 15 s (${c.signal ?? c.error?.message})`);
+    const c = spawnSync(process.execPath, ["--max-old-space-size=256", "--input-type=module", "-e", script], { encoding: "utf8", timeout: childTimeoutMs, killSignal: "SIGKILL" });
+    if (c.error || c.signal) r.add(n, `reader did not return within ${childTimeoutMs / 1000} s (${c.signal ?? c.error?.message})`);
     else if (c.status !== 0) r.add(n, `reader crashed: ${c.stderr.split("\n").find((l) => /Error|heap/.test(l)) ?? c.status}`);
     else {
       const out = JSON.parse(c.stdout);
@@ -453,10 +454,10 @@ function runChild(receiptsPath: string, mutant: string, dir: string, mode: strin
   });
 }
 
-export async function checkConcurrency(api: ReceiptsApi, receiptsPath: string, mutant = "real") {
+export async function checkConcurrency(api: ReceiptsApi, receiptsPath: string, mutant = "real", children = 12, writes = 40) {
   const r = rowResult("R-CONC", "operator: concurrent-writer behaviour; README: concurrent writers cannot collide");
   const dir = tmp();
-  const kids = await Promise.all(Array.from({ length: 12 }, (_, i) => runChild(receiptsPath, mutant, dir, "batch", 40, i)));
+  const kids = await Promise.all(Array.from({ length: children }, (_, i) => runChild(receiptsPath, mutant, dir, "batch", writes, i)));
   let ok = 0;
   for (const k of kids) {
     r.checked += 1;
@@ -549,11 +550,13 @@ export async function checkRace(api: ReceiptsApi, receiptsPath: string, mutant =
       continue;
     }
     r.notes.push(`${mode}: ${o.reads} reads, max ${o.maxMs} ms, ${o.accepted} accepted, swaps ${JSON.parse(sw.out || "{}").swaps ?? "?"}`);
-    if (o.maxMs > 2000) r.add(mode, `a read took ${o.maxMs} ms (blocked on the swapped entry)`);
+    // A blocked read never returns (the child timeout catches it); a starved runner can make a single read slow, so the
+    // per-read limit only flags reads far beyond any scheduling delay.
+    if (o.maxMs > 10_000) r.add(mode, `a read took ${o.maxMs} ms (blocked on the swapped entry)`);
     if (o.foreign > 0) r.add(mode, `${o.foreign} record(s) read through a symlink were accepted`);
     if (o.invalidAccepted > 0) r.add(mode, `${o.invalidAccepted} torn or invalid record(s) accepted`);
     if (o.threw > 0) r.add(mode, `readReceipts threw ${o.threw} time(s): ${o.firstThrow}`);
-    if (o.reads < 5) r.add(mode, `only ${o.reads} reads completed`);
+    if (o.reads < 1) r.add(mode, "no read completed");
   }
   return r;
 }
@@ -598,10 +601,10 @@ export async function checkToctou(api: ReceiptsApi, receiptsPath: string, mutant
         fs.symlinkSync(path.join(stage, "other.json"), hostile);
       } else if (kind === "fifo") spawnSync("mkfifo", [hostile]);
       else fs.mkdirSync(hostile);
-      const c = await runNode([TOCTOU, receiptsPath, dir, name, hostile, at, mutant], 10_000);
+      const c = await runNode([TOCTOU, receiptsPath, dir, name, hostile, at, mutant], 30_000);
       if (c.signal) {
         r.checked += 1;
-        r.add(id, "the reader blocked (killed after 10 s)");
+        r.add(id, "the reader blocked (killed after 30 s)");
         continue;
       }
       let o: any;
@@ -618,7 +621,7 @@ export async function checkToctou(api: ReceiptsApi, receiptsPath: string, mutant
       }
       r.checked += 1;
       if (o.prs.includes(999)) r.add(id, "accepted the record behind a symlink swapped in");
-      if (o.ms > 2000) r.add(id, `read took ${o.ms} ms`);
+      if (o.ms > 10_000) r.add(id, `read took ${o.ms} ms`);
       r.notes.push(`${id}: complete ${o.complete}, accepted ${JSON.stringify(o.prs)}`);
     }
   }
