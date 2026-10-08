@@ -1,0 +1,120 @@
+{
+ "recorded": "2026-10-08 (read-only REST GETs and GraphQL queries by the independent verifier)",
+ "repositoryWide": {
+  "pullRequests": 814,
+  "distinctHeadLabels": 814,
+  "headRepositories": [
+   1240764106
+  ],
+  "prsWithReopenedEvent": 0,
+  "prsWithHeadRefDeletedEvent": 64,
+  "prsWithHeadRefRestoredEvent": 1,
+  "prsWithBaseRefChangedEvent": 16,
+  "prsWithAutomaticBaseChange": 0
+ },
+ "deletedBranch": [
+  {
+   "pr": 601,
+   "state": "closed",
+   "headRef": "fix/p0-new-client-waitlist-final",
+   "branchExists": false,
+   "headListing": [
+    601
+   ],
+   "runs": [
+    {
+     "id": 32212457651,
+     "head_branch": "fix/p0-new-client-waitlist-final",
+     "head_repository_id": 1240764106,
+     "head_sha": "ca545459126ec4a1ecf5620cc4c07e7205ed75e9",
+     "pull_requests": [],
+     "created_at": "2026-08-19T03:31:39Z"
+    }
+   ]
+  },
+  {
+   "pr": 596,
+   "state": "closed",
+   "headRef": "docs/0183-0184-truth-cleanroom",
+   "branchExists": false,
+   "headListing": [
+    596
+   ],
+   "runs": [
+    {
+     "id": 32048689461,
+     "head_branch": "docs/0183-0184-truth-cleanroom",
+     "head_repository_id": 1240764106,
+     "head_sha": "6c885bb8c21760af6e5a0209b2c92c165ea6adb0",
+     "pull_requests": [],
+     "created_at": "2026-08-17T17:04:25Z"
+    }
+   ]
+  }
+ ],
+ "deletedThenRestored": {
+  "pr": 495,
+  "state": "closed",
+  "merged": true,
+  "headRef": "fix/server-authoritative-session-payment-amount",
+  "headRefDeletedAt": "2026-08-01T01:30:20Z",
+  "headRefRestoredAt": "2026-08-16T21:39:01Z",
+  "branchExists": true,
+  "headListing": [
+   495
+  ]
+ },
+ "mergedStillListed": {
+  "pr": 809,
+  "state": "closed",
+  "merged": true,
+  "headRef": "docs/ext-context-01",
+  "headListing": [
+   809
+  ]
+ },
+ "reruns": [
+  {
+   "id": 37366170753,
+   "latest": {
+    "attempt": 2,
+    "head_branch": "fix/sentry-identity-01",
+    "head_sha": "b4f7fdf111d8d8e840fa8d8dadd3a181181320d2",
+    "head_repository_id": 1240764106,
+    "created_at": "2026-10-05T19:52:14Z",
+    "run_started_at": "2026-10-05T20:12:37Z"
+   },
+   "attempt1": {
+    "attempt": 1,
+    "head_branch": "fix/sentry-identity-01",
+    "head_sha": "b4f7fdf111d8d8e840fa8d8dadd3a181181320d2",
+    "head_repository_id": 1240764106,
+    "created_at": "2026-10-05T19:52:14Z",
+    "run_started_at": "2026-10-05T19:52:14Z"
+   }
+  },
+  {
+   "id": 37362604831,
+   "latest": {
+    "attempt": 2,
+    "head_branch": "feat/wiki-interrupted-retry-01",
+    "head_sha": "f3452fa03136ad16323c79c9ecbc16715fc6f3bf",
+    "head_repository_id": 1240764106,
+    "created_at": "2026-10-05T19:19:39Z",
+    "run_started_at": "2026-10-05T19:37:01Z"
+   },
+   "attempt1": {
+    "attempt": 1,
+    "head_branch": "feat/wiki-interrupted-retry-01",
+    "head_sha": "f3452fa03136ad16323c79c9ecbc16715fc6f3bf",
+    "head_repository_id": 1240764106,
+    "created_at": "2026-10-05T19:19:39Z",
+    "run_started_at": "2026-10-05T19:19:39Z"
+   }
+  }
+ ],
+ "runsCreatedAfterTheirPr": {
+  "checked": 40,
+  "before": []
+ }
+}

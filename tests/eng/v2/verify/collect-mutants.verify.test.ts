@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- mutants wrap untyped functions under test */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 
 // prettier-ignore
@@ -10,9 +10,10 @@ import { collect } from "../../../../scripts/eng/v2/adapter/collect.mjs";
 import { createReaders } from "../../../../scripts/eng/v2/adapter/internal/github/index.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { createPrimitive } from "../../../../scripts/eng/v2/adapter/internal/github/primitive.mjs";
+import { createPrimitive as realCreatePrimitive } from "../../../../scripts/eng/v2/adapter/internal/github/primitive.mjs";
 import { COLLECT_ROWS, LOCAL, type CollectSut } from "./support/collect-rows";
 import { fakeGhKit, primitiveRows, type FakeGhKit } from "./support/fake-gh";
+import { primitiveHomes } from "./support/temp-home";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — mutation detection for the collector (SPEC-05A §5).
@@ -187,13 +188,21 @@ describe("collector mutation detection: the real collector, mutated, is rejected
 });
 
 describe("primitive mutation detection (SPEC-05A §5.1)", () => {
+  // every primitive built here (real or through a mutant) is tracked and closed after each test
+  const homes = primitiveHomes();
+  const createPrimitive = homes.wrap(realCreatePrimitive);
+  afterEach(() => homes.closeAll());
   let kit: FakeGhKit;
   let rows: ReturnType<typeof primitiveRows>;
   beforeAll(() => {
+    homes.setup();
     kit = fakeGhKit();
     rows = primitiveRows(kit, kit.make("json", `process.stdout.write(JSON.stringify({ hello: "world" }));`));
   });
-  afterAll(() => kit.cleanup());
+  afterAll(() => {
+    kit.cleanup();
+    homes.teardown();
+  });
 
   it("baseline: the real primitive satisfies both rows", () => {
     expect(rows["PT-no-dedicated-token"](createPrimitive)).toBeNull();
@@ -203,5 +212,10 @@ describe("primitive mutation detection (SPEC-05A §5.1)", () => {
   it("detects the UNSAFE mutant: the operator's GH_TOKEN is a fallback for the dedicated token", () => {
     const mutant = (o: any) => createPrimitive({ ...o, env: { ...o.env, HONE_ENG_READ_TOKEN: o.env?.HONE_ENG_READ_TOKEN || o.env?.GH_TOKEN || process.env.GH_TOKEN } });
     expect(rows["PT-no-dedicated-token"](mutant)).not.toBeNull();
+  });
+
+  it("hygiene: no primitive home is left behind by these rows (SPEC-05A §5.1: close() removes it)", () => {
+    expect(homes.maxSeen()).toBeGreaterThan(0);
+    expect(homes.leftovers()).toEqual([]);
   });
 });

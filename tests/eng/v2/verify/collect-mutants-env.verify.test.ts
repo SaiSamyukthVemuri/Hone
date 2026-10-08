@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- the mocked child_process signatures are untyped on purpose */
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — mutant "the child inherits the caller's environment"
@@ -26,17 +26,25 @@ vi.mock("child_process", async (importOriginal) => wrapChildProcess(await import
 
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { createPrimitive } from "../../../../scripts/eng/v2/adapter/internal/github/primitive.mjs";
+import { createPrimitive as realCreatePrimitive } from "../../../../scripts/eng/v2/adapter/internal/github/primitive.mjs";
 import { fakeGhKit, primitiveRows, type FakeGhKit } from "./support/fake-gh";
+import { primitiveHomes } from "./support/temp-home";
 
 describe("primitive mutation detection: an inherited environment (SPEC-05A §5.1)", () => {
+  const homes = primitiveHomes();
+  const createPrimitive = homes.wrap(realCreatePrimitive);
+  afterEach(() => homes.closeAll());
   let kit: FakeGhKit;
   let rows: ReturnType<typeof primitiveRows>;
   beforeAll(() => {
+    homes.setup();
     kit = fakeGhKit();
     rows = primitiveRows(kit, kit.make("json", `process.stdout.write(JSON.stringify({ hello: "world" }));`));
   });
-  afterAll(() => kit.cleanup());
+  afterAll(() => {
+    kit.cleanup();
+    homes.teardown();
+  });
 
   it("baseline (wrapper OFF): the child environment is built from nothing", () => {
     mutant.inheritEnv = false;
@@ -50,5 +58,10 @@ describe("primitive mutation detection: an inherited environment (SPEC-05A §5.1
     } finally {
       mutant.inheritEnv = false;
     }
+  });
+
+  it("hygiene: no primitive home is left behind by these rows (SPEC-05A §5.1: close() removes it)", () => {
+    expect(homes.maxSeen()).toBeGreaterThan(0);
+    expect(homes.leftovers()).toEqual([]);
   });
 });
