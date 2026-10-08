@@ -14,6 +14,7 @@ import { modelEq, scripted, type PassPlan } from "./support/coherence-model";
 import { canon, noThrow } from "./support/deep";
 import { NINE } from "./support/key-oracle";
 import { coherenceViolations, confirmViolations, keyPool } from "./support/row1-properties";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — ENG-LOOP V1 05A row 1, one coherent key per pass.
@@ -243,3 +244,5 @@ describe("row 1 verify: confirmPass, the bounded confirming re-read", () => {
     expect(isUnknownReason((out as any).value?.reason)).toBe(true);
   });
 });
+
+budgetGuard("row1-coherence.verify.test.ts");

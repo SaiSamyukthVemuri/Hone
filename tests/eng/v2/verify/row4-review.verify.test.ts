@@ -36,6 +36,7 @@ import {
   reviewAnswer,
   type Impl456,
 } from "./support/rows456";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — ENG-LOOP V1 05A rows 4-5: trusted review provenance and
@@ -309,3 +310,5 @@ describe("rows 4-5 verify: comment edits (§4.1 lastEditedAt, §4.2 channel B re
     for (const rev of r.record.reviews) expect(Object.keys(rev).sort()).toEqual(["author", "body", "commitOid", "id", "state"]);
   });
 });
+
+budgetGuard("row4-review.verify.test.ts");

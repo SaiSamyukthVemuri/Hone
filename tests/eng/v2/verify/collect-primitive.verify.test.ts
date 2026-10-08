@@ -10,6 +10,7 @@ import { TOKEN_ENV, createPrimitive as realCreatePrimitive } from "../../../../s
 import { isUnknownReason } from "../../../../scripts/eng/v2/contract/reasons.mjs";
 import { DEDICATED, OPERATOR, fakeGhKit, type FakeGhKit } from "./support/fake-gh";
 import { primitiveHomes } from "./support/temp-home";
+import { budgetGuard, SLOW_ROW_MS } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — SPEC-05A §5.1 "primitive.mjs" (f75ca255), black-box.
@@ -70,7 +71,7 @@ const open = (dir: string, extra: Record<string, string> = {}, timeoutMs = 4000)
 };
 const statsOf = (p: any): any[] => (typeof p.stats === "function" ? p.stats() : p.stats);
 
-describe("§5.1 primitive: the dedicated read-only token, and never the operator's session", () => {
+describe("§5.1 primitive: the dedicated read-only token, and never the operator's session", { timeout: SLOW_ROW_MS }, () => {
   it("the token variable is HONE_ENG_READ_TOKEN", () => {
     expect(TOKEN_ENV).toBe("HONE_ENG_READ_TOKEN");
   });
@@ -110,7 +111,7 @@ describe("§5.1 primitive: the dedicated read-only token, and never the operator
   });
 });
 
-describe("§5.1 primitive: a child environment built from nothing", () => {
+describe("§5.1 primitive: a child environment built from nothing", { timeout: SLOW_ROW_MS }, () => {
   const CANARY_PARAM = {
     GH_TOKEN: OPERATOR,
     GITHUB_TOKEN: OPERATOR,
@@ -171,7 +172,7 @@ describe("§5.1 primitive: a child environment built from nothing", () => {
   });
 });
 
-describe("§5.1 primitive: the request it sends", () => {
+describe("§5.1 primitive: the request it sends", { timeout: SLOW_ROW_MS }, () => {
   it("REST is GET with fixed Accept and API-version headers; the route is the endpoint; no body fields; no token in argv", () => {
     clearRecords();
     const p = open(PATHS.json);
@@ -219,7 +220,7 @@ describe("§5.1 primitive: the request it sends", () => {
   });
 });
 
-describe("§5.1 primitive: answers", () => {
+describe("§5.1 primitive: answers", { timeout: SLOW_ROW_MS }, () => {
   it("exit 0 with JSON is the body", () => {
     const r = open(PATHS.json).request(REST);
     expect(r).toEqual({ ok: true, body: { hello: "world", n: [1, 2] } });
@@ -256,7 +257,7 @@ describe("§5.1 primitive: answers", () => {
   });
 });
 
-describe("§5.1 primitive: the token is never an argument, a result, a detail or a statistic", () => {
+describe("§5.1 primitive: the token is never an argument, a result, a detail or a statistic", { timeout: SLOW_ROW_MS }, () => {
   it("an echo of the token in gh's stderr is redacted from the detail", () => {
     const r = open(PATHS.echoErr).request(REST);
     expect(r.reason).toBe("read_failed");
@@ -318,7 +319,7 @@ describe("§5.1 primitive: the token is never an argument, a result, a detail or
   });
 });
 
-describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e, 18d541a5 and 14522609)", () => {
+describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e, 18d541a5 and 14522609)", { timeout: SLOW_ROW_MS }, () => {
   // "A request must be exactly one of the two shapes — { label, rest } or { label, graphql, variables }, with string
   // or integer variables — or it is refused as malformed before anything is spawned."
   const G = "query($n:Int!){ repository(owner:\"o\",name:\"n\"){ pullRequest(number:$n){ number } } }";
@@ -404,3 +405,5 @@ describe("hygiene: this file leaves no primitive home behind (SPEC-05A §5.1: cl
     expect(homes.leftovers()).toEqual([]);
   });
 });
+
+budgetGuard("collect-primitive.verify.test.ts");

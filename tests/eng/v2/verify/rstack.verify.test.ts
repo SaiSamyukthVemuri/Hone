@@ -19,6 +19,7 @@ import { bindCi, requiredJobs } from "../../../../scripts/eng/v2/adapter/interna
 import { evaluate, type Impl } from "./support/pipeline";
 import { matches, show, type Expect } from "./support/scenarios";
 import { REAL, RUN_810, TARGET_REPO_ID, allGreenJobs, golden, ownRun, type RunSpec, type World } from "./support/world";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — R-STACK (SPEC-05A §7), operator gate of 2026-10-08.
@@ -465,3 +466,5 @@ describe("R-STACK evidence: the recorded observations say what the proof's premi
     }
   });
 });
+
+budgetGuard("rstack.verify.test.ts");
