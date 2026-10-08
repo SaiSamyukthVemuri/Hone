@@ -448,10 +448,20 @@ describe("R-STACK evidence: the recorded observations say what the proof's premi
     expect(hone.runsCreatedAfterTheirPr.before).toEqual([]);
   });
 
-  it("NEW FINDING (base binding): an automatic base change is an AutomaticBaseChangeSucceededEvent, not a BaseRefChangedEvent", () => {
+  it("R-AUTOBASE (closed at 4b0662a2): an automatic base change is an AutomaticBaseChangeSucceededEvent, not a BaseRefChangedEvent", () => {
     const a = EV("public-automatic-base-change.json");
     const autoOnly = a.prs.filter((p: any) => p.events.every((e: any) => e.type === "AutomaticBaseChangeSucceededEvent"));
     expect(autoOnly.length).toBeGreaterThanOrEqual(4);
     for (const p of autoOnly) expect(p.baseRefNow).toBe("main");
+  });
+
+  it("R-AUTOBASE (closed at 4b0662a2): every recorded grafana event list, as an answer to the widened §2.2 query, binds base_ref_changed", () => {
+    for (const p of EV("public-automatic-base-change.json").prs) {
+      const w = golden();
+      const types = p.events.map((e: any) => e.type);
+      w.prContext.baseRefEvents = types.filter((t: string) => t === "BaseRefChangedEvent").length;
+      w.prContext.extraBaseEvents = types.filter((t: string) => t !== "BaseRefChangedEvent");
+      expect(evaluate(w, REAL_IMPL).result, `#${p.number}`).toMatchObject({ ok: false, reason: "base_ref_changed" });
+    }
   });
 });
