@@ -46,3 +46,6 @@ Hone_Pilot_Control_Sheet.xlsx
 
 # OpenWiki's resumable run state. A completed run deletes it; it is never committed.
 /openwiki/.run.json
+
+# ENG-LOOP V1 shepherd diagnostic receipts (scripts/eng/v2/receipts.mjs): local, non-shipping
+/.eng/

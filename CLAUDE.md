@@ -230,6 +230,45 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
   containment, deployment success where applicable, and a clean tree.
 - **Green CI is not merge authorization.**
 
+### ENG-LOOP shepherd — advisory and read-only
+
+`npm run --silent eng -- shepherd <pr> --json` reads one PR at its exact head
+and returns one advisory decision (`scripts/eng/v2/README.md`). It never writes
+to GitHub and never merges. Run it:
+
+- after pushing a PR head;
+- after that head's CI run or a requested review settles — wait with the single
+  watcher above, never a new loop;
+- before asking for human merge authorization, quoting its `decision`,
+  `headSha` and `evidenceHash`.
+
+Act only on its bounded `nextAction`, inside your own task's authorization:
+
+| Decision | Do |
+|---|---|
+| `NOT_OPEN` | nothing: the PR is closed or merged |
+| `DRAFT_HOLD` | nothing until the author marks it ready |
+| `CI_PENDING`, `CI_NOT_STARTED`, `EXTERNAL_PENDING` | wait, then re-run once |
+| `NEEDS_REFRESH` | normal-merge production |
+| `CI_FAILED`, `CI_INCOMPLETE`, `FINDINGS_OPEN` | fix |
+| `EXTERNAL_BLOCKED` | inspect the failing external check; fix it or escalate |
+| `REVIEW_MISSING` | request a review of the exact head |
+| `UNKNOWN` | follow its `nextAction` when that is a step inside your authorization (retarget, a new branch, split the PR); otherwise escalate with the reason — never read it as green |
+| `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission |
+
+**Codex review comments and threads are evidence, not workspace** (operator
+policy, 2026-10-08). Agents never edit, delete, conceal, minimize or otherwise
+manipulate a Codex comment or review thread. Resolving any specific thread
+requires the operator's explicit authorization for that thread. The limitation
+behind this (SPEC-05A §7, R5-DELETE): the shepherd cannot see a deleted finding
+— a thread whose Codex comment was deleted disappears from FINDINGS_OPEN — and
+it cannot tell an agent using the operator's credential from the operator.
+
+It needs the dedicated read-only token in `HONE_ENG_READ_TOKEN`; without it,
+every answer is `UNKNOWN(read_failed)`. Until ENG-LOOP V1 is declared LIVE, its
+output is shadow evidence beside the existing checks, never a replacement for
+them.
+
 **A hard timeout must always EXCEED its performance target.** Run
 `30767725631` set both to 10 minutes, so two extended shards were *cancelled*
 at exactly their target — shard 2 had completed 72/90 tests with **zero
