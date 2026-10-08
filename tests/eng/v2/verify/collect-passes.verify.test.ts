@@ -32,7 +32,7 @@ import {
 } from "./support/collector";
 import { clone, noThrow } from "./support/deep";
 import { rng } from "./support/prng";
-import { FAILED_CONCLUSIONS, P0, PRODUCTION_REF, RUN_810, RUN_810_CREATED, ownRun, allGreenJobs, rawRulesFor, sha40 } from "./support/world";
+import { FAILED_CONCLUSIONS, P0, PRODUCTION_REF, RUN_810, RUN_810_CREATED, ownRun, allGreenJobs, sha40 } from "./support/world";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — SPEC-05A §5.3 (passes) and §5.4 (Evidence), f75ca255.
@@ -677,24 +677,12 @@ describe("collector §5.3 step 0: every option is checked before the first reque
 });
 
 // ---------------------------------------------------------------------------
-// NEW FINDING (pass 5, low): readers built with another production ref. Step 0 fixes collect's own policy, but the
-// readers come from their caller (README: the production ref comes "from fixed policy … never from a caller").
-// A §2.5 activity record and a §2.4 rules record carry no branch, so another branch's clean history binds as
-// production's. Strict known-failure: it starts failing, and must be re-derived, once the readers refuse or
-// ignore a policy other than V1's.
+// Pass 5's finding, closed at 14522609 (§5.1: "readers are never built for another repository, production ref or
+// workflow, so the history and CI reads cannot be pointed elsewhere"). A §2.5 activity record and a §2.4 rules record
+// carry no branch, so readers for another production ref would bind another branch's clean history as production's;
+// the control shows what is at stake, and construction now refuses those readers.
 // ---------------------------------------------------------------------------
-describe("collector: readers built for another production ref (pass 5)", () => {
-  const otherRef = "main";
-  const withRewrite = (w: CWorld) => {
-    const fake = fakeTransport(w);
-    // the other branch: protected the same way, no rewrite in its year (empty listings echo nothing)
-    const request = (q: any) => {
-      if (typeof q?.rest === "string" && q.rest.includes(`/rules/branches/${otherRef}`)) return { ok: true, body: rawRulesFor(["deletion", "non_fast_forward"]) };
-      if (typeof q?.rest === "string" && q.rest.includes(`activity?ref=${encodeURIComponent(`refs/heads/${otherRef}`)}`)) return { ok: true, body: [] };
-      return fake.request(q);
-    };
-    return { request, fake };
-  };
+describe("collector: readers for another production ref cannot be built (§5.1, 14522609)", () => {
   const forcePushed = () => {
     const w = goldenC();
     w.base.activity.forcePush = [{ timestamp: "2026-09-01T00:00:00Z", before: sha40(0xf0), after: sha40(0xf1) }];
@@ -706,13 +694,13 @@ describe("collector: readers built for another production ref (pass 5)", () => {
     expect(r.evidence.rows.ci).toMatchObject({ ok: false, reason: "base_history_unverified" });
   });
 
-  it.fails("[known deviation at 18d541a5] readers built for another production ref cannot turn production's history into a pass", async () => {
-    const { request } = withRewrite(forcePushed());
+  it("readers for production ref 'main' cannot be built, so that history can never be bound as production's", () => {
+    const fake = fakeTransport(forcePushed());
     let readers: any = null;
-    const made = noThrow(() => (readers = createReaders({ request, policy: { ...POLICY, productionRef: otherRef } })));
-    if (made.threw || !readers) return; // refused at creation: nothing to bind
-    const r = await collect({ prNumber: 810, readers, local: LOCAL(), now: () => NOW, policy: POLICY });
-    expect(r.ok === true && r.evidence.rows.ci?.value?.outcome === "SUCCEEDED", JSON.stringify(r.evidence?.rows?.ci)).toBe(false);
+    const made = noThrow(() => (readers = createReaders({ request: fake.request, policy: { ...POLICY, productionRef: "main" } })));
+    const built = !made.threw && readers && typeof readers === "object" && typeof readers.readActivity === "function";
+    expect(built).toBe(false);
+    expect(fake.log.length).toBe(0);
   });
 });
 

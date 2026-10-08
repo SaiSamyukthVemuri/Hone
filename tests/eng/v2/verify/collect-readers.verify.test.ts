@@ -248,8 +248,7 @@ describe("§5.1 parseFileBlob(raw, { path })", () => {
 
 describe("§5.1 readers: the policy every route is built from", () => {
   // README 'Parameters': "Each value comes from the coherent key (K0.headRef) or from fixed policy (productionRef),
-  // never from a caller." Since 18d541a5, §5.3 step 0 refuses any collect policy but V1's — but the readers are
-  // created separately, from the policy their caller gives, and collect cannot see it.
+  // never from a caller." §5.3 step 0 (18d541a5) pins collect's policy; §5.1 (14522609) pins the readers' too.
   const CALLS: Array<(r: any) => unknown> = [
     (r) => r.readBranchRules(),
     (r) => r.readActivity("force_push"),
@@ -274,17 +273,52 @@ describe("§5.1 readers: the policy every route is built from", () => {
     expect(requestsWith({})).toEqual(V1());
   });
 
-  // NEW FINDING (pass 5, low; reachable only through a caller that builds readers with another policy): such readers
-  // read another repository, branch or workflow, and the activity record carries no ref, so bindCi would take another
-  // branch's history for production's. Strict known-failures: each starts failing, and must be flipped, once the
-  // readers refuse (or ignore) any policy but V1's.
-  for (const [label, policy] of [
+  // 14522609 §5.1: "`policy` may be omitted; if given, it must equal V1's fixed policy (§2, §3) exactly, or
+  // construction fails — readers are never built for another repository, production ref or workflow".
+  it("an equal copy of V1's policy, fields reordered or frozen, builds the same eleven readers", () => {
+    for (const policy of [Object.fromEntries(Object.entries(POLICY).reverse()), Object.freeze({ ...POLICY })]) {
+      expect(Object.keys(createReaders({ request: () => ({ ok: false, reason: "read_failed", detail: "spy" }), policy })).length).toBe(11);
+      expect(requestsWith({ policy })).toEqual(V1());
+    }
+  });
+
+  it("the reads cannot be pointed elsewhere after construction: a policy whose production ref changes later is not re-read", () => {
+    let reads = 0;
+    const shifting: any = { ...POLICY };
+    Object.defineProperty(shifting, "productionRef", { enumerable: true, get: () => (++reads > 3 ? "main" : POLICY.productionRef) });
+    const seen = requestsWith({ policy: shifting });
+    const again = requestsWith({ policy: POLICY });
+    expect(seen.filter((q) => q.includes("main"))).toEqual([]);
+    expect(seen).toEqual(again);
+  });
+
+  const OTHER: Array<[string, unknown]> = [
     ["another owner", { ...POLICY, owner: "someone-else" }],
+    ["another repository name", { ...POLICY, name: "Other" }],
+    ["another repository id", { ...POLICY, repoId: 1 }],
+    ["the repository id as a string", { ...POLICY, repoId: String(POLICY.repoId) }],
     ["another production ref", { ...POLICY, productionRef: "main" }],
     ["another workflow", { ...POLICY, workflowId: 1 }],
-  ] as const)
-    it.fails(`[known deviation at 18d541a5] readers given ${label} never request anything outside V1's policy`, () => {
-      const v1 = new Set(V1());
-      for (const q of requestsWith({ policy })) expect(v1.has(q), q).toBe(true);
+    ["an extra field", { ...POLICY, extra: 1 }],
+    [
+      "a missing field",
+      (() => {
+        const p: any = { ...POLICY };
+        delete p.workflowId;
+        return p;
+      })(),
+    ],
+    ["an empty policy", {}],
+    ["a null policy", null],
+    ["a Map", new Map(Object.entries(POLICY))],
+  ];
+  for (const [label, policy] of OTHER)
+    it(`a policy with ${label}: construction fails, and nothing is ever requested for it`, () => {
+      const seen: any[] = [];
+      let readers: any = null;
+      const out = noThrow(() => (readers = createReaders({ request: (q: any) => (seen.push(q), { ok: false, reason: "read_failed", detail: "spy" }), policy })));
+      const built = !out.threw && readers && typeof readers === "object" && typeof readers.readBranchRules === "function";
+      expect(built, "readers were built for a policy other than V1's").toBe(false);
+      expect(seen).toEqual([]);
     });
 });
