@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { SectionLabel } from "@/components/ui/section-label";
 
 type Props = {
   slug: string;
@@ -30,9 +31,7 @@ export function BookingLinkCard({
   if (variant === "inline") {
     return (
       <div className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900">
-        <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Your booking link
-        </p>
+        <SectionLabel as="p">Your booking link</SectionLabel>
         <div className="flex flex-wrap items-center gap-3">
           <a
             href={url}

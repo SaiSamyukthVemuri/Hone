@@ -2,6 +2,7 @@ import { INTAKE_STEPS, type Question } from "@/lib/intake/questions";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { PostcareSettingsForm } from "../studio/PostcareSettingsForm";
 import { PolicySettingsForm } from "../studio/PolicySettingsForm";
+import { SectionLabel } from "@/components/ui/section-label";
 
 // Intake & Postcare settings page. Two surfaces:
 //
@@ -97,10 +98,10 @@ export default async function IntakeAndPostcarePage() {
               >
                 <summary className="flex cursor-pointer list-none items-start justify-between gap-3 px-5 py-4 [&::-webkit-details-marker]:hidden">
                   <div className="flex flex-col gap-1">
-                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <SectionLabel>
                       Step {step.id} of {INTAKE_STEPS.length} &middot;{" "}
                       {step.shortLabel}
-                    </span>
+                    </SectionLabel>
                     <h3 className="text-base font-medium tracking-tight">
                       {step.title}
                     </h3>
