@@ -1,0 +1,86 @@
+{
+ "recorded": "2026-10-08 (read-only GraphQL: timelineItems(itemTypes: [AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, BASE_REF_CHANGED_EVENT]) on the 100 most recently updated PRs)",
+ "repository": "grafana/grafana",
+ "note": "When a merged PR's head branch is deleted, GitHub retargets PRs based on it and records an AutomaticBaseChangeSucceededEvent. No BaseRefChangedEvent is recorded for that change (#133976 shows both kinds: an earlier manual change is a BaseRefChangedEvent, the later automatic one is not). Feature-branch names redacted.",
+ "scanned": 100,
+ "prs": [
+  {
+   "number": 134174,
+   "baseRefNow": "main",
+   "events": [
+    {
+     "type": "AutomaticBaseChangeSucceededEvent",
+     "createdAt": "2026-10-06T18:43:29Z",
+     "oldBase": "<feature-branch>",
+     "newBase": "main"
+    }
+   ]
+  },
+  {
+   "number": 134187,
+   "baseRefNow": "main",
+   "events": [
+    {
+     "type": "AutomaticBaseChangeSucceededEvent",
+     "createdAt": "2026-10-07T16:11:19Z",
+     "oldBase": "<feature-branch>",
+     "newBase": "main"
+    }
+   ]
+  },
+  {
+   "number": 132957,
+   "baseRefNow": "main",
+   "events": [
+    {
+     "type": "AutomaticBaseChangeSucceededEvent",
+     "createdAt": "2026-09-24T15:06:40Z",
+     "oldBase": "<feature-branch>",
+     "newBase": "main"
+    }
+   ]
+  },
+  {
+   "number": 134386,
+   "baseRefNow": "main",
+   "events": [
+    {
+     "type": "AutomaticBaseChangeSucceededEvent",
+     "createdAt": "2026-10-07T14:17:36Z",
+     "oldBase": "<feature-branch>",
+     "newBase": "main"
+    }
+   ]
+  },
+  {
+   "number": 133758,
+   "baseRefNow": "main",
+   "events": [
+    {
+     "type": "AutomaticBaseChangeSucceededEvent",
+     "createdAt": "2026-10-07T18:26:53Z",
+     "oldBase": "<feature-branch>",
+     "newBase": "main"
+    }
+   ]
+  },
+  {
+   "number": 133976,
+   "baseRefNow": "main",
+   "events": [
+    {
+     "type": "BaseRefChangedEvent",
+     "createdAt": "2026-10-01T18:16:51Z",
+     "previousRefName": "main",
+     "currentRefName": "<feature-branch>"
+    },
+    {
+     "type": "AutomaticBaseChangeSucceededEvent",
+     "createdAt": "2026-10-06T12:25:24Z",
+     "oldBase": "<feature-branch>",
+     "newBase": "main"
+    }
+   ]
+  }
+ ]
+}
