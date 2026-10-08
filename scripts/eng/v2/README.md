@@ -136,8 +136,11 @@ report shape** in JSON mode: every field above, `decision: "UNKNOWN"`, `reasonCo
 characters in anything GitHub supplied.
 
 In-process callers use `runShepherdCli({ argv, env, out, err, now?, timer?, spawn?, local?, toolVersion?,
-receiptsDir? })`, which returns the exit code. `now` dates the evidence (milliseconds, a `Date` or an ISO-8601 UTC
-string); `timer` times the requests (milliseconds, `Date.now` by default).
+receiptsDir? })`, which returns the exit code. `now` is the clock that dates the evidence — a function returning
+milliseconds, a `Date` or an ISO-8601 UTC string (a plain value is not a clock and is UNKNOWN(malformed)); `timer`
+is the function that times the requests (milliseconds, `Date.now` by default). A receipt whose temporary name
+cannot be removed after it was published is still `written`; stderr says so, and readers report the leftover as an
+interrupted write until it is removed.
 
 **Exit codes.** A successful read is not READY.
 

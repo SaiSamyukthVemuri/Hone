@@ -175,22 +175,25 @@ export function renderText(r) {
   const lines = [];
   const i = r.instrumentation;
   const latency = Number.isFinite(i.latencyMs) ? `${(i.latencyMs / 1000).toFixed(1)} s` : "n/a";
-  lines.push(`ENG-LOOP shepherd - PR #${r.pr ?? "unknown"} - ${r.advisory}`);
-  lines.push(`  ${pad("decision")}${r.decision}${r.decision === "UNKNOWN" ? ` (${r.reasonCodes.join(", ")})` : ""}`);
-  lines.push(`  ${pad("next")}${r.nextAction}`);
-  lines.push(`  ${pad("head")}${r.headSha ?? "unknown"}`);
-  lines.push(`  ${pad("base")}${r.baseRef ?? "unknown"}`);
-  lines.push(`  ${pad("production")}${r.production.ref} at ${r.production.tip ?? "unknown"}`);
+  // Every value is escaped, not only the ones known to come from GitHub: a branch name is GitHub's too.
+  lines.push(`ENG-LOOP shepherd - PR #${safe(r.pr ?? "unknown")} - ${r.advisory}`);
+  lines.push(
+    `  ${pad("decision")}${safe(r.decision)}${r.decision === "UNKNOWN" ? ` (${safe(r.reasonCodes.join(", "))})` : ""}`,
+  );
+  lines.push(`  ${pad("next")}${safe(r.nextAction)}`);
+  lines.push(`  ${pad("head")}${safe(r.headSha ?? "unknown")}`);
+  lines.push(`  ${pad("base")}${safe(r.baseRef ?? "unknown")}`);
+  lines.push(`  ${pad("production")}${safe(r.production.ref)} at ${safe(r.production.tip ?? "unknown")}`);
   lines.push(`  ${pad("blocking")}${safe(JSON.stringify(r.blocking))}`);
-  lines.push(`  ${pad("evidence")}${r.evidenceHash ?? "none"}`);
-  lines.push(`  ${pad("observed")}${r.observedAt ?? "unknown"}`);
-  lines.push(`  ${pad("tool")}${r.toolVersion ?? "unknown"}`);
+  lines.push(`  ${pad("evidence")}${safe(r.evidenceHash ?? "none")}`);
+  lines.push(`  ${pad("observed")}${safe(r.observedAt ?? "unknown")}`);
+  lines.push(`  ${pad("tool")}${safe(r.toolVersion ?? "unknown")}`);
   lines.push(
     `  ${pad("reads")}${i.requests} requests, ${i.failedRequests} failed, ${latency}` +
       `${i.attempts ? `, ${i.attempts} attempt(s)` : ""}${i.confirmed ? ", confirmed" : ""}`,
   );
-  for (const ref of r.sourceReferences) lines.push(`  ${pad("source")}${ref}`);
-  if (r.receipt !== undefined) lines.push(`  ${pad("receipt")}${r.receipt}`);
+  for (const ref of r.sourceReferences) lines.push(`  ${pad("source")}${safe(ref)}`);
+  if (r.receipt !== undefined) lines.push(`  ${pad("receipt")}${safe(r.receipt)}`);
   lines.push(`  ${pad("merge")}a human authorizes it; this command never merges and never writes to GitHub`);
   return `${lines.join("\n")}\n`;
 }

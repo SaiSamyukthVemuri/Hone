@@ -232,6 +232,51 @@ describe("shepherd: the injected clock dates the evidence and never times the re
   });
 });
 
+describe("shepherd: text mode escapes every value, and the injected timer is the one that times requests", () => {
+  it("a base branch named with a bidirectional override or a control character prints escaped", () => {
+    const routes = routes800();
+    const keyRoute = `pr-key {"n":800,"name":"Hone","owner":"SaiSamyukthVemuri"}`;
+    routes[keyRoute] = () => {
+      const raw = load("pr-key/pr-800-open-draft.json");
+      raw.data.repository.pullRequest.baseRefName = "feat/\u202eevil\u2066x\u001b[31m";
+      return raw;
+    };
+    const r = inProcess(["shepherd", "800"], routes);
+    expect(r.stdout).not.toMatch(/[\u202e\u2066\u001b]/);
+    expect(r.stdout).toContain("feat/\\u{202e}evil\\u{2066}x\\u{001b}[31m");
+  });
+
+  it("the documented timer option is called for each request", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-shepherd-timer-"));
+    try {
+      let calls = 0;
+      runShepherdCli({
+        argv: ["shepherd", "800", "--json"],
+        env: { PATH: process.env.PATH, HONE_ENG_READ_TOKEN: TOKEN },
+        out: sink(),
+        err: sink(),
+        now: () => Date.parse("2026-10-07T21:00:00Z"),
+        timer: () => ++calls,
+        spawn: fakeGhSpawn(routes800()).spawn,
+        local: LOCAL,
+        toolVersion: TOOL,
+        receiptsDir: dir,
+      });
+      expect(calls).toBe(60);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an argv that is not a list of strings is a usage error, not an exception", () => {
+    for (const argv of [undefined, null, "shepherd 800", ["shepherd", 800]]) {
+      const err = sink();
+      expect(runShepherdCli({ argv: argv as any, env: {}, out: sink(), err })).toBe(EXIT.USAGE);
+      expect(err.text()).toContain("usage:");
+    }
+  });
+});
+
 describe("shepherd: the tool version is established or null, never a placeholder", () => {
   it("no git, or a HEAD that is not a SHA, gives null; a clean or dirty checkout gives its SHA", () => {
     const sha = "e".repeat(40);

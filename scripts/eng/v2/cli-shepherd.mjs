@@ -50,10 +50,15 @@ function localCi() {
 
 /**
  * @param {{ argv: string[], env: object, out: { write(s: string): void }, err: { write(s: string): void },
- *           now?: () => number, spawn?: Function, local?: object, toolVersion?: string, receiptsDir?: string }} io
+ *           now?: () => number | Date | string, timer?: () => number, spawn?: Function, local?: object,
+ *           toolVersion?: string | null, receiptsDir?: string }} io
  * @returns {number} the exit code
  */
-export function runShepherdCli({ argv, env, out, err, now, spawn, local, toolVersion, receiptsDir }) {
+export function runShepherdCli({ argv, env, out, err, now, timer, spawn, local, toolVersion, receiptsDir }) {
+  if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string")) {
+    err.write(`${USAGE}\n`);
+    return EXIT.USAGE;
+  }
   const json = argv.includes("--json");
   const flags = argv.filter((a) => a.startsWith("--"));
   const [command, pr, ...rest] = argv.filter((a) => !a.startsWith("--"));
@@ -72,6 +77,7 @@ export function runShepherdCli({ argv, env, out, err, now, spawn, local, toolVer
       prNumber: Number(pr),
       env,
       ...(now ? { now } : {}),
+      ...(timer ? { timer } : {}),
       ...(spawn ? { spawn } : {}),
       local: local ?? localCi(),
       toolVersion: toolVersion === undefined ? detectToolVersion() : toolVersion,
@@ -83,6 +89,7 @@ export function runShepherdCli({ argv, env, out, err, now, spawn, local, toolVer
       const written = built.ok ? writeReceipt(dir, built.receipt) : built;
       receipt = written.ok ? "written" : "failed";
       if (!written.ok) err.write(`shepherd: diagnostic receipt not written: ${written.detail}\n`);
+      if (written.ok && written.leftover) err.write("shepherd: receipt written, but a .tmp- file remains in the receipts directory\n");
     }
     const full = { ...report, receipt };
     out.write(json ? `${JSON.stringify(full, null, 2)}\n` : renderText(full));

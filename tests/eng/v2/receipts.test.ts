@@ -203,6 +203,25 @@ describe("receipts: damage is reported, never read as clean", () => {
     }
   });
 
+  it("a receipt published but whose temporary name cannot be removed is still written, and the leftover is reported", () => {
+    const dir = tempDir();
+    try {
+      const stuck = {
+        ...fsModule,
+        unlinkSync: () => {
+          throw Object.assign(new Error("EIO"), { code: "EIO" });
+        },
+      };
+      const receipt = receiptFrom(report()).receipt;
+      expect(writeReceipt(dir, receipt, { fs: stuck })).toMatchObject({ ok: true, leftover: true });
+      const r = readReceipts(dir);
+      expect(r.receipts).toEqual([receipt]);
+      expect(r).toMatchObject({ interrupted: 1, complete: false });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("a missing or unreadable directory is not complete: no data is never proof of no failures", () => {
     expect(readReceipts(path.join(tmpdir(), "hone-receipts-does-not-exist-0b1c"))).toMatchObject({
       receipts: [],

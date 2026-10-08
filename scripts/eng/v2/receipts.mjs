@@ -125,7 +125,13 @@ export function writeReceipt(
         if (e?.code === "EEXIST" && attempt < PUBLISH_ATTEMPTS) continue;
         throw e;
       }
-      fs.unlinkSync(tmp);
+      // Published. Failing to remove the temporary name does not unpublish it: say so, and the reader will
+      // report the leftover as an interrupted write (complete: false) until it is removed.
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        return { ok: true, file: name, leftover: true };
+      }
       return { ok: true, file: name };
     }
     throw Object.assign(new Error("no free receipt name"), { code: "EEXIST" });
