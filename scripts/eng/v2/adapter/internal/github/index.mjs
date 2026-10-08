@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { PR_KEY_QUERY, parsePrKey } from "../../../contract/pr-key.mjs";
-import { fail, isNonEmptyString, isPosInt, isSha40 } from "../../../contract/strict.mjs";
+import { canonicalJson, fail, isNonEmptyString, isPosInt, isSha40 } from "../../../contract/strict.mjs";
 import {
   PR_CONTEXT_QUERY,
   parseActivity,
@@ -46,6 +46,9 @@ const isSafeRef = (v) => isNonEmptyString(v) && SAFE_REF.test(v) && !v.split("/"
 const refused = (what) => Object.freeze({ ok: false, reason: "malformed", detail: `refused before any request: ${what}` });
 
 export function createReaders({ request, policy = POLICY }) {
+  // V1 reads one repository under one fixed policy (SPEC-05A §5.1): readers are never built for another owner,
+  // repository, production ref or workflow, so no caller can point the history or CI reads elsewhere.
+  if (canonicalJson(policy) !== canonicalJson(POLICY)) throw new Error("the reader policy is not V1's fixed policy");
   const { owner, name, productionRef, workflowId } = policy;
   if (!isSafeRef(productionRef) || !isPosInt(workflowId)) throw new Error("the reader policy is invalid");
   const repoPath = `repos/${owner}/${name}`;

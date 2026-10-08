@@ -365,8 +365,11 @@ repository(owner,name){ object(oid:H){ __typename ... on Commit{ oid statusCheck
 
 ### 5.1 Readers and transport
 
-`adapter/internal/github/index.mjs`: `createReaders({ request, policy })`. Each reader takes typed scalars only and
-refuses anything else **before any request** (`malformed`, detail "refused before any request"). It makes exactly one
+`adapter/internal/github/index.mjs`: `createReaders({ request, policy })`. `policy` may be omitted; if given, it must
+equal V1's fixed policy (§2, §3) exactly, or construction fails — readers are never built for another repository,
+production ref or workflow, so the history and CI reads cannot be pointed elsewhere (verifier pass 5). Each reader
+takes typed scalars only and refuses anything else **before any request** (`malformed`, detail "refused before any
+request"). It makes exactly one
 request and returns its §2–§4 parser's result for the request it made. A transport failure passes through unchanged.
 
 | Reader | Parameters | Request |
@@ -398,7 +401,8 @@ request and returns its §2–§4 parser's result for the request it made. A tra
   request label.
 - A request must be exactly one of the two shapes — `{ label, rest }` or `{ label, graphql, variables }` with no other
   key, a non-empty `rest` or `graphql`, and `variables` a plain object of strings and integers — or it is refused as
-  `malformed` before anything is spawned.
+  `malformed` before anything is spawned. "Plain" means an object literal: an array, a `Map`, a `Date` or any class
+  instance is refused.
 - REST is `GET` with fixed `Accept` and API-version headers. GraphQL sends numbers with `-F` and strings with `-f`.
 - Exit 0 with JSON is the body. A non-zero exit is `read_failed`, with the reader's label and `gh`'s first stderr line
   as the detail (for example `candidate-runs: gh: … (HTTP 403)`), which names a missing permission. Non-JSON output

@@ -43,7 +43,12 @@ function redactor(token) {
   };
 }
 
-const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+/** A plain object literal: not an array, a Map, a Date or any class instance. */
+const isPlainObject = (v) => {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+};
 
 const keysAre = (o, keys) => {
   const own = Object.keys(o).sort();
