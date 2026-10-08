@@ -101,15 +101,25 @@ const KNOWN_FEATURE_ROUTES = new Set([
   "/features/waitlist-invitation",
 ]);
 
+// Hone intentionally disables Next's automatic trailing-slash redirects.
+// Remove ONE terminal slash for comparison; do not normalize multiple slashes
+// or rewrite the actual URL. That preserves the deployed page's original path.
+export function normalizePublicPathname(pathname: string): string {
+  return pathname.length > 1 && pathname.endsWith("/")
+    ? pathname.slice(0, -1)
+    : pathname;
+}
+
 export function isUnknownPublicPath(pathname: string): boolean {
   if (!pathname.startsWith("/") || pathname === "/") return false;
-  const first = pathname.split("/")[1] ?? "";
+  const normalized = normalizePublicPathname(pathname);
+  const first = normalized.split("/")[1] ?? "";
   // Unlike /book/:slug, /features is a *finite* namespace. Treat missing
   // children and the nonexistent feature-index route as genuine 404s.
-  if (first === "features") return !KNOWN_FEATURE_ROUTES.has(pathname);
+  if (first === "features") return !KNOWN_FEATURE_ROUTES.has(normalized);
   if (!ROUTE_ROOTS.has(first)) return true;
   // A static page cannot have a child route; don't redirect its typo to login.
-  return SINGLE_PAGE_ROOTS.has(first) && pathname !== "/" + first;
+  return SINGLE_PAGE_ROOTS.has(first) && normalized !== "/" + first;
 }
 
 export const NOT_FOUND_HTML = [

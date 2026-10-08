@@ -6,6 +6,7 @@ import { middleware } from "../../../middleware";
 import {
   preferredPublicRepresentation,
   isUnknownPublicPath,
+  normalizePublicPathname,
   appendVaryAccept,
 } from "@/lib/marketing/agent-http";
 import {
@@ -67,7 +68,7 @@ describe("public Markdown negotiation", () => {
     expect(unavailable.status).toBe(406);
   });
   it("negotiates new trust pages without opening private paths", async () => {
-    for (const route of ["/about", "/contact"]) {
+    for (const route of ["/about", "/contact", "/about/", "/contact/"]) {
       const resp = await middleware(new NextRequest("https://hone.care" + route, {
         headers: { accept: "text/markdown" },
       }));
@@ -110,6 +111,18 @@ describe("unknown route protection", () => {
     expect(feature.status).toBe(404);
     expect(feature.headers.get("Content-Type")).toMatch(/^text\/markdown/);
     expect(await feature.text()).toContain("/llms.txt");
+
+    const missingSlash = await middleware(new NextRequest(
+      "https://hone.care/features/unshipped-resource/",
+      { headers: { accept: "text/markdown" } },
+    ));
+    expect(missingSlash.status).toBe(404);
+    const validSlash = await middleware(new NextRequest(
+      "https://hone.care/about/",
+      { headers: { accept: "text/markdown" } },
+    ));
+    expect(validSlash.status).toBe(200);
+    expect(await validSlash.text()).toContain("# About Hone");
   });
   it("does not intercept existing private, API or token route families", () => {
     for (const route of [
@@ -123,6 +136,13 @@ describe("unknown route protection", () => {
     expect(isUnknownPublicPath("/features/not-a-feature")).toBe(true);
     expect(isUnknownPublicPath("/features/treatment-memory")).toBe(false);
     expect(isUnknownPublicPath("/features/waitlist-invitation")).toBe(false);
+    expect(isUnknownPublicPath("/features/treatment-memory/")).toBe(false);
+    expect(isUnknownPublicPath("/features/not-a-feature/")).toBe(true);
+    expect(isUnknownPublicPath("/about/")).toBe(false);
+    expect(isUnknownPublicPath("/contact/")).toBe(false);
+    expect(isUnknownPublicPath("/about//")).toBe(true);
+    expect(normalizePublicPathname("/about/")).toBe("/about");
+    expect(normalizePublicPathname("/")).toBe("/");
     expect(isUnknownPublicPath("/privacy/typo")).toBe(true);
     expect(isUnknownPublicPath("/")).toBe(false);
   });
@@ -155,6 +175,22 @@ describe("public agent and company information", () => {
     });
     expect(JSON.stringify(organization)).not.toContain("streetAddress");
     expect(JSON.stringify(organization)).not.toContain("telephone");
+  });
+  it("pins post-render Vary: Accept to the three public representations only", () => {
+    const config = JSON.parse(readFileSync(path.resolve(process.cwd(), "vercel.json"), "utf8"));
+    expect(config.crons).toHaveLength(3); // existing scheduling remains unchanged
+    const varyRules = config.routes;
+    expect(varyRules).toHaveLength(2);
+    const matches = (route: string) => varyRules.some((rule: {src:string;continue:boolean;transforms:Array<{type:string;op:string;target:{key:string};args:string}>}) =>
+      rule.continue === true &&
+      new RegExp(rule.src).test(route) &&
+      rule.transforms.some((t) =>
+        t.type === "response.headers" && t.op === "append" &&
+        t.target.key.toLowerCase() === "vary" && t.args.toLowerCase() === "accept",
+      ),
+    );
+    for (const route of ["/", "/about", "/contact", "/about/", "/contact/"]) expect(matches(route)).toBe(true);
+    for (const route of ["/clients", "/api/cron/calendar-sync", "/portal/verify/token", "/privacy", "/features/treatment-memory", "/about/private"]) expect(matches(route)).toBe(false);
   });
   it("follows llms.txt v2 H1, summary, guidance, H2 file-list format", () => {
     const value = readFileSync(path.resolve(process.cwd(), "public/llms.txt"), "utf8");

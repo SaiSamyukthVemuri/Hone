@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
-  appendVaryAccept, isUnknownPublicPath, NOT_FOUND_HTML,
-  preferredPublicRepresentation,
+  appendVaryAccept, isUnknownPublicPath, normalizePublicPathname,
+  NOT_FOUND_HTML, preferredPublicRepresentation,
 } from "@/lib/marketing/agent-http";
 import { NOT_FOUND_MARKDOWN, PUBLIC_MARKDOWN } from "@/lib/marketing/agent-content";
 import { updateSession } from "@/lib/supabase/middleware";
@@ -11,7 +11,9 @@ import { updateSession } from "@/lib/supabase/middleware";
 const PUBLIC_AGENT_ROUTES = new Set(["/about", "/contact", "/llms.txt"]);
 
 export async function middleware(request: NextRequest) {
-  const pathname = request.nextUrl.pathname;
+  // Only the routing *comparison* is normalized. The actual URL and Next's
+  // route handler continue to receive the original request unchanged.
+  const pathname = normalizePublicPathname(request.nextUrl.pathname);
   const isRead = request.method === "GET" || request.method === "HEAD";
   const accept = request.headers.get("Accept");
 
@@ -69,6 +71,9 @@ export async function middleware(request: NextRequest) {
   }
 
   if (isRead && PUBLIC_AGENT_ROUTES.has(pathname)) {
+    // Vercel applies a final response-header transform for these exact public
+    // paths. This middleware header is useful locally, but Next 15.5 can
+    // overwrite it when generating the HTML response.
     const response = NextResponse.next({ request });
     if (Object.prototype.hasOwnProperty.call(PUBLIC_MARKDOWN, pathname)) {
       appendVaryAccept(response.headers);
