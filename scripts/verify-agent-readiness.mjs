@@ -23,7 +23,8 @@ async function check(path, accept, status, type, required = [], vary = false, me
   const response = await fetch(new URL(path, origin), {
     method,
     headers: { Accept: accept },
-    redirect: "follow",
+    // Fail instead of following an auth redirect to a 200 /login shell.
+    redirect: "manual",
     signal: AbortSignal.timeout(20000),
   });
   const body = method === "HEAD" ? "" : await response.text();
@@ -54,7 +55,9 @@ try {
     await check(path, html, 404, html, ["Page not found"], true);
   }
   await check("/not-a-real-hone-page-2026", md, 404, md, [], true, "HEAD");
-  await check("/features/treatment-memory/", html, 200, html, ["<html"]);
+  await check("/features/treatment-memory/", html, 200, html, [
+    "<html", "Remember every treatment, before the client sits down."
+  ]);
   await check("/privacy", html, 200, html, ["Privacy"]);
   await check("/llms.txt", "text/plain", 200, "", ["# Hone", "## When to use Hone", "/about", "/contact"]);
   await check("/sitemap.xml", "application/xml", 200, "", ["https://hone.care/about", "https://hone.care/contact"]);

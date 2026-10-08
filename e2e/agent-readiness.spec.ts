@@ -40,9 +40,24 @@ test.describe("public agent readiness", () => {
     }
   });
 
+  test("feature page remains public with a trailing slash (no login redirect)", async ({ request }) => {
+    const response = await request.get("/features/treatment-memory/", {
+      headers: { Accept: "text/html" },
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(200);
+    expect(new URL(response.url()).pathname).toBe("/features/treatment-memory/");
+    const body = await response.text();
+    expect(body).toContain("Remember every treatment, before the client sits down.");
+    expect(body).not.toContain("<title>Sign in");
+  });
+
   test("trailing slash trust routes preserve HTML and Markdown", async ({ request }) => {
     for (const route of ["/about/", "/contact/"]) {
-      const html = await request.get(route, { headers: { Accept: "text/html" } });
+      const html = await request.get(route, {
+        headers: { Accept: "text/html" },
+        maxRedirects: 0,
+      });
       expect(html.status()).toBe(200);
       expect(html.headers()["content-type"]).toMatch(/^text\/html/);
       const markdown = await request.get(route, { headers: { Accept: "text/markdown" } });
