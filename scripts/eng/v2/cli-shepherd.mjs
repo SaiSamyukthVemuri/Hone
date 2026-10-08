@@ -13,23 +13,23 @@ import path from "node:path";
 
 import { LOCAL_ROOT, loadLocalCi } from "./adapter/local-ci.mjs";
 import { receiptFrom, writeReceipt } from "./receipts.mjs";
-import { EXIT, REPORT_SCHEMA, renderText, runShepherd } from "./shepherd.mjs";
+import { EXIT, buildErrorReport, renderText, runShepherd } from "./shepherd.mjs";
 
 export const RECEIPTS_ENV = "HONE_ENG_RECEIPTS_DIR";
 export const USAGE = "usage: npm run --silent eng -- shepherd <pr> [--json] [--no-receipt]";
 const FLAGS = ["--json", "--no-receipt"];
 
-/** `eng-loop-v1@<checkout HEAD>`, `+dirty` when the tool or its CI inputs differ from it, or `@unknown`. */
+/** `eng-loop-v1@<checkout HEAD>`, `+dirty` when the tool or its CI inputs differ from it, or null: never guessed. */
 export function detectToolVersion({ root = LOCAL_ROOT, exec = execFileSync } = {}) {
   const opts = { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] };
   try {
     const sha = String(exec("git", ["-C", root, "rev-parse", "HEAD"], opts)).trim();
-    if (!/^[0-9a-f]{40}$/.test(sha)) return "eng-loop-v1@unknown";
+    if (!/^[0-9a-f]{40}$/.test(sha)) return null;
     const paths = ["scripts/eng", "scripts/classify-changes.mjs", ".github/workflows/ci.yml"];
     const dirty = String(exec("git", ["-C", root, "status", "--porcelain", "--", ...paths], opts)).trim() !== "";
     return `eng-loop-v1@${sha}${dirty ? "+dirty" : ""}`;
   } catch {
-    return "eng-loop-v1@unknown";
+    return null;
   }
 }
 
@@ -58,8 +58,13 @@ export function runShepherdCli({ argv, env, out, err, now, spawn, local, toolVer
   const flags = argv.filter((a) => a.startsWith("--"));
   const [command, pr, ...rest] = argv.filter((a) => !a.startsWith("--"));
   if (command !== "shepherd" || !/^[1-9]\d{0,8}$/.test(pr ?? "") || rest.length > 0 || flags.some((f) => !FLAGS.includes(f))) {
-    if (json) out.write(`${JSON.stringify({ schema: REPORT_SCHEMA, error: "usage", usage: USAGE })}\n`);
-    else err.write(`${USAGE}\n`);
+    if (json) {
+      const prNumber = /^[1-9]\d{0,8}$/.test(pr ?? "") ? Number(pr) : null;
+      const report = buildErrorReport({ kind: "usage", prNumber, detail: USAGE, toolVersion: toolVersion ?? null });
+      out.write(`${JSON.stringify({ ...report, receipt: "none" }, null, 2)}\n`);
+    } else {
+      err.write(`${USAGE}\n`);
+    }
     return EXIT.USAGE;
   }
   try {
@@ -69,7 +74,7 @@ export function runShepherdCli({ argv, env, out, err, now, spawn, local, toolVer
       ...(now ? { now } : {}),
       ...(spawn ? { spawn } : {}),
       local: local ?? localCi(),
-      toolVersion: toolVersion ?? detectToolVersion(),
+      toolVersion: toolVersion === undefined ? detectToolVersion() : toolVersion,
     });
     let receipt = "disabled";
     if (!argv.includes("--no-receipt")) {
@@ -85,7 +90,8 @@ export function runShepherdCli({ argv, env, out, err, now, spawn, local, toolVer
   } catch (e) {
     err.write(`shepherd: internal error: ${e instanceof Error ? e.name : "error"}\n`);
     if (json) {
-      out.write(`${JSON.stringify({ schema: REPORT_SCHEMA, error: "internal", decision: "UNKNOWN", humanMergeRequired: true })}\n`);
+      const report = buildErrorReport({ kind: "internal", prNumber: Number(pr), detail: "the shepherd failed internally" });
+      out.write(`${JSON.stringify({ ...report, receipt: "none" }, null, 2)}\n`);
     }
     return EXIT.INTERNAL;
   }

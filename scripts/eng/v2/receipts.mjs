@@ -4,12 +4,16 @@
 // shadow evaluation, never a release-authority ledger, and `decide()` never
 // reads them.
 //
-// One receipt per file, published atomically: the record is written to an
-// exclusive temporary file, fsynced, then renamed into place. So a reader never
-// sees a torn record, concurrent writers never collide (unique names, `wx`),
-// and an interrupted write leaves only a `.tmp-` file that readers report as
-// possibly-missing data and never accept. Every record carries a checksum over
-// its canonical JSON, and the reader accepts exactly the closed schema.
+// One receipt per file, published atomically and exclusively: the record is
+// written to an exclusive temporary file, fsynced, then hard-linked to its
+// final name — link() fails rather than replace an existing file, so a receipt
+// is write-once by construction, not by the luck of a random suffix — and the
+// temporary name is removed. A reader never sees a torn record, and an
+// interrupted write leaves only a `.tmp-` file that readers report as
+// possibly-missing data and never accept. The reader opens only regular files,
+// never through a symlink and never blocking on a FIFO, and only up to a small
+// size. Every record carries a checksum over its canonical JSON, and the reader
+// accepts exactly the closed schema.
 //
 // A receipt holds no credential and no personal information: a PR number, two
 // hashes, a decision and its closed reasons, a time and a tool version.
@@ -17,7 +21,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import * as nodeFs from "node:fs";
-import { readFileSync, readdirSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import { canonicalJson } from "./contract/strict.mjs";
@@ -30,8 +34,12 @@ const REASONS = new Set([...DECISIONS, ...UNKNOWN_REASONS]);
 const SHA40 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
-const TOOL = /^eng-loop-v1@([0-9a-f]{40}(\+dirty)?|unknown)$/;
+const TOOL = /^eng-loop-v1@[0-9a-f]{40}(\+dirty)?$/;
 const PUBLISHED = /^\d{8}T\d{6}Z-pr\d+-\d+-[0-9a-f]{16}\.json$/;
+/** A receipt is a few hundred bytes; anything larger is not one, and is never read whole. */
+const MAX_RECEIPT_BYTES = 4096;
+const PUBLISH_ATTEMPTS = 3;
+const UNKNOWN_SET = new Set(UNKNOWN_REASONS);
 
 const checksumOf = (record) => createHash("sha256").update(canonicalJson(record)).digest("hex");
 
@@ -47,12 +55,13 @@ function validBody(r) {
     (r.evidenceHash === null || (typeof r.evidenceHash === "string" && SHA256.test(r.evidenceHash))) &&
     DECISIONS.includes(r.decision) &&
     Array.isArray(r.reasons) &&
-    r.reasons.length > 0 &&
-    r.reasons.every((x) => REASONS.has(x)) &&
+    r.reasons.length === 1 &&
+    REASONS.has(r.reasons[0]) &&
+    // A decision's reasons are [decision]; UNKNOWN's is its one closed reason (SPEC-05B §0).
+    (r.decision === "UNKNOWN" ? UNKNOWN_SET.has(r.reasons[0]) : r.reasons[0] === r.decision) &&
     typeof r.observed_at === "string" &&
     ISO.test(r.observed_at) &&
-    typeof r.tool_version === "string" &&
-    TOOL.test(r.tool_version)
+    (r.tool_version === null || (typeof r.tool_version === "string" && TOOL.test(r.tool_version)))
   );
 }
 
@@ -98,8 +107,8 @@ export function writeReceipt(
       return { ok: false, detail: "refused: not a valid receipt" };
     }
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const name = `${receipt.observed_at.replace(/[-:]/g, "")}-pr${receipt.pr}-${pid}-${random()}.json`;
-    tmp = path.join(dir, `.tmp-${name}`);
+    const stem = `${receipt.observed_at.replace(/[-:]/g, "")}-pr${receipt.pr}-${pid}`;
+    tmp = path.join(dir, `.tmp-${stem}-${random()}.json`);
     const fd = fs.openSync(tmp, "wx", 0o600);
     try {
       fs.writeSync(fd, `${JSON.stringify(receipt)}\n`);
@@ -107,8 +116,19 @@ export function writeReceipt(
     } finally {
       fs.closeSync(fd);
     }
-    fs.renameSync(tmp, path.join(dir, name));
-    return { ok: true, file: name };
+    // Publish exclusively: link() refuses an existing name, so no receipt can ever replace another.
+    for (let attempt = 1; attempt <= PUBLISH_ATTEMPTS; attempt++) {
+      const name = `${stem}-${random()}.json`;
+      try {
+        fs.linkSync(tmp, path.join(dir, name));
+      } catch (e) {
+        if (e?.code === "EEXIST" && attempt < PUBLISH_ATTEMPTS) continue;
+        throw e;
+      }
+      fs.unlinkSync(tmp);
+      return { ok: true, file: name };
+    }
+    throw Object.assign(new Error("no free receipt name"), { code: "EEXIST" });
   } catch (e) {
     return { ok: false, detail: `receipt not written: ${e?.code ?? "error"}${tmp ? " (a .tmp- file may remain)" : ""}` };
   }
@@ -127,6 +147,33 @@ export function parseReceipt(text) {
     return Object.freeze(r);
   } catch {
     return null;
+  }
+}
+
+/**
+ * One receipt file's text: a regular file, opened without following a symlink and without blocking on a FIFO,
+ * and no larger than MAX_RECEIPT_BYTES. Anything else is a reason, never a read.
+ */
+function readRegularFile(file) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (e) {
+    return { ok: false, why: `unreadable: ${e?.code ?? "error"}` };
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) return { ok: false, why: "not a regular file" };
+    if (st.size > MAX_RECEIPT_BYTES) return { ok: false, why: "too large to be a receipt" };
+    const buf = Buffer.alloc(st.size + 1);
+    let n = 0;
+    for (let got = 1; got > 0 && n < buf.length; n += got) got = readSync(fd, buf, n, buf.length - n, n);
+    if (n > st.size) return { ok: false, why: "changed while being read" };
+    return { ok: true, text: buf.subarray(0, n).toString("utf8") };
+  } catch (e) {
+    return { ok: false, why: `unreadable: ${e?.code ?? "error"}` };
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -154,13 +201,12 @@ export function readReceipts(dir) {
       invalid.push({ file: name, why: "not a receipt file name" });
       continue;
     }
-    let text;
-    try {
-      text = readFileSync(path.join(dir, name), "utf8");
-    } catch (e) {
-      invalid.push({ file: name, why: `unreadable: ${e?.code ?? "error"}` });
+    const read = readRegularFile(path.join(dir, name));
+    if (!read.ok) {
+      invalid.push({ file: name, why: read.why });
       continue;
     }
+    const text = read.text;
     const r = parseReceipt(text);
     if (r === null) invalid.push({ file: name, why: "not a valid receipt" });
     else receipts.push(r);

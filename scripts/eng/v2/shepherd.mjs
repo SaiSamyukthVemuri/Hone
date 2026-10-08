@@ -35,7 +35,22 @@ export function exitCodeFor(decision) {
   return EXIT.NOT_CANDIDATE;
 }
 
-const isoSeconds = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+/** A clock reading as an ISO-8601 second, or null when it is not a time: never guessed. */
+function isoOrNull(read) {
+  try {
+    const t = read();
+    const d = t instanceof Date ? t : typeof t === "number" || typeof t === "string" ? new Date(t) : null;
+    return d && Number.isFinite(d.getTime()) ? d.toISOString().replace(/\.\d{3}Z$/, "Z") : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The fixed next action for a run that never reached a decision (SPEC-05B's table covers decided runs). */
+export const ERROR_NEXT_ACTION = Object.freeze({
+  usage: "Re-run as: npm run --silent eng -- shepherd <pr> [--json] [--no-receipt]",
+  internal: "Do not act on this result. Re-run once; if it repeats, report the internal error.",
+});
 
 /** Links built only from normalized ids and SHAs, never from anything GitHub returned as a URL. */
 function sourceReferences(prNumber, collected, decision, policy) {
@@ -54,7 +69,8 @@ function sourceReferences(prNumber, collected, decision, policy) {
 
 function instrumentation(stats, collected) {
   const requests = stats.length;
-  const latencyMs = stats.reduce((sum, s) => sum + s.ms, 0);
+  const latencies = stats.map((s) => s.ms);
+  const latencyMs = latencies.every(Number.isFinite) ? latencies.reduce((sum, ms) => sum + ms, 0) : null;
   const failedRequests = stats.filter((s) => !s.ok).length;
   const d = collected.diagnostics ?? {};
   return {
@@ -98,9 +114,10 @@ export function buildReport({ prNumber, collected, decision, stats, toolVersion,
  *
  * @returns {{ exitCode: number, report: object }}
  */
-export function runShepherd({ prNumber, env, now = Date.now, spawn, local, toolVersion, policy = POLICY }) {
-  const observedAt = isoSeconds(now());
-  const primitive = createPrimitive({ env, ...(spawn ? { spawn } : {}), now });
+export function runShepherd({ prNumber, env, now = Date.now, timer = Date.now, spawn, local, toolVersion, policy = POLICY }) {
+  const observedAt = isoOrNull(now);
+  // Request timing uses its own millisecond timer: the injected clock dates the evidence, it does not time requests.
+  const primitive = createPrimitive({ env, ...(spawn ? { spawn } : {}), now: timer });
   let collected;
   let stats = [];
   if (!primitive.ok) {
@@ -118,26 +135,62 @@ export function runShepherd({ prNumber, env, now = Date.now, spawn, local, toolV
   return { exitCode: exitCodeFor(decision.decision), report };
 }
 
-const pad = (s) => s.padEnd(10);
+/**
+ * The report for a run that never reached a decision — a usage or internal error. It carries every field a
+ * decided report does, so a consumer of the JSON never meets a second shape; nothing unestablished is guessed.
+ */
+export function buildErrorReport({ kind, prNumber = null, detail, toolVersion = null, observedAt = null, policy = POLICY }) {
+  const pr = Number.isSafeInteger(prNumber) && prNumber > 0 ? prNumber : null;
+  return {
+    schema: REPORT_SCHEMA,
+    pr,
+    headSha: null,
+    baseRef: null,
+    production: { ref: policy.productionRef, tip: null },
+    observedAt,
+    toolVersion,
+    evidenceHash: null,
+    decision: "UNKNOWN",
+    reasonCodes: ["malformed"],
+    blocking: { row: kind, detail: typeof detail === "string" ? detail : null },
+    sourceReferences: pr === null ? [] : [`https://github.com/${policy.owner}/${policy.name}/pull/${pr}`],
+    nextAction: ERROR_NEXT_ACTION[kind],
+    humanMergeRequired: true,
+    advisory: ADVISORY,
+    instrumentation: { requests: 0, failedRequests: 0, latencyMs: 0, attempts: null, confirmed: false, stage: kind },
+    error: kind,
+  };
+}
+
+const pad = (s) => s.padEnd(12);
+
+// Text mode prints GitHub-supplied strings (check names, details): C0/C1 controls, DEL and the bidirectional
+// overrides and isolates are shown escaped, so nothing GitHub says can restyle or reorder the terminal.
+const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const safe = (v) =>
+  String(v).replace(UNSAFE_TEXT, (c) => `\\u{${c.codePointAt(0).toString(16).padStart(4, "0")}}`);
 
 /** Readable text: the same facts as the JSON, one per line. */
 export function renderText(r) {
   const lines = [];
-  lines.push(`ENG-LOOP shepherd - PR #${r.pr} - ${r.advisory}`);
+  const i = r.instrumentation;
+  const latency = Number.isFinite(i.latencyMs) ? `${(i.latencyMs / 1000).toFixed(1)} s` : "n/a";
+  lines.push(`ENG-LOOP shepherd - PR #${r.pr ?? "unknown"} - ${r.advisory}`);
   lines.push(`  ${pad("decision")}${r.decision}${r.decision === "UNKNOWN" ? ` (${r.reasonCodes.join(", ")})` : ""}`);
   lines.push(`  ${pad("next")}${r.nextAction}`);
   lines.push(`  ${pad("head")}${r.headSha ?? "unknown"}`);
   lines.push(`  ${pad("base")}${r.baseRef ?? "unknown"}`);
   lines.push(`  ${pad("production")}${r.production.ref} at ${r.production.tip ?? "unknown"}`);
-  lines.push(`  ${pad("blocking")}${JSON.stringify(r.blocking)}`);
+  lines.push(`  ${pad("blocking")}${safe(JSON.stringify(r.blocking))}`);
   lines.push(`  ${pad("evidence")}${r.evidenceHash ?? "none"}`);
-  lines.push(`  ${pad("observed")}${r.observedAt}   tool ${r.toolVersion}`);
-  const i = r.instrumentation;
+  lines.push(`  ${pad("observed")}${r.observedAt ?? "unknown"}`);
+  lines.push(`  ${pad("tool")}${r.toolVersion ?? "unknown"}`);
   lines.push(
-    `  ${pad("reads")}${i.requests} requests, ${i.failedRequests} failed, ${(i.latencyMs / 1000).toFixed(1)} s` +
+    `  ${pad("reads")}${i.requests} requests, ${i.failedRequests} failed, ${latency}` +
       `${i.attempts ? `, ${i.attempts} attempt(s)` : ""}${i.confirmed ? ", confirmed" : ""}`,
   );
   for (const ref of r.sourceReferences) lines.push(`  ${pad("source")}${ref}`);
+  if (r.receipt !== undefined) lines.push(`  ${pad("receipt")}${r.receipt}`);
   lines.push(`  ${pad("merge")}a human authorizes it; this command never merges and never writes to GitHub`);
   return `${lines.join("\n")}\n`;
 }

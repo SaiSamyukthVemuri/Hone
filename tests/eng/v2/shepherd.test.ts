@@ -7,7 +7,7 @@ import path from "node:path";
 
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { runShepherdCli } from "../../../scripts/eng/v2/cli-shepherd.mjs";
+import { detectToolVersion, runShepherdCli } from "../../../scripts/eng/v2/cli-shepherd.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { EXIT, exitCodeFor } from "../../../scripts/eng/v2/shepherd.mjs";
@@ -156,11 +156,14 @@ describe("shepherd: #800 end to end through the real primitive (recorded answers
     expect(inProcess(["shepherd", "800", "--json", "--no-receipt"]).receipts.receipts).toHaveLength(0);
   });
 
-  it("text mode prints the same facts for a person, and says a human merges", () => {
+  it("text mode prints the same facts for a person, the receipt state included, and says a human merges", () => {
     const r = inProcess(["shepherd", "800"]);
     expect(r.code).toBe(EXIT.NOT_CANDIDATE);
     expect(r.stdout).toContain("DRAFT_HOLD");
     expect(r.stdout).toContain(HEAD_800);
+    expect(r.stdout).toMatch(/receipt\s+written/);
+    expect(r.stdout).toMatch(/production\s+claude\/build-hone-saas-hOex7 at /);
+    expect(r.stdout).not.toContain("NaN");
     expect(r.stdout).toContain("a human authorizes it");
     expect(() => JSON.parse(r.stdout)).toThrow();
   });
@@ -203,6 +206,44 @@ describe("shepherd: #800 end to end through the real primitive (recorded answers
   });
 });
 
+describe("shepherd: the injected clock dates the evidence and never times the requests", () => {
+  it("a clock that reads as an ISO string still yields a finite latency and that observation time", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-shepherd-clock-"));
+    try {
+      const out = sink();
+      const code = runShepherdCli({
+        argv: ["shepherd", "800", "--json"],
+        env: { PATH: process.env.PATH, HONE_ENG_READ_TOKEN: TOKEN },
+        out,
+        err: sink(),
+        now: () => "2026-10-07T21:00:00Z",
+        spawn: fakeGhSpawn(routes800()).spawn,
+        local: LOCAL,
+        toolVersion: TOOL,
+        receiptsDir: dir,
+      });
+      expect(code).toBe(EXIT.NOT_CANDIDATE);
+      const report = JSON.parse(out.text());
+      expect(report.observedAt).toBe("2026-10-07T21:00:00Z");
+      expect(Number.isFinite(report.instrumentation.latencyMs)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("shepherd: the tool version is established or null, never a placeholder", () => {
+  it("no git, or a HEAD that is not a SHA, gives null; a clean or dirty checkout gives its SHA", () => {
+    const sha = "e".repeat(40);
+    expect(detectToolVersion({ exec: () => { throw new Error("no git"); } })).toBeNull();
+    expect(detectToolVersion({ exec: () => "not-a-sha\n" })).toBeNull();
+    expect(detectToolVersion({ exec: (_cmd: string, args: string[]) => (args.includes("rev-parse") ? `${sha}\n` : "") })).toBe(`eng-loop-v1@${sha}`);
+    expect(detectToolVersion({ exec: (_cmd: string, args: string[]) => (args.includes("rev-parse") ? `${sha}\n` : " M scripts/eng/cli.mjs\n") })).toBe(
+      `eng-loop-v1@${sha}+dirty`,
+    );
+  });
+});
+
 describe("shepherd: exit codes and usage", () => {
   it("only CANDIDATE_READY_FOR_HUMAN_REVIEW exits 0; UNKNOWN exits 3; every other decision exits 4", () => {
     for (const d of DECISIONS) {
@@ -210,11 +251,22 @@ describe("shepherd: exit codes and usage", () => {
     }
   });
 
-  it("a usage error exits 2; in JSON mode stdout is still exactly one JSON document", () => {
+  it("a usage error exits 2; in JSON mode stdout is one full report — every required field, UNKNOWN, never a second shape", () => {
     for (const argv of [["shepherd"], ["shepherd", "abc"], ["shepherd", "0"], ["shepherd", "810", "extra"], ["shepherd", "810", "--bogus"]]) {
       const json = inProcess([...argv, "--json"]);
       expect(json.code, argv.join(" ")).toBe(EXIT.USAGE);
-      expect(JSON.parse(json.stdout)).toMatchObject({ error: "usage" });
+      const report = JSON.parse(json.stdout);
+      for (const f of REQUIRED_FIELDS) expect(report, `${argv.join(" ")}: ${f}`).toHaveProperty(f);
+      expect(report).toMatchObject({
+        error: "usage",
+        decision: "UNKNOWN",
+        reasonCodes: ["malformed"],
+        headSha: null,
+        evidenceHash: null,
+        humanMergeRequired: true,
+        receipt: "none",
+      });
+      expect(report.nextAction).toContain("shepherd <pr>");
       expect(json.calls).toHaveLength(0);
       const text = inProcess(argv);
       expect(text.code).toBe(EXIT.USAGE);
@@ -274,7 +326,8 @@ describe("shepherd: the real CLI, as Claude Code runs it", () => {
         instrumentation: { requests: 0, stage: "transport" },
       });
       expect(report.blocking.detail).toContain("HONE_ENG_READ_TOKEN");
-      expect(report.toolVersion).toMatch(/^eng-loop-v1@([0-9a-f]{40}(\+dirty)?|unknown)$/);
+      // Established from this checkout's git HEAD, or null: never a placeholder.
+      expect(report.toolVersion === null || /^eng-loop-v1@[0-9a-f]{40}(\+dirty)?$/.test(report.toolVersion)).toBe(true);
       expect(readdirSync(dir).filter((f) => f.endsWith(".json"))).toHaveLength(1);
       expect(readReceipts(dir)).toMatchObject({ complete: true });
     } finally {

@@ -120,7 +120,7 @@ and writes one diagnostic receipt. It performs no GitHub mutation: every request
 **Report** (`eng-loop-v1/shepherd@1`):
 - `pr`, `headSha`, `baseRef`, and `production: { ref, tip }`;
 - `observedAt`, `toolVersion` (`eng-loop-v1@<checkout HEAD>`, with `+dirty` when the tool or its CI inputs differ
-  from that commit) and `evidenceHash`;
+  from that commit; `null` when no HEAD can be established) and `evidenceHash`;
 - `decision`, `reasonCodes`, `blocking`, `nextAction` and `humanMergeRequired: true`;
 - `sourceReferences`: links built only from normalized ids and SHAs;
 - `instrumentation`: request count, failed requests, latency, attempts, whether the confirming pass ran, and where
@@ -128,6 +128,16 @@ and writes one diagnostic receipt. It performs no GitHub mutation: every request
 - `receipt`: `written`, `failed` or `disabled`.
 
 Fields that could not be established are `null`, never guessed.
+
+A run that never reaches a decision — a usage error (exit 2) or an internal error (exit 1) — prints the **same
+report shape** in JSON mode: every field above, `decision: "UNKNOWN"`, `reasonCodes: ["malformed"]`,
+`blocking: { row: "usage" | "internal", detail }`, a fixed `nextAction`, `receipt: "none"` and `error: "usage" |
+"internal"`. In text mode a usage error goes to stderr. Text mode escapes control and bidirectional-override
+characters in anything GitHub supplied.
+
+In-process callers use `runShepherdCli({ argv, env, out, err, now?, timer?, spawn?, local?, toolVersion?,
+receiptsDir? })`, which returns the exit code. `now` dates the evidence (milliseconds, a `Date` or an ISO-8601 UTC
+string); `timer` times the requests (milliseconds, `Date.now` by default).
 
 **Exit codes.** A successful read is not READY.
 
@@ -140,13 +150,17 @@ Fields that could not be established are `null`, never guessed.
 | 1 | internal error |
 
 **Diagnostic receipts** live in `.eng/receipts/` (gitignored, non-shipping), or `HONE_ENG_RECEIPTS_DIR`.
-- **Contents.** Each receipt is one write-once file: `pr`, `head`, `evidenceHash`, `decision`, `reasons`,
-  `observed_at`, `tool_version` and a checksum. The schema is closed, so no credential, login, detail or URL can
-  enter.
-- **Writing.** Each receipt is written to an exclusive temporary file, fsynced, then renamed into place. A reader
-  therefore never sees a torn record, and concurrent writers cannot collide.
-- **Reading.** An interrupted write, an invalid file or an unreadable directory makes the read `complete: false`. No
-  data is never proof of no failures.
+- **Contents.** Each receipt is one write-once JSON file with exactly `schema` (`eng-loop-v1/receipt@1`), `pr`,
+  `head`, `evidenceHash`, `decision`, `reasons`, `observed_at`, `tool_version` (or `null`) and `checksum`, the
+  SHA-256 of the canonical JSON of the other fields. `reasons` is `[decision]`, or for `UNKNOWN` its one closed
+  reason. The schema is closed, so no credential, login, detail or URL can enter.
+- **Writing.** Each receipt is written to an exclusive temporary file and fsynced, then **hard-linked** to its final
+  name, which fails rather than replace an existing file, and the temporary name is removed. So a receipt is
+  write-once by construction: a name collision fails the write and never replaces another receipt, and a reader never
+  sees a torn record.
+- **Reading.** Only regular files are read — never through a symlink, never blocking on a FIFO, never more than 4 KB.
+  An interrupted write, an invalid or unreadable file, or an unreadable directory makes the read `complete: false`.
+  No data is never proof of no failures.
 - **Authority.** `decide()` never reads receipts. They are diagnostic evidence for the shadow evaluation, not a
   release ledger.
 

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- receipts are inspected as raw JSON on purpose */
 import { describe, expect, it } from "vitest";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fsModule from "node:fs";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -52,9 +52,25 @@ describe("receipts: write and read", () => {
     }
   });
 
-  it("an UNKNOWN report with no head and no evidence hash is still a valid receipt", () => {
-    const built = receiptFrom(report({ headSha: null, evidenceHash: null, decision: "UNKNOWN", reasonCodes: ["read_failed"] }));
+  it("an UNKNOWN report with no head, no evidence hash and no established tool version is still a valid receipt", () => {
+    const built = receiptFrom(
+      report({ headSha: null, evidenceHash: null, decision: "UNKNOWN", reasonCodes: ["read_failed"], toolVersion: null }),
+    );
     expect(built.ok).toBe(true);
+  });
+
+  it("a decision's reasons are [decision], and UNKNOWN's is one closed reason: anything else is not a receipt", () => {
+    for (const [decision, reasonCodes] of [
+      ["CANDIDATE_READY_FOR_HUMAN_REVIEW", ["read_failed"]],
+      ["CI_PENDING", ["CI_FAILED"]],
+      ["CI_PENDING", ["CI_PENDING", "CI_PENDING"]],
+      ["UNKNOWN", ["CI_PENDING"]],
+      ["UNKNOWN", ["read_failed", "malformed"]],
+      ["UNKNOWN", []],
+    ] as const) {
+      expect(receiptFrom(report({ decision, reasonCodes })).ok, `${decision} ${reasonCodes.join(",")}`).toBe(false);
+    }
+    expect(receiptFrom(report({ toolVersion: "eng-loop-v1@unknown" })).ok).toBe(false);
   });
 
   it("the writer refuses anything outside the closed schema, and writes nothing", () => {
@@ -120,6 +136,11 @@ describe("receipts: damage is reported, never read as clean", () => {
       ["no newline", good.trimEnd()],
       ["two records", good + good],
       ["checksum tampered", `${JSON.stringify({ ...parsed, decision: "CANDIDATE_READY_FOR_HUMAN_REVIEW" })}\n`],
+      // Consistent in every field but the checksum: only the checksum can catch this one.
+      [
+        "consistent but re-decided",
+        `${JSON.stringify({ ...parsed, decision: "CANDIDATE_READY_FOR_HUMAN_REVIEW", reasons: ["CANDIDATE_READY_FOR_HUMAN_REVIEW"] })}\n`,
+      ],
       ["extra field", `${JSON.stringify({ ...parsed, note: "x" })}\n`],
       ["not JSON", "hello\n"],
       ["empty", ""],
@@ -133,6 +154,50 @@ describe("receipts: damage is reported, never read as clean", () => {
       expect(r.receipts).toEqual([]);
       expect(r.invalid.map((i: any) => i.file).sort()).toEqual(["20261007T210000Z-pr810-1-0123456789abcdef.json", "notes.txt"]);
       expect(r.complete).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a FIFO, a symlink or an oversized file under a receipt name is invalid — read without hanging, never accepted", () => {
+    const dir = tempDir();
+    const elsewhere = tempDir();
+    try {
+      const good = `${JSON.stringify(receiptFrom(report()).receipt)}\n`;
+      writeFileSync(path.join(elsewhere, "real.json"), good);
+      fsModule.symlinkSync(path.join(elsewhere, "real.json"), path.join(dir, "20261007T210000Z-pr810-1-00000000000000aa.json"));
+      fsModule.symlinkSync("/dev/zero", path.join(dir, "20261007T210000Z-pr810-1-00000000000000bb.json"));
+      writeFileSync(path.join(dir, "20261007T210000Z-pr810-1-00000000000000cc.json"), "x".repeat(5000));
+      const fifo = spawnSync("mkfifo", [path.join(dir, "20261007T210000Z-pr810-1-00000000000000dd.json")]);
+      const started = Date.now();
+      const r = readReceipts(dir);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(r.receipts).toEqual([]);
+      expect(r.complete).toBe(false);
+      const why = Object.fromEntries(r.invalid.map((i: any) => [i.file.slice(-7, -5), i.why]));
+      expect(why.aa).toMatch(/unreadable: ELOOP/);
+      expect(why.bb).toMatch(/unreadable: ELOOP/);
+      expect(why.cc).toBe("too large to be a receipt");
+      if (fifo.status === 0) expect(why.dd).toBe("not a regular file");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("publishing is exclusive: when every name collides the write fails and the first receipt stands", () => {
+    const dir = tempDir();
+    try {
+      const fixed = { random: () => "0123456789abcdef", pid: 7 };
+      const first = receiptFrom(report({ pr: 810 })).receipt;
+      const second = receiptFrom(report({ pr: 810, decision: "CI_FAILED", reasonCodes: ["CI_FAILED"] })).receipt;
+      expect(writeReceipt(dir, first, fixed)).toMatchObject({ ok: true });
+      const w = writeReceipt(dir, second, fixed);
+      expect(w).toMatchObject({ ok: false });
+      expect(w.detail).toContain("EEXIST");
+      const r = readReceipts(dir);
+      expect(r.receipts).toEqual([first]);
+      expect(r.interrupted).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -246,11 +246,14 @@ Act only on its bounded `nextAction`, inside your own task's authorization:
 
 | Decision | Do |
 |---|---|
+| `NOT_OPEN` | nothing: the PR is closed or merged |
+| `DRAFT_HOLD` | nothing until the author marks it ready |
 | `CI_PENDING`, `CI_NOT_STARTED`, `EXTERNAL_PENDING` | wait, then re-run once |
 | `NEEDS_REFRESH` | normal-merge production |
 | `CI_FAILED`, `CI_INCOMPLETE`, `FINDINGS_OPEN` | fix |
+| `EXTERNAL_BLOCKED` | inspect the failing external check; fix it or escalate |
 | `REVIEW_MISSING` | request a review of the exact head |
-| `UNKNOWN` | escalate with its reason — never read it as green |
+| `UNKNOWN` | follow its `nextAction` when that is a step inside your authorization (retarget, a new branch, split the PR); otherwise escalate with the reason — never read it as green |
 | `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission |
 
 Never edit, delete or hide a Codex review comment or thread, and resolve one
