@@ -36,8 +36,10 @@ The package layout follows CAP-01 §2:
 | Decision engine (05B) | **Done at fixture level**: `decision/decide.mjs` (SPEC-05B), with `decision/policy.mjs` and the closed `decision/next-action.mjs`. All 21,600 evidence combinations agree with a precedence oracle written from the directive; 14 of 14 unsafe mutants are caught. Not yet independently verified. |
 
 Independent verification (CANONICAL_ROADMAP §16.5) lives under `tests/eng/v2/verify/`, written from SPEC-05A and the
-records alone. Rows 1–3 have had one pass; rows 4–6 and the collector have not been independently verified yet.
-SPEC-05A §7 lists what V1 does not prove.
+records alone, never from implementation source. Across six passes it covered rows 1–6 and the collector, and
+converged at 992af0b5: 1,016 verifier rows and 262 builder rows, all passing, with no known-failure row left. Every
+finding is either fixed (A1, R4-EDIT and the input, order, redaction and policy deviations) or recorded in SPEC-05A
+§7, which lists what V1 does not prove.
 
 Run the tests with `npx vitest run tests/eng/v2`.
 

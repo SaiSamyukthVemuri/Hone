@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { collect } from "../../../scripts/eng/v2/adapter/collect.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { createReaders } from "../../../scripts/eng/v2/adapter/internal/github/index.mjs";
+import { POLICY, createReaders } from "../../../scripts/eng/v2/adapter/internal/github/index.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { classify } from "../../../scripts/classify-changes.mjs";
@@ -196,6 +196,8 @@ describe("collect: options outside the contract fail closed before any request",
       ["clock returning an invalid Date", { ...base, now: () => new Date("x") }],
       ["clock returning a boolean", { ...base, now: () => true }],
       ["clock that throws", { ...base, now: () => { throw new Error("no clock"); } }],
+      ["a policy that is not V1's", { ...base, policy: { ...POLICY, repoId: 1 } }],
+      ["an empty policy", { ...base, policy: {} }],
     ];
     for (const [label, args] of variants) {
       expect(() => collect(args), label).not.toThrow();

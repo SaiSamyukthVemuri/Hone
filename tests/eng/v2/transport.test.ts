@@ -10,7 +10,7 @@ import path from "node:path";
 import { TOKEN_ENV, createPrimitive } from "../../../scripts/eng/v2/adapter/internal/github/primitive.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { BLOB_PATHS, createReaders } from "../../../scripts/eng/v2/adapter/internal/github/index.mjs";
+import { BLOB_PATHS, POLICY, createReaders } from "../../../scripts/eng/v2/adapter/internal/github/index.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { gitBlobSha, loadLocalCi, tablePinnedTo } from "../../../scripts/eng/v2/adapter/local-ci.mjs";
@@ -154,6 +154,12 @@ describe("primitive: the token never leaves, even when GitHub echoes it", () => 
       { label: "x", graphql: "query{x}", variables: [] },
       { label: "x", graphql: "query{x}", variables: { n: 1.5 } },
       { label: "x", graphql: "query{x}", variables: { o: { a: 1 } } },
+      { label: "x", graphql: "query{x}" },
+      { label: "x", rest: "r", method: "POST" },
+      { label: "x", graphql: "query{x}", variables: {}, extra: 1 },
+      { label: "x", graphql: "query{x}", variables: new Map([["n", 1]]) },
+      { label: "x", graphql: "query{x}", variables: new Date() },
+      { label: "x", graphql: "query{x}", variables: new (class Vars { n = 1; })() },
     ];
     for (const req of bad) expect(p.request(req), JSON.stringify(req) ?? "undefined").toMatchObject({ ok: false, reason: "malformed" });
     expect(calls).toHaveLength(0);
@@ -268,6 +274,15 @@ describe("readers: typed scalars only, refused before any request", () => {
     expect(failing.readPrKey(800)).toEqual({ ok: false, reason: "read_failed", detail: "pr-key: gh: Bad credentials (HTTP 401)" });
     const odd = createReaders({ request: () => undefined as any });
     expect(odd.readPrKey(800)).toMatchObject({ ok: false, reason: "read_failed" });
+  });
+
+  it("any policy but V1's fixed one is refused at construction; V1's own, or none, is accepted", () => {
+    const request = () => ({ ok: true as const, body: [] });
+    expect(() => createReaders({ request })).not.toThrow();
+    expect(() => createReaders({ request, policy: { ...POLICY } })).not.toThrow();
+    for (const over of [{ owner: "x" }, { name: "x" }, { repoId: 1 }, { productionRef: "main" }, { workflowId: 1 }, { extra: 1 }]) {
+      expect(() => createReaders({ request, policy: { ...POLICY, ...over } }), JSON.stringify(over)).toThrow(/V1's fixed policy/);
+    }
   });
 
   it("an unsafe production ref in the policy is refused at construction", () => {
