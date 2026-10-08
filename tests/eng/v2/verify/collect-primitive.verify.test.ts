@@ -1,14 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- the primitive's results and the child's recorded environment are untyped on purpose */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import os from "node:os";
 
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { TOKEN_ENV, createPrimitive } from "../../../../scripts/eng/v2/adapter/internal/github/primitive.mjs";
+import { TOKEN_ENV, createPrimitive as realCreatePrimitive } from "../../../../scripts/eng/v2/adapter/internal/github/primitive.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { isUnknownReason } from "../../../../scripts/eng/v2/contract/reasons.mjs";
 import { DEDICATED, OPERATOR, fakeGhKit, type FakeGhKit } from "./support/fake-gh";
+import { primitiveHomes } from "./support/temp-home";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — SPEC-05A §5.1 "primitive.mjs" (f75ca255), black-box.
@@ -19,11 +20,17 @@ import { DEDICATED, OPERATOR, fakeGhKit, type FakeGhKit } from "./support/fake-g
 
 const TOKEN_SHAPES = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
 
+// Every primitive built here is tracked and closed after each test; its home lands in this file's own directory.
+const homes = primitiveHomes();
+const createPrimitive = homes.wrap(realCreatePrimitive);
+afterEach(() => homes.closeAll());
+
 let kit: FakeGhKit;
 const records = () => kit.records();
 const clearRecords = () => kit.clear();
 const PATHS: Record<string, string> = {};
 beforeAll(() => {
+  homes.setup();
   kit = fakeGhKit();
   PATHS.json = kit.make("json", `process.stdout.write(JSON.stringify({ hello: "world", n: [1, 2] }));`);
   PATHS.denied = kit.make(
@@ -44,7 +51,10 @@ beforeAll(() => {
     `process.stdout.write(JSON.stringify({ a: "ghp_${"A".repeat(36)}", b: "see github_pat_11ABCDEFG0_${"q".repeat(59)} here", c: ["gho_${"C".repeat(36)}"], d: { e: "ghs_${"S".repeat(36)}" }, ["ghr_${"R".repeat(36)}"]: 1, n: 7 }));`,
   );
 });
-afterAll(() => kit?.cleanup());
+afterAll(() => {
+  kit?.cleanup();
+  homes.teardown();
+});
 
 const envFor = (dir: string, extra: Record<string, string> = {}) => ({ [TOKEN_ENV]: DEDICATED, PATH: `${dir}:/usr/bin:/bin`, ...extra });
 const REST = { label: "candidate-runs", rest: "repos/SaiSamyukthVemuri/Hone/actions/workflows/289443461/runs?head_sha=958b9d536e055e746499262cdc1a740e13501bf2&event=pull_request&per_page=100" };
@@ -386,4 +396,11 @@ describe("§5.1 primitive: requests outside the two shapes (amended 63bd3b6e, 18
       expect(r).toMatchObject({ ok: false, reason: "malformed" });
       expect(records()).toEqual([]);
     });
+});
+
+describe("hygiene: this file leaves no primitive home behind (SPEC-05A §5.1: close() removes the home)", () => {
+  it("every hone-eng-gh-* home the rows' primitives built is gone, and at least one was built", () => {
+    expect(homes.maxSeen()).toBeGreaterThan(0);
+    expect(homes.leftovers()).toEqual([]);
+  });
 });

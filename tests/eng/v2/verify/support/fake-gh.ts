@@ -82,7 +82,11 @@ export function primitiveRows(kit: FakeGhKit, jsonDir: string) {
         kit.clear();
         const r: any = withProcessEnv({ GH_TOKEN: OPERATOR }, () => {
           const p = createPrimitive({ env, timeoutMs: 3000 });
-          return p.ok ? p.request(REST_REQ) : p;
+          try {
+            return p.ok ? p.request(REST_REQ) : p;
+          } finally {
+            p.close?.();
+          }
         });
         if (r?.ok !== false || r?.reason !== "read_failed") return `no dedicated token: ${JSON.stringify(r).slice(0, 120)}`;
         if (kit.records().length) return "gh was invoked without the dedicated token";
@@ -94,7 +98,11 @@ export function primitiveRows(kit: FakeGhKit, jsonDir: string) {
       kit.clear();
       const out: any = withProcessEnv({ GITHUB_TOKEN: OPERATOR, VERIFY_CANARY_PROCESS: "process-canary" }, () => {
         const p = createPrimitive({ env: { HONE_ENG_READ_TOKEN: DEDICATED, PATH: `${jsonDir}:/usr/bin:/bin`, VERIFY_CANARY_PARAM: "param-canary", GH_TOKEN: OPERATOR }, timeoutMs: 3000 });
-        return p.ok ? p.request(REST_REQ) : p;
+        try {
+          return p.ok ? p.request(REST_REQ) : p;
+        } finally {
+          p.close?.();
+        }
       });
       if (!out?.ok) return `request failed: ${JSON.stringify(out).slice(0, 120)}`;
       const rec = kit.records();
