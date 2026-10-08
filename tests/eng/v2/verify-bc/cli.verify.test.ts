@@ -13,10 +13,12 @@ import { writeGhShim, readShimLog, routeRest, isReadOnlyQuery } from "./support/
 import { world } from "./support/worlds.mjs";
 import { errorReportViolations, parseOnlyJson, REQUIRED_FIELDS } from "./checks-shepherd";
 import { cleanupTmp, tmp } from "./support/tmp";
+import { ceiling, headlessRoot } from "./support/headless";
 
 afterAll(cleanupTmp);
 
 const ROOT = path.resolve(__dirname, "../../../..");
+const GIT = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim() || "/usr/bin/git";
 const TOKEN = "ghp_VERIFYbcFakeToken0Canary0000000000000"; // token-shaped, not a credential
 const PARENT_CANARIES = { GITHUB_TOKEN: "ghp_PARENTcanaryGITHUBTOKEN000000000000000", GH_DEBUG: "api", GH_REPO: "evil/repo", SECRET_CANARY: "do-not-inherit" };
 
@@ -35,7 +37,7 @@ function setup(w: any, opts: any = {}) {
   const t = tmp("cli-");
   const bin = path.join(t, "bin");
   writeGhShim({ dir: bin, world: freshRuns(w), logFile: path.join(t, "gh.log"), nodePath: process.execPath, opts });
-  fs.symlinkSync("/usr/bin/git", path.join(bin, "git"));
+  fs.symlinkSync(GIT, path.join(bin, "git"));
   for (const d of ["home", "ghconf", "rc", "tmp"]) fs.mkdirSync(path.join(t, d));
   return t;
 }
@@ -149,14 +151,22 @@ describe("CLI: the real process", { timeout: 180_000 }, () => {
     expect(left, `left behind: ${left.join(", ")}`).toEqual([]);
   });
 
-  test("CLI-TOOLVERSION: a checkout whose HEAD cannot be established reports toolVersion null, and its receipt tool_version null (README pass 2)", () => {
-    const r = runCli(["800", "--json"], world());
+  test("CLI-TOOLVERSION: run from a HEAD-less copy of the tool, toolVersion is null in the report and the receipt (README pass 2)", () => {
+    // The environment is built here (support/headless.ts), so the row holds in an archive, a checkout and CI alike.
+    const copy = headlessRoot();
+    const t = setup(world());
+    const r = spawnSync(process.execPath, [path.join(copy, "scripts/eng/cli.mjs"), "shepherd", "800", "--json"], {
+      cwd: copy,
+      env: { ...envFor(t, TOKEN), ...ceiling(copy) },
+      encoding: "utf8",
+      timeout: 120_000,
+    });
     const j = parseOnlyJson(r.stdout);
-    expect(j.ok).toBe(true);
+    expect(j.ok, j.why).toBe(true);
     expect(j.value.toolVersion).toBe(null);
-    const files = fs.readdirSync(r.receiptsDir);
+    const files = fs.readdirSync(path.join(t, "rc"));
     expect(files.length).toBe(1);
-    expect(JSON.parse(fs.readFileSync(path.join(r.receiptsDir, files[0]), "utf8")).tool_version).toBe(null);
+    expect(JSON.parse(fs.readFileSync(path.join(t, "rc", files[0]), "utf8")).tool_version).toBe(null);
   });
 
   test("CLI-RECEIPT-ROOT: by default receipts land under .eng/receipts/, gitignored, and never make the tool +dirty", () => {

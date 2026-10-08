@@ -10,6 +10,8 @@ import { CODEX, HUMAN, baseValue, candidate, ciValue, collected, evidence, ext, 
 import { malformedReads } from "./checks-decide";
 import { TOKEN, parseOnlyJson, runIn } from "./checks-shepherd";
 // @ts-expect-error untyped support module
+import { makeFakeSpawn } from "./support/fake-gh.mjs";
+// @ts-expect-error untyped support module
 import { world } from "./support/worlds.mjs";
 import { cleanupTmp, redirectTmpdir } from "./support/tmp";
 
@@ -238,23 +240,30 @@ describe("pass 2 adversarial (05C at 738a4537)", () => {
     expect(run.code).toBe(3);
   });
 
-  test("ADV-C10 SPEC AMBIGUITY (README in-process contract): `now` given as a value, as README's wording reads, fails closed as UNKNOWN(malformed)", () => {
-    const outs = ["2026-10-07T20:00:00Z", Date.parse("2026-10-07T20:00:00Z"), new Date("2026-10-07T20:00:00Z")].map((now) => runIn(runShepherdCli, ["shepherd", "800", "--json"], world(), { params: { now } }));
-    console.log(`ADV-C10 observed: ${outs.map((r) => `${r.code} ${L(parseOnlyJson(r.out).value)} (${parseOnlyJson(r.out).value.blocking?.detail})`).join("; ")}`);
-    for (const r of outs) {
-      expect(r.code).not.toBe(0);
-      expect(parseOnlyJson(r.out).ok).toBe(true);
+  test("ADV-C10 NO HOLE (final pass; was SPEC AMBIGUITY): `now` is a clock function; a plain value is UNKNOWN(malformed) and makes no request (README)", () => {
+    for (const now of ["2026-10-07T20:00:00Z", Date.parse("2026-10-07T20:00:00Z"), new Date("2026-10-07T20:00:00Z")]) {
+      const r = runIn(runShepherdCli, ["shepherd", "800", "--json"], world(), { params: { now } });
+      expect(r.code).toBe(3);
+      expect(L(parseOnlyJson(r.out).value)).toBe("UNKNOWN(malformed)");
+      expect(r.log).toEqual([]);
     }
+    const f = runIn(runShepherdCli, ["shepherd", "800", "--json"], world(), { params: { now: () => Date.parse("2026-10-07T20:00:00Z") } });
+    expect(L(parseOnlyJson(f.out).value)).toBe("DRAFT_HOLD");
   });
 
-  test("ADV-C11 NO HOLE (in-process misuse): a non-array argv throws instead of returning an exit code", () => {
-    let threw = false;
+  test("ADV-C11 NO HOLE (final pass): a non-array argv never throws; it is a run that never reaches a decision (exit 2 or 1), with no request", () => {
+    let code: any;
+    let threw: any = null;
+    const out: string[] = [];
+    const log: any[] = [];
     try {
-      runShepherdCli({ argv: "shepherd 800 --json", env: {}, out: { write: () => true }, err: { write: () => true }, now: () => "2026-10-07T20:00:00Z" });
-    } catch {
-      threw = true;
+      code = runShepherdCli({ argv: "shepherd 800 --json", env: { HONE_ENG_READ_TOKEN: TOKEN, PATH: "/x" }, out: { write: (c: any) => (out.push(String(c)), true) }, err: { write: () => true }, now: () => "2026-10-07T20:00:00Z", spawn: makeFakeSpawn(world(), log) });
+    } catch (e) {
+      threw = e;
     }
-    console.log(`ADV-C11 observed: non-array argv throws = ${threw}`);
-    expect(typeof threw).toBe("boolean");
+    console.log(`ADV-C11 observed: exit ${code}${threw ? `, threw ${threw.message}` : ""}`);
+    expect(threw).toBe(null);
+    expect([1, 2]).toContain(code);
+    expect(log).toEqual([]);
   });
 });

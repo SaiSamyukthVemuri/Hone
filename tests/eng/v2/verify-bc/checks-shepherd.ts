@@ -3,9 +3,11 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { CLOSED_REASONS, ALL_DECISIONS, PRODUCTION_REF } from "./oracle";
 import { tmp } from "./support/tmp";
+import { withHeadlessProcessEnv } from "./support/headless";
 // @ts-expect-error untyped support module
 import { makeFakeSpawn, isReadOnlyQuery, routeRest } from "./support/fake-gh.mjs";
 // @ts-expect-error untyped support module
@@ -457,12 +459,16 @@ export function checkInternal(runCli: RunCli) {
   return r;
 }
 
-/** C-TOOLVERSION: no injected toolVersion in a checkout without a git HEAD → toolVersion null, receipt tool_version null. */
-export function checkToolVersionNull(runCli: RunCli) {
+/** C-TOOLVERSION: no injected toolVersion, run from a HEAD-less copy of the tool (support/headless.ts) → toolVersion
+ * null in the report, tool_version null in the receipt. `runCliHeadless` is that copy's runShepherdCli (or a mutant
+ * built from it), so the row does not depend on where the suite itself is checked out. */
+export function checkToolVersionNull(runCliHeadless: RunCli, headlessDir: string) {
   const r = rowResult("C-TOOLVERSION", "README (pass 2): toolVersion is null when no HEAD can be established; fields that could not be established are null, never guessed");
   r.checked += 1;
   const dir = tmpDir("rc-");
-  const run = direct(runCli, { argv: ["shepherd", "800", "--json"], env: { PATH: "/usr/bin:/bin", HONE_ENG_READ_TOKEN: TOKEN }, spawn: makeFakeSpawn(world(), []), receiptsDir: dir });
+  const run = withHeadlessProcessEnv(headlessDir, () =>
+    direct(runCliHeadless, { argv: ["shepherd", "800", "--json"], env: { PATH: "/usr/bin:/bin", HONE_ENG_READ_TOKEN: TOKEN }, spawn: makeFakeSpawn(world(), []), receiptsDir: dir }),
+  );
   const j = parseOnlyJson(run.out);
   if (!j.ok) r.add("report", j.why!);
   else {
@@ -535,5 +541,73 @@ export function checkClaudeTable() {
   const table = sec.slice(0, sec.indexOf("\n\n", sec.indexOf("| Decision |")));
   const named = new Set([...table.matchAll(/`([A-Z_]+)`/g)].map((m) => m[1]));
   for (const d of ALL_DECISIONS) if (!named.has(d)) r.add(d, "no row in CLAUDE.md §4's table");
+  return r;
+}
+
+/** C-LEFTOVER (final pass): README — "A receipt whose temporary name cannot be removed after it was published is still
+ * `written`; stderr says so, and readers report the leftover as an interrupted write until it is removed." */
+export function checkLeftover(runCli: RunCli, readReceipts?: (dir: string) => any) {
+  const r = rowResult("C-LEFTOVER", "README (final pass): a published receipt whose temporary name cannot be removed is still written; stderr says so; readers report the leftover as an interrupted write");
+  r.checked += 1;
+  const dir = tmpDir("rc-");
+  const restore: (() => void)[] = [];
+  for (const name of ["unlinkSync", "rmSync"]) {
+    const orig = (fs as any)[name];
+    (fs as any)[name] = function (p: any, ...rest: any[]) {
+      if (String(p).startsWith(dir) && path.basename(String(p)).startsWith(".tmp-")) throw Object.assign(new Error("injected unlink fault"), { code: "EIO" });
+      return orig.call(this, p, ...rest);
+    };
+    restore.push(() => ((fs as any)[name] = orig));
+  }
+  syncBuiltinESMExports();
+  let run: Run;
+  try {
+    run = runIn(runCli, ["shepherd", "800", "--json"], world("ready", "protectedRules", "resolveOpenThread"), { receiptsDir: dir });
+  } finally {
+    for (const f of restore) f();
+    syncBuiltinESMExports();
+  }
+  const entries = fs.readdirSync(dir);
+  const finals = entries.filter((f) => /^\d{8}T\d{6}Z-pr\d+-\d+-[0-9a-f]{16}\.json$/.test(f));
+  const temps = entries.filter((f) => f.startsWith(".tmp-"));
+  if (temps.length === 0) {
+    r.add("setup", `the unlink fault was not reached (${JSON.stringify(entries)})`);
+    return r;
+  }
+  const j = parseOnlyJson(run.out);
+  if (!j.ok) r.add("report", j.why!);
+  else {
+    if (j.value.receipt !== "written") r.add("report", `receipt ${j.value.receipt} although the receipt was published`);
+    if (run.code !== 0) r.add("exit", `exit ${run.code} for ${j.value.decision}`);
+  }
+  if (finals.length !== 1) r.add("publication", `${finals.length} published records`);
+  if (run.err.trim().length === 0) r.add("stderr", "stderr does not say the temporary name was left behind");
+  if ((run.out + run.err).includes(TOKEN)) r.add("token", "token printed");
+  if (readReceipts) {
+    const read = readReceipts(dir);
+    if (read.complete !== false) r.add("reader", `complete ${read.complete} with a leftover temporary name`);
+    if ((read.receipts ?? []).length !== 1) r.add("reader", `${read.receipts?.length} receipts counted for one published record`);
+  }
+  return r;
+}
+
+/** C-DOC-POLICY (final pass): SPEC-05A §7 R5-DELETE makes policy the mitigation for a deleted finding ("added to
+ * CLAUDE.md with the shepherd"); CLAUDE.md §4 at 65511c09 carries the operator's 2026-10-08 Codex-thread policy. */
+export function checkClaudePolicy() {
+  const r = rowResult("C-DOC-POLICY", "SPEC-05A §7 R5-DELETE / CLAUDE.md §4 (operator policy 2026-10-08): agents never edit, delete, conceal, minimize or manipulate a Codex comment or thread; resolving one needs the operator's explicit authorization; the limitation is stated");
+  const md = fs.readFileSync(path.resolve(__dirname, "../../../../CLAUDE.md"), "utf8");
+  const start = md.indexOf("### ENG-LOOP shepherd");
+  const sec = start >= 0 ? md.slice(start, md.indexOf("\n## ", start) > 0 ? md.indexOf("\n## ", start) : undefined).replace(/\s+/g, " ") : "";
+  const need: [string, RegExp][] = [
+    ["never manipulate (edit, delete, conceal, minimize)", /never edit, delete, conceal, minimize or otherwise manipulate a Codex comment or review thread/i],
+    ["explicit authorization to resolve a specific thread", /resolving any specific thread requires the operator's explicit authorization for that thread/i],
+    ["the R5-DELETE limitation", /R5-DELETE/],
+    ["a deleted finding is invisible", /cannot see a deleted finding/i],
+    ["credential indistinguishability", /cannot tell an agent using the operator's credential from the operator/i],
+  ];
+  for (const [n, re] of need) {
+    r.checked += 1;
+    if (!re.test(sec)) r.add(n, "not stated in CLAUDE.md §4's ENG-LOOP shepherd section");
+  }
   return r;
 }

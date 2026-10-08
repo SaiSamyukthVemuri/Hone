@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import {
   TOKEN,
+  checkLeftover,
   checkClaudeTable,
   checkInternal,
   checkTextEscape,
@@ -24,6 +25,7 @@ import {
 // @ts-expect-error untyped support module
 import { PROD_TIP } from "./support/worlds.mjs";
 import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+import { headlessRoot, headlessRunShepherdCli } from "./support/headless";
 
 redirectTmpdir();
 afterAll(cleanupTmp);
@@ -128,6 +130,19 @@ function mutants(real: RunCli): Record<string, RunCli> {
       }
       return c;
     },
+    "C-M21 a published receipt with a leftover temporary name reported failed": (a) => {
+      let note = false;
+      let buf = "";
+      const c = real({ ...a, out: { write: (x: any) => ((buf += String(x)), true) }, err: { write: (x: any) => ((note = true), a.err.write(x)) } });
+      let rep: any = null;
+      try {
+        rep = JSON.parse(buf);
+      } catch {
+        /* text */
+      }
+      a.out.write(rep && note && rep.receipt === "written" ? JSON.stringify({ ...rep, receipt: "failed" }, null, 2) + "\n" : buf);
+      return c;
+    },
     "C-M16 decision replaced by a stale one (memoized per PR)": (() => {
       let first: any = null;
       return rewriteOut(real, (r) => {
@@ -138,19 +153,22 @@ function mutants(real: RunCli): Record<string, RunCli> {
   };
 }
 
-function allRows(run: RunCli, scen: any[]) {
-  return [...checkShepherd(run, scen), checkText(run, scen), checkUsage(run), checkUsageExit(run), checkNoToken(run), checkTokenEcho(run), checkReceiptModes(run), checkInternal(run), checkToolVersionNull(run), checkTextEscape(run), checkTimer(run), checkClaudeTable()];
+/** `headlessRun` is the same subject built from the HEAD-less copy of the tool (C-TOOLVERSION's environment). */
+function allRows(run: RunCli, scen: any[], headlessRun: RunCli) {
+  return [...checkShepherd(run, scen), checkText(run, scen), checkUsage(run), checkUsageExit(run), checkNoToken(run), checkTokenEcho(run), checkReceiptModes(run), checkInternal(run), checkToolVersionNull(headlessRun, headlessRoot()), checkTextEscape(run), checkTimer(run), checkClaudeTable(), checkLeftover(run)];
 }
 
 const caught: Record<string, string[]> = {};
 beforeAll(async () => {
   const { runShepherdCli } = await import(path.join(V2, "cli-shepherd.mjs"));
   const scen = scenarios();
-  const baseRows = allRows(runShepherdCli, scen);
+  const headlessReal = await headlessRunShepherdCli();
+  const baseRows = allRows(runShepherdCli, scen, headlessReal);
   const key = (r: any, v: any) => `${r.row}|${v.id}|${v.msg}`;
   const baseline = new Set(baseRows.flatMap((r: any) => r.violations.map((v: any) => key(r, v))));
+  const headlessMutants = mutants(headlessReal);
   for (const [name, m] of Object.entries(mutants(runShepherdCli))) {
-    caught[name] = allRows(m, scen).filter((r: any) => r.violations.some((v: any) => !baseline.has(key(r, v)))).map((r: any) => r.row);
+    caught[name] = allRows(m, scen, headlessMutants[name]).filter((r: any) => r.violations.some((v: any) => !baseline.has(key(r, v)))).map((r: any) => r.row);
   }
   console.log("05C mutants → catching rows:\n" + Object.entries(caught).map(([n, rs]) => `${rs.length ? "CAUGHT" : "MISSED"} ${n}: ${rs.join(", ") || "-"}`).join("\n"));
 }, 900_000);
@@ -158,7 +176,7 @@ beforeAll(async () => {
 describe("05C mutants", () => {
   test("every 05C mutant is caught by at least one row", () => {
     expect(Object.entries(caught).filter(([, rs]) => rs.length === 0).map(([n]) => n)).toEqual([]);
-    expect(Object.keys(caught).length).toBe(20);
+    expect(Object.keys(caught).length).toBe(21);
   });
   const expected: [string, string][] = [
     ["C-M01 exit 0 for any decided read", "C-EXIT"],
@@ -181,6 +199,7 @@ describe("05C mutants", () => {
     ["C-M18 placeholder tool version instead of null", "C-TOOLVERSION"],
     ["C-M19 minimal internal-error JSON", "C-INTERNAL"],
     ["C-M20 text mode prints GitHub strings raw", "C-TEXT-ESCAPE"],
+    ["C-M21 a published receipt with a leftover temporary name reported failed", "C-LEFTOVER"],
   ];
   for (const [m, row] of expected) test(`${m} is caught by ${row}`, () => expect(caught[m]).toContain(row));
   void TOKEN;

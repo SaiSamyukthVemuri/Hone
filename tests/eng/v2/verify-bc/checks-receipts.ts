@@ -25,6 +25,8 @@ const LINKCRASH = path.resolve(__dirname, "support/receipt-linkcrash.mjs");
 const TOCTOU = path.resolve(__dirname, "support/receipt-toctou.mjs");
 /** The final-name pattern observed from the black box; anything else in the directory is not a receipt. */
 export const FINAL = /^\d{8}T\d{6}Z-pr\d+-\d+-[0-9a-f]{16}\.json$/;
+/** chmod cannot make anything unreadable for root; those two R-ENTRIES cases need a non-root user (noted, not hidden). */
+export const IS_ROOT = typeof process.getuid === "function" && process.getuid() === 0;
 
 export function tmp(prefix = "rcpt-") {
   return tmpUnderRoot(prefix);
@@ -242,11 +244,12 @@ export function probeLegacyToolVersion(api: ReceiptsApi): string {
 
 export function checkDirEntries(api: ReceiptsApi) {
   const r = rowResult("R-ENTRIES", "README: an invalid file, or an unreadable directory, makes the read complete: false");
+  if (IS_ROOT) r.notes.push("running as root: the two chmod-unreadable cases cannot be constructed and were not run");
   const cases: [string, (dir: string) => void, boolean | null][] = [
     ["missing directory", (dir) => fs.rmSync(dir, { recursive: true }), false],
     ["directory is a file", (dir) => { fs.rmSync(dir, { recursive: true }); fs.writeFileSync(dir, "x"); }, false],
-    ["unreadable directory", (dir) => fs.chmodSync(dir, 0o000), false],
-    ["unreadable receipt file", (dir) => { const f = fs.readdirSync(dir)[0] ?? "20261007T200000Z-pr800-1-00000000000000dd.json"; if (!fs.existsSync(path.join(dir, f))) fs.writeFileSync(path.join(dir, f), "{}"); fs.chmodSync(path.join(dir, f), 0o000); }, false],
+    ...(IS_ROOT ? [] : ([["unreadable directory", (dir: string) => fs.chmodSync(dir, 0o000), false]] as [string, (dir: string) => void, boolean | null][])),
+    ...(IS_ROOT ? [] : ([["unreadable receipt file", (dir: string) => { const f = fs.readdirSync(dir)[0] ?? "20261007T200000Z-pr800-1-00000000000000dd.json"; if (!fs.existsSync(path.join(dir, f))) fs.writeFileSync(path.join(dir, f), "{}"); fs.chmodSync(path.join(dir, f), 0o000); }, false]] as [string, (dir: string) => void, boolean | null][])),
     ["subdirectory named like a receipt", (dir) => fs.mkdirSync(path.join(dir, "20261007T200000Z-pr800-1-0123456789abcdef.json")), false],
     ["foreign file", (dir) => fs.writeFileSync(path.join(dir, "README.md"), "notes"), false],
     ["dot-file temp", (dir) => fs.writeFileSync(path.join(dir, ".20261007T200000Z-pr800-1-0123456789abcdef.json.tmp"), "{\"schema\":"), false],
@@ -375,7 +378,9 @@ export function checkFaults(api: ReceiptsApi) {
     if (res.v?.ok && (finals.length !== 1 || !validReceiptText(fs.readFileSync(path.join(dir, finals[0]), "utf8")).ok)) r.add(id, `reported ok but the directory holds ${JSON.stringify(entries)}`);
     if (fn === "linkSync" && finals.length > 0) r.add(id, `link failed (${code}) yet a final record exists: ${finals.join(", ")}`);
     if (fn === "linkSync" && res.v?.ok) r.add(id, `link failed (${code}) yet writeReceipt reported ok`);
-    if (fn === "unlinkSync" && finals.length === 1 && res.v?.ok === false) r.notes.push(`${id}: the record was published but writeReceipt reported failure`);
+    // README (final pass): a receipt whose temporary name cannot be removed after it was published is still written.
+    if (fn === "unlinkSync" && finals.length === 1 && res.v?.ok !== true) r.add(id, `the record was published but writeReceipt reported ${JSON.stringify(res.v ?? res.e?.message)}`);
+    if (fn === "unlinkSync") r.notes.push(`${id}: writeReceipt ${JSON.stringify(res.v)}`);
     for (const f of finals) {
       const v = validReceiptText(fs.readFileSync(path.join(dir, f), "utf8"));
       if (!v.ok) r.add(id, `a torn final-named record after a ${fn} fault: ${f} (${v.why})`);

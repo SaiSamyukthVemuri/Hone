@@ -105,3 +105,26 @@ describe("REC pass 2: the 05A boundary the shepherd relies on (SPEC-05A §5.3 st
     expect(label(decide(b))).toBe("UNKNOWN(ci_definition_mismatch)");
   });
 });
+
+describe("REC final pass: V1's fixed policy is the only policy (SPEC-05A §5.1, §5.3 step 0 at 94db29d3)", () => {
+  test("REC-POLICY: createReaders and collect accept V1's policy (omitted or an equal copy) and refuse any other before a request", () => {
+    const log: any[] = [];
+    const request = makeFakeRequest(world(), log);
+    expect(() => createReaders({ request })).not.toThrow();
+    expect(() => createReaders({ request, policy: { ...POLICY } })).not.toThrow();
+    for (const bad of [{ ...POLICY, workflowId: 1 }, { ...POLICY, productionRef: "main" }, { ...POLICY, repoId: 2 }, { ...POLICY, owner: "someone-else" }, { ...POLICY, extra: true }, null, "V1"]) {
+      expect(() => createReaders({ request, policy: bad }), JSON.stringify(bad)).toThrow();
+    }
+    const readers = createReaders({ request, policy: POLICY });
+    for (const bad of [{ ...POLICY, workflowId: 1 }, { ...POLICY, repoId: 2 }, { ...POLICY, name: "Other" }, { cleanPrefix: "x" }]) {
+      const before = log.length;
+      const c = collect({ prNumber: 800, readers, local: loadLocalCi(), now: () => "2026-10-07T20:00:00Z", policy: bad });
+      expect(c.ok, JSON.stringify(bad)).toBe(false);
+      expect(c.reason).toBe("malformed");
+      expect(c.stage).toBe("collect");
+      expect(log.length, "no request before the policy check").toBe(before);
+    }
+    const ok = collect({ prNumber: 800, readers, local: loadLocalCi(), now: () => "2026-10-07T20:00:00Z", policy: { ...POLICY } });
+    expect(ok.ok).toBe(true);
+  });
+});

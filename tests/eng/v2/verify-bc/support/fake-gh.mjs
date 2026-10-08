@@ -7,6 +7,7 @@
 //   - gh level: `gh api …` argv plus the child environment (an injected spawn, or the executable shim).
 // Every call is logged with the facts the no-mutation and token-hygiene checks need.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -117,6 +118,21 @@ export function fixture(rel) {
   return JSON.parse(fs.readFileSync(path.join(FIXTURES, rel), "utf8"));
 }
 
+const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../../..");
+
+/** Git's blob id of a file in the checkout under test: sha1("blob <size>\0" + bytes), computed here, not imported. */
+function localBlob(rel) {
+  const bytes = fs.readFileSync(path.join(REPO_ROOT, rel));
+  return crypto.createHash("sha1").update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes])).digest("hex");
+}
+
+/** The recorded blob answers carry production's CI definition at 6cdd830b. The fake answers with the checkout's own
+ * definition instead, so production "is" this checkout's CI wherever the suite runs (archive, checkout, CI merge ref). */
+function blobAnswer(rel, recorded) {
+  const bytes = fs.statSync(path.join(REPO_ROOT, rel)).size;
+  return { ...recorded, sha: localBlob(rel), size: bytes };
+}
+
 /** The recorded #800 world exactly as captured (2026-10-07): an open draft at fe62f51f, production 6cdd830b. */
 export function world800() {
   return {
@@ -132,8 +148,8 @@ export function world800() {
     "run-jobs": fixture("ci/jobs-800.json"),
     "review-evidence": fixture("review/review-800.json"),
     "commit-rollup": fixture("rollup/rollup-800.json"),
-    "file-blob:.github/workflows/ci.yml": fixture("blob/contents-ci.yml-6cdd830b.json"),
-    "file-blob:scripts/classify-changes.mjs": fixture("blob/contents-classify-changes.mjs-6cdd830b.json"),
+    "file-blob:.github/workflows/ci.yml": blobAnswer(".github/workflows/ci.yml", fixture("blob/contents-ci.yml-6cdd830b.json")),
+    "file-blob:scripts/classify-changes.mjs": blobAnswer("scripts/classify-changes.mjs", fixture("blob/contents-classify-changes.mjs-6cdd830b.json")),
   };
 }
 

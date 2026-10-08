@@ -5,6 +5,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import {
+  checkClaudePolicy,
+  checkLeftover,
   checkClaudeTable,
   checkInternal,
   checkTextEscape,
@@ -22,6 +24,7 @@ import {
 // @ts-expect-error untyped support module
 import { makeFakeRequest } from "./support/fake-gh.mjs";
 import { cleanupTmp, redirectTmpdir } from "./support/tmp";
+import { headlessRoot, headlessRunShepherdCli } from "./support/headless";
 
 redirectTmpdir();
 afterAll(cleanupTmp);
@@ -40,7 +43,7 @@ beforeAll(async () => {
     return c.ok ? c.evidenceHash : null;
   };
   const scen = scenarios(hashOf);
-  for (const r of [...checkShepherd(runShepherdCli, scen), checkText(runShepherdCli, scen), checkUsage(runShepherdCli), checkUsageExit(runShepherdCli), checkNoToken(runShepherdCli), checkTokenEcho(runShepherdCli), checkReceiptModes(runShepherdCli), checkInternal(runShepherdCli), checkToolVersionNull(runShepherdCli), checkTextEscape(runShepherdCli), checkTimer(runShepherdCli), checkClaudeTable()]) rows[r.row] = r;
+  for (const r of [...checkShepherd(runShepherdCli, scen), checkText(runShepherdCli, scen), checkUsage(runShepherdCli), checkUsageExit(runShepherdCli), checkNoToken(runShepherdCli), checkTokenEcho(runShepherdCli), checkReceiptModes(runShepherdCli), checkInternal(runShepherdCli), checkToolVersionNull(await headlessRunShepherdCli(), headlessRoot()), checkTextEscape(runShepherdCli), checkTimer(runShepherdCli), checkClaudeTable(), checkClaudePolicy(), checkLeftover(runShepherdCli, (await import(path.join(V2, "receipts.mjs"))).readReceipts)]) rows[r.row] = r;
   console.log(
     "05C rows against efc7e186 runShepherdCli():\n" +
       Object.values(rows)
@@ -50,7 +53,7 @@ beforeAll(async () => {
 }, 600_000);
 
 describe("05C rows (in process)", () => {
-  for (const row of ["C-JSON", "C-FIELDS", "C-DECISION", "C-VALUES", "C-EXIT", "C-NOMUT", "C-ENV", "C-TOKEN", "C-RECEIPT", "C-TEXT", "C-USAGE", "C-USAGE-EXIT", "C-NOTOKEN", "C-TOKEN-ECHO", "C-RECEIPT-MODES", "C-INTERNAL", "C-TOOLVERSION", "C-TEXT-ESCAPE", "C-TIMER", "C-DOC"]) {
+  for (const row of ["C-JSON", "C-FIELDS", "C-DECISION", "C-VALUES", "C-EXIT", "C-NOMUT", "C-ENV", "C-TOKEN", "C-RECEIPT", "C-TEXT", "C-USAGE", "C-USAGE-EXIT", "C-NOTOKEN", "C-TOKEN-ECHO", "C-RECEIPT-MODES", "C-INTERNAL", "C-TOOLVERSION", "C-TEXT-ESCAPE", "C-TIMER", "C-DOC", "C-DOC-POLICY", "C-LEFTOVER"]) {
     test(row, () => {
       const r = rows[row];
       expect(r, `${row} ran`).toBeTruthy();
