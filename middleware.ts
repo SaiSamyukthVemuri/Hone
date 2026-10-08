@@ -1,8 +1,84 @@
-import { type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import {
+  appendVaryAccept, isUnknownPublicPath, NOT_FOUND_HTML,
+  preferredPublicRepresentation,
+} from "@/lib/marketing/agent-http";
+import { NOT_FOUND_MARKDOWN, PUBLIC_MARKDOWN } from "@/lib/marketing/agent-content";
 import { updateSession } from "@/lib/supabase/middleware";
 
+// Serve only the exact, non-sensitive company/agent files without requiring a
+// practitioner login. Do NOT widen this to /portal, /api or any route family.
+const PUBLIC_AGENT_ROUTES = new Set(["/about", "/contact", "/llms.txt"]);
+
 export async function middleware(request: NextRequest) {
-  return await updateSession(request);
+  const pathname = request.nextUrl.pathname;
+  const isRead = request.method === "GET" || request.method === "HEAD";
+  const accept = request.headers.get("Accept");
+
+  // Without this, unrecognized pages fall through to auth -> /login (final
+  // 200), so crawlers infer every resource exists. Known protected roots and
+  // bearer-token routes are NEVER handled by this shortcut.
+  if (isRead && isUnknownPublicPath(pathname)) {
+    const choice = preferredPublicRepresentation(accept);
+    const markdown = choice === "markdown";
+    return new NextResponse(
+      request.method === "HEAD" ? null : (markdown ? NOT_FOUND_MARKDOWN : NOT_FOUND_HTML),
+      {
+        status: 404,
+        headers: {
+          "Content-Type": markdown ? "text/markdown; charset=utf-8" : "text/html; charset=utf-8",
+          "Vary": "Accept",
+          "Cache-Control": "no-store",
+          "X-Robots-Tag": "noindex, nofollow",
+        },
+      },
+    );
+  }
+
+  // Only public marketing pages opt into content negotiation. A browser and
+  // Next's RSC requests keep the original HTML route. Protected/token routes
+  // never traverse this branch and cannot be rendered as public Markdown.
+  if (isRead && Object.prototype.hasOwnProperty.call(PUBLIC_MARKDOWN, pathname)) {
+    const choice = preferredPublicRepresentation(accept);
+    if (choice === "markdown") {
+      return new NextResponse(
+        request.method === "HEAD" ? null : PUBLIC_MARKDOWN[pathname],
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Vary": "Accept",
+            "Cache-Control": "public, s-maxage=300",
+          },
+        },
+      );
+    }
+    if (choice === "not-acceptable") {
+      return new NextResponse(
+        request.method === "HEAD" ? null : "Supported representations: text/html and text/markdown.",
+        {
+          status: 406,
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Vary": "Accept",
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
+  }
+
+  if (isRead && PUBLIC_AGENT_ROUTES.has(pathname)) {
+    const response = NextResponse.next({ request });
+    if (Object.prototype.hasOwnProperty.call(PUBLIC_MARKDOWN, pathname)) {
+      appendVaryAccept(response.headers);
+    }
+    return response;
+  }
+
+  const response = await updateSession(request);
+  if (isRead && pathname === "/") appendVaryAccept(response.headers);
+  return response;
 }
 
 // FOUR EXACT PATHS are excluded, never a directory prefix.
