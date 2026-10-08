@@ -13,6 +13,7 @@ import { exactFieldMutations } from "./support/parser-props";
 import { rng } from "./support/prng";
 import { isPrKeyViolations, keyCorpusViolations, keyPurityViolations, keysEqualViolations } from "./support/row1-properties";
 import { REAL } from "./support/world";
+import { budgetGuard, SLOW_ROW_MS } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — ENG-LOOP V1 05A row 1, PrSnapshotKey.
@@ -33,7 +34,7 @@ const OPEN_800 = {
   baseTip: "6cdd830b0bcc5e3532016bc612bd0298db3533fb" as string | null,
 };
 
-describe("row 1 verify: parsePrKey against an independent oracle", () => {
+describe("row 1 verify: parsePrKey against an independent oracle", { timeout: SLOW_ROW_MS }, () => {
   it("agrees with the §2 oracle on 4000 generated answers (valid, lookalike-invalid, extra/missing fields, envelopes)", () => {
     expect(keyCorpusViolations(parsePrKey, { n: 4000, seed: 0x05a1 })).toEqual([]);
   });
@@ -247,3 +248,5 @@ describe("row 1 verify: the closed reason set", () => {
     for (const r of needed) expect(UNKNOWN_REASONS, r).toContain(r);
   });
 });
+
+budgetGuard("row1-key.verify.test.ts");

@@ -34,6 +34,7 @@ import {
   type ReviewRow,
   type RollupRow,
 } from "./support/rows456";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — adversarial pass on rows 4-6 (SPEC-05A §4, ARCH-01 §17-§21,
@@ -310,3 +311,5 @@ describe("adversarial: rows 4-6 sequences (verdicts: SPEC AMBIGUITY = unrecorded
     });
   }
 });
+
+budgetGuard("adversarial-456.verify.test.ts");

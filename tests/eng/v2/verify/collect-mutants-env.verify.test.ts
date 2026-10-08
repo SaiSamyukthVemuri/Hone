@@ -29,8 +29,9 @@ vi.mock("child_process", async (importOriginal) => wrapChildProcess(await import
 import { createPrimitive as realCreatePrimitive } from "../../../../scripts/eng/v2/adapter/internal/github/primitive.mjs";
 import { fakeGhKit, primitiveRows, type FakeGhKit } from "./support/fake-gh";
 import { primitiveHomes } from "./support/temp-home";
+import { budgetGuard, SLOW_ROW_MS } from "./support/budgets";
 
-describe("primitive mutation detection: an inherited environment (SPEC-05A §5.1)", () => {
+describe("primitive mutation detection: an inherited environment (SPEC-05A §5.1)", { timeout: SLOW_ROW_MS }, () => {
   const homes = primitiveHomes();
   const createPrimitive = homes.wrap(realCreatePrimitive);
   afterEach(() => homes.closeAll());
@@ -65,3 +66,5 @@ describe("primitive mutation detection: an inherited environment (SPEC-05A §5.1
     expect(homes.leftovers()).toEqual([]);
   });
 });
+
+budgetGuard("collect-mutants-env.verify.test.ts");

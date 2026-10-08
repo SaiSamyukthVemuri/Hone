@@ -10,6 +10,7 @@ import { LOCAL_ROOT, gitBlobSha, loadLocalCi, tablePinnedTo } from "../../../../
 import { classify } from "../../../../scripts/classify-changes.mjs";
 import { BLOB_CI, BLOB_CLASSIFY, gitBlob } from "./support/collector";
 import { REAL_810_FILES } from "./support/world";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — SPEC-05A §5.2 (f75ca255): the CI definition the shepherd
@@ -86,3 +87,5 @@ describe("§5.2 tablePinnedTo: every §3.3 job name appears as `name: <job>`", (
     expect(tablePinnedTo("")).toBe(false);
   });
 });
+
+budgetGuard("collect-local-ci.verify.test.ts");

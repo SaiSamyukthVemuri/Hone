@@ -20,6 +20,7 @@ import { clone } from "./support/deep";
 import { evaluate, type Impl } from "./support/pipeline";
 import { ADVERSARIAL, SCENARIOS, matches, orderScenarios, type Scenario } from "./support/scenarios";
 import { WORKFLOW_ID, type World } from "./support/world";
+import { budgetGuard, SLOW_ROW_MS } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — mutation detection through the REAL pipeline.
@@ -186,7 +187,7 @@ const MUTANTS: Array<[string, MutantFactory, string[]]> = [
   ],
 ];
 
-describe("mutation detection C: the real pipeline, mutated, is rejected by the table", () => {
+describe("mutation detection C: the real pipeline, mutated, is rejected by the table", { timeout: SLOW_ROW_MS }, () => {
   const realResults = new Map(TABLE.map((s) => [s.id, evaluate(s.world(), REAL_IMPL).result]));
   const realPasses = TABLE.filter((s) => matches(realResults.get(s.id)!, s.expect));
 
@@ -203,3 +204,5 @@ describe("mutation detection C: the real pipeline, mutated, is rejected by the t
     });
   }
 });
+
+budgetGuard("mutants-pipeline.verify.test.ts");
