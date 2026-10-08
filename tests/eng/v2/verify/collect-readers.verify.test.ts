@@ -25,6 +25,7 @@ import { POLICY, createReaders } from "../../../../scripts/eng/v2/adapter/intern
 import { BLOB_CI, BLOB_CLASSIFY, NAME, OWNER, PROD_BLOBS, SPEC_QUERIES, selection } from "./support/collector";
 import { canon, clone, deepFreeze, isDeepFrozen, noThrow } from "./support/deep";
 import { H810, P0, PROD_REF_FULL, PRODUCTION_REF, REAL, RUN_810, TARGET_REPO_ID, WORKFLOW_ID, golden, rawCompareFor } from "./support/world";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — SPEC-05A §5.1 readers (f75ca255). Every expected route,
@@ -343,3 +344,5 @@ describe("§5.1 readers: the policy every route is built from", () => {
       expect(seen).toEqual([]);
     });
 });
+
+budgetGuard("collect-readers.verify.test.ts");

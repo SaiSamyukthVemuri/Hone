@@ -11,6 +11,7 @@ import { NINE } from "./support/key-oracle";
 import { coherenceViolations, confirmViolations, keyCorpusViolations, keysEqualViolations } from "./support/row1-properties";
 import { ADVERSARIAL, SCENARIOS, matches, orderScenarios, show, type Scenario } from "./support/scenarios";
 import { specModel, type Mutations } from "./support/spec-model";
+import { budgetGuard, SLOW_ROW_MS } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — mutation detection.
@@ -173,7 +174,7 @@ function evidenceFirstConfirm({ first, readKey, readBody, sameEvidence }: any) {
   return { ok: true };
 }
 
-describe("mutation detection B: row-1 mutants are rejected by the row-1 properties", () => {
+describe("mutation detection B: row-1 mutants are rejected by the row-1 properties", { timeout: SLOW_ROW_MS }, () => {
   it("baseline: the real row-1 functions give no violations on the mutant-detection seeds", () => {
     expect(keyCorpusViolations(parsePrKey, { n: 1500, seed: 0xa11 })).toEqual([]);
     expect(keysEqualViolations(keysEqual, parsePrKey, { seed: 0xa12 })).toEqual([]);
@@ -204,3 +205,5 @@ describe("mutation detection B: row-1 mutants are rejected by the row-1 properti
     expect(v.some((s) => s.includes('"reason":"pr_key_moved"'))).toBe(true);
   });
 });
+
+budgetGuard("mutants.verify.test.ts");

@@ -31,6 +31,7 @@ import { rng } from "./support/prng";
 import { SCENARIOS, matches, orderScenarios, show, type Scenario } from "./support/scenarios";
 import { modelRequiredJobs } from "./support/spec-model";
 import { H810, JOB, REAL, REAL_810_FILES, RUN_810, WORKFLOW_ID, ownRun, sha40, type World } from "./support/world";
+import { budgetGuard, SLOW_ROW_MS } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — ENG-LOOP V1 05A row 3: applicable CI, the V1 model.
@@ -343,7 +344,7 @@ describe("row 3 verify: bindCi scenario table (§3.4, §3.5 negative controls NC
   }
 });
 
-describe("row 3 verify: rule order — the first rule that fires decides (55 pairs, 40 random 3-5 sets)", () => {
+describe("row 3 verify: rule order — the first rule that fires decides (55 pairs, 40 random 3-5 sets)", { timeout: SLOW_ROW_MS }, () => {
   it("every combination of injected faults is decided by its lowest-numbered rule", () => {
     const bad: string[] = [];
     for (const s of orderScenarios()) {
@@ -358,7 +359,7 @@ describe("row 3 verify: rule order — the first rule that fires decides (55 pai
 // ---------------------------------------------------------------------------
 // §3.4 bindCi — metamorphic properties
 // ---------------------------------------------------------------------------
-describe("row 3 verify: bindCi metamorphic properties", () => {
+describe("row 3 verify: bindCi metamorphic properties", { timeout: SLOW_ROW_MS }, () => {
   const outcome = (w: World) => {
     const r = evaluate(w, IMPL).result;
     return r.ok ? { ok: true, outcome: r.outcome, runs: [...r.runs].sort((a, b) => a - b) } : r;
@@ -634,3 +635,5 @@ describe("row 3 verify: LIVE stacked PR (read-only GraphQL, 2026-10-07)", () => 
     }
   });
 });
+
+budgetGuard("row3-ci.verify.test.ts");

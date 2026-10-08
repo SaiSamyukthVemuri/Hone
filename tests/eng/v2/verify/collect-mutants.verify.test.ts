@@ -14,6 +14,7 @@ import { createPrimitive as realCreatePrimitive } from "../../../../scripts/eng/
 import { COLLECT_ROWS, LOCAL, type CollectSut } from "./support/collect-rows";
 import { fakeGhKit, primitiveRows, type FakeGhKit } from "./support/fake-gh";
 import { primitiveHomes } from "./support/temp-home";
+import { budgetGuard, SLOW_HOOK_MS, SLOW_ROW_MS } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — mutation detection for the collector (SPEC-05A §5).
@@ -164,13 +165,13 @@ const MUTANTS: Array<[string, CollectSut, string[]]> = [
   ["R-ECHO-Q: run jobs lose filter=latest", { collect, createReaders: rewriteRoutes((r) => r.replace("filter=latest&", "")) }, ["golden"]],
 ];
 
-describe("collector mutation detection: the real collector, mutated, is rejected by named rows", () => {
+describe("collector mutation detection: the real collector, mutated, is rejected by named rows", { timeout: SLOW_ROW_MS }, () => {
   const ids = Object.keys(COLLECT_ROWS);
   const baseline = new Map<string, string | null>();
 
   beforeAll(async () => {
     for (const id of ids) baseline.set(id, await COLLECT_ROWS[id].check(REAL));
-  });
+  }, SLOW_HOOK_MS);
 
   it("baseline: the real collector satisfies every named row", () => {
     const failing = ids.filter((id) => baseline.get(id) !== null).map((id) => `${id}: ${baseline.get(id)}`);
@@ -187,7 +188,7 @@ describe("collector mutation detection: the real collector, mutated, is rejected
   }
 });
 
-describe("primitive mutation detection (SPEC-05A §5.1)", () => {
+describe("primitive mutation detection (SPEC-05A §5.1)", { timeout: SLOW_ROW_MS }, () => {
   // every primitive built here (real or through a mutant) is tracked and closed after each test
   const homes = primitiveHomes();
   const createPrimitive = homes.wrap(realCreatePrimitive);
@@ -219,3 +220,5 @@ describe("primitive mutation detection (SPEC-05A §5.1)", () => {
     expect(homes.leftovers()).toEqual([]);
   });
 });
+
+budgetGuard("collect-mutants.verify.test.ts");

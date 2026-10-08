@@ -27,6 +27,7 @@ import {
   evaluateRollup,
   type Impl456,
 } from "./support/rows456";
+import { budgetGuard } from "./support/budgets";
 
 // ===========================================================================
 // INDEPENDENT VERIFIER — mutation detection for rows 4-6, through the REAL
@@ -244,3 +245,5 @@ describe("mutation detection D: rows 4-6, real functions wrapped by unsafe mutan
     });
   }
 });
+
+budgetGuard("mutants-rows456.verify.test.ts");
