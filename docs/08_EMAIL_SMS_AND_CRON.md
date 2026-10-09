@@ -120,11 +120,9 @@ STOP keywords (`STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`) opt ou
 
 ### Delivery ledger and status callbacks (SMS-00, migrations 0206 and 0207)
 
-> **INACTIVE UNTIL A SEND PATH IS WIRED.** SMS-00 ships the ledger, its commands and the status endpoint, but **no send path writes to the ledger yet**. Today's booking-confirmation and reminder texts go out exactly as before: no ledger row, no `StatusCallback`, so no delivery report and no `sms_delivery_failed` alert can arise for them. The table stays empty until the send paths land:
-> - SMS-02 for appointment reminders and confirmations;
-> - SMS-01 for waitlist invitations.
->
-> Everything below describes the behaviour **once those paths are wired**.
+> **WHICH SEND PATHS ARE LEDGERED.** SMS-00 shipped the ledger, its commands and the status endpoint. SMS-02 wires the appointment send paths:
+> - **booking confirmations, and 24h and 2h reminders, are ledgered** — one row per provider attempt, named in its `StatusCallback`, with delivery reports and `sms_delivery_failed` alerts;
+> - **waitlist invitation texts are not yet**: SMS-01 wires them, and until then `claim_waitlist_invitation_sms` has no caller.
 
 `public.sms_outbound_messages` holds **one row per ledgered outbound SMS attempt** — purpose, subject (an appointment or a waitlist invitation), status, Twilio's message SID and numeric error code. **No message body and no phone number.** It has RLS on, no policy and no table grant to any role; its only writers are five `service_role` commands (`lib/sms/delivery-ledger.ts` wraps them):
 
