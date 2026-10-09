@@ -136,6 +136,17 @@ const TWILIO_SEND_TIMEOUT_MS = 15_000;
 // shape before Hone records it anywhere.
 const MESSAGE_SID_RE = /^(SM|MM)[0-9a-fA-F]{32}$/;
 
+// undici `cause.code`s raised before a connection exists, so before any byte
+// of the request could have reached the provider.
+const PRE_CONNECTION_ERROR_CODES = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
 /**
  * Whether THIS deployment may send SMS at all.
  *
@@ -314,15 +325,21 @@ export async function sendSmsSafely(
       providerErrorCode: providerErrorCodeOf(parsed),
     };
   } catch (err) {
-    // AbortController fires AbortError on timeout. Network failures
-    // come through as TypeError. Both are retryable, and both are
-    // ambiguous: the request may have reached Twilio before the answer
-    // was lost.
-    const tag =
-      err instanceof Error && err.name === "AbortError"
-        ? "twilio_timeout"
-        : "twilio_network";
-    return { ok: false, error: tag, retryable: true, attempt: "ambiguous" };
+    // AbortController fires AbortError on timeout: the request was sent and
+    // its answer lost, so it is ambiguous.
+    if (err instanceof Error && err.name === "AbortError") {
+      return { ok: false, error: "twilio_timeout", retryable: true, attempt: "ambiguous" };
+    }
+    // A connection that was never established (DNS, refused, unreachable,
+    // connect timeout) carried no request, so no message can exist: that is
+    // a definite non-acceptance, and retrying it cannot send twice.
+    const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;
+    if (typeof code === "string" && PRE_CONNECTION_ERROR_CODES.has(code)) {
+      return { ok: false, error: "twilio_unreachable", retryable: true, attempt: "refused" };
+    }
+    // Any other network failure (a reset mid-request, a broken socket) may
+    // have happened after Twilio read the request: ambiguous.
+    return { ok: false, error: "twilio_network", retryable: true, attempt: "ambiguous" };
   } finally {
     clearTimeout(timeout);
   }

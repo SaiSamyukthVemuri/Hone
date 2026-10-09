@@ -10,7 +10,15 @@ import {
   normalizePhoneForSms,
   outboundSmsFence,
   sendSmsSafely,
+  type SendSmsResult,
 } from "./twilio";
+import {
+  beginAppointmentSmsMessage,
+  settleOutcomeForSend,
+  settleSmsMessage,
+  smsStatusCallbackUrl,
+  type AppointmentSmsPurpose,
+} from "./delivery-ledger";
 
 // SMS send helpers used by the booking, reschedule, and reminder cron
 // paths. Each top-level function follows the strict claim-then-send-
@@ -32,6 +40,14 @@ import {
 // the intended fallback for hard crashes; ordinary failures are
 // covered by the finally block.
 //
+// SMS-00/SMS-02: every provider attempt also gets a row in the delivery
+// ledger (lib/sms/delivery-ledger.ts), named in its StatusCallback so
+// Twilio's delivery reports land on it. The ledger records; it never
+// decides. claim_sms_send stays the authority on whether a send happens,
+// and record_sms_result is written BEFORE the ledger row is settled: the
+// settle is best-effort and must never stand between the provider's answer
+// and the authoritative record.
+//
 // Every send path also checks the studio toggle, the client's
 // sms_consent_at / sms_opted_out_at, that we have a normalizable
 // phone, and that the appointment has not already been sent (the
@@ -46,6 +62,31 @@ export type SmsSendResult =
   | { ok: true; messageSid: string }
   | { ok: false; skipped: true; reason: string }
   | { ok: false; skipped?: false; error: string; retryable: boolean };
+
+/**
+ * SMS-02: what a reminder send tells the cron. It says two things SmsSendResult
+ * cannot (Codex P2 4232680581):
+ * - POSSIBLY SENT. The provider was asked and its answer was lost (a 5xx, a
+ *   timeout, a reset mid-request, a success without a readable SID), so it may
+ *   have the message. It is recorded as sent and never retried, and the cron
+ *   still counts it as a failed attempt -- but it is no longer
+ *   indistinguishable from a definite refusal.
+ * - WHAT THE MESSAGE CARRIED. Whether the message the provider has, or may
+ *   have, carries the intake link, read from the message itself, so the cron
+ *   accounts for that link exactly when it may be in the client's hands.
+ */
+export type ReminderSmsResult =
+  | { ok: true; messageSid: string; intakeLinkIncluded: boolean }
+  | { ok: false; skipped: true; reason: string }
+  | {
+      ok: false;
+      skipped?: false;
+      possiblySent: true;
+      error: string;
+      retryable: false;
+      intakeLinkIncluded: boolean;
+    }
+  | { ok: false; skipped?: false; possiblySent?: false; error: string; retryable: boolean };
 
 // Re-export for callers that import alongside the send helpers.
 export type { SmsType };
@@ -272,15 +313,22 @@ export async function sendBookingConfirmationSmsToClient(
   });
 }
 
-type SendReminderInput = {
+/** A cron reminder window, as reminderWindowIso returns it. */
+export type ReminderWindow = { startIso: string; endIso: string };
+
+export type SendReminderInput = {
   admin: SupabaseClient;
   appointmentId: string;
-  startsAt: Date;
+  /**
+   * The cron window this reminder belongs to (reminderWindowIso). The start is
+   * RE-READ after the claim and must still fall inside it.
+   */
+  window: ReminderWindow;
   timezone: string;
   // A FRESH secure intake link, or null. The cron passes non-null ONLY when
   // send_intake_reminders is on, this window's SMS toggle is on, and the LIVE
-  // intake read after the appointment re-check said in_progress. The consent
-  // gate, the claim and the Twilio contract below are untouched by it.
+  // intake read said in_progress. The consent gate, the claim and the Twilio
+  // contract below are untouched by it.
   intakeUrl?: string | null;
   studio: Pick<
     Studio,
@@ -293,52 +341,398 @@ type SendReminderInput = {
     | "send_2h_sms_reminders"
   >;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
-  // Reminder SMS carry the same neutral /manage/<token> link as
-  // confirmation. The manage landing page surfaces both reschedule
-  // and cancel options after the studio's policies.
-  manageUrl: string | null;
+  /**
+   * The neutral /manage/<token> link for a start, or null. A BUILDER rather
+   * than a URL: the token expires at the appointment's start, so it is minted
+   * from the start read after the claim -- never from the one the window
+   * query saw, which a move may already have replaced.
+   */
+  manageUrlFor: (startsAt: Date) => string | null;
+  /**
+   * The cron run's ledger budget (createLedgerBudget), or absent. Both SMS
+   * passes of one run share it, so their ledger waits together stay within
+   * LEDGER_RUN_BUDGET_MS. Absent, each ledger step is bounded on its own, as
+   * the booking confirmation's are.
+   */
+  ledgerBudget?: LedgerBudget;
 };
 
 export async function send24hReminderSmsToClient(
   input: SendReminderInput,
-): Promise<SmsSendResult> {
-  return sendOne({
-    admin: input.admin,
-    appointmentId: input.appointmentId,
-    smsType: "reminder_24h",
-    studio: input.studio,
-    client: input.client,
-    buildBody: () =>
-      build24hReminderSms({
-        studioName: input.studio.name,
-        startsAt: input.startsAt,
-        timezone: input.timezone,
-        manageUrl: input.manageUrl,
-        intakeUrl: input.intakeUrl ?? null,
-      }),
-    to: (normalizedPhone) => normalizedPhone,
-  });
+): Promise<ReminderSmsResult> {
+  return sendReminder("reminder_24h", input);
 }
 
 export async function send2hReminderSmsToClient(
   input: SendReminderInput,
-): Promise<SmsSendResult> {
-  return sendOne({
-    admin: input.admin,
-    appointmentId: input.appointmentId,
-    smsType: "reminder_2h",
-    studio: input.studio,
-    client: input.client,
-    buildBody: () =>
-      build2hReminderSms({
-        studioName: input.studio.name,
-        startsAt: input.startsAt,
-        timezone: input.timezone,
-        manageUrl: input.manageUrl,
-        intakeUrl: input.intakeUrl ?? null,
-      }),
-    to: (normalizedPhone) => normalizedPhone,
+): Promise<ReminderSmsResult> {
+  return sendReminder("reminder_2h", input);
+}
+
+type ReminderClaim =
+  | { result: "claimed"; startsAt: Date }
+  | { result: "not_claimed" | "not_confirmed" | "outside_window" | "not_found" | "invalid_input" }
+  /** The command could not be reached or answered unreadably. It is one
+   *  transaction, so nothing was claimed and no attempt was spent. */
+  | { result: "unavailable" };
+
+const REMINDER_CLAIM_REFUSALS = new Set([
+  "not_claimed",
+  "not_confirmed",
+  "outside_window",
+  "not_found",
+  "invalid_input",
+]);
+
+/**
+ * claim_reminder_sms_send (0206): under the appointment row lock, refuse
+ * unless the appointment is confirmed and starts inside this cron window, then
+ * claim with claim_sms_send -- one transaction. The start it returns is the one
+ * the reminder names.
+ */
+async function claimReminderSmsSend(
+  admin: SupabaseClient,
+  appointmentId: string,
+  smsType: "reminder_24h" | "reminder_2h",
+  window: ReminderWindow,
+): Promise<ReminderClaim> {
+  try {
+    const { data, error } = await admin.rpc("claim_reminder_sms_send", {
+      p_appointment_id: appointmentId,
+      p_sms_type: smsType,
+      p_window_start: window.startIso,
+      p_window_end: window.endIso,
+    });
+    if (error) return { result: "unavailable" };
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | { result?: unknown; starts_at?: unknown }
+      | null;
+    if (row?.result === "claimed") {
+      const startsAt = new Date(String(row.starts_at));
+      return Number.isNaN(startsAt.getTime())
+        ? { result: "unavailable" }
+        : { result: "claimed", startsAt };
+    }
+    if (typeof row?.result === "string" && REMINDER_CLAIM_REFUSALS.has(row.result)) {
+      return { result: row.result } as ReminderClaim;
+    }
+    return { result: "unavailable" };
+  } catch {
+    return { result: "unavailable" };
+  }
+}
+
+/**
+ * SMS-02 — one appointment reminder SMS: gated, claimed, re-validated, sent,
+ * settled. Beyond sendOne's gate and claim it closes the two gaps the
+ * reminder path had:
+ *
+ *  1. CANCELLED OR MOVED AFTER THE WINDOW QUERY. claim_sms_send validates
+ *     nothing, and the old re-check ran before it. The claim now goes through
+ *     claim_reminder_sms_send, which checks status and window under the
+ *     appointment row lock and claims in the same transaction: a cancelled
+ *     appointment, or one moved out of this window, is refused without
+ *     spending an attempt, and the message and its manage link are built from
+ *     the start the claim returns -- so a move made before the send is
+ *     reminded at its new start.
+ *
+ *  2. AN ANSWER THAT WAS LOST. Twilio takes no idempotency key, so an
+ *     ambiguous attempt may already have reached the client, and retrying it
+ *     could send the reminder twice. It is recorded as sent -- no automatic
+ *     retry -- and the ledger keeps it `unknown` until a delivery callback
+ *     says what happened; a failure then raises an ops alert. It is returned
+ *     as POSSIBLY SENT (ReminderSmsResult), never as a definite failure, so
+ *     the cron can account for the intake link it may have carried. A
+ *     definite refusal (including a connection that never opened) is retried
+ *     on a later fire, within the 3-attempt budget, as before.
+ *
+ *  3. THE RECORD BEFORE THE LEDGER. record_sms_result is written as soon as
+ *     the provider answers; only then is the ledger row settled. A settle
+ *     that hangs, or an invocation killed during it, can no longer leave an
+ *     accepted (or possibly accepted) reminder holding only its claim, which
+ *     goes stale after five minutes and is reclaimed -- a duplicate. What is
+ *     left is the one round trip between the answer and that record. Each
+ *     ledger step is also bounded (LEDGER_STEP_BOUND_MS), so neither the row
+ *     before the send nor the settle after it can outlast the claim lease;
+ *     and the cron's run shares ONE ledger budget across both of its SMS
+ *     passes (LEDGER_RUN_BUDGET_MS), so the ledger cannot stall the batch
+ *     however many reminders it carries.
+ *
+ * A claim that could not be reached is a SKIP: no provider request was made
+ * and no attempt spent, so the cron never counts it as an attempt.
+ *
+ * NOT HERE: a fresh reminder after a move whose reminder already went out.
+ * The slot is recorded exactly as the provider answered; re-arming it safely
+ * needs start-bound claims for email and SMS alike (follow-up SMS-03,
+ * docs/13_BACKLOG_AND_DECISIONS.md).
+ */
+async function sendReminder(
+  smsType: "reminder_24h" | "reminder_2h",
+  args: SendReminderInput,
+): Promise<ReminderSmsResult> {
+  const gate = passesConsentGate({
+    studio: args.studio,
+    client: args.client,
+    smsType,
   });
+  if (!gate.ok) {
+    return { ok: false, skipped: true, reason: gate.reason };
+  }
+
+  const fence = outboundSmsFence();
+  if (!fence.allowed) {
+    return { ok: false, skipped: true, reason: fence.reason };
+  }
+
+  // (1) Validate and claim in ONE transaction. A refusal spends no attempt;
+  // an unreachable command spends none either (it rolled back), and is
+  // retried on a later fire.
+  const claim = await claimReminderSmsSend(args.admin, args.appointmentId, smsType, args.window);
+  if (claim.result === "unavailable") {
+    logSmsFailure({
+      appointmentId: args.appointmentId,
+      smsType,
+      error: "reminder_claim_unavailable",
+      retryable: true,
+      studioId: args.studio.id,
+    });
+    // Logged, but a skip: nothing reached the provider.
+    return { ok: false, skipped: true, reason: "reminder_claim_unavailable" };
+  }
+  if (claim.result !== "claimed") {
+    return { ok: false, skipped: true, reason: claim.result };
+  }
+  const startsAt = claim.startsAt;
+
+  let attempt: LedgeredAttempt;
+  let intakeLinkIncluded = false;
+  try {
+    const build = smsType === "reminder_24h" ? build24hReminderSms : build2hReminderSms;
+    const body = build({
+      studioName: args.studio.name,
+      startsAt,
+      timezone: args.timezone,
+      manageUrl: args.manageUrlFor(startsAt),
+      intakeUrl: args.intakeUrl ?? null,
+    });
+    // What this message carries, read from the message itself.
+    intakeLinkIncluded = Boolean(args.intakeUrl) && body.includes(args.intakeUrl as string);
+    attempt = await sendWithLedgerRow({
+      admin: args.admin,
+      studioId: args.studio.id,
+      appointmentId: args.appointmentId,
+      smsType,
+      to: gate.normalizedPhone,
+      body,
+      budget: args.ledgerBudget,
+    });
+  } catch {
+    // sendSmsSafely and the ledger never throw, so an exception here came from
+    // building the message: nothing reached the provider.
+    attempt = {
+      result: { ok: false, error: "sms_render_failed", retryable: false, attempt: "none" },
+      messageId: null,
+    };
+  }
+  const result = attempt.result;
+
+  // (2) The AUTHORITATIVE record, first. Sent, or possibly sent, counts as
+  // sent: an ambiguous attempt is never retried automatically.
+  const providerMayHaveIt = result.ok || result.attempt === "ambiguous";
+  await recordSmsResult(args.admin, args.appointmentId, smsType, providerMayHaveIt);
+
+  // (3) Then the best-effort ledger settle, within the run's ledger budget.
+  await settleLedgerRow(args.admin, attempt, args.ledgerBudget);
+
+  if (result.ok) {
+    console.log(
+      JSON.stringify({
+        event: "sms_sent",
+        appointmentId: args.appointmentId,
+        smsType,
+        messageSid: result.messageSid,
+        toMasked: maskedPhone(gate.normalizedPhone),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: true, messageSid: result.messageSid, intakeLinkIncluded };
+  }
+
+  const ambiguous = result.attempt === "ambiguous";
+  logSmsFailure({
+    appointmentId: args.appointmentId,
+    smsType,
+    error: ambiguous ? `${result.error}:outcome_unknown` : result.error,
+    // An ambiguous attempt is never retried automatically, so it is final.
+    retryable: ambiguous ? false : result.retryable,
+    studioId: args.studio.id,
+  });
+  if (ambiguous) {
+    // POSSIBLY SENT: recorded as sent above, never retried, and still a failed
+    // attempt to the cron, which keeps the intake link's accounting.
+    return { ok: false, possiblySent: true, error: result.error, retryable: false, intakeLinkIncluded };
+  }
+  return { ok: false, error: result.error, retryable: result.retryable };
+}
+
+// ---------------------------------------------------------------------------
+// Ledger plumbing shared by every appointment SMS (SMS-00 / SMS-02)
+// ---------------------------------------------------------------------------
+
+const LEDGER_PURPOSE: Record<SmsType, AppointmentSmsPurpose> = {
+  confirmation: "appointment_confirmation",
+  reminder_24h: "appointment_reminder_24h",
+  reminder_2h: "appointment_reminder_2h",
+};
+
+/** One provider attempt and the ledger row that names it (null without one). */
+type LedgeredAttempt = { result: SendSmsResult; messageId: string | null };
+
+/**
+ * The ledger is bookkeeping, so it may never hold up an SMS. Each ledger step
+ * is bounded far inside the five-minute claim lease, so a ledger row that
+ * stalls cannot keep this worker paused until another run reclaims the stale
+ * slot and sends it too. A step that runs out of time is abandoned, and the
+ * send continues exactly as it does without a ledger. Its request may still
+ * land later; a row left `claimed` is what monitoring surfaces as unresolved.
+ */
+export const LEDGER_STEP_BOUND_MS = 5_000;
+
+/**
+ * The reminder cron's allowance for the ledger: ONE budget per run, shared by
+ * both SMS passes (Codex P1 4232680578). A bound per step alone is paid again
+ * for every reminder in the sequential batch, so a stalled ledger would cost
+ * the run seconds per reminder. With the budget:
+ * - every ledger step waits at most what is left of it, and its wait is
+ *   charged to it;
+ * - a step that runs out of time spends the rest;
+ * - once it is spent, no further ledger request is started in that run.
+ * Every reminder is still claimed, sent and recorded, and the record still
+ * comes before the settle; what is lost is only the ledger row, and with it
+ * the delivery report, for the rest of that run. The next run starts afresh.
+ */
+export const LEDGER_RUN_BUDGET_MS = 5_000;
+
+/** Milliseconds of ledger wait left to one cron run. Mutated as steps run. */
+export type LedgerBudget = { remainingMs: number };
+
+export function createLedgerBudget(): LedgerBudget {
+  return { remainingMs: LEDGER_RUN_BUDGET_MS };
+}
+
+/**
+ * Run one ledger step within LEDGER_STEP_BOUND_MS and, when given, within the
+ * run's budget. `work` is a thunk so that a step the budget refuses is never
+ * started: no request leaves.
+ */
+async function boundedLedgerStep<T>(
+  step: "begin" | "settle",
+  work: () => Promise<T>,
+  onTimeout: T,
+  budget?: LedgerBudget,
+): Promise<T> {
+  if (budget && budget.remainingMs <= 0) {
+    console.error(
+      JSON.stringify({
+        event: "sms_ledger_step_skipped",
+        step,
+        reason: "run_budget_spent",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return onTimeout;
+  }
+  const boundMs = budget ? Math.min(LEDGER_STEP_BOUND_MS, budget.remainingMs) : LEDGER_STEP_BOUND_MS;
+  const startedAt = Date.now();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      console.error(
+        JSON.stringify({
+          event: "sms_ledger_step_timed_out",
+          step,
+          boundMs,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      resolve(onTimeout);
+    }, boundMs);
+  });
+  try {
+    // The ledger commands never reject (they log and answer null). An answer
+    // that arrives after the bound is ignored.
+    return await Promise.race([work(), expired]);
+  } finally {
+    clearTimeout(timer);
+    if (budget) {
+      budget.remainingMs = timedOut
+        ? 0
+        : Math.max(0, budget.remainingMs - (Date.now() - startedAt));
+    }
+  }
+}
+
+/**
+ * One provider attempt with its ledger row: created after the claim and named
+ * in the StatusCallback, so delivery reports land on it. FAIL-SOFT: without a
+ * row the message is sent exactly as before, only without delivery reports.
+ * Never throws.
+ *
+ * It does NOT settle the row. The caller records the authoritative slot
+ * (record_sms_result) first and only then calls settleLedgerRow. A row that
+ * does not come back within its bound, or that the run's spent budget never
+ * requests, is abandoned and the message goes without a StatusCallback.
+ */
+async function sendWithLedgerRow(args: {
+  admin: SupabaseClient;
+  studioId: string;
+  appointmentId: string;
+  smsType: SmsType;
+  to: string;
+  body: string;
+  budget?: LedgerBudget;
+}): Promise<LedgeredAttempt> {
+  const messageId = await boundedLedgerStep(
+    "begin",
+    () =>
+      beginAppointmentSmsMessage(args.admin, {
+        studioId: args.studioId,
+        appointmentId: args.appointmentId,
+        purpose: LEDGER_PURPOSE[args.smsType],
+      }),
+    null,
+    args.budget,
+  );
+  const result = await sendSmsSafely({
+    to: args.to,
+    body: args.body,
+    statusCallbackUrl: messageId ? smsStatusCallbackUrl(messageId) : null,
+  });
+  return { result, messageId };
+}
+
+/**
+ * Best-effort: settle the attempt's ledger row with the provider's answer.
+ * Call only AFTER record_sms_result. Never throws, and never waits longer than
+ * LEDGER_STEP_BOUND_MS, or than what is left of the run's budget; a row it
+ * never settles stays `claimed`, which monitoring surfaces as unresolved.
+ */
+async function settleLedgerRow(
+  admin: SupabaseClient,
+  attempt: LedgeredAttempt,
+  budget?: LedgerBudget,
+): Promise<void> {
+  if (attempt.messageId) {
+    const messageId = attempt.messageId;
+    await boundedLedgerStep(
+      "settle",
+      () => settleSmsMessage(admin, messageId, settleOutcomeForSend(attempt.result)),
+      null,
+      budget,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -356,16 +750,17 @@ type SendOneArgs = {
 };
 
 /**
- * The single send execution path all three public helpers funnel
- * through. Encapsulates:
- *   - consent gate
+ * The confirmation send path (the reminders use sendReminder, which adds
+ * the post-claim re-validation a scheduled send needs). Encapsulates:
+ *   - consent gate and deployment fence
  *   - claim
- *   - Twilio POST (with timeout, in twilio.ts)
+ *   - Twilio POST with its ledger row (sendWithLedgerRow)
  *   - record_sms_result in finally
+ *   - then the best-effort ledger settle (settleLedgerRow)
  *   - structured failure log
  *
  * Returns ok / skipped / error in a shape the caller can ignore
- * without breaking the booking, reschedule, or cron flow.
+ * without breaking the booking or reschedule flow.
  */
 async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   const gate = passesConsentGate({
@@ -397,11 +792,20 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     error: "sms_send_unknown",
     retryable: true,
   };
+  let attempt: LedgeredAttempt | null = null;
 
   try {
     const body = args.buildBody(gate.normalizedPhone);
     const to = args.to(gate.normalizedPhone);
-    const result = await sendSmsSafely({ to, body });
+    attempt = await sendWithLedgerRow({
+      admin: args.admin,
+      studioId: args.studio.id,
+      appointmentId: args.appointmentId,
+      smsType: args.smsType,
+      to,
+      body,
+    });
+    const result = attempt.result;
     success = result.ok;
     if (result.ok) {
       outcome = { ok: true, messageSid: result.messageSid };
@@ -449,6 +853,8 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       success,
     );
   }
+  // Only after the authoritative record: the best-effort ledger settle.
+  if (attempt) await settleLedgerRow(args.admin, attempt);
 
   // Light, log-only side effect so the operator sees masked phone +
   // outcome side by side in production logs. No PII.

@@ -21,14 +21,28 @@ This section **is** maintained as current. Everything under "Decision log" below
 
 ### SMS-03 — a fresh reminder after a practitioner moves an already-reminded appointment — `Open, specified, not started`
 
-**Status (2026-10-07): OPEN. Deliberately left out of the SMS P0 slice (SMS-00 #812, SMS-02 #813, SMS-01 #814) by operator decision, to keep that slice bounded.** Needs a migration of its own; derive its number with `npm run migration:state` at the moment of claim.
+**Status (2026-10-07; updated 2026-10-08): OPEN. Deliberately left out of the SMS P0 slice by operator decision, to keep that slice bounded.** The slice is SMS-00 (#812), then SMS-02 and SMS-01 as sequential replacement PRs for the closed #813 and #814. Needs a migration of its own; derive its number with `npm run migration:state` at the moment of claim.
 
 *What is true today.* The 24h and 2h reminder slots (email and SMS) live on the appointment row and are keyed only to the appointment. The client reschedule link inserts a successor appointment, whose slots start empty, so it is reminded correctly. A practitioner move (`move_or_reassign_appointment`) rewrites `starts_at` on the same row:
 
-* a move **before** the reminder goes out is handled — the cron selects by the current start, and SMS-02 re-reads status and start after `claim_sms_send` and builds the message and its manage link from that read;
+* a move **before** the reminder goes out is handled. The cron selects by the current start. SMS-02's `claim_reminder_sms_send` (0206) checks status and window under the appointment row lock, in the same transaction as the claim, and the message and its manage link are built from the start it returns;
 * a move **after** a reminder went out leaves that slot "sent", so no reminder names the new start.
 
 *Why it was not shipped with SMS-00.* The first SMS-00 head reset the slots in a `before update of starts_at` trigger. Codex P1s 4211982441, 4212063885 and 4212063896 showed the one root cause: the claim/record pairs (`claim_sms_send`/`record_sms_result`, 0049; `claim_email_send`/`record_email_result`, 0080) are blind to which start they serve. A send in flight across a move could stamp the re-armed slot as sent with the old time (suppressing the new reminder), or run concurrently with a fresh claim for the same new start (a duplicate). The trigger was removed from 0206 before any apply.
+
+*Accepted for P0 and carried here (operator decisions, 2026-10-08).* Two residual windows of the SMS-02 send path were accepted for P0 and belong to this item. Neither is a defect to patch in the P0 slice.
+
+* **D1(a), the residual duplicate window: accepted and monitored.**
+  * SMS-02 writes `record_sms_result` straight after the provider's answer, before the ledger settle, and every ledger step is bounded at 5 s.
+  * One database round trip remains between Twilio accepting and that record committing. An invocation that dies there, or a `record_sms_result` that errors, leaves the slot holding only its claim.
+  * The claim goes stale after five minutes, and the next fire reclaims it and sends a second reminder. The 3-attempt cap bounds how many repeats are possible.
+  * The monitoring query ships with SMS-01's activation runbook (`docs/runbooks/sms-p0-activation.md` §6).
+  * Closing it here means a ledger-aware stale reclaim: before reclaiming, the v2 claim stamps the slot sent when the latest ledger row for the appointment and purpose shows the provider may have the message. This is the architecture note's Q1(b), deliberately not folded into 0206.
+* **D2(a), the in-flight cancel/move window: an accepted limitation (Codex P1 4224110906).**
+  * `claim_reminder_sms_send` validates under the row lock, but the lock ends when the claim commits.
+  * A cancel or move that commits before Twilio has the message is not seen, so that reminder names the claimed start.
+  * The window is at most the bounded ledger step plus the 15 s provider request, typically under a second. The email reminder has the same window.
+  * Closing it here: a move bumps `reminder_generation`, and the v2 record refuses to stamp a stale generation, so the new start is reminded (design steps 1 and 2 below). A generation check immediately before the provider call narrows the window further. A cancellation in flight remains a send that has already happened, which no database write can recall.
 
 *Design (bounded, one migration).*
 
@@ -49,6 +63,7 @@ This section **is** maintained as current. Everything under "Decision log" below
 *Acceptance criteria.*
 
 * A client whose 24h or 2h reminder was sent, and whose appointment a practitioner then moves, receives exactly one reminder naming the new start in its window, per channel and per that channel's studio switch.
+* The D1(a) duplicate window is closed, or explicitly re-accepted, with a test that kills the invocation between the provider's answer and the record.
 * No reminder is ever sent twice for the same start, and a stale in-flight send never suppresses the new start's reminder.
 * Email reminders are otherwise unchanged: the existing email suites stay green without edits.
 * DB lane green, exact-head Codex clean, migration applied migration-first and recorded.
