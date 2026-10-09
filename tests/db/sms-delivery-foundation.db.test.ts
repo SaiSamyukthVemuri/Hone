@@ -11,12 +11,17 @@
 //     resolve an ambiguous settle into the provider's own answer;
 //   * the invitation claim holds the invitation row, so a lifecycle command
 //     racing it is either seen (not_live) or waits for it -- never missed;
+//   * claimers of one invitation run one at a time (0207): a claim that waited
+//     behind one that rolled back re-decides, so an invitation that expired
+//     meanwhile is not_live and nothing is written;
 //   * the reminder claim validates status and window and claims in one
 //     transaction: a refusal spends no attempt, and a cancel or move racing
 //     it is waited for and then seen.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { Client } from "pg";
 import {
   adminQuery,
@@ -75,7 +80,11 @@ type EntrySms = {
  *  SMS commands, not about how an invitation comes to exist. */
 async function seedInvitation(
   s: SeededStudio,
-  opts: EntrySms & { lifecycle?: "live" | "lapsed" | "released" } = {},
+  opts: EntrySms & {
+    lifecycle?: "live" | "lapsed" | "released";
+    /** A live invitation that expires this many seconds from now, by the DATABASE clock. */
+    expiresInSeconds?: number;
+  } = {},
 ): Promise<{ invitationId: string; entryId: string }> {
   const entryId = randomUUID();
   const phone = opts.phone === undefined ? "+16475550123" : opts.phone;
@@ -111,10 +120,12 @@ async function seedInvitation(
         issued_by_practitioner_id, released_at)
      values ($1, $2, $3, $4,
              case when $6 = 'lapsed' then now() - interval '3 days' else now() end,
-             case when $6 = 'lapsed' then now() - interval '1 hour' else now() + interval '48 hours' end,
+             case when $7::int is not null then clock_timestamp() + $7::int * interval '1 second'
+                  when $6 = 'lapsed' then now() - interval '1 hour'
+                  else now() + interval '48 hours' end,
              $5,
              case when $6 = 'released' then now() end)`,
-    [invitationId, s.studioId, entryId, hash64(), s.practitionerId, lifecycle],
+    [invitationId, s.studioId, entryId, hash64(), s.practitionerId, lifecycle, opts.expiresInSeconds ?? null],
   );
   return { invitationId, entryId };
 }
@@ -562,6 +573,130 @@ describe("claim_waitlist_invitation_sms waits for, then sees, a racing lifecycle
 
   it("a lifecycle write that rolls back leaves the invitation live: claimed (the control)", async () => {
     expect(await raceClaimAgainst("rollback")).toEqual({ result: "claimed", rows: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// claim_waitlist_invitation_sms: claimers of one invitation run one at a time
+// (0207; Codex P2 4225516723 on #812). Under 0206's FOR SHARE two claims could
+// both pass the liveness and clock check. The second then waited at the
+// per-invitation unique index and, if the first rolled back after expiry,
+// inserted WITHOUT re-deciding and returned 'claimed' for an expired
+// invitation. These are real two-session races; the last case runs the same
+// race against a test-only copy of 0206's exact function, so the first case
+// cannot pass vacuously.
+// ---------------------------------------------------------------------------
+describe("claim_waitlist_invitation_sms: claimers of one invitation run one at a time (0207)", () => {
+  const LIVE = "claim_waitlist_invitation_sms";
+  const CONTROL = "claim_waitlist_invitation_sms_0206_control";
+
+  afterEach(async () => {
+    await setWaitlistSms(A, false);
+  });
+
+  async function connect(): Promise<Client> {
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    return c;
+  }
+
+  /** Poll the DATABASE clock (never this process's) until the invitation has lapsed. */
+  async function waitUntilExpired(invitationId: string): Promise<void> {
+    for (let i = 0; i < 150; i++) {
+      const [r] = await q<{ expired: boolean }>(
+        `select expires_at <= clock_timestamp() as expired
+           from public.new_client_waitlist_invitations where id = $1`,
+        [invitationId],
+      );
+      if (r!.expired) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error("the invitation never expired");
+  }
+
+  /**
+   * Session one claims and holds its transaction open; session two claims the
+   * same invitation and must PARK behind it; optionally the invitation's
+   * expires_at passes; then session one commits or rolls back.
+   */
+  async function raceTwoClaims(opts: {
+    fn: string;
+    first: "commit" | "rollback";
+    expireWhileWaiting: boolean;
+  }): Promise<{ second: string; rows: number }> {
+    await setWaitlistSms(A, true);
+    const { invitationId } = await seedInvitation(A, {
+      expiresInSeconds: opts.expireWhileWaiting ? 3 : 120,
+    });
+    const one = await connect();
+    const two = await connect();
+    try {
+      await one.query("begin");
+      const first = (await one.query(`select * from public.${opts.fn}($1,$2)`, [A.studioId, invitationId]))
+        .rows[0] as ClaimRow;
+      expect(first.result, "the first claim must take the live invitation").toBe("claimed");
+      const pid = (await two.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+      const pending = two.query(`select * from public.${opts.fn}($1,$2)`, [A.studioId, invitationId]);
+      expect(await waitUntilBlocked(pid), "the second claim did not wait for the first").not.toBeNull();
+      if (opts.expireWhileWaiting) await waitUntilExpired(invitationId);
+      await one.query(opts.first);
+      const second = (await pending).rows[0] as ClaimRow;
+      const [n] = await q<{ n: number }>(
+        `select count(*)::int as n from public.sms_outbound_messages where waitlist_invitation_id = $1`,
+        [invitationId],
+      );
+      return { second: second.result, rows: n!.n };
+    } finally {
+      await one.end().catch(() => undefined);
+      await two.end().catch(() => undefined);
+    }
+  }
+
+  it("THE REPORTED RACE: the first rolls back after expiry; the waiting claim is not_live and writes nothing", async () => {
+    // rows 0: the refused claim consumed nothing, so the invitation's one claim
+    // is still unspent.
+    expect(await raceTwoClaims({ fn: LIVE, first: "rollback", expireWhileWaiting: true })).toEqual({
+      second: "not_live",
+      rows: 0,
+    });
+  });
+
+  it("a rollback BEFORE expiry consumes nothing: the waiting claim takes the invitation", async () => {
+    expect(await raceTwoClaims({ fn: LIVE, first: "rollback", expireWhileWaiting: false })).toEqual({
+      second: "claimed",
+      rows: 1,
+    });
+  });
+
+  it("a first claim that commits leaves the waiting one already_claimed: exactly once", async () => {
+    expect(await raceTwoClaims({ fn: LIVE, first: "commit", expireWhileWaiting: false })).toEqual({
+      second: "already_claimed",
+      rows: 1,
+    });
+  });
+
+  it("NEGATIVE CONTROL: 0206's exact FOR SHARE function, run through the same race, claims the expired invitation", async () => {
+    // The control is 0206's function text, verbatim apart from its name, so this
+    // reproduces the defect 0207 corrects. If this ever stops returning
+    // 'claimed', the race above is no longer being exercised.
+    const migration = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/0206_sms_delivery_foundation.sql"),
+      "utf8",
+    );
+    const start = migration.indexOf(`create or replace function public.${LIVE}(`);
+    const end = migration.indexOf("$$;", start) + "$$;".length;
+    expect(start, "0206's claim function was not found").toBeGreaterThan(-1);
+    const control = migration.slice(start, end).replace(`public.${LIVE}(`, `public.${CONTROL}(`);
+    expect(control).toMatch(/\bfor share;/);
+    await q(control);
+    try {
+      expect(await raceTwoClaims({ fn: CONTROL, first: "rollback", expireWhileWaiting: true })).toEqual({
+        second: "claimed",
+        rows: 1,
+      });
+    } finally {
+      await q(`drop function if exists public.${CONTROL}(uuid, uuid)`);
+    }
   });
 });
 
