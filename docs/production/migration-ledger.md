@@ -14,7 +14,45 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-09, post-0206 apply; `0206` APPLIED, repo == hosted)
+## Current state (verified 2026-10-09, post-0207 apply; `0207` APPLIED, repo == hosted)
+
+> **0207 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #812 HEAD, BEFORE ANY MERGE.**
+> `0207_sms_invitation_claim_serialized.sql` was applied to production on 2026-10-09 under explicit per-change owner authorization, from the reviewed PR #812 head `2998b6a30ecb656bc5b7b1b4bb946481f6f6af04`. It is the forward correction for Codex P2 4225516723: 0206's `FOR SHARE` let two claims of one invitation decide at once, so a claim waiting behind a rollback could claim an expired invitation. It was reviewed under Roadmap v1.25's convergence rule (handoff `SMS_01_INVITATION_CLAIM_CONCURRENCY_REVIEW_2026-10-09`) and proved by real two-session races with a negative control. **0206 was not re-applied** and stays byte-identical. **#812 was not merged and no application code was deployed.** The throwaway worktree's link files were removed and the worktree deleted afterwards.
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The file's sha256 `e85239e027623daac7b21c0541458f370c9a7ecedf78baef171575aeb4ed87b5` (6,890 bytes) matched the authorized value, and 0206's was unchanged.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**.
+> - `supabase migration list --linked` showed `0207` as the **only** local-only row.
+> - The **dry run listed exactly `0207_sms_invitation_claim_serialized.sql`**, re-asserted programmatically.
+>
+> **THE APPLY.** One `supabase db push --linked --yes`, **without `--include-all`**, run once, **exit code 0**. The client-side window was `2026-10-09T01:54:40.901Z`–`01:55:09.382Z` (~28.5 s), which is **not** a server apply time. The server-observed bracket was 01:53:44.443Z (max 0206) to 01:55:30.447Z (max 0207).
+>
+> **WHAT IT CHANGED, AND ONLY THAT.** `claim_waitlist_invitation_sms` now locks the invitation row **`FOR NO KEY UPDATE`** instead of `FOR SHARE`, so claimers of one invitation run one at a time. Its catalog comment now says so. It is still `SECURITY DEFINER`, still has `search_path` pinned, and is still `service_role`-only.
+>
+> **WHAT IT DID NOT CHANGE**, each verified against a read-only baseline taken just before:
+> - every other public function definition (fingerprint unchanged);
+> - 1,477 public columns, 128 user triggers, 0 ledger rows, 7 studios;
+> - **Willow Electrolysis's SMS settings**: confirmation on, 24h on, 2h on, waitlist invitation off, and no sender rows;
+> - 0 critical or error alerts.
+>
+> **PRODUCTION HEALTH.**
+> - `check-stripe-gates.mjs`: **15 PASS**.
+> - `verify-production.mjs`: **10 PASS** (remote max **0207**), 1 INCOMPLETE (the heartbeat, no Upstash env), and the **same pre-existing FAIL** recorded at the 0206 apply: 2 unresolved critical payment alerts from 2026-09-17 and 2026-09-27, which must be resolved, or accepted by the owner, before #812 merges.
+>
+> **THE BLOCK BELOW IS NOW HISTORY.** Its repo-max / pending / next-free rows were updated by #812 while `0207` was authored and pending, and are **preserved exactly as written**.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0207** (`0207_sms_invitation_claim_serialized.sql`) |
+| **Repo migration max** | **0207** — the same file, at the reviewed #812 head. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none** — repo == hosted. Nothing pending. |
+| **Next free migration** | Next free number is **0208**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list` before the push. It is distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `2998b6a30ecb656bc5b7b1b4bb946481f6f6af04` (PR #812). At apply time: CI **13 pass** (run 37869009493), exact-head Codex review clean naming the commit (`Reviewed commit: 2998b6a30e`), **0** unresolved review threads (the two 2026-10-09 threads resolved under explicit owner authorization), and `mergeStateStatus` **CLEAN**. **Not merged at apply time.** |
+| **Production application SHA at apply time** | `88f5e3cdea32845e6a40002b3627ea315d2bf70c`. **No application code was deployed by this apply.** |
+
+## Previous state (verified 2026-10-09, post-0206 apply; `0206` APPLIED, repo == hosted)
 
 > **0206 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #812 HEAD, BEFORE ANY MERGE.**
 > `0206_sms_delivery_foundation.sql` (SMS-00) was applied to production on 2026-10-09
