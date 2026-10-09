@@ -63,6 +63,31 @@ export type SmsSendResult =
   | { ok: false; skipped: true; reason: string }
   | { ok: false; skipped?: false; error: string; retryable: boolean };
 
+/**
+ * SMS-02: what a reminder send tells the cron. It says two things SmsSendResult
+ * cannot (Codex P2 4232680581):
+ * - POSSIBLY SENT. The provider was asked and its answer was lost (a 5xx, a
+ *   timeout, a reset mid-request, a success without a readable SID), so it may
+ *   have the message. It is recorded as sent and never retried, and the cron
+ *   still counts it as a failed attempt -- but it is no longer
+ *   indistinguishable from a definite refusal.
+ * - WHAT THE MESSAGE CARRIED. Whether the message the provider has, or may
+ *   have, carries the intake link, read from the message itself, so the cron
+ *   accounts for that link exactly when it may be in the client's hands.
+ */
+export type ReminderSmsResult =
+  | { ok: true; messageSid: string; intakeLinkIncluded: boolean }
+  | { ok: false; skipped: true; reason: string }
+  | {
+      ok: false;
+      skipped?: false;
+      possiblySent: true;
+      error: string;
+      retryable: false;
+      intakeLinkIncluded: boolean;
+    }
+  | { ok: false; skipped?: false; possiblySent?: false; error: string; retryable: boolean };
+
 // Re-export for callers that import alongside the send helpers.
 export type { SmsType };
 
@@ -323,17 +348,24 @@ export type SendReminderInput = {
    * query saw, which a move may already have replaced.
    */
   manageUrlFor: (startsAt: Date) => string | null;
+  /**
+   * The cron run's ledger budget (createLedgerBudget), or absent. Both SMS
+   * passes of one run share it, so their ledger waits together stay within
+   * LEDGER_RUN_BUDGET_MS. Absent, each ledger step is bounded on its own, as
+   * the booking confirmation's are.
+   */
+  ledgerBudget?: LedgerBudget;
 };
 
 export async function send24hReminderSmsToClient(
   input: SendReminderInput,
-): Promise<SmsSendResult> {
+): Promise<ReminderSmsResult> {
   return sendReminder("reminder_24h", input);
 }
 
 export async function send2hReminderSmsToClient(
   input: SendReminderInput,
-): Promise<SmsSendResult> {
+): Promise<ReminderSmsResult> {
   return sendReminder("reminder_2h", input);
 }
 
@@ -408,9 +440,11 @@ async function claimReminderSmsSend(
  *     ambiguous attempt may already have reached the client, and retrying it
  *     could send the reminder twice. It is recorded as sent -- no automatic
  *     retry -- and the ledger keeps it `unknown` until a delivery callback
- *     says what happened; a failure then raises an ops alert. A definite
- *     refusal (including a connection that never opened) is retried on a
- *     later fire, within the 3-attempt budget, as before.
+ *     says what happened; a failure then raises an ops alert. It is returned
+ *     as POSSIBLY SENT (ReminderSmsResult), never as a definite failure, so
+ *     the cron can account for the intake link it may have carried. A
+ *     definite refusal (including a connection that never opened) is retried
+ *     on a later fire, within the 3-attempt budget, as before.
  *
  *  3. THE RECORD BEFORE THE LEDGER. record_sms_result is written as soon as
  *     the provider answers; only then is the ledger row settled. A settle
@@ -419,8 +453,10 @@ async function claimReminderSmsSend(
  *     goes stale after five minutes and is reclaimed -- a duplicate. What is
  *     left is the one round trip between the answer and that record. Each
  *     ledger step is also bounded (LEDGER_STEP_BOUND_MS), so neither the row
- *     before the send nor the settle after it can outlast the claim lease or
- *     stall the cron's batch.
+ *     before the send nor the settle after it can outlast the claim lease;
+ *     and the cron's run shares ONE ledger budget across both of its SMS
+ *     passes (LEDGER_RUN_BUDGET_MS), so the ledger cannot stall the batch
+ *     however many reminders it carries.
  *
  * A claim that could not be reached is a SKIP: no provider request was made
  * and no attempt spent, so the cron never counts it as an attempt.
@@ -433,7 +469,7 @@ async function claimReminderSmsSend(
 async function sendReminder(
   smsType: "reminder_24h" | "reminder_2h",
   args: SendReminderInput,
-): Promise<SmsSendResult> {
+): Promise<ReminderSmsResult> {
   const gate = passesConsentGate({
     studio: args.studio,
     client: args.client,
@@ -469,6 +505,7 @@ async function sendReminder(
   const startsAt = claim.startsAt;
 
   let attempt: LedgeredAttempt;
+  let intakeLinkIncluded = false;
   try {
     const build = smsType === "reminder_24h" ? build24hReminderSms : build2hReminderSms;
     const body = build({
@@ -478,6 +515,8 @@ async function sendReminder(
       manageUrl: args.manageUrlFor(startsAt),
       intakeUrl: args.intakeUrl ?? null,
     });
+    // What this message carries, read from the message itself.
+    intakeLinkIncluded = Boolean(args.intakeUrl) && body.includes(args.intakeUrl as string);
     attempt = await sendWithLedgerRow({
       admin: args.admin,
       studioId: args.studio.id,
@@ -485,6 +524,7 @@ async function sendReminder(
       smsType,
       to: gate.normalizedPhone,
       body,
+      budget: args.ledgerBudget,
     });
   } catch {
     // sendSmsSafely and the ledger never throw, so an exception here came from
@@ -501,8 +541,8 @@ async function sendReminder(
   const providerMayHaveIt = result.ok || result.attempt === "ambiguous";
   await recordSmsResult(args.admin, args.appointmentId, smsType, providerMayHaveIt);
 
-  // (3) Then the best-effort ledger settle.
-  await settleLedgerRow(args.admin, attempt);
+  // (3) Then the best-effort ledger settle, within the run's ledger budget.
+  await settleLedgerRow(args.admin, attempt, args.ledgerBudget);
 
   if (result.ok) {
     console.log(
@@ -515,7 +555,7 @@ async function sendReminder(
         timestamp: new Date().toISOString(),
       }),
     );
-    return { ok: true, messageSid: result.messageSid };
+    return { ok: true, messageSid: result.messageSid, intakeLinkIncluded };
   }
 
   const ambiguous = result.attempt === "ambiguous";
@@ -527,11 +567,12 @@ async function sendReminder(
     retryable: ambiguous ? false : result.retryable,
     studioId: args.studio.id,
   });
-  return {
-    ok: false,
-    error: result.error,
-    retryable: ambiguous ? false : result.retryable,
-  };
+  if (ambiguous) {
+    // POSSIBLY SENT: recorded as sent above, never retried, and still a failed
+    // attempt to the cron, which keeps the intake link's accounting.
+    return { ok: false, possiblySent: true, error: result.error, retryable: false, intakeLinkIncluded };
+  }
+  return { ok: false, error: result.error, retryable: result.retryable };
 }
 
 // ---------------------------------------------------------------------------
@@ -549,41 +590,87 @@ type LedgeredAttempt = { result: SendSmsResult; messageId: string | null };
 
 /**
  * The ledger is bookkeeping, so it may never hold up an SMS. Each ledger step
- * is bounded far inside the five-minute claim lease:
- * - a ledger row that stalls cannot keep this worker paused until another run
- *   reclaims the stale slot and sends it too;
- * - a settle that stalls cannot keep the reminder cron's sequential batch from
- *   moving on and writing its heartbeat.
- * A step that runs out of time is abandoned, and the send continues exactly
- * as it does without a ledger. Its request may still land later; a row left
- * `claimed` is what monitoring surfaces as unresolved.
+ * is bounded far inside the five-minute claim lease, so a ledger row that
+ * stalls cannot keep this worker paused until another run reclaims the stale
+ * slot and sends it too. A step that runs out of time is abandoned, and the
+ * send continues exactly as it does without a ledger. Its request may still
+ * land later; a row left `claimed` is what monitoring surfaces as unresolved.
  */
 export const LEDGER_STEP_BOUND_MS = 5_000;
 
+/**
+ * The reminder cron's allowance for the ledger: ONE budget per run, shared by
+ * both SMS passes (Codex P1 4232680578). A bound per step alone is paid again
+ * for every reminder in the sequential batch, so a stalled ledger would cost
+ * the run seconds per reminder. With the budget:
+ * - every ledger step waits at most what is left of it, and its wait is
+ *   charged to it;
+ * - a step that runs out of time spends the rest;
+ * - once it is spent, no further ledger request is started in that run.
+ * Every reminder is still claimed, sent and recorded, and the record still
+ * comes before the settle; what is lost is only the ledger row, and with it
+ * the delivery report, for the rest of that run. The next run starts afresh.
+ */
+export const LEDGER_RUN_BUDGET_MS = 5_000;
+
+/** Milliseconds of ledger wait left to one cron run. Mutated as steps run. */
+export type LedgerBudget = { remainingMs: number };
+
+export function createLedgerBudget(): LedgerBudget {
+  return { remainingMs: LEDGER_RUN_BUDGET_MS };
+}
+
+/**
+ * Run one ledger step within LEDGER_STEP_BOUND_MS and, when given, within the
+ * run's budget. `work` is a thunk so that a step the budget refuses is never
+ * started: no request leaves.
+ */
 async function boundedLedgerStep<T>(
   step: "begin" | "settle",
-  work: Promise<T>,
+  work: () => Promise<T>,
   onTimeout: T,
+  budget?: LedgerBudget,
 ): Promise<T> {
+  if (budget && budget.remainingMs <= 0) {
+    console.error(
+      JSON.stringify({
+        event: "sms_ledger_step_skipped",
+        step,
+        reason: "run_budget_spent",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return onTimeout;
+  }
+  const boundMs = budget ? Math.min(LEDGER_STEP_BOUND_MS, budget.remainingMs) : LEDGER_STEP_BOUND_MS;
+  const startedAt = Date.now();
+  let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<T>((resolve) => {
     timer = setTimeout(() => {
+      timedOut = true;
       console.error(
         JSON.stringify({
           event: "sms_ledger_step_timed_out",
           step,
-          boundMs: LEDGER_STEP_BOUND_MS,
+          boundMs,
           timestamp: new Date().toISOString(),
         }),
       );
       resolve(onTimeout);
-    }, LEDGER_STEP_BOUND_MS);
+    }, boundMs);
   });
   try {
-    // The ledger commands never reject (they log and answer null).
-    return await Promise.race([work, expired]);
+    // The ledger commands never reject (they log and answer null). An answer
+    // that arrives after the bound is ignored.
+    return await Promise.race([work(), expired]);
   } finally {
     clearTimeout(timer);
+    if (budget) {
+      budget.remainingMs = timedOut
+        ? 0
+        : Math.max(0, budget.remainingMs - (Date.now() - startedAt));
+    }
   }
 }
 
@@ -595,8 +682,8 @@ async function boundedLedgerStep<T>(
  *
  * It does NOT settle the row. The caller records the authoritative slot
  * (record_sms_result) first and only then calls settleLedgerRow. A row that
- * does not come back within LEDGER_STEP_BOUND_MS is abandoned and the message
- * goes without a StatusCallback.
+ * does not come back within its bound, or that the run's spent budget never
+ * requests, is abandoned and the message goes without a StatusCallback.
  */
 async function sendWithLedgerRow(args: {
   admin: SupabaseClient;
@@ -605,15 +692,18 @@ async function sendWithLedgerRow(args: {
   smsType: SmsType;
   to: string;
   body: string;
+  budget?: LedgerBudget;
 }): Promise<LedgeredAttempt> {
   const messageId = await boundedLedgerStep(
     "begin",
-    beginAppointmentSmsMessage(args.admin, {
-      studioId: args.studioId,
-      appointmentId: args.appointmentId,
-      purpose: LEDGER_PURPOSE[args.smsType],
-    }),
+    () =>
+      beginAppointmentSmsMessage(args.admin, {
+        studioId: args.studioId,
+        appointmentId: args.appointmentId,
+        purpose: LEDGER_PURPOSE[args.smsType],
+      }),
     null,
+    args.budget,
   );
   const result = await sendSmsSafely({
     to: args.to,
@@ -626,15 +716,21 @@ async function sendWithLedgerRow(args: {
 /**
  * Best-effort: settle the attempt's ledger row with the provider's answer.
  * Call only AFTER record_sms_result. Never throws, and never waits longer than
- * LEDGER_STEP_BOUND_MS; a row it never settles stays `claimed`, which
- * monitoring surfaces as unresolved.
+ * LEDGER_STEP_BOUND_MS, or than what is left of the run's budget; a row it
+ * never settles stays `claimed`, which monitoring surfaces as unresolved.
  */
-async function settleLedgerRow(admin: SupabaseClient, attempt: LedgeredAttempt): Promise<void> {
+async function settleLedgerRow(
+  admin: SupabaseClient,
+  attempt: LedgeredAttempt,
+  budget?: LedgerBudget,
+): Promise<void> {
   if (attempt.messageId) {
+    const messageId = attempt.messageId;
     await boundedLedgerStep(
       "settle",
-      settleSmsMessage(admin, attempt.messageId, settleOutcomeForSend(attempt.result)),
+      () => settleSmsMessage(admin, messageId, settleOutcomeForSend(attempt.result)),
       null,
+      budget,
     );
   }
 }
