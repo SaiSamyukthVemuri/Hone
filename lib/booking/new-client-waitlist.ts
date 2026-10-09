@@ -275,3 +275,45 @@ export function validateWaitlistSubmission(raw: {
 export type NewClientWaitlistResult =
   | { ok: true }
   | { ok: false; error: string };
+
+// ===========================================================================
+// 0208 — THE SMS QUESTION ON THE PUBLIC SIGNUP
+// ===========================================================================
+//
+// Every new signup answers it explicitly, Yes or No; neither is preselected.
+// No keeps everything else exactly as it was: the entry, the email the studio
+// writes to, and the place in the queue. Only SMS eligibility differs.
+//
+// These two refusals reveal nothing about the database: they are about the
+// visitor's own form, decided before any lookup, so they are safe to show
+// verbatim on this unauthenticated surface.
+
+export const NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED =
+  "Please choose Yes or No for text messages.";
+
+export const NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE =
+  "To get texts, add your mobile number, or choose No.";
+
+/** The profile vocabulary's floor: a number with fewer digits cannot be texted. */
+export const WAITLIST_SMS_PHONE_MIN_DIGITS = 7;
+
+/**
+ * Validate the SMS answer against the submission it rides with. `answer` is
+ * the parsed radio value: `null` is NOT ANSWERED and is refused, never read as
+ * "no". A Yes needs a number to bind to.
+ */
+export function validateWaitlistSmsAnswer(input: {
+  answer: boolean | null;
+  phone: string | null;
+}): { ok: true; smsConsent: boolean } | { ok: false; error: string } {
+  if (input.answer === null) {
+    return { ok: false, error: NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED };
+  }
+  if (input.answer) {
+    const digits = (input.phone ?? "").replace(/\D/g, "");
+    if (digits.length < WAITLIST_SMS_PHONE_MIN_DIGITS) {
+      return { ok: false, error: NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE };
+    }
+  }
+  return { ok: true, smsConsent: input.answer };
+}

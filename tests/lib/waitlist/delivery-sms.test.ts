@@ -46,19 +46,46 @@ const target = (over: Claim = {}): Claim => ({
   ...over,
 });
 
+type Candidate = { id: string; studio_id: string; phone: string | null; sms_opted_out_at: string | null };
+
 const h: {
   claim: { data: unknown; error: unknown };
   /** "hang": settle_sms_message never answers (a stalled or killed request). */
   settle: "ok" | "hang";
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
+  /** 0208: opted-out client rows the phone-wide STOP read returns. */
+  optedOutClients: Candidate[];
+  /** 0208: every prospect row with a phone, as 0202's candidates command returns them. */
+  prospectCandidates: Candidate[];
+  /** 0208: the phone-wide STOP read fails. */
+  lookupFails: boolean;
 } = {
   claim: { data: [target()], error: null },
   settle: "ok",
   rpcs: [],
+  optedOutClients: [],
+  prospectCandidates: [],
+  lookupFails: false,
 };
 
 function admin(): SupabaseClient {
+  // The clients read the phone-wide lookup issues: select + two `not` filters,
+  // then awaited. Only opted-out rows are ever returned, as the filter asks.
+  const clientsQuery = {
+    select: () => clientsQuery,
+    not: () => clientsQuery,
+    then: (resolve: (v: unknown) => unknown) =>
+      Promise.resolve(
+        h.lookupFails
+          ? { data: null, error: { message: "read failed" } }
+          : { data: h.optedOutClients, error: null },
+      ).then(resolve),
+  };
   return {
+    from(table: string) {
+      if (table !== "clients") throw new Error(`unexpected table ${table}`);
+      return clientsQuery;
+    },
     rpc(fn: string, args: Record<string, unknown>) {
       h.rpcs.push({ fn, args });
       if (fn === "claim_waitlist_invitation_sms") return Promise.resolve(h.claim);
@@ -66,6 +93,9 @@ function admin(): SupabaseClient {
         return h.settle === "hang"
           ? new Promise(() => undefined)
           : Promise.resolve({ data: "settled", error: null });
+      }
+      if (fn === "waitlist_prospect_suppression_candidates") {
+        return Promise.resolve({ data: h.prospectCandidates, error: null });
       }
       return Promise.resolve({ data: null, error: { message: `unexpected ${fn}` } });
     },
@@ -100,6 +130,9 @@ beforeEach(() => {
   h.claim = { data: [target()], error: null };
   h.settle = "ok";
   h.rpcs = [];
+  h.optedOutClients = [];
+  h.prospectCandidates = [];
+  h.lookupFails = false;
   sleeps.length = 0;
   alerts.length = 0;
   logs = [];
@@ -330,5 +363,74 @@ describe("no secret reaches a log", () => {
     expect(all).not.toContain(TOKEN);
     expect(all).not.toContain("/invitation/");
     expect(all).not.toMatch(/6045550199|604\) 555/);
+  });
+});
+
+// ===========================================================================
+// 0208 — STOP PRECEDENCE AT THE MOMENT OF SENDING, and practitioner consent.
+// ===========================================================================
+
+describe("STOP is phone-wide and wins over any recorded consent (0208)", () => {
+  const STOPPED_AT = "2026-09-20T10:00:00Z";
+
+  it("a STOP on a CLIENT row in another studio, in another format, blocks the text", async () => {
+    // The claimed prospect is (604) 555-0199; the client wrote it as E.164.
+    h.optedOutClients = [
+      { id: "client-x", studio_id: "studio-other", phone: "+16045550199", sms_opted_out_at: STOPPED_AT },
+    ];
+    expect(await send()).toEqual({ state: "skipped", reason: "opted_out" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(settled()).toEqual([
+      expect.objectContaining({ p_message_id: ROW, p_outcome: "skipped", p_skip_reason: "opted_out" }),
+    ]);
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("a STOP on another PROSPECT row with the same number blocks the text", async () => {
+    h.prospectCandidates = [
+      { id: "entry-old", studio_id: "studio-1", phone: "604-555-0199", sms_opted_out_at: STOPPED_AT },
+      { id: "entry-new", studio_id: "studio-1", phone: "604-555-0199", sms_opted_out_at: null },
+    ];
+    expect(await send()).toEqual({ state: "skipped", reason: "opted_out" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("an opt-out on a DIFFERENT number does not block the text", async () => {
+    h.optedOutClients = [
+      { id: "client-y", studio_id: "studio-1", phone: "604-555-0100", sms_opted_out_at: STOPPED_AT },
+    ];
+    expect(await send()).toEqual({ state: "accepted" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unreadable STOP check fails CLOSED and says so", async () => {
+    h.lookupFails = true;
+    expect(await send()).toEqual({ state: "skipped", reason: "suppression_check_failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(settled()).toEqual([
+      expect.objectContaining({ p_outcome: "skipped", p_skip_reason: "suppression_check_failed" }),
+    ]);
+  });
+
+  it("the row's own STOP still wins before the phone-wide read", async () => {
+    h.claim = { data: [target({ sms_opted_out_at: STOPPED_AT })], error: null };
+    expect(await send()).toEqual({ state: "skipped", reason: "opted_out" });
+    expect(h.rpcs.map((c) => c.fn)).not.toContain("waitlist_prospect_suppression_candidates");
+  });
+});
+
+describe("a practitioner-recorded consent is texted like any recorded consent (D4(2))", () => {
+  it("consent on record, no STOP, no verification: one text", async () => {
+    // The claim returns only the consent instant; who recorded it does not
+    // change eligibility, and verification is optional.
+    h.claim = { data: [target({ mobile_verified_at: null })], error: null };
+    expect(await send()).toEqual({ state: "accepted" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("no consent on record: no text, whatever the phone", async () => {
+    h.claim = { data: [target({ sms_consent_at: null })], error: null };
+    expect(await send()).toEqual({ state: "skipped", reason: "no_consent" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

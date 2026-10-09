@@ -2,6 +2,14 @@
 
 import { useId, useState, useTransition } from "react";
 import { submitNewClientBookingWaitlistAction } from "./waitlist-actions";
+import {
+  SMS_CONSENT_ANSWER_FIELD,
+  SMS_CONSENT_ANSWER_NO,
+  SMS_CONSENT_ANSWER_YES,
+  SMS_OPERATIONAL_CONSENT_DECLINED_NOTE,
+  SMS_OPERATIONAL_CONSENT_LABEL,
+} from "@/lib/waitlist/prospect-sms-consent";
+import { MOBILE_CANDIDATE_NOTE } from "@/lib/waitlist/join-copy";
 
 // ===========================================================================
 // P0 EMERGENCY — NEW-CLIENT WAITLIST FORM
@@ -55,6 +63,15 @@ import { submitNewClientBookingWaitlistAction } from "./waitlist-actions";
 // from making the request, so a checkbox here would be a consent theatre that
 // gates the only action on the page.
 //
+// 0208 — THE SMS QUESTION IS THE OPPOSITE CASE, AND THAT IS WHY IT IS ASKED.
+// Texting is optional and separable: someone can wait without ever getting a
+// text. So it gets an affirmative answer, and an EXPLICIT one: Yes or No,
+// neither preselected, because a default records an answer the person never
+// gave. The question is the approved sentence verbatim
+// (SMS_OPERATIONAL_CONSENT_LABEL, waitlist_sms_operational_v1), so a Yes is
+// agreement to exactly the words shown. No costs nothing else: the same entry,
+// the same emails, the same place in the queue.
+//
 // Uses the public booking page's existing design language rather than
 // introducing a new one.
 // ===========================================================================
@@ -82,9 +99,14 @@ const NOT_A_RESERVATION = "Joining the waitlist does not reserve an appointment.
  * server-only activation fact into the browser bundle for a caption. So the
  * notice states what is true under BOTH paths, and app/privacy/page.tsx §6
  * carries the distinction, one link away.
+ *
+ * 0208: THE NOTICE NAMES THE SMS ANSWER BECAUSE THE FORM NOW ASKS FOR ONE. A
+ * notice that undercounts what its form collects is the defect 1bf24ccf fixed
+ * on the WAIT-04 surface; the words are that surface's own
+ * (`joinCollectionNotice`), so the product keeps one vocabulary.
  */
 const COLLECTION_NOTICE =
-  "use the name, email and phone number you enter here to manage this waitlist and contact you about availability.";
+  "use the name, email and phone number you enter here, and whether you agreed to text messages, to manage this waitlist and contact you about availability.";
 
 /**
  * The confirmation surface. Exported so it can be rendered and compared
@@ -129,10 +151,16 @@ export function NewClientWaitlistForm({
   const nameId = useId();
   const emailId = useId();
   const phoneId = useId();
+  const phoneNoteId = useId();
+  const smsQuestionId = useId();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  // NO DEFAULT. `null` is "not answered", which the server refuses.
+  const [smsAnswer, setSmsAnswer] = useState<
+    typeof SMS_CONSENT_ANSWER_YES | typeof SMS_CONSENT_ANSWER_NO | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   // Set only by a successful server answer, so the confirmation panel can never
   // render without one. A boolean deliberately: there is no second success
@@ -151,6 +179,9 @@ export function NewClientWaitlistForm({
     fd.set("name", name);
     fd.set("email", email);
     fd.set("phone", phone);
+    // Sent only when answered: an absent field is how "not answered" reaches
+    // the server, which refuses it rather than guessing.
+    if (smsAnswer) fd.set(SMS_CONSENT_ANSWER_FIELD, smsAnswer);
     startSubmitting(async () => {
       const result = await submitNewClientBookingWaitlistAction(fd);
       if (!result.ok) {
@@ -254,10 +285,60 @@ export function NewClientWaitlistForm({
             maxLength={40}
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
+            aria-describedby={phoneNoteId}
             className="w-full max-w-full bg-transparent py-2 text-[16px] outline-none"
             style={{ borderBottom: `1px solid ${INK}`, color: INK }}
           />
+          <p id={phoneNoteId} className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
+            {MOBILE_CANDIDATE_NOTE}
+          </p>
         </div>
+
+        <fieldset
+          className="flex w-full flex-col gap-2"
+          aria-describedby={smsQuestionId}
+          data-testid="waitlist-sms-question"
+        >
+          <legend className="text-[12px] uppercase tracking-[0.1em]" style={{ color: MUTED }}>
+            Text messages <span aria-hidden="true">*</span>
+          </legend>
+          <p id={smsQuestionId} className="text-[15px] leading-[1.6]" style={{ color: INK }}>
+            {SMS_OPERATIONAL_CONSENT_LABEL}
+          </p>
+          <div className="flex flex-wrap gap-6">
+            <label className="flex min-h-[44px] items-center gap-2 text-[15px]" style={{ color: INK }}>
+              <input
+                type="radio"
+                name={SMS_CONSENT_ANSWER_FIELD}
+                value={SMS_CONSENT_ANSWER_YES}
+                checked={smsAnswer === SMS_CONSENT_ANSWER_YES}
+                onChange={() => setSmsAnswer(SMS_CONSENT_ANSWER_YES)}
+                className="h-4 w-4"
+              />
+              Yes
+            </label>
+            <label className="flex min-h-[44px] items-center gap-2 text-[15px]" style={{ color: INK }}>
+              <input
+                type="radio"
+                name={SMS_CONSENT_ANSWER_FIELD}
+                value={SMS_CONSENT_ANSWER_NO}
+                checked={smsAnswer === SMS_CONSENT_ANSWER_NO}
+                onChange={() => setSmsAnswer(SMS_CONSENT_ANSWER_NO)}
+                className="h-4 w-4"
+              />
+              No
+            </label>
+          </div>
+          {smsAnswer === SMS_CONSENT_ANSWER_NO && (
+            <p
+              className="text-[13px] leading-[1.6]"
+              style={{ color: MUTED }}
+              data-testid="waitlist-sms-declined-note"
+            >
+              {SMS_OPERATIONAL_CONSENT_DECLINED_NOTE}
+            </p>
+          )}
+        </fieldset>
 
         <div className="flex flex-col gap-3">
           <button

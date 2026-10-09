@@ -11,6 +11,7 @@ import {
 } from "@/lib/booking/new-client-admission";
 import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
 import {
+  validateWaitlistSmsAnswer,
   validateWaitlistSubmission,
   NEW_CLIENT_WAITLIST_SUBMIT_FAILED,
   NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED,
@@ -18,6 +19,10 @@ import {
   type NewClientWaitlistResult,
   type WaitlistSubmission,
 } from "@/lib/booking/new-client-waitlist";
+import {
+  SMS_CONSENT_ANSWER_FIELD,
+  parseSmsConsentAnswer,
+} from "@/lib/waitlist/prospect-sms-consent";
 import { limitNewClientBookingWaitlist, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { sendWaitlistEmailIdempotent } from "@/lib/email/new-client-waitlist-send";
 import {
@@ -259,6 +264,9 @@ async function submitToDurableWaitlist(
   // configured. Correlation is then unavailable, which is a degraded log, not
   // a reason to put the raw address in one.
   emailFingerprint: string | null,
+  // 0208. The visitor's explicit answer to the SMS question. Recorded by the
+  // command on a NEW entry only, in the same transaction as the join.
+  smsConsent: boolean,
 ): Promise<NewClientWaitlistResult> {
   // Construct the service-role client separately from the call, and classify a
   // construction failure as a DEFINITE failure: a missing key means nothing
@@ -287,12 +295,17 @@ async function submitToDurableWaitlist(
     // guarded command re-decides inside its own transaction, under the studios
     // row lock, so an owner who closes the studio first wins and no entry is
     // written. `p_legacy_bridge_waitlist` is server-derived and TEMPORARY.
-    const { data, error } = await admin.rpc("join_new_client_waitlist_guarded", {
+    //
+    // 0208: the same guarded join, wrapped by the command that also records the
+    // SMS answer. The admission gate and the join run unchanged inside it; a
+    // Yes is written on a newly created entry only, never on an existing one.
+    const { data, error } = await admin.rpc("join_new_client_waitlist_with_sms_answer", {
       p_studio_id: studio.id,
       p_name: submission.name,
       p_email: submission.email,
       p_phone: submission.phone,
       p_legacy_bridge_waitlist: newClientAdmissionLegacyBridgeWaitlist(studio.slug),
+      p_sms_consent: smsConsent,
     });
     if (error) {
       const code = typeof error.code === "string" ? error.code : "";
@@ -553,6 +566,17 @@ export async function submitNewClientBookingWaitlistAction(
     phone: trimmed(formData.get("phone")) || null,
   });
   if (!validated.ok) return { ok: false, error: validated.error };
+
+  // 0208. THE SMS QUESTION IS ANSWERED, EXPLICITLY, BEFORE ANYTHING ELSE RUNS.
+  // Not answered is refused, never read as "no". A Yes needs a number. Both
+  // refusals are about the visitor's own form and reveal nothing about the
+  // studio or the queue.
+  const smsAnswer = validateWaitlistSmsAnswer({
+    answer: parseSmsConsentAnswer(formData.get(SMS_CONSENT_ANSWER_FIELD)),
+    phone: validated.value.phone,
+  });
+  if (!smsAnswer.ok) return { ok: false, error: smsAnswer.error };
+
   if (!slug || slug.length > WAITLIST_SLUG_MAX) {
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
   }
@@ -615,8 +639,12 @@ export async function submitNewClientBookingWaitlistAction(
   //
   //    The whole decision lives in ONE deletable file. See
   //    lib/booking/new-client-waitlist-durability-bridge.ts.
+  //
+  //    THE SMS ANSWER is recorded on the durable path only. The notification
+  //    path writes no row, so there is nothing to bind it to, and SMS-01 never
+  //    applies there: an invitation exists only for a durable entry.
   if (newClientWaitlistCommitIsDurable(admission, studio.slug)) {
-    return submitToDurableWaitlist(studio, submission, emailFingerprint);
+    return submitToDurableWaitlist(studio, submission, emailFingerprint, smsAnswer.smsConsent);
   }
   return submitViaStudioNotification(studio, submission, emailFingerprint);
 }

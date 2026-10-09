@@ -10,6 +10,10 @@ import {
   type SmsSkipReason,
 } from "@/lib/sms/delivery-ledger";
 import { prospectMayReceiveSms } from "@/lib/waitlist/prospect-sms-consent";
+import {
+  lookupPhoneWideSuppression,
+  type PhoneSuppressionAnswer,
+} from "@/lib/sms/phone-suppression-lookup";
 import { invitationExpiryLabel } from "./policy";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 
@@ -92,6 +96,8 @@ export async function sendWaitlistInvitationSms(args: {
   invitationUrl: string;
   /** Test seam for the retry gap. */
   sleep?: (ms: number) => Promise<void>;
+  /** The phone-wide STOP read. Defaults to the database lookup. */
+  phoneSuppression?: (phone: string) => Promise<PhoneSuppressionAnswer>;
 }): Promise<WaitlistInvitationSmsOutcome> {
   const ids = { studioId: args.studio.id, invitationId: args.invitationId };
 
@@ -113,7 +119,28 @@ export async function sendWaitlistInvitationSms(args: {
     return { state: "skipped", reason: skip };
   }
 
-  const to = normalizePhoneForSms(claim.target.phone) as string;
+  // 0208 — STOP IS PHONE-WIDE, AND IT IS READ AT THE MOMENT OF SENDING. The
+  // entry's own opt-out is already decided above; this asks whether the NUMBER
+  // said STOP anywhere, including on a row created before this entry existed
+  // or before this consent was recorded. A read that fails does not send.
+  const phone = claim.target.phone as string;
+  const suppression = await (args.phoneSuppression ??
+    ((p: string) => lookupPhoneWideSuppression(args.admin, p)))(phone);
+  const suppressionSkip: SmsSkipReason | null = !suppression.ok
+    ? "suppression_check_failed"
+    : suppression.suppressed
+      ? "opted_out"
+      : null;
+  if (suppressionSkip) {
+    await settleSmsMessage(args.admin, claim.messageId, {
+      outcome: "skipped",
+      skipReason: suppressionSkip,
+    });
+    log({ ...ids, outcome: "skipped", reason: suppressionSkip });
+    return { state: "skipped", reason: suppressionSkip };
+  }
+
+  const to = normalizePhoneForSms(phone) as string;
   const body = buildWaitlistInvitationSms({
     studioName: args.studio.name ?? "",
     invitationUrl: args.invitationUrl,
