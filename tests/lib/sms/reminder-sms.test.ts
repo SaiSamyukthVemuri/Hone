@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  LEDGER_RUN_BUDGET_MS,
   LEDGER_STEP_BOUND_MS,
+  createLedgerBudget,
   sendBookingConfirmationSmsToClient,
   send24hReminderSmsToClient,
   send2hReminderSmsToClient,
@@ -39,7 +41,8 @@ const WINDOW = { startIso: "2026-10-09T16:00:00.000Z", endIso: "2026-10-09T18:00
 type ClaimAnswer = { result: string; starts_at?: string | null } | "error";
 const h: {
   claim: ClaimAnswer;
-  begin: { data: unknown; error: unknown } | "hang";
+  /** "hang": never answers. { afterMs }: answers with the row after that long. */
+  begin: { data: unknown; error: unknown } | "hang" | { afterMs: number };
   /** "hang": settle_sms_message never answers (a stalled or killed request). */
   settle: "ok" | "hang";
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
@@ -64,7 +67,12 @@ function admin(): SupabaseClient {
       // The confirmation path's plain claim (0049).
       if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
       if (fn === "begin_appointment_sms_message") {
-        return h.begin === "hang" ? new Promise(() => undefined) : Promise.resolve(h.begin);
+        const begin = h.begin;
+        if (begin === "hang") return new Promise(() => undefined);
+        if ("afterMs" in begin) {
+          return new Promise((r) => setTimeout(() => r({ data: LEDGER_ROW, error: null }), begin.afterMs));
+        }
+        return Promise.resolve(begin);
       }
       if (fn === "settle_sms_message") {
         return h.settle === "hang"
@@ -153,7 +161,7 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 describe("a reminder that sends", () => {
   it("claims, sends once in the studio's timezone, records it sent, and ledgers it", async () => {
     const r = await send24hReminderSmsToClient(input());
-    expect(r).toEqual({ ok: true, messageSid: SID });
+    expect(r).toEqual({ ok: true, messageSid: SID, intakeLinkIncluded: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const body = sentForm().get("Body")!;
@@ -207,7 +215,13 @@ describe("duplicates", () => {
       Promise.reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
     );
     const r = await send24hReminderSmsToClient(input());
-    expect(r).toEqual({ ok: false, error: "twilio_timeout", retryable: false });
+    expect(r).toEqual({
+      ok: false,
+      possiblySent: true,
+      error: "twilio_timeout",
+      retryable: false,
+      intakeLinkIncluded: false,
+    });
     expect(recorded(), "a possibly-sent reminder must not be re-sent").toEqual([true]);
     expect(settled()).toEqual([expect.objectContaining({ p_outcome: "unknown" })]);
     await flush();
@@ -438,7 +452,7 @@ describe("each ledger step is bounded inside the claim lease", () => {
     await vi.advanceTimersByTimeAsync(LEDGER_STEP_BOUND_MS - 1);
     expect(fetchMock, "not before the bound").not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    await expect(pending).resolves.toEqual({ ok: true, messageSid: SID });
+    await expect(pending).resolves.toEqual({ ok: true, messageSid: SID, intakeLinkIncluded: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sentForm().has("StatusCallback")).toBe(false);
     expect(recorded()).toEqual([true]);
@@ -450,7 +464,7 @@ describe("each ledger step is bounded inside the claim lease", () => {
     h.settle = "hang";
     const pending = send24hReminderSmsToClient(input());
     await vi.advanceTimersByTimeAsync(LEDGER_STEP_BOUND_MS);
-    await expect(pending).resolves.toEqual({ ok: true, messageSid: SID });
+    await expect(pending).resolves.toEqual({ ok: true, messageSid: SID, intakeLinkIncluded: false });
     expect(recorded()).toEqual([true]);
     expect(settled()).toHaveLength(1);
   });
@@ -477,5 +491,151 @@ describe("each ledger step is bounded inside the claim lease", () => {
     await vi.advanceTimersByTimeAsync(LEDGER_STEP_BOUND_MS);
     await expect(pending).resolves.toEqual({ ok: true, messageSid: SID });
     expect(recorded()).toEqual([true]);
+  });
+});
+
+// ===========================================================================
+// POSSIBLY SENT, AND WHAT THE MESSAGE CARRIED (Codex P2 4232680581). An
+// ambiguous answer is recorded as sent and never retried, as before; the
+// helper now says so explicitly instead of returning the shape of a definite
+// failure, and reports whether the message carried the intake link, read from
+// the message itself, so the cron can account for that link.
+// ===========================================================================
+describe("a possibly-sent reminder is named as such, with what it carried", () => {
+  const INTAKE = "https://hone.care/intake/fixture-token";
+  const ambiguous: Array<[label: string, answer: () => Promise<Response>, error: string]> = [
+    ["a 5xx", () => twilioAnswer(503, {}), "twilio_http_503"],
+    ["a success without a readable SID", () => twilioAnswer(201, { sid: "not-a-sid" }), "twilio_unreadable_success"],
+    [
+      "a reset mid-request",
+      () => Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } })),
+      "twilio_network",
+    ],
+    ["a timeout", () => Promise.reject(Object.assign(new Error("aborted"), { name: "AbortError" })), "twilio_timeout"],
+  ];
+  for (const [label, answer, error] of ambiguous) {
+    it(`${label}: possibly sent, recorded sent, never retryable, carrying the link`, async () => {
+      fetchMock.mockImplementationOnce(answer);
+      const r = await send24hReminderSmsToClient(input({ intakeUrl: INTAKE }));
+      expect(r).toEqual({ ok: false, possiblySent: true, error, retryable: false, intakeLinkIncluded: true });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(recorded()).toEqual([true]);
+    });
+  }
+
+  it("control: a definite refusal is NOT possibly sent, and reports no composition", async () => {
+    fetchMock.mockImplementationOnce(() => twilioAnswer(400, { code: 21211 }));
+    expect(await send24hReminderSmsToClient(input({ intakeUrl: INTAKE }))).toEqual({
+      ok: false,
+      error: "twilio_http_400",
+      retryable: false,
+    });
+    expect(recorded()).toEqual([false]);
+  });
+
+  it("control: a connection that never opened is NOT possibly sent", async () => {
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } })),
+    );
+    expect(await send24hReminderSmsToClient(input({ intakeUrl: INTAKE }))).toEqual({
+      ok: false,
+      error: "twilio_unreachable",
+      retryable: true,
+    });
+  });
+
+  it("an accepted reminder reports whether its message carried the link", async () => {
+    expect(await send2hReminderSmsToClient(input({ intakeUrl: INTAKE }))).toEqual({
+      ok: true,
+      messageSid: SID,
+      intakeLinkIncluded: true,
+    });
+    expect(sentForm().get("Body")).toContain(INTAKE);
+    fetchMock.mockClear();
+    expect(await send2hReminderSmsToClient(input({ intakeUrl: null }))).toEqual({
+      ok: true,
+      messageSid: SID,
+      intakeLinkIncluded: false,
+    });
+    expect(sentForm().get("Body")).not.toContain("/intake/");
+  });
+});
+
+// ===========================================================================
+// ONE LEDGER BUDGET PER CRON RUN (Codex P1 4232680578). The run's two SMS
+// passes share it (driven through the real route in
+// tests/app/api/cron/reminder-ledger-run-budget.test.ts); here, one reminder's
+// steps against it. Each step waits at most what is left and is charged its
+// wait; a step that runs out of time spends the rest; once it is spent no
+// ledger request is started. The reminder is still claimed, sent and recorded,
+// and the record still comes before the settle.
+// ===========================================================================
+describe("one ledger budget per cron run", () => {
+  it("is five seconds, whole for each run", () => {
+    expect(LEDGER_RUN_BUDGET_MS).toBe(5_000);
+    expect(LEDGER_RUN_BUDGET_MS).toBeLessThanOrEqual(LEDGER_STEP_BOUND_MS);
+    const a = createLedgerBudget();
+    expect(a).toEqual({ remainingMs: LEDGER_RUN_BUDGET_MS });
+    expect(createLedgerBudget(), "a fresh budget per run, never a shared module value").not.toBe(a);
+  });
+
+  it("a spent budget starts NO ledger request; the reminder is still claimed, sent and recorded", async () => {
+    const r = await send24hReminderSmsToClient(input({ ledgerBudget: { remainingMs: 0 } }));
+    expect(r).toEqual({ ok: true, messageSid: SID, intakeLinkIncluded: false });
+    expect(h.rpcs.map((c) => c.fn)).toEqual(["claim_reminder_sms_send", "record_sms_result"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentForm().has("StatusCallback")).toBe(false);
+  });
+
+  it("a step waits at most what is left, and running out of time spends the rest", async () => {
+    vi.useFakeTimers();
+    h.begin = "hang";
+    const budget = { remainingMs: 1_000 };
+    const pending = send24hReminderSmsToClient(input({ ledgerBudget: budget }));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock, "not before what was left of the budget").not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    expect(budget.remainingMs).toBe(0);
+    expect(recorded()).toEqual([true]);
+    expect(settled(), "no row came back, so there is nothing to settle").toEqual([]);
+  });
+
+  it("a step that answers in time is charged what it waited", async () => {
+    vi.useFakeTimers();
+    h.begin = { afterMs: 1_200 };
+    const budget = createLedgerBudget();
+    const pending = send24hReminderSmsToClient(input({ ledgerBudget: budget }));
+    await vi.advanceTimersByTimeAsync(1_200);
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    expect(budget.remainingMs).toBe(LEDGER_RUN_BUDGET_MS - 1_200);
+    expect(settled()).toHaveLength(1);
+  });
+
+  it("a LATE answer, arriving after its step ran out of time, is ignored: no settle, no further request", async () => {
+    vi.useFakeTimers();
+    h.begin = { afterMs: LEDGER_RUN_BUDGET_MS + 2_000 };
+    const budget = createLedgerBudget();
+    const pending = send24hReminderSmsToClient(input({ ledgerBudget: budget }));
+    await vi.advanceTimersByTimeAsync(LEDGER_RUN_BUDGET_MS);
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    await vi.advanceTimersByTimeAsync(3_000); // the late row lands now
+    expect(sentForm().has("StatusCallback"), "sent before any row existed").toBe(false);
+    expect(h.rpcs.map((c) => c.fn)).toEqual([
+      "claim_reminder_sms_send",
+      "begin_appointment_sms_message",
+      "record_sms_result",
+    ]);
+    expect(budget.remainingMs).toBe(0);
+  });
+
+  it("under a budget the record still comes before the settle", async () => {
+    await send24hReminderSmsToClient(input({ ledgerBudget: createLedgerBudget() }));
+    expect(h.rpcs.map((c) => c.fn)).toEqual([
+      "claim_reminder_sms_send",
+      "begin_appointment_sms_message",
+      "record_sms_result",
+      "settle_sms_message",
+    ]);
   });
 });
