@@ -14,7 +14,62 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-03, post-0205 apply; `0205` APPLIED, repo == hosted)
+## Current state (verified 2026-10-09, post-0206 apply; `0206` APPLIED, repo == hosted)
+
+> **0206 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #812 HEAD, BEFORE ANY MERGE.**
+> `0206_sms_delivery_foundation.sql` (SMS-00) was applied to production on 2026-10-09
+> under explicit per-change owner authorization, from the reviewed PR #812 head
+> `2467f347e1cad53a02d4d160957bb21ccae34afb`, using a throwaway detached worktree at that
+> head and the pinned Supabase CLI 2.102.0. **#812 was NOT merged at apply time and no
+> application code was deployed.** The worktree's link files were removed and the
+> worktree deleted afterwards.
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**.
+> - The file's sha256 `e3cdaf222f39fc34fe04f7bf93cdbbef62f0b08c2b1033fd9c44010cda86b0ab` (32,472 bytes) matched the authorized value.
+> - `supabase migration list --linked` showed `0206` as the **only** local-only row, and no remote-only row.
+> - The **dry run listed exactly `0206_sms_delivery_foundation.sql`**, re-asserted programmatically before the push.
+>
+> **THE APPLY.** One `supabase db push --linked --yes`, **without `--include-all`**, run once, **exit code 0**, with no retry and no hand-copied SQL. The operator-observed **client-side** window was `2026-10-09T00:00:03.146Z`–`00:00:41.870Z` (~38.7 s), which is **not** a server apply time. The server emitted two expected NOTICEs from the file's own `drop trigger if exists` statements.
+>
+> **WHAT IT CREATED (additive only).**
+> - One table, `sms_outbound_messages`: no body and no phone number; RLS on, no policy, no grant; two triggers on it.
+> - One column, `studios.send_waitlist_invitation_sms boolean not null default false`.
+> - Five `SECURITY DEFINER` commands executable by `service_role` only, with `search_path` pinned.
+> - Two trigger functions closed to every role.
+>
+> **No trigger on any existing table, and no migration-level DML.**
+>
+> **POST-APPLY VERIFICATION (read-only).**
+> - History: max(version) `0206`, 204 → 205 rows (exactly +1), `0206` once, `0205` not re-applied, nothing above.
+> - The ledger table: 0 rows, RLS on, 0 policies, no table privilege for `anon`, `authenticated` or `service_role`.
+> - The commands: all five present and executable by `service_role` only.
+> - The studio switch: boolean, NOT NULL, default false, with **0 of 7** studios on (7 before and 7 after).
+> - Triggers: only the two new ones, both on the new table (126 → 128).
+> - Alerts: 0 critical or error ops alerts in the hour before and after.
+>
+> **PRODUCTION HEALTH.**
+> - `check-stripe-gates.mjs`: **15 PASS**.
+> - `verify-production.mjs`: **10 PASS, 1 INCOMPLETE, 1 FAIL**.
+>   - The INCOMPLETE is the reminder heartbeat: no Upstash env on the apply host, the runbook's accepted case.
+>   - The FAIL **pre-dates this apply and is unrelated to it**: 2 unresolved critical payment ops alerts, `session_payment_succeeded_write_zero_rows`, raised 2026-09-17 and 2026-09-27. Per the migration-first runbook it must be **resolved, or explicitly accepted by the owner, before #812 merges.**
+>
+> **NOTHING SENDS.** Every new path is behind a studio switch that defaults off. The application that calls the new commands ships only when #812 merges, which needs its own approval.
+>
+> **THE BLOCK BELOW IS NOW HISTORY.** Its repo-max / pending / next-free rows were updated by #812 while `0206` was authored and pending, and are **preserved exactly as written** rather than re-derived.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0206** (`0206_sms_delivery_foundation.sql`) |
+| **Repo migration max** | **0206** — the same file, at the reviewed #812 head. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none** — repo == hosted. Nothing pending. |
+| **Next free migration** | Next free number is **0207**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project (PostgreSQL 17.6.1.121), confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list` before the push. It is distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `2467f347e1cad53a02d4d160957bb21ccae34afb` (PR #812). At apply time: CI **13 pass** (run 37825205985), exact-head Codex review clean naming the commit (`Reviewed commit: 2467f347e1`), **0** unresolved review threads (two resolutions ratified by the owner on 2026-10-08), and `mergeStateStatus` **CLEAN**. **Not merged at apply time.** |
+| **Production application SHA at apply time** | `88f5e3cdea32845e6a40002b3627ea315d2bf70c`. **No application code was deployed by this apply.** |
+
+## Previous state (verified 2026-10-03, post-0205 apply; `0205` APPLIED, repo == hosted)
 
 > **ONE DEFAULT, TWO COLUMN COMMENTS, AND ZERO ROWS WRITTEN.** The complete
 > inventory is: **one `alter table public.studios alter column
