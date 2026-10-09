@@ -14,7 +14,45 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-09, post-0207 apply; `0207` APPLIED, repo == hosted)
+## Current state (verified 2026-10-09; `0207` APPLIED, `0209` AUTHORED AND PENDING)
+
+> **AUTHORED, NOT APPLIED — MIGRATION-FIRST PENDING.** WAIT-v4 PR0 authors
+> `0209_public_slot_candidate_buffer_window.sql`. It is **not** applied to
+> production, no production write was performed, and
+> `docs/production/migration-state.json` is **untouched** — `hosted_migration_max`
+> stays **0207**. The repository therefore sits legitimately ABOVE hosted, which
+> is the second of the two legal shapes the parity guard admits.
+>
+> **WHAT IT CHANGES.** Two `create or replace function` statements and nothing
+> else: `public_booking_slot_candidates` (0170) and
+> `public_reschedule_slot_candidates` (0171). Both read
+> `studio_calendar_reservations` with `cr.ends_at > v_win_start` — the ACTUAL end
+> — while re-applying the studio buffer to reach the PROTECTED end, so a 23:50
+> appointment under a 30-minute buffer is protected to 00:20 and was never loaded
+> for the following day. **Local midnight was offered and the write authority then
+> refused it.** No table, column, index, constraint or trigger is touched, and
+> there is **zero** migration-level DML. The file opens its own `begin;`/`commit;`
+> with `set local lock_timeout = '5s'` inside the transaction.
+>
+> **⚠️ THIS BRANCH IS STACKED ON `0208`, AND THAT IS STRUCTURAL, NOT STYLISTIC.**
+> `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql` belongs to the
+> SMS/consent lane and is already pushed on `feat/sms-01-waitlist-sms-r2`. The
+> parity guard requires the pending suffix to be **CONTIGUOUS** from
+> `hosted + 1`, admitting only PERMANENTLY-skipped slots, so `0209` is legal only
+> once `0208` is present in the tree. **`0208` must therefore be merged, and
+> applied, before `0209`** — `supabase db push` orders lexically, so applying
+> `0209` first would leave `0208` below the remote max.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0207** (`0207_sms_invitation_claim_serialized.sql`) — unchanged by this branch; no apply was performed or claimed. |
+| **Repo migration max** | **0209** — this branch authors `0209_public_slot_candidate_buffer_window.sql` (WAIT-v4 PR0): **TWO `create or replace function`** statements, no table, column, index, constraint or trigger, and **no top-level `insert`/`update`/`delete`/`truncate`**. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0208`, `0209`** — `0208` is the SMS/consent lane's, pushed on `feat/sms-01-waitlist-sms-r2`; `0209` is this branch's. Both are authored and **NOT applied**, so `repo > hosted` is the MIGRATION-FIRST PENDING shape and **not** a parity violation. |
+| **Next free migration** | Next free number is **0210**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. No Supabase command was run against it for this change. |
+
+## Previous state (verified 2026-10-09, post-0207 apply; `0207` APPLIED, repo == hosted)
 
 > **0207 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #812 HEAD, BEFORE ANY MERGE.**
 > `0207_sms_invitation_claim_serialized.sql` was applied to production on 2026-10-09 under explicit per-change owner authorization, from the reviewed PR #812 head `2998b6a30ecb656bc5b7b1b4bb946481f6f6af04`. It is the forward correction for Codex P2 4225516723: 0206's `FOR SHARE` let two claims of one invitation decide at once, so a claim waiting behind a rollback could claim an expired invitation. It was reviewed under Roadmap v1.25's convergence rule (handoff `SMS_01_INVITATION_CLAIM_CONCURRENCY_REVIEW_2026-10-09`) and proved by real two-session races with a negative control. **0206 was not re-applied** and stays byte-identical. **#812 was not merged and no application code was deployed.** The throwaway worktree's link files were removed and the worktree deleted afterwards.

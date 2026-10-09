@@ -43,11 +43,19 @@ function definition(sql: string): string {
 const normalise = (sql: string) => stripComments(sql).replace(/\s+/g, " ").trim();
 
 describe("0207 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. 0206 handed the claim over when this file was authored.
-    expect(isRepoMax(VERSION), "0207 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0207").toEqual([]);
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
+    // `isRepoMax`, and that claim now lives in 0209's own test. 0206 handed it
+    // to this file; WAIT-v4 PR0 authored 0209 and takes it from here.
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, NOT PINNED: something sits above it, and everything above it is
+    // greater. A literal list would be the forbidden pin in other clothes.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once", () => {
