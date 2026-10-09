@@ -96,14 +96,20 @@ Each switch only *permits*. Delivery still requires:
 Since Roadmap v1.25 (operator decision D4(2), 2026-10-08), `prospectMayReceiveSms` allows a text on **recorded consent and no STOP**. A verified mobile is optional strengthening, never a gate, because OTP / Twilio Verify is not a WAIT launch prerequisite. Mobile verification itself stays dormant (`HONE_MOBILE_VERIFICATION_LIVE`, the Twilio Verify service, the WAIT-04B capability flag), and SMS-01 does not need it.
 
 **What still protects the prospect:**
-- **Consent bound to one number.** Consent is recorded only beside a phone (the join and the completion both require one), and a stored phone can never be replaced or cleared (0202/0203). The claim reads both from one locked row, so the text goes to the number the consent was given with.
-- **STOP.** It is phone-wide and terminal, and reaches prospect rows through the inbound route.
+- **Consent bound to one number.** Consent is recorded only beside a phone, and a stored phone can never be replaced or cleared (0202/0203). The claim reads both from one locked row, so the text goes to the number the consent was given with.
+- **STOP.** It is phone-wide and terminal, and reaches prospect rows through the inbound route. Since 0208 the sender also re-reads it phone-wide just before texting, so a row created after the STOP is covered; a failed read is `skipped` / `suppression_check_failed`.
 - **Phone validation.** A number that does not normalise is recorded `skipped` / `invalid_phone` and never tried.
 - **The production fence.** Previews and other non-production deployments record `skipped` / `non_production_deployment`.
 
 **Accepted residual.** Nobody proves the number reaches the person. A mistyped number, or a join that pairs someone's name and email with a phone the submitter controls, receives the invitation text and its booking link. STOP ends it.
 
-The join form and the completion panel now say: "Check this is your own mobile number. If you agree to texts, they'll go to this number."
+**Correction (2026-10-09).** An earlier revision said the join form and the completion panel showed "Check this is your own mobile number. If you agree to texts, they'll go to this number." They did not: those two surfaces (`WaitlistJoinForm`, `CompleteProfilePanel`) are not routed in production. The **live** form is `app/book/[slug]/NewClientWaitlistForm.tsx`, and it shows that note only from 0208's change onward.
+
+**How consent is recorded (0208, pending).** Until 0208 is applied and its application change deployed, **no live path records prospect consent**: the live form never asked, so no prospect is textable. 0208 adds the only two paths:
+- **The signup answer.** The live form asks the approved sentence with Yes / No, neither preselected. A Yes is recorded on the new entry (`public_form`, v1). A No joins the same way and records nothing.
+- **The owner's record of consent given outside Hone** (`/settings/waitlist`): source `practitioner`, who recorded it, scope `waitlist_operational`, an evidence reference, the recording time, and the day they agreed only when known.
+
+Existing Willow prospects who agreed directly with the studio are recorded through the second path, from the bounded backfill packet (`/srv/hone/handoffs/SMS_01_CONSENT_PATCH_AND_WILLOW_BACKFILL_2026-10-09.md`), after 0208 is applied. **0208 is migration-first:** apply it before deploying the application that calls its commands.
 
 ## 6. Monitoring
 

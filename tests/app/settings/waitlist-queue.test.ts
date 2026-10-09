@@ -34,6 +34,14 @@ import {
 // asks the right questions and renders the right answers.
 
 const STUDIO_ID = "44444444-4444-4444-8444-444444444444";
+/**
+ * The one entries projection. 0208 added the four SMS-standing columns; the
+ * evidence reference and the recorder are deliberately absent, because the
+ * queue states what is on record and never renders the owner's own note.
+ */
+const ENTRY_COLUMNS =
+  "id,name,email,phone,joined_at,status,source,joined_at_provenance," +
+  "sms_consent_at,sms_consent_source,sms_consent_given_on,sms_opted_out_at";
 const USER_ID = "55555555-5555-4555-8555-555555555555";
 const SLUG = "queue-studio";
 
@@ -470,6 +478,12 @@ function entry(overrides: Partial<Record<string, unknown>> = {}) {
     // been made against a row that cannot exist.
     source: "public_booking",
     joined_at_provenance: "form",
+    // 0202's consent columns are nullable with no default, so a row that
+    // nobody has recorded consent or STOP for reads exactly like this.
+    sms_consent_at: null,
+    sms_consent_source: null,
+    sms_consent_given_on: null,
+    sms_opted_out_at: null,
     ...overrides,
   };
 }
@@ -561,7 +575,7 @@ describe("the query the page asks", () => {
 
   it("selects only the columns it renders — no `*`", async () => {
     await render();
-    expect(entriesQuery().columns).toBe("id,name,email,phone,joined_at,status,source,joined_at_provenance");
+    expect(entriesQuery().columns).toBe(ENTRY_COLUMNS);
     expect(entriesQuery().columns).not.toContain("*");
   });
 
@@ -731,12 +745,19 @@ describe("rendered rows", () => {
     //
     // Enumerated, not excluded, exactly as before: the next unannounced
     // control still fails here.
+    //
+    // 0208 — AND AGAIN, PER-ROW. The owner's SMS-consent record: a disclosure
+    // naming the person, and its one submit. Offered only on a row with a
+    // mobile, no consent and no STOP, which this fixture is; the cases where
+    // it is withheld are proved in the 0208 block below.
     expect(controls.sort()).toEqual([
       "Add to waitlist",
       "Cancel",
       "Confirm removal",
       "Invite to book",
       "Record",
+      "Record SMS consent for Jo Smith",
+      "Record consent",
       "Remove",
       "Send invitation",
       "Start inviting",
@@ -1992,7 +2013,7 @@ describe("a section past one page is navigable, not truncated", () => {
       ["eq", "studio_id", STUDIO_ID],
       ["eq", "status", "claimed"],
     ]);
-    expect(readFor("claimed").columns).toBe("id,name,email,phone,joined_at,status,source,joined_at_provenance");
+    expect(readFor("claimed").columns).toBe(ENTRY_COLUMNS);
   });
 });
 
@@ -2703,6 +2724,106 @@ describe("WAIT-04A — truncation copy is provenance-neutral", () => {
     expect(row).toBeTruthy();
     for (const forbidden of [/\bposition\b/i, /\brank\b/i, /\b#\d+\b/, /\b\d+(st|nd|rd|th)\b/i]) {
       expect(row!, `ordinal leaked: ${forbidden}`).not.toMatch(forbidden);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0208 — EACH ROW STATES ITS SMS STANDING, AS RECORDED
+// ---------------------------------------------------------------------------
+//
+// The row says what is on record and nothing more: STOP first, then whose
+// consent it is and when, then "none". The owner's recording form appears only
+// where the command would accept it. The command's own refusals are proved in
+// tests/db/waitlist-sms-consent-practitioner-and-signup.db.test.ts; the action
+// in tests/app/settings/waitlist-sms-consent-action.test.ts.
+describe("0208 — each row states its SMS standing, as recorded", () => {
+  const standing = (row: string) =>
+    row.match(/data-testid="sms-consent-status"[^>]*>([^<]*)</)?.[1] ?? null;
+  const rowOf = async (over: Record<string, unknown>) => {
+    scenario.rows = [entry({ id: "e-sms", ...over })];
+    scenario.count = 1;
+    const row = rowMarkup(await render(), "e-sms");
+    expect(row, "the row must render").not.toBeNull();
+    return row!;
+  };
+
+  it("a row with a mobile and no consent offers the recording form, nothing preselected", async () => {
+    const row = await rowOf({});
+    expect(standing(row)).toBe("Texts: no consent on record");
+    expect(row).toContain('data-testid="sms-consent-form"');
+    expect(row).toMatch(/<input type="hidden" name="entry_id" value="e-sms"\/>/);
+    // NO DEFAULTS: the attestation is unticked and neither date answer is
+    // chosen, so a hurried press records nothing nobody stated.
+    const form = row.slice(row.indexOf('data-testid="sms-consent-form"'));
+    expect(form).toContain('name="sms_consent_attest"');
+    expect(form).toContain('name="sms_consent_date_known"');
+    expect(form).not.toMatch(/\bchecked\b/);
+    // The day field appears only once "I know the day" is chosen.
+    expect(form).not.toContain('name="sms_consent_given_on"');
+  });
+
+  it("STOP wins: an opted-out row says so and offers no form, even with consent on record", async () => {
+    const row = await rowOf({
+      sms_consent_at: "2026-08-20T09:00:00.000Z",
+      sms_consent_source: "public_form",
+      sms_opted_out_at: "2026-08-21T09:00:00.000Z",
+    });
+    expect(standing(row)).toBe("Texts: opted out (replied STOP)");
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+    expect(row).not.toMatch(/agreed/);
+  });
+
+  it("the person's own Yes reads as theirs, on the studio's calendar day", async () => {
+    // 02:30 UTC on the 21st is still the 20th in Toronto: the day is the
+    // studio's, not the server's.
+    const row = await rowOf({
+      sms_consent_at: "2026-08-21T02:30:00.000Z",
+      sms_consent_source: "public_form",
+    });
+    expect(standing(row)).toBe("Texts: agreed on the waitlist form on Aug 20, 2026");
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+  });
+
+  it("a studio-recorded consent says so, with the day they agreed, unshifted", async () => {
+    // A bare date read as an instant would render as Feb 28 in Toronto.
+    const row = await rowOf({
+      sms_consent_at: "2026-08-22T15:00:00.000Z",
+      sms_consent_source: "practitioner",
+      sms_consent_given_on: "2026-03-01",
+    });
+    expect(standing(row)).toBe(
+      "Texts: consent recorded by the studio on Aug 22, 2026 · they agreed on Mar 1, 2026",
+    );
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+  });
+
+  it("an unknown agreement day is stated as unknown, never as the recording day", async () => {
+    const row = await rowOf({
+      sms_consent_at: "2026-08-22T15:00:00.000Z",
+      sms_consent_source: "practitioner",
+      sms_consent_given_on: null,
+    });
+    expect(standing(row)).toBe(
+      "Texts: consent recorded by the studio on Aug 22, 2026 · they agreed on a day not known",
+    );
+  });
+
+  it("a row with no mobile says so, and offers no form", async () => {
+    const row = await rowOf({ phone: null });
+    expect(standing(row)).toBe("Texts: no consent on record · no mobile number on file");
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+  });
+
+  it("the read never asks for the owner's evidence note, the recorder or the scope", async () => {
+    await rowOf({});
+    for (const column of [
+      "sms_consent_evidence_ref",
+      "sms_consent_recorded_by_practitioner_id",
+      "sms_consent_scope",
+      "sms_consent_text_version",
+    ]) {
+      expect(entriesQuery().columns).not.toContain(column);
     }
   });
 });

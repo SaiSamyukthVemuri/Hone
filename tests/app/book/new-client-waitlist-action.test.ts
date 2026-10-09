@@ -186,12 +186,19 @@ const { submitNewClientBookingWaitlistAction } = await import(
   "@/app/book/[slug]/waitlist-actions"
 );
 
+/**
+ * A complete submission, including 0208's explicit SMS answer: a visitor who
+ * has not answered cannot submit, so the fixture answers "no", the answer that
+ * grants nothing. The answer's own contract is proved in
+ * new-client-waitlist-durable-commit.test.ts, where the command records it.
+ */
 function form(overrides: Record<string, string> = {}): FormData {
   const fd = new FormData();
   fd.set("slug", SLUG);
   fd.set("name", CANARY_NAME);
   fd.set("email", CANARY_EMAIL);
   fd.set("phone", CANARY_PHONE);
+  fd.set("sms_consent_answer", "no");
   for (const [k, v] of Object.entries(overrides)) fd.set(k, v);
   return fd;
 }
@@ -322,20 +329,20 @@ describe("NEW-CLIENT-MODE-01: the ROW is the commitment, the email is not", () =
     scenario.studioOutcome = { status: "rejected", code: "bounce" };
     const result = await submitNewClientBookingWaitlistAction(form());
     // The row was written before the send was attempted, so the join stands.
-    expect(dbOps).toContain("rpc:join_new_client_waitlist_guarded");
+    expect(dbOps).toContain("rpc:join_new_client_waitlist_with_sms_answer");
     expect(result.ok, "a failed notification is not a failed join").toBe(true);
   });
 
   it("an AMBIGUOUS send cannot erase the durable row either", async () => {
     scenario.studioOutcome = { status: "ambiguous", reason: "timeout" };
     const result = await submitNewClientBookingWaitlistAction(form());
-    expect(dbOps).toContain("rpc:join_new_client_waitlist_guarded");
+    expect(dbOps).toContain("rpc:join_new_client_waitlist_with_sms_answer");
     expect(result.ok).toBe(true);
   });
 
   it("the durable command runs BEFORE any send is attempted", async () => {
     await submitNewClientBookingWaitlistAction(form());
-    const rpcAt = dbOps.indexOf("rpc:join_new_client_waitlist_guarded");
+    const rpcAt = dbOps.indexOf("rpc:join_new_client_waitlist_with_sms_answer");
     expect(rpcAt, "the command must have run").toBeGreaterThan(-1);
     expect(sends.length, "and the notification follows it").toBeGreaterThan(0);
   });
@@ -344,7 +351,7 @@ describe("NEW-CLIENT-MODE-01: the ROW is the commitment, the email is not", () =
     // The entry id is now the idempotency scope: it exists precisely because
     // the row is the commitment, so a resend cannot duplicate a notification.
     await submitNewClientBookingWaitlistAction(form());
-    expect(rpcArgs.map((r) => r.fn)).toContain("join_new_client_waitlist_guarded");
+    expect(rpcArgs.map((r) => r.fn)).toContain("join_new_client_waitlist_with_sms_answer");
     expect(sends.length).toBeGreaterThan(0);
   });
 });
@@ -426,7 +433,7 @@ describe("exactly one durable write, and no direct table access", () => {
   it("a SUCCESSFUL submission performs the lookup and exactly one command", async () => {
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
     expect(dbOps.filter((o) => o.startsWith("rpc:"))).toEqual([
-      "rpc:join_new_client_waitlist_guarded",
+      "rpc:join_new_client_waitlist_with_sms_answer",
     ]);
     expect(dbOps).toContain(`select:studios:${SLUG}`);
   });

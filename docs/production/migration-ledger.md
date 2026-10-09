@@ -14,7 +14,14 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-09, post-0207 apply; `0207` APPLIED, repo == hosted)
+## Current state (verified 2026-10-09, post-0207 apply; `0207` APPLIED, `0208` AUTHORED AND PENDING on the SMS-01 consent branch)
+
+> **0208 IS AUTHORED AND PENDING (added after the 0207 apply), on the local SMS-01 consent branch only.**
+> `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql` lets a studio owner record SMS consent a prospect gave OUTSIDE Hone, and makes the public signup ask Yes or No. It adds four nullable provenance columns to `new_client_waitlist_entries` (who recorded it, through a same-studio composite FK; the permission scope; an evidence reference; and the day they agreed, when known), replaces 0202's evidence check with three legal shapes (none, self-service, practitioner), and carries 0203's transition guard forward verbatim with one added clause: consent evidence is **write-once**. It adds two `service_role`-only commands, `record_waitlist_sms_consent_by_practitioner` and `join_new_client_waitlist_with_sms_answer`. **No existing row is changed, no data is written, and no applied migration is edited.** It was numbered by `npm run migration:state` at 0208, the derived next free number, with nothing else claiming it in this tree.
+>
+> **NOT APPLIED, NOT PUSHED, NOT MERGED.** It is a tested patch for the SMS-01 owner. Apply it migration-first, under separate approval, before any application change that calls its commands is deployed: the signup form and the owner's consent control both call commands that exist only after 0208.
+>
+> **THE BLOCK BELOW IS THE 0207 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0208` while it is pending.
 
 > **0207 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #812 HEAD, BEFORE ANY MERGE.**
 > `0207_sms_invitation_claim_serialized.sql` was applied to production on 2026-10-09 under explicit per-change owner authorization, from the reviewed PR #812 head `2998b6a30ecb656bc5b7b1b4bb946481f6f6af04`. It is the forward correction for Codex P2 4225516723: 0206's `FOR SHARE` let two claims of one invitation decide at once, so a claim waiting behind a rollback could claim an expired invitation. It was reviewed under Roadmap v1.25's convergence rule (handoff `SMS_01_INVITATION_CLAIM_CONCURRENCY_REVIEW_2026-10-09`) and proved by real two-session races with a negative control. **0206 was not re-applied** and stays byte-identical. **#812 was not merged and no application code was deployed.** The throwaway worktree's link files were removed and the worktree deleted afterwards.
@@ -44,10 +51,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0207** (`0207_sms_invitation_claim_serialized.sql`) |
-| **Repo migration max** | **0207** — the same file, at the reviewed #812 head. |
+| **Repo migration max** | **0208** — `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`, authored on the SMS-01 consent branch. Four nullable columns, one composite FK, two checks (one replacing 0202's evidence check), the 0203 guard redefined with one write-once clause, and two `service_role`-only commands. No data. `0202`, `0203`, `0204` and `0207` stay byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none** — repo == hosted. Nothing pending. |
-| **Next free migration** | Next free number is **0208**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
+| **Pending migrations** | **`0208`** — `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`, **NOT applied**, so `repo > hosted` by exactly one and the chain is at MIGRATION-FIRST PENDING. Apply it migration-first, under separate approval, before the application that calls it is deployed. |
+| **Next free migration** | Next free number is **0209**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list` before the push. It is distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
 | **Reviewed release head** | `2998b6a30ecb656bc5b7b1b4bb946481f6f6af04` (PR #812). At apply time: CI **13 pass** (run 37869009493), exact-head Codex review clean naming the commit (`Reviewed commit: 2998b6a30e`), **0** unresolved review threads (the two 2026-10-09 threads resolved under explicit owner authorization), and `mergeStateStatus` **CLEAN**. **Not merged at apply time.** |
 | **Production application SHA at apply time** | `88f5e3cdea32845e6a40002b3627ea315d2bf70c`. **No application code was deployed by this apply.** |

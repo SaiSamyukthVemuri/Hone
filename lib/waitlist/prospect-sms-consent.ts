@@ -322,3 +322,152 @@ export function prospectMayReceiveSms(record: {
   // 2. Recorded consent decides.
   return Boolean(record.sms_consent_at);
 }
+
+// ===========================================================================
+// 0208 — THE SIGNUP ANSWER, AND CONSENT A STUDIO OWNER RECORDS
+// ===========================================================================
+
+/**
+ * The live signup's SMS question. The form shows SMS_OPERATIONAL_CONSENT_LABEL
+ * verbatim, so a Yes is agreement to waitlist_sms_operational_v1 and nothing is
+ * re-worded. Two radios, NEITHER PRESELECTED: a default would record an answer
+ * the person never gave.
+ */
+export const SMS_CONSENT_ANSWER_FIELD = "sms_consent_answer";
+export const SMS_CONSENT_ANSWER_YES = "yes";
+export const SMS_CONSENT_ANSWER_NO = "no";
+
+/**
+ * Read the signup answer. THREE outcomes, and the third is not the second:
+ * `null` means NOT ANSWERED, which the action refuses, never "no". A checkbox
+ * cannot say this (unticked is indistinguishable from unanswered), which is why
+ * this field is a pair of radios rather than `parseSmsOperationalConsent`.
+ */
+export function parseSmsConsentAnswer(
+  value: FormDataEntryValue | null | undefined,
+): boolean | null {
+  if (value === SMS_CONSENT_ANSWER_YES) return true;
+  if (value === SMS_CONSENT_ANSWER_NO) return false;
+  return null;
+}
+
+/**
+ * What a practitioner-recorded consent covers (0208 `sms_consent_scope`). ONE
+ * purpose, the one the public sentence names, so an owner's record and a
+ * person's own Yes authorise the same texts. A wider purpose is a new value
+ * AND a sender that reads it, never a reinterpretation of this one.
+ */
+export const PRACTITIONER_SMS_CONSENT_SCOPES = ["waitlist_operational"] as const;
+export type PractitionerSmsConsentScope = (typeof PRACTITIONER_SMS_CONSENT_SCOPES)[number];
+export const PRACTITIONER_SMS_CONSENT_SCOPE: PractitionerSmsConsentScope = "waitlist_operational";
+
+/** The scope in words, for the owner's attestation. */
+export const PRACTITIONER_SMS_CONSENT_SCOPE_TEXT =
+  "texts about this waitlist and any appointment offered from it";
+
+export const SMS_CONSENT_EVIDENCE_MIN = 3;
+export const SMS_CONSENT_EVIDENCE_MAX = 200;
+/** The earliest consent day the database accepts. */
+export const SMS_CONSENT_EARLIEST_DAY = "2000-01-01";
+
+export const PRACTITIONER_CONSENT_FIELDS = {
+  attest: "sms_consent_attest",
+  evidence: "sms_consent_evidence_ref",
+  dateKnown: "sms_consent_date_known",
+  givenOn: "sms_consent_given_on",
+} as const;
+
+export type PractitionerSmsConsentInput = {
+  scope: PractitionerSmsConsentScope;
+  evidenceRef: string;
+  /** True when the owner states the day; false when they declare it unknown. */
+  consentDateKnown: boolean;
+  /** YYYY-MM-DD when known, else null. Never guessed. */
+  consentGivenOn: string | null;
+};
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+
+function isRealCalendarDay(value: string): boolean {
+  if (!ISO_DAY.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return (
+    date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
+  );
+}
+
+/**
+ * Validate an owner's consent recording BEFORE the command sees it, so each
+ * refusal can say which answer is missing. The command re-checks everything
+ * and is the authority; this is the clearer message.
+ *
+ * `studioToday` is the studio's own calendar day (YYYY-MM-DD): a day the owner
+ * reads off a local calendar is never "tomorrow".
+ */
+export function parsePractitionerSmsConsentInput(
+  raw: {
+    attest: FormDataEntryValue | null | undefined;
+    evidence: FormDataEntryValue | null | undefined;
+    dateKnown: FormDataEntryValue | null | undefined;
+    givenOn: FormDataEntryValue | null | undefined;
+  },
+  studioToday: string,
+): { ok: true; value: PractitionerSmsConsentInput } | { ok: false; message: string } {
+  if (raw.attest !== "yes") {
+    return {
+      ok: false,
+      message: `Confirm the person agreed to ${PRACTITIONER_SMS_CONSENT_SCOPE_TEXT}.`,
+    };
+  }
+
+  const evidence = typeof raw.evidence === "string" ? raw.evidence.trim() : "";
+  if (
+    evidence.length < SMS_CONSENT_EVIDENCE_MIN ||
+    evidence.length > SMS_CONSENT_EVIDENCE_MAX ||
+    CONTROL_CHARACTER.test(evidence)
+  ) {
+    return {
+      ok: false,
+      message: `Say where the evidence of their agreement is (${SMS_CONSENT_EVIDENCE_MIN} to ${SMS_CONSENT_EVIDENCE_MAX} characters, one line).`,
+    };
+  }
+
+  if (raw.dateKnown !== "known" && raw.dateKnown !== "unknown") {
+    return { ok: false, message: "Say whether you know the day they agreed." };
+  }
+
+  if (raw.dateKnown === "unknown") {
+    return {
+      ok: true,
+      value: {
+        scope: PRACTITIONER_SMS_CONSENT_SCOPE,
+        evidenceRef: evidence,
+        consentDateKnown: false,
+        consentGivenOn: null,
+      },
+    };
+  }
+
+  const givenOn = typeof raw.givenOn === "string" ? raw.givenOn.trim() : "";
+  if (!isRealCalendarDay(givenOn)) {
+    return { ok: false, message: "Enter the day they agreed, or choose that it is not known." };
+  }
+  if (givenOn < SMS_CONSENT_EARLIEST_DAY) {
+    return { ok: false, message: "Enter a real day they agreed, from 2000 onward." };
+  }
+  if (givenOn > studioToday) {
+    return { ok: false, message: "The day they agreed can't be in the future." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      scope: PRACTITIONER_SMS_CONSENT_SCOPE,
+      evidenceRef: evidence,
+      consentDateKnown: true,
+      consentGivenOn: givenOn,
+    },
+  };
+}

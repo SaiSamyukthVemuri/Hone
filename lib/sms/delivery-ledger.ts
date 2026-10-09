@@ -44,6 +44,8 @@ export const SMS_SKIP_REASONS = [
   "invalid_phone",
   "non_production_deployment",
   "provider_not_configured",
+  // 0208: the phone-wide STOP check could not be read, so the text is not sent.
+  "suppression_check_failed",
 ] as const;
 export type SmsSkipReason = (typeof SMS_SKIP_REASONS)[number];
 
