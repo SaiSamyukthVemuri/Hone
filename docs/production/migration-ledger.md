@@ -54,6 +54,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >   - The INCOMPLETE is the reminder heartbeat: no Upstash env on the apply host, the runbook's accepted case.
 >   - The FAIL **pre-dates this apply and is unrelated to it**: 2 unresolved critical payment ops alerts, `session_payment_succeeded_write_zero_rows`, raised 2026-09-17 and 2026-09-27. Per the migration-first runbook it must be **resolved, or explicitly accepted by the owner, before #812 merges.**
 >
+> **0207 IS AUTHORED AND PENDING (added after the 0206 apply).** Codex P2 4225516723, on the head that recorded this apply, found that 0206's `FOR SHARE` let two claims of one invitation decide at once. If the first rolled back after expiry, the waiting second could claim an expired invitation. The forward correction `0207` serializes claimers on the invitation row. It was reviewed under Roadmap v1.25's convergence rule (handoff `SMS_01_INVITATION_CLAIM_CONCURRENCY_REVIEW_2026-10-09`) and proved by real two-session races with a negative control. The rows below that name `0207` were updated while it is pending.
+>
 > **NOTHING SENDS.** Every new path is behind a studio switch that defaults off. The application that calls the new commands ships only when #812 merges, which needs its own approval.
 >
 > **THE BLOCK BELOW IS NOW HISTORY.** Its repo-max / pending / next-free rows were updated by #812 while `0206` was authored and pending, and are **preserved exactly as written** rather than re-derived.
@@ -61,10 +63,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0206** (`0206_sms_delivery_foundation.sql`) |
-| **Repo migration max** | **0206** — the same file, at the reviewed #812 head. |
+| **Repo migration max** | **0207** — this branch (#812) now also authors `0207_sms_invitation_claim_serialized.sql`, the forward correction for Codex P2 4225516723. It redefines `claim_waitlist_invitation_sms` with the identical body apart from the row lock (`FOR SHARE` → `FOR NO KEY UPDATE`), re-asserts its revokes and `service_role` grant by name, and corrects its catalog comment. No table, index, constraint or trigger changes, and no data. `0206` stays byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none** — repo == hosted. Nothing pending. |
-| **Next free migration** | Next free number is **0207**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
+| **Pending migrations** | **`0207`** — `0207_sms_invitation_claim_serialized.sql`, authored on #812 and **NOT applied**, so `repo > hosted` by exactly one and the chain is at MIGRATION-FIRST PENDING. Apply it migration-first, under separate approval, before #812 merges. |
+| **Next free migration** | Next free number is **0208**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project (PostgreSQL 17.6.1.121), confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list` before the push. It is distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
 | **Reviewed release head** | `2467f347e1cad53a02d4d160957bb21ccae34afb` (PR #812). At apply time: CI **13 pass** (run 37825205985), exact-head Codex review clean naming the commit (`Reviewed commit: 2467f347e1`), **0** unresolved review threads (two resolutions ratified by the owner on 2026-10-08), and `mergeStateStatus` **CLEAN**. **Not merged at apply time.** |
 | **Production application SHA at apply time** | `88f5e3cdea32845e6a40002b3627ea315d2bf70c`. **No application code was deployed by this apply.** |
