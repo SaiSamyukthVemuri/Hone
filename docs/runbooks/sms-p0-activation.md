@@ -1,8 +1,21 @@
 # SMS P0 — production activation and Willow acceptance
 
-**Scope:** SMS-00 (#812, migration `0206`), SMS-02 (#813) and SMS-01 (waitlist invitation texts).
+**Scope:** SMS-00 (#812, migrations `0206` and `0207`), SMS-02 (#818, replacing #813) and SMS-01 (#819, replacing #814, migration `0208`: waitlist invitation texts and recorded consent).
 
-**Status: NOTHING BELOW HAS BEEN DONE.** Every step that touches production — a migration apply, a deploy, a studio switch, a real message — needs the operator's explicit approval **at that step**. Approval of one step is not approval of the next.
+**Status (2026-10-09).**
+- **Done:**
+  - `0206` and `0207` were applied to production (§1);
+  - SMS-00 merged as `46a1db9e`;
+  - SMS-02 merged and deployed as `1bdc10ba`.
+  - Willow's confirmation and 24h/2h reminder switches were already on before SMS-02. SMS-02 changed their send path, not the switches.
+- **Pending:**
+  1. the `0208` apply (§1b);
+  2. the SMS-01 merge and deploy;
+  3. Willow's consent backfill (§5);
+  4. Willow's waitlist switch (§4);
+  5. the controlled tests (§3).
+
+Every step that touches production — a migration apply, a deploy, a studio switch, a real message — needs the operator's explicit approval **at that step**. Approval of one step is not approval of the next.
 
 Related: [migration-first-process.md](./migration-first-process.md) · [../08_EMAIL_SMS_AND_CRON.md](../08_EMAIL_SMS_AND_CRON.md) · [../10_DEPLOYMENT_AND_ENV.md](../10_DEPLOYMENT_AND_ENV.md)
 
@@ -10,21 +23,25 @@ Related: [migration-first-process.md](./migration-first-process.md) · [../08_EM
 
 ## 0. Order
 
-| # | Unit | Gate |
-|---|---|---|
-| 1 | **SMS-00 (#812)** | **Migration first:** apply `0206` from the exact reviewed head (§1), then merge. |
-| 2 | SMS-02: replacement PR for the closed #813 | After #812. A new PR from a new branch, with fresh CI and one exact-head review (operator decision D5(A): a retargeted PR cannot become shepherd-ready). No migration. |
-| 3 | SMS-01: replacement PR for the closed #814 | After SMS-02, the same way. No migration. |
+| # | Unit | Migration | Gate | Status |
+|---|---|---|---|---|
+| 1 | **SMS-00 (#812)** | `0206`, `0207` | **Migration first:** apply each from the exact reviewed head (§1), then merge. | **Done.** Applied 2026-10-09; merged as `46a1db9e`. |
+| 2 | **SMS-02 (#818)**, replacing the closed #813 | none | After SMS-00. A new PR from a new branch, with fresh CI and one exact-head review (operator decision D5(A): a retargeted PR cannot become shepherd-ready). | **Done.** Merged and deployed as `1bdc10ba`. |
+| 3 | **SMS-01 (#819)**, replacing the closed #814 | **`0208`** | After SMS-02. **Migration first: apply and verify `0208` (§1b) from the exact reviewed head, then merge and deploy the application.** The new public signup calls `join_new_client_waitlist_with_sms_answer`, which exists only after `0208`, so deploying first makes every durable public waitlist join fail. | Pending. |
+
+**Whether a migration is still pending is DERIVED, never restated:** run `npm run migration:state` on the head. A unit's migration-first gate holds while it reads **MIGRATION-FIRST PENDING** for that unit's migration.
 
 Merging and deploying all three **sends nothing new by itself**:
 - every new path is behind a studio switch that defaults off;
 - every recipient must have recorded consent and no STOP. For prospects verification is optional (§5);
 - non-production deployments are fenced.
 
-## 1. Apply `0206` (operator)
+## 1. Apply `0206` (operator) — DONE 2026-10-09, with `0207`
+
+**Done.** `0206` was applied from the reviewed #812 head on 2026-10-09, and `0207` (the serialized invitation claim) from `2998b6a3` the same night. Both are recorded in `docs/production/migration-state.json` and the ledger. The steps are kept as the record of what was run.
 
 1. Re-run `npm run migration:state` on the reviewed head. Repo max `0206`, hosted `0205`, **MIGRATION-FIRST PENDING**.
-   - ⚠️ The parked WAIT-v4 PR0 candidate holds a *different*, local-only `0206`. It was never pushed and holds no claim. Whichever of the two lands second re-derives its number.
+   - SMS-00's `0206` landed first. The parked WAIT-v4 PR0 candidate's local-only `0206` was never pushed and holds no claim, so it re-derives its number.
 2. Confirm the linked project ref is the production Hone project, as in `migration-first-process.md`.
 3. Apply, then verify on production:
 
@@ -40,6 +57,41 @@ select count(*) filter (where send_waitlist_invitation_sms) from public.studios;
 ```
 
 4. In the **same change**, record the apply: `docs/production/migration-state.json` (`hosted_migration_max` → `0206`) and the ledger's current block.
+
+## 1b. Apply and verify `0208` (operator) — BEFORE the SMS-01 merge and deploy
+
+`0208_waitlist_sms_consent_practitioner_and_signup_answer.sql` is forward-only and writes no data. It is safe with the application already deployed: everything it adds is nullable or new, and that application calls neither of its commands. It must be applied **before** SMS-01's application deploys, because that application's signup calls `join_new_client_waitlist_with_sms_answer`.
+
+1. **Derive the state.** On the exact reviewed head, run `npm run migration:state`. Expect repo max `0208`, hosted `0207`, **MIGRATION-FIRST PENDING**, next free `0209`.
+2. **Use a throwaway worktree.** Work in a detached worktree at that head, never a shared checkout. Run `supabase link --project-ref alhhybgqdmcdyzpybykj`, then confirm `supabase/.temp/project-ref` and the project name **Hone**, never Hone Staging, as `migration-first-process.md` describes.
+3. **Check the file.** Its sha256 must equal the value recorded in the reviewed PR.
+4. **List the migrations.** `supabase migration list --linked` must show `0208` as the only local-only row, and no remote-only row.
+5. **Dry-run.** `supabase db push --linked --dry-run` must list exactly `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`.
+6. **Preflight (read-only).** The count of entries with `sms_consent_source = 'practitioner'` must be 0; otherwise 0208's own preflight refuses. Note the consents and entries totals.
+7. **Apply once.** Run `supabase db push --linked --yes`, with no `--include-all`. Capture the exit code and the apply window.
+8. **Verify on production (read-only):**
+
+```sql
+select max(version) from supabase_migrations.schema_migrations;                       -- '0208'
+select count(*) from supabase_migrations.schema_migrations where version = '0208';   -- 1
+select count(*) from information_schema.columns
+ where table_schema = 'public' and table_name = 'new_client_waitlist_entries'
+   and is_nullable = 'YES'
+   and column_name in ('sms_consent_recorded_by_practitioner_id', 'sms_consent_scope',
+                       'sms_consent_evidence_ref', 'sms_consent_given_on');           -- 4
+select pg_get_functiondef('public.new_client_waitlist_entries_transition_guard()'::regprocedure)
+       ~ 'may not be replaced or cleared';                                            -- true (write-once)
+select has_function_privilege('anon','public.join_new_client_waitlist_with_sms_answer(uuid, text, text, text, boolean, boolean)','EXECUTE'),
+       has_function_privilege('service_role','public.join_new_client_waitlist_with_sms_answer(uuid, text, text, text, boolean, boolean)','EXECUTE');  -- false, true
+select has_function_privilege('authenticated','public.record_waitlist_sms_consent_by_practitioner(uuid, uuid, uuid, text, text, boolean, date)','EXECUTE'),
+       has_function_privilege('service_role','public.record_waitlist_sms_consent_by_practitioner(uuid, uuid, uuid, text, text, boolean, date)','EXECUTE');  -- false, true
+select count(*) from public.new_client_waitlist_entries where sms_consent_source = 'practitioner';  -- 0
+select count(*) filter (where send_waitlist_invitation_sms) from public.studios;     -- 0
+```
+
+   The consents and entries totals must match step 6, and every studio's SMS switches must be unchanged.
+9. **Clean up.** Remove `supabase/.temp`, then delete the worktree.
+10. **Record it in a change on the SMS-01 PR:** `docs/production/migration-state.json` (`hosted_migration_max` → `0208`) and the ledger's current block, giving PARITY and next free `0209`. That moves the PR head, so it needs fresh CI and an exact-head review before the merge approval.
 
 ## 2. Configuration check (read-only; names, never values)
 
@@ -61,7 +113,7 @@ Use a controlled studio, never Willow, and an operator-owned client and phone wi
 | Move before the send | Move an appointment whose reminder has **not** gone out yet → its next reminder names the **new** time (the helper re-reads the start after the claim) |
 | Cancel | Cancel before the window → no reminder |
 | STOP | Reply STOP → `clients.sms_opted_out_at` stamped → no further SMS |
-| Waitlist (only if §5 is armed) | Invite a verified, consenting test prospect → **one** text with the secure link and the email's deadline |
+| Waitlist (only after `0208` is applied, SMS-01 is deployed, and the controlled studio's waitlist switch is on) | Invite a consenting test prospect (verification optional, §5) → **one** text with the secure link and the email's deadline |
 
 Ledger check after each test:
 
@@ -74,12 +126,14 @@ select purpose, status, skip_reason, provider_error_code, claimed_at, settled_at
 
 ## 4. Enable for Willow (operator SQL, explicit approval)
 
-There is no owner-facing switch yet (follow-up). Enable per studio:
+There is no owner-facing switch yet (follow-up). Enable per studio.
+
+**Willow's 24h and 2h reminder switches (and confirmations) were already on before SMS-02**, and they are unchanged. The first statement below is for any other studio. Willow's remaining step is the waitlist switch, and only **after** `0208` is applied (§1b), SMS-01 is deployed, and the consent backfill is applied and verified (§5). Each of those is its own approval.
 
 ```sql
 -- SMS-02: appointment reminders (24h and 2h are separate switches)
 update public.studios set send_24h_sms_reminders = true, send_2h_sms_reminders = true
- where id = '<willow studio id>';
+ where id = '<studio id>';
 -- SMS-01: waitlist invitation texts
 update public.studios set send_waitlist_invitation_sms = true
  where id = '<willow studio id>';
@@ -142,7 +196,12 @@ having count(*) > 1;
 ## 7. Rollback
 
 - **Per studio, immediate:** turn the switches off (§4 with `false`). The next cron fire, or the next invitation, sends nothing.
-- **No data rollback is needed.** `0206` is additive (no trigger on any existing table), and the ledger holds no body or phone number.
+- **No data rollback is needed.** None of the three migrations writes data:
+  - `0206` is additive, with no trigger on any existing table;
+  - `0207` redefines one function;
+  - `0208` adds nullable columns and two `service_role` commands, and replaces checks and a guard that every existing row already satisfies.
+
+  Rolling the application back after `0208` is safe: the earlier application calls neither command. The ledger holds no body or phone number. The consent backfill's records are a separate, approved write, and consent evidence is write-once.
 
 ## 8. Willow acceptance (real device, the Willow owner)
 
