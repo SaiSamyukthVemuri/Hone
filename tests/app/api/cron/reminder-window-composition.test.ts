@@ -322,9 +322,16 @@ describe("intake SMS reuses the existing SMS channel and its authority", () => {
 });
 
 describe("intake-link accounting stays truthful PER CHANNEL", () => {
-  it("the SMS pass stamps only on a successful SMS that carried the link", () => {
+  it("the SMS pass stamps only for an accepted or POSSIBLY-SENT SMS that carried the link", () => {
+    // Codex P2 4232680581: an ambiguous answer is recorded as sent and never
+    // retried, so a link it carried may be in the client's hands. What the
+    // message carried comes from the send helper. The behaviour, with its
+    // refusal and skip controls, is driven through the real route in
+    // reminder-sms-intake-stamp.test.ts.
+    expect(SMS_PASS).toMatch(/if \(result\.ok\) \{[\s\S]*?linkMayHaveGone = result\.intakeLinkIncluded;/);
+    expect(SMS_PASS).toMatch(/linkMayHaveGone = result\.possiblySent === true && result\.intakeLinkIncluded;/);
     expect(SMS_PASS).toMatch(
-      /if \(result\.ok\) \{[\s\S]*?if \(smsIntakeUrl && smsIntake\) \{[\s\S]*?await stampIntakeLinkIssued\(admin, smsIntake\.id, \{ emailed: false \}\)/,
+      /if \(linkMayHaveGone && smsIntake\) \{\s*await stampIntakeLinkIssued\(admin, smsIntake\.id, \{ emailed: false \}\);/,
     );
     expect(SMS_PASS.match(/stampIntakeLinkIssued\(/g) ?? []).toHaveLength(1);
   });
