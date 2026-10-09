@@ -95,17 +95,80 @@ export function normalizePhoneForMatch(raw: string | null): string {
 // Outbound SMS
 // ---------------------------------------------------------------------------
 
+/**
+ * What the provider was told, which is a different fact from `retryable`.
+ *
+ *   none       no request left Hone (not configured, or fenced), so nothing
+ *              can exist at the provider;
+ *   refused    the provider answered and did not create a message;
+ *   ambiguous  a request was made and its answer was lost or unreadable, so a
+ *              message MAY exist. Twilio's Messages API takes no idempotency
+ *              key, so an ambiguous attempt must never be retried
+ *              automatically by a path that cannot tell the two apart.
+ */
+export type SendSmsAttempt = "none" | "refused" | "ambiguous";
+
 export type SendSmsResult =
   | { ok: true; messageSid: string }
-  | { ok: false; error: string; retryable: boolean };
+  | {
+      ok: false;
+      error: string;
+      retryable: boolean;
+      attempt: SendSmsAttempt;
+      /** Twilio's numeric error code, when its error body carried one. */
+      providerErrorCode?: number;
+    };
 
 type SendSmsParams = {
   to: string;
   body: string;
+  /**
+   * Absolute URL Twilio should POST this message's delivery-status callbacks
+   * to (lib/sms/delivery-ledger.ts builds it). Omitted, Twilio reports nothing.
+   */
+  statusCallbackUrl?: string | null;
 };
 
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01";
 const TWILIO_SEND_TIMEOUT_MS = 15_000;
+
+// A message SID is the provider's identity for the message; it is checked for
+// shape before Hone records it anywhere.
+const MESSAGE_SID_RE = /^(SM|MM)[0-9a-fA-F]{32}$/;
+
+/**
+ * Whether THIS deployment may send SMS at all.
+ *
+ * Vercel preview deployments carry the live Twilio credentials and run against
+ * the production database, so a preview could text a real person from
+ * unreviewed code. Only the production deployment sends; any other Vercel
+ * environment is fenced unless an operator deliberately sets
+ * HONE_SMS_NON_PRODUCTION_SENDS=allow on it. Outside Vercel (local, CI)
+ * there is no VERCEL_ENV and nothing is fenced here: those runs have no live
+ * credentials, and tests stub the network.
+ */
+export function outboundSmsFence(
+  env: NodeJS.ProcessEnv = process.env,
+): { allowed: true } | { allowed: false; reason: "non_production_deployment" } {
+  const vercelEnv = env.VERCEL_ENV;
+  if (
+    vercelEnv &&
+    vercelEnv !== "production" &&
+    env.HONE_SMS_NON_PRODUCTION_SENDS !== "allow"
+  ) {
+    return { allowed: false, reason: "non_production_deployment" };
+  }
+  return { allowed: true };
+}
+
+/** Twilio's numeric error code from a parsed error body, or undefined. */
+function providerErrorCodeOf(parsed: unknown): number | undefined {
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const code = (parsed as { code?: unknown }).code;
+  return typeof code === "number" && Number.isInteger(code) && code > 0 && code < 100_000_000
+    ? code
+    : undefined;
+}
 
 /**
  * Post one outbound SMS via Twilio Messages API. Never throws; every
@@ -113,12 +176,16 @@ const TWILIO_SEND_TIMEOUT_MS = 15_000;
  * retryable flag the cron uses to decide whether to attempt again.
  *
  * Configuration:
+ *   - A non-production Vercel deployment is fenced (outboundSmsFence)
+ *     before any credential is read: ok:false, attempt "none".
  *   - Requires TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN; missing
  *     either returns ok:false with retryable:false. The caller's job
  *     is to surface this once on startup (settings → launch) rather
  *     than blow up booking.
  *   - Uses TWILIO_MESSAGING_SERVICE_SID when set; otherwise falls
  *     back to TWILIO_FROM_NUMBER. Missing both also returns ok:false.
+ *   - `statusCallbackUrl`, when given, becomes Twilio's StatusCallback,
+ *     so delivery reports reach /api/twilio/message-status.
  *
  * Logging discipline:
  *   - Auth Token is never logged.
@@ -130,6 +197,17 @@ const TWILIO_SEND_TIMEOUT_MS = 15_000;
 export async function sendSmsSafely(
   params: SendSmsParams,
 ): Promise<SendSmsResult> {
+  // Checked before anything else, so a fenced deployment never even reads
+  // the credentials it holds.
+  if (!outboundSmsFence().allowed) {
+    return {
+      ok: false,
+      error: "sms_fenced_non_production",
+      retryable: false,
+      attempt: "none",
+    };
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   if (!accountSid || !authToken) {
@@ -137,6 +215,7 @@ export async function sendSmsSafely(
       ok: false,
       error: "twilio_not_configured",
       retryable: false,
+      attempt: "none",
     };
   }
 
@@ -147,6 +226,7 @@ export async function sendSmsSafely(
       ok: false,
       error: "twilio_missing_sender",
       retryable: false,
+      attempt: "none",
     };
   }
 
@@ -157,6 +237,9 @@ export async function sendSmsSafely(
     formBody.set("MessagingServiceSid", messagingServiceSid);
   } else if (fromNumber) {
     formBody.set("From", fromNumber);
+  }
+  if (params.statusCallbackUrl) {
+    formBody.set("StatusCallback", params.statusCallbackUrl);
   }
 
   const url = `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(
@@ -191,15 +274,28 @@ export async function sendSmsSafely(
     } catch {
       // Some 5xx responses are HTML or empty; treat as retryable.
     }
-    const sid =
+    const rawSid =
       typeof parsed === "object" &&
       parsed !== null &&
       typeof (parsed as { sid?: unknown }).sid === "string"
         ? ((parsed as { sid: string }).sid as string)
         : null;
+    const sid = rawSid !== null && MESSAGE_SID_RE.test(rawSid) ? rawSid : null;
 
     if (res.ok && sid) {
       return { ok: true, messageSid: sid };
+    }
+
+    if (res.ok) {
+      // A success status without a well-formed SID: the provider probably
+      // created the message, and Hone cannot name it. That is the definition
+      // of ambiguous, never a refusal.
+      return {
+        ok: false,
+        error: "twilio_unreadable_success",
+        retryable: false,
+        attempt: "ambiguous",
+      };
     }
 
     // Map status codes to retryable / non-retryable. 429 + 5xx are
@@ -207,15 +303,26 @@ export async function sendSmsSafely(
     // sender config is wrong and a retry will not help.
     const retryable = res.status === 429 || res.status >= 500;
     const errorTag = `twilio_http_${res.status}`;
-    return { ok: false, error: errorTag, retryable };
+    return {
+      ok: false,
+      error: errorTag,
+      retryable,
+      // A 4xx (429 included) is the provider answering that it did not create
+      // a message. A 5xx is an answer about the provider, not about the
+      // message, so it cannot rule out that the message was created.
+      attempt: res.status >= 500 ? "ambiguous" : "refused",
+      providerErrorCode: providerErrorCodeOf(parsed),
+    };
   } catch (err) {
     // AbortController fires AbortError on timeout. Network failures
-    // come through as TypeError. Both are retryable.
+    // come through as TypeError. Both are retryable, and both are
+    // ambiguous: the request may have reached Twilio before the answer
+    // was lost.
     const tag =
       err instanceof Error && err.name === "AbortError"
         ? "twilio_timeout"
         : "twilio_network";
-    return { ok: false, error: tag, retryable: true };
+    return { ok: false, error: tag, retryable: true, attempt: "ambiguous" };
   } finally {
     clearTimeout(timeout);
   }

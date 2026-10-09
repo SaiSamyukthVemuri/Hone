@@ -166,6 +166,10 @@ export type Studio = {
   send_confirmation_sms: boolean;
   send_24h_sms_reminders: boolean;
   send_2h_sms_reminders: boolean;
+  // Migration 0206 (SMS-01): whether a new waitlist invitation is also texted
+  // to an eligible prospect. Default false. Optional because a row read before
+  // 0206 is applied has no such column, and absent must mean OFF.
+  send_waitlist_invitation_sms?: boolean;
 };
 
 // Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.

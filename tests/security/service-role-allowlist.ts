@@ -334,6 +334,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "x-twilio-signature",
   },
   {
+    path: "app/api/twilio/message-status/route.ts",
+    purpose: "SMS-00 Twilio delivery-status callback.",
+    why: "No user session; authenticated by the Twilio signature (x-twilio-signature) over the full URL, whose query carries the ledger row id. The admin client is built only after the signature verifies, and drives ONLY the service-role-only record_sms_delivery_status command, which re-derives studio and subject from the addressed row and refuses a SID that does not match it.",
+    scopeGuard: "x-twilio-signature",
+  },
+  {
     path: "app/book/[slug]/actions.ts",
     purpose: "Public, unauthenticated token-scoped route/query.",
     why: "No session; the bearer signed/hashed token is verified (verifyCancellationToken) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",
