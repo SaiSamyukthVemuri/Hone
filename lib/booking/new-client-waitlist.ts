@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizePhoneForSms } from "@/lib/sms/twilio";
 
 // ===========================================================================
 // P0 EMERGENCY — NEW-CLIENT WAITLIST (ADMISSION CONTROL)
@@ -294,13 +295,20 @@ export const NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED =
 export const NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE =
   "To get texts, add your mobile number, or choose No.";
 
-/** The profile vocabulary's floor: a number with fewer digits cannot be texted. */
+/**
+ * The DATABASE's floor: 0208's join wrapper refuses a Yes with fewer digits.
+ * It is a backstop only. A Yes here must pass the sender's own law
+ * (`normalizePhoneForSms`), which is stricter: every number it accepts has at
+ * least 8 digits, so the database never refuses a Yes this module accepted.
+ */
 export const WAITLIST_SMS_PHONE_MIN_DIGITS = 7;
 
 /**
  * Validate the SMS answer against the submission it rides with. `answer` is
  * the parsed radio value: `null` is NOT ANSWERED and is refused, never read as
- * "no". A Yes needs a number to bind to.
+ * "no". A Yes needs a number the SENDER can text (Codex P2 4234615500):
+ * consent bound to a number the invitation sender refuses would settle every
+ * invitation `invalid_phone`. A No needs nothing, and joins exactly like a Yes.
  */
 export function validateWaitlistSmsAnswer(input: {
   answer: boolean | null;
@@ -309,11 +317,8 @@ export function validateWaitlistSmsAnswer(input: {
   if (input.answer === null) {
     return { ok: false, error: NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED };
   }
-  if (input.answer) {
-    const digits = (input.phone ?? "").replace(/\D/g, "");
-    if (digits.length < WAITLIST_SMS_PHONE_MIN_DIGITS) {
-      return { ok: false, error: NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE };
-    }
+  if (input.answer && normalizePhoneForSms(input.phone) === null) {
+    return { ok: false, error: NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE };
   }
   return { ok: true, smsConsent: input.answer };
 }

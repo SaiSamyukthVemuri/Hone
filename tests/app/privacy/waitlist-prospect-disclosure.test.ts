@@ -104,16 +104,31 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   });
 
   it("enumerates exactly what the waitlist form actually collects, and no more", () => {
-    // Name, email, optional phone, which studio, when, and the waiting/removed
-    // status. That is the whole of new_client_waitlist_entries' personal data.
+    // Name, email, optional phone, the text-message answer (0208), which
+    // studio, when, and the waiting/removed status.
     expect(PRIVACY).toMatch(/Your name and email address/);
     expect(PRIVACY).toMatch(/Your phone number, if you choose to give one; it is optional/);
+    // 0208: the explicit Yes/No answer is collected, so the list names it.
+    expect(PRIVACY).toMatch(
+      /Whether you agree to text messages about the waitlist and appointments\s+offered from it/,
+    );
     expect(PRIVACY).toMatch(/Which studio&rsquo;s waitlist you joined, and when/);
     // Scoped: waiting/removed is a column on a stored entry. Where no entry is
     // stored there is no such status, so the bullet may not claim it outright.
     expect(PRIVACY).toMatch(
       /Where the studio keeps its waitlist with us, whether you are still\s+waiting, or have been removed/,
     );
+  });
+
+  it("names the studio's own record of text-message permission (0208), and no longer calls the list whole", () => {
+    // An owner can record a permission the person gave the studio directly:
+    // who recorded it, when, the scope, an evidence reference and, if known,
+    // the day it was given. That is data about the prospect a practitioner
+    // enters, so the notice names it beside the form's own list.
+    expect(PRIVACY).toMatch(
+      /We also keep records of text-message permission you gave directly to the\s+studio, including who recorded it, when, the agreed scope, an evidence\s+reference, and the date permission was given if known\./,
+    );
+    expect(PRIVACY).not.toMatch(/That is the whole list/);
   });
 
   it("does NOT over-claim: no health data is asked for, and no client record is created", () => {

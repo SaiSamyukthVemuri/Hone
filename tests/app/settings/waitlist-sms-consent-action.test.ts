@@ -15,11 +15,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 //   * calling it for a number that already said STOP through ANOTHER row,
 //     which the command cannot see (phone matching lives in TypeScript);
 //   * reading a failed opt-out check as "not opted out";
+//   * recording consent on a number the sender can never text (Codex P2
+//     4234615500);
 //   * reading a refusal as a success, or leaking a code or PII.
 //
 // The phone-wide check runs through the REAL lookup and the REAL matching law,
-// against a fake admin client, so "a differently formatted number in another
-// studio" is decided by the same code the STOP route uses.
+// against a fake admin client that answers like PostgREST (row-limited pages),
+// so "a differently formatted number in another studio" is decided by the same
+// code the STOP route uses.
+
+import { pagedSource } from "@/tests/lib/sms/helpers/postgrest-pages";
 
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
@@ -98,24 +103,12 @@ function arrangeClients() {
       // The phone-wide read is the ONLY table the service role may touch here,
       // and only to read. Anything else is a design error, not a fallback.
       if (table !== "clients") throw new Error(`unexpected admin table: ${table}`);
-      const builder = {
-        select: () => builder,
-        not: () => builder,
-        then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
-          Promise.resolve({ data: h.clientsError ? null : h.optedOutClients, error: h.clientsError }).then(
-            resolve,
-            reject,
-          ),
-      };
-      return builder;
+      return pagedSource(() => h.optedOutClients, { fail: () => h.clientsError !== null }).query();
     },
     rpc(name: string, args?: Record<string, unknown>) {
       if (name === "waitlist_prospect_suppression_candidates") {
         adminReads.push(`rpc:${name}`);
-        return Promise.resolve({
-          data: h.prospectsError ? null : h.prospects,
-          error: h.prospectsError,
-        });
+        return pagedSource(() => h.prospects, { fail: () => h.prospectsError !== null }).query();
       }
       commands.push({ name, args: args ?? {} });
       return Promise.resolve({ data: h.commandError ? null : h.result, error: h.commandError });
@@ -483,4 +476,36 @@ describe("result mapping and log hygiene", () => {
     expect(JSON.parse(errors[0]).outcome).toBe("phone_suppressed");
     expect(JSON.parse(errors[1]).outcome).toBe("already_consented");
   });
+});
+
+// ===========================================================================
+// ONLY A NUMBER THE SENDER CAN TEXT (Codex P2 4234615500). Consent binds to the
+// entry's number, so the owner records it only when the invitation sender's own
+// law (normalizePhoneForSms) accepts that number. Otherwise every invitation
+// would settle `invalid_phone`. Refused before the phone-wide read and the
+// command, with plain copy; no number at all is still the command's `no_phone`.
+// ===========================================================================
+describe("a number the sender cannot text is refused before anything runs", () => {
+  for (const phone of ["555 0142", "604 555 01", "44 7700 900123", "2 604 555 0199"]) {
+    it(`an entry whose number is ${phone}`, async () => {
+      h.entry = { phone };
+      expect(await record()).toEqual({
+        ok: false,
+        message: "The number on file can't receive texts, so consent can't be recorded.",
+      });
+      expect(adminReads, "no phone-wide read for a number that can't be texted").toEqual([]);
+      expect(commands, "the command must not run").toEqual([]);
+      expect(revalidatePath).not.toHaveBeenCalled();
+      expect(JSON.parse(errors[0]!).outcome).toBe("phone_not_textable");
+      expect(errors.join(" ")).not.toContain(phone);
+    });
+  }
+
+  for (const phone of ["604-555-0199", "+1 (416) 555-0100", "1 604 555 0199", "+44 7700 900123"]) {
+    it(`control: a textable number (${phone}) is checked and recorded as before`, async () => {
+      h.entry = { phone };
+      expect(await record()).toEqual({ ok: true });
+      expect(commands).toHaveLength(1);
+    });
+  }
 });

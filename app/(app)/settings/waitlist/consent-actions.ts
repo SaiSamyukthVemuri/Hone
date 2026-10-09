@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { lookupPhoneWideSuppression } from "@/lib/sms/phone-suppression-lookup";
+import { normalizePhoneForSms } from "@/lib/sms/twilio";
 import {
   PRACTITIONER_CONSENT_FIELDS,
   parsePractitionerSmsConsentInput,
@@ -35,6 +36,12 @@ import {
 // re-checks the same law at send time, so a STOP that lands after this check
 // still wins.
 //
+// ONLY A NUMBER THE SENDER CAN TEXT (Codex P2 4234615500). Consent binds to
+// the entry's number, so it is recorded only when the invitation sender's own
+// law (`normalizePhoneForSms`) accepts that number. Otherwise every invitation
+// would settle `invalid_phone`, and the record would promise texts that can
+// never go.
+//
 // THE ENTRY'S NUMBER IS READ THROUGH THE OWNER'S OWN SESSION. 0185's owner
 // SELECT policy already shows them this row; the service-role client is used
 // only for what the session cannot do, the command and the phone-wide read.
@@ -62,6 +69,7 @@ type RecordConsentResult =
 const OWNER_ONLY = "Only the studio owner can record SMS consent.";
 const CHECK_FAILED =
   "Couldn't check this number against opt-outs. Nothing was recorded. Please try again.";
+const NOT_TEXTABLE = "The number on file can't receive texts, so consent can't be recorded.";
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const REFUSALS: Readonly<Record<Exclude<RecordConsentResult, "recorded">, string>> = {
@@ -152,6 +160,13 @@ export async function recordProspectSmsConsentAction(
   } catch {
     logRefusal(studioId, "entry_read_failed");
     return { ok: false, message: CHECK_FAILED };
+  }
+
+  // A number the sender would refuse is refused here, before the phone-wide
+  // read and the command. No number at all is still the command's `no_phone`.
+  if (phone && normalizePhoneForSms(phone) === null) {
+    logRefusal(studioId, "phone_not_textable");
+    return { ok: false, message: NOT_TEXTABLE };
   }
 
   const admin = createAdminClient();

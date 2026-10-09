@@ -5,6 +5,7 @@ import {
   sendWaitlistInvitationSms,
 } from "@/lib/waitlist/delivery/sms";
 import { invitationExpiryLabel } from "@/lib/waitlist/delivery/policy";
+import { pagedSource } from "@/tests/lib/sms/helpers/postgrest-pages";
 
 const alerts: Array<Record<string, unknown>> = [];
 vi.mock("@/lib/ops/alerts", () => ({
@@ -69,22 +70,14 @@ const h: {
 };
 
 function admin(): SupabaseClient {
-  // The clients read the phone-wide lookup issues: select + two `not` filters,
-  // then awaited. Only opted-out rows are ever returned, as the filter asks.
-  const clientsQuery = {
-    select: () => clientsQuery,
-    not: () => clientsQuery,
-    then: (resolve: (v: unknown) => unknown) =>
-      Promise.resolve(
-        h.lookupFails
-          ? { data: null, error: { message: "read failed" } }
-          : { data: h.optedOutClients, error: null },
-      ).then(resolve),
-  };
+  // The phone-wide lookup's two reads answer like PostgREST: row-limited pages,
+  // filtered as asked (lib/sms/suppression-candidates).
+  const clients = pagedSource(() => h.optedOutClients, { fail: () => h.lookupFails });
+  const prospects = pagedSource(() => h.prospectCandidates);
   return {
     from(table: string) {
       if (table !== "clients") throw new Error(`unexpected table ${table}`);
-      return clientsQuery;
+      return clients.query();
     },
     rpc(fn: string, args: Record<string, unknown>) {
       h.rpcs.push({ fn, args });
@@ -94,9 +87,7 @@ function admin(): SupabaseClient {
           ? new Promise(() => undefined)
           : Promise.resolve({ data: "settled", error: null });
       }
-      if (fn === "waitlist_prospect_suppression_candidates") {
-        return Promise.resolve({ data: h.prospectCandidates, error: null });
-      }
+      if (fn === "waitlist_prospect_suppression_candidates") return prospects.query();
       return Promise.resolve({ data: null, error: { message: `unexpected ${fn}` } });
     },
   } as unknown as SupabaseClient;

@@ -10,6 +10,10 @@ import {
   HONE_SUPPRESSION_SCOPE,
   selectHoneSuppressionTargets,
 } from "@/lib/sms/suppression";
+import {
+  readClientSuppressionCandidates,
+  readProspectSuppressionCandidates,
+} from "@/lib/sms/suppression-candidates";
 
 // Twilio inbound SMS webhook (PR Twilio v1).
 //
@@ -193,11 +197,12 @@ export async function POST(req: Request): Promise<Response> {
   // all matching client rows get opted out. This is intentional;
   // phone-number ownership is per-person, not per-studio.
   //
-  // We scan with a broad SELECT and filter in-app because the schema
-  // stores phone as free text without a normalized index. The pilot
-  // scale (single-digit thousands of clients) makes the scan fine for
-  // v1; the helper is isolated so a future indexed normalized_phone
-  // column can replace this scan without touching the route.
+  // We scan every row with a phone and filter in-app because the schema
+  // stores phone as free text without a normalized index. The scan reads
+  // in keyset pages until it is complete (lib/sms/suppression-candidates),
+  // because a single PostgREST response stops at the API's row limit
+  // without an error. A future indexed normalized_phone column can replace
+  // the scan without touching the route.
   //
   // Retry-dedup: we also select sms_opted_out_at and skip rows that
   // are already opted out. If Twilio retries this webhook (which it
@@ -208,11 +213,12 @@ export async function POST(req: Request): Promise<Response> {
   let alreadyOptedOutCount = 0;
   let clientScanFailed = false;
   try {
-    const { data: candidates, error: scanErr } = await admin
-      .from("clients")
-      .select("id, studio_id, phone, sms_opted_out_at")
-      .not("phone", "is", null);
-    if (scanErr) throw scanErr;
+    // Read COMPLETELY (Codex P1 4234615485): one PostgREST response stops at
+    // the API's row limit with no error, so a single read would silently miss
+    // every match past it. A failed or incomplete read is a scan failure.
+    const scan = await readClientSuppressionCandidates(admin, { optedOutOnly: false });
+    if (!scan.ok) throw new Error("client scan failed or incomplete");
+    const candidates = scan.candidates;
     // COMMS-01B: the phone-wide rule is now a NAMED, TESTED concept in
     // lib/sms/suppression.ts rather than a loop here. Behaviour is unchanged;
     // what changed is that per-studio senders cannot quietly narrow it. Note
@@ -312,12 +318,11 @@ export async function POST(req: Request): Promise<Response> {
   let prospectsAlreadyOptedOutCount = 0;
   let prospectScanFailed = false;
   try {
-    const { data: prospectCandidates, error: prospectScanErr } = await admin.rpc(
-      "waitlist_prospect_suppression_candidates",
-    );
-    if (prospectScanErr) throw prospectScanErr;
+    // Read COMPLETELY, as the client scan above is.
+    const scan = await readProspectSuppressionCandidates(admin, { optedOutOnly: false });
+    if (!scan.ok) throw new Error("prospect scan failed or incomplete");
     const prospectSelection = selectHoneSuppressionTargets({
-      candidates: prospectCandidates ?? [],
+      candidates: scan.candidates,
       fromPhone: from,
     });
     matchedProspects = prospectSelection.targets;
