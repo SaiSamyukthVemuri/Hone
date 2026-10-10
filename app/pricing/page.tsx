@@ -182,18 +182,14 @@ export default function PricingPage() {
               <PlanColumn key={plan.id} plan={plan} />
             ))}
           </div>
-          {/* A LIST, not a styled sentence. The separator is decorative and
-              hidden, so a screen reader hears four assurances rather than one
-              run-on line punctuated by middots. */}
-          <ul className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[0.9375rem] text-ink">
-            {PRICING_ASSURANCES.map((a, i) => (
-              <li key={a} className="flex items-center gap-3">
-                {i > 0 ? (
-                  <span aria-hidden="true" className="text-mineral">
-                    ·
-                  </span>
-                ) : null}
-                <span>{a}</span>
+          {/* A LIST, not a styled sentence, so a screen reader hears four
+              assurances rather than one run-on line. Ruled cells like the
+              homepage's trust strip: a wrapped line of middots left a dot
+              hanging at the end of a line on a phone. */}
+          <ul className="mt-6 grid grid-cols-2 gap-x-6 border-t border-[color:var(--color-hairline)] text-[0.9375rem] text-ink sm:grid-cols-4">
+            {PRICING_ASSURANCES.map((a) => (
+              <li key={a} className="border-b border-[color:var(--color-hairline)] py-3">
+                {a}
               </li>
             ))}
           </ul>
