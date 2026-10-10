@@ -16,9 +16,10 @@ import type { SendSmsResult } from "./twilio";
 //
 // FAIL-SOFT, WITH ONE EXCEPTION. Recording an appointment attempt is
 // bookkeeping: if the ledger cannot be written, the send it describes must
-// still happen exactly as it did before this ledger existed. The waitlist
-// invitation CLAIM is different -- it is the once-per-invitation guard -- so
-// when it cannot be taken the invitation is not texted (fail closed).
+// still happen exactly as it did before this ledger existed. The two waitlist
+// CLAIMS are different -- the invitation claim is the once-per-invitation
+// guard, and the join acknowledgement claim (SMS-04, 0210) the once-per-entry
+// guard -- so when either cannot be taken nothing is texted (fail closed).
 //
 // PRIVACY. Nothing here writes or logs a phone number, a message body or a
 // provider message. The ledger holds purpose, subject, status, the provider
@@ -28,9 +29,14 @@ export type SmsPurpose =
   | "appointment_confirmation"
   | "appointment_reminder_24h"
   | "appointment_reminder_2h"
-  | "waitlist_invitation";
+  | "waitlist_invitation"
+  // SMS-04 (0210): the one text a genuinely new self-service waitlist join gets.
+  | "waitlist_join_acknowledgement";
 
-export type AppointmentSmsPurpose = Exclude<SmsPurpose, "waitlist_invitation">;
+export type AppointmentSmsPurpose = Exclude<
+  SmsPurpose,
+  "waitlist_invitation" | "waitlist_join_acknowledgement"
+>;
 
 /**
  * Why a claimed attempt made no provider call. A closed vocabulary: the
@@ -272,6 +278,88 @@ export async function claimWaitlistInvitationSms(
   }
 }
 
+export type WaitlistJoinAckSmsTarget = {
+  phone: string | null;
+  smsConsentAt: string | null;
+  smsOptedOutAt: string | null;
+  mobileVerifiedAt: string | null;
+};
+
+export type WaitlistJoinAckSmsClaim =
+  | { result: "claimed"; messageId: string; target: WaitlistJoinAckSmsTarget }
+  | {
+      result:
+        | "already_claimed"
+        | "recently_acknowledged"
+        | "not_eligible"
+        | "not_fresh"
+        | "studio_disabled"
+        | "not_found"
+        | "invalid_input";
+    }
+  /** The claim could not be taken or read. Fail closed: no text. */
+  | { result: "unavailable" };
+
+const JOIN_ACK_CLAIM_REFUSALS = new Set([
+  "already_claimed",
+  "recently_acknowledged",
+  "not_eligible",
+  "not_fresh",
+  "studio_disabled",
+  "not_found",
+  "invalid_input",
+]);
+
+/**
+ * SMS-04 (0210). Claim the ONE join acknowledgement text for an entry. The
+ * database admits only a genuinely new self-service join with its own Yes,
+ * at most once per entry and once per number per 24 hours, and only while
+ * the studio's waitlist texts are on; anything else writes nothing. Like the
+ * invitation claim this is the guard, so a claim that cannot be taken or read
+ * means no text (fail closed).
+ */
+export async function claimWaitlistJoinAckSms(
+  admin: SupabaseClient,
+  input: { studioId: string; entryId: string },
+): Promise<WaitlistJoinAckSmsClaim> {
+  try {
+    const { data, error } = await admin.rpc("claim_waitlist_join_ack_sms", {
+      p_studio_id: input.studioId,
+      p_entry_id: input.entryId,
+    });
+    if (error) {
+      logLedger("sms_join_ack_claim_failed", { shape: "rpc_error" });
+      return { result: "unavailable" };
+    }
+    const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+    const result = row?.result;
+    if (result === "claimed") {
+      if (!isLedgerMessageId(row?.message_id)) {
+        logLedger("sms_join_ack_claim_failed", { shape: "malformed_claim" });
+        return { result: "unavailable" };
+      }
+      return {
+        result: "claimed",
+        messageId: row.message_id as string,
+        target: {
+          phone: stringOrNull(row?.phone),
+          smsConsentAt: stringOrNull(row?.sms_consent_at),
+          smsOptedOutAt: stringOrNull(row?.sms_opted_out_at),
+          mobileVerifiedAt: stringOrNull(row?.mobile_verified_at),
+        },
+      };
+    }
+    if (typeof result === "string" && JOIN_ACK_CLAIM_REFUSALS.has(result)) {
+      return { result } as WaitlistJoinAckSmsClaim;
+    }
+    logLedger("sms_join_ack_claim_failed", { shape: "unknown_result" });
+    return { result: "unavailable" };
+  } catch {
+    logLedger("sms_join_ack_claim_failed", { shape: "threw" });
+    return { result: "unavailable" };
+  }
+}
+
 export type SmsSettleResult =
   | "settled"
   | "already_settled"
@@ -354,6 +442,7 @@ const PURPOSES = new Set<string>([
   "appointment_reminder_24h",
   "appointment_reminder_2h",
   "waitlist_invitation",
+  "waitlist_join_acknowledgement",
 ]);
 
 /**

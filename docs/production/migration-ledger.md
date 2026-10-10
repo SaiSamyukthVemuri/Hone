@@ -14,7 +14,23 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-10, post-0208 apply; `0208` APPLIED, repo == hosted)
+## Current state (verified 2026-10-10, post-0208 apply; `0208` APPLIED, `0210` AUTHORED AND PENDING on the SMS-04 branch; `0209` reserved by WAIT #820)
+
+> **0210 IS AUTHORED AND PENDING (added after the 0208 apply), on the SMS-04 branch `feat/sms-04-waitlist-join-ack` only.**
+> `0210_sms_waitlist_join_acknowledgement.sql` does two things:
+> - **A phone number becomes required for every new public waitlist signup.** A new signup command, `join_new_client_waitlist_with_phone_and_sms_answer`, refuses a missing or unsendable phone for a Yes and a No alike, and records a Yes as wording version 2. 0208's command is left in place, unchanged, for the deployed application.
+> - **The waitlist join acknowledgement text.** It adds a fifth SMS ledger purpose with its own subject column, a once-per-entry index, and the `service_role`-only claim `claim_waitlist_join_ack_sms`.
+>
+> It also widens the wording-version check to v1 or v2. It writes no data.
+>
+> **0209 IS RESERVED BY WAIT #820** (`0209_public_slot_candidate_buffer_window.sql`, open), which merges and applies first.
+> - This tree does not contain `0209`, so the pending suffix has a hole until #820 lands.
+> - The contiguity guard (`tests/docs/canonical-production-facts.test.ts`) is red on this branch **by design** until production, carrying `0209`, is merged in.
+> - Apply order: `0209`, then `0210`, each migration-first from its own reviewed head under separate approval.
+>
+> **NOT APPLIED, NOT MERGED.**
+>
+> **THE BLOCK BELOW IS THE 0208 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0210` while it is pending.
 
 > **0208 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #819 HEAD, BEFORE ANY MERGE.**
 > `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql` was applied to production on 2026-10-10 under explicit per-change owner authorization, from the reviewed PR #819 head `82d2ef1acb7f17145ccfbb5274f587f87f85eceb`. It lets a studio owner record SMS consent a prospect gave outside Hone, and makes the public signup ask Yes or No. It is applied before the SMS-01 application that calls its commands is deployed, as runbook §1b requires.
@@ -52,10 +68,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0208** (`0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`) |
-| **Repo migration max** | **0208**: `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`, on PR #819. Four nullable columns, one composite FK, three consent checks (one replacing 0202's evidence check), the 0203 guard redefined with one write-once clause, and two `service_role`-only commands. No data. `0202`, `0203`, `0204` and `0207` stay byte-identical. |
+| **Repo migration max** | **0210** — `0210_sms_waitlist_join_acknowledgement.sql`, authored on the SMS-04 branch (`feat/sms-04-waitlist-join-ack`).<br>It adds:<br>• a ledger subject column with a composite same-studio FK, its purpose and subject checks and a once-per-entry index;<br>• the ledger identity guard redefined with one clause;<br>• the wording-version check widened to v1/v2;<br>• two `service_role`-only commands.<br>No data. `0199`, `0202`, `0204`, `0206`, `0207` and `0208` stay byte-identical. `0209` is reserved by WAIT #820 and is not in this tree. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none** — repo == hosted, PARITY. |
-| **Next free migration** | Next free number is **0209**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
+| **Pending migrations** | **`0210`** — `0210_sms_waitlist_join_acknowledgement.sql`, authored on the SMS-04 branch and **NOT applied**. It is MIGRATION-FIRST: apply it after WAIT #820's `0209`, from the reviewed head of its own PR, before that PR's application deploys. |
+| **Next free migration** | Next free number is **0211**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list` before the push. It is distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
 | **Reviewed release head** | `82d2ef1acb7f17145ccfbb5274f587f87f85eceb` (PR #819, draft). At apply time: CI green (run 38002593747, database lane included); the exact-head Codex review was clean, naming the commit (`Reviewed commit: 82d2ef1acb`, comment 6090799757); all 3 review threads were resolved under explicit owner authorization. **Not merged at apply time.** |
 | **Production application SHA at apply time** | `1bdc10ba271484ffd3fba7979fce77ab486fe9fa`. **No application code was deployed by this apply.** |

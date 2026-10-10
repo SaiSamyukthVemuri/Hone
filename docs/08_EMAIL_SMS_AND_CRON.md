@@ -173,6 +173,50 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
 - **Independence.** The text runs **off the response path**. It starts on a later macrotask and is handed to `after()` as a **started promise**, never a callback: in Next 15.5 a callback would move the Server Action's request to the `after` phase if the practitioner navigated away mid-send, and the action's re-render would then throw. Outside a request scope it falls back to fire-and-forget. The action never awaits it, so a stalled provider can never hold the Invite to book action open. It never delays, changes or fails the email or the invitation, and the practitioner's result is still the email's disposition.
 - **Activation.** Needs `send_waitlist_invitation_sms` (default off) for the studio. A consenting prospect is then texted at their stored number; no verification step is involved. See [runbooks/sms-p0-activation.md](./runbooks/sms-p0-activation.md).
 
+### Waitlist join acknowledgement SMS and the required phone (SMS-04, migration 0210)
+
+**The signup.**
+- **A phone number is required on every NEW public waitlist signup**, for a Yes and a No alike.
+  - The form refuses a blank, whitespace-only or unsendable number before it submits, and the server action refuses it again before any database call. Both use `validateWaitlistPhone` (`lib/waitlist/signup-contact.ts`), which applies the sender's own law, `normalizePhoneForSms` (now in the pure, browser-safe `lib/sms/phone.ts`, re-exported from `lib/sms/twilio.ts`).
+  - The signup command `join_new_client_waitlist_with_phone_and_sms_answer` (0210) refuses it as well, through `public.sms_normalized_phone`.
+  - There is no verification code (D4(2)).
+- **The question is version 2:** "May we text you about joining this waitlist and any appointment offered from it? Reply STOP at any time to opt out." (`SMS_JOIN_CONSENT_QUESTION`).
+  - A Yes is recorded as `waitlist_sms_operational_v2`. Answers already recorded keep v1, and `SMS_CONSENT_WORDING_BY_VERSION` resolves each version to its own sentence.
+  - Still two answers, neither preselected. A No still joins, with the same entry, emails and place.
+- **Existing entries are untouched**, email-only ones included. The owner's "Add someone to the waitlist" keeps its optional phone. `0208`'s `join_new_client_waitlist_with_sms_answer` is kept, unchanged, for the deployed application during the rollout window.
+
+**The join text.** A genuinely new public join with a Yes gets ONE text after the entry is durably saved:
+
+> `<Studio>`: you've joined our waitlist. We'll contact you when you're invited to book. Reply STOP to opt out.
+
+- **When.** The join action starts it after the commit and after the response (`app/book/[slug]/waitlist-actions.ts` → `lib/waitlist/delivery/join-ack-sms.ts`), beside the two emails, never before them in the response path.
+  - A resubmission (`already_waiting`) never reaches it.
+  - A No never asks for it.
+- **Whether at all — the database.** `claim_waitlist_join_ack_sms` (0210) admits one claim per entry. Each of these must hold, or it writes nothing:
+  - the studio's waitlist texts are on (`send_waitlist_invitation_sms`);
+  - the entry came from the public form and is still waiting;
+  - its consent is the form's own v2 Yes, recorded inside the join's own minute;
+  - it joined less than 15 minutes ago;
+  - no other join text that may have reached the same sendable number was claimed in the last 24 hours, in any studio.
+- **Who can never get it.** People already on a waitlist:
+  - an owner-recorded or backfilled consent is source `practitioner`;
+  - turning the switch on runs nothing;
+  - their join is older than 15 minutes.
+  A v1 Yes never qualifies either.
+- **To whom — the invitation text's protections, in the same order:**
+  - `prospectMayReceiveSms`;
+  - a usable number (`invalid_phone`);
+  - STOP re-read phone-wide (`opted_out`, `suppression_check_failed`);
+  - the production fence (`non_production_deployment`).
+
+  Each is settled on the claimed row.
+- **What it says.** The studio name and what happens next. It has **no link**: there is nothing to do yet, and the secure booking link only ever comes with an invitation (`/invitation/<token>`, to book a consultation).
+- **Retries and alerts.** These are as for the invitation text:
+  - an ambiguous answer is never repeated;
+  - a definite, retryable refusal is tried once more;
+  - a refused or lost text raises one `sms_send_failed` warning (purpose `waitlist_join_acknowledgement`), before the best-effort settle.
+- **The ledger.** Purpose `waitlist_join_acknowledgement`, subject `waitlist_entry_id`. The subject is tied to the studio by a composite key, there is at most one row per entry (unique index), and it is write-once.
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.

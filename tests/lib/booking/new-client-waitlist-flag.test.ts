@@ -10,6 +10,7 @@ import {
   WAITLIST_NAME_MAX,
   WAITLIST_PHONE_MAX,
 } from "@/lib/booking/new-client-waitlist";
+import { WAITLIST_PHONE_INVALID, WAITLIST_PHONE_REQUIRED } from "@/lib/waitlist/signup-contact";
 
 // ===========================================================================
 // THE KILL SWITCH
@@ -108,10 +109,29 @@ describe("validateWaitlistSubmission", () => {
     });
   });
 
-  it("treats an omitted or whitespace-only phone as null", () => {
-    for (const phone of [null, "   "]) {
+  // SMS-04 (approved): a phone number is REQUIRED on every new public signup,
+  // for a Yes and a No alike. This replaces "an omitted phone is null".
+  it("SMS-04: refuses an omitted, empty or whitespace-only phone", () => {
+    for (const phone of [null, "", "   ", "\t \n"]) {
       const r = validateWaitlistSubmission({ name: "Ada", email: "a@b.co", phone });
-      expect(r.ok && r.value.phone).toBeNull();
+      expect(r, JSON.stringify(phone)).toEqual({ ok: false, error: WAITLIST_PHONE_REQUIRED });
+    }
+  });
+
+  it("SMS-04: refuses a number the sender could not text (normalizePhoneForSms)", () => {
+    for (const phone of ["555-0123", "12345", "abc", "+123", "020 7946 0958", "416-555-010"]) {
+      const r = validateWaitlistSubmission({ name: "Ada", email: "a@b.co", phone });
+      expect(r, phone).toEqual({ ok: false, error: WAITLIST_PHONE_INVALID });
+    }
+  });
+
+  it("SMS-04: keeps a sendable number as typed (trimmed); normalisation happens only at send", () => {
+    for (const phone of ["416-555-0100", "(416) 555-0100", "+1 416 555 0100", "14165550100", "+44 20 7946 0958"]) {
+      const r = validateWaitlistSubmission({ name: "Ada", email: "a@b.co", phone: `  ${phone} ` });
+      expect(r, phone).toEqual({
+        ok: true,
+        value: { name: "Ada", email: "a@b.co", phone },
+      });
     }
   });
 
@@ -125,14 +145,14 @@ describe("validateWaitlistSubmission", () => {
       validateWaitlistSubmission({
         name: "a".repeat(WAITLIST_NAME_MAX + 1),
         email: "a@b.co",
-        phone: null,
+        phone: "416-555-0100",
       }).ok,
     ).toBe(false);
     expect(
       validateWaitlistSubmission({
         name: "Ada",
         email: `${"a".repeat(250)}@example.com`,
-        phone: null,
+        phone: "416-555-0100",
       }).ok,
     ).toBe(false);
     expect(
@@ -142,11 +162,15 @@ describe("validateWaitlistSubmission", () => {
         phone: "9".repeat(WAITLIST_PHONE_MAX + 1),
       }).ok,
     ).toBe(false);
+    // The exact ceiling, and still a number the sender could text: the filler
+    // is internal whitespace, which the trim keeps and the digits ignore.
+    const atCeiling = `+1${" ".repeat(WAITLIST_PHONE_MAX - 12)}4165550100`;
+    expect(atCeiling).toHaveLength(WAITLIST_PHONE_MAX);
     expect(
       validateWaitlistSubmission({
         name: "a".repeat(WAITLIST_NAME_MAX),
         email: "a@b.co",
-        phone: "9".repeat(WAITLIST_PHONE_MAX),
+        phone: atCeiling,
       }).ok,
     ).toBe(true);
   });

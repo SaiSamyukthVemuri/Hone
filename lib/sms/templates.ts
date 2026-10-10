@@ -148,3 +148,23 @@ export function buildWaitlistInvitationSms(p: WaitlistInvitationSmsInput): strin
   const action = `Choose a time by ${p.expiresAtLabel}: ${p.invitationUrl}`;
   return `${joinParts([head, action])} ${REPLY_DISCLOSURE}`;
 }
+
+export type WaitlistJoinAckSmsInput = {
+  /** Server-resolved from studios.name. Never request input. */
+  studioName: string;
+};
+
+/**
+ * SMS-04. The one text a genuinely new self-service waitlist join gets, after
+ * the entry is durably saved: who it is from, that they joined, and what
+ * happens next. It carries NO LINK -- there is nothing to do yet, and a link
+ * here could be mistaken for a way to rejoin -- and promises no position, slot
+ * or date. The booking link only ever arrives with an invitation.
+ *
+ * Plain ASCII apostrophes on purpose: a typographic quote is outside the GSM-7
+ * alphabet and would force the whole message into UCS-2, halving a segment.
+ */
+export function buildWaitlistJoinAckSms(p: WaitlistJoinAckSmsInput): string {
+  const studio = p.studioName.trim() || "Your clinic";
+  return `${studio}: you've joined our waitlist. We'll contact you when you're invited to book. Reply STOP to opt out.`;
+}

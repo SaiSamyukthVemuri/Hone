@@ -3,10 +3,16 @@ import { getOwnerPractitionerId, seedE2eStudio, seedE2eMember, sql } from "./hel
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 import {
   PRACTITIONER_SMS_CONSENT_SCOPE,
+  SMS_JOIN_CONSENT_QUESTION,
+  SMS_JOIN_CONSENT_TEXT_VERSION,
   SMS_OPERATIONAL_CONSENT_DECLINED_NOTE,
   SMS_OPERATIONAL_CONSENT_LABEL,
-  SMS_OPERATIONAL_CONSENT_TEXT_VERSION,
 } from "@/lib/waitlist/prospect-sms-consent";
+import {
+  WAITLIST_PHONE_HELP,
+  WAITLIST_PHONE_INVALID,
+  WAITLIST_PHONE_REQUIRED,
+} from "@/lib/waitlist/signup-contact";
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST, END TO END (WAIT-01 gate + WAIT-02 durable record)
@@ -220,11 +226,14 @@ async function fillAndSubmitWaitlist(
   // 0208. The SMS question is required and has no default, so every journey
   // answers it. "no" unless the scenario is about the answer itself; `null`
   // leaves it unanswered.
-  opts: { name: string; email: string; phone?: string; sms?: "yes" | "no" | null },
+  // SMS-04: a phone number is REQUIRED, so a journey that is not about the
+  // number gets a usable one; `null` leaves the field exactly as it is.
+  opts: { name: string; email: string; phone?: string | null; sms?: "yes" | "no" | null },
 ) {
   await page.getByLabel(/^name/i).fill(opts.name);
   await page.getByLabel(/^email/i).fill(opts.email);
-  if (opts.phone) await page.getByLabel(/^phone/i).fill(opts.phone);
+  const phone = opts.phone === undefined ? "416 555 0100" : opts.phone;
+  if (phone !== null) await page.getByLabel(/^phone/i).fill(phone);
   const sms = opts.sms === undefined ? "no" : opts.sms;
   if (sms) await page.getByRole("radio", { name: sms === "yes" ? /^yes$/i : /^no$/i }).check();
   await page.getByRole("button", { name: /^join waitlist$/i }).click();
@@ -431,7 +440,9 @@ test.describe("new client at a waitlisted studio", () => {
     const seed = await seedWaitlistStudio();
     await openWaitlistForm(page);
 
-    await expect(page.getByText(SMS_OPERATIONAL_CONSENT_LABEL)).toBeVisible();
+    // SMS-04: the approved version-2 question, verbatim; v1 is no longer shown.
+    await expect(page.getByText(SMS_JOIN_CONSENT_QUESTION)).toBeVisible();
+    await expect(page.getByText(SMS_OPERATIONAL_CONSENT_LABEL)).toHaveCount(0);
     const yes = page.getByRole("radio", { name: /^yes$/i });
     const no = page.getByRole("radio", { name: /^no$/i });
     await expect(yes).not.toBeChecked();
@@ -458,12 +469,12 @@ test.describe("new client at a waitlisted studio", () => {
 
     const rows = await consentRows(seed.studioId);
     expect(rows).toHaveLength(1);
-    // Their own answer to the sentence they saw: the form, the v1 wording, and
+    // Their own answer to the sentence they saw: the form, the v2 wording, and
     // none of a practitioner record's provenance.
     expect(rows[0]).toMatchObject({
       phone: "416 555 0161",
       sms_consent_source: "public_form",
-      sms_consent_text_version: SMS_OPERATIONAL_CONSENT_TEXT_VERSION,
+      sms_consent_text_version: SMS_JOIN_CONSENT_TEXT_VERSION,
       sms_consent_recorded_by_practitioner_id: null,
       sms_consent_scope: null,
       sms_consent_evidence_ref: null,
@@ -501,6 +512,64 @@ test.describe("new client at a waitlisted studio", () => {
       sms_consent_source: null,
       sms_consent_text_version: null,
     });
+  });
+
+  // SMS-04 — A PHONE NUMBER IS REQUIRED FOR EVERY NEW SIGNUP, YES OR NO.
+  test("SMS-04: a blank or unusable phone is refused in the form for a Yes and a No, and nothing is written", async ({
+    page,
+  }) => {
+    const seed = await seedWaitlistStudio();
+    await openWaitlistForm(page);
+
+    const phone = page.getByLabel(/^phone number/i);
+    await expect(phone).toHaveAttribute("required", "");
+    await expect(phone).toHaveAttribute("aria-required", "true");
+    await expect(page.getByText(WAITLIST_PHONE_HELP)).toBeVisible();
+
+    for (const sms of ["no", "yes"] as const) {
+      for (const [typed, message] of [
+        ["", WAITLIST_PHONE_REQUIRED],
+        ["   ", WAITLIST_PHONE_REQUIRED],
+        ["555-12", WAITLIST_PHONE_INVALID],
+      ] as const) {
+        await fillAndSubmitWaitlist(page, {
+          name: "Phone Check",
+          email: canaryEmail(`${seed.runId}-${sms}`),
+          phone: typed,
+          sms,
+        });
+        await expect(page.getByText(message)).toBeVisible();
+        await expect(phone).toHaveAttribute("aria-invalid", "true");
+        // Keyboard users land on the field that needs fixing.
+        await expect(phone).toBeFocused();
+        await expect(
+          page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
+        ).toHaveCount(0);
+      }
+    }
+    expect(await waitlistRows(seed.studioId)).toHaveLength(0);
+
+    // A usable number with a No joins: same entry, same place, no consent.
+    await fillAndSubmitWaitlist(page, {
+      name: "Phone Check",
+      email: canaryEmail(`${seed.runId}-ok`),
+      phone: "416 555 0163",
+      sms: "no",
+    });
+    await expect(
+      page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
+    ).toBeVisible({ timeout: 60_000 });
+    const rows = await consentRows(seed.studioId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "waiting", phone: "416 555 0163", sms_consent_at: null });
+
+    // SMS-04: this studio's waitlist texts are OFF (the default), so no join
+    // text is even claimed: the ledger has no row for the entry.
+    const ledger = await sql<{ n: number }>(
+      `select count(*)::int as n from public.sms_outbound_messages where waitlist_entry_id = $1`,
+      [rows[0].id],
+    );
+    expect(ledger[0].n).toBe(0);
   });
 });
 
@@ -544,7 +613,7 @@ test.describe("the studio's waitlist queue", () => {
     await fillAndSubmitWaitlist(page, {
       name: "Queue Person",
       email,
-      phone: "555 0142",
+      phone: "416 555 0142",
     });
     await expect(
       page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
@@ -565,7 +634,7 @@ test.describe("the studio's waitlist queue", () => {
     await expect(page.getByText(/^Waitlist entries:\s*1$/)).toBeVisible();
     await expect(page.getByText("Queue Person", { exact: true })).toBeVisible();
     await expect(page.getByText(email, { exact: true })).toBeVisible();
-    await expect(page.getByText("555 0142")).toBeVisible();
+    await expect(page.getByText("416 555 0142")).toBeVisible();
 
     // 390px: the queue is usable on a phone and does not overflow.
     await page.setViewportSize({ width: 390, height: 844 });
