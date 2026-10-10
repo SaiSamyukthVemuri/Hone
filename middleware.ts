@@ -1,8 +1,69 @@
-import { type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import {
+  appendVaryAccept, isUnknownPublicPath, normalizePublicPathname,
+  NOT_FOUND_HTML, preferredPublicRepresentation,
+} from "@/lib/marketing/agent-http";
+import { NOT_FOUND_MARKDOWN, PUBLIC_MARKDOWN } from "@/lib/marketing/agent-content";
 import { updateSession } from "@/lib/supabase/middleware";
 
+// Serve only the exact, non-sensitive company/agent files without requiring a
+// practitioner login. Do NOT widen this to /portal, /api or any route family.
+const PUBLIC_AGENT_ROUTES = new Set(["/about", "/contact", "/llms.txt"]);
+
 export async function middleware(request: NextRequest) {
-  return await updateSession(request);
+  const rawPathname = request.nextUrl.pathname;
+  const isRead = request.method === "GET" || request.method === "HEAD";
+  const accept = request.headers.get("Accept");
+
+  // Do not send unknown anonymous public paths to /login (a soft-404).
+  // Protected and token-bearing families still run their existing handlers.
+  if (isRead && isUnknownPublicPath(rawPathname)) {
+    const markdown = preferredPublicRepresentation(accept) === "markdown";
+    return new NextResponse(
+      request.method === "HEAD" ? null : markdown ? NOT_FOUND_MARKDOWN : NOT_FOUND_HTML,
+      {
+        status: 404,
+        headers: {
+          "Content-Type": markdown ? "text/markdown; charset=utf-8" : "text/html; charset=utf-8",
+          "Vary": "Accept",
+          "Cache-Control": "no-store",
+          "X-Robots-Tag": "noindex, nofollow",
+        },
+      },
+    );
+  }
+
+  // Only three explicitly public company pages participate in Markdown
+  // negotiation; no patient, authenticated or token route can enter here.
+  const pathname = normalizePublicPathname(rawPathname);
+  const negotiated = isRead && Object.prototype.hasOwnProperty.call(PUBLIC_MARKDOWN, pathname);
+  if (negotiated) {
+    const chosen = preferredPublicRepresentation(accept);
+    if (chosen !== "html") {
+      const markdown = chosen === "markdown";
+      return new NextResponse(
+        request.method === "HEAD"
+          ? null
+          : markdown ? PUBLIC_MARKDOWN[pathname] : "Available representations: text/html, text/markdown.",
+        {
+          status: markdown ? 200 : 406,
+          headers: {
+            "Content-Type": markdown ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8",
+            "Vary": "Accept",
+            "Cache-Control": markdown ? "public, s-maxage=300" : "no-store",
+          },
+        },
+      );
+    }
+  }
+
+  const response = isRead && PUBLIC_AGENT_ROUTES.has(pathname)
+    ? NextResponse.next({ request })
+    : await updateSession(request);
+  // Next 15.5 may replace Vary on rendered HTML; Vercel's narrow
+  // post-render response transform provides final Vary: Accept there.
+  if (negotiated) appendVaryAccept(response.headers);
+  return response;
 }
 
 // FOUR EXACT PATHS are excluded, never a directory prefix.

@@ -323,6 +323,9 @@ export const BROWSER_GROUPS = {
     specs: [
       "marketing-homepage.spec.ts",
       "marketing-pages.spec.ts",
+      // AGENT-01: verifies real HTTP content negotiation and unknown-page
+      // behavior against the built app; it must run with the marketing group.
+      "agent-readiness.spec.ts",
       // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
       // motion preference, and the poster being preloaded eagerly. Filed here
       // rather than in `smoke` on purpose — it is heavier than a smoke case

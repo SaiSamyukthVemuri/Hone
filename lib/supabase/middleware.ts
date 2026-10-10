@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdmin } from "@/lib/admin";
+import { normalizePublicPathname } from "@/lib/marketing/agent-http";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -32,7 +33,11 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { pathname } = request.nextUrl;
+  // Compare the same slash-normalized pathname as the public 404 classifier.
+  // Crucially, keep the original NextRequest and bearer-token URL unchanged:
+  // this only prevents real marketing pages ending in "/" from being
+  // redirected to practitioner /login before Next can render them.
+  const pathname = normalizePublicPathname(request.nextUrl.pathname);
   const isPublicRoute =
     pathname === "/" ||
     pathname === "/login" ||
