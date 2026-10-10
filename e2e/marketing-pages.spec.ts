@@ -135,3 +135,98 @@ test.describe("the product film on /demo", () => {
       .toBeGreaterThan(0.2);
   });
 });
+
+// THE REQUEST COMES FIRST ON /demo (MKT-03 revision 2). The form used to sit
+// after the film and three explanatory sections, about 1,200px down on a
+// desktop. Measured at both ends of the range: its first field is inside the
+// first screen.
+for (const vp of [
+  { name: "desktop", width: 1440, height: 900, mobile: false },
+  { name: "phone", width: 390, height: 844, mobile: true },
+]) {
+  test.describe(`/demo request form (${vp.name})`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, isMobile: vp.mobile, hasTouch: vp.mobile });
+
+    test("the first field is in the first screen, and every field meets the touch floor", async ({ page }) => {
+      await page.goto("/demo");
+      const name = page.getByLabel(/^Your name/);
+      await expect(name).toBeVisible();
+      const b = await name.boundingBox();
+      expect(b!.y + b!.height, "the form's first field is below the first screen").toBeLessThan(vp.height);
+      for (const field of await page.locator("#request input:not([type=radio]), #request textarea").all()) {
+        const fb = await field.boundingBox();
+        expect(fb!.height, "a field is under 44px").toBeGreaterThanOrEqual(44);
+      }
+      // A visible focus on the field, drawn as an outline (DESIGN LAW 6).
+      await name.focus();
+      expect(await name.evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe("none");
+    });
+  });
+}
+
+test.describe("/demo request form: errors and submission", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("names each missing or wrong field beside it, then submits and says what happens next", async ({ page }) => {
+    await page.goto("/demo");
+    const form = page.locator("#request");
+    const submit = form.getByRole("button", { name: "Request my walkthrough" });
+    const name = form.getByLabel(/^Your name/);
+    const email = form.getByLabel(/^Email/);
+
+    // Nothing filled in: the name is named, marked invalid, and takes focus.
+    await submit.click();
+    await expect(form.getByText("Enter your name.")).toBeVisible();
+    await expect(name).toHaveAttribute("aria-invalid", "true");
+    await expect(name).toBeFocused();
+    await expect(email).toHaveAttribute("aria-invalid", "true");
+
+    // A name, but an address nobody can reply to.
+    await name.fill("Walkthrough Test");
+    await email.fill("not-an-address");
+    await submit.click();
+    await expect(form.getByText("Enter your name.")).toHaveCount(0);
+    await expect(form.getByText("Enter an email address we can reply to.")).toBeVisible();
+    await expect(email).toBeFocused();
+
+    // Corrected: the request goes through the real server action, against the
+    // e2e harness's own local stack (never production), and the success state
+    // says what actually happens next.
+    await email.fill(`walkthrough-${Date.now()}@example.test`);
+    // The radio itself is visually hidden; a person presses its label.
+    await form.locator('label[for="practice_type-electrolysis"]').click();
+    await expect(form.getByLabel("Electrolysis only")).toBeChecked();
+    await submit.click();
+    await expect(
+      form.getByText("Thanks, we'll be in touch within one business day to set up your walkthrough."),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(form.getByText(/no automatic booking/i)).toBeVisible();
+  });
+});
+
+// /privacy and /terms are rendered in the SAME shell as the rest of the
+// marketing site (MKT-03 revision 2): one header, one footer, one type scale.
+// They used the older public shell, with its own nav and a closed mobile
+// dialog that stayed focusable behind aria-hidden.
+test.describe("legal pages share the marketing shell", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  for (const path of ["/privacy", "/terms"]) {
+    test(`${path} — the marketing header and footer, one H1, nothing past the edge`, async ({ page }) => {
+      await page.goto(path);
+      await expect(page.locator("h1")).toHaveCount(1);
+      await expect(page.getByRole("banner").getByRole("link", { name: "Hone" })).toBeVisible();
+      // The older shell's nav carried a "Records" link the marketing site does not.
+      await expect(page.getByRole("link", { name: "Records", exact: true })).toHaveCount(0);
+      // The marketing menu: inert while closed (the older one stayed focusable
+      // behind aria-hidden), named and focused when open.
+      const dialog = page.locator('[role="dialog"]');
+      await expect(dialog).toHaveAttribute("inert", "");
+      await page.getByRole("button", { name: "Menu" }).click();
+      await expect(page.getByRole("dialog", { name: "Site navigation" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Close" })).toBeFocused();
+      await page.keyboard.press("Escape");
+      await noOverflow(page, `${path} phone`);
+    });
+  }
+});

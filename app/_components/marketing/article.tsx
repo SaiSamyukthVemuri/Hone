@@ -21,7 +21,7 @@ export function ArticleByline({ article }: { article: ResourceArticle }) {
         <Link
           href={article.authorHref}
           rel="author"
-          className="font-medium text-ink underline underline-offset-4 hover:text-mineral"
+          className="inline-flex min-h-11 items-center font-medium text-ink underline underline-offset-4 hover:text-mineral pointer-fine:min-h-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
         >
           {article.author}
         </Link>

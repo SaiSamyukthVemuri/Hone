@@ -134,6 +134,62 @@ describe("workflow editorial split", () => {
   });
 });
 
+describe("one type scale, with room for the glyphs (MKT-03 revision 2)", () => {
+  // The H1 was 64-72px at a 1.02 line height: Instrument Sans' ascenders and
+  // descenders nearly met between lines, and each page opened at its own size.
+  const px = (rem: string) => parseFloat(rem) * 16;
+  const clampOf = (key: string) => {
+    const m = PRIMITIVES.match(new RegExp(`${key}:\\s*"clamp\\(([\\d.]+)rem,[^,]+,\\s*([\\d.]+)rem\\)"`));
+    expect(m, `TYPE_SCALE.${key} is not a rem clamp`).not.toBeNull();
+    return { min: px(m![1]), max: px(m![2]) };
+  };
+
+  it("the H1 runs about 34px on a phone to 58px on a desktop", () => {
+    const d = clampOf("display");
+    expect(d.min).toBeGreaterThanOrEqual(34);
+    expect(d.min).toBeLessThanOrEqual(40);
+    expect(d.max).toBeGreaterThanOrEqual(52);
+    expect(d.max).toBeLessThanOrEqual(60);
+  });
+
+  it("headings sit below the H1 and above the body", () => {
+    expect(clampOf("title").max).toBeLessThan(clampOf("display").max);
+    expect(clampOf("subtitle").max).toBeLessThan(clampOf("title").min);
+  });
+
+  it("every heading primitive leaves line height for its glyphs", () => {
+    const heights = [...PRIMITIVES.matchAll(/lineHeight:\s*([\d.]+)/g)].map((m) => Number(m[1]));
+    expect(heights.length, "no lineHeight found — vacuous").toBeGreaterThanOrEqual(4);
+    for (const h of heights) expect(h).toBeGreaterThanOrEqual(1.05);
+  });
+
+  it("no page sizes its own H1: Display takes no size", () => {
+    expect(PRIMITIVES).not.toMatch(/size === "compact"/);
+    for (const f of PAGE_FILES) {
+      expect(read(f), `${f}: Display with a size`).not.toMatch(/<Display[^>]*\bsize=/);
+    }
+  });
+});
+
+describe("one filled button per view", () => {
+  it("the header's walkthrough request is the quiet outline, not a second filled button", () => {
+    const header = read("app/_components/marketing/SiteHeader.tsx");
+    const cta = header.slice(header.indexOf("<CTAButton"), header.indexOf("</CTAButton>"));
+    expect(cta, "the header renders no CTAButton").not.toBe("");
+    expect(cta).toMatch(/variant="outline"/);
+    expect(cta).toMatch(/WALKTHROUGH\.href/);
+    expect(header).not.toMatch(/bg-mineral/);
+    // Opaque: at 95% the page's headings showed through the bar on scroll.
+    expect(header).toMatch(/sticky top-0[^"]*\bbg-paper\b(?!\/)/);
+  });
+
+  it("focus is an outline on every CTA, never a box-shadow ring (DESIGN LAW 6)", () => {
+    const cta = PRIMITIVES.slice(PRIMITIVES.indexOf("export function CTAButton"));
+    expect(cta).toMatch(/focus-visible:outline-2/);
+    expect(cta).not.toMatch(/focus-visible:ring|outline-none/);
+  });
+});
+
 describe("Product dropdown behavior", () => {
   it("closes on route change, outside click, Escape, and selection; returns focus", () => {
     expect(PRODUCT_MENU).toMatch(/usePathname/); // route change

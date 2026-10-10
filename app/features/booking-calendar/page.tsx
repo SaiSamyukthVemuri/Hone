@@ -14,10 +14,17 @@ import {
   Lede,
   CTAButton,
 } from "../../_components/marketing/primitives";
-import { Reveal } from "../../_components/marketing/Reveal";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
 import { CalendarPreview } from "../../_components/marketing/visuals/CalendarPreview";
-import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../../_components/marketing/sections";
+import {
+  WalkthroughCTA,
+  RelatedLinks,
+  FeatureMatrix,
+  SpecRows,
+  SpecRow,
+  SpecRowHead,
+  SpecRowBody,
+} from "../../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS, POSITIONING } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -92,11 +99,10 @@ export default function BookingCalendarPage() {
           { name: "Booking and calendar", path: "/features/booking-calendar" },
         ]}
       />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
-        <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
-          <Reveal immediate>
-            <Eyebrow>Booking and calendar</Eyebrow>
-            <Display className="mt-4">Booking connected to the treatment record</Display>
+      <main id="main-content" className="scroll-mt-16">
+        <Container className="grid items-start gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1.25rem,0.75rem+2vw,2.75rem)] lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+          <div>
+            <Display className="max-w-[18ch]">Booking connected to the treatment record</Display>
             {/* #762 OWNS THESE WORDS, THIS PAGE OWNS ONLY THE LINE BREAK. Deck §6
                 sets the sub as two lines, and it is the same sentence pair #762
                 declares as POSITIONING.differentiationLine. Spelled by hand it
@@ -104,7 +110,7 @@ export default function BookingCalendarPage() {
                 is applied to the constant instead of the words being retyped.
                 Split on sentence ends rather than on a known fragment, so a
                 different sentence count still renders. */}
-            <Lede className="mt-6 max-w-xl">
+            <Lede className="mt-5 max-w-[38rem]">
               {POSITIONING.differentiationLine
                 .split(/(?<=\.)\s+/)
                 .filter(Boolean)
@@ -115,24 +121,24 @@ export default function BookingCalendarPage() {
                   </Fragment>
                 ))}
             </Lede>
-            <div className="mt-8">
-              <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
-                {WALKTHROUGH.primaryLabel}
-              </CTAButton>
-            </div>
-          </Reveal>
-          <Reveal delay={80} className="lg:pl-4">
-            <CalendarPreview />
-          </Reveal>
+            <CTAButton
+              href={WALKTHROUGH.href}
+              event={ANALYTICS_EVENTS.primaryCtaClick}
+              className="mt-7 max-sm:w-full"
+            >
+              {WALKTHROUGH.primaryLabel}
+            </CTAButton>
+          </div>
+          <CalendarPreview />
         </Container>
 
         <Section tone="warm">
-          <Container size="wide">
+          <Container>
             <Eyebrow>Online booking for your studio</Eyebrow>
-            <Title className="mt-4 max-w-2xl">
+            <Title className="mt-3 max-w-2xl">
               Appointments land on the calendar with the record attached.
             </Title>
-            <Lede className="mt-5 max-w-2xl">
+            <Lede className="mt-4 max-w-2xl">
               Clients book from your studio&rsquo;s booking page. Appointments land on the
               studio calendar with the client&rsquo;s record attached.
             </Lede>
@@ -140,64 +146,61 @@ export default function BookingCalendarPage() {
           </Container>
         </Section>
 
+        {/* ONE SPEC SHEET, NOT FOUR BANDS (see sections.tsx SpecRows). Two
+            bodies used to restate their own heading word for word; the repeat
+            is trimmed and nothing is added. */}
         <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>One shared calendar</Eyebrow>
-              <Title className="mt-4">The record always shows who treated.</Title>
-              <Lede className="mt-5">
-                A colour-coded calendar for the whole studio. Each practitioner charts under
-                their own name, so the record always shows who treated.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="warm">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Intake before the visit</Eyebrow>
-              <Title className="mt-4">Read the history before they arrive.</Title>
-              <Lede className="mt-5">
-                Health history is collected before the appointment and reviewed by you. Flags
-                like a pacemaker or an EpiPen are visible before the client arrives.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Client portal</Eyebrow>
-              <Title className="mt-4">A signed-in space, connected to the same record.</Title>
-              <Lede className="mt-5">
-                Clients sign in with a passwordless, single-use magic link that expires in 60
-                minutes. The portal surfaces outstanding items &mdash; incomplete intake,
-                consent to sign, unread messages &mdash; and carries secure two-way messaging
-                whose content stays in the portal and never in notification emails.
-              </Lede>
-              <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
-                Treatment photos are never shown in the portal. Cancelling and rescheduling
-                happen from the client&rsquo;s confirmation and reminder emails.
-              </p>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="warm">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>What booking is for on Hone</Eyebrow>
-              <Title className="mt-4">
-                The next appointment starts with the last treatment.
-              </Title>
-              <Lede className="mt-5">
-                Booking puts the appointment on the calendar. Charting puts the treatment in
-                the record. Hone connects the two so the next appointment starts with the last
-                treatment.
-              </Lede>
-            </Reveal>
+          <Container>
+            <Title className="max-w-2xl">Around the appointment</Title>
+            <SpecRows>
+              <SpecRow>
+                <SpecRowHead>One shared calendar</SpecRowHead>
+                <SpecRowBody>
+                  <p>The record always shows who treated.</p>
+                  <p>
+                    A colour-coded calendar for the whole studio. Each practitioner charts under
+                    their own name.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Intake before the visit</SpecRowHead>
+                <SpecRowBody>
+                  <p>Read the history before they arrive.</p>
+                  <p>
+                    Health history is collected before the appointment and reviewed by you.
+                    Flags like a pacemaker or an EpiPen are visible before the client arrives.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Client portal</SpecRowHead>
+                <SpecRowBody>
+                  <p>A signed-in space, connected to the same record.</p>
+                  <p>
+                    Clients sign in with a passwordless, single-use magic link that expires in
+                    60 minutes. The portal surfaces outstanding items &mdash; incomplete intake,
+                    consent to sign, unread messages &mdash; and carries secure two-way
+                    messaging whose content stays in the portal and never in notification
+                    emails.
+                  </p>
+                  <p>
+                    Treatment photos are never shown in the portal. Cancelling and rescheduling
+                    happen from the client&rsquo;s confirmation and reminder emails.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>What booking is for on Hone</SpecRowHead>
+                <SpecRowBody>
+                  <p>The next appointment starts with the last treatment.</p>
+                  <p>
+                    Booking puts the appointment on the calendar. Charting puts the treatment in
+                    the record. Hone connects the two.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+            </SpecRows>
           </Container>
         </Section>
 

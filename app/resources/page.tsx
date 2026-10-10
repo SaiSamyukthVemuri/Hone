@@ -7,12 +7,10 @@ import { SiteFooter } from "../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
   Container,
-  Eyebrow,
   Display,
   Subtitle,
   Lede,
 } from "../_components/marketing/primitives";
-import { Reveal } from "../_components/marketing/Reveal";
 import { Breadcrumbs } from "../_components/marketing/JsonLd";
 import { WalkthroughCTA } from "../_components/marketing/sections";
 import { RESOURCE_ARTICLES, RESOURCE_AUTHOR } from "@/lib/marketing/resources";
@@ -36,44 +34,41 @@ export default function ResourcesPage() {
           { name: "Resources", path: "/resources" },
         ]}
       />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
-        <Container className="pb-8 pt-8 lg:pt-10">
-          <Reveal immediate>
-            <Eyebrow>Resources</Eyebrow>
-            <Display className="mt-4 max-w-3xl">
-              Practical guides for running an electrolysis practice.
-            </Display>
-            <Lede className="mt-6 max-w-2xl">
-              Operational guides from {RESOURCE_AUTHOR}, the people building Hone, on keeping
-              good treatment records and moving a practice off paper. Practical, not
-              promotional.
-            </Lede>
-          </Reveal>
+      <main id="main-content" className="scroll-mt-16">
+        <Container className="pt-[clamp(1.25rem,0.75rem+2vw,2.75rem)]">
+          <Display className="max-w-[20ch]">
+            Practical guides for running an electrolysis practice.
+          </Display>
+          <Lede className="mt-5 max-w-[38rem]">
+            Operational guides from {RESOURCE_AUTHOR}, the people building Hone, on keeping
+            good treatment records and moving a practice off paper. Practical, not
+            promotional.
+          </Lede>
         </Container>
 
-        <Container className="pb-16">
-          <ul className="grid gap-5 md:grid-cols-2">
-            {RESOURCE_ARTICLES.map((a, i) => (
-              <Reveal as="li" key={a.slug} delay={i * 70}>
+        {/* A ruled list of guides, not a pair of white cards. Each entry is one
+            link named by its title; nothing is appended to the label. */}
+        <Container className="pb-[var(--mk-section-pad)] pt-[clamp(1.75rem,1rem+2vw,3rem)]">
+          <ul className="grid gap-x-[clamp(2rem,4vw,4rem)] md:grid-cols-2">
+            {RESOURCE_ARTICLES.map((a) => (
+              <li key={a.slug} className="border-t border-[color:var(--color-hairline-strong)]">
                 <Link
                   href={a.slug}
                   data-event={ANALYTICS_EVENTS.resourceCtaClick}
-                  className="group flex h-full flex-col rounded-[12px] border border-[color:var(--color-hairline)] bg-white p-6 transition-colors hover:border-[color:var(--color-hairline-strong)]"
+                  className="group flex h-full flex-col py-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
                 >
-                  <p className="text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-mineral">
-                    Guide · {a.readingTime}
-                  </p>
-                  <Subtitle as="h2" className="mt-3 text-[1.25rem] group-hover:text-mineral">
+                  <p className="text-[0.875rem] font-medium text-mineral">{a.readingTime}</p>
+                  <Subtitle
+                    as="h2"
+                    className="mt-2 text-ink underline decoration-[color:var(--color-hairline-strong)] underline-offset-[6px] transition-colors duration-[var(--hone-duration-ui)] group-hover:text-mineral group-hover:decoration-[color:var(--color-mineral)]"
+                  >
                     {a.title}
                   </Subtitle>
-                  <p className="mt-3 flex-1 text-[0.9375rem] leading-[1.6] text-muted">
+                  <p className="mt-3 max-w-[52ch] text-[1rem] leading-[1.6] text-muted">
                     {a.description}
                   </p>
-                  <span className="mt-4 inline-block text-[0.875rem] font-medium text-mineral">
-                    Read the guide →
-                  </span>
                 </Link>
-              </Reveal>
+              </li>
             ))}
           </ul>
         </Container>

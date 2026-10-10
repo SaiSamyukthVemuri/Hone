@@ -279,12 +279,24 @@ body {
 
 /* A frame that runs edge to edge on a phone, where the shell's gutters would
  * cost a 16:9 product film a sixth of its width. Below `sm` only; from there
- * up the frame keeps the shell's edges like everything else. Percent margins
- * resolve against the frame's own column, so this cancels exactly the gutter. */
+ * up the frame keeps the shell's edges like everything else.
+ *
+ * THE GUTTER, NOT THE VIEWPORT. This used `calc((100% - 100vw) / 2)`, and
+ * `100vw` includes a classic scrollbar, so on a narrow desktop window the frame
+ * overshot the page by the scrollbar's width, and <main> clipped horizontal
+ * overflow to hide it. Each gutter is exactly half of the
+ * amount `.mk-shell` subtracts (the same `clamp`, so the same 14vw), which
+ * cancels it on every browser, scrollbar or not, with nothing to clip. */
 @media (width < 40rem) {
   .marketing-surface .mk-bleed {
-    margin-inline: calc((100% - 100vw) / 2);
+    margin-inline: calc(clamp(3rem, 14vw, 15rem) / -2);
   }
+}
+
+/* The sticky header is 4rem tall. Anything a link can jump to (a skip link,
+ * a section anchor, a policy heading) lands below it, not under it. */
+.marketing-surface [id] {
+  scroll-margin-top: 5rem;
 }
 .marketing-surface ::selection {
   background: var(--color-wash);

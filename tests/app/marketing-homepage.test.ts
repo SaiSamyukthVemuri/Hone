@@ -289,8 +289,21 @@ describe("CTA truthfulness: request, never book", () => {
 });
 
 describe("static rendering + no horizontal overflow", () => {
-  it("main clips horizontal overflow", () => {
-    expect(PAGE).toMatch(/overflow-x-hidden/);
+  // INVERTED IN MKT-03 REVISION 2, deliberately. This asserted that <main>
+  // clipped horizontal overflow, which hid whatever overflowed instead of
+  // fixing it. The thing it was hiding was the phone film bleed: it used
+  // `100vw`, which includes a classic scrollbar, so on a narrow desktop window
+  // the frame overshot the page by the scrollbar's width. The bleed now cancels
+  // the shell's own gutter (the same clamp `.mk-shell` subtracts), so there is
+  // nothing to clip — and the browser specs measure every element against the
+  // viewport edge with an anti-vacuity probe, rather than trusting a clip.
+  it("main no longer hides horizontal overflow, because nothing overflows", () => {
+    expect(PAGE).not.toMatch(/overflow-x-hidden/);
+    const bleed = CSS.slice(CSS.indexOf(".marketing-surface .mk-bleed"));
+    expect(bleed).toMatch(/margin-inline:\s*calc\(clamp\(3rem,\s*14vw,\s*15rem\)\s*\/\s*-2\)/);
+    expect(bleed.slice(0, bleed.indexOf("}"))).not.toMatch(/100vw/);
+    // The gutter the bleed cancels must be the one the shell actually uses.
+    expect(CSS).toMatch(/\.mk-shell\s*\{\s*width:\s*min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\)/);
   });
   it("renders content statically visible (no opacity-gated reveal that can stick)", () => {
     // The fragile intersection-observer reveal + SVG-thread assembly were removed

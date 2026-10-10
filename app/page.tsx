@@ -36,17 +36,17 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // and the compact opening (MKT-03).
 //
 // THE FILM IS THE OPENING, NOT THE SECOND SCREEN. MKT-02B led the argument with
-// the film but kept a type-only hero above it, so at 1440x900 the film began
-// about 1,100px down and no first screen anywhere showed the product. MKT-03
-// sets the headline beside its supporting copy, then puts the film first on the
-// band: most or all of the film is in the first screen at every width tested
-// (390, 768, 1440, 1920), at full shell width on desktop and edge to edge on a
-// phone, and it plays on its own, muted, while it is in view.
+// the film but kept a tall type-only hero above it, so at 1440x900 the film
+// began about 1,100px down and no first screen anywhere showed the product.
+// MKT-03 keeps the opening to one compact group (category, headline, sub, one
+// filled button) and puts the film first on the band directly beneath it, at
+// full shell width on desktop and edge to edge on a phone; it plays on its own,
+// muted, while at least half of it is in view.
 //
 // EDITORIAL PACING, NOT A STACK OF EQUAL CARDS. Each block gets the structure
 // its content actually wants, and the tones alternate so the page has a rhythm:
 //
-//   hero        paper   one row on desktop: headline | sub + CTAs
+//   hero        paper   one group: category, headline, sub, the filled button
 //   1 film      BAND    the film first, then its heading and what it shows
 //   2 trust     paper   a thin ruled strip, deliberately not a section
 //   3 areas     paper   editorial split, product panel right
@@ -155,31 +155,27 @@ export default function HomePage() {
     <MarketingSurface>
       <SkipLink />
       <SiteHeader />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16">
         {/* ── Hero ─────────────────────────────────────────────────────────
-            One row on desktop: the headline, and beside it the sentence that
-            explains it and the one call to action. Stacked on a phone and a
-            tablet, in reading order. Two things left so the film could rise:
-            the proof line (each of its four clauses is said again, in full,
-            further down: the sub, the trust strip, the records band), and the
-            secondary link, which now follows the film it explains. */}
-        <Container className="grid gap-x-[clamp(2.5rem,5vw,6rem)] gap-y-6 pb-[clamp(1.5rem,1rem+1.25vw,2.5rem)] pt-[clamp(1.5rem,0.5rem+2vw,2.75rem)] lg:grid-cols-[minmax(0,1fr)_minmax(18rem,26rem)] lg:items-end">
-          <div>
-            <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
-            <Display size="compact" className="mt-3 max-w-[19ch]">
-              {POSITIONING.heroH1}
-            </Display>
-          </div>
-          <div className="lg:pb-1.5">
-            <Lede className="max-w-[46ch]">{POSITIONING.heroSub}</Lede>
-            <CTAButton
-              href={WALKTHROUGH.href}
-              event={ANALYTICS_EVENTS.primaryCtaClick}
-              className="mt-6 max-sm:w-full"
-            >
-              {WALKTHROUGH.primaryLabel}
-            </CTAButton>
-          </div>
+            ONE GROUP, READ IN ONE PASS: the category, the headline, the
+            sentence that explains it, and the one filled button, stacked in a
+            single left-aligned column at every width. The revision-1 opening
+            split the headline from its sub and button into two desktop
+            columns, which read as two unrelated blocks with a filled button
+            floating under the header's own. The header's request is now an
+            outline, so this is the only filled button on the first screen.
+            The film follows directly below, on the band. */}
+        <Container className="pb-[clamp(1.75rem,1rem+2vw,3rem)] pt-[clamp(2rem,1rem+3vw,3.5rem)]">
+          <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
+          <Display className="mt-4 max-w-[22ch]">{POSITIONING.heroH1}</Display>
+          <Lede className="mt-5 max-w-[38rem]">{POSITIONING.heroSub}</Lede>
+          <CTAButton
+            href={WALKTHROUGH.href}
+            event={ANALYTICS_EVENTS.primaryCtaClick}
+            className="mt-7 max-sm:w-full"
+          >
+            {WALKTHROUGH.primaryLabel}
+          </CTAButton>
         </Container>
 
         {/* ── 1. Before the client sits down ───────────────────────────────
@@ -189,27 +185,25 @@ export default function HomePage() {
         <Section tone="band" className="!pt-[clamp(1.25rem,0.75rem+1.25vw,2.25rem)]">
           <Container>
             <ProductFilm autoplay bleed />
-            <div className="mt-[clamp(1.75rem,1rem+2vw,3rem)] grid gap-x-[clamp(2.5rem,5vw,6rem)] gap-y-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,26rem)] lg:items-end">
-              <div>
-                <Eyebrow onBand>{POSITIONING.keepPhrase}</Eyebrow>
-                <Title className="mt-2 text-paper">Before the client sits down</Title>
-              </div>
-              <div className="lg:pb-1">
-                <Lede onBand>
-                  {`In ${FILM.durationSeconds} silent seconds: the week's calendar, the last treatment area by area, the exact setup used, today's charting and one client record.`}
-                </Lede>
-                {/* Label and destination move together: MKT-02A repointed this
-                    at the treatment-memory page, and a control may only promise
-                    what its destination delivers. Here it follows the film it
-                    explains, instead of crowding the opening. */}
-                <Link
-                  href={WALKTHROUGH.secondaryHref}
-                  data-event={ANALYTICS_EVENTS.featureCtaClick}
-                  className="mt-3 inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-paper underline decoration-[color:var(--color-onband-muted)] underline-offset-[6px] hover:decoration-paper focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-paper)]"
-                >
-                  {WALKTHROUGH.secondaryLabel}
-                </Link>
-              </div>
+            {/* What the film shows, as one group under it — the same single
+                column the opening uses, not a second two-column split. */}
+            <div className="mt-[clamp(1.75rem,1rem+2vw,3rem)] max-w-[44rem]">
+              <Eyebrow onBand>{POSITIONING.keepPhrase}</Eyebrow>
+              <Title className="mt-2 text-paper">Before the client sits down</Title>
+              <Lede onBand className="mt-4">
+                {`In ${FILM.durationSeconds} silent seconds: the week's calendar, the last treatment area by area, the exact setup used, today's charting and one client record.`}
+              </Lede>
+              {/* Label and destination move together: MKT-02A repointed this
+                  at the treatment-memory page, and a control may only promise
+                  what its destination delivers. Here it follows the film it
+                  explains, instead of crowding the opening. */}
+              <Link
+                href={WALKTHROUGH.secondaryHref}
+                data-event={ANALYTICS_EVENTS.featureCtaClick}
+                className="mt-3 inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-paper underline decoration-[color:var(--color-onband-muted)] underline-offset-[6px] hover:decoration-paper focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-paper)]"
+              >
+                {WALKTHROUGH.secondaryLabel}
+              </Link>
             </div>
           </Container>
         </Section>
@@ -405,9 +399,12 @@ export default function HomePage() {
             </div>
 
             <p className="mt-5 text-[0.9375rem] text-muted">{POSITIONING.assuranceLine}</p>
+            {/* An outline, not a second filled button: the filled button is the
+                walkthrough request, and the closing band right below carries it. */}
             <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
               <CTAButton
                 href="/pricing"
+                variant="outline"
                 event={ANALYTICS_EVENTS.pricingPlanViewed}
                 className="max-sm:w-full"
               >
@@ -441,6 +438,7 @@ export default function HomePage() {
             <div className="mt-8 flex justify-center">
               <CTAButton
                 href={WALKTHROUGH.href}
+                onBand
                 event={ANALYTICS_EVENTS.primaryCtaClick}
                 className="max-sm:w-full"
               >

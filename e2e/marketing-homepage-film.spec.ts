@@ -239,10 +239,14 @@ test.describe("homepage film (desktop)", () => {
     await page.goto("/");
     await expectReducedMotion(page, false);
 
-    // The opening is compact: the film starts in the top half of the screen.
+    // The film follows the opening directly: on a standard desktop it starts
+    // inside the first screen with at least half of it showing, so it plays on
+    // arrival without a scroll. (Revision 1 pinned "above 450px", the cramped
+    // two-column opening Sam rejected; the requirement was always this one.)
     const box = await film(page).boundingBox();
     expect(box, "film has no box").not.toBeNull();
-    expect(box!.y, `film starts ${box!.y}px down`).toBeLessThan(450);
+    expect(box!.y, `film starts ${box!.y}px down`).toBeLessThan(900);
+    expect(await visibleShare(page), "less than half the film shows on arrival").toBeGreaterThanOrEqual(0.5);
 
     await expect(video(page)).toHaveCount(1);
     await expectAdvancing(video(page));

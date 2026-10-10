@@ -108,6 +108,69 @@ test.describe("marketing homepage (desktop)", () => {
   });
 });
 
+// THE OPENING IS ONE GROUP (MKT-03 revision 2). Revision 1 split the headline
+// from its sub and button into two desktop columns, under a header that carried
+// a second filled copy of the same button. Measured, not read from classes: the
+// four parts stack in reading order on one left edge, the film follows directly,
+// and the header's request is the quiet outline.
+for (const vp of [
+  { name: "desktop", width: 1440, height: 900, mobile: false },
+  { name: "short laptop", width: 1280, height: 720, mobile: false },
+  { name: "phone", width: 390, height: 844, mobile: true },
+]) {
+  test.describe(`homepage opening (${vp.name})`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, isMobile: vp.mobile, hasTouch: vp.mobile });
+
+    test("category, headline, sub and the one filled button read as one group, film directly below", async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.goto("/");
+      await page.evaluate(() => document.fonts.ready);
+      const main = page.getByRole("main");
+      const parts = {
+        eyebrow: main.getByText("Electrolysis practice software").first(),
+        h1: main.getByRole("heading", { level: 1 }),
+        sub: main.getByText(/^Each treated area keeps its own history\./),
+        cta: main.getByRole("link", { name: "Request a walkthrough" }).first(),
+      };
+      const box = async (l: (typeof parts)[keyof typeof parts]) => {
+        const b = await l.boundingBox();
+        expect(b, "an opening part has no box").not.toBeNull();
+        return b!;
+      };
+      const [e, h, s, c] = [await box(parts.eyebrow), await box(parts.h1), await box(parts.sub), await box(parts.cta)];
+      // Reading order, top to bottom, with no part beside another.
+      expect(h.y).toBeGreaterThan(e.y + e.height - 1);
+      expect(s.y).toBeGreaterThan(h.y + h.height - 1);
+      expect(c.y).toBeGreaterThan(s.y + s.height - 1);
+      // One left edge.
+      for (const b of [h, s, c]) expect(Math.abs(b.x - e.x), "the opening is not one column").toBeLessThan(2);
+
+      // Leading leaves room for the glyphs: at least 1.05x the font size.
+      const lh = await parts.h1.evaluate((el) => {
+        const st = getComputedStyle(el);
+        return parseFloat(st.lineHeight) / parseFloat(st.fontSize);
+      });
+      expect(lh).toBeGreaterThanOrEqual(1.05);
+
+      // The film follows the group directly and starts inside the first screen.
+      const frame = await page.locator("main figure").first().boundingBox();
+      expect(frame, "film frame has no box").not.toBeNull();
+      expect(frame!.y).toBeGreaterThan(c.y + c.height);
+      expect(frame!.y, "the film does not start in the first screen").toBeLessThan(vp.height);
+
+      // The hero's request is filled; the header's (desktop) is the quiet outline.
+      const filled = (l: typeof parts.cta) => l.evaluate((el) => getComputedStyle(el).backgroundColor);
+      expect(await filled(parts.cta)).not.toBe("rgba(0, 0, 0, 0)");
+      if (!vp.mobile) {
+        const headerCta = page.getByRole("banner").getByRole("link", { name: "Request a walkthrough" });
+        await expect(headerCta).toBeVisible();
+        expect(await filled(headerCta), "the header button is filled").toBe("rgba(0, 0, 0, 0)");
+        expect(await headerCta.evaluate((el) => getComputedStyle(el).borderTopStyle)).toBe("solid");
+      }
+    });
+  });
+}
+
 test.describe("marketing homepage (mobile)", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
@@ -130,5 +193,31 @@ test.describe("marketing homepage (mobile)", () => {
     await expect(dialog.getByRole("link", { name: "Request a walkthrough" })).toBeVisible();
     await expect(dialog.getByRole("link", { name: "Sign in" })).toBeVisible();
     await expectNoPageOverflow(page, "homepage mobile menu open");
+  });
+
+  test("the menu takes focus, gives it back on Escape, and its links go where they say", async ({ page }) => {
+    await page.goto("/");
+    const trigger = page.getByRole("button", { name: "Menu" });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "Site navigation" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close" })).toBeFocused();
+
+    // Closed is INERT, not merely faded: Playwright counts an opacity-0 element
+    // as visible, and what matters is that nothing in it can be reached.
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[role="dialog"]')).toHaveAttribute("inert", "");
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(trigger).toBeFocused();
+
+    // Every target in the open menu meets the 44px floor (DESIGN LAW 5).
+    await trigger.click();
+    for (const link of await dialog.getByRole("link").all()) {
+      const b = await link.boundingBox();
+      expect(b!.height, `${await link.textContent()} is under 44px`).toBeGreaterThanOrEqual(44);
+    }
+    await dialog.getByRole("link", { name: "Pricing" }).click();
+    await page.waitForURL(/\/pricing$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Simple plans, in Canadian dollars." })).toBeVisible();
   });
 });

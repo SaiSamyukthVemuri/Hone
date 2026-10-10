@@ -20,11 +20,16 @@ export function WalkthroughCTA({ title, body }: { title: string; body: ReactNode
     <Section tone="band">
       <Container className="text-center">
         <Title className="mx-auto max-w-2xl text-paper">{title}</Title>
-        <Lede onBand className="mx-auto mt-5 max-w-xl">
+        <Lede onBand className="mx-auto mt-4 max-w-xl">
           {body}
         </Lede>
-        <div className="mt-8 flex justify-center">
-          <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
+        <div className="mt-7 flex justify-center">
+          <CTAButton
+            href={WALKTHROUGH.href}
+            onBand
+            event={ANALYTICS_EVENTS.primaryCtaClick}
+            className="max-sm:w-full"
+          >
             {WALKTHROUGH.primaryLabel}
           </CTAButton>
         </div>
@@ -57,9 +62,7 @@ export function FeatureMatrix({ items }: { items: MatrixItem[] }) {
         {items.map((it) => (
           <div key={it.title} className={featureCell}>
             {it.eyebrow ? (
-              <p className="mb-2 text-[0.75rem] font-semibold uppercase tracking-[0.12em] text-mineral">
-                {it.eyebrow}
-              </p>
+              <p className="mb-1.5 text-[0.875rem] font-medium text-mineral">{it.eyebrow}</p>
             ) : null}
             <Subtitle as="h3" className={it.body ? "lg:min-h-[3.4rem]" : ""}>
               {it.title}
@@ -72,9 +75,9 @@ export function FeatureMatrix({ items }: { items: MatrixItem[] }) {
             {it.link ? (
               <Link
                 href={it.link.href}
-                className="mt-auto inline-block pt-4 text-[0.875rem] font-medium text-mineral underline underline-offset-4"
+                className="mt-auto inline-flex min-h-11 items-center self-start pt-2 text-[0.9375rem] font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
               >
-                {it.link.label} →
+                {it.link.label}
               </Link>
             ) : null}
           </div>
@@ -125,10 +128,12 @@ export function WorkflowGrid({
   );
 }
 
-/** A grid of descriptive internal links (no "click here"; §25). Cards align at
- *  top and the "Read more" affordance pins to the bottom so links line up. */
+/** Descriptive internal links (no "click here"; §25), as a ruled list rather
+ *  than a wall of white cards. Each entry is one link whose name is its title;
+ *  the hairline above it is the only frame, and nothing is appended to the
+ *  label (no "Read more", no arrow) — the title already says where it goes. */
 export function RelatedLinks({
-  eyebrow = "Keep exploring",
+  eyebrow,
   title,
   links,
 }: {
@@ -138,27 +143,69 @@ export function RelatedLinks({
 }) {
   return (
     <Section tone="paper">
-      <Container size="wide">
-        <Eyebrow>{eyebrow}</Eyebrow>
-        <Title className="mt-3 max-w-2xl">{title}</Title>
-        <div className="mt-9 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <Container>
+        {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
+        <Title className={`${eyebrow ? "mt-3 " : ""}max-w-2xl`}>{title}</Title>
+        <ul className="mt-8 grid gap-x-[clamp(2rem,4vw,4rem)] sm:grid-cols-2 lg:grid-cols-3">
           {links.map((l) => (
-            <Link
-              key={l.href}
-              href={l.href}
-              className="group flex h-full flex-col rounded-[12px] border border-[color:var(--color-hairline)] bg-white p-6 transition-colors hover:border-[color:var(--color-hairline-strong)]"
-            >
-              <Subtitle as="h3" className="text-[1.125rem] group-hover:text-mineral">
-                {l.label}
-              </Subtitle>
-              <p className="mt-2 text-[0.9375rem] leading-[1.55] text-muted">{l.blurb}</p>
-              <span className="mt-auto pt-4 text-[0.875rem] font-medium text-mineral">
-                Read more →
-              </span>
-            </Link>
+            <li key={l.href} className="border-t border-[color:var(--color-hairline-strong)]">
+              <Link
+                href={l.href}
+                className="group flex h-full flex-col py-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
+              >
+                <Subtitle
+                  as="h3"
+                  className="text-ink underline decoration-[color:var(--color-hairline-strong)] underline-offset-[6px] transition-colors duration-[var(--hone-duration-ui)] group-hover:text-mineral group-hover:decoration-[color:var(--color-mineral)]"
+                >
+                  {l.label}
+                </Subtitle>
+                <p className="mt-2 max-w-[40ch] text-[0.9375rem] leading-[1.55] text-muted">
+                  {l.blurb}
+                </p>
+              </Link>
+            </li>
           ))}
-        </div>
+        </ul>
       </Container>
     </Section>
+  );
+}
+
+/** A spec sheet: a heading over ruled rows, each a short topic on the left and
+ *  what Hone actually does on the right. It replaces stacks of thin bands that
+ *  each held one heading and two lines — the same information, without a
+ *  background change and a 128px gap between every two sentences.
+ *
+ *  LAYOUT ONLY, ON PURPOSE. A row's words are written in the page as ordinary
+ *  JSX children (a `<SpecRowHead>` and a `<SpecRowBody>`), never as props, so
+ *  the copy guards that read page source — the append-only qualifier in
+ *  particular — keep seeing every heading and sentence as its own element. */
+export function SpecRows({ children }: { children: ReactNode }) {
+  return <div className="mt-8 border-t border-[color:var(--color-hairline-strong)]">{children}</div>;
+}
+
+export function SpecRow({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid gap-x-[clamp(2rem,5vw,5rem)] gap-y-2 border-b border-[color:var(--color-hairline)] py-6 sm:py-7 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.7fr)]">
+      {children}
+    </div>
+  );
+}
+
+/** The row's topic: an H3 in the left column. */
+export function SpecRowHead({ children }: { children: ReactNode }) {
+  return (
+    <Subtitle as="h3" className="lg:pt-0.5">
+      {children}
+    </Subtitle>
+  );
+}
+
+/** The row's substance: a first sentence in ink, then detail in muted text. */
+export function SpecRowBody({ children }: { children: ReactNode }) {
+  return (
+    <div className="max-w-[64ch] text-[1.0625rem] leading-[1.6] text-muted [&>p+p]:mt-3 [&>p:first-child]:text-ink">
+      {children}
+    </div>
   );
 }

@@ -110,26 +110,37 @@ export function Eyebrow({
   );
 }
 
-/** Hero H1. `size="compact"` caps at 64px instead of 72px, for an opening that
- *  sets the headline beside its supporting copy rather than above it. */
+// ONE TYPE SCALE FOR EVERY MARKETING PAGE (MKT-03 revision 2). The H1 ran
+// 64-72px at a 1.02 line height: Instrument Sans' ascenders and descenders
+// nearly met between lines, five-line headlines filled a half-width hero, and
+// each page's opening sat at a different size. Now every page's H1 shares one
+// clamp, about 34px on a phone to 58px on a wide desktop, and every heading
+// has room for its glyphs:
+//
+//   H1  Display    34 -> 58px   line-height 1.08
+//   H2  Title      28 -> 40px   line-height 1.14
+//   H3  Subtitle   18 -> 21px   line-height 1.3
+//
+// The values are fluid between the widths that matter (320, 768, 1024, 1440),
+// and the guard in tests/app/marketing-desktop.test.ts pins the scale.
+export const TYPE_SCALE = {
+  display: "clamp(2.125rem, 1.55rem + 2.45vw, 3.625rem)",
+  title: "clamp(1.75rem, 1.45rem + 1.25vw, 2.5rem)",
+  subtitle: "clamp(1.125rem, 1.06rem + 0.3vw, 1.3125rem)",
+} as const;
+
+/** Page H1. The same size on every marketing page. */
 export function Display({
   children,
-  size = "default",
   className = "",
 }: {
   children: ReactNode;
-  size?: "default" | "compact";
   className?: string;
 }) {
   return (
     <h1
       className={`text-balance ${className}`}
-      style={displayStyle(
-        size === "compact"
-          ? "clamp(2.5rem, 1.5rem + 3vw, 4rem)"
-          : "clamp(2.75rem, 1.7rem + 3.9vw, 4.5rem)",
-        { lineHeight: 1.02, letterSpacing: "-0.03em" },
-      )}
+      style={displayStyle(TYPE_SCALE.display, { lineHeight: 1.08, letterSpacing: "-0.022em" })}
     >
       {children}
     </h1>
@@ -150,9 +161,9 @@ export function Title({
   return (
     <Tag
       className={`text-balance ${className}`}
-      style={displayStyle("clamp(1.875rem, 1.35rem + 2vw, 2.75rem)", {
-        lineHeight: 1.06,
-        letterSpacing: "-0.025em",
+      style={displayStyle(TYPE_SCALE.title, {
+        lineHeight: 1.14,
+        letterSpacing: "-0.018em",
       })}
     >
       {children}
@@ -160,7 +171,7 @@ export function Title({
   );
 }
 
-/** Sub-heading / card title (H3). */
+/** Sub-heading / row title (H3). */
 export function Subtitle({
   children,
   as = "h3",
@@ -174,9 +185,9 @@ export function Subtitle({
   return (
     <Tag
       className={`text-balance ${className}`}
-      style={displayStyle("clamp(1.1875rem, 1.02rem + 0.6vw, 1.375rem)", {
-        lineHeight: 1.22,
-        letterSpacing: "-0.015em",
+      style={displayStyle(TYPE_SCALE.subtitle, {
+        lineHeight: 1.3,
+        letterSpacing: "-0.01em",
       })}
     >
       {children}
@@ -240,10 +251,17 @@ export function Chip({ children }: { children: ReactNode }) {
 type CTAVariant = "primary" | "secondary" | "outline";
 
 /**
- * Primary/secondary walkthrough or nav CTA. Renders a Link. `event` is a
- * privacy-safe analytics event name (from lib/marketing/content ANALYTICS_EVENTS)
- * attached as data-event for the analytics layer wired in a later stage, no
- * PII is ever attached here.
+ * Walkthrough or nav CTA. Renders a Link. `event` is a privacy-safe analytics
+ * event name (from lib/marketing/content ANALYTICS_EVENTS) attached as
+ * data-event; no PII is ever attached here.
+ *
+ * ONE FILLED BUTTON PER VIEW. `primary` is the walkthrough request, the one
+ * conversion. Everything else on the same screen is `outline` (the header) or
+ * `secondary` (an underlined text action), so the filled button is never
+ * competing with a copy of itself.
+ *
+ * FOCUS IS AN OUTLINE, NOT A RING (DESIGN LAW 6). A box-shadow ring vanishes
+ * in forced-colours mode; an outline is redrawn in the system colour.
  */
 export function CTAButton({
   href,
@@ -260,16 +278,17 @@ export function CTAButton({
   event?: string;
   className?: string;
 }) {
-  const base =
-    "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-[8px] px-5 text-[0.9375rem] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[color:var(--color-mineral)]";
+  const base = `inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] text-[0.9375rem] font-semibold transition-colors duration-[var(--hone-duration-ui)] focus-visible:outline-2 focus-visible:outline-offset-2 ${
+    onBand ? "focus-visible:outline-[color:var(--color-paper)]" : "focus-visible:outline-[color:var(--color-mineral)]"
+  }`;
   const variantClass =
     variant === "primary"
-      ? "bg-mineral text-paper hover:bg-[color:var(--color-mineral-deep)] focus-visible:ring-offset-[color:var(--color-paper)]"
+      ? "bg-mineral px-5 text-paper hover:bg-[color:var(--color-mineral-deep)]"
       : variant === "outline"
-        ? "border border-[color:var(--color-hairline-strong)] bg-transparent text-ink hover:bg-warm focus-visible:ring-offset-[color:var(--color-paper)]"
+        ? "border border-[color:var(--color-hairline-strong)] bg-transparent px-4 text-ink hover:border-[color:var(--color-muted)] hover:bg-warm"
         : onBand
-          ? "text-paper underline decoration-[color:var(--color-onband-muted)] underline-offset-[6px] hover:decoration-paper focus-visible:ring-offset-[color:var(--color-band)]"
-          : "text-ink underline decoration-[color:var(--color-hairline-strong)] underline-offset-[6px] hover:decoration-[color:var(--color-ink)] focus-visible:ring-offset-[color:var(--color-paper)]";
+          ? "px-1 text-paper underline decoration-[color:var(--color-onband-muted)] underline-offset-[6px] hover:decoration-paper"
+          : "px-1 text-ink underline decoration-[color:var(--color-hairline-strong)] underline-offset-[6px] hover:decoration-[color:var(--color-ink)]";
   return (
     <Link
       href={href}
