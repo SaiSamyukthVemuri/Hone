@@ -14,11 +14,12 @@
   - Willow's confirmation and 24h/2h reminder switches were already on before SMS-02. SMS-02 changed their send path, not the switches.
   - `0208` was applied and verified on production on 2026-10-10 (§1b), migration-first, before the SMS-01 merge.
   - SMS-01 merged and deployed as `4564383c` (2026-10-10).
+  - WAIT #820's `0209` was applied on 2026-10-10 (A1) and #820 merged as `0e16257e`. Production was then merged into the SMS-04 branch, so `0210` is the only pending migration.
 - **Pending:**
   1. Willow's consent backfill (§5);
   2. the controlled tests (§3);
   3. Willow's waitlist switch (§4);
-  4. SMS-04: its own review, then `0210` after WAIT #820's `0209` (§1c), then its merge and deploy.
+  4. SMS-04: its exact-head review, then `0210` (§1c), then its merge and deploy.
 
 Every step that touches production — a migration apply, a deploy, a studio switch, a real message — needs the operator's explicit approval **at that step**. Approval of one step is not approval of the next.
 
@@ -33,7 +34,7 @@ Related: [migration-first-process.md](./migration-first-process.md) · [../08_EM
 | 1 | **SMS-00 (#812)** | `0206`, `0207` | **Migration first:** apply each from the exact reviewed head (§1), then merge. | **Done.** Applied 2026-10-09; merged as `46a1db9e`. |
 | 2 | **SMS-02 (#818)**, replacing the closed #813 | none | After SMS-00. A new PR from a new branch, with fresh CI and one exact-head review (operator decision D5(A): a retargeted PR cannot become shepherd-ready). | **Done.** Merged and deployed as `1bdc10ba`. |
 | 3 | **SMS-01 (#819)**, replacing the closed #814 | **`0208`** | After SMS-02. **Migration first: apply and verify `0208` (§1b) from the exact reviewed head, then merge and deploy the application.** The new public signup calls `join_new_client_waitlist_with_sms_answer`, which exists only after `0208`, so deploying first makes every durable public waitlist join fail. | **Done.** `0208` applied and verified 2026-10-10; merged and deployed as `4564383c`. |
-| 4 | **SMS-04**, required phone and the join text | **`0210`** | After SMS-01, **and after WAIT #820's `0209` is merged and applied** (`0209` is reserved by #820; apply order is `0209`, then `0210`). **Migration first: apply and verify `0210` (§1c) from the exact reviewed head, then merge and deploy the application.** The new public signup calls `join_new_client_waitlist_with_phone_and_sms_answer`, which exists only after `0210`, so deploying first makes every durable public waitlist join fail. `0208`'s command stays, so the deployed application keeps working (and keeps recording v1) until the new one replaces it. | Authored; awaiting review. Not applied. |
+| 4 | **SMS-04**, required phone and the join text | **`0210`** | After SMS-01 and WAIT #820's `0209`, **both done**: `0209` was applied on 2026-10-10 and #820 merged as `0e16257e`, so `0210` is the only pending migration. **Migration first: apply and verify `0210` (§1c) from the exact reviewed head, then merge and deploy the application.** The new public signup calls `join_new_client_waitlist_with_phone_and_sms_answer`, which exists only after `0210`, so deploying first makes every durable public waitlist join fail. `0208`'s command stays, so the deployed application keeps working (and keeps recording v1) until the new one replaces it. | Authored; awaiting review. Not applied. |
 
 **Whether a migration is still pending is DERIVED, never restated:** run `npm run migration:state` on the head. A unit's migration-first gate holds while it reads **MIGRATION-FIRST PENDING** for that unit's migration.
 
@@ -111,7 +112,7 @@ select count(*) filter (where send_waitlist_invitation_sms) from public.studios;
 
 `0208`'s signup command is kept, so the deployed application keeps working through the apply.
 
-1. **Order.** WAIT #820 (`0209`) must be merged into production and `0209` applied first. Then merge production into the SMS-04 branch. Its census must read hosted `0209` and repo max `0210`, with only `0210` pending.
+1. **Order (done).** `0209` was applied on 2026-10-10 and #820 merged as `0e16257e`. Production was then merged into the SMS-04 branch, whose census must read hosted `0209` and repo max `0210`, with only `0210` pending.
 2. **The same procedure as §1b**, steps 2 to 9:
    - a throwaway worktree at the exact reviewed head;
    - the linked project confirmed as **Hone** (`alhhybgqdmcdyzpybykj`);
