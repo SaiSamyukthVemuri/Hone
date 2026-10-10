@@ -14,7 +14,53 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-09, post-0207 apply; `0207` APPLIED, `0208` AUTHORED AND PENDING on the SMS-01 consent branch)
+## Current state (verified 2026-10-10, post-0208 apply; `0208` APPLIED, repo == hosted)
+
+> **0208 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #819 HEAD, BEFORE ANY MERGE.**
+> `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql` was applied to production on 2026-10-10 under explicit per-change owner authorization, from the reviewed PR #819 head `82d2ef1acb7f17145ccfbb5274f587f87f85eceb`. It lets a studio owner record SMS consent a prospect gave outside Hone, and makes the public signup ask Yes or No. It is applied before the SMS-01 application that calls its commands is deployed, as runbook §1b requires.
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The file's sha256 `1c6c512b6f59fc7cde5cc61f538b8acac4a526d9131df7c3e4a4b35d324637f0` (33,598 bytes) matched the authorized value.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**, in both the link file and `supabase projects list`.
+> - `npm run migration:state` read repo `0208`, hosted `0207`, pending `0208`, next free `0209`.
+> - `supabase migration list --linked` showed `0208` as the **only** local-only row, with no remote-only row.
+> - The **dry run listed exactly `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`**, re-asserted programmatically.
+> - The preflight read **0** practitioner-sourced consents, so 0208's own preflight could not refuse.
+>
+> **THE APPLY.**
+> - One `supabase db push --linked --yes`, **without `--include-all`**, run once, **exit code 0**. Three expected notices (`drop constraint if exists`, skipping).
+> - The client-side window was `2026-10-10T01:26:13.191Z` to `01:26:41.823Z` (about 28.6 s). It is **not** a server apply time.
+> - The server-observed bracket: max `0207` with 206 history rows at 01:25:58.059Z, and max `0208` with 207 rows at 01:26:44.636Z.
+>
+> **WHAT IT CHANGED, AND ONLY THAT.**
+> - Four nullable provenance columns on `new_client_waitlist_entries`; public columns 1,477 → 1,481.
+> - Its four constraints, all validated.
+> - The transition guard, now carrying the write-once clause for consent evidence.
+> - The two commands, `record_waitlist_sms_consent_by_practitioner` and `join_new_client_waitlist_with_sms_answer`, with `EXECUTE` for `service_role` only.
+> - It wrote no data.
+>
+> **WHAT IT DID NOT CHANGE**, each verified against a read-only baseline taken just before:
+> - every other public function definition (fingerprint unchanged);
+> - 119 user triggers, 0 SMS ledger rows, 7 studios, and every studio's four SMS switches (fingerprint unchanged);
+> - **Willow Electrolysis's SMS settings**: confirmation, 24h and 2h on; waitlist invitation off;
+> - 0 studios with waitlist SMS on;
+> - 60 waitlist entries, 0 consents, 0 practitioner-sourced consents, 0 opted-out prospects;
+> - 0 critical or error alerts in 24h, with exactly the two accepted historical payment alerts unresolved.
+>
+> **NO APPLICATION CODE WAS DEPLOYED.** Production stays at `1bdc10ba` until #819 merges under separate approval, and the deployed application calls neither 0208 command. The consent backfill, activation and real messages are separate approvals.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0208** (`0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`) |
+| **Repo migration max** | **0208**: `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`, on PR #819. Four nullable columns, one composite FK, three consent checks (one replacing 0202's evidence check), the 0203 guard redefined with one write-once clause, and two `service_role`-only commands. No data. `0202`, `0203`, `0204` and `0207` stay byte-identical. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none** — repo == hosted, PARITY. |
+| **Next free migration** | Next free number is **0209**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list` before the push. It is distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `82d2ef1acb7f17145ccfbb5274f587f87f85eceb` (PR #819, draft). At apply time: CI green (run 38002593747, database lane included); the exact-head Codex review was clean, naming the commit (`Reviewed commit: 82d2ef1acb`, comment 6090799757); all 3 review threads were resolved under explicit owner authorization. **Not merged at apply time.** |
+| **Production application SHA at apply time** | `1bdc10ba271484ffd3fba7979fce77ab486fe9fa`. **No application code was deployed by this apply.** |
+
+## Previous state (verified 2026-10-09, post-0207 apply; `0207` APPLIED, `0208` AUTHORED AND PENDING on the SMS-01 consent branch)
 
 > **0208 IS AUTHORED AND PENDING (added after the 0207 apply), on the local SMS-01 consent branch only.**
 > `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql` lets a studio owner record SMS consent a prospect gave OUTSIDE Hone, and makes the public signup ask Yes or No. It adds four nullable provenance columns to `new_client_waitlist_entries` (who recorded it, through a same-studio composite FK; the permission scope; an evidence reference; and the day they agreed, when known), replaces 0202's evidence check with three legal shapes (none, self-service, practitioner), and carries 0203's transition guard forward verbatim with one added clause: consent evidence is **write-once**. It adds two `service_role`-only commands, `record_waitlist_sms_consent_by_practitioner` and `join_new_client_waitlist_with_sms_answer`. **No existing row is changed, no data is written, and no applied migration is edited.** It was numbered by `npm run migration:state` at 0208, the derived next free number, with nothing else claiming it in this tree.

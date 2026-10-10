@@ -2,18 +2,18 @@
 
 **Scope:** SMS-00 (#812, migrations `0206` and `0207`), SMS-02 (#818, replacing #813) and SMS-01 (#819, replacing #814, migration `0208`: waitlist invitation texts and recorded consent).
 
-**Status (2026-10-09).**
+**Status (2026-10-10).**
 - **Done:**
   - `0206` and `0207` were applied to production (§1);
   - SMS-00 merged as `46a1db9e`;
   - SMS-02 merged and deployed as `1bdc10ba`.
   - Willow's confirmation and 24h/2h reminder switches were already on before SMS-02. SMS-02 changed their send path, not the switches.
+  - `0208` was applied and verified on production on 2026-10-10 (§1b), migration-first, before the SMS-01 merge.
 - **Pending:**
-  1. the `0208` apply (§1b);
-  2. the SMS-01 merge and deploy;
-  3. Willow's consent backfill (§5);
-  4. Willow's waitlist switch (§4);
-  5. the controlled tests (§3).
+  1. the SMS-01 merge and deploy;
+  2. Willow's consent backfill (§5);
+  3. Willow's waitlist switch (§4);
+  4. the controlled tests (§3).
 
 Every step that touches production — a migration apply, a deploy, a studio switch, a real message — needs the operator's explicit approval **at that step**. Approval of one step is not approval of the next.
 
@@ -27,7 +27,7 @@ Related: [migration-first-process.md](./migration-first-process.md) · [../08_EM
 |---|---|---|---|---|
 | 1 | **SMS-00 (#812)** | `0206`, `0207` | **Migration first:** apply each from the exact reviewed head (§1), then merge. | **Done.** Applied 2026-10-09; merged as `46a1db9e`. |
 | 2 | **SMS-02 (#818)**, replacing the closed #813 | none | After SMS-00. A new PR from a new branch, with fresh CI and one exact-head review (operator decision D5(A): a retargeted PR cannot become shepherd-ready). | **Done.** Merged and deployed as `1bdc10ba`. |
-| 3 | **SMS-01 (#819)**, replacing the closed #814 | **`0208`** | After SMS-02. **Migration first: apply and verify `0208` (§1b) from the exact reviewed head, then merge and deploy the application.** The new public signup calls `join_new_client_waitlist_with_sms_answer`, which exists only after `0208`, so deploying first makes every durable public waitlist join fail. | Pending. |
+| 3 | **SMS-01 (#819)**, replacing the closed #814 | **`0208`** | After SMS-02. **Migration first: apply and verify `0208` (§1b) from the exact reviewed head, then merge and deploy the application.** The new public signup calls `join_new_client_waitlist_with_sms_answer`, which exists only after `0208`, so deploying first makes every durable public waitlist join fail. | `0208` applied and verified 2026-10-10. Merge and deploy pending. |
 
 **Whether a migration is still pending is DERIVED, never restated:** run `npm run migration:state` on the head. A unit's migration-first gate holds while it reads **MIGRATION-FIRST PENDING** for that unit's migration.
 
@@ -58,7 +58,9 @@ select count(*) filter (where send_waitlist_invitation_sms) from public.studios;
 
 4. In the **same change**, record the apply: `docs/production/migration-state.json` (`hosted_migration_max` → `0206`) and the ledger's current block.
 
-## 1b. Apply and verify `0208` (operator) — BEFORE the SMS-01 merge and deploy
+## 1b. Apply and verify `0208` (operator) — BEFORE the SMS-01 merge and deploy — DONE 2026-10-10
+
+**Done.** Applied on 2026-10-10 from the reviewed #819 head `82d2ef1a`, and verified read-only. It is recorded in `docs/production/migration-state.json` and the ledger. The steps are kept as the record of what was run.
 
 `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql` is forward-only and writes no data. It is safe with the application already deployed: everything it adds is nullable or new, and that application calls neither of its commands. It must be applied **before** SMS-01's application deploys, because that application's signup calls `join_new_client_waitlist_with_sms_answer`.
 
@@ -159,7 +161,7 @@ Since Roadmap v1.25 (operator decision D4(2), 2026-10-08), `prospectMayReceiveSm
 
 **Correction (2026-10-09).** An earlier revision said the join form and the completion panel showed "Check this is your own mobile number. If you agree to texts, they'll go to this number." They did not: those two surfaces (`WaitlistJoinForm`, `CompleteProfilePanel`) are not routed in production. The **live** form is `app/book/[slug]/NewClientWaitlistForm.tsx`, and it shows that note only from 0208's change onward.
 
-**How consent is recorded (0208, pending).** Until 0208 is applied and its application change deployed, **no live path records prospect consent**: the live form never asked, so no prospect is textable. 0208 adds the only two paths:
+**How consent is recorded (0208, applied 2026-10-10; its application change is pending).** Until SMS-01's application is deployed, **no live path records prospect consent**: the live form never asked, so no prospect is textable. 0208 adds the only two paths:
 - **The signup answer.** The live form asks the approved sentence with Yes / No, neither preselected. A Yes is recorded on the new entry (`public_form`, v1). A No joins the same way and records nothing.
 - **The owner's record of consent given outside Hone** (`/settings/waitlist`): source `practitioner`, who recorded it, scope `waitlist_operational`, an evidence reference, the recording time, and the day they agreed only when known.
 
