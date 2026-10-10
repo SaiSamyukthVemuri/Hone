@@ -118,6 +118,13 @@ describe("validateWaitlistSubmission", () => {
     }
   });
 
+  it("SMS-04: the refusal copy is the owner-approved wording, verbatim", () => {
+    // Approved 2026-10-10. Changing either string is a copy change that needs the
+    // owner's approval, not a refactor.
+    expect(WAITLIST_PHONE_REQUIRED).toBe("Your phone number is required.");
+    expect(WAITLIST_PHONE_INVALID).toBe("Enter a valid phone number.");
+  });
+
   it("SMS-04: refuses a number the sender could not text (normalizePhoneForSms)", () => {
     for (const phone of ["555-0123", "12345", "abc", "+123", "020 7946 0958", "416-555-010"]) {
       const r = validateWaitlistSubmission({ name: "Ada", email: "a@b.co", phone });
