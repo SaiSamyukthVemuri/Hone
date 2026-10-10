@@ -34,14 +34,16 @@ import {
   UNKNOWN_JOINED_AT_COPY,
 } from "@/lib/waitlist/entry-provenance";
 import { EntryAvailability } from "@/components/waitlist/entry-availability";
+import { EntrySmsConsent, type SmsConsentView } from "@/components/waitlist/entry-sms-consent";
 import { AddToWaitlistPanel } from "@/components/waitlist/add-to-waitlist-panel";
 import {
   setWaitlistAvailabilityFormAction,
   addWaitlistEntryFormAction,
   importLegacyWaitlistEntryFormAction,
 } from "./profile-actions";
+import { recordProspectSmsConsentFormAction } from "./consent-actions";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { localLongDate } from "@/lib/booking/tz";
+import { formatLocalDateLabel, localDateString, localLongDate } from "@/lib/booking/tz";
 // `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
 // deliberately NOT imported. Both still exist, are still tested and still reach
 // their commands — this surface simply no longer offers claiming. See the
@@ -184,7 +186,54 @@ type WaitlistRow = {
   // instant as the day they joined. See lib/waitlist/entry-provenance.ts.
   source: string | null;
   joined_at_provenance: string | null;
+  // 0208. Read so the row states the person's SMS standing as recorded, and
+  // offers the owner's consent form only where the command would accept it.
+  // The evidence reference and the recorder are deliberately NOT read: the
+  // row says what is on record, not the owner's private note.
+  sms_consent_at: string | null;
+  sms_consent_source: string | null;
+  sms_consent_given_on: string | null;
+  sms_opted_out_at: string | null;
 };
+
+/**
+ * One row's SMS standing, as the queue renders it (0208).
+ *
+ * STOP is checked first and wins over everything, as it does at send time. A
+ * practitioner record carries the day they agreed only when the owner knew
+ * it; `null` renders as "not known", never as the recording date. Both days
+ * are rendered as calendar days: `sms_consent_given_on` is a bare date, and
+ * shifting it through a timezone would move it by a day.
+ */
+function smsConsentView(row: WaitlistRow, timezone: string): SmsConsentView {
+  if (row.sms_opted_out_at) return { kind: "opted_out" };
+  if (row.sms_consent_at) {
+    const source =
+      row.sms_consent_source === "public_form" ||
+      row.sms_consent_source === "prospect_link" ||
+      row.sms_consent_source === "practitioner"
+        ? row.sms_consent_source
+        : null;
+    if (source !== null) {
+      return {
+        kind: "consented",
+        source,
+        recordedOnLabel: formatLocalDateLabel(
+          localDateString(new Date(row.sms_consent_at), timezone),
+        ),
+        agreedOnLabel:
+          source === "practitioner" && row.sms_consent_given_on
+            ? formatLocalDateLabel(row.sms_consent_given_on)
+            : null,
+      };
+    }
+  }
+  if (!row.phone) return { kind: "none", recordable: false, reason: "no_phone" };
+  if (row.status === "converted" || row.status === "removed") {
+    return { kind: "none", recordable: false, reason: "not_active" };
+  }
+  return { kind: "none", recordable: true };
+}
 
 /**
  * The sections, in the order they appear — most actionable first. This list is
@@ -401,10 +450,10 @@ export default async function WaitlistSettingsPage({
       const from = focusedStatus === status ? rangeFrom : 0;
       const query = supabase
         .from("new_client_waitlist_entries")
-        .select("id,name,email,phone,joined_at,status,source,joined_at_provenance", {
-          count: "exact",
-          head: !listed,
-        })
+        .select(
+          "id,name,email,phone,joined_at,status,source,joined_at_provenance,sms_consent_at,sms_consent_source,sms_consent_given_on,sms_opted_out_at",
+          { count: "exact", head: !listed },
+        )
         .eq("studio_id", studio.id)
         .eq("status", status)
         .order("joined_at", { ascending: true })
@@ -992,6 +1041,12 @@ export default async function WaitlistSettingsPage({
                                     }
                             }
                             action={setWaitlistAvailabilityFormAction}
+                          />
+                          <EntrySmsConsent
+                            entryId={row.id}
+                            entryName={row.name}
+                            view={smsConsentView(row, studio.timezone)}
+                            action={recordProspectSmsConsentFormAction}
                           />
                           {/* THE ROW SAYS WHAT THE PAGE ACTUALLY KNOWS. The
                               section sentence is status-only, and for `invited`

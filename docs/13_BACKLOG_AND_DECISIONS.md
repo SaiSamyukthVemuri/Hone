@@ -21,7 +21,7 @@ This section **is** maintained as current. Everything under "Decision log" below
 
 ### SMS-03 — a fresh reminder after a practitioner moves an already-reminded appointment — `Open, specified, not started`
 
-**Status (2026-10-07; updated 2026-10-08): OPEN. Deliberately left out of the SMS P0 slice by operator decision, to keep that slice bounded.** The slice is SMS-00 (#812), then SMS-02 and SMS-01 as sequential replacement PRs for the closed #813 and #814. Needs a migration of its own; derive its number with `npm run migration:state` at the moment of claim.
+**Status (2026-10-07; updated 2026-10-09): OPEN. Deliberately left out of the SMS P0 slice by operator decision, to keep that slice bounded.** The slice is SMS-00 (#812, merged), then SMS-02 and SMS-01 as sequential replacement PRs for the closed #813 and #814: SMS-02 is #818 (merged), and SMS-01 is #819 (open, with `0208` migration-first). Needs a migration of its own; derive its number with `npm run migration:state` at the moment of claim.
 
 *What is true today.* The 24h and 2h reminder slots (email and SMS) live on the appointment row and are keyed only to the appointment. The client reschedule link inserts a successor appointment, whose slots start empty, so it is reminded correctly. A practitioner move (`move_or_reassign_appointment`) rewrites `starts_at` on the same row:
 

@@ -128,3 +128,27 @@ export function honeSuppressionAllowsSend(client: {
   if (client.sms_opted_out_at) return false;
   return Boolean(client.sms_consent_at);
 }
+
+/**
+ * Is this number suppressed ANYWHERE in Hone? (0208)
+ *
+ * The phone-wide rule, READ rather than applied: true when any client or
+ * prospect row whose number matches this one already carries an opt-out. It is
+ * exactly the match an inbound STOP uses (`selectHoneSuppressionTargets`), so
+ * the number a STOP reached is the number this refuses. That includes rows
+ * created AFTER the STOP, which the STOP itself could not stamp: a person who
+ * said STOP is not texted again because someone later recorded or ticked a
+ * consent against the same phone. STOP wins, phone-wide, always.
+ *
+ * A number with no digits matches nothing and is not "suppressed"; it is
+ * unusable, and the send path refuses it as `invalid_phone` on its own.
+ */
+export function isPhoneSuppressedPhoneWide(input: {
+  candidates: readonly SuppressionCandidate[];
+  phone: string;
+}): boolean {
+  return (
+    selectHoneSuppressionTargets({ candidates: input.candidates, fromPhone: input.phone })
+      .alreadyOptedOutCount > 0
+  );
+}

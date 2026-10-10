@@ -186,11 +186,12 @@ export function ProfileFields({
    */
   mobileLocked?: boolean;
   /**
-   * Say out loud that a newly typed number is not yet usable.
+   * Say out loud where agreed texts will go.
    *
-   * Product-visible because the alternative is implying we will text a number
-   * we have not confirmed. `prospectMayReceiveSms` refuses to send to an
-   * unverified number, so without this note the copy and the behaviour disagree.
+   * Product-visible because nobody confirms a typed number before texting it
+   * (verification is optional since Roadmap v1.25, D4(2)), and a stored number
+   * can never be changed afterwards. The note asks the person to check it is
+   * their own; it never promises a confirmation step.
    */
   showMobileCandidateNote?: boolean;
 }) {

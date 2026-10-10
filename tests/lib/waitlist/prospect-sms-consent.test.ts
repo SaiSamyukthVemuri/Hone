@@ -19,6 +19,12 @@ import {
   isSmsConsentSource,
   parseSmsOperationalConsent,
   prospectMayReceiveSms,
+  PRACTITIONER_CONSENT_FIELDS,
+  PRACTITIONER_SMS_CONSENT_SCOPE,
+  PRACTITIONER_SMS_CONSENT_SCOPES,
+  SMS_CONSENT_ANSWER_FIELD,
+  parsePractitionerSmsConsentInput,
+  parseSmsConsentAnswer,
 } from "@/lib/waitlist/prospect-sms-consent";
 
 // WAIT-04A makes mobile REQUIRED, which is exactly the change that makes
@@ -323,5 +329,126 @@ describe("THE DURABLE CLARIFICATION — consent needs an entry to live on", () =
     expect(refused.sms_consent_at).toBeNull();
     expect(refused.sms_consent_source).toBeNull();
     expect(refused.sms_consent_text_version).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0208 — THE SIGNUP ANSWER, AND THE OWNER'S RECORD
+// ---------------------------------------------------------------------------
+
+describe("0208 — the signup answer is explicit, and only two values are answers", () => {
+  it("reads exactly `yes` and `no`", () => {
+    expect(SMS_CONSENT_ANSWER_FIELD).toBe("sms_consent_answer");
+    expect(parseSmsConsentAnswer("yes")).toBe(true);
+    expect(parseSmsConsentAnswer("no")).toBe(false);
+  });
+
+  it("everything else is NOT ANSWERED, never a silent No", () => {
+    // `null` is what the server refuses. Reading any of these as false would
+    // join someone on an answer they did not give, and as true would text them.
+    for (const value of [null, undefined, "", " yes", "YES", "No", "on", "true", "1", "false"]) {
+      expect(parseSmsConsentAnswer(value), String(value)).toBeNull();
+    }
+    expect(parseSmsConsentAnswer(new File(["yes"], "yes.txt"))).toBeNull();
+  });
+});
+
+describe("0208 — an owner's record of consent given outside Hone", () => {
+  const TODAY = "2026-10-09";
+  const valid = {
+    attest: "yes",
+    evidence: "  Owner confirmation 2026-10-09: agreed in person at intake  ",
+    dateKnown: "unknown",
+    givenOn: null,
+  };
+  const parse = (over: Partial<Record<keyof typeof valid, FormDataEntryValue | null>>) =>
+    parsePractitionerSmsConsentInput({ ...valid, ...over }, TODAY);
+
+  it("ONE scope, the purpose the public sentence names", () => {
+    expect(PRACTITIONER_SMS_CONSENT_SCOPES).toEqual(["waitlist_operational"]);
+    expect(PRACTITIONER_SMS_CONSENT_SCOPE).toBe("waitlist_operational");
+    expect(PRACTITIONER_CONSENT_FIELDS).toEqual({
+      attest: "sms_consent_attest",
+      evidence: "sms_consent_evidence_ref",
+      dateKnown: "sms_consent_date_known",
+      givenOn: "sms_consent_given_on",
+    });
+  });
+
+  it("an unknown day is recorded as unknown: no date, never today's", () => {
+    expect(parse({})).toEqual({
+      ok: true,
+      value: {
+        scope: "waitlist_operational",
+        evidenceRef: "Owner confirmation 2026-10-09: agreed in person at intake",
+        consentDateKnown: false,
+        consentGivenOn: null,
+      },
+    });
+    // A stray day beside "unknown" is not quietly adopted.
+    const stray = parse({ givenOn: "2026-03-01" });
+    expect(stray.ok && stray.value.consentGivenOn).toBeNull();
+  });
+
+  it("a known day is preserved exactly, including today", () => {
+    for (const day of ["2026-03-01", "2000-01-01", TODAY]) {
+      const result = parse({ dateKnown: "known", givenOn: day });
+      expect(result).toEqual({
+        ok: true,
+        value: expect.objectContaining({ consentDateKnown: true, consentGivenOn: day }),
+      });
+    }
+  });
+
+  it("the attestation must be ticked: nothing else counts", () => {
+    for (const attest of [null, "", "on", "true", "YES"]) {
+      const result = parse({ attest });
+      expect(result.ok, String(attest)).toBe(false);
+    }
+    const missing = parse({ attest: null });
+    expect(!missing.ok && missing.message).toMatch(/^Confirm the person agreed to texts about this waitlist/);
+  });
+
+  it("evidence is 3 to 200 characters on one line, after trimming", () => {
+    for (const evidence of [null, "", "  ", "ab", " ab ", "x".repeat(201), "line one\nline two", "tab\there"]) {
+      const result = parse({ evidence });
+      expect(result.ok, JSON.stringify(evidence)).toBe(false);
+      expect(!result.ok && result.message).toMatch(/evidence/);
+    }
+    expect(parse({ evidence: "abc" }).ok).toBe(true);
+    expect(parse({ evidence: "x".repeat(200) }).ok).toBe(true);
+  });
+
+  it("the day question must be answered: no default either way", () => {
+    for (const dateKnown of [null, "", "yes", "Known", "on"]) {
+      const result = parse({ dateKnown });
+      expect(result).toEqual({ ok: false, message: "Say whether you know the day they agreed." });
+    }
+  });
+
+  it("a known day must be a real calendar day, not before 2000, not after the studio's today", () => {
+    for (const givenOn of [null, "", "2026-02-30", "2026-13-01", "26-03-01", "2026/03/01", "yesterday"]) {
+      expect(parse({ dateKnown: "known", givenOn })).toEqual({
+        ok: false,
+        message: "Enter the day they agreed, or choose that it is not known.",
+      });
+    }
+    expect(parse({ dateKnown: "known", givenOn: "1999-12-31" })).toEqual({
+      ok: false,
+      message: "Enter a real day they agreed, from 2000 onward.",
+    });
+    expect(parse({ dateKnown: "known", givenOn: "2026-10-10" })).toEqual({
+      ok: false,
+      message: "The day they agreed can't be in the future.",
+    });
+  });
+
+  it("the record never carries a wording version: the owner did not show one", () => {
+    // 0208's shape: a practitioner record has no text_version. The parser has
+    // no field that could carry one, so a form cannot smuggle one in.
+    const result = parse({});
+    expect(result.ok && Object.keys(result.value).sort()).toEqual(
+      ["consentDateKnown", "consentGivenOn", "evidenceRef", "scope"],
+    );
   });
 });

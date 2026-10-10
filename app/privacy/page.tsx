@@ -47,7 +47,7 @@ const EFFECTIVE_DATE = "May 22, 2026";
 
 // When the text below was last revised. A fact about this file, not a legal
 // determination.
-const LAST_UPDATED = "August 24, 2026";
+const LAST_UPDATED = "October 9, 2026";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -148,6 +148,10 @@ export default function PrivacyPolicyPage() {
       <UL>
         <li>Your name and email address</li>
         <li>Your phone number, if you choose to give one; it is optional</li>
+        <li>
+          Whether you agree to text messages about the waitlist and appointments
+          offered from it
+        </li>
         <li>Which studio&rsquo;s waitlist you joined, and when</li>
         <li>
           Where the studio keeps its waitlist with us, whether you are still
@@ -155,7 +159,10 @@ export default function PrivacyPolicyPage() {
         </li>
       </UL>
       <P>
-        That is the whole list. The waitlist form does not ask for health
+        We also keep records of text-message permission you gave directly to the
+        studio, including who recorded it, when, the agreed scope, an evidence
+        reference, and the date permission was given if known.
+        The waitlist form does not ask for health
         information, and joining a waitlist does not create a client record, an
         appointment, or an intake form for you.
       </P>

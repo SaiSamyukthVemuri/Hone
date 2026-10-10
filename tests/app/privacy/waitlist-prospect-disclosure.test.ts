@@ -104,16 +104,31 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   });
 
   it("enumerates exactly what the waitlist form actually collects, and no more", () => {
-    // Name, email, optional phone, which studio, when, and the waiting/removed
-    // status. That is the whole of new_client_waitlist_entries' personal data.
+    // Name, email, optional phone, the text-message answer (0208), which
+    // studio, when, and the waiting/removed status.
     expect(PRIVACY).toMatch(/Your name and email address/);
     expect(PRIVACY).toMatch(/Your phone number, if you choose to give one; it is optional/);
+    // 0208: the explicit Yes/No answer is collected, so the list names it.
+    expect(PRIVACY).toMatch(
+      /Whether you agree to text messages about the waitlist and appointments\s+offered from it/,
+    );
     expect(PRIVACY).toMatch(/Which studio&rsquo;s waitlist you joined, and when/);
     // Scoped: waiting/removed is a column on a stored entry. Where no entry is
     // stored there is no such status, so the bullet may not claim it outright.
     expect(PRIVACY).toMatch(
       /Where the studio keeps its waitlist with us, whether you are still\s+waiting, or have been removed/,
     );
+  });
+
+  it("names the studio's own record of text-message permission (0208), and no longer calls the list whole", () => {
+    // An owner can record a permission the person gave the studio directly:
+    // who recorded it, when, the scope, an evidence reference and, if known,
+    // the day it was given. That is data about the prospect a practitioner
+    // enters, so the notice names it beside the form's own list.
+    expect(PRIVACY).toMatch(
+      /We also keep records of text-message permission you gave directly to the\s+studio, including who recorded it, when, the agreed scope, an evidence\s+reference, and the date permission was given if known\./,
+    );
+    expect(PRIVACY).not.toMatch(/That is the whole list/);
   });
 
   it("does NOT over-claim: no health data is asked for, and no client record is created", () => {
@@ -606,8 +621,8 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     expect(lib).toMatch(/UNCACHED/);
 
     // The durable command carries no handling/mode argument...
-    expect(action).toMatch(/rpc\("join_new_client_waitlist_guarded", \{/);
-    const call = action.slice(action.indexOf('rpc("join_new_client_waitlist_guarded"'));
+    expect(action).toMatch(/rpc\("join_new_client_waitlist_with_sms_answer", \{/);
+    const call = action.slice(action.indexOf('rpc("join_new_client_waitlist_with_sms_answer"'));
     const args = call.slice(0, call.indexOf("}"));
     for (const forbidden of ["handling", "mode", "commit_point", "durable"]) {
       expect(args.toLowerCase(), `rpc args must not carry ${forbidden}`).not.toContain(forbidden);
@@ -686,6 +701,9 @@ describe("public waitlist form — notice at the point of collection", () => {
   it("names WHO handles it, WHAT is collected, and WHY", () => {
     expect(html).toContain("Willow Electrolysis and Hone use");
     expect(html).toContain("the name, email and phone number you enter here");
+    // 0208. The form asks the SMS question, so the notice names the answer:
+    // a notice that undercounts what its form collects is the 1bf24ccf defect.
+    expect(html).toContain("and whether you agreed to text messages");
     expect(html).toContain("to manage this waitlist and contact you about availability");
   });
 
@@ -751,7 +769,17 @@ describe("public waitlist form — notice at the point of collection", () => {
 
   it("adds NO consent checkbox — this collection is not separable from the request", () => {
     const inputs = [...html.matchAll(/<input[^>]*>/g)].map((m) => m[0]);
-    expect(inputs).toHaveLength(3); // name, email, phone — unchanged
+    const radios = inputs.filter((input) => input.includes('type="radio"'));
+    // The data fields are unchanged: name, email, phone.
+    expect(inputs.filter((input) => !radios.includes(input))).toHaveLength(3);
+    // 0208 added ONE separable question, about texts only: two radios, neither
+    // selected. It gates SMS, never the join, so it is not consent to this
+    // collection, and the collection itself still asks for none.
+    expect(radios).toHaveLength(2);
+    for (const radio of radios) {
+      expect(radio).toContain('name="sms_consent_answer"');
+      expect(radio).not.toMatch(/\bchecked\b/);
+    }
     expect(html).not.toContain('type="checkbox"');
   });
 

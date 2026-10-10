@@ -107,11 +107,11 @@ describe("0209 sits correctly in the migration sequence", () => {
   it("is the repository maximum, and nothing sits above it", () => {
     // Only the CURRENT maximum migration's own test may assert this — see
     // CLAUDE.md §2. It was handed over from
-    // tests/migrations/0207-sms-invitation-claim-serialized.test.ts in the same
-    // change that authored this file; the older test now asserts the inverse,
-    // derived rather than pinned. The claim travelled 0205 -> 0209 -> 0207 ->
-    // here while this lane was parked, which is exactly why it is never pinned
-    // to a literal successor.
+    // tests/migrations/0208-waitlist-sms-consent-practitioner-and-signup-answer.test.ts
+    // in the same change that authored this file; the older test now asserts the
+    // inverse, derived rather than pinned. The claim travelled
+    // 0205 -> 0206 -> 0207 -> 0208 -> here while this lane was parked, which is
+    // exactly why it is never pinned to a literal successor.
     expect(isRepoMax(VERSION), "0209 is no longer the repo max").toBe(true);
     expect(versionsAbove(VERSION), "something was added above 0209").toEqual([]);
   });

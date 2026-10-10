@@ -1,9 +1,10 @@
 import { localLongDate, localTimeString12h } from "@/lib/booking/tz";
 
-// Transactional SMS bodies for the three SMS types this codebase ships:
+// Transactional SMS bodies for the SMS this codebase ships:
 //   - confirmation (sent inline from a successful booking)
 //   - reminder_24h (sent by cron 24h before starts_at)
 //   - reminder_2h  (sent by cron 2h before starts_at)
+//   - waitlist invitation (SMS-01, sent beside the invitation email)
 //
 // All bodies share the same shape:
 //   {Studio}: <event>. <intake link if applicable>. <manage link if
@@ -120,4 +121,30 @@ export function build2hReminderSms(p: ReminderSmsInput): string {
   const manage = p.manageUrl ? `Manage appointment: ${p.manageUrl}` : null;
   const body = joinParts([head, intake, manage]);
   return `${body}. ${REPLY_DISCLOSURE}`;
+}
+
+export type WaitlistInvitationSmsInput = {
+  /** Server-resolved from studios.name. Never request input. */
+  studioName: string;
+  /** The invitation's own /invitation/<token> link: the secure booking link. */
+  invitationUrl: string;
+  /**
+   * The deadline as the invitation email states it (invitationExpiryLabel),
+   * so the two channels name ONE deadline in one rendering. Not re-derived.
+   */
+  expiresAtLabel: string;
+};
+
+/**
+ * SMS-01. The text that accompanies a waitlist invitation email: who is
+ * inviting, that the prospect is invited to book a consultation, the deadline
+ * and the secure link. It promises nothing the invitation does not -- not a held slot, not a
+ * queue position -- and names the studio first, so the recipient can tell who
+ * it is from before following a link.
+ */
+export function buildWaitlistInvitationSms(p: WaitlistInvitationSmsInput): string {
+  const studio = p.studioName.trim() || "Your clinic";
+  const head = `${studio}: you're invited to book a consultation from the waitlist`;
+  const action = `Choose a time by ${p.expiresAtLabel}: ${p.invitationUrl}`;
+  return `${joinParts([head, action])} ${REPLY_DISCLOSURE}`;
 }

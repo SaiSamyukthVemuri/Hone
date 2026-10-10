@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizePhoneForSms } from "@/lib/sms/twilio";
 
 // ===========================================================================
 // P0 EMERGENCY — NEW-CLIENT WAITLIST (ADMISSION CONTROL)
@@ -275,3 +276,49 @@ export function validateWaitlistSubmission(raw: {
 export type NewClientWaitlistResult =
   | { ok: true }
   | { ok: false; error: string };
+
+// ===========================================================================
+// 0208 — THE SMS QUESTION ON THE PUBLIC SIGNUP
+// ===========================================================================
+//
+// Every new signup answers it explicitly, Yes or No; neither is preselected.
+// No keeps everything else exactly as it was: the entry, the email the studio
+// writes to, and the place in the queue. Only SMS eligibility differs.
+//
+// These two refusals reveal nothing about the database: they are about the
+// visitor's own form, decided before any lookup, so they are safe to show
+// verbatim on this unauthenticated surface.
+
+export const NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED =
+  "Please choose Yes or No for text messages.";
+
+export const NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE =
+  "To get texts, add your mobile number, or choose No.";
+
+/**
+ * The DATABASE's floor: 0208's join wrapper refuses a Yes with fewer digits.
+ * It is a backstop only. A Yes here must pass the sender's own law
+ * (`normalizePhoneForSms`), which is stricter: every number it accepts has at
+ * least 8 digits, so the database never refuses a Yes this module accepted.
+ */
+export const WAITLIST_SMS_PHONE_MIN_DIGITS = 7;
+
+/**
+ * Validate the SMS answer against the submission it rides with. `answer` is
+ * the parsed radio value: `null` is NOT ANSWERED and is refused, never read as
+ * "no". A Yes needs a number the SENDER can text (Codex P2 4234615500):
+ * consent bound to a number the invitation sender refuses would settle every
+ * invitation `invalid_phone`. A No needs nothing, and joins exactly like a Yes.
+ */
+export function validateWaitlistSmsAnswer(input: {
+  answer: boolean | null;
+  phone: string | null;
+}): { ok: true; smsConsent: boolean } | { ok: false; error: string } {
+  if (input.answer === null) {
+    return { ok: false, error: NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED };
+  }
+  if (input.answer && normalizePhoneForSms(input.phone) === null) {
+    return { ok: false, error: NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE };
+  }
+  return { ok: true, smsConsent: input.answer };
+}

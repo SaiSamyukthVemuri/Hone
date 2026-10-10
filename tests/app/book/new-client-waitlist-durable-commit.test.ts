@@ -7,6 +7,8 @@ import path from "node:path";
 import {
   NEW_CLIENT_WAITLIST_SLUGS_ENV,
   NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV,
+  NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED,
+  NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE,
 } from "@/lib/booking/new-client-waitlist";
 
 // ===========================================================================
@@ -208,13 +210,24 @@ const { submitNewClientBookingWaitlistAction } = await import(
   "@/app/book/[slug]/waitlist-actions"
 );
 
-function form(overrides: Record<string, string> = {}): FormData {
+/**
+ * A complete submission. 0208 made the SMS question part of it: a visitor who
+ * has not answered cannot submit, so the fixture answers. "no" is the default
+ * because it is the answer that grants nothing; the Yes path is proved
+ * explicitly below. A `null` override REMOVES a field, which is how "not
+ * answered" is modelled.
+ */
+function form(overrides: Record<string, string | null> = {}): FormData {
   const fd = new FormData();
   fd.set("slug", SLUG);
   fd.set("name", CANARY_NAME);
   fd.set("email", CANARY_EMAIL);
   fd.set("phone", CANARY_PHONE);
-  for (const [k, v] of Object.entries(overrides)) fd.set(k, v);
+  fd.set("sms_consent_answer", "no");
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v === null) fd.delete(k);
+    else fd.set(k, v);
+  }
   return fd;
 }
 
@@ -250,9 +263,9 @@ describe("the database is the commit point", () => {
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result).toEqual({ ok: true });
     // Nothing has been sent yet: the sends are post-response work.
-    expect(trace).toEqual(["rpc:join_new_client_waitlist_guarded"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_with_sms_answer"]);
     await flushPostResponse();
-    expect(trace).toEqual(["rpc:join_new_client_waitlist_guarded", "send:studio", "send:client"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_with_sms_answer", "send:studio", "send:client"]);
   });
 
   it("A REFUSED STUDIO NOTIFICATION STILL REPORTS JOINED", async () => {
@@ -298,7 +311,7 @@ describe("the database is the commit point", () => {
   it("passes the SERVER-RESOLVED studio id and the bounded submission, nothing else", async () => {
     await submitNewClientBookingWaitlistAction(form({ slug: "attacker-chosen-slug" }));
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_guarded");
+    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_with_sms_answer");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_name: CANARY_NAME,
@@ -310,6 +323,10 @@ describe("the database is the commit point", () => {
       // false. So the value is proved to come from the server-resolved studio.
       // Consulted only while the row is unstamped; retired with the bridge.
       p_legacy_bridge_waitlist: true,
+      // 0208. The visitor's own answer, as a boolean and nothing more: no
+      // wording version, no timestamp, no source. The command stamps those
+      // itself, and only for a Yes on a newly created entry.
+      p_sms_consent: false,
     });
     // No status, no source, no joined_at, no entry id: the command owns all of
     // them, so a forged post cannot propose one.
@@ -321,7 +338,81 @@ describe("the database is the commit point", () => {
   it("performs NO direct table access at all", async () => {
     await submitNewClientBookingWaitlistAction(form());
     expect(tableAccess).toEqual([]);
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_guarded"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_with_sms_answer"]);
+  });
+});
+
+describe("0208 — the SMS answer is the visitor's own, and explicit", () => {
+  it("a Yes reaches the command as `p_sms_consent: true`, with every other field unchanged", async () => {
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }))).toEqual({
+      ok: true,
+    });
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_with_sms_answer");
+    expect(rpcCalls[0].args).toEqual({
+      p_studio_id: STUDIO_ID,
+      p_name: CANARY_NAME,
+      p_email: CANARY_EMAIL,
+      p_phone: CANARY_PHONE,
+      p_legacy_bridge_waitlist: true,
+      p_sms_consent: true,
+    });
+  });
+
+  it("a No joins exactly like a Yes: same answer to the visitor, same emails", async () => {
+    // Declining removes SMS eligibility only. The place on the waitlist and
+    // the email acknowledgement do not depend on it.
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "no" }))).toEqual({
+      ok: true,
+    });
+    await flushPostResponse();
+    expect(rpcCalls.map((c) => c.args.p_sms_consent)).toEqual([false]);
+    expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
+  });
+
+  it("a No needs no number: an email-only visitor still joins", async () => {
+    expect(
+      await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "no", phone: "" })),
+    ).toEqual({ ok: true });
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].args.p_phone).toBeNull();
+    expect(rpcCalls[0].args.p_sms_consent).toBe(false);
+  });
+
+  for (const [label, value] of [
+    ["missing", null],
+    ["empty", ""],
+    ["a checkbox's default value", "on"],
+    ["a differently-cased Yes", "YES"],
+    ["a boolean spelling", "true"],
+  ] as const) {
+    it(`an answer that is ${label} is NOT ANSWERED: refused before the lookup, the limiter and the command`, async () => {
+      const result = await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: value }));
+      expect(result).toEqual({ ok: false, error: NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED });
+      // Never read as "no" and joined anyway: nothing at all happened.
+      expect(rpcCalls).toEqual([]);
+      expect(tableAccess).toEqual([]);
+      await flushPostResponse();
+      expect(sends).toEqual([]);
+    });
+  }
+
+  it("a Yes with no usable number is refused, and nothing is written", async () => {
+    for (const phone of ["", "   ", "555-12"]) {
+      const result = await submitNewClientBookingWaitlistAction(
+        form({ sms_consent_answer: "yes", phone }),
+      );
+      expect(result).toEqual({ ok: false, error: NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE });
+    }
+    expect(rpcCalls).toEqual([]);
+    await flushPostResponse();
+    expect(sends).toEqual([]);
+  });
+
+  it("the refusal copy names the form, never the studio or the queue", () => {
+    for (const copy of [NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED, NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE]) {
+      expect(copy).not.toMatch(/full|capacity|queue|position|already/i);
+    }
   });
 });
 
@@ -345,7 +436,7 @@ describe("duplicate submission", () => {
     // it: a duplicate must not manufacture a row or a message.
     scenario.commandResult = "already_waiting";
     await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_guarded"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_with_sms_answer"]);
     expect(sends).toHaveLength(0);
     expect(tableAccess).toEqual([]);
   });
@@ -437,7 +528,7 @@ describe("a duplicate is externally indistinguishable from a fresh join", () => 
 
       expect(sends, `${outcome} sent mail before responding`).toHaveLength(0);
       expect(trace, `${outcome} awaited more than the command`).toEqual([
-        "rpc:join_new_client_waitlist_guarded",
+        "rpc:join_new_client_waitlist_with_sms_answer",
       ]);
     }
   });
@@ -838,7 +929,7 @@ describe("Stage B records what closed, and what is still open", () => {
   it("ANTI-VACUITY: the durable write path is still present", () => {
     // If this stops being true the rest of this block is moot, and that must
     // be a visible decision rather than a silently passing suite.
-    expect(ACTION).toContain('rpc("join_new_client_waitlist_guarded"');
+    expect(ACTION).toContain('rpc("join_new_client_waitlist_with_sms_answer"');
   });
 
   it("still records it as a studio-scoped personal-data class", () => {
