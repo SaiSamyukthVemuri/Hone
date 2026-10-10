@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-10; `0208` APPLIED, `0209` AUTHORED AND PENDING)
+## Current state (verified 2026-10-10, post-0208 apply; `0208` APPLIED, `0209` AUTHORED AND PENDING)
 
 > **AUTHORED, NOT APPLIED — MIGRATION-FIRST PENDING.** WAIT-v4 PR0 authors
 > `0209_public_slot_candidate_buffer_window.sql`. It is **not** applied to
