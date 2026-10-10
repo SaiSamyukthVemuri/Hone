@@ -23,9 +23,19 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > stays **0208**. The repository therefore sits legitimately ABOVE hosted, which
 > is the second of the two legal shapes the parity guard admits.
 >
-> **WHAT IT CHANGES.** Two `create or replace function` statements and nothing
-> else: `public_booking_slot_candidates` (0170) and
-> `public_reschedule_slot_candidates` (0171). Both read
+> **COMPLETE STATEMENT INVENTORY.** Twelve statements, and nothing else: **two
+> `create or replace function`** (`public_booking_slot_candidates`, 0170, and
+> `public_reschedule_slot_candidates`, 0171), **eight `revoke execute`** — each
+> function from `public`, `anon`, `authenticated` and `service_role` by name —
+> and **two `grant execute` to `service_role`**, which is the posture 0170/0171
+> already had. The revoke block is required, not decorative: Supabase's
+> `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`, `authenticated` **and**
+> `service_role` at function-create time, so each must be revoked explicitly by
+> name (CLAUDE.md §5; missed once in 0129 and again in 0164). **NO** table,
+> column, index, constraint, trigger, policy or `COMMENT ON`, and **zero**
+> migration-level DML — no top-level `insert`/`update`/`delete`/`truncate`.
+>
+> **WHAT THE TWO FUNCTIONS DO WRONG TODAY.** Both read
 > `studio_calendar_reservations` with `cr.ends_at > v_win_start` — the ACTUAL end
 > — while re-applying the studio buffer to reach the PROTECTED end, so a 23:50
 > appointment under a 30-minute buffer is protected to 00:20 and was never loaded
@@ -49,7 +59,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0208** (`0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`) — unchanged by this branch; no apply was performed or claimed. |
-| **Repo migration max** | **0209** — this branch authors `0209_public_slot_candidate_buffer_window.sql` (WAIT-v4 PR0): **TWO `create or replace function`** statements, no table, column, index, constraint or trigger, and **no top-level `insert`/`update`/`delete`/`truncate`**. |
+| **Repo migration max** | **0209** — this branch authors `0209_public_slot_candidate_buffer_window.sql` (WAIT-v4 PR0): **two `create or replace function`**, **eight `revoke execute`** and **two `grant execute` to `service_role`** — twelve statements total. No table, column, index, constraint, trigger, policy or `COMMENT ON`, and **no top-level `insert`/`update`/`delete`/`truncate`**. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
 | **Pending migrations** | **`0209`** only — authored on this branch and **NOT applied**, so `repo > hosted` is the MIGRATION-FIRST PENDING shape and **not** a parity violation. |
 | **Next free migration** | Next free number is **0210**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
