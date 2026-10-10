@@ -103,19 +103,33 @@ describe("desktop grids", () => {
 });
 
 describe("workflow editorial split", () => {
-  it("homepage renders the workflow as an editorial split (intro column + steps)", () => {
+  it("the heading runs across the top, and the calendar and steps share the row beneath it", () => {
+    // MKT-03 retired the narrow intro column: a five-line heading stood over
+    // the calendar, and that column ran taller than the steps beside it. The
+    // heading now spans the shell and the split sits under it, level.
     const page = read("app/page.tsx");
-    expect(page).toMatch(/lg:grid-cols-\[minmax\(17rem/);
-    expect(page).toMatch(/<WorkflowGrid steps=/);
+    const at = page.indexOf('id="how-hone-works"');
+    expect(at, "workflow section not found").toBeGreaterThan(-1);
+    const section = page.slice(at, page.indexOf("</Section>", at));
+    expect(section).toMatch(/<Title className="max-w-\[24ch\] lg:max-w-none">/);
+    expect(section).toMatch(/lg:grid-cols-\[minmax\(18rem,0\.75fr\)_minmax\(0,1\.6fr\)\]/);
+    // The heading precedes the split, so it can never become one of its columns.
+    expect(section.indexOf("<Title")).toBeLessThan(section.indexOf("lg:grid-cols-["));
+    expect(section).toMatch(/<CalendarPreview \/>/);
+    expect(section).toMatch(/<WorkflowGrid steps=/);
   });
   it("WorkflowGrid is a 2-column numbered sequence, not a 3-col matrix", () => {
     const start = SECTIONS.indexOf("export function WorkflowGrid");
     const wf = SECTIONS.slice(start, SECTIONS.indexOf("export function", start + 1));
     expect(wf).toMatch(/sm:grid-cols-2/);
     expect(wf).not.toMatch(/lg:grid-cols-3/);
-    // Prominent teal step number + a hairline divider, no animated connector.
+    // An ordered list, because the order is real; a teal step number and one
+    // hairline per step; no fixed title height stretching the grid taller than
+    // what it says; no animated connector.
+    expect(wf).toMatch(/<ol\b/);
     expect(wf).toMatch(/text-mineral/);
-    expect(wf).toMatch(/Hairline/);
+    expect(wf).toMatch(/border-t/);
+    expect(wf).not.toMatch(/min-h-\[/);
     expect(wf).not.toMatch(/svg|stroke|IntersectionObserver/i);
   });
 });

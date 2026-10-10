@@ -342,15 +342,20 @@ describe("demo-data discipline", () => {
   it("every product asset carries the film's own demo-data label, verbatim", () => {
     // One wording across the film, the poster and every still, so nothing needs
     // recutting to agree with the page. The film already burns these exact
-    // words into its own corner.
+    // words into its own corner, and so does the poster frame.
     expect(POSITIONING.demoDataLabel).toBe("Demo data. Actual Hone application.");
-    expect(FILM_PLAYER).toMatch(/POSITIONING\.demoDataLabel/);
-    // On the poster AND under the player: a visitor who never presses play
-    // still sees it.
+    // Under the player, as the figure's caption, OUTSIDE every playback branch:
+    // a visitor who never sees the film move still reads it. Once, not twice —
+    // MKT-03 dropped the copy that sat on the poster on top of the frame's own,
+    // which put the same line in the same place three times.
+    const player = stripComments(FILM_PLAYER);
     expect(
-      (FILM_PLAYER.match(/POSITIONING\.demoDataLabel/g) ?? []).length,
-      "the label must appear on the poster and under the player",
-    ).toBeGreaterThanOrEqual(2);
+      (player.match(/POSITIONING\.demoDataLabel/g) ?? []).length,
+      "the label must be rendered by the player exactly once",
+    ).toBe(1);
+    expect(player).toMatch(
+      /<figcaption[^>]*>\s*\{POSITIONING\.demoDataLabel\}\s*<\/figcaption>\s*<\/figure>/,
+    );
   });
 });
 

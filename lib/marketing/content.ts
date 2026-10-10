@@ -57,6 +57,12 @@ export const CONTACT_EMAIL = "hello@hone.care" as const;
 //   * a "most popular" badge on the Solo pricing card
 //   * the six-box capability grid AS THE HOMEPAGE'S MAIN PRODUCT SECTION
 //
+// MKT-03 retired one more, by the same rule: v2.2's own `proofLine`, the
+// middle-dot strip under the hero. It was true, and it was the only thing on
+// the page said twice in a row — each of its four clauses is said again, in
+// full, in the sub, the trust strip or the records band — so the compact
+// opening dropped it, and an unrendered string is deleted, not kept.
+//
 // REPRODUCING A RETIRED LINE HERE WOULD BE A DEFECT, not documentation. A guard
 // that scans this file for retired copy has to strip comments to tell an
 // assertion from its denial, and the strip order is a known trap: line comments
@@ -90,13 +96,11 @@ export const POSITIONING = {
   differentiationLine:
     "Your calendar remembers the appointment. Hone helps you remember the treatment.",
   keepPhrase: "Treatment memory for electrologists",
-  // Every clause is register-backed, and the fourth is the one worth naming:
+  // Rendered directly under the Before Today block (deck §3 section 2).
+  //
   // "CSV export on every plan" rests on `lib/export/resource-registry.ts` plus
   // the register's "Exportable records (full studio export)" row, class
   // LIVE_FOR_ALL_ONBOARDED — not plan-gated, so "every plan" is literal.
-  proofLine:
-    "Built for electrolysis records · History by treated area · Probe lots tied to treatments · CSV export on every plan",
-  // Rendered directly under the Before Today block (deck §3 section 2).
   //
   // THE FOURTH ITEM IS NOT A SUPPORT PROMISE, AND THAT IS DELIBERATE.
   // It read as a commitment that one specific person answers support. That is a

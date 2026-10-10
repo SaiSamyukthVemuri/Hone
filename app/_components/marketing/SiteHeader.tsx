@@ -16,9 +16,11 @@ export function SiteHeader() {
     <header className="sticky top-0 z-40 border-b border-[color:var(--color-hairline)] bg-paper/95">
       <Container>
         <div className="flex h-16 items-center justify-between">
+          {/* inline-flex + min-h-11: the wordmark is the home control, so it
+              meets the 44px touch floor (DESIGN LAW 5) inside the 64px bar. */}
           <Link
             href="/"
-            className="text-[1.375rem] font-bold text-ink"
+            className="inline-flex min-h-11 items-center text-[1.375rem] font-bold text-ink"
             style={{ fontFamily: MK_FONT_DISPLAY }}
           >
             Hone

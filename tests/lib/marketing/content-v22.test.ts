@@ -130,6 +130,13 @@ const RETIRED = [
     parts: ["Built around", "real electrolysis workflows"],
     sha256: "f138dca97bc8f0be6c2544946bf55fe3ef399cace8c85bdc2a834ff407b01422",
   },
+  {
+    // MKT-03, not the deck: v2.2's own hero proof strip, retired because every
+    // clause is said again in full lower on the homepage. Same mechanism.
+    label: "v2.2 hero proof strip (MKT-03)",
+    parts: ["Built for electrolysis records", "· History by treated area"],
+    sha256: "447bf1b629785789753e6d8eb753a733b215cf8164cf720db23fb02699924b91",
+  },
 ] as const;
 
 const needle = (parts: ReadonlyArray<string>): string => parts.join(" ").toLowerCase();
@@ -187,12 +194,13 @@ describe("v2.2 retires strings from THE WHOLE MARKETING SURFACE", () => {
     // And the pins are distinct, so a copy-paste of one digest across two
     // entries cannot hide a wrong fragment behind a right one.
     expect(new Set(RETIRED.map((r) => r.sha256)).size).toBe(RETIRED.length);
-    expect(RETIRED.length).toBe(4);
+    expect(RETIRED.length).toBe(5);
   });
 
   it("the retired keys are gone as KEYS, not merely as values", () => {
     expect("categoryAmbition" in POSITIONING).toBe(false);
     expect("heroSupporting" in POSITIONING).toBe(false);
+    expect("proofLine" in POSITIONING).toBe(false);
   });
 
   it("no retired copy reaches any route's title or description", () => {
@@ -296,7 +304,6 @@ describe("v2.2 claim constants carry their register obligations", () => {
     const authored = [
       POSITIONING.heroH1,
       POSITIONING.heroSub,
-      POSITIONING.proofLine,
       POSITIONING.trustStrip,
       POSITIONING.assuranceLine,
       POSITIONING.noCapsLine,

@@ -8,9 +8,11 @@ import { FILM, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 //
 // Two kinds of claim are pinned here, and they are pinned differently.
 //
-//   THE PLAYER'S BEHAVIOUR is a claim about source: no autoplay, nothing
-//   fetched before a click, an accessible name, a real text equivalent. Those
-//   are read out of the component.
+//   THE PLAYER'S CONTRACT is a claim about source: autoplay only where a page
+//   opts in and never against reduced motion or Save-Data, a truthful
+//   Pause/Play control, no media fetched before playback is wanted, an
+//   accessible name and a real text equivalent. Those are read out of the
+//   component here and proved as behaviour in e2e/marketing-homepage-film.spec.ts.
 //
 //   THE ASSET'S PROPERTIES are a claim about a FILE. "25 seconds", "1920x1080"
 //   and above all "there is no audio track" were copied into a TypeScript
@@ -151,32 +153,104 @@ describe("the asset on disk is the asset the constant describes", () => {
   });
 });
 
-describe("no autoplay — structurally, not by convention", () => {
-  it("the player names no autoplay attribute at all", () => {
+// ---------------------------------------------------------------------------
+// THE PLAYBACK CONTRACT (MKT-03). Source tripwires, read from the
+// comment-stripped component. The behaviour itself — frames decoding, the loop
+// wrapping, Pause stopping the clock, the reduced-motion poster, a refused
+// autoplay — is proved in a real browser by e2e/marketing-homepage-film.spec.ts.
+// What is pinned here is the shape that makes those outcomes structural.
+//
+// This REPLACES the MKT-02B contract, which pinned the opposite: no autoplay
+// at all, one play() reachable only from a click, native controls after it.
+// The product decision changed (the homepage film now plays muted while in
+// view), so the old pins were the obsolete half; the asset, poster, transcript,
+// analytics and middleware pins around them still hold and are unchanged.
+// ---------------------------------------------------------------------------
+const filmCall = (src: string): string => src.match(/<ProductFilm\b[^>]*\/>/)?.[0] ?? "";
+const HOMEPAGE_CALL = filmCall(PAGE);
+const DEMO_CALL = filmCall(readFileSync(join(ROOT, "app/demo/page.tsx"), "utf8"));
+
+/** The span of the stripped component between two markers. */
+function between(from: string, to: string): string {
+  const start = PLAYER.indexOf(from);
+  expect(start, `marker not found: ${from}`).toBeGreaterThan(-1);
+  const end = PLAYER.indexOf(to, start);
+  expect(end, `marker not found after ${from}: ${to}`).toBeGreaterThan(start);
+  return PLAYER.slice(start, end);
+}
+
+describe("autoplay is the homepage's choice, and never against the visitor's", () => {
+  it("is opt-in per page: off by default, on only where a page says so", () => {
+    expect(PLAYER).toMatch(/autoplay = false/);
+    expect(HOMEPAGE_CALL, "homepage film call site not found").not.toBe("");
+    expect(HOMEPAGE_CALL).toMatch(/\bautoplay\b/);
+    // /demo is a lead form. Its visitors came to fill it in, not to spend
+    // 3.6 MB on a film they did not ask for, so it stays manual.
+    expect(DEMO_CALL, "/demo film call site not found").not.toBe("");
+    expect(DEMO_CALL).not.toMatch(/\bautoplay\b/);
+  });
+
+  it("starts in code, never through the autoplay ATTRIBUTE", () => {
+    // The attribute would start (and fetch) before reduced motion, Save-Data
+    // or visibility had a chance to say no.
     expect(PLAYER).not.toMatch(/\bautoPlay\b/);
-    expect(PLAYER).not.toMatch(/\bautoplay\b/i);
+    expect(PLAYER).not.toMatch(/\bautoplay=/i);
   });
 
-  it("playback is reachable only through the activation state", () => {
-    // Exactly one call site, and it sits behind the `activated` guard. A second
-    // play() — in a mount effect, in a ref callback, in an IntersectionObserver
-    // — is how a page starts playing at someone without being asked.
-    const calls = PLAYER.match(/\.play\(\)/g) ?? [];
-    expect(calls, `expected one play() call, found ${calls.length}`).toHaveLength(1);
-    expect(PLAYER).toMatch(/if \(!activated\) return;/);
-    expect(PLAYER).not.toMatch(/IntersectionObserver/);
+  it("reduced motion and Save-Data both mean: start on the poster", () => {
+    expect(PLAYER).toMatch(/matchMedia\("\(prefers-reduced-motion: reduce\)"\)/);
+    expect(PLAYER).toMatch(/connection\?\.saveData === true/);
+    expect(PLAYER).toMatch(/const manual = reduce\.matches \|\| saveData;/);
+    expect(PLAYER).toMatch(/setAwaitingStart\(manual\)/);
   });
 
-  it("fetches nothing until asked", () => {
-    expect(PLAYER).toMatch(/preload="none"/);
-    // The <video> is mounted only in the activated branch, so before the click
-    // there is no media element on the page at all.
-    expect(PLAYER).toMatch(/activated \?/);
+  it("is muted, inline and looping", () => {
+    const video = between("<video", "/>");
+    for (const attr of ["muted", "loop", "playsInline"]) {
+      expect(video, `<video> is missing ${attr}`).toMatch(new RegExp(`\\b${attr}\\b`));
+    }
   });
 
-  it("is muted and plays inline", () => {
-    expect(PLAYER).toMatch(/\bmuted\b/);
-    expect(PLAYER).toMatch(/\bplaysInline\b/);
+  it("plays only while half on screen, and a person's Pause is final", () => {
+    const observer = between("new IntersectionObserver(", "observer.observe(");
+    expect(observer).toMatch(/threshold: 0\.5/);
+    expect(observer).toMatch(/if \(heldByPerson\.current \|\| refused\.current\) return;/);
+    // Off screen it stops, so a loop never runs down a phone's battery unseen.
+    expect(observer).toMatch(/\.pause\(\)/);
+  });
+
+  it("fetches nothing until playback is wanted", () => {
+    // The <video> exists only in the mounted branch, and asks for nothing
+    // until play() — so a reduced-motion, Save-Data or /demo visit fetches no
+    // media bytes before a person presses Play (counted, in the browser spec).
+    expect(PLAYER).toMatch(/\{mounted \? \(\s*<video/);
+    expect(between("<video", "/>")).toMatch(/preload="none"/);
+  });
+});
+
+describe("the control tells the truth, and survives a refusal", () => {
+  it("labels itself from what the media element reports, not from intent", () => {
+    expect(PLAYER).toMatch(/onPlay=\{\(\) => setPaused\(false\)\}/);
+    expect(PLAYER).toMatch(/onPause=\{\(\) => setPaused\(true\)\}/);
+    expect(PLAYER).toMatch(/\{paused \? "Play" : "Pause"\}/);
+  });
+
+  it("brings the start control back when the browser refuses — but not for its own pause()", () => {
+    const attempt = between("function attemptPlay()", "function startByPerson()");
+    // AbortError is our own pause() interrupting a pending play(): not a refusal.
+    expect(attempt).toMatch(/error\.name === "AbortError"\) return;/);
+    expect(attempt).toMatch(/refused\.current = true;/);
+    expect(attempt).toMatch(/setAwaitingStart\(true\)/);
+  });
+
+  it("runs a person's play() inside their click", () => {
+    // Safari in Low Power Mode honours play() only inside the gesture; an
+    // effect that runs after the click is too late.
+    const start = between("function startByPerson()", "function toggle()");
+    const flush = start.indexOf("flushSync(");
+    expect(flush, "startByPerson must commit the video synchronously").toBeGreaterThan(-1);
+    expect(start.indexOf("attemptPlay()")).toBeGreaterThan(flush);
+    expect(start).not.toMatch(/useEffect|setTimeout|requestAnimationFrame/);
   });
 });
 
@@ -185,14 +259,13 @@ describe("the poster is fetched eagerly, not discovered late", () => {
     expect(PLAYER).toMatch(/from "next\/image"/);
     expect(PLAYER).toMatch(/import posterImage from "@\/app\/_media\//);
     expect(PLAYER).toMatch(/\bpriority\b/);
-    // `loading="lazy"` would take the poster out of the preload scanner and
-    // take the poster out of the preload scanner entirely.
+    // `loading="lazy"` would take the poster out of the preload scanner.
     expect(PLAYER).not.toMatch(/loading="lazy"/);
   });
 
   it("declares intrinsic dimensions so the frame reserves its own space", () => {
     // A 16:9 box sized from FILM, so the film section never shifts layout while
-    // the poster decodes.
+    // the poster decodes or the video replaces it.
     expect(PLAYER).toMatch(/aspectRatio/);
     expect(PLAYER).toMatch(/FILM\.width/);
     expect(PLAYER).toMatch(/FILM\.height/);
@@ -200,9 +273,12 @@ describe("the poster is fetched eagerly, not discovered late", () => {
 });
 
 describe("accessible without sight and without sound", () => {
-  it("the player and its play control both carry an accessible name", () => {
+  it("the film, its start button and its Pause control all carry a name", () => {
     expect(PLAYER).toMatch(/aria-label=\{FILM\.accessibleName\}/);
     expect(PLAYER).toMatch(/Play: \$\{FILM\.accessibleName\}/);
+    // The visible word leads the accessible name (WCAG 2.5.3): "Pause the
+    // product film", with the suffix for assistive tech only.
+    expect(PLAYER).toMatch(/<span className="sr-only"> the product film<\/span>/);
     // The name states the running time and that it is silent, so nobody waits
     // for narration that does not exist.
     expect(FILM.accessibleName).toMatch(/25 seconds/);
@@ -221,8 +297,8 @@ describe("accessible without sight and without sound", () => {
     // Visually hidden, never REMOVED. `hidden`, display:none or aria-hidden
     // would take it out of the accessibility tree as well, which is the
     // opposite of the point. Scoped to the transcript element, because
-    // aria-hidden is correct elsewhere in the file — the decorative play glyph
-    // legitimately carries it, and a whole-file scan would forbid that too.
+    // aria-hidden is correct elsewhere in the file — the decorative glyphs
+    // legitimately carry it, and a whole-file scan would forbid that too.
     const at = PLAYER.indexOf("id={transcriptId}");
     expect(at, "transcript element not found").toBeGreaterThan(-1);
     const transcript = PLAYER.slice(at, PLAYER.indexOf("</div>", at));
@@ -230,67 +306,64 @@ describe("accessible without sight and without sound", () => {
     expect(transcript).not.toMatch(/\bhidden(=|\s|\/?>)/);
     expect(transcript).not.toMatch(/aria-hidden/);
     expect(transcript).not.toMatch(/display:\s*none/);
-    // And it is announced with the control, not merely present on the page.
-    expect(PLAYER).toMatch(/aria-describedby=\{transcriptId\}/);
+    // And it is announced with the film and its start control.
+    expect((PLAYER.match(/aria-describedby=\{transcriptId\}/g) ?? []).length).toBe(2);
   });
 
-  it("the demo-data label cannot swallow a click meant for the play control", () => {
-    // MY OWN FIX, PINNED, because nothing else proves it. The label paints
-    // after the full-bleed button and overlaps it, so without pointer-events
-    // the bottom-left corner of the play target is silently dead — and the
-    // browser proof clicks the button's CENTRE, so it would never notice.
-    const at = PLAYER.indexOf("POSITIONING.demoDataLabel");
-    expect(at, "poster label not found").toBeGreaterThan(-1);
-    // The span that carries it, scanning back to its opening tag.
-    const openedAt = PLAYER.lastIndexOf("<span", at);
-    const label = PLAYER.slice(openedAt, at);
-    expect(label).toContain("absolute");
-    expect(
-      label,
-      "the poster's demo-data label overlaps the play button and must not take pointer events",
-    ).toContain("pointer-events-none");
+  it("renders the demo-data disclosure in every state, once, under the picture", () => {
+    // The poster frame and the film both burn these exact words into their own
+    // corner, so the one HTML copy is the caption under the frame. It is the
+    // figure's last child and outside every playback branch, so a visitor who
+    // never sees the film move still reads it. (It used to be repeated ON the
+    // poster as well: a third copy of the same line in one place.)
+    expect((PLAYER.match(/POSITIONING\.demoDataLabel/g) ?? []).length).toBe(1);
+    expect(PLAYER).toMatch(
+      /<figcaption[^>]*>\s*\{POSITIONING\.demoDataLabel\}\s*<\/figcaption>\s*<\/figure>/,
+    );
   });
 
-  it("moves focus to the video it swapped in", () => {
-    // Activation UNMOUNTS the button the keyboard user just pressed. Without a
-    // transfer their focus falls to the body, the film plays, and the pause and
-    // scrub controls they now need are a full tab sequence away.
-    expect(PLAYER).toMatch(/el\.focus\(\)/);
-    // And it happens in the activation effect, not on mount — focusing a video
-    // on mount would steal focus from wherever the person actually was.
-    const effect = PLAYER.slice(PLAYER.indexOf("useEffect("), PLAYER.indexOf("}, [activated]);"));
-    expect(effect).toContain("if (!activated) return;");
-    expect(effect).toContain("el.focus()");
+  it("hands focus on: to Pause after a start, back to Play after a refusal", () => {
+    // Each start control unmounts the button that was pressed; focus left on
+    // a removed element falls to the top of the document.
+    expect(between("function startByPerson()", "function toggle()")).toMatch(
+      /toggleRef\.current\?\.focus\(\)/,
+    );
+    expect(between("function attemptPlay()", "function startByPerson()")).toMatch(
+      /if \(hadFocus\) startRef\.current\?\.focus\(\)/,
+    );
   });
 
-  it("the play control is a real button, not a click handler on a div", () => {
-    expect(PLAYER).toMatch(/<button\s/);
-    expect(PLAYER).toMatch(/type="button"/);
-    expect(PLAYER).toMatch(/focus-visible:ring/);
+  it("both controls are real buttons whose focus survives forced colours", () => {
+    expect((PLAYER.match(/<button\s/g) ?? []).length).toBe(2);
+    expect((PLAYER.match(/type="button"/g) ?? []).length).toBe(2);
+    // An outline, not a ring: box-shadow rings vanish in forced-colours mode,
+    // and LAW 6 says focus must not depend on colour the system may override.
+    expect((PLAYER.match(/focus-visible:outline-2/g) ?? []).length).toBe(2);
+    expect(PLAYER).not.toMatch(/outline-none/);
   });
 
-  it("native controls are present once it plays", () => {
-    // Keyboard scrubbing and pause, for free and correct. The asset has no
-    // audio, so the volume control native chrome shows is inert — that is a
-    // better trade than hand-rolling a control surface and its a11y.
-    expect(PLAYER).toMatch(/\bcontrols\b/);
+  it("the Pause control meets the 44px touch floor in both dimensions", () => {
+    const toggle = between("ref={toggleRef}", ">");
+    expect(toggle).toMatch(/\bmin-h-11\b/);
+    expect(toggle).toMatch(/\bmin-w-11\b/);
   });
 });
 
 describe("motion", () => {
-  it("nothing moves before the click, so reduced motion needs no branch", () => {
-    // The facade has no transition, animation or transform. The one moving
-    // thing on the page is a film a person pressed play on, which is requested
-    // motion and is not what prefers-reduced-motion is about.
-    const facade = PLAYER.slice(PLAYER.indexOf("activated ?"));
-    expect(facade).not.toMatch(/animate-|transition-|@keyframes|\btransform\b/);
+  it("nothing animates but the film itself", () => {
+    // No entrance, no pulse, no animated glyph. The control's hover is a colour
+    // change on the shared UI duration (DESIGN contract 8), not motion.
+    expect(PLAYER).not.toMatch(/animate-|@keyframes|\btransform\b/);
+    expect(PLAYER).toMatch(/duration-\[var\(--hone-duration-ui\)\]/);
   });
 });
 
 describe("analytics stays inside the existing allowlist", () => {
-  it("the play event is declared in ANALYTICS_EVENTS and used by name", () => {
+  it("film_play marks a person pressing Play — never autoplay, never Pause", () => {
     expect(ANALYTICS_EVENTS.filmPlay).toBe("marketing:film_play");
+    // The start button, and the toggle only while it reads "Play".
     expect(PLAYER).toMatch(/data-event=\{ANALYTICS_EVENTS\.filmPlay\}/);
+    expect(PLAYER).toMatch(/data-event=\{paused \? ANALYTICS_EVENTS\.filmPlay : undefined\}/);
   });
 
   it("the player wires up no analytics transport of its own", () => {
@@ -311,8 +384,9 @@ describe("analytics stays inside the existing allowlist", () => {
 });
 
 describe("the homepage consumes the film as section 1", () => {
-  it("renders the player, and the close reuses the film's own end card", () => {
+  it("renders the player edge to edge on a phone, and closes on the film's own end card", () => {
     expect(PAGE).toMatch(/<ProductFilm\b/);
+    expect(HOMEPAGE_CALL).toMatch(/\bbleed\b/);
     // The end-card wording is COPY and belongs to MKT-02A's POSITIONING, not to
     // this lane's asset constant. What is pinned here is that the page actually
     // closes on it — the film's last frame and the page's last words agreeing.

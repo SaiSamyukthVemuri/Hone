@@ -56,7 +56,9 @@ export function Container({
 
 type Tone = "paper" | "warm" | "band";
 
-/** A vertical-rhythm section. `tone="band"` is the one dark comparison band. */
+/** A vertical-rhythm section. `tone="band"` is the one dark comparison band.
+ *  Padding is the site-wide `--mk-section-pad` (app/globals.css), so every
+ *  marketing page shares one rhythm instead of each section choosing its own. */
 export function Section({
   children,
   id,
@@ -77,7 +79,7 @@ export function Section({
   return (
     <section
       id={id}
-      className={`${toneClass} py-[clamp(4.5rem,6vw,7rem)] ${className}`}
+      className={`${toneClass} py-[var(--mk-section-pad)] ${className}`}
       data-tone={tone}
     >
       {children}
@@ -85,7 +87,9 @@ export function Section({
   );
 }
 
-/** Uppercase, letter-spaced kicker/label. */
+/** Short label above a heading, in sentence case. It names what the block is
+ *  about; it is not decoration, so it is set as words rather than as a tracked
+ *  all-caps device (MKT-03 retired the uppercase treatment site-wide). */
 export function Eyebrow({
   children,
   onBand = false,
@@ -97,7 +101,7 @@ export function Eyebrow({
 }) {
   return (
     <p
-      className={`text-[0.8125rem] font-semibold uppercase tracking-[0.14em] ${
+      className={`text-[0.9375rem] font-medium leading-[1.4] ${
         onBand ? "text-[color:var(--color-onband-muted)]" : "text-mineral"
       } ${className}`}
     >
@@ -106,21 +110,26 @@ export function Eyebrow({
   );
 }
 
-/** Hero H1. */
+/** Hero H1. `size="compact"` caps at 64px instead of 72px, for an opening that
+ *  sets the headline beside its supporting copy rather than above it. */
 export function Display({
   children,
+  size = "default",
   className = "",
 }: {
   children: ReactNode;
+  size?: "default" | "compact";
   className?: string;
 }) {
   return (
     <h1
       className={`text-balance ${className}`}
-      style={displayStyle("clamp(2.75rem, 1.7rem + 3.9vw, 4.5rem)", {
-        lineHeight: 1.02,
-        letterSpacing: "-0.03em",
-      })}
+      style={displayStyle(
+        size === "compact"
+          ? "clamp(2.5rem, 1.5rem + 3vw, 4rem)"
+          : "clamp(2.75rem, 1.7rem + 3.9vw, 4.5rem)",
+        { lineHeight: 1.02, letterSpacing: "-0.03em" },
+      )}
     >
       {children}
     </h1>

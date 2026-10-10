@@ -7,7 +7,6 @@ import {
   Title,
   Subtitle,
   Lede,
-  Hairline,
   CTAButton,
 } from "./primitives";
 import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
@@ -37,8 +36,10 @@ export function WalkthroughCTA({ title, body }: { title: string; body: ReactNode
 // A ruled desktop feature matrix (title + body). Edge-aligned columns, row and
 // column dividers at lg, and a shared title min-height so bodies align across
 // each row: a designed desktop table, not floating cards.
+// Cell padding follows the MKT-03 rhythm: 20px rows on a phone, 28px on a
+// desktop, where a 36px row read as more paper than content.
 const featureCell =
-  "flex flex-col border-b border-[color:var(--color-hairline)] py-7 lg:py-9 sm:px-6 lg:px-9 " +
+  "flex flex-col border-b border-[color:var(--color-hairline)] py-5 sm:px-6 lg:px-9 lg:py-7 " +
   "lg:[&:nth-child(3n+1)]:pl-0 lg:[&:nth-child(3n)]:pr-0 " +
   "lg:[&:not(:nth-child(3n+1))]:border-l lg:[&:not(:nth-child(3n+1))]:border-[color:var(--color-hairline)]";
 
@@ -83,33 +84,44 @@ export function FeatureMatrix({ items }: { items: MatrixItem[] }) {
   );
 }
 
-/** Numbered workflow steps (2 columns x 3 rows) for the editorial split. A
- *  prominent teal step number, a strong title, a hairline, then the description.
- *  Titles share a min-height so dividers and descriptions align across each row.
- *  Reads as an ordered process (01 -> 06), not a feature matrix. */
+/** The connected workflow as an ordered list (2 columns from `sm`, 1 on a
+ *  phone). The numbers are real — a visit happens in this order — so the list
+ *  is an <ol>, and the visible "01" beside each title is the same fact drawn,
+ *  hidden from assistive tech to avoid announcing it twice. One hairline per
+ *  step, no fixed title height: the grid is as tall as what it says, which is
+ *  what lets it sit level with the column beside it. */
 export function WorkflowGrid({
   steps,
 }: {
   steps: { n: string; title: string; body: string }[];
 }) {
   return (
-    <div className="grid grid-cols-1 gap-x-[clamp(2.5rem,4vw,4.5rem)] gap-y-[clamp(1.875rem,3vw,3rem)] sm:grid-cols-2">
+    <ol className="grid grid-cols-1 gap-x-[clamp(2rem,3.5vw,3.5rem)] gap-y-5 sm:grid-cols-2 sm:gap-y-7">
       {steps.map((s) => (
-        <div key={s.n} className="flex flex-col">
-          <span className="text-[1rem] font-semibold tabular-nums tracking-[0.02em] text-mineral">
+        <li
+          key={s.n}
+          className="grid grid-cols-[2.25rem_minmax(0,1fr)] border-t border-[color:var(--color-hairline-strong)] pt-4"
+        >
+          <span
+            aria-hidden="true"
+            className="pt-[0.2rem] text-[0.875rem] font-semibold tabular-nums text-mineral"
+          >
             {s.n}
           </span>
-          <h3
-            className="mt-2 text-[1.375rem] font-semibold leading-[1.15] tracking-[-0.02em] text-ink lg:min-h-[3.2rem]"
-            style={{ fontFamily: "var(--font-marketing-sans)" }}
-          >
-            {s.title}
-          </h3>
-          <Hairline className="my-3.5" />
-          <p className="text-[1.0625rem] leading-[1.5] text-muted">{s.body}</p>
-        </div>
+          <div>
+            <h3
+              className="text-[1.125rem] font-semibold leading-[1.25] tracking-[-0.015em] text-ink sm:text-[1.25rem]"
+              style={{ fontFamily: "var(--font-marketing-sans)" }}
+            >
+              {s.title}
+            </h3>
+            <p className="mt-1.5 text-[1rem] leading-[1.5] text-muted sm:text-[1.0625rem]">
+              {s.body}
+            </p>
+          </div>
+        </li>
       ))}
-    </div>
+    </ol>
   );
 }
 
@@ -125,7 +137,7 @@ export function RelatedLinks({
   links: { href: string; label: string; blurb: string }[];
 }) {
   return (
-    <Section tone="paper" className="!py-[clamp(3.5rem,5vw,5.5rem)]">
+    <Section tone="paper">
       <Container size="wide">
         <Eyebrow>{eyebrow}</Eyebrow>
         <Title className="mt-3 max-w-2xl">{title}</Title>

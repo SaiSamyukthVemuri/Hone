@@ -78,13 +78,12 @@ test.describe("reduced motion", () => {
 });
 
 // THE SAME PLAYER ON A SECOND PAGE, WHICH IS WHY THIS IS NOT A DUPLICATE OF
-// e2e/marketing-homepage-film.spec.ts. That spec is the deep proof of #764's
-// ProductFilm and it runs on `/`. MKT-02E put the same component on /demo inside
-// a band section with no props, so what is unproven is the CALL SITE: that the
-// adaptation did not cost the facade behaviour or the focus transfer on this
-// page. Both properties are asserted here against /demo specifically, by the
-// same methods that spec uses -- request counting and keyboard drive -- rather
-// than by re-checking attributes on a component whose source is already guarded.
+// e2e/marketing-homepage-film.spec.ts. That spec is the deep proof of the
+// ProductFilm and it runs on `/`, where the film AUTOPLAYS (MKT-03). /demo uses
+// the component with no props, which is the MANUAL contract: a lead form whose
+// visitors did not come for 3.6 MB of video. What is unproven is that call
+// site, so both properties are asserted against /demo specifically, by the same
+// methods that spec uses -- request counting and keyboard drive.
 const FILM_URL = /\/film\/hone-treatment-memory-v3-1\.mp4/;
 
 test.describe("the product film on /demo", () => {
@@ -109,12 +108,12 @@ test.describe("the product film on /demo", () => {
     ).toHaveLength(0);
   });
 
-  // Pressing play REPLACES the poster button with a <video>. The button holding
-  // focus is unmounted, and focus on a removed element falls to <body> — the
-  // visitor who just asked for the film is silently returned to the top of the
-  // document, with the controls they asked for reachable only by tabbing the
-  // whole page again. Driven by keyboard, because that is who it happens to.
-  test("/demo — keyboard play moves focus onto the film, not to the body", async ({ page }) => {
+  // Pressing play REMOVES the poster's start button. The button holding focus
+  // is unmounted, and focus on a removed element falls to <body> — the visitor
+  // who just asked for the film is silently returned to the top of the
+  // document, with the Pause control they now need reachable only by tabbing
+  // the whole page again. Driven by keyboard, because that is who it happens to.
+  test("/demo — keyboard play hands focus to the Pause control, and the film plays", async ({ page }) => {
     await page.goto("/demo");
 
     const play = page.getByRole("button", { name: /^Play:/ });
@@ -122,14 +121,17 @@ test.describe("the product film on /demo", () => {
     await play.focus();
     await page.keyboard.press("Enter");
 
-    const video = page.locator("video");
-    await expect(video).toBeVisible();
-    await expect(video).toBeFocused();
+    const pause = page.getByRole("button", { name: "Pause the product film" });
+    await expect(pause).toBeFocused();
     expect(
       await page.evaluate(() => document.activeElement?.tagName ?? ""),
-      "focus fell out of the film when the poster was swapped for the video",
-    ).toBe("VIDEO");
-    // The controls the transfer exists to hand over are actually there.
-    await expect(video).toHaveAttribute("controls", "");
+      "focus fell out of the film when the start button unmounted",
+    ).toBe("BUTTON");
+
+    // And the film is genuinely playing — the state the focus was handed to.
+    const video = page.locator("video");
+    await expect
+      .poll(async () => video.evaluate((v) => (v as HTMLVideoElement).currentTime), { timeout: 20_000 })
+      .toBeGreaterThan(0.2);
   });
 });

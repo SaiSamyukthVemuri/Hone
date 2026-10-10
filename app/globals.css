@@ -269,6 +269,22 @@ body {
   font-family: var(--font-marketing-text);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Vertical rhythm (MKT-03). ONE section padding for the whole marketing
+   * site, read by the Section primitive: 32px on a phone, rising with the
+   * viewport to 64px on a wide desktop. The previous 72-144px bands left more
+   * paper than content on most screens. A block that needs a different rhythm
+   * (the homepage's compact opening) says so where it is built. */
+  --mk-section-pad: clamp(2rem, 1.25rem + 3vw, 4rem);
+}
+
+/* A frame that runs edge to edge on a phone, where the shell's gutters would
+ * cost a 16:9 product film a sixth of its width. Below `sm` only; from there
+ * up the frame keeps the shell's edges like everything else. Percent margins
+ * resolve against the frame's own column, so this cancels exactly the gutter. */
+@media (width < 40rem) {
+  .marketing-surface .mk-bleed {
+    margin-inline: calc((100% - 100vw) / 2);
+  }
 }
 .marketing-surface ::selection {
   background: var(--color-wash);
