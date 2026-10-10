@@ -375,7 +375,7 @@ describe("the module cannot be asked who a phone belongs to", () => {
   });
 });
 
-describe("send eligibility stays fail-closed, and B2b does not open it", () => {
+describe("send eligibility: consent and no STOP decide, verification is optional (D4(2))", () => {
   const V = "2026-09-27T10:00:00.000Z";
   const C = "2026-09-27T10:05:00.000Z";
 
@@ -385,10 +385,10 @@ describe("send eligibility stays fail-closed, and B2b does not open it", () => {
     ).toBe(false);
   });
 
-  it("consent WITHOUT verification is ineligible", () => {
+  it("consent WITHOUT verification is eligible (Roadmap v1.25)", () => {
     expect(
       prospectMayReceiveSms({ mobile_verified_at: null, sms_consent_at: C, sms_opted_out_at: null }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("verification AND consent but OPTED OUT is ineligible", () => {
@@ -399,7 +399,7 @@ describe("send eligibility stays fail-closed, and B2b does not open it", () => {
     ).toBe(false);
   });
 
-  it("only all three together satisfy the mobile/consent portion", () => {
+  it("verification adds nothing to the decision", () => {
     expect(
       prospectMayReceiveSms({ mobile_verified_at: V, sms_consent_at: C, sms_opted_out_at: null }),
     ).toBe(true);

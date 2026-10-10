@@ -20,11 +20,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //     consent-authority.db.test.ts, against a real database and 0202's guard;
 //   * prospect send eligibility — tests/lib/waitlist/prospect-sms-consent.test.ts.
 
+import { candidateRows, pagedSource, type PagedSource } from "@/tests/lib/sms/helpers/postgrest-pages";
+
 type Row = { id: string; studio_id: string; phone: string | null; sms_opted_out_at: string | null };
 
 const h: {
   clients: Row[];
   prospects: Row[];
+  /** Both scans answer like PostgREST: row-limited pages (Codex P1 4234615485). */
+  clientSource: PagedSource;
+  prospectSource: PagedSource;
+  /** Fail exactly this page (0-based) of a scan. */
+  clientPageFail: number | null;
+  prospectPageFail: number | null;
   validSignature: boolean;
   clientUpdates: Array<{ id: string }>;
   suppressCalls: Array<{ ids: string[]; optedAt: string }>;
@@ -34,7 +42,10 @@ const h: {
   failProspectScan: boolean;
   failProspectSuppress: boolean;
 } = {
-  clients: [], prospects: [], validSignature: true,
+  clients: [], prospects: [],
+  clientSource: pagedSource(() => []), prospectSource: pagedSource(() => []),
+  clientPageFail: null, prospectPageFail: null,
+  validSignature: true,
   clientUpdates: [], suppressCalls: [], audits: [],
   failClientUpdate: false, failClientScan: false, failProspectScan: false, failProspectSuppress: false,
 };
@@ -55,15 +66,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           },
         };
       }
-      // clients: select(...).not(...) resolves to the candidate rows;
+      // clients: select(...) starts one row-limited page of the scan;
       // update(...).eq(...).is(...) records the stamp.
       return {
-        select: () => ({
-          not: () =>
-            h.failClientScan
-              ? Promise.resolve({ data: null, error: { message: "client scan boom" } })
-              : Promise.resolve({ data: h.clients, error: null }),
-        }),
+        select: () => h.clientSource.query(),
         update: () => ({
           eq: (_c: string, id: string) => ({
             is: () => {
@@ -76,10 +82,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       };
     },
     rpc(fn: string, args?: Record<string, unknown>) {
-      if (fn === "waitlist_prospect_suppression_candidates") {
-        if (h.failProspectScan) return Promise.resolve({ data: null, error: { message: "scan boom" } });
-        return Promise.resolve({ data: h.prospects, error: null });
-      }
+      if (fn === "waitlist_prospect_suppression_candidates") return h.prospectSource.query();
       if (fn === "suppress_waitlist_prospects") {
         const ids = (args?.p_entry_ids as string[]) ?? [];
         h.suppressCalls.push({ ids, optedAt: String(args?.p_opted_at) });
@@ -124,6 +127,10 @@ beforeEach(() => {
   h.failClientScan = false;
   h.failProspectScan = false;
   h.failProspectSuppress = false;
+  h.clientPageFail = null;
+  h.prospectPageFail = null;
+  h.clientSource = pagedSource(() => h.clients, { fail: (i) => h.failClientScan || i === h.clientPageFail });
+  h.prospectSource = pagedSource(() => h.prospects, { fail: (i) => h.failProspectScan || i === h.prospectPageFail });
 });
 
 const P = (id: string, studio: string, phone: string | null, out: string | null = null): Row => ({
@@ -349,5 +356,54 @@ describe("the route holds no second suppression rule", () => {
       expect(args, "the inbound To never reaches the selector").not.toMatch(/\bto\b/);
       expect(args, "matching is on the sender-blind From").toMatch(/fromPhone:\s*from/);
     }
+  });
+});
+
+// ===========================================================================
+// THE SCANS ARE COMPLETE PAST THE API'S ROW LIMIT (Codex P1 4234615485).
+// One PostgREST response stops at its row limit (1,000) with no error, so a
+// single read would never see a match past it, and that STOP would never be
+// recorded. Both scans now read to the end. A failed page is a failed scan:
+// the existing posture, a 500 so Twilio retries.
+// ===========================================================================
+describe("a STOP is recorded however many rows precede the match", () => {
+  const FROM = "+14165557777";
+
+  it("a CLIENT whose number is row 1,500 of 2,000 clients with a phone is opted out", async () => {
+    h.clients = candidateRows(2000, "c", { sms_opted_out_at: null }, { 1500: { phone: "(416) 555-7777" } }) as Row[];
+    const res = await stop(FROM);
+    expect(res.status).toBe(200);
+    expect(h.clientUpdates).toEqual([{ id: "c-001500" }]);
+    expect(h.clientSource.requests).toBe(3); // 1,000 + 1,000, then the empty page
+  });
+
+  it("a PROSPECT whose number is row 1,200 of 1,300 prospect candidates is suppressed", async () => {
+    h.prospects = candidateRows(1300, "p", { sms_opted_out_at: null }, { 1200: { phone: "416.555.7777" } }) as Row[];
+    const res = await stop(FROM);
+    expect(res.status).toBe(200);
+    expect(h.suppressCalls.map((c) => c.ids)).toEqual([["p-001200"]]);
+  });
+
+  it("a failed SECOND page of the client scan is a failed scan: 500, so Twilio retries", async () => {
+    h.clients = candidateRows(1500, "c", { sms_opted_out_at: null });
+    h.clientPageFail = 1;
+    const res = await stop(FROM);
+    expect(res.status).toBe(500);
+    expect(h.clientUpdates).toEqual([]);
+  });
+
+  it("a failed SECOND page of the prospect scan is a failed scan: 500", async () => {
+    h.prospects = candidateRows(1500, "p", { sms_opted_out_at: null });
+    h.prospectPageFail = 1;
+    const res = await stop(FROM);
+    expect(res.status).toBe(500);
+    expect(h.suppressCalls).toEqual([]);
+  });
+
+  it("control: a match on the first page still opts out exactly as before", async () => {
+    h.clients = candidateRows(10, "c", { sms_opted_out_at: null }, { 4: { phone: "+1 416 555 7777" } }) as Row[];
+    const res = await stop(FROM);
+    expect(res.status).toBe(200);
+    expect(h.clientUpdates).toEqual([{ id: "c-000004" }]);
   });
 });

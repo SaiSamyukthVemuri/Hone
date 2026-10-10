@@ -139,11 +139,28 @@ describe("mobile / accessibility contract of the waitlist form", () => {
   it("gives the CTA a >=44px target and bounds every field to the container", () => {
     expect(html).toContain("min-h-[44px]");
     const inputs = [...html.matchAll(/<input[^>]*>/g)].map((m) => m[0]);
-    expect(inputs).toHaveLength(3);
-    for (const input of inputs) {
+    const fields = inputs.filter((input) => !input.includes('type="radio"'));
+    expect(fields).toHaveLength(3);
+    for (const input of fields) {
       expect(input, "fields must not overflow at 390px").toContain("w-full");
       expect(input).toContain("max-w-full");
     }
+  });
+
+  it("0208: each SMS answer is a >=44px target, labelled by its own word", () => {
+    // The radio itself is small; the LABEL is the target, so it carries the
+    // height. Each label wraps exactly one radio and names it.
+    // Labels do not nest, so each match runs to its own closing tag.
+    const labels = [...html.matchAll(/<label[^>]*>[\s\S]*?<\/label>/g)]
+      .map((m) => m[0])
+      .filter((label) => label.includes('type="radio"'));
+    expect(labels).toHaveLength(2);
+    for (const label of labels) {
+      expect(label).toContain("min-h-[44px]");
+      expect(label.match(/<input/g)).toHaveLength(1);
+    }
+    expect(labels[0]).toMatch(/>Yes<\/label>$/);
+    expect(labels[1]).toMatch(/>No<\/label>$/);
   });
 
   it("submits through a real form element, so keyboard Enter works", () => {

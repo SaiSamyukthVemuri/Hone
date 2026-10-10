@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { addDays, localDateString } from "@/lib/booking/tz";
@@ -7,6 +8,8 @@ import {
   sendWaitlistInvitationEmail,
   type DeliveryStudio,
 } from "@/lib/waitlist/delivery/send";
+import { sendWaitlistInvitationSms } from "@/lib/waitlist/delivery/sms";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import {
   type BookingScope,
@@ -348,6 +351,15 @@ export type DeliveryAttempt = {
   providerAttempted: boolean;
 };
 
+/**
+ * The invitation's public link. The raw token is spent into this URL, and the
+ * URL is handed only to the two message constructors -- the email and, for an
+ * eligible prospect, its SMS. It is never stored, logged or returned.
+ */
+function invitationUrlFor(rawToken: string): string {
+  return `${getRequiredAppOrigin()}/invitation/${rawToken}`;
+}
+
 async function deliverInvitation(args: {
   studio: DeliveryStudio;
   invitationId: string;
@@ -357,14 +369,12 @@ async function deliverInvitation(args: {
   expiresAt: Date;
 }): Promise<DeliveryAttempt> {
   try {
-    const origin = getRequiredAppOrigin();
     const result = await sendWaitlistInvitationEmail({
       studio: args.studio,
       invitationId: args.invitationId,
       recipientEmail: args.recipientEmail,
-      // The token appears in exactly one place: the URL handed to the mail
-      // constructor. It is built here and held nowhere else.
-      invitationUrl: `${origin}/invitation/${args.rawToken}`,
+      // The token reaches the mail constructor only inside this URL.
+      invitationUrl: invitationUrlFor(args.rawToken),
       issuedAt: args.issuedAt,
       expiresAt: args.expiresAt,
     });
@@ -384,6 +394,79 @@ async function deliverInvitation(args: {
     // result is genuinely undetermined; it just must not be WRITTEN DOWN as an
     // observed provider outcome.
     return { state: "unknown", providerAttempted: false };
+  }
+}
+
+/**
+ * SMS-01. The invitation's text, beside its email and in the SAME request --
+ * the raw token exists nowhere else, so there is no later send. It runs OFF
+ * the response path (scheduleOffResponsePath): the action never awaits it, so
+ * a stalled provider can never hold the Invite to book action open. Whether it
+ * goes at all is decided by the database claim (the studio switch, liveness,
+ * once per invitation) and by prospectMayReceiveSms; its outcome lives in the
+ * SMS ledger. It never changes the admission, the invitation or the email's
+ * disposition, and it never throws. A throw it contains raises the same
+ * durable `sms_send_failed` warning as a refused or lost text: this text has
+ * no later retry.
+ */
+async function deliverInvitationSms(args: {
+  studio: DeliveryStudio;
+  invitationId: string;
+  rawToken: string;
+}): Promise<void> {
+  try {
+    await sendWaitlistInvitationSms({
+      admin: createAdminClient(),
+      studio: args.studio,
+      invitationId: args.invitationId,
+      invitationUrl: invitationUrlFor(args.rawToken),
+    });
+  } catch {
+    // Structural only, like recordFailed: no recipient, token or identity.
+    console.error(
+      JSON.stringify({
+        event: "waitlist_invitation_sms_failed",
+        shape: "threw",
+        at: new Date().toISOString(),
+      }),
+    );
+    // recordOpsAlert never throws.
+    await recordOpsAlert({
+      severity: "warning",
+      event: "sms_send_failed",
+      message:
+        "A waitlist invitation text failed with an unexpected error and may not have been sent; the invitation email is unaffected.",
+      studioId: args.studio.id,
+      route: "lib/waitlist/invite-to-book-adapter",
+      safeDetails: { purpose: "waitlist_invitation", shape: "threw" },
+    });
+  }
+}
+
+/**
+ * Run work OFF the response path without touching the request: schedule() in
+ * lib/analytics/server.ts, for the same reason (SENTRY-AFTER-01). The work
+ * starts on a later macrotask and is handed to after() as a STARTED PROMISE,
+ * never as a callback. In Next 15.5 a callback enrols this Server Action's
+ * request store, and if the response closes early -- the practitioner
+ * navigates away while the email is still sending -- Next flips that shared
+ * store to the "after" phase, so the action's revalidatePath and re-render
+ * throw on cookies()/headers(). A promise is waitUntil only: it keeps the
+ * invocation alive until the work settles and never touches the phase.
+ * Outside a request scope, or where after() is unavailable, the started work
+ * simply runs fire-and-forget. The caller never awaits it.
+ */
+function scheduleOffResponsePath(work: () => Promise<void>): void {
+  const task = new Promise<void>((resolve) => setTimeout(resolve, 0))
+    .then(work)
+    .catch(() => {
+      // `work` is written never to reject; this keeps that a guarantee.
+    });
+  try {
+    after(task);
+  } catch {
+    // Out of request scope (or after() unavailable): the task is already
+    // queued and runs fire-and-forget.
   }
 }
 
@@ -549,8 +632,15 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     // THE RAW TOKEN EXISTS EXACTLY ONCE, IN MEMORY, HERE. Only its digest is
     // persisted, so if this function returns without spending it the invitation
     // can never be delivered by any later process. It is passed straight into
-    // #680's reviewed send path and into nothing else: not stored, not logged,
+    // #680's reviewed email path and SMS-01's text path, inside the one URL
+    // invitationUrlFor builds, and into nothing else: not stored, not logged,
     // not returned, not attached to an error.
+    //
+    // SMS-01: one opportunity, one deadline, two channels. The text is
+    // scheduled off the response path, so it never delays the practitioner
+    // or the email; its outcome is not this function's `delivery` (that
+    // remains the email's recorded disposition).
+    scheduleOffResponsePath(() => deliverInvitationSms({ studio, invitationId, rawToken }));
     const attempt = await deliverInvitation({
       studio,
       invitationId,

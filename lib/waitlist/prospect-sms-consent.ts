@@ -284,28 +284,190 @@ export function buildProspectSmsConsentRecord(input: {
  * The same law as `honeSuppressionAllowsSend` for clients, restated over a
  * prospect record so the answer cannot differ between the two. Opt-out
  * dominates: a person who replied STOP is not textable no matter what a consent
- * column says, because the STOP came later and means more.
+ * column says, because the STOP came later and means more. Then recorded
+ * consent decides.
  *
- * A PHONE NUMBER IS NOT AN ARGUMENT TO THIS FUNCTION. It cannot be: possession
- * is not part of the decision, so it is not part of the signature.
+ * VERIFICATION IS OPTIONAL (Roadmap v1.25; operator decision D4(2),
+ * 2026-10-08). OTP / Twilio Verify is not a normal WAIT launch prerequisite, so
+ * a verified mobile is no longer a condition of sending. The protections that
+ * keep this decision safe sit beside this function:
+ *   - CONSENT IS BOUND TO ONE NUMBER. The database records consent only on a
+ *     row that holds a phone: the join requires one, and a completion requires
+ *     one. It never lets a stored phone be replaced or cleared (0202/0203), so
+ *     a consent can never be carried over to a number it was not given with.
+ *   - THE NUMBER MUST BE USABLE. The send path refuses a phone that does not
+ *     normalise (`invalid_phone`).
+ *   - NON-PRODUCTION NEVER SENDS. The deployment fence refuses before any
+ *     claim.
+ * WHAT THIS ACCEPTS: nobody proved the number reaches the person. A mistyped
+ * number, or a join that pairs someone's name and email with a phone the
+ * submitter controls, receives the text. STOP ends it, phone-wide and for
+ * good.
+ *
+ * A PHONE NUMBER IS NOT AN ARGUMENT TO THIS FUNCTION: possession is not part
+ * of the decision, so it is not part of the signature.
  */
 export function prospectMayReceiveSms(record: {
   sms_consent_at: string | null;
   sms_opted_out_at: string | null;
   /**
-   * REQUIRED, and required for a reason. Making it optional would let every
-   * existing call site keep compiling while silently authorising sends to
-   * unverified numbers — the precise failure this parameter exists to stop.
+   * Proof that the number reaches the person, when a verification flow has
+   * produced one. Accepted so a caller can pass the stored row as it is. NOT
+   * consulted: verification is optional strengthening, never a gate.
    */
-  mobile_verified_at: string | null;
+  mobile_verified_at?: string | null;
 }): boolean {
   // 1. A person who said STOP is not textable, whatever else is true.
   if (record.sms_opted_out_at) return false;
-  // 2. A NUMBER SOMEONE TYPED IS NOT A CHANNEL. A bearer completion link can
-  //    supply a candidate; verification is what makes it a destination. Without
-  //    this line, a candidate paired with a consent tick in the same submission
-  //    would authorise texts to whoever holds the link.
-  if (!record.mobile_verified_at) return false;
-  // 3. And only then does consent decide.
+  // 2. Recorded consent decides.
   return Boolean(record.sms_consent_at);
+}
+
+// ===========================================================================
+// 0208 — THE SIGNUP ANSWER, AND CONSENT A STUDIO OWNER RECORDS
+// ===========================================================================
+
+/**
+ * The live signup's SMS question. The form shows SMS_OPERATIONAL_CONSENT_LABEL
+ * verbatim, so a Yes is agreement to waitlist_sms_operational_v1 and nothing is
+ * re-worded. Two radios, NEITHER PRESELECTED: a default would record an answer
+ * the person never gave.
+ */
+export const SMS_CONSENT_ANSWER_FIELD = "sms_consent_answer";
+export const SMS_CONSENT_ANSWER_YES = "yes";
+export const SMS_CONSENT_ANSWER_NO = "no";
+
+/**
+ * Read the signup answer. THREE outcomes, and the third is not the second:
+ * `null` means NOT ANSWERED, which the action refuses, never "no". A checkbox
+ * cannot say this (unticked is indistinguishable from unanswered), which is why
+ * this field is a pair of radios rather than `parseSmsOperationalConsent`.
+ */
+export function parseSmsConsentAnswer(
+  value: FormDataEntryValue | null | undefined,
+): boolean | null {
+  if (value === SMS_CONSENT_ANSWER_YES) return true;
+  if (value === SMS_CONSENT_ANSWER_NO) return false;
+  return null;
+}
+
+/**
+ * What a practitioner-recorded consent covers (0208 `sms_consent_scope`). ONE
+ * purpose, the one the public sentence names, so an owner's record and a
+ * person's own Yes authorise the same texts. A wider purpose is a new value
+ * AND a sender that reads it, never a reinterpretation of this one.
+ */
+export const PRACTITIONER_SMS_CONSENT_SCOPES = ["waitlist_operational"] as const;
+export type PractitionerSmsConsentScope = (typeof PRACTITIONER_SMS_CONSENT_SCOPES)[number];
+export const PRACTITIONER_SMS_CONSENT_SCOPE: PractitionerSmsConsentScope = "waitlist_operational";
+
+/** The scope in words, for the owner's attestation. */
+export const PRACTITIONER_SMS_CONSENT_SCOPE_TEXT =
+  "texts about this waitlist and any appointment offered from it";
+
+export const SMS_CONSENT_EVIDENCE_MIN = 3;
+export const SMS_CONSENT_EVIDENCE_MAX = 200;
+/** The earliest consent day the database accepts. */
+export const SMS_CONSENT_EARLIEST_DAY = "2000-01-01";
+
+export const PRACTITIONER_CONSENT_FIELDS = {
+  attest: "sms_consent_attest",
+  evidence: "sms_consent_evidence_ref",
+  dateKnown: "sms_consent_date_known",
+  givenOn: "sms_consent_given_on",
+} as const;
+
+export type PractitionerSmsConsentInput = {
+  scope: PractitionerSmsConsentScope;
+  evidenceRef: string;
+  /** True when the owner states the day; false when they declare it unknown. */
+  consentDateKnown: boolean;
+  /** YYYY-MM-DD when known, else null. Never guessed. */
+  consentGivenOn: string | null;
+};
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+
+function isRealCalendarDay(value: string): boolean {
+  if (!ISO_DAY.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return (
+    date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
+  );
+}
+
+/**
+ * Validate an owner's consent recording BEFORE the command sees it, so each
+ * refusal can say which answer is missing. The command re-checks everything
+ * and is the authority; this is the clearer message.
+ *
+ * `studioToday` is the studio's own calendar day (YYYY-MM-DD): a day the owner
+ * reads off a local calendar is never "tomorrow".
+ */
+export function parsePractitionerSmsConsentInput(
+  raw: {
+    attest: FormDataEntryValue | null | undefined;
+    evidence: FormDataEntryValue | null | undefined;
+    dateKnown: FormDataEntryValue | null | undefined;
+    givenOn: FormDataEntryValue | null | undefined;
+  },
+  studioToday: string,
+): { ok: true; value: PractitionerSmsConsentInput } | { ok: false; message: string } {
+  if (raw.attest !== "yes") {
+    return {
+      ok: false,
+      message: `Confirm the person agreed to ${PRACTITIONER_SMS_CONSENT_SCOPE_TEXT}.`,
+    };
+  }
+
+  const evidence = typeof raw.evidence === "string" ? raw.evidence.trim() : "";
+  if (
+    evidence.length < SMS_CONSENT_EVIDENCE_MIN ||
+    evidence.length > SMS_CONSENT_EVIDENCE_MAX ||
+    CONTROL_CHARACTER.test(evidence)
+  ) {
+    return {
+      ok: false,
+      message: `Say where the evidence of their agreement is (${SMS_CONSENT_EVIDENCE_MIN} to ${SMS_CONSENT_EVIDENCE_MAX} characters, one line).`,
+    };
+  }
+
+  if (raw.dateKnown !== "known" && raw.dateKnown !== "unknown") {
+    return { ok: false, message: "Say whether you know the day they agreed." };
+  }
+
+  if (raw.dateKnown === "unknown") {
+    return {
+      ok: true,
+      value: {
+        scope: PRACTITIONER_SMS_CONSENT_SCOPE,
+        evidenceRef: evidence,
+        consentDateKnown: false,
+        consentGivenOn: null,
+      },
+    };
+  }
+
+  const givenOn = typeof raw.givenOn === "string" ? raw.givenOn.trim() : "";
+  if (!isRealCalendarDay(givenOn)) {
+    return { ok: false, message: "Enter the day they agreed, or choose that it is not known." };
+  }
+  if (givenOn < SMS_CONSENT_EARLIEST_DAY) {
+    return { ok: false, message: "Enter a real day they agreed, from 2000 onward." };
+  }
+  if (givenOn > studioToday) {
+    return { ok: false, message: "The day they agreed can't be in the future." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      scope: PRACTITIONER_SMS_CONSENT_SCOPE,
+      evidenceRef: evidence,
+      consentDateKnown: true,
+      consentGivenOn: givenOn,
+    },
+  };
 }

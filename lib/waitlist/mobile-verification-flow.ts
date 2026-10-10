@@ -41,8 +41,10 @@ import type { MobileVerificationProvider } from "@/lib/waitlist/mobile-verificat
 //      `resolve_new_client_waitlist_invitation` (entry_id, studio_id) and
 //      `resolve_waitlist_invitation_recipient_identity` (phone). No migration.
 //      Reachable only once an invitation is LIVE — which is after the moment a
-//      verified mobile would have been useful, because the point of verifying is
-//      to be allowed to text a prospect at all.
+//      verified mobile would have been useful, because the point of verifying
+//      was to be allowed to text a prospect at all. (Since Roadmap v1.25,
+//      operator decision D4(2), verification is optional and no longer gates a
+//      text.)
 //   B  PROFILE-COMPLETION GRANT. Needs one new narrow capability-gated read
 //      returning (entry_id, phone), in the shape 0192 established twice. The right
 //      moment, and the only option under which WAIT_04B_CAPABILITIES.verifiesMobile
