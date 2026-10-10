@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import posterImage from "@/app/_media/treatment-memory-setup-frame.png";
 import { ANALYTICS_EVENTS, FILM, POSITIONING } from "@/lib/marketing/content";
@@ -11,11 +11,13 @@ import { ANALYTICS_EVENTS, FILM, POSITIONING } from "@/lib/marketing/content";
 // TWO WAYS TO START, CHOSEN BY THE PAGE AND THEN BY THE VISITOR.
 //
 //   autoplay   The homepage. The film plays muted, inline and on a loop while
-//              at least half of it is on screen, and stops when it scrolls away.
-//              It is the page's product demonstration, so it moves without a
-//              click — but never against a stated preference:
+//              at least half of it is on screen, and stops as soon as less than
+//              half is. It is the page's product demonstration, so it moves
+//              without a click — but never against a stated preference:
 //                - prefers-reduced-motion: it starts on the poster, and only a
-//                  person pressing Play starts it;
+//                  person pressing Play starts it. Switched on mid-visit, it
+//                  stops the film wherever it is, and the page never starts it
+//                  again;
 //                - Save-Data: the same, because 3.6 MB of video the visitor did
 //                  not ask for is exactly what that setting refuses;
 //                - a REFUSED play() (Low Power Mode, a browser or site setting):
@@ -30,7 +32,9 @@ import { ANALYTICS_EVENTS, FILM, POSITIONING } from "@/lib/marketing/content";
 // reachable by keyboard. Its label comes from what the media element REPORTS
 // (`play`/`pause` events), not from what this component asked for, so it can
 // never say "Pause" over a film that is not playing. A person's Pause is final:
-// scrolling away and back never restarts a film someone stopped.
+// scrolling away and back never restarts a film someone stopped. And its Play
+// always plays, including before the page has created the film at all (a frame
+// that has not yet been half on screen).
 //
 // THE VIDEO IS STILL LAZY. The <video> element is created only when playback is
 // actually wanted — the page's own start (on screen, preference allows) or a
@@ -51,6 +55,9 @@ import { ANALYTICS_EVENTS, FILM, POSITIONING } from "@/lib/marketing/content";
 // also what lets a browser start it without a click. The text equivalent is
 // the transcript, announced with the film.
 type Start = "deciding" | "auto" | "manual";
+
+/** The share of the frame that must be on screen for the film to play. */
+const PLAY_WHEN_VISIBLE = 0.5;
 
 type SaveDataNavigator = Navigator & { connection?: { saveData?: boolean } };
 
@@ -81,33 +88,48 @@ export function ProductFilm({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const startRef = useRef<HTMLButtonElement | null>(null);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
+  // The page may start the film by itself: autoplay, and no stated preference
+  // against it. A ref, not state, because the observer reads it at the instant
+  // it would start the film, and a preference switched on mid-visit has to win
+  // that instant, not the next render.
+  const pageMayStart = useRef(false);
   // The visitor pressed Pause. Nothing but the visitor resumes it.
   const heldByPerson = useRef(false);
   // The browser refused to start it. The page does not try again on its own.
   const refused = useRef(false);
   const transcriptId = useId();
 
-  function attemptPlay() {
+  // Both read only refs and state setters, so their identity never changes and
+  // the effects below that call them still run only when the mode does.
+
+  // Put the poster's Play button back. If the Pause/Play control that is about
+  // to unmount held focus, hand it to that button, or focus would fall back to
+  // the top of the document.
+  const returnToPoster = useCallback(() => {
+    const hadFocus = document.activeElement === toggleRef.current;
+    flushSync(() => setAwaitingStart(true));
+    if (hadFocus) startRef.current?.focus();
+  }, []);
+
+  const attemptPlay = useCallback(() => {
     const el = videoRef.current;
     if (!el) return;
     const attempt = el.play();
     // An AbortError means our own pause() (or a reload) interrupted the request
     // — the film was not refused, so nothing changes. Anything else is a
-    // refusal: put the poster's Play button back, and if the Pause control that
-    // is about to unmount held focus, hand it to that button.
+    // refusal, and the visitor is owed a start again.
     attempt?.catch((error: unknown) => {
       if (error instanceof DOMException && error.name === "AbortError") return;
       refused.current = true;
-      const hadFocus = document.activeElement === toggleRef.current;
-      flushSync(() => setAwaitingStart(true));
-      if (hadFocus) startRef.current?.focus();
+      returnToPoster();
     });
-  }
+  }, [returnToPoster]);
 
-  // A person's start, from the poster's Play button. Commits the video and the
-  // Pause control synchronously so play() runs inside the click, then hands
-  // focus to the Pause control — the button they pressed has just unmounted,
-  // and focus left on a removed element falls back to the top of the document.
+  // A person's start, from the poster's Play button (or from the Play control
+  // before the film exists). Commits the video and the Pause control
+  // synchronously so play() runs inside the click, then hands focus to the
+  // Pause control — the poster's button has just unmounted, and focus left on
+  // a removed element falls back to the top of the document.
   function startByPerson() {
     heldByPerson.current = false;
     refused.current = false;
@@ -121,7 +143,12 @@ export function ProductFilm({
 
   function toggle() {
     const el = videoRef.current;
-    if (!el) return;
+    // No film yet: the frame has not been half on screen, so the page has not
+    // created it. Play here is a person's start, exactly like the poster's.
+    if (!el) {
+      startByPerson();
+      return;
+    }
     if (el.paused) {
       heldByPerson.current = false;
       attemptPlay();
@@ -132,30 +159,50 @@ export function ProductFilm({
   }
 
   // Read the preferences once the browser can answer, and keep listening to
-  // reduced motion: switched on mid-visit, it stops the motion the page
-  // started (the visitor can still press Play).
+  // reduced motion. Switched on mid-visit, it puts the film in manual mode
+  // WHATEVER the film is doing at that moment: playing, paused because it
+  // scrolled away, or not created yet. Stopping only a playing film is not
+  // enough — a film paused off screen would stay in auto mode and start again
+  // the moment it came back into view, against the preference just set.
+  //
+  // So the film stops; the page gives up its own start at once (the ref) and
+  // for the rest of the visit (manual mode tears the observer down); and a
+  // film that was never created goes back to the poster's Play, exactly as a
+  // reduced-motion visit begins. A person's Pause is untouched, and a person's
+  // Play still works. Switched off again, nothing restarts: the visitor has
+  // the control.
   useEffect(() => {
     if (!autoplay) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     const saveData = (navigator as SaveDataNavigator).connection?.saveData === true;
     const manual = reduce.matches || saveData;
+    pageMayStart.current = !manual;
     setStart(manual ? "manual" : "auto");
     setAwaitingStart(manual);
 
     const onChange = () => {
       if (!reduce.matches) return;
-      const el = videoRef.current;
-      if (el && !el.paused && !heldByPerson.current) {
-        heldByPerson.current = true;
-        el.pause();
-      }
+      pageMayStart.current = false;
+      videoRef.current?.pause();
+      setStart("manual");
+      if (!videoRef.current) returnToPoster();
     };
     reduce.addEventListener("change", onChange);
     return () => reduce.removeEventListener("change", onChange);
-  }, [autoplay]);
+  }, [autoplay, returnToPoster]);
 
   // Ordinary viewing: play while at least half the frame is on screen, stop
-  // when it leaves, so an off-screen loop never runs down a phone's battery.
+  // the moment less than half is, so an off-screen loop never runs down a
+  // phone's battery.
+  //
+  // THE RATIO, NOT `isIntersecting`. The threshold decides WHEN this callback
+  // runs; it does not change what `isIntersecting` means, and per the spec that
+  // is any overlap at all, true at 1% visible. Gating on it restarts the film on
+  // the way OUT (the callback that fires as the frame drops below half) and
+  // starts a frame that is only a strip on screen at load. Chromium happens to
+  // report it differently (false until the ratio reaches the lowest threshold,
+  // measured in Chromium 148), so the bug cannot be seen in Chrome alone; the
+  // browser spec runs these cases under both meanings.
   useEffect(() => {
     if (start !== "auto") return;
     const frame = frameRef.current;
@@ -163,19 +210,19 @@ export function ProductFilm({
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (!entry) return;
-        if (entry.isIntersecting) {
-          if (heldByPerson.current || refused.current) return;
+        if (entry.intersectionRatio >= PLAY_WHEN_VISIBLE) {
+          if (!pageMayStart.current || heldByPerson.current || refused.current) return;
           if (!videoRef.current) flushSync(() => setMounted(true));
           attemptPlay();
         } else if (videoRef.current && !videoRef.current.paused) {
           videoRef.current.pause();
         }
       },
-      { threshold: 0.5 },
+      { threshold: PLAY_WHEN_VISIBLE },
     );
     observer.observe(frame);
     return () => observer.disconnect();
-  }, [start]);
+  }, [start, attemptPlay]);
 
   const showToggle = start !== "deciding" && !awaitingStart;
 

@@ -201,7 +201,24 @@ describe("autoplay is the homepage's choice, and never against the visitor's", (
     expect(PLAYER).toMatch(/matchMedia\("\(prefers-reduced-motion: reduce\)"\)/);
     expect(PLAYER).toMatch(/connection\?\.saveData === true/);
     expect(PLAYER).toMatch(/const manual = reduce\.matches \|\| saveData;/);
+    expect(PLAYER).toMatch(/pageMayStart\.current = !manual;/);
     expect(PLAYER).toMatch(/setAwaitingStart\(manual\)/);
+  });
+
+  it("reduced motion switched on mid-visit means manual mode, whatever the film is doing", () => {
+    const onChange = between("const onChange = () => {", "reduce.addEventListener(");
+    // Codex P2 on #821 (4237579448): the first version acted only on a film
+    // that was PLAYING, so a film paused off screen stayed in auto mode and
+    // started again on its way back into view. Nothing here may depend on
+    // whether the film is playing at that moment.
+    expect(onChange).not.toMatch(/\.paused\b/);
+    expect(onChange).toMatch(/pageMayStart\.current = false;/);
+    expect(onChange).toMatch(/videoRef\.current\?\.pause\(\);/);
+    expect(onChange).toMatch(/setStart\("manual"\);/);
+    // A film that was never created goes back to the poster's Play.
+    expect(onChange).toMatch(/if \(!videoRef\.current\) returnToPoster\(\);/);
+    // A person's Pause is theirs: the preference neither sets nor clears it.
+    expect(onChange).not.toMatch(/heldByPerson/);
   });
 
   it("is muted, inline and looping", () => {
@@ -212,10 +229,18 @@ describe("autoplay is the homepage's choice, and never against the visitor's", (
   });
 
   it("plays only while half on screen, and a person's Pause is final", () => {
+    expect(PLAYER).toMatch(/const PLAY_WHEN_VISIBLE = 0\.5;/);
     const observer = between("new IntersectionObserver(", "observer.observe(");
-    expect(observer).toMatch(/threshold: 0\.5/);
-    expect(observer).toMatch(/if \(heldByPerson\.current \|\| refused\.current\) return;/);
-    // Off screen it stops, so a loop never runs down a phone's battery unseen.
+    expect(observer).toMatch(/threshold: PLAY_WHEN_VISIBLE/);
+    // Codex P2 on #821 (4237579445): the RATIO decides. `isIntersecting` stays
+    // true at 1% visible, so gating on it restarted the film in the very
+    // callback that fires as the frame drops below half.
+    expect(observer).toMatch(/entry\.intersectionRatio >= PLAY_WHEN_VISIBLE/);
+    expect(observer).not.toMatch(/isIntersecting/);
+    expect(observer).toMatch(
+      /if \(!pageMayStart\.current \|\| heldByPerson\.current \|\| refused\.current\) return;/,
+    );
+    // Below half it stops, so a loop never runs down a phone's battery unseen.
     expect(observer).toMatch(/\.pause\(\)/);
   });
 
@@ -236,11 +261,23 @@ describe("the control tells the truth, and survives a refusal", () => {
   });
 
   it("brings the start control back when the browser refuses — but not for its own pause()", () => {
-    const attempt = between("function attemptPlay()", "function startByPerson()");
+    const attempt = between("const attemptPlay = useCallback(", "function startByPerson()");
     // AbortError is our own pause() interrupting a pending play(): not a refusal.
     expect(attempt).toMatch(/error\.name === "AbortError"\) return;/);
     expect(attempt).toMatch(/refused\.current = true;/);
-    expect(attempt).toMatch(/setAwaitingStart\(true\)/);
+    expect(attempt).toMatch(/returnToPoster\(\);/);
+    expect(between("const returnToPoster = useCallback(", "const attemptPlay = useCallback(")).toMatch(
+      /setAwaitingStart\(true\)/,
+    );
+  });
+
+  it("the Play control plays even before the page has created the film", () => {
+    // A frame that has never been half on screen (a short window, a page
+    // loaded part-way down) has no <video> yet. Play there must still start
+    // it, as a person's start, not return without doing anything.
+    expect(between("function toggle()", "useEffect(")).toMatch(
+      /if \(!el\) \{\s*startByPerson\(\);\s*return;\s*\}/,
+    );
   });
 
   it("runs a person's play() inside their click", () => {
@@ -324,11 +361,13 @@ describe("accessible without sight and without sound", () => {
 
   it("hands focus on: to Pause after a start, back to Play after a refusal", () => {
     // Each start control unmounts the button that was pressed; focus left on
-    // a removed element falls to the top of the document.
+    // a removed element falls to the top of the document. Returning to the
+    // poster (a refusal, or reduced motion switched on before the film
+    // existed) unmounts the Pause/Play control the same way.
     expect(between("function startByPerson()", "function toggle()")).toMatch(
       /toggleRef\.current\?\.focus\(\)/,
     );
-    expect(between("function attemptPlay()", "function startByPerson()")).toMatch(
+    expect(between("const returnToPoster = useCallback(", "const attemptPlay = useCallback(")).toMatch(
       /if \(hadFocus\) startRef\.current\?\.focus\(\)/,
     );
   });

@@ -19,6 +19,17 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 //                           setting, and the precondition is asserted: no video
 //                           element, zero film requests, a Play button; pressing
 //                           it plays and hands focus to Pause.
+//   "half on screen"        the RATIO decides, measured in the page each time:
+//                           at 30% on screen the film is paused and its clock
+//                           still, both on the way out (the very callback that
+//                           used to restart it) and on the way in from off
+//                           screen; past half it plays. A frame a quarter on
+//                           screen at load fetches nothing, and its Play plays.
+//   "reduced motion, later" switched on while the film is paused off screen, it
+//                           stays still when it returns, and Play and Pause
+//                           still work; while it plays, it stops and scrolling
+//                           does not restart it; before it ever ran, the
+//                           poster's Play comes back and nothing is fetched.
 //   "refusal"               play() rejected with NotAllowedError: the poster's
 //                           Play button comes back and no control claims Pause;
 //                           a person's Play then works.
@@ -88,6 +99,115 @@ async function expectReducedMotion(page: Page, reduce: boolean): Promise<void> {
   expect(
     await page.evaluate(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches),
   ).toBe(reduce);
+}
+
+/** Paused, and the clock does not move over `ms`. */
+async function expectStill(v: Locator, ms: number): Promise<void> {
+  const before = await clock(v);
+  await v.page().waitForTimeout(ms);
+  const after = await clock(v);
+  expect(after.paused, "the film is playing").toBe(true);
+  expect(after.currentTime, "the film's clock moved").toBe(before.currentTime);
+}
+
+const frameOf = (page: Page) => film(page).locator(":scope > div").first();
+
+/** The share of the frame inside the viewport, as the observer measures it. */
+function visibleShare(page: Page): Promise<number> {
+  return frameOf(page).evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const visible = Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0);
+    return Math.max(0, visible) / r.height;
+  });
+}
+
+/** Scroll so that `share` of the frame is on screen, its top part scrolled away. */
+async function showShare(page: Page, share: number): Promise<void> {
+  await frameOf(page).evaluate((el, s) => {
+    const r = el.getBoundingClientRect();
+    window.scrollTo({ top: r.top + window.scrollY + (1 - s) * r.height, behavior: "instant" });
+  }, share);
+}
+
+const scrollToEnd = (page: Page) =>
+  page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }));
+const scrollToTop = (page: Page) => page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+
+// A laptop window with the browser's own chrome taking height: the frame starts
+// part-way on screen. Asserted, never assumed, by every test that uses it.
+const PART_WAY = { width: 1440, height: 600 };
+
+async function expectPartWay(page: Page): Promise<void> {
+  const share = await visibleShare(page);
+  expect(share, `precondition: ${share.toFixed(2)} of the frame on screen`).toBeGreaterThan(0.1);
+  expect(share, `precondition: ${share.toFixed(2)} of the frame on screen`).toBeLessThan(0.45);
+}
+
+// TWO MEANINGS OF `isIntersecting`, AND WHY THE PARTIAL-VISIBILITY TESTS RUN
+// UNDER BOTH. Measured in Chromium 148: with `threshold: 0.5`, a frame 30% on
+// screen reports `isIntersecting: false`, because Chromium counts a target as
+// intersecting only once its ratio reaches the lowest threshold. The spec
+// counts ANY overlap, and notifies when a target enters or leaves the viewport
+// as well. So in plain Chromium a player that gates on `isIntersecting` behaves
+// as if it read the ratio, and these tests could never catch the difference:
+// against the first version they passed in Chromium. Under the spec's meaning
+// they fail against it, as they must.
+type Semantics = "chromium" | "spec";
+const SEMANTICS: Semantics[] = ["chromium", "spec"];
+
+/**
+ * Give Chromium the spec's `isIntersecting`: add a 0 threshold (which makes
+ * its flag mean "any overlap") and deliver entries only when the spec would,
+ * on a change of threshold index or of `isIntersecting`, for the thresholds
+ * the page asked for.
+ */
+async function useSemantics(page: Page, semantics: Semantics): Promise<void> {
+  if (semantics === "chromium") return;
+  await page.addInitScript(() => {
+    const Native = window.IntersectionObserver;
+    window.IntersectionObserver = class extends Native {
+      constructor(callback: IntersectionObserverCallback, options: IntersectionObserverInit = {}) {
+        const asked = [options.threshold ?? 0].flat().sort((a, b) => a - b);
+        const last = new Map<Element, string>();
+        super(
+          (entries, observer) => {
+            const due = entries.filter((e) => {
+              const state = `${asked.filter((t) => t <= e.intersectionRatio).length}:${e.isIntersecting}`;
+              if (last.get(e.target) === state) return false;
+              last.set(e.target, state);
+              return true;
+            });
+            if (due.length > 0) callback(due, observer);
+          },
+          { ...options, threshold: [0, ...asked] },
+        );
+      }
+    };
+  });
+}
+
+/** What a 0.5-threshold observer reports as `isIntersecting` for the frame right now. */
+function reportsIntersecting(page: Page): Promise<boolean> {
+  return frameOf(page).evaluate(
+    (el) =>
+      new Promise<boolean>((resolve) => {
+        const io = new IntersectionObserver(
+          ([entry]) => {
+            io.disconnect();
+            resolve(entry!.isIntersecting);
+          },
+          { threshold: 0.5 },
+        );
+        io.observe(el);
+      }),
+  );
+}
+
+/** Under the spec's meaning, prove the shim is live: a frame part-way on screen IS intersecting. */
+async function expectSemantics(page: Page, semantics: Semantics): Promise<void> {
+  if (semantics === "spec") {
+    expect(await reportsIntersecting(page), "the spec's isIntersecting is not in force").toBe(true);
+  }
 }
 
 /** Elements inside <main> whose box reaches past the viewport's edges. */
@@ -241,6 +361,40 @@ test.describe("homepage film (desktop)", () => {
     await expect(page.getByRole("button", { name: PAUSE })).toBeVisible();
   });
 
+  for (const semantics of SEMANTICS) {
+    test(`plays only while at least half the frame is on screen, in both directions (${semantics} isIntersecting)`, async ({
+      page,
+    }) => {
+      await useSemantics(page, semantics);
+      await page.goto("/");
+      const v = video(page);
+      await expectAdvancing(v);
+
+      // ON THE WAY OUT. 30% left on screen. The observer's callback fires as
+      // the frame drops below half, and under the spec `isIntersecting` is
+      // still true inside it: the first version played on that callback
+      // instead of pausing.
+      await showShare(page, 0.3);
+      expect(await visibleShare(page)).toBeCloseTo(0.3, 1);
+      await expectSemantics(page, semantics);
+      await expect.poll(async () => (await clock(v)).paused, { timeout: 5_000 }).toBe(true);
+      await expectStill(v, 900);
+
+      // ON THE WAY IN. From fully off screen back to the same 30%: entering
+      // the viewport is not being half on screen.
+      await scrollToEnd(page);
+      await expect.poll(() => visibleShare(page)).toBe(0);
+      await showShare(page, 0.3);
+      await expectStill(v, 900);
+
+      // Past half, it plays again by itself.
+      await showShare(page, 0.7);
+      expect(await visibleShare(page)).toBeCloseTo(0.7, 1);
+      await expect.poll(async () => (await clock(v)).paused, { timeout: 5_000 }).toBe(false);
+      await expectAdvancing(v, (await clock(v)).currentTime + 0.2);
+    });
+  }
+
   test("a refused autoplay puts the poster's Play back, and a person's Play still works", async ({ page }) => {
     // Low Power Mode, a data saver or a site setting can refuse play(). Refuse
     // it here until the test says otherwise, with the error a browser uses.
@@ -332,7 +486,115 @@ test.describe("homepage film (reduced motion)", () => {
     await expect(video(page)).toHaveCount(0);
     expect(hits, "the film was fetched against Save-Data").toHaveLength(0);
   });
+
+  test("switched on while the film is off screen: it stays still when it returns", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/");
+    const v = video(page);
+    await expectAdvancing(v);
+
+    // Off screen the observer has already paused it, so nothing is PLAYING
+    // when the preference changes: the case the first version ignored, which
+    // left the film in auto mode to start again on its way back.
+    await scrollToEnd(page);
+    await expect.poll(async () => (await clock(v)).paused, { timeout: 5_000 }).toBe(true);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expectReducedMotion(page, true);
+
+    await scrollToTop(page);
+    expect(await visibleShare(page), "precondition: back in view").toBeGreaterThan(0.5);
+    await expectStill(v, 1_200);
+    const play = page.getByRole("button", { name: PLAY });
+    await expect(play).toBeVisible();
+    await expect(page.getByRole("button", { name: PAUSE })).toHaveCount(0);
+
+    // The visitor keeps the control: Play plays, and their Pause stops it.
+    await play.click();
+    await expectAdvancing(v, (await clock(v)).currentTime + 0.2);
+    await page.getByRole("button", { name: PAUSE }).click();
+    await expect(page.getByRole("button", { name: PLAY })).toBeVisible();
+    await expectStill(v, 700);
+  });
+
+  test("switched on while the film plays: it stops, and scrolling away and back does not restart it", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/");
+    const v = video(page);
+    await expectAdvancing(v);
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect.poll(async () => (await clock(v)).paused, { timeout: 5_000 }).toBe(true);
+    await expect(page.getByRole("button", { name: PLAY })).toBeVisible();
+
+    await scrollToEnd(page);
+    await page.waitForTimeout(500);
+    await scrollToTop(page);
+    expect(await visibleShare(page), "precondition: back in view").toBeGreaterThan(0.5);
+    await expectStill(v, 1_200);
+  });
 });
+
+for (const semantics of SEMANTICS) {
+  test.describe(`homepage film (part-way on screen at load, ${semantics} isIntersecting)`, () => {
+    test.use({ viewport: PART_WAY });
+
+    test.beforeEach(async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      await useSemantics(page, semantics);
+    });
+
+    test("fetches and starts nothing, and its Play still plays", async ({ page }) => {
+      const hits = watchFilmRequests(page);
+      await page.goto("/");
+      await page.waitForLoadState("networkidle");
+      await expectPartWay(page);
+      await expectSemantics(page, semantics);
+
+      // The first version gated on `isIntersecting`, true at any overlap, so a
+      // strip of frame at the bottom of the window started the film.
+      await page.waitForTimeout(700);
+      await expect(video(page)).toHaveCount(0);
+      expect(hits, "the film was fetched while less than half on screen").toHaveLength(0);
+
+      // Play under the frame, pressed without scrolling the frame into view: a
+      // person's start before the page has created the film at all, which the
+      // first version's Play answered by doing nothing.
+      const play = page.getByRole("button", { name: PLAY });
+      await play.evaluate((el) => (el as HTMLElement).focus({ preventScroll: true }));
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("button", { name: PAUSE })).toBeFocused();
+      await expectAdvancing(video(page));
+      await expectPartWay(page);
+    });
+
+    test("reduced motion switched on before the film ever ran: the poster's Play, and nothing fetched", async ({ page }) => {
+      const hits = watchFilmRequests(page);
+      await page.goto("/");
+      await page.waitForLoadState("networkidle");
+      await expectPartWay(page);
+      await expectSemantics(page, semantics);
+      await expect(video(page)).toHaveCount(0);
+
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await expectReducedMotion(page, true);
+      // The state a reduced-motion visit begins in.
+      const start = page.getByRole("button", { name: START });
+      await expect(start).toBeAttached();
+      await expect(page.getByRole("button", { name: PLAY })).toHaveCount(0);
+
+      // Brought well past half on screen, it still does not start by itself.
+      await showShare(page, 0.75);
+      expect(await visibleShare(page), "precondition: well past half on screen").toBeGreaterThan(0.7);
+      await page.waitForTimeout(1_200);
+      await expect(video(page)).toHaveCount(0);
+      expect(hits, "the film was fetched after reduced motion was switched on").toHaveLength(0);
+
+      await start.click();
+      await expectAdvancing(video(page));
+      await expect(page.getByRole("button", { name: PAUSE })).toBeFocused();
+    });
+  });
+}
 
 test.describe("homepage film (phone)", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
