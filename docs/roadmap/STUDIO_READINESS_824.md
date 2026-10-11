@@ -63,7 +63,7 @@ Results are from the isolated local stack (`hone-studio-824`) at production
 `6c5eac80`, with migrations `0001`–`0210`:
 - the **existing full DB suite passes first**: 176 files and 3,534 tests;
 - the five-plus file then passes **31/31** on three consecutive runs, leaving no synthetic studio behind;
-- the recovery-procedure file (§1.4) passes **10/10** on three consecutive runs, also leaving none behind. The admission suite it cites passes 20/20 on the same stack.
+- the recovery-procedure file (§1.4) passes **11/11** on three consecutive runs, also leaving none behind. The two suites it cites pass on the same tree: the admission commit-authority suite (20/20, same stack) and the booking-action gate test (20/20).
 
 | #824 requirement | Proof (test id) | Result |
 |---|---|---|
@@ -75,7 +75,7 @@ Results are from the isolated local stack (`hone-studio-824`) at production
 | Explicit owner and practitioner permissions; same-studio and cross-studio negatives | G1–G4, C3, F3, D2 | ✅ (one rule flagged: **F6**) |
 | LA date boundaries and DST; Canadian behaviour unchanged | H1: both 2031 US DST days. H2: UTC-midnight crossing. H3: Toronto EST/EDT, capacity OFF, still studio-wide. | ✅ |
 | Failed or stale operations leave no partial appointment or reservation | J: nine refused operations change zero appointment, reservation or audit rows | ✅ |
-| A per-studio activation and recovery plan whose steps the real commands support (§1.4) | `capacity-recovery-procedure.db.test.ts` §1–§3. The `closed` refusals and the unstamped cutover are from `new-client-admission-commit-authority.db.test.ts` §1B–§3B and its UNSTAMPED block. | ✅ procedure; ❌ **GAP R1** (no dedicated pause; client self-reschedule continues) |
+| A per-studio activation and recovery plan whose steps the real commands support (§1.4) | `capacity-recovery-procedure.db.test.ts` §1–§3. The `closed` refusals and the unstamped cutover are from `new-client-admission-commit-authority.db.test.ts` §1B–§3B and its UNSTAMPED block. The existing-client action branch under CLOSED is from `tests/app/book/new-client-waitlist-gate.test.ts`. | ✅ procedure; ❌ **GAP R1** (no dedicated pause; client self-reschedule continues) |
 
 **F6, a permission rule for decision.** A non-owner may create or move only
 their **own** booking. `practitioner_cancel_appointment` (`0174`) and the
@@ -120,13 +120,15 @@ Nothing here is automatic.
       - `waitlist` is **not** a pause: it still admits a valid scoped invitation (`app/book/[slug]/actions.ts`:614–646).
       - If the studio's mode is unstamped (`new_client_admission_mode_set_at` is null), `closed` returns `legacy_waitlist_cutover_required` and writes nothing. Set `waitlist` first, which stamps it, then `closed` (the same file's UNSTAMPED block).
       - It governs **public** admission only. Staff can still add a client and book them in the app (`create_internal_appointment_v2` reads no admission mode).
-      - **Returning clients are unaffected.** A booker on the existing-client path whose email matches an active client still books, reschedules and cancels through their own links (§1; `0170`, `0171` and `0176` read no admission mode). They can also rebook from the portal, which has no admission gate by design (`app/portal/rebook-actions.ts`:92–97). An unmatched email on the existing-client path is refused (`actions.ts`:964–967), so it is no way around `closed`.
-   2. **If needed, freeze all new bookings by hiding every active service** (Settings → Services, owner only).
+      - **Returning clients are unaffected.** A booker on the existing-client path whose email matches an active client still books, reschedules and cancels through their own links:
+        - at the **action** layer, `publicBookAppointmentAction` leaves an existing client outside the CLOSED refusal and still runs the booking command (`tests/app/book/new-client-waitlist-gate.test.ts`, "CLOSED: an EXISTING client is completely outside this authority");
+        - at the **command** layer, `0170`, `0171` and `0176` read no admission mode (§1).
+      - They can also rebook from the portal, which has no admission gate by design (`app/portal/rebook-actions.ts`:92–97). An unmatched email on the existing-client path is refused (`actions.ts`:964–967), so it is no way around `closed`.
+   2. **If needed, freeze all new bookings by hiding every active service** (Settings → Services, owner only). **Record the menu order first**, because the restore in step 5 needs it.
       - **Stops** everything that creates through `create_public_appointment`: the public page, portal rebook and invited bookings all get `public_booking_unavailable` (`0170`:690–710). An invited booking is refused before its invitation is spent: the active-service read (`actions.ts`:727–733) runs before consumption (`:841`–`869`). Staff cannot create appointments either (`invalid_service`, `0174`).
       - **Does not stop** staff moves, reassignments or cancellations; completion and no-show marking; or payments, refunds and charting on existing appointments (`lib/billing` reads no `services.active`).
-      - **Does not stop a client's self-reschedule** through an existing link. `reschedule_appointment_v2` (`0171`) reads neither `services.active`, the admission mode nor the booking flag, so a reschedule can create a new overlap (§2).
+      - **Does not stop a client's self-reschedule** through an existing link. `reschedule_appointment_v2` (`0171`) reads neither `services.active`, the admission mode nor the booking flag. With every service hidden and booking OFF, a reschedule onto another practitioner's time still succeeds, and retirement then refuses (§3).
       - **While frozen**, staff service pickers and the readiness panels show no bookable service.
-      - **To restore**, record the menu order first and show the services again in that order, because each service shown goes to the bottom (`show_studio_service`, `0161`; §2). Then reopen admission.
       - **GAP R1: no dedicated public-booking pause exists, and nothing pauses client self-reschedule.**
    3. **Remove each overlap in time, with booking still ON.**
       - A **future** appointment can be moved to a time that does not overlap (by the owner, or by a practitioner for their own), or cancelled.
@@ -136,8 +138,11 @@ Nothing here is automatic.
       - Reassignment alone never clears an overlap.
       - A past appointment left `confirmed` blocks indefinitely, because the no-show cron does not mutate anything (`app/api/cron/no-show-check/route.ts`; §3).
    4. **Then turn booking OFF and retire structure** with `retire_practitioner_capacity`. It refuses while booking is ON, and the CHECK requires booking OFF before structure goes OFF.
-      - Keep this window short. With booking OFF, staff moves pause (`booking_paused`), while public bookings and client reschedules continue.
+      - Keep this window short. With booking OFF, staff moves pause (`booking_paused`), while client reschedules continue (and public bookings, unless frozen).
       - If retirement still refuses, cancellation, completion and no-show all still work with booking OFF (§3). A move needs booking back ON.
+   5. **Restore only after retirement succeeds**, or once the recovery is abandoned. Restoring earlier lets public and staff creation resume mid-recovery, which can add a new overlap and make retirement fail again.
+      - Show the services again **in the recorded order**, because each service shown goes to the bottom of the menu (`show_studio_service`, `0161`; §2).
+      - Then reopen admission (`open`, or `waitlist`).
 
 ---
 

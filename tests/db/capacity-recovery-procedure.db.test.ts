@@ -16,17 +16,25 @@ import { randomUUID } from "node:crypto";
 // Each step of the procedure is a claim about a real command. This file runs
 // them on synthetic capacity-ON studios in America/Los_Angeles:
 //
-//   §1  `closed` pauses NEW clients only. A returning client still books,
-//       reschedules and cancels. (The new-client and invitation refusals under
-//       `closed`, and the unstamped-studio cutover, are already proven in
-//       new-client-admission-commit-authority.db.test.ts §1B, §3B and its
-//       UNSTAMPED block, so they are cited from there, not repeated.)
+//   §1  `closed` pauses NEW clients only. At the COMMAND layer, a returning
+//       client still books (0170), reschedules (0171) and cancels by their own
+//       link (0176). Two things are proven elsewhere and cited, not repeated:
+//       - the ACTION layer: in publicBookAppointmentAction an existing client is
+//         outside the CLOSED refusal and still reaches the booking command
+//         (tests/app/book/new-client-waitlist-gate.test.ts, "CLOSED: an
+//         EXISTING client is completely outside this authority");
+//       - the new-client and invitation refusals under `closed`, and the
+//         unstamped cutover (new-client-admission-commit-authority.db.test.ts
+//         §1B, §3B and its UNSTAMPED block).
 //   §2  Hiding every service stops new public and staff bookings, and only
 //       those. Moves, cancellations and client self-reschedule continue, and
 //       restoring the menu depends on the order services are shown again.
 //   §3  retire_practitioner_capacity counts overlaps in TIME, studio-wide.
 //       Reassignment never clears one. Moving, cancelling, a no-show, or a
-//       completion whose blocked end has passed does.
+//       completion whose blocked end has passed does. A client's
+//       self-reschedule still runs in the retirement window itself, with the
+//       services hidden and booking OFF, and can create the overlap that
+//       makes retirement refuse.
 //
 // One studio per scenario, so no scenario's appointments reach another's
 // overlap count. Instants are RELATIVE to now: the public command enforces a
@@ -215,6 +223,30 @@ const placeAt = (l: Lab, who: SynthPractitioner, client: string, startAgo: strin
     [randomUUID(), l.s.studioId, client, l.services[0], who.practitionerId, startAgo, endAgo],
   ).then((r) => r.rows[0].id as string);
 
+/** Overlapping participating pairs, counted exactly as 0138's retirement counts them. */
+const overlapPairs = (l: Lab) =>
+  adminQuery(
+    `select count(*)::int as n
+       from public.appointments a1
+       join public.appointments a2 on a1.studio_id = a2.studio_id and a1.id < a2.id
+      where a1.studio_id = $1
+        and public.appointment_participates_in_capacity(a1.status, a1.blocked_ends_at)
+        and public.appointment_participates_in_capacity(a2.status, a2.blocked_ends_at)
+        and tstzrange(a1.starts_at, a1.blocked_ends_at, '[)')
+            && tstzrange(a2.starts_at, a2.blocked_ends_at, '[)')`,
+    [l.s.studioId],
+  ).then((r) => r.rows[0].n as number);
+
+/** toggleServiceActiveAction's hide branch, for every active service, as the owner. */
+const hideAllServices = (l: Lab) =>
+  asUser(l.owner.userId, (q) =>
+    q(
+      `update public.services set active = false, updated_at = now()
+        where studio_id = $1 and active returning id`,
+      [l.s.studioId],
+    ),
+  ).then((r) => r.rowCount);
+
 const participates = (apptId: string) =>
   adminQuery(
     `select public.appointment_participates_in_capacity(status, blocked_ends_at) as p
@@ -291,10 +323,10 @@ describe("§2 hiding every service freezes NEW bookings, and only those", () => 
     expect((await staffBook(L, L.p1, L.clients[1], await at(7, "14:00"))).result).toBe("invalid_service");
   });
 
-  it("does NOT stop staff moves or a client's self-reschedule, which can create a new overlap", async () => {
+  it("does NOT stop staff moves or a client's self-reschedule", async () => {
     expect(await moveTo(L, held.id, L.owner, await at(7, "12:00"))).toBe("moved");
-    // The limit: the reschedule command reads neither services.active, the
-    // admission mode nor the booking flag (0171).
+    // The reschedule command reads neither services.active, the admission mode
+    // nor the booking flag (0171). §3 runs it in the retirement window itself.
     const r = await clientReschedule(held.id, held.hash, await at(8, "10:00"));
     expect(r.result).toBe("success");
     held = { id: r.newId!, hash: held.hash };
@@ -425,5 +457,31 @@ describe("§3 retirement counts overlaps in TIME, studio-wide; only time or stat
     expect(await participates(c)).toBe(false);
     await setBooking(past, false);
     expect(await retire(past)).toEqual({ ok: true });
+  });
+
+  it("in the retirement window itself, a client's self-reschedule still runs and creates the overlap that blocks it", async () => {
+    const L = await lab("window");
+    // The owner's public booking on day 7, and P1's staff booking on day 8.
+    const held = await publicBook(L, await at(7, "10:00"));
+    expect(held.result).toBe("created");
+    expect((await staffBook(L, L.p1, L.clients[1], await at(8, "10:00"))).result).toBe("created");
+
+    // The recovery state: every service hidden, booking OFF, no overlap left.
+    expect(await hideAllServices(L)).toBe(1);
+    await setBooking(L, false);
+    expect(await overlapPairs(L)).toBe(0);
+
+    // The client moves their booking onto P1's time. The command reads neither
+    // the freeze nor the booking flag (0171), so it goes through.
+    const r = await clientReschedule(held.id!, held.hash, await at(8, "10:00"));
+    expect(r.result).toBe("success");
+    expect(await overlapPairs(L)).toBe(1);
+
+    const blocked = await retire(L);
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) {
+      expect(blocked.code).toBe("23P01");
+      expect(blocked.message).toContain("overlapping_appointments:1");
+    }
   });
 });
