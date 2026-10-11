@@ -88,16 +88,12 @@ PR1 owns this document and one correctness fix (§6). It implements nothing.
 ### 2.7 Recipient booking
 
 * Booking **atomically converts one reservation to an appointment AND redeems the
-  invitation**.
-* **Failure leaves both untouched.**
-* **The v4 target replaces the "consume first, then create appointment" pattern.**
+  invitation** — one step, both effects.
+* **Failure leaves both untouched.** No appointment without redemption, and no
+  redemption without an appointment.
 
-> **Provenance, stated precisely.** This bullet is **a paraphrase of the supplied v4
-> contract's position, not a literal quotation of it**, and it is not an inference
-> from the repository either. An earlier revision of this document asserted it was a
-> verbatim quotation; that claim was wrong and is withdrawn. The repository evidence
-> for what the legacy path actually does — and therefore what is being replaced — is
-> held separately in **§3.4**, and nothing in §2 depends on that evidence.
+*(What this supersedes, and the repository evidence for it, is in §3.4. §2.7 states
+the target only.)*
 
 ### 2.8 What a recipient sees and may do
 
@@ -124,10 +120,9 @@ blocks, **service / buffer / timezone / notice** changes, **owner booking**, or
 * This is the **only post-launch operation allowed to increase R**.
 * **Closed rounds never revive.**
 * **Scope note:** this rule governs calendar and invitation state, and applies
-  whatever the client's intent was. It does **not** address the person's **queue
-  priority**, which §14.5.7C governs and which **depends on the intent**: "cancel and
-  return to waitlist" gives a NEW waiting-time priority, while "cancel and leave"
-  returns them to no queue at all. Neither is superseded. See §3.5 and §5.
+  whatever the client's intent was. **It does not address the person's queue
+  priority** — that is outside v4's scope here, and what governs it instead, by
+  intent, is recorded in **§5**.
 
 ### 2.11 Freed time that is not round-derived
 
@@ -201,17 +196,27 @@ tests, so a change is visible rather than silent.
 under §2.10 it is **not** the restoration mechanism (§3.5), so nothing in v4 should
 add one to it.
 
-### 3.4 The legacy booking path is the one §2.7 replaces
+### 3.4 The legacy booking path, and what §2.7 supersedes
 
-`§14.5.5B` records the shipped limitation: **B2 consumes the invitation before the
-appointment exists**, so the current client outcome must distinguish confirmed
-booked / definitively consumed without booking / indeterminate transport.
+**Repository evidence.** `§14.5.5B` records the shipped limitation: **B2 consumes the
+invitation before the appointment exists**, so the current client outcome must
+distinguish confirmed booked / definitively consumed without booking / indeterminate
+transport, and *"'Already used' alone does not prove"* booked.
 
-**That is the legacy behaviour §2.7 replaces**, not a constraint on v4. v4's
+**The comparison.** That "consume first, then create appointment" ordering is the
+pattern **§2.7's target replaces** — it is **not** a constraint on v4. §2.7's
 convert-and-redeem is one atomic step whose failure leaves both untouched, which
-**removes** the consumed-without-booking state for round-derived bookings. The
-legacy three-way outcome remains the truth for **legacy invitations** (§4) until
-they drain.
+**removes** the consumed-without-booking state for round-derived bookings. The legacy
+three-way outcome remains the truth for **legacy invitations** (§4) until they drain,
+so both regimes coexist while they do.
+
+> **Provenance of the comparison.** The characterisation of "consume first, then
+> create appointment" as legacy-to-be-replaced is **a paraphrase of the supplied v4
+> contract's position — not a literal quotation of it.** An earlier revision of this
+> document asserted it was a verbatim quotation, and declined a review finding partly
+> on that basis; the claim was wrong and is withdrawn. The paragraph above is the
+> repository half, citable at `§14.5.5B`; the target half is §2.7, which depends on
+> none of it. See §11 for the general rule.
 
 ### 3.5 Restoration is a new operation, not requeue
 
@@ -501,12 +506,19 @@ PR2 and later must re-derive at the moment of claim.
 
 ## 11. Not established
 
-§2 **restates** the supplied frozen v4 contract. **No sentence in §2 should be read as
-a verbatim quotation of it** — the wording is this document's, the authority is the
-contract's, and where the two differ the contract governs. §2 is also **not verifiable
-from this repository**, because the contract text is not held here; that is a property
-of the source, not a gap in the contract, and it is the reason §3 keeps every
-repository observation outside §2. The six bounded seams of §14.5.7E remain as the predecessor
+**The provenance rule.** §2 **restates** the supplied frozen v4 contract. **No
+sentence in §2 should be read as a verbatim quotation of it** — the wording is this
+document's, the authority is the contract's, and where the two differ the contract
+governs. §2 is also **not verifiable from this repository**, because the contract text
+is not held here; that is a property of the source, not a gap in the contract.
+
+**The separation rule that follows from it.** §2 carries target behaviour and nothing
+else — no repository observation, and no comparison against today's code. Every
+such statement lives in §3, each citable against a file, a migration or a roadmap
+section. Where a §3 entry describes what the target supersedes, the comparison and its
+provenance sit in §3 too (see §3.4), so that §2 can be read against the contract alone
+and §3 against the repository alone. An earlier revision mixed the two inside §2.7 and
+asserted a verbatim quotation it could not support; both are corrected. The six bounded seams of §14.5.7E remain as the predecessor
 left them, except where §2 settles them. No hosted database was read for this
 document. Nothing was implemented, no number claimed, PR2 is unstarted, and waitlist
 SMS is off.
