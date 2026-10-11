@@ -198,6 +198,13 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
   - its consent is the form's own v2 Yes, recorded inside the join's own minute;
   - it joined less than 15 minutes ago;
   - no other join text that may have reached the same sendable number was claimed in the last 24 hours, in any studio.
+
+  **The per-number rule is atomic** across entries and studios.
+  - Before that check, the claim takes a **transaction-level advisory lock keyed by the normalized number** (`sms_join_ack_number:`). It holds the lock through its ledger insert, and a rollback releases it.
+  - A second claim for the same number waits, then sees the first claim and is refused (`recently_acknowledged`). A pending first claim counts; a skipped or refused one still does not.
+  - **Lock order** is always the entry row, then the number.
+  - **Waits are bounded** by the claim's own `lock_timeout` (5 s). A claim that times out writes nothing, and the sender, reading `unavailable`, sends nothing.
+  - This repairs Codex P1 4239431828. It is proven with real concurrent connections in `tests/db/sms-waitlist-join-ack.db.test.ts`, including a mutation that removes the lock and reproduces the race.
 - **Who can never get it.** People already on a waitlist:
   - an owner-recorded or backfilled consent is source `practitioner`;
   - turning the switch on runs nothing;

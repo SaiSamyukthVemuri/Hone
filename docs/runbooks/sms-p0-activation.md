@@ -227,7 +227,7 @@ Existing Willow prospects who agreed directly with the studio are recorded throu
   - the join less than 15 minutes old;
   - the studio's waitlist texts on;
   - no earlier join text for that entry;
-  - no join text that may have reached the same number in the last 24 hours, in any studio;
+  - no join text that may have reached the same number in the last 24 hours, in any studio. This holds atomically even for simultaneous joins: claims for one number are serialised by a transaction-level advisory lock, and each wait is capped at 5 s;
   - then the same checks as the invitation text: STOP phone-wide, a usable number, and the production fence.
 - **Who never gets it:**
   - people already waiting;

@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
-import { adminQuery, adminTx, closePool, seedStudio } from "./helpers/harness";
+import { Client } from "pg";
+import { adminQuery, adminTx, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
 
 // 0210 — SMS-04, against a real database.
 //
@@ -16,7 +17,8 @@ import { adminQuery, adminTx, closePool, seedStudio } from "./helpers/harness";
 //   - never for people already waiting: not after a backfilled or
 //     owner-recorded consent, not after the switch is turned on, not for a
 //     v1 Yes, not for a No, not for an old entry;
-//   - at most one per number per 24 hours, across studios;
+//   - at most one per number per 24 hours, across studios -- ATOMICALLY: claims
+//     for one number are serialised, proven below with real connections;
 //   - the ledger's new subject is tenant-bound, single, and write-once.
 //
 // Nothing here calls a provider: the claim writes a ledger row and the sender
@@ -428,6 +430,269 @@ describe("0210: at most one join text per number per 24 hours, across studios", 
     await adminQuery(`select public.settle_sms_message($1, 'refused', null, 21211, null)`, [c.message_id]);
     const second = await signup(s.studioId, { phone: d });
     expect((await claim(s.studioId, second.entry_id)).result).toBe("claimed");
+  });
+});
+
+// ===========================================================================
+// THE PER-NUMBER RULE IS ATOMIC -- two (and six) real connections
+// ===========================================================================
+// Codex P1 4239431828 (D3 checkpoint: SMS04_JOIN_ACK_PER_NUMBER_RACE_ASSESSMENT
+// _2026-10-10). Two entries that share a number lock different rows, and the
+// 24-hour check reads committed rows only, so without a lock on the NUMBER both
+// claims could pass it before either insert commits. The claim now takes a
+// transaction-level advisory lock keyed by the normalized number before that
+// check and holds it through the insert. Each case below holds one claim's
+// transaction open on its own connection and drives a second claim on another.
+
+/** A dedicated connection, so two claims really are two transactions. */
+async function connection() {
+  const c = new Client({ connectionString: resolveLocalDbUrl() });
+  await c.connect();
+  return c;
+}
+
+const CLAIM_RESULT = `select result from public.claim_waitlist_join_ack_sms($1, $2)`;
+
+async function backendPid(c: Client): Promise<number> {
+  return Number((await c.query("select pg_backend_pid() as pid")).rows[0].pid);
+}
+
+/** Poll pg_stat_activity (from the pool) until that backend waits on a lock. */
+async function untilWaiting(pid: number) {
+  let w: { wait_event_type: string | null; wait_event: string | null } | undefined;
+  for (let i = 0; i < 100; i++) {
+    w = (
+      await adminQuery(`select wait_event_type, wait_event from pg_stat_activity where pid = $1`, [pid])
+    ).rows[0];
+    if (w?.wait_event_type === "Lock") return w;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return w;
+}
+
+/** True when the query has finished (either way) within `ms`. */
+const settlesWithin = (q: Promise<unknown>, ms: number) =>
+  Promise.race([
+    q.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<boolean>((r) => setTimeout(() => r(false), ms)),
+  ]);
+
+/** The same ten digits, written the other way. */
+const spaced = (d: string) => `+1 (${d.slice(0, 3)}) ${d.slice(3, 6)} ${d.slice(6)}`;
+
+const joinAckRowsFor = async (entryIds: (string | null)[]) =>
+  (
+    await adminQuery(
+      `select waitlist_entry_id, status from public.sms_outbound_messages
+        where waitlist_entry_id = any($1::uuid[])`,
+      [entryIds],
+    )
+  ).rows as { waitlist_entry_id: string; status: string }[];
+
+describe("0210: the per-number rule is ATOMIC across entries and studios (real connections)", () => {
+  it("the claim is VOLATILE, carries its own 5 s lock_timeout, and claims run READ COMMITTED", async () => {
+    const r = await adminQuery(
+      `select p.provolatile, p.proconfig from pg_proc p
+        where p.oid = 'public.claim_waitlist_join_ack_sms(uuid, uuid)'::regprocedure`,
+    );
+    // VOLATILE: every statement in it takes a NEW snapshot, so the check after
+    // the wait sees what the first claim committed.
+    expect(r.rows[0].provolatile).toBe("v");
+    expect(r.rows[0].proconfig).toEqual(expect.arrayContaining(["lock_timeout=5s"]));
+    const c = await connection();
+    try {
+      // The isolation a claim actually runs at (PostgREST does not change it).
+      expect((await c.query("show transaction_isolation")).rows[0].transaction_isolation).toBe("read committed");
+      // The session asks for no bound of its own: the 5 s is the function's.
+      expect((await c.query("show lock_timeout")).rows[0].lock_timeout).toBe("0");
+    } finally {
+      await c.end();
+    }
+  });
+
+  it("same number, two studios, two formats: the second claim holds its own entry, WAITS on the number, then is refused; one row, still pending", async () => {
+    const s1 = await waitlistStudio("ack-atomic-1", true);
+    const s2 = await waitlistStudio("ack-atomic-2", true);
+    const d = freshDigits();
+    const a = await signup(s1.studioId, { phone: dashed(d) });
+    const b = await signup(s2.studioId, { phone: spaced(d) });
+    const ca = await connection();
+    const cb = await connection();
+    try {
+      await ca.query("begin");
+      expect((await ca.query(CLAIM_RESULT, [s1.studioId, a.entry_id])).rows[0].result).toBe("claimed");
+      const pidB = await backendPid(cb);
+      const second = cb.query(CLAIM_RESULT, [s2.studioId, b.entry_id]);
+      // It waits on the ADVISORY lock -- the number -- not on a row ...
+      expect(await untilWaiting(pidB)).toMatchObject({ wait_event_type: "Lock", wait_event: "advisory" });
+      // ... while already holding ITS OWN entry row: entry first, number second.
+      await expect(
+        adminQuery(`select 1 from public.new_client_waitlist_entries where id = $1 for update nowait`, [b.entry_id]),
+      ).rejects.toMatchObject({ code: "55P03" });
+      expect(await settlesWithin(second, 300)).toBe(false);
+      await ca.query("commit");
+      // Its check ran after the wait, as a new statement: it sees the first claim.
+      expect((await second).rows[0].result).toBe("recently_acknowledged");
+    } finally {
+      await ca.end();
+      await cb.end();
+    }
+    const rows = await joinAckRowsFor([a.entry_id, b.entry_id]);
+    expect(rows).toHaveLength(1);
+    // The first claim is still PENDING (never settled) -- and a pending claim counts.
+    expect(rows[0]).toMatchObject({ waitlist_entry_id: a.entry_id, status: "claimed" });
+  });
+
+  it("different numbers: both claim, and neither waits for the other", async () => {
+    const s = await waitlistStudio("ack-atomic-diff", true);
+    const a = await signup(s.studioId, { phone: dashed(freshDigits()) });
+    const c = await signup(s.studioId, { phone: dashed(freshDigits()) });
+    const ca = await connection();
+    const cc = await connection();
+    try {
+      await ca.query("begin");
+      expect((await ca.query(CLAIM_RESULT, [s.studioId, a.entry_id])).rows[0].result).toBe("claimed");
+      const other = cc.query(CLAIM_RESULT, [s.studioId, c.entry_id]);
+      // It finishes while the first claim's transaction is still open.
+      expect(await settlesWithin(other, 2_000)).toBe(true);
+      expect((await other).rows[0].result).toBe("claimed");
+      await ca.query("commit");
+    } finally {
+      await ca.end();
+      await cc.end();
+    }
+    expect(await joinAckRowsFor([a.entry_id, c.entry_id])).toHaveLength(2);
+  });
+
+  it("a rollback releases the number: the waiting claim then claims, and the rolled-back claim leaves no row", async () => {
+    const s1 = await waitlistStudio("ack-atomic-rb-1", true);
+    const s2 = await waitlistStudio("ack-atomic-rb-2", true);
+    const d = freshDigits();
+    const a = await signup(s1.studioId, { phone: dashed(d) });
+    const b = await signup(s2.studioId, { phone: spaced(d) });
+    const ca = await connection();
+    const cb = await connection();
+    try {
+      await ca.query("begin");
+      expect((await ca.query(CLAIM_RESULT, [s1.studioId, a.entry_id])).rows[0].result).toBe("claimed");
+      const pidB = await backendPid(cb);
+      const second = cb.query(CLAIM_RESULT, [s2.studioId, b.entry_id]);
+      expect(await untilWaiting(pidB)).toMatchObject({ wait_event_type: "Lock", wait_event: "advisory" });
+      await ca.query("rollback");
+      expect((await second).rows[0].result).toBe("claimed");
+    } finally {
+      await ca.end();
+      await cb.end();
+    }
+    const rows = await joinAckRowsFor([a.entry_id, b.entry_id]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].waitlist_entry_id).toBe(b.entry_id);
+  });
+
+  it("BOUNDED: behind a holder that never finishes, a claim gives up at the 5 s lock_timeout (55P03) and writes nothing", async () => {
+    const s1 = await waitlistStudio("ack-atomic-bound-1", true);
+    const s2 = await waitlistStudio("ack-atomic-bound-2", true);
+    const d = freshDigits();
+    const a = await signup(s1.studioId, { phone: dashed(d) });
+    const b = await signup(s2.studioId, { phone: spaced(d) });
+    const ca = await connection();
+    const cb = await connection();
+    try {
+      await ca.query("begin");
+      expect((await ca.query(CLAIM_RESULT, [s1.studioId, a.entry_id])).rows[0].result).toBe("claimed");
+      const t0 = Date.now();
+      await expect(cb.query(CLAIM_RESULT, [s2.studioId, b.entry_id])).rejects.toMatchObject({ code: "55P03" });
+      const waited = Date.now() - t0;
+      expect(waited).toBeGreaterThanOrEqual(4_500);
+      expect(waited).toBeLessThan(9_000);
+      await ca.query("rollback");
+    } finally {
+      await ca.end();
+      await cb.end();
+    }
+    // The timed-out claim wrote nothing (and the rolled-back one nothing either).
+    expect(await joinAckRowsFor([a.entry_id, b.entry_id])).toHaveLength(0);
+  }, 20_000);
+
+  it("six simultaneous claims for one number across two studios: exactly one claims, five are refused, none deadlocks", async () => {
+    const s1 = await waitlistStudio("ack-atomic-burst-1", true);
+    const s2 = await waitlistStudio("ack-atomic-burst-2", true);
+    const d = freshDigits();
+    const entries: { studioId: string; entryId: string }[] = [];
+    for (let i = 0; i < 6; i++) {
+      const s = i % 2 === 0 ? s1 : s2;
+      const j = await signup(s.studioId, { phone: i % 2 === 0 ? dashed(d) : spaced(d) });
+      expect(j.result).toBe("created");
+      entries.push({ studioId: s.studioId, entryId: j.entry_id! });
+    }
+    const conns = await Promise.all(entries.map(() => connection()));
+    try {
+      // Promise.all rejects on any error -- a deadlock (40P01) included.
+      const results = await Promise.all(
+        entries.map((e, i) => conns[i].query(CLAIM_RESULT, [e.studioId, e.entryId])),
+      );
+      const answers = results.map((r) => r.rows[0].result).sort();
+      expect(answers).toEqual([
+        "claimed",
+        "recently_acknowledged",
+        "recently_acknowledged",
+        "recently_acknowledged",
+        "recently_acknowledged",
+        "recently_acknowledged",
+      ]);
+    } finally {
+      await Promise.all(conns.map((c) => c.end()));
+    }
+    expect(await joinAckRowsFor(entries.map((e) => e.entryId))).toHaveLength(1);
+  });
+
+  it("MUTATION: the same claim WITHOUT the number lock reproduces the original race -- both claim, two rows", async () => {
+    const def = (
+      await adminQuery(
+        `select pg_get_functiondef('public.claim_waitlist_join_ack_sms(uuid, uuid)'::regprocedure) as d`,
+      )
+    ).rows[0].d as string;
+    const LOCK_BLOCK =
+      /\n[ \t]*if v_number is not null then\n[ \t]*perform pg_catalog\.pg_advisory_xact_lock\(\n[ \t]*pg_catalog\.hashtextextended\('sms_join_ack_number:' \|\| v_number, 0\)\);\n[ \t]*end if;\n/;
+    // The lock is really there to remove, exactly once.
+    expect(def.match(new RegExp(LOCK_BLOCK.source, "g")) ?? []).toHaveLength(1);
+    const mutant = def
+      .replace(LOCK_BLOCK, "\n")
+      .replace(
+        "FUNCTION public.claim_waitlist_join_ack_sms(",
+        "FUNCTION sms04_mutation.claim_without_number_lock(",
+      );
+    expect(mutant).not.toMatch(/pg_advisory_xact_lock/);
+    expect(mutant).toContain("sms04_mutation.claim_without_number_lock(");
+
+    const s1 = await waitlistStudio("ack-atomic-mutant-1", true);
+    const s2 = await waitlistStudio("ack-atomic-mutant-2", true);
+    const d = freshDigits();
+    const a = await signup(s1.studioId, { phone: dashed(d) });
+    const b = await signup(s2.studioId, { phone: spaced(d) });
+    const MUTANT_RESULT = `select result from sms04_mutation.claim_without_number_lock($1, $2)`;
+    await adminQuery("create schema sms04_mutation");
+    const ca = await connection();
+    const cb = await connection();
+    try {
+      await adminQuery(mutant);
+      await ca.query("begin");
+      expect((await ca.query(MUTANT_RESULT, [s1.studioId, a.entry_id])).rows[0].result).toBe("claimed");
+      const second = cb.query(MUTANT_RESULT, [s2.studioId, b.entry_id]);
+      // Nothing to wait on: it finishes while the first claim is uncommitted ...
+      expect(await settlesWithin(second, 2_000)).toBe(true);
+      // ... and claims too: the race Codex described.
+      expect((await second).rows[0].result).toBe("claimed");
+      await ca.query("commit");
+    } finally {
+      await ca.end();
+      await cb.end();
+      await adminQuery("drop schema if exists sms04_mutation cascade");
+    }
+    expect(await joinAckRowsFor([a.entry_id, b.entry_id])).toHaveLength(2);
   });
 });
 

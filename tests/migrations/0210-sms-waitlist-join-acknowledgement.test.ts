@@ -200,6 +200,34 @@ describe("the claim: only a fresh public-form signup with its own v2 Yes", () =>
     expect(body).not.toMatch(/m\.studio_id = p_studio_id/);
   });
 
+  it("serialises claims per NUMBER: one transaction-level lock, after the entry row, before the 24-hour check, held through the insert", () => {
+    // Codex P1 4239431828: two entries sharing a number lock different rows, so
+    // the per-number rule needs a lock on the number itself.
+    const LOCK =
+      /if v_number is not null then perform pg_catalog\.pg_advisory_xact_lock\( ?pg_catalog\.hashtextextended\('sms_join_ack_number:' \|\| v_number, 0\)\); end if;/;
+    expect(body).toMatch(LOCK);
+    expect((body.match(/pg_advisory_xact_lock/g) ?? []).length).toBe(1);
+    // Transaction-level only: released at commit or rollback, never held by a session.
+    expect(body).not.toMatch(/pg_advisory_lock\(|pg_advisory_unlock|pg_try_advisory/);
+    // ORDER: entry row, then number, then the 24-hour check, then the insert.
+    const at = (needle: RegExp | string) =>
+      typeof needle === "string" ? body.indexOf(needle) : body.search(needle);
+    const entryLock = at("for no key update");
+    const numberLock = at(LOCK);
+    const dayCheck = at("m.claimed_at > clock_timestamp() - interval '24 hours'");
+    const insert = at("insert into public.sms_outbound_messages");
+    expect(entryLock).toBeGreaterThan(-1);
+    expect(numberLock).toBeGreaterThan(entryLock);
+    expect(dayCheck).toBeGreaterThan(numberLock);
+    expect(insert).toBeGreaterThan(dayCheck);
+  });
+
+  it("bounds every lock wait with its own lock_timeout, and stays VOLATILE so the check after a wait sees fresh rows", () => {
+    const header = normalise(definition(SQL, CLAIM).split("as $$")[0]);
+    expect(header).toContain("set search_path = pg_catalog, pg_temp set lock_timeout = '5s'");
+    expect(header).not.toMatch(/\b(stable|immutable)\b/);
+  });
+
   it("writes exactly one ledger row, of its own purpose, and only when it claims", () => {
     expect((body.match(/insert into public\.sms_outbound_messages/g) ?? []).length).toBe(1);
     expect(body).toContain(

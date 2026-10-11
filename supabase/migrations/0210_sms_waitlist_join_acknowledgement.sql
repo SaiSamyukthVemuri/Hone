@@ -76,7 +76,10 @@
 -- text that may have reached the provider was claimed for the same sendable
 -- number, in any studio, in the last 24 hours. "The same number" is
 -- public.sms_normalized_phone (0199), the parity-proven SQL twin of the
--- sender's own normalizePhoneForSms.
+-- sender's own normalizePhoneForSms. The rule is ATOMIC across entries and
+-- studios: claims for one number are serialised by a transaction-level
+-- advisory lock taken before the 24-hour check and held through the ledger
+-- insert (section 5).
 --
 -- WHAT THE APPLICATION STILL DECIDES, AFTER THE CLAIM: prospectMayReceiveSms
 -- (STOP first, then recorded consent), a usable number, the phone-wide STOP
@@ -206,6 +209,24 @@ $$;
 -- serialisation 0207 gave the invitation claim. Returns the entry's phone and
 -- SMS facts from that locked row, so the text goes to the number the consent
 -- was recorded with (a stored phone can never change: 0202/0203).
+--
+-- The NUMBER is serialised as well (Codex P1 4239431828): two different
+-- entries that share a number -- in one studio or two -- lock different rows,
+-- and the 24-hour check reads committed rows only, so both could pass it
+-- before either insert commits. Before that check the claim takes a
+-- transaction-level advisory lock keyed by the normalized number (namespace
+-- 'sms_join_ack_number:'); it is held through the insert, until the claim's
+-- transaction ends, and a rollback releases it.
+--   ORDER: the entry row, then the number -- always, and nothing else takes
+--     this lock -- so no two claims can wait on each other in a cycle.
+--   VISIBILITY: the check is a new statement after the wait, so under READ
+--     COMMITTED (PostgREST's default) it sees the first claim's committed row
+--     and answers recently_acknowledged. A claim still pending (status
+--     'claimed') counts; a row that definitely reached no one (skipped,
+--     refused) still does not.
+--   BOUNDED: the function's lock_timeout (5 s) caps every lock wait in it. A
+--     claim that times out errors and writes nothing, and the sender, reading
+--     'unavailable', sends nothing.
 
 create or replace function public.claim_waitlist_join_ack_sms(
   p_studio_id uuid,
@@ -221,6 +242,7 @@ create or replace function public.claim_waitlist_join_ack_sms(
 language plpgsql
 security definer
 set search_path = pg_catalog, pg_temp
+set lock_timeout = '5s'
 as $$
 declare
   v_entry   record;
@@ -301,6 +323,15 @@ begin
   -- sender, so to the recipient it is one stream. A row that definitely
   -- reached no one (skipped, refused) does not count.
   v_number := public.sms_normalized_phone(v_entry.phone);
+
+  -- ONE CLAIMER PER NUMBER AT A TIME, taken BEFORE the check and held through
+  -- the insert below (see the section header). A second claim for this number
+  -- waits here; its check then runs as a new statement and sees this claim.
+  if v_number is not null then
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('sms_join_ack_number:' || v_number, 0));
+  end if;
+
   if v_number is not null and exists (
     select 1
       from public.sms_outbound_messages m
@@ -456,7 +487,7 @@ comment on table public.sms_outbound_messages is
 comment on column public.sms_outbound_messages.waitlist_entry_id is
   'SMS-04 (0210). The waitlist entry a join acknowledgement text is about; set only for purpose waitlist_join_acknowledgement, at most one row per entry, write-once by trigger.';
 comment on function public.claim_waitlist_join_ack_sms(uuid, uuid) is
-  'SMS-04 (0210). Claims the ONE join acknowledgement text for a genuinely new self-service waitlist join with its own Yes (public form, still waiting, consent public_form recorded in the join, joined < 15 minutes ago), when the studio''s waitlist texts are on, at most once per entry and once per sendable number per 24 hours. Writes a ledger row only for claimed. Returns (result, message_id, phone, sms_consent_at, sms_opted_out_at, mobile_verified_at); result is claimed | already_claimed | recently_acknowledged | not_eligible | not_fresh | studio_disabled | not_found | invalid_input. service_role only.';
+  'SMS-04 (0210). Claims the ONE join acknowledgement text for a genuinely new self-service waitlist join with its own Yes (public form, still waiting, consent public_form recorded in the join, joined < 15 minutes ago), when the studio''s waitlist texts are on, at most once per entry and once per sendable number per 24 hours, atomically across entries and studios: claims for one number are serialised by a transaction-level advisory lock (namespace sms_join_ack_number:) taken before the 24-hour check and held through the insert, with every lock wait capped by the function''s lock_timeout (5 s); a claim that times out writes nothing. Writes a ledger row only for claimed. Returns (result, message_id, phone, sms_consent_at, sms_opted_out_at, mobile_verified_at); result is claimed | already_claimed | recently_acknowledged | not_eligible | not_fresh | studio_disabled | not_found | invalid_input. service_role only.';
 comment on column public.new_client_waitlist_entries.sms_consent_text_version is
   'Which wording a self-service Yes agreed to: waitlist_sms_operational_v1 ("Text me about this waitlist and any appointment offered from it. Reply STOP at any time to opt out.") or, from 0210, waitlist_sms_operational_v2 ("May we text you about joining this waitlist and any appointment offered from it? Reply STOP at any time to opt out."). Consent is to a specific sentence: a re-wording is a new version and an existing version is never re-pointed. NULL for an owner-recorded consent, which no form sentence was shown for.';
 comment on function public.join_new_client_waitlist_with_phone_and_sms_answer(uuid, text, text, text, boolean, boolean) is
