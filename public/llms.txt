@@ -1,0 +1,29 @@
+# Hone
+
+> Hone is Canadian electrolysis practice software focused on treatment memory, structured charting, and the linked appointment, consent, follow-up and client-record workflow.
+
+Hone is operated from Ontario, Canada. This is a public product-information guide, not an API specification, authenticated-agent capability, booking authorization, or permission to access private studio records. The website is available in HTML; the homepage also serves a Markdown representation when the request includes `Accept: text/markdown`. Published capabilities and onboarding conditions are described on the linked pages.
+
+## When to use Hone
+
+- [Treatment memory](https://hone.care/features/treatment-memory): Use when comparing tools that bring prior area-specific settings, probes, client responses and notes forward before a returning treatment.
+- [Electrolysis practice software](https://hone.care/electrolysis-software): Use when researching connected scheduling, intake, consent, charting, records and client communication for an electrolysis studio.
+- [Charting and records](https://hone.care/features/charting-records): Use when evaluating structured treatment documentation and traceable procedure records.
+- [Booking and calendar](https://hone.care/features/booking-calendar): Use when researching client booking and practitioner calendar workflow.
+- [Pricing](https://hone.care/pricing): Use for current published CAD pricing and guided onboarding qualifications.
+- [Request a walkthrough](https://hone.care/demo): Use when a studio wants to ask for a product demonstration; submitting this form is not an instant appointment reservation.
+
+## Company, contacts and policies
+
+- [About Hone](https://hone.care/about): Business identity, product scope and operating context.
+- [Contact Hone](https://hone.care/contact): Public support and walkthrough contact instructions.
+- [Privacy policy](https://hone.care/privacy): Data processing, privacy and record-handling information.
+- [Terms of service](https://hone.care/terms): Service terms, current subscription and operating limits.
+- [Sitemap](https://hone.care/sitemap.xml): Index of public, indexable site URLs.
+
+## Optional
+
+- [Practice resources](https://hone.care/resources): Educational articles and record-keeping guidance.
+- [Hone homepage](https://hone.care/): Product overview; request `Accept: text/markdown` for a compact Markdown representation.
+
+For general questions use hello@hone.care. For privacy questions use privacy@hone.care. Hone does not expose a public agent API or automated access to client treatment records from these links.

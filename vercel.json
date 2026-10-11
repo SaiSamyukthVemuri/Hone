@@ -12,5 +12,35 @@
       "path": "/api/cron/calendar-sync",
       "schedule": "30 9 * * *"
     }
+  ],
+  "routes": [
+    {
+      "src": "^/$",
+      "continue": true,
+      "transforms": [
+        {
+          "type": "response.headers",
+          "op": "append",
+          "target": {
+            "key": "Vary"
+          },
+          "args": "Accept"
+        }
+      ]
+    },
+    {
+      "src": "^/(about|contact)/?$",
+      "continue": true,
+      "transforms": [
+        {
+          "type": "response.headers",
+          "op": "append",
+          "target": {
+            "key": "Vary"
+          },
+          "args": "Accept"
+        }
+      ]
+    }
   ]
 }

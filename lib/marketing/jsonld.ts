@@ -23,6 +23,30 @@ export function organizationLd() {
     url: CANONICAL_HOST,
     description: "Electrolysis practice software with treatment memory, built for electrologists.",
     email: CONTACT_EMAIL,
+    // Both contact channels and the operating region are already published
+    // in Hone's Terms and Privacy Policy. No phone, street or invented legal
+    // address is implied by this partial PostalAddress.
+    contactPoint: [
+      {
+        "@type": "ContactPoint",
+        contactType: "customer support",
+        email: CONTACT_EMAIL,
+        url: `${CANONICAL_HOST}/contact`,
+        availableLanguage: "en",
+      },
+      {
+        "@type": "ContactPoint",
+        contactType: "privacy inquiries",
+        email: "privacy@hone.care",
+        url: `${CANONICAL_HOST}/privacy`,
+        availableLanguage: "en",
+      },
+    ],
+    address: {
+      "@type": "PostalAddress",
+      addressRegion: "Ontario",
+      addressCountry: "CA",
+    },
     logo: `${CANONICAL_HOST}/icon`,
   };
 }

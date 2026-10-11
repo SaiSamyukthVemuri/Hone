@@ -428,10 +428,11 @@ export const FOOTER_GROUPS: ReadonlyArray<FooterGroup> = [
   {
     title: "Company",
     links: [
+      { href: "/about", label: "About" },
+      { href: "/contact", label: "Contact" },
       { href: "/privacy", label: "Privacy" },
       { href: "/terms", label: "Terms" },
       { href: "/login", label: "Sign in" },
-      { href: `mailto:${CONTACT_EMAIL}`, label: "Contact" },
     ],
   },
 ] as const;
@@ -520,6 +521,18 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     title: "Moving an Electrolysis Practice From Paper Records | Hone",
     description:
       "How to move an electrolysis practice from paper treatment cards to structured digital records without losing client history.",
+    indexable: true,
+  },
+  {
+    path: "/about",
+    title: "About Hone | Electrolysis practice software",
+    description: "Hone's treatment-memory approach, operating context, guided onboarding and record-keeping commitments for electrolysis practitioners.",
+    indexable: true,
+  },
+  {
+    path: "/contact",
+    title: "Contact Hone | Questions and walkthroughs",
+    description: "Contact Hone for an electrolysis software walkthrough, product questions and privacy inquiries. Operated from Ontario, Canada.",
     indexable: true,
   },
   { path: "/privacy", title: null, description: null, indexable: true },

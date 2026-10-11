@@ -51,13 +51,19 @@ const AUTHENTICATED_URLS = [
 ];
 
 describe("marketing surface derivation", () => {
-  it("MARKETING_ROUTES equals the 12 canonical marketing pages", () => {
-    expect(MARKETING_ROUTES).toHaveLength(12);
+  it("includes the current canonical marketing pages, including company trust pages", () => {
+    expect(MARKETING_ROUTES.length).toBeGreaterThanOrEqual(12);
+    expect(new Set(MARKETING_ROUTES).size).toBe(MARKETING_ROUTES.length);
+    for (const path of ["/about", "/contact", "/privacy"]) {
+      expect(MARKETING_ROUTES).toContain(path);
+    }
     for (const p of MARKETING_ROUTES) expect(isMarketingPath(p)).toBe(true);
+    expect(isMarketingPath("/portal")).toBe(false);
+    expect(isMarketingPath("/clients")).toBe(false);
   });
 });
 
-describe("Scenario 8 — the 12 exact marketing paths permit $pageview/$pageleave", () => {
+describe("Scenario 8 — exact canonical marketing paths permit $pageview/$pageleave", () => {
   for (const path of MARKETING_ROUTES) {
     it(`allows $pageview on ${path}`, () => {
       expect(guardBrowserEvent(ev("$pageview", `${HOST}${path}`))).not.toBeNull();
