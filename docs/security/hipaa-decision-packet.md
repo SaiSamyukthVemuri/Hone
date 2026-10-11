@@ -1,0 +1,236 @@
+# HIPAA decision packet (HIPAA-READY-01, issue #828)
+
+> **Proposal, not authority.** This packet lists the agreements,
+> configuration and spending Hone would need *before* any HIPAA-dependent
+> patient onboarding or claim.
+> - Nothing here has been purchased, toggled, signed, or requested from a vendor.
+> - Prices come from public pages read on 2026-10-11 and are not quotes.
+> - Every decision row belongs to Sam. The legal rows also need qualified counsel.
+>
+> Evidence and statuses: [hipaa-readiness-assessment.md](./hipaa-readiness-assessment.md).
+
+## 1. Agreement chain
+
+```
+Studio (covered entity, if D-0 says so)
+  └─ BAA ─ Hone (business associate)
+             ├─ BAA ─ Supabase   (DB, Auth, Storage)        required
+             ├─ BAA ─ Vercel     (hosting, functions, logs)  required
+             ├─ BAA ─ Twilio     (SMS, Verify)               required if SMS carries PHI
+             ├─ BAA ─ email route (see §3.1)                 required unless email is PHI-free
+             ├─ BAA ─ Upstash    (rate limiting)             confirm need: keys are hashed
+             └─ none ─ Sentry, PostHog, Stripe, Google, GitHub
+                       → keep PHI out by design; verify at the wire (G-08)
+```
+
+**Studio-to-Hone BAA (G-22).** Counsel drafts this. The packet does not.
+It must at least settle:
+- permitted uses and disclosures;
+- safeguards and subcontractor flow-down;
+- reporting of incidents and breaches, with timelines and which party
+  notifies individuals;
+- patient access, amendment and accounting support. Hone has an export and
+  append-only amendments (F18, G-21);
+- making Hone's books and records available to HHS;
+- return, export or destruction of data at termination, including backups
+  and Storage objects (G-12);
+- termination for breach;
+- limits on Hone's liability.
+
+These items track 45 CFR 164.504(e); counsel confirms the current text.
+
+**Hone-to-processor BAAs.** Each must be executed for **Hone's own
+account** and cover the products Hone actually uses. When one is signed,
+record in the assessment (without the contract text):
+- the date;
+- the account or team;
+- the product scope;
+- where the signed copy is stored, outside GitHub.
+
+**Keep out of GitHub:** signed contracts, quotes, account ids beyond what
+is already public, secrets, customer records and raw logs.
+
+## 2. Configuration packet
+
+These are checklists for each provider. Every item starts **UNKNOWN**
+until a dated read-only check is recorded. A change happens only with
+Sam's explicit per-change authorization.
+
+### 2.1 Supabase (G-02, G-03, G-11, G-12)
+
+Prerequisites and duties are from Supabase's
+[shared responsibility model](https://supabase.com/docs/guides/deployment/shared-responsibility-model)
+and its [HIPAA projects](https://supabase.com/docs/guides/platform/hipaa-projects) page.
+
+1. Organization on **Team plan or higher**. The production project is on
+   Pro today.
+2. HIPAA add-on request, then a signed BAA.
+3. Mark the project as a HIPAA project, then address the Security Advisor
+   items it raises. Use the assessment's §6 classification method: no
+   blanket revokes or blanket policies.
+4. **Enforce MFA** for every member of the Supabase organization.
+5. **Point-in-time recovery** enabled. Check the compute-size
+   prerequisite.
+6. **SSL enforcement** on.
+7. **Network restrictions** on. Vercel functions connect from dynamic
+   egress. Before enabling, confirm from Supabase's network-restrictions
+   documentation which connection types it governs, and check that every
+   real app and CI connection path still works. This is unverified here.
+8. **Postgres connection logging** (`log_connections`) kept on.
+9. Storage objects need their own backup and restore route. Database
+   backups exclude Storage objects
+   ([backups](https://supabase.com/docs/guides/platform/backups)).
+10. Auth settings:
+    - session timebox and inactivity timeout (G-11);
+    - leaked-password protection;
+    - the custom SMTP provider for workforce email (F16).
+11. Rotate the service-role key and other secrets on a schedule; keep an
+    inventory of who holds them.
+
+### 2.2 Vercel (G-04, G-07, G-16)
+
+1. Confirm the team plan. A BAA is available to **Pro and Enterprise**;
+   Pro buys the HIPAA add-on from Billing
+   ([compliance](https://vercel.com/docs/security/compliance)).
+2. After signing, obtain in writing which features the BAA covers.
+   Specifically: functions, runtime logs, log drains, Web Analytics, Speed
+   Insights, previews, and Blob (if it is ever used).
+3. **Web Analytics and Speed Insights on `(app)` and `/book`** (G-07):
+   - if the BAA does not cover them, unmount them on authenticated and
+     booking trees, or strip ids in `beforeSend`;
+   - either way, re-verify at the wire with synthetic data.
+4. Runtime logs: do a log-payload audit with synthetic data. Logs must not
+   carry names, contact details, notes or tokens. Set a retention period
+   and decide whether to use a log drain to a BAA-covered destination.
+5. Previews:
+   - decide whether previews may ever touch production data;
+   - the default recommendation is **no**: previews get a separate
+     Supabase project with synthetic data (G-16);
+   - put deployment protection on previews.
+6. Team access: individual accounts, MFA, least-privilege roles, and an
+   offboarding checklist.
+7. **Secure Compute is optional, not required.** It is an Enterprise
+   feature that Vercel offers as "additional protection". Do not treat it
+   as a legal requirement.
+
+### 2.3 Twilio (G-06)
+
+1. Confirm that every product in use is on Twilio's
+   [HIPAA Eligible Products and Services](https://www.twilio.com/en-us/hipaa)
+   list for Hone's account: Programmable Messaging through a Messaging
+   Service, and Verify.
+2. Execute Twilio's Business Associate Addendum on the account and
+   subaccount that actually sends.
+3. Configure message retention and redaction to match the BAA guidance
+   ("Architecting for HIPAA on Twilio").
+4. Keep the existing callback signature verification, idempotent claims,
+   STOP and opt-out handling.
+5. **A2P 10DLC registration is a separate matter** from HIPAA. Track it in
+   the sender lane of #824.
+
+### 2.4 Other processors
+
+| Processor | Recommended stance | Check |
+|---|---|---|
+| Sentry | Keep PHI out (current scrubbers); consider a BAA as defence in depth | Check plan eligibility for its published BAA; gate the DSN so local and CI runs never report to production |
+| PostHog | Keep PHI out; browser marketing-only, server events practitioner-only | Wire capture with synthetic data (G-08) |
+| Stripe | Minimize: remove `hone_client_name` from customer metadata (G-09) | Confirm reconciliation needs only opaque ids |
+| Upstash | Hashed keys only | Confirm BAA availability and plan if hashed email plus studio counts as PHI |
+| Google Calendar | Times only, constant title | Studio guidance only (G-15) |
+
+## 3. Provider routes for PHI-bearing communications
+
+### 3.1 Email (G-05): the main blocker
+
+Resend cannot sign a BAA. Removing note text alone is **not** enough. Each
+part of a message has to be classified:
+
+| Surface | Today | PHI-free target |
+|---|---|---|
+| Recipient address | Patient email | Still identifies a person, so it needs a BAA route or patient consent analysis by counsel |
+| From / display name | Studio name | Reveals the care relationship, so treat it as PHI in a covered context |
+| Subject | Service, studio, date and time | Generic: "A message from your provider" |
+| Body | Times, aftercare, names | "Sign in to view": content only behind authentication |
+| Links and tokens | Manage, intake, portal bearer tokens | Short-lived, single-purpose; never log them |
+| Attachments | ICS invite (service, studio) | Remove, or generic |
+| Tracking and metadata | Provider logs, opens and clicks | Disable tracking; classify the provider's retention |
+| Replies | Go to the studio or to Hone | Route to a BAA-covered inbox, or disable replies |
+
+Options for Sam:
+- **A. A BAA-capable email provider** for every patient-facing email.
+  Candidates must be verified against the vendor's current BAA terms
+  before they are named in code. Keep the existing provider-neutral
+  delivery truth, idempotency, callback authentication and opt-out
+  handling.
+- **B. PHI-free notifications** using the table above, with content only
+  behind authenticated portal access. Counsel must still classify the
+  recipient address and studio name. B lowers exposure but probably does
+  not remove the need for a BAA in a covered context.
+- **C. Both (recommended):** B everywhere, plus A as the transport.
+  Exposure stays minimal even under a BAA.
+
+Workforce-only email (ops alerts, admin, feedback, demo) can stay on
+Resend if it is shown PHI-free (F15, F19). Patient-facing email cannot.
+
+### 3.2 SMS
+
+Twilio under an executed BAA, following §2.3. Templates already avoid
+treatment detail but include the studio name and time. That is PHI in a
+covered context, so the BAA is required, not optional.
+
+## 4. Cost packet
+
+Only figures read from a public page on 2026-10-11 are listed. Everything
+else needs a quote.
+
+| Item | Public figure | Status |
+|---|---|---|
+| Supabase Team plan | "From $599 / month", first project included ([pricing](https://supabase.com/pricing)) | Verified public price |
+| Supabase HIPAA add-on | "HIPAA available as paid add-on"; price not published | **Quote needed** |
+| Supabase PITR and any compute upgrade it requires | Add-on; price depends on retention and compute | **Quote or calculator needed** |
+| Vercel HIPAA BAA add-on (Pro) | Purchased in team Billing; price not shown on the public pricing page read | **Read in Billing (read-only)** |
+| Vercel Pro seats | Developer seat $20 / month ([pricing](https://vercel.com/pricing)) | Verified public price |
+| Twilio BAA | Not stated on the HIPAA page | **Ask Twilio / account team** |
+| BAA-capable email provider | Depends on option A choice | **Quote needed** |
+| Upstash plan with BAA | Not stated | **Quote needed** |
+| Counsel (studio BAA, risk analysis review, policies) | Not applicable | **Quote needed** |
+
+## 5. Decisions for Sam, in recommended order
+
+1. **D-0**: obtain the Los Angeles studio's covered-entity status and the
+   workflows it wants. Ask counsel whether Hone acts as its business
+   associate.
+2. **D-1**: appoint the security/privacy official and engage a qualified
+   advisor for the risk analysis and policies (G-01, G-19, G-20).
+3. **D-2**: the Supabase upgrade path. Team plan, HIPAA add-on and BAA,
+   and the §2.1 settings; get the quote first.
+4. **D-3**: the Vercel BAA add-on and its covered features; then decide
+   G-07 (analytics on app routes).
+5. **D-4**: the email route (§3.1 A, B or C).
+6. **D-5**: the Twilio BAA and product confirmation.
+7. **D-6**: preview isolation (G-16).
+
+Engineering can start these now, with no spend and no hosted change:
+- G-07 analytics unmount or strip;
+- G-08 wire-capture tests;
+- G-09 Stripe metadata minimization;
+- G-13 clinical read-audit design;
+- G-16 Sentry DSN gate;
+- G-17 form copy;
+- G-18 advisor classification.
+
+Each is a small PR in its owning lane, using synthetic data.
+
+## 6. Until the gate is met
+
+- No HIPAA claim in marketing, sales or replies to prospects. The marketing
+  tests already reject the word "HIPAA" on public pages.
+- The demo for the prospective studio uses **synthetic data only**. Do not
+  import real patient records, and do not invite reliance on an unverified
+  HIPAA claim.
+- **Gate for any HIPAA-dependent onboarding.** All of these, together:
+  - executed BAAs for every PHI processor;
+  - a recorded configuration evidence row for each §2 item;
+  - the risk-management disposition;
+  - tested incident and breach procedures;
+  - qualified compliance/legal review.
