@@ -14,39 +14,17 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-11, post-0210 apply; hosted `0210`, `0213` AUTHORED AND PENDING on the LEAD-ALERT-01 branch)
+## Current state (verified 2026-10-11, post-0210 apply; hosted `0210`; `0211`, `0212`, `0213` AUTHORED AND PENDING, stacked in that order)
 
-> **0213 IS AUTHORED AND PENDING, on `feat/lead-alert-01-operator-email` (#826) only.**
-> `0213_platform_lead_alerts.sql` adds the operator alert for a new Hone demo request or
-> early-access signup: one table (`platform_lead_alerts`, service_role SELECT only, RLS on,
-> no policy), its update guard, and seven `service_role`-only commands that save a lead and
-> its alert intent together and claim, settle, expire, block and requeue the alert. It
-> writes no row at top level, so no existing lead is ever alerted, and it changes no existing
-> object: 0004's and 0006's anonymous insert policies stay for the deployed forms.
->
-> **NUMBERING.** A fresh census (recorded in `/home/sam/hone-migration-coordination.md`)
-> found `0211` pending in PR #827 (`0211_client_sms_permission_guard.sql`) and `0212` held
-> by the DELIVERY-EVENTS-01 worktree. This lane therefore uses **0213**. On this branch alone
-> the pending suffix is **not contiguous** (`0211` and `0212` are absent from this tree), and
-> the canonical-facts contiguity guard reports that, correctly: `0213` cannot be applied
-> without `--include-all` until `0211` and `0212` are applied first, or the lanes agree a
-> renumber. The guard is deliberately left as it is.
->
-> **0209 and 0210 are APPLIED AND FROZEN** and carried byte-identical
-> (`9fa04999…f877`, `b1d33743…7157`).
+> **THIS TREE IS THE STACKED INTEGRATION OF THREE DRAFT LANES**, coordinated through the shared
+> census (`/home/sam/hone-migration-coordination.md`): `0211` G3 (PR #827, head `481e60c6`),
+> `0212` DELIVERY-EVENTS-01 (PR #832, head `ea7f8c0a`) and `0213` LEAD-ALERT-01 (PR #831), merged
+> in that order. `0211` and `0212` are carried **byte-identical** to their PR heads (pinned by
+> `tests/migrations/0213-platform-lead-alerts.test.ts`). The pending suffix above hosted `0210` is
+> therefore **contiguous**: `0211`, `0212`, `0213`. Apply strictly in that order, each migration-first
+> under its own approval from its own reviewed head; none is applied.
 
-| Field | Value |
-|---|---|
-| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0213** — `0213_platform_lead_alerts.sql`, authored on the LEAD-ALERT-01 branch (`feat/lead-alert-01-operator-email`). No data; no existing object altered. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0213`** only on this branch — **NOT applied**, so `repo > hosted` is the MIGRATION-FIRST PENDING shape. `0211` (PR #827) and `0212` (DELIVERY-EVENTS-01) must be applied first; until then the suffix has a hole and `0213` is not appliable. |
-| **Next free migration** | Next free number is **0214**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it. |
-| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
-
-## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
-
-### Pending below 0213: `0211` (G3, PR #827), as recorded by that branch
+### Pending `0211` — G3 client SMS permission guard (PR #827)
 
 > **0211 IS AUTHORED AND PENDING (added after the 0210 apply), on the draft G3 branch `fix/g3-client-sms-field-guard` only.**
 > `0211_client_sms_permission_guard.sql` closes finding G3: studio members could rewrite a client's SMS consent and opt-out through the database API. It adds ONE `SECURITY INVOKER` trigger function and ONE trigger on `public.clients`, nothing else:
@@ -60,7 +38,43 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >
 > **NOT APPLIED, NOT MERGED.** Apply it migration-first, under separate approval, from the exact reviewed head. No application change depends on it: either order is safe for the application, and the guard binds only raw member writes that no screen makes.
 >
-> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0211` while it is pending.
+
+### Pending `0212` — email delivery events (PR #832)
+
+> **0212 IS AUTHORED AND PENDING (added after the 0210 apply), on the DELIVERY-EVENTS-01 branch `feat/delivery-events-01-resend` only.**
+> `0212_email_delivery_events.sql` adds two tables and five `service_role`-only commands:
+> - **`email_outbound_messages`**, the email delivery ledger, shaped like 0206's SMS ledger: one row per attempt, forward-only status, no address, subject or body;
+> - **`email_provider_events`**, one receipt per signature-verified Resend webhook delivery, deduplicated on its delivery id.
+>
+> The commands are `begin_appointment_email_message`, `settle_email_message`, `record_email_provider_event`, `claim_email_provider_events` and `process_email_provider_event`. No browser grant, no policy, no trigger on an existing table, and it writes no data.
+>
+
+### Pending `0213` — operator lead alerts (PR #831)
+
+> **0213 IS AUTHORED AND PENDING, on `feat/lead-alert-01-operator-email` (#826) only.**
+> `0213_platform_lead_alerts.sql` adds the operator alert for a new Hone demo request or
+> early-access signup: one table (`platform_lead_alerts`, service_role SELECT only, RLS on,
+> no policy), its update guard, and seven `service_role`-only commands that save a lead and
+> its alert intent together and claim, settle, expire, block and requeue the alert. It
+> writes no row at top level, so no existing lead is ever alerted, and it changes no existing
+> object: 0004's and 0006's anonymous insert policies stay for the deployed forms.
+>
+
+> **DELIVERY AUTHORITY, ONE OWNER EACH.** `0213` owns the lead alert's SEND retries (claim → send →
+> settle, at most five attempts). `0212` owns delivery-event RECEIPTS (record → claim → process,
+> bounded and quarantined) and never resends anything; its ledger is studio-scoped, so a receipt for
+> a lead-alert email matches no ledger row and stays platform-only. Neither writes the other's tables.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
+| **Repo migration max** | **0213** — `0213_platform_lead_alerts.sql`, above `0212_email_delivery_events.sql` and `0211_client_sms_permission_guard.sql`. `0209` and `0210` are byte-identical. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0211`, `0212`, `0213`**, contiguous from hosted + 1, all **NOT applied**: the MIGRATION-FIRST PENDING shape, `repo > hosted`. |
+| **Next free migration** | Next free number is **0214**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
+
+## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
 
 > **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
 > `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on
@@ -120,10 +134,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0211** — `0211_client_sms_permission_guard.sql`, authored on the draft G3 branch: one `SECURITY INVOKER` trigger function and one trigger on `public.clients`. `0209` and `0210` are byte-identical. |
+| **Repo migration max** | **0210** — repo and hosted are equal, so this is the PARITY shape with **nothing pending**. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0211`** — `0211_client_sms_permission_guard.sql`, **NOT applied**, so `repo > hosted` by exactly one: the MIGRATION-FIRST PENDING shape. Apply it migration-first, under separate approval, before or with the merge of its branch. |
-| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. A lane that needs it must stack on `0211` or wait for it, because the pending suffix must be contiguous. |
+| **Pending migrations** | **none.** |
+| **Next free migration** | Next free number is **0211**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
 | **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |

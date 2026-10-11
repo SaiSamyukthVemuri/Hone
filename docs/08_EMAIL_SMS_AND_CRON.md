@@ -84,6 +84,70 @@ Pinned by `tests/migrations/0186-intake-reminder-24h-2h.test.ts`, `tests/app/api
 
 The double-send gap is closed. The reminder cron now claims each row via `claim_email_send(appointment_id, email_type)` BEFORE calling Resend: one conditional UPDATE that increments the attempts counter and stamps the matching `*_claimed_at`, gated on sent-is-null, attempts under the 3-strike cap, and no fresh claim (claims older than 5 minutes are stale and reclaimable, so a crashed sender never permanently blocks a row). Two overlapping cron runs can no longer both send; the loser counts the row as `skipped` in the response stats. Outcomes are recorded via `record_email_result` (stamps `*_sent_at` on success, clears the claim, never increments). Both RPCs are SECURITY DEFINER with locked search_path, `revoke from public/anon/authenticated`, execute granted to `service_role` only. This mirrors the SMS `claim_sms_send` / `record_sms_result` pair from migration 0049. The unclaimed one-shot paths (booking confirmation, reschedule notices, no-show cron, postcare) keep using `record_email_attempt` (0028); they run inside a single user request and do not race a scheduler.
 
+### Email delivery events (DELIVERY-EVENTS-01, migration 0212)
+
+> **THE RECEIVING HALF ONLY, AND INERT.** This adds the signed Resend webhook, the receipts and an email delivery ledger. It does **not** wire any send path into the ledger, raise any alert or show anything to a studio. Until a producer slice wires a send path in, every event is unattributed and stays platform-only. Until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend (a separately authorized activation), nothing arrives at all.
+
+**Route: `POST /api/resend/webhook`** (`app/api/resend/webhook/route.ts`, exact-path middleware exemption). It reads the raw body, then verifies the Svix signature (`svix-id`, `svix-timestamp`, `svix-signature`) with `RESEND_WEBHOOK_SECRET` in `lib/email/resend-webhook.ts`. The check is hand-rolled on `node:crypto`, like the Twilio check, and is held to the official Resend SDK verifier on the same fixtures. Refusals:
+- missing secret: 500, nothing written;
+- missing or invalid signature, or a timestamp more than **five minutes** from the server clock: 403 and zero database work;
+- a body over 256 KB: 413.
+
+A captured request therefore cannot be replayed later. A replay inside the window carries the same `svix-id` and is deduplicated below.
+
+**Durable before acknowledged.** `record_email_provider_event` writes one receipt per delivery, unique on `(provider, svix-id)`. Resend keeps that id across every retry of an event.
+- If the receipt cannot be written, the route answers **500** and Resend retries on its own schedule (roughly 27 hours, after which it may disable the endpoint).
+- Once the receipt is written, the answer is **200**, whatever happens to processing. A poison event must never keep the provider retrying until it disables the endpoint.
+- A retried delivery whose receipt is still **pending** is processed again; one already processed is acknowledged as-is.
+
+**Exactly-once processing and crash recovery.**
+- `process_email_provider_event` applies one receipt in one transaction. It locks the receipt, refuses one that is no longer pending (`already_processed`), locks the ledger row, moves the status and records the outcome. Any error rolls back all of it.
+- `claim_email_provider_events` counts every attempt in its own committed statement, **before** the attempt. A claim is held for two minutes. The route claims the receipt it just recorded, then sweeps up to five receipts that are at least a minute old, which covers a request that died mid-processing.
+- A receipt that has spent **five** attempts is quarantined as `processing_exhausted` instead of being retried forever.
+- The sweep runs only as a side effect of the next delivery. A scheduled sweep and its heartbeat belong to the alerting slice.
+
+**Order.** Statuses only move forward: `claimed`/`unknown` < `accepted` < `sent` < `delivery_delayed` < `delivered` < `bounced` | `failed` | `suppressed`.
+- Every arrival order of the same events ends in the same state. A late, repeated or lower event is recorded `stale` and changes nothing.
+- A bounce reported after `delivered` supersedes it: the recipient's server rejected the message after all.
+- `email.complained` records `complained_at` once and implies `delivered`.
+- `email.opened` and `email.clicked` are `ignored`: they are not delivery facts, and the activation subscribes to neither.
+
+**Truthful display.** `lib/delivery/status.ts` maps a ledger row to one channel-agnostic vocabulary:
+- queued, not sent, provider accepted, delayed, delivered, bounced, failed, suppressed;
+- **unknown** (an ambiguous answer, or a claim its sender never settled);
+- **stale** (accepted, but nothing reported within 24 hours, or delayed beyond 72 hours).
+
+Accepted is never shown as delivered. *Delivered* means the recipient's mail server accepted the message, never the inbox or a read. Unknown and stale are never success.
+
+**Attribution: Hone's own row, never the payload.** A ledgered send carries the Resend tag `hone_m = <email_outbound_messages.id>`. Resend reports tags inside the signed payload, so an event addresses the row Hone created before the call, even when the send's own answer was lost. Without a tag, the provider email id is the key. A receipt links to a ledger row, and through it to a studio, only when it was **applied** or **stale**. These cases keep `email_message_id` NULL and are attributable to no studio:
+- an unknown tag (`unmatched_tag`: another deployment sharing the Resend account) or an unknown email id (`unmatched_email_id`);
+- a tag and email id that disagree (`email_id_mismatch`);
+- an id already held by another attempt (`email_id_conflict`);
+- an event for an attempt Hone recorded as never sent (`not_sent`);
+- an unknown type (`unknown_event_type`) or a missing email id (`missing_email_id`).
+
+**Minimum metadata.** A receipt keeps:
+- the delivery id, the event type and time;
+- the provider email id and the reported tag;
+- reason **slugs**: bounce type and subtype, failure reason, suppression type.
+
+Addresses, subject, headers, other tags and every free-text provider message are dropped before anything is stored or logged. A reason that is not a plain identifier becomes `other`, so free text cannot leak through in slug form. Neither table has a policy or a grant: the five commands are `service_role` only.
+
+**Joining a send path (the producer contract).** The intent owner (for example LEAD-ALERT-01's notification row) stays the retry authority. For each provider attempt it:
+1. calls the purpose's begin command (`begin_appointment_email_message` today);
+2. sends through the ONE Resend path with tag `hone_m` set to the row id, plus its own idempotency key;
+3. calls `settle_email_message`: `accepted` with the email id, `refused`, `unknown` or `skipped`.
+
+A retry under the **same** idempotency key may settle an `unknown` row `accepted`. The ledger never resends. A resend after the provider's 24-hour idempotency window must first reconcile the earlier attempt.
+
+**Activation packet (each step separately authorized; none taken here).**
+1. Hosted migration `0212`, migration-first, after the lane holding `0211`.
+2. `RESEND_WEBHOOK_SECRET` in Vercel production.
+3. A Resend endpoint for `https://hone.care/api/resend/webhook`, subscribed to exactly `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed` and `email.complained`.
+4. A dashboard test event, verified as one receipt with the expected outcome.
+
+Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutations, exactly-once under concurrency, crash recovery, tenant isolation, provider failure, privileges), `tests/migrations/0212-email-delivery-events.test.ts`, `tests/lib/email/resend-webhook.test.ts`, `tests/app/api/resend-webhook.test.ts` and `tests/lib/delivery/status.test.ts`.
+
 ## SMS (Twilio)
 
 ### Posture

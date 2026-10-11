@@ -74,7 +74,7 @@
   - **Client-facing mail** sends as `<Studio name> via Hone <hello@hone.care>`, with `Reply-To` set to the studio's contact address when one is usable. The studio name is **display text only**, sanitised so it cannot inject a mail header; an absent or unusable name falls back to exactly `Hone <hello@hone.care>`.
   - **Reply-To is derived server-side** from `studios.postcare_contact_email`, else `studios.owner_email` (`studioClientContactEmail`). If neither is usable the header is **omitted** — never fabricated, and never the client's own address.
   - **Hone-facing mail** (ops alerts, team invitations) deliberately keeps `Hone <hello@hone.care>` with no `Reply-To`: Hone is speaking as Hone.
-  - **Hone learns only that Resend ACCEPTED a message.** There is no delivery webhook, no bounce or complaint tracking and no suppression list (COMMS-01D).
+  - **Hone learns only that Resend ACCEPTED a message.** In production there is still no bounce or complaint tracking and no suppression list (COMMS-01D). DELIVERY-EVENTS-01 (migration `0212`, pending) adds the receiving half only: a signed webhook at `/api/resend/webhook`, durable receipts and an email delivery ledger. It stays inert until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend, and no send path records its attempts in the ledger yet ([docs/08 §Email delivery events](./08_EMAIL_SMS_AND_CRON.md#email-delivery-events-delivery-events-01-migration-0212)).
 
 ## Twilio
 
@@ -117,6 +117,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `SUPABASE_SERVICE_ROLE_KEY` | Required (server) | Service-role key. Never exposed to the client. |
 | `NEXT_PUBLIC_APP_ORIGIN` | **Required in production** | Used to build cancel/reschedule/manage/intake/portal URLs in outgoing email + SMS. No silent fallback. See [docs/03 §7](./03_SECURITY_AND_PRIVACY.md#7-production-config-fail-closed-pr-143). |
 | `RESEND_API_KEY` | Required for email features | |
+| `RESEND_WEBHOOK_SECRET` | Optional; required only once the Resend delivery webhook is activated | The `whsec_…` signing secret of the Resend webhook endpoint for `/api/resend/webhook` (DELIVERY-EVENTS-01). The route verifies every delivery's Svix signature with it before any database work. **Unset → the route answers 500 and records nothing**, so an endpoint configured without it fails loudly in Resend's dashboard rather than silently. It never needs `RESEND_API_KEY`. |
 | `CRON_SECRET` | Required for `/api/cron/*` | Generate via `openssl rand -hex 32`. |
 | `APPOINTMENT_SIGNING_SECRET` | Required | HMAC for legacy cancel/reschedule tokens (column-based tokens are the primary path; HMAC remains the fallback). |
 | `INTAKE_SIGNING_SECRET` | Required | HMAC for `/intake/<token>`. |
