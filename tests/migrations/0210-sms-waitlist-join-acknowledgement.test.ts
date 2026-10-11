@@ -46,12 +46,21 @@ function definition(sql: string, fn: string): string {
 }
 
 describe("0210 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0209's test when production,
-    // carrying WAIT #820's 0209, was merged into this branch.
-    expect(isRepoMax(VERSION), "0210 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0210").toEqual([]);
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
+    // `isRepoMax`, and that claim now lives in the current max's own test.
+    // It reached this file from 0209's test when production, carrying WAIT
+    // #820's 0209, was merged into the SMS-04 branch, and left for the next
+    // migration's own test.
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, NOT PINNED: something sits above it, and everything above it is
+    // greater. A literal list would be the forbidden pin in other clothes.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once", () => {

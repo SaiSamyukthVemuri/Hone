@@ -1556,6 +1556,21 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Stripe Connect account state per mode. Provider configuration and identifiers, not studio content.",
   },
+  studio_payment_jurisdictions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "PAY-CCY-02 (0214): the studio's payment country and charge currency. Payment configuration, not studio content; the currency of every exported amount is the deciding reader, so decide deliberately.",
+  },
+  studio_payment_jurisdiction_changes: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "PAY-CCY-02 (0214): operator audit of payment country/currency changes, with free-text actor and reason. Operator records; review before any export.",
+  },
   calendar_connections: {
     kind: "pending",
     ticket: "TRUTH-01B",
