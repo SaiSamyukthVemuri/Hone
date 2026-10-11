@@ -237,6 +237,26 @@ describe("the claim: only a fresh public-form signup with its own v2 Yes", () =>
   });
 });
 
+describe("the cooldown lookup's index (Codex P2 4239987967; D3 architecture review)", () => {
+  it("indexes exactly the expression the claim's per-number check compares", () => {
+    expect(TOP_LEVEL).toMatch(
+      /create index new_client_waitlist_entries_sms_number_idx\s+on public\.new_client_waitlist_entries \(public\.sms_normalized_phone\(phone\)\);/,
+    );
+    expect(normalise(definition(SQL, CLAIM))).toContain("public.sms_normalized_phone(o.phone) = v_number");
+  });
+
+  it("is the only plain index 0210 adds: the measured-and-rejected ledger time index is absent", () => {
+    expect((TOP_LEVEL.match(/\bcreate index\b/g) ?? []).length).toBe(1);
+    expect(TOP_LEVEL).not.toMatch(/create index[^;]*sms_outbound_messages[^;]*claimed_at/);
+  });
+
+  it("records that the index must be rebuilt if the normalizer is ever redefined, and leaves 0199's normalizer alone", () => {
+    expect(TOP_LEVEL).toMatch(/comment on index public\.new_client_waitlist_entries_sms_number_idx is/);
+    expect(TOP_LEVEL).toMatch(/Must be rebuilt \(REINDEX\) if public\.sms_normalized_phone is ever redefined/);
+    expect(TOP_LEVEL).not.toMatch(/create or replace function public\.sms_normalized_phone/);
+  });
+});
+
 describe("the signup: a required phone, the guarded join unchanged, a Yes as v2", () => {
   const body = normalise(definition(SQL, SIGNUP));
 

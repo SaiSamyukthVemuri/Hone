@@ -421,6 +421,32 @@ describe("0210: at most one join text per number per 24 hours, across studios", 
     expect(await ledgerFor(second.entry_id!)).toHaveLength(0);
   });
 
+  it("the window is 24 hours: an acknowledgement just inside it counts, one just past it does not", async () => {
+    const s = await waitlistStudio("ack-number-window", true);
+    const d = freshDigits();
+    const first = await signup(s.studioId, { phone: dashed(d) });
+    const c = await claim(s.studioId, first.entry_id);
+    expect(c.result).toBe("claimed");
+    // claimed_at is write-once (the identity guard), so the fixture backdates it
+    // with triggers off -- test fixture only.
+    const backdate = (ago: string) =>
+      adminTx(async (q) => {
+        await q(`set local session_replication_role = replica`);
+        await q(
+          `update public.sms_outbound_messages
+              set claimed_at = now() - $2::interval, created_at = now() - $2::interval
+            where id = $1`,
+          [c.message_id, ago],
+        );
+      });
+    await backdate("23 hours 59 minutes");
+    const inside = await signup(s.studioId, { phone: d });
+    expect((await claim(s.studioId, inside.entry_id)).result).toBe("recently_acknowledged");
+    await backdate("24 hours 1 minute");
+    const past = await signup(s.studioId, { phone: `+1 (${d.slice(0, 3)}) ${d.slice(3, 6)} ${d.slice(6)}` });
+    expect((await claim(s.studioId, past.entry_id)).result).toBe("claimed");
+  });
+
   it("an earlier attempt that definitely reached no one (refused, skipped) does not count", async () => {
     const s = await waitlistStudio("ack-number-refused", true);
     const d = freshDigits();
@@ -694,6 +720,124 @@ describe("0210: the per-number rule is ATOMIC across entries and studios (real c
     }
     expect(await joinAckRowsFor([a.entry_id, b.entry_id])).toHaveLength(2);
   });
+});
+
+// ===========================================================================
+// THE COOLDOWN LOOKUP'S ACCESS PATH (Codex P2 4239987967)
+// ===========================================================================
+// Architecture review: SMS04_JOIN_ACK_COOLDOWN_ARCHITECTURE_REVIEW_2026-10-11.
+// sms_normalized_phone carries SET search_path, so PostgreSQL cannot inline it
+// (~70 us a call). Without an index on the normalized number the planner
+// normalized EVERY entry's phone under the per-number lock (2.2 s at 30,350
+// entries). 0210 indexes the expression; the lookup's SQL is unchanged.
+
+/** A tree walk over an EXPLAIN (FORMAT JSON) plan. */
+function planNodes(node: Record<string, unknown>, out: Record<string, unknown>[] = []) {
+  out.push(node);
+  for (const child of (node.Plans as Record<string, unknown>[] | undefined) ?? []) planNodes(child, out);
+  return out;
+}
+
+/** 5,000 entries with distinct sendable numbers, each with an OLD join text, inside `c`'s transaction. */
+async function representativeHistory(c: Client, studioId: string) {
+  const tag = randomUUID().slice(0, 8);
+  await c.query(`set local session_replication_role = replica`);
+  await c.query(
+    `insert into public.new_client_waitlist_entries
+       (id, studio_id, name, email, phone, status, source, joined_at, joined_at_provenance)
+     select gen_random_uuid(), $1, 'Plan ' || g, 'plan-' || $2 || '-' || g || '@example.com',
+            '+1647' || lpad(g::text, 7, '0'), 'waiting', 'public_booking', now() - interval '400 days', 'form'
+       from generate_series(1, 5000) g`,
+    [studioId, tag],
+  );
+  await c.query(
+    `insert into public.sms_outbound_messages
+       (studio_id, purpose, waitlist_entry_id, status, provider_message_sid, claimed_at, created_at)
+     select e.studio_id, 'waitlist_join_acknowledgement', e.id, 'delivered', 'SM' || md5(e.id::text),
+            now() - interval '300 days', now() - interval '300 days'
+       from public.new_client_waitlist_entries e
+      where e.studio_id = $1 and e.email like 'plan-' || $2 || '-%'`,
+    [studioId, tag],
+  );
+  await c.query(`set local session_replication_role = origin`);
+  await c.query(`analyze public.new_client_waitlist_entries`);
+  await c.query(`analyze public.sms_outbound_messages`);
+}
+
+describe("0210: the cooldown lookup reaches the number through an index (P2 4239987967)", () => {
+  it("planned exactly as the claim writes it, on representative data, in BOTH plan modes", async () => {
+    // The lookup is taken from the claim's own definition, so this plans the SQL production runs.
+    const def = (
+      await adminQuery(
+        `select pg_get_functiondef('public.claim_waitlist_join_ack_sms(uuid, uuid)'::regprocedure) as d`,
+      )
+    ).rows[0].d as string;
+    const m = def.match(/if v_number is not null and exists \(\s*(select 1[\s\S]*?= v_number)\s*\) then/);
+    expect(m, "the claim's cooldown lookup was not found in its definition").not.toBeNull();
+    const lookup = m![1].replace(/\bv_number\b/g, "$1");
+    expect(lookup).toContain("public.sms_normalized_phone(o.phone) = $1");
+
+    const s = await waitlistStudio("ack-plan", true);
+    const c = await connection();
+    try {
+      await c.query("begin");
+      await representativeHistory(c, s.studioId);
+      for (const mode of ["force_custom_plan", "force_generic_plan"]) {
+        await c.query(`set local plan_cache_mode = ${mode}`);
+        await c.query(`prepare cooldown_lookup(text) as select exists (${lookup})`);
+        const json = (await c.query(`explain (format json) execute cooldown_lookup('+16470000001')`)).rows[0][
+          "QUERY PLAN"
+        ];
+        await c.query(`deallocate cooldown_lookup`);
+        const nodes = planNodes(json[0].Plan);
+        expect(
+          nodes.some((n) => n["Index Name"] === "new_client_waitlist_entries_sms_number_idx"),
+          `${mode}: the lookup must probe the number index`,
+        ).toBe(true);
+        expect(
+          nodes.some((n) => n["Node Type"] === "Seq Scan" && n["Relation Name"] === "new_client_waitlist_entries"),
+          `${mode}: the lookup must never scan every entry`,
+        ).toBe(false);
+      }
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      await c.end();
+    }
+  }, 60_000);
+
+  it("the claim function's OWN nested lookup uses the index, custom and generic (auto_explain)", async () => {
+    const s = await waitlistStudio("ack-plan-real", true);
+    const a = await signup(s.studioId, { phone: dashed(freshDigits()) });
+    const b = await signup(s.studioId, { phone: dashed(freshDigits()) });
+    const c = await connection();
+    const notices: string[] = [];
+    c.on("notice", (n) => notices.push(String(n.message ?? "")));
+    try {
+      await c.query("begin");
+      await representativeHistory(c, s.studioId);
+      // auto_explain is preloaded on the Supabase image (LOAD itself is refused to
+      // the postgres role); its settings are open to this session.
+      await c.query("set local auto_explain.log_min_duration = 0");
+      await c.query("set local auto_explain.log_nested_statements = on");
+      await c.query("set local auto_explain.log_level = 'notice'");
+      await c.query("set local client_min_messages = 'notice'");
+      for (const [mode, entry] of [
+        ["force_custom_plan", a.entry_id],
+        ["force_generic_plan", b.entry_id],
+      ] as const) {
+        notices.length = 0;
+        await c.query(`set local plan_cache_mode = ${mode}`);
+        expect((await c.query(CLAIM_RESULT, [s.studioId, entry])).rows[0].result).toBe("claimed");
+        const lookup = notices.find((n) => n.includes("join public.new_client_waitlist_entries o"));
+        expect(lookup, `${mode}: auto_explain did not report the cooldown lookup`).toBeDefined();
+        expect(lookup!, mode).toMatch(/Index (Only )?Scan using new_client_waitlist_entries_sms_number_idx/);
+        expect(lookup!, mode).not.toMatch(/Seq Scan on new_client_waitlist_entries/);
+      }
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      await c.end();
+    }
+  }, 60_000);
 });
 
 // ===========================================================================

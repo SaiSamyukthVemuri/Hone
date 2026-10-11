@@ -79,7 +79,9 @@
 -- sender's own normalizePhoneForSms. The rule is ATOMIC across entries and
 -- studios: claims for one number are serialised by a transaction-level
 -- advisory lock taken before the 24-hour check and held through the ledger
--- insert (section 5).
+-- insert (section 5). The check reaches the number through an index on the
+-- normalized phone (section 3b), so the time it holds that lock does not grow
+-- with the waitlist's history.
 --
 -- WHAT THE APPLICATION STILL DECIDES, AFTER THE CLAIM: prospectMayReceiveSms
 -- (STOP first, then recorded consent), a usable number, the phone-wide STOP
@@ -159,6 +161,32 @@ create unique index sms_outbound_messages_one_join_ack_per_entry
   where waitlist_entry_id is not null;
 
 -- ---------------------------------------------------------------------------
+-- 3b. THE COOLDOWN LOOKUP'S INDEX (Codex P2 4239987967)
+-- ---------------------------------------------------------------------------
+--
+-- The claim's one-text-per-number check (section 5) finds the entries that
+-- share the claim's number by comparing public.sms_normalized_phone(o.phone).
+-- That function (0199) is IMMUTABLE but carries SET search_path, so PostgreSQL
+-- cannot inline it: with no index, the planner normalised EVERY entry's phone,
+-- and did it while holding the per-number lock -- 2.2 s at 30,350 entries on an
+-- isolated PostgreSQL 17.6 stack, in custom and generic plans alike (the D3
+-- architecture review SMS04_JOIN_ACK_COOLDOWN_ARCHITECTURE_REVIEW_2026-10-11).
+-- Indexing the expression the lookup already compares makes it one index probe
+-- (0.07-0.17 ms) with the lookup's SQL unchanged. A ledger index on claimed_at
+-- was measured and rejected: generic plans bypass it, and even forced it still
+-- normalises every join text of the last 24 hours.
+--
+-- An index on an IMMUTABLE expression is only as true as the function: if
+-- public.sms_normalized_phone is ever redefined, this index must be rebuilt
+-- (REINDEX) in the same change -- just as clients.sms_phone, 0199's stored
+-- column of the same function, must be rewritten.
+create index new_client_waitlist_entries_sms_number_idx
+  on public.new_client_waitlist_entries (public.sms_normalized_phone(phone));
+
+comment on index public.new_client_waitlist_entries_sms_number_idx is
+  'SMS-04 (0210). The normalized phone (public.sms_normalized_phone) of every entry, so the join-text claim''s one-text-per-number check finds the entries sharing a number by an index probe instead of normalising every phone under the per-number lock. Must be rebuilt (REINDEX) if public.sms_normalized_phone is ever redefined.';
+
+-- ---------------------------------------------------------------------------
 -- 4. The identity guard (0206's, replaced whole, plus the new subject)
 -- ---------------------------------------------------------------------------
 
@@ -227,6 +255,9 @@ $$;
 --   BOUNDED: the function's lock_timeout (5 s) caps every lock wait in it. A
 --     claim that times out errors and writes nothing, and the sender, reading
 --     'unavailable', sends nothing.
+--   SHORT: while the lock is held, the 24-hour check reaches the number
+--     through new_client_waitlist_entries_sms_number_idx (section 3b), so the
+--     time a claim holds the lock stays flat as the waitlist grows.
 
 create or replace function public.claim_waitlist_join_ack_sms(
   p_studio_id uuid,

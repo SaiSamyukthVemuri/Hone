@@ -218,6 +218,11 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
   - A second claim for the same number waits, then sees the first claim and is refused (`recently_acknowledged`). A pending first claim counts; a skipped or refused one still does not.
   - **Lock order** is always the entry row, then the number.
   - **Waits are bounded** by the claim's own `lock_timeout` (5 s). A claim that times out writes nothing, and the sender, reading `unavailable`, sends nothing.
+  - **The lock is held briefly, and that does not change as the waitlist grows.**
+    - The check finds the entries sharing the number through `new_client_waitlist_entries_sms_number_idx`, an index on `sms_normalized_phone(phone)`.
+    - Without it, the planner normalized every entry's phone under the lock, because the function's `SET search_path` prevents inlining. That took 2.2 s at 30,350 entries; with the index it takes 0.1–0.2 ms.
+    - The index must be rebuilt if the normalizer is ever redefined.
+    - The decision is recorded in the D3 architecture review (Codex P2 4239987967).
   - This repairs Codex P1 4239431828. It is proven with real concurrent connections in `tests/db/sms-waitlist-join-ack.db.test.ts`, including a mutation that removes the lock and reproduces the race.
 - **Who can never get it.** People already on a waitlist:
   - an owner-recorded or backfilled consent is source `practitioner`;
