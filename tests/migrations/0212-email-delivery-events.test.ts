@@ -60,7 +60,8 @@ function tableOf(name: string): string {
 describe("0212 sits correctly in the migration sequence", () => {
   it("is the repository maximum, and nothing sits above it", () => {
     // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0210's test.
+    // CLAUDE.md §2. It reached this file from 0211's test when this branch
+    // stacked on #827.
     expect(isRepoMax(VERSION), "0212 is no longer the repo max").toBe(true);
     expect(versionsAbove(VERSION), "something was added above 0212").toEqual([]);
   });

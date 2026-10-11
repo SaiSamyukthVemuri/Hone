@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, `0212` AUTHORED AND PENDING on the DELIVERY-EVENTS-01 branch)
+## Current state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, `0211` AND `0212` AUTHORED AND PENDING: `0212` on the DELIVERY-EVENTS-01 branch, stacked on the G3 branch carrying `0211`)
 
 > **0212 IS AUTHORED AND PENDING (added after the 0210 apply), on the DELIVERY-EVENTS-01 branch `feat/delivery-events-01-resend` only.**
 > `0212_email_delivery_events.sql` adds two tables and five `service_role`-only commands:
@@ -23,11 +23,24 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >
 > The commands are `begin_appointment_email_message`, `settle_email_message`, `record_email_provider_event`, `claim_email_provider_events` and `process_email_provider_event`. No browser grant, no policy, no trigger on an existing table, and it writes no data.
 >
-> **0211 IS NOT IN THIS TREE, BY COORDINATION.** Per the shared census (`/home/sam/hone-migration-coordination.md`, 2026-10-11), `0211` is the G3 client SMS permission guard (draft PR #827, pending), `0212` is this lane, and `0213` is LEAD-ALERT-01 (draft PR #831, pending). This branch's pending suffix therefore has a hole at `0211` until `0212` is stacked on #827, or renumbered at integration. The contiguity rule in `tests/docs/canonical-production-facts.test.ts` is red on this branch for exactly that reason, by construction.
+> **STACKED ON `0211`, BY COORDINATION.** Per the shared census (`/home/sam/hone-migration-coordination.md`, 2026-10-11), `0211` is the G3 client SMS permission guard (draft PR #827), `0212` is this lane (draft PR #832), and `0213` is LEAD-ALERT-01 (draft PR #831). This branch merges #827's head unchanged, so the pending suffix is the contiguous `0211`, `0212`. Apply order is 0211 → 0212 → 0213. `0211` and its record below belong to the G3 lane.
 >
 > **NOT APPLIED, NOT MERGED.**
 >
-> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0212` while it is pending.
+
+> **0211 IS AUTHORED AND PENDING (added after the 0210 apply), on the draft G3 branch `fix/g3-client-sms-field-guard` only.**
+> `0211_client_sms_permission_guard.sql` closes finding G3: studio members could rewrite a client's SMS consent and opt-out through the database API. It adds ONE `SECURITY INVOKER` trigger function and ONE trigger on `public.clients`, nothing else:
+> - a member (`anon` / `authenticated`) can never add, change or remove SMS consent;
+> - recorded consent evidence is write-once, and an opt-out is terminal, for every role;
+> - a member may still record a withdrawal (source `practitioner`, on the database clock).
+>
+> No table, column, constraint, policy, index or grant changes, and no row is written. The census of every writer of the four fields, which the trigger must keep working, is in the migration header: the 0204 new-client booking command, the public booking action and the inbound STOP route.
+>
+> **NUMBERING, from a fresh census at authoring time (2026-10-11 ~18:00Z):** hosted max `0210` (read-only query), repository max `0210`, and no remote branch, open PR (#823 and #825 included) or worktree on this host carrying a migration above `0210`. `0211` was free and is used here. **It is not reserved beyond this draft:** issue #824 and WAIT v4 allocate their own numbers at write time, and the pending suffix must stay contiguous, so a lane that needs a migration before this one merges re-censuses, and stacks or renumbers. `0209` and `0210` stay frozen and byte-identical (pinned by `tests/migrations/0211-client-sms-permission-guard.test.ts`).
+>
+> **NOT APPLIED, NOT MERGED.** Apply it migration-first, under separate approval, from the exact reviewed head. No application change depends on it: either order is safe for the application, and the guard binds only raw member writes that no screen makes.
+>
+> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0211` and `0212` while they are pending.
 
 > **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
 > `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on
@@ -87,10 +100,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0212** — above hosted, so this is the MIGRATION-FIRST PENDING shape. |
+| **Repo migration max** | **0212** — `0212_email_delivery_events.sql` (DELIVERY-EVENTS-01, draft PR #832), stacked on `0211`. `0209` and `0210` are byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0212`** (`0212_email_delivery_events.sql`, DELIVERY-EVENTS-01) — authored, **not applied, not merged**. `0211` (G3, PR #827) is absent from this tree; `0213` (LEAD-ALERT-01, PR #831) applies after this. |
-| **Next free migration** | Next free number is **0213**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Pending migrations** | **`0211`, `0212`** — `0211_client_sms_permission_guard.sql` (G3, PR #827) and `0212_email_delivery_events.sql` (DELIVERY-EVENTS-01, PR #832), both **NOT applied**, so `repo > hosted` by exactly two: the MIGRATION-FIRST PENDING shape, contiguous from hosted + 1. Apply `0211` first, under separate approval for each. |
+| **Next free migration** | Next free number is **0213**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here (LEAD-ALERT-01's PR #831 carries a `0213` of its own). |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
 | **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |
