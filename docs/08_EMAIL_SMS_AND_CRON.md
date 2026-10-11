@@ -243,6 +243,43 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
   - a refused or lost text raises one `sms_send_failed` warning (purpose `waitlist_join_acknowledgement`), before the best-effort settle.
 - **The ledger.** Purpose `waitlist_join_acknowledgement`, subject `waitlist_entry_id`. The subject is tied to the studio by a composite key, there is at most one row per entry (unique index), and it is write-once.
 
+### Operator lead alerts (LEAD-ALERT-01, #826, migration 0213)
+
+When a Hone **demo request** (`/demo`) or **early-access signup** (`public.waitlist`, not a
+studio's new-client waitlist) is saved, the platform operator gets one email. Nothing is sent
+to the prospect.
+
+- **Saved together.** `record_platform_demo_request` / `record_platform_early_access_signup`
+  (service_role only) write the lead and its `platform_lead_alerts` row in one transaction,
+  after the action's validation and rate limit. A refused submission saves nothing and alerts
+  nobody. An early-access address already on the list is a duplicate: no lead, no alert.
+  Every accepted demo request is its own lead with its own single alert (lead capture is
+  unchanged; the rate limit bounds repeats).
+- **Sent after the response**, through the existing keyed Resend attempt
+  (`sendOnceWithIdempotencyKey`), under the alert's `idempotency_key`
+  (`lead-alert/<alert id>/<generation>`), identical on every retry of that generation.
+- **Claim → send → settle.** One worker leases an alert (`FOR UPDATE SKIP LOCKED`, 120 s
+  lease); only the current claim token may settle it. At most five attempts, backing off
+  2 min, 10 min, 1 h, 6 h. A provider refusal the same request would meet again fails at
+  once. An abandoned lease is re-claimed under the same key. Alerts unsent 72 hours after
+  the lead become a visible `failed: expired`.
+- **States are honest.** `accepted` means the provider accepted the message. It is not a
+  delivery receipt.
+- **Recipient.** `LEAD_ALERT_EMAIL`, exactly one address that is also on `ADMIN_EMAILS`.
+  Missing or refused configuration, a missing `RESEND_API_KEY` or a missing
+  `NEXT_PUBLIC_APP_ORIGIN` sends nothing and spends no attempt. The alert records the
+  blocker and `/admin` shows **Lead alerts: Not sending**.
+- **Content.** Name, email, practice, city, practice type, practitioner count, current tool
+  when given, event and time, and a sign-in-required `/admin#lead-…` link. Submitted text
+  is flattened (no control, invisible or bidi characters, capped at 200 characters) and
+  HTML-escaped. Notes are never included; the email says only that there are some. The
+  subject carries no submitted text.
+- **Visibility.** `/admin` has a **Lead alerts** card (configuration, counts by state,
+  failed alerts with **Retry**) and an Alert column on both lead tables. A final failure
+  raises a `warning` ops alert carrying ids and codes only.
+- **No catch-up.** Leads saved before 0213, or written any other way, have no alert and
+  never generate email.
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.
@@ -259,6 +296,7 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
 | `/api/cron/materialize-recurring-breaks` | **Vercel Cron, `vercel.json`, `0 8 * * *`** (daily, 08:00 UTC — allowed on every plan). Also runs the reminder-scheduler health check in a `finally` (PR OPS-01). |
 | `/api/cron/calendar-reconcile` | **Vercel Cron, `vercel.json`, `0 9 * * *`** (daily, B2.3-c3 — daily because the plan caps cron at once/day). **DORMANT:** the reconciliation sweep finds zero intent-eligible studios while every studio outbound flag is OFF. Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
 | `/api/cron/calendar-sync` | **Vercel Cron, `vercel.json`, `30 9 * * *`** (daily, B2.3-c3, after reconciliation). **DORMANT:** `worker_enabled=false` → the claim RPC returns zero rows and mutates nothing → no-work. The **first scheduled run doubles as the B2.3-c2 no-work production validation** (Vercel Cron auto-supplies the production `CRON_SECRET`). Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
+| `/api/cron/lead-alerts` | **Vercel Cron, `vercel.json`, `0 13 * * *`** (daily, LEAD-ALERT-01). Recovery sweep for operator lead alerts: expires alerts past 72 h, then sends due or abandoned ones, one claim at a time (≤ 20 per run). Each alert is normally sent right after its lead is saved; for retries faster than daily, add an external every-15-min `GET` with `Authorization: Bearer $CRON_SECRET` (activation step, not done in code). |
 | `/api/cron/no-show-check` | **intentionally NOT scheduled** (disabled, non-mutating stub). |
 
 ### Reminder scheduler: RUNTIME OPERATION PROVEN 2026-08-12 · HUMAN OWNERSHIP still OPEN

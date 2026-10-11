@@ -1,12 +1,14 @@
 "use server";
 
 import { headers } from "next/headers";
-import { createClient } from "@/lib/supabase/server";
+import { after } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   limitDemoRequestSubmit,
   RATE_LIMIT_MESSAGE,
 } from "@/lib/rate-limit/public";
 import { CONTACT_EMAIL } from "@/lib/marketing/content";
+import { deliverPlatformLeadAlert } from "@/lib/platform-leads/alert-delivery";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -66,27 +68,40 @@ export async function submitDemoRequest(
     return { ok: false, error: RATE_LIMIT_MESSAGE };
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase.from("demo_requests").insert({
-    name,
-    email,
-    practice_name: emptyToNull(payload.practice_name),
-    location: emptyToNull(payload.location),
-    practice_type: checkEnum(payload.practice_type, PRACTICE_TYPES),
-    practitioner_count: checkEnum(
+  // LEAD-ALERT-01 (#826): the request and its operator alert are saved
+  // together, in one transaction, by a service-role-only command (0213). The
+  // columns and values are exactly what this form always saved. Every request
+  // that gets this far is a new lead with its own single alert; the limiter
+  // above is what bounds repeats.
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("record_platform_demo_request", {
+    p_name: name,
+    p_email: email,
+    p_practice_name: emptyToNull(payload.practice_name),
+    p_location: emptyToNull(payload.location),
+    p_practice_type: checkEnum(payload.practice_type, PRACTICE_TYPES),
+    p_practitioner_count: checkEnum(
       payload.practitioner_count,
       PRACTITIONER_COUNTS,
     ),
-    current_tool: emptyToNull(payload.current_tool),
-    notes: emptyToNull(payload.notes),
+    p_current_tool: emptyToNull(payload.current_tool),
+    p_notes: emptyToNull(payload.notes),
   });
+  const saved = (Array.isArray(data) ? data[0] : null) as
+    | { result: string; alert_id: string | null }
+    | null;
 
-  if (error) {
+  if (error || saved?.result !== "recorded" || !saved.alert_id) {
     return {
       ok: false,
       error: `Your request didn't send. Try again in a moment, or email ${CONTACT_EMAIL}.`,
     };
   }
 
+  // SAVED. The operator email goes out after this response, and whatever
+  // happens to it is recorded on the alert: it cannot make this request look
+  // unsaved, and nothing is ever sent to the person who asked.
+  const alertId = saved.alert_id;
+  after(() => deliverPlatformLeadAlert(alertId));
   return { ok: true };
 }

@@ -353,6 +353,27 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "verifyCancellationToken",
   },
   {
+    path: "app/actions/demo.ts",
+    purpose:
+      "LEAD-ALERT-01 (#826) public /demo request: the sole caller of record_platform_demo_request (0213), which saves the demo request and its operator alert intent in one transaction; then schedules deliverPlatformLeadAlert after the response.",
+    why: "Unauthenticated public surface with no session. The command is service_role-only (EXECUTE revoked from public/anon/authenticated) so that a client cannot create alert intents directly and bypass the form's rate limit. The action validates name and email, runs the shared limiter BEFORE the call, and passes exactly the columns the form always saved; the browser supplies only those bounded fields and never a recipient, status or id.",
+    scopeGuard: "record_platform_demo_request",
+  },
+  {
+    path: "app/actions/waitlist.ts",
+    purpose:
+      "LEAD-ALERT-01 (#826) public early-access signup: the sole caller of record_platform_early_access_signup (0213), which saves the address and its operator alert intent together, or reports a duplicate and creates nothing; then schedules deliverPlatformLeadAlert after the response.",
+    why: "Unauthenticated public surface with no session. The command is service_role-only so a client cannot create alert intents directly; the action normalizes and validates the address and rate-limits BEFORE the call. A duplicate still reads as success, so the answer is no membership oracle. The browser supplies one address and nothing else.",
+    scopeGuard: "record_platform_early_access_signup",
+  },
+  {
+    path: "lib/platform-leads/alert-delivery.ts",
+    purpose:
+      "LEAD-ALERT-01 (#826) operator lead-alert worker: claims, settles, expires, records configuration blockers on and requeues platform_lead_alerts through the 0213 service_role-only commands, after the saving action's response and from the CRON_SECRET-gated sweep.",
+    why: "platform_lead_alerts grants nothing to anon/authenticated and only SELECT to service_role; every write is a 0213 definer command granted to service_role alone. The worker runs with no user session (after() and cron), never writes a lead, takes the recipient only from server env allowlisted against ADMIN_EMAILS, and logs ids and codes only.",
+    scopeGuard: "claim_platform_lead_alert",
+  },
+  {
     path: "app/book/[slug]/waitlist-actions.ts",
     purpose:
       "WAIT-02 public new-client waitlist join — the sole caller of join_new_client_waitlist (migration 0185), reached since 0210 through join_new_client_waitlist_with_phone_and_sms_answer (the successor of 0208's join_new_client_waitlist_with_sms_answer), which wraps 0204's guarded join, requires a sendable phone and records the visitor's explicit SMS answer on the entry it creates; and, with the same server-built client after the commit, the sole caller of claim_waitlist_join_ack_sms (0210) through lib/waitlist/delivery/join-ack-sms.ts.",

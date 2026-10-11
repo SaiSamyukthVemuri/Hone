@@ -1,0 +1,273 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { IdempotentEmailTransport } from "@/lib/email/new-client-waitlist-send";
+
+// LEAD-ALERT-01 (#826): the delivery worker's decisions, with the database
+// and the provider replaced by recording fakes. The real database path is
+// proved in tests/db/platform-lead-alerts.db.test.ts; this file pins what is
+// awkward there: the provider's literal 15-second timeout, the outcome
+// mapping for every answer, and that the worker never throws.
+
+const ops = vi.hoisted(() => ({ calls: [] as unknown[] }));
+vi.mock("@/lib/ops/alerts", () => ({
+  recordOpsAlert: async (input: unknown) => {
+    ops.calls.push(input);
+  },
+}));
+
+import {
+  deliverPlatformLeadAlert,
+  leadAlertConfigurationStatus,
+  settlementFor,
+  sweepPlatformLeadAlerts,
+} from "@/lib/platform-leads/alert-delivery";
+
+const OPS = "ops@hone.example";
+const ENV = { LEAD_ALERT_EMAIL: OPS, ADMIN_EMAILS: OPS };
+const ALERT = "8f0c2b7e-5d1a-4a2b-9c3d-4e5f6a7b8c9d";
+
+const CLAIMED = {
+  result: "claimed",
+  alert_id: ALERT,
+  claim_token: "token-1",
+  attempt: 1,
+  idempotency_key: `lead-alert/${ALERT}/1`,
+  lead_kind: "demo_request",
+  lead_id: "lead-1",
+  event_at: "2026-10-11T18:05:00Z",
+  lead_name: "Avery Lead",
+  lead_email: "avery@example.test",
+  practice_name: null,
+  location: null,
+  practice_type: null,
+  practitioner_count: null,
+  current_tool: null,
+  has_notes: false,
+};
+
+type Call = { fn: string; args: Record<string, unknown> };
+
+function fakeAdmin(answers: Record<string, unknown>, calls: Call[]): SupabaseClient {
+  return {
+    rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+      calls.push({ fn, args });
+      const answer = answers[fn];
+      if (answer instanceof Error) throw answer;
+      if (answer && typeof answer === "object" && "error" in (answer as object)) return answer;
+      return { data: answer, error: null };
+    },
+  } as unknown as SupabaseClient;
+}
+
+function transport(answer: () => Promise<unknown>): IdempotentEmailTransport {
+  return { emails: { send: async () => (await answer()) as never } };
+}
+
+beforeEach(() => {
+  ops.calls.length = 0;
+  vi.spyOn(console, "info").mockImplementation(() => undefined);
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe("settlementFor: the provider's answer as the alert's next state", () => {
+  it("accepted", () => {
+    expect(settlementFor({ status: "accepted", messageId: "m1" })).toEqual({ outcome: "accepted", messageId: "m1" });
+  });
+
+  it("an answer that may or may not have been taken is retried under the same key", () => {
+    expect(settlementFor({ status: "ambiguous", reason: "timeout" })).toEqual({ outcome: "retry", errorCode: "provider_timeout" });
+    expect(settlementFor({ status: "ambiguous", reason: "no_message_id" })).toEqual({ outcome: "retry", errorCode: "provider_exception" });
+    expect(settlementFor({ status: "ambiguous", reason: "concurrent" })).toEqual({
+      outcome: "retry",
+      errorCode: "provider_unavailable",
+      providerError: "concurrent_idempotent_requests",
+    });
+  });
+
+  it("a refusal the same request would meet again is final", () => {
+    for (const code of ["validation_error", "invalid_to_address", "missing_required_field", "invalid_idempotency_key", "invalid_idempotent_request"] as const) {
+      expect(settlementFor({ status: "rejected", code })).toEqual({ outcome: "fail", errorCode: "provider_rejected", providerError: code });
+    }
+  });
+
+  it("a rate limit or an unrecognised provider error may pass: retried within the budget", () => {
+    for (const code of ["rate_limit_exceeded", "unrecognized_provider_error"] as const) {
+      expect(settlementFor({ status: "rejected", code })).toEqual({ outcome: "retry", errorCode: "provider_unavailable", providerError: code });
+    }
+  });
+
+  it("a local refusal made no request", () => {
+    expect(settlementFor({ status: "rejected", code: "not_configured" })).toEqual({ outcome: "retry", errorCode: "transport_not_configured" });
+    expect(settlementFor({ status: "rejected", code: null })).toEqual({ outcome: "retry", errorCode: "provider_exception" });
+  });
+});
+
+describe("deliverPlatformLeadAlert", () => {
+  it("a provider that never answers: the 15-second ceiling becomes a retry, under the alert's own key", async () => {
+    vi.useFakeTimers();
+    const calls: Call[] = [];
+    const keys: Array<string | undefined> = [];
+    const hanging: IdempotentEmailTransport = {
+      emails: {
+        send: (_payload, options) => {
+          keys.push(options?.idempotencyKey);
+          return new Promise(() => undefined);
+        },
+      },
+    };
+    const running = deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({ claim_platform_lead_alert: [CLAIMED], settle_platform_lead_alert: "retry_scheduled" }, calls),
+      transport: hanging,
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await running).toEqual({ result: "retry_scheduled" });
+    expect(keys).toEqual([`lead-alert/${ALERT}/1`]);
+    expect(calls.find((c) => c.fn === "settle_platform_lead_alert")?.args).toMatchObject({
+      p_alert_id: ALERT,
+      p_claim_token: "token-1",
+      p_outcome: "retry",
+      p_error_code: "provider_timeout",
+    });
+  });
+
+  it("blocked configuration claims nothing and sends nothing", async () => {
+    const calls: Call[] = [];
+    let sends = 0;
+    const out = await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({ record_platform_lead_alerts_unconfigured: 1 }, calls),
+      transport: transport(async () => {
+        sends += 1;
+        return { data: { id: "m" }, error: null };
+      }),
+      env: { ADMIN_EMAILS: OPS },
+      appOrigin: () => "https://hone.example",
+    });
+    expect(out).toEqual({ result: "blocked", code: "recipient_not_configured" });
+    expect(calls.map((c) => c.fn)).toEqual(["record_platform_lead_alerts_unconfigured"]);
+    expect(calls[0].args).toEqual({ p_error_code: "recipient_not_configured", p_alert_id: ALERT });
+    expect(sends).toBe(0);
+  });
+
+  it("a final failure raises one ops alert carrying ids and codes, never lead details", async () => {
+    const out = await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({ claim_platform_lead_alert: [CLAIMED], settle_platform_lead_alert: "failed" }, []),
+      transport: transport(async () => ({ data: null, error: { name: "validation_error", message: "bad", statusCode: 422 } })),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    expect(out).toEqual({ result: "failed" });
+    expect(ops.calls).toHaveLength(1);
+    const text = JSON.stringify(ops.calls[0]);
+    expect(text).toContain(ALERT);
+    expect(text).toContain("provider_rejected");
+    expect(text).not.toMatch(/Avery|avery@example/);
+  });
+
+  it("an unsettled send reports settle_error (the lease brings it back under the same key)", async () => {
+    const out = await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({
+        claim_platform_lead_alert: [CLAIMED],
+        settle_platform_lead_alert: { data: null, error: { code: "08006", message: "connection lost" } },
+      }, []),
+      transport: transport(async () => ({ data: { id: "m" }, error: null })),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    expect(out).toEqual({ result: "settle_error" });
+  });
+
+  it("nothing to claim sends nothing", async () => {
+    let sends = 0;
+    const out = await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({ claim_platform_lead_alert: [{ ...CLAIMED, result: "none" }] }, []),
+      transport: transport(async () => {
+        sends += 1;
+        return { data: { id: "m" }, error: null };
+      }),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    expect(out).toEqual({ result: "none" });
+    expect(sends).toBe(0);
+  });
+
+  it("never throws, whatever the database does", async () => {
+    const out = await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({ claim_platform_lead_alert: new Error("boom") }, []),
+      transport: transport(async () => ({ data: { id: "m" }, error: null })),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    expect(out).toEqual({ result: "threw" });
+  });
+});
+
+describe("sweepPlatformLeadAlerts", () => {
+  it("expires first, then stops at the first empty claim", async () => {
+    const calls: Call[] = [];
+    let claims = 0;
+    const admin = {
+      rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+        calls.push({ fn, args });
+        if (fn === "expire_platform_lead_alerts") return { data: 2, error: null };
+        if (fn === "claim_platform_lead_alert") {
+          claims += 1;
+          return { data: [claims <= 2 ? { ...CLAIMED, claim_token: `t${claims}` } : { ...CLAIMED, result: "none" }], error: null };
+        }
+        return { data: "accepted", error: null };
+      },
+    } as unknown as SupabaseClient;
+    const summary = await sweepPlatformLeadAlerts({
+      admin,
+      transport: transport(async () => ({ data: { id: "m" }, error: null })),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    expect(summary).toMatchObject({ ok: true, expired: 2, attempted: 2, accepted: 2 });
+    expect(calls[0].fn).toBe("expire_platform_lead_alerts");
+    expect(calls.filter((c) => c.fn === "claim_platform_lead_alert").every((c) => c.args.p_alert_id === null)).toBe(true);
+    expect(ops.calls).toHaveLength(1);
+    expect(JSON.stringify(ops.calls[0])).toContain("platform_lead_alerts_expired");
+  });
+
+  it("is bounded per run", async () => {
+    let claims = 0;
+    const admin = {
+      rpc: async (fn: string) => {
+        if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
+        if (fn === "claim_platform_lead_alert") {
+          claims += 1;
+          return { data: [{ ...CLAIMED, claim_token: `t${claims}` }], error: null };
+        }
+        return { data: "retry_scheduled", error: null };
+      },
+    } as unknown as SupabaseClient;
+    const summary = await sweepPlatformLeadAlerts({
+      admin,
+      transport: transport(async () => ({ data: { id: "m" }, error: null })),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+      maxAlerts: 3,
+    });
+    expect(summary).toMatchObject({ attempted: 3, retryScheduled: 3 });
+    expect(claims).toBe(3);
+  });
+});
+
+describe("leadAlertConfigurationStatus", () => {
+  it("masks the recipient, and names the blocker when there is one", () => {
+    expect(
+      leadAlertConfigurationStatus({ env: ENV, transport: transport(async () => ({})), appOrigin: () => "https://hone.example" }),
+    ).toEqual({ state: "ready", maskedRecipient: "o•••@h•••.example" });
+    expect(leadAlertConfigurationStatus({ env: ENV, transport: null, appOrigin: () => "x" })).toEqual({
+      state: "blocked",
+      code: "transport_not_configured",
+    });
+  });
+});
