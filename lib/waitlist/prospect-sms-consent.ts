@@ -114,6 +114,31 @@ export const SMS_OPERATIONAL_CONSENT_LABEL =
 export const SMS_OPERATIONAL_CONSENT_DECLINED_NOTE =
   "We'll email you instead. Your place on the waitlist is the same either way.";
 
+/**
+ * SMS-04 — VERSION 2: the live public signup's question.
+ *
+ * The approved re-wording names joining, because a Yes now also covers the one
+ * text that acknowledges the join. Re-wording makes a new version (see
+ * SMS_OPERATIONAL_CONSENT_TEXT_VERSION): v1 keeps its own sentence for every
+ * consent already recorded against it, and still labels the unrouted WAIT-04
+ * profile surfaces, which record v1. The live form shows this sentence
+ * verbatim, and the command it calls (0210) stamps exactly this version, so a
+ * stored Yes always names the words the person answered.
+ */
+export const SMS_JOIN_CONSENT_TEXT_VERSION = "waitlist_sms_operational_v2";
+
+export const SMS_JOIN_CONSENT_QUESTION =
+  "May we text you about joining this waitlist and any appointment offered from it? Reply STOP at any time to opt out.";
+
+/**
+ * Every wording a stored self-service consent may name, keyed by the version
+ * the database records (0210 admits exactly these two). Never re-point a key.
+ */
+export const SMS_CONSENT_WORDING_BY_VERSION = {
+  [SMS_OPERATIONAL_CONSENT_TEXT_VERSION]: SMS_OPERATIONAL_CONSENT_LABEL,
+  [SMS_JOIN_CONSENT_TEXT_VERSION]: SMS_JOIN_CONSENT_QUESTION,
+} as const;
+
 /** Where an agreement was collected. Mirrors 0193's preference `source` vocabulary. */
 export const SMS_CONSENT_SOURCES = [
   "public_form",
@@ -328,10 +353,11 @@ export function prospectMayReceiveSms(record: {
 // ===========================================================================
 
 /**
- * The live signup's SMS question. The form shows SMS_OPERATIONAL_CONSENT_LABEL
- * verbatim, so a Yes is agreement to waitlist_sms_operational_v1 and nothing is
- * re-worded. Two radios, NEITHER PRESELECTED: a default would record an answer
- * the person never gave.
+ * The live signup's SMS question. Since SMS-04 the form shows
+ * SMS_JOIN_CONSENT_QUESTION verbatim, so a Yes is agreement to
+ * waitlist_sms_operational_v2 (0210's command stamps exactly that); v1 answers
+ * already recorded keep v1. Two radios, NEITHER PRESELECTED: a default would
+ * record an answer the person never gave.
  */
 export const SMS_CONSENT_ANSWER_FIELD = "sms_consent_answer";
 export const SMS_CONSENT_ANSWER_YES = "yes";

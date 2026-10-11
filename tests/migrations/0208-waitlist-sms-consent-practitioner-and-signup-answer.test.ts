@@ -48,8 +48,8 @@ const normalise = (sql: string) => stripComments(sql).replace(/\s+/g, " ").trim(
 describe("0208 sits correctly in the migration sequence", () => {
   it("is no longer the repository maximum", () => {
     // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
-    // `isRepoMax`, and that claim now lives in 0209's own test. 0207 handed it
-    // to this file; WAIT-v4 PR0 authored 0209 and takes it from here.
+    // `isRepoMax`, and that claim now lives in the current max's own test.
+    // 0207 handed it to this file; WAIT-v4 PR0's 0209 took it from here.
     expect(isRepoMax(VERSION)).toBe(false);
     // DERIVED, NOT PINNED: something sits above it, and everything above it is
     // greater. A literal list would be the forbidden pin in other clothes.

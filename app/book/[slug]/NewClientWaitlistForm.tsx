@@ -1,15 +1,21 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useId, useRef, useState, useTransition } from "react";
 import { submitNewClientBookingWaitlistAction } from "./waitlist-actions";
 import {
   SMS_CONSENT_ANSWER_FIELD,
   SMS_CONSENT_ANSWER_NO,
   SMS_CONSENT_ANSWER_YES,
+  SMS_JOIN_CONSENT_QUESTION,
   SMS_OPERATIONAL_CONSENT_DECLINED_NOTE,
-  SMS_OPERATIONAL_CONSENT_LABEL,
 } from "@/lib/waitlist/prospect-sms-consent";
-import { MOBILE_CANDIDATE_NOTE } from "@/lib/waitlist/join-copy";
+import {
+  NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED,
+  validateWaitlistPhone,
+  WAITLIST_PHONE_HELP,
+  WAITLIST_PHONE_LABEL,
+  WAITLIST_PHONE_MAX,
+} from "@/lib/waitlist/signup-contact";
 
 // ===========================================================================
 // P0 EMERGENCY — NEW-CLIENT WAITLIST FORM
@@ -72,6 +78,18 @@ import { MOBILE_CANDIDATE_NOTE } from "@/lib/waitlist/join-copy";
 // agreement to exactly the words shown. No costs nothing else: the same entry,
 // the same emails, the same place in the queue.
 //
+// SMS-04 — A PHONE NUMBER IS REQUIRED, AND THE QUESTION IS VERSION 2. Name,
+// email and phone number are all mandatory for a new signup, for a Yes and a
+// No alike; the number must be one the sender could text (validateWaitlistPhone,
+// the same rule the server action applies). The text question is the approved
+// v2 sentence, SMS_JOIN_CONSENT_QUESTION, because a Yes now also covers the one
+// text that acknowledges the join; the command behind this form stamps
+// waitlist_sms_operational_v2. Still two answers, neither preselected, and No
+// still joins with the same place in the queue. No verification code is sent.
+//
+// KEYBOARD FOCUS IS ALWAYS VISIBLE: every control carries the public booking
+// page's own focus-visible ring (PublicBookForm's client-type buttons).
+//
 // Uses the public booking page's existing design language rather than
 // introducing a new one.
 // ===========================================================================
@@ -82,6 +100,12 @@ const INK = "#0A0A0A";
 const MUTED = "#6B6B6B";
 
 const NOT_A_RESERVATION = "Joining the waitlist does not reserve an appointment.";
+
+/** The public booking page's own focus-visible treatment (PublicBookForm). */
+const FOCUS_RING =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0A0A0A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#FAFAF7]";
+
+const TEXT_INPUT_CLASS = `w-full max-w-full bg-transparent py-2 text-[16px] outline-none ${FOCUS_RING}`;
 
 /**
  * Plain-language collection notice, split around the studio name so the
@@ -152,7 +176,9 @@ export function NewClientWaitlistForm({
   const emailId = useId();
   const phoneId = useId();
   const phoneNoteId = useId();
+  const phoneErrorId = useId();
   const smsQuestionId = useId();
+  const phoneInput = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -162,6 +188,8 @@ export function NewClientWaitlistForm({
     typeof SMS_CONSENT_ANSWER_YES | typeof SMS_CONSENT_ANSWER_NO | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  // The phone's own refusal, shown under the field it is about.
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   // Set only by a successful server answer, so the confirmation panel can never
   // render without one. A boolean deliberately: there is no second success
   // state left to hold.
@@ -174,6 +202,19 @@ export function NewClientWaitlistForm({
     // pending AND the handler refuses to start a second transition.
     if (submitting) return;
     setError(null);
+    setPhoneError(null);
+    // SMS-04: the same phone rule the server applies, checked before anything
+    // is sent, for a Yes and a No alike. The server re-checks it regardless.
+    const phoneCheck = validateWaitlistPhone(phone);
+    if (!phoneCheck.ok) {
+      setPhoneError(phoneCheck.error);
+      phoneInput.current?.focus();
+      return;
+    }
+    if (!smsAnswer) {
+      setError(NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED);
+      return;
+    }
     const fd = new FormData();
     fd.set("slug", slug);
     fd.set("name", name);
@@ -209,7 +250,7 @@ export function NewClientWaitlistForm({
         <button
           type="button"
           onClick={onContinueAsExistingClient}
-          className="text-[13px] underline"
+          className={`text-[13px] underline ${FOCUS_RING}`}
           style={{ color: MUTED }}
         >
           Already a client? Continue booking.
@@ -248,7 +289,7 @@ export function NewClientWaitlistForm({
             maxLength={120}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full max-w-full bg-transparent py-2 text-[16px] outline-none"
+            className={TEXT_INPUT_CLASS}
             style={{ borderBottom: `1px solid ${INK}`, color: INK }}
           />
         </div>
@@ -267,31 +308,48 @@ export function NewClientWaitlistForm({
             maxLength={254}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full max-w-full bg-transparent py-2 text-[16px] outline-none"
+            className={TEXT_INPUT_CLASS}
             style={{ borderBottom: `1px solid ${INK}`, color: INK }}
           />
         </div>
 
         <div className="flex w-full flex-col gap-1">
           <label htmlFor={phoneId} className="text-[12px] uppercase tracking-[0.1em]" style={{ color: MUTED }}>
-            Phone (optional)
+            {WAITLIST_PHONE_LABEL} <span aria-hidden="true">*</span>
           </label>
           <input
+            ref={phoneInput}
             id={phoneId}
             name="phone"
             type="tel"
+            required
+            aria-required="true"
+            aria-invalid={phoneError ? true : undefined}
             inputMode="tel"
             autoComplete="tel"
-            maxLength={40}
+            maxLength={WAITLIST_PHONE_MAX}
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            aria-describedby={phoneNoteId}
-            className="w-full max-w-full bg-transparent py-2 text-[16px] outline-none"
+            onChange={(e) => {
+              setPhone(e.target.value);
+              if (phoneError) setPhoneError(null);
+            }}
+            aria-describedby={phoneError ? `${phoneNoteId} ${phoneErrorId}` : phoneNoteId}
+            className={TEXT_INPUT_CLASS}
             style={{ borderBottom: `1px solid ${INK}`, color: INK }}
           />
           <p id={phoneNoteId} className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
-            {MOBILE_CANDIDATE_NOTE}
+            {WAITLIST_PHONE_HELP}
           </p>
+          {phoneError && (
+            <p
+              id={phoneErrorId}
+              role="alert"
+              className="text-[13px] leading-[1.6] text-red-600"
+              data-testid="waitlist-phone-error"
+            >
+              {phoneError}
+            </p>
+          )}
         </div>
 
         <fieldset
@@ -303,7 +361,7 @@ export function NewClientWaitlistForm({
             Text messages <span aria-hidden="true">*</span>
           </legend>
           <p id={smsQuestionId} className="text-[15px] leading-[1.6]" style={{ color: INK }}>
-            {SMS_OPERATIONAL_CONSENT_LABEL}
+            {SMS_JOIN_CONSENT_QUESTION}
           </p>
           <div className="flex flex-wrap gap-6">
             <label className="flex min-h-[44px] items-center gap-2 text-[15px]" style={{ color: INK }}>
@@ -313,7 +371,7 @@ export function NewClientWaitlistForm({
                 value={SMS_CONSENT_ANSWER_YES}
                 checked={smsAnswer === SMS_CONSENT_ANSWER_YES}
                 onChange={() => setSmsAnswer(SMS_CONSENT_ANSWER_YES)}
-                className="h-4 w-4"
+                className={`h-4 w-4 ${FOCUS_RING}`}
               />
               Yes
             </label>
@@ -324,7 +382,7 @@ export function NewClientWaitlistForm({
                 value={SMS_CONSENT_ANSWER_NO}
                 checked={smsAnswer === SMS_CONSENT_ANSWER_NO}
                 onChange={() => setSmsAnswer(SMS_CONSENT_ANSWER_NO)}
-                className="h-4 w-4"
+                className={`h-4 w-4 ${FOCUS_RING}`}
               />
               No
             </label>
@@ -344,7 +402,7 @@ export function NewClientWaitlistForm({
           <button
             type="submit"
             disabled={submitting}
-            className="flex min-h-[44px] w-full items-center justify-center px-6 py-3 text-[13px] font-medium uppercase disabled:opacity-60 sm:w-auto sm:self-start"
+            className={`flex min-h-[44px] w-full items-center justify-center px-6 py-3 text-[13px] font-medium uppercase disabled:opacity-60 sm:w-auto sm:self-start ${FOCUS_RING}`}
             style={{ backgroundColor: INK, color: CARD_BG, letterSpacing: "0.1em" }}
           >
             {submitting ? "Joining…" : "Join waitlist"}
@@ -358,7 +416,7 @@ export function NewClientWaitlistForm({
               href="/privacy"
               target="_blank"
               rel="noreferrer"
-              className="underline"
+              className={`underline ${FOCUS_RING}`}
               style={{ color: INK }}
             >
               Privacy Policy

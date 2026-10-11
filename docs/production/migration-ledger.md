@@ -14,7 +14,20 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-10, post-0209 apply; `0209` APPLIED, repo == hosted)
+## Current state (verified 2026-10-10, post-0209 apply; `0209` APPLIED, `0210` AUTHORED AND PENDING on the SMS-04 branch)
+
+> **0210 IS AUTHORED AND PENDING (added after the 0209 apply), on the SMS-04 branch `feat/sms-04-waitlist-join-ack` only.**
+> `0210_sms_waitlist_join_acknowledgement.sql` does two things:
+> - **A phone number becomes required for every new public waitlist signup.** A new signup command, `join_new_client_waitlist_with_phone_and_sms_answer`, refuses a missing or unsendable phone for a Yes and a No alike, and records a Yes as wording version 2. 0208's command is left in place, unchanged, for the deployed application.
+> - **The waitlist join acknowledgement text.** It adds a fifth SMS ledger purpose with its own subject column, a once-per-entry index, and the `service_role`-only claim `claim_waitlist_join_ack_sms`.
+>
+> It also widens the wording-version check to v1 or v2. It writes no data.
+>
+> **0209 IS APPLIED AND FROZEN** (WAIT #820, merged into production as `0e16257e`). This tree carries it byte-identical (sha256 `9fa04999b974d70d838ba27800a22338b1f08fd7977f553dec38fba034e3f877`), so the pending suffix is exactly `0210`, contiguous from hosted + 1. `0210` is applied migration-first from this PR's reviewed head under its own approval, before this PR's application deploys.
+>
+> **NOT APPLIED, NOT MERGED.**
+>
+> **THE BLOCK BELOW IS THE 0209 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0210` while it is pending.
 
 > **0209 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #820 HEAD, BEFORE ANY MERGE.**
 > `0209_public_slot_candidate_buffer_window.sql` was applied to production on
@@ -71,10 +84,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0209** (`0209_public_slot_candidate_buffer_window.sql`), applied 2026-10-10 from #820's reviewed head. |
-| **Repo migration max** | **0209** — repo and hosted are equal, so this is the PARITY shape with **nothing pending**. |
+| **Repo migration max** | **0210** — `0210_sms_waitlist_join_acknowledgement.sql`, authored on the SMS-04 branch (`feat/sms-04-waitlist-join-ack`).<br>It adds:<br>• a ledger subject column with a composite same-studio FK, its purpose and subject checks and a once-per-entry index;<br>• the ledger identity guard redefined with one clause;<br>• the wording-version check widened to v1/v2;<br>• two `service_role`-only commands.<br>No data. `0199`, `0202`, `0204`, `0206`, `0207` and `0208` stay byte-identical. `0209` (WAIT #820) is applied and frozen, and this tree carries it byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none.** |
-| **Next free migration** | Next free number is **0210**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. SMS-04 (#822) has authored `0210` on its own branch and lands separately; this record allocates nothing. |
+| **Pending migrations** | **`0210`** only — `0210_sms_waitlist_join_acknowledgement.sql`, authored on the SMS-04 branch and **NOT applied**, so `repo > hosted` is the MIGRATION-FIRST PENDING shape and **not** a parity violation. `0209` is applied, so the suffix is contiguous. Apply `0210` from the reviewed head of its own PR, before that PR's application deploys. |
+| **Next free migration** | Next free number is **0211**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `0d45c3ca50e6d8840b3106a13dbfe19ae2278417` (PR #820) — CI **9 pass / 3 skipping / 0 fail** (run 38018893247), explicit exact-head Codex review clean ("Reviewed commit `0d45c3ca50`"), 0 review threads. |
 | **Production application SHA at apply time** | `4564383c3171dac66cb21e40dc3190d26f22c072` (the #819 merge). **No application behaviour was deployed by this apply.** |

@@ -168,3 +168,89 @@ describe("mobile / accessibility contract of the waitlist form", () => {
     expect(html).toMatch(/<button[^>]*type="submit"/);
   });
 });
+
+// ===========================================================================
+// SMS-04 — THE APPROVED SIGNUP: A REQUIRED PHONE AND THE VERSION-2 QUESTION
+// ===========================================================================
+describe("SMS-04: the phone number is required and the text question is version 2", () => {
+  const html = waitlistHtml();
+  const phoneInput = () => {
+    const m = html.match(/<input[^>]*name="phone"[^>]*>/);
+    expect(m, "the phone input renders").not.toBeNull();
+    return m![0];
+  };
+
+  it("labels the field exactly 'Phone number' with the same required marker as Name and Email", () => {
+    expect(html).toContain('Phone number <span aria-hidden="true">*</span>');
+    expect(html).toContain('Name <span aria-hidden="true">*</span>');
+    expect(html).toContain('Email <span aria-hidden="true">*</span>');
+    expect(html).not.toContain("Phone (optional)");
+  });
+
+  it("marks the phone input required, for assistive technology too", () => {
+    const input = phoneInput();
+    expect(input).toMatch(/\srequired=""/);
+    expect(input).toContain('aria-required="true"');
+    expect(input).toContain('type="tel"');
+    expect(input).toContain('autoComplete="tel"');
+  });
+
+  it("shows the approved help text, tied to the field", async () => {
+    const { WAITLIST_PHONE_HELP } = await import("@/lib/waitlist/signup-contact");
+    expect(WAITLIST_PHONE_HELP).toBe(
+      "A phone number is required so we can contact you. Please check that this is your own number.",
+    );
+    expect(html).toContain(WAITLIST_PHONE_HELP);
+    const describedBy = phoneInput().match(/aria-describedby="([^"]+)"/)![1];
+    expect(html).toMatch(new RegExp(`<p id="${describedBy}"[^>]*>${WAITLIST_PHONE_HELP}</p>`));
+  });
+
+  it("asks the approved version-2 question verbatim, and no longer the v1 sentence", async () => {
+    const consent = await import("@/lib/waitlist/prospect-sms-consent");
+    expect(consent.SMS_JOIN_CONSENT_QUESTION).toBe(
+      "May we text you about joining this waitlist and any appointment offered from it? Reply STOP at any time to opt out.",
+    );
+    expect(consent.SMS_JOIN_CONSENT_TEXT_VERSION).toBe("waitlist_sms_operational_v2");
+    expect(html).toContain(consent.SMS_JOIN_CONSENT_QUESTION);
+    expect(html).not.toContain(consent.SMS_OPERATIONAL_CONSENT_LABEL);
+  });
+
+  it("keeps v1 on record: its sentence is unchanged and still resolvable by version", async () => {
+    const consent = await import("@/lib/waitlist/prospect-sms-consent");
+    expect(consent.SMS_OPERATIONAL_CONSENT_TEXT_VERSION).toBe("waitlist_sms_operational_v1");
+    expect(consent.SMS_CONSENT_WORDING_BY_VERSION).toEqual({
+      waitlist_sms_operational_v1:
+        "Text me about this waitlist and any appointment offered from it. Reply STOP at any time to opt out.",
+      waitlist_sms_operational_v2:
+        "May we text you about joining this waitlist and any appointment offered from it? Reply STOP at any time to opt out.",
+    });
+  });
+
+  it("keeps the Yes/No question mandatory with NEITHER answer preselected", () => {
+    const radios = [...html.matchAll(/<input[^>]*type="radio"[^>]*>/g)].map((m) => m[0]);
+    expect(radios).toHaveLength(2);
+    for (const r of radios) expect(r).not.toMatch(/\schecked(=|\s|>)/);
+    expect(html).toContain('Text messages <span aria-hidden="true">*</span>');
+  });
+
+  it("gives EVERY control a visible keyboard focus ring (the booking page's own)", () => {
+    const ring = "focus-visible:ring-2";
+    const controls = [
+      ...html.matchAll(/<(input|button|a)\b[^>]*>/g),
+    ].map((m) => m[0]);
+    expect(controls.length).toBeGreaterThanOrEqual(7);
+    for (const c of controls) {
+      expect(c, `missing focus ring: ${c.slice(0, 80)}`).toContain(ring);
+      expect(c).toContain("focus-visible:ring-[#0A0A0A]");
+    }
+  });
+
+  it("names nobody's place, capacity or queue in the new copy", async () => {
+    const { WAITLIST_PHONE_HELP, WAITLIST_PHONE_REQUIRED, WAITLIST_PHONE_INVALID } = await import(
+      "@/lib/waitlist/signup-contact"
+    );
+    for (const copy of [WAITLIST_PHONE_HELP, WAITLIST_PHONE_REQUIRED, WAITLIST_PHONE_INVALID]) {
+      expect(copy).not.toMatch(/full|capacity|queue|position|already|verify|code/i);
+    }
+  });
+});

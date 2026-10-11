@@ -10,6 +10,10 @@ import {
   NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED,
   NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE,
 } from "@/lib/booking/new-client-waitlist";
+import {
+  WAITLIST_PHONE_INVALID,
+  WAITLIST_PHONE_REQUIRED,
+} from "@/lib/waitlist/signup-contact";
 
 // ===========================================================================
 // WAIT-02 — THE COMMIT POINT MOVED TO THE DATABASE
@@ -75,6 +79,11 @@ const scenario = {
   studioSendThrows: false,
   studioSendHangs: false,
   clientSendThrows: false,
+  // SMS-04: what claim_waitlist_join_ack_sms answers. The default is the
+  // switched-off studio, so no suite below can reach a provider through it;
+  // the sender's own suite proves what happens after a real claim.
+  claimResult: "studio_disabled" as string,
+  claimThrows: false,
 };
 
 function reset() {
@@ -98,6 +107,8 @@ function reset() {
     studioSendThrows: false,
     studioSendHangs: false,
     clientSendThrows: false,
+    claimResult: "studio_disabled",
+    claimThrows: false,
   });
 }
 
@@ -195,6 +206,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
       rpcCalls.push({ fn, args });
       trace.push(`rpc:${fn}`);
+      if (fn === "claim_waitlist_join_ack_sms") {
+        if (scenario.claimThrows) throw new Error(`claim exploded ${CANARY_PHONE}`);
+        return { data: [{ result: scenario.claimResult }], error: null };
+      }
       if (scenario.commandThrows) throw new Error(`transport exploded ${CANARY_EMAIL}`);
       if (scenario.commandError) return { data: null, error: scenario.commandError };
       return {
@@ -263,9 +278,9 @@ describe("the database is the commit point", () => {
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result).toEqual({ ok: true });
     // Nothing has been sent yet: the sends are post-response work.
-    expect(trace).toEqual(["rpc:join_new_client_waitlist_with_sms_answer"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_with_phone_and_sms_answer"]);
     await flushPostResponse();
-    expect(trace).toEqual(["rpc:join_new_client_waitlist_with_sms_answer", "send:studio", "send:client"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_with_phone_and_sms_answer", "send:studio", "send:client"]);
   });
 
   it("A REFUSED STUDIO NOTIFICATION STILL REPORTS JOINED", async () => {
@@ -311,7 +326,7 @@ describe("the database is the commit point", () => {
   it("passes the SERVER-RESOLVED studio id and the bounded submission, nothing else", async () => {
     await submitNewClientBookingWaitlistAction(form({ slug: "attacker-chosen-slug" }));
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_with_sms_answer");
+    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_with_phone_and_sms_answer");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_name: CANARY_NAME,
@@ -338,7 +353,7 @@ describe("the database is the commit point", () => {
   it("performs NO direct table access at all", async () => {
     await submitNewClientBookingWaitlistAction(form());
     expect(tableAccess).toEqual([]);
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_with_sms_answer"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_with_phone_and_sms_answer"]);
   });
 });
 
@@ -348,7 +363,7 @@ describe("0208 — the SMS answer is the visitor's own, and explicit", () => {
       ok: true,
     });
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_with_sms_answer");
+    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_with_phone_and_sms_answer");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_name: CANARY_NAME,
@@ -370,13 +385,52 @@ describe("0208 — the SMS answer is the visitor's own, and explicit", () => {
     expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
   });
 
-  it("a No needs no number: an email-only visitor still joins", async () => {
+  // SMS-04 (approved): a phone number is REQUIRED on every new public signup,
+  // whatever the answer. This replaces "a No needs no number". A No still
+  // joins -- with a number -- and gets the same entry, emails and place.
+  for (const answer of ["no", "yes"] as const) {
+    it(`SMS-04: a ${answer === "no" ? "No" : "Yes"} without a phone is refused before the lookup, the limiter and the command`, async () => {
+      for (const [phone, error] of [
+        [null, WAITLIST_PHONE_REQUIRED],
+        ["", WAITLIST_PHONE_REQUIRED],
+        ["   ", WAITLIST_PHONE_REQUIRED],
+        ["\t\n", WAITLIST_PHONE_REQUIRED],
+      ] as const) {
+        const result = await submitNewClientBookingWaitlistAction(
+          form({ sms_consent_answer: answer, phone }),
+        );
+        expect(result, JSON.stringify(phone)).toEqual({ ok: false, error });
+      }
+      expect(rpcCalls).toEqual([]);
+      expect(tableAccess).toEqual([]);
+      await flushPostResponse();
+      expect(sends).toEqual([]);
+    });
+
+    it(`SMS-04: a ${answer === "no" ? "No" : "Yes"} with a number the sender could not text is refused, and nothing is written`, async () => {
+      for (const phone of ["555-12", "12345", "not a phone", "+123", "020 7946 0958"]) {
+        const result = await submitNewClientBookingWaitlistAction(
+          form({ sms_consent_answer: answer, phone }),
+        );
+        expect(result, phone).toEqual({ ok: false, error: WAITLIST_PHONE_INVALID });
+      }
+      expect(rpcCalls).toEqual([]);
+      await flushPostResponse();
+      expect(sends).toEqual([]);
+    });
+  }
+
+  it("SMS-04: a No with a usable number joins, and the number reaches the command as typed", async () => {
     expect(
-      await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "no", phone: "" })),
+      await submitNewClientBookingWaitlistAction(
+        form({ sms_consent_answer: "no", phone: "  (416) 555-0100 " }),
+      ),
     ).toEqual({ ok: true });
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].args.p_phone).toBeNull();
+    expect(rpcCalls[0].args.p_phone).toBe("(416) 555-0100");
     expect(rpcCalls[0].args.p_sms_consent).toBe(false);
+    await flushPostResponse();
+    expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
   });
 
   for (const [label, value] of [
@@ -397,20 +451,13 @@ describe("0208 — the SMS answer is the visitor's own, and explicit", () => {
     });
   }
 
-  it("a Yes with no usable number is refused, and nothing is written", async () => {
-    for (const phone of ["", "   ", "555-12"]) {
-      const result = await submitNewClientBookingWaitlistAction(
-        form({ sms_consent_answer: "yes", phone }),
-      );
-      expect(result).toEqual({ ok: false, error: NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE });
-    }
-    expect(rpcCalls).toEqual([]);
-    await flushPostResponse();
-    expect(sends).toEqual([]);
-  });
-
   it("the refusal copy names the form, never the studio or the queue", () => {
-    for (const copy of [NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED, NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE]) {
+    for (const copy of [
+      NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED,
+      NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE,
+      WAITLIST_PHONE_REQUIRED,
+      WAITLIST_PHONE_INVALID,
+    ]) {
       expect(copy).not.toMatch(/full|capacity|queue|position|already/i);
     }
   });
@@ -436,7 +483,7 @@ describe("duplicate submission", () => {
     // it: a duplicate must not manufacture a row or a message.
     scenario.commandResult = "already_waiting";
     await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_with_sms_answer"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_with_phone_and_sms_answer"]);
     expect(sends).toHaveLength(0);
     expect(tableAccess).toEqual([]);
   });
@@ -528,7 +575,7 @@ describe("a duplicate is externally indistinguishable from a fresh join", () => 
 
       expect(sends, `${outcome} sent mail before responding`).toHaveLength(0);
       expect(trace, `${outcome} awaited more than the command`).toEqual([
-        "rpc:join_new_client_waitlist_with_sms_answer",
+        "rpc:join_new_client_waitlist_with_phone_and_sms_answer",
       ]);
     }
   });
@@ -929,7 +976,7 @@ describe("Stage B records what closed, and what is still open", () => {
   it("ANTI-VACUITY: the durable write path is still present", () => {
     // If this stops being true the rest of this block is moot, and that must
     // be a visible decision rather than a silently passing suite.
-    expect(ACTION).toContain('rpc("join_new_client_waitlist_with_sms_answer"');
+    expect(ACTION).toContain('rpc("join_new_client_waitlist_with_phone_and_sms_answer"');
   });
 
   it("still records it as a studio-scoped personal-data class", () => {
@@ -1217,5 +1264,120 @@ describe("no studio is enabled at merge time", () => {
     // pre-filled there, a fresh deploy would arrive already enabled.
     const example = read(".env.local.example");
     expect(example).not.toContain("NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS");
+  });
+});
+
+// ===========================================================================
+// SMS-04 — THE ONE JOIN ACKNOWLEDGEMENT TEXT, AS THE ACTION ASKS FOR IT
+// ===========================================================================
+//
+// The action's half of the guarantee: it asks the database for the text ONLY
+// for an entry this request created with a Yes, only after the commit and
+// after the response, and it starts that ask before the two emails so a slow
+// email cannot hold it back. Whether a text is then sent is the database
+// claim's decision (0210, proved against a real database in
+// tests/db/sms-waitlist-join-ack.db.test.ts) and the sender's
+// (tests/lib/waitlist/join-ack-sms.test.ts). The claim here answers
+// `studio_disabled` unless a case says otherwise, so no case can reach a
+// provider.
+describe("SMS-04 — the join text is asked for once, and only for a new Yes", () => {
+  const claims = () => rpcCalls.filter((c) => c.fn === "claim_waitlist_join_ack_sms");
+
+  it("a created Yes: nothing before the response; afterwards exactly ONE claim, for THIS entry", async () => {
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }))).toEqual({
+      ok: true,
+    });
+    expect(claims(), "the claim must not run before the response").toEqual([]);
+    await flushPostResponse();
+    expect(claims()).toEqual([
+      { fn: "claim_waitlist_join_ack_sms", args: { p_studio_id: STUDIO_ID, p_entry_id: "entry-1" } },
+    ]);
+  });
+
+  it("is started BEFORE the two emails", async () => {
+    await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }));
+    await flushPostResponse();
+    expect(trace).toEqual([
+      "rpc:join_new_client_waitlist_with_phone_and_sms_answer",
+      "rpc:claim_waitlist_join_ack_sms",
+      "send:studio",
+      "send:client",
+    ]);
+  });
+
+  it("a studio email that never answers cannot hold the text back", async () => {
+    scenario.studioSendHangs = true;
+    await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }));
+    const queued = deferred.splice(0, deferred.length);
+    expect(queued).toHaveLength(1);
+    void queued[0]!(); // never settles: the studio email hangs
+    await new Promise((r) => setTimeout(r, 0));
+    expect(claims()).toHaveLength(1);
+  });
+
+  it("a No: the person joins and is emailed, and NO claim is made", async () => {
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "no" }))).toEqual({
+      ok: true,
+    });
+    await flushPostResponse();
+    expect(claims()).toEqual([]);
+    expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
+  });
+
+  it("a DUPLICATE submission with a Yes: no claim, nothing scheduled, the same answer", async () => {
+    scenario.commandResult = "already_waiting";
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }))).toEqual({
+      ok: true,
+    });
+    expect(deferred).toHaveLength(0);
+    await flushPostResponse();
+    expect(claims()).toEqual([]);
+    expect(sends).toEqual([]);
+  });
+
+  it("a command that refused, failed or lost its answer: no claim", async () => {
+    for (const set of [
+      () => (scenario.commandResult = "invalid_input"),
+      () => (scenario.commandResult = "studio_not_found"),
+      () => (scenario.commandError = { code: "P0001" }),
+      () => (scenario.commandError = { code: "" }),
+      () => (scenario.commandThrows = true),
+    ]) {
+      reset();
+      set();
+      await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }));
+      await flushPostResponse();
+      expect(claims()).toEqual([]);
+    }
+  });
+
+  it("a created entry with no id from the command: no claim (nothing to name)", async () => {
+    scenario.entryId = null;
+    await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }));
+    await flushPostResponse();
+    expect(claims()).toEqual([]);
+  });
+
+  it("a claim that throws changes nothing the visitor sees or the emails, and logs no number", async () => {
+    scenario.claimThrows = true;
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+      logs.push(a.map(String).join(" "));
+    });
+    try {
+      expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }))).toEqual({
+        ok: true,
+      });
+      await flushPostResponse();
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(claims()).toHaveLength(1);
+    expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
+    for (const line of [...logs, ...consoleErrors]) {
+      expect(line).not.toContain(CANARY_PHONE);
+      expect(line).not.toContain(CANARY_EMAIL);
+      expect(line).not.toContain(CANARY_NAME);
+    }
   });
 });

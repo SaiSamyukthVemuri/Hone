@@ -104,16 +104,22 @@ function delta(before: string[], after: string[]) {
 }
 
 describe("0209 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It was handed over from
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
+    // `isRepoMax`, and that claim now lives in the current max's own test.
+    // It reached this file from
     // tests/migrations/0208-waitlist-sms-consent-practitioner-and-signup-answer.test.ts
-    // in the same change that authored this file; the older test now asserts the
-    // inverse, derived rather than pinned. The claim travelled
-    // 0205 -> 0206 -> 0207 -> 0208 -> here while this lane was parked, which is
-    // exactly why it is never pinned to a literal successor.
-    expect(isRepoMax(VERSION), "0209 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0209").toEqual([]);
+    // (0205 -> 0206 -> 0207 -> 0208 -> 0209) and left for 0210's own test when
+    // production, carrying 0209, was merged into the SMS-04 branch.
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, NOT PINNED: something sits above it, and everything above it is
+    // greater. A literal list would be the forbidden pin in other clothes.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once, at the number the census derived", () => {
