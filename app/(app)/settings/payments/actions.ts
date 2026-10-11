@@ -15,6 +15,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
+  ACCOUNT_COUNTRY_MISMATCH_ERROR,
+  PAYMENT_COUNTRY_UNVERIFIED_ERROR,
+} from "@/lib/stripe/account-messages";
+import {
   createOrLoadConnectedAccountForStudio,
   createConnectOnboardingLink,
   createExpressDashboardLoginLink,
@@ -43,6 +47,10 @@ const SAFE_USER_FACING_MESSAGES: ReadonlySet<string> = new Set([
   "Stripe dashboard is available after onboarding is complete.",
   // race-with-another-tab gate
   "Stripe onboarding is already starting in another window. Refresh in a few seconds.",
+  // PAY-CCY-03: the account's country is not the studio's payment country,
+  // or the studio's payment country could not be read. Both stop onboarding.
+  ACCOUNT_COUNTRY_MISMATCH_ERROR,
+  PAYMENT_COUNTRY_UNVERIFIED_ERROR,
 ]);
 
 function logInternal(event: string, detail: unknown) {
