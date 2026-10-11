@@ -8,7 +8,7 @@ import {
 } from "@/app/_components/PolicyLayout";
 
 export const metadata: Metadata = {
-  title: "Terms of Service",
+  title: { absolute: "Terms of Service | Hone" },
   description:
     "The terms for using Hone, electrolysis practice software, including the data processing agreement, acceptable use and limitation of liability.",
 };

@@ -27,7 +27,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: {
     default: "Hone | Treatment memory for electrologists",
-    template: "%s | Hone",
+    // The template titles the signed-in app's pages too ("Financials · Hone"),
+    // so it stays as it was. Marketing and policy pages set absolute
+    // "… | Hone" titles of their own.
+    template: "%s · Hone",
   },
   description:
     "Electrolysis practice software that keeps each treated area's history and brings it forward before the next appointment.",
