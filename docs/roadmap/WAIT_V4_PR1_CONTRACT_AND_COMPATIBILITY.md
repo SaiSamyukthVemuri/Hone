@@ -119,10 +119,11 @@ blocks, **service / buffer / timezone / notice** changes, **owner booking**, or
 * Its **invitation stays used**; **U and C do not increase**; **weekly room returns**.
 * This is the **only post-launch operation allowed to increase R**.
 * **Closed rounds never revive.**
-* **Scope note:** this rule governs calendar and invitation state. It does **not**
-  address the person's **queue priority** — §14.5.7C's cancel-and-return rule (a NEW
-  waiting-time priority, previous spot not held) is **not** superseded and still
-  binds. See §5.
+* **Scope note:** this rule governs calendar and invitation state, and applies
+  whatever the client's intent was. It does **not** address the person's **queue
+  priority**, which §14.5.7C governs and which **depends on the intent**: "cancel and
+  return to waitlist" gives a NEW waiting-time priority, while "cancel and leave"
+  returns them to no queue at all. Neither is superseded. See §3.5 and §5.
 
 ### 2.11 Freed time that is not round-derived
 
@@ -221,9 +222,23 @@ restoration therefore does not go through requeue at all**: it restores the
 refusal is not an obstacle to §2.10.
 
 **But the queue position is still governed** — by §14.5.7C, which §2.10 does not
-replace. So a cancellation has two separate effects that must both be implemented:
-the reservation returns to the live round (§2.10), **and** the person's return to the
-waitlist carries a NEW waiting-time priority (§14.5.7C).
+replace. So a cancellation has **two independent effects, and only the first is
+intent-free**:
+
+1. **The reservation returns to the live round** (§2.10) — this follows from the
+   appointment being round-derived and the round being live, whatever the client
+   chose.
+2. **The queue consequence depends on which intent the client chose**, and §14.5.7C
+   offers two:
+   * **"Cancel and return to waitlist"** → a **NEW** waiting-time priority; the
+     previous spot is not held.
+   * **"Cancel and leave"** → **no queue return at all.** The contract is explicit:
+     cancel *"without forcing someone back into waitlist contact"*, an explicit
+     separate intent.
+
+**Do not apply the queue return to every cancellation.** An earlier revision of this
+section said "a cancellation has two separate effects that must both be implemented",
+which wrongly swept cancel-and-leave into the queue return.
 
 ### 3.6 The shared deadline is set at launch, and then protected
 
@@ -311,9 +326,27 @@ than assuming one.
   supersession the contract does not make.
 * **§14.5.7B's dual-channel opportunity** — email plus eligible consented SMS are
   **one** opportunity with **one** response deadline, not two invitations.
-* §14.5.7A profile and join requirements; §14.5.7C's other first-consultation
-  boundaries (no client-controlled rescheduling of first consultations; cancel-and-leave
-  as a separate intent; clinic-initiated moves without penalty).
+* **§14.5.7A** profile and join requirements, in full.
+* **§14.5.7C in full — all nine rows bind, not only the ones v4 touches.** Listed
+  here because a partial summary reads as an exhaustive one:
+  1. **Request to reschedule online** — no client-controlled rescheduling of first
+     consultations, enforced in confirmation / reminder / portal / old-link routes
+     **and** server mutation.
+  2. **Cancel and return to waitlist** — NEW waiting-time priority; previous spot not held.
+  3. **Cancel and leave** — cancel without forcing the person back into waitlist contact.
+  4. **Clinic-initiated / practitioner-approved move** — no waitlist penalty.
+  5. **Consultation no-call / no-show** — permanent clinic-scoped self-service booking
+     restriction, with **no automatic expiry or reinstatement**.
+  6. **Owner exception** — a manual booking of an exceptional case **does not clear**
+     the restriction; audit the exception.
+  7. **Incorrect no-show / protected need** — explicit owner correction and a private
+     accommodation/review path; **correction and exception are distinct records**.
+  8. **Client identity / scope** — the restriction belongs to the clinic's
+     authoritative client/person identity; never an unverified browser email alone,
+     and never leak blocked-person state.
+  9. **Existing treatment clients** — preserve unrelated treatment
+     booking/cancellation/rescheduling semantics, via a canonical first-consultation
+     classification rather than a service-name heuristic.
 * §14.5.5A — **open/preview/reload/GET never book, consume, decline or remove**, and
   the response deadline, appointment date range, proof-challenge expiry and
   verified-capability expiry are kept **distinct**.
