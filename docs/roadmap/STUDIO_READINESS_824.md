@@ -25,7 +25,7 @@ helper and the payment tables. Section 4 orders them for that reason.
 | Concern | Where | Notes |
 |---|---|---|
 | Collision model | `0134` | `resource_key` per practitioner on capacity-ON studios. Studio-wide blocks fan out to every practitioner, and one GiST exclusion covers all four collision rules (`docs/roadmap/PRACTITIONER_CAPACITY_ARCHITECTURE.md`). |
-| Flags | `0134`, `0136` | `practitioner_capacity_enabled` is the structure. `practitioner_capacity_booking_enabled` is the booking switch (`booking_paused` when structure is ON and booking is OFF). Both are operator-only: browser writes raise `42501`. |
+| Flags | `0134`, `0136` | `practitioner_capacity_enabled` is the structure. `practitioner_capacity_booking_enabled` gates the **internal** commands only: on a structure-ON studio with it OFF, `create_internal_appointment_v2` and `move_or_reassign_appointment` return `booking_paused` (`0174`). `create_public_appointment` (`0170`) never reads it, so it is **not** a public-intake switch (§1.4). A CHECK forbids booking ON while structure is OFF. Both are operator-only: browser writes raise `42501`. |
 | Per-practitioner availability, scoped blocks and breaks | `0135`, `0137`–`0139`, `0149` | `save_weekly_availability(studio, scope, days)`. A scoped source on a capacity-OFF studio is retained but **dormant**. |
 | Service eligibility | `0134` (`service_practitioners`) | Default trigger: every **active** practitioner becomes eligible for a new service. |
 | Internal booking | `create_internal_appointment_v2` (`0146` → `0152` → `0174`) | The actor must be an active member. A non-owner may book only themselves, with no duration or outside-hours override. |
@@ -92,9 +92,10 @@ public booking either lands on the owner's resource or fails. The July
 architecture note planned this as "PR C" (fair rule: *eligible + available →
 lowest booked minutes → oldest last assignment → stable id*), and it was never
 built. It is a **bounded follow-up PR**. It touches shared scheduling and the
-public booking surface, so it needs WAIT coordination (§5). Until it ships, a
-capacity studio must keep `practitioner_capacity_booking_enabled = false` for
-public intake, or accept owner-only public bookings.
+public booking surface, so it needs WAIT coordination (§5). Until it ships,
+public bookings on a capacity studio land on the owner's resource, and no flag
+changes that: the public command never reads
+`practitioner_capacity_booking_enabled` (§1.4).
 
 ### 1.4 Per-studio activation and recovery plan
 
@@ -109,11 +110,12 @@ Nothing here is automatic.
    - zero orphan reservations;
    - every appointment's `resource_key` equals its practitioner;
    - studio-wide blocks fanned out to every practitioner.
-3. **Booking ON** (`practitioner_capacity_booking_enabled = true`), only after G1 ships, or only for owner-assigned public intake.
-4. **Recovery.** Turning structure OFF is **not** an instant rollback once parallel appointments exist (`known-limitations.md` L7). Turning it OFF would re-key them to one studio bucket, where they overlap. Recovery is therefore:
-   - turn **booking** OFF, which stops new intake without touching data;
-   - resolve overlaps by reassigning or moving;
-   - only then turn structure OFF, if that is still wanted.
+3. **Booking ON** (`practitioner_capacity_booking_enabled = true`) in the same operator window as step 2. While structure is ON and booking is OFF, staff cannot create or move appointments: both internal commands return `booking_paused` (`0174`). Booking ON does **not** open practitioner-aware public booking. Public bookings keep landing on the single active owner until G1 ships, whatever this flag says.
+4. **Recovery.** Turning structure OFF is **not** an instant rollback once parallel appointments exist (`known-limitations.md` L7). It would re-key them into one studio bucket, where they overlap, and `retire_practitioner_capacity` (`0136`, `0138`) refuses with reason codes. The booking flag is **not** an intake pause either: the public command never reads it, and turning it OFF blocks the moves and reassignments that recovery needs. Recovery is therefore:
+   - pause **new-client** public intake with `set_new_client_admission_mode` (`waitlist` or `closed`, `0204`);
+   - **GAP R1: returning clients can still book publicly, and no control pauses that today.** Until a real public-booking pause exists, activating a five-plus studio means accepting that returning clients can keep booking during a recovery. That needs an explicit decision. The pause ships with G1 or as its own bounded PR;
+   - keep booking ON, and resolve overlaps by reassigning or moving;
+   - only then turn booking OFF (the CHECK requires it before structure goes OFF) and retire structure through `retire_practitioner_capacity`, if that is still wanted.
 
 ---
 
@@ -316,7 +318,7 @@ PR 1   five-plus proof + this contract             tests/docs only, no migration
   - the reservation exclusion path that its PR2 extends.
 
   **#824 claims none of them.** Consequences:
-  - **G1 (public practitioner selection) is sequenced after WAIT v4's public-booking work** (its PR5, recipient flow and atomic booking), or is built only under an explicit ownership hand-off. Until then G1 stays a documented gap, and a capacity studio keeps public intake owner-assigned or paused.
+  - **G1 (public practitioner selection) is sequenced after WAIT v4's public-booking work** (its PR5, recipient flow and atomic booking), or is built only under an explicit ownership hand-off. Until then G1 stays a documented gap: public bookings on a capacity studio stay owner-assigned, and only new-client intake can be paused (§1.4, GAP R1).
   - **#824 owns** the receptionist objects (§2.3) and its server routes. It also owns `lib/supabase/queries.ts` membership resolution, which is shared with every authenticated page, so it goes to coordinated review.
   - **The shared-core re-emission of the three internal commands** (`create_internal_appointment_v2`, `move_or_reassign_appointment`, `practitioner_cancel_appointment`) is the **one** shared scheduling seam. WAIT v4's withdrawal paths (its PR6) also act on owner bookings and moves. Whichever lane lands second re-emits on top of the first's body and never edits the other's migration. These functions stay behaviourally identical for existing callers.
   - **US/USD** touches payment tables, RPCs, receipts and Stripe only. It has no WAIT overlap.
