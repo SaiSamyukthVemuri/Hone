@@ -8,7 +8,7 @@ import {
 } from "@/app/_components/PolicyLayout";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy",
+  title: { absolute: "Privacy Policy | Hone" },
   description:
     "How Hone collects, uses, stores, shares, and protects personal information.",
 };

@@ -6,10 +6,23 @@ import { ImageResponse } from "next/og";
 // metadata edits are needed in layout.tsx. No client data; branded copy only.
 // PR #244: the card leads with the public category phrase (treatment memory
 // for electrologists) instead of the old "practice software" framing.
+//
+// MKT-03 REVISION 3 (the anti-slop pass) put the card in the site's own
+// palette and words. It drew a tracked, all-caps label in grey on near-white,
+// a slogan the site no longer uses, and a middle-dot list of features. Now it
+// is the marketing surface's paper, ink and green, the category in sentence
+// case, and the homepage's own headline. The colours are the `@theme` values
+// in app/globals.css, written out because an edge ImageResponse cannot read
+// CSS variables.
+const PAPER = "#f7f4ee";
+const INK = "#17211f";
+const MUTED = "#556661";
+const MINERAL = "#1e6b62";
+const HAIRLINE = "#e2ddd3";
 
 export const runtime = "edge";
 export const alt =
-  "Hone. Treatment memory for electrologists: before-today prep, charting, and procedure records.";
+  "Hone, electrolysis practice software: start the next treatment where the last one ended.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -23,20 +36,12 @@ export default function OpengraphImage() {
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          backgroundColor: "#FAFAF7",
-          color: "#0A0A0A",
+          backgroundColor: PAPER,
+          color: INK,
           padding: "76px",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            fontSize: 26,
-            letterSpacing: "0.22em",
-            textTransform: "uppercase",
-            color: "#6B6B6B",
-          }}
-        >
+        <div style={{ display: "flex", fontSize: 30, color: MINERAL }}>
           Treatment memory for electrologists
         </div>
 
@@ -52,8 +57,8 @@ export default function OpengraphImage() {
           >
             Hone
           </div>
-          <div style={{ display: "flex", fontSize: 40, marginTop: 18 }}>
-            Remember what happened last time.
+          <div style={{ display: "flex", fontSize: 46, marginTop: 22, lineHeight: 1.15, maxWidth: 900 }}>
+            Start the next treatment where the last one ended.
           </div>
         </div>
 
@@ -62,16 +67,14 @@ export default function OpengraphImage() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            borderTop: "1px solid #E5E2DA",
+            borderTop: `1px solid ${HAIRLINE}`,
             paddingTop: 28,
             fontSize: 30,
-            color: "#6B6B6B",
+            color: MUTED,
           }}
         >
-          <div style={{ display: "flex" }}>
-            Before Today · Charting · Procedure records · Lot traceability
-          </div>
-          <div style={{ display: "flex", color: "#0A0A0A" }}>hone.care</div>
+          <div style={{ display: "flex" }}>Electrolysis practice software</div>
+          <div style={{ display: "flex", color: INK }}>hone.care</div>
         </div>
       </div>
     ),

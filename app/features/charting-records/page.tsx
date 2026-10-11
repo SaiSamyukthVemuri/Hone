@@ -7,16 +7,22 @@ import {
   MarketingSurface,
   Container,
   Section,
-  Eyebrow,
   Display,
   Title,
   Lede,
   CTAButton,
 } from "../../_components/marketing/primitives";
-import { Reveal } from "../../_components/marketing/Reveal";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
 import { SessionRecordPreview } from "../../_components/marketing/visuals/SessionRecordPreview";
-import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../../_components/marketing/sections";
+import {
+  WalkthroughCTA,
+  RelatedLinks,
+  FeatureMatrix,
+  SpecRows,
+  SpecRow,
+  SpecRowHead,
+  SpecRowBody,
+} from "../../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -138,7 +144,7 @@ const FIELDS: readonly string[] = [
 const CAPABILITIES: { title: string; body: string }[] = [
   {
     title: "Point-of-care charting",
-    body: "Chart electrolysis and laser sessions on one page, mode (thermolysis, blend, galvanic), Apilus modality, energy, machine frequency, and per-pass readings.",
+    body: "Chart electrolysis and laser sessions on one page: mode (thermolysis, blend or galvanic), Apilus modality, energy, machine frequency and per-pass readings.",
   },
   {
     title: "Structured probe and lot",
@@ -150,7 +156,7 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Observations and response",
-    body: "Tag what you saw with quick observation chips, and capture how each area was tolerated and any reaction, as structured, factual records alongside free-text notes.",
+    body: "Tag what you saw with quick observation chips, and record how each area was tolerated and any reaction, alongside free-text notes.",
   },
   {
     title: "Procedure records and print views",
@@ -174,36 +180,35 @@ export default function ChartingRecordsPage() {
           { name: "Charting and records", path: "/features/charting-records" },
         ]}
       />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
-        <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
-          <Reveal immediate>
-            <Eyebrow>Charting and records</Eyebrow>
-            <Display className="mt-4">
-              Electrolysis charting built around treatments, not generic notes
-            </Display>
-            <Lede className="mt-6 max-w-xl">
-              The record is shaped like the work: per area, per treatment, in fields.
+      <main id="main-content" className="scroll-mt-16">
+        <Container className="grid items-start gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+          <div>
+            <Display className="max-w-[18ch]">Electrolysis charting for each treated area</Display>
+            <Lede className="mt-5 max-w-[38rem]">
+              Each treated area is charted with its side, the settings used, probe and lot,
+              tolerance and skin response.
             </Lede>
-            <div className="mt-8">
-              <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
-                {WALKTHROUGH.primaryLabel}
-              </CTAButton>
-            </div>
-          </Reveal>
-          <Reveal delay={80} className="lg:pl-4">
-            <SessionRecordPreview />
-          </Reveal>
+            <CTAButton
+              href={WALKTHROUGH.href}
+              event={ANALYTICS_EVENTS.primaryCtaClick}
+              className="mt-7 max-sm:w-full"
+            >
+              {WALKTHROUGH.primaryLabel}
+            </CTAButton>
+          </div>
+          <SessionRecordPreview />
         </Container>
 
         <Section tone="warm">
-          <Container size="wide">
-            <Eyebrow>The fields</Eyebrow>
-            <Title className="mt-4 max-w-2xl">What one treatment records.</Title>
-            <ul className="mt-8 flex flex-wrap gap-3">
+          <Container>
+            <Title className="max-w-2xl">What one treatment record holds</Title>
+            {/* A ruled list, not a wall of pills: these are the record's fields,
+                and a spec sheet is how a record's fields are read. */}
+            <ul className="mt-6 grid grid-cols-2 gap-x-8 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-3 lg:grid-cols-4">
               {FIELDS.map((field) => (
                 <li
                   key={field}
-                  className="rounded-full border border-hairline bg-paper px-4 py-2 text-[0.875rem] leading-none text-ink"
+                  className="border-b border-[color:var(--color-hairline)] py-2.5 text-[1rem] text-ink"
                 >
                   {field}
                 </li>
@@ -213,109 +218,104 @@ export default function ChartingRecordsPage() {
           </Container>
         </Section>
 
+        {/* ONE SPEC SHEET, NOT FIVE BANDS. Each of these was its own section
+            with its own background: a label, a heading and two lines, then a
+            64px gap. As rows they read in one pass. The words are unchanged,
+            and each heading and sentence is still its own element, which the
+            append-only guard in tests/app/marketing-feature-pages.test.ts
+            depends on. */}
         <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Per area, not per visit</Eyebrow>
-              <Title className="mt-4">Every area keeps its own history.</Title>
-              <Lede className="mt-5">
-                Each treated area is recorded as an area, with its own side &mdash; not as one
-                line in a visit note. Treat several areas at the same settings and those
-                settings are recorded once, for that group, and every area in it carries the
-                treatment into its own history. Open the chin months later and you read the
-                chin.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="warm">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Clinical notes are append-only</Eyebrow>
-              <Title className="mt-4">A saved clinical note is never overwritten.</Title>
-              <Lede className="mt-5">
-                Correcting a clinical note records a new revision that supersedes the old one,
-                so the original stays readable. Sterile-item and disinfectant records keep an
-                append-only log of their own.
-              </Lede>
-              <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
-                Treatment records themselves stay editable, so a value you change is the value
-                the record shows. The same goes for the next-treatment note: append-only applies
-                to clinical notes, not to the whole chart.
-              </p>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Lots, sterile items and expiry</Eyebrow>
-              <Title className="mt-4">Show what was used on the day.</Title>
-              <Lede className="mt-5">
-                The probe lot is part of the treatment record and linked to your inventory.
-                Sterile items and disinfectant carry expiry dates in a log. When you need to
-                show what was used on a given day, there&rsquo;s a print-friendly view.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="warm">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Photos</Eyebrow>
-              <Title className="mt-4">Attached to the record, kept private.</Title>
-              <Lede className="mt-5">
-                Treatment photos attach to the record. They&rsquo;re stored privately, camera
-                metadata is stripped, and they open through short-lived links.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Gaps are flagged</Eyebrow>
-              <Title className="mt-4">Hone points out what&rsquo;s missing.</Title>
-              <Lede className="mt-5">
-                A missing probe lot. Aftercare not marked. A completed appointment not yet
-                charted. Hone flags each one.
-              </Lede>
-              <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
-                Hone supports record-keeping workflows; studios remain responsible for meeting
-                their local public-health requirements.
-              </p>
-            </Reveal>
+          <Container>
+            <Title className="max-w-2xl">How the record is kept</Title>
+            <SpecRows>
+              <SpecRow>
+                <SpecRowHead>Recorded by area</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    Each treated area is recorded as an area, with its own side. Treat several
+                    areas at the same settings and those settings are recorded once, for that
+                    group, and every area in it carries the treatment into its own history.
+                    Months later, the chin&rsquo;s history lists every treatment that included the
+                    chin.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Clinical notes are append-only</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    Correcting a clinical note records a new revision that supersedes the old
+                    one, so the original stays readable. Sterile-item and disinfectant records
+                    keep an append-only log of their own.
+                  </p>
+                  <p>
+                    Treatment records themselves stay editable, so a value you change is the
+                    value the record shows, and the same is true of the next-treatment note. Only
+                    clinical notes are append-only.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Lots, sterile items and expiry</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    The probe lot is part of the treatment record and linked to your inventory.
+                    Sterile items and disinfectant carry expiry dates in a log. When you need to
+                    show what was used on a given day, there&rsquo;s a print-friendly view.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Photos</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    Treatment photos attach to the record. They are stored privately, with
+                    location and camera data removed, and open only through links that expire
+                    within a minute.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Gaps are flagged</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    Hone flags a missing probe lot, aftercare not marked and a completed
+                    appointment not yet charted.
+                  </p>
+                  <p>
+                    Hone supports record-keeping workflows; studios remain responsible for
+                    meeting their local public-health requirements.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+            </SpecRows>
           </Container>
         </Section>
 
         <RelatedLinks
-          title="Where the record goes."
+          title="Related pages"
           links={[
             {
               href: "/features/treatment-memory",
               label: "Treatment memory",
-              blurb: "Structured charting is what makes the Before Today briefing possible next visit.",
+              blurb: "The Before Today briefing is built from this charting.",
             },
             {
               href: "/features/booking-calendar",
               label: "Booking and calendar",
-              blurb: "Each appointment links to the session you chart against it.",
+              blurb: "Each appointment links to the session you chart for it.",
             },
             {
               href: "/electrolysis-software",
               label: "Electrolysis practice software",
-              blurb: "See how charting and records fit the whole workflow.",
+              blurb: "See how charting and records fit the rest of the practice.",
             },
           ]}
         />
 
         <WalkthroughCTA
-          title="See charting on a real session."
-          body="We'll walk through charting a session and pulling a procedure record, and reply within one business day."
+          title="See a session charted"
+          body="We reply within one business day to set a time, then chart a session with you and pull a procedure record."
         />
       </main>
       <SiteFooter />

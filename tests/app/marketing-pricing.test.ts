@@ -42,7 +42,7 @@ describe("pricing: CAD + three plans", () => {
   it("has exactly one H1 (Display) and a visible FAQ", () => {
     expect((RAW.match(/<Display\b/g) ?? []).length).toBe(1);
     expect(PAGE).toMatch(/FAQ\.map/);
-    expect(PAGE).toMatch(/Pricing questions, answered\./);
+    expect(PAGE).toMatch(/<Title className="max-w-\[14ch\]">Pricing questions<\/Title>/);
   });
 
   it("carries the payment qualifier and the conditional replaces statement", () => {

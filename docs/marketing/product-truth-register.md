@@ -267,8 +267,12 @@ charting/calendar-collaboration story, not a per-practitioner booking story.
 
 ## No client or appointment caps (copy deck v2.2 `noCapsLine`)
 
-**Claim published:** "Every plan includes the full treatment workflow. No client caps.
-No appointment caps."
+**Claim published:** "Every plan includes the full treatment workflow, with no cap on
+clients or appointments."
+
+*(Reworded by MKT-03 revision 3, the operator-authorised anti-slop pass, from "Every plan
+includes the full treatment workflow. No client caps. No appointment caps." The claim and
+its verification are unchanged; only the three clipped negatives became one sentence.)*
 
 **Class: verified ABSENCE.** This row exists because the claim is the only kind the rest
 of this register cannot express: every other row records that a capability IS present,
