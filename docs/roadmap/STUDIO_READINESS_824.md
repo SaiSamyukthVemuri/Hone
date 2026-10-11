@@ -62,7 +62,8 @@ recorded as a gap, not as a pass.
 Results are from the isolated local stack (`hone-studio-824`) at production
 `6c5eac80`, with migrations `0001`–`0210`:
 - the **existing full DB suite passes first**: 176 files and 3,534 tests;
-- the new file then passes **31/31** on three consecutive runs, leaving no synthetic studio behind.
+- the five-plus file then passes **31/31** on three consecutive runs, leaving no synthetic studio behind;
+- the recovery-procedure file (§1.4) passes **10/10** on three consecutive runs, also leaving none behind. The admission suite it cites passes 20/20 on the same stack.
 
 | #824 requirement | Proof (test id) | Result |
 |---|---|---|
@@ -74,6 +75,7 @@ Results are from the isolated local stack (`hone-studio-824`) at production
 | Explicit owner and practitioner permissions; same-studio and cross-studio negatives | G1–G4, C3, F3, D2 | ✅ (one rule flagged: **F6**) |
 | LA date boundaries and DST; Canadian behaviour unchanged | H1: both 2031 US DST days. H2: UTC-midnight crossing. H3: Toronto EST/EDT, capacity OFF, still studio-wide. | ✅ |
 | Failed or stale operations leave no partial appointment or reservation | J: nine refused operations change zero appointment, reservation or audit rows | ✅ |
+| A per-studio activation and recovery plan whose steps the real commands support (§1.4) | `capacity-recovery-procedure.db.test.ts` §1–§3. The `closed` refusals and the unstamped cutover are from `new-client-admission-commit-authority.db.test.ts` §1B–§3B and its UNSTAMPED block. | ✅ procedure; ❌ **GAP R1** (no dedicated pause; client self-reschedule continues) |
 
 **F6, a permission rule for decision.** A non-owner may create or move only
 their **own** booking. `practitioner_cancel_appointment` (`0174`) and the
@@ -111,11 +113,31 @@ Nothing here is automatic.
    - every appointment's `resource_key` equals its practitioner;
    - studio-wide blocks fanned out to every practitioner.
 3. **Booking ON** (`practitioner_capacity_booking_enabled = true`) in the same operator window as step 2. While structure is ON and booking is OFF, staff cannot create or move appointments: both internal commands return `booking_paused` (`0174`). Booking ON does **not** open practitioner-aware public booking. Public bookings keep landing on the single active owner until G1 ships, whatever this flag says.
-4. **Recovery.** Turning structure OFF is **not** an instant rollback once parallel appointments exist (`known-limitations.md` L7). It would re-key them into one studio bucket, where they overlap. `retire_practitioner_capacity` (`0136`, `0138`) therefore refuses while any two participating appointments overlap anywhere in the studio, whichever practitioners they belong to (`0138`:294–302). The booking flag is **not** an intake pause either: the public command never reads it, and turning it OFF blocks the moves that recovery needs. Recovery is therefore:
-   - **Pause new-client intake** with `set_new_client_admission_mode('closed')` (`0204`). `closed` refuses before any invitation is consulted. `waitlist` is not a pause, because a valid scoped invitation can still book (`app/book/[slug]/actions.ts`:614–646).
-   - **Freeze all public booking, if needed, by hiding every active service** (`toggleServiceActiveAction`, owner only). `create_public_appointment` then returns `public_booking_unavailable` (`0170`:690–710). Internal create also refuses a hidden service (`invalid_service`, `0174`), while moves and cancellations keep working. To restore, show the services again **in their original display order**, because showing re-slots a service at the end of the visible order (`show_studio_service`, `0161`). **GAP R1 is that no dedicated public-booking switch exists.** This workaround is cumbersome and changes what clients see.
-   - **Remove each overlap in time, with booking still ON.** Move one appointment to a time that does not overlap, cancel it, or close its lifecycle. A no-show or cancellation stops participating at once; a completed appointment stops once its blocked end has passed (`appointment_participates_in_capacity`, `0136`). Reassignment alone does **not** help, because retirement counts overlapping pairs studio-wide.
-   - **Only then** turn booking OFF (the CHECK requires it, and retirement refuses while it is ON) and retire structure through `retire_practitioner_capacity`, if that is still wanted.
+4. **Recovery.** Turning structure OFF is **not** an instant rollback once parallel appointments exist (`known-limitations.md` L7). It would re-key them into one studio bucket, where they overlap. `retire_practitioner_capacity` (`0136`, `0138`) therefore refuses while any two participating appointments overlap **in time** anywhere in the studio, whichever practitioners they belong to (`0138`:294–302). The booking flag is **not** an intake pause either: the public command never reads it, and turning it OFF pauses the moves that recovery needs. Every step below is run against the real commands in `tests/db/capacity-recovery-procedure.db.test.ts` (§1–§3) unless another test is named.
+   1. **Pause new clients with `closed`.**
+      - The owner sets it in Settings → Booking (`set_new_client_admission_mode`, owner only, `0204`).
+      - The database then refuses every new-client booking, an invited one included, and every new waitlist join (`assert_new_client_admission`). The refusals are proven in `new-client-admission-commit-authority.db.test.ts` §1B, §2B and §3B; in §3B a *valid* invitation is refused and nothing is spent.
+      - `waitlist` is **not** a pause: it still admits a valid scoped invitation (`app/book/[slug]/actions.ts`:614–646).
+      - If the studio's mode is unstamped (`new_client_admission_mode_set_at` is null), `closed` returns `legacy_waitlist_cutover_required` and writes nothing. Set `waitlist` first, which stamps it, then `closed` (the same file's UNSTAMPED block).
+      - It governs **public** admission only. Staff can still add a client and book them in the app (`create_internal_appointment_v2` reads no admission mode).
+      - **Returning clients are unaffected.** A booker on the existing-client path whose email matches an active client still books, reschedules and cancels through their own links (§1; `0170`, `0171` and `0176` read no admission mode). They can also rebook from the portal, which has no admission gate by design (`app/portal/rebook-actions.ts`:92–97). An unmatched email on the existing-client path is refused (`actions.ts`:964–967), so it is no way around `closed`.
+   2. **If needed, freeze all new bookings by hiding every active service** (Settings → Services, owner only).
+      - **Stops** everything that creates through `create_public_appointment`: the public page, portal rebook and invited bookings all get `public_booking_unavailable` (`0170`:690–710). An invited booking is refused before its invitation is spent: the active-service read (`actions.ts`:727–733) runs before consumption (`:841`–`869`). Staff cannot create appointments either (`invalid_service`, `0174`).
+      - **Does not stop** staff moves, reassignments or cancellations; completion and no-show marking; or payments, refunds and charting on existing appointments (`lib/billing` reads no `services.active`).
+      - **Does not stop a client's self-reschedule** through an existing link. `reschedule_appointment_v2` (`0171`) reads neither `services.active`, the admission mode nor the booking flag, so a reschedule can create a new overlap (§2).
+      - **While frozen**, staff service pickers and the readiness panels show no bookable service.
+      - **To restore**, record the menu order first and show the services again in that order, because each service shown goes to the bottom (`show_studio_service`, `0161`; §2). Then reopen admission.
+      - **GAP R1: no dedicated public-booking pause exists, and nothing pauses client self-reschedule.**
+   3. **Remove each overlap in time, with booking still ON.**
+      - A **future** appointment can be moved to a time that does not overlap (by the owner, or by a practitioner for their own), or cancelled.
+      - Once an appointment has **started**, both refuse (`appointment_not_movable`, `not_cancelable`), so close its lifecycle instead:
+        - `mark_appointment_no_show`, once it has ended, stops it participating at once;
+        - `mark_appointment_complete`, once it has started, stops it only when its blocked end has passed (`appointment_participates_in_capacity`, `0136`).
+      - Reassignment alone never clears an overlap.
+      - A past appointment left `confirmed` blocks indefinitely, because the no-show cron does not mutate anything (`app/api/cron/no-show-check/route.ts`; §3).
+   4. **Then turn booking OFF and retire structure** with `retire_practitioner_capacity`. It refuses while booking is ON, and the CHECK requires booking OFF before structure goes OFF.
+      - Keep this window short. With booking OFF, staff moves pause (`booking_paused`), while public bookings and client reschedules continue.
+      - If retirement still refuses, cancellation, completion and no-show all still work with booking OFF (§3). A move needs booking back ON.
 
 ---
 
@@ -318,7 +340,7 @@ PR 1   five-plus proof + this contract             tests/docs only, no migration
   - the reservation exclusion path that its PR2 extends.
 
   **#824 claims none of them.** Consequences:
-  - **G1 (public practitioner selection) is sequenced after WAIT v4's public-booking work** (its PR5, recipient flow and atomic booking), or is built only under an explicit ownership hand-off. Until then G1 stays a documented gap. Public bookings on a capacity studio stay owner-assigned. New-client intake pauses with `closed`, and all public booking only by hiding every service (§1.4, GAP R1).
+  - **G1 (public practitioner selection) is sequenced after WAIT v4's public-booking work** (its PR5, recipient flow and atomic booking), or is built only under an explicit ownership hand-off. Until then G1 stays a documented gap. Public bookings on a capacity studio stay owner-assigned. New-client intake pauses with `closed`. New bookings of every kind stop only when every service is hidden, and even that leaves client self-reschedule running (§1.4, GAP R1).
   - **#824 owns** the receptionist objects (§2.3) and its server routes. It also owns `lib/supabase/queries.ts` membership resolution, which is shared with every authenticated page, so it goes to coordinated review.
   - **The shared-core re-emission of the three internal commands** (`create_internal_appointment_v2`, `move_or_reassign_appointment`, `practitioner_cancel_appointment`) is the **one** shared scheduling seam. WAIT v4's withdrawal paths (its PR6) also act on owner bookings and moves. Whichever lane lands second re-emits on top of the first's body and never edits the other's migration. These functions stay behaviourally identical for existing callers.
   - **US/USD** touches payment tables, RPCs, receipts and Stripe only. It has no WAIT overlap.
