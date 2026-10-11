@@ -269,6 +269,57 @@ body {
   font-family: var(--font-marketing-text);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Vertical rhythm (MKT-03). ONE section padding for the whole marketing
+   * site, read by the Section primitive: 32px on a phone, rising with the
+   * viewport to 64px on a wide desktop. The previous 72-144px bands left more
+   * paper than content on most screens. A block that needs a different rhythm
+   * (the homepage's compact opening) says so where it is built. */
+  --mk-section-pad: clamp(2rem, 1.25rem + 3vw, 4rem);
+}
+
+/* THE FILM'S BAND RISES BEHIND IT (the homepage, MKT-03 revision 3). The film
+ * starts on paper directly under the opening row and the dark band begins
+ * halfway down its frame, so the opening runs straight into the film with no
+ * strip of band above it, and the film still lands on the band it introduces.
+ *
+ * The paper is the band's own first layer, half the film's height tall. That
+ * height is computed from the shell exactly as `.mk-shell` computes its width:
+ * `%` in padding is the band's own width, so a classic scrollbar cannot skew
+ * it, and 9/32 is half of the film's 16:9. Below `sm` the film runs edge to
+ * edge and covers the paper completely. */
+.marketing-surface .mk-film-rise {
+  position: relative;
+  isolation: isolate;
+}
+.marketing-surface .mk-film-rise::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: -1;
+  padding-top: calc(min(100% - clamp(3rem, 14vw, 15rem), 87.5rem) * 9 / 32);
+  background: var(--color-paper);
+}
+
+/* A frame that runs edge to edge on a phone, where the shell's gutters would
+ * cost a 16:9 product film a sixth of its width. Below `sm` only; from there
+ * up the frame keeps the shell's edges like everything else.
+ *
+ * THE GUTTER, NOT THE VIEWPORT. This used `calc((100% - 100vw) / 2)`, and
+ * `100vw` includes a classic scrollbar, so on a narrow desktop window the frame
+ * overshot the page by the scrollbar's width, and <main> clipped horizontal
+ * overflow to hide it. Each gutter is exactly half of the
+ * amount `.mk-shell` subtracts (the same `clamp`, so the same 14vw), which
+ * cancels it on every browser, scrollbar or not, with nothing to clip. */
+@media (width < 40rem) {
+  .marketing-surface .mk-bleed {
+    margin-inline: calc(clamp(3rem, 14vw, 15rem) / -2);
+  }
+}
+
+/* The sticky header is 4rem tall. Anything a link can jump to (a skip link,
+ * a section anchor, a policy heading) lands below it, not under it. */
+.marketing-surface [id] {
+  scroll-margin-top: 5rem;
 }
 .marketing-surface ::selection {
   background: var(--color-wash);

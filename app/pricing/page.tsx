@@ -13,10 +13,8 @@ import {
   Title,
   Subtitle,
   Lede,
-  Hairline,
   CTAButton,
 } from "../_components/marketing/primitives";
-import { Reveal } from "../_components/marketing/Reveal";
 import { JsonLd, Breadcrumbs } from "../_components/marketing/JsonLd";
 import { faqPageLd } from "@/lib/marketing/jsonld";
 import {
@@ -102,17 +100,20 @@ const FAQ: { q: string; a: string }[] = [
   },
 ];
 
-function PlanCard({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
-  // EVERY CARD IS RENDERED IDENTICALLY. The emphasised border and shadow were
+function PlanColumn({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
+  // EVERY PLAN IS RENDERED IDENTICALLY. The emphasised border and shadow were
   // driven by the badge, so one tier appeared recommended by styling alone.
+  //
+  // A PRICE LIST, NOT THREE CARDS — the same ruled columns the homepage uses,
+  // sharing one top rule. Each plan used to carry its own identical "Request a
+  // walkthrough" button: three copies of one action, side by side, with nothing
+  // to choose between. The single request below the list is the same action.
   return (
-    <div className="flex flex-col rounded-[12px] border border-[color:var(--color-hairline)] bg-white p-6 sm:p-7">
-      <Subtitle as="h2" className="text-[1.375rem]">
-        {plan.name}
-      </Subtitle>
+    <div className="flex flex-col border-b border-[color:var(--color-hairline)] py-6 sm:px-7 sm:[&:first-child]:pl-0 sm:[&:last-child]:pr-0 sm:[&:not(:first-child)]:border-l sm:[&:not(:first-child)]:border-[color:var(--color-hairline)]">
+      <Subtitle as="h2">{plan.name}</Subtitle>
 
-      <p className="mt-4">
-        <span className="text-[2rem] font-semibold text-ink">
+      <p className="mt-3">
+        <span className="text-[2rem] font-semibold leading-[1.15] text-ink">
           {plan.priceLabel ?? "Talk to us"}
         </span>
         {plan.cadence ? (
@@ -120,34 +121,21 @@ function PlanCard({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
         ) : null}
       </p>
       {plan.seats ? (
-        <p className="mt-1 text-[0.875rem] text-muted">For {plan.seats}</p>
+        <p className="mt-1 text-[0.9375rem] text-muted">For {plan.seats}</p>
       ) : null}
 
-      <p className="mt-4 text-[0.9375rem] leading-[1.55] text-muted">{plan.bestFor}</p>
+      <p className="mt-4 text-[1rem] leading-[1.55] text-ink">{plan.bestFor}</p>
 
       {plan.transition ? (
-        <p className="mt-3 text-[0.875rem] leading-[1.5] text-[color:var(--color-mineral-deep)]">
+        <p className="mt-3 text-[0.9375rem] leading-[1.55] text-[color:var(--color-mineral-deep)]">
           {plan.transition}
         </p>
       ) : null}
       {plan.id === "studio" ? (
-        <p className="mt-3 text-[0.875rem] leading-[1.5] text-muted">
+        <p className="mt-3 text-[0.9375rem] leading-[1.55] text-muted">
           Studio setup is completed through guided onboarding.
         </p>
       ) : null}
-
-      <div className="mt-auto pt-6">
-        {/* One variant for every plan: a primary button on a single card is a
-            recommendation too, so the CTA no longer varies by tier. */}
-        <CTAButton
-          href={WALKTHROUGH.href}
-          variant="outline"
-          event={ANALYTICS_EVENTS.foundingCtaClick}
-          className="w-full"
-        >
-          {WALKTHROUGH.primaryLabelShort}
-        </CTAButton>
-      </div>
     </div>
   );
 }
@@ -163,11 +151,10 @@ export default function PricingPage() {
           { name: "Pricing", path: "/pricing" },
         ]}
       />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
-        <Container className="pb-4 pt-8 lg:pt-10">
-          <Reveal immediate>
-            <Eyebrow>Pricing</Eyebrow>
-            <Display className="mt-4 max-w-3xl">
+      <main id="main-content" className="scroll-mt-16">
+        <Container className="pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)]">
+          <div>
+            <Display className="max-w-[18ch]">
               Simple plans, in Canadian dollars.
             </Display>
             {/* THE SHARED CONSTANT, VERBATIM — never a local retyping of it.
@@ -184,117 +171,117 @@ export default function PricingPage() {
                 usage quota, an SMS allowance, or the word "unlimited" — the
                 register is explicit that absence of a plan cap is not a promise
                 of infinite capacity, and the guard below holds that line. */}
-            <Lede className="mt-6 max-w-2xl">{POSITIONING.noCapsLine}</Lede>
-          </Reveal>
+            <Lede className="mt-5 max-w-[38rem]">{POSITIONING.noCapsLine}</Lede>
+          </div>
         </Container>
 
         {/* Plans */}
-        <Container className="pb-8 pt-8">
-          <div className="grid items-stretch gap-5 md:grid-cols-3">
+        <Container className="pb-[var(--mk-section-pad)] pt-[clamp(1.75rem,1rem+2vw,3rem)]">
+          <div className="grid grid-cols-1 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-3">
             {PRICING_PLANS.map((plan) => (
-              <PlanCard key={plan.id} plan={plan} />
+              <PlanColumn key={plan.id} plan={plan} />
             ))}
           </div>
-          {/* A LIST, not a styled sentence. The separator is decorative and
-              hidden, so a screen reader hears four assurances rather than one
-              run-on line punctuated by middots. */}
-          <ul className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[0.9375rem] text-ink">
-            {PRICING_ASSURANCES.map((a, i) => (
-              <li key={a} className="flex items-center gap-3">
-                {i > 0 ? (
-                  <span aria-hidden="true" className="text-mineral">
-                    ·
-                  </span>
-                ) : null}
-                <span>{a}</span>
+          {/* A LIST, not a styled sentence, so a screen reader hears four
+              assurances rather than one run-on line. Ruled cells like the
+              homepage's trust strip: a wrapped line of middots left a dot
+              hanging at the end of a line on a phone. */}
+          <ul className="mt-6 grid grid-cols-2 gap-x-6 border-t border-[color:var(--color-hairline)] text-[0.9375rem] text-ink sm:grid-cols-4">
+            {PRICING_ASSURANCES.map((a) => (
+              <li key={a} className="border-b border-[color:var(--color-hairline)] py-3">
+                {a}
               </li>
             ))}
           </ul>
-          <p className="mt-5 text-[0.8125rem] text-muted">
+          <p className="mt-3 text-[0.875rem] text-muted">
             Prices in Canadian dollars (CAD). Setup and payment activation happen during a
             guided onboarding, there is no self-service checkout.
           </p>
+          <CTAButton
+            href={WALKTHROUGH.href}
+            event={ANALYTICS_EVENTS.primaryCtaClick}
+            className="mt-7 max-sm:w-full"
+          >
+            {WALKTHROUGH.primaryLabel}
+          </CTAButton>
         </Container>
 
         {/* Every plan includes */}
         <Section tone="warm">
-          <Container className="grid gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16">
-            <Reveal>
+          <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-8 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+            <div>
               <Eyebrow>Every plan includes</Eyebrow>
-              <Title className="mt-4">The whole workflow, not a stripped-down tier.</Title>
-              <Lede className="mt-5">
+              <Title className="mt-3">The whole workflow, not a stripped-down tier.</Title>
+              <Lede className="mt-4">
                 Treatment memory, charting, intake, consent, and records are never held
                 back to build a higher tier.
               </Lede>
-            </Reveal>
-            <Reveal delay={80}>
-              <ul className="grid gap-x-8 gap-y-3 sm:grid-cols-2">
+            </div>
+            <div>
+              <ul className="grid gap-x-8 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-2">
                 {INCLUDED.map((item) => (
-                  <li key={item} className="flex gap-3 text-[0.9375rem] text-ink">
-                    <span aria-hidden="true" className="mt-1 text-mineral">
-                      •
-                    </span>
-                    <span>{item}</span>
+                  <li
+                    key={item}
+                    className="border-b border-[color:var(--color-hairline)] py-3 text-[1rem] leading-[1.5] text-ink"
+                  >
+                    {item}
                   </li>
                 ))}
               </ul>
-              <p className="mt-6 text-[0.9375rem] leading-[1.6] text-muted">
+              <p className="mt-5 text-[0.9375rem] leading-[1.6] text-muted">
                 {PAYMENT_QUALIFIER} {REPLACES_STATEMENT}
               </p>
-            </Reveal>
+            </div>
           </Container>
         </Section>
 
         {/* FAQ */}
         <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Questions</Eyebrow>
-              <Title className="mt-4">Pricing questions, answered.</Title>
-            </Reveal>
-            <dl className="mt-10">
-              {FAQ.map((item, i) => (
-                <Reveal as="div" key={item.q} delay={(i % 3) * 50}>
-                  {i > 0 ? <Hairline className="my-6" /> : null}
-                  <dt>
-                    <Subtitle as="h3" className="text-[1.125rem]">
-                      {item.q}
-                    </Subtitle>
-                  </dt>
-                  <dd className="mt-2 text-[0.9375rem] leading-[1.6] text-muted">{item.a}</dd>
-                </Reveal>
-              ))}
-            </dl>
-            <p className="mt-8 text-[0.9375rem] text-muted">
-              Still deciding?{" "}
-              <Link
-                href={`mailto:${CONTACT_EMAIL}`}
-                className="font-medium text-mineral underline underline-offset-4"
-              >
-                Email us
-              </Link>{" "}
-              or request a walkthrough.
-            </p>
+          <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.7fr)]">
+            <Title className="max-w-[14ch]">Pricing questions, answered.</Title>
+            <div className="max-w-[64ch]">
+              <dl className="border-t border-[color:var(--color-hairline-strong)]">
+                {FAQ.map((item) => (
+                  <div key={item.q} className="border-b border-[color:var(--color-hairline)] py-5">
+                    <dt>
+                      <Subtitle as="h3">{item.q}</Subtitle>
+                    </dt>
+                    <dd className="mt-2 text-[1rem] leading-[1.6] text-muted">{item.a}</dd>
+                  </div>
+                ))}
+              </dl>
+              <p className="mt-6 text-[0.9375rem] text-muted">
+                Still deciding?{" "}
+                <Link
+                  href={`mailto:${CONTACT_EMAIL}`}
+                  className="font-medium text-mineral underline underline-offset-4"
+                >
+                  Email us
+                </Link>{" "}
+                or request a walkthrough.
+              </p>
+            </div>
           </Container>
         </Section>
 
         {/* Closing CTA */}
         <Section tone="band">
           <Container className="text-center">
-            <Reveal>
-              <Title className="mx-auto max-w-2xl text-paper">
-                See Hone before you decide.
-              </Title>
-              <Lede onBand className="mx-auto mt-5 max-w-xl">
-                We&apos;ll walk through your real workflow, set up guided onboarding, and
-                reply within one business day.
-              </Lede>
-              <div className="mt-8 flex justify-center">
-                <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
-                  {WALKTHROUGH.primaryLabel}
-                </CTAButton>
-              </div>
-            </Reveal>
+            <Title className="mx-auto max-w-2xl text-paper">See Hone before you decide.</Title>
+            <Lede onBand className="mx-auto mt-4 max-w-xl">
+              We&apos;ll walk through your real workflow, set up guided onboarding, and reply
+              within one business day.
+            </Lede>
+            <div className="mt-7 flex justify-center">
+              <CTAButton
+                href={WALKTHROUGH.href}
+                onBand
+                event={ANALYTICS_EVENTS.primaryCtaClick}
+                className="max-sm:w-full"
+              >
+                {WALKTHROUGH.primaryLabel}
+              </CTAButton>
+            </div>
           </Container>
         </Section>
       </main>

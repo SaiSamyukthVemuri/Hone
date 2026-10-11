@@ -13,7 +13,6 @@ import {
   Title,
   Subtitle,
   Lede,
-  Hairline,
   CTAButton,
 } from "./_components/marketing/primitives";
 import { WorkflowGrid, FeatureMatrix } from "./_components/marketing/sections";
@@ -33,29 +32,36 @@ import {
 } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
-// Public marketing homepage — copy deck v2.2 §3, the film release (MKT-02B).
+// Public marketing homepage — copy deck v2.2 §3, the film release (MKT-02B),
+// and the compact opening (MKT-03).
 //
-// WHAT CHANGED, AND WHY IT IS A RESTRUCTURE RATHER THAN A RESKIN.
-// The previous homepage argued the case in prose: a calendar-vs-Hone band, a
-// six-step how-it-works, a capability matrix, a trust grid. It was a good
-// argument and it was all assertion. The film is a DEMONSTRATION of the same
-// claim, so the page now leads with it and the prose steps aside — section 1
-// drops to two sentences because the 25 seconds underneath carry the proof the
-// paragraphs were carrying.
+// THE FILM IS THE OPENING, NOT THE SECOND SCREEN. MKT-02B led the argument with
+// the film but kept a tall type-only hero above it, so at 1440x900 the film
+// began about 1,100px down and no first screen anywhere showed the product.
+// MKT-03 keeps the opening to one compact row (category and headline beside the
+// sub and the one button) and puts the film directly beneath it, at full shell
+// width on desktop and edge to edge on a phone, with the band rising behind it;
+// it plays on its own, muted, while at least half of it is in view. At
+// 1440x900 the film starts about 270px down.
 //
 // EDITORIAL PACING, NOT A STACK OF EQUAL CARDS. Each block gets the structure
 // its content actually wants, and the tones alternate so the page has a rhythm:
 //
-//   hero        paper   type only, no visual — the film is 300px below it
-//   1 film      BAND    the one full-width cinema moment
+//   hero        paper   one row: category + headline | sub + the button
+//   1 film      BAND    the film first, then its heading and what it shows
 //   2 trust     paper   a thin ruled strip, deliberately not a section
 //   3 areas     paper   editorial split, product panel right
 //   4 note      warm    a typographic A/B — the sentence against the fields
-//   5 workflow  paper   editorial split + the shared numbered grid
+//   5 workflow  paper   heading across the top, then calendar | ordered steps
 //   6 records   BAND    four lines, no image, after three image blocks
 //   7 yours     paper   the shared ruled matrix
 //   8 pricing   warm    ruled columns sharing one rule, not three floating cards
-//   9 CTA       BAND    centred, the film's own closing line as the eyebrow
+//   9 CTA       BAND    centred, the film's own closing line as its label
+//
+// ONE RHYTHM. No section here overrides its padding any more: each reads the
+// site-wide --mk-section-pad (32px on a phone up to 64px on a wide desktop)
+// through the Section primitive. The opening and the film band's top edge are
+// the deliberate exceptions, and both are tighter, not looser.
 //
 // ONE H1 — marketing-integrity counts the Display primitive by source shape, so
 // this file must never even NAME that tag outside the hero. Copy-critical
@@ -142,67 +148,94 @@ const OWNERSHIP: { title: string; body: string }[] = [
 ];
 
 export default function HomePage() {
+  // The workflow heading is two sentences, and on a wide screen it reads as
+  // two lines that break where the sentences do — not as a five-line column.
+  const workflowHeading = POSITIONING.differentiationLine.split(/(?<=\.)\s+/);
+
   return (
     <MarketingSurface>
       <SkipLink />
-      <SiteHeader />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
+      {/* The opening carries the walkthrough request itself, a few hundred
+          pixels below the header, so the header drops its copy on this page. */}
+      <SiteHeader cta={false} />
+      <main id="main-content" className="scroll-mt-16">
         {/* ── Hero ─────────────────────────────────────────────────────────
-            Type only. The old hero put a product panel beside the H1, which
-            meant the first product thing a visitor saw was a drawing. It is
-            now the film, one scroll down, at full width. */}
-        <Container className="pb-[clamp(4rem,7vw,7rem)] pt-[clamp(3.5rem,6vw,6rem)]">
-          <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
-          <Display className="mt-5 max-w-[19ch]">{POSITIONING.heroH1}</Display>
-          <Lede className="mt-7 max-w-[46ch]">{POSITIONING.heroSub}</Lede>
-          <div className="mt-9 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
+            ONE ROW ON A DESKTOP (MKT-03 revision 3): the category and the
+            headline on the left; the sentence that explains it and the one
+            button together on the right, the two sides sharing a bottom edge.
+            Revision 2 stacked all four in one left column, which left the
+            right half of the first screen empty and pushed the film 506px
+            down at 1440x900. The row is about 145px tall, so the film now
+            starts inside 280px with the product showing. Revision 1 also used
+            two columns, but under a header that carried a second copy of the
+            same button; the header drops its request on this page, so this is
+            the only "Request a walkthrough" in the opening.
+
+            On a phone and a tablet the same four parts stack in reading order
+            with tight, even gaps, and the film follows. */}
+        <Container className="grid gap-x-[clamp(2.5rem,6vw,6.5rem)] gap-y-5 pb-[clamp(1.25rem,1rem+0.75vw,1.75rem)] pt-[clamp(1.25rem,0.75rem+1.25vw,2rem)] lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-end">
+          <div>
+            <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
+            <Display className="mt-2.5">{POSITIONING.heroH1}</Display>
+          </div>
+          <div>
+            <Lede>{POSITIONING.heroSub}</Lede>
+            <CTAButton
+              href={WALKTHROUGH.href}
+              event={ANALYTICS_EVENTS.primaryCtaClick}
+              className="mt-5 max-sm:w-full"
+            >
               {WALKTHROUGH.primaryLabel}
             </CTAButton>
-            {/* Label and destination move together: MKT-02A repointed this at
-                the treatment-memory page, and a control may only promise what
-                its destination delivers. */}
-            <CTAButton
-              href={WALKTHROUGH.secondaryHref}
-              variant="secondary"
-              event={ANALYTICS_EVENTS.featureCtaClick}
-            >
-              {WALKTHROUGH.secondaryLabel}
-            </CTAButton>
           </div>
-          <Hairline className="mt-[clamp(3rem,5vw,4.5rem)]" />
-          <p className="mt-4 text-[0.8125rem] leading-[1.6] text-muted">
-            {POSITIONING.proofLine}
-          </p>
         </Container>
 
         {/* ── 1. Before the client sits down ───────────────────────────────
-            The one cinema moment. Two sentences, then 25 seconds at full
-            width on near-black, so the film is the section rather than an
-            illustration inside it. */}
-        <Section tone="band" className="!py-[clamp(4.5rem,7vw,8rem)]">
+            The one cinema moment, and the first thing on the band: the film
+            at full width, then its heading and a plain list of what it
+            actually shows, taken from its own transcript.
+
+            NO STRIP OF BAND ABOVE THE FILM. The band used to open with its own
+            padding, so between the button and the picture sat a strip of
+            paper and then a strip of band. Now the band has no top padding
+            and starts behind the film, halfway down (`mk-film-rise`, in
+            app/globals.css). The film's top half sits on paper, so it draws
+            its own hairline edge (`framed`). */}
+        <Section tone="band" className="mk-film-rise !pt-0">
           <Container>
-            <Eyebrow onBand>{POSITIONING.keepPhrase}</Eyebrow>
-            <Title className="mt-5 max-w-[16ch] text-paper">
-              Before the client sits down
-            </Title>
-            <Lede onBand className="mt-6 max-w-[50ch]">
-              Last treatment shouldn&apos;t be buried in a note. Hone brings forward what
-              happened last time, area by area.
-            </Lede>
-            <ProductFilm className="mt-[clamp(2.5rem,4vw,4rem)]" />
+            <ProductFilm autoplay bleed framed />
+            {/* What the film shows, as one column under it, not a second
+                split beside it: the opening row already spends that move. */}
+            <div className="mt-[clamp(1.75rem,1rem+2vw,3rem)] max-w-[44rem]">
+              <Eyebrow onBand>{POSITIONING.keepPhrase}</Eyebrow>
+              <Title className="mt-2 text-paper">Before the client sits down</Title>
+              <Lede onBand className="mt-4">
+                {`In ${FILM.durationSeconds} silent seconds: the week's calendar, the last treatment area by area, the exact setup used, today's charting and one client record.`}
+              </Lede>
+              {/* Label and destination move together: MKT-02A repointed this
+                  at the treatment-memory page, and a control may only promise
+                  what its destination delivers. Here it follows the film it
+                  explains, instead of crowding the opening. */}
+              <Link
+                href={WALKTHROUGH.secondaryHref}
+                data-event={ANALYTICS_EVENTS.featureCtaClick}
+                className="mt-3 inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-paper underline decoration-[color:var(--color-onband-muted)] underline-offset-[6px] hover:decoration-paper focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-paper)]"
+              >
+                {WALKTHROUGH.secondaryLabel}
+              </Link>
+            </div>
           </Container>
         </Section>
 
         {/* ── 2. Trust strip ───────────────────────────────────────────────
             Not a Section and not four cards: one ruled row, the width of the
             shell, that a visitor reads in a single pass on the way down. */}
-        <Container className="py-[clamp(1.75rem,2.5vw,2.5rem)]">
+        <Container className="py-[clamp(1.5rem,2.5vw,2.25rem)]">
           <ul className="grid grid-cols-1 divide-y divide-[color:var(--color-hairline)] border-y border-[color:var(--color-hairline)] sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4">
             {POSITIONING.trustStrip.split(" · ").map((line) => (
               <li
                 key={line}
-                className="py-3.5 text-[0.875rem] leading-[1.45] text-muted sm:border-b sm:border-[color:var(--color-hairline)] sm:pr-6 lg:border-b-0 lg:[&:not(:first-child)]:border-l lg:[&:not(:first-child)]:border-[color:var(--color-hairline)] lg:[&:not(:first-child)]:pl-6"
+                className="py-3.5 text-[0.9375rem] leading-[1.45] text-muted sm:border-b sm:border-[color:var(--color-hairline)] sm:pr-6 lg:border-b-0 lg:[&:not(:first-child)]:border-l lg:[&:not(:first-child)]:border-[color:var(--color-hairline)] lg:[&:not(:first-child)]:pl-6"
               >
                 {line}
               </li>
@@ -211,11 +244,11 @@ export default function HomePage() {
         </Container>
 
         {/* ── 3. Every area keeps its own history ─────────────────────────── */}
-        <Section tone="paper" className="!py-[clamp(4.5rem,7vw,8rem)]">
-          <Container className="grid items-center gap-[clamp(2.5rem,5vw,5rem)] lg:grid-cols-[1.02fr_0.98fr]">
+        <Section tone="paper">
+          <Container className="grid items-center gap-[clamp(2rem,4vw,4.5rem)] lg:grid-cols-[1.02fr_0.98fr]">
             <div>
               <Title className="max-w-[15ch]">Every area keeps its own history</Title>
-              <p className="mt-6 max-w-[38ch] text-[1.25rem] leading-[1.4] text-ink">
+              <p className="mt-5 max-w-[38ch] text-[1.1875rem] leading-[1.4] text-ink sm:text-[1.25rem]">
                 Upper lip, chin, neck and brows don&apos;t share one note.
               </p>
               {/* THE PRODUCT MODEL, NOT A SIMPLIFICATION OF IT. This claimed a
@@ -225,7 +258,7 @@ export default function HomePage() {
                   one settings block + per-area laterality", 0128/0129). The
                   per-area promise that IS true is findability — memory is kept
                   per treatment area — so that is what this says now. */}
-              <Lede className="mt-5 max-w-[46ch]">
+              <Lede className="mt-4 max-w-[46ch]">
                 Treat several areas at the same settings and Hone records those areas under
                 one settings block. Each area still remains findable in its own history.
                 When the setup changes, a new block preserves the difference.
@@ -239,18 +272,16 @@ export default function HomePage() {
             A typographic A/B. The sentence a notes field can hold, set large
             and muted, against the same treatment as fields. The comparison IS
             the layout; neither side is a card. */}
-        <Section tone="warm" className="!py-[clamp(4.5rem,7vw,8rem)]">
+        <Section tone="warm">
           <Container>
             <Title className="max-w-[12ch]">More than a note</Title>
-            <div className="mt-[clamp(2.5rem,4vw,3.5rem)] grid gap-[clamp(2.5rem,5vw,4.5rem)] lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+            <div className="mt-[clamp(1.75rem,3vw,3rem)] grid gap-[clamp(2rem,4vw,4rem)] lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
               <div>
-                <p className="text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-muted">
-                  A note can say
-                </p>
-                <p className="mt-4 border-l border-[color:var(--color-hairline-strong)] pl-5 text-[clamp(1.375rem,1.1rem+1vw,1.75rem)] leading-[1.35] text-muted">
+                <p className="text-[0.9375rem] font-medium text-muted">A note can say</p>
+                <p className="mt-3 border-l border-[color:var(--color-hairline-strong)] pl-5 text-[clamp(1.375rem,1.1rem+1vw,1.75rem)] leading-[1.35] text-muted">
                   &ldquo;Upper lip treated, tolerated well.&rdquo;
                 </p>
-                <Lede className="mt-8 max-w-[42ch]">
+                <Lede className="mt-6 max-w-[42ch]">
                   Hone records the treatment as fields, not a paragraph: the areas treated,
                   the machine settings, probe and lot, how each area was tolerated, and what
                   to remember next time. Because they&apos;re fields rather than prose, each
@@ -259,9 +290,9 @@ export default function HomePage() {
                 <Link
                   href="/features/charting-records"
                   data-event={ANALYTICS_EVENTS.featureCtaClick}
-                  className="mt-6 inline-block text-[0.9375rem] font-medium text-mineral underline underline-offset-4"
+                  className="mt-3 inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-mineral underline underline-offset-4"
                 >
-                  See every field →
+                  See every field Hone records
                 </Link>
               </div>
               <SessionRecordPreview />
@@ -270,20 +301,31 @@ export default function HomePage() {
         </Section>
 
         {/* ── 5. The connected workflow ────────────────────────────────────
-            The editorial split the desktop system defines: a narrow intro
-            column, the shared numbered grid beside it. */}
-        <Section tone="paper" className="!py-[clamp(4.5rem,7vw,8rem)]" id="how-hone-works">
+            The heading runs across the top in two sentences, so it no longer
+            stands five lines tall in a narrow column. Under it, the calendar
+            and the ordered steps sit side by side at the same height: the steps
+            carry no fixed title height and the calendar keeps its natural size.
+            On a phone and a tablet the steps stand alone; the calendar is a
+            desktop composition. */}
+        <Section tone="paper" id="how-hone-works">
           <Container>
-            <div className="grid gap-10 lg:grid-cols-[minmax(17rem,0.72fr)_minmax(0,1.28fr)] lg:items-start lg:gap-[clamp(4rem,6vw,6.5rem)]">
-              <div>
-                <Title className="max-w-[18ch]">{POSITIONING.differentiationLine}</Title>
-                <Lede className="mt-6 max-w-[30rem]">
-                  One calm workflow, start to finish. Booking, intake, consent, treatment,
-                  follow-up, payment and the client portal share one record.
-                </Lede>
-                <div className="mt-9 hidden lg:block">
-                  <CalendarPreview />
-                </div>
+            <Title className="max-w-[24ch] lg:max-w-none">
+              {/* The trailing space keeps the heading's TEXT one sentence apart
+                  ("appointment. Hone") for assistive tech, copy and search; it
+                  collapses visually at the line end. */}
+              {workflowHeading.map((sentence) => (
+                <span key={sentence} className="lg:block">
+                  {`${sentence} `}
+                </span>
+              ))}
+            </Title>
+            <Lede className="mt-4 max-w-[60ch]">
+              One calm workflow, start to finish. Booking, intake, consent, treatment,
+              follow-up, payment and the client portal share one record.
+            </Lede>
+            <div className="mt-[clamp(1.75rem,3vw,3rem)] grid items-start gap-[clamp(2rem,4vw,4rem)] lg:grid-cols-[minmax(18rem,0.75fr)_minmax(0,1.6fr)]">
+              <div className="hidden lg:block">
+                <CalendarPreview />
               </div>
               <WorkflowGrid steps={WORKFLOW_STEPS} />
             </div>
@@ -292,15 +334,15 @@ export default function HomePage() {
 
         {/* ── 6. Know what was used, and when ──────────────────────────────
             The band with nothing to look at. Four lines, large, ruled. */}
-        <Section tone="band" className="!py-[clamp(4.5rem,7vw,8rem)]">
+        <Section tone="band">
           <Container>
-            <div className="grid gap-[clamp(2rem,4vw,4rem)] lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
+            <div className="grid gap-[clamp(1.5rem,3vw,3.5rem)] lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
               <Title className="max-w-[14ch] text-paper">Know what was used, and when</Title>
               <ul className="border-t border-white/15">
                 {RECORD_LINES.map((line) => (
                   <li
                     key={line}
-                    className="border-b border-white/15 py-5 text-[clamp(1.0625rem,1rem+0.4vw,1.25rem)] leading-[1.45] text-paper"
+                    className="border-b border-white/15 py-4 text-[clamp(1.0625rem,1rem+0.4vw,1.25rem)] leading-[1.45] text-paper"
                   >
                     {line}
                   </li>
@@ -310,9 +352,9 @@ export default function HomePage() {
             <Link
               href="/features/charting-records"
               data-event={ANALYTICS_EVENTS.featureCtaClick}
-              className="mt-8 inline-block text-[0.9375rem] font-medium text-[color:var(--color-wash)] underline underline-offset-4"
+              className="mt-5 inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-[color:var(--color-wash)] underline underline-offset-4"
             >
-              More on records →
+              More on records and logs
             </Link>
           </Container>
         </Section>
@@ -320,13 +362,13 @@ export default function HomePage() {
         {/* ── 7. Your client records should stay yours ─────────────────────
             The shared ruled matrix — a designed table, not six floating
             cards. No badges, no hosting-location line. */}
-        <Section tone="paper" className="!py-[clamp(4.5rem,7vw,8rem)]">
+        <Section tone="paper">
           <Container>
             <Title className="max-w-[18ch]">{POSITIONING.recordsHeading}</Title>
             <FeatureMatrix
               items={OWNERSHIP.map((o) => ({ title: o.title, body: o.body }))}
             />
-            <p className="mt-8 text-[0.9375rem] text-muted">
+            <p className="mt-6 text-[0.9375rem] text-muted">
               Read the{" "}
               <Link href="/privacy" className="font-medium text-mineral underline underline-offset-4">
                 privacy policy
@@ -339,22 +381,22 @@ export default function HomePage() {
         {/* ── 8. Simple plans, in Canadian dollars ─────────────────────────
             Three columns sharing ONE top rule and one baseline, divided by
             hairlines. A price list, not three cards competing for a click. */}
-        <Section tone="warm" id="pricing" className="!py-[clamp(4.5rem,7vw,8rem)]">
+        <Section tone="warm" id="pricing">
           <Container>
             <Title className="max-w-[20ch]">{POSITIONING.pricingHeading}</Title>
-            <Lede className="mt-6 max-w-[48ch]">{POSITIONING.noCapsLine}</Lede>
+            <Lede className="mt-5 max-w-[48ch]">{POSITIONING.noCapsLine}</Lede>
             {/* everyPlanIncludes NAMES PAYMENTS, so the qualifier is not
                 optional — card-on-file is LIVE_WITH_GUIDED_SETUP, not live for
                 everyone, and MKT-02A pins the pairing obligation. */}
-            <p className="mt-4 max-w-[52ch] text-[0.9375rem] leading-[1.6] text-muted">
+            <p className="mt-3 max-w-[52ch] text-[0.9375rem] leading-[1.6] text-muted">
               {POSITIONING.everyPlanIncludes} {PAYMENT_QUALIFIER}
             </p>
 
-            <div className="mt-[clamp(2.5rem,4vw,3.5rem)] grid grid-cols-1 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-3">
+            <div className="mt-[clamp(1.75rem,3vw,3rem)] grid grid-cols-1 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-3">
               {PRICING_PLANS.map((plan) => (
                 <div
                   key={plan.id}
-                  className="flex flex-col border-b border-[color:var(--color-hairline)] py-7 sm:px-7 sm:[&:first-child]:pl-0 sm:[&:last-child]:pr-0 sm:[&:not(:first-child)]:border-l sm:[&:not(:first-child)]:border-[color:var(--color-hairline)]"
+                  className="flex flex-col border-b border-[color:var(--color-hairline)] py-6 sm:px-7 sm:[&:first-child]:pl-0 sm:[&:last-child]:pr-0 sm:[&:not(:first-child)]:border-l sm:[&:not(:first-child)]:border-[color:var(--color-hairline)]"
                 >
                   <Subtitle as="h3">{plan.name}</Subtitle>
                   <p className="mt-3">
@@ -366,7 +408,7 @@ export default function HomePage() {
                     ) : null}
                   </p>
                   {plan.seats ? (
-                    <p className="mt-1 text-[0.8125rem] text-muted">For {plan.seats}</p>
+                    <p className="mt-1 text-[0.875rem] text-muted">For {plan.seats}</p>
                   ) : null}
                   <p className="mt-3 text-[0.9375rem] leading-[1.55] text-muted">
                     {plan.bestFor}
@@ -375,9 +417,16 @@ export default function HomePage() {
               ))}
             </div>
 
-            <p className="mt-6 text-[0.875rem] text-muted">{POSITIONING.assuranceLine}</p>
-            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-              <CTAButton href="/pricing" event={ANALYTICS_EVENTS.pricingPlanViewed}>
+            <p className="mt-5 text-[0.9375rem] text-muted">{POSITIONING.assuranceLine}</p>
+            {/* An outline, not a second filled button: the filled button is the
+                walkthrough request, and the closing band right below carries it. */}
+            <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
+              <CTAButton
+                href="/pricing"
+                variant="outline"
+                event={ANALYTICS_EVENTS.pricingPlanViewed}
+                className="max-sm:w-full"
+              >
                 See pricing details
               </CTAButton>
               <CTAButton
@@ -392,21 +441,26 @@ export default function HomePage() {
         </Section>
 
         {/* ── 9. Walkthrough CTA ───────────────────────────────────────────
-            The film's closing card, reused as the eyebrow, so the page ends
-            on the same words the film ends on. */}
-        <Section tone="band" className="!py-[clamp(5rem,8vw,9rem)]">
+            The film's closing card, reused as the label above the heading, so
+            the page ends on the same words the film ends on. */}
+        <Section tone="band">
           <Container className="text-center">
             <Eyebrow onBand>{POSITIONING.filmClosingLine}</Eyebrow>
-            <Title className="mx-auto mt-5 max-w-[18ch] text-paper">
+            <Title className="mx-auto mt-3 max-w-[18ch] text-paper">
               {POSITIONING.walkthroughHeading}
             </Title>
-            <Lede onBand className="mx-auto mt-6 max-w-[52ch]">
+            <Lede onBand className="mx-auto mt-5 max-w-[52ch]">
               In a walkthrough, we open a returning client and you watch Before Today assemble
               from their history. If Hone fits, we set up your studio and bring your existing
               clients across.
             </Lede>
-            <div className="mt-9 flex justify-center">
-              <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
+            <div className="mt-8 flex justify-center">
+              <CTAButton
+                href={WALKTHROUGH.href}
+                onBand
+                event={ANALYTICS_EVENTS.primaryCtaClick}
+                className="max-sm:w-full"
+              >
                 {WALKTHROUGH.primaryLabel}
               </CTAButton>
             </div>

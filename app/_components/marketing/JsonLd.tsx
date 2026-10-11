@@ -14,9 +14,12 @@ export function JsonLd({ data }: { data: object }) {
  */
 export function Breadcrumbs({ items }: { items: { name: string; path: string }[] }) {
   return (
-    <Container className="pt-5">
+    // Links are 44px rows on touch and compact for a fine pointer (DESIGN LAWS 3
+    // and 5); the row's own padding is trimmed to match, so the trail sits where
+    // it did.
+    <Container className="pt-2 pointer-fine:pt-4">
       <nav aria-label="Breadcrumb">
-        <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted">
+        <ol className="flex flex-wrap items-center gap-x-2 text-[0.8125rem] text-muted">
           {items.map((it, i) => {
             const last = i === items.length - 1;
             return (
@@ -26,7 +29,10 @@ export function Breadcrumbs({ items }: { items: { name: string; path: string }[]
                     {it.name}
                   </span>
                 ) : (
-                  <Link href={it.path} className="hover:text-mineral">
+                  <Link
+                    href={it.path}
+                    className="-mx-1.5 inline-flex min-h-11 min-w-11 items-center justify-center px-1.5 hover:text-mineral pointer-fine:min-h-6 pointer-fine:min-w-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
+                  >
                     {it.name}
                   </Link>
                 )}

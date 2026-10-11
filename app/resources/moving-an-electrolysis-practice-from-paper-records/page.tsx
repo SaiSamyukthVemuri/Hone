@@ -85,12 +85,12 @@ export default function MovingFromPaperArticlePage() {
           { name: "Moving from paper records", path: article.slug },
         ]}
       />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
+      <main id="main-content" className="scroll-mt-16">
         <article>
-          <Container size="prose" className="pb-6 pt-6 lg:pt-8">
+          <Container size="prose" className="pb-6 pt-4 lg:pt-5">
             <Reveal immediate>
               <Eyebrow>Guide</Eyebrow>
-              <Display className="mt-4">{article.title}</Display>
+              <Display className="mt-2.5">{article.title}</Display>
               <ArticleByline article={article} />
               <p className="mt-8 text-[1.0625rem] leading-[1.7] text-ink">
                 Paper treatment cards work right up until they don&apos;t: a card is hard to

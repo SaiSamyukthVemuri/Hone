@@ -10,13 +10,14 @@ import {
   Eyebrow,
   Display,
   Title,
+  Subtitle,
   Lede,
+  CTAButton,
 } from "../_components/marketing/primitives";
-import { Reveal } from "../_components/marketing/Reveal";
 import { Breadcrumbs } from "../_components/marketing/JsonLd";
 import { ProductFilm } from "../_components/marketing/ProductFilm";
 import { DemoForm } from "../_components/DemoForm";
-import { WALKTHROUGH } from "@/lib/marketing/content";
+import { ANALYTICS_EVENTS, WALKTHROUGH } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
 // /demo, a LEAD-CAPTURE request. The visitor never selects a real appointment
@@ -26,7 +27,9 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // PII, see DemoForm + MarketingAnalytics.
 //
 // MKT-02E. Structure and copy follow marketing copy deck v2.2 section 9: the
-// film sits ABOVE the "What you'll see" list, with the deck's line beneath it.
+// film sits ABOVE the "What you'll see" list, with the deck's line beside it.
+// MKT-03 revision 2 moves the FORM to the top: the request is in the first
+// screen, and the film and the explanation below it support it.
 //
 // TWO DECK ITEMS ARE DELIBERATELY NOT SHIPPED, AND BOTH ARE TRUTH DECISIONS.
 //
@@ -96,108 +99,119 @@ export default function DemoPage() {
           { name: "Walkthrough", path: "/demo" },
         ]}
       />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
-        <Container className="pb-12 pt-8 lg:pt-10">
-          <Reveal immediate>
-            <Eyebrow>Walkthrough</Eyebrow>
-            <Display className="mt-4 max-w-3xl">{WALKTHROUGH.demoHeading}</Display>
-            <Lede className="mt-6 max-w-2xl">
+      <main id="main-content" className="scroll-mt-16">
+        {/* ── The request, first ───────────────────────────────────────────
+            THE FORM IS THE PAGE'S JOB, SO IT IS IN THE FIRST SCREEN. It used
+            to come after the film and three explanatory sections, about 1,200px
+            down on a desktop; a visitor who arrived to ask for a walkthrough
+            had to scroll past the case for one first. Now the heading and the
+            form share the opening: side by side on a desktop, and on a narrow
+            screen the order is heading, form, then what happens next.
+            One grid, placed by row and column, so each part is rendered once
+            and the reading order is the DOM order at every width. */}
+        {/* `grid-rows-[auto_1fr]`: the form spans both rows, and without it the
+            form's extra height was shared between them, leaving a gap under the
+            introduction. The first row is the introduction's own height; the
+            second takes the rest. */}
+        <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-8 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1fr)_minmax(26rem,34rem)] lg:grid-rows-[auto_1fr] lg:items-start">
+          <div className="lg:col-start-1 lg:row-start-1">
+            <Display className="max-w-[16ch]">{WALKTHROUGH.demoHeading}</Display>
+            <Lede className="mt-5 max-w-[38rem]">
               A walkthrough is a live screen share. We open a returning client and you watch
               Before Today assemble from their history, then chart a treatment together so you
               can see where the fields go.
             </Lede>
-          </Reveal>
-        </Container>
+          </div>
 
-        {/* The film sits above the list, per deck section 9.
-            ON THE BAND, BECAUSE THE PLAYER IS BUILT FOR IT. #764's ProductFilm is
-            the canonical player and this page adopted it wholesale rather than
-            keeping a second copy. It styles its own box `bg-band` and its caption
-            `--color-onband-muted` (#9fb3ad), which is legible on near-black and
-            almost invisible on paper — so the call site moves to `tone="band"`
-            rather than the component growing a theme prop for one page. Same
-            treatment the homepage gives it, which is also the honest reading of
-            §9: the film is a moment, not an illustration in a column. */}
-        <Section tone="band">
-          <Container>
-            <Reveal>
-              <ProductFilm />
-              <Lede onBand className="mt-6 max-w-[50ch]">
-                This is the short version. The walkthrough is the live one.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="warm">
-          <Container size="wide">
-            <Eyebrow>What you&rsquo;ll see</Eyebrow>
-            <Title className="mt-4 max-w-2xl">The real app, on a returning client.</Title>
-            <ul className="mt-8 grid gap-x-10 gap-y-4 sm:grid-cols-2">
-              {WHAT_YOU_WILL_SEE.map((item) => (
-                <li
-                  key={item}
-                  className="flex items-start gap-3 text-[0.9375rem] leading-[1.55] text-ink"
-                >
-                  <span aria-hidden="true" className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-mineral" />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </Container>
-        </Section>
-
-        <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>What happens after</Eyebrow>
-              <Title className="mt-4">If Hone fits, we set your studio up.</Title>
-              <Lede className="mt-5">
-                If Hone fits, we set up your studio and bring your existing clients across.
-                Standard import is included. No setup fee.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Container className="grid gap-12 pb-20 pt-12 lg:grid-cols-[1fr_1fr] lg:gap-16">
-          <Reveal>
-            <p className="text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-mineral">
-              What happens next
+          <section
+            id="request"
+            aria-labelledby="request-title"
+            className="rounded-[12px] border border-[color:var(--color-hairline)] bg-white p-5 sm:p-8 lg:col-start-2 lg:row-span-2 lg:row-start-1"
+          >
+            <Subtitle as="h2" className="text-ink">
+              <span id="request-title">Tell us about your practice</span>
+            </Subtitle>
+            <p className="mt-2 text-[0.9375rem] leading-[1.55] text-muted">
+              We use this to tailor the walkthrough. We reply within one business day to set
+              up a time.
             </p>
-            <ol className="mt-5 space-y-4">
+            <div className="mt-6">
+              <DemoForm />
+            </div>
+          </section>
+
+          <div className="lg:col-start-1 lg:row-start-2">
+            <Subtitle as="h2">What happens next</Subtitle>
+            <ol className="mt-4 space-y-3.5">
               {WHAT_HAPPENS.map((s) => (
                 <li
                   key={s.step}
-                  className="flex items-start gap-4 text-[0.9375rem] leading-[1.55] text-ink"
+                  className="grid grid-cols-[1.5rem_minmax(0,1fr)] text-[1rem] leading-[1.55] text-ink"
                 >
-                  <span aria-hidden="true" className="text-[0.9375rem] font-semibold text-mineral">
+                  <span aria-hidden="true" className="font-semibold tabular-nums text-mineral">
                     {s.step}
                   </span>
                   <span>{s.body}</span>
                 </li>
               ))}
             </ol>
-            <p className="mt-8 max-w-md text-[0.875rem] leading-[1.6] text-muted">
+            <p className="mt-6 max-w-md text-[0.9375rem] leading-[1.6] text-muted">
               No sales pressure. The goal is to see whether Hone actually fits your practice.
             </p>
-          </Reveal>
-
-          <Reveal delay={80}>
-            <div className="rounded-[12px] border border-[color:var(--color-hairline)] bg-white p-6 sm:p-8">
-              <p className="text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-muted">
-                Tell us about your practice
-              </p>
-              <p className="mt-2 text-[0.875rem] leading-[1.55] text-muted">
-                We use this to tailor the walkthrough. We reply within one business day to set
-                up a time.
-              </p>
-              <div className="mt-7">
-                <DemoForm />
-              </div>
-            </div>
-          </Reveal>
+          </div>
         </Container>
+
+        {/* The film, now in support of the request rather than in front of it.
+            ON THE BAND, BECAUSE THE PLAYER IS BUILT FOR IT. #764's ProductFilm is
+            the canonical player and this page adopted it wholesale rather than
+            keeping a second copy. It styles its own box `bg-band` and its caption
+            `--color-onband-muted` (#9fb3ad), which is legible on near-black and
+            almost invisible on paper — so the call site moves to `tone="band"`
+            rather than the component growing a theme prop for one page. It stays
+            MANUAL here (no `autoplay`): a lead form's visitors did not come for
+            3.6 MB of video. */}
+        <Section tone="band">
+          <Container>
+            <Lede onBand className="mb-6 max-w-[50ch]">
+              This is the short version. The walkthrough is the live one.
+            </Lede>
+            <ProductFilm />
+          </Container>
+        </Section>
+
+        <Section tone="paper">
+          <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 lg:grid-cols-2">
+            <div>
+              <Eyebrow>What you&rsquo;ll see</Eyebrow>
+              <Title className="mt-3 max-w-[22ch]">The real app, on a returning client.</Title>
+              <ul className="mt-6 border-t border-[color:var(--color-hairline)]">
+                {WHAT_YOU_WILL_SEE.map((item) => (
+                  <li
+                    key={item}
+                    className="border-b border-[color:var(--color-hairline)] py-3 text-[1rem] leading-[1.5] text-ink"
+                  >
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <Eyebrow>What happens after</Eyebrow>
+              <Title className="mt-3 max-w-[22ch]">If Hone fits, we set your studio up.</Title>
+              <Lede className="mt-4">
+                We bring your existing clients across as part of setup. Standard import is
+                included. No setup fee.
+              </Lede>
+              <CTAButton
+                href="#request"
+                event={ANALYTICS_EVENTS.primaryCtaClick}
+                className="mt-7 max-sm:w-full"
+              >
+                {WALKTHROUGH.primaryLabel}
+              </CTAButton>
+            </div>
+          </Container>
+        </Section>
       </main>
       <SiteFooter />
       <SafeAnalytics />

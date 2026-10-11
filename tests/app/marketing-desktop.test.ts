@@ -103,20 +103,124 @@ describe("desktop grids", () => {
 });
 
 describe("workflow editorial split", () => {
-  it("homepage renders the workflow as an editorial split (intro column + steps)", () => {
+  it("the heading runs across the top, and the calendar and steps share the row beneath it", () => {
+    // MKT-03 retired the narrow intro column: a five-line heading stood over
+    // the calendar, and that column ran taller than the steps beside it. The
+    // heading now spans the shell and the split sits under it, level.
     const page = read("app/page.tsx");
-    expect(page).toMatch(/lg:grid-cols-\[minmax\(17rem/);
-    expect(page).toMatch(/<WorkflowGrid steps=/);
+    const at = page.indexOf('id="how-hone-works"');
+    expect(at, "workflow section not found").toBeGreaterThan(-1);
+    const section = page.slice(at, page.indexOf("</Section>", at));
+    expect(section).toMatch(/<Title className="max-w-\[24ch\] lg:max-w-none">/);
+    expect(section).toMatch(/lg:grid-cols-\[minmax\(18rem,0\.75fr\)_minmax\(0,1\.6fr\)\]/);
+    // The heading precedes the split, so it can never become one of its columns.
+    expect(section.indexOf("<Title")).toBeLessThan(section.indexOf("lg:grid-cols-["));
+    expect(section).toMatch(/<CalendarPreview \/>/);
+    expect(section).toMatch(/<WorkflowGrid steps=/);
   });
   it("WorkflowGrid is a 2-column numbered sequence, not a 3-col matrix", () => {
     const start = SECTIONS.indexOf("export function WorkflowGrid");
     const wf = SECTIONS.slice(start, SECTIONS.indexOf("export function", start + 1));
     expect(wf).toMatch(/sm:grid-cols-2/);
     expect(wf).not.toMatch(/lg:grid-cols-3/);
-    // Prominent teal step number + a hairline divider, no animated connector.
+    // An ordered list, because the order is real; a teal step number and one
+    // hairline per step; no fixed title height stretching the grid taller than
+    // what it says; no animated connector.
+    expect(wf).toMatch(/<ol\b/);
     expect(wf).toMatch(/text-mineral/);
-    expect(wf).toMatch(/Hairline/);
+    expect(wf).toMatch(/border-t/);
+    expect(wf).not.toMatch(/min-h-\[/);
     expect(wf).not.toMatch(/svg|stroke|IntersectionObserver/i);
+  });
+});
+
+describe("one type scale, with room for the glyphs (MKT-03 revision 2)", () => {
+  // The H1 was 64-72px at a 1.02 line height: Instrument Sans' ascenders and
+  // descenders nearly met between lines, and each page opened at its own size.
+  const px = (rem: string) => parseFloat(rem) * 16;
+  const clampOf = (key: string) => {
+    const m = PRIMITIVES.match(new RegExp(`${key}:\\s*"clamp\\(([\\d.]+)rem,[^,]+,\\s*([\\d.]+)rem\\)"`));
+    expect(m, `TYPE_SCALE.${key} is not a rem clamp`).not.toBeNull();
+    return { min: px(m![1]), max: px(m![2]) };
+  };
+
+  it("the H1 runs about 34px on a phone to 52px on a desktop", () => {
+    const d = clampOf("display");
+    expect(d.min).toBeGreaterThanOrEqual(34);
+    expect(d.min).toBeLessThanOrEqual(40);
+    expect(d.max).toBeGreaterThanOrEqual(48);
+    expect(d.max).toBeLessThanOrEqual(52);
+  });
+
+  // REVISION 3: 48-52px ON EVERY DESKTOP WIDTH THE OPENING IS JUDGED AT. At 58px
+  // the homepage headline needed most of the shell for two lines, so nothing
+  // could sit beside it. Evaluated from the clamp itself, at each width, rather
+  // than from its two ends: the ends alone cannot say what 1280 gets.
+  it("the H1 is 48-52px at 1280, 1440 and 1920", () => {
+    const m = PRIMITIVES.match(
+      /display:\s*"clamp\(([\d.]+)rem,\s*([\d.]+)rem\s*\+\s*([\d.]+)vw,\s*([\d.]+)rem\)"/,
+    );
+    expect(m, "TYPE_SCALE.display is not clamp(Xrem, Yrem + Zvw, Wrem)").not.toBeNull();
+    const [min, base, vw, max] = m!.slice(1).map(Number);
+    const at = (width: number) => Math.min(Math.max(min * 16, base * 16 + (vw * width) / 100), max * 16);
+    for (const width of [1280, 1440, 1920]) {
+      expect(at(width), `H1 at ${width}px`).toBeGreaterThanOrEqual(48);
+      expect(at(width), `H1 at ${width}px`).toBeLessThanOrEqual(52);
+    }
+    expect(at(390), "H1 on a phone").toBeGreaterThanOrEqual(34);
+  });
+
+  it("headings sit below the H1 and above the body", () => {
+    expect(clampOf("title").max).toBeLessThan(clampOf("display").max);
+    expect(clampOf("subtitle").max).toBeLessThan(clampOf("title").min);
+  });
+
+  it("every heading primitive leaves line height for its glyphs", () => {
+    const heights = [...PRIMITIVES.matchAll(/lineHeight:\s*([\d.]+)/g)].map((m) => Number(m[1]));
+    expect(heights.length, "no lineHeight found — vacuous").toBeGreaterThanOrEqual(4);
+    for (const h of heights) expect(h).toBeGreaterThanOrEqual(1.05);
+  });
+
+  it("no page sizes its own H1: Display takes no size", () => {
+    expect(PRIMITIVES).not.toMatch(/size === "compact"/);
+    for (const f of PAGE_FILES) {
+      expect(read(f), `${f}: Display with a size`).not.toMatch(/<Display[^>]*\bsize=/);
+    }
+  });
+});
+
+describe("one filled button per view", () => {
+  it("the header's walkthrough request is the quiet outline, not a second filled button", () => {
+    const header = read("app/_components/marketing/SiteHeader.tsx");
+    const cta = header.slice(header.indexOf("<CTAButton"), header.indexOf("</CTAButton>"));
+    expect(cta, "the header renders no CTAButton").not.toBe("");
+    expect(cta).toMatch(/variant="outline"/);
+    expect(cta).toMatch(/WALKTHROUGH\.href/);
+    expect(header).not.toMatch(/bg-mineral/);
+    // Opaque: at 95% the page's headings showed through the bar on scroll.
+    expect(header).toMatch(/sticky top-0[^"]*\bbg-paper\b(?!\/)/);
+  });
+
+  // REVISION 3. The homepage's opening row carries the request a few hundred
+  // pixels below the header, so the header drops its copy there, and only
+  // there: on every other page the header's request is the way back to it.
+  it("only the homepage turns the header's request off", () => {
+    const header = read("app/_components/marketing/SiteHeader.tsx");
+    expect(header).toMatch(/export function SiteHeader\(\{ cta = true \}/);
+    expect(header).toMatch(/\{cta \? \(\s*<CTAButton/);
+    expect(read("app/page.tsx")).toMatch(/<SiteHeader cta=\{false\} \/>/);
+    const others = [...PAGE_FILES.filter((p) => p !== "app/page.tsx"), "app/_components/PolicyLayout.tsx"];
+    for (const f of others) {
+      const src = read(f);
+      expect(src, `${f} no longer renders the marketing header — re-derive this list`).toMatch(/<SiteHeader\b/);
+      expect(src, `${f} turns the header's request off`).not.toMatch(/<SiteHeader[^>]*cta=/);
+    }
+  });
+
+  it("focus is an outline on every CTA, never a box-shadow ring (DESIGN LAW 6)", () => {
+    const cta = PRIMITIVES.slice(PRIMITIVES.indexOf("export function CTAButton"));
+    expect(cta).toMatch(/focus-visible:outline-2/);
+    expect(cta).not.toMatch(/focus-visible:ring|outline-none/);
   });
 });
 

@@ -16,10 +16,17 @@ import {
   Lede,
   CTAButton,
 } from "../_components/marketing/primitives";
-import { Reveal } from "../_components/marketing/Reveal";
 import { Breadcrumbs } from "../_components/marketing/JsonLd";
 import { TreatmentMemoryPanel } from "../_components/marketing/visuals/TreatmentMemoryPanel";
-import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../_components/marketing/sections";
+import {
+  WalkthroughCTA,
+  RelatedLinks,
+  FeatureMatrix,
+  SpecRows,
+  SpecRow,
+  SpecRowHead,
+  SpecRowBody,
+} from "../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS, POSITIONING } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -113,20 +120,23 @@ export default function ElectrolysisSoftwarePage() {
           { name: "Electrolysis software", path: "/electrolysis-software" },
         ]}
       />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
-        <Container className="pb-16 pt-8 lg:pb-20 lg:pt-10">
-          <Reveal immediate>
-            <Eyebrow>Electrolysis software</Eyebrow>
-            <Display className="mt-4 max-w-4xl">
+      <main id="main-content" className="scroll-mt-16">
+        <Container className="grid items-center gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div>
+            <Display className="max-w-[18ch]">
               Electrolysis software built around how electrolysis is charted
             </Display>
-            <Lede className="mt-6 max-w-2xl">
+            <Lede className="mt-5 max-w-[38rem]">
               Hone is practice software for electrologists. It keeps a separate history for
               every treated area and brings last time&rsquo;s settings forward before the next
               appointment.
             </Lede>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
+            <div className="mt-7 flex flex-wrap items-center gap-x-6 gap-y-3">
+              <CTAButton
+                href={WALKTHROUGH.href}
+                event={ANALYTICS_EVENTS.primaryCtaClick}
+                className="max-sm:w-full"
+              >
                 {WALKTHROUGH.primaryLabel}
               </CTAButton>
               {/* Label AND destination from the constants, deliberately together:
@@ -141,106 +151,119 @@ export default function ElectrolysisSoftwarePage() {
                 {WALKTHROUGH.secondaryLabel}
               </CTAButton>
             </div>
-          </Reveal>
+          </div>
+          {/* THE EVIDENCE OPENS THE PAGE. This still sat four sections down;
+              it is the real treatment-memory panel, so it now stands beside
+              the headline it proves.
+
+              THE SAME FRAME THE CANONICAL PLAYER USES, imported rather than
+              fetched from a path of this lane's own. It was a second copy of
+              that PNG under public/film with an identical sha256; #764 put it
+              in app/_media so next/image can serve AVIF/WebP at the rendered
+              width, and types/static-images.d.ts is what makes the import
+              typecheck on a fresh CI checkout.
+
+              alt IS DESCRIPTIVE HERE, unlike on the homepage. There the same
+              frame is the visual layer of a play button that already names
+              itself, so alt="" is correct. Here it is a still with no control
+              over it and nothing else describing it, and it was written after
+              LOOKING at the frame: two areas, and the frame carries its own
+              baked-in provenance label. */}
+          <figure className="m-0 overflow-hidden rounded-[var(--mk-radius-frame)] border border-[color:var(--color-hairline)] bg-warm">
+            <Image
+              src={posterFrame}
+              alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing what was recorded for two treated areas &mdash; midline upper lip and bilateral chin &mdash; each with machine frequency, probe and lot number, mode, energy, timing and minutes."
+              priority
+              sizes="(min-width: 1640px) 680px, (min-width: 1024px) 43vw, 92vw"
+              className="block aspect-video w-full object-cover"
+            />
+          </figure>
         </Container>
 
+        {/* ONE SPEC SHEET, NOT SIX BANDS (see sections.tsx SpecRows). Each row
+            was a section of its own, alternating backgrounds, a label, a
+            heading and two lines. Where a body restated its own heading, the
+            repeat is trimmed; nothing is added. */}
         <Section tone="warm">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Who it&rsquo;s for</Eyebrow>
-              <Title className="mt-4">Solo electrologists and small studios.</Title>
-              <Lede className="mt-5">
-                Solo electrologists and small studios of up to three practitioners. Plans in
-                Canadian dollars.
-              </Lede>
-            </Reveal>
+          <Container>
+            <Title className="max-w-2xl">Built around the treatment record</Title>
+            <SpecRows>
+              <SpecRow>
+                <SpecRowHead>Who it&rsquo;s for</SpecRowHead>
+                <SpecRowBody>
+                  <p>Solo electrologists and small studios of up to three practitioners.</p>
+                  <p>Plans in Canadian dollars.</p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Before the client sits down</SpecRowHead>
+                <SpecRowBody>
+                  <p>The briefing is already assembled.</p>
+                  <p>
+                    Open a returning client and it is there, built from their previous
+                    treatments: areas, settings, probe and lot, skin response, and what you
+                    flagged for next time.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Every area keeps its own history</SpecRowHead>
+                <SpecRowBody>
+                  <p>The history of the chin is the history of the chin.</p>
+                  <p>
+                    Treat four areas at the same settings and those settings are recorded once,
+                    for those four areas. Each one carries the treatment into its own history,
+                    and each one is searchable by name.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>More than a note</SpecRowHead>
+                <SpecRowBody>
+                  <p>Fields, not sentences.</p>
+                  <p>
+                    Area and side, mode and modality, energy, frequency and pulse count, probe
+                    type and lot, tolerance, skin response and the note for next time, recorded
+                    as fields so Hone can keep each area separate, bring the right one forward,
+                    and flag what&rsquo;s missing.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Know what was used, and when</SpecRowHead>
+                <SpecRowBody>
+                  <p>Traceable to the day.</p>
+                  <p>
+                    Probe lots linked to inventory. Sterile-item and disinfectant expiry logged,
+                    and that log is append-only. A print-friendly view of the record. Gaps
+                    flagged: a missing lot, aftercare not marked, a completed appointment not
+                    yet charted.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Plans</SpecRowHead>
+                <SpecRowBody>
+                  <p>{POSITIONING.pricingHeading}</p>
+                  <p>{POSITIONING.noCapsLine}</p>
+                  <p>
+                    <Link
+                      href="/pricing"
+                      className="inline-flex min-h-11 items-center font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
+                    >
+                      See pricing
+                    </Link>
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+            </SpecRows>
           </Container>
         </Section>
 
         <Section tone="paper">
-          <Container className="grid items-center gap-10 lg:grid-cols-[0.95fr_1.05fr] lg:gap-14">
-            <Reveal>
-              <Eyebrow>Before the client sits down</Eyebrow>
-              <Title className="mt-4">The briefing is already assembled.</Title>
-              <Lede className="mt-5">
-                Open a returning client and the briefing is already assembled from their
-                previous treatments: areas, settings, probe and lot, skin response, and what
-                you flagged for next time.
-              </Lede>
-            </Reveal>
-            <Reveal delay={80}>
-              <figure className="m-0 overflow-hidden rounded-[14px] border border-hairline bg-warm">
-                {/* THE SAME FRAME THE CANONICAL PLAYER USES, imported rather than
-                    fetched from a path of this lane's own. It was a second copy of
-                    that PNG under public/film with an identical sha256; #764 put it
-                    in app/_media so next/image can serve AVIF/WebP at the rendered
-                    width, and types/static-images.d.ts is what makes the import
-                    typecheck on a fresh CI checkout.
-
-                    alt IS DESCRIPTIVE HERE, unlike on the homepage. There the same
-                    frame is the visual layer of a play button that already names
-                    itself, so alt="" is correct. Here it is a still with no control
-                    over it and nothing else describing it, and it was written after
-                    LOOKING at the frame: two areas, and the frame carries its own
-                    baked-in provenance label. */}
-                <Image
-                  src={posterFrame}
-                  alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing what was recorded for two treated areas &mdash; midline upper lip and bilateral chin &mdash; each with machine frequency, probe and lot number, mode, energy, timing and minutes."
-                  sizes="(min-width: 1024px) 52vw, 92vw"
-                  className="block aspect-video w-full object-cover"
-                />
-              </figure>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="warm">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Every area keeps its own history</Eyebrow>
-              <Title className="mt-4">The history of the chin is the history of the chin.</Title>
-              <Lede className="mt-5">
-                Treat four areas at the same settings and those settings are recorded once, for
-                those four areas. Each one carries the treatment into its own history, and each
-                one is searchable by name.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>More than a note</Eyebrow>
-              <Title className="mt-4">Fields, not sentences.</Title>
-              <Lede className="mt-5">
-                Area and side, mode and modality, energy, frequency and pulse count, probe type
-                and lot, tolerance, skin response and the note for next time. Fields, not
-                sentences, so Hone can keep each area separate, bring the right one forward,
-                and flag what&rsquo;s missing.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="warm">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Know what was used, and when</Eyebrow>
-              <Title className="mt-4">Traceable to the day.</Title>
-              <Lede className="mt-5">
-                Probe lots linked to inventory. Sterile-item and disinfectant expiry logged,
-                and that log is append-only. A print-friendly view of the record. Gaps flagged:
-                a missing lot, aftercare not marked, a completed appointment not yet charted.
-              </Lede>
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="paper">
-          <Container size="wide">
+          <Container>
             <Eyebrow>Everything else stays connected</Eyebrow>
-            <Title className="mt-4 max-w-2xl">
+            <Title className="mt-3 max-w-2xl">
               Booking, intake, consent, treatment, follow-up and the client portal share one
               record.
             </Title>
@@ -255,37 +278,17 @@ export default function ElectrolysisSoftwarePage() {
         </Section>
 
         <Section tone="warm">
-          <Container className="grid items-center gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14">
-            <Reveal>
+          <Container className="grid items-center gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+            <div>
               <Eyebrow>Why specialist</Eyebrow>
-              <Title className="mt-4">Built around returning-client memory.</Title>
-              <Lede className="mt-5">
+              <Title className="mt-3">Built around returning-client memory.</Title>
+              <Lede className="mt-4">
                 Generic scheduling tools record that an appointment happened. Electrolysis is a
                 course of treatment, so what matters next time is what was done to each area
                 and how it responded. Hone keeps that, per area, and brings it forward.
               </Lede>
-            </Reveal>
-            <Reveal delay={80}>
-              <TreatmentMemoryPanel />
-            </Reveal>
-          </Container>
-        </Section>
-
-        <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Plans</Eyebrow>
-              <Title className="mt-4">{POSITIONING.pricingHeading}</Title>
-              <Lede className="mt-5">{POSITIONING.noCapsLine}</Lede>
-              <p className="mt-6">
-                <Link
-                  href="/pricing"
-                  className="text-[0.9375rem] font-medium text-mineral underline underline-offset-4"
-                >
-                  See pricing
-                </Link>
-              </p>
-            </Reveal>
+            </div>
+            <TreatmentMemoryPanel />
           </Container>
         </Section>
 

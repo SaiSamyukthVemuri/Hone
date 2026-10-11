@@ -109,9 +109,7 @@ export function MobileNav() {
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-5 py-6">
-          <p className="pb-1 text-[0.75rem] font-semibold uppercase tracking-[0.14em] text-muted">
-            Product
-          </p>
+          <p className="pb-1 text-[0.875rem] font-medium text-muted">Product</p>
           {PRODUCT_MENU.map((item) => (
             <Link
               key={item.href}

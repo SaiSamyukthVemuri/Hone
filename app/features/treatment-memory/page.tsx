@@ -13,7 +13,6 @@ import {
   Lede,
   CTAButton,
 } from "../../_components/marketing/primitives";
-import { Reveal } from "../../_components/marketing/Reveal";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
 import { TreatmentMemoryPanel } from "../../_components/marketing/visuals/TreatmentMemoryPanel";
 import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../../_components/marketing/sections";
@@ -65,33 +64,32 @@ export default function TreatmentMemoryPage() {
           { name: "Treatment memory", path: "/features/treatment-memory" },
         ]}
       />
-      <main id="main-content" className="scroll-mt-16 overflow-x-hidden">
-        <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
-          <Reveal immediate>
-            <Eyebrow>Treatment memory</Eyebrow>
-            <Display className="mt-4">
+      <main id="main-content" className="scroll-mt-16">
+        <Container className="grid items-start gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+          <div>
+            <Display className="max-w-[18ch]">
               Remember every treatment, before the client sits down.
             </Display>
-            <Lede className="mt-6 max-w-xl">
+            <Lede className="mt-5 max-w-[38rem]">
               Treatment memory is the part generic booking tools forget. Hone carries the
               detail that shapes a returning client&apos;s session from one appointment into
               the next, assembled automatically from your own records.
             </Lede>
-            <div className="mt-8">
-              <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
-                {WALKTHROUGH.primaryLabel}
-              </CTAButton>
-            </div>
-          </Reveal>
-          <Reveal delay={80} className="lg:pl-4">
-            <TreatmentMemoryPanel />
-          </Reveal>
+            <CTAButton
+              href={WALKTHROUGH.href}
+              event={ANALYTICS_EVENTS.primaryCtaClick}
+              className="mt-7 max-sm:w-full"
+            >
+              {WALKTHROUGH.primaryLabel}
+            </CTAButton>
+          </div>
+          <TreatmentMemoryPanel />
         </Container>
 
         <Section tone="warm">
-          <Container size="wide">
+          <Container>
             <Eyebrow>What it does</Eyebrow>
-            <Title className="mt-4 max-w-2xl">
+            <Title className="mt-3 max-w-2xl">
               Your charting, brought forward when it matters.
             </Title>
             <FeatureMatrix items={CAPABILITIES} />
@@ -99,11 +97,13 @@ export default function TreatmentMemoryPage() {
         </Section>
 
         <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
+          <Container className="grid gap-x-[clamp(2rem,5vw,5rem)] gap-y-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.7fr)]">
+            <div>
               <Eyebrow>Why it matters</Eyebrow>
-              <Title className="mt-4">Every session builds on the last.</Title>
-              <Lede className="mt-5">
+              <Title className="mt-3">Every session builds on the last.</Title>
+            </div>
+            <div className="max-w-[64ch]">
+              <Lede>
                 Electrolysis is a course of treatment. When the record of what worked lives in
                 your head or on a paper card, continuity depends on memory and luck. Hone keeps
                 it structured and close to the next visit, so you can start each appointment
@@ -113,7 +113,7 @@ export default function TreatmentMemoryPage() {
                 Hone surfaces what you recorded; it does not diagnose, recommend settings, or
                 make clinical decisions. The judgement stays yours.
               </p>
-            </Reveal>
+            </div>
           </Container>
         </Section>
 

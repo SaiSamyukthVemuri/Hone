@@ -15,28 +15,25 @@ function fmt(iso: string): string {
 /** Byline: real organizational author (linked), published + last-reviewed dates. */
 export function ArticleByline({ article }: { article: ResourceArticle }) {
   return (
-    <div className="mt-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.875rem] text-muted">
+    <div className="mt-6 flex flex-wrap items-center gap-x-5 text-[0.875rem] text-muted">
       <span>
         By{" "}
         <Link
           href={article.authorHref}
           rel="author"
-          className="font-medium text-ink underline underline-offset-4 hover:text-mineral"
+          className="inline-flex min-h-11 items-center font-medium text-ink underline underline-offset-4 hover:text-mineral pointer-fine:min-h-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
         >
           {article.author}
         </Link>
       </span>
-      <span aria-hidden="true">·</span>
       <span>
         Published{" "}
         <time dateTime={article.datePublished}>{fmt(article.datePublished)}</time>
       </span>
-      <span aria-hidden="true">·</span>
       <span>
         Last reviewed{" "}
         <time dateTime={article.dateModified}>{fmt(article.dateModified)}</time>
       </span>
-      <span aria-hidden="true">·</span>
       <span>{article.readingTime}</span>
     </div>
   );

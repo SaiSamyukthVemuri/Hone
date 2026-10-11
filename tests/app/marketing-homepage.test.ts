@@ -281,6 +281,35 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
   });
 });
 
+describe("the opening row and the film's band (MKT-03 revision 3)", () => {
+  // The browser spec measures the composition; these pin the two mechanisms
+  // whose failure would be silent there. The band's paper layer is computed
+  // from the shell's own gutter, so a shell change that forgot it would leave
+  // the band starting at the wrong height behind the film, with nothing red.
+  it("the band starts behind the film, at half its height, from the shell's own width", () => {
+    const rise = CSS.slice(CSS.indexOf(".marketing-surface .mk-film-rise::before"));
+    expect(rise, "the rise rule is gone").not.toBe("");
+    const rule = rise.slice(0, rise.indexOf("}"));
+    expect(rule).toMatch(
+      /padding-top:\s*calc\(min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\),\s*87\.5rem\)\s*\*\s*9\s*\/\s*32\)/,
+    );
+    expect(rule).toMatch(/background:\s*var\(--color-paper\)/);
+    expect(rule, "the rise must not measure the viewport").not.toMatch(/100vw/);
+    // The shell it mirrors: the same gutter clamp and the same ceiling.
+    expect(CSS).toMatch(/\.mk-shell\s*\{\s*width:\s*min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\),\s*87\.5rem\)/);
+    // And the homepage's band uses it, with no padding of its own above the film.
+    expect(PAGE).toMatch(/<Section tone="band" className="mk-film-rise !pt-0">\s*<Container>\s*<ProductFilm autoplay bleed framed \/>/);
+  });
+
+  it("only a film on paper draws its own edge", () => {
+    const player = stripComments(FILM_PLAYER);
+    expect(player).toMatch(/framed \? "ring-1 ring-\[color:var\(--color-hairline-strong\)\]/);
+    expect(player).toMatch(/framed = false/);
+    // The /demo film sits on the band from its first pixel, so it does not.
+    expect(read("app/demo/page.tsx")).not.toMatch(/<ProductFilm[^>]*framed/);
+  });
+});
+
 describe("CTA truthfulness: request, never book", () => {
   it("uses no 'Book … walkthrough' CTA anywhere on the surface", () => {
     expect(SURFACE).not.toMatch(/Book (a|the|your|a 15-minute)[^.]*walkthrough/i);
@@ -289,8 +318,21 @@ describe("CTA truthfulness: request, never book", () => {
 });
 
 describe("static rendering + no horizontal overflow", () => {
-  it("main clips horizontal overflow", () => {
-    expect(PAGE).toMatch(/overflow-x-hidden/);
+  // INVERTED IN MKT-03 REVISION 2, deliberately. This asserted that <main>
+  // clipped horizontal overflow, which hid whatever overflowed instead of
+  // fixing it. The thing it was hiding was the phone film bleed: it used
+  // `100vw`, which includes a classic scrollbar, so on a narrow desktop window
+  // the frame overshot the page by the scrollbar's width. The bleed now cancels
+  // the shell's own gutter (the same clamp `.mk-shell` subtracts), so there is
+  // nothing to clip — and the browser specs measure every element against the
+  // viewport edge with an anti-vacuity probe, rather than trusting a clip.
+  it("main no longer hides horizontal overflow, because nothing overflows", () => {
+    expect(PAGE).not.toMatch(/overflow-x-hidden/);
+    const bleed = CSS.slice(CSS.indexOf(".marketing-surface .mk-bleed"));
+    expect(bleed).toMatch(/margin-inline:\s*calc\(clamp\(3rem,\s*14vw,\s*15rem\)\s*\/\s*-2\)/);
+    expect(bleed.slice(0, bleed.indexOf("}"))).not.toMatch(/100vw/);
+    // The gutter the bleed cancels must be the one the shell actually uses.
+    expect(CSS).toMatch(/\.mk-shell\s*\{\s*width:\s*min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\)/);
   });
   it("renders content statically visible (no opacity-gated reveal that can stick)", () => {
     // The fragile intersection-observer reveal + SVG-thread assembly were removed
@@ -342,15 +384,20 @@ describe("demo-data discipline", () => {
   it("every product asset carries the film's own demo-data label, verbatim", () => {
     // One wording across the film, the poster and every still, so nothing needs
     // recutting to agree with the page. The film already burns these exact
-    // words into its own corner.
+    // words into its own corner, and so does the poster frame.
     expect(POSITIONING.demoDataLabel).toBe("Demo data. Actual Hone application.");
-    expect(FILM_PLAYER).toMatch(/POSITIONING\.demoDataLabel/);
-    // On the poster AND under the player: a visitor who never presses play
-    // still sees it.
+    // Under the player, as the figure's caption, OUTSIDE every playback branch:
+    // a visitor who never sees the film move still reads it. Once, not twice —
+    // MKT-03 dropped the copy that sat on the poster on top of the frame's own,
+    // which put the same line in the same place three times.
+    const player = stripComments(FILM_PLAYER);
     expect(
-      (FILM_PLAYER.match(/POSITIONING\.demoDataLabel/g) ?? []).length,
-      "the label must appear on the poster and under the player",
-    ).toBeGreaterThanOrEqual(2);
+      (player.match(/POSITIONING\.demoDataLabel/g) ?? []).length,
+      "the label must be rendered by the player exactly once",
+    ).toBe(1);
+    expect(player).toMatch(
+      /<figcaption[^>]*>\s*\{POSITIONING\.demoDataLabel\}\s*<\/figcaption>\s*<\/figure>/,
+    );
   });
 });
 
