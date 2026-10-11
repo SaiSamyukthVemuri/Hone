@@ -316,16 +316,36 @@ than assuming one.
 
 **NOT superseded, and still binding:**
 
-* **§14.5.7C's cancel-and-return queue rule — a client who cancels gets a NEW
-  waiting-time priority and the previous spot is not held.** §2.10 governs the
+* **§14.5.7C's cancellation rules are not replaced.** §2.10 governs only the
   **calendar and invitation state** of a round-derived appointment (its reservation
-  is restored, its invitation stays used, U and C do not increase). It says nothing
-  about the person's queue priority, so it **does not replace** the recipient-facing
-  rule. Both bind: the reservation returns to the round **and** the person's return
-  to the queue carries a new priority. An earlier revision of this table claimed a
-  supersession the contract does not make.
-* **§14.5.7B's dual-channel opportunity** — email plus eligible consented SMS are
-  **one** opportunity with **one** response deadline, not two invitations.
+  restored, invitation still used, U and C unchanged). It says nothing about the
+  person's queue position, so the **queue consequence remains §14.5.7C's and remains
+  intent-dependent** — see rows 2 and 3 below, and §3.5. **This bullet deliberately
+  does not restate the rule**; two earlier revisions stated it unqualified here and
+  swept cancel-and-leave into a queue return it does not get.
+* **§14.5.7B — all seven rows bind, except where §5's table above records v4 as
+  generalising one.** Listed because a partial summary reads as exhaustive:
+  1. **Send invitation** — email plus eligible consented SMS are **one** opportunity,
+     not two invitations; delivery failure does not fabricate an issuance failure.
+     *(v4 generalises only the per-invitation 48h to one shared round deadline; the
+     dual-channel rule itself is untouched.)*
+  2. **Book a time** — only permitted live consultation slots, and the result is
+     recorded; proof-bound capability **plus** current admission, identity, scope and
+     booking authority. *(v4 §2.7 adds atomicity; these authority requirements stand.)*
+  3. **"These times don't work — keep my place"** — close the current offer, return or
+     remain waiting with **original** waiting-time priority; no repeat invitation.
+  4. **"Update my availability — keep my place"** — update the structured preference,
+     close this offer, preserve waiting-time priority; one governed response path, and
+     no mutation of another person's record.
+  5. **"Remove me from the waitlist"** — leave the active list and stop further
+     automated waitlist invitation and contact attempts; an **explicit opt-out event**.
+  6. **No response at 48 hours** — remove from the active waitlist under the disclosed
+     policy and **never permanently ban the person**, and **only** after the
+     authoritative deadline with no qualifying response. *(v4 §2.12 adds
+     late-cleanup safety, idempotent close, and that uncertain or failed delivery is
+     not non-response.)*
+  7. **SMS STOP** — stop SMS through the existing suppression authority. **STOP is
+     not, by itself, leave-waitlist**, and not consent to another channel.
 * **§14.5.7A** profile and join requirements, in full.
 * **§14.5.7C in full — all nine rows bind, not only the ones v4 touches.** Listed
   here because a partial summary reads as an exhaustive one:
