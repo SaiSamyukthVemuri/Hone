@@ -46,6 +46,22 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
 
+### Pending below 0213: `0211` (G3, PR #827), as recorded by that branch
+
+> **0211 IS AUTHORED AND PENDING (added after the 0210 apply), on the draft G3 branch `fix/g3-client-sms-field-guard` only.**
+> `0211_client_sms_permission_guard.sql` closes finding G3: studio members could rewrite a client's SMS consent and opt-out through the database API. It adds ONE `SECURITY INVOKER` trigger function and ONE trigger on `public.clients`, nothing else:
+> - a member (`anon` / `authenticated`) can never add, change or remove SMS consent;
+> - recorded consent evidence is write-once, and an opt-out is terminal, for every role;
+> - a member may still record a withdrawal (source `practitioner`, on the database clock).
+>
+> No table, column, constraint, policy, index or grant changes, and no row is written. The census of every writer of the four fields, which the trigger must keep working, is in the migration header: the 0204 new-client booking command, the public booking action and the inbound STOP route.
+>
+> **NUMBERING, from a fresh census at authoring time (2026-10-11 ~18:00Z):** hosted max `0210` (read-only query), repository max `0210`, and no remote branch, open PR (#823 and #825 included) or worktree on this host carrying a migration above `0210`. `0211` was free and is used here. **It is not reserved beyond this draft:** issue #824 and WAIT v4 allocate their own numbers at write time, and the pending suffix must stay contiguous, so a lane that needs a migration before this one merges re-censuses, and stacks or renumbers. `0209` and `0210` stay frozen and byte-identical (pinned by `tests/migrations/0211-client-sms-permission-guard.test.ts`).
+>
+> **NOT APPLIED, NOT MERGED.** Apply it migration-first, under separate approval, from the exact reviewed head. No application change depends on it: either order is safe for the application, and the guard binds only raw member writes that no screen makes.
+>
+> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0211` while it is pending.
+
 > **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
 > `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on
 > 2026-10-11 under explicit per-change owner authorization (A4), from
@@ -104,10 +120,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0210** — repo and hosted are equal, so this is the PARITY shape with **nothing pending**. |
+| **Repo migration max** | **0211** — `0211_client_sms_permission_guard.sql`, authored on the draft G3 branch: one `SECURITY INVOKER` trigger function and one trigger on `public.clients`. `0209` and `0210` are byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none.** |
-| **Next free migration** | Next free number is **0211**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Pending migrations** | **`0211`** — `0211_client_sms_permission_guard.sql`, **NOT applied**, so `repo > hosted` by exactly one: the MIGRATION-FIRST PENDING shape. Apply it migration-first, under separate approval, before or with the merge of its branch. |
+| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. A lane that needs it must stack on `0211` or wait for it, because the pending suffix must be contiguous. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
 | **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |
