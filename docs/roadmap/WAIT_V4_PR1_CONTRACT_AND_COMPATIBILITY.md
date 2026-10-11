@@ -90,10 +90,14 @@ PR1 owns this document and one correctness fix (§6). It implements nothing.
 * Booking **atomically converts one reservation to an appointment AND redeems the
   invitation**.
 * **Failure leaves both untouched.**
-* **"Consume first, then create appointment" is LEGACY behaviour to replace** — it is
-  not the v4 target. *This sentence is the v4 contract's own clarification, quoted,
-  not an inference from the repository;* the repository evidence for what that legacy
-  path does is kept separately in §3.4.
+* **The v4 target replaces the "consume first, then create appointment" pattern.**
+
+> **Provenance, stated precisely.** This bullet is **a paraphrase of the supplied v4
+> contract's position, not a literal quotation of it**, and it is not an inference
+> from the repository either. An earlier revision of this document asserted it was a
+> verbatim quotation; that claim was wrong and is withdrawn. The repository evidence
+> for what the legacy path actually does — and therefore what is being replaced — is
+> held separately in **§3.4**, and nothing in §2 depends on that evidence.
 
 ### 2.8 What a recipient sees and may do
 
@@ -438,19 +442,53 @@ retirement would be a cross-domain decision needing an owner ruling that names i
 
 ---
 
-## 9. Scheduling ownership — coordination
+## 9. Scheduling ownership — coordination with #824 and #825
 
-PR2's reservation storage, the calendar integration and the lock discipline of §3.3
-are **shared scheduling surfaces**. Ownership must be settled with **#824** before PR2
-opens, so that two lanes do not both claim `lib/booking/slots.ts`,
-`public-slot-range.ts` or the reservation exclusion path.
+**Correction.** An earlier revision of this document stated that *"#824 is not open
+and no branch for it exists."* **That was wrong, and it was wrong because the check
+was `gh pr view 824` alone.** `#824` is not a pull request — it is an **OPEN ISSUE**,
+*"Independent studio readiness: team/RBAC, owner console, CA/US communications and
+payments"* (**STUDIO-READY-01**), opened 2026-10-11. **#825** is the **open draft PR**
+carrying its first slice, *"STUDIO-READY-01: five-plus-practitioner proof and the #824
+readiness contract."*
 
-**At the time of writing, #824 is not open** and no branch for it exists on the
-remote, so its file ownership could not be read. This is recorded as an open
-coordination item, not as a settled boundary. PR0's superseded draft **#781** also
-remains open and untouched.
+### The shared surface is real
 
----
+#824 requires, in its own words:
+
+* *"the same practitioner cannot double-book, **including buffers** and concurrent writes"*;
+* *"per-practitioner availability, breaks, service eligibility, assignment, move/cancel and deactivation behave correctly"*;
+* *"public booking supports the intended practitioner/any-available selection with **authoritative assignment and conflict protection**"*;
+* *"**failed or stale operations produce no partial appointment/reservation state**."*
+
+The last of those and v4 §2.6's *"a failed or stale launch leaves no partial state"*
+are **the same invariant approached from two directions**. They must not be
+implemented twice, and they must not be implemented differently.
+
+### The boundary
+
+| Surface | Owner |
+|---|---|
+| WAIT **round reservation** storage — anonymous, created at round launch (§2.1, §2.6) | **v4 PR2** |
+| The **scheduling-locked launch transaction** and its lock mode/ordering (§2.6, §3.3) | **v4 PR2** |
+| Multi-practitioner **appointment** scheduling correctness — double-book prevention including buffers, per-practitioner availability, assignment, any-available selection | **#824 / #825** |
+| `lib/booking/slots.ts`, `lib/booking/public-slot-range.ts` — the candidate and exclusion path | **SHARED. Whoever lands first; the other composes rather than re-deriving.** |
+| "No partial appointment/reservation state" | **One implementation, agreed between the lanes before either writes it.** |
+
+### Verified at the time of writing
+
+**#825's head touches no runtime scheduling file** — its diff is
+`docs/roadmap/STUDIO_READINESS_824.md` and
+`tests/db/five-plus-practitioner-acceptance.db.test.ts`, i.e. documentation and a
+database acceptance test. **So there is no file conflict with v4 PR2 today**, and the
+boundary above is a forward agreement rather than a live collision. It must be
+re-read before PR2 opens, because #825 is a draft and its shape can still change.
+
+Both lanes also inherit **§3.3's lock-mode divergence** and **`0209`'s corrected
+buffered candidate window**: #824's "including buffers" double-book proof and v4's
+buffered candidate times read the same corrected surface.
+
+PR0's superseded draft **#781** also remains open and untouched.
 
 ## 10. Migration availability, and what stays frozen
 
@@ -463,8 +501,12 @@ PR2 and later must re-derive at the moment of claim.
 
 ## 11. Not established
 
-§2 is reproduced from the supplied frozen v4 contract; where this document paraphrases
-it, the contract governs. The six bounded seams of §14.5.7E remain as the predecessor
+§2 **restates** the supplied frozen v4 contract. **No sentence in §2 should be read as
+a verbatim quotation of it** — the wording is this document's, the authority is the
+contract's, and where the two differ the contract governs. §2 is also **not verifiable
+from this repository**, because the contract text is not held here; that is a property
+of the source, not a gap in the contract, and it is the reason §3 keeps every
+repository observation outside §2. The six bounded seams of §14.5.7E remain as the predecessor
 left them, except where §2 settles them. No hosted database was read for this
 document. Nothing was implemented, no number claimed, PR2 is unstarted, and waitlist
 SMS is off.
