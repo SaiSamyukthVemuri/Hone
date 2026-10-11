@@ -36,10 +36,11 @@ test.describe("marketing homepage (desktop)", () => {
     await expect(page.getByText("Electrolysis practice software").first()).toBeVisible();
     await expectNoPageOverflow(page, "homepage desktop");
 
-    // Primary CTA is "Request …" (never "Book") and links to /demo.
-    const headerCta = page.getByRole("link", { name: "Request a walkthrough" }).first();
-    await expect(headerCta).toBeVisible();
-    expect(await headerCta.getAttribute("href")).toBe("/demo");
+    // Primary CTA is "Request …" (never "Book") and links to /demo. On this
+    // page the header carries no copy of it, so the first is the opening's.
+    const firstCta = page.getByRole("link", { name: "Request a walkthrough" }).first();
+    await expect(firstCta).toBeVisible();
+    expect(await firstCta.getAttribute("href")).toBe("/demo");
     await expect(page.getByText(/Book a walkthrough|Book the walkthrough/)).toHaveCount(0);
 
     // The deck's nine blocks, each by its heading, in the order they appear.
@@ -95,10 +96,10 @@ test.describe("marketing homepage (desktop)", () => {
     await expect(signIn).toBeVisible();
     expect(await signIn.getAttribute("href")).toBe("/login");
 
-    // The hero CTA navigates to the walkthrough page. Scoped to <main>: v2.2
-    // drops the duration from the label, so the hero and the sticky header now
-    // share one accessible name and an unscoped .first() would click the
-    // HEADER and prove nothing about the hero.
+    // The hero CTA navigates to the walkthrough page. Scoped to <main>, where
+    // the request lives: this page's header carries no copy of it, and should
+    // one come back, an unscoped .first() would click the HEADER and prove
+    // nothing about the hero.
     await page
       .getByRole("main")
       .getByRole("link", { name: "Request a walkthrough" })
@@ -108,68 +109,133 @@ test.describe("marketing homepage (desktop)", () => {
   });
 });
 
-// THE OPENING IS ONE GROUP (MKT-03 revision 2). Revision 1 split the headline
-// from its sub and button into two desktop columns, under a header that carried
-// a second filled copy of the same button. Measured, not read from classes: the
-// four parts stack in reading order on one left edge, the film follows directly,
-// and the header's request is the quiet outline.
+// THE OPENING IS ONE ROW (MKT-03 revision 3). Revision 2 stacked the category,
+// headline, sub and button in one left column: the right half of the first
+// screen stood empty and the film began 506px down at 1440x900. On a desktop
+// the category and headline now sit on the left, the sub and the one button on
+// the right, the two sides sharing a bottom edge, and the film starts directly
+// below, inside 280px. The header drops its own request on this page, so the
+// opening holds the only one. On a phone the same four parts stack in reading
+// order. Measured, not read from classes, at the four sizes it was judged at.
 for (const vp of [
   { name: "desktop", width: 1440, height: 900, mobile: false },
   { name: "short laptop", width: 1280, height: 720, mobile: false },
+  { name: "wide desktop", width: 1920, height: 1080, mobile: false },
   { name: "phone", width: 390, height: 844, mobile: true },
 ]) {
   test.describe(`homepage opening (${vp.name})`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height }, isMobile: vp.mobile, hasTouch: vp.mobile });
 
-    test("category, headline, sub and the one filled button read as one group, film directly below", async ({ page }) => {
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await page.goto("/");
-      await page.evaluate(() => document.fonts.ready);
-      const main = page.getByRole("main");
-      const parts = {
-        eyebrow: main.getByText("Electrolysis practice software").first(),
-        h1: main.getByRole("heading", { level: 1 }),
-        sub: main.getByText(/^Each treated area keeps its own history\./),
-        cta: main.getByRole("link", { name: "Request a walkthrough" }).first(),
-      };
-      const box = async (l: (typeof parts)[keyof typeof parts]) => {
-        const b = await l.boundingBox();
-        expect(b, "an opening part has no box").not.toBeNull();
-        return b!;
-      };
-      const [e, h, s, c] = [await box(parts.eyebrow), await box(parts.h1), await box(parts.sub), await box(parts.cta)];
-      // Reading order, top to bottom, with no part beside another.
-      expect(h.y).toBeGreaterThan(e.y + e.height - 1);
-      expect(s.y).toBeGreaterThan(h.y + h.height - 1);
-      expect(c.y).toBeGreaterThan(s.y + s.height - 1);
-      // One left edge.
-      for (const b of [h, s, c]) expect(Math.abs(b.x - e.x), "the opening is not one column").toBeLessThan(2);
+    test(
+      vp.mobile
+        ? "category, headline, sub and button stack in reading order, and the film follows inside the first screen"
+        : "headline left, sub and the one button right on one bottom edge, and the film starts inside 280px",
+      async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.goto("/");
+        await page.evaluate(() => document.fonts.ready);
+        const main = page.getByRole("main");
+        const parts = {
+          eyebrow: main.getByText("Electrolysis practice software").first(),
+          h1: main.getByRole("heading", { level: 1 }),
+          sub: main.getByText(/^Each treated area keeps its own history\./),
+          cta: main.getByRole("link", { name: "Request a walkthrough" }).first(),
+        };
+        const box = async (l: (typeof parts)[keyof typeof parts]) => {
+          const b = await l.boundingBox();
+          expect(b, "an opening part has no box").not.toBeNull();
+          return b!;
+        };
+        const [e, h, s, c] = [await box(parts.eyebrow), await box(parts.h1), await box(parts.sub), await box(parts.cta)];
 
-      // Leading leaves room for the glyphs: at least 1.05x the font size.
-      const lh = await parts.h1.evaluate((el) => {
-        const st = getComputedStyle(el);
-        return parseFloat(st.lineHeight) / parseFloat(st.fontSize);
-      });
-      expect(lh).toBeGreaterThanOrEqual(1.05);
+        // The headline: leading with room for the glyphs everywhere, and on a
+        // desktop 48-52px on no more than two lines.
+        const type = await parts.h1.evaluate((el) => {
+          const st = getComputedStyle(el);
+          const size = parseFloat(st.fontSize);
+          const lh = parseFloat(st.lineHeight);
+          return { size, ratio: lh / size, lines: Math.round(el.getBoundingClientRect().height / lh) };
+        });
+        expect(type.ratio).toBeGreaterThanOrEqual(1.08);
+        if (!vp.mobile) {
+          expect(type.size).toBeGreaterThanOrEqual(48);
+          expect(type.size).toBeLessThanOrEqual(52);
+          expect(type.lines, "the headline wraps past two lines").toBeLessThanOrEqual(2);
+        }
 
-      // The film follows the group directly and starts inside the first screen.
-      const frame = await page.locator("main figure").first().boundingBox();
-      expect(frame, "film frame has no box").not.toBeNull();
-      expect(frame!.y).toBeGreaterThan(c.y + c.height);
-      expect(frame!.y, "the film does not start in the first screen").toBeLessThan(vp.height);
+        // The category sits directly above the headline, and the button
+        // directly under the sub, each pair on one left edge.
+        expect(h.y).toBeGreaterThan(e.y + e.height - 1);
+        expect(Math.abs(h.x - e.x)).toBeLessThan(2);
+        expect(c.y).toBeGreaterThan(s.y + s.height - 1);
+        expect(Math.abs(c.x - s.x)).toBeLessThan(2);
 
-      // The hero's request is filled; the header's (desktop) is the quiet outline.
-      const filled = (l: typeof parts.cta) => l.evaluate((el) => getComputedStyle(el).backgroundColor);
-      expect(await filled(parts.cta)).not.toBe("rgba(0, 0, 0, 0)");
-      if (!vp.mobile) {
-        const headerCta = page.getByRole("banner").getByRole("link", { name: "Request a walkthrough" });
-        await expect(headerCta).toBeVisible();
-        expect(await filled(headerCta), "the header button is filled").toBe("rgba(0, 0, 0, 0)");
-        expect(await headerCta.evaluate((el) => getComputedStyle(el).borderTopStyle)).toBe("solid");
-      }
-    });
+        if (vp.mobile) {
+          // Stacked in reading order on one left edge, and the button is a
+          // full-width target that meets the 44px floor (DESIGN LAW 5).
+          expect(s.y).toBeGreaterThan(h.y + h.height - 1);
+          expect(Math.abs(s.x - h.x)).toBeLessThan(2);
+          expect(c.height).toBeGreaterThanOrEqual(44);
+          expect(c.width).toBeGreaterThanOrEqual(s.width - 1);
+        } else {
+          // One row: the sub and button beside the headline, not under it,
+          // and the two sides sharing a bottom edge.
+          expect(s.x, "the sub is not beside the headline").toBeGreaterThan(h.x + h.width);
+          expect(s.y, "the sub has dropped below the headline").toBeLessThan(h.y + h.height);
+          expect(
+            Math.abs(c.y + c.height - (h.y + h.height)),
+            "the row's two sides do not share a bottom edge",
+          ).toBeLessThan(3);
+        }
+
+        // The film follows directly, starts high, and shows the product: at
+        // least half of it is in the first screen, which is also what starts it.
+        const frameBox = await page.locator("main figure > div").first().boundingBox();
+        expect(frameBox, "film frame has no box").not.toBeNull();
+        const frame = frameBox!;
+        const rowBottom = Math.max(c.y + c.height, h.y + h.height);
+        expect(frame.y).toBeGreaterThan(rowBottom);
+        expect(frame.y - rowBottom, "a gap opened between the opening and the film").toBeLessThanOrEqual(40);
+        if (!vp.mobile) expect(frame.y, `the film starts ${frame.y}px down`).toBeLessThanOrEqual(280);
+        const shown = (Math.min(frame.y + frame.height, vp.height) - frame.y) / frame.height;
+        expect(shown, "less than half the film is in the first screen").toBeGreaterThanOrEqual(0.5);
+
+        // ONE request in the opening, filled, and none in this page's header.
+        expect(await parts.cta.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+        if (!vp.mobile) {
+          await expect(page.getByRole("banner").getByRole("link", { name: "Request a walkthrough" })).toHaveCount(0);
+        }
+        const onFirstScreen = await page.getByRole("link", { name: "Request a walkthrough" }).evaluateAll(
+          (els) =>
+            els.filter((el) => {
+              const r = el.getBoundingClientRect();
+              return r.width > 0 && r.height > 0 && r.top < innerHeight && r.bottom > 0 && !el.closest("[inert]");
+            }).length,
+        );
+        expect(onFirstScreen, "the first screen does not hold exactly one walkthrough request").toBe(1);
+        await expectNoPageOverflow(page, `homepage opening (${vp.name})`);
+      },
+    );
   });
 }
+
+// THE HEADER DROPS ITS REQUEST ON THE HOMEPAGE ONLY. Everywhere else it is the
+// way back to the request, so it must still be there.
+test.describe("header request on the other pages (desktop)", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("pricing, a feature page and the privacy policy keep the header's request", async ({ page }) => {
+    for (const path of ["/pricing", "/features/treatment-memory", "/privacy"]) {
+      await page.goto(path);
+      const headerCta = page.getByRole("banner").getByRole("link", { name: "Request a walkthrough" });
+      await expect(headerCta, `${path} lost the header's request`).toBeVisible();
+      expect(await headerCta.getAttribute("href")).toBe("/demo");
+      expect(await headerCta.evaluate((el) => getComputedStyle(el).backgroundColor), "the header button is filled").toBe(
+        "rgba(0, 0, 0, 0)",
+      );
+    }
+  });
+});
 
 test.describe("marketing homepage (mobile)", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });

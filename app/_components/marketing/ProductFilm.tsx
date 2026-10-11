@@ -64,12 +64,17 @@ type SaveDataNavigator = Navigator & { connection?: { saveData?: boolean } };
 export function ProductFilm({
   autoplay = false,
   bleed = false,
+  framed = false,
   className = "",
 }: {
   /** Start muted, inline and looping while on screen (homepage only). */
   autoplay?: boolean;
   /** Run the frame edge to edge below the `sm` breakpoint. */
   bleed?: boolean;
+  /** Draw the frame's own hairline edge and shadow, for a film whose top sits
+   *  on paper. The film's picture is paper-coloured, so without an edge its
+   *  top would dissolve into the page around it. */
+  framed?: boolean;
   className?: string;
 }) {
   // "deciding" is the server render and the first client render: the
@@ -234,7 +239,7 @@ export function ProductFilm({
         ref={frameRef}
         className={`relative col-span-2 overflow-hidden bg-band sm:rounded-[var(--mk-radius-frame)] ${
           bleed ? "mk-bleed" : ""
-        }`}
+        } ${framed ? "ring-1 ring-[color:var(--color-hairline-strong)] sm:shadow-[var(--mk-shadow-frame)]" : ""}`}
         style={{ aspectRatio: `${FILM.width} / ${FILM.height}` }}
       >
         {/* alt="" ON PURPOSE. The poster is not decorative, but it is already

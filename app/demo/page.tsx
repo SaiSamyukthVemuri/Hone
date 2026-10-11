@@ -113,7 +113,7 @@ export default function DemoPage() {
             form's extra height was shared between them, leaving a gap under the
             introduction. The first row is the introduction's own height; the
             second takes the rest. */}
-        <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-8 pb-[var(--mk-section-pad)] pt-[clamp(1.25rem,0.75rem+2vw,2.75rem)] lg:grid-cols-[minmax(0,1fr)_minmax(26rem,34rem)] lg:grid-rows-[auto_1fr] lg:items-start">
+        <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-8 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1fr)_minmax(26rem,34rem)] lg:grid-rows-[auto_1fr] lg:items-start">
           <div className="lg:col-start-1 lg:row-start-1">
             <Display className="max-w-[16ch]">{WALKTHROUGH.demoHeading}</Display>
             <Lede className="mt-5 max-w-[38rem]">

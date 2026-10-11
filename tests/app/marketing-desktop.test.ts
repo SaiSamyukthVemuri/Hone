@@ -144,12 +144,30 @@ describe("one type scale, with room for the glyphs (MKT-03 revision 2)", () => {
     return { min: px(m![1]), max: px(m![2]) };
   };
 
-  it("the H1 runs about 34px on a phone to 58px on a desktop", () => {
+  it("the H1 runs about 34px on a phone to 52px on a desktop", () => {
     const d = clampOf("display");
     expect(d.min).toBeGreaterThanOrEqual(34);
     expect(d.min).toBeLessThanOrEqual(40);
-    expect(d.max).toBeGreaterThanOrEqual(52);
-    expect(d.max).toBeLessThanOrEqual(60);
+    expect(d.max).toBeGreaterThanOrEqual(48);
+    expect(d.max).toBeLessThanOrEqual(52);
+  });
+
+  // REVISION 3: 48-52px ON EVERY DESKTOP WIDTH THE OPENING IS JUDGED AT. At 58px
+  // the homepage headline needed most of the shell for two lines, so nothing
+  // could sit beside it. Evaluated from the clamp itself, at each width, rather
+  // than from its two ends: the ends alone cannot say what 1280 gets.
+  it("the H1 is 48-52px at 1280, 1440 and 1920", () => {
+    const m = PRIMITIVES.match(
+      /display:\s*"clamp\(([\d.]+)rem,\s*([\d.]+)rem\s*\+\s*([\d.]+)vw,\s*([\d.]+)rem\)"/,
+    );
+    expect(m, "TYPE_SCALE.display is not clamp(Xrem, Yrem + Zvw, Wrem)").not.toBeNull();
+    const [min, base, vw, max] = m!.slice(1).map(Number);
+    const at = (width: number) => Math.min(Math.max(min * 16, base * 16 + (vw * width) / 100), max * 16);
+    for (const width of [1280, 1440, 1920]) {
+      expect(at(width), `H1 at ${width}px`).toBeGreaterThanOrEqual(48);
+      expect(at(width), `H1 at ${width}px`).toBeLessThanOrEqual(52);
+    }
+    expect(at(390), "H1 on a phone").toBeGreaterThanOrEqual(34);
   });
 
   it("headings sit below the H1 and above the body", () => {
@@ -181,6 +199,22 @@ describe("one filled button per view", () => {
     expect(header).not.toMatch(/bg-mineral/);
     // Opaque: at 95% the page's headings showed through the bar on scroll.
     expect(header).toMatch(/sticky top-0[^"]*\bbg-paper\b(?!\/)/);
+  });
+
+  // REVISION 3. The homepage's opening row carries the request a few hundred
+  // pixels below the header, so the header drops its copy there, and only
+  // there: on every other page the header's request is the way back to it.
+  it("only the homepage turns the header's request off", () => {
+    const header = read("app/_components/marketing/SiteHeader.tsx");
+    expect(header).toMatch(/export function SiteHeader\(\{ cta = true \}/);
+    expect(header).toMatch(/\{cta \? \(\s*<CTAButton/);
+    expect(read("app/page.tsx")).toMatch(/<SiteHeader cta=\{false\} \/>/);
+    const others = [...PAGE_FILES.filter((p) => p !== "app/page.tsx"), "app/_components/PolicyLayout.tsx"];
+    for (const f of others) {
+      const src = read(f);
+      expect(src, `${f} no longer renders the marketing header — re-derive this list`).toMatch(/<SiteHeader\b/);
+      expect(src, `${f} turns the header's request off`).not.toMatch(/<SiteHeader[^>]*cta=/);
+    }
   });
 
   it("focus is an outline on every CTA, never a box-shadow ring (DESIGN LAW 6)", () => {

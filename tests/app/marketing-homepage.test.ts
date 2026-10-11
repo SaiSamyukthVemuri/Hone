@@ -281,6 +281,35 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
   });
 });
 
+describe("the opening row and the film's band (MKT-03 revision 3)", () => {
+  // The browser spec measures the composition; these pin the two mechanisms
+  // whose failure would be silent there. The band's paper layer is computed
+  // from the shell's own gutter, so a shell change that forgot it would leave
+  // the band starting at the wrong height behind the film, with nothing red.
+  it("the band starts behind the film, at half its height, from the shell's own width", () => {
+    const rise = CSS.slice(CSS.indexOf(".marketing-surface .mk-film-rise::before"));
+    expect(rise, "the rise rule is gone").not.toBe("");
+    const rule = rise.slice(0, rise.indexOf("}"));
+    expect(rule).toMatch(
+      /padding-top:\s*calc\(min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\),\s*87\.5rem\)\s*\*\s*9\s*\/\s*32\)/,
+    );
+    expect(rule).toMatch(/background:\s*var\(--color-paper\)/);
+    expect(rule, "the rise must not measure the viewport").not.toMatch(/100vw/);
+    // The shell it mirrors: the same gutter clamp and the same ceiling.
+    expect(CSS).toMatch(/\.mk-shell\s*\{\s*width:\s*min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\),\s*87\.5rem\)/);
+    // And the homepage's band uses it, with no padding of its own above the film.
+    expect(PAGE).toMatch(/<Section tone="band" className="mk-film-rise !pt-0">\s*<Container>\s*<ProductFilm autoplay bleed framed \/>/);
+  });
+
+  it("only a film on paper draws its own edge", () => {
+    const player = stripComments(FILM_PLAYER);
+    expect(player).toMatch(/framed \? "ring-1 ring-\[color:var\(--color-hairline-strong\)\]/);
+    expect(player).toMatch(/framed = false/);
+    // The /demo film sits on the band from its first pixel, so it does not.
+    expect(read("app/demo/page.tsx")).not.toMatch(/<ProductFilm[^>]*framed/);
+  });
+});
+
 describe("CTA truthfulness: request, never book", () => {
   it("uses no 'Book … walkthrough' CTA anywhere on the surface", () => {
     expect(SURFACE).not.toMatch(/Book (a|the|your|a 15-minute)[^.]*walkthrough/i);

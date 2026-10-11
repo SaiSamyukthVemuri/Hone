@@ -118,10 +118,10 @@ export default function ChecklistArticlePage() {
       />
       <main id="main-content" className="scroll-mt-16">
         <article>
-          <Container size="prose" className="pb-6 pt-6 lg:pt-8">
+          <Container size="prose" className="pb-6 pt-4 lg:pt-5">
             <Reveal immediate>
               <Eyebrow>Guide</Eyebrow>
-              <Display className="mt-4">{article.title}</Display>
+              <Display className="mt-2.5">{article.title}</Display>
               <ArticleByline article={article} />
               <p className="mt-8 text-[1.0625rem] leading-[1.7] text-ink">
                 A good electrolysis treatment record does two jobs: it protects the client, and

@@ -121,7 +121,7 @@ export default function ElectrolysisSoftwarePage() {
         ]}
       />
       <main id="main-content" className="scroll-mt-16">
-        <Container className="grid items-center gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1.25rem,0.75rem+2vw,2.75rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <Container className="grid items-center gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div>
             <Display className="max-w-[18ch]">
               Electrolysis software built around how electrolysis is charted

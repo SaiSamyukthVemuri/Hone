@@ -35,7 +35,7 @@ export default function ResourcesPage() {
         ]}
       />
       <main id="main-content" className="scroll-mt-16">
-        <Container className="pt-[clamp(1.25rem,0.75rem+2vw,2.75rem)]">
+        <Container className="pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)]">
           <Display className="max-w-[20ch]">
             Practical guides for running an electrolysis practice.
           </Display>

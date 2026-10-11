@@ -133,9 +133,12 @@ const scrollToEnd = (page: Page) =>
   page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }));
 const scrollToTop = (page: Page) => page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
 
-// A laptop window with the browser's own chrome taking height: the frame starts
-// part-way on screen. Asserted, never assumed, by every test that uses it.
-const PART_WAY = { width: 1440, height: 600 };
+// A short laptop window, with the browser's own chrome and the dock taking
+// height: the frame starts part-way on screen. Asserted, never assumed, by every
+// test that uses it. Revision 3 moved the film up to about 270px down at this
+// width, so the window is 500px tall for about a third of the frame to show; at
+// the old 600 nearly half of it did, and the precondition below caught it.
+const PART_WAY = { width: 1440, height: 500 };
 
 async function expectPartWay(page: Page): Promise<void> {
   const share = await visibleShare(page);

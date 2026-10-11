@@ -277,6 +277,29 @@ body {
   --mk-section-pad: clamp(2rem, 1.25rem + 3vw, 4rem);
 }
 
+/* THE FILM'S BAND RISES BEHIND IT (the homepage, MKT-03 revision 3). The film
+ * starts on paper directly under the opening row and the dark band begins
+ * halfway down its frame, so the opening runs straight into the film with no
+ * strip of band above it, and the film still lands on the band it introduces.
+ *
+ * The paper is the band's own first layer, half the film's height tall. That
+ * height is computed from the shell exactly as `.mk-shell` computes its width:
+ * `%` in padding is the band's own width, so a classic scrollbar cannot skew
+ * it, and 9/32 is half of the film's 16:9. Below `sm` the film runs edge to
+ * edge and covers the paper completely. */
+.marketing-surface .mk-film-rise {
+  position: relative;
+  isolation: isolate;
+}
+.marketing-surface .mk-film-rise::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: -1;
+  padding-top: calc(min(100% - clamp(3rem, 14vw, 15rem), 87.5rem) * 9 / 32);
+  background: var(--color-paper);
+}
+
 /* A frame that runs edge to edge on a phone, where the shell's gutters would
  * cost a 16:9 product film a sixth of its width. Below `sm` only; from there
  * up the frame keeps the shell's edges like everything else.

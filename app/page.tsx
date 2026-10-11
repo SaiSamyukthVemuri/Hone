@@ -38,15 +38,16 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // THE FILM IS THE OPENING, NOT THE SECOND SCREEN. MKT-02B led the argument with
 // the film but kept a tall type-only hero above it, so at 1440x900 the film
 // began about 1,100px down and no first screen anywhere showed the product.
-// MKT-03 keeps the opening to one compact group (category, headline, sub, one
-// filled button) and puts the film first on the band directly beneath it, at
-// full shell width on desktop and edge to edge on a phone; it plays on its own,
-// muted, while at least half of it is in view.
+// MKT-03 keeps the opening to one compact row (category and headline beside the
+// sub and the one button) and puts the film directly beneath it, at full shell
+// width on desktop and edge to edge on a phone, with the band rising behind it;
+// it plays on its own, muted, while at least half of it is in view. At
+// 1440x900 the film starts about 270px down.
 //
 // EDITORIAL PACING, NOT A STACK OF EQUAL CARDS. Each block gets the structure
 // its content actually wants, and the tones alternate so the page has a rhythm:
 //
-//   hero        paper   one group: category, headline, sub, the filled button
+//   hero        paper   one row: category + headline | sub + the button
 //   1 film      BAND    the film first, then its heading and what it shows
 //   2 trust     paper   a thin ruled strip, deliberately not a section
 //   3 areas     paper   editorial split, product panel right
@@ -154,39 +155,57 @@ export default function HomePage() {
   return (
     <MarketingSurface>
       <SkipLink />
-      <SiteHeader />
+      {/* The opening carries the walkthrough request itself, a few hundred
+          pixels below the header, so the header drops its copy on this page. */}
+      <SiteHeader cta={false} />
       <main id="main-content" className="scroll-mt-16">
         {/* ── Hero ─────────────────────────────────────────────────────────
-            ONE GROUP, READ IN ONE PASS: the category, the headline, the
-            sentence that explains it, and the one filled button, stacked in a
-            single left-aligned column at every width. The revision-1 opening
-            split the headline from its sub and button into two desktop
-            columns, which read as two unrelated blocks with a filled button
-            floating under the header's own. The header's request is now an
-            outline, so this is the only filled button on the first screen.
-            The film follows directly below, on the band. */}
-        <Container className="pb-[clamp(1.75rem,1rem+2vw,3rem)] pt-[clamp(2rem,1rem+3vw,3.5rem)]">
-          <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
-          <Display className="mt-4 max-w-[22ch]">{POSITIONING.heroH1}</Display>
-          <Lede className="mt-5 max-w-[38rem]">{POSITIONING.heroSub}</Lede>
-          <CTAButton
-            href={WALKTHROUGH.href}
-            event={ANALYTICS_EVENTS.primaryCtaClick}
-            className="mt-7 max-sm:w-full"
-          >
-            {WALKTHROUGH.primaryLabel}
-          </CTAButton>
+            ONE ROW ON A DESKTOP (MKT-03 revision 3): the category and the
+            headline on the left; the sentence that explains it and the one
+            button together on the right, the two sides sharing a bottom edge.
+            Revision 2 stacked all four in one left column, which left the
+            right half of the first screen empty and pushed the film 506px
+            down at 1440x900. The row is about 145px tall, so the film now
+            starts inside 280px with the product showing. Revision 1 also used
+            two columns, but under a header that carried a second copy of the
+            same button; the header drops its request on this page, so this is
+            the only "Request a walkthrough" in the opening.
+
+            On a phone and a tablet the same four parts stack in reading order
+            with tight, even gaps, and the film follows. */}
+        <Container className="grid gap-x-[clamp(2.5rem,6vw,6.5rem)] gap-y-5 pb-[clamp(1.25rem,1rem+0.75vw,1.75rem)] pt-[clamp(1.25rem,0.75rem+1.25vw,2rem)] lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-end">
+          <div>
+            <Eyebrow>{POSITIONING.heroEyebrow}</Eyebrow>
+            <Display className="mt-2.5">{POSITIONING.heroH1}</Display>
+          </div>
+          <div>
+            <Lede>{POSITIONING.heroSub}</Lede>
+            <CTAButton
+              href={WALKTHROUGH.href}
+              event={ANALYTICS_EVENTS.primaryCtaClick}
+              className="mt-5 max-sm:w-full"
+            >
+              {WALKTHROUGH.primaryLabel}
+            </CTAButton>
+          </div>
         </Container>
 
         {/* ── 1. Before the client sits down ───────────────────────────────
-            The one cinema moment, and now the first thing on the band: the
-            film at full width, then its heading and a plain list of what it
-            actually shows, taken from its own transcript. */}
-        <Section tone="band" className="!pt-[clamp(1.25rem,0.75rem+1.25vw,2.25rem)]">
+            The one cinema moment, and the first thing on the band: the film
+            at full width, then its heading and a plain list of what it
+            actually shows, taken from its own transcript.
+
+            NO STRIP OF BAND ABOVE THE FILM. The band used to open with its own
+            padding, so between the button and the picture sat a strip of
+            paper and then a strip of band. Now the band has no top padding
+            and starts behind the film, halfway down (`mk-film-rise`, in
+            app/globals.css). The film's top half sits on paper, so it draws
+            its own hairline edge (`framed`). */}
+        <Section tone="band" className="mk-film-rise !pt-0">
           <Container>
-            <ProductFilm autoplay bleed />
-            {/* What the film shows, as one group under it — the same single
-                column the opening uses, not a second two-column split. */}
+            <ProductFilm autoplay bleed framed />
+            {/* What the film shows, as one column under it, not a second
+                split beside it: the opening row already spends that move. */}
             <div className="mt-[clamp(1.75rem,1rem+2vw,3rem)] max-w-[44rem]">
               <Eyebrow onBand>{POSITIONING.keepPhrase}</Eyebrow>
               <Title className="mt-2 text-paper">Before the client sits down</Title>

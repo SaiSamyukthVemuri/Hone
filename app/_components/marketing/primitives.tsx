@@ -114,17 +114,22 @@ export function Eyebrow({
 // 64-72px at a 1.02 line height: Instrument Sans' ascenders and descenders
 // nearly met between lines, five-line headlines filled a half-width hero, and
 // each page's opening sat at a different size. Now every page's H1 shares one
-// clamp, about 34px on a phone to 58px on a wide desktop, and every heading
-// has room for its glyphs:
+// clamp, and every heading has room for its glyphs:
 //
-//   H1  Display    34 -> 58px   line-height 1.08
+//   H1  Display    34 -> 52px   line-height 1.1
 //   H2  Title      28 -> 40px   line-height 1.14
 //   H3  Subtitle   18 -> 21px   line-height 1.3
+//
+// REVISION 3 BROUGHT THE H1 DOWN TO 48-52PX ON A DESKTOP (it reached 58px at
+// 1440). At 58px the homepage headline needed most of the shell's width for two
+// lines, so nothing could sit beside it and the film was pushed below the
+// first screen. The ceiling is 52px, reached at about 1510px; a 1280px laptop
+// gets 48px and 1440 gets 51px. It is still one clamp for every page.
 //
 // The values are fluid between the widths that matter (320, 768, 1024, 1440),
 // and the guard in tests/app/marketing-desktop.test.ts pins the scale.
 export const TYPE_SCALE = {
-  display: "clamp(2.125rem, 1.55rem + 2.45vw, 3.625rem)",
+  display: "clamp(2.125rem, 1.6rem + 1.75vw, 3.25rem)",
   title: "clamp(1.75rem, 1.45rem + 1.25vw, 2.5rem)",
   subtitle: "clamp(1.125rem, 1.06rem + 0.3vw, 1.3125rem)",
 } as const;
@@ -140,7 +145,7 @@ export function Display({
   return (
     <h1
       className={`text-balance ${className}`}
-      style={displayStyle(TYPE_SCALE.display, { lineHeight: 1.08, letterSpacing: "-0.022em" })}
+      style={displayStyle(TYPE_SCALE.display, { lineHeight: 1.1, letterSpacing: "-0.022em" })}
     >
       {children}
     </h1>

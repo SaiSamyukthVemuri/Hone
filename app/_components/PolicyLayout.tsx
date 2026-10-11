@@ -41,7 +41,7 @@ export function PolicyLayout({
       <SkipLink />
       <SiteHeader />
       <main id="main-content">
-        <article className="pb-[var(--mk-section-pad)] pt-[clamp(1.75rem,1rem+3vw,3.5rem)]">
+        <article className="pb-[var(--mk-section-pad)] pt-[clamp(1.25rem,0.75rem+1.25vw,2rem)]">
           <Container size="prose">
             <header>
               <Display>{title}</Display>
