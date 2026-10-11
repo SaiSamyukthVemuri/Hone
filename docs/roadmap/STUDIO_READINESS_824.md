@@ -194,9 +194,17 @@ body inserts into `appointments` or updates its status, times or practitioner
 source. Nothing in this table is new behaviour.
 
 Method: overloads are keyed by their full signature, because two `0176`
-overloads share a name and a name-keyed pass hid the writer. Superseded
-overloads are excluded: the `0145` move signature is dropped in `0148`, and the
-two-argument token cancel in `0091`.
+overloads share a name and a name-keyed pass hid the writer. Every candidate
+is then checked against later `drop function` statements, and dropped
+signatures are excluded:
+- the `0145` move signature, dropped in `0148`;
+- the two-argument token cancel, dropped in `0091`;
+- `finalize_card_required_public_booking`, dropped in `0091` (`0091`:168–176);
+- `reschedule_appointment`. Its hash-only body comes from `0091`, and `0175`:241–243 drops that exact signature (`uuid, text, timestamptz, timestamptz, integer, text`). Nothing re-creates it.
+
+*Revision 2's first push listed the last two as live, granted legacy writers.
+That was wrong: the census had not applied drops (Codex P2 `4243574424` on
+#830). Neither function exists at `0210`.*
 
 The direct-write paths are closed: `authenticated` holds no `insert`, `update`
 or `delete` on `appointments`, and no RLS write policy exists. The application
@@ -214,12 +222,9 @@ code that names the table only reads it (for example
 | `practitioner_cancel_appointment` (`0174`) | status → cancelled | ❌ | ❌ | ❌ | staff cancel | no (removes) | **verified** |
 | `public_cancel_appointment_with_token` (`0176`) | status → cancelled | ❌ | ❌ | ❌ | client cancel link | no (removes) | **verified** (recovery test §1) |
 | `mark_appointment_complete` (`0175`), `mark_appointment_no_show` (`0033`) | status | ❌ | ❌ | ❌ | calendar, session start | no (removes, completion once its blocked end passes) | **verified** (recovery test §3) |
-| `reschedule_appointment` (`0091`), `finalize_card_required_public_booking` (`0032`) | insert (+ status) | ❌ | ❌ | ❌ | **no application caller** found by name | not from the app; still granted at the database | **source-read** |
-
-So **two writers can recreate an overlap whatever the freeze or flag says**: the
-client reschedule and the owner's outcome repair. That is GAP R1's full extent
-for appointments. The two legacy writers have no application caller, but stay
-granted; whether to revoke them is a follow-up, not part of this contract.
+So **two live writers can recreate an overlap whatever the freeze or flag
+says**: the client reschedule and the owner's outcome repair. That is GAP R1's
+full extent for appointments at `0210`.
 
 ---
 
