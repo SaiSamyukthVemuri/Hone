@@ -189,6 +189,20 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
 
 > `<Studio>`: you've joined our waitlist. We'll contact you when you're invited to book. Reply STOP to opt out.
 
+**The sender label** (`<Studio>`) follows its own policy. It was settled in a D3 design review after Codex P2 4239889929.
+- **The goal:** the whole text is GSM-7 in **one segment**, and the approved copy after the label never changes. So the label gets the 61 units the copy leaves, counted as carriers count them: `[ ] { } | ~ ^ \ €` cost two.
+- **What is kept:** characters GSM-7 supports, exactly as written (`É`, `é`, `è`, `Ø`, `Ñ`).
+- **What is normalized:**
+  - unsupported accents lose the accent (`ê`→`e`, `ç`→`c`);
+  - typographic punctuation becomes ASCII (`’`→`'`, `–`→`-`);
+  - a few Latin letters are transliterated (`œ`→`oe`, `ł`→`l`).
+- **What is dropped:** emoji, other scripts, and invisible characters.
+- **Over budget:** a long name is cut at a word boundary, with no ellipsis.
+- **The fallback:** a name with no letter or digit left becomes `Your clinic`.
+- **Scope:** only the join text. Confirmations, reminders and invitations keep the template file's documented policy.
+- **Implementation:** `lib/sms/templates.ts` and `lib/sms/gsm7.ts`.
+- **Tests:** `tests/lib/sms/join-ack-sender-label.test.ts` (with an independent GSM-7 counter) and `tests/lib/sms/gsm7.test.ts`.
+
 - **When.** The join action starts it after the commit and after the response (`app/book/[slug]/waitlist-actions.ts` → `lib/waitlist/delivery/join-ack-sms.ts`), beside the two emails, never before them in the response path.
   - A resubmission (`already_waiting`) never reaches it.
   - A No never asks for it.
