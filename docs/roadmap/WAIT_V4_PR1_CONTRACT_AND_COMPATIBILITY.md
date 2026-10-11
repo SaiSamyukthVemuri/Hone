@@ -91,7 +91,9 @@ PR1 owns this document and one correctness fix (§6). It implements nothing.
   invitation**.
 * **Failure leaves both untouched.**
 * **"Consume first, then create appointment" is LEGACY behaviour to replace** — it is
-  not the v4 target. See §3.4 and §5.
+  not the v4 target. *This sentence is the v4 contract's own clarification, quoted,
+  not an inference from the repository;* the repository evidence for what that legacy
+  path does is kept separately in §3.4.
 
 ### 2.8 What a recipient sees and may do
 
@@ -117,6 +119,10 @@ blocks, **service / buffer / timezone / notice** changes, **owner booking**, or
 * Its **invitation stays used**; **U and C do not increase**; **weekly room returns**.
 * This is the **only post-launch operation allowed to increase R**.
 * **Closed rounds never revive.**
+* **Scope note:** this rule governs calendar and invitation state. It does **not**
+  address the person's **queue priority** — §14.5.7C's cancel-and-return rule (a NEW
+  waiting-time priority, previous spot not held) is **not** superseded and still
+  binds. See §5.
 
 ### 2.11 Freed time that is not round-derived
 
@@ -169,10 +175,15 @@ duplicate.**
 
 ### 3.3 Lock-mode divergence that §2.6's scheduling-locked transaction inherits
 
-| Migration | `for update` on `public.studios` | `for no key update` |
+Counted as **executable statements that lock `public.studios`**, excluding comment
+lines — a raw phrase count is misleading here (0193 has 11 lines containing
+`for no key update`, of which **2 are comments**, and 0192 has 20 lines containing
+`for update` of which only 3 lock `studios`):
+
+| Migration | `for update` on `public.studios` | `for no key update` on `public.studios` |
 |---|---|---|
 | 0192 (round + recipient proof) | **3** | 0 |
-| 0193 (admission authority) | 0 | **11** |
+| 0193 (admission authority) | 0 | **9** |
 | 0204 | 0 | 1 |
 
 `for update` on a parent row conflicts with the FK key-share locks taken by inserts
@@ -208,6 +219,11 @@ Under §2.10 a cancelled round-derived appointment's **invitation stays used** a
 restoration therefore does not go through requeue at all**: it restores the
 **reservation**, not the queue position. The two must not be conflated, and requeue's
 refusal is not an obstacle to §2.10.
+
+**But the queue position is still governed** — by §14.5.7C, which §2.10 does not
+replace. So a cancellation has two separate effects that must both be implemented:
+the reservation returns to the live round (§2.10), **and** the person's return to the
+waitlist carries a NEW waiting-time priority (§14.5.7C).
 
 ### 3.6 The shared deadline is set at launch, and then protected
 
@@ -276,18 +292,31 @@ than assuming one.
 | Limb | §14.5.7 (predecessor) | v4 (target) |
 |---|---|---|
 | Reservation | not addressed; join is explicitly not a reservation | anonymous reservations **at launch**; join still reserves nothing (§2.13) |
-| Cohort | "one opportunity … not two invitations" | fixed cohort **M**, `1 ≤ M ≤ K`, no additions (§2.1) |
+| Cohort | **no cohort rule.** (§14.5.7B's "one opportunity and one response deadline, not two invitations" at `CANONICAL_ROADMAP.md:1373` is a **dual-channel delivery** rule — email plus eligible SMS are *one* opportunity — **not** a cohort rule, and it is **not** superseded.) | v4 **introduces** the fixed cohort **M**, `1 ≤ M ≤ K`, no additions (§2.1) |
 | Deadline | fixed 48h **per invitation** | **one shared** 48h per round (§2.6) |
 | Booking atomicity | consume-then-create, three outcomes accepted | **atomic** convert + redeem; failure leaves both untouched (§2.7) |
-| Cancel → waitlist | **NEW** waiting-time priority, spot not held | **restores its own reservation**; invitation stays used; U and C unchanged (§2.10) |
+| Cancel → waitlist, **calendar and invitation state** | not addressed | **restores its own reservation**; invitation stays used; U and C unchanged; weekly room returns (§2.10) |
 | Freed time | not addressed | never joins a live round; far-out → proposals, near-term → REBOOK-01 (§2.11) |
 | Withdrawal | recipient opt-out event | **also** a studio write removing reserved time, gated by `R − q ≥ U` (§2.9) |
 
-§14.5.7's other rules — profile/join requirements (A), first-consultation boundaries
-(C), and §14.5.5A's requirement that **open/preview/reload/GET never book, consume,
-decline or remove**, with the response deadline, appointment date range,
-proof-challenge expiry and verified-capability expiry kept **distinct** — are **not**
-superseded and continue to bind.
+**NOT superseded, and still binding:**
+
+* **§14.5.7C's cancel-and-return queue rule — a client who cancels gets a NEW
+  waiting-time priority and the previous spot is not held.** §2.10 governs the
+  **calendar and invitation state** of a round-derived appointment (its reservation
+  is restored, its invitation stays used, U and C do not increase). It says nothing
+  about the person's queue priority, so it **does not replace** the recipient-facing
+  rule. Both bind: the reservation returns to the round **and** the person's return
+  to the queue carries a new priority. An earlier revision of this table claimed a
+  supersession the contract does not make.
+* **§14.5.7B's dual-channel opportunity** — email plus eligible consented SMS are
+  **one** opportunity with **one** response deadline, not two invitations.
+* §14.5.7A profile and join requirements; §14.5.7C's other first-consultation
+  boundaries (no client-controlled rescheduling of first consultations; cancel-and-leave
+  as a separate intent; clinic-initiated moves without penalty).
+* §14.5.5A — **open/preview/reload/GET never book, consume, decline or remove**, and
+  the response deadline, appointment date range, proof-challenge expiry and
+  verified-capability expiry are kept **distinct**.
 
 ---
 
