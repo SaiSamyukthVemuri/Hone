@@ -127,7 +127,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `STRIPE_ALLOW_LIVE_MODE` | Default `false` | Live-mode gate. Leave unset / `false` until a deliberate live-mode PR. |
 | `STRIPE_WEBHOOK_SECRET` | Required | Signing secret from the connected-account webhook in the Stripe dashboard. |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Required for portal Add-card surface | `pk_test_*` mirrors the secret-key gate; portal renders calm unavailable surface if missing. |
-| `STRIPE_CONNECT_COUNTRY` | Default `CA` | Hardcoded for Canadian rollout. |
+| `STRIPE_CONNECT_COUNTRY` | — | **No longer read** (PAY-CCY-03, #824). Express accounts are created in each studio's verified payment country (`studio_payment_jurisdictions`, migration 0214). Leaving the variable set is harmless; it changes nothing. |
 | `UPSTASH_REDIS_REST_URL` | **Required in production** | Public rate limit. Missing in prod → the production build fails (PR #262 gate). Runtime still fails open on a transient outage. |
 | `UPSTASH_REDIS_REST_TOKEN` | **Required in production** | Same. |
 | `TWILIO_ACCOUNT_SID` | Optional | SMS subsystem gated on this. |
