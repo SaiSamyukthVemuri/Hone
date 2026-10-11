@@ -123,7 +123,7 @@ export default function MovingFromPaperArticlePage() {
                 spreadsheet, paper cards or another tool, and it appears in each client&apos;s{" "}
                 <Link
                   href="/features/treatment-memory"
-                  className="font-medium text-mineral underline underline-offset-4"
+                  className="font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
                 >
                   Before Today briefing
                 </Link>{" "}

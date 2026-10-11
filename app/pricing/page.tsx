@@ -247,7 +247,7 @@ export default function PricingPage() {
                 To ask something first,{" "}
                 <Link
                   href={`mailto:${CONTACT_EMAIL}`}
-                  className="font-medium text-mineral underline underline-offset-4"
+                  className="font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
                 >
                   email us
                 </Link>{" "}
@@ -255,7 +255,7 @@ export default function PricingPage() {
                 <Link
                   href={WALKTHROUGH.href}
                   data-event={ANALYTICS_EVENTS.primaryCtaClick}
-                  className="font-medium text-mineral underline underline-offset-4"
+                  className="font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
                 >
                   request a walkthrough
                 </Link>

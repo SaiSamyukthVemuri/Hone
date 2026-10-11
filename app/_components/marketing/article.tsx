@@ -59,7 +59,7 @@ export function ArticleCorrections() {
       To report a correction or ask a question, email{" "}
       <Link
         href={`mailto:${CONTACT_EMAIL}`}
-        className="font-medium text-mineral underline underline-offset-4"
+        className="font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
       >
         {CONTACT_EMAIL}
       </Link>

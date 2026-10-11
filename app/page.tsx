@@ -287,7 +287,7 @@ export default function HomePage() {
                 <Link
                   href="/features/charting-records"
                   data-event={ANALYTICS_EVENTS.featureCtaClick}
-                  className="mt-3 inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-mineral underline underline-offset-4"
+                  className="mt-3 inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
                 >
                   See every field Hone records
                 </Link>
@@ -336,7 +336,7 @@ export default function HomePage() {
             <Link
               href="/features/charting-records"
               data-event={ANALYTICS_EVENTS.featureCtaClick}
-              className="mt-5 inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-[color:var(--color-wash)] underline underline-offset-4"
+              className="mt-5 inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-[color:var(--color-wash)] underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-paper)]"
             >
               More on records and logs
             </Link>
@@ -354,7 +354,7 @@ export default function HomePage() {
             />
             <p className="mt-6 text-[0.9375rem] text-muted">
               Read the{" "}
-              <Link href="/privacy" className="font-medium text-mineral underline underline-offset-4">
+              <Link href="/privacy" className="font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]">
                 privacy policy
               </Link>{" "}
               for the full detail.
