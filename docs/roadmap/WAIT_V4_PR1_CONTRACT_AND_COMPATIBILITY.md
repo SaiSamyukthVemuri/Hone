@@ -139,12 +139,13 @@ blocks, **service / buffer / timezone / notice** changes, **owner booking**, or
 * **One reminder at 24 hours after launch**, for still-active unbooked invitations.
 * **Messages never list appointment times.**
 
-### 2.13 The join disclaimer stays true
+### 2.13 Joining reserves nothing; launch is what reserves
 
 **Joining the waitlist alone STILL does not reserve an appointment.** Anonymous
-calendar reservations arise **at round launch**, not at join. The existing join
-disclaimer is therefore **correct under v4** and must **not** be classified as
-false. (An earlier revision of this document implied it was. It is not.)
+calendar reservations arise **at round launch**, not at join.
+
+*(What this means for the disclaimer shipped today is in §3.2. §2.13 states the
+target only.)*
 
 ---
 
@@ -169,9 +170,13 @@ re-declared as a local literal** at `app/book/[slug]/NewClientWaitlistForm.tsx:1
 (rendered `:160`, `:411`); `components/waitlist/waitlist-join-form.tsx:17` imports
 the shared constant but is not routed.
 
-Under §2.13 the sentence **stays**. This is recorded so that nobody later edits one
-copy believing they have changed the live promise — **the routed surface renders the
-duplicate.**
+**The shipped sentence is consistent with the target, so it stays.** §2.13 places
+reservation at round launch, not at join, so the disclaimer remains accurate and must
+**not** be classified as false. *An earlier revision of this document implied §2's
+reservation limb contradicted it; that implication was wrong and is withdrawn.*
+
+This duplication is recorded so that nobody later edits one copy believing they have
+changed the live promise — **the routed surface renders the duplicate.**
 
 ### 3.3 Lock-mode divergence that §2.6's scheduling-locked transaction inherits
 
@@ -466,16 +471,26 @@ readiness contract."*
 * *"public booking supports the intended practitioner/any-available selection with **authoritative assignment and conflict protection**"*;
 * *"**failed or stale operations produce no partial appointment/reservation state**."*
 
-The last of those and v4 §2.6's *"a failed or stale launch leaves no partial state"*
-are **the same invariant approached from two directions**. They must not be
-implemented twice, and they must not be implemented differently.
+That last requirement and v4 §2.6's *"a failed or stale launch leaves no partial
+state"* are **the same PROPERTY over DIFFERENT OPERATIONS, and conflating them would
+be a mistake.** §2.6 governs the **round launch**, which creates reservations and
+invitations together; #824 governs **appointment operations** — booking, move, cancel,
+deactivation — across five-plus practitioners. **Each needs its own all-or-nothing
+implementation**; neither subsumes the other.
+
+What the lanes owe each other is therefore **consistency of approach, not a shared
+implementation**: the same transaction discipline, the same lock ordering (§3.3), and
+no path where one lane's rollback leaves state the other lane's invariant would
+reject. *An earlier revision of this section called them "the same invariant" and said
+they must not be implemented twice; that was wrong and is withdrawn.*
 
 ### The boundary
 
 | Surface | Owner |
 |---|---|
 | WAIT **round reservation** storage — anonymous, created at round launch (§2.1, §2.6) | **v4 PR2** |
-| The **scheduling-locked launch transaction** and its lock mode/ordering (§2.6, §3.3) | **v4 PR2** |
+| The **lock primitives and their mode/ordering** that a launch will use (§3.3) | **v4 PR2** |
+| The **scheduling-locked launch transaction** itself (§2.6) — reservations and invitations created together, delivery after commit | **v4 PR4**, per the §8 sequence. *An earlier revision of this table assigned it to PR2, contradicting §8; corrected.* |
 | Multi-practitioner **appointment** scheduling correctness — double-book prevention including buffers, per-practitioner availability, assignment, any-available selection | **#824 / #825** |
 | `lib/booking/slots.ts`, `lib/booking/public-slot-range.ts` — the candidate and exclusion path | **SHARED. Whoever lands first; the other composes rather than re-deriving.** |
 | "No partial appointment/reservation state" | **One implementation, agreed between the lanes before either writes it.** |
