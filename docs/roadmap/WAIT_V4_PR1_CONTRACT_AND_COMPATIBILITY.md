@@ -1,106 +1,173 @@
-# WAIT-v4 PR1 — contract ownership and compatibility design
+# WAIT-ROUND-01 v4 — PR1: contract, ownership and compatibility
 
-**Design only. No behaviour, no migration, no number claimed.** Basis: production
-`6c5eac80537d67118ae2d5df581fa52dbf25d691` (the #821 merge). Every repo fact below
-was re-verified at that head; nothing is restated from an earlier packet or from
-memory.
+**Design only. No behaviour, no migration, no number claimed.**
 
-## 0. What this document is, and the one input it does not have
+**Authoritative target behaviour:** the frozen **WAIT-ROUND-01 v4** contract
+(roadmap edition of 2026-10-07), reproduced as target in §2 below.
 
-The frozen contract for the eight limbs below is **[§14.5.7 WAIT-04 — frozen Chloe
-launch contract](./CANONICAL_ROADMAP.md)**, with its accepted architecture in
-§14.5.5A (clocks) and §14.5.5B (atomicity). Those are in this repository and are
-cited here by section.
+**§14.5.7 "WAIT-04 — frozen Chloe launch contract" is v4's PREDECESSOR, not its
+target.** Where the two differ, v4 governs; §5 lists each supersession explicitly.
+An earlier revision of this document mistakenly treated §14.5.7 as the target and
+recorded reservation and cohort as unspecified. **Both are specified in v4. That
+gate was false and is removed.**
 
-**Two limbs are NOT specified there: reservation and cohort.** Their specifications
-are in the v4 plan, which is not in evidence in this repository — the same verified
-absence the PR4/PR8 handoff recorded on 2026-10-02, still true at this head. This
-document therefore states, for those two, **what the repo can support and what any
-contract answer must satisfy**, and does not invent their content. If the v4 plan
-defines them differently, the plan wins and §3.1 / §3.3 must be re-derived.
-
-**Migration availability, rechecked at this head:** repo max **0210**, hosted
-**0210**, pending **none** (PARITY), next free **0211**, permanently skipped 0158,
-no duplicates, nothing malformed. **`0209` and `0210` are applied and FROZEN.**
-PR1 claims **no** number; any later v4 PR must re-derive at the moment of claim.
+**Compatibility constraints are labelled separately, in §3.** They are verified
+observations about production at
+`6c5eac80537d67118ae2d5df581fa52dbf25d691` — what the code does today. They
+constrain *how* v4 is reached; they never qualify *what* v4 requires.
 
 ---
 
-## 1. One correction this PR makes, because v4 would otherwise land on a false premise
+## 1. Scope of PR1
 
-`docs/production/current-state.md:579` asserts:
+PR1 owns this document and one correctness fix (§6). It implements nothing.
+**PR2 is unstarted.** `0209` and `0210` are applied and frozen. Waitlist SMS is off.
 
-> **Fixed/no-choice 48h policy remains open** because the composer still permits
-> alternate TTLs
+---
 
-**That is false at this head**, and it matters because §14.5.7D makes it a
-precondition: *"WAIT-04C / dual-channel delivery — Precondition: fixed/no-choice
-48h policy already enforced."* Reading the claim literally, WAIT-04C is blocked.
-It is not.
+## 2. v4 TARGET BEHAVIOUR
 
-Verified:
+### 2.1 Round identity and shape
 
-| Evidence | At `6c5eac80` |
+* **One live round per studio**, belonging to **one practitioner** and **one
+  consultation service / duration**.
+* **Drafts reserve nothing.**
+* A **launched** round has **K** real, mutually non-conflicting **buffered**
+  consultation times and **M** distinct people, with **1 ≤ M ≤ K**.
+* **One weekday OR weekend pool.** The cohort is **fixed** — no additions after
+  launch.
+
+### 2.2 The invariants
+
+| Symbol | Meaning |
 |---|---|
-| `lib/waitlist/invitation-window.ts:24` | "THE WINDOW IS FIXED AT 48 HOURS, AND NOBODY CHOOSES IT." |
-| `lib/waitlist/invitation-window.ts:63` | `export const WAIT_INVITATION_TTL_HOURS = 48;` |
-| `components/waitlist/invite-composer.tsx` | reads the constant — no TTL choice surface |
-| TTL-choice surface (24 / 72 / 168 / custom) | **none** — the only `24`/`72` hits are the join-ack rate limit and Resend idempotency |
-| Guard | `tests/lib/waitlist/wait-48-fixed-window.test.ts`, plus `tests/lib/waitlist/invitation-window.test.ts` |
+| **R** | remaining **unbooked reservations** |
+| **U** | **active unbooked invitations**, *including pending/uncertain delivery* |
+| **C** | **admission consumption** — **not** calendar inventory |
 
-PR1 corrects that one clause and nothing else in that file.
+**While the round is open: `R ≥ U` and `C ≤ M`.**
+
+### 2.3 Automatic proposals
+
+* Driven by **queue priority**, **weekly intake room**, and a default **14-day
+  horizon**.
+* **Kind** follows the **longest-waiting eligible person**. **Both** looks ahead to
+  the next single-kind person; otherwise the **greater clean-time count**, with
+  **weekday winning ties**.
+* **K = min(weekly room, compatible times, eligible people).**
+* **Weekly room** counts new-client consultation bookings **committed in the
+  trailing seven days, across all channels**.
+
+### 2.4 Candidate times and ranking
+
+* Candidates begin **no earlier than `now + 48 hours + authoritative booking
+  notice`**.
+* Ranking: **protect treatment capacity**, then **spread days**, then **prefer
+  earlier times**.
+* **Treatment-length** means the **longest active treatment duration plus its
+  buffer**.
+* **Launch revalidates against its actual instant** — a proposal is not a promise.
+
+### 2.5 Changing people, and the waitlist picker
+
+* "Change people" and the picker use the **same eligibility and the same weekly-room
+  cap** as automatic proposal.
+* **Opposing weekday/weekend selections produce two proposals; only one launches.**
+* **Skipped people retain priority.**
+* Automatic and final cohorts are **audited**.
+* **No count override.**
+
+### 2.6 Launch
+
+* **One scheduling-locked database transaction** creating **the reservations and the
+  invitations together**.
+* **Provider delivery happens only after commit.**
+* **One shared 48-hour deadline** for the round.
+* A **failed or stale launch leaves no partial state.**
+
+### 2.7 Recipient booking
+
+* Booking **atomically converts one reservation to an appointment AND redeems the
+  invitation**.
+* **Failure leaves both untouched.**
+* **"Consume first, then create appointment" is LEGACY behaviour to replace** — it is
+  not the v4 target. See §3.4 and §5.
+
+### 2.8 What a recipient sees and may do
+
+* Recipients see **only the current remaining reserved times**.
+* **Keep-place / availability-update** closes **this** offer and **preserves queue
+  priority**.
+* **Leaving the waitlist is a separate recipient action.**
+
+### 2.9 Withdrawal — a studio write that removes reserved time
+
+Withdrawal is **any studio write removing reserved time**: availability changes,
+blocks, **service / buffer / timezone / notice** changes, **owner booking**, or
+**moves into reservations**.
+
+* Removing **q** rows requires **`R − q ≥ U`** — **or** the named offers must be
+  **resolved in the same transaction**.
+* **Owner status is not a bypass.**
+
+### 2.10 Cancellation and move restoration
+
+* Cancelling or moving a **round-derived** appointment **while its round is live**
+  **restores its OWN original reservation, atomically**.
+* Its **invitation stays used**; **U and C do not increase**; **weekly room returns**.
+* This is the **only post-launch operation allowed to increase R**.
+* **Closed rounds never revive.**
+
+### 2.11 Freed time that is not round-derived
+
+* **Ordinary freed time never joins a live round.**
+* **Far-out** freed time feeds **future proposals**.
+* **Near-term** freed time goes to **REBOOK-01**, for compatible **active, due,
+  unbooked existing clients with no future appointment**.
+
+### 2.12 Deadline, close and reminder
+
+* **Deadline enforcement works even if cleanup is late.**
+* **Close is idempotent.**
+* **Uncertain or failed delivery is NOT non-response.**
+* **One reminder at 24 hours after launch**, for still-active unbooked invitations.
+* **Messages never list appointment times.**
+
+### 2.13 The join disclaimer stays true
+
+**Joining the waitlist alone STILL does not reserve an appointment.** Anonymous
+calendar reservations arise **at round launch**, not at join. The existing join
+disclaimer is therefore **correct under v4** and must **not** be classified as
+false. (An earlier revision of this document implied it was. It is not.)
 
 ---
 
-## 2. Ownership model — who may change what
+## 3. COMPATIBILITY CONSTRAINTS — verified production findings
 
-| Authority | Owner | Shipped location |
-|---|---|---|
-| Admission allowance and round lifecycle | **practitioner**, by command | `open_/close_new_client_waitlist_admission_round` (0192) |
-| Seat consumption count | **database**, derived | `waitlist_admission_round_consumed` (0192), gateway `read_waitlist_admission_round_consumed` (0197) |
-| Invitation issuance and its immutable facts | **practitioner**, once | `new_client_waitlist_invitations_append_only` (0200:261) |
-| Response (book / decline / update / remove) | **recipient**, proof-bound | §14.5.7B; B3 `/invitation/[token]` |
-| Response deadline | **server**, fixed | `WAIT_INVITATION_TTL_HOURS = 48` |
-| Expiry outcome | **server**, after the deadline | §14.5.7B "only after authoritative deadline" |
-| Suppression / STOP | **recipient**, channel-scoped | existing suppression authority (#767), LIVE |
-| Clinic-initiated move | **practitioner**, no penalty | §14.5.7C |
+Each verified at `6c5eac80`. These say what today's code does. They are inputs to
+sequencing, not amendments to §2.
 
-**The ownership law this implies:** every WAIT state transition is owned by exactly
-one actor class, and §14.5.7B's "Authority / race condition" column requires that
-the owner be re-established *at mutation time*, not inherited from the surface that
-rendered. §14.5.5A adds the read/write split: **"Open/preview/reload/GET must never
-book, consume, decline or remove."**
+### 3.1 Reservation storage does not exist for WAIT, and the calendar primitive is appointment-scoped
 
----
+`studio_calendar_reservations`, with `ReservationRow` / `ReservationExclusion`
+(`lib/booking/slots.ts`), holds protected intervals for **appointments and timed
+blocks**. v4's **anonymous, round-launch reservations (§2.1, §2.6)** are new storage.
+Their exclusion surface is the one **`0209`** has just corrected to cross local
+midnight, so §2.4's buffered candidate window must **compose with** that corrected
+window rather than re-deriving it.
 
-## 3. The eight limbs
+### 3.2 The join disclaimer is duplicated — do not "fix" one copy
 
-### 3.1 Reservation ownership — a v4 ADDITION that contradicts shipped copy
+`NOT_A_RESERVATION` is exported from `lib/waitlist/join-copy.ts:40` **and
+re-declared as a local literal** at `app/book/[slug]/NewClientWaitlistForm.tsx:102`
+(rendered `:160`, `:411`); `components/waitlist/waitlist-join-form.tsx:17` imports
+the shared constant but is not routed.
 
-* **Contract in repo:** §14.5.7A "Public response — no exact position guarantee or
-  fabricated wait-time estimate"; an invitation is sent "when matching consultation
-  times become available".
-* **Shipped:** `studio_calendar_reservations` with `ReservationRow` /
-  `ReservationExclusion` (`lib/booking/slots.ts`) are **appointment and timed-block**
-  protected intervals. There is **no WAIT reservation authority.**
-* **The live promise says the opposite:** `NOT_A_RESERVATION` — *"Joining the
-  waitlist does not reserve an appointment."*
+Under §2.13 the sentence **stays**. This is recorded so that nobody later edits one
+copy believing they have changed the live promise — **the routed surface renders the
+duplicate.**
 
-> ⚠️ **The promise is duplicated, and the routed surface renders the duplicate.**
-> `lib/waitlist/join-copy.ts:40` exports the constant, and
-> `app/book/[slug]/NewClientWaitlistForm.tsx:102` **re-declares the same sentence as
-> a local literal**, rendering it at `:160` and `:411`.
-> `components/waitlist/waitlist-join-form.tsx:17` imports the shared constant but
-> that component is not routed. **A contract that introduces a reservation must
-> change both, and changing only the shared constant leaves the live page making the
-> old promise.**
-
-* **Constraints any contract answer must satisfy:** it owns the copy change and its
-  disclosure consequence; it must say what a prospect is being promised; and its
-  exclusion surface is the one `0209` just tightened, so a reservation must compose
-  with the buffer-protected candidate window rather than re-deriving it.
-
-### 3.2 Scheduling locks — a shipped divergence any v4 lock inherits
+### 3.3 Lock-mode divergence that §2.6's scheduling-locked transaction inherits
 
 | Migration | `for update` on `public.studios` | `for no key update` |
 |---|---|---|
@@ -108,177 +175,209 @@ book, consume, decline or remove."**
 | 0193 (admission authority) | 0 | **11** |
 | 0204 | 0 | 1 |
 
-* `for update` on a parent row conflicts with the FK key-share locks taken by inserts
-  that reference it; `for no key update` does not. The **shipped round commands take
-  the stronger lock**, so a v4 round-level or cohort-level lock composed with them
-  inherits that contention.
-* **`requeue_new_client_waitlist_entry` (0200) deliberately takes no row lock.** Any
-  v4 limb must not add one there.
-* **Constraint:** a v4 lock must declare its **mode**, its **position in the ordering**,
-  and the ordering it shares with 0192's commands. Lock mode is pinned by
-  `tests/db/waitlist-admission-authority.db.test.ts` and the 0202/0206/0207
-  migration tests, so a change is visible, not silent.
+`for update` on a parent row conflicts with the FK key-share locks taken by inserts
+referencing it; `for no key update` does not. §2.6's launch transaction must declare
+its **mode** and its **ordering** against 0192's commands. Lock mode is pinned by
+`tests/db/waitlist-admission-authority.db.test.ts` and the 0202/0206/0207 migration
+tests, so a change is visible rather than silent.
 
-### 3.3 Cohort limits — not in this repo, and not necessarily the round
+**`requeue_new_client_waitlist_entry` (0200) deliberately takes no row lock** — and
+under §2.10 it is **not** the restoration mechanism (§3.5), so nothing in v4 should
+add one to it.
 
-* **Contract in repo:** §14.5.7B "one opportunity and one response deadline, **not
-  two invitations**".
-* **Shipped grouping primitive:** `studio_waitlist_admission_rounds` (0192) —
-  `allowance integer NOT NULL CHECK (allowance >= 0)`, refusals `round_already_open`,
-  `no_round_open`, `no_admission_round`, `round_full`.
-* **"Cohort" exists nowhere** in `lib/`, `app/` or `supabase/migrations/` — the only
-  match is `lib/security/headers.ts`, an unrelated sense.
-* **Constraint:** whether the v4 cohort **is** the admission round, a superset of it,
-  or something else is **not derivable from this repo. Do not assume it is the
-  round.** Until it is specified, `DeliveryKind` must not widen and no per-channel
-  truth number may be claimed, because the disposition's grain may depend on it.
+### 3.4 The legacy booking path is the one §2.7 replaces
 
-### 3.4 The shared deadline — blocked by an immutability law, not merely absent
+`§14.5.5B` records the shipped limitation: **B2 consumes the invitation before the
+appointment exists**, so the current client outcome must distinguish confirmed
+booked / definitively consumed without booking / indeterminate transport.
 
-* **Contract in repo:** §14.5.7B — "one opportunity and **one response deadline**";
-  "Fixed 48 hours; no expiry question in Chloe's composer".
-* **Shipped:** fixed per-invitation 48h (§1 above).
-* **No round-level deadline exists.** `studio_waitlist_admission_rounds` (0192:81)
-  holds `allowance`, `opened_at`, `opened_by_practitioner_id`, `closed_at`,
-  `closed_by_practitioner_id`, `updated_at` — **a round closes by actor, not clock.**
+**That is the legacy behaviour §2.7 replaces**, not a constraint on v4. v4's
+convert-and-redeem is one atomic step whose failure leaves both untouched, which
+**removes** the consumed-without-booking state for round-derived bookings. The
+legacy three-way outcome remains the truth for **legacy invitations** (§4) until
+they drain.
 
-> ⚠️ **`expires_at` is IMMUTABLE on an issued invitation.** The append-only trigger
-> `new_client_waitlist_invitations_append_only` (0200:261) refuses any update that
-> changes `id`, `studio_id`, `entry_id`, `token_hash`, `issued_at`, **`expires_at`**
-> or `issued_by_practitioner_id`. **A shared deadline therefore cannot be implemented
-> by rewriting issued invitations' expiry.** It must be either a new round-level
-> column composed at read time, or a new forward migration that amends the trigger —
-> and `0200` is applied and frozen, so it is never edited in place.
+### 3.5 Restoration is a new operation, not requeue
 
-* **Unresolved seam, already flagged by the contract:** §14.5.7E — the 48-hour clock's
-  threshold, "sent" versus "delivered/accepted". *"Provider acceptance does not prove
-  inbox visibility."* A shared deadline inherits this question, it does not settle it.
+`requeue_new_client_waitlist_entry` (0200) returns a **released or expired** prospect
+to waiting and refuses `already_redeemed` — *"that entry has spent an admission
+seat."*
 
-### 3.5 Atomic launch and booking — the contract forbids overstating it
+Under §2.10 a cancelled round-derived appointment's **invitation stays used** and
+**C does not increase**, so the entry is *supposed* to stay redeemed. **v4
+restoration therefore does not go through requeue at all**: it restores the
+**reservation**, not the queue position. The two must not be conflated, and requeue's
+refusal is not an obstacle to §2.10.
 
-* **Contract in repo:** §14.5.5B, titled **"DO NOT OVERSTATE ATOMICITY"**:
-  *"Atomic admission is not atomic appointment creation."* #685 rolls back partial
-  claiming if issuing an invitation fails; separately, **B2 consumes the invitation
-  before the appointment exists.**
-* **Required client outcomes — three, not two:** confirmed booked · definitively
-  consumed without booking · indeterminate transport outcome. *"'Already used' alone
-  does not prove"* booked.
-* **Explicitly forbidden:** inventing a second booking engine, and silently calling
-  release/reissue.
-* **Shipped discipline to reuse:** 0193's atomic waiting→claimed→invited wrapper;
-  `claim_new_client_waitlist_entry(_ies)`; and 0207, where
-  `claim_waitlist_invitation_sms` holds the invitation **`FOR NO KEY UPDATE`** — the
-  claim-before-provider-call pattern.
-* **Constraint:** a v4 launch is a fan-out over many invitations. The accepted
-  single-invitation limitation does not become acceptable *n* times over in silence;
-  a launch must report per-invitation outcomes in the same three-way split.
+### 3.6 The shared deadline is set at launch, and then protected
 
-### 3.6 Withdrawal — the explicit opt-out event is not shipped
+The append-only trigger `new_client_waitlist_invitations_append_only` (`0200:261`)
+refuses any update changing `id`, `studio_id`, `entry_id`, `token_hash`, `issued_at`,
+**`expires_at`** or `issued_by_practitioner_id`.
 
-* **Contract in repo:** §14.5.7B "Remove me from the waitlist → leave the active list
-  and **stop further automated waitlist invitation/contact attempts**. Explicit
-  opt-out event."
-* **And the distinction that must not be collapsed:** *"**SMS STOP is not, by itself,
-  leave-waitlist** or consent to another channel. Respect distinct policies."*
-* **Shipped:** the STOP / suppression authority is LIVE and wired (#767);
-  `close_unbooked_new_client_waitlist_invitation` (0200) closes an offer. There is
-  **no `withdraw` authority** anywhere in `lib/`, `app/` or `supabase/migrations/`.
-* **Constraint:** withdrawal is a **waitlist-scoped** opt-out event, distinct in
-  storage and in effect from channel suppression. It must not permanently ban the
-  person (§14.5.7B's expiry rule says the same of non-response).
+Because §2.6 creates invitations **inside the launch transaction**, the one shared
+48-hour deadline is stamped at creation and the trigger then **protects** it. This is
+**supporting**, not blocking — but it does mean a deadline can never be *amended*
+later by writing to invitations; anything post-launch must read a round-level clock
+or amend the trigger by a new forward migration (`0200` is frozen).
 
-### 3.7 Cancellation and move restoration — two different priority rules, easy to get backwards
+### 3.7 Today's deadline authority and the absent reminder
 
-> **The contract deliberately separates these, and reversing them would be a product
-> defect, not a style choice.**
+`WAIT_INVITATION_TTL_HOURS = 48` (`lib/waitlist/invitation-window.ts:63`); the
+composer reads the constant and offers no choice; pinned by
+`tests/lib/waitlist/wait-48-fixed-window.test.ts`. The fixed window is therefore
+already the per-invitation law, which §2.6's **shared** deadline generalises to the
+round.
 
-| Event | Contract | Priority result |
-|---|---|---|
-| "These times don't work — keep my place" (§14.5.7B) | close the current offer, return/remain waiting | **ORIGINAL** waiting-time priority |
-| "Update my availability — keep my place" (§14.5.7B) | update preference, close this offer | **preserve** waiting-time priority |
-| "Cancel and return to waitlist" (§14.5.7C) | client confirms cancellation | **NEW** waiting-time priority; **previous spot is NOT held** |
-| "Cancel and leave" (§14.5.7C) | separate explicit intent | leaves; no forced waitlist contact |
-| Clinic-initiated / practitioner-approved move (§14.5.7C) | authorized practitioner command | **no waitlist penalty** |
-| Request to reschedule online (§14.5.7C) | **not permitted** for first consultations | enforce in confirmation / reminder / portal / old-link routes **and server mutation** |
+`studio_waitlist_admission_rounds` (`0192:81`) has **no deadline column** — a round
+closes **by actor**. §2.6's shared deadline and §2.12's idempotent close are new
+round-level state. The **24-hour reminder of §2.12 does not exist** for WAIT.
 
-* **Shipped:** `requeue_new_client_waitlist_entry` (0200) returns a **released or
-  expired** prospect to waiting.
+### 3.8 Admission consumption already exists, and §2.2 keeps it distinct
 
-> ⚠️ **Requeue cannot serve the cancellation case.** It refuses with
-> `already_redeemed` — *"that entry has spent an admission seat"* — which is exactly
-> the state of an entry that booked and then cancelled. The §14.5.7C NEW-priority
-> restoration therefore needs a **different** path, and that path must also not add a
-> row lock to requeue (§3.2).
+`allowance` on `studio_waitlist_admission_rounds`, `waitlist_admission_round_consumed`
+(0192) and the gateway `read_waitlist_admission_round_consumed` (0197) are the shipped
+consumption authority. §2.2's **C is admission consumption, not calendar inventory** —
+so C maps onto this existing authority while **R** is new reservation state. Keeping
+them separate is a contract requirement, not an implementation preference.
 
-### 3.8 Expiry authority — server-owned, after the deadline, never a ban
+### 3.9 Weekly room has no shipped counter
 
-* **Contract in repo:** §14.5.7B "No response at 48 hours → remove from the active
-  waitlist under the disclosed policy, **not permanently ban the person**. Only after
-  authoritative deadline, no qualifying response."
-* **Shipped:** the fixed 48h window; `close_unbooked_new_client_waitlist_invitation`
-  (0200); the live-invitation read (0198).
-* **Not shipped:** WAIT-specific 24-hour reminder eligibility, which §14.5.7B
-  requires ("one reminder through eligible channels if the invitation is still
-  awaiting response"), and which has **no round-level expiry counterpart**.
-* **Constraint:** expiry is evaluated against the **authoritative** deadline, so if a
-  shared deadline is introduced (§3.4) the expiry authority must read the same clock,
-  and §14.5.5A requires it stay distinct from the appointment date range, the
-  proof-challenge expiry and the verified-capability expiry — **four clocks, kept
-  separate.**
+§2.3's weekly room — new-client consultation bookings committed in the trailing seven
+days **across all channels** — has no existing counter. "All channels" spans the
+public booking path, practitioner booking and owner booking, so it cannot be derived
+from the waitlist tables alone.
 
 ---
 
-## 4. Affected existing paths
+## 4. Legacy invitation compatibility versus new-round authority
+
+These are two regimes and must not be merged:
+
+| | **Legacy invitation** (shipped) | **v4 round** (target) |
+|---|---|---|
+| Origin | practitioner issues one invitation | round launch creates reservations + invitations in one transaction (§2.6) |
+| Reserved time | **none** | K buffered times, anonymous until booked (§2.1) |
+| Deadline | per-invitation fixed 48h (§3.7) | **one shared** 48h for the round (§2.6) |
+| Booking | consume, then create appointment (§3.4) | **atomic** convert + redeem (§2.7) |
+| Cancellation | §14.5.7C: new priority, spot not held | **restore its own reservation**, invitation stays used (§2.10) |
+| Grouping | admission round allowance | fixed cohort M, with R/U/C invariants (§2.2) |
+
+**Existing live offers and appointments must not be invalidated by installing v4
+authority.** Legacy invitations keep legacy semantics until they drain; v4 semantics
+apply to round-derived objects. Any shared surface (the recipient page, the delivery
+path, the close/expiry job) must branch on which regime an object belongs to rather
+than assuming one.
+
+---
+
+## 5. Where v4 supersedes §14.5.7 (WAIT-04)
+
+| Limb | §14.5.7 (predecessor) | v4 (target) |
+|---|---|---|
+| Reservation | not addressed; join is explicitly not a reservation | anonymous reservations **at launch**; join still reserves nothing (§2.13) |
+| Cohort | "one opportunity … not two invitations" | fixed cohort **M**, `1 ≤ M ≤ K`, no additions (§2.1) |
+| Deadline | fixed 48h **per invitation** | **one shared** 48h per round (§2.6) |
+| Booking atomicity | consume-then-create, three outcomes accepted | **atomic** convert + redeem; failure leaves both untouched (§2.7) |
+| Cancel → waitlist | **NEW** waiting-time priority, spot not held | **restores its own reservation**; invitation stays used; U and C unchanged (§2.10) |
+| Freed time | not addressed | never joins a live round; far-out → proposals, near-term → REBOOK-01 (§2.11) |
+| Withdrawal | recipient opt-out event | **also** a studio write removing reserved time, gated by `R − q ≥ U` (§2.9) |
+
+§14.5.7's other rules — profile/join requirements (A), first-consultation boundaries
+(C), and §14.5.5A's requirement that **open/preview/reload/GET never book, consume,
+decline or remove**, with the response deadline, appointment date range,
+proof-challenge expiry and verified-capability expiry kept **distinct** — are **not**
+superseded and continue to bind.
+
+---
+
+## 6. One correction PR1 makes
+
+`docs/production/current-state.md:579` claimed *"Fixed/no-choice 48h policy remains
+open because the composer still permits alternate TTLs."* **False at this head**:
+`WAIT_INVITATION_TTL_HOURS = 48`, the composer reads that constant, no
+24/72/168/custom surface exists, and `wait-48-fixed-window.test.ts` pins it. One
+clause corrected; nothing else in that file.
+
+---
+
+## 7. Affected existing paths
 
 **Database (applied, frozen — compose, never edit):** 0192 round + recipient proof ·
 0193 admission authority · 0197 consumed-count gateway · 0198 live invitation read ·
-0200 redeemed-unbooked exit, append-only trigger, requeue · 0202 profile + consent
-authority · 0203 mobile verification · 0204 admission mode · 0207 serialized SMS
-claim · 0208 consent + signup answer · **0209 slot-candidate buffer window** ·
-**0210 join acknowledgement**.
+0200 redeemed-unbooked exit, append-only trigger, requeue · 0202 profile + consent ·
+0203 mobile verification · 0204 admission mode · 0207 serialized SMS claim · 0208
+consent + signup answer · **0209 slot-candidate buffer window** · **0210 join
+acknowledgement**.
 
-**Runtime:** `lib/waitlist/` — `invitation-window.ts`, `invitation-capacity.ts`,
-`round-consumption-server.ts`, `invite-to-book-contract.ts`,
-`invite-to-book-adapter.ts`, `b4-invitation-draft.ts`, `join-profile.ts`,
-`join-copy.ts`, `invitation-offer.ts`, `delivery/*` · `lib/booking/slots.ts`,
-`public-slot-range.ts`, `new-client-admission.ts`, `waitlist-invitation.ts` ·
-`app/book/[slug]/` — `NewClientWaitlistForm.tsx`, `waitlist-actions.ts`, `page.tsx` ·
-`app/(app)/settings/waitlist/` · `components/waitlist/` — `invite-composer.tsx`.
+**Runtime:** `lib/booking/slots.ts`, `public-slot-range.ts`,
+`new-client-admission.ts`, `waitlist-invitation.ts` · `lib/waitlist/` —
+`invitation-window.ts`, `invitation-capacity.ts`, `round-consumption-server.ts`,
+`invite-to-book-contract.ts`, `invite-to-book-adapter.ts`, `b4-invitation-draft.ts`,
+`join-profile.ts`, `join-copy.ts`, `invitation-offer.ts`, `delivery/*` ·
+`app/book/[slug]/` · `app/(app)/settings/waitlist/` · `components/waitlist/`.
 
-**Docs:** §14.5 of the roadmap (the integration surface) ·
-`docs/production/current-state.md` (§1 correction) ·
-`docs/roadmap/CAPABILITY_MANIFEST.json`, which carries **no** WAIT entry at all and
-is stale (`as_of` 2026-07-30, `hosted_migration_max` 0160 against an actual 0210) —
-v4 **adds** an entry there; it supersedes nothing.
-
-**Do not retire `CANCEL-RECOVERY-01`** as a side effect. It is about *existing*
-clients and released appointment capacity, not the new-client waitlist, and line
-1466 says explicitly "Not Cancellation Recovery." Retiring it is a cross-domain
-decision needing an owner ruling that names it by id.
+**Docs:** §14.5 of the roadmap · `docs/production/current-state.md` (§6) ·
+`docs/roadmap/CAPABILITY_MANIFEST.json`, which carries **no** WAIT entry and is stale
+(`as_of` 2026-07-30, `hosted_migration_max` 0160 against an actual 0210) — v4 **adds**
+an entry; it supersedes nothing there.
 
 ---
 
-## 5. Boundaries of later PRs
+## 8. The frozen PR sequence
 
-| PR | Owns | Entry gate |
-|---|---|---|
-| **PR1 (this)** | contract ownership, compatibility surface, the §1 correction | none — docs only |
-| **PR2** | reservation authority **or** cohort authority, whichever the v4 plan specifies first | **the v4 plan's text for §3.1 / §3.3.** Blocked without it. |
-| **PR3** | shared deadline at round level | PR2's grain; and a forward migration for §3.4's immutability law |
-| **PR4** | post-commit initial email + eligible SMS (the **SMS limb only** — the email half ships) | reservation **and** cohort both implemented; `DeliveryKind` must not widen before then |
-| **PR8** | 24h reminder + expiry / delivery-evidence gating | §14.5.7E's sent-vs-delivered threshold decided |
-| PR5-PR7, PR9-PR11 | response UX, restoration paths, acceptance | not scoped here |
+| PR | Scope |
+|---|---|
+| **0** | buffer fix — **COMPLETE** (#820, `0209` applied) |
+| **1** | **contract / compatibility — this PR** |
+| **2** | reservation storage, calendar integration, locks |
+| **3a** | automatic proposal |
+| **3b** | manual cohort authority |
+| **3c** | picker |
+| **4** | atomic launch + post-commit delivery |
+| **5** | recipient flow + atomic booking |
+| **6** | withdrawal paths |
+| **7** | cancellation / move restoration |
+| **8** | expiry / close / reminder |
+| **9** | practitioner UI |
+| **10** | REBOOK-01 |
+| **11** | controlled acceptance |
 
-**Anti-scope for PR1:** no change to the composer, `invitation-window.ts`, delivery,
-consent, or any round command; no migration; no `lib/`, `app/` or `components/`
-change. Every behavioural limb belongs to a later PR.
+**CANCEL-RECOVERY and Fast Fill are excluded from the v4 launch.** Excluded is not
+retired: **no unrelated backlog ID is retired globally** by v4, and
+`CANCEL-RECOVERY-01` in particular is about existing clients and released appointment
+capacity (roadmap line 1466 says explicitly "Not Cancellation Recovery"), so any
+retirement would be a cross-domain decision needing an owner ruling that names it by id.
 
 ---
 
-## 6. Not established
+## 9. Scheduling ownership — coordination
 
-The v4 plan's text for **reservation** and **cohort** (§3.1, §3.3) — recorded as
-verified absence, not guessed. §14.5.7E's six bounded seams remain open as the
-contract leaves them. No hosted database was read for this document; the migration
-figures are the committed record plus the derivation at this head. Nothing was
-implemented, no number claimed, and `0209`/`0210` are untouched and frozen.
+PR2's reservation storage, the calendar integration and the lock discipline of §3.3
+are **shared scheduling surfaces**. Ownership must be settled with **#824** before PR2
+opens, so that two lanes do not both claim `lib/booking/slots.ts`,
+`public-slot-range.ts` or the reservation exclusion path.
+
+**At the time of writing, #824 is not open** and no branch for it exists on the
+remote, so its file ownership could not be read. This is recorded as an open
+coordination item, not as a settled boundary. PR0's superseded draft **#781** also
+remains open and untouched.
+
+---
+
+## 10. Migration availability, and what stays frozen
+
+Rechecked at this head: repo max **0210**, hosted **0210**, pending **none**
+(**PARITY**), **next free 0211**, permanently skipped 0158, no duplicates, nothing
+malformed. **`0209` and `0210` are applied and FROZEN.** PR1 claims **no** number;
+PR2 and later must re-derive at the moment of claim.
+
+---
+
+## 11. Not established
+
+§2 is reproduced from the supplied frozen v4 contract; where this document paraphrases
+it, the contract governs. The six bounded seams of §14.5.7E remain as the predecessor
+left them, except where §2 settles them. No hosted database was read for this
+document. Nothing was implemented, no number claimed, PR2 is unstarted, and waitlist
+SMS is off.
