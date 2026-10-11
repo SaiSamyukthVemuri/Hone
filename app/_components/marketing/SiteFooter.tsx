@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { FOOTER_GROUPS, POSITIONING } from "@/lib/marketing/content";
+import { FOOTER_GROUPS, FOOTER_LEGAL, POSITIONING } from "@/lib/marketing/content";
 import { Container, Hairline } from "./primitives";
 import { MK_FONT_DISPLAY } from "./tokens";
 
@@ -12,6 +12,9 @@ import { MK_FONT_DISPLAY } from "./tokens";
 // Group titles are words in sentence case, not a tracked all-caps device.
 const FOOTER_LINK =
   "inline-flex min-h-11 items-center text-[0.9375rem] text-ink transition-colors duration-[var(--hone-duration-ui)] hover:text-mineral pointer-fine:min-h-8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]";
+// The legal line's links: the same targets, at the line's own size and tone.
+const LEGAL_LINK =
+  "inline-flex min-h-11 items-center text-[0.8125rem] text-muted underline decoration-[color:var(--color-hairline-strong)] underline-offset-4 transition-colors duration-[var(--hone-duration-ui)] hover:text-ink pointer-fine:min-h-8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]";
 
 export function SiteFooter() {
   const year = 2026; // static; no build-time date fabrication.
@@ -19,9 +22,11 @@ export function SiteFooter() {
     <footer className="bg-paper">
       <Hairline />
       <Container>
-        {/* Two columns from the narrowest screen: four single-column groups
-            of 44px rows made the footer taller than a phone's screen. */}
-        <div className="grid grid-cols-2 gap-x-6 gap-y-8 py-12 lg:grid-cols-[1.4fr_repeat(4,1fr)] lg:gap-x-10">
+        {/* Two columns from the narrowest screen: single-column groups of 44px
+            rows made the footer taller than a phone's screen. Three groups since
+            MKT-03 revision 3 (see FOOTER_GROUPS): the product pages, the guides,
+            and the two ways to reach a person. */}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-8 py-12 lg:grid-cols-[1.4fr_repeat(3,1fr)] lg:gap-x-10">
           <div className="col-span-2 max-w-xs lg:col-span-1">
             <span
               className="text-[1.375rem] font-bold text-ink"
@@ -65,9 +70,23 @@ export function SiteFooter() {
         </div>
 
         <Hairline />
-        <div className="flex flex-col gap-2 py-6 text-[0.8125rem] text-muted sm:flex-row sm:items-center sm:justify-between">
-          <p>© {year} Hone. {POSITIONING.category}.</p>
-          <p>Operated from Canada.</p>
+        {/* The legal line: the copyright, where Hone is operated from, and the
+            two policy pages beside them, with Sign in. */}
+        <div className="flex flex-col gap-x-6 gap-y-2 py-5 text-[0.8125rem] text-muted sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <p>
+            © {year} Hone. {POSITIONING.category}. Operated from Canada.
+          </p>
+          <nav aria-label="Legal">
+            <ul className="flex flex-wrap gap-x-5">
+              {FOOTER_LEGAL.map((link) => (
+                <li key={link.href}>
+                  <Link href={link.href} className={LEGAL_LINK}>
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
         </div>
       </Container>
     </footer>

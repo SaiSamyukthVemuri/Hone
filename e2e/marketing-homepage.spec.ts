@@ -28,7 +28,7 @@ test.describe("marketing homepage (desktop)", () => {
     await page.goto("/");
     await expect(
       page.getByRole("heading", {
-        name: "Start the next treatment where the last one ended.",
+        name: "Start the next treatment where the last one ended",
         level: 1,
       }),
     ).toBeVisible();
@@ -43,24 +43,28 @@ test.describe("marketing homepage (desktop)", () => {
     expect(await firstCta.getAttribute("href")).toBe("/demo");
     await expect(page.getByText(/Book a walkthrough|Book the walkthrough/)).toHaveCount(0);
 
-    // The deck's nine blocks, each by its heading, in the order they appear.
+    // The page's blocks, each by its heading, in the order they appear.
     for (const name of [
       "Before the client sits down",
       "Every area keeps its own history",
-      "More than a note",
+      "Each detail in its own field",
+      "One record, from booking to payment",
       "Know what was used, and when",
-      "Your client records should stay yours.",
-      "Simple plans, in Canadian dollars.",
-      "See it with a returning client.",
+      "How your records are kept",
+      "Plans in Canadian dollars",
+      "See it with a returning client",
     ]) {
       await expect(page.getByRole("heading", { name }), `missing: ${name}`).toBeVisible();
     }
 
-    // The trust strip: four lines, one row, no heading.
-    await expect(page.getByText("Records isolated by studio")).toBeVisible();
+    // The film's lede is the operator's own line (MKT-03 revision 3), and the
+    // trust strip that followed it is gone: each of its claims is made once,
+    // in the records section below.
     await expect(
-      page.getByText("Imported history stays marked as imported"),
+      page.getByText("Review the last treatment, check the settings used and chart today’s session."),
     ).toBeVisible();
+    await expect(page.getByText("Records isolated by studio")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Imported history stays labelled" })).toBeVisible();
 
     // Signature product visual (anonymized demo data).
     await expect(page.getByText("Before today").first()).toBeVisible();
@@ -85,7 +89,7 @@ test.describe("marketing homepage (desktop)", () => {
     // its subset rather than claiming "full studio history" (TRUTH-01A).
     // #764's wording supersedes the old "Studio data stays isolated" line that
     // stood here; the claim moved, the check moves with it.
-    await expect(page.getByText("Each studio's records are isolated")).toBeVisible();
+    await expect(page.getByText("Each studio's records are kept apart")).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Export your records as CSV, on every plan" }),
     ).toBeVisible();
@@ -266,7 +270,7 @@ test.describe("marketing homepage (mobile)", () => {
     await page.goto("/");
     await expect(
       page.getByRole("heading", {
-        name: "Start the next treatment where the last one ended.",
+        name: "Start the next treatment where the last one ended",
         level: 1,
       }),
     ).toBeVisible();
@@ -306,6 +310,6 @@ test.describe("marketing homepage (mobile)", () => {
     }
     await dialog.getByRole("link", { name: "Pricing" }).click();
     await page.waitForURL(/\/pricing$/);
-    await expect(page.getByRole("heading", { level: 1, name: "Simple plans, in Canadian dollars." })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Plans in Canadian dollars" })).toBeVisible();
   });
 });

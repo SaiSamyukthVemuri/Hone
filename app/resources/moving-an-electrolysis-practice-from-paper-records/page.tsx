@@ -42,21 +42,20 @@ const STEPS: { h: string; body: string[] }[] = [
   {
     h: "2. Get the data into a consistent shape",
     body: [
-      "Digital tools need consistency. Put the history you are bringing over into a simple, consistent structure, a spreadsheet with one row per client (or per past session) and clear columns, before you import anything.",
+      "Digital tools need consistency. Before you import anything, put the history you are bringing over into one consistent structure, such as a spreadsheet with one row per client (or per past session) and clear columns.",
       "Even a rough, consistent spreadsheet is far easier to work with than a stack of cards in different handwriting.",
     ],
   },
   {
     h: "3. Keep imported history separate from new charting",
     body: [
-      "Imported history is a snapshot of what happened elsewhere; it is not the same as a session you charted live. Keeping the two clearly separated, and labelled, protects the integrity of your new records and avoids confusion about what was actually recorded at the time.",
+      "Imported history is a snapshot of what happened elsewhere, recorded differently from a session you chart live. Keep the two separate and labelled, so it is always clear what was recorded at the time and what was brought over later.",
     ],
   },
   {
     h: "4. Start charting new sessions digitally from day one",
     body: [
-      "The value of moving off paper comes from what you record going forward. From your first digital appointment, chart the full session, settings, probe lot, areas, response, and a plan for next time, at the point of care.",
-      "Within a few visits, the digital record becomes the one you actually reach for.",
+      "Most of the benefit comes from what you record from now on. From your first digital appointment, chart the full session at the point of care: settings, probe lot, areas, response and a plan for next time.",
     ],
   },
   {
@@ -68,7 +67,7 @@ const STEPS: { h: string; body: string[] }[] = [
   {
     h: "6. Build the point-of-care habit",
     body: [
-      "The practices that succeed with digital records are the ones that chart during or right after the appointment, not at the end of the week. A tool that is quick to use at the point of care makes that habit realistic.",
+      "Chart during the appointment or straight after it, while the details are fresh. A tool that is quick to use at the point of care makes that habit realistic.",
     ],
   },
 ];
@@ -93,11 +92,10 @@ export default function MovingFromPaperArticlePage() {
               <Display className="mt-2.5">{article.title}</Display>
               <ArticleByline article={article} />
               <p className="mt-8 text-[1.0625rem] leading-[1.7] text-ink">
-                Paper treatment cards work right up until they don&apos;t: a card is hard to
-                read, hard to search, and only in one place at a time. Moving to digital records
-                is mostly about continuity, keeping the history you have while making the
-                records you take from now on cleaner and easier to use. Here is a practical way
-                to do it without losing anything.
+                A paper treatment card is hard to read, hard to search and in only one place at a
+                time. Moving to digital records is mostly about continuity: keeping the history
+                you have while making the records you take from now on easier to use. These six
+                steps cover the move.
               </p>
             </Reveal>
           </Container>
@@ -121,17 +119,16 @@ export default function MovingFromPaperArticlePage() {
                 How Hone handles the move
               </Subtitle>
               <p className="mt-3 text-[0.9375rem] leading-[1.7] text-muted">
-                Hone is built for exactly this transition. During guided onboarding, standard
-                client import brings your history over from a spreadsheet, paper cards, or
-                another tool, and it appears in each client&apos;s{" "}
+                During guided onboarding, standard client import brings your history over from a
+                spreadsheet, paper cards or another tool, and it appears in each client&apos;s{" "}
                 <Link
                   href="/features/treatment-memory"
                   className="font-medium text-mineral underline underline-offset-4"
                 >
                   Before Today briefing
                 </Link>{" "}
-                clearly labelled as imported, never mixed with what you chart live. From there,
-                new sessions are charted digitally from day one.
+                labelled as imported and kept apart from what you chart live. New sessions are
+                charted in Hone from the first appointment.
               </p>
               <ArticleDisclaimer />
               <ArticleCorrections />
@@ -140,8 +137,7 @@ export default function MovingFromPaperArticlePage() {
         </article>
 
         <RelatedLinks
-          eyebrow="Related"
-          title="Keep reading."
+          title="Related reading"
           links={[
             {
               href: "/resources/electrolysis-treatment-record-checklist",
@@ -162,8 +158,8 @@ export default function MovingFromPaperArticlePage() {
         />
 
         <WalkthroughCTA
-          title="Thinking about moving off paper?"
-          body="We'll walk through import and how new charting works, on your real records, and reply within one business day."
+          title="Moving off paper with Hone"
+          body="We reply within one business day to set a time, then walk through import and how new charting works."
         />
       </main>
       <SiteFooter />

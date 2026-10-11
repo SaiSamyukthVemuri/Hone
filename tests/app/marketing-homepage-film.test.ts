@@ -423,13 +423,15 @@ describe("analytics stays inside the existing allowlist", () => {
 });
 
 describe("the homepage consumes the film as section 1", () => {
-  it("renders the player edge to edge on a phone, and closes on the film's own end card", () => {
+  it("renders the player edge to edge on a phone, and its end card stays the film's own", () => {
     expect(PAGE).toMatch(/<ProductFilm\b/);
     expect(HOMEPAGE_CALL).toMatch(/\bbleed\b/);
-    // The end-card wording is COPY and belongs to MKT-02A's POSITIONING, not to
-    // this lane's asset constant. What is pinned here is that the page actually
-    // closes on it — the film's last frame and the page's last words agreeing.
-    expect(PAGE).toMatch(/POSITIONING\.filmClosingLine/);
+    // MKT-03 REVISION 3 RETIRED THE PAGE'S COPY OF THE END CARD. The close used
+    // to repeat the film's last line as a label, a slogan the visitor had just
+    // seen. The line now lives only where it is the film's own words: in the
+    // frames and in the transcript, quoted exactly.
+    expect(PAGE).not.toMatch(/filmClosingLine/);
+    expect(FILM.transcript.at(-1)).toMatch(/“Hone\. Pick up where you left off\. hone\.care”/);
   });
 });
 

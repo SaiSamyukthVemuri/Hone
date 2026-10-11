@@ -25,7 +25,6 @@ import { CalendarPreview } from "./_components/marketing/visuals/CalendarPreview
 import {
   POSITIONING,
   WALKTHROUGH,
-  FILM,
   PRICING_PLANS,
   PAYMENT_QUALIFIER,
   ANALYTICS_EVENTS,
@@ -49,14 +48,17 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 //
 //   hero        paper   one row: category + headline | sub + the button
 //   1 film      BAND    the film first, then its heading and what it shows
-//   2 trust     paper   a thin ruled strip, deliberately not a section
-//   3 areas     paper   editorial split, product panel right
-//   4 note      warm    a typographic A/B — the sentence against the fields
-//   5 workflow  paper   heading across the top, then calendar | ordered steps
-//   6 records   BAND    four lines, no image, after three image blocks
-//   7 yours     paper   the shared ruled matrix
-//   8 pricing   warm    ruled columns sharing one rule, not three floating cards
-//   9 CTA       BAND    centred, the film's own closing line as its label
+//   2 areas     paper   editorial split, product panel right
+//   3 fields    warm    a typographic A/B: a free-text note beside the fields
+//   4 workflow  paper   heading across the top, then calendar | ordered steps
+//   5 records   BAND    four lines, no image, after three image blocks
+//   6 kept      paper   the shared ruled matrix
+//   7 pricing   warm    ruled columns sharing one rule, not three floating cards
+//   8 CTA       BAND    centred, the request and what happens in it
+//
+// MKT-03 revision 3 (the anti-slop pass) removed the trust strip, whose four
+// lines all reappear in sections 6 and 7, and the two slogan labels that sat
+// above the film's heading and the close.
 //
 // ONE RHYTHM. No section here overrides its padding any more: each reads the
 // site-wide --mk-section-pad (32px on a phone up to 64px on a wide desktop)
@@ -74,28 +76,31 @@ export const metadata: Metadata = marketingMetadata("/");
 // Deck §3.5. The connected workflow, in the order a visit actually happens.
 // Rendered through the shared WorkflowGrid so the homepage does not hand-roll a
 // second numbered-sequence treatment.
+//
+// Each body is a full sentence with its actor (MKT-03 revision 3): the
+// fragments ("Health history before the visit.") read as a template grid.
 const WORKFLOW_STEPS: { n: string; title: string; body: string }[] = [
-  { n: "01", title: "Booking", body: "A booking page for your studio and a shared calendar." },
-  { n: "02", title: "Intake", body: "Health history before the visit. A pacemaker or an EpiPen is flagged before the appointment." },
-  { n: "03", title: "Consent", body: "The exact text the client signed, with signature and timestamp." },
-  { n: "04", title: "Treatment", body: "Areas, settings, probe and lot recorded as fields at the point of care." },
-  { n: "05", title: "Follow-up", body: "Aftercare and next-treatment notes carried to the next visit." },
-  { n: "06", title: "Payment", body: `Take payment at the session, keep a card on file, issue refunds. ${PAYMENT_QUALIFIER}` },
+  { n: "01", title: "Booking", body: "Clients book online from your studio's booking page, and the appointment lands on your calendar." },
+  { n: "02", title: "Intake", body: "Clients complete a health history before the visit, and answers such as a pacemaker or an EpiPen are flagged for you to review." },
+  { n: "03", title: "Consent", body: "Hone keeps the exact text each client signed, with their signature and the time." },
+  { n: "04", title: "Treatment", body: "You chart areas, settings, probe and lot at the point of care." },
+  { n: "05", title: "Follow-up", body: "Aftercare and your note for next time come back at the next visit." },
+  { n: "06", title: "Payment", body: `Take payment at the session, keep a card on file and issue refunds. ${PAYMENT_QUALIFIER}` },
 ];
 
 // Deck §3.6. Four lines, no image — the band earns its contrast by being the
 // one block on the page with nothing to look at.
 const RECORD_LINES: string[] = [
-  "Probe lots recorded on the treatment and linked to your inventory.",
-  "Sterile-item and disinfectant expiry logged.",
+  "Probe lots are recorded on each treatment and linked to your inventory.",
+  "Sterile items and disinfectants are logged with their expiry dates.",
   // NARROWED. This read "Edits kept as history, not written over", which
   // promised append-only behaviour for every edit. Treatment and session values
   // are editable IN PLACE — the register is explicit that records "stay
   // editable" and forbids implying immutability. What is genuinely append-only
   // is the clinical note: a correction is a new row (`supersedes_note_id`), and
   // the register lists that among the claims still marketable as written.
-  "Clinical note corrections are kept as revisions, not written over.",
-  "Record gaps flagged: a missing probe lot, aftercare not marked, a completed appointment not yet charted.",
+  "A corrected clinical note is saved as a new revision, and the original stays readable.",
+  "Hone flags gaps such as a missing probe lot, aftercare not marked or a completed appointment not yet charted.",
 ];
 
 // Deck §3.7. The export line resolves the deck's [VERIFY] the only way it can
@@ -107,23 +112,27 @@ const RECORD_LINES: string[] = [
 const OWNERSHIP: { title: string; body: string }[] = [
   {
     title: "Export your records as CSV, on every plan",
-    body: "Clients, sessions, charting, appointments, treatment plans and record-keeping logs. The export names in writing what it does and does not yet include.",
+    body: "Clients, sessions, charting, appointments, treatment plans and record-keeping logs. The export page lists what it does and does not yet include.",
   },
   {
-    title: "Each studio's records are isolated",
-    body: "Separated from every other studio's with database row-level security.",
+    // Plain words for the mechanism (MKT-03 revision 3). "Row-level security"
+    // is the database's term; what a practitioner needs is where the line is.
+    title: "Each studio's records are kept apart",
+    body: "Hone separates each studio's records from every other studio's in the database itself.",
   },
   {
+    // Register: private per-studio bucket, EXIF/GPS stripped on upload, 60s
+    // path-bound signed URLs. Said as what a practitioner would notice.
     title: "Treatment photos stay private",
-    body: "Stored in a private per-studio bucket, camera metadata stripped, opened through short-lived links — never public URLs.",
+    body: "Photos are stored privately for your studio, with location and camera data removed on upload. They open only through links that expire within a minute.",
   },
   {
     title: "No AI training on your records",
-    body: "Hone does not train AI models on practitioner or client records. The checks that flag record gaps are rules, not AI.",
+    body: "Hone does not train AI models on practitioner or client records. The checks that flag record gaps follow fixed rules and use no AI.",
   },
   {
-    title: "Imported history is always marked as imported",
-    body: "History brought over from paper or another system stays labelled, never mixed into what you charted in Hone.",
+    title: "Imported history stays labelled",
+    body: "History brought over from paper or another system keeps an imported label, separate from what you chart in Hone.",
   },
   {
     // THE RETIRED LINE IS DESCRIBED, NEVER REPRODUCED — MKT-02A's rule, and it
@@ -142,16 +151,12 @@ const OWNERSHIP: { title: string; body: string }[] = [
     // retired the contract claim, and neither is verifiable from anything in
     // this repository. What remains are the two terms the operator actually
     // publishes. The bounded export wording below is unchanged.
-    title: "No setup fee. Cancel anytime.",
-    body: "What you can take with you is the export named above — nothing here promises more than that list.",
+    title: "No setup fee, and you can cancel anytime",
+    body: "If you leave, the CSV export described above is what you take with you.",
   },
 ];
 
 export default function HomePage() {
-  // The workflow heading is two sentences, and on a wide screen it reads as
-  // two lines that break where the sentences do — not as a five-line column.
-  const workflowHeading = POSITIONING.differentiationLine.split(/(?<=\.)\s+/);
-
   return (
     <MarketingSurface>
       <SkipLink />
@@ -207,10 +212,13 @@ export default function HomePage() {
             {/* What the film shows, as one column under it, not a second
                 split beside it: the opening row already spends that move. */}
             <div className="mt-[clamp(1.75rem,1rem+2vw,3rem)] max-w-[44rem]">
-              <Eyebrow onBand>{POSITIONING.keepPhrase}</Eyebrow>
-              <Title className="mt-2 text-paper">Before the client sits down</Title>
+              {/* No label above the heading: the category line it carried is
+                  the footer's, and here it only repeated the film's own title
+                  card a few hundred pixels up. */}
+              <Title className="text-paper">Before the client sits down</Title>
               <Lede onBand className="mt-4">
-                {`In ${FILM.durationSeconds} silent seconds: the week's calendar, the last treatment area by area, the exact setup used, today's charting and one client record.`}
+                Review the last treatment, check the settings used and chart today&rsquo;s
+                session.
               </Lede>
               {/* Label and destination move together: MKT-02A repointed this
                   at the treatment-memory page, and a control may only promise
@@ -227,29 +235,17 @@ export default function HomePage() {
           </Container>
         </Section>
 
-        {/* ── 2. Trust strip ───────────────────────────────────────────────
-            Not a Section and not four cards: one ruled row, the width of the
-            shell, that a visitor reads in a single pass on the way down. */}
-        <Container className="py-[clamp(1.5rem,2.5vw,2.25rem)]">
-          <ul className="grid grid-cols-1 divide-y divide-[color:var(--color-hairline)] border-y border-[color:var(--color-hairline)] sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4">
-            {POSITIONING.trustStrip.split(" · ").map((line) => (
-              <li
-                key={line}
-                className="py-3.5 text-[0.9375rem] leading-[1.45] text-muted sm:border-b sm:border-[color:var(--color-hairline)] sm:pr-6 lg:border-b-0 lg:[&:not(:first-child)]:border-l lg:[&:not(:first-child)]:border-[color:var(--color-hairline)] lg:[&:not(:first-child)]:pl-6"
-              >
-                {line}
-              </li>
-            ))}
-          </ul>
-        </Container>
+        {/* THE TRUST STRIP IS GONE (MKT-03 revision 3). Each of its four
+            lines was said again in full lower on this page, in the records
+            section and at pricing, so the strip was a repeat, not a block. */}
 
-        {/* ── 3. Every area keeps its own history ─────────────────────────── */}
+        {/* ── 2. Every area keeps its own history ─────────────────────────── */}
         <Section tone="paper">
           <Container className="grid items-center gap-[clamp(2rem,4vw,4.5rem)] lg:grid-cols-[1.02fr_0.98fr]">
             <div>
               <Title className="max-w-[15ch]">Every area keeps its own history</Title>
               <p className="mt-5 max-w-[38ch] text-[1.1875rem] leading-[1.4] text-ink sm:text-[1.25rem]">
-                Upper lip, chin, neck and brows don&apos;t share one note.
+                Upper lip, chin, neck and brows each keep their own record.
               </p>
               {/* THE PRODUCT MODEL, NOT A SIMPLIFICATION OF IT. This claimed a
                   four-area appointment is recorded as four separate treatments.
@@ -259,33 +255,34 @@ export default function HomePage() {
                   per-area promise that IS true is findability — memory is kept
                   per treatment area — so that is what this says now. */}
               <Lede className="mt-4 max-w-[46ch]">
-                Treat several areas at the same settings and Hone records those areas under
-                one settings block. Each area still remains findable in its own history.
-                When the setup changes, a new block preserves the difference.
+                Treat several areas at the same settings and Hone records them under
+                one settings block. Each area stays findable in its own history, and areas
+                treated at different settings get a block of their own.
               </Lede>
             </div>
             <TreatmentMemoryPanel />
           </Container>
         </Section>
 
-        {/* ── 4. More than a note ──────────────────────────────────────────
-            A typographic A/B. The sentence a notes field can hold, set large
-            and muted, against the same treatment as fields. The comparison IS
-            the layout; neither side is a card. */}
+        {/* ── 3. Each detail in its own field ──────────────────────────────
+            A typographic A/B: a real free-text note, set large and muted,
+            beside the same treatment recorded as fields. The comparison is the
+            layout; neither side is a card. The heading names what Hone does
+            rather than setting it against a note. */}
         <Section tone="warm">
           <Container>
-            <Title className="max-w-[12ch]">More than a note</Title>
+            <Title className="max-w-[16ch]">Each detail in its own field</Title>
             <div className="mt-[clamp(1.75rem,3vw,3rem)] grid gap-[clamp(2rem,4vw,4rem)] lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
               <div>
-                <p className="text-[0.9375rem] font-medium text-muted">A note can say</p>
+                <p className="text-[0.9375rem] font-medium text-muted">A free-text note</p>
                 <p className="mt-3 border-l border-[color:var(--color-hairline-strong)] pl-5 text-[clamp(1.375rem,1.1rem+1vw,1.75rem)] leading-[1.35] text-muted">
                   &ldquo;Upper lip treated, tolerated well.&rdquo;
                 </p>
                 <Lede className="mt-6 max-w-[42ch]">
-                  Hone records the treatment as fields, not a paragraph: the areas treated,
-                  the machine settings, probe and lot, how each area was tolerated, and what
-                  to remember next time. Because they&apos;re fields rather than prose, each
-                  area stays findable on its own and Hone can tell you when one is missing.
+                  Hone records the areas treated, the machine settings, probe and lot, how
+                  each area was tolerated and the note for next time, each in its own field.
+                  That keeps every area findable on its own, and lets Hone tell you when
+                  something is missing.
                 </Lede>
                 <Link
                   href="/features/charting-records"
@@ -300,29 +297,16 @@ export default function HomePage() {
           </Container>
         </Section>
 
-        {/* ── 5. The connected workflow ────────────────────────────────────
-            The heading runs across the top in two sentences, so it no longer
-            stands five lines tall in a narrow column. Under it, the calendar
-            and the ordered steps sit side by side at the same height: the steps
-            carry no fixed title height and the calendar keeps its natural size.
-            On a phone and a tablet the steps stand alone; the calendar is a
-            desktop composition. */}
+        {/* ── 4. The connected workflow ────────────────────────────────────
+            The heading runs across the top, so it never stands tall in a
+            narrow column. Under it, the calendar and the ordered steps sit side
+            by side at the same height: the steps carry no fixed title height
+            and the calendar keeps its natural size. On a phone and a tablet the
+            steps stand alone; the calendar is a desktop composition. The lede
+            that restated the six steps is gone: the steps say it. */}
         <Section tone="paper" id="how-hone-works">
           <Container>
-            <Title className="max-w-[24ch] lg:max-w-none">
-              {/* The trailing space keeps the heading's TEXT one sentence apart
-                  ("appointment. Hone") for assistive tech, copy and search; it
-                  collapses visually at the line end. */}
-              {workflowHeading.map((sentence) => (
-                <span key={sentence} className="lg:block">
-                  {`${sentence} `}
-                </span>
-              ))}
-            </Title>
-            <Lede className="mt-4 max-w-[60ch]">
-              One calm workflow, start to finish. Booking, intake, consent, treatment,
-              follow-up, payment and the client portal share one record.
-            </Lede>
+            <Title className="max-w-[24ch] lg:max-w-none">{POSITIONING.differentiationLine}</Title>
             <div className="mt-[clamp(1.75rem,3vw,3rem)] grid items-start gap-[clamp(2rem,4vw,4rem)] lg:grid-cols-[minmax(18rem,0.75fr)_minmax(0,1.6fr)]">
               <div className="hidden lg:block">
                 <CalendarPreview />
@@ -332,7 +316,7 @@ export default function HomePage() {
           </Container>
         </Section>
 
-        {/* ── 6. Know what was used, and when ──────────────────────────────
+        {/* ── 5. Know what was used, and when ──────────────────────────────
             The band with nothing to look at. Four lines, large, ruled. */}
         <Section tone="band">
           <Container>
@@ -359,7 +343,7 @@ export default function HomePage() {
           </Container>
         </Section>
 
-        {/* ── 7. Your client records should stay yours ─────────────────────
+        {/* ── 6. How your records are kept ─────────────────────────────────
             The shared ruled matrix — a designed table, not six floating
             cards. No badges, no hosting-location line. */}
         <Section tone="paper">
@@ -378,9 +362,10 @@ export default function HomePage() {
           </Container>
         </Section>
 
-        {/* ── 8. Simple plans, in Canadian dollars ─────────────────────────
-            Three columns sharing ONE top rule and one baseline, divided by
-            hairlines. A price list, not three cards competing for a click. */}
+        {/* ── 7. Plans in Canadian dollars ──────────────────────────────────
+            Three columns because Hone has three plans, sharing ONE top rule
+            and one baseline, divided by hairlines. A price list, not three
+            cards competing for a click, and no plan is marked as recommended. */}
         <Section tone="warm" id="pricing">
           <Container>
             <Title className="max-w-[20ch]">{POSITIONING.pricingHeading}</Title>
@@ -417,10 +402,11 @@ export default function HomePage() {
               ))}
             </div>
 
-            <p className="mt-5 text-[0.9375rem] text-muted">{POSITIONING.assuranceLine}</p>
-            {/* An outline, not a second filled button: the filled button is the
-                walkthrough request, and the closing band right below carries it. */}
-            <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
+            <p className="mt-5 max-w-[60ch] text-[0.9375rem] text-muted">{POSITIONING.assuranceLine}</p>
+            {/* One action here, an outline. The walkthrough request that sat
+                beside it is the closing band's own button, directly below, so
+                the two read as the same link twice. */}
+            <div className="mt-6">
               <CTAButton
                 href="/pricing"
                 variant="outline"
@@ -429,24 +415,16 @@ export default function HomePage() {
               >
                 See pricing details
               </CTAButton>
-              <CTAButton
-                href={WALKTHROUGH.href}
-                variant="secondary"
-                event={ANALYTICS_EVENTS.primaryCtaClick}
-              >
-                {WALKTHROUGH.primaryLabel}
-              </CTAButton>
             </div>
           </Container>
         </Section>
 
-        {/* ── 9. Walkthrough CTA ───────────────────────────────────────────
-            The film's closing card, reused as the label above the heading, so
-            the page ends on the same words the film ends on. */}
+        {/* ── 8. Walkthrough CTA ───────────────────────────────────────────
+            No label above the heading. It used to carry the film's end-card
+            line, which repeated a slogan the visitor had already seen. */}
         <Section tone="band">
           <Container className="text-center">
-            <Eyebrow onBand>{POSITIONING.filmClosingLine}</Eyebrow>
-            <Title className="mx-auto mt-3 max-w-[18ch] text-paper">
+            <Title className="mx-auto max-w-[18ch] text-paper">
               {POSITIONING.walkthroughHeading}
             </Title>
             <Lede onBand className="mx-auto mt-5 max-w-[52ch]">

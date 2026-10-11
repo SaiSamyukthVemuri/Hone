@@ -10,7 +10,6 @@ import {
   MarketingSurface,
   Container,
   Section,
-  Eyebrow,
   Display,
   Title,
   Lede,
@@ -79,23 +78,23 @@ export const metadata: Metadata = marketingMetadata("/electrolysis-software");
 const MANAGES: { title: string; body: string; href?: string; link?: string }[] = [
   {
     title: "Booking and schedule",
-    body: "A public booking page with real open times and double-booking protection, plus a calendar built for how an electrolysis day actually runs.",
+    body: "A public booking page that shows real open times and prevents double-booking, and a calendar with day, week and month views.",
     href: "/features/booking-calendar",
     link: "Booking and calendar",
   },
   {
     title: "Client preparation",
-    body: "A secure health intake and your own consent forms, collected before the visit and reviewed in one place.",
+    body: "A secure health intake and your own consent forms, completed by the client before the visit.",
   },
   {
     title: "Treatment charting",
-    body: "Point-of-care charting for electrolysis and laser, mode, energy, machine frequency, structured probe and lot, minutes, and observations.",
+    body: "Chart electrolysis and laser sessions at the point of care: mode, energy, machine frequency, probe and lot, minutes and observations.",
     href: "/features/charting-records",
     link: "Charting and records",
   },
   {
     title: "Treatment memory",
-    body: "The details that shape a returning client's session, last settings, probe lot, how they responded, and the plan you left, surfaced before they sit down.",
+    body: "Before a returning client sits down, Hone shows their last settings, probe lot, how they responded and the plan you left.",
     href: "/features/treatment-memory",
     link: "Treatment memory",
   },
@@ -124,7 +123,7 @@ export default function ElectrolysisSoftwarePage() {
         <Container className="grid items-center gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div>
             <Display className="max-w-[18ch]">
-              Electrolysis software built around how electrolysis is charted
+              Electrolysis software built around the treatment record
             </Display>
             <Lede className="mt-5 max-w-[38rem]">
               Hone is practice software for electrologists. It keeps a separate history for
@@ -172,7 +171,7 @@ export default function ElectrolysisSoftwarePage() {
           <figure className="m-0 overflow-hidden rounded-[var(--mk-radius-frame)] border border-[color:var(--color-hairline)] bg-warm">
             <Image
               src={posterFrame}
-              alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing what was recorded for two treated areas &mdash; midline upper lip and bilateral chin &mdash; each with machine frequency, probe and lot number, mode, energy, timing and minutes."
+              alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing what was recorded for two treated areas (midline upper lip and bilateral chin), each with machine frequency, probe and lot number, mode, energy, timing and minutes."
               priority
               sizes="(min-width: 1640px) 680px, (min-width: 1024px) 43vw, 92vw"
               className="block aspect-video w-full object-cover"
@@ -184,67 +183,67 @@ export default function ElectrolysisSoftwarePage() {
             was a section of its own, alternating backgrounds, a label, a
             heading and two lines. Where a body restated its own heading, the
             repeat is trimmed; nothing is added. */}
+        {/* NO TAGLINE UNDER EACH ROW HEAD (MKT-03 revision 3). Every row opened
+            with a short line ("Traceable to the day.") that restated its head
+            as a slogan before the body said it plainly; the bodies stand. */}
         <Section tone="warm">
           <Container>
-            <Title className="max-w-2xl">Built around the treatment record</Title>
+            <Title className="max-w-2xl">At a glance</Title>
             <SpecRows>
               <SpecRow>
                 <SpecRowHead>Who it&rsquo;s for</SpecRowHead>
                 <SpecRowBody>
-                  <p>Solo electrologists and small studios of up to three practitioners.</p>
-                  <p>Plans in Canadian dollars.</p>
+                  <p>
+                    Solo electrologists and small studios of up to three practitioners. Plans are
+                    in Canadian dollars.
+                  </p>
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
                 <SpecRowHead>Before the client sits down</SpecRowHead>
                 <SpecRowBody>
-                  <p>The briefing is already assembled.</p>
                   <p>
-                    Open a returning client and it is there, built from their previous
-                    treatments: areas, settings, probe and lot, skin response, and what you
-                    flagged for next time.
+                    Open a returning client and the briefing is there, built from their previous
+                    treatments: areas, settings, probe and lot, skin response and what you flagged
+                    for next time.
                   </p>
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
                 <SpecRowHead>Every area keeps its own history</SpecRowHead>
                 <SpecRowBody>
-                  <p>The history of the chin is the history of the chin.</p>
                   <p>
-                    Treat four areas at the same settings and those settings are recorded once,
-                    for those four areas. Each one carries the treatment into its own history,
-                    and each one is searchable by name.
+                    Treat four areas at the same settings and Hone records those settings once,
+                    for all four. Each area carries the treatment into its own history and can be
+                    searched by name.
                   </p>
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
-                <SpecRowHead>More than a note</SpecRowHead>
+                <SpecRowHead>Recorded as fields</SpecRowHead>
                 <SpecRowBody>
-                  <p>Fields, not sentences.</p>
                   <p>
                     Area and side, mode and modality, energy, frequency and pulse count, probe
-                    type and lot, tolerance, skin response and the note for next time, recorded
-                    as fields so Hone can keep each area separate, bring the right one forward,
-                    and flag what&rsquo;s missing.
+                    type and lot, tolerance, skin response and the note for next time are each
+                    recorded as a field. That is how Hone keeps each area separate, brings the
+                    right one forward and flags what is missing.
                   </p>
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
                 <SpecRowHead>Know what was used, and when</SpecRowHead>
                 <SpecRowBody>
-                  <p>Traceable to the day.</p>
                   <p>
-                    Probe lots linked to inventory. Sterile-item and disinfectant expiry logged,
-                    and that log is append-only. A print-friendly view of the record. Gaps
-                    flagged: a missing lot, aftercare not marked, a completed appointment not
-                    yet charted.
+                    Probe lots are linked to your inventory. Sterile-item and disinfectant expiry
+                    dates go into an append-only log. The record has a print-friendly view, and
+                    Hone flags gaps: a missing lot, aftercare not marked or a completed
+                    appointment not yet charted.
                   </p>
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
                 <SpecRowHead>Plans</SpecRowHead>
                 <SpecRowBody>
-                  <p>{POSITIONING.pricingHeading}</p>
                   <p>{POSITIONING.noCapsLine}</p>
                   <p>
                     <Link
@@ -262,10 +261,9 @@ export default function ElectrolysisSoftwarePage() {
 
         <Section tone="paper">
           <Container>
-            <Eyebrow>Everything else stays connected</Eyebrow>
-            <Title className="mt-3 max-w-2xl">
+            <Title className="max-w-2xl">
               Booking, intake, consent, treatment, follow-up and the client portal share one
-              record.
+              record
             </Title>
             <FeatureMatrix
               items={MANAGES.map((m) => ({
@@ -280,12 +278,11 @@ export default function ElectrolysisSoftwarePage() {
         <Section tone="warm">
           <Container className="grid items-center gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
             <div>
-              <Eyebrow>Why specialist</Eyebrow>
-              <Title className="mt-3">Built around returning-client memory.</Title>
+              <Title>Electrolysis is a course of treatment</Title>
               <Lede className="mt-4">
-                Generic scheduling tools record that an appointment happened. Electrolysis is a
-                course of treatment, so what matters next time is what was done to each area
-                and how it responded. Hone keeps that, per area, and brings it forward.
+                What matters at the next appointment is what was done to each area and how it
+                responded. Hone keeps that for each area and brings it forward before the client
+                sits down.
               </Lede>
             </div>
             <TreatmentMemoryPanel />
@@ -293,7 +290,7 @@ export default function ElectrolysisSoftwarePage() {
         </Section>
 
         <RelatedLinks
-          title="Go deeper."
+          title="Each part in detail"
           links={[
             {
               href: "/features/treatment-memory",
@@ -315,7 +312,7 @@ export default function ElectrolysisSoftwarePage() {
 
         <WalkthroughCTA
           title={POSITIONING.walkthroughHeading}
-          body="A short, founder-led walkthrough of the real app. We reply within one business day."
+          body="A founder-led walkthrough of the real app. We reply within one business day to set a time."
         />
       </main>
       <SiteFooter />

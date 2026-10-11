@@ -8,7 +8,6 @@ import {
   MarketingSurface,
   Container,
   Section,
-  Eyebrow,
   Display,
   Title,
   Subtitle,
@@ -52,17 +51,17 @@ export const metadata: Metadata = marketingMetadata("/pricing");
 // screenshotted, excerpted and read alone. Relying on adjacency would make the
 // rule hold by layout.
 const INCLUDED: string[] = [
-  "Treatment memory, the Before Today briefing on every returning client",
+  "Treatment memory: the Before Today briefing for every returning client",
   "Treatment charting for electrolysis and laser",
   "Client health intake",
   "Your own consent forms",
   "Private treatment photos and procedure records",
   "Client follow-up and postcare",
-  `Owner-run card payments — ${PAYMENT_QUALIFIER}`,
+  `Owner-run card payments. ${PAYMENT_QUALIFIER}`,
   "The client portal",
   // TRUTH-01A: "Full data export" overstated a named-subset export. See
   // lib/export/resource-registry.ts for the authoritative contents.
-  "CSV data export, any time, listing exactly what it includes",
+  "CSV data export at any time, with a list of what it includes",
 ];
 
 const FAQ: { q: string; a: string }[] = [
@@ -76,15 +75,15 @@ const FAQ: { q: string; a: string }[] = [
     // that it then declined to answer — and published that pairing as
     // FAQPage structured data. A question is a promise to answer it.
     q: "Is there a setup fee?",
-    a: "No setup fee. Setup is founder-led during onboarding, and you can cancel anytime.",
+    a: "No. Setup is founder-led during onboarding, and you can cancel anytime.",
   },
   {
     q: "What's included on each plan?",
-    a: "Every plan includes the full Hone workflow, booking, intake and consent, charting, treatment memory, photos and records, and client follow-up. Plans differ by who they're for and how many practitioners they cover, not by locking features behind a higher tier.",
+    a: "Every plan includes the full Hone workflow: booking, intake and consent, charting, treatment memory, photos and records, and client follow-up. Plans differ only by who they are for and how many practitioners they cover.",
   },
   {
     q: "Can I bring my existing client history into Hone?",
-    a: "Yes. Standard client import is free and part of guided onboarding, we help bring history over from paper cards, spreadsheets, or another tool.",
+    a: "Yes. Standard client import is free and part of guided onboarding. We help bring history over from paper cards, spreadsheets or another tool.",
   },
   {
     q: "How do payments work?",
@@ -154,9 +153,7 @@ export default function PricingPage() {
       <main id="main-content" className="scroll-mt-16">
         <Container className="pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)]">
           <div>
-            <Display className="max-w-[18ch]">
-              Simple plans, in Canadian dollars.
-            </Display>
+            <Display className="max-w-[18ch]">{POSITIONING.pricingHeading}</Display>
             {/* THE SHARED CONSTANT, VERBATIM — never a local retyping of it.
                 #762 established this sentence as verified product truth (a
                 VERIFIED ABSENCE row in the truth register, checked against
@@ -183,9 +180,9 @@ export default function PricingPage() {
             ))}
           </div>
           {/* A LIST, not a styled sentence, so a screen reader hears four
-              assurances rather than one run-on line. Ruled cells like the
-              homepage's trust strip: a wrapped line of middots left a dot
-              hanging at the end of a line on a phone. */}
+              assurances rather than one run-on line. Ruled cells: a wrapped
+              line of middots left a dot hanging at the end of a line on a
+              phone. */}
           <ul className="mt-6 grid grid-cols-2 gap-x-6 border-t border-[color:var(--color-hairline)] text-[0.9375rem] text-ink sm:grid-cols-4">
             {PRICING_ASSURANCES.map((a) => (
               <li key={a} className="border-b border-[color:var(--color-hairline)] py-3">
@@ -194,8 +191,8 @@ export default function PricingPage() {
             ))}
           </ul>
           <p className="mt-3 text-[0.875rem] text-muted">
-            Prices in Canadian dollars (CAD). Setup and payment activation happen during a
-            guided onboarding, there is no self-service checkout.
+            Prices are in Canadian dollars (CAD). Setup and payment activation happen during
+            guided onboarding; there is no self-service checkout.
           </p>
           <CTAButton
             href={WALKTHROUGH.href}
@@ -210,12 +207,8 @@ export default function PricingPage() {
         <Section tone="warm">
           <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-8 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
             <div>
-              <Eyebrow>Every plan includes</Eyebrow>
-              <Title className="mt-3">The whole workflow, not a stripped-down tier.</Title>
-              <Lede className="mt-4">
-                Treatment memory, charting, intake, consent, and records are never held
-                back to build a higher tier.
-              </Lede>
+              <Title>What every plan includes</Title>
+              <Lede className="mt-4">No part of the workflow is held back for a higher plan.</Lede>
             </div>
             <div>
               <ul className="grid gap-x-8 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-2">
@@ -238,7 +231,7 @@ export default function PricingPage() {
         {/* FAQ */}
         <Section tone="paper">
           <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.7fr)]">
-            <Title className="max-w-[14ch]">Pricing questions, answered.</Title>
+            <Title className="max-w-[14ch]">Pricing questions</Title>
             <div className="max-w-[64ch]">
               <dl className="border-t border-[color:var(--color-hairline-strong)]">
                 {FAQ.map((item) => (
@@ -251,14 +244,22 @@ export default function PricingPage() {
                 ))}
               </dl>
               <p className="mt-6 text-[0.9375rem] text-muted">
-                Still deciding?{" "}
+                To ask something first,{" "}
                 <Link
                   href={`mailto:${CONTACT_EMAIL}`}
                   className="font-medium text-mineral underline underline-offset-4"
                 >
-                  Email us
+                  email us
                 </Link>{" "}
-                or request a walkthrough.
+                or{" "}
+                <Link
+                  href={WALKTHROUGH.href}
+                  data-event={ANALYTICS_EVENTS.primaryCtaClick}
+                  className="font-medium text-mineral underline underline-offset-4"
+                >
+                  request a walkthrough
+                </Link>
+                .
               </p>
             </div>
           </Container>
@@ -267,10 +268,10 @@ export default function PricingPage() {
         {/* Closing CTA */}
         <Section tone="band">
           <Container className="text-center">
-            <Title className="mx-auto max-w-2xl text-paper">See Hone before you decide.</Title>
+            <Title className="mx-auto max-w-2xl text-paper">See Hone before you decide</Title>
             <Lede onBand className="mx-auto mt-4 max-w-xl">
-              We&apos;ll walk through your real workflow, set up guided onboarding, and reply
-              within one business day.
+              We reply within one business day to set a time, then walk through your workflow in
+              the real app.
             </Lede>
             <div className="mt-7 flex justify-center">
               <CTAButton

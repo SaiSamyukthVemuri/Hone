@@ -36,13 +36,10 @@ export default function ResourcesPage() {
       />
       <main id="main-content" className="scroll-mt-16">
         <Container className="pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)]">
-          <Display className="max-w-[20ch]">
-            Practical guides for running an electrolysis practice.
-          </Display>
+          <Display className="max-w-[20ch]">Guides for running an electrolysis practice</Display>
           <Lede className="mt-5 max-w-[38rem]">
-            Operational guides from {RESOURCE_AUTHOR}, the people building Hone, on keeping
-            good treatment records and moving a practice off paper. Practical, not
-            promotional.
+            Written by {RESOURCE_AUTHOR}, the people building Hone, on keeping treatment
+            records and moving a practice off paper.
           </Lede>
         </Container>
 
@@ -74,8 +71,8 @@ export default function ResourcesPage() {
         </Container>
 
         <WalkthroughCTA
-          title="Prefer to see it in the product?"
-          body="We'll walk through how Hone handles booking, charting, treatment memory, and records on your real workflow, and reply within one business day."
+          title="See it in the product"
+          body="We reply within one business day to set a time, then walk through booking, charting, treatment memory and records in the real app."
         />
       </main>
       <SiteFooter />

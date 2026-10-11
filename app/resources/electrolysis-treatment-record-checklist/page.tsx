@@ -81,7 +81,7 @@ const SECTIONS: { h: string; intro: string; items: string[] }[] = [
   },
   {
     h: "6. Client response",
-    intro: "How the skin and the client tolerated the session, the record that protects continuity and safety.",
+    intro: "How the skin and the client tolerated the session, recorded so the next treatment can follow on safely.",
     items: [
       "Tolerance for each area",
       "Any skin or client reaction, and whether it settled",
@@ -90,7 +90,7 @@ const SECTIONS: { h: string; intro: string; items: string[] }[] = [
   },
   {
     h: "7. Plan for the next visit",
-    intro: "The note that turns a one-off record into a course of treatment.",
+    intro: "What to adjust or watch at the next visit, so the course of treatment continues.",
     items: [
       "Suggested spacing before the next appointment",
       "Settings or areas to adjust next time",
@@ -99,7 +99,7 @@ const SECTIONS: { h: string; intro: string; items: string[] }[] = [
   },
   {
     h: "8. Follow-up",
-    intro: "Closing the loop after the client leaves.",
+    intro: "What the client takes home, and anything you send afterwards.",
     items: ["Aftercare instructions given", "Postcare communication sent, if any"],
   },
 ];
@@ -157,11 +157,10 @@ export default function ChecklistArticlePage() {
                 Keeping it consistent
               </Subtitle>
               <p className="mt-2 text-[0.9375rem] leading-[1.7] text-muted">
-                The hardest part of record-keeping isn&apos;t knowing what to capture, it&apos;s
-                capturing it the same way every time, at the point of care. Structured charting
-                helps: when settings, probe lot, areas, and response are their own fields rather
-                than a free-text note, the record stays legible and the detail carries forward.
-                That is exactly what{" "}
+                The hard part of record-keeping is capturing the same details the same way every
+                time, at the point of care. Structured charting helps: when settings, probe lot,
+                areas and response are separate fields, the record stays legible and the detail
+                carries forward. That is what{" "}
                 <Link
                   href="/features/charting-records"
                   className="font-medium text-mineral underline underline-offset-4"
@@ -177,8 +176,7 @@ export default function ChecklistArticlePage() {
         </article>
 
         <RelatedLinks
-          eyebrow="Related"
-          title="Keep reading."
+          title="Related reading"
           links={[
             {
               href: "/resources/moving-an-electrolysis-practice-from-paper-records",
@@ -188,7 +186,7 @@ export default function ChecklistArticlePage() {
             {
               href: "/features/charting-records",
               label: "Charting and records",
-              blurb: "See how Hone captures every item on this checklist as structured data.",
+              blurb: "See how Hone records these items as structured fields.",
             },
             {
               href: "/features/treatment-memory",
@@ -199,8 +197,8 @@ export default function ChecklistArticlePage() {
         />
 
         <WalkthroughCTA
-          title="See structured charting in Hone."
-          body="We'll walk through charting a session so every item here is captured cleanly, and reply within one business day."
+          title="See structured charting in Hone"
+          body="We reply within one business day to set a time, then chart a session with you, field by field."
         />
       </main>
       <SiteFooter />

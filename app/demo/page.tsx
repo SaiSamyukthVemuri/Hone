@@ -7,7 +7,6 @@ import {
   MarketingSurface,
   Container,
   Section,
-  Eyebrow,
   Display,
   Title,
   Subtitle,
@@ -17,7 +16,7 @@ import {
 import { Breadcrumbs } from "../_components/marketing/JsonLd";
 import { ProductFilm } from "../_components/marketing/ProductFilm";
 import { DemoForm } from "../_components/DemoForm";
-import { ANALYTICS_EVENTS, WALKTHROUGH } from "@/lib/marketing/content";
+import { ANALYTICS_EVENTS, FILM, WALKTHROUGH } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
 // /demo, a LEAD-CAPTURE request. The visitor never selects a real appointment
@@ -83,8 +82,8 @@ const WHAT_YOU_WILL_SEE: readonly string[] = [
 
 const WHAT_HAPPENS: { step: string; body: string }[] = [
   { step: "1", body: "Tell us a little about your practice using the form." },
-  { step: "2", body: "We reply by email within one business day to set up a time, there is no automatic booking." },
-  { step: "3", body: "On a short call we walk through your workflow in the real app: booking, charting, treatment memory, and records." },
+  { step: "2", body: "We reply by email within one business day to set up a time. Nothing is booked automatically." },
+  { step: "3", body: "On a call, we walk through your workflow in the real app: booking, charting, treatment memory and records." },
   { step: "4", body: "We decide together whether Hone fits your practice. If it doesn't, we'll say so." },
 ];
 
@@ -155,9 +154,8 @@ export default function DemoPage() {
                 </li>
               ))}
             </ol>
-            <p className="mt-6 max-w-md text-[0.9375rem] leading-[1.6] text-muted">
-              No sales pressure. The goal is to see whether Hone actually fits your practice.
-            </p>
+            {/* The "no sales pressure" line that followed restated step 4 as a
+                slogan, so it is gone (MKT-03 revision 3). */}
           </div>
         </Container>
 
@@ -173,7 +171,7 @@ export default function DemoPage() {
         <Section tone="band">
           <Container>
             <Lede onBand className="mb-6 max-w-[50ch]">
-              This is the short version. The walkthrough is the live one.
+              {`The same app in a ${FILM.durationSeconds}-second film, without sound.`}
             </Lede>
             <ProductFilm />
           </Container>
@@ -182,8 +180,7 @@ export default function DemoPage() {
         <Section tone="paper">
           <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 lg:grid-cols-2">
             <div>
-              <Eyebrow>What you&rsquo;ll see</Eyebrow>
-              <Title className="mt-3 max-w-[22ch]">The real app, on a returning client.</Title>
+              <Title className="max-w-[22ch]">What the walkthrough covers</Title>
               <ul className="mt-6 border-t border-[color:var(--color-hairline)]">
                 {WHAT_YOU_WILL_SEE.map((item) => (
                   <li
@@ -196,11 +193,10 @@ export default function DemoPage() {
               </ul>
             </div>
             <div>
-              <Eyebrow>What happens after</Eyebrow>
-              <Title className="mt-3 max-w-[22ch]">If Hone fits, we set your studio up.</Title>
+              <Title className="max-w-[22ch]">If Hone fits, we set your studio up</Title>
               <Lede className="mt-4">
                 We bring your existing clients across as part of setup. Standard import is
-                included. No setup fee.
+                included, and there is no setup fee.
               </Lede>
               <CTAButton
                 href="#request"

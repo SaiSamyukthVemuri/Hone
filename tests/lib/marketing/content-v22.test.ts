@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { softwareApplicationLd } from "@/lib/marketing/jsonld";
 import {
+  FILM,
   MARKETING_PAGES,
   PAYMENT_QUALIFIER,
   POSITIONING,
@@ -137,6 +138,26 @@ const RETIRED = [
     parts: ["Built for electrolysis records", "· History by treated area"],
     sha256: "447bf1b629785789753e6d8eb753a733b215cf8164cf720db23fb02699924b91",
   },
+  // MKT-03 REVISION 3, the anti-slop pass the operator authorised. Three more
+  // lines retired by the same mechanism: the calendar-against-treatment
+  // contrast that headed the workflow and the booking page, the treatment-memory
+  // page's restatement of the rival-tools claim, and the homepage trust strip,
+  // every line of which the page said again lower down.
+  {
+    label: "calendar-versus-treatment contrast (MKT-03 r3)",
+    parts: ["Your calendar remembers", "the appointment"],
+    sha256: "026279ea454ca5dce5e40b477861f990d2a09e860c6c20456bb3d8372ce05868",
+  },
+  {
+    label: "generic-booking-tools claim (MKT-03 r3)",
+    parts: ["the part generic", "booking tools forget"],
+    sha256: "33e04705de89783bee1897d5263deff6640eac755f0b0d528ac5514136e52d5f",
+  },
+  {
+    label: "homepage trust strip (MKT-03 r3)",
+    parts: ["Records isolated by studio", "· Imported history stays marked as imported"],
+    sha256: "6e1055e7f2ab4f7825cfb23189587f529c7764575ce16ae88caa9820e819c5b2",
+  },
 ] as const;
 
 const needle = (parts: ReadonlyArray<string>): string => parts.join(" ").toLowerCase();
@@ -194,13 +215,16 @@ describe("v2.2 retires strings from THE WHOLE MARKETING SURFACE", () => {
     // And the pins are distinct, so a copy-paste of one digest across two
     // entries cannot hide a wrong fragment behind a right one.
     expect(new Set(RETIRED.map((r) => r.sha256)).size).toBe(RETIRED.length);
-    expect(RETIRED.length).toBe(5);
+    expect(RETIRED.length).toBe(8);
   });
 
   it("the retired keys are gone as KEYS, not merely as values", () => {
     expect("categoryAmbition" in POSITIONING).toBe(false);
     expect("heroSupporting" in POSITIONING).toBe(false);
     expect("proofLine" in POSITIONING).toBe(false);
+    // MKT-03 revision 3: the trust strip and the slogan label went with their blocks.
+    expect("trustStrip" in POSITIONING).toBe(false);
+    expect("filmClosingLine" in POSITIONING).toBe(false);
   });
 
   it("no retired copy reaches any route's title or description", () => {
@@ -229,7 +253,9 @@ describe("v2.2 retires strings from THE WHOLE MARKETING SURFACE", () => {
 describe("v2.2 hero and CTA constants are the deck's, verbatim", () => {
   it("pins the hero triple", () => {
     expect(POSITIONING.heroEyebrow).toBe("Electrolysis practice software");
-    expect(POSITIONING.heroH1).toBe("Start the next treatment where the last one ended.");
+    // The deck's words. MKT-03 revision 3 dropped the closing full stop: no
+    // heading on the site carries one (see the house-style test below).
+    expect(POSITIONING.heroH1).toBe("Start the next treatment where the last one ended");
     expect(POSITIONING.heroSub).toBe(
       "Each treated area keeps its own history. Before a returning client sits down, " +
         "Hone brings forward last time's settings, response and notes.",
@@ -287,8 +313,10 @@ describe("v2.2 claim constants carry their register obligations", () => {
     // truth register. It must claim no MORE than that — in particular it must
     // not promise unlimited anything, which would be a different claim about
     // capacity rather than about plan gating.
+    // One sentence since MKT-03 revision 3 (it was three clipped negatives). The
+    // same verified absence, and still nothing about capacity.
     expect(POSITIONING.noCapsLine).toBe(
-      "Every plan includes the full treatment workflow. No client caps. No appointment caps.",
+      "Every plan includes the full treatment workflow, with no cap on clients or appointments.",
     );
     expect(POSITIONING.noCapsLine).not.toMatch(/unlimited/i);
   });
@@ -304,20 +332,42 @@ describe("v2.2 claim constants carry their register obligations", () => {
     const authored = [
       POSITIONING.heroH1,
       POSITIONING.heroSub,
-      POSITIONING.trustStrip,
+      POSITIONING.differentiationLine,
       POSITIONING.assuranceLine,
       POSITIONING.noCapsLine,
       POSITIONING.everyPlanIncludes,
+      POSITIONING.pricingHeading,
+      POSITIONING.recordsHeading,
       POSITIONING.walkthroughHeading,
-      POSITIONING.filmClosingLine,
       POSITIONING.demoDataLabel,
+      ...FILM.transcript,
     ];
     for (const line of authored) {
-      // "No em dashes anywhere on the site."
+      // "No em dashes anywhere on the site." The anti-slop pass holds en dashes
+      // to the same rule, and a run of terms joined by middle dots reads as a
+      // template, so authored copy joins none (the film's label never did).
       expect(line, `"${line}" contains an em dash`).not.toContain("—");
+      expect(line, `"${line}" contains an en dash`).not.toContain("–");
+      expect(line, `"${line}" joins terms with middle dots`).not.toContain(" · ");
       // Banned vocabulary: never patient, clinic, platform, operating system.
       expect(line.toLowerCase()).not.toMatch(/\bpatients?\b|\bclinics?\b|\bplatform\b/);
       expect(line.toLowerCase()).not.toContain("operating system");
+    }
+  });
+
+  // MKT-03 REVISION 3: ONE RULE FOR HEADINGS. The site mixed headings that ended
+  // in a full stop with headings that did not, sometimes for the same words
+  // ("See it with a returning client" was both). None does now.
+  it("no heading constant ends in a full stop", () => {
+    for (const heading of [
+      POSITIONING.heroH1,
+      POSITIONING.differentiationLine,
+      POSITIONING.pricingHeading,
+      POSITIONING.recordsHeading,
+      POSITIONING.walkthroughHeading,
+      WALKTHROUGH.demoHeading,
+    ]) {
+      expect(heading, `"${heading}" ends in a full stop`).not.toMatch(/\.$/);
     }
   });
 });

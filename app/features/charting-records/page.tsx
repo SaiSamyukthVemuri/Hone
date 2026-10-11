@@ -7,7 +7,6 @@ import {
   MarketingSurface,
   Container,
   Section,
-  Eyebrow,
   Display,
   Title,
   Lede,
@@ -145,7 +144,7 @@ const FIELDS: readonly string[] = [
 const CAPABILITIES: { title: string; body: string }[] = [
   {
     title: "Point-of-care charting",
-    body: "Chart electrolysis and laser sessions on one page, mode (thermolysis, blend, galvanic), Apilus modality, energy, machine frequency, and per-pass readings.",
+    body: "Chart electrolysis and laser sessions on one page: mode (thermolysis, blend or galvanic), Apilus modality, energy, machine frequency and per-pass readings.",
   },
   {
     title: "Structured probe and lot",
@@ -157,7 +156,7 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Observations and response",
-    body: "Tag what you saw with quick observation chips, and capture how each area was tolerated and any reaction, as structured, factual records alongside free-text notes.",
+    body: "Tag what you saw with quick observation chips, and record how each area was tolerated and any reaction, alongside free-text notes.",
   },
   {
     title: "Procedure records and print views",
@@ -184,11 +183,10 @@ export default function ChartingRecordsPage() {
       <main id="main-content" className="scroll-mt-16">
         <Container className="grid items-start gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
           <div>
-            <Display className="max-w-[18ch]">
-              Electrolysis charting built around treatments, not generic notes
-            </Display>
+            <Display className="max-w-[18ch]">Electrolysis charting for each treated area</Display>
             <Lede className="mt-5 max-w-[38rem]">
-              The record is shaped like the work: per area, per treatment, in fields.
+              Each treated area is charted with its side, the settings used, probe and lot,
+              tolerance and skin response.
             </Lede>
             <CTAButton
               href={WALKTHROUGH.href}
@@ -203,8 +201,7 @@ export default function ChartingRecordsPage() {
 
         <Section tone="warm">
           <Container>
-            <Eyebrow>The fields</Eyebrow>
-            <Title className="mt-3 max-w-2xl">What one treatment records.</Title>
+            <Title className="max-w-2xl">What one treatment record holds</Title>
             {/* A ruled list, not a wall of pills: these are the record's fields,
                 and a spec sheet is how a record's fields are read. */}
             <ul className="mt-6 grid grid-cols-2 gap-x-8 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-3 lg:grid-cols-4">
@@ -232,14 +229,13 @@ export default function ChartingRecordsPage() {
             <Title className="max-w-2xl">How the record is kept</Title>
             <SpecRows>
               <SpecRow>
-                <SpecRowHead>Per area, not per visit</SpecRowHead>
+                <SpecRowHead>Recorded by area</SpecRowHead>
                 <SpecRowBody>
-                  <p>Every area keeps its own history.</p>
                   <p>
-                    Each treated area is recorded as an area, with its own side &mdash; not as
-                    one line in a visit note. Treat several areas at the same settings and those
-                    settings are recorded once, for that group, and every area in it carries the
-                    treatment into its own history. Open the chin months later and you read the
+                    Each treated area is recorded as an area, with its own side. Treat several
+                    areas at the same settings and those settings are recorded once, for that
+                    group, and every area in it carries the treatment into its own history.
+                    Months later, the chin&rsquo;s history lists every treatment that included the
                     chin.
                   </p>
                 </SpecRowBody>
@@ -247,7 +243,6 @@ export default function ChartingRecordsPage() {
               <SpecRow>
                 <SpecRowHead>Clinical notes are append-only</SpecRowHead>
                 <SpecRowBody>
-                  <p>A saved clinical note is never overwritten.</p>
                   <p>
                     Correcting a clinical note records a new revision that supersedes the old
                     one, so the original stays readable. Sterile-item and disinfectant records
@@ -255,15 +250,14 @@ export default function ChartingRecordsPage() {
                   </p>
                   <p>
                     Treatment records themselves stay editable, so a value you change is the
-                    value the record shows. The same goes for the next-treatment note:
-                    append-only applies to clinical notes, not to the whole chart.
+                    value the record shows, and the same is true of the next-treatment note. Only
+                    clinical notes are append-only.
                   </p>
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
                 <SpecRowHead>Lots, sterile items and expiry</SpecRowHead>
                 <SpecRowBody>
-                  <p>Show what was used on the day.</p>
                   <p>
                     The probe lot is part of the treatment record and linked to your inventory.
                     Sterile items and disinfectant carry expiry dates in a log. When you need to
@@ -274,20 +268,19 @@ export default function ChartingRecordsPage() {
               <SpecRow>
                 <SpecRowHead>Photos</SpecRowHead>
                 <SpecRowBody>
-                  <p>Attached to the record, kept private.</p>
                   <p>
-                    Treatment photos attach to the record. They&rsquo;re stored privately, camera
-                    metadata is stripped, and they open through short-lived links.
+                    Treatment photos attach to the record. They are stored privately, with
+                    location and camera data removed, and open only through links that expire
+                    within a minute.
                   </p>
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
                 <SpecRowHead>Gaps are flagged</SpecRowHead>
                 <SpecRowBody>
-                  <p>Hone points out what&rsquo;s missing.</p>
                   <p>
-                    A missing probe lot. Aftercare not marked. A completed appointment not yet
-                    charted. Hone flags each one.
+                    Hone flags a missing probe lot, aftercare not marked and a completed
+                    appointment not yet charted.
                   </p>
                   <p>
                     Hone supports record-keeping workflows; studios remain responsible for
@@ -300,29 +293,29 @@ export default function ChartingRecordsPage() {
         </Section>
 
         <RelatedLinks
-          title="Where the record goes."
+          title="Related pages"
           links={[
             {
               href: "/features/treatment-memory",
               label: "Treatment memory",
-              blurb: "Structured charting is what makes the Before Today briefing possible next visit.",
+              blurb: "The Before Today briefing is built from this charting.",
             },
             {
               href: "/features/booking-calendar",
               label: "Booking and calendar",
-              blurb: "Each appointment links to the session you chart against it.",
+              blurb: "Each appointment links to the session you chart for it.",
             },
             {
               href: "/electrolysis-software",
               label: "Electrolysis practice software",
-              blurb: "See how charting and records fit the whole workflow.",
+              blurb: "See how charting and records fit the rest of the practice.",
             },
           ]}
         />
 
         <WalkthroughCTA
-          title="See charting on a real session."
-          body="We'll walk through charting a session and pulling a procedure record, and reply within one business day."
+          title="See a session charted"
+          body="We reply within one business day to set a time, then chart a session with you and pull a procedure record."
         />
       </main>
       <SiteFooter />

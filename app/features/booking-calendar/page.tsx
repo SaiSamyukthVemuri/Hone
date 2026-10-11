@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import type { Metadata } from "next";
 import { SafeAnalytics } from "../../_components/SafeAnalytics";
 import { SiteHeader } from "../../_components/marketing/SiteHeader";
@@ -8,7 +7,6 @@ import {
   MarketingSurface,
   Container,
   Section,
-  Eyebrow,
   Display,
   Title,
   Lede,
@@ -25,7 +23,7 @@ import {
   SpecRowHead,
   SpecRowBody,
 } from "../../_components/marketing/sections";
-import { WALKTHROUGH, ANALYTICS_EVENTS, POSITIONING } from "@/lib/marketing/content";
+import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
 // Feature: /features/booking-calendar. Intent: electrolysis booking / calendar
@@ -67,11 +65,11 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Services and availability you control",
-    body: "Set your services, weekly hours, date-specific overrides, vacations, breaks, and one-off blocks. Clients can only book the time you actually make available.",
+    body: "Set your services, weekly hours, date-specific overrides, vacations, breaks and one-off blocks. Clients can book only the times you open.",
   },
   {
-    title: "A calendar built for the day",
-    body: "See your whole schedule in day, week, or month view on any device, and book a client or block off time in seconds.",
+    title: "Day, week and month views",
+    body: "See your whole schedule by day, week or month on any device, and book a client or block off time in seconds.",
   },
   {
     title: "Self-serve cancel and reschedule",
@@ -103,23 +101,12 @@ export default function BookingCalendarPage() {
         <Container className="grid items-start gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
           <div>
             <Display className="max-w-[18ch]">Booking connected to the treatment record</Display>
-            {/* #762 OWNS THESE WORDS, THIS PAGE OWNS ONLY THE LINE BREAK. Deck §6
-                sets the sub as two lines, and it is the same sentence pair #762
-                declares as POSITIONING.differentiationLine. Spelled by hand it
-                would drift the first time that constant is edited, so the break
-                is applied to the constant instead of the words being retyped.
-                Split on sentence ends rather than on a known fragment, so a
-                different sentence count still renders. */}
+            {/* The sub was the deck's calendar-versus-treatment slogan, shared
+                with the homepage. MKT-03 revision 3 replaced it there and here
+                with what the page shows: where a booking goes once it is made. */}
             <Lede className="mt-5 max-w-[38rem]">
-              {POSITIONING.differentiationLine
-                .split(/(?<=\.)\s+/)
-                .filter(Boolean)
-                .map((line, i) => (
-                  <Fragment key={line}>
-                    {i > 0 ? <br /> : null}
-                    {line}
-                  </Fragment>
-                ))}
+              Clients book online, and each appointment links to the client&rsquo;s record and to
+              the session you chart for it.
             </Lede>
             <CTAButton
               href={WALKTHROUGH.href}
@@ -134,10 +121,7 @@ export default function BookingCalendarPage() {
 
         <Section tone="warm">
           <Container>
-            <Eyebrow>Online booking for your studio</Eyebrow>
-            <Title className="mt-3 max-w-2xl">
-              Appointments land on the calendar with the record attached.
-            </Title>
+            <Title className="max-w-2xl">Online booking for your studio</Title>
             <Lede className="mt-4 max-w-2xl">
               Clients book from your studio&rsquo;s booking page. Appointments land on the
               studio calendar with the client&rsquo;s record attached.
@@ -156,33 +140,30 @@ export default function BookingCalendarPage() {
               <SpecRow>
                 <SpecRowHead>One shared calendar</SpecRowHead>
                 <SpecRowBody>
-                  <p>The record always shows who treated.</p>
                   <p>
                     A colour-coded calendar for the whole studio. Each practitioner charts under
-                    their own name.
+                    their own name, so the record shows who treated.
                   </p>
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
                 <SpecRowHead>Intake before the visit</SpecRowHead>
                 <SpecRowBody>
-                  <p>Read the history before they arrive.</p>
                   <p>
-                    Health history is collected before the appointment and reviewed by you.
-                    Flags like a pacemaker or an EpiPen are visible before the client arrives.
+                    Clients complete their health history before the appointment, and you review
+                    it. Flags such as a pacemaker or an EpiPen are visible before the client
+                    arrives.
                   </p>
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
                 <SpecRowHead>Client portal</SpecRowHead>
                 <SpecRowBody>
-                  <p>A signed-in space, connected to the same record.</p>
                   <p>
                     Clients sign in with a passwordless, single-use magic link that expires in
-                    60 minutes. The portal surfaces outstanding items &mdash; incomplete intake,
-                    consent to sign, unread messages &mdash; and carries secure two-way
-                    messaging whose content stays in the portal and never in notification
-                    emails.
+                    60 minutes. The portal shows what is outstanding (an incomplete intake, a
+                    consent to sign, unread messages) and carries secure two-way messaging whose
+                    content stays in the portal and never appears in notification emails.
                   </p>
                   <p>
                     Treatment photos are never shown in the portal. Cancelling and rescheduling
@@ -191,12 +172,11 @@ export default function BookingCalendarPage() {
                 </SpecRowBody>
               </SpecRow>
               <SpecRow>
-                <SpecRowHead>What booking is for on Hone</SpecRowHead>
+                <SpecRowHead>Booking and charting, connected</SpecRowHead>
                 <SpecRowBody>
-                  <p>The next appointment starts with the last treatment.</p>
                   <p>
-                    Booking puts the appointment on the calendar. Charting puts the treatment in
-                    the record. Hone connects the two.
+                    Each appointment links to the session you chart for it, so the next visit
+                    opens with the last treatment&rsquo;s details.
                   </p>
                 </SpecRowBody>
               </SpecRow>
@@ -205,7 +185,7 @@ export default function BookingCalendarPage() {
         </Section>
 
         <RelatedLinks
-          title="What the appointment connects to."
+          title="Related pages"
           links={[
             {
               href: "/features/treatment-memory",
@@ -215,19 +195,19 @@ export default function BookingCalendarPage() {
             {
               href: "/features/charting-records",
               label: "Charting and records",
-              blurb: "The treatment you chart against the appointment you booked.",
+              blurb: "Chart each treatment against the appointment it belongs to.",
             },
             {
               href: "/electrolysis-software",
               label: "Electrolysis practice software",
-              blurb: "See how booking fits the rest of the workflow.",
+              blurb: "See how booking fits the rest of the practice.",
             },
           ]}
         />
 
         <WalkthroughCTA
-          title="See booking and the record together."
-          body="We'll show a booking landing on the calendar and the treatment charted against it, and reply within one business day."
+          title="See booking and the record together"
+          body="We reply within one business day to set a time, then show a booking arriving on the calendar and the treatment charted against it."
         />
       </main>
       <SiteFooter />

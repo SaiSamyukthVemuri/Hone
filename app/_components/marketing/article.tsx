@@ -56,14 +56,14 @@ export function ArticleDisclaimer() {
 export function ArticleCorrections() {
   return (
     <p className="mt-6 text-[0.875rem] leading-[1.6] text-muted">
-      Spotted something that needs a correction, or have a question? Email{" "}
+      To report a correction or ask a question, email{" "}
       <Link
         href={`mailto:${CONTACT_EMAIL}`}
         className="font-medium text-mineral underline underline-offset-4"
       >
         {CONTACT_EMAIL}
-      </Link>{" "}
-      and we&apos;ll review it.
+      </Link>
+      .
     </p>
   );
 }
