@@ -15,11 +15,12 @@
   - `0208` was applied and verified on production on 2026-10-10 (§1b), migration-first, before the SMS-01 merge.
   - SMS-01 merged and deployed as `4564383c` (2026-10-10).
   - WAIT #820's `0209` was applied on 2026-10-10 (A1) and #820 merged as `0e16257e`. Production was then merged into the SMS-04 branch, so `0210` is the only pending migration.
+  - `0210` was applied and verified on production on 2026-10-11 (A4, §1c), migration-first from #822's reviewed head `3096e1f4`, before the SMS-04 merge.
 - **Pending:**
   1. Willow's consent backfill (§5);
   2. the controlled tests (§3);
   3. Willow's waitlist switch (§4);
-  4. SMS-04: its exact-head review, then `0210` (§1c), then its merge and deploy.
+  4. SMS-04: its merge and deploy (`0210` is applied, §1c).
 
 Every step that touches production — a migration apply, a deploy, a studio switch, a real message — needs the operator's explicit approval **at that step**. Approval of one step is not approval of the next.
 
@@ -34,7 +35,7 @@ Related: [migration-first-process.md](./migration-first-process.md) · [../08_EM
 | 1 | **SMS-00 (#812)** | `0206`, `0207` | **Migration first:** apply each from the exact reviewed head (§1), then merge. | **Done.** Applied 2026-10-09; merged as `46a1db9e`. |
 | 2 | **SMS-02 (#818)**, replacing the closed #813 | none | After SMS-00. A new PR from a new branch, with fresh CI and one exact-head review (operator decision D5(A): a retargeted PR cannot become shepherd-ready). | **Done.** Merged and deployed as `1bdc10ba`. |
 | 3 | **SMS-01 (#819)**, replacing the closed #814 | **`0208`** | After SMS-02. **Migration first: apply and verify `0208` (§1b) from the exact reviewed head, then merge and deploy the application.** The new public signup calls `join_new_client_waitlist_with_sms_answer`, which exists only after `0208`, so deploying first makes every durable public waitlist join fail. | **Done.** `0208` applied and verified 2026-10-10; merged and deployed as `4564383c`. |
-| 4 | **SMS-04**, required phone and the join text | **`0210`** | After SMS-01 and WAIT #820's `0209`, **both done**: `0209` was applied on 2026-10-10 and #820 merged as `0e16257e`, so `0210` is the only pending migration. **Migration first: apply and verify `0210` (§1c) from the exact reviewed head, then merge and deploy the application.** The new public signup calls `join_new_client_waitlist_with_phone_and_sms_answer`, which exists only after `0210`, so deploying first makes every durable public waitlist join fail. `0208`'s command stays, so the deployed application keeps working (and keeps recording v1) until the new one replaces it. | Authored; awaiting review. Not applied. |
+| 4 | **SMS-04**, required phone and the join text | **`0210`** | After SMS-01 and WAIT #820's `0209`, **both done**: `0209` was applied on 2026-10-10 and #820 merged as `0e16257e`, so `0210` is the only pending migration. **Migration first: apply and verify `0210` (§1c) from the exact reviewed head, then merge and deploy the application.** The new public signup calls `join_new_client_waitlist_with_phone_and_sms_answer`, which exists only after `0210`, so deploying first makes every durable public waitlist join fail. `0208`'s command stays, so the deployed application keeps working (and keeps recording v1) until the new one replaces it. | **`0210` applied and verified 2026-10-11** (A4, from `3096e1f4`). Merge and deploy pending. |
 
 **Whether a migration is still pending is DERIVED, never restated:** run `npm run migration:state` on the head. A unit's migration-first gate holds while it reads **MIGRATION-FIRST PENDING** for that unit's migration.
 
@@ -102,7 +103,9 @@ select count(*) filter (where send_waitlist_invitation_sms) from public.studios;
 9. **Clean up.** Remove `supabase/.temp`, then delete the worktree.
 10. **Record it in a change on the SMS-01 PR:** `docs/production/migration-state.json` (`hosted_migration_max` → `0208`) and the ledger's current block, giving PARITY and next free `0209`. That moves the PR head, so it needs fresh CI and an exact-head review before the merge approval.
 
-## 1c. Apply and verify `0210` (operator) — AFTER WAIT #820's `0209`, BEFORE the SMS-04 merge and deploy
+## 1c. Apply and verify `0210` (operator) — AFTER WAIT #820's `0209`, BEFORE the SMS-04 merge and deploy — DONE 2026-10-11
+
+**Done.** Applied on 2026-10-11 (A4) from the reviewed #822 head `3096e1f4`, and verified read-only. It is recorded in `docs/production/migration-state.json` and the ledger. The steps are kept as the record of what was run.
 
 `0210_sms_waitlist_join_acknowledgement.sql` is forward-only and writes no data. It adds:
 - the signup command `join_new_client_waitlist_with_phone_and_sms_answer`, which requires a phone and records v2;
