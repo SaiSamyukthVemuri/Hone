@@ -200,6 +200,28 @@ for (const vp of [
         const shown = (Math.min(frame.y + frame.height, vp.height) - frame.y) / frame.height;
         expect(shown, "less than half the film is in the first screen").toBeGreaterThanOrEqual(0.5);
 
+        // The band starts behind the film, halfway down, and paints nothing at
+        // its own top edge. In a real Chrome, paper painted over the band left
+        // a 1px grey seam across the gutters at the film's top, at every
+        // desktop width; this headless browser rasterises that edge cleanly,
+        // so the mechanism is what is pinned.
+        if (!vp.mobile) {
+          const band = await page.locator('main section[data-tone="band"]').first().evaluate((el) => {
+            const own = getComputedStyle(el);
+            const layer = getComputedStyle(el, "::before");
+            return {
+              background: own.backgroundColor,
+              clip: layer.backgroundClip,
+              rise: parseFloat(layer.paddingTop),
+              top: el.getBoundingClientRect().top,
+            };
+          });
+          expect(band.background, "the band paints its own background at its top edge").toBe("rgba(0, 0, 0, 0)");
+          expect(band.clip).toBe("content-box");
+          expect(Math.abs(band.top - frame.y), "the film no longer starts at the band's top").toBeLessThan(1);
+          expect(Math.abs(band.rise - frame.height / 2), "the band does not rise halfway up the film").toBeLessThan(2);
+        }
+
         // ONE request in the opening, filled, and none in this page's header.
         expect(await parts.cta.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
         if (!vp.mobile) {

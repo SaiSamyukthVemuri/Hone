@@ -287,14 +287,23 @@ describe("the opening row and the film's band (MKT-03 revision 3)", () => {
   // from the shell's own gutter, so a shell change that forgot it would leave
   // the band starting at the wrong height behind the film, with nothing red.
   it("the band starts behind the film, at half its height, from the shell's own width", () => {
-    const rise = CSS.slice(CSS.indexOf(".marketing-surface .mk-film-rise::before"));
-    expect(rise, "the rise rule is gone").not.toBe("");
-    const rule = rise.slice(0, rise.indexOf("}"));
+    const at = CSS.indexOf(".marketing-surface .mk-film-rise::before");
+    expect(at, "the rise rule is gone").toBeGreaterThan(-1);
+    const rule = CSS.slice(at, CSS.indexOf("}", at));
     expect(rule).toMatch(
       /padding-top:\s*calc\(min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\),\s*87\.5rem\)\s*\*\s*9\s*\/\s*32\)/,
     );
-    expect(rule).toMatch(/background:\s*var\(--color-paper\)/);
     expect(rule, "the rise must not measure the viewport").not.toMatch(/100vw/);
+    // THE BAND IS DRAWN BELOW THE RISE; NOTHING IS PAINTED AT THE TOP EDGE. The
+    // first version painted paper over the band, and in a real Chrome the two
+    // half-pixel edges left a 1px grey seam across the gutters. So the band
+    // colour is clipped to the content box under the padding, and the section
+    // itself is transparent: no layer may paint paper over the band.
+    expect(rule).toMatch(/background:\s*var\(--color-band\)/);
+    expect(rule).toMatch(/background-clip:\s*content-box/);
+    expect(rule, "paper painted over the band again").not.toMatch(/--color-paper/);
+    const section = CSS.slice(CSS.indexOf(".marketing-surface .mk-film-rise {"), at);
+    expect(section).toMatch(/background-color:\s*transparent/);
     // The shell it mirrors: the same gutter clamp and the same ceiling.
     expect(CSS).toMatch(/\.mk-shell\s*\{\s*width:\s*min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\),\s*87\.5rem\)/);
     // And the homepage's band uses it, with no padding of its own above the film.

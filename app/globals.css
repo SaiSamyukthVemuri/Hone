@@ -282,22 +282,33 @@ body {
  * halfway down its frame, so the opening runs straight into the film with no
  * strip of band above it, and the film still lands on the band it introduces.
  *
- * The paper is the band's own first layer, half the film's height tall. That
- * height is computed from the shell exactly as `.mk-shell` computes its width:
- * `%` in padding is the band's own width, so a classic scrollbar cannot skew
- * it, and 9/32 is half of the film's 16:9. Below `sm` the film runs edge to
- * edge and covers the paper completely. */
+ * The section paints no background of its own. The band is one layer behind
+ * the content that starts at the rise: its top padding is half the film's
+ * height, computed from the shell exactly as `.mk-shell` computes its width
+ * (`%` in padding is the band's own width, so a classic scrollbar cannot skew
+ * it, and 9/32 is half of the film's 16:9), and the colour is clipped to the
+ * content box under that padding. Below `sm` the film runs edge to edge and
+ * covers the rise completely.
+ *
+ * NEVER PAINT PAPER OVER THE BAND INSTEAD. The first version did exactly that,
+ * and the section's top edge usually lands on a half pixel (269.5px at
+ * 1440x900). Chrome then anti-aliased the band's edge and the paper's edge
+ * separately, and a 1px grey seam ran across both gutters at the film's top.
+ * Headless Chromium rasterises it cleanly, so only a real browser showed it.
+ * With nothing painted at the top edge, there is nothing to seam. */
 .marketing-surface .mk-film-rise {
   position: relative;
   isolation: isolate;
+  background-color: transparent;
 }
 .marketing-surface .mk-film-rise::before {
   content: "";
   position: absolute;
-  inset: 0 0 auto;
+  inset: 0;
   z-index: -1;
   padding-top: calc(min(100% - clamp(3rem, 14vw, 15rem), 87.5rem) * 9 / 32);
-  background: var(--color-paper);
+  background: var(--color-band);
+  background-clip: content-box;
 }
 
 /* A frame that runs edge to edge on a phone, where the shell's gutters would
