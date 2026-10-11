@@ -2,8 +2,10 @@
 
 **Design only. No behaviour, no migration, no number claimed.**
 
-**Authoritative target behaviour:** the frozen **WAIT-ROUND-01 v4** contract
-(roadmap edition of 2026-10-07), reproduced as target in §2 below.
+**Authoritative target behaviour:** the frozen **WAIT-ROUND-01 v4** contract, now
+preserved verbatim in this repository as [WAIT_ROUND_01_V4_CONTRACT.md](./WAIT_ROUND_01_V4_CONTRACT.md)
+(13 bullets, operator-supplied 2026-10-11T17:01:31.814Z, sha256 `4009c3f8…`). §2 below
+**restates** it as target; **where the two differ, the contract file governs.**
 
 **§14.5.7 "WAIT-04 — frozen Chloe launch contract" is v4's PREDECESSOR, not its
 target.** Where the two differ, v4 governs; §5 lists each supersession explicitly.
@@ -144,8 +146,13 @@ blocks, **service / buffer / timezone / notice** changes, **owner booking**, or
 **Joining the waitlist alone STILL does not reserve an appointment.** Anonymous
 calendar reservations arise **at round launch**, not at join.
 
-*(What this means for the disclaimer shipped today is in §3.2. §2.13 states the
-target only.)*
+The contract adds one instruction about today's shipped wording, quoted verbatim from
+bullet 13 of [WAIT_ROUND_01_V4_CONTRACT.md](./WAIT_ROUND_01_V4_CONTRACT.md):
+
+> Do not classify the existing join disclaimer as automatically false.
+
+*(The repository specifics of that disclaimer — where it lives and that it is
+duplicated — are in §3.2.)*
 
 ---
 
@@ -215,13 +222,19 @@ convert-and-redeem is one atomic step whose failure leaves both untouched, which
 three-way outcome remains the truth for **legacy invitations** (§4) until they drain,
 so both regimes coexist while they do.
 
-> **Provenance of the comparison.** The characterisation of "consume first, then
-> create appointment" as legacy-to-be-replaced is **a paraphrase of the supplied v4
-> contract's position — not a literal quotation of it.** An earlier revision of this
-> document asserted it was a verbatim quotation, and declined a review finding partly
-> on that basis; the claim was wrong and is withdrawn. The paragraph above is the
-> repository half, citable at `§14.5.5B`; the target half is §2.7, which depends on
-> none of it. See §11 for the general rule.
+> **Provenance of the comparison — now quotable.** The contract settles this itself.
+> Bullet 7 of [WAIT_ROUND_01_V4_CONTRACT.md](./WAIT_ROUND_01_V4_CONTRACT.md) reads, verbatim:
+>
+> > Recipient booking atomically converts one reservation to an appointment AND
+> > redeems the invitation. Failure leaves both untouched. “Consume first, then create
+> > appointment” is legacy behaviour to replace, not the v4 target.
+>
+> **An earlier revision of this document called that a quotation while actually
+> rewording it, then declined a review finding partly on the strength of the claim; a
+> later revision over-corrected to "paraphrase, not a quotation".** Both are
+> superseded: the contract is now in the repository, so the sentence is cited above
+> rather than characterised. The paragraph above it is the repository half, citable at
+> `§14.5.5B`. §2.7 states the target and depends on none of it.
 
 ### 3.5 Restoration is a new operation, not requeue
 
@@ -521,11 +534,16 @@ PR2 and later must re-derive at the moment of claim.
 
 ## 11. Not established
 
-**The provenance rule.** §2 **restates** the supplied frozen v4 contract. **No
-sentence in §2 should be read as a verbatim quotation of it** — the wording is this
-document's, the authority is the contract's, and where the two differ the contract
-governs. §2 is also **not verifiable from this repository**, because the contract text
-is not held here; that is a property of the source, not a gap in the contract.
+**The provenance rule.** §2 **restates** the frozen v4 contract, which is now held in
+this repository verbatim as [WAIT_ROUND_01_V4_CONTRACT.md](./WAIT_ROUND_01_V4_CONTRACT.md). **Except where §2 marks text
+as a quotation, its wording is this document's and the authority is the contract's;
+where the two differ, the contract file governs.**
+
+**§2 is now verifiable here, and that is new.** Earlier revisions of this document
+stated that §2 could not be checked against anything in the repository, because the
+contract text was not held here. That was true when written and is **no longer true**:
+§2 was checked bullet-by-bullet against all 13 contract bullets, and the contract file
+records its own provenance and the precise limit of its scope.
 
 **The separation rule that follows from it.** §2 carries target behaviour and nothing
 else — no repository observation, and no comparison against today's code. Every
