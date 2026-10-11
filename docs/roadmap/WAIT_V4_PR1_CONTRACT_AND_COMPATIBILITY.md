@@ -291,7 +291,7 @@ These are two regimes and must not be merged:
 | Reserved time | **none** | K buffered times, anonymous until booked (§2.1) |
 | Deadline | per-invitation fixed 48h (§3.7) | **one shared** 48h for the round (§2.6) |
 | Booking | consume, then create appointment (§3.4) | **atomic** convert + redeem (§2.7) |
-| Cancellation | §14.5.7C: new priority, spot not held | **restore its own reservation**, invitation stays used (§2.10) |
+| Cancellation | §14.5.7C, **two intents**: "cancel and return to waitlist" → new priority, spot not held; **"cancel and leave" → no queue return at all** | **restore its own reservation**, invitation stays used (§2.10) — and the queue consequence stays §14.5.7C's, by intent |
 | Grouping | admission round allowance | fixed cohort M, with R/U/C invariants (§2.2) |
 
 **Existing live offers and appointments must not be invalidated by installing v4
@@ -323,30 +323,35 @@ than assuming one.
   intent-dependent** — see rows 2 and 3 below, and §3.5. **This bullet deliberately
   does not restate the rule**; two earlier revisions stated it unqualified here and
   swept cancel-and-leave into a queue return it does not get.
-* **§14.5.7B — all seven rows bind, except where §5's table above records v4 as
-  generalising one.** Listed because a partial summary reads as exhaustive:
+* **§14.5.7B — all eight rows bind, except where §5's table above records v4 as
+  generalising one.** Listed in the contract's own row order, because a partial
+  summary reads as exhaustive:
   1. **Send invitation** — email plus eligible consented SMS are **one** opportunity,
      not two invitations; delivery failure does not fabricate an issuance failure.
      *(v4 generalises only the per-invitation 48h to one shared round deadline; the
      dual-channel rule itself is untouched.)*
-  2. **Book a time** — only permitted live consultation slots, and the result is
+  2. **24-hour reminder** — **one** reminder through eligible channels if the
+     invitation is still awaiting response, with per-invitation / per-channel /
+     per-event dedupe and a re-check of consent and lifecycle at send time.
+     *(v4 §2.12 anchors it at 24 hours **after launch** and restricts it to
+     still-active unbooked invitations; the dedupe and send-time re-check stand.)*
+  3. **Book a time** — only permitted live consultation slots, and the result is
      recorded; proof-bound capability **plus** current admission, identity, scope and
      booking authority. *(v4 §2.7 adds atomicity; these authority requirements stand.)*
-  3. **"These times don't work — keep my place"** — close the current offer, return or
+  4. **"These times don't work — keep my place"** — close the current offer, return or
      remain waiting with **original** waiting-time priority; no repeat invitation.
-  4. **"Update my availability — keep my place"** — update the structured preference,
+  5. **"Update my availability — keep my place"** — update the structured preference,
      close this offer, preserve waiting-time priority; one governed response path, and
      no mutation of another person's record.
-  5. **"Remove me from the waitlist"** — leave the active list and stop further
+  6. **"Remove me from the waitlist"** — leave the active list and stop further
      automated waitlist invitation and contact attempts; an **explicit opt-out event**.
-  6. **No response at 48 hours** — remove from the active waitlist under the disclosed
+  7. **No response at 48 hours** — remove from the active waitlist under the disclosed
      policy and **never permanently ban the person**, and **only** after the
      authoritative deadline with no qualifying response. *(v4 §2.12 adds
      late-cleanup safety, idempotent close, and that uncertain or failed delivery is
      not non-response.)*
-  7. **SMS STOP** — stop SMS through the existing suppression authority. **STOP is
+  8. **SMS STOP** — stop SMS through the existing suppression authority. **STOP is
      not, by itself, leave-waitlist**, and not consent to another channel.
-* **§14.5.7A** profile and join requirements, in full.
 * **§14.5.7C in full — all nine rows bind, not only the ones v4 touches.** Listed
   here because a partial summary reads as an exhaustive one:
   1. **Request to reschedule online** — no client-controlled rescheduling of first
