@@ -153,7 +153,12 @@ export async function updateSession(request: NextRequest) {
     // X-Twilio-Signature over the full URL (the ledger row id rides in its
     // query) plus sorted POST fields, validated before any DB write. Exact
     // path, for the reason above.
-    pathname === "/api/twilio/message-status";
+    pathname === "/api/twilio/message-status" ||
+    // DELIVERY-EVENTS-01 Resend delivery-event webhook. Authenticates via
+    // the Svix signature (svix-id / svix-timestamp / svix-signature over the
+    // raw body, five-minute replay window), verified inside the route handler
+    // before any DB write. Exact path: do NOT broaden to /api/resend/*.
+    pathname === "/api/resend/webhook";
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
