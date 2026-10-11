@@ -355,7 +355,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/book/[slug]/waitlist-actions.ts",
     purpose:
-      "WAIT-02 public new-client waitlist join — the sole caller of join_new_client_waitlist (migration 0185), reached since 0208 through join_new_client_waitlist_with_sms_answer, which wraps 0204's guarded join and records the visitor's explicit SMS answer on the entry it creates.",
+      "WAIT-02 public new-client waitlist join — the sole caller of join_new_client_waitlist (migration 0185), reached since 0210 through join_new_client_waitlist_with_phone_and_sms_answer (the successor of 0208's join_new_client_waitlist_with_sms_answer), which wraps 0204's guarded join, requires a sendable phone and records the visitor's explicit SMS answer on the entry it creates; and, with the same server-built client after the commit, the sole caller of claim_waitlist_join_ack_sms (0210) through lib/waitlist/delivery/join-ack-sms.ts.",
     // The scopeGuard is the COMMAND NAME rather than the generic
     // `getStudioBySlug` this route already uses, following the B1 tightening
     // applied to move-appointment-actions.ts: if this file ever stops going
@@ -363,7 +363,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     // insert into new_client_waitlist_entries — the allowlist test fails rather
     // than continuing to vouch for a justification that is no longer true.
     why: "Unauthenticated public surface: there is no session to satisfy RLS, and `authenticated` holds SELECT only on new_client_waitlist_entries while `anon` and `service_role` hold NOTHING on the table (0185), so no client role can write it at all. The action resolves the studio server-side from the public slug (getStudioBySlug), re-derives the waitlist gate from the SERVER-RESOLVED slug, and passes that studio.id as the command's tenant argument; the browser supplies only a lookup slug and bounded contact fields. join_new_client_waitlist is service_role-only (EXECUTE revoked from public/anon/authenticated), validates and normalizes its own input, owns the studio-scoped duplicate rule atomically, and writes exactly one table. 0208's wrapper is service_role-only by the same revoke-by-name pattern; it refuses an unanswered SMS question, adds nothing to the guarded join's authority, and stamps consent (public_form, v1, its own clock) only on an entry that join has just created, never on an existing one.",
-    scopeGuard: "join_new_client_waitlist_with_sms_answer",
+    scopeGuard: "join_new_client_waitlist_with_phone_and_sms_answer",
   },
   {
     path: "app/book/[slug]/page.tsx",
