@@ -14,7 +14,61 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
+## Current state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0216` AUTHORED AND PENDING on the STUDIO-READY-02a branch)
+
+> **AUTHORED, NOT APPLIED — MIGRATION-FIRST PENDING.** STUDIO-READY-02a (#824)
+> authors `0216_receptionist_membership_foundation.sql` on
+> `feat/receptionist-foundation-824`. It is **not** applied to production, no
+> production write was performed, and `docs/production/migration-state.json` is
+> **untouched** — `hosted_migration_max` stays **0210**. The repository therefore
+> sits legitimately ABOVE hosted, which is the second of the two legal shapes the
+> parity guard admits.
+>
+> **WHAT IT ADDS.** A receptionist membership that is deliberately **not** a
+> `practitioners` row: the table `studio_receptionists`; three bounded read
+> projections for a signed-in receptionist (`receptionist_calendar`,
+> `receptionist_calendar_closures`, `receptionist_client_contacts`); and two
+> `service_role`-only owner lifecycle commands (`add_studio_receptionist`,
+> `set_studio_receptionist_active`). Every existing policy and command resolves
+> membership from `practitioners`, so a receptionist is refused by all of them by
+> construction. No existing policy, membership helper, role check or command is
+> redefined, and `pending_invitations.role` is unchanged, so no receptionist
+> invitation can exist yet.
+>
+> **COMPLETE STATEMENT INVENTORY — fifty-eight statements**, inside the file's own
+> `begin;` / `set local lock_timeout = '5s';` / `commit;`:
+> - **one `create table`** (`studio_receptionists`), its **`comment on table`**, and **one partial `create index`** (`user_id` where active);
+> - **nine `create or replace function`**, all new names: two internal helpers, two trigger guards, three projections, two lifecycle commands;
+> - **two `create trigger`**, each preceded by `drop trigger if exists`: the dual-membership guard on the new table, and **one BEFORE trigger on the existing `practitioners` table**, which can only refuse (23514) a practitioner becoming active while already an active receptionist in the same studio, and never writes;
+> - **row-level security enabled** and **one `create policy`** (preceded by `drop policy if exists`): a receptionist selects their own row, the studio owner selects the studio's rows;
+> - table privileges: **`revoke all` from `anon`**, **`revoke insert, update, delete, truncate` from `authenticated`**, **`grant select` to `authenticated`**;
+> - **thirty-one `revoke execute`** — every function by name, one statement per role — **three `grant execute … to authenticated`** (the projections only) and **two `grant execute … to service_role`** (the lifecycle commands only).
+>
+> NO existing table altered, NO column added to an existing table, NO existing
+> function or policy redefined, and **zero** migration-level DML. `0209` and `0210`
+> stay byte-identical.
+>
+> **PROVED LOCALLY, ON AN ISOLATED STACK ONLY** (pinned CLI 2.102.0; never the
+> shared stack, never production). Under its first number, `0211`, with identical
+> SQL: one fresh `db reset` and the full DB suite. As `0216`: applied on the
+> stack at `0210`, then the behavioural suite
+> `tests/db/receptionist-foundation.db.test.ts` and the source contract
+> `tests/migrations/0216-receptionist-membership-foundation.test.ts`.
+>
+> **NOT APPLIED, NOT MERGED.** Apply `0216` migration-first from the reviewed head
+> of its own PR, under its own per-change approval, before any application that
+> calls it deploys.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`) — unchanged by this branch; no apply was performed or claimed. |
+| **Repo migration max** | **0216** — this branch authors `0216_receptionist_membership_foundation.sql` (STUDIO-READY-02a, #824): one new table, nine new functions, two triggers (one a refuse-only guard on `practitioners`) and one policy — fifty-eight statements in all. No data. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0216`** on this branch, **NOT applied**. It is the sixth of a pending sequence held by other lanes: `0211` (#827), `0212` (#832), `0213` (#831), `0214` (#833) and `0215` (delivery incidents, authored in the Sentry lane, not yet in a PR). This branch does not carry those files, so the parity guard reports a hole **by construction** until it integrates after them, in order `0211` → `0212` → `0213` → `0214` → `0215` → `0216`. It renumbers if that order changes. `repo > hosted` is the MIGRATION-FIRST PENDING shape: `0216` is pending, not applied. |
+| **Next free migration** | Next free number is **0217**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. No Supabase command was run against it for this change. |
+
+## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
 
 > **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
 > `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on
