@@ -1,0 +1,288 @@
+# Studio readiness (#824): contract, capability matrix and dependency map
+
+**Status: preparation only.** Issue #824 authorizes preparation, isolated
+implementation, tests and draft PRs. These all remain separate decisions:
+- production merges;
+- hosted migrations;
+- feature activation;
+- live provider configuration;
+- invitations and customer messages.
+
+**Baseline.** Production `claude/build-hone-saas-hOex7` at `6c5eac80`.
+- Repository and hosted migrations are both at `0210`, with nothing pending (`npm run migration:state`, 2026-10-11).
+- No open PR, remote branch or worktree on this host carries a migration above `0210`. This is from a census taken when this branch was cut; re-run it before writing any migration.
+
+The three capabilities are independent at the product level. They are **not**
+independent in the code: they share the scheduling commands, the membership
+helper and the payment tables. Section 4 orders them for that reason.
+
+---
+
+## 1. Five-plus-practitioner operation: reuse, prove, fill gaps
+
+### 1.1 What exists (source, not history)
+
+| Concern | Where | Notes |
+|---|---|---|
+| Collision model | `0134` | `resource_key` per practitioner on capacity-ON studios. Studio-wide blocks fan out to every practitioner, and one GiST exclusion covers all four collision rules (`docs/roadmap/PRACTITIONER_CAPACITY_ARCHITECTURE.md`). |
+| Flags | `0134`, `0136` | `practitioner_capacity_enabled` is the structure. `practitioner_capacity_booking_enabled` is the booking switch (`booking_paused` when structure is ON and booking is OFF). Both are operator-only: browser writes raise `42501`. |
+| Per-practitioner availability, scoped blocks and breaks | `0135`, `0137`–`0139`, `0149` | `save_weekly_availability(studio, scope, days)`. A scoped source on a capacity-OFF studio is retained but **dormant**. |
+| Service eligibility | `0134` (`service_practitioners`) | Default trigger: every **active** practitioner becomes eligible for a new service. |
+| Internal booking | `create_internal_appointment_v2` (`0146` → `0152` → `0174`) | The actor must be an active member. A non-owner may book only themselves, with no duration or outside-hours override. |
+| Move and reassign | `move_or_reassign_appointment` (`0143`–`0148` → `0152` → `0174`) | A non-owner may move only their own appointment and may not reassign. Stale snapshots return `stale_appointment`. |
+| Cancel | `practitioner_cancel_appointment` (`0033` → `0174`) | The actor must be an active member of the studio. |
+| Public booking | `create_public_appointment` (`0170`, slots `0209`) | **Studio-wide only.** It assigns the studio's single active owner, or `NULL` when there are zero or several owners (`0170` lines 790–828). The public slot loader always builds capacity-OFF slots and passes no practitioner (`lib/booking/slots.ts`). |
+
+**Existing proof.** Each of these suites runs on synthetic studios of three or
+fewer practitioners in a UTC timezone:
+- the capacity suites: `practitioner-capacity`, `practitioner-capacity-state`, `practitioner-availability` and `scoped-blocks-breaks`;
+- the booking suites: `internal-booking-command`, `move-reassign-appointment`, `move-preserve-target-race`, `reassignment-integrity`, `schedule-lock-order`, `public-booking-concurrency` and `cross-studio-isolation`;
+- the integrated journey, `integrated-onboarding-capacity-journey`, which turns all three flags ON.
+
+**Hosted state.** This is a read-only census from 2026-10-11, quoted in #824:
+- capacity is ON for one studio;
+- public practitioner booking is ON for zero studios.
+
+None of that is customer acceptance.
+
+### 1.2 The proof this package adds
+
+`tests/db/five-plus-practitioner-acceptance.db.test.ts` sets up one synthetic
+studio:
+- `America/Los_Angeles`;
+- an owner and five treating practitioners, plus an inactive sixth;
+- capacity and booking both ON.
+
+It drives only the authoritative commands named above. The mapping from the
+#824 checklist to its tests is in §1.3; an item that has no command is
+recorded as a gap, not as a pass.
+
+### 1.3 Checklist → proof or gap
+
+Results are from the isolated local stack (`hone-studio-824`) at production
+`6c5eac80`, with migrations `0001`–`0210`:
+- the **existing full DB suite passes first**: 176 files and 3,534 tests;
+- the new file then passes **31/31** on three consecutive runs, leaving no synthetic studio behind.
+
+| #824 requirement | Proof (test id) | Result |
+|---|---|---|
+| Different eligible practitioners treat simultaneously | A: all six treating members are booked concurrently at one LA instant, each on its own `resource_key` | ✅ |
+| Same practitioner cannot double-book, including buffers and concurrent writes | B1: overlap `23P01`. B2: the buffer is per practitioner (`buffer_conflict`). B3: two concurrent writes give exactly one row. B4: the owner override never bypasses a real overlap. | ✅ |
+| Per-practitioner availability, breaks, eligibility, assignment, move, cancel, deactivation | C1–C3, D1–D2, E1, F1–F5, F7 | ✅ |
+| Studio-wide closures hit every resource; practitioner closures hit only theirs | E1 (scoped), E2 (fan-out to every member, the inactive one included), E3, E4 (full-day blockout, owner override included) | ✅ |
+| Public practitioner or any-available booking with authoritative assignment | K pins today's behaviour | ❌ **GAP G1** (below) |
+| Explicit owner and practitioner permissions; same-studio and cross-studio negatives | G1–G4, C3, F3, D2 | ✅ (one rule flagged: **F6**) |
+| LA date boundaries and DST; Canadian behaviour unchanged | H1: both 2031 US DST days. H2: UTC-midnight crossing. H3: Toronto EST/EDT, capacity OFF, still studio-wide. | ✅ |
+| Failed or stale operations leave no partial appointment or reservation | J: nine refused operations change zero appointment, reservation or audit rows | ✅ |
+
+**F6, a permission rule for decision.** A non-owner may create or move only
+their **own** booking. `practitioner_cancel_appointment` (`0174`) and the
+calendar cancel action, however, let **any** active member cancel **any**
+future confirmed booking in the studio. Both layers agree, so this is a
+deliberate-looking rule, not a leak. At five-plus practitioners, and with a
+receptionist coming, it should be decided explicitly: keep it, or narrow
+non-owners to their own bookings. F6 pins today's rule, so a change has to be
+deliberate.
+
+**GAP G1: public practitioner selection and "any available" assignment do not
+exist.** `create_public_appointment` takes no practitioner and assigns the
+single active owner, or `NULL`. On a capacity-ON studio, a `NULL` confirmed
+booking violates `appointments_capacity_requires_practitioner` (`0134`). So a
+public booking either lands on the owner's resource or fails. The July
+architecture note planned this as "PR C" (fair rule: *eligible + available →
+lowest booked minutes → oldest last assignment → stable id*), and it was never
+built. It is a **bounded follow-up PR**. It touches shared scheduling and the
+public booking surface, so it needs WAIT coordination (§5). Until it ships, a
+capacity studio must keep `practitioner_capacity_booking_enabled = false` for
+public intake, or accept owner-only public bookings.
+
+### 1.4 Per-studio activation and recovery plan
+
+These steps are an operator plan, run under separate per-studio authorization.
+Nothing here is automatic.
+
+1. **Preflight (read-only).** The studio has:
+   - no confirmed or completed appointment with `NULL practitioner_id`;
+   - every treating practitioner active, with weekly availability saved;
+   - service eligibility reviewed (the default makes every active practitioner eligible).
+2. **Structure ON** (`practitioner_capacity_enabled = true`) through the operator path. `rematerialize_studio_reservations` re-keys every reservation inside one transaction. Verify with `scripts/verify-practitioner-capacity.mjs`, which checks:
+   - zero orphan reservations;
+   - every appointment's `resource_key` equals its practitioner;
+   - studio-wide blocks fanned out to every practitioner.
+3. **Booking ON** (`practitioner_capacity_booking_enabled = true`), only after G1 ships, or only for owner-assigned public intake.
+4. **Recovery.** Turning structure OFF is **not** an instant rollback once parallel appointments exist (`known-limitations.md` L7). Turning it OFF would re-key them to one studio bucket, where they overlap. Recovery is therefore:
+   - turn **booking** OFF, which stops new intake without touching data;
+   - resolve overlaps by reassigning or moving;
+   - only then turn structure OFF, if that is still wanted.
+
+---
+
+## 2. Receptionist: restricted operational access
+
+### 2.1 Capability matrix
+
+The proposal below follows #824's initial set. Every cell outside it is
+**denied by default** and needs an explicit decision to add. Enforcement means
+**both** a database check (RLS, privilege or RPC gate) **and** a server-path
+check. Navigation is presentation only.
+
+| Capability | Owner | Practitioner | Receptionist | DB enforcement | Server enforcement |
+|---|---|---|---|---|---|
+| View the operational calendar (appointments, blocks, practitioner names and colours) | ✅ | ✅ | ✅ | appointments and reservation SELECT through a staff-scoped helper | page guard allows `receptionist` |
+| Client minimum contact (name, phone, email) for scheduling | ✅ | ✅ | ✅ projection only | **no** raw `clients` SELECT; a reviewed definer RPC or view returns only these columns | the client picker uses the projection |
+| Other client columns (date of birth, address, Fitzpatrick type, skin notes, contraindications, notes, photo consent) | ✅ | ✅ | ❌ | raw `clients` SELECT denied | — |
+| Create, move and cancel bookings for treating practitioners | ✅ any | ✅ own | ✅ any treating practitioner | the commands accept a `receptionist` **actor**. The target must be an owner or practitioner, and there are no duration or outside-hours overrides. | actions allow `receptionist` |
+| Intake and consent **completion status** | ✅ | ✅ | ✅ status only | a definer RPC returns booleans and timestamps; raw intake, signature and template rows are denied | — |
+| Health answers and signed document content | ✅ | ✅ | ❌ | `client_intake_forms`, `client_consent_signatures` SELECT denied | — |
+| Treatment notes, settings, history, sessions, blocks, areas, clinical notes, treatment memory, plans and goals | ✅ | ✅ | ❌ | every clinical-table SELECT denied | session and client-record pages refuse |
+| Clinical images (`treatment-images` bucket, `treatment_images`, `photos`) | ✅ | ✅ | ❌ | `storage.objects` policy plus table SELECT denied; signing refused | the images page and signing action refuse |
+| Clinical recording, completion, signing, machine and probe defaults, treatment attribution | ✅ | ✅ | ❌ | write commands refuse a `receptionist` actor | actions refuse |
+| Card or payment details, charge preparation and execution, refunds, pricing overrides, financial reports | ✅ | per current rules | ❌ | payment RPCs and tables refuse | payment and financials actions refuse |
+| Search | ✅ | ✅ | names and appointments only | clinical tables unreachable through RLS | the search action drops clinical sources for `receptionist` |
+| Exports | ✅ | ❌ (today) | ❌ | unchanged owner-only | unchanged |
+| Invitations, roles, removals, capability changes | ✅ | ❌ | ❌ | owner-only, unchanged | unchanged |
+| Security, provider, billing and studio administration | ✅ | ❌ | ❌ | unchanged | unchanged |
+| Be a treating resource, eligible for a service, an assignment candidate or capacity | ✅ | ✅ | ❌ **never** | excluded from eligibility defaults, fan-out keys, assignment candidates and capacity counts | — |
+
+**Decisions still open (product authority):**
+- whether pronouns are part of the contact projection;
+- whether appointment notes (`set_appointment_notes`) are visible to a receptionist;
+- whether a receptionist may mark arrival or completion status;
+- whether a receptionist sees service prices;
+- whether a receptionist may manage waitlist entries.
+
+All of these stay denied until decided.
+
+### 2.2 Where access is granted today (implementation inventory)
+
+- **Database.**
+  - `public.is_studio_member(studio_id)` gates SELECT and write policies in **58** migration files. `public.is_studio_owner` appears in 21.
+  - Adding a `receptionist` membership row **without** changing these would grant every clinical read. This is the risk #824 names.
+- **Server.**
+  - `requirePractitionerWithStudio()` and `getCurrentPractitionerWithStudio()` (`lib/supabase/queries.ts`) admit any active membership.
+  - About 57 files gate on `role === 'owner'`. All the rest admit any member. Clinical actions are in that "any member" set today.
+- **Capacity.** The `practitioners` row is both the membership and the treating resource.
+  - The eligibility default trigger (`0134`) adds every active practitioner.
+  - Studio-wide fan-out covers every practitioner.
+  - Owner-capacity dashboards count members.
+- **Storage.** The `treatment-images` bucket policies use membership (`0092`/`0093`). Signing happens in `app/(app)/clients/[id]/images/`.
+- **Search.** `app/(app)/global-search-actions.ts` reads `clients`, `sessions`, `session_blocks`, `session_block_areas`, the record-keeping tables, `services` and `appointments`.
+- **Export.** `app/(app)/settings/data/actions.ts` is owner-gated, and some resources also carry an owner-only RLS policy.
+- **Service-role paths.** Every admin-client read reached from a member action must re-check the role, because RLS does not apply to it.
+
+### 2.3 Enforcement design: deny by default, with one narrowing point
+
+1. **Role constraint.** Add `'receptionist'` to `practitioners.role` and `pending_invitations.role` (both `check (role in ('owner','practitioner'))` since `0001`/`0007`).
+2. **Narrow `is_studio_member` to clinical members** (owner and practitioner) in one function redefinition. Every one of the 58 files then denies a receptionist automatically. Add `is_studio_staff(studio_id)` (owner, practitioner or receptionist) and grant it **only** on the operational objects in §2.1. Doing this the other way round would mean auditing 58 files' policies one by one, and missing a single one would expose clinical data.
+3. **Projection.** Add a `SECURITY DEFINER` RPC for the client minimum fields and the intake and consent completion status. It is scoped by `is_studio_staff` and the selected studio, revoked from `anon`, `authenticated` and `service_role`, then granted back to `authenticated` only (`tests/security/clinical-rpc-grant-guard.test.ts` convention).
+4. **Scheduling commands.** Re-emit `create_internal_appointment_v2`, `move_or_reassign_appointment` and `practitioner_cancel_appointment` with three changes:
+   - a `receptionist` actor may act for any **treating** target;
+   - the target must have role owner or practitioner;
+   - overrides stay owner-only.
+
+   Audit records the receptionist as the actor. The human identity is preserved.
+5. **Treating-resource exclusion.**
+   - Eligibility defaults, fan-out keys, public assignment candidates and capacity counts filter `role in ('owner','practitioner')`.
+   - A guard rejects a `service_practitioners` row for a receptionist.
+6. **Server.**
+   - `requirePractitionerWithStudio()` keeps its contract but **refuses `receptionist` by default**.
+   - A new `requireStaffWithStudio({ allow: ['receptionist'] })` is used only by the calendar and booking pages and actions.
+   - Every service-role read re-checks the role.
+7. **Multi-studio.** The role is per membership row. Studio selection is unchanged and re-validated per request.
+
+### 2.4 Tests required (real database roles)
+
+- Raw PostgREST reads of every clinical table, `clients` columns, storage objects and signed URLs, as a receptionist JWT: denied.
+- Forged server-action calls (clinical, payment, settings): refused.
+- Search excludes clinical sources. Export is refused. Dashboard previews hold no clinical fields.
+- Bookings: a receptionist creates, moves and cancels a practitioner's booking; may not target themselves or override.
+- Lifecycle: invitation, acceptance, role transition (practitioner to receptionist and back), deactivation, forged studio and identity, and cross-studio access.
+- Receptionist exclusion from eligibility, fan-out, assignment and capacity counts.
+
+---
+
+## 3. US/USD payments: per-studio country and currency
+
+### 3.1 Inventory of CA/CAD assumptions
+
+- **Schema `CHECK`s pinned to `'cad'`:**
+  - `studio_payment_settings.default_charge_currency` (`0032`);
+  - `payment_charge_attempts.currency` (`0032` default; `0073` CHECK);
+  - `manual_fee_charge_attempts.currency` (`0064`);
+  - `appointment_settlements.currency` (`0187`).
+- **Application constants:**
+  - `currency: "cad"` (`app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts:326`);
+  - `currency = "cad"` (`lib/billing/manual-fee-eligibility.ts:392`);
+  - the default `"CAD"` in `lib/billing/payment-manual-review.ts:55`.
+- **Provider:** `STRIPE_CONNECT_COUNTRY` (env, default `CA`) is read by `lib/stripe/account.ts:110` for **every** Express account.
+- **Documents and displays:**
+  - receipts (`lib/billing/payment-receipt.ts`, `lib/email/templates/payment-receipt.ts`, which assumes the CHECK);
+  - fee and charge cards (`app/(app)/calendar/[id]/ManualFeeChargeCard.tsx`);
+  - financial reports (`lib/finance/*`).
+- **Webhooks and reconciliation:** currency identity checks already exist. Refund and dispute currency mismatches route to manual review (`0032`; `lib/billing/payment-webhook-reconciliation.ts`).
+- **Out of scope:** `lib/marketing/content.ts` `CURRENCY = "CAD"` is Hone's own plan pricing, not studio payments.
+
+### 3.2 Design
+
+- **Configuration.** Two explicit per-studio values, `payment_country` (`CA`|`US`) and `payment_currency` (`cad`|`usd`).
+  - Only the allowed pairs (CA/cad and US/usd) are permitted.
+  - The values are written by an operator-protected path, never inferred from timezone, and read by the server from the selected studio.
+  - Existing studios are backfilled to CA/cad. The read-only census comes first (§3.3).
+- **Account creation.** Uses the studio's country. An existing account whose provider country differs fails closed and is never replaced.
+- **Prepared attempts.** Currency and integer cents are written once at preparation. Execution, refunds and reconciliation read those facts and nothing later or browser-supplied. The `CHECK`s widen to `('cad','usd')` per row, consistent with the studio's configuration at preparation.
+- **Changes.** Changing country or currency after an account exists, or after any monetary history, is refused except through an explicit protected policy. Old prices and transactions are never reinterpreted.
+- **Displays and receipts.** Format from each row's own currency, and say USD or CAD explicitly. Canadian output must stay byte-identical.
+- **Out of scope:** FX, conversion, payout-model changes and provider migration. Existing consent, idempotency, readiness and ledger-recovery rules are unchanged.
+
+### 3.3 Read-only census before the legacy migration
+
+The census reports counts only. For each studio it gathers:
+- payment country and currency in effect;
+- Stripe account presence and mode;
+- monetary history (attempts, settlements, refunds).
+
+It also confirms every existing row is `cad`. The result shapes the backfill and the protected-change policy. Provider eligibility of Hone's Connect platform for US Express onboarding is a **verification gap**, closed in an authorized sandbox step, not by documentation.
+
+### 3.4 Tests (fake-provider lanes)
+
+On the fake-provider lanes, with the existing CAD suites as regression:
+- USD prepare, execute, receipt, refund and webhook recovery;
+- duplicate and concurrent requests;
+- mismatched provider currency or country;
+- stale configuration;
+- a Canadian regression with byte-identical receipts.
+
+---
+
+## 4. Dependency map and PR sequence
+
+```text
+PR 1  five-plus proof + this contract              (tests/docs only, no migration)
+ │
+ ├─ PR 2  public practitioner selection (G1)          shared: create_public_appointment, slots,
+ │        migration N                                  app/book — WAIT coordination required
+ │
+ ├─ PR 3  receptionist foundation                     shared: is_studio_member, practitioners.role,
+ │        migration N(+1)                              scheduling commands, eligibility trigger
+ │        └─ PR 3b receptionist server paths + UI      shared: lib/supabase/queries.ts guards
+ │
+ └─ PR 4  US/USD per-studio currency                   shared: payment tables/RPCs, receipts,
+          migration N(+2)                              stripe account creation
+```
+
+- **PR 2 and PR 3 both re-emit scheduling functions.** Whichever lands second re-emits on top of the first's body; neither edits the other's migration.
+- **PR 3 changes `is_studio_member`,** which every RLS policy reads. It needs the full DB lane plus the security guards, and it lands alone.
+- **PR 4 is independent of PR 2 and PR 3** in code. It shares only the migration sequence.
+
+## 5. Coordination with DB, WAIT and SMS lanes
+
+- **Migration numbers.** They are allocated at write time from a fresh census of hosted state, the repository, this host's worktrees and open PRs. Pending migrations must form one **contiguous suffix** (the parity guard). So only one lane can hold pending migrations at a time unless they are stacked; the next lane takes N+1 only on top of N.
+- **WAIT v4.** PR1 (#823) is a docs-only contract that keeps the one-practitioner round contract frozen. PR 2 here does **not** change rounds, invitation conversion (`0195`) or the waitlist gateway (`0197`). Any shared-file overlap (the public command and slots) is flagged in PR 2 for WAIT review before it leaves draft.
+- **Willow SMS.** No file under `lib/sms/**`, `lib/waitlist/delivery/**` or the SMS migrations is touched here. Waitlist SMS switches stay off.
+
+## 6. Release gates (each PR)
+
+- Exact-head required CI, a Codex review and a read-only shepherd receipt.
+- Production integration one PR at a time, after exact-head approval.
+- Hosted migrations migration-first, under separate per-change authorization.
+- No activation, provider configuration, invitation or message without its own approval.
