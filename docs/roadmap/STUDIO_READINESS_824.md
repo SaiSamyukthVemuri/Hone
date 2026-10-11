@@ -128,21 +128,21 @@ check. Navigation is presentation only.
 
 | Capability | Owner | Practitioner | Receptionist | DB enforcement | Server enforcement |
 |---|---|---|---|---|---|
-| View the operational calendar (appointments, blocks, practitioner names and colours) | ✅ | ✅ | ✅ | appointments and reservation SELECT through a staff-scoped helper | page guard allows `receptionist` |
-| Client minimum contact (name, phone, email) for scheduling | ✅ | ✅ | ✅ projection only | **no** raw `clients` SELECT; a reviewed definer RPC or view returns only these columns | the client picker uses the projection |
-| Other client columns (date of birth, address, Fitzpatrick type, skin notes, contraindications, notes, photo consent) | ✅ | ✅ | ❌ | raw `clients` SELECT denied | — |
-| Create, move and cancel bookings for treating practitioners | ✅ any | ✅ own | ✅ any treating practitioner | the commands accept a `receptionist` **actor**. The target must be an owner or practitioner, and there are no duration or outside-hours overrides. | actions allow `receptionist` |
-| Intake and consent **completion status** | ✅ | ✅ | ✅ status only | a definer RPC returns booleans and timestamps; raw intake, signature and template rows are denied | — |
-| Health answers and signed document content | ✅ | ✅ | ❌ | `client_intake_forms`, `client_consent_signatures` SELECT denied | — |
-| Treatment notes, settings, history, sessions, blocks, areas, clinical notes, treatment memory, plans and goals | ✅ | ✅ | ❌ | every clinical-table SELECT denied | session and client-record pages refuse |
-| Clinical images (`treatment-images` bucket, `treatment_images`, `photos`) | ✅ | ✅ | ❌ | `storage.objects` policy plus table SELECT denied; signing refused | the images page and signing action refuse |
-| Clinical recording, completion, signing, machine and probe defaults, treatment attribution | ✅ | ✅ | ❌ | write commands refuse a `receptionist` actor | actions refuse |
-| Card or payment details, charge preparation and execution, refunds, pricing overrides, financial reports | ✅ | per current rules | ❌ | payment RPCs and tables refuse | payment and financials actions refuse |
-| Search | ✅ | ✅ | names and appointments only | clinical tables unreachable through RLS | the search action drops clinical sources for `receptionist` |
+| View the operational calendar (appointment times and status, service, practitioner names and colours, client display name) | ✅ | ✅ | ✅ projection | **no** raw `appointments` or reservation SELECT (RLS reads `practitioners` membership). The receptionist calendar RPC returns the fixed columns. | receptionist route guard |
+| Client minimum contact (name, phone, email) for scheduling | ✅ | ✅ | ✅ projection | **no** raw `clients` SELECT. The contacts RPC returns only these columns. | the receptionist picker uses the projection |
+| Other client columns (date of birth, address, Fitzpatrick type, skin notes, contraindications, notes, photo consent) | ✅ | ✅ | ❌ | raw `clients` SELECT denied by construction | — |
+| Create, move and cancel bookings for treating practitioners | ✅ any | ✅ own | ✅ any treating practitioner | receptionist commands over the shared booking core. The target must be an active owner or practitioner, and there are no duration or outside-hours overrides. | receptionist actions only |
+| Intake and consent **completion status** | ✅ | ✅ | ✅ status only | the contacts RPC returns booleans and dates; raw intake, signature and template rows are denied | — |
+| Health answers and signed document content | ✅ | ✅ | ❌ | `client_intake_forms`, `client_consent_signatures` denied by construction | — |
+| Treatment notes, settings, history, sessions, blocks, areas, clinical notes, treatment memory, plans and goals | ✅ | ✅ | ❌ | every clinical-table policy reads `practitioners` membership, so all are denied by construction | existing guards refuse (no practitioner membership) |
+| Clinical images (`treatment-images` bucket, `treatment_images`, `photos`) | ✅ | ✅ | ❌ | `storage.objects` and table policies denied by construction | the existing images page and signing action refuse |
+| Clinical recording, completion, signing, machine and probe defaults, treatment attribution | ✅ | ✅ | ❌ | every write command's actor check reads `practitioners`, so all refuse | existing actions refuse |
+| Card or payment details, charge preparation and execution, refunds, pricing overrides, financial reports | ✅ | per current rules | ❌ | payment commands and tables denied by construction | existing actions refuse |
+| Search | ✅ | ✅ | ❌ (until decided) | clinical sources denied by construction | the existing search action refuses |
 | Exports | ✅ | ❌ (today) | ❌ | unchanged owner-only | unchanged |
-| Invitations, roles, removals, capability changes | ✅ | ❌ | ❌ | owner-only, unchanged | unchanged |
+| Invitations, roles, removals, capability changes | ✅ | ❌ | ❌ | owner-only commands | unchanged |
 | Security, provider, billing and studio administration | ✅ | ❌ | ❌ | unchanged | unchanged |
-| Be a treating resource, eligible for a service, an assignment candidate or capacity | ✅ | ✅ | ❌ **never** | excluded from eligibility defaults, fan-out keys, assignment candidates and capacity counts | — |
+| Be a treating resource, eligible for a service, an assignment candidate or capacity | ✅ | ✅ | ❌ **never** | no `practitioners` row, so none of these is possible | — |
 
 **Decisions still open (product authority):**
 - whether pronouns are part of the contact projection;
@@ -170,25 +170,56 @@ All of these stay denied until decided.
 - **Export.** `app/(app)/settings/data/actions.ts` is owner-gated, and some resources also carry an owner-only RLS policy.
 - **Service-role paths.** Every admin-client read reached from a member action must re-check the role, because RLS does not apply to it.
 
-### 2.3 Enforcement design: deny by default, with one narrowing point
+### 2.3 Enforcement design: a separate membership, denied by construction
 
-1. **Role constraint.** Add `'receptionist'` to `practitioners.role` and `pending_invitations.role` (both `check (role in ('owner','practitioner'))` since `0001`/`0007`).
-2. **Narrow `is_studio_member` to clinical members** (owner and practitioner) in one function redefinition. Every one of the 58 files then denies a receptionist automatically. Add `is_studio_staff(studio_id)` (owner, practitioner or receptionist) and grant it **only** on the operational objects in §2.1. Doing this the other way round would mean auditing 58 files' policies one by one, and missing a single one would expose clinical data.
-3. **Projection.** Add a `SECURITY DEFINER` RPC for the client minimum fields and the intake and consent completion status. It is scoped by `is_studio_staff` and the selected studio, revoked from `anon`, `authenticated` and `service_role`, then granted back to `authenticated` only (`tests/security/clinical-rpc-grant-guard.test.ts` convention).
-4. **Scheduling commands.** Re-emit `create_internal_appointment_v2`, `move_or_reassign_appointment` and `practitioner_cancel_appointment` with three changes:
-   - a `receptionist` actor may act for any **treating** target;
-   - the target must have role owner or practitioner;
-   - overrides stay owner-only.
+**Decision: a receptionist is NOT a `practitioners` row.** The obvious design
+adds `'receptionist'` to `practitioners.role`. It would then have to:
+- narrow `is_studio_member`, which 58 migration files read;
+- re-audit every `SECURITY DEFINER` command whose actor check is `practitioners.active` without a role test. That covers session, image and note writes, intake review, payments and record keeping;
+- re-audit every server action that admits "any member".
 
-   Audit records the receptionist as the actor. The human identity is preserved.
-5. **Treating-resource exclusion.**
-   - Eligibility defaults, fan-out keys, public assignment candidates and capacity counts filter `role in ('owner','practitioner')`.
-   - A guard rejects a `service_practitioners` row for a receptionist.
-6. **Server.**
-   - `requirePractitionerWithStudio()` keeps its contract but **refuses `receptionist` by default**.
-   - A new `requireStaffWithStudio({ allow: ['receptionist'] })` is used only by the calendar and booking pages and actions.
-   - Every service-role read re-checks the role.
-7. **Multi-studio.** The role is per membership row. Studio selection is unchanged and re-validated per request.
+Missing one of those exposes clinical data, which is the exact risk #824 names.
+
+A **separate receptionist membership** inverts that. Every existing policy,
+command and server path keeps reading `practitioners`, so a receptionist is
+**refused everywhere by construction**. The only access is what the new
+objects explicitly grant:
+
+1. **`studio_receptionists`.**
+   - Columns: `id`, `studio_id`, `user_id`, `display_name`, `email`, `active` and timestamps.
+   - `unique (studio_id, user_id)`.
+   - A guard refuses one user being both an active practitioner and an active receptionist in the same studio.
+   - RLS: a receptionist reads only their own row; the owner reads the studio's rows.
+   - No browser writes. Owner-only definer commands invite, activate, deactivate and convert.
+2. **`is_studio_receptionist(studio_id)`.** True for the signed-in user's active row. It is used **only** by the new objects below, never added to an existing policy.
+3. **Projection RPCs** (`SECURITY DEFINER`, revoked from `public`/`anon`/`service_role`, granted to `authenticated` only):
+   - **The receptionist calendar.** Appointment times, status, service name, the treating practitioner's display name and colour, and the client's display name. It excludes appointment notes and every price (undecided, §2.1).
+   - **Client contacts.** Client id, name, phone and email, plus intake and consent *completion* as booleans and dates.
+4. **Scheduling commands for a receptionist.** These are separate definer commands that take the receptionist actor and then apply the **same** authoritative booking, move and cancel logic:
+   - the same validator, exclusion, buffer and lock order;
+   - the target must be an active owner or practitioner;
+   - no duration or outside-hours override.
+
+   To do this without forking that logic, the existing commands are re-emitted over a shared internal core that receives a server-resolved actor kind. Their behaviour for existing callers stays byte-identical, pinned by the existing suites.
+5. **Audit and attribution.**
+   - `appointment_audit.actor_type` gains `'receptionist'`, with a same-studio FK column to `studio_receptionists`. Today the type is constrained to `practitioner|client|system` (`0010`), and `0174` ties `actor_practitioner_id` to practitioners only.
+   - `appointments` gains receptionist creator and canceller columns, beside 0174's practitioner columns, with a CHECK that a row names at most one creator kind.
+   - The human actor is recorded, never a borrowed practitioner.
+6. **Not a treating resource, by construction.** There is no `practitioners` row, so the receptionist cannot be:
+   - an eligibility row (the FK targets `practitioners`);
+   - a fan-out key;
+   - an assignment candidate;
+   - a capacity count;
+   - a booking target.
+7. **Invitations.** `pending_invitations.role` (`0007`) widens to admit `'receptionist'`. Acceptance (`admin_accept_pending_invitation`, `0141`) creates a `studio_receptionists` row for that role, and never a `practitioners` row. Role transition between practitioner and receptionist is one owner command that deactivates one kind and activates the other, atomically, with audit.
+8. **Server (follow-up PR).**
+   - Existing guards (`getCurrentPractitionerWithStudio`, `requirePractitionerWithStudio`) are unchanged, and they refuse a receptionist because there is no practitioner membership.
+   - A new `requireReceptionistWithStudio()` serves only the receptionist calendar, contacts and booking routes.
+   - Middleware and the shell admit a receptionist **only** to those routes.
+   - Multi-studio selection extends to receptionist memberships and is re-validated per request.
+
+This trades a little duplication (two membership tables) for an access model
+in which forgetting something fails **closed**.
 
 ### 2.4 Tests required (real database roles)
 
@@ -257,27 +288,38 @@ On the fake-provider lanes, with the existing CAD suites as regression:
 ## 4. Dependency map and PR sequence
 
 ```text
-PR 1  five-plus proof + this contract              (tests/docs only, no migration)
+PR 1   five-plus proof + this contract             tests/docs only, no migration (#825)
  │
- ├─ PR 2  public practitioner selection (G1)          shared: create_public_appointment, slots,
- │        migration N                                  app/book — WAIT coordination required
+ ├─ PR 2   receptionist DB foundation               studio_receptionists, projection RPCs,
+ │         migration N                              receptionist scheduling commands, audit
+ │         └─ PR 2b receptionist server paths + UI  requireReceptionistWithStudio, middleware,
+ │                                                  calendar/contacts routes (no migration)
  │
- ├─ PR 3  receptionist foundation                     shared: is_studio_member, practitioners.role,
- │        migration N(+1)                              scheduling commands, eligibility trigger
- │        └─ PR 3b receptionist server paths + UI      shared: lib/supabase/queries.ts guards
+ ├─ PR 3   US/USD per-studio currency               payment settings, CHECKs, immutable attempt
+ │         migration N+1 (stacked on N, or          currency, account country, receipts
+ │         renumbered after N lands)
  │
- └─ PR 4  US/USD per-studio currency                   shared: payment tables/RPCs, receipts,
-          migration N(+2)                              stripe account creation
+ └─ PR 4   public practitioner selection (G1)       after WAIT v4 PR5, or under an explicit
+           migration N+2                            ownership hand-off (§5)
 ```
 
-- **PR 2 and PR 3 both re-emit scheduling functions.** Whichever lands second re-emits on top of the first's body; neither edits the other's migration.
-- **PR 3 changes `is_studio_member`,** which every RLS policy reads. It needs the full DB lane plus the security guards, and it lands alone.
-- **PR 4 is independent of PR 2 and PR 3** in code. It shares only the migration sequence.
+- **PR 2 re-emits the three internal scheduling commands** over a shared core. That is the one seam shared with WAIT v4 PR6 (§5).
+- **PR 2 changes no existing policy.** A receptionist is denied by construction (§2.3). Its proof is the full DB lane plus the security guards, and the new tests that read every clinical table as a receptionist.
+- **PR 3 is independent of PR 2 in code.** It shares only the migration sequence: pending migrations must stay a contiguous suffix (§5).
 
 ## 5. Coordination with DB, WAIT and SMS lanes
 
 - **Migration numbers.** They are allocated at write time from a fresh census of hosted state, the repository, this host's worktrees and open PRs. Pending migrations must form one **contiguous suffix** (the parity guard). So only one lane can hold pending migrations at a time unless they are stacked; the next lane takes N+1 only on top of N.
-- **WAIT v4.** PR1 (#823) is a docs-only contract that keeps the one-practitioner round contract frozen. PR 2 here does **not** change rounds, invitation conversion (`0195`) or the waitlist gateway (`0197`). Any shared-file overlap (the public command and slots) is flagged in PR 2 for WAIT review before it leaves draft.
+- **WAIT v4: file ownership (this answers #823 §9's open item).** WAIT v4 lists these runtime surfaces as its own (#823 §7, §9):
+  - `lib/booking/slots.ts`, `lib/booking/public-slot-range.ts`, `new-client-admission.ts`, `waitlist-invitation.ts`;
+  - `lib/waitlist/**`, `app/book/[slug]/**`, `app/(app)/settings/waitlist/**`, `components/waitlist/**`;
+  - the reservation exclusion path that its PR2 extends.
+
+  **#824 claims none of them.** Consequences:
+  - **G1 (public practitioner selection) is sequenced after WAIT v4's public-booking work** (its PR5, recipient flow and atomic booking), or is built only under an explicit ownership hand-off. Until then G1 stays a documented gap, and a capacity studio keeps public intake owner-assigned or paused.
+  - **#824 owns** the receptionist objects (§2.3) and its server routes. It also owns `lib/supabase/queries.ts` membership resolution, which is shared with every authenticated page, so it goes to coordinated review.
+  - **The shared-core re-emission of the three internal commands** (`create_internal_appointment_v2`, `move_or_reassign_appointment`, `practitioner_cancel_appointment`) is the **one** shared scheduling seam. WAIT v4's withdrawal paths (its PR6) also act on owner bookings and moves. Whichever lane lands second re-emits on top of the first's body and never edits the other's migration. These functions stay behaviourally identical for existing callers.
+  - **US/USD** touches payment tables, RPCs, receipts and Stripe only. It has no WAIT overlap.
 - **Willow SMS.** No file under `lib/sms/**`, `lib/waitlist/delivery/**` or the SMS migrations is touched here. Waitlist SMS switches stay off.
 
 ## 6. Release gates (each PR)
