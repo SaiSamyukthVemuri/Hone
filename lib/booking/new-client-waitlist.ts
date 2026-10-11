@@ -1,5 +1,15 @@
 import "server-only";
 import { normalizePhoneForSms } from "@/lib/sms/twilio";
+import {
+  NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED,
+  validateWaitlistPhone,
+  WAITLIST_PHONE_MAX,
+} from "@/lib/waitlist/signup-contact";
+
+// SMS-04: the phone rule and the SMS-answer refusal live in the client-safe
+// lib/waitlist/signup-contact so the public form applies the same rule before
+// it submits. Re-exported here for every existing importer.
+export { NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED, WAITLIST_PHONE_MAX };
 
 // ===========================================================================
 // P0 EMERGENCY — NEW-CLIENT WAITLIST (ADMISSION CONTROL)
@@ -145,7 +155,6 @@ export const NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED =
 // before it reaches a database lookup, a rate limiter or an email template.
 export const WAITLIST_NAME_MAX = 120;
 export const WAITLIST_EMAIL_MAX = 254; // RFC 5321 practical address ceiling
-export const WAITLIST_PHONE_MAX = 40;
 // The slug arrives from the browser as a lookup pointer only. Bounding it keeps
 // an arbitrarily long attacker-supplied string out of the studio query and out
 // of any diagnostic log line.
@@ -205,7 +214,12 @@ export type WaitlistSubmission = {
   name: string;
   /** Trimmed + lowercased. The only representation this feature stores or sends. */
   email: string;
-  phone: string | null;
+  /**
+   * SMS-04: REQUIRED on every new public signup, and a number the sender's own
+   * law (normalizePhoneForSms) accepts. Stored as typed (trimmed); normalised
+   * only at send. Existing entries without a phone are untouched.
+   */
+  phone: string;
 };
 
 export type WaitlistValidation =
@@ -215,9 +229,12 @@ export type WaitlistValidation =
 /**
  * Bounded validation for the public waitlist form.
  *
- * Deliberately NOT a client-profile normaliser: the phone is a plain contact
- * string (no E.164 coercion, no dedupe, no match against `clients`), because
- * V1 creates no client record and claims no identity.
+ * Deliberately NOT a client-profile normaliser: the phone is stored as the
+ * contact string the person typed (no E.164 coercion, no dedupe, no match
+ * against `clients`), because V1 creates no client record and claims no
+ * identity. SMS-04: it is REQUIRED, and must be a number normalizePhoneForSms
+ * accepts -- the same rule the form applies (validateWaitlistPhone) -- for a
+ * Yes and a No alike.
  */
 export function validateWaitlistSubmission(raw: {
   name: string;
@@ -235,14 +252,12 @@ export function validateWaitlistSubmission(raw: {
     return { ok: false, error: "Enter a valid email address." };
   }
 
-  const phoneRaw = (raw.phone ?? "").trim();
-  if (phoneRaw.length > WAITLIST_PHONE_MAX) {
-    return { ok: false, error: "Please shorten your phone number." };
-  }
+  const phone = validateWaitlistPhone(raw.phone);
+  if (!phone.ok) return { ok: false, error: phone.error };
 
   return {
     ok: true,
-    value: { name, email, phone: phoneRaw.length === 0 ? null : phoneRaw },
+    value: { name, email, phone: phone.phone },
   };
 }
 
@@ -289,9 +304,6 @@ export type NewClientWaitlistResult =
 // visitor's own form, decided before any lookup, so they are safe to show
 // verbatim on this unauthenticated surface.
 
-export const NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED =
-  "Please choose Yes or No for text messages.";
-
 export const NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE =
   "To get texts, add your mobile number, or choose No.";
 
@@ -308,7 +320,11 @@ export const WAITLIST_SMS_PHONE_MIN_DIGITS = 7;
  * the parsed radio value: `null` is NOT ANSWERED and is refused, never read as
  * "no". A Yes needs a number the SENDER can text (Codex P2 4234615500):
  * consent bound to a number the invitation sender refuses would settle every
- * invitation `invalid_phone`. A No needs nothing, and joins exactly like a Yes.
+ * invitation `invalid_phone`. A No joins exactly like a Yes.
+ *
+ * SMS-04: validateWaitlistSubmission now requires that number for EVERY new
+ * signup and runs first, so the Yes check below is a backstop the action can
+ * no longer reach; it stays so this function remains correct on its own.
  */
 export function validateWaitlistSmsAnswer(input: {
   answer: boolean | null;

@@ -47,7 +47,7 @@ const EFFECTIVE_DATE = "May 22, 2026";
 
 // When the text below was last revised. A fact about this file, not a legal
 // determination.
-const LAST_UPDATED = "October 9, 2026";
+const LAST_UPDATED = "October 10, 2026";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -147,7 +147,7 @@ export default function PrivacyPolicyPage() {
       </P>
       <UL>
         <li>Your name and email address</li>
-        <li>Your phone number, if you choose to give one; it is optional</li>
+        <li>Your phone number, which is required so the studio can contact you</li>
         <li>
           Whether you agree to text messages about the waitlist and appointments
           offered from it

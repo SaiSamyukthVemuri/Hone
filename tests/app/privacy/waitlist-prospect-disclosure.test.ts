@@ -104,10 +104,13 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   });
 
   it("enumerates exactly what the waitlist form actually collects, and no more", () => {
-    // Name, email, optional phone, the text-message answer (0208), which
-    // studio, when, and the waiting/removed status.
+    // Name, email, phone (REQUIRED since SMS-04, for every new signup), the
+    // text-message answer (0208), which studio, when, and the waiting/removed
+    // status.
     expect(PRIVACY).toMatch(/Your name and email address/);
-    expect(PRIVACY).toMatch(/Your phone number, if you choose to give one; it is optional/);
+    expect(PRIVACY).toMatch(/Your phone number, which is required so the studio can contact you/);
+    // The notice must not still call the phone optional once the form requires it.
+    expect(PRIVACY).not.toMatch(/phone number, if you choose to give one/);
     // 0208: the explicit Yes/No answer is collected, so the list names it.
     expect(PRIVACY).toMatch(
       /Whether you agree to text messages about the waitlist and appointments\s+offered from it/,
@@ -621,8 +624,9 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     expect(lib).toMatch(/UNCACHED/);
 
     // The durable command carries no handling/mode argument...
-    expect(action).toMatch(/rpc\("join_new_client_waitlist_with_sms_answer", \{/);
-    const call = action.slice(action.indexOf('rpc("join_new_client_waitlist_with_sms_answer"'));
+    // SMS-04 (0210): the successor of 0208's command, with the same arguments.
+    expect(action).toMatch(/rpc\("join_new_client_waitlist_with_phone_and_sms_answer", \{/);
+    const call = action.slice(action.indexOf('rpc("join_new_client_waitlist_with_phone_and_sms_answer"'));
     const args = call.slice(0, call.indexOf("}"));
     for (const forbidden of ["handling", "mode", "commit_point", "durable"]) {
       expect(args.toLowerCase(), `rpc args must not carry ${forbidden}`).not.toContain(forbidden);

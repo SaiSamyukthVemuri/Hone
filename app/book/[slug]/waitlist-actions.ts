@@ -34,6 +34,8 @@ import {
   buildNewClientWaitlistStudioEmail,
 } from "@/lib/email/templates/new-client-waitlist";
 import { hashFingerprint } from "@/lib/portal/tokens";
+import { sendWaitlistJoinAckSms } from "@/lib/waitlist/delivery/join-ack-sms";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import type { Studio } from "@/lib/types/database";
 
 // ===========================================================================
@@ -254,6 +256,44 @@ async function sendClientAcknowledgement(
   }
 }
 
+/**
+ * SMS-04. The one join acknowledgement text, for an entry this request just
+ * created with a Yes. Strictly after the commit and after the response, like
+ * the emails, and never able to change either: whether it goes at all is the
+ * database claim's decision (claim_waitlist_join_ack_sms, 0210 -- the studio
+ * switch, a genuinely new public-form Yes, once per entry, once per number per
+ * day) and then the sender's (STOP phone-wide, a usable number, the
+ * production fence). Its outcome lives in the SMS ledger. It never throws: a
+ * throw it contains raises the same durable `sms_send_failed` warning as a
+ * refused or lost text.
+ */
+async function deliverJoinAckSms(
+  admin: ReturnType<typeof createAdminClient>,
+  studio: Studio,
+  entryId: string,
+): Promise<void> {
+  try {
+    await sendWaitlistJoinAckSms({
+      admin,
+      studio: { id: studio.id, name: studio.name },
+      entryId,
+    });
+  } catch {
+    // Structural only: no recipient, number or identity.
+    logWaitlistEvent("new_client_waitlist_join_ack_sms_threw", { studioId: studio.id });
+    // recordOpsAlert never throws.
+    await recordOpsAlert({
+      severity: "warning",
+      event: "sms_send_failed",
+      message:
+        "A waitlist join acknowledgement text failed with an unexpected error and may not have been sent; the person is on the waitlist and their acknowledgement email is unaffected.",
+      studioId: studio.id,
+      route: "app/book/[slug]/waitlist-actions",
+      safeDetails: { purpose: "waitlist_join_acknowledgement", shape: "threw" },
+    });
+  }
+}
+
 // ===========================================================================
 // WAIT-02 — DURABLE PATH. The database row is the commit.
 // ===========================================================================
@@ -299,7 +339,10 @@ async function submitToDurableWaitlist(
     // 0208: the same guarded join, wrapped by the command that also records the
     // SMS answer. The admission gate and the join run unchanged inside it; a
     // Yes is written on a newly created entry only, never on an existing one.
-    const { data, error } = await admin.rpc("join_new_client_waitlist_with_sms_answer", {
+    // SMS-04 (0210): the successor command, which also refuses a missing or
+    // unsendable phone for a Yes and a No alike, and stamps the version-2
+    // wording this form now shows.
+    const { data, error } = await admin.rpc("join_new_client_waitlist_with_phone_and_sms_answer", {
       p_studio_id: studio.id,
       p_name: submission.name,
       p_email: submission.email,
@@ -370,6 +413,12 @@ async function submitToDurableWaitlist(
   // ---- COMMITTED. Everything below is notification and cannot change that,
   // ---- and none of it is awaited before the caller gets an answer.
   schedulePostResponse(async () => {
+    // SMS-04. Started FIRST and run beside the two emails, so a slow email can
+    // never hold it back. Only a Yes on THIS new entry can qualify; a No, and
+    // every resubmission (already_waiting returned above), never reach here.
+    const joinAckText =
+      smsConsent && entryId ? deliverJoinAckSms(admin, studio, entryId) : null;
+
     // Tracked for the operator log line at the end, never for the response: the
     // browser now learns nothing beyond "success", so this is the only place the
     // notification outcome is still visible.
@@ -436,6 +485,8 @@ async function submitToDurableWaitlist(
       studioId: studio.id,
       notification,
     });
+
+    if (joinAckText) await joinAckText;
   });
 
   // Reached at the same point in the flow as the duplicate branch above: the
