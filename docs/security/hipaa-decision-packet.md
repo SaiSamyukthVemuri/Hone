@@ -102,6 +102,20 @@ and its [HIPAA projects](https://supabase.com/docs/guides/platform/hipaa-project
 11. Rotate the service-role key and other secrets on a schedule; keep an
     inventory of who holds them.
 
+**Proposed change sequence for the §2.1 settings** (each is a separate
+authorization; nothing has been changed):
+
+| Step | Setting | Pre-check (read-only, before the change) | Risk if done blind | Rollback |
+|---|---|---|---|---|
+| 1 | Enforce MFA on the org | The sole member already has MFA on | Low | Toggle off |
+| 2 | SSL enforcement on | List every **direct** Postgres client (CI `supabase db push`, operator `psql`/`db query`, any pooler user) and confirm each connects with TLS. The app uses HTTPS (PostgREST, Storage) | A non-TLS operator or CI connection is refused | Toggle off |
+| 3 | Session timebox and inactivity timeout | Pick values with the practice workflow (for example a 12h inactivity limit; product decision) | Mid-session logouts during treatment | Set back to 0 |
+| 4 | Leaked-password protection; longer minimum password | Check the plan tier for the feature | Existing short passwords keep working until changed | Toggle off |
+| 5 | PITR | Read the compute-size prerequisite and price (D-2 quote) | Cost | Disable |
+| 6 | Network restrictions | Inventory direct DB connection sources: CI runners use **dynamic** IPs, Vercel functions use HTTPS, not direct DB. Decide how CI and the operator reach the DB after the change | **Locks out migrations and operator access** if the CI and operator paths are not planned | Reset to `0.0.0.0/0` |
+| 7 | Team plan, HIPAA add-on, BAA, HIPAA project mark | Quote, then legal review | Spend | Plan downgrade per Supabase terms |
+| 8 | Confirm `log_connections` | `show log_connections` (read-only) | None | n/a |
+
 ### 2.2 Vercel (G-04, G-07, G-16)
 
 **Account facts, read-only (Vercel API, 2026-10-12):**
@@ -246,6 +260,11 @@ else needs a quote.
 5. **D-4**: the email route (§3.1 A, B or C).
 6. **D-5**: the Twilio BAA and product confirmation.
 7. **D-6**: preview isolation (G-16).
+8. **D-7**: the payment receipt subject (copy decision, possibly with
+   legal). Proposal: `Receipt from <studio>`, with the reason and amount kept
+   in the body and PDF. The Audit lane has no objection and will implement it
+   if approved.
+9. **D-8**: the access-log questions Q2 and Q4 from the G-13 contract.
 
 Engineering can start these now, with no spend and no hosted change:
 - G-07 analytics unmount or strip;
@@ -293,9 +312,14 @@ deployed; neither depends on a decision above):
 - Email subjects without client name, service, date, time, attendance or
   treatment fact: #859. This reduces exposure but does **not** clear G-05.
 - PostHog token-path redaction derived from the canonical registry: #869.
+- Hidden neutral email preheader (previews only): #870, stacked on #859.
+  The waitlist family is excluded (idempotency payload) and handed to the
+  WAIT lane. **Email is not PHI-free.**
+- Provider-visible email inventory:
+  `docs/security/email-provider-visible-inventory.md` (in #870).
 - G-13 clinical access audit: contract proposed in
   [clinical-access-audit-contract.md](./clinical-access-audit-contract.md);
-  shape agreed in principle with the RBAC lane; no migration number held (≥ 0222, via the shared register).
+  shape agreed in principle with the RBAC lane; no migration number held (≥ 0223: #868 now claims 0222; allocated via the shared register).
 
 **Consequence for Friday (2026-10-16).** Several of these depend on vendor
 turnaround that this packet cannot vouch for. Unless each gate is met and
