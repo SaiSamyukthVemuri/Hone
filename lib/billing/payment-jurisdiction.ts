@@ -118,7 +118,9 @@ export function describePaymentCountry(input: {
   jurisdiction: StudioPaymentJurisdiction | null;
   account:
     | { kind: "none" }
-    | { kind: "bound"; observedCountry: string | null }
+    // conflictingCountry: a later, contradicting Stripe report (0214's
+    // stripe_account_country_conflict). Optional so existing callers compile.
+    | { kind: "bound"; observedCountry: string | null; conflictingCountry?: string | null }
     | { kind: "unknown" };
 }): PaymentCountrySummary {
   const { jurisdiction, account } = input;
@@ -145,7 +147,11 @@ export function describePaymentCountry(input: {
       detail: `When you connect Stripe, the account will be created in ${where}. Contact Hone support before connecting if this is not your business's country.`,
     };
   }
-  const verdict = accountCountryVerdict(jurisdiction.country, account.observedCountry);
+  const verdict = accountCountryVerdict(
+    jurisdiction.country,
+    account.observedCountry,
+    account.conflictingCountry ?? null,
+  );
   switch (verdict) {
     case "match":
       return {
@@ -164,6 +170,12 @@ export function describePaymentCountry(input: {
         tone: "blocked",
         heading,
         detail: `Stripe has not yet confirmed that your account is registered in ${where}. Charges are paused until it does. Refresh status from Stripe.`,
+      };
+    case "conflict":
+      return {
+        tone: "blocked",
+        heading,
+        detail: "Stripe has reported more than one country for your account. Onboarding and charges are blocked. Contact Hone support; the account will not be replaced automatically.",
       };
     case "mismatch": {
       const reported =
