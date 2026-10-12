@@ -888,10 +888,17 @@ describe("what is excluded, and on what grounds", () => {
       // 4 -> 5: email_provider_events (0212, DELIVERY-EVENTS-01), Hone's
       // intake of Resend webhooks. A studio's delivery truth stays on the
       // pending email_outbound_messages ledger.
+<<<<<<< HEAD
       // 5 -> 6: platform_lead_alerts (0213, LEAD-ALERT-01), Hone's own
       // operator-alert state for its sales leads; no studio_id.
       platform: 6,
       derived: 6,
+=======
+      // 5 -> 6: delivery_sweep_heartbeat (0215, DELIVERY-VISIBILITY-01).
+      platform: 6,
+      // 6 -> 7: delivery_incidents (0215), derived from the two ledgers.
+      derived: 7,
+>>>>>>> 91fb2e54f4966dc6e905199f36aa90794181a70f
       deliberate_privacy: 2,
     });
   });

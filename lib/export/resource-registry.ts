@@ -1102,6 +1102,18 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Delivery log for outbound marketing-tracking events. The underlying booking is already exported in appointments.csv.",
   },
+  delivery_incidents: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "Deduplicated delivery-failure incidents, live since migration 0215 (DELIVERY-VISIBILITY-01). Each row is derived from attempts on the SMS and email delivery ledgers (one open row per studio, channel, purpose and failure class) and holds counts, timestamps and reason slugs, nothing a studio authored. The underlying attempt history is decided with sms_outbound_messages and email_outbound_messages.",
+  },
+  delivery_sweep_heartbeat: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "One row recording Hone's last email delivery-event recovery sweep, live since migration 0215 (DELIVERY-VISIBILITY-01). Platform scheduler health, holding no studio data.",
+  },
   email_provider_events: {
     kind: "excluded",
     category: "platform",
