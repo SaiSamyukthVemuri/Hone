@@ -218,10 +218,32 @@ export function PublicBookForm({
   // it belongs in its own slice with its own proof, not here.
   //
   // Until then the honest move is to withdraw the affordance rather than ship a
-  // button that confidently answers the wrong question. "Any available" still
-  // offers it, which is the default and the only reachable state on a LEGACY
-  // studio — so for every studio today this changes nothing.
-  const nextAvailableApplies = !(pickerApplies && practitionerId);
+  // button that confidently answers the wrong question.
+  //
+  // THE `practitionerOptions.length > 1` TERM IS LOAD-BEARING, AND ITS ABSENCE
+  // WAS A REGRESSION I SHIPPED. The first version of this gate read
+  // `!(pickerApplies && practitionerId)`, and I argued it changed nothing for
+  // any studio today because "Any available" is the default. That was wrong,
+  // because it ignored the sibling fix twenty lines up: a SOLE eligible
+  // practitioner is now AUTO-ASSIGNED, so `practitionerId` is non-empty on an
+  // ordinary single-practitioner studio where no choice was ever offered. The
+  // gate then hid "Next available" for essentially every studio. Five browser
+  // tests caught it — three in book-next-available-fast.spec.ts and two in
+  // public-booking-error-containment.spec.ts, which presses that button to
+  // drive a Server Action — while the source-contract guards passed, because
+  // they check the shape of each fix and cannot see two correct-looking fixes
+  // interacting.
+  //
+  // So the jump is withdrawn only where a choice was genuinely OFFERED AND
+  // MADE: more than one option, and one of them picked. With a single eligible
+  // practitioner the control is not rendered, nothing was chosen, and the
+  // studio-wide jump is exactly the pre-G1 behaviour — no better, no worse, and
+  // not a regression.
+  const nextAvailableApplies = !(
+    pickerApplies &&
+    practitionerOptions.length > 1 &&
+    practitionerId
+  );
 
   // THE ONE ORDERING DECISION, taken in `lib/booking/new-client-admission.ts`
   // so the whole cross-product is testable without a renderer (this suite runs
@@ -398,20 +420,41 @@ export function PublicBookForm({
       if (cancelled) return;
       const options = r.ok ? r.practitioners : [];
       setPractitionerOptions(options);
-      // G1 — A HIDDEN PICKER MUST STILL SUBMIT ITS ONLY ANSWER.
+      // G1 — THE SOLE-ELIGIBLE PRACTITIONER IS **NOT** AUTO-ASSIGNED HERE, and
+      // this is a deliberate retreat from a fix that was already written.
       //
-      // The control below renders only when there is more than one option, on
-      // the grounds that a one-option picker is noise. That is right about the
-      // UI and was wrong about the DATA: leaving `practitionerId` empty sent
-      // NULL, and NULL means "any available", which `create_public_appointment_v2`
-      // resolves down its legacy ACTIVE-OWNER path. If the service is pinned to
-      // a single NON-OWNER practitioner, the page offered that practitioner's
-      // slots and the command then refused the booking as `not_eligible` — the
-      // page and the command disagreeing again, which is the one failure class
-      // this lane exists to remove.
+      // The defect is real (Codex P2 at 12033879): the control below renders
+      // only when there is more than one option, so with exactly one the
+      // picker is hidden and `practitionerId` stays empty. Submission then
+      // sends NULL, NULL means "any available", and
+      // `create_public_appointment_v2` resolves that down its legacy
+      // ACTIVE-OWNER path — so a service pinned to a single NON-OWNER
+      // practitioner can display that practitioner's slots and then refuse the
+      // booking as `not_eligible`.
       //
-      // So assign the sole option instead of hiding an unanswered question.
-      if (options.length === 1) setPractitionerId(options[0]!.id);
+      // `if (options.length === 1) setPractitionerId(options[0]!.id)` fixes it
+      // and BREAKS ERROR CONTAINMENT. Proved by bisect, not argued: with that
+      // line present, `public-booking-error-containment.spec.ts` fails both of
+      // its cases; with only that line reverted, both pass. The mechanism is
+      // this effect's own error policy. The options read ABSORBS failure by
+      // design (`r.ok ? r.practitioners : []`, so a failed read leaves the
+      // picker absent rather than erroring). Assigning the sole option makes
+      // this action the FIRST `next-action` POST after the client-type choice,
+      // and that spec breaks exactly the first such POST — so the injected
+      // failure is swallowed here and the error boundary the spec requires
+      // never renders.
+      //
+      // Both behaviours are correct in isolation and cannot both live on this
+      // effect. The fix therefore belongs SERVER-SIDE, where no ordering is
+      // involved: resolve an unspecified practitioner to the sole eligible one
+      // at commit, in the action that already calls `loadEligiblePractitioners`.
+      // That also fixes clients that never ran this effect at all. It is not
+      // done here because it changes what NULL MEANS for a legacy studio —
+      // attribution would move from the active owner to the pinned
+      // practitioner — and this lane's standing contract is that NULL
+      // reproduces 0204 exactly. That is a product decision, not a refactor.
+      //
+      // Recorded as a gap rather than bypassed. See the PR description.
     })();
     return () => {
       cancelled = true;
