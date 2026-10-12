@@ -95,9 +95,16 @@ test("US studio: prepare, charge and refund a session payment in USD", async ({ 
   expect(row.rows[0]).toEqual({ amount_cents: BOOKED_PRICE_CENTS, currency: "usd", status: "ready" });
 
   configureFakeStripeOutcome(idempotencySelectorForAttempt(prepared[0].id), "success");
+  // Codex P2 4244957363: the money-moving confirmation names USD, from the
+  // prepared attempt, after the labelled form is gone.
+  await expect(region.getByTestId("ready-charge-section")).toContainText(
+    /saved card will be charged \$150\.00 USD\./,
+  );
   await runCharge.click();
-  await region.getByRole("button", { name: /confirm: run charge/i }).click();
-  await expect(region.getByTestId("payment-summary-paid")).toContainText(/Paid · \$150\.00/, {
+  const confirm = region.getByRole("button", { name: /confirm: run charge/i });
+  await expect(confirm).toHaveText("Confirm: run charge ($150.00 USD)");
+  await confirm.click();
+  await expect(region.getByTestId("payment-summary-paid")).toContainText(/Paid · \$150\.00 USD/, {
     timeout: 30_000,
   });
 
