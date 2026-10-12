@@ -177,3 +177,74 @@ describe("the settlement amount field names its currency", () => {
     expect(src).not.toMatch(/: ""\}\s*\n\s*<input/);
   });
 });
+
+// PAY-CCY-07 (#824, DRAFT — product decision pending). Option B: a US studio
+// is not offered Interac e-Transfer; its Zelle / Venmo / check is recorded as
+// paid_other_external with US wording. Canada and an unread country are
+// byte-for-byte today's list. Stored values and meanings are unchanged.
+describe("US external payments (option B, draft)", () => {
+  const buttons = (html: string) =>
+    [...html.matchAll(/data-testid="settlement-open-([a-z_]+)"[^>]*>([^<]*)</g)].map(
+      (m) => [m[1], m[2]] as const,
+    );
+  const TODAY = [
+    ["paid_cash", "Paid cash"],
+    ["paid_e_transfer", "Paid by e-transfer"],
+    ["paid_other_external", "Paid another way"],
+    ["still_owes", "Client still owes"],
+  ];
+
+  it("US: e-transfer is not offered; 'Paid another way' names the US rails", () => {
+    expect(buttons(render({ settledMethod: null, paymentCountry: "US" }))).toEqual([
+      ["paid_cash", "Paid cash"],
+      ["paid_other_external", "Paid another way (Zelle, Venmo, check)"],
+      ["still_owes", "Client still owes"],
+    ]);
+  });
+
+  it("US owner still gets Waive, and still no e-transfer", () => {
+    const html = render({ settledMethod: null, paymentCountry: "US", isOwner: true });
+    expect(html).toContain("settlement-open-waived");
+    expect(html).not.toContain("settlement-open-paid_e_transfer");
+  });
+
+  it("CANADIAN REGRESSION: a CA studio sees exactly today's four, worded exactly as today", () => {
+    expect(buttons(render({ settledMethod: null, paymentCountry: "CA" }))).toEqual(TODAY);
+  });
+
+  it("an UNREAD country keeps today's full list (no silent change on a failed read)", () => {
+    expect(buttons(render({ settledMethod: null, paymentCountry: null }))).toEqual(TODAY);
+  });
+
+  it("an existing paid_e_transfer record still reads truthfully, whatever the country", () => {
+    const html = render({
+      settledMethod: "paid_e_transfer",
+      settledAmountCents: 4500,
+      settledCurrency: "usd",
+      currency: "usd",
+      paymentCountry: "US",
+    });
+    expect(html).toContain("Paid · e-transfer");
+  });
+
+  it("the stored vocabulary and its meanings are unchanged; the server still accepts every value", async () => {
+    const t = await import("@/lib/billing/settlement-types");
+    expect([...t.SETTLEMENT_METHODS]).toEqual([
+      "paid_cash",
+      "paid_e_transfer",
+      "paid_other_external",
+      "waived",
+      "still_owes",
+    ]);
+    expect([...t.PRACTITIONER_METHODS]).toEqual([
+      "paid_cash",
+      "paid_e_transfer",
+      "paid_other_external",
+      "still_owes",
+    ]);
+    // Offering only: enforcement is a separate decision.
+    expect(t.isPractitionerMethod("paid_e_transfer")).toBe(true);
+    expect(t.SETTLEMENT_BADGE_LABEL.paid_other_external).toBe("Paid · other");
+    expect(t.SETTLEMENT_ACTION_LABEL.paid_other_external).toBe("Paid another way");
+  });
+});

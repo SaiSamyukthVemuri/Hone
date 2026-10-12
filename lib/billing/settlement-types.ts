@@ -14,7 +14,7 @@
 // exactly one place to look, so the two can never be summed together by
 // accident.
 
-import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import type { PaymentCountry, PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 
 /** The five recordable dispositions. Mirrors 0187's method CHECK exactly. */
 export const SETTLEMENT_METHODS = [
@@ -43,6 +43,42 @@ export const PRACTITIONER_METHODS = [
 ] as const;
 
 export type PractitionerSettlementMethod = (typeof PRACTITIONER_METHODS)[number];
+
+/**
+ * PAY-CCY-07 (#824, DRAFT — product decision pending). Which outcomes a
+ * practitioner is OFFERED, by the studio's payment COUNTRY (never inferred
+ * from currency).
+ *
+ * `paid_e_transfer` means Interac e-Transfer, a Canadian rail. A US studio is
+ * not offered it; a US client's Zelle / Venmo / check is recorded as
+ * `paid_other_external`. The stored vocabulary (0187) and every value's
+ * meaning are unchanged, and Canada — and an UNREAD country, which has always
+ * seen the full list — gets exactly the four it has today.
+ *
+ * Offering only: the server action and 0187 still ACCEPT paid_e_transfer for
+ * any studio. Enforcement, if wanted, is a separate decision.
+ */
+export function practitionerMethodsFor(
+  country: PaymentCountry | null,
+): readonly PractitionerSettlementMethod[] {
+  return country === "US"
+    ? PRACTITIONER_METHODS.filter((m) => m !== "paid_e_transfer")
+    : PRACTITIONER_METHODS;
+}
+
+/** The US wording for `paid_other_external`, naming the rails it covers. */
+export const US_OTHER_EXTERNAL_ACTION_LABEL = "Paid another way (Zelle, Venmo, check)";
+
+/** The action button's label for a studio in `country`. Canada unchanged. */
+export function settlementActionLabel(
+  method: SettlementMethod,
+  country: PaymentCountry | null,
+): string {
+  if (country === "US" && method === "paid_other_external") {
+    return US_OTHER_EXTERNAL_ACTION_LABEL;
+  }
+  return SETTLEMENT_ACTION_LABEL[method];
+}
 
 /** The three that mean money was COLLECTED, just not by Hone. */
 export const EXTERNALLY_COLLECTED_METHODS = [

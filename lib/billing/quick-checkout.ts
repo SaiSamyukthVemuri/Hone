@@ -10,7 +10,7 @@ import {
   resolveAppointmentQuotedAmountCents,
 } from "@/lib/billing/appointment-settlement";
 import type { SettlementMethod } from "@/lib/billing/settlement-types";
-import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import type { PaymentCountry, PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 
 // Quick checkout (Chloe feedback: checkout takes too many clicks while the client
@@ -63,6 +63,8 @@ export type AppointmentSettlementContext = {
    * failed read: the amount is then unlabelled, never assumed Canadian.
    */
   currency: PaymentCurrency | null;
+  /** PAY-CCY-07 (DRAFT). The studio's payment country; null when unread. */
+  country: PaymentCountry | null;
   /**
    * The authoritative price, resolved from the APPOINTMENT so it is available
    * with no session. Pre-fills the amount; the action re-resolves and snapshots
@@ -172,6 +174,7 @@ export async function resolveQuickCheckoutContext(
     settledAmountCents: live?.amountCents ?? null,
     settledCurrency: live?.currency ?? null,
     currency: jurisdiction.ok ? jurisdiction.jurisdiction.currency : null,
+    country: jurisdiction.ok ? jurisdiction.jurisdiction.country : null,
     quotedAmountCents: await resolveAppointmentQuotedAmountCents(
       args.studioId,
       args.appointmentId,

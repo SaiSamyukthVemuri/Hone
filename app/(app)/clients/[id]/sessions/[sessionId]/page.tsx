@@ -1056,6 +1056,11 @@ export default async function SessionDetailPage({
               ? settlementJurisdiction.jurisdiction.currency
               : null
           }
+          settlementCountry={
+            settlementJurisdiction?.ok
+              ? settlementJurisdiction.jurisdiction.country
+              : null
+          }
           // The UI's copy of the database's own rule: only a COMPLETED
           // appointment can carry a disposition (0187 answers anything else
           // with `not_completed`). Offering the controls on a visit that has
