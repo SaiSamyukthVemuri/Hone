@@ -343,6 +343,40 @@ than assuming one.
 
 **NOT superseded, and still binding:**
 
+* **§14.5.7A's profile and join requirements are not replaced — all EIGHT rows
+  (`CANONICAL_ROADMAP.md:1356-1367`).** v4 says nothing about any of them, so
+  every one still binds a later PR: separate required **first and last name**;
+  **email and mobile** both required and server-validated, with a contact phone
+  being neither consent nor proof of identity; **treatment areas** as a
+  controlled multi-select of canonical IDs with no free-text box; **availability**
+  as structured `weekdays / weekends / both` reusing the existing vocabulary with
+  no duplicate weekday authority; **SMS permission** as a separate explicit
+  unchecked opt-in carrying version/time/source and current suppression, never
+  inferred from mobile being required; **legacy incomplete entries** preserved
+  with their original waiting priority and marked honestly; **invitation
+  eligibility** requiring the agreed complete profile, without invalidating
+  existing live offers; and the **public response** rule forbidding an exact
+  position guarantee or a fabricated wait-time estimate.
+
+  Two of these bear directly on v4's own open terms, so they are not background:
+  **invitation eligibility constrains "eligible people"** (bullet 3 — a
+  complete profile is a precondition, even though the full predicate stays
+  open), and **availability is the Kind/Both vocabulary** that
+  `WAIT_ROUND_01_V4_CONTRACT.md` §3 now records as closed.
+
+  *An earlier revision of this checklist omitted §14.5.7A entirely, so an
+  implementer using this section as the compatibility checklist could have
+  defined eligible people or launched invitations without the profile and
+  consent constraints; corrected.*
+
+> **How to read this checklist, so the next omission is visible.** Each bullet
+> names its source section and, where the source is a table, **its row count**.
+> The roadmap text governs in full: this list is a pointer into
+> §§14.5.7A–D, never a replacement for reading them. Three successive review
+> rounds caught a row missing from a list labelled exhaustive here
+> (§14.5.7B's reminder row, §14.5.7C's boundaries, then §14.5.7A entirely), so
+> treat an uncounted list in this document as unverified.
+
 * **§14.5.7C's cancellation rules are not replaced.** §2.10 governs only the
   **calendar and invitation state** of a round-derived appointment (its reservation
   restored, invitation still used, U and C unchanged). It says nothing about the
@@ -359,9 +393,20 @@ than assuming one.
      dual-channel rule itself is untouched.)*
   2. **24-hour reminder** — **one** reminder through eligible channels if the
      invitation is still awaiting response, with per-invitation / per-channel /
-     per-event dedupe and a re-check of consent and lifecycle at send time.
+     per-event dedupe and, quoting `CANONICAL_ROADMAP.md:1374` exactly, a
+     re-check of **consent, lifecycle AND DEADLINE immediately before send**;
+     never remind after book / response / remove.
      *(v4 §2.12 anchors it at 24 hours **after launch** and restricts it to
-     still-active unbooked invitations; the dedupe and send-time re-check stand.)*
+     still-active unbooked invitations; the dedupe and all three send-time
+     re-checks stand.)*
+     **The deadline re-check is not redundant with the lifecycle check, and
+     dropping it is the specific defect v4 §2.12 makes reachable.** §2.12 says
+     deadline enforcement must work *even if cleanup is late* — so a delayed
+     reminder worker can legitimately meet an invitation whose stored lifecycle
+     still reads active while its 48-hour deadline has already passed. Checking
+     lifecycle alone would send an **already-expired booking link to a client.**
+     *An earlier revision of this row listed only consent and lifecycle;
+     corrected.*
   3. **Book a time** — only permitted live consultation slots, and the result is
      recorded; proof-bound capability **plus** current admission, identity, scope and
      booking authority. *(v4 §2.7 adds atomicity; these authority requirements stand.)*
