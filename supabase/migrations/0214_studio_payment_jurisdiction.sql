@@ -338,7 +338,9 @@ alter table public.appointment_settlements
 alter table public.studio_payment_settings
   add column if not exists stripe_account_country text,
   add column if not exists stripe_account_default_currency text,
-  add column if not exists stripe_account_observed_at timestamptz;
+  add column if not exists stripe_account_observed_at timestamptz,
+  add column if not exists stripe_account_country_conflict text,
+  add column if not exists stripe_account_country_conflict_at timestamptz;
 
 alter table public.studio_payment_settings
   drop constraint if exists studio_payment_settings_account_country_check;
@@ -360,6 +362,23 @@ alter table public.studio_payment_settings
   add constraint studio_payment_settings_account_observation_check
   check (stripe_account_country is null or stripe_account_id is not null);
 
+-- A conflict is a later, different report about an account whose country is
+-- already recorded. It is kept, and it blocks charging, until an operator
+-- resolves the account; no observation clears it.
+alter table public.studio_payment_settings
+  drop constraint if exists studio_payment_settings_account_country_conflict_check;
+alter table public.studio_payment_settings
+  add constraint studio_payment_settings_account_country_conflict_check
+  check (
+    case when stripe_account_country_conflict is null
+         then stripe_account_country_conflict_at is null
+         else stripe_account_country_conflict ~ '^[A-Z]{2}$'
+              and stripe_account_country_conflict_at is not null
+              and stripe_account_country is not null
+              and stripe_account_country_conflict <> stripe_account_country
+    end
+  );
+
 -- 4c. A charge attempt is prepared in its studio's currency, on an account in
 -- its studio's country.
 --
@@ -375,6 +394,7 @@ declare
   v_country text;
   v_currency text;
   v_account_country text;
+  v_account_conflict text;
 begin
   select j.payment_country, j.payment_currency
     into v_country, v_currency
@@ -397,12 +417,21 @@ begin
   end if;
 
   if new.stripe_account_id is not null then
-    select s.stripe_account_country
-      into v_account_country
+    select s.stripe_account_country, s.stripe_account_country_conflict
+      into v_account_country, v_account_conflict
       from public.studio_payment_settings s
      where s.studio_id = new.studio_id
        and s.stripe_account_id = new.stripe_account_id
        and s.stripe_livemode is not distinct from new.stripe_livemode;
+  end if;
+
+  -- STRIPE CONTRADICTED ITSELF. Neither report is trusted until an operator
+  -- resolves the account, whichever of them matches the studio.
+  if v_account_conflict is not null then
+    raise exception
+      'payment_account_country_conflict: Stripe has reported the studio''s account as both % and %',
+      v_account_country, v_account_conflict
+      using errcode = 'check_violation';
   end if;
 
   if v_account_country is not null and v_account_country <> v_country then
@@ -497,12 +526,16 @@ create trigger appointment_settlements_currency_from_jurisdiction
 --
 -- Called by the application after it creates an account, refreshes one, or
 -- receives account.updated. A connected account's country never changes, so
--- the first observation is kept: a later, different country is reported as a
--- conflict and NOT written. The default currency can change and is refreshed.
+-- the first observation is kept. A later, different country does not
+-- overwrite it: the contradicting country is PERSISTED as a conflict, which
+-- blocks every charge on the account (section 4c and the application) until an
+-- operator resolves it. A later report that agrees again does not clear it.
+-- The default currency can change and is refreshed.
 --
 -- Results (out_result): recorded | refreshed | country_conflict | not_bound |
--- invalid_input. out_matches says whether the RECORDED account country equals
--- the studio's payment country; the application fails closed when it is false.
+-- invalid_input. out_matches is true only when the recorded account country
+-- equals the studio's payment country AND no conflict is recorded; the
+-- application fails closed when it is false.
 create or replace function public.record_stripe_account_jurisdiction(
   p_studio_id uuid,
   p_stripe_account_id text,
@@ -552,9 +585,13 @@ begin
 
   if v_settings.stripe_account_country is not null
      and v_settings.stripe_account_country <> v_country then
+    update public.studio_payment_settings s
+       set stripe_account_country_conflict = v_country,
+           stripe_account_country_conflict_at = now(),
+           stripe_account_observed_at = now()
+     where s.id = v_settings.id;
     return query select 'country_conflict'::text, v_settings.stripe_account_country,
-                        v_payment_country,
-                        v_settings.stripe_account_country = v_payment_country;
+                        v_payment_country, false;
     return;
   end if;
 
@@ -564,12 +601,16 @@ begin
          stripe_account_observed_at = now()
    where s.id = v_settings.id;
 
+  -- A recorded conflict outlives any later agreeing report.
   return query select
-    case when v_settings.stripe_account_country is null
+    case when v_settings.stripe_account_country_conflict is not null
+         then 'country_conflict'
+         when v_settings.stripe_account_country is null
          then 'recorded' else 'refreshed' end,
     v_country,
     v_payment_country,
-    v_country = v_payment_country;
+    v_settings.stripe_account_country_conflict is null
+      and v_country = v_payment_country;
 end;
 $$;
 
@@ -622,6 +663,10 @@ comment on table public.studio_payment_jurisdiction_changes is
   'Append-only audit of set_studio_payment_jurisdiction: who changed a studio''s payment country and currency, from what, to what, why, and whether configured prices were explicitly acknowledged. Written only by that command.';
 comment on column public.studio_payment_settings.stripe_account_country is
   'The connected account''s country as Stripe reported it, recorded by record_stripe_account_jurisdiction. Write-once: a later different country is a conflict, never an overwrite. Null until first observed.';
+comment on column public.studio_payment_settings.stripe_account_country_conflict is
+  'A later country Stripe reported for this account that contradicts stripe_account_country. While set, no charge attempt can be prepared on the account (payment_account_country_conflict) and the application treats the account as mismatched. Cleared only by operator resolution.';
+comment on column public.studio_payment_settings.stripe_account_country_conflict_at is
+  'When the contradicting country in stripe_account_country_conflict was last reported.';
 comment on column public.studio_payment_settings.stripe_account_default_currency is
   'The connected account''s default currency as Stripe last reported it. Informational; charges use the studio''s payment currency.';
 comment on column public.studio_payment_settings.stripe_account_observed_at is
@@ -629,6 +674,6 @@ comment on column public.studio_payment_settings.stripe_account_observed_at is
 comment on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean) is
   'The protected change of a studio''s payment country and currency (CA/cad or US/usd). Refuses once the studio has a Stripe account, provisioning attempt, saved card or Stripe customer in any mode (refused_payment_account), or any recorded money (refused_monetary_history); refuses over configured or recorded prices unless p_acknowledge_configured_prices is true (refused_priced_configuration). Locks the jurisdiction row before checking, so no first payment can interleave. Audited. service_role only.';
 comment on function public.record_stripe_account_jurisdiction(uuid, text, boolean, text, text) is
-  'Record the country and default currency Stripe reports for a studio''s bound connected account (studio, mode, account). The country is write-once; a different later country returns country_conflict and writes nothing. Returns whether the recorded country equals the studio''s payment country. service_role only.';
+  'Record the country and default currency Stripe reports for a studio''s bound connected account (studio, mode, account). The country is write-once; a different later country is persisted as stripe_account_country_conflict, returns country_conflict, and blocks charging until an operator resolves it. Returns whether the recorded country equals the studio''s payment country. service_role only.';
 
 commit;

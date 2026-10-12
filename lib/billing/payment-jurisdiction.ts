@@ -41,6 +41,10 @@ export type AccountCountryVerdict =
   | "match"
   // Stripe reported a different country. Fails closed everywhere.
   | "mismatch"
+  // Stripe reported the account in two different countries (0214 persists
+  // the later one as stripe_account_country_conflict). Neither report is
+  // trusted, whichever matches the studio. Fails closed everywhere.
+  | "conflict"
   // Never observed, on a Canadian studio: every account created before #824
   // was created in CA, so this is the legacy case and stays chargeable.
   | "unobserved_legacy_ca"
@@ -56,7 +60,11 @@ export type AccountCountryVerdict =
 export function accountCountryVerdict(
   studioCountry: PaymentCountry,
   observedAccountCountry: string | null | undefined,
+  conflictingAccountCountry: string | null | undefined,
 ): AccountCountryVerdict {
+  if (conflictingAccountCountry != null && conflictingAccountCountry !== "") {
+    return "conflict";
+  }
   if (observedAccountCountry == null || observedAccountCountry === "") {
     return studioCountry === "CA" ? "unobserved_legacy_ca" : "unobserved_refused";
   }
@@ -74,6 +82,8 @@ export function accountCountryBlockingReason(
   switch (verdict) {
     case "mismatch":
       return "The studio's Stripe account is registered in a different country than the studio's payment settings. No charge can be prepared until Hone support resolves it.";
+    case "conflict":
+      return "Stripe has reported conflicting countries for the studio's Stripe account. No charge can be prepared until Hone support resolves it.";
     case "unobserved_refused":
       return "Hone has not yet confirmed the country of the studio's Stripe account. Refresh the Stripe status in Settings, then try again.";
     default:
