@@ -9,6 +9,7 @@ import {
   recordSmsDeliveryStatus,
 } from "@/lib/sms/delivery-ledger";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { canonicalTwilioSignedUrl } from "@/lib/sms/webhook-base";
 
 // Twilio message delivery-status callback (SMS-00).
 //
@@ -83,10 +84,8 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const requestUrl = new URL(req.url);
-  const baseOverride = process.env.TWILIO_WEBHOOK_BASE_URL;
-  const signedUrl = baseOverride
-    ? `${baseOverride.replace(/\/+$/, "")}${requestUrl.pathname}${requestUrl.search}`
-    : req.url;
+  // ONE rule, shared with every URL Hone configures (lib/sms/webhook-base.ts).
+  const signedUrl = canonicalTwilioSignedUrl(req.url);
 
   if (!validateTwilioFormRequest({ authToken, signature, url: signedUrl, formParams })) {
     logError("twilio_status_invalid_signature", {});

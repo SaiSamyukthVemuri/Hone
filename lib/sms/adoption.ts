@@ -10,6 +10,7 @@ import type {
   FinalizeResult,
   ProvisioningStore,
 } from "./provisioning";
+import { inboundReaches } from "./inbound-routing";
 
 // ===========================================================================
 // WILLOW ADOPTION — establish the 0191 lifecycle over an ALREADY-OWNED sender
@@ -335,7 +336,18 @@ export async function adoptExistingStudioSmsSender(
   }
 
   const mismatched: Array<"inbound_webhook" | "status_callback"> = [];
-  if (current.config.inboundRequestUrl !== input.requiredInboundWebhookUrl) {
+  // The EFFECTIVE inbound URL (lib/sms/inbound-routing.ts): the number's own
+  // webhook when the service routes inbound to it, else the service's. Unknown
+  // is never a match, so an unreported flag cannot pass.
+  const inbound = inboundReaches(
+    {
+      serviceInboundUrl: current.config.inboundRequestUrl,
+      useInboundWebhookOnNumber: current.config.useInboundWebhookOnNumber,
+      numberSmsUrl: facts.facts.numberSmsUrl,
+    },
+    input.requiredInboundWebhookUrl,
+  );
+  if (inbound !== "yes") {
     mismatched.push("inbound_webhook");
   }
   if (current.config.statusCallbackUrl !== input.requiredStatusCallbackUrl) {

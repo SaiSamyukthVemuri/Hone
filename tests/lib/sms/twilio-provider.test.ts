@@ -323,6 +323,22 @@ describe("lookupOwnedNumber: read-only census", () => {
     });
   });
 
+  it("reports the number's own inbound webhook (sms_url) from the same record: set, empty, or not reported", async () => {
+    for (const [record, expected] of [
+      [{ sms_url: "https://hone.care/api/twilio/inbound-sms" }, "https://hone.care/api/twilio/inbound-sms"],
+      [{ sms_url: "" }, null],
+      [{}, undefined],
+    ] as const) {
+      stubFetch([
+        { status: 200, json: { incoming_phone_numbers: [{ sid: PN("a"), phone_number: NUMBER, ...record }] } },
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status: 200, json: {} },
+      ]);
+      const r = await (await adapter()).lookupOwnedNumber({ phoneNumber: NUMBER, expectedMessagingServiceSid: MG("b") });
+      expect(r.ok && r.facts.numberSmsUrl, JSON.stringify(record)).toBe(expected);
+    }
+  });
+
   it("A MALFORMED SERVICE ENTRY FAILS THE CENSUS CLOSED", async () => {
     // The skipped entry could be the one holding the number, so a census that
     // ignored it and reported `not_associated` would license an attach.
@@ -450,7 +466,17 @@ describe("readMessagingServiceConfig: read-only", () => {
     expect(r.ok && r.config).toEqual({
       inboundRequestUrl: "https://hone.care/in",
       statusCallbackUrl: "https://hone.care/st",
+      // Not in the answer: UNKNOWN, never false.
+      useInboundWebhookOnNumber: null,
     });
+  });
+
+  it("reports use_inbound_webhook_on_number exactly as given; a non-boolean is unknown", async () => {
+    for (const [given, expected] of [[true, true], [false, false], ["true", null], [null, null]] as const) {
+      stubFetch([{ status: 200, json: { inbound_request_url: null, status_callback: null, use_inbound_webhook_on_number: given } }]);
+      const r = await (await adapter()).readMessagingServiceConfig({ messagingServiceSid: MG("b") });
+      expect(r.ok && r.config.useInboundWebhookOnNumber, String(given)).toBe(expected);
+    }
   });
 });
 

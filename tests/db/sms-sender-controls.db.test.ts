@@ -299,3 +299,83 @@ describe("adoption is checked before the claim: refused, uncertain, failed", () 
     expect(r.map((x) => x.claimed_phone_number)).toEqual([NUMBER]);
   });
 });
+
+// The ONE webhook base (lib/sms/webhook-base.ts), and the EFFECTIVE inbound
+// route (lib/sms/inbound-routing.ts), against the database.
+describe("webhook base and effective inbound routing", () => {
+  const BASE = "https://hooks.hone.example";
+  const MG = "MG" + "e4".repeat(16);
+  const NUMBER = "+14165550166";
+  const svc = (over: Record<string, unknown>) => ({
+    sid: MG, numbers: [NUMBER], inboundUrl: `${ORIGIN}/api/twilio/inbound-sms`, statusUrl: `${ORIGIN}/api/twilio/message-status`, ...over,
+  });
+  const fake = (service: Record<string, unknown>, smsUrls: Record<string, string | null | undefined> = {}) =>
+    new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [NUMBER]: "PN" + "e5".repeat(16) },
+      preOwnedNumberSmsUrls: smsUrls,
+      accountServices: [service as never],
+    });
+  const adopt = (provider: FakeSmsProvisioningProvider, studioId: string, userId: string, env?: Record<string, string>) =>
+    controls.runSenderAdoption({ ...deps(provider), env }, { studioId, actorUserId: userId, country: "CA", phoneNumber: NUMBER, messagingServiceSid: MG });
+  const claims = async (studioId: string) =>
+    Number((await adminQuery("select count(*)::int n from public.studio_sms_senders where studio_id = $1", [studioId])).rows[0].n);
+
+  it("provisioning configures webhooks on TWILIO_WEBHOOK_BASE_URL, not the app origin, when the base is set", async () => {
+    const s = await seedStudio("ctl-base-provision");
+    const provider = new FakeSmsProvisioningProvider();
+    const configured: Array<[string, unknown]> = [];
+    // The fake ignores its arguments; the orchestration passes the URLs it configures.
+    const inbound = provider.configureInboundWebhook.bind(provider) as unknown as (a: unknown) => Promise<unknown>;
+    const status = provider.configureStatusCallback.bind(provider) as unknown as (a: unknown) => Promise<unknown>;
+    provider.configureInboundWebhook = (async (arg: unknown) => { configured.push(["inbound", arg]); return inbound(arg); }) as never;
+    provider.configureStatusCallback = (async (arg: unknown) => { configured.push(["status", arg]); return status(arg); }) as never;
+    const found = await controls.runSenderSearch({ provider }, { country: "CA", areaCode: "905" });
+    const out = await controls.runSenderProvision(
+      { ...deps(provider), env: { TWILIO_WEBHOOK_BASE_URL: `${BASE}/` } },
+      { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "905", phoneNumber: found.ok ? found.candidates[0].phoneNumber : "" },
+    );
+    expect(out).toMatchObject({ ok: true, result: "activated" });
+    const text = JSON.stringify(configured);
+    expect(text).toContain(`${BASE}/api/twilio/inbound-sms`);
+    expect(text).toContain(`${BASE}/api/twilio/message-status`);
+    expect(text).not.toContain(ORIGIN);
+  });
+
+  it("adoption requires the BASE: a service wired to the app origin is refused when the base differs, before any claim", async () => {
+    const s = await seedStudio("ctl-base-adopt");
+    const out = await adopt(fake(svc({})), s.studioId, s.userId, { TWILIO_WEBHOOK_BASE_URL: BASE });
+    expect(out).toEqual({ ok: false, result: "refused", reason: "service_webhooks_mismatch", uncertain: false });
+    expect(await claims(s.studioId)).toBe(0);
+  });
+
+  it("flag ON and the number's own webhook is Hone's: adopted, whatever the service's inbound URL says", async () => {
+    const s = await seedStudio("ctl-flag-on-ok");
+    const provider = fake(svc({ useInboundWebhookOnNumber: true, inboundUrl: "https://elsewhere.example/sms" }), {
+      [NUMBER]: `${ORIGIN}/api/twilio/inbound-sms`,
+    });
+    expect(await adopt(provider, s.studioId, s.userId)).toMatchObject({ ok: true, result: "adopted" });
+  });
+
+  it("flag ON and the number's webhook points elsewhere: refused before the claim, even though the service URL is Hone's", async () => {
+    const s = await seedStudio("ctl-flag-on-other");
+    const provider = fake(svc({ useInboundWebhookOnNumber: true }), { [NUMBER]: "https://elsewhere.example/sms" });
+    expect(await adopt(provider, s.studioId, s.userId)).toEqual({ ok: false, result: "refused", reason: "service_webhooks_mismatch", uncertain: false });
+    expect(await claims(s.studioId)).toBe(0);
+  });
+
+  it("flag UNREPORTED, or ON with the number's URL unreported: refused as uncertain before the claim (unknown is a blocker)", async () => {
+    const s = await seedStudio("ctl-flag-unknown");
+    for (const provider of [
+      fake(svc({ useInboundWebhookOnNumber: null })),
+      fake(svc({ useInboundWebhookOnNumber: true }), { [NUMBER]: undefined }),
+    ]) {
+      expect(await adopt(provider, s.studioId, s.userId)).toEqual({ ok: false, result: "refused", reason: "inbound_routing_unknown", uncertain: true });
+    }
+    expect(await claims(s.studioId)).toBe(0);
+  });
+
+  it("flag OFF and no service inbound URL (inbound disabled): refused", async () => {
+    const s = await seedStudio("ctl-inbound-disabled");
+    expect(await adopt(fake(svc({ inboundUrl: null })), s.studioId, s.userId)).toMatchObject({ ok: false, result: "refused", reason: "service_webhooks_mismatch" });
+  });
+});

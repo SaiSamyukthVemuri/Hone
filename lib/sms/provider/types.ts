@@ -169,6 +169,13 @@ export type OwnedNumberFacts = {
   /** Echoed back so the caller can prove the provider answered about the right number. */
   phoneNumber: string | null;
   association: NumberAssociation;
+  /**
+   * The number's OWN inbound webhook (IncomingPhoneNumber `sms_url`), which
+   * Twilio calls instead of the service's when the service has
+   * `use_inbound_webhook_on_number` enabled. Null = the number has none;
+   * undefined = not reported (unknown, never "none").
+   */
+  numberSmsUrl?: string | null;
 };
 
 /**
@@ -179,6 +186,13 @@ export type OwnedNumberFacts = {
 export type MessagingServiceConfig = {
   inboundRequestUrl: string | null;
   statusCallbackUrl: string | null;
+  /**
+   * Twilio `use_inbound_webhook_on_number`: when true, the phone number's own
+   * webhook overrides the service's `inbound_request_url`/`fallback_url`
+   * (twilio.com/docs/messaging/api/service-resource, checked 2026-10-12).
+   * NULL = the provider did not report it: UNKNOWN, a blocker, never "false".
+   */
+  useInboundWebhookOnNumber: boolean | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -385,6 +399,11 @@ export function asString(value: unknown): string | null {
 
 export function asBoolean(value: unknown): boolean {
   return value === true;
+}
+
+/** A boolean the provider actually reported, or null when it did not: never coerced. */
+export function asReportedBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 export function asRecord(value: unknown): Record<string, unknown> | null {

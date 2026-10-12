@@ -14,6 +14,8 @@ import {
 import { adoptExistingStudioSmsSender, type AdoptionOutcome } from "./adoption";
 import { createProvisioningStore } from "./provisioning-store";
 import { SMS_STATUS_CALLBACK_PATH } from "./delivery-ledger";
+import { twilioWebhookUrl } from "./webhook-base";
+import { inboundReaches } from "./inbound-routing";
 
 // ===========================================================================
 // SMS-SENDER-CONTROL-01 (#824): the studio owner's controls over the 0191
@@ -107,6 +109,7 @@ export type PreClaimRefusal = {
     | "number_association_ambiguous"
     | "number_association_unavailable"
     | "service_webhooks_mismatch"
+    | "inbound_routing_unknown"
     | "ownership_unverified";
   uncertain: boolean;
 };
@@ -128,12 +131,15 @@ export function areaCodeMatchesCountry(areaCode: string, country: SenderCountry)
 
 const controlsFakes = new Map<string, FakeSmsProvisioningProvider>();
 
-/** The seeded fake for one app origin (its webhook URLs are part of the seed). */
-export function senderControlsFakeProvider(appOrigin: string): FakeSmsProvisioningProvider {
-  const origin = appOrigin.replace(/\/+$/, "");
-  let fake = controlsFakes.get(origin);
+/**
+ * The seeded fake for one webhook base (its URLs are part of the seed, built
+ * by the same rule as everything Hone configures).
+ */
+export function senderControlsFakeProvider(appOrigin: string, env: Env = process.env): FakeSmsProvisioningProvider {
+  const u = urls(appOrigin, env) ?? { inbound: null, status: null };
+  const key = `${u.inbound}|${u.status}`;
+  let fake = controlsFakes.get(key);
   if (!fake) {
-    const u = urls(origin);
     const { CA, US } = DEMO_ADOPTION_INVENTORY.numbers;
     fake = new FakeSmsProvisioningProvider({
       preOwnedNumbers: { [CA.phoneNumber]: CA.phoneNumberSid, [US.phoneNumber]: US.phoneNumberSid },
@@ -146,7 +152,7 @@ export function senderControlsFakeProvider(appOrigin: string): FakeSmsProvisioni
         },
       ],
     });
-    controlsFakes.set(origin, fake);
+    controlsFakes.set(key, fake);
   }
   return fake;
 }
@@ -158,6 +164,8 @@ export type SenderControlsDeps = {
   appOrigin: string;
   /** Where the provisioning proof text goes: an operator destination, never a client. */
   testDestination: string;
+  /** The environment the webhook base is read from. Defaults to process.env. */
+  env?: Env;
 };
 
 export type SearchResult =
@@ -192,18 +200,26 @@ export async function runSenderSearch(
   };
 }
 
-function urls(appOrigin: string) {
-  const origin = appOrigin.replace(/\/+$/, "");
-  return {
-    inbound: `${origin}/api/twilio/inbound-sms`,
-    status: `${origin}${SMS_STATUS_CALLBACK_PATH}`,
-  };
+/**
+ * The webhook URLs to configure and to require, built by the SAME base rule
+ * the signature-verifying Twilio routes use (lib/sms/webhook-base.ts):
+ * TWILIO_WEBHOOK_BASE_URL when set, else the app origin. Null when no usable
+ * base exists; nothing is then configured or adopted.
+ */
+function urls(appOrigin: string, env: Env = process.env): { inbound: string; status: string } | null {
+  const inbound = twilioWebhookUrl("/api/twilio/inbound-sms", appOrigin, env);
+  const status = twilioWebhookUrl(SMS_STATUS_CALLBACK_PATH, appOrigin, env);
+  return inbound && status ? { inbound, status } : null;
 }
+
+/** Refused before any claim: no usable webhook base to configure or require. */
+export type WebhookBaseRefusal = { ok: false; result: "refused"; reason: "webhook_base_unusable" };
+const WEBHOOK_BASE_UNUSABLE: WebhookBaseRefusal = { ok: false, result: "refused", reason: "webhook_base_unusable" };
 
 export async function runSenderProvision(
   deps: SenderControlsDeps,
   input: { studioId: string; actorUserId: string; country: string; areaCode: string | null; phoneNumber: string },
-): Promise<ProvisionOutcome | CountryRefusal> {
+): Promise<ProvisionOutcome | CountryRefusal | WebhookBaseRefusal> {
   if (!isSenderCountry(input.country)) return { ok: false, result: "refused", reason: "invalid_input" };
   // Before any claim: the number, and any area code, are the chosen country's.
   if (
@@ -212,7 +228,8 @@ export async function runSenderProvision(
   ) {
     return { ok: false, result: "refused", reason: "number_country_mismatch" };
   }
-  const u = urls(deps.appOrigin);
+  const u = urls(deps.appOrigin, deps.env);
+  if (!u) return WEBHOOK_BASE_UNUSABLE;
   return provisionStudioSmsSender({
     store: createProvisioningStore(deps.admin),
     provider: deps.provider,
@@ -233,12 +250,13 @@ export async function runSenderProvision(
 export async function runSenderAdoption(
   deps: SenderControlsDeps,
   input: { studioId: string; actorUserId: string; country: string; phoneNumber: string; messagingServiceSid: string },
-): Promise<AdoptionOutcome | CountryRefusal | PreClaimRefusal> {
+): Promise<AdoptionOutcome | CountryRefusal | PreClaimRefusal | WebhookBaseRefusal> {
   if (!isSenderCountry(input.country)) return { ok: false, result: "refused", reason: "invalid_input" };
   if (!numberMatchesCountry(input.phoneNumber, input.country)) {
     return { ok: false, result: "refused", reason: "number_country_mismatch" };
   }
-  const u = urls(deps.appOrigin);
+  const u = urls(deps.appOrigin, deps.env);
+  if (!u) return WEBHOOK_BASE_UNUSABLE;
 
   // PROVE IT CAN BE ADOPTED BEFORE THE CLAIM (Codex P2 4250840773). The
   // orchestration claims first and checks ownership second; 0191 makes the
@@ -259,7 +277,7 @@ export async function runSenderAdoption(
     expectedMessagingServiceSid: input.messagingServiceSid,
   });
   if (!owned.ok) return refuse("ownership_unverified", true);
-  const { phoneNumberSid, phoneNumber: reported, association } = owned.facts;
+  const { phoneNumberSid, phoneNumber: reported, association, numberSmsUrl } = owned.facts;
   if (!phoneNumberSid) return refuse("number_not_owned_by_account", false);
   if (reported !== input.phoneNumber) return refuse("provider_number_mismatch", false);
   switch (association.kind) {
@@ -276,7 +294,19 @@ export async function runSenderAdoption(
   }
   const config = await deps.provider.readMessagingServiceConfig({ messagingServiceSid: input.messagingServiceSid });
   if (!config.ok) return refuse("ownership_unverified", true);
-  if (config.config.inboundRequestUrl !== u.inbound || config.config.statusCallbackUrl !== u.status) {
+  // Inbound (STOP included) must EFFECTIVELY reach Hone: the number's own
+  // webhook when the service routes inbound to it, else the service's.
+  // An unreported routing flag is UNKNOWN: refused as uncertain, never passed.
+  const inbound = inboundReaches(
+    {
+      serviceInboundUrl: config.config.inboundRequestUrl,
+      useInboundWebhookOnNumber: config.config.useInboundWebhookOnNumber,
+      numberSmsUrl,
+    },
+    u.inbound,
+  );
+  if (inbound === "unknown") return refuse("inbound_routing_unknown", true);
+  if (inbound === "no" || config.config.statusCallbackUrl !== u.status) {
     return refuse("service_webhooks_mismatch", false);
   }
 

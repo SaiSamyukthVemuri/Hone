@@ -84,7 +84,10 @@ describe("adoption cannot purchase, create or move", () => {
   it("adoption reads the service configuration and compares rather than writing", () => {
     expect(ADOPTION).toContain("readMessagingServiceConfig");
     expect(ADOPTION).toContain("provider_configuration_required");
-    expect(ADOPTION).toMatch(/inboundRequestUrl !== input\.requiredInboundWebhookUrl/);
+    // The EFFECTIVE inbound URL is compared (use_inbound_webhook_on_number aware),
+    // and anything but an exact "yes" is a mismatch.
+    expect(ADOPTION).toMatch(/inboundReaches\(\s*\{\s*serviceInboundUrl: current\.config\.inboundRequestUrl,\s*useInboundWebhookOnNumber: current\.config\.useInboundWebhookOnNumber,/);
+    expect(ADOPTION).toMatch(/input\.requiredInboundWebhookUrl,\s*\);\s*if \(inbound !== "yes"\)/);
     expect(ADOPTION).toMatch(/statusCallbackUrl !== input\.requiredStatusCallbackUrl/);
   });
 
