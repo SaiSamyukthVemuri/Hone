@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   adminQuery,
   purgeAppointmentAudit,
@@ -414,6 +414,72 @@ export async function seedFettReceptionist(
     [practitionerId, studioId, userId, displayName, email],
   );
   return { userId, practitionerId, email, displayName, via: "direct_insert" };
+}
+
+/**
+ * A demo slot the rehearsal can rely on: **next Wednesday 10:00 in the
+ * studio's own timezone**.
+ *
+ * Deliberately computed in SQL rather than JS, so it is the DATABASE's idea of
+ * the studio's local time. `date_trunc('week', ...)` lands on Monday, so +9
+ * days is the following Wednesday — always inside the fixture's default Mon–Fri
+ * window, and far enough out to clear any booking-notice floor.
+ */
+export const FETT_DEMO_SLOT_SQL =
+  "((date_trunc('week', (now() at time zone 'America/Los_Angeles'))" +
+  " + interval '9 days 10 hours') at time zone 'America/Los_Angeles')";
+
+/** What `create_internal_appointment_v2` returns. */
+export type FettInternalBooking = {
+  result: string;
+  appointment_id: string | null;
+  /** node-postgres returns timestamptz as a Date, not a string — compare
+   *  instants (getTime()), never object identity. */
+  starts_at: Date | null;
+  ends_at: Date | null;
+};
+
+/**
+ * Book through the REAL practitioner-facing command, not a raw INSERT.
+ *
+ * `public.create_internal_appointment_v2` is the current internal booking
+ * command on the 0210 chain (0142 → 0146 → 0147 → 0152; only the `_v2` name
+ * exists at runtime) and it DOES take a target practitioner —
+ * `p_target_practitioner_id`. So practitioner-aware, genuinely concurrent
+ * scheduling is available today on the STAFF-facing path; what lacks
+ * practitioner selection is the PUBLIC surface (`create_public_appointment`,
+ * see the header of tests/db/public-practitioner-booking-gap.db.test.ts).
+ *
+ * Using this instead of an INSERT means a booking proof exercises the real
+ * availability validator, duration authority and buffer rules, not just the
+ * exclusion constraint.
+ *
+ * The cancellation token hash must match `^[a-f0-9]{64}$`
+ * (0090_appointment_token_hash.sql:89), so it is generated here; a readable
+ * placeholder is rejected by the CHECK.
+ */
+export async function bookFettInternal(
+  fett: FettStudio,
+  targetPractitionerId: string,
+  opts: { startsAtSql?: string; serviceId?: string; clientId?: string } = {},
+): Promise<FettInternalBooking> {
+  const startsAtSql = opts.startsAtSql ?? FETT_DEMO_SLOT_SQL;
+  const serviceId = opts.serviceId ?? fett.services.treatmentId;
+  const clientId = opts.clientId ?? fett.clientId;
+  const r = await adminQuery(
+    `select * from public.create_internal_appointment_v2(
+       $1, $2, $3, $4, $5, ${startsAtSql}, $6, null, null, false)`,
+    [
+      fett.studioId,
+      // The owner acts; the TARGET is whichever practitioner is being booked.
+      fett.practitionerId,
+      targetPractitionerId,
+      clientId,
+      serviceId,
+      randomBytes(32).toString("hex"),
+    ],
+  );
+  return r.rows[0] as FettInternalBooking;
 }
 
 /**

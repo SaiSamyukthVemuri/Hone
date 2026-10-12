@@ -5,6 +5,7 @@ import {
   seedHistoricalAppointmentAudit,
 } from "./helpers/harness";
 import {
+  bookFettInternal,
   detectFettCapabilities,
   dropFettStudio,
   seedFettReceptionist,
@@ -294,27 +295,14 @@ describe("Fett rehearsal fixture — teardown", () => {
 describe("Fett rehearsal fixture — practitioner capacity is the demo-critical bit", () => {
   // Both 0134/0136 flags default FALSE, so a studio seeded without them is
   // LEGACY: ONE studio-wide resource. Five practitioners in that studio cannot
-  // hold parallel appointments — exactly what a Fett demo must show. These
-  // tests prove the fixture's default actually buys that, by booking the SAME
-  // instant for TWO different practitioners.
-  const bookParallel = async (
-    studioId: string,
-    practitionerId: string,
-    clientId: string,
-    serviceId: string,
-  ) =>
-    adminQuery(
-      `insert into public.appointments
-         (studio_id, practitioner_id, client_id, service_id,
-          starts_at, ends_at, duration_minutes, status)
-       values ($1, $2, $3, $4,
-               date_trunc('hour', now()) + interval '10 days',
-               date_trunc('hour', now()) + interval '10 days 1 hour',
-               60, 'confirmed')`,
-      [studioId, practitionerId, clientId, serviceId],
-    );
+  // hold parallel appointments — exactly what a Fett demo must show.
+  //
+  // These book through the REAL practitioner-facing command
+  // (create_internal_appointment_v2), not a raw INSERT, so they exercise the
+  // availability validator, duration authority and buffer rules too — and they
+  // demonstrate the same path the rehearsal will drive.
 
-  it("defaults to LIVE, and two practitioners CAN hold the same instant", async () => {
+  it("defaults to LIVE, and two practitioners are booked at the SAME instant", async () => {
     const fett = await seedFettStudio({ treatingCount: 2 });
     try {
       expect(fett.capacityState).toBe("live");
@@ -326,59 +314,42 @@ describe("Fett rehearsal fixture — practitioner capacity is the demo-critical 
       expect(flags.rows[0].c).toBe(true);
       expect(flags.rows[0].b).toBe(true);
 
-      const client = await adminQuery(
-        `select id from public.clients where studio_id = $1 limit 1`,
+      const a = await bookFettInternal(fett, fett.treating[0].practitionerId);
+      const b = await bookFettInternal(fett, fett.treating[1].practitionerId);
+      expect(a.result).toBe("created");
+      expect(b.result).toBe("created");
+      // The SAME instant, for two DIFFERENT practitioners. This is the demo.
+      // pg returns timestamptz as a Date, so compare the INSTANT: toBe would
+      // fail on object identity for two equal timestamps.
+      expect(a.starts_at).toBeInstanceOf(Date);
+      expect(b.starts_at!.getTime()).toBe(a.starts_at!.getTime());
+      expect(a.appointment_id).not.toBe(b.appointment_id);
+
+      const n = await adminQuery(
+        `select count(*)::text n, count(distinct practitioner_id)::text p
+           from public.appointments where studio_id = $1`,
         [fett.studioId],
       );
-      // Same instant, two DIFFERENT practitioners. This is the demo.
-      await bookParallel(
-        fett.studioId,
-        fett.treating[0].practitionerId,
-        client.rows[0].id,
-        fett.services.treatmentId,
-      );
-      await bookParallel(
-        fett.studioId,
-        fett.treating[1].practitionerId,
-        client.rows[0].id,
-        fett.services.treatmentId,
-      );
-      expect(
-        await count(
-          `select count(*) n from public.appointments where studio_id = $1`,
-          [fett.studioId],
-        ),
-      ).toBe(2);
+      expect(n.rows[0].n).toBe("2");
+      expect(n.rows[0].p).toBe("2");
     } finally {
       await dropFettStudio(fett);
     }
   });
 
-  it("LEGACY is one studio-wide resource: the second parallel booking is REFUSED", async () => {
-    // THE CONTROL. Without it, the LIVE test above could pass on a schema that
-    // never enforced a studio-wide exclusion at all, and the fixture's default
-    // would be proving nothing.
+  it("LEGACY is one studio-wide resource: the second booking is REFUSED", async () => {
+    // THE CONTROL. Without it the LIVE case could be passing on a schema that
+    // never enforced a studio-wide exclusion, and the fixture's default would
+    // prove nothing. Measured refusal: the exclusion constraint
+    // `no_overlapping_appointments_studio_wide`.
     const fett = await seedFettStudio({ treatingCount: 2, capacity: "legacy" });
     try {
       expect(fett.capacityState).toBe("legacy");
-      const client = await adminQuery(
-        `select id from public.clients where studio_id = $1 limit 1`,
-        [fett.studioId],
-      );
-      await bookParallel(
-        fett.studioId,
-        fett.treating[0].practitionerId,
-        client.rows[0].id,
-        fett.services.treatmentId,
-      );
+      const first = await bookFettInternal(fett, fett.treating[0].practitionerId);
+      expect(first.result).toBe("created");
       await expect(
-        bookParallel(
-          fett.studioId,
-          fett.treating[1].practitionerId,
-          client.rows[0].id,
-          fett.services.treatmentId,
-        ),
-      ).rejects.toThrow();
+        bookFettInternal(fett, fett.treating[1].practitionerId),
+      ).rejects.toThrow(/no_overlapping_appointments_studio_wide/);
       expect(
         await count(
           `select count(*) n from public.appointments where studio_id = $1`,
