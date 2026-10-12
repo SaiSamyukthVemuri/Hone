@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requireReceptionistWithStudio } from "@/lib/receptionist/identity";
 import { localDateString, localTimeString, utcInstantFromLocal } from "@/lib/booking/tz";
-import { generateAppointmentToken, hashAppointmentToken } from "@/lib/booking/appointment-token";
 import { dispatchBookingNotifications } from "@/lib/booking/booking-notifications";
 import { notifyAppointmentMoved, type MoveNotificationKind } from "@/lib/email/notify-appointment-moved";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
@@ -105,14 +104,14 @@ export async function bookFrontDeskAppointmentAction(
   if (start.getTime() <= Date.now()) return { ok: false, message: RESULT_COPY.invalid_time };
 
   const supabase = await createClient();
-  const token = generateAppointmentToken();
+  // No cancellation credential is sent: the command generates it (0220), so no
+  // caller ever knows a raw token for the booking.
   const { data, error } = await supabase.rpc("receptionist_create_appointment", {
     p_studio_id: studio.id,
     p_target_practitioner_id: practitionerId,
     p_client_id: clientId,
     p_service_id: serviceId,
     p_starts_at: start.toISOString(),
-    p_cancellation_token_hash: hashAppointmentToken(token),
   });
   if (error) {
     if (error.code === "23P01") return { ok: false, message: SLOT_TAKEN };

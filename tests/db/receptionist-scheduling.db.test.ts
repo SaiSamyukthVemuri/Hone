@@ -121,8 +121,8 @@ const asDesk = <T>(fn: Parameters<typeof asUser<T>>[1]) => asUser<T>(deskUser, f
 async function deskBook(local: string, target = P1().practitionerId, client = S.clientId, svc = service, studio = S.studioId) {
   return asDesk(async (q) => {
     const r = await q(
-      `select * from public.receptionist_create_appointment($1, $2, $3, $4, ${at(local)}, $5)`,
-      [studio, target, client, svc, hash64()],
+      `select * from public.receptionist_create_appointment($1, $2, $3, $4, ${at(local)})`,
+      [studio, target, client, svc],
     );
     return r.rows[0] as Row;
   });
@@ -159,6 +159,29 @@ describe("0220: a receptionist books, moves and cancels through the shared core"
       action: "created",
     });
     expect((ev.details as Row).source).toBe("receptionist_booking_command");
+  });
+
+  it("the cancellation credential is the DATABASE's: a direct caller cannot choose it (Codex P1 4244695029)", async () => {
+    // The command takes no hash at all: the old 6-argument form does not exist.
+    const forged = await asDesk((q) =>
+      q(`select * from public.receptionist_create_appointment($1, $2, $3, $4, ${at("2031-08-04 15:00")}, $5)`, [
+        S.studioId,
+        P1().practitionerId,
+        S.clientId,
+        service,
+        "a".repeat(64),
+      ]),
+    ).catch((e: unknown) => e);
+    expect(errCode(forged)).toBe("42883");
+    // A real booking gets a well-formed, unique hash nobody supplied.
+    const a = await deskBook("2031-08-04 16:00");
+    const b = await deskBook("2031-08-04 17:00");
+    const hashes = await adminQuery(
+      `select cancellation_token_hash as h from public.appointments where id in ($1, $2)`,
+      [a.appointment_id, b.appointment_id],
+    );
+    expect(hashes.rows.map((r) => r.h).every((h: string) => /^[a-f0-9]{64}$/.test(h))).toBe(true);
+    expect(new Set(hashes.rows.map((r) => r.h)).size).toBe(2);
   });
 
   it("MOVES and REASSIGNS, and the audit names the receptionist", async () => {
@@ -392,12 +415,11 @@ describe("0220: cross-studio protection", () => {
     expect((await appt(id)).status).toBe("confirmed");
     // And X's own receptionist, naming S, is refused.
     const xDesk = await asUser(otherDeskUser, (q) =>
-      q(`select * from public.receptionist_create_appointment($1, $2, $3, $4, ${at("2031-08-15 11:00")}, $5)`, [
+      q(`select * from public.receptionist_create_appointment($1, $2, $3, $4, ${at("2031-08-15 11:00")})`, [
         S.studioId,
         P1().practitionerId,
         S.clientId,
         service,
-        hash64(),
       ]).then((r) => r.rows[0] as Row),
     );
     expect(xDesk.result).toBe("not_authorized");
@@ -408,7 +430,7 @@ describe("0220: direct API negatives (real roles)", () => {
   it("anon and service_role cannot execute the receptionist commands or the projection", async () => {
     for (const role of ["anon", "service_role"] as const) {
       for (const sql of [
-        `select * from public.receptionist_create_appointment('${randomUUID()}', null, null, null, now(), null)`,
+        `select * from public.receptionist_create_appointment('${randomUUID()}', null, null, null, now())`,
         `select public.receptionist_cancel_appointment('${randomUUID()}', '${randomUUID()}', null)`,
         `select * from public.receptionist_move_appointment('${randomUUID()}', '${randomUUID()}', null, now(), now(), now())`,
         `select * from public.receptionist_booking_options('${randomUUID()}')`,
@@ -443,12 +465,11 @@ describe("0220: direct API negatives (real roles)", () => {
 
   it("a PRACTITIONER's own JWT gets not_authorized from the receptionist commands: no receptionist row, no authority", async () => {
     const r = await asUser(P1().userId, (q) =>
-      q(`select * from public.receptionist_create_appointment($1, $2, $3, $4, ${at("2031-08-18 10:00")}, $5)`, [
+      q(`select * from public.receptionist_create_appointment($1, $2, $3, $4, ${at("2031-08-18 10:00")})`, [
         S.studioId,
         P1().practitionerId,
         S.clientId,
         service,
-        hash64(),
       ]).then((x) => x.rows[0] as Row),
     );
     expect(r.result).toBe("not_authorized");

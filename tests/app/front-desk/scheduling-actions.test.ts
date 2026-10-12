@@ -68,11 +68,11 @@ describe("booking", () => {
     expect(ctx.rpc).toHaveBeenCalledTimes(1);
     const [name, args] = ctx.rpc.mock.calls[0];
     expect(name).toBe("receptionist_create_appointment");
+    // No cancellation credential is sent: the command generates it (Codex P1 4244695029).
     expect(Object.keys(args).sort()).toEqual(
-      ["p_cancellation_token_hash", "p_client_id", "p_service_id", "p_starts_at", "p_studio_id", "p_target_practitioner_id"].sort(),
+      ["p_client_id", "p_service_id", "p_starts_at", "p_studio_id", "p_target_practitioner_id"].sort(),
     );
     expect(args.p_studio_id).toBe(STUDIO.id);
-    expect(args.p_cancellation_token_hash).toMatch(/^[a-f0-9]{64}$/);
     // 10:00 in Los Angeles on 2031-08-04 (PDT, UTC-7).
     expect(args.p_starts_at).toBe("2031-08-04T17:00:00.000Z");
   });

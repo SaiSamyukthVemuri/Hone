@@ -21,7 +21,8 @@
 --   2. Three NEW receptionist commands, granted to `authenticated` ONLY. Each
 --      derives the actor from the signed-in user (receptionist_actor_id, 0216)
 --      and passes it to the same core. Nothing the caller sends names the
---      actor. The receptionist kind:
+--      actor, and the booking's cancellation credential is generated inside
+--      the command, never supplied. The receptionist kind:
 --        * may target any ACTIVE owner or practitioner of the studio (never
 --          themselves: they have no practitioners row);
 --        * may NOT override duration or outside-hours availability (owner-only,
@@ -837,8 +838,7 @@ create or replace function public.receptionist_create_appointment(
   p_target_practitioner_id  uuid,
   p_client_id               uuid,
   p_service_id              uuid,
-  p_starts_at               timestamptz,
-  p_cancellation_token_hash text
+  p_starts_at               timestamptz
 )
 returns table(result text, appointment_id uuid, starts_at timestamptz, ends_at timestamptz)
 language plpgsql
@@ -853,10 +853,19 @@ begin
     return;
   end if;
   -- No notes, no duration override, no outside-hours override.
+  --
+  -- The cancellation credential is generated HERE and its raw value is never
+  -- known to anyone (Codex P1 4244695029 on #862). A caller-supplied hash would
+  -- let a receptionist keep the raw token and act as the CLIENT on the public
+  -- cancel/manage/reschedule links, attributed as the client. No client link
+  -- needs the raw value: every link is the stateless HMAC token, which those
+  -- routes verify as their fallback (0091; the practitioner path discards its
+  -- raw token the same way).
   return query
     select * from public.create_appointment_core(
       'receptionist', p_studio_id, v_desk, p_target_practitioner_id,
-      p_client_id, p_service_id, p_starts_at, p_cancellation_token_hash,
+      p_client_id, p_service_id, p_starts_at,
+      encode(pg_catalog.sha256(convert_to(gen_random_uuid()::text || gen_random_uuid()::text, 'UTF8')), 'hex'),
       null, null, false);
 end;
 $function$;
@@ -943,10 +952,10 @@ begin
 end;
 $function$;
 
-revoke execute on function public.receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz, text) from public;
-revoke execute on function public.receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz, text) from anon;
-revoke execute on function public.receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz, text) from service_role;
-grant execute on function public.receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz, text) to authenticated;
+revoke execute on function public.receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz) from public;
+revoke execute on function public.receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz) from anon;
+revoke execute on function public.receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz) from service_role;
+grant execute on function public.receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz) to authenticated;
 revoke execute on function public.receptionist_cancel_appointment(uuid, uuid, text) from public;
 revoke execute on function public.receptionist_cancel_appointment(uuid, uuid, text) from anon;
 revoke execute on function public.receptionist_cancel_appointment(uuid, uuid, text) from service_role;

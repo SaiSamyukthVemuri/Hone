@@ -111,7 +111,7 @@ describe("lib/receptionist/scheduling-actions.ts (STUDIO-READY-02c)", () => {
   });
 
   it("never sends an actor, override, duration or note", () => {
-    expect(c).not.toMatch(/p_actor|p_receptionist_id|p_practitioner_id|p_allow_outside|p_duration|p_notes/);
+    expect(c).not.toMatch(/p_actor|p_receptionist_id|p_practitioner_id|p_allow_outside|p_duration|p_notes|p_cancellation_token_hash/);
   });
 
   it("resolves the studio server-side in every action, before any command", () => {

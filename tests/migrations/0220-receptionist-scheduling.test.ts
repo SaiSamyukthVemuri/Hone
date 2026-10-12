@@ -109,11 +109,17 @@ describe("0220 reuses the authoritative commands rather than forking them", () =
       const lower = SQL.toLowerCase();
       const at = lower.indexOf(`create or replace function public.${fn}(`);
       const args = lower.slice(at, lower.indexOf("returns", at));
-      expect(args, fn).not.toMatch(/actor|override|outside|notes|duration/);
+      expect(args, fn).not.toMatch(/actor|override|outside|notes|duration|token|hash/);
       const body = flat(bodyOf(SQL, fn));
       expect(body, fn).toContain("public.receptionist_actor_id(p_studio_id)");
       expect(body, fn).toMatch(/'receptionist'/);
     }
+  });
+
+  it("generates the cancellation credential inside the command, never from the caller (Codex P1 4244695029)", () => {
+    const body = flat(stripComments(bodyOf(SQL, "receptionist_create_appointment")));
+    expect(body).toContain("encode(pg_catalog.sha256(convert_to(gen_random_uuid()::text || gen_random_uuid()::text, 'utf8')), 'hex')");
+    expect(body).not.toMatch(/p_cancellation_token_hash/);
   });
 
   it("does not re-emit the public booking path or public cancellation", () => {
@@ -156,7 +162,7 @@ describe("0220 privileges", () => {
     "move_or_reassign_appointment(uuid, uuid, uuid, uuid, timestamptz, timestamptz, timestamptz, boolean)",
   ];
   const RECEPTIONIST_CMDS = [
-    "receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz, text)",
+    "receptionist_create_appointment(uuid, uuid, uuid, uuid, timestamptz)",
     "receptionist_cancel_appointment(uuid, uuid, text)",
     "receptionist_move_appointment(uuid, uuid, uuid, timestamptz, timestamptz, timestamptz)",
     "receptionist_booking_options(uuid)",
