@@ -121,7 +121,7 @@ available" fact comes from the vendor's public page, read 2026-10-11.
 | Supabase | Postgres, Auth, Storage | Yes, all | BAA on **Team or higher** with the HIPAA add-on; the project must be marked HIPAA; customer duties include org MFA, PITR, SSL enforcement, network restrictions and connection logging ([shared responsibility](https://supabase.com/docs/guides/deployment/shared-responsibility-model), [HIPAA projects](https://supabase.com/docs/guides/platform/hipaa-projects)) | Pro plan (issue baseline); BAA, add-on and High Compliance **not held** |
 | Vercel | Functions, CDN, cron, runtime logs, Web Analytics, Speed Insights | Yes, in transit and logs | BAA for **Pro and Enterprise**; Pro buys a HIPAA add-on in Billing ([compliance](https://vercel.com/docs/security/compliance), [guide](https://vercel.com/kb/guide/hipaa-compliance-guide-vercel)); Secure Compute is optional and Enterprise-only | Team plan, add-on and BAA **UNKNOWN** (connector access blocked) |
 | Resend | Transactional email | Yes, subjects and bodies | **Cannot sign a BAA** ([security FAQ](https://resend.com/security)) | Active; **blocker for PHI** |
-| Twilio | Programmable Messaging, Verify | Yes, phone and appointment context | BAA for listed HIPAA-eligible products ([twilio.com/hipaa](https://www.twilio.com/en-us/hipaa)) | Account, products and BAA **UNKNOWN** |
+| Twilio | Programmable Messaging, Verify | Yes, phone and appointment context | BAA for listed HIPAA-eligible products, and only on **Security or Enterprise Edition** ([twilio.com/hipaa](https://www.twilio.com/en-us/hipaa), FAQ, read 2026-10-12) | Account, products and BAA **UNKNOWN** |
 | Stripe | Connect (studio accounts), SetupIntents, charges | Client name plus ids in metadata | Payment-processing context; the Services Agreement defines PHI ([stripe.com/legal/ssa](https://stripe.com/legal/ssa)); applicability to Hone is **UNKNOWN** | Live; minimize (G-09) |
 | Sentry | Error tracking | Designed out (scrubbed) | Publishes a Business Associate Amendment v1.0.1 (2026-01-15) ([sentry.io/legal/baa](https://sentry.io/legal/baa/)); plan eligibility unverified | No BAA known |
 | PostHog | Analytics (browser, marketing only; server, practitioner) | Designed out | BAA "contact us" ([PostHog HIPAA](https://posthog.com/docs/privacy/hipaa-compliance)) | No BAA known; keep PHI out |
@@ -193,3 +193,4 @@ Any resulting migration needs a fresh migration census
 | Date | Change |
 |---|---|
 | 2026-10-11 | First assessment (HIPAA-READY-01), source at `6c5eac80`. |
+| 2026-10-12 | Twilio edition prerequisite; Amazon SES verified as a HIPAA-eligible email candidate (packet §3.1); Monday decision sheet (packet §6). G-07 fix opened as a separate draft PR. |

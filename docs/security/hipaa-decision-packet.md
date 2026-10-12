@@ -119,13 +119,18 @@ and its [HIPAA projects](https://supabase.com/docs/guides/platform/hipaa-project
    [HIPAA Eligible Products and Services](https://www.twilio.com/en-us/hipaa)
    list for Hone's account: Programmable Messaging through a Messaging
    Service, and Verify.
-2. Execute Twilio's Business Associate Addendum on the account and
+2. **Edition prerequisite (verified 2026-10-12):** Twilio says customers
+   who sign its BAA "must have our Security Edition or Enterprise Edition"
+   ([twilio.com/hipaa](https://www.twilio.com/en-us/hipaa) FAQ). Both are
+   sold through sales, so this carries a sales turnaround and a price
+   that is not public.
+3. Execute Twilio's Business Associate Addendum on the account and
    subaccount that actually sends.
-3. Configure message retention and redaction to match the BAA guidance
+4. Configure message retention and redaction to match the BAA guidance
    ("Architecting for HIPAA on Twilio").
-4. Keep the existing callback signature verification, idempotent claims,
+5. Keep the existing callback signature verification, idempotent claims,
    STOP and opt-out handling.
-5. **A2P 10DLC registration is a separate matter** from HIPAA. Track it in
+6. **A2P 10DLC registration is a separate matter** from HIPAA. Track it in
    the sender lane of #824.
 
 ### 2.4 Other processors
@@ -159,7 +164,13 @@ part of a message has to be classified:
 Options for Sam:
 - **A. A BAA-capable email provider** for every patient-facing email.
   Candidates must be verified against the vendor's current BAA terms
-  before they are named in code. Keep the existing provider-neutral
+  before they are named in code.
+  - **Verified candidate:** Amazon Simple Email Service (SES) is on AWS's
+    [HIPAA Eligible Services Reference](https://aws.amazon.com/compliance/hipaa-eligible-services-reference/)
+    (read 2026-10-12). It is covered only under an executed AWS BAA on the
+    sending AWS account; the steps and turnaround for that are unverified
+    here.
+  - Dedicated HIPAA email vendors also exist. None is verified here. Keep the existing provider-neutral
   delivery truth, idempotency, callback authentication and opt-out
   handling.
 - **B. PHI-free notifications** using the table above, with content only
@@ -190,8 +201,8 @@ else needs a quote.
 | Supabase PITR and any compute upgrade it requires | Add-on; price depends on retention and compute | **Quote or calculator needed** |
 | Vercel HIPAA BAA add-on (Pro) | Purchased in team Billing; price not shown on the public pricing page read | **Read in Billing (read-only)** |
 | Vercel Pro seats | Developer seat $20 / month ([pricing](https://vercel.com/pricing)) | Verified public price |
-| Twilio BAA | Not stated on the HIPAA page | **Ask Twilio / account team** |
-| BAA-capable email provider | Depends on option A choice | **Quote needed** |
+| Twilio BAA | Requires **Security Edition or Enterprise Edition** (verified 2026-10-12); edition pricing via sales | **Quote needed** |
+| BAA-capable email provider | Amazon SES is HIPAA-eligible under an AWS BAA (verified); usage pricing not read | **Read AWS pricing; confirm AWS BAA steps** |
 | Upstash plan with BAA | Not stated | **Quote needed** |
 | Counsel (studio BAA, risk analysis review, policies) | Not applicable | **Quote needed** |
 
@@ -221,7 +232,30 @@ Engineering can start these now, with no spend and no hosted change:
 
 Each is a small PR in its owning lane, using synthetic data.
 
-## 6. Until the gate is met
+## 6. Monday decision sheet (2026-10-12)
+
+The decisions above, with each one's external dependency and who acts.
+Nothing here is authorized until Sam approves that row.
+
+| # | Decision | External dependency | Turnaround | First action, read-only or quote |
+|---|---|---|---|---|
+| D-0 | Covered-entity status of the LA studio | The studio plus counsel | Unknown | Ask the studio how it bills (insurance or cash) and whether it sends HIPAA standard transactions |
+| D-1 | Privacy official and advisor | Advisor engagement | Unknown | Name the official; request an advisor quote |
+| D-2 | Supabase Team, HIPAA add-on and BAA | Supabase HIPAA request form | Unknown (form, then review) | Request a quote; read the current org settings |
+| D-3 | Vercel HIPAA add-on | Self-serve on Pro in team Billing | Self-serve once on Pro | Read the team plan and add-on price in Billing |
+| D-4 | Email route | AWS BAA plus SES setup, or another verified vendor | Unknown | Choose option A, B or C; read SES pricing |
+| D-5 | Twilio BAA | Security or Enterprise Edition through Twilio sales | Sales cycle | Request an edition quote; list the products in use |
+| D-6 | Preview isolation | None (engineering) | Days | Approve a separate preview project with synthetic data |
+
+**Engineering already under way, in this lane:** G-07 (Vercel analytics
+URL redaction) is a separate draft PR. It does not depend on any decision
+above.
+
+**Consequence for Friday (2026-10-16).** Several of these depend on vendor
+turnaround that this packet cannot vouch for. Unless each gate is met and
+evidenced, the meeting stays synthetic-only, as #824 already requires.
+
+## 7. Until the gate is met
 
 - No HIPAA claim in marketing, sales or replies to prospects. The marketing
   tests already reject the word "HIPAA" on public pages.
