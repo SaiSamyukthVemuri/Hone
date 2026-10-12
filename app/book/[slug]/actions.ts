@@ -181,9 +181,13 @@ async function loadEligiblePractitioners(
     { p_studio_id: studioId },
   );
   if (error) {
+    // NO RAW DB ERROR TEXT. tests/app/book/pii-log-minimization.test.ts
+    // allowlists the payload keys for public booking logs and forbids
+    // message/details/hint outright — a Postgres message can carry row values.
+    // `code` is the sqlstate: low-cardinality and non-identifying.
     logInternalBookingError("public_practitioner_options_failed", {
       studioId,
-      message: error.message,
+      code: error.code ?? null,
     });
     return [];
   }
@@ -205,7 +209,7 @@ async function loadEligiblePractitioners(
     // someone the command then refuses.
     logInternalBookingError("public_practitioner_eligibility_failed", {
       studioId,
-      message: pinErr.message,
+      code: pinErr.code ?? null,
     });
     return [];
   }
