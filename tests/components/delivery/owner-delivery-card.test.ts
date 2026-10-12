@@ -94,6 +94,20 @@ describe("OwnerDeliveryCard", () => {
     expect(live).toContain("not that it was read");
   });
 
+  it("never says nothing was reported when the window holds only resolved incidents (Codex P2 4244957358)", async () => {
+    h.answer = {
+      data: [
+        incident({ resolved_at: "2026-10-11T00:00:00Z", resolution: "fixed" }),
+        incident({ incident_id: "y", resolved_at: "2026-10-10T00:00:00Z", resolution: "acknowledged" }),
+      ],
+      error: null,
+    };
+    const html = await render();
+    expect(html).not.toContain("No delivery problems reported");
+    expect(html).toContain("No open delivery problems. 2 problems were reported in the last 14 days and since resolved.");
+    expect(html).not.toContain("not delivered");
+  });
+
   it("lists open incidents once each, with a count, the meaning, the next step and the appointment", async () => {
     h.answer = {
       data: [incident(), incident({ incident_id: "x", resolved_at: "2026-10-11T00:00:00Z", resolution: "fixed" })],
@@ -101,6 +115,7 @@ describe("OwnerDeliveryCard", () => {
     };
     const html = await render();
     expect(html).toContain("1 open delivery problem.");
+    expect(html).toContain("1 problem was reported in the last 14 days and since resolved.");
     expect(html).toContain("24-hour reminder email not delivered");
     expect(html).toContain("3 times");
     expect(html).toContain("The client&#x27;s mail server rejected the email.");
