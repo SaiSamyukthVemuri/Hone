@@ -22,6 +22,7 @@ import {
   parseCadAmountToCents,
 } from "@/lib/billing/cad-amount";
 import { OWNER_ONLY_AMOUNT_ERROR } from "@/lib/billing/checkout-final-amount";
+import { currencyLabel, currencyName } from "@/lib/billing/payment-jurisdiction";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   derivePaymentSummary,
@@ -1503,7 +1504,9 @@ function PrepareForm({
           enough to hit with a client standing there. */}
       <label className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-          Final charge (CAD)
+          {/* PAY-CCY-04: the studio's currency, from server-read eligibility.
+              A Canadian studio still reads exactly "Final charge (CAD)". */}
+          Final charge ({currencyLabel(eligibility.paymentCurrency)})
         </span>
         <input
           type="text"
@@ -1511,7 +1514,7 @@ function PrepareForm({
           data-testid="final-charge-input"
           // Named for a person reading it aloud, not for its position on the
           // page, so a test and a screen reader find it the same way.
-          aria-label="Final charge in Canadian dollars"
+          aria-label={`Final charge in ${currencyName(eligibility.paymentCurrency)}`}
           value={finalAmount}
           onChange={(e) => setFinalAmount(e.target.value)}
           // `decimal`, not `numeric`: the iPad keyboard has to offer a decimal
