@@ -238,18 +238,42 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     await expect(page.getByTestId(`machine-pick-${machineId}`)).toBeVisible({
       timeout: T,
     });
-    await expect(page.getByText("Synthetic Demo Multineedle")).toBeVisible();
+    // Scoped to the BUTTON and then to the CHOSEN block. Page-wide text
+    // locators are what broke step 4 (3 matches, the field's advisory notes
+    // contain its name), and the same shape would bite here as soon as a
+    // prior-setup card renders the model too.
+    await expect(page.getByTestId(`machine-pick-${machineId}`)).toContainText(
+      "Synthetic Demo Multineedle",
+    );
     await page.getByTestId(`machine-pick-${machineId}`).click();
-    await expect(page.getByText("Room 1 demo")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+      timeout: T,
+    });
     await noOverflow(page);
   });
 
   await test.step("4: the chart shows that model's NATIVE fields", async () => {
     // Labels and units are the machine's own, from the profile - not this
     // spec's and not the schema's.
-    await expect(page.getByText("Current")).toBeVisible({ timeout: T });
-    await expect(page.getByText("(µA)")).toBeVisible();
-    await expect(page.getByText("Time")).toBeVisible();
+    //
+    // TARGETED BY TESTID, not by page text. getByText("Current") was a
+    // strict-mode violation with THREE matches: the field label, plus two
+    // advisory notes that legitimately contain the field's name ("Current is
+    // documented in microamps and per-probe..."). Found by the ops01 lane's
+    // gate-open diagnostic, which is the first run that ever reached this step
+    // with a selectable machine - the gate-closed half returns before here, so
+    // no amount of CI on the closed path could have caught it.
+    //
+    // It also makes the assertion stronger: prose mentioning the word cannot
+    // satisfy "the machine's own label is rendered".
+    await expect(page.getByTestId("field-label-current")).toHaveText("Current", {
+      timeout: T,
+    });
+    await expect(page.getByTestId("field-unit-current")).toHaveText("(µA)");
+    // "Time" is the GEMM's native name for duration - the profile's word, not
+    // the quantity's, which is the thing worth proving.
+    await expect(page.getByTestId("field-label-duration")).toHaveText("Time");
+    await expect(page.getByTestId("field-unit-duration")).toHaveText("(s)");
   });
 
   await test.step("5: save the settings block, so there is a block to record against", async () => {
@@ -332,7 +356,9 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
     await openMachinePanel(page);
     // Chosen already, from the database rather than from component state.
-    await expect(page.getByText("Room 1 demo")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+      timeout: T,
+    });
     await expect(page.getByTestId("machine-first-status")).toHaveAttribute(
       "data-persistence",
       "database",
@@ -356,9 +382,14 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     await page.getByTestId("add-settings-block-cta").click({ timeout: T });
     await openMachinePanel(page);
 
-    await expect(page.getByTestId("machine-prior-setup")).toBeVisible({ timeout: T });
-    await expect(page.getByText("Last recorded setup")).toBeVisible();
-    await expect(page.getByText("Synthetic Demo Multineedle")).toBeVisible();
+    const prior = page.getByTestId("machine-prior-setup");
+    await expect(prior).toBeVisible({ timeout: T });
+    // SCOPED TO THE CARD. A machine is also REMEMBERED from the previous visit
+    // here, so the chosen-machine block names the same model and a page-wide
+    // locator is a 2-match strict-mode violation. Found by auditing the rest of
+    // the file after step 4 failed, rather than waiting for the next run.
+    await expect(prior).toContainText("Last recorded setup");
+    await expect(prior).toContainText("Synthetic Demo Multineedle");
     // The values, in their own units, from the previous visit.
     await expect(page.getByTestId("machine-prior-setup")).toContainText("135");
     await expect(page.getByTestId("machine-prior-setup")).toContainText("300.5");

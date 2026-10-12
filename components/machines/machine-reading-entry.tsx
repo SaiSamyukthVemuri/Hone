@@ -152,9 +152,14 @@ export function MachineReadingEntry({
               return (
                 <label key={k} className="flex flex-col gap-1">
                   <span className="text-sm font-medium">
-                    {f.label}
+                    {/* Same ids as the panel's read-only list; only one of the
+                        two renders at a time. See the note there. */}
+                    <span data-testid={`field-label-${f.key}`}>{f.label}</span>
                     {f.unit && (
-                      <span className="ml-1 font-normal text-neutral-500">
+                      <span
+                        className="ml-1 font-normal text-neutral-500"
+                        data-testid={`field-unit-${f.key}`}
+                      >
                         ({f.unit})
                       </span>
                     )}

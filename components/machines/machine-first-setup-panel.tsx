@@ -237,7 +237,7 @@ export function MachineFirstSetupPanel({
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3" data-testid="machine-chosen">
           {selectionNote && (
             <p
               className="text-xs text-amber-700 dark:text-amber-500"
@@ -280,9 +280,29 @@ export function MachineFirstSetupPanel({
                     key={`${group.key}:${f.key}`}
                     className="text-sm text-neutral-700 dark:text-neutral-300"
                   >
-                    <span className="font-medium">{f.label}</span>
+                    {/*
+                      TESTIDS ON THE LABEL AND UNIT, not because a test is
+                      fussy, but because the field's advisory notes legitimately
+                      contain the field's own name - "Current is documented in
+                      microamps..." - so a page-wide getByText("Current") is a
+                      3-way strict-mode violation. Targeting the label by
+                      identity also makes the assertion mean what it says: the
+                      MACHINE'S OWN label and unit are rendered, which prose
+                      mentioning the word cannot satisfy.
+                    */}
+                    <span
+                      className="font-medium"
+                      data-testid={`field-label-${f.key}`}
+                    >
+                      {f.label}
+                    </span>
                     {f.unit && (
-                      <span className="ml-1 text-neutral-500">({f.unit})</span>
+                      <span
+                        className="ml-1 text-neutral-500"
+                        data-testid={`field-unit-${f.key}`}
+                      >
+                        ({f.unit})
+                      </span>
                     )}
                     <span className="ml-2 text-xs text-neutral-500">
                       {f.decimals === 0
