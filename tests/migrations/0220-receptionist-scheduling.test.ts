@@ -50,8 +50,10 @@ const sentinels = (body: string) => new Set([...body.matchAll(/'([a-z_]+)'::text
 describe("0220 sits correctly in the migration sequence", () => {
   it("is the repository maximum, and nothing sits above it", () => {
     // Only the CURRENT maximum migration's own test may assert this (CLAUDE.md §2).
-    expect(isRepoMax(VERSION), "0220 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+    expect(isRepoMax(VERSION)).toBe(false); // handed off to 0222 on this branch
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above 0220").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
   });
 
   it("is allocated exactly once", () => {

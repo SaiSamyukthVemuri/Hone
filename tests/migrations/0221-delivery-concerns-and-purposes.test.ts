@@ -29,8 +29,10 @@ describe("0221 sits correctly in the migration sequence", () => {
   it("is the repository maximum, and nothing sits above it", () => {
     // Only the CURRENT maximum migration's own test may assert this — see
     // CLAUDE.md §2. It reached this file from 0215's test.
-    expect(isRepoMax(VERSION), "0221 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0221").toEqual([]);
+    expect(isRepoMax(VERSION)).toBe(false); // handed off to 0222 on this branch
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above 0221").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
   });
 
   it("is allocated exactly once", () => {

@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`; `0211`–`0219` AUTHORED AND PENDING, contiguous, in that order)
+## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`; `0211`–`0222` AUTHORED AND PENDING, contiguous, in that order)
 <!-- integration: incoming lane's ledger prose, preserved verbatim -->
 <!-- integration: incoming lane's ledger prose, preserved verbatim -->
 
@@ -49,10 +49,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0219** — `0219_public_practitioner_selection.sql` (G1 public practitioner selection, #824 DB/WAIT), above the isolated synthetic integration of eight lanes' pending migrations `0211`–`0218`, each byte-identical to its own PR head. Additive: two read-only functions, no data, no existing object altered. |
+| **Repo migration max** | **0222** — `0222_public_practitioner_booking_command.sql` (G1 write side, #824 DB/WAIT): the practitioner-scoped public booking validator and command. Above it sits nothing. This tree is the isolated synthetic integration of eleven lanes' pending migrations `0211`–`0221`, each carried byte-identical to its own PR head, plus `0219` and `0222` from this lane. Additive: four functions in total across 0219/0222, no data, no existing object altered, and 0170's own command and validator left in place unchanged. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
 | **Pending migrations** | **`0217`** only on this branch, **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, with `0211`-`0216` absent from this tree. |
-| **Next free migration** | Next free number is **0220**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here — availability is not allocation. The shared register records `0220` as held by the receptionist-scheduling lane and `0221` as allocated to DELIVERY-VISIBILITY-04. |
+| **Next free migration** | Next free number is **0223**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here — availability is not allocation. The shared register (`~/hone-migration-coordination.md`) is the authority for in-flight claims. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
