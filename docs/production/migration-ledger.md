@@ -18,8 +18,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 > **THIS TREE IS THE STACKED INTEGRATION OF THREE DRAFT LANES**, coordinated through the shared
 > census (`/home/sam/hone-migration-coordination.md`): `0211` G3 (PR #827, head `481e60c6`),
-> `0212` DELIVERY-EVENTS-01 (PR #832, head `ea7f8c0a`) and `0213` LEAD-ALERT-01 (PR #831), merged
-> in that order. `0211` and `0212` are carried **byte-identical** to their PR heads (pinned by
+> `0212` DELIVERY-EVENTS-01 (PR #832, head `b5d50e78`, itself stacked on #827) and `0213`
+> LEAD-ALERT-01 (PR #831), on top of #832's head. `0211` and `0212` are carried **byte-identical** to their PR heads (pinned by
 > `tests/migrations/0213-platform-lead-alerts.test.ts`). The pending suffix above hosted `0210` is
 > therefore **contiguous**: `0211`, `0212`, `0213`. Apply strictly in that order, each migration-first
 > under its own approval from its own reviewed head; none is applied.

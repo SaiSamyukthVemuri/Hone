@@ -77,7 +77,8 @@ describe("0213 leaves every applied migration it relies on untouched", () => {
     ["0209_public_slot_candidate_buffer_window.sql", "9fa04999b974d70d838ba27800a22338b1f08fd7977f553dec38fba034e3f877"],
     ["0210_sms_waitlist_join_acknowledgement.sql", "b1d33743235644447da41a17778e890c05c14deda6c299303cc5febdceea7157"],
     // STACKED BELOW 0213, carried byte-identical to their own PR heads:
-    // #827 (481e60c6) and #832 (ea7f8c0a). A change there must be re-merged here.
+    // #827 (481e60c6) and #832 (b5d50e78, itself on #827). A change there must be
+    // re-merged here.
     ["0211_client_sms_permission_guard.sql", "33232496322727b2db67e33f15a38bd6281898d112d4d6b4d3b25534766578c3"],
     ["0212_email_delivery_events.sql", "cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1"],
   ];
