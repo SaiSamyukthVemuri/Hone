@@ -32,7 +32,9 @@ import {
 // No provider is involved. The Sentry tunnel is fulfilled locally.
 // ===========================================================================
 
-const LAUNCH = "/settings/launch";
+// STUDIO-READY-03b (#824): the owner card moved from Settings → Launch into the
+// owner console (Codex P1 4244880915 on #867).
+const OWNER_CONSOLE = "/settings/overview";
 const CARD = () => (page: Page) => page.locator("section[aria-labelledby='owner-delivery-heading']");
 
 async function fenceSentry(page: Page): Promise<void> {
@@ -92,7 +94,7 @@ test.describe("owner delivery card", () => {
     const s = await seedE2eStudio();
     await seedIncidents(s);
     await loginByMagicLink(page, s.ownerEmail);
-    await page.goto(LAUNCH);
+    await page.goto(OWNER_CONSOLE);
 
     const card = CARD()(page);
     await expect(card.getByRole("heading", { name: "Message delivery" })).toBeVisible();
@@ -120,14 +122,15 @@ test.describe("owner delivery card", () => {
     const memberPage = await (await browser.newContext()).newPage();
     await fenceSentry(memberPage);
     await loginByMagicLink(memberPage, member.email);
-    await memberPage.goto(LAUNCH);
-    await expect(memberPage.getByRole("heading", { name: /ready for booking checklist/i })).toBeVisible();
+    await memberPage.goto(OWNER_CONSOLE);
+    // A practitioner gets the console's owner-only notice, and no card.
+    await expect(memberPage.getByText("Only studio owners can see the studio overview.")).toBeVisible();
     await expect(CARD()(memberPage)).toHaveCount(0);
 
     const ownerB = await (await browser.newContext()).newPage();
     await fenceSentry(ownerB);
     await loginByMagicLink(ownerB, b.ownerEmail);
-    await ownerB.goto(LAUNCH);
+    await ownerB.goto(OWNER_CONSOLE);
     const cardB = CARD()(ownerB);
     await expect(cardB.getByText("No delivery problems reported in the last 14 days.")).toBeVisible();
     await expect(cardB.getByText(/not delivered/)).toHaveCount(0);
@@ -136,7 +139,7 @@ test.describe("owner delivery card", () => {
   test("an owner whose read fails sees UNKNOWN, never 'no problems'", async ({ page }) => {
     const s = await seedE2eStudio();
     await loginByMagicLink(page, s.ownerEmail);
-    await page.goto(LAUNCH);
+    await page.goto(OWNER_CONSOLE);
     await expect(CARD()(page).getByText("No delivery problems reported in the last 14 days.")).toBeVisible();
 
     // Make the owner's read fail with something other than a permission
@@ -211,7 +214,7 @@ test.describe("platform support queue", () => {
     expect(audit[0]?.outcome).toBe("succeeded");
 
     // The owner's card follows: one open problem left.
-    await ownerPage.goto(LAUNCH);
+    await ownerPage.goto(OWNER_CONSOLE);
     await expect(CARD()(ownerPage).getByText("1 open delivery problem.", { exact: false })).toBeVisible();
   });
 });
