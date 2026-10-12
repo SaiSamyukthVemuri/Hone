@@ -87,6 +87,11 @@ describe("formatAmountLabel", () => {
     expect(formatAmountLabel(null, "cad")).toBeNull();
     expect(formatAmountLabel(undefined, "cad")).toBeNull();
   });
+  it("PAY-CCY-04: names USD, and never assumes CAD for a row without a currency", () => {
+    expect(formatAmountLabel(5000, "usd")).toBe("$50.00 USD");
+    expect(formatAmountLabel(5000, null)).toBe("$50.00 (currency unknown)");
+    expect(formatAmountLabel(5000, "")).toBe("$50.00 (currency unknown)");
+  });
 });
 
 // ---------------------------------------------------------------------------

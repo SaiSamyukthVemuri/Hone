@@ -34,6 +34,8 @@ const TABLE_READERS = [
   "app/(app)/settings/payments/actions.ts",
   "app/(app)/settings/payments/return/page.tsx",
   "app/api/stripe/webhook/route.ts",
+  // PAY-CCY-04: the owner page's account-country read, current mode only.
+  "lib/billing/payment-jurisdiction-server.ts",
   "lib/billing/session-payment-charge.ts",
   "lib/billing/session-payment-eligibility.ts",
   "lib/stripe/account.ts",
