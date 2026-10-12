@@ -7,6 +7,7 @@ import {
   type IntakeReminderKind,
   type IntakeSectionCopy,
 } from "@/lib/email/templates/intake-reminder";
+import { clientPreheader, withPreheader } from "@/lib/email/preheader";
 
 function escapeHtml(s: string): string {
   return s
@@ -229,7 +230,7 @@ export function build24hReminderEmail(p: ReminderProps): {
   const intake = intakeSectionFor("24h", p);
   return {
     subject,
-    html: reminderHtml({ headline, lead, subject, p, intake }),
+    html: withPreheader(reminderHtml({ headline, lead, subject, p, intake }), clientPreheader(p.studioName)),
     text: reminderText({ headline, lead, p, intake }),
   };
 }
@@ -246,7 +247,7 @@ export function build2hReminderEmail(p: ReminderProps): {
   const intake = intakeSectionFor("2h", p);
   return {
     subject,
-    html: reminderHtml({ headline, lead, subject, p, intake }),
+    html: withPreheader(reminderHtml({ headline, lead, subject, p, intake }), clientPreheader(p.studioName)),
     text: reminderText({ headline, lead, p, intake }),
   };
 }
@@ -306,5 +307,5 @@ ${p.rebookUrl ? `\nIf you'd like to rebook: ${p.rebookUrl}\n` : ""}
 ${p.studioName} via Hone
 `;
 
-  return { subject, html, text };
+  return { subject, html: withPreheader(html, clientPreheader(p.studioName)), text };
 }

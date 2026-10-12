@@ -1,5 +1,6 @@
 import { localTimeString12h } from "@/lib/booking/tz";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
+import { clientPreheader, withPreheader } from "@/lib/email/preheader";
 
 // Postcare email template (v1).
 //
@@ -225,5 +226,10 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   }
   const text = textSections.join("\n");
 
-  return { subject, html, text, preview: text };
+  return {
+    subject,
+    html: withPreheader(html, clientPreheader(p.studioName)),
+    text,
+    preview: text,
+  };
 }

@@ -55,6 +55,28 @@ The intake templates already followed a stricter rule (no studio name).
 - See the #828 decision packet §3.1.
 - Pinned by `tests/lib/email/subject-minimum-necessary.test.ts`.
 
+### Hidden preheader (HIPAA-READY-01, #828)
+
+Inbox and lock-screen previews come from the first text in the HTML body.
+Every template listed in
+[the provider-visible inventory](./security/email-provider-visible-inventory.md)
+starts its body with a hidden **neutral preheader** (`lib/email/preheader.ts`):
+- client-facing: `A message from <studio>. Open it to see the details.`;
+- studio-facing: `New activity at <studio> in Hone. …`;
+- intake templates: generic, with no studio name.
+
+Invisible filler follows the preheader, so the preview cannot run on into
+the body. It follows the same content rule as subjects.
+
+**Excluded:**
+- the waitlist family, whose Resend idempotency payload must stay byte-stable;
+- payment receipts, which belong to the Audit lane.
+
+**Not affected:** plain-text parts and attachments. This minimizes the
+preview only. Email is **not** PHI-free.
+
+Pinned by `tests/lib/email/preheader-minimum-necessary.test.ts`.
+
 ### Pre-appointment instructions (PR #160)
 
 Booking confirmation + 24h + 2h reminder emails render a per-service `Before your appointment` block sourced from `services.pre_care_instructions` (nullable text, migration 0025). The studio edits it from `Settings → Services` per service; the same field also feeds the portal Care instructions section (PR #159), so a single edit reaches both surfaces.

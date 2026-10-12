@@ -26,6 +26,7 @@
 // escape hatch so the message is honest under both races.
 
 import { localTimeString12h } from "@/lib/booking/tz";
+import { clientPreheader, withPreheader } from "@/lib/email/preheader";
 
 export type IntakeReminderKind = "24h" | "2h";
 
@@ -161,5 +162,5 @@ export function buildIntakeReminderEmail(p: {
   </body>
 </html>`.trim();
 
-  return { subject, html, text };
+  return { subject, html: withPreheader(html, clientPreheader(null)), text };
 }
