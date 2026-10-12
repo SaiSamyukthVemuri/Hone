@@ -1,11 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Client, Studio } from "@/lib/types/database";
-import {
-  listedRoutingStudioIds,
-  liveSendTimeRouteReader,
-  type SendTimeRouteRead,
-  type SendTimeRouteReader,
-} from "./send-time-route";
+import { listedRoutingStudioIds, type SendTimeRouteReader } from "./send-time-route";
 import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send-appointment";
 
 // ===========================================================================
@@ -47,8 +42,17 @@ import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send
 // (created_at, id), RECOVERY_PAGE_SIZE rows, at most
 // RECOVERY_MAX_PAGES_PER_STUDIO pages), so rows that keep refusing (an
 // opted-out client, an unready sender) can neither starve newer rows of the
-// same studio nor another studio. Each studio's sender snapshot is read ONCE
-// per run, and a route is looked at once per row: the next run is the retry.
+// same studio nor another studio. A route is looked at once per row, the next
+// run being the retry.
+//
+// FRESHNESS. An APPROVAL is never reused: every recovered send reads the
+// sender snapshot afresh, immediately before its claim, so a sender
+// suspended, released or replaced mid-run is seen. Only a STUDIO-WIDE refusal
+// (unreadable, no or ambiguous sender, wrong studio, no identity) is
+// remembered for the rest of the run, and only to skip that studio's other
+// rows; destination refusals depend on the recipient and are not. The
+// client's STOP, consent and phone are re-read with the appointment, before
+// AND after the claim, so a STOP that lands mid-run is honoured.
 //
 // BOUNDS. At most RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN provider requests per
 // run, counting failures as well as sends, so a provider outage cannot turn
@@ -123,6 +127,15 @@ export function isOwedConfirmation(row: OwedConfirmationRow, nowMs: number, stud
   );
 }
 
+/** Route refusals that hold for every row of the studio, whoever the recipient. */
+const STUDIO_WIDE_REFUSALS: ReadonlySet<string> = new Set([
+  "sms_route_sender_read_failed",
+  "sms_route_no_active_sender",
+  "sms_route_ambiguous_active_sender",
+  "sms_route_sender_wrong_studio",
+  "sms_route_sender_identity_missing",
+]);
+
 export type RecoveryRun =
   | { ran: false; reason: "disabled" | "no_routed_studios" }
   | { ran: false; reason: "read_failed" }
@@ -145,17 +158,8 @@ export async function recoverOwedConfirmations(opts: {
   const studioIds = listedRoutingStudioIds(env);
   if (studioIds.length === 0) return { ran: false, reason: "no_routed_studios" };
 
-  // One snapshot per studio per run, failures included.
-  const base = opts.routeReader ?? liveSendTimeRouteReader(opts.admin);
-  const snapshots = new Map<string, Promise<SendTimeRouteRead>>();
-  const reader: SendTimeRouteReader = (studioId) => {
-    let p = snapshots.get(studioId);
-    if (!p) {
-      p = base(studioId).catch(() => ({ ok: false }) as const);
-      snapshots.set(studioId, p);
-    }
-    return p;
-  };
+  // Studio-wide refusals seen this run; approvals are never remembered.
+  const studioRefusal = new Map<string, string>();
 
   const w = owedWindow(opts.nowMs);
   const pageSize = opts.pageSize ?? RECOVERY_PAGE_SIZE;
@@ -183,6 +187,12 @@ export async function recoverOwedConfirmations(opts: {
           skip("not_owed");
           continue;
         }
+        const refused = studioRefusal.get(studioId);
+        if (refused) {
+          skip(refused);
+          continue;
+        }
+        const listedPhone = row.client.phone;
         let result: SmsSendResult;
         try {
           result = await sendRecoveredConfirmationSmsToClient({
@@ -191,16 +201,18 @@ export async function recoverOwedConfirmations(opts: {
             timezone: row.studio.timezone,
             studio: row.studio,
             client: row.client,
-            routeReader: reader,
+            routeReader: opts.routeReader,
             manageUrlFor: (startsAt) => opts.manageUrlFor(row.id, startsAt),
-            revalidate: () => revalidateOwed(opts.admin, row.id, clock()),
+            revalidate: () => revalidateOwed(opts.admin, row.id, clock(), listedPhone),
           });
         } catch {
           result = { ok: false, error: "recovery_threw", retryable: false };
         }
         if (result.ok) run.sent += 1;
-        else if (result.skipped) skip(result.reason);
-        else run.failed += 1;
+        else if (result.skipped) {
+          skip(result.reason);
+          if (STUDIO_WIDE_REFUSALS.has(result.reason)) studioRefusal.set(studioId, result.reason);
+        } else run.failed += 1;
       }
       if (rows.length < pageSize) continue studios;
       const last = rows[rows.length - 1];
@@ -256,27 +268,43 @@ async function readOwedPage(
   }
 }
 
-/** After the claim: still confirmed, and still starting beyond the horizon. */
+type RevalidatedRow = {
+  status: string;
+  starts_at: string;
+  client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at"> | Array<Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">> | null;
+};
+
+/**
+ * Before and after the claim: still confirmed, still starting beyond the
+ * horizon, and the client still consenting, not opted out (STOP is stamped
+ * on every row holding the number), and still on the number the gate used.
+ */
 async function revalidateOwed(
   admin: SupabaseClient,
   appointmentId: string,
   nowMs: number,
+  listedPhone: string | null,
 ): Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }> {
   // An unreadable answer is looked at again; only a READ verdict refuses.
-  let row: { status: string; starts_at: string } | null = null;
+  let row: RevalidatedRow | null = null;
   for (let look = 0; look < RECOVERY_POST_CLAIM_LOOKS && !row; look += 1) {
     try {
       const { data, error } = await admin
         .from("appointments")
-        .select("status, starts_at")
+        .select("status, starts_at, client:clients(phone, sms_consent_at, sms_opted_out_at)")
         .eq("id", appointmentId)
         .maybeSingle();
-      if (!error && data) row = data as { status: string; starts_at: string };
+      if (!error && data) row = data as RevalidatedRow;
     } catch {
       // looked at again below
     }
   }
   if (!row) return { ok: false, reason: "recovery_revalidate_failed" };
+  const client = Array.isArray(row.client) ? (row.client[0] ?? null) : row.client;
+  if (!client) return { ok: false, reason: "recovery_revalidate_failed" };
+  if (client.sms_opted_out_at) return { ok: false, reason: "client_opted_out" };
+  if (!client.sms_consent_at) return { ok: false, reason: "client_no_consent" };
+  if (client.phone !== listedPhone) return { ok: false, reason: "recovery_client_phone_changed" };
   if (row.status !== "confirmed") return { ok: false, reason: "recovery_not_confirmed" };
   const startsAt = new Date(row.starts_at);
   if (!Number.isFinite(startsAt.getTime()) || startsAt.getTime() <= nowMs + RECOVERY_MIN_LEAD_MS) {

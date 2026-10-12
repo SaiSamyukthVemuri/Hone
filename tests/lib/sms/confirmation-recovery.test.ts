@@ -175,7 +175,17 @@ function admin(): SupabaseClient {
           if (failRead?.(phase)) return Promise.resolve({ data: null, error: { code: "57014" } });
           if (row && phase === "post" && afterClaimRead) afterClaimRead(row);
           if (row && phase === "pre" && preClaimRead) preClaimRead(row);
-          return Promise.resolve({ data: row ? { status: row.status, starts_at: row.starts_at } : null, error: null });
+          return Promise.resolve({
+            data: row
+              ? {
+                  status: row.status,
+                  starts_at: row.starts_at,
+                  // The client as it is NOW, not as the page saw it.
+                  client: { phone: row.client_phone, sms_consent_at: "2026-10-01T00:00:00Z", sms_opted_out_at: row.client_opted_out_at },
+                }
+              : null,
+            error: null,
+          });
         },
       };
       return q;
@@ -636,5 +646,84 @@ describe("a provider that could never be reached spends nothing", () => {
     events = [];
     expect(await run()).toMatchObject({ sent: 1 });
     expect(providerCalls()).toBe(1);
+  });
+});
+
+describe("FRESHNESS: an approval is never reused, and a STOP mid-run is honoured", () => {
+  const twoRows = () => [
+    appt({ id: "r-1", created_at: iso(NOW - 3 * HOUR) }),
+    appt({ id: "r-2", created_at: iso(NOW - 2 * HOUR) }),
+  ];
+
+  it("a sender suspended after the first send is seen by the next: no claim, no send", async () => {
+    db = twoRows();
+    let reads = 0;
+    snapshot = () => {
+      reads += 1;
+      return reads === 1
+        ? readyStudioA()
+        : {
+            data: {
+              senders: [{ id: "sender-a-1", studio_id: A, status: "suspended", phone_number: "+14165550100", messaging_service_sid: MSID_A }],
+              registrations: [],
+            },
+            error: null,
+          };
+    };
+    const r = await run();
+    expect(r).toMatchObject({ sent: 1, skipped: { sms_route_no_active_sender: 1 } });
+    expect(reads).toBe(2);
+    expect(db.find((x) => x.id === "r-2")!.sms_confirmation_send_attempts).toBe(0);
+    expect(providerCalls()).toBe(1);
+  });
+
+  it("STOP landing after the page was read, before the claim: refused, nothing claimed", async () => {
+    db = [appt()];
+    preClaimRead = (row) => {
+      row.client_opted_out_at = iso(NOW - 1000);
+    };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { client_opted_out: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(providerCalls()).toBe(0);
+  });
+
+  it("STOP landing while the claim is held: no provider call, the claim released", async () => {
+    db = [appt()];
+    afterClaimRead = (row) => {
+      row.client_opted_out_at = iso(NOW - 1000);
+    };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { client_opted_out: 1 } });
+    expect(providerCalls()).toBe(0);
+    expect(db[0].sms_confirmation_claimed_at).toBeNull();
+  });
+
+  it("the client's number changed since the page was read: refused before the claim, still owed", async () => {
+    db = [appt()];
+    preClaimRead = (row) => {
+      row.client_phone = "+16475559999";
+    };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { recovery_client_phone_changed: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(db[0].sms_confirmation_send_attempts).toBe(0);
+  });
+
+  it("a studio-wide refusal is remembered for the run; an approval is not", async () => {
+    db = twoRows();
+    let reads = 0;
+    snapshot = () => {
+      reads += 1;
+      return { data: { senders: [], registrations: [] }, error: null };
+    };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_no_active_sender: 2 } });
+    expect(reads).toBe(1);
+    reads = 0;
+    events = [];
+    db = twoRows();
+    snapshot = () => {
+      reads += 1;
+      return readyStudioA();
+    };
+    expect(await run()).toMatchObject({ sent: 2 });
+    expect(reads).toBe(2);
   });
 });
