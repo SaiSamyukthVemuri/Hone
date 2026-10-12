@@ -103,7 +103,7 @@ test.describe("owner delivery card", () => {
     await expect(card.getByText("The client's mail server rejected the email.")).toBeVisible();
     await expect(card.getByText("Check the client's email address with them and update it.")).toBeVisible();
     // Truthful about what it cannot see yet (no webhook secret in this lane).
-    await expect(card.getByText(/Email bounce reports are not switched on yet/)).toBeVisible();
+    await expect(card.getByText(/appears here only once Hone is receiving the email provider's delivery reports/)).toBeVisible();
     const text = await card.innerText();
     expect(text).not.toContain(s.clientName);
     expect(text).not.toContain(s.clientEmail);
