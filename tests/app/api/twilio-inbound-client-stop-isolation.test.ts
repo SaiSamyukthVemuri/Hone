@@ -98,11 +98,13 @@ const PLATFORM_SENDER = "+15550001111";
 const STUDIO_B_SENDER = "+15559998888";
 const PHONE = "+16475551234";
 
-function inbound(body: string, from = PHONE, to = PLATFORM_SENDER) {
+function inbound(body: string, from = PHONE, to = PLATFORM_SENDER, signed = true) {
+  const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded" };
+  if (signed) headers["x-twilio-signature"] = "sig";
   return POST(
     new Request("https://hone.care/api/twilio/inbound-sms", {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", "x-twilio-signature": "sig" },
+      headers,
       body: new URLSearchParams({ From: from, To: to, Body: body, MessageSid: "SM1" }).toString(),
     }) as never,
   );
@@ -228,7 +230,18 @@ describe("only the exact STOP keywords act; nothing re-subscribes", () => {
 });
 
 describe("authentication gates every studio at once", () => {
-  it("an unsigned STOP opts out nobody, even with the number in three studios", async () => {
+  it("an UNSIGNED STOP (no signature header at all) opts out nobody, even with the number in three studios", async () => {
+    threeStudiosOnePerson();
+    // The validator would accept: only the route's own missing-header guard can refuse.
+    h.validSignature = true;
+    const res = await inbound("STOP", PHONE, STUDIO_B_SENDER, false);
+    expect(res.status).toBe(403);
+    expect(h.clientUpdates).toEqual([]);
+    expect(h.suppressCalls).toEqual([]);
+    expect(h.audits).toEqual([]);
+  });
+
+  it("a STOP whose signature does not verify opts out nobody either", async () => {
     threeStudiosOnePerson();
     h.validSignature = false;
     const res = await inbound("STOP", PHONE, STUDIO_B_SENDER);
