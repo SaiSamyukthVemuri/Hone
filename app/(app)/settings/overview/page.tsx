@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getPractitionersForStudio, requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getNewClientReadiness, type NewClientReadiness } from "@/lib/booking/new-client-readiness";
 import { presentSenderStatus, readOwnStudioSmsSender } from "@/lib/sms/sender-status";
-import { deriveConnectCapability } from "@/lib/payments/payment-status-presenter";
+import { currentRuntimeMode, deriveConnectCapability } from "@/lib/payments/payment-status-presenter";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import {
   bookingPanel,
@@ -26,6 +26,7 @@ export const dynamic = "force-dynamic";
 const TONE_PILL: Record<ConsolePanel["tone"], string> = {
   ready: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
   attention: "bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+  chosen: "bg-sky-50 text-sky-900 dark:bg-sky-950 dark:text-sky-200",
   unknown: "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
   unavailable: "border border-dashed border-neutral-300 text-neutral-500 dark:border-neutral-700",
 };
@@ -80,7 +81,7 @@ export default async function OwnerConsolePage() {
     bookingPanel(readiness),
     teamPanel(practitioners == null || pending == null ? null : { practitioners, pendingInvitations: pending }),
     phonePanel(presentSenderStatus(sender)),
-    paymentsPanel(capability),
+    paymentsPanel(capability, currentRuntimeMode()),
     notYetAvailablePanel("delivery"),
     notYetAvailablePanel("notifications"),
   ];

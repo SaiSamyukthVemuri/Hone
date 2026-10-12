@@ -67,11 +67,37 @@ describe("the three-state rule", () => {
   });
 
   it("payments: only a fully enabled account is ready; an unread status is unknown", () => {
-    expect(paymentsPanel("ready").tone).toBe("ready");
-    expect(paymentsPanel("unknown").tone).toBe("unknown");
-    for (const c of ["not_connected", "onboarding_started", "charges_disabled", "charges_enabled_payouts_pending"] as const) {
-      expect(paymentsPanel(c).tone, c).toBe("attention");
+    expect(paymentsPanel("ready", "live")).toMatchObject({ tone: "ready", status: "Live payments ready" });
+    for (const m of ["live", "test"] as const) {
+      expect(paymentsPanel("unknown", m).tone).toBe("unknown");
+      for (const c of ["not_connected", "onboarding_started", "charges_disabled", "charges_enabled_payouts_pending"] as const) {
+        expect(paymentsPanel(c, m).tone, `${c} ${m}`).toBe("attention");
+      }
     }
+  });
+
+  it("payments: TEST-mode readiness never reads as live readiness (Codex P2 4244007430)", () => {
+    const p = paymentsPanel("ready", "test");
+    expect(p.tone).not.toBe("ready");
+    expect(p.status).toBe("Test mode ready");
+    expect(p.detail).toMatch(/no real money moves/);
+  });
+
+  it("booking: a deliberate admission mode is a choice, never a setup step (Codex P2 4244007433)", () => {
+    const wait = { key: "wait_admission", label: "New clients join the waitlist instead of booking directly." };
+    const closed = { key: "admission_closed", label: "This studio is not accepting new clients." };
+    const only = (blockers: unknown[], unavailable: unknown[] = []) =>
+      bookingPanel({ status: "not_ready", blockers: blockers as never, nextStep: null, unavailable: unavailable as never });
+
+    expect(only([wait])).toMatchObject({ tone: "chosen", status: "Waitlist only" });
+    expect(only([closed])).toMatchObject({ tone: "chosen", status: "Not accepting new clients" });
+    expect(only([wait]).status).not.toMatch(/step/);
+    // Real steps are counted WITHOUT the choice, and the choice is still stated.
+    const mixed = only([{ key: "availability", label: "x" }, wait]);
+    expect(mixed).toMatchObject({ tone: "attention", status: "1 step left" });
+    expect(mixed.detail).toContain(wait.label);
+    // A partial list with only a choice proven never claims setup is complete.
+    expect(only([wait], ["consent"]).detail).toMatch(/may still need steps/);
   });
 
   it("panels without an authority yet say so, and link nowhere", () => {
