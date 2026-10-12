@@ -754,11 +754,11 @@ describe("the delivery worker, through the existing fake Resend transport", () =
   it("missing or refused configuration: nothing sent, no attempt spent, the alert says why; fixed, it sends", async () => {
     const r = await recordDemo();
     const sent: Sent[] = [];
-    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(undefined, sent))).toEqual({ result: "blocked", code: "recipient_not_configured" });
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(undefined, sent))).toEqual({ result: "blocked", code: "recipient_not_configured", recorded: true });
     expect(await alertRow(r.alert_id!)).toMatchObject({ status: "pending", attempt_count: 0, last_error_code: "recipient_not_configured" });
 
-    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps("someone-else@example.test", sent))).toEqual({ result: "blocked", code: "recipient_not_allowlisted" });
-    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, { ...deps(OPS, sent), transport: null })).toEqual({ result: "blocked", code: "transport_not_configured" });
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps("someone-else@example.test", sent))).toEqual({ result: "blocked", code: "recipient_not_allowlisted", recorded: true });
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, { ...deps(OPS, sent), transport: null })).toEqual({ result: "blocked", code: "transport_not_configured", recorded: true });
     expect(
       await delivery.deliverPlatformLeadAlert(r.alert_id!, {
         ...deps(OPS, sent),
@@ -766,7 +766,7 @@ describe("the delivery worker, through the existing fake Resend transport", () =
           throw new Error("NEXT_PUBLIC_APP_ORIGIN is required in production.");
         },
       }),
-    ).toEqual({ result: "blocked", code: "app_origin_not_configured" });
+    ).toEqual({ result: "blocked", code: "app_origin_not_configured", recorded: true });
     expect(sent).toHaveLength(0);
     expect((await alertRow(r.alert_id!)).attempt_count).toBe(0);
 
@@ -828,7 +828,7 @@ describe("the delivery worker, through the existing fake Resend transport", () =
       `Ops <${OPS}>`,
     ]) {
       const out = await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(configured, sent));
-      expect(out, configured).toEqual({ result: "blocked", code: "recipient_not_allowlisted" });
+      expect(out, configured).toEqual({ result: "blocked", code: "recipient_not_allowlisted", recorded: true });
     }
     expect(sent).toHaveLength(1);
   });

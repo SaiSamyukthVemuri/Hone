@@ -333,11 +333,16 @@ async function claimAndSend(
   return settle(admin, row, settlementFor(outcome));
 }
 
+/**
+ * Record a configuration blocker. A database failure here is a FAILED write,
+ * reported as one: it is never folded into "no alerts were blocked"
+ * (Codex P2 4244064458).
+ */
 async function recordBlocked(
   admin: SupabaseClient,
   code: LeadAlertConfigCode,
   alertId: string | null,
-): Promise<number> {
+): Promise<{ ok: true; count: number } | { ok: false }> {
   const { data, error } = await admin.rpc("record_platform_lead_alerts_unconfigured", {
     p_error_code: code,
     p_alert_id: alertId,
@@ -349,7 +354,7 @@ async function recordBlocked(
       blocked: code,
       code: error.code ?? null,
     });
-    return 0;
+    return { ok: false };
   }
   const count = Number(data) || 0;
   log("error", {
@@ -358,12 +363,13 @@ async function recordBlocked(
     blocked: code,
     alerts: count,
   });
-  return count;
+  return { ok: true, count };
 }
 
 export type LeadAlertDeliveryResult =
   | { result: LeadAlertAttemptResult }
-  | { result: "blocked"; code: LeadAlertConfigCode }
+  /** `recorded: false`: the blocker could not be written either. */
+  | { result: "blocked"; code: LeadAlertConfigCode; recorded: boolean }
   | { result: "threw" };
 
 /**
@@ -378,8 +384,8 @@ export async function deliverPlatformLeadAlert(
     const admin = deps.admin ?? createAdminClient();
     const ready = resolveLeadAlertReadiness(deps);
     if (!ready.ready) {
-      await recordBlocked(admin, ready.code, alertId);
-      return { result: "blocked", code: ready.code };
+      const record = await recordBlocked(admin, ready.code, alertId);
+      return { result: "blocked", code: ready.code, recorded: record.ok };
     }
     return { result: await claimAndSend(admin, ready, alertId) };
   } catch (err) {
@@ -448,7 +454,13 @@ export async function sweepPlatformLeadAlerts(
     const ready = resolveLeadAlertReadiness(opts);
     if (!ready.ready) {
       summary.blocked = ready.code;
-      summary.blockedAlerts = await recordBlocked(admin, ready.code, null);
+      const record = await recordBlocked(admin, ready.code, null);
+      if (record.ok) {
+        summary.blockedAlerts = record.count;
+      } else {
+        // The blocker was not persisted: the run FAILED (the route answers 500).
+        summary.ok = false;
+      }
       return summary;
     }
 

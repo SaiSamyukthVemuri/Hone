@@ -148,7 +148,7 @@ describe("deliverPlatformLeadAlert", () => {
       env: { ADMIN_EMAILS: OPS },
       appOrigin: () => "https://hone.example",
     });
-    expect(out).toEqual({ result: "blocked", code: "recipient_not_configured" });
+    expect(out).toEqual({ result: "blocked", code: "recipient_not_configured", recorded: true });
     expect(calls.map((c) => c.fn)).toEqual(["record_platform_lead_alerts_unconfigured"]);
     expect(calls[0].args).toEqual({ p_error_code: "recipient_not_configured", p_alert_id: ALERT });
     expect(sends).toBe(0);
@@ -291,5 +291,59 @@ describe("leadAlertConfigurationStatus", () => {
       state: "blocked",
       code: "transport_not_configured",
     });
+  });
+});
+
+// Codex P2 4243922093 and 4244064458: a database write that failed is never a
+// successful run. EVERY database call the worker makes is failed in turn, and
+// the sweep must answer ok:false. The source guard below keeps this table and
+// the code in step, so a new call cannot reintroduce the per-branch gap.
+describe("every worker database call: its failure fails the run", () => {
+  const SWEEP_CALLS = [
+    "expire_platform_lead_alerts",
+    "claim_platform_lead_alert",
+    "settle_platform_lead_alert",
+    "record_platform_lead_alerts_unconfigured",
+  ] as const;
+
+  for (const failing of SWEEP_CALLS) {
+    it(`${failing} failing -> ok:false`, async () => {
+      const blocked = failing === "record_platform_lead_alerts_unconfigured";
+      const admin = {
+        rpc: async (fn: string) => {
+          if (fn === failing) return { data: null, error: { code: "08006", message: "lost" } };
+          if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
+          if (fn === "claim_platform_lead_alert") return { data: [{ ...CLAIMED, claim_token: "t" }], error: null };
+          if (fn === "settle_platform_lead_alert") return { data: "accepted", error: null };
+          return { data: 1, error: null };
+        },
+      } as unknown as SupabaseClient;
+      const summary = await sweepPlatformLeadAlerts({
+        admin,
+        transport: transport(async () => ({ data: { id: "m" }, error: null })),
+        // The blocker path runs only when configuration is missing.
+        env: blocked ? { ADMIN_EMAILS: OPS } : ENV,
+        appOrigin: () => "https://hone.example",
+        maxAlerts: 1,
+      });
+      expect(summary.ok, failing).toBe(false);
+    });
+  }
+
+  it("the single-alert path reports an unpersisted blocker", async () => {
+    const out = await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({ record_platform_lead_alerts_unconfigured: { data: null, error: { code: "08006", message: "lost" } } }, []),
+      transport: transport(async () => ({ data: { id: "m" }, error: null })),
+      env: { ADMIN_EMAILS: OPS },
+      appOrigin: () => "https://hone.example",
+    });
+    expect(out).toEqual({ result: "blocked", code: "recipient_not_configured", recorded: false });
+  });
+
+  it("the table covers every rpc the worker makes (source guard)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/platform-leads/alert-delivery.ts", "utf8");
+    const called = [...src.matchAll(/admin\.rpc\(\s*"([a-z_]+)"/g)].map((m) => m[1]).sort();
+    expect([...new Set(called)]).toEqual([...SWEEP_CALLS].sort());
   });
 });
