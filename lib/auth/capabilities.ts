@@ -98,9 +98,11 @@ export const ROLE_CAPABILITIES: Record<StudioRole, Record<CapabilityKey, Access>
   },
   receptionist: {
     schedule_view: "yes",
-    // Receptionist booking over the shared scheduling core is a later slice (S4).
-    schedule_book_move: "not_yet",
-    schedule_cancel: "not_yet",
+    // STUDIO-READY-02c (0220): book, move/reassign and cancel for ANY active
+    // owner or practitioner, through the receptionist commands over the shared
+    // core. Never an override, never as a treating practitioner.
+    schedule_book_move: "any",
+    schedule_cancel: "any",
     client_contacts: "yes",
     intake_status: "yes",
     clinical_records: "no",

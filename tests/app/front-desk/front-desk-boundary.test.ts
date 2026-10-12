@@ -33,6 +33,7 @@ describe("front-desk routes", () => {
   it("exist, and include the layout and both pages", () => {
     expect(ALL_DESK.sort()).toEqual(
       [
+        "app/front-desk/(desk)/book/page.tsx",
         "app/front-desk/(desk)/contacts/page.tsx",
         "app/front-desk/(desk)/layout.tsx",
         "app/front-desk/(desk)/page.tsx",
@@ -81,9 +82,14 @@ describe("front-desk routes", () => {
 describe("lib/receptionist/projections.ts", () => {
   const c = code(read("lib/receptionist/projections.ts"));
 
-  it("calls exactly the three 0216 projections, with the caller's own session", () => {
+  it("calls exactly the three 0216 projections and the 0220 booking options, with the caller's own session", () => {
     const rpcs = [...c.matchAll(/\.rpc\("([a-z_]+)"/g)].map((m) => m[1]).sort();
-    expect(rpcs).toEqual(["receptionist_calendar", "receptionist_calendar_closures", "receptionist_client_contacts"]);
+    expect(rpcs).toEqual([
+      "receptionist_booking_options",
+      "receptionist_calendar",
+      "receptionist_calendar_closures",
+      "receptionist_client_contacts",
+    ]);
     expect(c).toMatch(/from "@\/lib\/supabase\/server"/);
     expect(c).not.toMatch(/admin-server|createAdminClient/);
   });
@@ -91,6 +97,55 @@ describe("lib/receptionist/projections.ts", () => {
   it("reads no table and passes no actor id", () => {
     expect(c).not.toMatch(/\.from\(/);
     expect(c).not.toMatch(/p_actor|p_receptionist_id|p_practitioner_id/);
+  });
+});
+
+describe("lib/receptionist/scheduling-actions.ts (STUDIO-READY-02c)", () => {
+  const c = code(read("lib/receptionist/scheduling-actions.ts"));
+
+  it("writes ONLY through the three 0220 receptionist commands, with the caller's own session", () => {
+    const rpcs = [...c.matchAll(/\.rpc\("([a-z_]+)"/g)].map((m) => m[1]).sort();
+    expect(rpcs).toEqual(["receptionist_cancel_appointment", "receptionist_create_appointment", "receptionist_move_appointment"]);
+    for (const m of c.matchAll(/(\w+)\.rpc\("receptionist_/g)) expect(m[1]).toBe("supabase");
+    expect(c).toMatch(/const supabase = await createClient\(\);/);
+  });
+
+  it("never sends an actor, override, duration or note", () => {
+    expect(c).not.toMatch(/p_actor|p_receptionist_id|p_practitioner_id|p_allow_outside|p_duration|p_notes/);
+  });
+
+  it("resolves the studio server-side in every action, before any command", () => {
+    for (const fn of ["bookFrontDeskAppointmentAction", "moveFrontDeskAppointmentAction", "cancelFrontDeskAppointmentAction"]) {
+      const body = c.slice(c.indexOf(`export async function ${fn}`));
+      const guard = body.indexOf("await requireReceptionistWithStudio()");
+      expect(guard, fn).toBeGreaterThan(-1);
+      expect(guard, fn).toBeLessThan(body.indexOf(".rpc("));
+    }
+  });
+
+  it("the service role is used only AFTER a committed result, and every read is scoped to the studio", () => {
+    expect(c.indexOf("createAdminClient()")).toBeGreaterThan(c.indexOf('row?.result !== "created"'));
+    const reads = [...c.matchAll(/\.from\("([a-z_]+)"\)/g)].length;
+    const scoped = [...c.matchAll(/\.eq\("studio_id", studioId\)|\.eq\("id", studioId\)/g)].length;
+    expect(reads).toBeGreaterThan(0);
+    expect(scoped).toBe(reads);
+    expect(c).not.toMatch(/\.(insert|update|upsert|delete)\(/);
+  });
+
+  it("exports only the three actions (every export of a server module is an endpoint)", () => {
+    const exported = [...c.matchAll(/export (?:async function|function|const) (\w+)/g)].map((m) => m[1]).sort();
+    expect(exported).toEqual(["bookFrontDeskAppointmentAction", "cancelFrontDeskAppointmentAction", "moveFrontDeskAppointmentAction"]);
+  });
+});
+
+describe("components/front-desk", () => {
+  it("call only the front-desk actions, and read nothing", () => {
+    for (const f of files("components/front-desk")) {
+      const c = code(read(f));
+      const imports = [...c.matchAll(/from "(@\/[^"]+)"/g)].map((m) => m[1]);
+      expect(imports, f).toEqual(["@/lib/receptionist/scheduling-actions"]);
+      expect(c, f).not.toMatch(/\.from\(|\.rpc\(/);
+    }
   });
 });
 

@@ -25,6 +25,9 @@ export default async function FrontDeskLayout({ children }: { children: React.Re
             <Link href="/front-desk" className="hover:underline">
               Schedule
             </Link>
+            <Link href="/front-desk/book" className="hover:underline">
+              Book
+            </Link>
             <Link href="/front-desk/contacts" className="hover:underline">
               Contacts
             </Link>
