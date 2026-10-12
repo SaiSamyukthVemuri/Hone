@@ -14,7 +14,69 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, `0212` AUTHORED AND PENDING on the DELIVERY-EVENTS-01 branch)
+## Current state (verified 2026-10-12, post-0212 apply; `0212` APPLIED, repo == hosted on this branch)
+
+> **0212 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #832 HEAD, BEFORE ANY MERGE.**
+> `0212_email_delivery_events.sql` was applied to production on 2026-10-12 under explicit
+> per-change owner authorization (DEC-2, re-issued for this exact head), from
+> `7116c66848574b0e02e7c2b8f500a6d3198edb58`. **#832 was NOT merged and no application
+> code was deployed.** The SQL is byte-identical to the originally approved head `ba8fc505`.
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH (re-run at 21:59Z).**
+> - The remote branch head and a **fresh detached throwaway** worktree were the exact head, with a clean tree.
+> - sha256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1` (44,462 bytes, blob `cd8a4908fdad8b68e917842d5ffe1590c86eb875`) matched, and so did `0211`'s.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**, in the link file, `linked-project.json` and `supabase projects list`.
+> - `supabase migration list --linked`: 211 rows, `0212` the **only** local-only row, **no** remote-only row.
+> - The **dry run listed exactly `0212_email_delivery_events.sql`**.
+> - The read-only preflight:
+>   - remote max `0211` with 210 rows;
+>   - neither new table present, and 0 of the five commands present;
+>   - the FK targets present (`appointments_id_studio_id_unique`, and the `studios` primary key);
+>   - the unresolved critical/error alert set exactly the two accepted historical ids.
+> - The head carried a **clean exact-head Codex review**: the summary shows Completed 2026-10-12T20:15:55Z for `7116c66`, with a +1 and no review object or finding at that head. Threads 4251760841 and 4251846113 are addressed at this head and await the operator.
+> - CI run `38302868662` was **11/11 success** (the full matrix).
+>
+> **EXCEPTIONS, EXPLICITLY RETAINED: NONE OF THESE IS GREEN.**
+> 1. **Shepherd receipt: UNKNOWN** (`read_failed`; `HONE_ENG_READ_TOKEN` was not set in the applying session; last read 2026-10-12T20:29:05Z). It was accepted by the operator for migration-only applies (DEC-3).
+> 2. **`verify-production` FAIL: the two accepted historical critical payment alerts.** Both are `session_payment_succeeded_write_zero_rows`, raised 2026-09-17 and 2026-09-27, and identical by id before and after this apply.
+> 3. **`verify-production` INCOMPLETE: the reminder scheduler heartbeat.** There is no Upstash env on the apply host.
+>
+> **THE APPLY.** One `supabase db push --linked` (CLI 2.102.0), **without `--include-all`**, run
+> once, **exit code 0**. The only output beyond progress was four expected NOTICEs from the file's
+> own `drop trigger if exists` on the two new tables. The client-side window was
+> `2026-10-12T21:59:30.054Z`-`22:00:22.063Z`. It is **not** a server apply time, so
+> `hosted_applied_at` stays null. Server bracket: `21:59:07.751Z` (0211, 210 rows) to
+> `22:00:45.812Z` (0212, 211 rows).
+>
+> **WHAT IT ADDED, AND ONLY THAT:**
+> - tables `public.email_outbound_messages` and `public.email_provider_events`: RLS on, 0 policies, no table privilege for `anon`, `authenticated` or `service_role`, and 0 rows each;
+> - four triggers, on those tables only;
+> - five `SECURITY DEFINER` commands, executable by `service_role` **only**: `begin_appointment_email_message`, `settle_email_message`, `record_email_provider_event`, `claim_email_provider_events` and `process_email_provider_event`.
+>
+> Nothing on an existing table changed, and **zero rows were written**. `0211`'s guard is still
+> enabled, and clients are unchanged: 136 clients, 54 consents, 0 opt-outs.
+>
+> **POST-APPLY VERIFICATION, all read-only.**
+> - The migration list shows 211 rows, with no mismatch. `0212` and `0211` are each present exactly once, and nothing sits above `0212`.
+> - `verify-production.mjs`: **10 PASS, 1 FAIL, 1 INCOMPLETE**, with "Remote migration max: = 0212". The FAIL and the INCOMPLETE are exceptions 2 and 3.
+> - `check-stripe-gates.mjs`: **15 PASS, 0 FAIL**.
+> - **0** critical-or-error `ops_alerts` since the apply, and 0 in the preceding hour.
+>
+> `0212` is now **FROZEN**. Any correction is a new forward migration; there is no
+> manual down-migration.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
+| **Repo migration max** | **0212** on this branch, so repo and hosted are equal here: the PARITY shape. A branch stacked above it carries its own pending suffix. |
+| **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
+| **Pending migrations** | **none** on this branch. |
+| **Next free migration** | Next free number is **0213**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. LEAD-ALERT-01's PR #831 holds it by coordination. |
+| **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
+| **Reviewed release head** | `7116c66848574b0e02e7c2b8f500a6d3198edb58` (PR #832): clean exact-head Codex review (20:15:55Z) and CI `38302868662` 11/11. The shepherd was UNKNOWN (exception 1). |
+| **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
+
+## Previous state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, `0212` AUTHORED AND PENDING on the DELIVERY-EVENTS-01 branch)
 
 > **0212 IS AUTHORED AND PENDING (added after the 0210 apply; `0211` beneath it is now APPLIED), on the DELIVERY-EVENTS-01 branch `feat/delivery-events-01-resend` only.**
 > `0212_email_delivery_events.sql` adds two tables and five `service_role`-only commands:
