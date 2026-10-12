@@ -196,6 +196,33 @@ export function PublicBookForm({
   // Offering a choice the commit ignores is worse than offering none.
   const pickerApplies = isNewClient && newClientAdmission === "open";
 
+  // G1 — THE STUDIO-WIDE JUMP IS NOT OFFERED ONCE A PRACTITIONER IS CHOSEN.
+  //
+  // `fetchNextAvailableDateAction` answers studio-wide, by construction: it
+  // hands the window to `loadPublicSlotsByDate`, whose `PublicRangeContext`
+  // has no practitioner field and whose reservation read filters on
+  // `studio_id` alone. So with a practitioner selected it would answer a
+  // DIFFERENT question than the grid beneath it — skipping a date they are
+  // free on (every other practitioner's booking counts as a conflict) and
+  // landing on dates whose scoped grid is empty.
+  //
+  // Scoping the jump properly means making the BULK pass practitioner-aware.
+  // It must stay one bulk pass: `tests/app/book/next-available-bounded.test.ts`
+  // forbids `getAvailableSlots` in that action, requires
+  // `loadPublicSlotsByDate`, and forbids awaiting inside a loop — the
+  // BOOK-NEXT-FAST-01 contract. Doing that needs practitioner-aware variants
+  // of `getStudioWide{Overrides,Defaults}Safe` (both hard-code
+  // `.is("practitioner_id", null)`) plus the per-date precedence rule that
+  // `lib/booking/slots.ts` already owns. Re-implementing that precedence in a
+  // second engine is the drift this module's own comments exist to prevent, so
+  // it belongs in its own slice with its own proof, not here.
+  //
+  // Until then the honest move is to withdraw the affordance rather than ship a
+  // button that confidently answers the wrong question. "Any available" still
+  // offers it, which is the default and the only reachable state on a LEGACY
+  // studio — so for every studio today this changes nothing.
+  const nextAvailableApplies = !(pickerApplies && practitionerId);
+
   // THE ONE ORDERING DECISION, taken in `lib/booking/new-client-admission.ts`
   // so the whole cross-product is testable without a renderer (this suite runs
   // on the `node` environment; there is no jsdom in the repo).
@@ -369,7 +396,22 @@ export function PublicBookForm({
     void (async () => {
       const r = await fetchPublicPractitionerOptionsAction({ slug, serviceId });
       if (cancelled) return;
-      setPractitionerOptions(r.ok ? r.practitioners : []);
+      const options = r.ok ? r.practitioners : [];
+      setPractitionerOptions(options);
+      // G1 — A HIDDEN PICKER MUST STILL SUBMIT ITS ONLY ANSWER.
+      //
+      // The control below renders only when there is more than one option, on
+      // the grounds that a one-option picker is noise. That is right about the
+      // UI and was wrong about the DATA: leaving `practitionerId` empty sent
+      // NULL, and NULL means "any available", which `create_public_appointment_v2`
+      // resolves down its legacy ACTIVE-OWNER path. If the service is pinned to
+      // a single NON-OWNER practitioner, the page offered that practitioner's
+      // slots and the command then refused the booking as `not_eligible` — the
+      // page and the command disagreeing again, which is the one failure class
+      // this lane exists to remove.
+      //
+      // So assign the sole option instead of hiding an unanswered question.
+      if (options.length === 1) setPractitionerId(options[0]!.id);
     })();
     return () => {
       cancelled = true;
@@ -859,7 +901,7 @@ export function PublicBookForm({
             <p className="text-sm text-[#6B6B6B]">
               {`No availability on ${formatLocalDate(date)}.`}
             </p>
-            {noneInHorizon ? (
+            {!nextAvailableApplies ? null : noneInHorizon ? (
               <p className="text-sm text-[#6B6B6B]">
                 No availability within the current booking window. Please
                 check back later or contact the studio.
@@ -943,7 +985,7 @@ export function PublicBookForm({
                 below is the spec's "No later availability is
                 currently published. Please contact the studio." line
                 shown when the server returns date: null. */}
-            {noneInHorizon ? (
+            {!nextAvailableApplies ? null : noneInHorizon ? (
               <p className="text-sm text-[#6B6B6B]">
                 No later availability is currently published. Please
                 contact the studio.
