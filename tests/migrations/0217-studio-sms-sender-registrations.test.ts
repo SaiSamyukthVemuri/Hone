@@ -20,9 +20,13 @@ const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
 const SIG = "public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text)";
 
 describe("0217 in the sequence", () => {
-  it("is the repository maximum on this branch, allocated once", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  // isRepoMax HANDOFF (CLAUDE.md §2): on #863's branch 0226 sits above 0217,
+  // so the max assertion moves to 0226's test and this keeps the derived
+  // tripwire older migrations use: something is above, all of it greater.
+  it("is allocated once, and everything above it is a later migration", () => {
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
+    for (const v of versionsAbove(VERSION)) expect(v > VERSION, v).toBe(true);
     expect(countVersion(VERSION)).toBe(1);
   });
 

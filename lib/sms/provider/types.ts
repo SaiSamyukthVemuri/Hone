@@ -176,6 +176,15 @@ export type OwnedNumberFacts = {
    * undefined = not reported (unknown, never "none").
    */
   numberSmsUrl?: string | null;
+  /** The number's `sms_method` ("POST" | "GET"). Null = empty; undefined = not reported. */
+  numberSmsMethod?: string | null;
+  /**
+   * The number's `sms_application_sid`. When populated, Twilio IGNORES the
+   * number's sms_* URLs and routes to that TwiML application
+   * (twilio.com/docs/phone-numbers/api/incomingphonenumber-resource). Null =
+   * none; undefined = not reported.
+   */
+  numberSmsApplicationSid?: string | null;
 };
 
 /**
@@ -193,6 +202,8 @@ export type MessagingServiceConfig = {
    * NULL = the provider did not report it: UNKNOWN, a blocker, never "false".
    */
   useInboundWebhookOnNumber: boolean | null;
+  /** The service's `inbound_method` ("POST" | "GET"). Null = not reported. */
+  inboundMethod: string | null;
 };
 
 // ---------------------------------------------------------------------------

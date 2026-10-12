@@ -14,7 +14,14 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`, `0217` AUTHORED AND PENDING on the SMS-SENDER-REG-01 branch)
+## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`, `0217` and `0226` AUTHORED AND PENDING on the SMS-SENDER-CONTROL-01 branch)
+
+> **0226 IS AUTHORED AND PENDING, on `feat/sms-sender-control-01` (#863) only**, which is stacked on #844 (`0217`).
+> `0226_studio_sms_sender_unpurchased_release.sql` adds three service_role-only definer functions and nothing else: no table, no ALTER, no row written.
+> - **The functions:** `get_releasable_studio_sms_claim`, `release_unpurchased_studio_sms_claim` and `studio_sms_resource_recorded`.
+> - **What they allow:** an owner can release an `error` claim that recorded no provider resource and failed definitively before purchase (`number_no_longer_available` or `provider_resource_mismatch`), after the provider confirms nothing exists under its claim key. The release goes error -> releasing -> released through 0191's own guard.
+> - **Allocation:** allocated after a fresh census (nothing at or above `0226` on any ref, worktree or this ledger); recorded in `/home/sam/hone-migration-coordination.md`. It applies after `0225`.
+> - **Holes on this branch:** the pending suffix has holes at `0211`-`0216` and `0218`-`0225`. The contiguity guard reports them and is not weakened.
 
 > **0217 IS AUTHORED AND PENDING, on `feat/sms-sender-reg-01` only** (stacked on #841, which has no migration).
 > `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`), one service_role-only command and one service_role-only snapshot read.
@@ -33,10 +40,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0217** — `0217_studio_sms_sender_registrations.sql`, authored on `feat/sms-sender-reg-01`. No data; no existing object altered. |
+| **Repo migration max** | **0226** — `0226_studio_sms_sender_unpurchased_release.sql`, authored on `feat/sms-sender-control-01`. No data; no existing object altered. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0217`** only on this branch, **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, with `0211`-`0216` absent from this tree. |
-| **Next free migration** | Next free number is **0218**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. |
+| **Pending migrations** | **`0217`** and **`0226`** on this branch, **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, with `0211`-`0216` and `0218`-`0225` absent from this tree. |
+| **Next free migration** | Next free number is **0227**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)

@@ -7,6 +7,7 @@ import { SmsSenderStatusCard } from "./SmsSenderStatusCard";
 import { SmsSenderReadinessPanel } from "./SmsSenderReadinessPanel";
 import { SmsSenderControls } from "./SmsSenderControls";
 import { senderControlsGate } from "@/lib/sms/sender-controls";
+import { demoAdoptionInventory } from "@/lib/sms/sender-controls-demo";
 import { studioSenderReadiness } from "@/lib/sms/sender-readiness";
 import {
   readOwnSenderRegistrations,
@@ -112,9 +113,14 @@ export default async function IntegrationsSettingsPage() {
       <SmsSenderReadinessPanel rows={studioSenderReadiness(smsRead, usRegistration)} />
 
       {/* SMS-SENDER-CONTROL-01: owner controls, FAKE PROVIDER ONLY. The gate
-          is shut in production and whenever live provisioning is armed, so
+          is shut in production, on hosted previews and whenever live provisioning is armed, so
           nothing renders there; each action re-checks it. */}
-      {senderControlsGate().open ? <SmsSenderControls /> : null}
+      {senderControlsGate().open ? (
+        <SmsSenderControls
+          inventory={demoAdoptionInventory(studio.id)}
+          canRelease={sender?.status === "error"}
+        />
+      ) : null}
     </section>
   );
 }

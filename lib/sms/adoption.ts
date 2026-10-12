@@ -342,8 +342,11 @@ export async function adoptExistingStudioSmsSender(
   const inbound = inboundReaches(
     {
       serviceInboundUrl: current.config.inboundRequestUrl,
+      serviceInboundMethod: current.config.inboundMethod,
       useInboundWebhookOnNumber: current.config.useInboundWebhookOnNumber,
       numberSmsUrl: facts.facts.numberSmsUrl,
+      numberSmsMethod: facts.facts.numberSmsMethod,
+      numberSmsApplicationSid: facts.facts.numberSmsApplicationSid,
     },
     input.requiredInboundWebhookUrl,
   );

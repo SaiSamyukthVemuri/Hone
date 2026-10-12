@@ -91,6 +91,10 @@ export type FakeProviderScript = {
    * provider record that did not report the field.
    */
   preOwnedNumberSmsUrls?: Record<string, string | null | undefined>;
+  /** A pre-owned number's `sms_method`. Absent = "POST" (Twilio's default); undefined value = not reported. */
+  preOwnedNumberSmsMethods?: Record<string, string | null | undefined>;
+  /** A pre-owned number's `sms_application_sid`. Absent = null; undefined value = not reported. */
+  preOwnedNumberSmsApplications?: Record<string, string | null | undefined>;
   /**
    * The account's Messaging Services, in the order the list endpoint returns
    * them, each with the numbers it holds. The fake PAGINATES over this exactly
@@ -104,6 +108,8 @@ export type FakeProviderScript = {
     statusUrl?: string | null;
     /** Twilio `use_inbound_webhook_on_number`. Defaults to false; null models "not reported". */
     useInboundWebhookOnNumber?: boolean | null;
+    /** `inbound_method`. Defaults to "POST"; null models "not reported". */
+    inboundMethod?: string | null;
   } | null>;
   /** Page size for the service list walk. Small values force multiple pages. */
   servicePageSize?: number;
@@ -307,6 +313,10 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
 
     const urls = this.script.preOwnedNumberSmsUrls ?? {};
     const numberSmsUrl = input.phoneNumber in urls ? urls[input.phoneNumber] : null;
+    const methods = this.script.preOwnedNumberSmsMethods ?? {};
+    const numberSmsMethod = input.phoneNumber in methods ? methods[input.phoneNumber] : "POST";
+    const apps = this.script.preOwnedNumberSmsApplications ?? {};
+    const numberSmsApplicationSid = input.phoneNumber in apps ? apps[input.phoneNumber] : null;
     const services = this.script.accountServices ?? [];
     const pageSize = this.script.servicePageSize ?? 100;
     const holders: string[] = [];
@@ -328,6 +338,8 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
             phoneNumberSid: sid,
             phoneNumber: input.phoneNumber,
             numberSmsUrl,
+            numberSmsMethod,
+            numberSmsApplicationSid,
             association: { kind: "unavailable", reason: "service_page_unparseable" },
           },
         };
@@ -345,6 +357,8 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
               phoneNumberSid: sid,
               phoneNumber: input.phoneNumber,
               numberSmsUrl,
+              numberSmsMethod,
+              numberSmsApplicationSid,
               association: { kind: "unavailable", reason: "service_page_unparseable" },
             },
           };
@@ -363,6 +377,8 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
         phoneNumberSid: sid,
         phoneNumber: input.phoneNumber,
         numberSmsUrl,
+        numberSmsMethod,
+        numberSmsApplicationSid,
         association: classifyAssociation(holders, input.expectedMessagingServiceSid),
       },
     };
@@ -382,6 +398,7 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
         inboundRequestUrl: svc.inboundUrl ?? null,
         statusCallbackUrl: svc.statusUrl ?? null,
         useInboundWebhookOnNumber: svc.useInboundWebhookOnNumber === undefined ? false : svc.useInboundWebhookOnNumber,
+        inboundMethod: svc.inboundMethod === undefined ? "POST" : svc.inboundMethod,
       },
     };
   }
