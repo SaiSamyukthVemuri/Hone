@@ -43,10 +43,13 @@
 --      bookable practitioners (receptionist_booking_options). Names, durations
 --      and colours only: no price, no email, no clinical field.
 --
+--   5. revert_appointment_outcome (B4) also clears both canceller attribution
+--      columns when it restores an appointment; nothing else in it changes.
+--
 -- NOT touched: create_public_appointment, reschedule_appointment_v2, public
--- cancellation, revert_appointment_outcome, the slot files, WAIT round storage
--- and the launch transaction. DB/WAIT confirmed it re-emits none of the three
--- commands (#824). No row is written at top level.
+-- cancellation, the slot files, WAIT round storage and the launch transaction.
+-- DB/WAIT confirmed it re-emits none of the scheduling commands (#824). No row
+-- is written at top level.
 --
 -- Migration 0220. 0219 is DB/WAIT's G1 queue position (#824).
 
@@ -956,5 +959,162 @@ revoke execute on function public.receptionist_booking_options(uuid) from public
 revoke execute on function public.receptionist_booking_options(uuid) from anon;
 revoke execute on function public.receptionist_booking_options(uuid) from service_role;
 grant execute on function public.receptionist_booking_options(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 7) revert_appointment_outcome (B4, 0173) clears the canceller attribution.
+--    Its live body, read from the catalog on a fresh chain, with ONLY two
+--    assignments added to the existing UPDATE. Every gate, the 72-hour window,
+--    the audit baseline, the sentinels and the single audit event are unchanged.
+--    Without this a reverted receptionist (or practitioner) cancellation kept
+--    naming its canceller on a confirmed appointment.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.revert_appointment_outcome(p_appointment_id uuid, p_studio_id uuid, p_actor_user_id uuid, p_expected_status text, p_reason text)
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog', 'pg_temp'
+AS $function$
+declare
+  -- Minimum meaningful reason, AFTER btrim. SQL owns normalisation; the client
+  -- cannot satisfy this with whitespace.
+  c_min_reason  constant integer  := 10;
+  c_window      constant interval := interval '72 hours';
+
+  v_practitioner_id uuid;
+  v_role            text;
+  v_reason          text;
+  v_appt            public.appointments;
+  v_blocking        text;
+  v_baseline_action text;
+  v_baseline_id     uuid;
+  v_baseline_at     timestamptz;
+  v_updated         integer;
+begin
+  -- GATE 1 — actor. Membership and role are derived here, never accepted from
+  -- the caller. A non-member is refused before any appointment is looked at,
+  -- so this command cannot be used to probe another studio's schedule.
+  select r.practitioner_id, r.actor_role
+    into v_practitioner_id, v_role
+    from public.appointment_actor_role(p_studio_id, p_actor_user_id) r;
+  if v_practitioner_id is null then
+    return 'not_a_member';
+  end if;
+  if v_role <> 'owner' then
+    return 'not_owner';
+  end if;
+
+  -- GATE 2 — the requested target must be a terminal status this command
+  -- understands. Checked before any row is touched.
+  if p_expected_status is null
+     or p_expected_status not in ('completed', 'no_show', 'cancelled') then
+    return 'not_terminal';
+  end if;
+
+  -- GATE 3 — reason. SQL owns the whitespace normalisation.
+  v_reason := btrim(coalesce(p_reason, ''));
+  if length(v_reason) < c_min_reason then
+    return 'reason_too_short';
+  end if;
+
+  -- GATE 4 — lock. Cross-studio and unknown are indistinguishable.
+  v_appt := public.lock_appointment_for_command(p_appointment_id, p_studio_id);
+  if v_appt.id is null then
+    return 'appointment_not_found';
+  end if;
+
+  -- GATE 5 — optimistic concurrency. The caller states the status it saw; if
+  -- the row has moved since, refuse rather than overwrite. A second identical
+  -- invocation lands here (the row is now 'confirmed') and is refused
+  -- truthfully with `status_mismatch` rather than silently "succeeding".
+  if v_appt.status <> p_expected_status then
+    return 'status_mismatch';
+  end if;
+
+  -- GATE 6 — blocking dependents, checked independently of everything above.
+  v_blocking := public.appointment_has_blocking_dependents(p_appointment_id, p_studio_id);
+  if v_blocking is not null then
+    return 'blocked_' || v_blocking;
+  end if;
+
+  -- GATE 7 — the audit baseline that established the CURRENT outcome, and the
+  -- repair window measured from it. Absence REFUSES; it never permits.
+  v_baseline_action := case v_appt.status
+                         when 'completed' then 'marked_complete'
+                         when 'no_show'   then 'marked_no_show'
+                         when 'cancelled' then 'cancelled'
+                       end;
+
+  select aa.id, aa.created_at
+    into v_baseline_id, v_baseline_at
+    from public.appointment_audit aa
+   where aa.appointment_id = p_appointment_id
+     and aa.action = v_baseline_action
+   order by aa.created_at desc, aa.id desc
+   limit 1;
+
+  if v_baseline_id is null then
+    return 'no_audit_baseline';
+  end if;
+
+  -- Inclusive at exactly 72 hours: a repair AT the boundary is allowed.
+  if now() - v_baseline_at > c_window then
+    return 'repair_window_expired';
+  end if;
+
+  -- MUTATION. The expected status is repeated in the predicate so the
+  -- concurrency check is enforced by the UPDATE itself, not merely by GATE 5.
+  -- Re-arming the 0029 exclusion (and the 0030 shadow) can raise 23P01.
+  begin
+    update public.appointments a
+       set status              = 'confirmed',
+           cancellation_reason = null,
+           cancelled_at        = null,
+           cancelled_by        = null,
+           -- 0220: a reverted appointment has no canceller. Both attribution
+           -- columns are cleared with the role word (Codex P2 4244674652 on
+           -- #862; 0174 GROUP 3.4 already states this rule for its backfill).
+           cancelled_by_practitioner_id = null,
+           cancelled_by_receptionist_id = null,
+           updated_at          = now()
+     where a.id = p_appointment_id
+       and a.studio_id = p_studio_id
+       and a.status = p_expected_status;
+    get diagnostics v_updated = row_count;
+  exception
+    when exclusion_violation then       -- 23P01
+      return 'slot_conflict';
+  end;
+
+  if v_updated <> 1 then
+    -- Unreachable under the row lock held since GATE 4; treated as a refusal
+    -- rather than an assertion so the command cannot report success on zero
+    -- rows (the "zero-row write looks like success" trap, 0172 test §1).
+    return 'status_mismatch';
+  end if;
+
+  -- EXACTLY ONE audit event, only on success.
+  perform public.write_appointment_audit(
+    p_appointment_id,
+    'practitioner',
+    v_practitioner_id,
+    'outcome_reverted',
+    jsonb_build_object(
+      'source',            'appointment_repair_command',
+      'previous_status',   p_expected_status,
+      'new_status',        'confirmed',
+      'reason',            v_reason,
+      'baseline_audit_id', v_baseline_id,
+      'baseline_at',       v_baseline_at
+    )
+  );
+
+  return 'ok';
+end;
+$function$;
+
+revoke execute on function public.revert_appointment_outcome(uuid, uuid, uuid, text, text) from public;
+revoke execute on function public.revert_appointment_outcome(uuid, uuid, uuid, text, text) from anon;
+revoke execute on function public.revert_appointment_outcome(uuid, uuid, uuid, text, text) from authenticated;
+grant execute on function public.revert_appointment_outcome(uuid, uuid, uuid, text, text) to service_role;
 
 commit;

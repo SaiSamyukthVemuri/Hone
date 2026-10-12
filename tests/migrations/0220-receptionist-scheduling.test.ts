@@ -116,10 +116,28 @@ describe("0220 reuses the authoritative commands rather than forking them", () =
     }
   });
 
-  it("does not re-emit the public booking path, public cancellation or revert", () => {
-    for (const fn of ["create_public_appointment", "reschedule_appointment_v2", "public_cancel_appointment_with_token", "revert_appointment_outcome"]) {
+  it("does not re-emit the public booking path or public cancellation", () => {
+    for (const fn of ["create_public_appointment", "reschedule_appointment_v2", "public_cancel_appointment_with_token"]) {
       expect(flat(CODE), fn).not.toContain(`function public.${fn}(`);
     }
+  });
+
+  it("re-emits revert_appointment_outcome with ONLY the two canceller clears added (Codex P2 4244674652)", () => {
+    const R0173 = read("0173_appointment_repair_commands.sql");
+    const norm = (b: string) => flat(stripComments(b));
+    const before = norm(bodyOf(R0173, "revert_appointment_outcome"));
+    const after = norm(bodyOf(SQL, "revert_appointment_outcome"));
+    const added = "cancelled_by_practitioner_id = null, cancelled_by_receptionist_id = null,";
+    expect(after).toContain(added);
+    expect(after.replace(`${added} `, "")).toBe(before);
+    for (const role of ["public", "anon", "authenticated"]) {
+      expect(flat(TOP_LEVEL)).toContain(
+        `revoke execute on function public.revert_appointment_outcome(uuid, uuid, uuid, text, text) from ${role};`,
+      );
+    }
+    expect(flat(TOP_LEVEL)).toContain(
+      "grant execute on function public.revert_appointment_outcome(uuid, uuid, uuid, text, text) to service_role;",
+    );
   });
 });
 

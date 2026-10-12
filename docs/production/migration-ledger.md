@@ -30,6 +30,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >   columns, so `create_public_appointment`'s explicit INSERT is unaffected.
 >   `cancelled_by` and `appointment_audit.actor_type` widen to admit `receptionist`,
 >   and the audit trigger derives `actor_receptionist_id`.
+> - `revert_appointment_outcome` (B4) is re-emitted from its live body with only
+>   two assignments added: a revert clears both canceller attribution columns.
 > - No public path is re-emitted. No data.
 >
 > **NOT APPLIED, NOT MERGED.** `0219` is DB/WAIT's queue position (G1, #824), so

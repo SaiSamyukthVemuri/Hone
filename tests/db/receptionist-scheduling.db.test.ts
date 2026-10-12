@@ -200,6 +200,24 @@ describe("0220: a receptionist books, moves and cancels through the shared core"
     expect((evs[1].details as Row).role).toBe("receptionist");
   });
 
+  it("an owner's REVERT of a receptionist cancellation clears every canceller field (Codex P2 4244674652)", async () => {
+    const b = await deskBook("2031-08-06 14:00");
+    await asDesk((q) => q(`select public.receptionist_cancel_appointment($1, $2, 'client called')`, [S.studioId, b.appointment_id]));
+    expect((await appt(b.appointment_id as string)).cancelled_by_receptionist_id).toBe(deskId);
+    const r = await adminQuery(`select public.revert_appointment_outcome($1, $2, $3, 'cancelled', 'cancelled by mistake at the desk') as r`, [
+      b.appointment_id,
+      S.studioId,
+      owner().userId,
+    ]);
+    expect(r.rows[0].r).toBe("ok");
+    expect(await appt(b.appointment_id as string)).toMatchObject({
+      status: "confirmed",
+      cancelled_by: null,
+      cancelled_by_receptionist_id: null,
+      cancelled_by_practitioner_id: null,
+    });
+  });
+
   it("may cancel and move a booking a PRACTITIONER made, as the contract allows (any treating practitioner)", async () => {
     const made = await adminQuery(
       `select r.* from public.create_internal_appointment_v2($1, $2, $2, $3, $4, ${at("2031-08-07 10:00")}, $5) r`,
