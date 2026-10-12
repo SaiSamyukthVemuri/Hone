@@ -54,7 +54,9 @@ export async function requireReceptionistWithStudio(): Promise<ReceptionistWithS
 
   const membership = resolveReceptionistMembership(loaded.rows, await readSelectedStudioId());
   if (membership.kind === "none") redirect("/no-access");
-  if (membership.kind === "choose") redirect("/no-access?reason=multiple-studios");
+  // The practitioner chooser at /no-access lists practitioner memberships only,
+  // so a receptionist in 2+ studios chooses at /front-desk/select instead.
+  if (membership.kind === "choose") redirect(FRONT_DESK_SELECT_PATH);
 
   const { value } = membership;
   const admin = createAdminClient();
@@ -73,4 +75,31 @@ export async function requireReceptionistWithStudio(): Promise<ReceptionistWithS
       timezone: studio.timezone as string,
     },
   };
+}
+
+export const FRONT_DESK_SELECT_PATH = "/front-desk/select";
+
+/**
+ * The caller's OWN active receptionist memberships, with each studio's name, for
+ * the chooser. The studio ids come only from the caller's own rows (their
+ * session, 0216 self-select). The service role then reads the names of exactly
+ * those studios, and nothing else.
+ */
+export async function listOwnFrontDeskStudios(): Promise<Array<{ studioId: string; studioName: string }>> {
+  const loaded = await loadOwnRows();
+  if (!loaded) redirect("/login");
+  const ids = [...new Set(loaded.rows.map((r) => r.studio_id))];
+  if (ids.length === 0) return [];
+  const admin = createAdminClient();
+  const { data, error } = await admin.from("studios").select("id, name").in("id", ids);
+  if (error) throw new Error("receptionist_studio_read_failed");
+  return (data ?? [])
+    .map((s) => ({ studioId: s.id as string, studioName: s.name as string }))
+    .sort((a, b) => a.studioName.localeCompare(b.studioName));
+}
+
+/** True only when `studioId` is one of the caller's own active receptionist memberships. */
+export async function isOwnFrontDeskStudio(studioId: string): Promise<boolean> {
+  const loaded = await loadOwnRows();
+  return loaded != null && loaded.rows.some((r) => r.studio_id === studioId);
 }

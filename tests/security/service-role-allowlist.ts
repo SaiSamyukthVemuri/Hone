@@ -223,7 +223,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "lib/receptionist/identity.ts",
     purpose: "The /front-desk route guard — reads the receptionist's studio name and timezone (STUDIO-READY-02d).",
-    why: "A receptionist holds no studios read under RLS. The guard first reads the caller's OWN studio_receptionists rows with their session and resolves them (resolveReceptionistMembership); only then does the service role read id, name and timezone of THAT studio, and nothing else.",
+    why: "A receptionist holds no studios read under RLS. Both reads start from the caller's OWN studio_receptionists rows, read with their session. The guard resolves them (resolveReceptionistMembership), then the service role reads id, name and timezone of THAT studio only. The /front-desk/select chooser reads the names of exactly the studios in those rows. Nothing else is read.",
     scopeGuard: "resolveReceptionistMembership",
   },
   {

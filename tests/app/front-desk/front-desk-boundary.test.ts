@@ -24,12 +24,21 @@ function files(dir: string): string[] {
   });
 }
 
-const DESK = files("app/front-desk").filter((f) => /\.(ts|tsx)$/.test(f));
+const ALL_DESK = files("app/front-desk").filter((f) => /\.(ts|tsx)$/.test(f));
+// The guarded group, and the chooser that sits outside it.
+const DESK = ALL_DESK.filter((f) => f.startsWith("app/front-desk/(desk)/"));
+const SELECT = ALL_DESK.filter((f) => f.startsWith("app/front-desk/select/"));
 
 describe("front-desk routes", () => {
   it("exist, and include the layout and both pages", () => {
-    expect(DESK.sort()).toEqual(
-      ["app/front-desk/contacts/page.tsx", "app/front-desk/layout.tsx", "app/front-desk/page.tsx"].sort(),
+    expect(ALL_DESK.sort()).toEqual(
+      [
+        "app/front-desk/(desk)/contacts/page.tsx",
+        "app/front-desk/(desk)/layout.tsx",
+        "app/front-desk/(desk)/page.tsx",
+        "app/front-desk/select/actions.ts",
+        "app/front-desk/select/page.tsx",
+      ].sort(),
     );
   });
 
@@ -38,7 +47,7 @@ describe("front-desk routes", () => {
   });
 
   it("never import the practitioner guards, query helpers, the admin client or a raw Supabase client", () => {
-    for (const f of DESK) {
+    for (const f of ALL_DESK) {
       const c = code(read(f));
       expect(c, f).not.toMatch(/@\/lib\/supabase\/(queries|admin-server|server)"/);
       expect(c, f).not.toMatch(/requirePractitionerWithStudio|getCurrentPractitionerWithStudio/);
@@ -48,7 +57,24 @@ describe("front-desk routes", () => {
 
   it("read data only through lib/receptionist/projections", () => {
     const imports = DESK.flatMap((f) => [...code(read(f)).matchAll(/from "(@\/lib\/[^"]+)"/g)].map((m) => m[1]));
-    expect([...new Set(imports)].sort()).toEqual(["@/lib/receptionist/identity", "@/lib/receptionist/projections"]);
+    expect([...new Set(imports)].sort()).toEqual([
+      "@/lib/receptionist/calendar-days",
+      "@/lib/receptionist/identity",
+      "@/lib/receptionist/projections",
+    ]);
+  });
+
+  it("the chooser lists and sets ONLY the caller's own memberships, and reads no studio data", () => {
+    const page = code(read("app/front-desk/select/page.tsx"));
+    const action = code(read("app/front-desk/select/actions.ts"));
+    expect(page).toMatch(/await listOwnFrontDeskStudios\(\)/);
+    // The cookie is set only after the studio is verified as the caller's own.
+    expect(action.indexOf("await isOwnFrontDeskStudio(studioId)")).toBeGreaterThan(-1);
+    expect(action.indexOf("await setSelectedStudioId(studioId)")).toBeGreaterThan(
+      action.indexOf("await isOwnFrontDeskStudio(studioId)"),
+    );
+    const imports = SELECT.flatMap((f) => [...code(read(f)).matchAll(/from "(@\/lib\/[^"]+)"/g)].map((m) => m[1]));
+    expect([...new Set(imports)].sort()).toEqual(["@/lib/receptionist/identity", "@/lib/supabase/selected-studio"]);
   });
 });
 
@@ -72,7 +98,7 @@ describe("lib/receptionist/identity.ts", () => {
   const c = code(read("lib/receptionist/identity.ts"));
 
   it("reads only the caller's own receptionist rows, and the studio's name and timezone", () => {
-    const tables = [...c.matchAll(/\.from\("([a-z_]+)"\)/g)].map((m) => m[1]).sort();
+    const tables = [...new Set([...c.matchAll(/\.from\("([a-z_]+)"\)/g)].map((m) => m[1]))].sort();
     expect(tables).toEqual(["studio_receptionists", "studios"]);
     expect(c).toMatch(/\.from\("studios"\)\s*\.select\("id, name, timezone"\)/);
     expect(c).toMatch(/\.eq\("user_id", user\.id\)\s*\.eq\("active", true\)/);
@@ -80,13 +106,19 @@ describe("lib/receptionist/identity.ts", () => {
 
   it("verifies membership BEFORE the one service-role read", () => {
     expect(c.indexOf("resolveReceptionistMembership(")).toBeGreaterThan(-1);
-    expect(c.indexOf("createAdminClient()")).toBeGreaterThan(c.indexOf('redirect("/no-access?reason=multiple-studios")'));
+    expect(c.indexOf("createAdminClient()")).toBeGreaterThan(c.indexOf("redirect(FRONT_DESK_SELECT_PATH)"));
+    // The chooser's name read covers only the caller's own studio ids.
+    expect(c).toMatch(/const ids = \[\.\.\.new Set\(loaded\.rows\.map\(\(r\) => r\.studio_id\)\)\]/);
+    expect(c).toMatch(/\.from\("studios"\)\.select\("id, name"\)\.in\("id", ids\)/);
   });
 
   it("redirects exactly as the practitioner guard does", () => {
     expect(c).toMatch(/redirect\("\/login"\)/);
     expect(c).toMatch(/redirect\("\/no-access"\)/);
-    expect(c).toMatch(/redirect\("\/no-access\?reason=multiple-studios"\)/);
+    // 2+ studios choose at the receptionist's own chooser, not the practitioner one.
+    expect(c).toMatch(/redirect\(FRONT_DESK_SELECT_PATH\)/);
+    expect(c).toMatch(/FRONT_DESK_SELECT_PATH = "\/front-desk\/select"/);
+    expect(c).not.toMatch(/reason=multiple-studios/);
   });
 });
 

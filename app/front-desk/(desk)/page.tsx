@@ -1,5 +1,6 @@
 import { requireReceptionistWithStudio } from "@/lib/receptionist/identity";
 import { getFrontDeskCalendar, type FrontDeskAppointment } from "@/lib/receptionist/projections";
+import { localCalendarDays, localDateKey as dayKey, localDateLabel as dayLabel } from "@/lib/receptionist/calendar-days";
 
 // STUDIO-READY-02d (#824): the operational schedule, today plus six days, from
 // receptionist_calendar and receptionist_calendar_closures ONLY. Read-only:
@@ -8,18 +9,6 @@ import { getFrontDeskCalendar, type FrontDeskAppointment } from "@/lib/reception
 export const dynamic = "force-dynamic";
 
 const DAYS = 7;
-
-function dayKey(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(
-    new Date(iso),
-  );
-}
-
-function dayLabel(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", month: "short", day: "numeric" }).format(
-    new Date(iso),
-  );
-}
 
 function time(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
@@ -39,13 +28,7 @@ export default async function FrontDeskSchedulePage() {
 
   const tz = studio.timezone;
   const today = dayKey(new Date().toISOString(), tz);
-  const keys: string[] = [];
-  for (let i = 0; i < DAYS; i++) {
-    const d = new Date();
-    d.setUTCDate(d.getUTCDate() + i);
-    const k = dayKey(d.toISOString(), tz);
-    if (!keys.includes(k)) keys.push(k);
-  }
+  const keys = localCalendarDays(today, DAYS);
   const byDay = new Map<string, FrontDeskAppointment[]>();
   for (const a of appointments) {
     const k = dayKey(a.starts_at, tz);
@@ -69,12 +52,11 @@ export default async function FrontDeskSchedulePage() {
       </div>
       {keys.filter((k) => k >= today).map((k) => {
         const rows = (byDay.get(k) ?? []).filter((a) => a.status !== "cancelled");
-        const first = rows[0]?.starts_at ?? `${k}T12:00:00Z`;
         const blocked = closuresByDay.get(k) ?? 0;
         return (
           <section key={k} className="flex flex-col gap-2" aria-label={k}>
             <h2 className="text-sm font-medium">
-              {dayLabel(first, tz)}
+              {dayLabel(k)}
               <span className="ml-2 text-xs font-normal text-neutral-500">
                 {rows.length === 0 ? "No appointments" : `${rows.length} appointment${rows.length === 1 ? "" : "s"}`}
                 {blocked > 0 ? ` · ${blocked} blocked period${blocked === 1 ? "" : "s"}` : ""}

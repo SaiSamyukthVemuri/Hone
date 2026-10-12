@@ -73,6 +73,19 @@ describe("a receptionist-only user", () => {
     }
   });
 
+  it("reaches its own studio chooser", async () => {
+    expect(location(await go("/front-desk/select"))).toBeNull();
+  });
+
+  it("can still reach invitation acceptance, deliberately (Codex P1 4243875486 on #845)", async () => {
+    // Exempt for every signed-in user, so a receptionist can accept a real
+    // owner-issued invitation (another studio, or another receptionist
+    // invitation). A SAME-studio practitioner invitation cannot turn them into
+    // a practitioner: the linker's practitioners insert is refused 23514 by the
+    // 0216 guard (tests/db/receptionist-foundation.db.test.ts, "either order").
+    expect(location(await go("/accept-invitation"))).toBeNull();
+  });
+
   it("does not match a lookalike path", async () => {
     expect(location(await go("/front-desk-admin"))).toBe("/front-desk");
     expect(location(await go("/front-deskx/clients"))).toBe("/front-desk");
