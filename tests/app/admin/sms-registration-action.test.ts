@@ -6,18 +6,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // compares, and the form can no longer name a kind (Codex P2 4244484022).
 
 const rpc = vi.fn();
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+const cache = vi.hoisted(() => ({ throws: false }));
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(() => {
+    if (cache.throws) throw new Error("revalidate failed");
+  }),
+}));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({ auth: { getUser: async () => ({ data: { user: { id: "u1", email: "ops@example.test" } } }) } }),
 }));
-vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc }) }));
+const adminCtl = vi.hoisted(() => ({ throws: false }));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => {
+    if (adminCtl.throws) throw new Error("no service role");
+    return { rpc };
+  },
+}));
 vi.mock("@/lib/admin", () => ({ isAdmin: () => true }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://example.test" }));
 vi.mock("@/lib/email/send-welcome", () => ({ deliverWelcomeEmail: vi.fn() }));
-const audit = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
+const audit = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>>, throwOn: null as string | null }));
 vi.mock("@/lib/audit/admin-actions", () => ({
   logAdminAction: vi.fn(async (input: Record<string, unknown>) => {
     audit.calls.push(input);
+    if (audit.throwOn && input.outcome === audit.throwOn) throw new Error("audit store down");
   }),
 }));
 
@@ -35,6 +47,9 @@ const valid = { expected_sender_id: SENDER, expected_phone_number: "+12125550123
 beforeEach(() => {
   rpc.mockReset();
   audit.calls.length = 0;
+  cache.throws = false;
+  adminCtl.throws = false;
+  audit.throwOn = null;
 });
 
 describe("recordSmsRegistrationFormAction", () => {
@@ -62,13 +77,42 @@ describe("recordSmsRegistrationFormAction", () => {
     expect(out.error).toMatch(message);
   });
 
-  it("an unavailable command, or one that throws, is still returned state", async () => {
-    rpc.mockResolvedValue({ data: null, error: { message: "down" } });
-    expect(await recordSmsRegistrationFormAction(STUDIO, null, form(valid))).toMatchObject({ ok: false, result: "error" });
-    rpc.mockRejectedValue(new Error("network"));
+  // Codex P2 4249989480: once the command may have run, nothing claims it did not.
+  it("a command whose answer was lost (an error, a throw, no row) is an UNKNOWN outcome, never 'nothing was saved'", async () => {
+    for (const answer of [
+      () => rpc.mockResolvedValue({ data: null, error: { message: "down" } }),
+      () => rpc.mockRejectedValue(new Error("network")),
+      () => rpc.mockResolvedValue({ data: [], error: null }),
+    ]) {
+      rpc.mockReset();
+      answer();
+      const out = await recordSmsRegistrationFormAction(STUDIO, null, form(valid));
+      expect(out).toMatchObject({ ok: false, result: "outcome_unknown" });
+      expect(out.error).toMatch(/could not confirm whether the registration was recorded/);
+      expect(out.error).not.toMatch(/Nothing was saved|Nothing was recorded/);
+    }
+  });
+
+  it("an exception AFTER the command ran (the final audit write) is an unknown outcome too", async () => {
+    rpc.mockResolvedValue({ data: [{ result: "recorded", registration_id: "r", kind: "us_10dlc" }], error: null });
+    audit.throwOn = "succeeded";
+    const out = await recordSmsRegistrationFormAction(STUDIO, null, form(valid));
+    expect(out).toMatchObject({ ok: false, result: "outcome_unknown" });
+    expect(out.error).not.toMatch(/Nothing was saved/);
+  });
+
+  it("a failure BEFORE the command is sent says nothing was saved", async () => {
+    adminCtl.throws = true;
     const out = await recordSmsRegistrationFormAction(STUDIO, null, form(valid));
     expect(out).toMatchObject({ ok: false, result: "error" });
     expect(out.error).toMatch(/Nothing was saved/);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("a recorded write stays recorded even if refreshing the page cache throws", async () => {
+    rpc.mockResolvedValue({ data: [{ result: "recorded", registration_id: "r", kind: "us_10dlc" }], error: null });
+    cache.throws = true;
+    expect(await recordSmsRegistrationFormAction(STUDIO, null, form(valid))).toEqual({ ok: true, result: "recorded" });
   });
 
   it("refuses before the command without a sender id or a supported number", async () => {
@@ -88,5 +132,37 @@ describe("recordSmsRegistrationFormAction", () => {
     await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, expected_phone_number: "" }));
     expect(audit.calls).toHaveLength(4);
     for (const call of audit.calls) expect(call).toMatchObject({ action: "sms_registration_recorded", studioId: STUDIO, targetId: STUDIO });
+  });
+
+  // Codex P2 4249989482: EVERY return path writes exactly one audit event.
+  it("every return path is audited exactly once, the invalid status included", async () => {
+    const paths: Array<[string, () => void, Record<string, string>]> = [
+      ["recorded", () => rpc.mockResolvedValue({ data: [{ result: "recorded" }], error: null }), valid],
+      ["refused", () => rpc.mockResolvedValue({ data: [{ result: "sender_changed" }], error: null }), valid],
+      ["lost answer", () => rpc.mockResolvedValue({ data: null, error: { message: "x" } }), valid],
+      ["thrown", () => rpc.mockRejectedValue(new Error("x")), valid],
+      ["missing sender", () => undefined, { ...valid, expected_sender_id: "" }],
+      ["unsupported number", () => undefined, { ...valid, expected_phone_number: "+18765550123" }],
+      ["invalid status", () => undefined, { ...valid, status: "delivered" }],
+    ];
+    for (const [label, arrange, fields] of paths) {
+      rpc.mockReset();
+      audit.calls.length = 0;
+      arrange();
+      await recordSmsRegistrationFormAction(STUDIO, null, form(fields));
+      expect(audit.calls, label).toHaveLength(1);
+      expect(audit.calls[0], label).toMatchObject({ action: "sms_registration_recorded", studioId: STUDIO });
+      expect(audit.calls[0].outcome, label).toBe(label === "recorded" ? "succeeded" : "failed");
+    }
+  });
+
+  it("source guard: the action audits only through its one helper", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/admin/studios/[id]/actions.ts", "utf8");
+    const body = src.slice(src.indexOf("export async function recordSmsRegistrationAction("));
+    const fn = body.slice(0, body.indexOf("\n}\n") + 3);
+    // One logAdminAction call, and it is the helper's; every path above calls the helper.
+    expect(fn.match(/logAdminAction\(/g)).toHaveLength(1);
+    expect(fn).toMatch(/const audit = \(outcome[^)]*\) =>\s+logAdminAction\(/);
   });
 });
