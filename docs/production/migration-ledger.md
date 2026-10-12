@@ -14,7 +14,15 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0216` AUTHORED AND PENDING on the STUDIO-READY-02a branch)
+## Current state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0216` and `0218` AUTHORED AND PENDING on the STUDIO-READY-02a/02b branches)
+
+> **`0218` IS AUTHORED AND PENDING, stacked on `0216`.** STUDIO-READY-02b (#824)
+> authors `0218_receptionist_invitations.sql`. It adds four agreement-evidence
+> columns to `studio_receptionists`, widens `pending_invitations.role` to admit
+> `receptionist`, and re-emits `link_invited_membership` with a receptionist branch.
+> The practitioner path is byte-identical to `0141`, and privileges are restated as
+> `service_role` only. Neither acceptance caller is re-emitted. No data.
+> **NOT APPLIED, NOT MERGED.** The block below records `0216`.
 
 > **AUTHORED, NOT APPLIED — MIGRATION-FIRST PENDING.** STUDIO-READY-02a (#824)
 > authors `0216_receptionist_membership_foundation.sql` on
@@ -62,10 +70,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`) — unchanged by this branch; no apply was performed or claimed. |
-| **Repo migration max** | **0216** — this branch authors `0216_receptionist_membership_foundation.sql` (STUDIO-READY-02a, #824): one new table, nine new functions, two triggers (one a refuse-only guard on `practitioners`) and one policy — fifty-eight statements in all. No data. |
+| **Repo migration max** | **0218**: `0218_receptionist_invitations.sql` (STUDIO-READY-02b), stacked on `0216_receptionist_membership_foundation.sql` (STUDIO-READY-02a, #824). `0217` is held by #844 (SMS sender registrations) and is not on this branch. No data. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0216`** on this branch, **NOT applied**. It is the sixth of a pending sequence held by other lanes: `0211` (#827), `0212` (#832), `0213` (#831), `0214` (#833) and `0215` (delivery incidents, authored in the Sentry lane, not yet in a PR). This branch does not carry those files, so the parity guard reports a hole **by construction** until it integrates after them, in order `0211` → `0212` → `0213` → `0214` → `0215` → `0216`. It renumbers if that order changes. `repo > hosted` is the MIGRATION-FIRST PENDING shape: `0216` is pending, not applied. |
-| **Next free migration** | Next free number is **0217**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Pending migrations** | **`0216`** and **`0218`** on this branch, **NOT applied**. They follow a pending sequence held by other lanes: `0211` (#827), `0212` (#832), `0213` (#831), `0214` (#833), `0215` (#843) and `0217` (#844). This branch does not carry those files, so the parity guard reports a hole **by construction** until it integrates after them, in order `0211` → … → `0218`. It renumbers if that order changes. `repo > hosted` is the MIGRATION-FIRST PENDING shape: `0216` and `0218` are pending, not applied. |
+| **Next free migration** | Next free number is **0219**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. No Supabase command was run against it for this change. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)

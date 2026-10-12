@@ -12,6 +12,10 @@ import type { ClientBudgetLevel } from "@/lib/budget/levels";
 export type Modality = "electrolysis" | "laser";
 export type ElectrolysisMode = "thermo" | "galv" | "blend";
 export type PractitionerRole = "owner" | "practitioner";
+// STUDIO-READY-02b (#824, migration 0218): an invitation may also be for the
+// front desk. Accepting one creates a studio_receptionists row, never a
+// practitioners row, so this is NOT a practitioner role.
+export type InvitationRole = PractitionerRole | "receptionist";
 export type PhotoType = "before" | "after" | "progress";
 export type FitzpatrickType = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -1349,7 +1353,7 @@ export type PendingInvitation = {
   studio_id: string;
   email: string;
   invited_by: string | null;
-  role: PractitionerRole;
+  role: InvitationRole;
   display_name: string | null;
   status: InvitationStatus;
   created_at: string;

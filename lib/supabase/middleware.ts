@@ -248,6 +248,14 @@ export async function updateSession(request: NextRequest) {
           return NextResponse.redirect(deskUrl);
         }
       }
+      // A user who is ALSO a receptionist somewhere, with 2+ practitioner
+      // memberships and no selection, must still reach /front-desk (Codex P2
+      // 4243982486 on #850): the practitioner chooser governs the practitioner
+      // app, not the front desk. This grants nothing: every /front-desk page
+      // re-resolves receptionist membership itself and refuses anyone without one.
+      if (!usable && activeStudioIds.length > 1 && isFrontDeskPath(pathname)) {
+        return supabaseResponse;
+      }
       if (!usable) {
         const url = request.nextUrl.clone();
         url.pathname = "/no-access";

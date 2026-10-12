@@ -16,7 +16,7 @@ function buildShareMessage(email: string): string {
 export function InviteForm() {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [role, setRole] = useState<"practitioner" | "owner">("practitioner");
+  const [role, setRole] = useState<"practitioner" | "owner" | "receptionist">("practitioner");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [, startTransition] = useTransition();
 
@@ -117,12 +117,19 @@ export function InviteForm() {
         <select
           value={role}
           onChange={(e) =>
-            setRole(e.target.value === "owner" ? "owner" : "practitioner")
+            setRole(
+              e.target.value === "owner"
+                ? "owner"
+                : e.target.value === "receptionist"
+                  ? "receptionist"
+                  : "practitioner",
+            )
           }
           className="max-w-xs rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         >
           <option value="practitioner">Practitioner</option>
           <option value="owner">Owner</option>
+          <option value="receptionist">Receptionist (front desk)</option>
         </select>
       </label>
       <div className="flex items-center gap-3">

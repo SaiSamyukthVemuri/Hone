@@ -42,7 +42,7 @@ export async function GET(request: Request) {
         );
         const status =
           rec && typeof rec === "object"
-            ? (rec as { status?: string; choose_studio?: boolean })
+            ? (rec as { status?: string; choose_studio?: boolean; role?: string })
             : null;
         if (status?.status === "acceptance_required") {
           dest = "/accept-invitation";
@@ -50,6 +50,13 @@ export async function GET(request: Request) {
           dest = "/no-access?reason=invite-conflict";
         } else if (status?.status === "ambiguous") {
           dest = "/no-access?reason=invite-ambiguous";
+        } else if (
+          (status?.status === "linked" || status?.status === "already_linked") &&
+          status?.role === "receptionist"
+        ) {
+          // A front-desk membership lands on the front desk (STUDIO-READY-02b).
+          dest = status.choose_studio === true ? "/front-desk/select" : "/front-desk";
+          clearSelection = status.choose_studio === true;
         } else if (
           (status?.status === "linked" ||
             status?.status === "already_linked") &&

@@ -69,6 +69,13 @@ describe("setReceptionistActiveAction", () => {
     );
   });
 
+  it("names the one-active-row-per-email refusal (0218, Codex P2 4244037190 on #850)", async () => {
+    ctx.rpc.mockResolvedValue({ data: null, error: { code: "23505" } });
+    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).rejects.toThrow(
+      /already uses this email/,
+    );
+  });
+
   it("treats no_change as success", async () => {
     ctx.rpc.mockResolvedValue({ data: "no_change", error: null });
     await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).resolves.toBeUndefined();

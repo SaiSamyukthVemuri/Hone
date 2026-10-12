@@ -46,11 +46,24 @@ export async function acceptInvitationAction(
   const res = (rec && typeof rec === "object" ? rec : {}) as {
     status?: string;
     choose_studio?: boolean;
+    role?: string;
   };
 
   if (res.status === "conflict") redirect("/no-access?reason=invite-conflict");
   if (res.status === "ambiguous") redirect("/no-access?reason=invite-ambiguous");
   if (res.status === "no_invitation") redirect("/no-access");
+
+  // A front-desk acceptance lands on the front desk, whatever other
+  // memberships the person holds (STUDIO-READY-02b, Codex P2 4243953164 on
+  // #850). The middleware only reroutes users with NO practitioner membership,
+  // so a practitioner elsewhere would otherwise stay in the practitioner app.
+  if (res.role === "receptionist") {
+    if (res.choose_studio === true) {
+      await clearSelectedStudioId();
+      redirect("/front-desk/select");
+    }
+    redirect("/front-desk");
+  }
 
   // linked / already_linked. Force the chooser for a newly multi-studio user.
   if (res.choose_studio === true) {
