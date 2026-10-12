@@ -24,25 +24,43 @@ const ACTIONS = readFileSync(
   "utf8",
 );
 
-describe("G1: a hidden picker still submits its only answer", () => {
-  // THE DEFECT: the picker renders only when there is more than one eligible
-  // practitioner. With exactly one, the control was hidden and practitionerId
-  // was left empty, so submission sent NULL -- and NULL means "any available",
-  // which create_public_appointment_v2 resolves down its legacy ACTIVE-OWNER
-  // path. A service pinned to a single NON-OWNER practitioner therefore
-  // displayed that practitioner's slots and then refused the booking as
-  // `not_eligible`.
-  it("assigns the sole eligible option instead of leaving NULL", () => {
+describe("G1: the sole-eligible gap is recorded, not silently fixed", () => {
+  // Codex P2 at 12033879 is REAL and is NOT fixed in this lane. With exactly
+  // one eligible practitioner the picker is hidden and practitionerId stays
+  // empty, so submission sends NULL and create_public_appointment_v2 resolves
+  // that down its legacy ACTIVE-OWNER path.
+  //
+  // The client-side fix was written and then REVERTED, because it breaks error
+  // containment. Bisected: with `if (options.length === 1) setPractitionerId(...)`
+  // present, public-booking-error-containment.spec.ts fails both cases; with
+  // only that line reverted, both pass. The options read absorbs failure by
+  // design, and assigning the sole option makes it the FIRST next-action POST
+  // after the client-type choice -- which is exactly the POST that spec breaks,
+  // so the injected failure is swallowed and the required boundary never
+  // renders.
+  //
+  // These assertions pin the RETREAT so it cannot be undone by accident: the
+  // absorbing read must stay absorbing, and the auto-assign must stay out of
+  // this effect. The real fix belongs server-side at commit, and changes what
+  // NULL means for a legacy studio -- a product decision.
+  it("does not auto-assign inside the options effect", () => {
+    // Comments may DISCUSS the reverted line; code may not contain it. Strip
+    // line comments before asserting, or this guard passes on its own prose.
+    const code = FORM.split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
     expect(
-      FORM,
-      "a one-option picker is hidden for being noise; its ANSWER must still " +
-        "be submitted, or NULL sends the booking down the active-owner path",
-    ).toMatch(/options\.length === 1\s*\)\s*setPractitionerId\(/);
+      code,
+      "auto-assigning the sole option here makes this the first next-action " +
+        "POST and swallows the failure public-booking-error-containment needs",
+    ).not.toMatch(/options\.length === 1\s*\)\s*setPractitionerId\(/);
   });
 
-  it("still hides the control itself when there is nothing to choose", () => {
-    // Anti-overreach: the fix is about the submitted VALUE, not about showing a
-    // pointless dropdown.
+  it("keeps the options read ABSORBING, which is why the retreat was needed", () => {
+    expect(FORM).toMatch(/r\.ok \? r\.practitioners : \[\]/);
+  });
+
+  it("still hides the control when there is nothing to choose", () => {
     expect(FORM).toMatch(/pickerApplies && practitionerOptions\.length > 1/);
   });
 });
@@ -55,10 +73,37 @@ describe("G1: the studio-wide jump is not offered against a chosen practitioner"
   // selected it answered a different question than the grid beneath it: it
   // could skip a date they are free on (every other practitioner's booking
   // counts as a conflict) and land on a date whose scoped grid is empty.
-  it("gates the jump on no specific practitioner being chosen", () => {
-    expect(FORM).toMatch(
-      /const nextAvailableApplies = !\(pickerApplies && practitionerId\)/,
+  it("withdraws the jump only where a choice was OFFERED AND MADE", () => {
+    // THE INTERACTION THIS FILE ORIGINALLY MISSED, and that five browser tests
+    // caught instead. The first gate was `!(pickerApplies && practitionerId)`,
+    // which looks right in isolation and is wrong next to its sibling fix: a
+    // SOLE eligible practitioner is auto-assigned, so practitionerId is
+    // non-empty on an ordinary single-practitioner studio where the control was
+    // never rendered. That hid "Next available" for essentially every studio —
+    // including from public-booking-error-containment.spec.ts, which presses it
+    // to drive a Server Action.
+    //
+    // The options-count term is therefore load-bearing, not defensive: without
+    // it the gate fires where no choice was ever offered.
+    const gate = FORM.match(
+      /const nextAvailableApplies = !\([\s\S]{0,200}?\);/,
     );
+    expect(gate, "expected the next-available gate").not.toBeNull();
+    expect(gate![0]).toContain("pickerApplies");
+    expect(gate![0]).toContain("practitionerId");
+    // DEFENCE IN DEPTH, and the history is why it is here. While the sole
+    // option was briefly auto-assigned, practitionerId became non-empty on an
+    // ordinary single-practitioner studio and this gate hid "Next available"
+    // from essentially every studio -- five browser tests caught it. The
+    // auto-assign is now reverted, so today practitionerId can only be set by
+    // an explicit choice from a rendered picker, which already implies more
+    // than one option. The term is kept so that reinstating any form of
+    // auto-assignment cannot silently withdraw the jump a second time.
+    expect(
+      gate![0],
+      "the gate must require more than one option, so that any future " +
+        "auto-assignment cannot silently withdraw the jump",
+    ).toContain("practitionerOptions.length > 1");
   });
 
   it("gates EVERY next-available surface, not just the empty-grid one", () => {
