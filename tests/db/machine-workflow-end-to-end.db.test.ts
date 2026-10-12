@@ -718,6 +718,90 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     expect(forBea.value[0]!.blockId).toBe(beaBlockId);
   });
 
+  it("does NOT offer a SOFT-DELETED block as next-visit guidance", async () => {
+    // soft_delete_session_block (0166) retires a treatment area without
+    // removing its rows, and the readings survive by design - the observation
+    // happened. But removing an area is usually how a MIS-ENTRY is corrected,
+    // so offering it back as "the setup to reproduce" would ignore the
+    // correction and re-present the mistake. record_treatment_setup_group
+    // already refuses to WRITE against a deleted block; this read was
+    // inconsistent with it (Codex, a66f5ec9).
+    const studio = await seedStudio("e2e-softdel");
+    const machineId = await registerSynthetic(studio, "Room 1");
+
+    // An EARLIER block that stays live, with a distinguishable value.
+    const kept = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        blockId: kept.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 60 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+        ],
+      }),
+    );
+
+    // A LATER block, recorded after it, then retired.
+    const removed = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        blockId: removed.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 999 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+        ],
+      }),
+    );
+
+    // Retire it the way the application does.
+    await adminQuery(
+      `update public.session_blocks set deleted_at = now() where id = $1`,
+      [removed.blockId],
+    );
+
+    const prior = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId),
+    );
+    expect(prior.ok).toBe(true);
+    if (!prior.ok) return;
+
+    // The KEPT block's 60, not the retired block's newer 999.
+    expect(
+      prior.value[0]?.blockId,
+      "a retired block was offered as next-visit guidance",
+    ).toBe(kept.blockId);
+    expect(prior.value[0]!.value).toMatchObject({ kind: "value", value: 60 });
+
+    // And the retired block's readings still EXIST - retiring an area does not
+    // unwrite the observation, it only stops it being offered as guidance.
+    const survived = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_readings
+        where session_block_id = $1`,
+      [removed.blockId],
+    );
+    expect(survived.rows[0].n).toBe(1);
+  });
+
   it("returns nothing for a client in ANOTHER studio, even to a member of both", async () => {
     // The function takes a studio AND a client; a client id from elsewhere must
     // not resolve just because the caller is a member of the studio asked about.

@@ -105,6 +105,40 @@ async function readingsInStudio(studioId: string) {
   );
 }
 
+/**
+ * ANOTHER session for a client who already exists — the next visit.
+ *
+ * Deliberately NOT seedE2eDraftElectrolysisSession, which inserts a FRESH
+ * CLIENT on every call (`const clientId = randomUUID()`). Step 9 used it and so
+ * navigated to a different person's chart.
+ *
+ * Before the client-scoping fix that passed anyway, because the prior-setup
+ * read was studio-scoped and found the readings regardless of whose chart was
+ * open — i.e. the step was passing BECAUSE of the defect, and asserting
+ * nothing about same-client retrieval. Now that latest_setup_for_client filters
+ * by client_id, the old fixture makes the step hang until timeout, which reads
+ * like a broken feature and is a broken fixture. Found by Codex at a66f5ec9.
+ */
+async function seedNextVisitForSameClient(
+  studioId: string,
+  clientId: string,
+): Promise<{ sessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners
+        where studio_id = $1 and role = 'owner' limit 1`,
+      [studioId],
+    )
+  )[0]!;
+  const rows = await sql<{ id: string }>(
+    `insert into public.sessions (studio_id, client_id, practitioner_id, modality)
+     values ($1, $2, $3, 'electrolysis')
+     returning id`,
+    [studioId, clientId, prac.id],
+  );
+  return { sessionId: rows[0]!.id };
+}
+
 async function openSettingsForm(page: Page, clientId: string, sessionId: string) {
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
   await page.getByTestId("add-settings-block-cta").click({ timeout: T });
@@ -315,8 +349,10 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
   });
 
   await test.step("9: NEXT-VISIT RETRIEVAL — the prior setup is shown on a new visit", async () => {
-    const next = await seedE2eDraftElectrolysisSession(seed);
-    await page.goto(`/clients/${next.clientId}/sessions/${next.sessionId}`);
+    // THE SAME CLIENT, a later visit. This is the whole point of the step:
+    // next-visit guidance must come from THIS client's own history.
+    const next = await seedNextVisitForSameClient(seed.studioId, clientId);
+    await page.goto(`/clients/${clientId}/sessions/${next.sessionId}`);
     await page.getByTestId("add-settings-block-cta").click({ timeout: T });
     await openMachinePanel(page);
 
@@ -328,6 +364,20 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     await expect(page.getByTestId("machine-prior-setup")).toContainText("300.5");
     await expect(page.getByTestId("machine-prior-setup")).toContainText("µA");
     await noOverflow(page);
+  });
+
+  await test.step("9b: ANOTHER client's chart does NOT show this setup", async () => {
+    // The negative half, without which step 9 would pass again the moment the
+    // prior-setup read regressed to studio scoping - which is exactly how the
+    // original defect hid. A studio-mate must see nothing from this client.
+    const stranger = await seedE2eDraftElectrolysisSession(seed);
+    await page.goto(`/clients/${stranger.clientId}/sessions/${stranger.sessionId}`);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await openMachinePanel(page);
+    await expect(
+      page.getByTestId("machine-prior-setup"),
+      "another client's chart showed this client's recorded setup",
+    ).toHaveCount(0);
   });
 
   await test.step("10: the earlier reading is unchanged by the new visit", async () => {

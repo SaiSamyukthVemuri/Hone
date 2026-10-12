@@ -645,6 +645,20 @@ as $$
      where r.studio_id = p_studio_id
        and sn.studio_id = p_studio_id
        and sn.client_id = p_client_id
+       -- A RETIRED BLOCK IS NOT GUIDANCE.
+       --
+       -- soft_delete_session_block (0166) retires a treatment area without
+       -- removing its rows, and the readings survive by design - the
+       -- observation happened, and an append-only clinical record does not
+       -- unhappen it. But "what to reproduce next visit" must not be taken
+       -- from an area the practitioner REMOVED, which is usually how a
+       -- mis-entry is corrected: the correction would be ignored and the
+       -- mistake re-presented as the thing to repeat.
+       --
+       -- record_treatment_setup_group above already refuses to WRITE against a
+       -- deleted block (`b.deleted_at is null`). This read was inconsistent
+       -- with it, which is the actual defect. Codex, a66f5ec9.
+       and b.deleted_at is null
        and public.is_studio_member(p_studio_id)
      order by r.recorded_at desc
      limit 1
@@ -679,7 +693,7 @@ as $$
 $$;
 
 comment on function public.latest_setup_for_client(uuid, uuid) is
-  '0223. The readings of the most recent block RECORDED FOR THIS CLIENT, as a jsonb array, for next-visit guidance. Scoped through session_blocks -> sessions.client_id so a studio-mate''s newer block can never be shown as this client''s setup. SECURITY INVOKER: RLS stays in force and is_studio_member is a fail-closed second lock. value_numeric is emitted as TEXT so a recorded zero and the machine''s own precision survive JSON.';
+  '0223. The readings of the most recent NON-RETIRED block RECORDED FOR THIS CLIENT, as a jsonb array, for next-visit guidance. A soft-deleted block keeps its readings but is never offered as guidance, because removing an area is how a mis-entry is corrected. Scoped through session_blocks -> sessions.client_id so a studio-mate''s newer block can never be shown as this client''s setup. SECURITY INVOKER: RLS stays in force and is_studio_member is a fail-closed second lock. value_numeric is emitted as TEXT so a recorded zero and the machine''s own precision survive JSON.';
 
 -- ---------------------------------------------------------------------------
 -- GRANTS — re-asserted by name on every command

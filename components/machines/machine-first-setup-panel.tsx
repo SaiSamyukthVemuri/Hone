@@ -348,6 +348,7 @@ export function MachineFirstSetupPanel({
         hasScope={scope != null}
         persistence={persistence}
         savedCount={savedCount}
+        rememberedDeviceId={deviceId}
       />
     </section>
   );
@@ -366,11 +367,23 @@ function PersistenceStatus({
   hasScope,
   persistence,
   savedCount,
+  rememberedDeviceId,
 }: {
   hasScope: boolean;
   persistence: PersistenceCapability;
   /** Readings this panel has actually saved, so the line below is derived. */
   savedCount: number;
+  /**
+   * The machine ACTUALLY remembered right now, or null.
+   *
+   * Separate from `persistence` on purpose. `persistence.persisted` says the
+   * store CAN keep a choice; it says nothing about whether one exists. Reading
+   * the answer off the capability made this line claim "Remembered: yes" for
+   * every authenticated practitioner with a working database - before any
+   * machine was chosen, and immediately after the selection was cleared
+   * (Codex, a66f5ec9).
+   */
+  rememberedDeviceId: string | null;
 }) {
   return (
     <dl
@@ -384,7 +397,9 @@ function PersistenceStatus({
           <dd>
             {persistence.kind === "test-store"
               ? "test store only. Not a database, and never reported to a practitioner."
-              : "yes, for you in this studio."}
+              : rememberedDeviceId
+                ? "yes, for you in this studio."
+                : "nothing yet. The machine you choose will be kept for you in this studio."}
           </dd>
         ) : (
           <dd>
