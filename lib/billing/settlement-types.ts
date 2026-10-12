@@ -14,6 +14,8 @@
 // exactly one place to look, so the two can never be summed together by
 // accident.
 
+import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+
 /** The five recordable dispositions. Mirrors 0187's method CHECK exactly. */
 export const SETTLEMENT_METHODS = [
   "paid_cash",
@@ -88,6 +90,9 @@ export type AppointmentSettlement = {
   appointmentId: string;
   method: SettlementMethod;
   amountCents: number;
+  // PAY-CCY-04. The currency this row was recorded in, stamped from the
+  // studio's jurisdiction by 0214. Null only for a value outside cad/usd.
+  currency: PaymentCurrency | null;
   quotedAmountCents: number | null;
   recordedAt: string;
   supersedesId: string | null;

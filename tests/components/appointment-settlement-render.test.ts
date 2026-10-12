@@ -127,3 +127,28 @@ describe("a SETTLED visit shows the outcome and offers nothing further", () => {
     expect(seen.size).toBe(5);
   });
 });
+
+// PAY-CCY-04. An attested amount names the currency its row was recorded in,
+// and a new amount is labelled with the studio's currency.
+describe("settlement amounts carry their currency", () => {
+  it("a recorded USD settlement reads USD; a CAD one reads CAD", () => {
+    expect(
+      render({ settledMethod: "paid_cash", settledAmountCents: 4500, settledCurrency: "usd", currency: "usd" }),
+    ).toContain("$45.00 USD");
+    expect(
+      render({ settledMethod: "paid_cash", settledAmountCents: 4500, settledCurrency: "cad", currency: "cad" }),
+    ).toContain("$45.00 CAD");
+  });
+
+  it("the RECORDED row's currency wins over the studio's current one", () => {
+    const html = render({ settledMethod: "paid_cash", settledAmountCents: 4500, settledCurrency: "cad", currency: "usd" });
+    expect(html).toContain("$45.00 CAD");
+    expect(html).not.toContain("USD");
+  });
+
+  it("an unknown currency is said so, never shown as Canadian", () => {
+    const html = render({ settledMethod: "paid_cash", settledAmountCents: 4500, settledCurrency: null, currency: null });
+    expect(html).toContain("$45.00 (currency unknown)");
+    expect(html).not.toContain("CAD");
+  });
+});
