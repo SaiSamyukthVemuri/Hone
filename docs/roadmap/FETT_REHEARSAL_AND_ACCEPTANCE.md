@@ -59,7 +59,7 @@ different practitioners**, with the `LEGACY` refusal as its control.
 | # | Required | Status on 0210 | Evidence |
 |---|---|---|---|
 | 1 | Five treating practitioners + owner | **Supported and proven**, but only in `LIVE` capacity state | `practitioners` (`0001:18`); `0134`/`0136` flags, default off; two same-instant bookings measured via `create_internal_appointment_v2` (§2.1) |
-| 2 | Restricted receptionist | **Not possible on this chain** | `practitioners.role` is `check (role in ('owner','practitioner'))` (`0001:24`); `receptionist` appears in no migration on the chain |
+| 2 | Restricted receptionist | **Absent on this chain** — the surface does not exist yet, and lands with #838/#850/#852 | A receptionist is a row in `public.studio_receptionists` (`0216:47`) created via `add_studio_receptionist` (`0216:407`). **Not** because of `practitioners.role` — see the correction below |
 | 3 | Simultaneous resource scheduling | **Per-practitioner: works, and is proven. There is no resource/room model.** | Of the **97** tables created on the chain, none is a resource, room, equipment, device, machine, chair or bay. Concurrency is modelled as practitioner capacity (`0134`/`0136`) and demonstrated in §2.1 |
 | 4 | Intake / status | *Not verified by this lane* | Intake surfaces exist under `app/intake`; readiness owned by the ONB/intake lane |
 | 5 | Treatment recording | *Partly verified* — clinical records exist | `0119`, `0120` (finalization, corrections/amendments). Depth owned by the clinical lane |
@@ -94,6 +94,27 @@ Two details that bite anyone reproducing this:
   by the CHECK;
 * `node-postgres` returns `timestamptz` as a **Date**, so comparing two equal
   instants with `toBe` fails on object identity. Compare `getTime()`.
+
+### Correction: a receptionist is a separate table, not a practitioner role
+
+An earlier revision of this document said a restricted receptionist was
+**"schema-impossible"** on the 0210 chain because `practitioners.role` carries
+`check (role in ('owner','practitioner'))`. The RBAC lane corrected that, and
+they are right — verified here against `0216`/`0218` directly:
+
+* `practitioners.role` stays two-valued across `0216`, `0218` **and** `0220`,
+  **by design**. That unchanged CHECK is precisely what makes a receptionist
+  **denied by construction** as a treating practitioner. It is **not** evidence
+  that receptionists are unsupported.
+* `0218`'s three-valued `check (role in ('owner','practitioner','receptionist'))`
+  is on **`pending_invitations`** (`0218:55`) — the *invitation* role.
+
+The practical consequence, which is why this is recorded rather than quietly
+edited: **a capability probe must read `to_regclass('public.studio_receptionists')`
+and the `add_studio_receptionist` function, never the role CHECK.** A probe on
+the role answers `false` on every chain — including a chain with complete
+receptionist support — so it would report "unsupported" forever and hide the
+design. `tests/db/helpers/fett-fixture.ts` was fixed accordingly.
 
 ### A gap in the ordinary booking path, owned by this lane
 
@@ -153,8 +174,8 @@ proving.
    cannot be deleted until its trail is purged, and the suite proves a bare
    delete is refused first.
 
-**Not in the rehearsal, because the chain cannot do it:** receptionist access
-(2), machine-first selection (7), USD (9). Demonstrating a mock of any of these
+**Not in the rehearsal, because this chain does not carry the surface:**
+receptionist access (2), machine-first selection (7), USD (9). Demonstrating a mock of any of these
 as though it were the product would be the one failure this document exists to
 prevent.
 
