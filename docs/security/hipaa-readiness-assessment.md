@@ -193,6 +193,7 @@ Any resulting migration needs a fresh migration census
 | Date | Change |
 |---|---|
 | 2026-10-11 | First assessment (HIPAA-READY-01), source at `6c5eac80`. |
+| 2026-10-12 | #870 green (CI 38272759445) and Codex-clean at `a334c5f3`. Waitlist preheader **owner unassigned** (SMS and DB/WAIT both declined; packet D-9 lists two fix options). |
 | 2026-10-12 | Preheader draft #870 (stacked on #859) and the provider-visible email inventory. Receipt subject deferred by Audit to Sam (D-7). Waitlist preheader handed to the WAIT lane. Supabase change sequence added (packet §2.1). |
 | 2026-10-12 | Codex exact-head reviews: #857 clean at `20dda7a6`. Findings fixed on new heads (threads left for human disposition): #842 → `aedaa35e` (registry-derived token routes; 32+ char opaque segments), #848 → `5e34dcf2` (every Auth table incl. `auth.identities`; runtime token expiry; drill PASS 120/120 tables, 3/3 objects), #859 → `f7b68c87` (no-show and postcare subjects). New #869 (`28488f18`): PostHog token-path list derived from the canonical registry (it lacked `/invitation`). |
 | 2026-10-12 | Read-only Supabase account checks (Management API and pinned CLI `get` commands): plan, SSL, network restrictions, PITR, Postgres config, auth MFA/session/SMTP settings, org member MFA (G-02, G-03, G-10, G-11, F16). |

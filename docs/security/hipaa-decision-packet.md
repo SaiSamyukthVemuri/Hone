@@ -265,6 +265,19 @@ else needs a quote.
    in the body and PDF. The Audit lane has no objection and will implement it
    if approved.
 9. **D-8**: the access-log questions Q2 and Q4 from the G-13 contract.
+10. **D-9: assign an owner for the waitlist emails' preheader.** It is
+    excluded from #870. Both candidate lanes declined on 2026-10-12:
+    - **SMS/lead lane:** the builders, keys and
+      `lib/waitlist/delivery/policy.ts` belong to DB/WAIT;
+    - **DB/WAIT:** it does not own the email presentation surface.
+
+    Both agree a preheader must not ship before the idempotency question is
+    settled. Two fix options are on record:
+    - **(a) version the Idempotency-Key** (DB/WAIT's recommendation;
+      the invitation window is now a fixed 48h);
+    - **(b) freeze the exact message per key generation in the database**,
+      as #831's lead alerts do (0213 `freeze_platform_lead_alert_message`),
+      so retries resend the stored bytes.
 
 Engineering can start these now, with no spend and no hosted change:
 - G-07 analytics unmount or strip;
