@@ -4,6 +4,10 @@ import { useState } from "react";
 
 import { SectionLabel } from "@/components/ui/section-label";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
+import {
+  NO_PERSISTENCE,
+  type PersistenceCapability,
+} from "@/lib/machines/selection-store";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { activeModes } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
@@ -53,6 +57,17 @@ export type MachineFirstSetupPanelProps = {
   initialDeviceId?: string | null;
   /** Injectable for tests and for a future studio-scoped catalogue. */
   catalogue?: readonly MachineProfile[];
+  /**
+   * What the backing store can actually do. The default is the truth on the
+   * server today: nothing persists. A test double passes its own capability so
+   * a test-store render can never read as production persistence.
+   */
+  persistence?: PersistenceCapability;
+  /**
+   * Set when the device list is empty because no inventory source exists, as
+   * opposed to this studio simply having registered nothing.
+   */
+  inventoryReason?: string | null;
 };
 
 /** Every profile a practitioner might expect to see, with its real status. */
@@ -73,6 +88,8 @@ export function MachineFirstSetupPanel({
   scope = null,
   initialDeviceId = null,
   catalogue = MACHINE_CATALOGUE,
+  persistence = NO_PERSISTENCE,
+  inventoryReason = null,
 }: MachineFirstSetupPanelProps) {
   const [deviceId, setDeviceId] = useState<string | null>(initialDeviceId);
 
@@ -110,9 +127,10 @@ export function MachineFirstSetupPanel({
       {selectable.length === 0 ? (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           No verified machine is available to select yet.{" "}
-          {scope
-            ? "This studio has no registered machine on a reviewed profile."
-            : "This surface does not yet know which practitioner and studio is charting, so no machine list can be scoped to it."}
+          {!scope
+            ? "This surface does not yet know which practitioner and studio is charting, so no machine list can be scoped to it."
+            : (inventoryReason ??
+              "This studio has no registered machine on a reviewed profile.")}
         </p>
       ) : !chosen ? (
         <div className="flex flex-col gap-2">
@@ -209,7 +227,7 @@ export function MachineFirstSetupPanel({
         </div>
       )}
 
-      <PersistenceStatus hasScope={scope != null} />
+      <PersistenceStatus hasScope={scope != null} persistence={persistence} />
     </section>
   );
 }
@@ -223,20 +241,35 @@ export function MachineFirstSetupPanel({
  * ships - they are the honest status of the slice, and they disappear when the
  * storage work lands.
  */
-function PersistenceStatus({ hasScope }: { hasScope: boolean }) {
+function PersistenceStatus({
+  hasScope,
+  persistence,
+}: {
+  hasScope: boolean;
+  persistence: PersistenceCapability;
+}) {
   return (
     <dl
       className="flex flex-col gap-1 border-t border-neutral-200 pt-3 text-xs text-neutral-500 dark:border-neutral-800"
       data-testid="machine-first-status"
+      data-persistence={persistence.kind}
     >
       <div className="flex gap-1.5">
         <dt className="font-medium">Remembered:</dt>
-        <dd>
-          no. Your choice lasts for this form only.{" "}
-          {hasScope
-            ? "Saving it per practitioner and studio needs a stored field, which is not in the database yet."
-            : "This surface does not know which practitioner and studio is charting, and the stored field does not exist yet."}
-        </dd>
+        {persistence.persisted ? (
+          <dd>
+            {persistence.kind === "test-store"
+              ? "test store only. Not a database, and never reported to a practitioner."
+              : "yes, for you in this studio."}
+          </dd>
+        ) : (
+          <dd>
+            no. {persistence.reason}{" "}
+            {hasScope
+              ? ""
+              : "This surface does not know which practitioner and studio is charting either."}
+          </dd>
+        )}
       </div>
       <div className="flex gap-1.5">
         <dt className="font-medium">Recorded:</dt>

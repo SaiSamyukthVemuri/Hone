@@ -20,6 +20,14 @@ const { renderToStaticMarkup } = await import("react-dom/server");
 const { MachineFirstSetupPanel } = await import(
   "@/components/machines/machine-first-setup-panel"
 );
+const { MachineFirstSetupConnected } = await import(
+  "@/components/machines/machine-first-setup-connected"
+);
+const { NO_PERSISTENCE, TEST_STORE_PERSISTENCE } = await import(
+  "@/lib/machines/selection-store"
+);
+const { readFileSync } = await import("node:fs");
+const nodePath = (await import("node:path")).default;
 
 /** Synthetic, active, GEMM-shaped. Not a real machine. */
 const SYNTHETIC: MachineProfile = {
@@ -126,9 +134,11 @@ function render(props: Record<string, unknown> = {}): string {
 
 // ---------------------------------------------------------------------------
 
-describe("the panel as it is actually mounted today", () => {
-  // No props: exactly how block-setup-form.tsx renders it, because that form
-  // receives neither a studio nor a practitioner id.
+describe("the panel with no identity yet", () => {
+  // The pure panel with no props. This is what the connected wrapper renders
+  // on its FIRST paint, before the server identity round trip returns - and
+  // what it keeps rendering if that read fails. Charting below is unaffected
+  // either way, so the honest unscoped state is the correct fallback.
   const html = render();
 
   it("renders at all, and heads the block with the machine", () => {
@@ -308,5 +318,132 @@ describe("the panel records nothing, structurally", () => {
 
   it("carries no form element of its own", () => {
     expect(chosen).not.toContain("<form");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server-derived identity, and the persisted / test-store distinction
+// ---------------------------------------------------------------------------
+
+describe("the connected wrapper's first paint is honest", () => {
+  // renderToStaticMarkup runs no effect, so this IS the server paint a
+  // practitioner sees before the identity round trip returns. It must state
+  // the unscoped truth rather than imply a machine is coming.
+  const html = renderToStaticMarkup(createElement(MachineFirstSetupConnected, {}));
+
+  it("renders the panel, not a placeholder", () => {
+    expect(html).toContain('data-testid="machine-first-panel"');
+  });
+
+  it("says it does not yet know who is charting", () => {
+    expect(html).toContain("does not yet know which practitioner and studio is charting");
+  });
+
+  it("reports no persistence on the first paint", () => {
+    expect(html).toContain('data-persistence="none"');
+  });
+
+  it("sends no ownership of its own", () => {
+    const src = readFileSync(
+      nodePath.resolve(
+        __dirname,
+        "../../components/machines/machine-first-setup-connected.tsx",
+      ),
+      "utf8",
+    );
+    const code = src
+      .split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join("\n");
+    // It calls the no-argument loader and invents no identity to pass.
+    expect(code).toContain("loadMachineSetupContext()");
+    expect(code).not.toMatch(/studioId:\s*["'`]/);
+    expect(code).not.toMatch(/practitionerId:\s*["'`]/);
+  });
+});
+
+describe("a real studio with no inventory says so, specifically", () => {
+  const html = render({
+    scope: SCOPE,
+    devices: [],
+    inventoryReason:
+      "No machine inventory exists in the database yet, so no studio has a registered machine to choose.",
+    persistence: NO_PERSISTENCE,
+  });
+
+  it("names the missing inventory rather than blaming the studio", () => {
+    expect(html).toContain("No machine inventory exists in the database yet");
+    expect(html).not.toContain("does not yet know which practitioner and studio is charting");
+  });
+});
+
+describe("persisted behaviour and test-store behaviour render differently", () => {
+  it("the real capability reports no, with the reason", () => {
+    const html = render({ scope: SCOPE, persistence: NO_PERSISTENCE });
+    expect(html).toContain('data-persistence="none"');
+    expect(html).toContain("Remembered:");
+    expect(html).toContain("lasts for this form only");
+  });
+
+  it("a TEST STORE is labelled as one and never as a database", () => {
+    // The dishonesty this guards against: a panel backed by an in-memory
+    // double reporting the same "yes" a real column would.
+    const html = render({ scope: SCOPE, persistence: TEST_STORE_PERSISTENCE });
+    expect(html).toContain('data-persistence="test-store"');
+    expect(html).toContain("test store only");
+    expect(html).toContain("never reported to a practitioner");
+  });
+
+  it("neither rendering claims a saved selection", () => {
+    for (const cap of [NO_PERSISTENCE, TEST_STORE_PERSISTENCE]) {
+      const html = render({ scope: SCOPE, persistence: cap });
+      expect(html.toLowerCase()).not.toContain("saved");
+    }
+  });
+});
+
+describe("historical values are untouched by anything here", () => {
+  const actionsSrc = readFileSync(
+    nodePath.resolve(
+      __dirname,
+      "../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+    ),
+    "utf8",
+  );
+  const code = actionsSrc
+    .split("\n")
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join("\n");
+
+  it("the machine actions touch no clinical table", () => {
+    // Choosing a machine is a UI default. It must not reach a treatment
+    // record, which is why this module has no supabase client at all.
+    for (const table of [
+      "session_blocks",
+      "electrolysis_entries",
+      "laser_entries",
+      "sessions",
+      "clients",
+    ]) {
+      expect(code, `machine setup must not touch ${table}`).not.toContain(table);
+    }
+  });
+
+  it("performs no write of its own beyond the selection store", () => {
+    expect(code).not.toMatch(/\.(insert|update|upsert|delete)\(/);
+    expect(code).not.toContain("createClient");
+    expect(code).not.toContain("revalidatePath");
+  });
+
+  it("the panel renders no control that could edit a recorded value", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      initialDeviceId: "room-9",
+      catalogue: CAT,
+    });
+    for (const tag of ["<input", "<textarea", "<select", "<form"]) {
+      expect(html).not.toContain(tag);
+    }
   });
 });

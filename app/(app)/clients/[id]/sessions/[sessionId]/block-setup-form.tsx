@@ -87,7 +87,7 @@ import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
-import { MachineFirstSetupPanel } from "@/components/machines/machine-first-setup-panel";
+import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
 import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
 import { resolveModeSections } from "@/lib/sessions/mode-sections";
@@ -1000,9 +1000,11 @@ export function BlockSetupForm({
           machine's labels and units. It is a DISPLAY surface - it records
           nothing, and says so - so every field below remains the record and is
           untouched by it. No studio or practitioner id reaches this form, so
-          the panel scopes no device list and states that plainly rather than
-          guessing. See components/machines/machine-first-setup-panel.tsx. */}
-      <MachineFirstSetupPanel />
+          identity is derived on the SERVER by machine-setup-actions.ts, which
+          takes no studio or practitioner argument at all - so the client cannot
+          name an owner, and cannot name the wrong one. See
+          components/machines/machine-first-setup-connected.tsx. */}
+      <MachineFirstSetupConnected />
 
       {copyMessage && (
         <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">
