@@ -28,17 +28,36 @@ import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[ses
 // step she takes BEFORE entering settings, which is if anything clearer than a
 // panel that quietly populates itself.
 //
-// WHAT IT STILL DOES NOT DO. It sends no studio id and no practitioner id,
-// because `loadMachineSetupContext` accepts none. Identity is derived from the
-// authenticated session on the server, every call.
+// WHAT IT STILL DOES NOT DO. It sends no studio id and no practitioner id:
+// those are ACTOR facts and the server derives them from the authenticated
+// session on every call.
+//
+// It DOES send the route's client and session ids, and that is not a loophole
+// in the sentence above. Which chart is open is a subject, not an authority
+// claim, and the server authorizes the pair with `assertSessionForClient`
+// before reading anything. Sending nothing at all was the actual bug: with no
+// client in scope the prior-setup read fell back to the whole studio and could
+// show another client's settings (Codex, 9c6fbbe5).
 
 export type MachineFirstSetupConnectedProps = {
   /** The treatment block being charted, from the host form. */
   blockId?: string | null;
+  /**
+   * Route values from the host form, authorized on the server. Required for a
+   * correct prior-setup read: without them it is not possible to ask "what did
+   * THIS client last have", only the wrong question.
+   */
+  clientId: string;
+  sessionId: string;
   /** Injected by tests; production uses the server action. */
   load?: () => Promise<MachineSetupContext>;
   /** Injected by tests; production uses the server action. */
   record?: MachineFirstSetupPanelRecord;
+  /** Injected by tests; production uses the server action. */
+  select?: (choice: {
+    deviceId: string | null;
+    modeKey: string | null;
+  }) => Promise<{ ok: boolean; error?: string }>;
 };
 
 type MachineFirstSetupPanelRecord = NonNullable<
@@ -47,9 +66,12 @@ type MachineFirstSetupPanelRecord = NonNullable<
 
 export function MachineFirstSetupConnected({
   blockId = null,
+  clientId,
+  sessionId,
   load,
+  select,
   record,
-}: MachineFirstSetupConnectedProps = {}) {
+}: MachineFirstSetupConnectedProps) {
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
 
@@ -62,7 +84,7 @@ export function MachineFirstSetupConnected({
           const mod = await import(
             "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
           );
-          return mod.loadMachineSetupContext();
+          return mod.loadMachineSetupContext({ clientId, sessionId });
         });
       setCtx(await loader());
       setState("idle");
@@ -71,7 +93,7 @@ export function MachineFirstSetupConnected({
       // reported in place rather than escalated.
       setState("failed");
     }
-  }, [load]);
+  }, [load, clientId, sessionId]);
 
   if (!ctx) {
     return (
@@ -114,6 +136,26 @@ export function MachineFirstSetupConnected({
       return out.ok ? { ok: true } : { ok: false, error: out.error };
     });
 
+  // The selection action the panel calls on every pick and on "Change
+  // machine". Previously absent, which is why a choice never survived a
+  // reload even though the store and the action were both correct.
+  const onSelectMachine = async (choice: {
+    deviceId: string | null;
+    modeKey: string | null;
+  }) => {
+    const mod = await import(
+      "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
+    );
+    const out =
+      choice.deviceId === null
+        ? await mod.clearMachineSelectionAction()
+        : await mod.rememberMachineSelectionAction({
+            deviceId: choice.deviceId,
+            modeKey: choice.modeKey,
+          });
+    return out.ok ? { ok: true } : { ok: false, error: out.error };
+  };
+
   return (
     <MachineFirstSetupPanel
       scope={ctx.scope}
@@ -127,6 +169,7 @@ export function MachineFirstSetupConnected({
       canManageMachines={ctx.canManageMachines}
       priorSetup={ctx.priorSetup}
       blockId={blockId}
+      onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}
     />
   );

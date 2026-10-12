@@ -1009,7 +1009,11 @@ export function BlockSetupForm({
           no row yet, so there is nothing to record readings against and the
           panel shows the field contract read-only instead of inviting a value
           it would have to discard. */}
-      <MachineFirstSetupConnected blockId={block?.id ?? null} />
+      <MachineFirstSetupConnected
+        blockId={block?.id ?? null}
+        clientId={clientId}
+        sessionId={sessionId}
+      />
 
       {copyMessage && (
         <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">

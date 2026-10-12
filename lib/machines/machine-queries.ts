@@ -216,6 +216,24 @@ export async function readRememberedMachine(
 // Readings
 // ---------------------------------------------------------------------------
 
+/**
+ * What a CLIENT may say about one reading: which field, what it read, and how
+ * it was observed.
+ *
+ * Deliberately smaller than `ReadingInputRow` below. The field's native unit
+ * and precision are properties of the MACHINE, so the server derives them from
+ * the profile and the caller does not get to assert them - an earlier shape
+ * accepted both and cast them straight into an append-only clinical row
+ * (Codex, 9c6fbbe5).
+ */
+export type ReadingSubmission = {
+  /** Null for a mode-level field. */
+  stageKey: string | null;
+  fieldKey: string;
+  value: ReadingValue;
+  observationSource: ReadingInputRow["observationSource"];
+};
+
 export type ReadingInputRow = {
   /** Null for a mode-level field. */
   stageKey: string | null;
@@ -367,25 +385,35 @@ export async function readingsForBlock(
  * setup is only reproducible as a set: a current without its duration is not a
  * setting anyone can repeat.
  */
+/**
+ * This CLIENT's most recent recorded setup, for next-visit guidance.
+ *
+ * REQUIRES A CLIENT, and that is the whole point. The first version took only a
+ * studio id and returned the newest reading anywhere in the studio, so opening
+ * Ana's chart while Bea's block was newer showed Bea's settings as guidance for
+ * Ana (Codex, 9c6fbbe5). PR #286 had already removed studio-only scoping from
+ * the charting writes in this directory for exactly that reason; this had
+ * reintroduced it on the read side.
+ *
+ * The scoping is done in SQL by `latest_setup_for_client`, over the
+ * block-in-session lineage the schema guarantees, rather than by filtering
+ * here - so a future caller cannot omit it. `clientId` is a route value, not a
+ * claim of ownership: the caller authorizes it with assertSessionForClient
+ * first, and the function re-checks studio membership itself.
+ */
 export async function latestRecordedSetup(
   db: MachineDb,
   studioId: string,
+  clientId: string,
 ): Promise<MachineOutcome<RecordedReading[]>> {
-  const { data, error } = await db
-    .from("treatment_setup_readings")
-    .select(READING_COLUMNS)
-    .eq("studio_id", studioId)
-    .order("recorded_at", { ascending: false })
-    .limit(500);
+  const { data, error } = await db.rpc("latest_setup_for_client", {
+    p_studio_id: studioId,
+    p_client_id: clientId,
+  });
 
   if (error) {
     return { ok: false, error: fail(error, "Could not read the last setup.") };
   }
   const rows = ((data ?? []) as ReadingRow[]).map(toReading);
-  if (rows.length === 0) return { ok: true, value: [] };
-
-  // The newest row names the block; return that block's readings only, so the
-  // caller gets one coherent setup instead of a mixture of visits.
-  const newestBlock = rows[0]!.blockId;
-  return { ok: true, value: rows.filter((r) => r.blockId === newestBlock) };
+  return { ok: true, value: rows };
 }

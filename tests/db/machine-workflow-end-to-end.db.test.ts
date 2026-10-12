@@ -613,6 +613,158 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
   });
 });
 
+describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", () => {
+  // THE TEST THAT WAS MISSING. latestRecordedSetup took only a studio id, so
+  // it returned the newest reading anywhere in the studio: open Ana's chart
+  // while Bea's block is newer and Ana's panel showed Bea's settings as
+  // next-visit guidance for Ana. Every existing test in this file used a
+  // single-client studio, so none of them could see it (Codex, 9c6fbbe5).
+  //
+  // PR #286 removed studio-only scoping from the charting WRITES in this
+  // directory for exactly this reason. This is the read-side equivalent, and
+  // it is proved here rather than argued, because the scoping now lives in SQL
+  // (latest_setup_for_client) over the block-in-session lineage.
+  it("does not return a studio-mate's newer setup", async () => {
+    const studio = await seedStudio("e2e-two-clients");
+    const machineId = await registerSynthetic(studio, "Room 1");
+
+    // Ana, recorded FIRST.
+    const ana = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        blockId: ana.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 70 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+        ],
+      }),
+    );
+
+    // A SECOND client in the SAME studio, recorded LATER and with a different
+    // value, so a studio-scoped read is guaranteed to pick the wrong one.
+    const beaClientId = randomUUID();
+    await adminQuery(
+      `insert into public.clients (id, studio_id, name) values ($1, $2, $3)`,
+      [beaClientId, studio.studioId, "Client Bea"],
+    );
+    const beaSessionId = randomUUID();
+    const beaBlockId = randomUUID();
+    await adminQuery(
+      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
+       values ($1, $2, $3, $4, 'electrolysis')`,
+      [beaSessionId, studio.studioId, beaClientId, studio.practitionerId],
+    );
+    await adminQuery(
+      `insert into public.session_blocks (id, studio_id, session_id)
+       values ($1, $2, $3)`,
+      [beaBlockId, studio.studioId, beaSessionId],
+    );
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        blockId: beaBlockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 410 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+        ],
+      }),
+    );
+
+    // Ana's chart must show ANA's 70, never Bea's newer 410.
+    const forAna = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId),
+    );
+    expect(forAna.ok).toBe(true);
+    if (!forAna.ok) return;
+    expect(forAna.value.map((r) => r.fieldKey)).toEqual(["current"]);
+    expect(
+      forAna.value[0]!.value,
+      "Ana's panel showed another client's reading",
+    ).toMatchObject({ kind: "value", value: "70" });
+    expect(forAna.value[0]!.blockId).toBe(ana.blockId);
+
+    // And Bea's chart shows Bea's.
+    const forBea = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, beaClientId),
+    );
+    expect(forBea.ok).toBe(true);
+    if (!forBea.ok) return;
+    expect(forBea.value[0]!.value).toMatchObject({ kind: "value", value: "410" });
+    expect(forBea.value[0]!.blockId).toBe(beaBlockId);
+  });
+
+  it("returns nothing for a client in ANOTHER studio, even to a member of both", async () => {
+    // The function takes a studio AND a client; a client id from elsewhere must
+    // not resolve just because the caller is a member of the studio asked about.
+    const mine = await seedStudio("e2e-scope-mine");
+    const other = await seedStudio("e2e-scope-other");
+    const machineId = await registerSynthetic(mine, "Room 1");
+    const block = await seedSession(mine);
+    await asDb(mine.userId, (db) =>
+      recordSetupGroup(db, {
+        blockId: block.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [],
+        readings: READINGS,
+      }),
+    );
+
+    const out = await asDb(mine.userId, (db) =>
+      latestRecordedSetup(db, mine.studioId, other.clientId),
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.value).toEqual([]);
+  });
+
+  it("returns nothing to a NON-MEMBER asking about a studio's client", async () => {
+    // is_studio_member is the fail-closed second lock inside the function, on
+    // top of RLS. A member of another studio gets an empty answer, not a leak.
+    const target = await seedStudio("e2e-scope-target");
+    const stranger = await seedStudio("e2e-scope-stranger");
+    const machineId = await registerSynthetic(target, "Room 1");
+    const block = await seedSession(target);
+    await asDb(target.userId, (db) =>
+      recordSetupGroup(db, {
+        blockId: block.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [],
+        readings: READINGS,
+      }),
+    );
+
+    const leaked = await asDb(stranger.userId, (db) =>
+      latestRecordedSetup(db, target.studioId, target.clientId),
+    );
+    expect(leaked.ok).toBe(true);
+    if (!leaked.ok) return;
+    expect(leaked.value, "a non-member read another studio's setup").toEqual([]);
+  });
+});
+
 describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () => {
   it("returns the most recent block's whole group, not a mixture of visits", async () => {
     const studio = await seedStudio("e2e-next");
@@ -652,7 +804,7 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
     );
 
     const prior = await asDb(studio.userId, (db) =>
-      latestRecordedSetup(db, studio.studioId),
+      latestRecordedSetup(db, studio.studioId, studio.clientId),
     );
     expect(prior.ok).toBe(true);
     if (!prior.ok) return;
@@ -694,7 +846,7 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
     );
 
     const prior = await asDb(studio.userId, (db) =>
-      latestRecordedSetup(db, studio.studioId),
+      latestRecordedSetup(db, studio.studioId, studio.clientId),
     );
     if (!prior.ok) throw new Error("expected a prior setup");
 
@@ -744,7 +896,7 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
   it("a studio with no history gets an empty prior setup, not an error", async () => {
     const studio = await seedStudio("e2e-next-none");
     const prior = await asDb(studio.userId, (db) =>
-      latestRecordedSetup(db, studio.studioId),
+      latestRecordedSetup(db, studio.studioId, studio.clientId),
     );
     expect(prior.ok && prior.value).toEqual([]);
   });

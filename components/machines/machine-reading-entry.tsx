@@ -9,7 +9,7 @@ import type {
   MachineProfile,
   ReadingValue,
 } from "@/lib/machines/profile-contract";
-import type { ReadingInputRow } from "@/lib/machines/machine-queries";
+import type { ReadingSubmission } from "@/lib/machines/machine-queries";
 
 // MPX-03 — recording what the machine showed.
 //
@@ -46,7 +46,7 @@ export type MachineReadingEntryProps = {
     modeKey: string;
     groupKey: string;
     channels: number[];
-    readings: ReadingInputRow[];
+    readings: ReadingSubmission[];
   }) => Promise<{ ok: boolean; error?: string }>;
 };
 
@@ -84,7 +84,7 @@ export function MachineReadingEntry({
   async function submit() {
     setPending(true);
     setMessage(null);
-    const readings: ReadingInputRow[] = [];
+    const readings: ReadingSubmission[] = [];
     for (const g of groups) {
       for (const f of g.fields) {
         const value = parse(draft[key(g.key, f)] ?? "");
@@ -96,8 +96,6 @@ export function MachineReadingEntry({
           stageKey: f.stageKey,
           fieldKey: f.key,
           value,
-          nativeUnit: f.unit || "none",
-          decimals: f.decimals,
           observationSource: "practitioner-entered",
         });
       }
@@ -127,8 +125,18 @@ export function MachineReadingEntry({
         data-testid="machine-reading-saved"
         role="status"
       >
-        Settings saved to this treatment. A change of setting is recorded as a
-        new reading, so this one stays as entered.
+        {/*
+          This used to read "A change of setting is recorded as a new reading,
+          so this one stays as entered." The first half was false: the schema
+          has one row per (block, group, stage, field), so a SECOND reading for
+          the same field in the same block is refused, not appended - a changed
+          setting cannot currently be recorded at all (Codex, 9c6fbbe5).
+          Whether it SHOULD be is a clinical-record question recorded for
+          product authority, not one to settle in UI copy. Until it is settled
+          this says only what is true.
+        */}
+        Settings saved to this treatment, and they cannot be overwritten. To
+        correct or add to them, record them in the treatment notes below.
       </p>
     );
   }

@@ -30,12 +30,41 @@ import { MACHINE_CATALOGUE } from "./catalogue";
  *    equal `"1"`. Absent, empty or any other value means off: the gate fails
  *    CLOSED, so forgetting to set it can only ever hide the profile.
  *
- * 3. Production is refused even if the flag is set. `VERCEL_ENV === "production"`
- *    or `NODE_ENV === "production"` disables it unconditionally. A leaked
- *    environment variable in production therefore changes nothing, which is the
- *    point: the flag is not a feature switch, it is a demo affordance.
+ * 3. Any DEPLOYED runtime is refused even if the flag is set, by the same
+ *    `deployedEnvironmentSignal` predicate the four other e2e fake-guards use
+ *    (Vercel, AWS, Kubernetes). A leaked environment variable in a deployment
+ *    therefore changes nothing, which is the point: the flag is not a feature
+ *    switch, it is a demo affordance.
  *
- * All three are asserted in tests, including the leak case.
+ * 4. The instance must be talking to a LOCAL Supabase stack. A deployed Hone
+ *    never points at 127.0.0.1, so this is an independent second lock on
+ *    reason 3 rather than a restatement of it.
+ *
+ * All four are asserted in tests, including the leak case.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY NOT `NODE_ENV === "production"`, WHICH THIS REPLACED
+ * ---------------------------------------------------------------------------
+ *
+ * Because it refused the one environment the profile exists to serve, and did
+ * it silently. Playwright's webServer runs `npm run e2e:server`
+ * (`next build && next start`), and next's CLI sets
+ * `process.env.NODE_ENV = process.env.NODE_ENV || "production"` for `start`
+ * (node_modules/next/dist/bin/next). Nothing in local-env.ts,
+ * playwright.config.ts or package.json sets NODE_ENV, so every browser run was
+ * NODE_ENV=production and the gate closed BEFORE it ever read the flag.
+ *
+ * The consequence was worse than a blocked demo: the browser spec's gate-open
+ * half could never execute, so it silently proved nothing while reporting
+ * green, and the un-run half was hiding a real defect (the panel never
+ * persisted a selection). Found by Codex review at 9c6fbbe5, confirmed by
+ * reading next's CLI rather than inferred.
+ *
+ * NODE_ENV describes how the code was BUILT. It does not say where the code is
+ * RUNNING, and only the second question is a safety question. Reasons 3 and 4
+ * ask the second question, which is why this gate is strictly stronger against
+ * a real deployment than the check it replaced: a Vercel PREVIEW was caught
+ * before only incidentally, by its NODE_ENV, and is now caught by name.
  */
 
 const SYNTHETIC_PROFILE_ID = "synthetic:demo-multineedle";
@@ -117,12 +146,47 @@ export const SYNTHETIC_DEMO_PROFILE: MachineProfile = {
 };
 
 /** Is the synthetic profile enabled for this process? Fails closed. */
+/**
+ * Is this a deployed runtime? Byte-identical to the predicate in
+ * lib/email/e2e-fake-resend.ts, lib/stripe/e2e-fake-guard.ts,
+ * lib/reliability/e2e-route-fault.ts and
+ * lib/google-calendar/e2e/fake-google-guard.ts, which is the established
+ * convention here: each e2e guard keeps its own private copy.
+ *
+ * Deliberately NOT a shared import, because collapsing five copies means
+ * editing four files owned by other lanes mid-sprint. The duplication is a
+ * real drift risk and is recorded as a follow-up; all four copies were
+ * compared and are identical at the time of writing.
+ */
+function deployedEnvironmentSignal(env: NodeJS.ProcessEnv): string | null {
+  if (env.VERCEL === "1") return "VERCEL";
+  if (env.VERCEL_ENV) return `VERCEL_ENV=${env.VERCEL_ENV}`;
+  if (env.AWS_REGION || env.AWS_EXECUTION_ENV) return "AWS";
+  if (env.KUBERNETES_SERVICE_HOST) return "KUBERNETES";
+  return null;
+}
+
+/**
+ * Reason 4. The same local-only test `e2e/helpers/local-env.ts` enforces by
+ * refusing to run at all: a hosted Supabase host, or anything that is not
+ * loopback, means this is not a local stack.
+ */
+const HOSTED_SUPABASE_PATTERNS =
+  /supabase\.co|supabase\.com|supabase\.in|pooler\.|amazonaws\.com|rds\.|azure|neon\.tech/i;
+
+function talksToLocalSupabase(env: NodeJS.ProcessEnv): boolean {
+  const url = env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!url) return false;
+  if (HOSTED_SUPABASE_PATTERNS.test(url)) return false;
+  return /127\.0\.0\.1|localhost/.test(url);
+}
+
 export function syntheticProfileEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  // Reason 3 first, so no amount of flag-setting can override it.
-  if (env.VERCEL_ENV === "production") return false;
-  if (env.NODE_ENV === "production") return false;
+  // Reasons 3 and 4 first, so no amount of flag-setting can override them.
+  if (deployedEnvironmentSignal(env) !== null) return false;
+  if (!talksToLocalSupabase(env)) return false;
   // Reason 2: exact value, nothing coerced.
   return env[FLAG] === "1";
 }
