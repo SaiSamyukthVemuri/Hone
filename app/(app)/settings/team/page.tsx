@@ -13,6 +13,7 @@ import {
   revokeInvitationAction,
 } from "./actions";
 import { setReceptionistActiveAction } from "./receptionist-actions";
+import { accessSummary, ROLE_LABELS, type StudioRole } from "@/lib/auth/capabilities";
 
 type ReceptionistRow = {
   id: string;
@@ -140,6 +141,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
                   {!r.active && <span className="text-xs text-neutral-500">inactive</span>}
                 </div>
                 {r.email && <div className="truncate text-xs text-neutral-500">{r.email}</div>}
+                <AccessSummary role="receptionist" />
               </div>
               <form action={setReceptionistActiveAction}>
                 <input type="hidden" name="id" value={r.id} />
@@ -204,6 +206,7 @@ function CurrentPractitioners({
                 <div className="truncate text-xs text-neutral-500">
                   {p.email}
                 </div>
+                <AccessSummary role={p.role} />
               </div>
               {p.role !== "owner" && !isSelf && (
                 <form action={removePractitionerAction}>
@@ -291,5 +294,35 @@ function RoleBadge({ role }: { role: "owner" | "practitioner" | "receptionist" }
     >
       {role}
     </span>
+  );
+}
+
+// STUDIO-READY-02e (#824): the readable access summary, rendered from the FIXED
+// role definition (lib/auth/capabilities.ts). It describes; the database and
+// the server guards enforce.
+function AccessSummary({ role }: { role: StudioRole }) {
+  const { can, cannot } = accessSummary(role);
+  return (
+    <details className="mt-1 text-xs text-neutral-500">
+      <summary className="cursor-pointer select-none">What {ROLE_LABELS[role].toLowerCase()}s can do</summary>
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+        <div>
+          <div className="font-medium text-neutral-700 dark:text-neutral-300">Can</div>
+          <ul className="mt-1 list-disc pl-4">
+            {can.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <div className="font-medium text-neutral-700 dark:text-neutral-300">Cannot</div>
+          <ul className="mt-1 list-disc pl-4">
+            {cannot.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </details>
   );
 }
