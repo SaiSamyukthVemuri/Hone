@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { ReportDeliveryConcern } from "@/components/delivery/ReportDeliveryConcern";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
@@ -587,6 +588,10 @@ export default async function AppointmentDetailPage({
           isOwner={isOwner}
         />
       )}
+
+      {/* DELIVERY-VISIBILITY-04: owner-only "client says they didn't receive
+          it". The database refuses anyone else; hiding it is just courtesy. */}
+      {isOwner && <ReportDeliveryConcern studioId={studio.id} appointmentId={id} />}
 
       {typedStatus === "completed" && (
         <NextStepCard

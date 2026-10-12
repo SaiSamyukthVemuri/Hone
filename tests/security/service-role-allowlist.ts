@@ -20,6 +20,12 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "lib/email/send-appointment.ts",
+    purpose: "DELIVERY-VISIBILITY-03: the booking confirmation joins the email delivery ledger.",
+    why: "Bookkeeping only, after the send decision its caller already made. sendBookingConfirmationToClient builds the admin client ONLY to call the service-role-only begin_appointment_email_message (which re-checks that the appointment belongs to the studio it names) and settle_email_message on the row it just created. It reads no other table and accepts no caller-chosen row id. Fail-soft: without it the same email is sent, untagged.",
+    scopeGuard: "beginAppointmentEmailMessage",
+  },
+  {
     path: "app/(app)/settings/waitlist/profile-actions.ts",
     purpose:
       "WAIT-04A owner surface — the sole caller of set_waitlist_entry_availability, create_practitioner_waitlist_entry and import_legacy_waitlist_entry (all migration 0193).",
@@ -327,6 +333,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Trusted onboarding completion + celebration adapters (wizard).",
     why: "completed_at / celebrated_at / status='completed' / the 'done' marker are PROTECTED fields — a SECURITY INVOKER guard trigger blocks any direct browser write. Completion + celebration are therefore the service-role-ONLY commands admin_complete_onboarding / admin_mark_onboarding_celebrated (public/anon/authenticated execute revoked). The adapter passes ONLY the session user id (resolved server-side by the owner-gated action) + the studio id; each command re-verifies IN-DB that the user is an ACTIVE OWNER of that studio AND onboarding_v2 is enabled, and accepts no role/status/timestamp/step state from the browser.",
     scopeGuard: "admin_complete_onboarding",
+  },
+  {
+    path: "app/admin/delivery/page.tsx",
+    purpose: "DELIVERY-VISIBILITY-02 platform support delivery queue (cross-studio).",
+    why: "Platform-global by design. The /admin layout gates it to the ADMIN_EMAILS allowlist (isAdmin) before render. It reads ONLY the service-role-only 0215 commands support_delivery_incidents, support_email_receipt_outcomes and email_delivery_health, which return operational metadata (no client identity, address or message).",
+    scopeGuard: "support_delivery_incidents",
+  },
+  {
+    path: "app/admin/delivery/actions.ts",
+    purpose: "DELIVERY-VISIBILITY-02 support closes a delivery incident.",
+    why: "Admin-only server action: isAdmin(user.email) is re-checked before the admin client is built, and every attempt (blocked included) is audited via logAdminAction. It drives ONLY resolve_delivery_incident, which closes one open incident by id.",
+    scopeGuard: "isAdmin(user.email)",
   },
   {
     path: "app/api/cron/appointment-reminders/route.ts",
