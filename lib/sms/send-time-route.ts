@@ -41,8 +41,10 @@ import type { SenderStatus, StudioSmsSenderState } from "./sender-status";
 //   * a recipient that is a Canadian or US mobile-range number;
 //   * the SMS lane's readiness model (lib/sms/sender-readiness.ts) saying
 //     ACTIVE for that destination, fed only with registration evidence
-//     recorded for THIS sender of THIS studio. Evidence for a released or
-//     replaced sender is stale and is ignored, never inherited.
+//     recorded for THIS sender of THIS studio, for the number it holds NOW
+//     (registrationEvidenceFor matches the number). Evidence for a released or
+//     replaced sender, or for a number the sender used to hold, is stale and
+//     is ignored, never inherited.
 //
 // NOT DECIDED HERE: whether the provider relationship covers health
 // information (BAA, #828; the SMS lane's NOT_HIPAA_COVERAGE). "Active" readiness never implies it; it is a
@@ -80,7 +82,7 @@ export type SendTimeSender = {
 
 export type SendTimeRegistration = Pick<
   LiveRegistrationSnapshot,
-  "studio_id" | "sender_id" | "kind" | "status" | "missing_information"
+  "studio_id" | "sender_id" | "phone_number" | "kind" | "status" | "missing_information"
 >;
 
 /** A read that did not answer is never "no sender". */

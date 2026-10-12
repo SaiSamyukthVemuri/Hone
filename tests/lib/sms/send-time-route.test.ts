@@ -42,6 +42,7 @@ const sender = (over: Partial<SendTimeSender> = {}): SendTimeSender => ({
 const registration = (over: Partial<SendTimeRegistration> = {}): SendTimeRegistration => ({
   studio_id: A,
   sender_id: "sender-a-1",
+  phone_number: TOLL_FREE_SENDER_NUMBER,
   kind: "toll_free_verification",
   status: "approved",
   missing_information: null,
@@ -195,6 +196,14 @@ describe("STALE REGISTRATION: only the live sender's own evidence counts", () =>
         [tollFree, sender({ id: "sender-a-1", status: "released", messaging_service_sid: null })],
         [registration({ sender_id: "sender-a-1" })],
       ),
+      US_RECIPIENT,
+    );
+    expect(r).toEqual({ ok: false, reason: "destination_not_ready", readiness: "requires_information" });
+  });
+
+  it("approval recorded for the number this sender USED to hold is never inherited", () => {
+    const r = decide(
+      read([tollFree], [registration({ sender_id: "sender-a-2", phone_number: "+18775550100" })]),
       US_RECIPIENT,
     );
     expect(r).toEqual({ ok: false, reason: "destination_not_ready", readiness: "requires_information" });

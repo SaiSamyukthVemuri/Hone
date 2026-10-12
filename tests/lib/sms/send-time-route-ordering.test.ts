@@ -254,6 +254,7 @@ const TOLL_FREE = sender({ id: "sender-a-2", phone_number: "+18885550100" });
 const staleApproval: SendTimeRegistration = {
   studio_id: A,
   sender_id: "sender-a-1", // the studio's PREVIOUS sender
+  phone_number: "+18885550100",
   kind: "toll_free_verification",
   status: "approved",
   missing_information: null,
@@ -418,6 +419,7 @@ const snapRow = (over: Record<string, unknown> = {}) => ({
 const snapReg = (over: Record<string, unknown> = {}) => ({
   sender_id: "sender-a-1",
   studio_id: A,
+  phone_number: "+18885550100",
   kind: "toll_free_verification",
   status: "approved",
   missing_information: null,
@@ -458,6 +460,16 @@ describe.each(PATHS)("%s: through 0217's snapshot (the default reader)", (label,
       expect(events).toEqual(looksFor(label, "sms_route_sender_read_failed", SNAPSHOT_RPC));
     });
   }
+
+  it("STALE REGISTRATION: approval for the number this sender used to hold refuses before the claim", async () => {
+    routeStudioA();
+    snapshot = snapshotOf([snapRow({ phone_number: "+18885550100" })], [snapReg({ phone_number: "+18775550100" })]);
+    const r = await send(undefined);
+    // 0217 never returns such a row, so the SMS lane's parser rejects the whole
+    // answer as broken: unreadable, never "ready".
+    expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_sender_read_failed" });
+    expect(events).toEqual(looksFor(label, "sms_route_sender_read_failed", SNAPSHOT_RPC));
+  });
 
   it("STALE REGISTRATION: a toll-free sender with no evidence of its own is not ready", async () => {
     routeStudioA();
