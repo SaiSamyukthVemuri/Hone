@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { SmsRegistrationSection } from "./SmsRegistrationSection";
-import { readLiveRegistrationState } from "@/lib/sms/sender-registration";
+import { readLiveRegistrationState } from "@/lib/sms/sender-registration-admin";
 import {
   loadStudioPaymentStatus,
   type StudioModeRow,
