@@ -181,13 +181,13 @@ export default async function AdminStudioPage({
   // PR B: per-studio payment status: capability/status/counts only, both
   // modes, redacted account suffix. Read via the shared admin helper.
   const payments = await loadStudioPaymentStatus(createAdminClient(), id);
-  // SMS-SENDER-REG-01: the recorded US registration evidence (0217), read
-  // through service_role (granted SELECT; writes go through the command).
-  const registrations = await createAdminClient()
-    .from("studio_sms_sender_registrations")
-    .select("kind, status, missing_information, provider_reference, updated_at")
-    .eq("studio_id", id)
-    .order("kind");
+  // SMS-SENDER-REG-01: the LIVE sender's recorded US registration evidence
+  // (0217). A released number's rows are its history and never appear as the
+  // current number's state (Codex P2 4244011188).
+  const registrations = await createAdminClient().rpc(
+    "list_live_studio_sms_sender_registrations",
+    { p_studio_id: id },
+  );
 
   const inviteLabel =
     studio.owner_invite_status === "accepted"

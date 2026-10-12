@@ -138,6 +138,35 @@ describe("the command", () => {
   });
 });
 
+describe("the operator's read (Codex P2 4244011188)", () => {
+  it("shows the LIVE number's evidence only, never a released predecessor's", async () => {
+    const s = await seedStudio("reg-replaced");
+    const old = await seedActiveSender(s, phone());
+    await record(s.studioId, "us_10dlc", "approved");
+    await adminQuery("update public.studio_sms_senders set status = 'releasing' where id = $1", [old]);
+    await adminQuery("update public.studio_sms_senders set status = 'released', released_at = now() where id = $1", [old]);
+    const replacement = phone();
+    await seedActiveSender(s, replacement);
+    await record(s.studioId, "us_10dlc", "pending");
+
+    const live = (await adminQuery("select * from public.list_live_studio_sms_sender_registrations($1)", [s.studioId])).rows;
+    expect(live).toEqual([expect.objectContaining({ kind: "us_10dlc", status: "pending", phone_number: replacement })]);
+    // The predecessor's approval is still recorded, as that number's history.
+    const all = await adminQuery("select status from public.studio_sms_sender_registrations where studio_id = $1 order by status", [s.studioId]);
+    expect(all.rows.map((r) => r.status)).toEqual(["approved", "pending"]);
+  });
+
+  it("is service_role only", async () => {
+    for (const role of ["anon", "authenticated"] as const) {
+      await expect(
+        asRole(role, (q) => q("select * from public.list_live_studio_sms_sender_registrations($1)", [a.studioId])),
+      ).rejects.toMatchObject({ code: "42501" });
+    }
+    const ok = await asRole("service_role", (q) => q("select * from public.list_live_studio_sms_sender_registrations($1)", [a.studioId]));
+    expect(ok.rows.length).toBeGreaterThan(0);
+  });
+});
+
 describe("privileges", () => {
   it("the owner reads their own rows, without the provider reference", async () => {
     const own = await asUser(a.userId, (q) =>

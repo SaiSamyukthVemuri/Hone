@@ -10,6 +10,8 @@ export type AdminRegistrationRow = {
   missing_information: string | null;
   provider_reference: string | null;
   updated_at: string;
+  /** The live sender's number: the evidence below is about THIS number. */
+  phone_number: string | null;
 };
 
 const KIND_LABEL: Record<AdminRegistrationRow["kind"], string> = {
@@ -41,6 +43,10 @@ export function SmsRegistrationSection({
       ) : rows.length === 0 ? (
         <p className="text-sm text-neutral-500">Nothing recorded. US readiness shows Requires information.</p>
       ) : (
+        <>
+        <p className="mb-1 text-sm text-neutral-500">
+          For the studio&apos;s current number{rows[0].phone_number ? ` ${rows[0].phone_number}` : ""}. Records for released numbers are not shown.
+        </p>
         <ul className="flex flex-col gap-1 text-sm">
           {rows.map((r) => (
             <li key={r.kind}>
@@ -50,6 +56,7 @@ export function SmsRegistrationSection({
             </li>
           ))}
         </ul>
+        </>
       )}
       <form action={record} className="mt-3 flex flex-wrap items-end gap-2 text-sm">
         <label className="flex flex-col">

@@ -19,7 +19,11 @@
 --      platform operator's console after support has checked the provider
 --      account; it resolves the studio's LIVE sender itself, so evidence can
 --      never be attached to another studio's sender or to a released one.
---   3. The studio OWNER reads their own rows (status, kind, what is missing),
+--   3. list_live_studio_sms_sender_registrations(studio) -- the operator
+--      console's read, service_role only: the rows of the studio's LIVE sender
+--      only. A released sender's evidence stays on its own row (it is that
+--      number's history) but is never shown as the current number's state.
+--   4. The studio OWNER reads their own rows (status, kind, what is missing),
 --      exactly as 0191 lets them read their sender. The provider reference
 --      (a brand or campaign identifier) is not granted to them.
 --
@@ -131,6 +135,37 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- The operator's read: the live sender's evidence only
+-- ---------------------------------------------------------------------------
+-- service_role cannot read studio_sms_senders (0191 revokes it), so the console
+-- cannot tell the live sender's rows from a released predecessor's by itself.
+-- This read joins them here and returns only the current number's evidence.
+create or replace function public.list_live_studio_sms_sender_registrations(
+  p_studio_id uuid
+) returns table (
+  kind                text,
+  status              text,
+  missing_information text,
+  provider_reference  text,
+  updated_at          timestamptz,
+  phone_number        text
+)
+language sql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+  select r.kind, r.status, r.missing_information, r.provider_reference,
+         r.updated_at, s.phone_number
+    from public.studio_sms_sender_registrations r
+    join public.studio_sms_senders s on s.id = r.sender_id
+   where r.studio_id = p_studio_id
+     and s.studio_id = p_studio_id
+     and s.status <> 'released'
+   order by r.kind;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Privileges
 -- ---------------------------------------------------------------------------
 revoke all on table public.studio_sms_sender_registrations from public;
@@ -149,8 +184,16 @@ revoke execute on function public.record_studio_sms_sender_registration(uuid, te
 revoke execute on function public.record_studio_sms_sender_registration(uuid, text, text, text, text) from service_role;
 grant execute on function public.record_studio_sms_sender_registration(uuid, text, text, text, text) to service_role;
 
+revoke execute on function public.list_live_studio_sms_sender_registrations(uuid) from public;
+revoke execute on function public.list_live_studio_sms_sender_registrations(uuid) from anon;
+revoke execute on function public.list_live_studio_sms_sender_registrations(uuid) from authenticated;
+revoke execute on function public.list_live_studio_sms_sender_registrations(uuid) from service_role;
+grant execute on function public.list_live_studio_sms_sender_registrations(uuid) to service_role;
+
 comment on table public.studio_sms_sender_registrations is
   'SMS-SENDER-REG-01 (0217): support-recorded US registration evidence (10DLC or toll-free verification) for a studio''s live sender. Evidence for readiness only: recording it calls no provider and activates nothing. Owner reads own rows (no provider_reference); written only by record_studio_sms_sender_registration.';
+comment on function public.list_live_studio_sms_sender_registrations(uuid) is
+  'SMS-SENDER-REG-01 (0217): the operator console''s read of the studio''s LIVE sender''s registration evidence only (a released number''s rows are history, never current state). service_role only.';
 comment on function public.record_studio_sms_sender_registration(uuid, text, text, text, text) is
   'SMS-SENDER-REG-01 (0217): records the current registration state of one kind for the studio''s live sender (resolved here, never named by the caller). service_role only.';
 

@@ -39,12 +39,13 @@ describe("blast radius", () => {
     expect(TOP_LEVEL.trim()).toMatch(/commit;$/);
   });
 
-  it("creates one table and one function, and alters, drops or writes nothing that exists", () => {
+  it("creates one table and two functions, and alters, drops or writes nothing that exists", () => {
     expect([...TOP_LEVEL.matchAll(/create table (public\.\w+)/g)].map((m) => m[1])).toEqual([
       "public.studio_sms_sender_registrations",
     ]);
     expect([...CODE.matchAll(/create or replace function (public\.\w+)\(/g)].map((m) => m[1])).toEqual([
       "public.record_studio_sms_sender_registration",
+      "public.list_live_studio_sms_sender_registrations",
     ]);
     expect(TOP_LEVEL).not.toMatch(/^\s*(drop|alter\s+(?!table public\.studio_sms_sender_registrations\b))/im);
     expect(TOP_LEVEL).not.toMatch(/^\s*(insert|update|delete)\b/im);
@@ -66,7 +67,7 @@ describe("privileges", () => {
     }
     expect(TOP_LEVEL).toMatch(/grant select \(id, studio_id, sender_id, kind, status, missing_information, recorded_at, updated_at\)\s+on public\.studio_sms_sender_registrations to authenticated;/);
     expect(TOP_LEVEL).toContain("grant select on table public.studio_sms_sender_registrations to service_role;");
-    expect(TOP_LEVEL.match(/grant [^;]*studio_sms_sender_registrations[^;]*;/g)).toHaveLength(2);
+    expect(TOP_LEVEL.match(/grant [^;]*\bon (table )?public\.studio_sms_sender_registrations\b[^;]*;/g)).toHaveLength(2);
   });
 
   it("the owner policy is select-only and studio-owner scoped", () => {
@@ -74,10 +75,16 @@ describe("privileges", () => {
     expect(CODE.match(/create policy/g)).toHaveLength(1);
   });
 
-  it("the command is revoked by name and granted to service_role only", () => {
-    for (const role of ["public", "anon", "authenticated", "service_role"]) {
-      expect(TOP_LEVEL).toContain(`revoke execute on function ${SIG} from ${role};`);
+  it("both functions are revoked by name and granted to service_role only", () => {
+    for (const sig of [SIG, "public.list_live_studio_sms_sender_registrations(uuid)"]) {
+      for (const role of ["public", "anon", "authenticated", "service_role"]) {
+        expect(TOP_LEVEL).toContain(`revoke execute on function ${sig} from ${role};`);
+      }
     }
-    expect([...TOP_LEVEL.matchAll(/grant execute on function [^;]* to (\w+);/g)].map((m) => m[1])).toEqual(["service_role"]);
+    expect([...TOP_LEVEL.matchAll(/grant execute on function [^;]* to (\w+);/g)].map((m) => m[1])).toEqual(["service_role", "service_role"]);
+  });
+
+  it("the operator's read returns the LIVE sender's rows only (Codex P2 4244011188)", () => {
+    expect(CODE).toMatch(/join public\.studio_sms_senders s on s\.id = r\.sender_id\s+where r\.studio_id = p_studio_id\s+and s\.studio_id = p_studio_id\s+and s\.status <> 'released'/);
   });
 });
