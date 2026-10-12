@@ -247,9 +247,10 @@ Nothing here is authorized until Sam approves that row.
 | D-5 | Twilio BAA | Security or Enterprise Edition through Twilio sales | Sales cycle | Request an edition quote; list the products in use |
 | D-6 | Preview isolation | None (engineering) | Days | Approve a separate preview project with synthetic data |
 
-**Engineering already under way, in this lane:** G-07 (Vercel analytics
-URL redaction) is a separate draft PR. It does not depend on any decision
-above.
+**Engineering already under way, in this lane** (drafts, not merged or
+deployed; neither depends on a decision above):
+- G-07 Vercel analytics URL redaction: #842;
+- G-12 isolated restore drill: #848.
 
 **Consequence for Friday (2026-10-16).** Several of these depend on vendor
 turnaround that this packet cannot vouch for. Unless each gate is met and
