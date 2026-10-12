@@ -97,7 +97,8 @@ A captured request therefore cannot be replayed later. A replay inside the windo
 
 **Durable before acknowledged.** `record_email_provider_event` writes one receipt per delivery, unique on `(provider, svix-id)`. Resend keeps that id across every retry of an event.
 - If the receipt cannot be written, the route answers **500** and Resend retries on its own schedule (roughly 27 hours, after which it may disable the endpoint).
-- Once the receipt is written, the answer is **200**, whatever happens to processing. A poison event must never keep the provider retrying until it disables the endpoint.
+- If the receipt is written but **this request's own processing attempt fails**, the answer is also **500**, so Resend's retry recovers the still-pending receipt (Codex P2 4244387538). Its next retry arrives after the two-minute claim has expired, and the recovery does not depend on another webhook or a scheduled sweep. Attempts are bounded in the database: after five the receipt is quarantined and the retry that follows gets **200**, so a poison event cannot keep the provider retrying until it disables the endpoint.
+- Every other outcome is acknowledged with **200**: applied, stale, unmatched, ignored, quarantined, or held by another worker that answers for itself.
 - A retried delivery whose receipt is still **pending** is processed again; one already processed is acknowledged as-is.
 
 **Exactly-once processing and crash recovery.**

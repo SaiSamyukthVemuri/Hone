@@ -213,15 +213,42 @@ describe("an accepted delivery is durable before it is acknowledged", () => {
     expect(res.status).toBe(500);
   });
 
-  it("still answers 200 when processing fails after the receipt is durable; the sweep finishes it", async () => {
+  it("answers 500 when its own processing fails, so the provider's retry recovers the still-pending receipt (Codex P2 4244387538)", async () => {
     h.answers = {
       record_email_provider_event: [recorded()],
       claim_email_provider_events: [claimedOwn, claimedNone],
       process_email_provider_event: [{ data: null, error: { message: "deadlock detected" } }],
     };
     const res = await deliver(payload());
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ ok: false, recorded: true });
     expect(logged.join("\n")).toContain("processing_failed");
+  });
+
+  it("answers 500 when the claim itself fails, for the same reason", async () => {
+    h.answers = {
+      record_email_provider_event: [recorded()],
+      claim_email_provider_events: [{ data: null, error: { message: "db blip" } }],
+    };
+    expect((await deliver(payload())).status).toBe(500);
+  });
+
+  it("acknowledges the provider's retry once the receipt is processed or quarantined after its bounded attempts", async () => {
+    // The database quarantines a receipt after five attempts; the retry that
+    // follows finds it processed and gets 200, so a poison event cannot keep
+    // the provider retrying until it disables the endpoint.
+    h.answers = { record_email_provider_event: [recorded("quarantined", "duplicate")] };
+    const res = await deliver(payload());
+    expect(res.status).toBe(200);
+    expect(fns()).toEqual(["record_email_provider_event"]);
+  });
+
+  it("acknowledges a receipt another worker holds: that worker answers for it", async () => {
+    h.answers = {
+      record_email_provider_event: [recorded()],
+      claim_email_provider_events: [claimedNone, claimedNone],
+    };
+    expect((await deliver(payload())).status).toBe(200);
   });
 
   it("acknowledges a malformed but signed body as a receipt rather than refusing it", async () => {
