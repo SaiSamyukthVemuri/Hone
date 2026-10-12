@@ -17,14 +17,39 @@
  * edits a status by hand. An empty active set is the honest current state, and
  * the integrity test pins it as a measurement rather than an aspiration.
  *
- * THE 15/17-PAGE RESEARCH REFERENCE IS NOT IN THIS REPOSITORY. #829 cites a
- * research document and instructs: read available local copies, do not invent
- * quotations if unavailable. It is not present at this production baseline
- * (`6c5eac80`), and no local copy was found. Accordingly NOTHING below is
- * attributed to it; every claim traces to a URL in #829's own source ledger or
- * to the named practitioner report in the canonical roadmap. When that document
- * lands, its numeric tables are what unblock the ranges deliberately absent
- * here.
+ * THE 15/17-PAGE RESEARCH REFERENCE IS NOT ON THIS HOST. #829 cites it and
+ * instructs: read available local copies, do not invent quotations if
+ * unavailable. A search on 2026-10-12 covered the repository at `6c5eac80`,
+ * every other worktree, `docs/14_AI_HANDOFF.md` (240 KB, ZERO machine
+ * mentions), all 157 entries of `/srv/hone/handoffs`, its only source pack
+ * (`2026-09-17`: four files, canonical roadmap at v1_15), the `/home/sam/hone`
+ * checkout, and GitHub. No October 7 pack and no v1.25 document exists
+ * anywhere, and #829's body carries no non-manufacturer link.
+ *
+ * Note that in the v1_15 roadmap, section 7 is "PR Lifecycle, Scope Budgets,
+ * Review and Stop Laws" -- not machine fields. So #829's "v1.25 handoff
+ * (section 7)" either refers to a differently-numbered document or the
+ * numbering moved; either way the pointer cannot be resolved from what is here,
+ * and guessing which section was meant would be the invented quotation the
+ * issue forbids.
+ *
+ * Accordingly NOTHING below is attributed to it; every claim traces to a URL in
+ * #829's own source ledger or to the practitioner report recorded in
+ * `docs/roadmap/CANONICAL_ROADMAP.md` section 14.3 -- that half of the pointer
+ * DID resolve. When the document lands, its numeric tables are what unblock the
+ * ranges deliberately absent here.
+ *
+ * ACTIVATION REVIEW, 2026-10-12. ST 350 was reviewed as the closest candidate
+ * and is NOT ready. It passed the original gate -- four non-optional fields
+ * documented, its one question blocking only the optional `repeat` -- but the
+ * manual mirror establishes four LABELS and their units and nothing more. The
+ * decimal precision, the editability of each field and the machine's own mode
+ * names had all been inferred while the fields claimed
+ * `manufacturer-documented`. The 5HD carried the identical gap. Both now
+ * declare it through `MachineField.unverified`, both gained precision and
+ * mode-name questions, and the gate grew two limbs so it can see such gaps: a
+ * required field's unverified aspects, and a mode's own identity.
+ * `activationReadiness()` reports the verdict per profile.
  *
  * NO NUMERIC RANGE IS ENFORCED ANYWHERE IN THIS CATALOGUE. Not one source in
  * the ledger establishes a hardware-enforced bound for an exact model and
@@ -166,7 +191,10 @@ const Q_SENIOR_CONFLICTS: OpenQuestion = {
     "Senior 3G: the product copy states an RF frequency inconsistent with the manual, and the operating instructions disagree with the specification table about an OmniBlend intensity limit. Which is correct for the physical unit?",
   resolvedBy:
     "Matching hardware plus the manual edition for that unit's firmware; a settings-screen photo showing the frequency and the OmniBlend scale.",
-  blocks: ["frequency", "omniblend.intensity"],
+  // The OmniBlend half names no field on purpose: OmniBlend is not modelled for
+  // this profile yet, so there is nothing to hold. Encoding it as a field key
+  // would make this question LOOK like it guards something it does not.
+  blocks: ["@frequency"],
 };
 
 const Q_XCELL_FIRMWARE: OpenQuestion = {
@@ -204,12 +232,53 @@ const Q_ST350_REPEAT: OpenQuestion = {
   blocks: ["repeat"],
 };
 
+/**
+ * Raised by the 2026-10-12 activation review. The manual mirror establishes
+ * four LABELS and their units; it does not say how many decimals the machine
+ * shows for any of them, nor which the practitioner can change.
+ */
+const Q_ST350_PRECISION: OpenQuestion = {
+  id: "st350-display-precision",
+  question:
+    "ST 350: how many decimal places does the display show for time, HF %, galvanic mA and UL, and which of the four are practitioner-adjustable rather than machine-computed?",
+  resolvedBy:
+    "The manual pages that show the operating screen at a readable resolution, or a settings-screen photograph of the studio's unit containing no client data.",
+  blocks: ["time", "hf_percent", "galvanic_ma", "ul"],
+};
+
+const Q_ST350_MODE_NAMES: OpenQuestion = {
+  id: "st350-mode-names",
+  question:
+    "ST 350: what are the machine's own mode names, and does the display present one combined screen or one per mode? The current single mode is a placeholder, not the machine's word.",
+  resolvedBy:
+    "The manual's mode-selection pages, or a photograph of the mode selector.",
+  blocks: ["*"],
+};
+
+/** The same gap, found in the same review, on the 5HD. */
+const Q_5HD_PRECISION: OpenQuestion = {
+  id: "5hd-display-precision",
+  question:
+    "Evolution 5HD: what are the units and decimal precision behind the native T, UE and MAX labels, and what is MAX — a ceiling, a peak reading or a mode indicator?",
+  resolvedBy:
+    "The manual pages showing the operating screen, or a settings-screen photograph.",
+  blocks: ["t", "ue", "max"],
+};
+
+const Q_5HD_MODE_NAMES: OpenQuestion = {
+  id: "5hd-mode-names",
+  question:
+    "Evolution 5HD: what are the machine's own mode names? The current single mode is a placeholder.",
+  resolvedBy: "The manual's mode-selection pages, or a photograph of the selector.",
+  blocks: ["*"],
+};
+
 const Q_XHD_FREQUENCIES: OpenQuestion = {
   id: "xhd-frequency-values",
   question:
     "XHD: which three RF frequencies are selectable? The product page advertises three without naming them.",
   resolvedBy: "The XHD manual or its frequency-selection screen.",
-  blocks: ["frequency"],
+  blocks: ["@frequency"],
 };
 
 const Q_GEMM_TIMER: OpenQuestion = {
@@ -518,7 +587,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
     model: "Evolution 5HD",
     availability: "blocked",
     availabilityReason:
-      "Native display labels are documented, but their units, precision and editability are not, and no numeric bound is verified.",
+      "Native display LABELS are documented; their units, decimal precision and editability are not, the machine's own mode names have not been read, and no numeric bound is verified. Recorded by the 2026-10-12 activation review alongside the ST 350.",
     verification: "manufacturer-documented",
     frequency: {
       kind: "unverified",
@@ -527,11 +596,13 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
     modes: [
       {
         key: "native",
+        // PLACEHOLDER — see st350-mode-names for the same gap. The 5HD's own
+        // mode names have not been read either.
         nativeLabel: "Treatment",
         family: "thermolysis",
         stages: [],
         availability: "blocked",
-        verification: "manufacturer-documented",
+        verification: "pending-evidence",
         evidence: [EVO_5HD_MANUAL.id],
         fields: [
           {
@@ -544,6 +615,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             expectedSource: "machine-displayed",
             editable: true,
             verification: "pending-evidence",
+            unverified: ["decimals", "editability"],
             evidence: [EVO_5HD_MANUAL.id],
             note: "The manual establishes the LABEL 'T'. Its unit is not established, so the native display is preserved rather than assumed to be seconds.",
           },
@@ -557,6 +629,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             expectedSource: "machine-displayed",
             editable: true,
             verification: "manufacturer-documented",
+            unverified: ["decimals", "editability"],
             evidence: [EVO_5HD_MANUAL.id],
             note: "This machine's own energy display. It is NOT the ST 350's UL: do not rename, equate or normalise the two into a common dose.",
           },
@@ -570,6 +643,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             expectedSource: "device-computed",
             editable: false,
             verification: "pending-evidence",
+            unverified: ["decimals", "editability"],
             evidence: [EVO_5HD_MANUAL.id],
             note: "Appears on the native display; whether it is a ceiling, a peak reading or a mode indicator is unconfirmed.",
           },
@@ -577,7 +651,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
       },
     ],
     evidence: [EVO_5HD_MANUAL],
-    openQuestions: [],
+    openQuestions: [Q_5HD_PRECISION, Q_5HD_MODE_NAMES],
   },
   {
     profileId: "silhouettone:evolution-7hd",
@@ -602,7 +676,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
     model: "Evolution ST 350",
     availability: "blocked",
     availabilityReason:
-      "Four native display fields are documented, but the repeat upper bound is unconfirmed and no hardware-enforced bound is verified.",
+      "The manual mirror establishes four native display LABELS and their units — and nothing more. The 2026-10-12 activation review found decimal precision, editability and the machine's own mode names all unestablished, so the profile passes no activation gate yet. The repeat upper bound is separately unconfirmed and no hardware-enforced bound is verified.",
     verification: "manufacturer-documented",
     frequency: {
       kind: "unverified",
@@ -611,11 +685,16 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
     modes: [
       {
         key: "native",
+        // PLACEHOLDER, not the machine's word. The manual mirror read so far
+        // does not give the ST 350's own mode names, so this mode's identity is
+        // pending evidence and the gate keeps it out of the picker. See
+        // st350-mode-names.
         nativeLabel: "Treatment",
         family: "blend",
         stages: [],
         availability: "blocked",
-        verification: "manufacturer-documented",
+        verification: "pending-evidence",
+        note: "Single combined screen is an assumption; the machine may present one mode per screen.",
         evidence: [EVO_ST350_MANUAL.id],
         fields: [
           {
@@ -628,6 +707,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             expectedSource: "practitioner-entered",
             editable: true,
             verification: "manufacturer-documented",
+            unverified: ["decimals", "editability"],
             evidence: [EVO_ST350_MANUAL.id],
           },
           {
@@ -640,6 +720,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             expectedSource: "practitioner-entered",
             editable: true,
             verification: "manufacturer-documented",
+            unverified: ["decimals", "editability"],
             evidence: [EVO_ST350_MANUAL.id],
             note: "A percentage of this machine's high-frequency output. Not an absolute energy and not comparable across models.",
           },
@@ -653,6 +734,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             expectedSource: "practitioner-entered",
             editable: true,
             verification: "manufacturer-documented",
+            unverified: ["decimals", "editability"],
             evidence: [EVO_ST350_MANUAL.id],
             note: "Milliamps here, microamps on the GEMM-16. Never convert between them to share a column. The retired legacy galvanic_intensity_percent must never be reinterpreted as a current in either unit.",
           },
@@ -666,6 +748,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             expectedSource: "machine-displayed",
             editable: true,
             verification: "manufacturer-documented",
+            unverified: ["decimals", "editability"],
             evidence: [EVO_ST350_MANUAL.id],
             note: "This machine's units-of-lye display, preserved where actually entered. It is NOT the 5HD's UE.",
           },
@@ -686,7 +769,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
       },
     ],
     evidence: [EVO_ST350_MANUAL],
-    openQuestions: [Q_ST350_REPEAT],
+    openQuestions: [Q_ST350_REPEAT, Q_ST350_PRECISION, Q_ST350_MODE_NAMES],
   },
   {
     profileId: "silhouettone:evolution-xhd",
@@ -876,15 +959,39 @@ export function catalogueIntegrity(
           blockedKeys.has(f.key) ||
           blockedKeys.has(`${mode.key}.${f.key}`) ||
           (stage ? blockedKeys.has(`${stage}.${f.key}`) : false);
+        const gaps = f.unverified ?? [];
 
-        if (mode.availability === "active" && !f.optional && (!qualifies || held)) {
+        if (
+          mode.availability === "active" &&
+          !f.optional &&
+          (!qualifies || held || gaps.length > 0)
+        ) {
           out.push({
             profileId: p.profileId,
             problem: `mode ${mode.key} is active but required field ${f.key} is ${
-              held ? "held by an open question" : f.verification
+              held
+                ? "held by an open question"
+                : gaps.length > 0
+                  ? `missing evidence for its ${gaps.join(", ")}`
+                  : f.verification
             }`,
           });
         }
+      }
+
+      // The mode's OWN name must be source-backed before it is offered. A mode
+      // whose label we constructed cannot satisfy "display the actual machine
+      // and mode labels", however well evidenced its fields are — the ST 350
+      // review found exactly that, with a placeholder "Treatment" sitting on a
+      // mode marked documented.
+      const modeQualifies =
+        mode.verification === "manufacturer-documented" ||
+        mode.verification === "device-confirmed";
+      if (mode.availability === "active" && !modeQualifies) {
+        out.push({
+          profileId: p.profileId,
+          problem: `mode ${mode.key} is active but its own identity is ${mode.verification}`,
+        });
       }
 
       if (p.availability !== "active" && mode.availability === "active") {
@@ -904,6 +1011,28 @@ export function catalogueIntegrity(
   }
 
   return out;
+}
+
+/**
+ * Would this profile pass the activation gate if someone flipped it to
+ * `active` right now, and if not, exactly what is missing?
+ *
+ * This is the policy review in executable form. `catalogueIntegrity` answers
+ * "is the catalogue self-consistent as written"; this answers "is this model
+ * READY", which is the question a reviewer actually asks. It never activates
+ * anything — activation stays a deliberate edit plus review.
+ */
+export function activationReadiness(
+  profile: MachineProfile,
+): { ready: boolean; blockers: string[] } {
+  const candidate: MachineProfile = {
+    ...profile,
+    availability: "active",
+    modes: profile.modes.map((m) => ({ ...m, availability: "active" as const })),
+  };
+  // Reuse the real gate rather than restating it, so the two can never drift.
+  const blockers = catalogueIntegrity([candidate]).map((v) => v.problem);
+  return { ready: blockers.length === 0 && profile.modes.length > 0, blockers };
 }
 
 /** Profiles by id, for render-time lookup of a historical reading's profile. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   MACHINE_CATALOGUE,
+  activationReadiness,
   catalogueIntegrity,
   openEvidenceChecklist,
   profileById,
@@ -673,5 +674,168 @@ describe("carry-forward is a proposal that clears on incompatibility", () => {
       at("permanence-gemm:gemm-16", 1, "galvanic"),
     );
     expect(JSON.stringify(MACHINE_CATALOGUE)).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The activation policy review, 2026-10-12
+// ---------------------------------------------------------------------------
+
+describe("activation readiness is derived, and no model passes it yet", () => {
+  it("no catalogue profile is ready to become selectable", () => {
+    const ready = MACHINE_CATALOGUE.filter((p) => activationReadiness(p).ready).map(
+      (p) => p.profileId,
+    );
+    expect(ready).toEqual([]);
+  });
+
+  it("ST 350 — the closest candidate — is NOT ready, and says exactly why", () => {
+    // It passes the ORIGINAL gate: four non-optional fields documented, and its
+    // repeat question blocks only the optional field. The 2026-10-12 review
+    // found that gate too coarse. The manual mirror establishes four LABELS and
+    // their units; the decimal precision, the editability and the machine's own
+    // mode names were inferred. These blockers are that finding, mechanised.
+    const review = activationReadiness(profileById("silhouettone:evolution-st-350")!);
+    expect(review.ready).toBe(false);
+
+    const all = review.blockers.join(" | ");
+    // All four display fields are held. Two independent mechanisms now cover
+    // them — the precision question and the per-field unverified aspects — and
+    // the gate reports whichever it reaches first. Both must be cleared.
+    for (const key of ["time", "hf_percent", "galvanic_ma", "ul"]) {
+      expect(all, `${key} should be held`).toContain(key);
+    }
+    expect(
+      profileById("silhouettone:evolution-st-350")!.modes[0]!.fields.every(
+        (f) => f.optional || (f.unverified ?? []).length > 0,
+      ),
+      "every required ST 350 field should declare its evidence gap",
+    ).toBe(true);
+    // And the mode's own identity is a placeholder, not the machine's word.
+    expect(all).toMatch(/its own identity is pending-evidence/);
+  });
+
+  it("5HD carries the identical gap, found in the same review", () => {
+    const review = activationReadiness(profileById("silhouettone:evolution-5hd")!);
+    expect(review.ready).toBe(false);
+    const all = review.blockers.join(" | ");
+    for (const key of ["t", "ue"]) expect(all).toContain(key);
+    expect(all).toMatch(/its own identity is pending-evidence/);
+  });
+
+  it("a profile with no modes at all is never 'ready' by vacuous default", () => {
+    // ST 250 claims no modes. An empty required-field set must not pass a gate
+    // that only looks for violations.
+    const review = activationReadiness(profileById("silhouettone:st-250")!);
+    expect(review.ready).toBe(false);
+  });
+
+  it("records the precision and mode-name questions against both models", () => {
+    const ids = (profileId: string) =>
+      profileById(profileId)!.openQuestions.map((q) => q.id);
+    expect(ids("silhouettone:evolution-st-350")).toEqual([
+      "st350-repeat-bound",
+      "st350-display-precision",
+      "st350-mode-names",
+    ]);
+    expect(ids("silhouettone:evolution-5hd")).toEqual([
+      "5hd-display-precision",
+      "5hd-mode-names",
+    ]);
+  });
+
+  it("every open question blocks a field that actually exists, or everything", () => {
+    // A question whose `blocks` names a typo holds nothing, which is worse than
+    // no question at all: the gate would pass while the gap remained.
+    for (const p of MACHINE_CATALOGUE) {
+      const keys = new Set(
+        p.modes.flatMap((m) => modeFields(m).map(({ field }) => field.key)),
+      );
+      for (const q of p.openQuestions) {
+        for (const b of q.blocks) {
+          // "*" holds the whole profile; "@"-prefixed targets are
+          // profile-level (e.g. the FrequencyContract), not field keys.
+          if (b === "*" || b.startsWith("@")) continue;
+          const bare = b.includes(".") ? b.split(".").pop()! : b;
+          expect(keys, `${p.profileId}: question ${q.id} blocks unknown '${b}'`).toContain(
+            bare,
+          );
+        }
+      }
+    }
+  });
+});
+
+describe("the two new gate limbs bite", () => {
+  /** An otherwise perfect, fully evidenced, active single-field profile. */
+  const perfect = (): MachineProfile => ({
+    profileId: "fixture:perfect",
+    version: 1,
+    family: "Silhouet-Tone",
+    manufacturer: "Fixture",
+    model: "Perfect",
+    availability: "active",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "p",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-12",
+        establishes: "A synthetic fully evidenced unit.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "active",
+        verification: "device-confirmed",
+        evidence: ["p"],
+        stages: [],
+        fields: [
+          {
+            key: "f",
+            nativeLabel: "F",
+            quantity: "duration",
+            unit: "s",
+            decimals: 1,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["p"],
+          },
+        ],
+      },
+    ],
+  });
+
+  it("the control passes, so the limbs below are not passing by accident", () => {
+    expect(catalogueIntegrity([perfect()])).toEqual([]);
+    expect(activationReadiness(perfect()).ready).toBe(true);
+  });
+
+  it("an unverified ASPECT on a required field blocks activation", () => {
+    const p = perfect();
+    p.modes[0]!.fields[0]!.unverified = ["decimals"];
+    const problems = catalogueIntegrity([p]).map((v) => v.problem).join(" ");
+    expect(problems).toContain("missing evidence for its decimals");
+  });
+
+  it("an unverified aspect on an OPTIONAL field does not block", () => {
+    const p = perfect();
+    p.modes[0]!.fields[0]!.optional = true;
+    p.modes[0]!.fields[0]!.unverified = ["decimals"];
+    expect(catalogueIntegrity([p])).toEqual([]);
+  });
+
+  it("a mode whose own identity is unverified blocks activation", () => {
+    const p = perfect();
+    p.modes[0]!.verification = "pending-evidence";
+    const problems = catalogueIntegrity([p]).map((v) => v.problem).join(" ");
+    expect(problems).toContain("its own identity is pending-evidence");
   });
 });
