@@ -2,9 +2,13 @@
 
 **Prepared:** 2026-10-12.
 
-**Status:** decision pending.
-- Nothing in this packet has been applied or merged, and no configuration or message has changed.
-- The hosted max is **0210** per `docs/production/migration-state.json`. That is a declaration: re-read it at step 1.
+**Status (2026-10-12): EXECUTED. Both migrations are applied; neither PR is merged.**
+- `0211` was applied at about 19:40Z from #827 `481e60c6` (DEC-1).
+- `0212` was applied at about 22:00Z from #832 **`7116c668`**, not `ba8fc505`. Under DEC-2 it waited for a clean exact-head Codex review; two ledger-only findings moved the head, and the SQL is byte-identical.
+- The authoritative apply records are `docs/production/migration-ledger.md` and `docs/production/migration-state.json`, now hosted max **0212**. This packet is kept as the pre-apply plan; its heads, CI and evidence below are as of preparation.
+- Exceptions retained, none of them green: the shepherd is UNKNOWN (`read_failed`); the `verify-production` FAIL is the two accepted historical payment alerts; its INCOMPLETE is the missing Upstash env.
+- One post-apply effect of `0211` is a rare public-booking consent-stamp race that skips one confirmation SMS. It is fixed app-side in #827 (`a4e6f017`), unmerged, and had 0 occurrences when this was written.
+- Nothing was merged or configured, and no message was sent.
 
 **Scope:** two migrations, applied one at a time, each from its own reviewed head. Both PRs stay **unmerged** through D1.
 

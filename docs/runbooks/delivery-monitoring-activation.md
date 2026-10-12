@@ -10,7 +10,7 @@
 | #849 | DELIVERY-VISIBILITY-03: booking confirmation ledgering | none |
 | #865 | DELIVERY-VISIBILITY-04: cancellation and postcare ledgering, "client says they didn't receive it" | `0221` |
 
-**Status (2026-10-12):** nothing below has been done. No migration is applied, nothing is merged or configured, and no message has been sent.
+**Status (2026-10-12):** `0211` and `0212` are **applied** to production, migration-first (D1; see [delivery-d1-release-packet.md](./delivery-d1-release-packet.md) and the migration ledger). Nothing else below has been done. No PR is merged, nothing is configured, no message has been sent, and `0215`/`0221` are not applied.
 
 Every step that touches production needs the operator's explicit approval **at that step**:
 - a migration apply;
