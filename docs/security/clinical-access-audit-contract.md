@@ -3,8 +3,10 @@
 > **Status: PROPOSAL.**
 > - Needs agreement with the RBAC / owner-console lane (#830 role matrix,
 >   #838/#850/#852), and Sam's decisions on the open questions in §6.
-> - No schema exists yet. Migration number **0219** is *requested*, not taken
->   (census below).
+> - No schema exists yet, and **no migration number is held**. 0219 was
+>   requested and then withdrawn; see the census below.
+> - **Shape agreed in principle with the RBAC lane (ops01), 2026-10-12.**
+>   The agreed points are recorded in §7.
 > - This does not establish HIPAA compliance.
 
 Today Hone audits clinical **changes**: `clinical_audit_events` records only
@@ -62,7 +64,7 @@ details, note text, file names, search strings, IP addresses or user agents.
 | `studio_id` | uuid, FK `studios` | Tenant boundary |
 | `actor_kind` | `owner`, `practitioner`, `receptionist`, `platform_support`, `platform_admin`, `system` | From the #830 fixed roles, resolved server-side, never from the browser |
 | `actor_user_id` | uuid (`auth.users`) | Attributable to a person; null only for `system` |
-| `actor_membership_id` | uuid, nullable | `practitioners.id` or `studio_receptionists.id`, so a role change stays attributable |
+| `actor_practitioner_id`, `actor_receptionist_id` | uuid, nullable, **typed** | Composite same-studio FKs (the 0174 pattern, as in the RBAC lane's 0220 audit columns), with a CHECK tying each `actor_kind` to exactly one column. A role change stays attributable |
 | `action` | `view_client_record`, `view_intake`, `view_clinical_notes`, `view_session`, `view_photo` (signing), `print_clinical_notes`, `export_records`, `search_clinical` | Closed enum; adding a value is a contract change |
 | `client_id` | uuid, nullable | The subject |
 | `target_type`, `target_id` | text enum, uuid | e.g. `session`, `clinical_note`, `treatment_image` |
@@ -107,7 +109,7 @@ grants back only what is needed.
 ## 5. Proposed slicing
 
 1. **Contract agreed** (this document, with the RBAC lane).
-2. **0219** (requested): table, enum checks, append-only trigger, and
+2. **Migration (number to be claimed at the time, ≥ 0221):** table, enum checks, append-only trigger, and
    `record_clinical_access`, with grants pinned by
    `tests/security/clinical-rpc-grant-guard.test.ts`. Real-role DB tests:
    - a member writes no row directly;
@@ -130,11 +132,27 @@ grants back only what is needed.
 6. Is search an audited "view" (results reveal clinical facts), or only
    opening a result?
 
+## 7. Agreed with the RBAC / owner-console lane (2026-10-12)
+
+| Item | Agreement |
+|---|---|
+| Shape | Fine as proposed, with **typed** actor FKs (above) instead of one untyped id |
+| Receptionists | Denied every clinical table by construction (0216: no `practitioners` row, so `is_studio_member` is false). A receptionist `view_*` event is therefore impossible. **Denied attempts are not recorded in V1** |
+| Q1 direct API | **B1, incremental**: clinical notes, intake answers and photos first. The read and its event commit in one definer transaction. **B3 with documented sign-off** covers tables not yet moved. B2 (pgaudit) is **not relied on**: it is unverified on hosted Supabase and records SQL, not the actor or membership |
+| Q3 failure | **Fail closed** under B1. Any remaining app-level hook on a direct read can only **alert** |
+| Q6 search | A search that returns clinical content (note or intake snippets) is `search_clinical`; a search over name or phone is not |
+| Permissions | No new permission engine. In code, use the fixed role map `ROLE_CAPABILITIES` in `lib/auth/capabilities.ts` (#852) |
+| Owner console | Do **not** mount anything on #851 yet; it is read-only today |
+| **Product authority (Sam)** | **Q2**: RBAC lane recommends the full log on the platform/support path (§4), with an owner-scoped "who accessed your clients' records" projection later. **Q4**: recommends owner-only for V1 |
+
 ## Migration census (2026-10-12)
 
 - **Production repository maximum:** `0210`; hosted maximum `0210`, per
   `docs/production/migration-state.json`.
 - **Claimed by open PRs:** 0211 (#827/#831), 0212 (#831/#832), 0213 (#831),
   0214 (#833), 0215 (#843), 0216 (#838), 0217 (#844), 0218 (#850).
-- **Next free: 0219**, requested for G-13. No file is created until the
-  contract and the allocation are confirmed.
+- **Also claimed in #824 comments** (missed by a PR-file-only census):
+  **0219** (DB/WAIT, G1 queue position) and **0220** (STUDIO-READY-02c,
+  receptionist scheduling).
+- **G-13 holds no number.** Re-derive from PR heads *and* #824 claims at
+  claim time; currently that is expected to be ≥ 0221.

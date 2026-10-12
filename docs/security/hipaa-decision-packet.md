@@ -275,7 +275,7 @@ deployed; neither depends on a decision above):
 - G-12 isolated restore drill: #848.
 - G-13 clinical access audit: contract proposed in
   [clinical-access-audit-contract.md](./clinical-access-audit-contract.md);
-  migration 0219 requested.
+  shape agreed in principle with the RBAC lane; no migration number held (≥ 0221 at claim time).
 
 **Consequence for Friday (2026-10-16).** Several of these depend on vendor
 turnaround that this packet cannot vouch for. Unless each gate is met and
