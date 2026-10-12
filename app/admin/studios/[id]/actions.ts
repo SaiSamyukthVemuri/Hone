@@ -126,6 +126,8 @@ export async function recordSmsRegistrationAction(
       action: "sms_registration_recorded",
       targetType: "studio",
       targetId: studioId,
+      // The audit view and its studio filter read studio_id (Codex P2 4248698146).
+      studioId,
       outcome: "blocked",
     });
     return { ok: false, error: "Not authorized." };
@@ -142,6 +144,7 @@ export async function recordSmsRegistrationAction(
       action: "sms_registration_recorded",
       targetType: "studio",
       targetId: studioId,
+      studioId,
       outcome: "failed",
     });
     return { ok: false, result: "missing_sender", error: "Reload the page: the studio's sender could not be confirmed." };
@@ -157,6 +160,7 @@ export async function recordSmsRegistrationAction(
       action: "sms_registration_recorded",
       targetType: "studio",
       targetId: studioId,
+      studioId,
       outcome: "failed",
     });
     return {
@@ -189,6 +193,7 @@ export async function recordSmsRegistrationAction(
     action: "sms_registration_recorded",
     targetType: "studio",
     targetId: studioId,
+    studioId,
     outcome: result === "recorded" ? "succeeded" : "failed",
   });
   revalidatePath(`/admin/studios/${studioId}`);

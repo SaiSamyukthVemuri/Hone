@@ -14,7 +14,12 @@ vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc 
 vi.mock("@/lib/admin", () => ({ isAdmin: () => true }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://example.test" }));
 vi.mock("@/lib/email/send-welcome", () => ({ deliverWelcomeEmail: vi.fn() }));
-vi.mock("@/lib/audit/admin-actions", () => ({ logAdminAction: vi.fn(async () => undefined) }));
+const audit = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
+vi.mock("@/lib/audit/admin-actions", () => ({
+  logAdminAction: vi.fn(async (input: Record<string, unknown>) => {
+    audit.calls.push(input);
+  }),
+}));
 
 import { recordSmsRegistrationFormAction } from "@/app/admin/studios/[id]/actions";
 
@@ -29,6 +34,7 @@ const valid = { expected_sender_id: SENDER, expected_phone_number: "+12125550123
 
 beforeEach(() => {
   rpc.mockReset();
+  audit.calls.length = 0;
 });
 
 describe("recordSmsRegistrationFormAction", () => {
@@ -71,5 +77,16 @@ describe("recordSmsRegistrationFormAction", () => {
       expect(await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, expected_phone_number: n }))).toMatchObject({ ok: false, result: "unsupported_number" });
     }
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("every audit event carries the studio, on every path (Codex P2 4248698146)", async () => {
+    rpc.mockResolvedValue({ data: [{ result: "recorded", registration_id: "r", kind: "us_10dlc" }], error: null });
+    await recordSmsRegistrationFormAction(STUDIO, null, form(valid));
+    rpc.mockResolvedValue({ data: [{ result: "sender_changed", registration_id: null, kind: null }], error: null });
+    await recordSmsRegistrationFormAction(STUDIO, null, form(valid));
+    await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, expected_sender_id: "" }));
+    await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, expected_phone_number: "" }));
+    expect(audit.calls).toHaveLength(4);
+    for (const call of audit.calls) expect(call).toMatchObject({ action: "sms_registration_recorded", studioId: STUDIO, targetId: STUDIO });
   });
 });
