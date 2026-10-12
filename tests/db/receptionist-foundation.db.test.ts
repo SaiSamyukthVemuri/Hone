@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
+import { adminQuery, adminTx, asRole, asUser, closePool } from "./helpers/harness";
 import {
   dropSynthStudio,
   seedSynthStudioA,
@@ -534,5 +534,43 @@ describe("STUDIO-READY-02a: membership lifecycle and the dual-membership guard",
       X.practitioners = X.practitioners.filter((p) => p.practitionerId !== prId);
       await adminQuery(`delete from public.practitioners where id = $1`, [prId]);
     }
+  });
+});
+
+describe("STUDIO-READY-02a: lock order (Codex P2 4243829833)", () => {
+  it("reactivation takes the membership lock BEFORE the row lock, so it serializes with add_studio_receptionist instead of deadlocking", async () => {
+    // Inactive first, so set_studio_receptionist_active(true) has work to do.
+    expect(
+      (await adminQuery(`select public.set_studio_receptionist_active($1, $2, $3, false) as r`, [
+        S.studioId,
+        owner().practitionerId,
+        receptionistId,
+      ])).rows[0].r,
+    ).toBe("updated");
+
+    // Session A does what add_studio_receptionist does: the membership lock,
+    // then the row lock. Session B reactivates in between. In the old order,
+    // B held the row and waited for the advisory lock while A waited for the
+    // row: a cycle PostgreSQL breaks with 40P01.
+    const a = await adminTx(async (q) => {
+      await q(`set local lock_timeout = '5s'`);
+      await q(`select public.studio_membership_kind_lock($1, $2)`, [S.studioId, receptionistUserId]);
+      const b = adminQuery(`select public.set_studio_receptionist_active($1, $2, $3, true) as r`, [
+        S.studioId,
+        owner().practitionerId,
+        receptionistId,
+      ]).then(
+        (r) => ({ ok: true as const, r: r.rows[0].r as string }),
+        (e) => ({ ok: false as const, code: errCode(e) }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const row = await q(`select active from public.studio_receptionists where id = $1 for update`, [receptionistId]);
+      return { b, activeWhileHeld: row.rows[0].active as boolean };
+    });
+
+    // B had not touched the row while A held the membership lock...
+    expect(a.activeWhileHeld).toBe(false);
+    // ...and once A committed, B ran to completion: no deadlock, no abort.
+    expect(await a.b).toEqual({ ok: true, r: "updated" });
   });
 });

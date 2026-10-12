@@ -479,7 +479,8 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
-  v_row public.studio_receptionists%rowtype;
+  v_row       public.studio_receptionists%rowtype;
+  v_lock_user uuid;
 begin
   if not exists (
     select 1 from public.practitioners pr
@@ -494,12 +495,33 @@ begin
     raise exception 'invalid_active' using errcode = '22004';
   end if;
 
+  -- LOCK ORDER: the membership-kind advisory lock BEFORE the row lock, exactly
+  -- as add_studio_receptionist takes them. Locking the row first would let a
+  -- concurrent reactivation through add_studio_receptionist (advisory, then
+  -- row) and this command (row, then the guard trigger's advisory) deadlock
+  -- (40P01) instead of serializing. The user id is read unlocked only to name
+  -- the lock, and the locked read below re-checks everything.
+  select sr.user_id into v_lock_user
+    from public.studio_receptionists sr
+   where sr.id = p_receptionist_id and sr.studio_id = p_studio_id;
+  if not found then
+    return 'not_found';
+  end if;
+  if v_lock_user is not null then
+    perform public.studio_membership_kind_lock(p_studio_id, v_lock_user);
+  end if;
+
   select * into v_row
     from public.studio_receptionists sr
    where sr.id = p_receptionist_id and sr.studio_id = p_studio_id
    for update;
   if not found then
     return 'not_found';
+  end if;
+  if v_row.user_id is distinct from v_lock_user then
+    -- The membership changed between the two reads, so the lock taken above
+    -- may not be the one the guard needs. Refuse rather than lock out of order.
+    raise exception 'receptionist_changed_concurrently' using errcode = '40001';
   end if;
   if v_row.active = p_active then
     return 'no_change';
