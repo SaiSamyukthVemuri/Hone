@@ -103,6 +103,18 @@ Gating order (PR #158 clarifies what the client sees in each state; PR #170 adds
 
 The practitioner-side `PaymentMethodCard` on the client profile mirrors the same five states with practitioner-actionable copy so Chloe can read out exactly what to ask the client to do next. The new branches added by PR #170 are `AuthorizationOutOfDateBlock` (no active card) and `AuthorizationOutOfDateWarning` (alongside an active card).
 
+**Stripe Customer identity is opaque ids only (HIPAA-READY-01 G-09, #828).**
+- The card-on-file Customer created on the studio's connected account
+  carries `description: "Hone studio <id> / client <id>"` and the metadata
+  `hone_studio_id`, `hone_client_id` and `hone_source`.
+- It carries **no** client name, email or phone. The former
+  `hone_client_name` key had no reader anywhere: no reconciliation, receipt
+  or webhook path, checked across production and every PAY-CCY branch. The
+  portal action no longer selects the name.
+- Customers created earlier keep their old metadata. A backfill would be a
+  live Stripe write and needs explicit authorization.
+- Pinned by `tests/lib/stripe/setup-intent-no-client-identity.test.ts`.
+
 The shared helper `lib/consent/current-card-authorization.ts:getCardAuthorizationStatus` is the single source of truth for "is the signature current?". It compares `client_consent_signatures.template_version` (snapshot from migration 0057) to the live template's current `version`. The same helper is used by `createCardSetupIntentAction`; the `lib/billing/manual-fee-eligibility.ts` helper performs the same comparison inline; the PR #172 session payment eligibility helper `lib/billing/session-payment-eligibility.ts:getSessionPaymentEligibility` calls the same helper directly. See [docs/05 §Current-version signature gate (PR #170)](./05_CONSENT_AND_FORMS.md#current-version-signature-gate-pr-170).
 
 ## 4b. Session payment prepare flow (PR #172, test mode only)

@@ -57,13 +57,9 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
   clientId: string;
   stripeAccountId: string;
   stripeLivemode: boolean;
-  // Client-facing description fields. Passed to Stripe via the
-  // metadata + name fields so the connected-account customer is
-  // identifiable. We deliberately do NOT pass email here for new
-  // customers; the RPC requires normalized_email on the clients
-  // row, but reusing it on the Stripe customer is a privacy /
-  // duplicate-customer call we defer until needed.
-  clientName: string;
+  // No client name, email or phone goes to Stripe (HIPAA-READY-01 G-09,
+  // #828). The connected-account customer is identified by opaque Hone ids
+  // only; reconciliation resolves the client through Hone's own rows.
 }): Promise<StripeCustomerResolution> {
   const { admin, studioId, clientId, stripeAccountId, stripeLivemode } = params;
 
@@ -117,9 +113,9 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
   }
 
   // Step 2: Stripe Customer create on the connected account, keyed
-  // by the RPC's idempotency key. Description / metadata help an
-  // operator triage the connected-account dashboard; no card-touching
-  // information is sent.
+  // by the RPC's idempotency key. Description / metadata carry opaque
+  // ids only, enough to triage the connected-account dashboard against
+  // Hone. No card-touching information and no client name are sent.
   const stripe = getStripe();
   let stripeCustomerId: string;
   try {
@@ -129,7 +125,6 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
         metadata: {
           hone_studio_id: studioId,
           hone_client_id: clientId,
-          hone_client_name: params.clientName.slice(0, 200),
           hone_source: "portal_card_on_file",
         },
       },
