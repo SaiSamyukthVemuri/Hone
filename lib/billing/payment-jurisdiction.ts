@@ -31,6 +31,26 @@ export function parseJurisdiction(row: {
   return null;
 }
 
+/** A stored attempt's currency, or null when it is not one Hone charges in. */
+export function parsePaymentCurrency(value: unknown): PaymentCurrency | null {
+  return value === "cad" || value === "usd" ? value : null;
+}
+
+/**
+ * "$120.00 CAD" / "$120.00 USD": an amount with the currency it was PREPARED
+ * in, for every surface that confirms or reports a charge. An unknown currency
+ * is said so, never assumed Canadian.
+ */
+export function formatMoneyWithCurrency(
+  cents: number,
+  currency: PaymentCurrency | null,
+): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  const amount = `${sign}$${Math.trunc(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
+  return `${amount} ${currency ? currencyLabel(currency) : "(currency unknown)"}`;
+}
+
 /** "CAD" / "USD": how money is labelled to people. */
 export function currencyLabel(currency: PaymentCurrency): "CAD" | "USD" {
   return currency === "usd" ? "USD" : "CAD";
