@@ -63,6 +63,55 @@ function logError(event: string, fields: Record<string, unknown>): void {
   console.error(JSON.stringify({ event, ...fields, timestamp: new Date().toISOString() }));
 }
 
+type BoundedBody =
+  | { kind: "ok"; text: string }
+  | { kind: "too_large"; declared: boolean }
+  | { kind: "failed" };
+
+/**
+ * Reads the request body without ever holding more than `limit` bytes
+ * (Codex P2 4248920477). This is a public, unauthenticated endpoint, so the
+ * limit has to bound memory and read work, not just what gets verified:
+ *   - a declared Content-Length above the limit is refused before reading;
+ *   - the stream is counted as it arrives and cancelled the moment it passes
+ *     the limit, whatever (or whether) Content-Length was declared.
+ * The bytes are decoded as UTF-8 exactly as req.text() would, so the
+ * signature still covers the same string.
+ */
+async function readBoundedBody(req: Request, limit: number): Promise<BoundedBody> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null) {
+    const n = Number(declared);
+    if (Number.isFinite(n) && n > limit) return { kind: "too_large", declared: true };
+  }
+  if (!req.body) return { kind: "ok", text: "" };
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel().catch(() => undefined);
+        return { kind: "too_large", declared: false };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { kind: "failed" };
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    bytes.set(c, offset);
+    offset += c.byteLength;
+  }
+  return { kind: "ok", text: new TextDecoder("utf-8").decode(bytes) };
+}
+
 export async function POST(req: Request): Promise<Response> {
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   if (!secret) {
@@ -72,17 +121,16 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  let rawBody: string;
-  try {
-    rawBody = await req.text();
-  } catch {
+  const body = await readBoundedBody(req, MAX_BODY_BYTES);
+  if (body.kind === "too_large") {
+    logError("resend_webhook_body_too_large", { declared: body.declared });
+    return NextResponse.json({ ok: false }, { status: 413 });
+  }
+  if (body.kind === "failed") {
     logError("resend_webhook_body_read_failed", {});
     return NextResponse.json({ ok: false }, { status: 400 });
   }
-  if (Buffer.byteLength(rawBody, "utf8") > MAX_BODY_BYTES) {
-    logError("resend_webhook_body_too_large", {});
-    return NextResponse.json({ ok: false }, { status: 413 });
-  }
+  const rawBody = body.text;
 
   const verdict = verifyResendWebhookSignature({
     secret,
