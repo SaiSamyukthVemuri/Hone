@@ -154,7 +154,7 @@ const admin = {
     // `create_public_appointment` stays for EXISTING clients, unchanged.
     if (
       fn === "create_public_appointment" ||
-      (fn === "create_public_appointment_for_new_client" && args.p_entry_id == null)
+      (fn === "create_public_appointment_for_new_client_v2" && args.p_entry_id == null)
     ) {
       if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       return {
@@ -175,7 +175,7 @@ const admin = {
     // WAIT-03. The invitation path's commit command. `scenario.bookingResult`
     // still drives it, mapped onto 0195's vocabulary, so every scenario these
     // tests set up behaves identically to before the binding.
-    if (fn === "create_public_appointment_for_new_client" && args.p_entry_id != null) {
+    if (fn === "create_public_appointment_for_new_client_v2" && args.p_entry_id != null) {
       if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       const created = scenario.bookingResult === "created";
       return {
@@ -297,7 +297,7 @@ const APPOINTMENT_COMMANDS = [
   // covers both the ordinary and the invited path. Naming only one would make
   // this read "did not book" for a journey that plainly did.
   "create_public_appointment",
-  "create_public_appointment_for_new_client",
+  "create_public_appointment_for_new_client_v2",
 ];
 const bookIndex = () => rpcCalls.findIndex((c) => APPOINTMENT_COMMANDS.includes(c));
 const booked = () => bookIndex() > -1;
