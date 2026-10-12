@@ -2,6 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
+  SmsRegistrationSection,
+  type AdminRegistrationRow,
+} from "./SmsRegistrationSection";
+import {
   loadStudioPaymentStatus,
   type StudioModeRow,
 } from "@/lib/payments/admin-payment-status";
@@ -177,6 +181,13 @@ export default async function AdminStudioPage({
   // PR B: per-studio payment status: capability/status/counts only, both
   // modes, redacted account suffix. Read via the shared admin helper.
   const payments = await loadStudioPaymentStatus(createAdminClient(), id);
+  // SMS-SENDER-REG-01: the LIVE sender's recorded US registration evidence
+  // (0217). A released number's rows are its history and never appear as the
+  // current number's state (Codex P2 4244011188).
+  const registrations = await createAdminClient().rpc(
+    "list_live_studio_sms_sender_registrations",
+    { p_studio_id: id },
+  );
 
   const inviteLabel =
     studio.owner_invite_status === "accepted"
@@ -329,6 +340,12 @@ export default async function AdminStudioPage({
           </div>
         )}
       </section>
+
+      <SmsRegistrationSection
+        studioId={id}
+        rows={(registrations.data ?? []) as AdminRegistrationRow[]}
+        loadError={Boolean(registrations.error)}
+      />
 
       <section className="flex flex-wrap gap-4 text-sm">
         <Link href="/admin" className="underline">

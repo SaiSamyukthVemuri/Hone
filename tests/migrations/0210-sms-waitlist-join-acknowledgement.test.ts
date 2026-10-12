@@ -48,6 +48,7 @@ function definition(sql: string, fn: string): string {
 describe("0210 sits correctly in the migration sequence", () => {
   it("is no longer the repository maximum", () => {
     // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
+<<<<<<< HEAD
     // `isRepoMax`, and that claim now lives in the current max's own test.
 <<<<<<< HEAD
     // It reached this file from 0209's test when production, carrying WAIT
@@ -64,6 +65,14 @@ describe("0210 sits correctly in the migration sequence", () => {
       above.every((v) => Number(v) > Number(VERSION)),
       "versionsAbove returned a version at or below its own",
     ).toBe(true);
+=======
+    // `isRepoMax`. On this branch it left for 0217's own test
+    // (SMS-SENDER-REG-01); 0211-0216 are other lanes' pending migrations.
+    expect(isRepoMax(VERSION)).toBe(false);
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this migration").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
+>>>>>>> 9dd18252611d93be6ae3c694bf6f8dabda7094ed
   });
 
   it("is allocated exactly once", () => {
