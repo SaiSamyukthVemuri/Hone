@@ -4,10 +4,11 @@ import { useActionState } from "react";
 import {
   adoptSenderNumberAction,
   provisionSenderNumberAction,
+  releaseSenderClaimAction,
   searchSenderNumbersAction,
   type SenderControlResult,
 } from "./sender-control-actions";
-import { DEMO_ADOPTION_INVENTORY } from "@/lib/sms/sender-controls-demo";
+import type { DemoAdoptionInventory } from "@/lib/sms/sender-controls-demo";
 import type { SearchResult } from "@/lib/sms/sender-controls";
 
 // SMS-SENDER-CONTROL-01 (#824): rendered only when the page's gate is open,
@@ -17,10 +18,19 @@ import type { SearchResult } from "@/lib/sms/sender-controls";
 
 const field = "rounded border px-2 py-1";
 
-export function SmsSenderControls() {
+export function SmsSenderControls({
+  inventory,
+  canRelease,
+}: {
+  /** This studio's own fake account inventory (lib/sms/sender-controls-demo.ts). */
+  inventory: DemoAdoptionInventory;
+  /** The studio's sender is in `error`: offer "choose a different number". The server decides. */
+  canRelease: boolean;
+}) {
   const [search, searchAction, searching] = useActionState<SearchResult | null, FormData>(searchSenderNumbersAction, null);
   const [provision, provisionAction, provisioning] = useActionState<SenderControlResult | null, FormData>(provisionSenderNumberAction, null);
   const [adopt, adoptAction, adopting] = useActionState<SenderControlResult | null, FormData>(adoptSenderNumberAction, null);
+  const [release, releaseAction, releasing] = useActionState<SenderControlResult | null, FormData>(releaseSenderClaimAction, null);
 
   return (
     <div data-testid="sms-sender-controls" className="rounded-lg border border-dashed border-amber-400 p-5">
@@ -62,12 +72,24 @@ export function SmsSenderControls() {
       )}
       {provision && <p role="status" className={`mt-2 text-sm ${provision.ok ? "text-emerald-800" : "text-red-700"}`}>{provision.message}</p>}
 
+      {canRelease && (
+        <form action={releaseAction} className="mt-4 text-sm" data-testid="sms-sender-release">
+          <p className="text-neutral-600 dark:text-neutral-400">
+            The last setup attempt did not finish. If it failed before a number was bought, you can release it and choose a different number.
+          </p>
+          <button type="submit" disabled={releasing} className="mt-2 rounded-md border px-3 py-1">
+            Choose a different number
+          </button>
+          {release && <p role="status" className={`mt-2 ${release.ok ? "text-emerald-800" : "text-red-700"}`}>{release.message}</p>}
+        </form>
+      )}
+
       <details className="mt-4 text-sm">
         <summary>Use a number the studio already has (support-assisted)</summary>
         <p className="mt-2 text-xs text-amber-800 dark:text-amber-300" data-testid="sms-sender-demo-inventory">
-          Fake provider: the demo account owns {DEMO_ADOPTION_INVENTORY.numbers.CA.phoneNumber} (Canada) and{" "}
-          {DEMO_ADOPTION_INVENTORY.numbers.US.phoneNumber} (United States), both in messaging service{" "}
-          {DEMO_ADOPTION_INVENTORY.messagingServiceSid}. The number must match the country chosen.
+          Fake provider: the demo account owns {inventory.numbers.CA.phoneNumber} (Canada) and{" "}
+          {inventory.numbers.US.phoneNumber} (United States), both in messaging service{" "}
+          {inventory.messagingServiceSid}. The number must match the country chosen.
         </p>
         <form action={adoptAction} className="mt-2 flex flex-wrap items-end gap-2">
           <label className="flex flex-col">

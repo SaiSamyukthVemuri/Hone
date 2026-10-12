@@ -2,9 +2,9 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { liveProvisioningArmed, FakeSmsProvisioningProvider } from "./provider";
 import { classifyNanpNumber } from "./nanp";
-import { DEMO_ADOPTION_INVENTORY } from "./sender-controls-demo";
+import { demoAdoptionInventory } from "./sender-controls-demo";
 
-export { DEMO_ADOPTION_INVENTORY };
+export { demoAdoptionInventory };
 import type { SmsProvisioningProvider, AvailableNumberCandidate } from "./provider/types";
 import {
   provisionStudioSmsSender,
@@ -37,6 +37,8 @@ import { inboundReaches } from "./inbound-routing";
 //   * the deployment is PRODUCTION (VERCEL_ENV=production): with live unarmed
 //     the resolver returns the FAKE there too, so an unguarded control would
 //     write a fake "active" sender into the production database. Refused.
+//   * the deployment is ANY OTHER HOSTED Vercel environment (preview): previews
+//     use the production database. Refused (Codex P1 4251747841).
 //
 // The provider the operations use is therefore always the fake, and it is
 // passed in explicitly rather than resolved, so nothing here can reach the
@@ -54,13 +56,18 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 export type SenderControlsGate =
   | { open: true; mode: "fake" }
-  | { open: false; reason: "not_enabled" | "live_provisioning_armed" | "production" };
+  | { open: false; reason: "not_enabled" | "live_provisioning_armed" | "production" | "hosted_deployment" };
 
 export function senderControlsGate(
   env: Env = process.env,
   liveArmed: () => boolean = liveProvisioningArmed,
 ): SenderControlsGate {
   if (env.VERCEL_ENV === "production") return { open: false, reason: "production" };
+  // PREVIEWS TOO (Codex P1 4251747841): Vercel previews run against the
+  // PRODUCTION database (docs/08), so a fake sender written there would be a
+  // fake "active" production record. Only an unhosted run (no VERCEL_ENV) or
+  // Vercel's local development environment may open these controls.
+  if (env.VERCEL_ENV && env.VERCEL_ENV !== "development") return { open: false, reason: "hosted_deployment" };
   if (liveArmed()) return { open: false, reason: "live_provisioning_armed" };
   if (env[SENDER_CONTROLS_ENV] !== "fake") return { open: false, reason: "not_enabled" };
   return { open: true, mode: "fake" };
@@ -110,6 +117,8 @@ export type PreClaimRefusal = {
     | "number_association_unavailable"
     | "service_webhooks_mismatch"
     | "inbound_routing_unknown"
+    | "resource_already_recorded"
+    | "recorded_check_unavailable"
     | "ownership_unverified";
   uncertain: boolean;
 };
@@ -132,20 +141,26 @@ export function areaCodeMatchesCountry(areaCode: string, country: SenderCountry)
 const controlsFakes = new Map<string, FakeSmsProvisioningProvider>();
 
 /**
- * The seeded fake for one webhook base (its URLs are part of the seed, built
- * by the same rule as everything Hone configures).
+ * The seeded fake for ONE studio and one webhook base: that studio's own demo
+ * numbers and Messaging Service (Codex P2 4251747847), wired to the URLs built
+ * by the same rule as everything Hone configures.
  */
-export function senderControlsFakeProvider(appOrigin: string, env: Env = process.env): FakeSmsProvisioningProvider {
+export function senderControlsFakeProvider(
+  appOrigin: string,
+  studioId: string,
+  env: Env = process.env,
+): FakeSmsProvisioningProvider {
   const u = urls(appOrigin, env) ?? { inbound: null, status: null };
-  const key = `${u.inbound}|${u.status}`;
+  const key = `${studioId}|${u.inbound}|${u.status}`;
   let fake = controlsFakes.get(key);
   if (!fake) {
-    const { CA, US } = DEMO_ADOPTION_INVENTORY.numbers;
+    const inv = demoAdoptionInventory(studioId);
+    const { CA, US } = inv.numbers;
     fake = new FakeSmsProvisioningProvider({
       preOwnedNumbers: { [CA.phoneNumber]: CA.phoneNumberSid, [US.phoneNumber]: US.phoneNumberSid },
       accountServices: [
         {
-          sid: DEMO_ADOPTION_INVENTORY.messagingServiceSid,
+          sid: inv.messagingServiceSid,
           numbers: [CA.phoneNumber, US.phoneNumber],
           inboundUrl: u.inbound,
           statusUrl: u.status,
@@ -216,10 +231,36 @@ function urls(appOrigin: string, env: Env = process.env): { inbound: string; sta
 export type WebhookBaseRefusal = { ok: false; result: "refused"; reason: "webhook_base_unusable" };
 const WEBHOOK_BASE_UNUSABLE: WebhookBaseRefusal = { ok: false, result: "refused", reason: "webhook_base_unusable" };
 
+/**
+ * Is this number (or Messaging Service) already recorded on ANOTHER studio's
+ * sender row? (This studio's own claim on it is its own retry.)
+ * 0191's unique indexes would refuse the finalize AFTER a write-once claim;
+ * asking first (0226 studio_sms_resource_recorded, a read) refuses before it.
+ * Null = the database did not answer: the caller treats that as uncertain.
+ */
+async function resourceRecorded(
+  admin: SupabaseClient,
+  studioId: string,
+  phoneNumber: string,
+  messagingServiceSid: string | null,
+): Promise<boolean | null> {
+  try {
+    const { data, error } = await admin.rpc("studio_sms_resource_recorded", {
+      p_studio_id: studioId,
+      p_phone_number: phoneNumber,
+      p_messaging_service_sid: messagingServiceSid,
+    });
+    if (error || typeof data !== "boolean") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 export async function runSenderProvision(
   deps: SenderControlsDeps,
   input: { studioId: string; actorUserId: string; country: string; areaCode: string | null; phoneNumber: string },
-): Promise<ProvisionOutcome | CountryRefusal | WebhookBaseRefusal> {
+): Promise<ProvisionOutcome | CountryRefusal | WebhookBaseRefusal | PreClaimRefusal> {
   if (!isSenderCountry(input.country)) return { ok: false, result: "refused", reason: "invalid_input" };
   // Before any claim: the number, and any area code, are the chosen country's.
   if (
@@ -230,6 +271,12 @@ export async function runSenderProvision(
   }
   const u = urls(deps.appOrigin, deps.env);
   if (!u) return WEBHOOK_BASE_UNUSABLE;
+  // A number another studio already holds is refused BEFORE the write-once
+  // claim, so an ordinary stale search result cannot wedge setup
+  // (Codex P2 4251989009); 0226's release covers what slips past this.
+  const recorded = await resourceRecorded(deps.admin, input.studioId, input.phoneNumber, null);
+  if (recorded === null) return { ok: false, result: "refused", reason: "recorded_check_unavailable", uncertain: true };
+  if (recorded) return { ok: false, result: "refused", reason: "resource_already_recorded", uncertain: false };
   return provisionStudioSmsSender({
     store: createProvisioningStore(deps.admin),
     provider: deps.provider,
@@ -272,12 +319,18 @@ export async function runSenderAdoption(
     reason,
     uncertain,
   });
+  // Already recorded on any sender row (this or another studio): the finalize
+  // would hit 0191's uniqueness after a write-once claim (Codex P2 4251747847).
+  const recorded = await resourceRecorded(deps.admin, input.studioId, input.phoneNumber, input.messagingServiceSid);
+  if (recorded === null) return refuse("recorded_check_unavailable", true);
+  if (recorded) return refuse("resource_already_recorded", false);
   const owned = await deps.provider.lookupOwnedNumber({
     phoneNumber: input.phoneNumber,
     expectedMessagingServiceSid: input.messagingServiceSid,
   });
   if (!owned.ok) return refuse("ownership_unverified", true);
-  const { phoneNumberSid, phoneNumber: reported, association, numberSmsUrl } = owned.facts;
+  const { phoneNumberSid, phoneNumber: reported, association, numberSmsUrl, numberSmsMethod, numberSmsApplicationSid } =
+    owned.facts;
   if (!phoneNumberSid) return refuse("number_not_owned_by_account", false);
   if (reported !== input.phoneNumber) return refuse("provider_number_mismatch", false);
   switch (association.kind) {
@@ -300,8 +353,11 @@ export async function runSenderAdoption(
   const inbound = inboundReaches(
     {
       serviceInboundUrl: config.config.inboundRequestUrl,
+      serviceInboundMethod: config.config.inboundMethod,
       useInboundWebhookOnNumber: config.config.useInboundWebhookOnNumber,
       numberSmsUrl,
+      numberSmsMethod,
+      numberSmsApplicationSid,
     },
     u.inbound,
   );
@@ -323,4 +379,87 @@ export async function runSenderAdoption(
     testDestination: deps.testDestination,
     testBody: "Hone provisioning test.",
   });
+}
+
+// ---------------------------------------------------------------------------
+// RELEASE AND CHOOSE AGAIN (Codex P2 4251989009)
+// ---------------------------------------------------------------------------
+// For a claim that failed DEFINITIVELY BEFORE ANY PURCHASE (0226 decides which:
+// error, no recorded resource, last error number_no_longer_available or
+// provider_resource_mismatch), the owner may release it and choose another
+// number. The database alone cannot prove nothing was bought -- a purchase
+// whose answer was lost is recorded nowhere until reconciled -- so between the
+// two database calls the PROVIDER is asked (a read, lookupResourcesByClaim)
+// what exists under the claim key. Anything found, or no complete answer,
+// refuses: only a retry, which reconciles first, may continue that claim.
+
+export type ReleaseOutcome =
+  | { ok: true; result: "released"; senderId: string }
+  | {
+      ok: false;
+      result: "refused";
+      reason:
+        | "invalid_input"
+        | "not_a_member"
+        | "not_owner"
+        | "no_live_sender"
+        | "not_releasable"
+        | "sender_changed"
+        | "resources_found"
+        | "ownership_unverified"
+        | "store_unavailable";
+      uncertain: boolean;
+    };
+
+export async function runSenderRelease(
+  deps: Pick<SenderControlsDeps, "admin" | "provider">,
+  input: { studioId: string; actorUserId: string },
+): Promise<ReleaseOutcome> {
+  const refuse = (reason: Extract<ReleaseOutcome, { ok: false }>["reason"], uncertain = false): ReleaseOutcome => ({
+    ok: false,
+    result: "refused",
+    reason,
+    uncertain,
+  });
+
+  // 1. Is the studio's live claim releasable, and what is its key?
+  let row: { result?: string; sender_id?: string | null; claim_key?: string | null } | null = null;
+  try {
+    const { data, error } = await deps.admin.rpc("get_releasable_studio_sms_claim", {
+      p_studio_id: input.studioId,
+      p_actor_user_id: input.actorUserId,
+    });
+    if (error) return refuse("store_unavailable", true);
+    row = (Array.isArray(data) ? data[0] : null) ?? null;
+  } catch {
+    return refuse("store_unavailable", true);
+  }
+  if (!row?.result) return refuse("store_unavailable", true);
+  if (row.result !== "releasable" || !row.sender_id || !row.claim_key) {
+    const known = ["invalid_input", "not_a_member", "not_owner", "no_live_sender", "not_releasable"] as const;
+    return refuse((known as readonly string[]).includes(row.result) ? (row.result as (typeof known)[number]) : "not_releasable");
+  }
+
+  // 2. The provider: does ANYTHING exist under this claim? A read.
+  const found = await deps.provider.lookupResourcesByClaim(row.claim_key);
+  if (!found.ok) return refuse("ownership_unverified", true);
+  const f = found.found;
+  if (f.phoneNumberSid || f.phoneNumber || f.messagingServiceSid) return refuse("resources_found");
+
+  // 3. Release: compare-and-set on the sender and key, re-checked under lock.
+  try {
+    const { data, error } = await deps.admin.rpc("release_unpurchased_studio_sms_claim", {
+      p_studio_id: input.studioId,
+      p_actor_user_id: input.actorUserId,
+      p_expected_sender_id: row.sender_id,
+      p_claim_key: row.claim_key,
+    });
+    if (error) return refuse("store_unavailable", true);
+    if (data === "released") return { ok: true, result: "released", senderId: row.sender_id };
+    const known = ["invalid_input", "not_a_member", "not_owner", "no_live_sender", "not_releasable", "sender_changed"] as const;
+    return refuse((known as readonly string[]).includes(String(data)) ? (data as (typeof known)[number]) : "not_releasable");
+  } catch {
+    // The command may have run: never claim it did not.
+    return refuse("store_unavailable", true);
+  }
 }

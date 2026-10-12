@@ -86,7 +86,7 @@ describe("adoption cannot purchase, create or move", () => {
     expect(ADOPTION).toContain("provider_configuration_required");
     // The EFFECTIVE inbound URL is compared (use_inbound_webhook_on_number aware),
     // and anything but an exact "yes" is a mismatch.
-    expect(ADOPTION).toMatch(/inboundReaches\(\s*\{\s*serviceInboundUrl: current\.config\.inboundRequestUrl,\s*useInboundWebhookOnNumber: current\.config\.useInboundWebhookOnNumber,/);
+    expect(ADOPTION).toMatch(/inboundReaches\(\s*\{\s*serviceInboundUrl: current\.config\.inboundRequestUrl,\s*serviceInboundMethod: current\.config\.inboundMethod,\s*useInboundWebhookOnNumber: current\.config\.useInboundWebhookOnNumber,\s*numberSmsUrl: facts\.facts\.numberSmsUrl,\s*numberSmsMethod: facts\.facts\.numberSmsMethod,\s*numberSmsApplicationSid: facts\.facts\.numberSmsApplicationSid,/);
     expect(ADOPTION).toMatch(/input\.requiredInboundWebhookUrl,\s*\);\s*if \(inbound !== "yes"\)/);
     expect(ADOPTION).toMatch(/statusCallbackUrl !== input\.requiredStatusCallbackUrl/);
   });

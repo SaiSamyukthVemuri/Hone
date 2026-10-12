@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness";
+import { adminQuery, asRole, closePool, seedMember, seedStudio } from "./helpers/harness";
 import { E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "@/e2e/helpers/local-env";
 import { FakeSmsProvisioningProvider } from "@/lib/sms/provider/fake-provider";
 
@@ -206,11 +206,12 @@ describe("the number belongs to the country chosen", () => {
 describe("the controls' seeded fake account", () => {
   it("adopts the demo Canadian number through the panel's own fake, without a purchase", async () => {
     const s = await seedStudio("ctl-demo-adopt");
-    const provider = controls.senderControlsFakeProvider(ORIGIN);
-    const { CA } = controls.DEMO_ADOPTION_INVENTORY.numbers;
+    const provider = controls.senderControlsFakeProvider(ORIGIN, s.studioId);
+    const inv = controls.demoAdoptionInventory(s.studioId);
+    const { CA } = inv.numbers;
     const out = await controls.runSenderAdoption(deps(provider), {
       studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: CA.phoneNumber,
-      messagingServiceSid: controls.DEMO_ADOPTION_INVENTORY.messagingServiceSid,
+      messagingServiceSid: inv.messagingServiceSid,
     });
     expect(out).toMatchObject({ ok: true, result: "adopted", phoneNumber: CA.phoneNumber });
     expect(provider.calls.purchase).toBe(0);
@@ -219,10 +220,10 @@ describe("the controls' seeded fake account", () => {
 
   it("the demo numbers are never offered for purchase, and another studio can still provision", async () => {
     const s = await seedStudio("ctl-demo-provision");
-    const provider = controls.senderControlsFakeProvider(ORIGIN);
+    const provider = controls.senderControlsFakeProvider(ORIGIN, s.studioId);
     const found = await controls.runSenderSearch({ provider }, { country: "US", areaCode: "212" });
     const numbers = found.ok ? found.candidates.map((c) => c.phoneNumber) : [];
-    expect(numbers).not.toContain(controls.DEMO_ADOPTION_INVENTORY.numbers.US.phoneNumber);
+    expect(numbers).not.toContain(controls.demoAdoptionInventory(s.studioId).numbers.US.phoneNumber);
     // Other tests' separate fakes share this database: pick a number no live sender holds.
     const held = new Set(
       (await adminQuery("select phone_number from public.studio_sms_senders where phone_number is not null")).rows.map((r) => r.phone_number as string),
@@ -304,8 +305,15 @@ describe("adoption is checked before the claim: refused, uncertain, failed", () 
 // route (lib/sms/inbound-routing.ts), against the database.
 describe("webhook base and effective inbound routing", () => {
   const BASE = "https://hooks.hone.example";
-  const MG = "MG" + "e4".repeat(16);
-  const NUMBER = "+14165550166";
+  // Fresh resources per test: a resource another studio already recorded is
+  // (correctly) refused before the claim, so tests must not share one.
+  let MG = "";
+  let NUMBER = "";
+  beforeEach(() => {
+    const r = () => Math.floor(Math.random() * 16 ** 8).toString(16).padStart(8, "0");
+    MG = `MG${r()}${r()}${r()}${r()}`;
+    NUMBER = `+1416555${String(2000 + Math.floor(Math.random() * 7999))}`;
+  });
   const svc = (over: Record<string, unknown>) => ({
     sid: MG, numbers: [NUMBER], inboundUrl: `${ORIGIN}/api/twilio/inbound-sms`, statusUrl: `${ORIGIN}/api/twilio/message-status`, ...over,
   });
@@ -377,5 +385,150 @@ describe("webhook base and effective inbound routing", () => {
   it("flag OFF and no service inbound URL (inbound disabled): refused", async () => {
     const s = await seedStudio("ctl-inbound-disabled");
     expect(await adopt(fake(svc({ inboundUrl: null })), s.studioId, s.userId)).toMatchObject({ ok: false, result: "refused", reason: "service_webhooks_mismatch" });
+  });
+});
+
+// Codex P2 4251747847: every studio has its OWN demo account, and a resource
+// already recorded anywhere is refused before the claim.
+describe("per-studio demo inventory and the recorded-resource check", () => {
+  it("two studios get different demo services, from a line range search never offers", async () => {
+    const a = await seedStudio("ctl-inv-a");
+    const b = await seedStudio("ctl-inv-b");
+    const ia = controls.demoAdoptionInventory(a.studioId);
+    const ib = controls.demoAdoptionInventory(b.studioId);
+    expect(ia.messagingServiceSid).not.toBe(ib.messagingServiceSid);
+    for (const n of [ia.numbers.CA.phoneNumber, ia.numbers.US.phoneNumber]) {
+      const line = Number(n.slice(-4));
+      expect(line).toBeGreaterThanOrEqual(150);
+      expect(line).toBeLessThanOrEqual(199);
+    }
+    // Both adopt their own demo number.
+    for (const s of [a, b]) {
+      const inv = controls.demoAdoptionInventory(s.studioId);
+      const out = await controls.runSenderAdoption(deps(controls.senderControlsFakeProvider(ORIGIN, s.studioId)), {
+        studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: inv.numbers.CA.phoneNumber, messagingServiceSid: inv.messagingServiceSid,
+      });
+      // Two studios may hash to the same 555-01xx line: the second is then refused BEFORE a claim.
+      if (!out.ok) expect(out).toEqual({ ok: false, result: "refused", reason: "resource_already_recorded", uncertain: false });
+      else expect(out).toMatchObject({ ok: true, result: "adopted" });
+    }
+  });
+
+  it("a number or service already recorded for another studio is refused before any claim", async () => {
+    const owner = await seedStudio("ctl-rec-owner");
+    const other = await seedStudio("ctl-rec-other");
+    const r = () => Math.floor(Math.random() * 16 ** 8).toString(16).padStart(8, "0");
+    const mg = `MG${r()}${r()}${r()}${r()}`;
+    const ca = `+1416555${String(2000 + Math.floor(Math.random() * 7999))}`;
+    const us = `+1212555${String(2000 + Math.floor(Math.random() * 7999))}`;
+    const provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [ca]: "PN" + r() + r() + r() + r(), [us]: "PN" + r() + r() + r() + r() },
+      accountServices: [{ sid: mg, numbers: [ca, us], inboundUrl: `${ORIGIN}/api/twilio/inbound-sms`, statusUrl: `${ORIGIN}/api/twilio/message-status` }],
+    });
+    expect(await controls.runSenderAdoption(deps(provider), {
+      studioId: owner.studioId, actorUserId: owner.userId, country: "CA", phoneNumber: ca, messagingServiceSid: mg,
+    })).toMatchObject({ ok: true, result: "adopted" });
+    // The SAME account's service, offered to another studio.
+    const out = await controls.runSenderAdoption(deps(provider), {
+      studioId: other.studioId, actorUserId: other.userId, country: "US", phoneNumber: us, messagingServiceSid: mg,
+    });
+    expect(out).toEqual({ ok: false, result: "refused", reason: "resource_already_recorded", uncertain: false });
+    expect(await liveSenders(other.studioId)).toEqual([]);
+  });
+});
+
+// Codex P2 4251989009: a definitive pre-purchase failure can be released and
+// the owner can choose again; anything that might own a number cannot.
+describe("release and choose again", () => {
+  const status = async (studioId: string) =>
+    (await adminQuery("select status, claimed_phone_number from public.studio_sms_senders where studio_id = $1 order by created_at", [studioId])).rows;
+
+  /** Wedge a studio the way a stale search does: claim a number, then fail it as no longer available. */
+  async function wedge(label: string, code = "number_no_longer_available") {
+    const s = await seedStudio(label);
+    const number = `+1905555${String(Math.floor(1000 + Math.random() * 8999))}`;
+    const { rows } = await adminQuery(
+      "select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)",
+      [s.studioId, s.userId, number],
+    );
+    await adminQuery("select public.fail_studio_sms_provisioning($1, $2, $3, $4)", [s.studioId, rows[0].claim_key, rows[0].lease_generation, code]);
+    return { s, number, claimKey: rows[0].claim_key as string };
+  }
+
+  it("STALE SEARCH: the number another studio bought is refused before the claim; nothing is wedged", async () => {
+    const a = await seedStudio("ctl-stale-a");
+    const b = await seedStudio("ctl-stale-b");
+    const provider = new FakeSmsProvisioningProvider();
+    const found = await controls.runSenderSearch({ provider }, { country: "CA", areaCode: "613" });
+    const pick = found.ok ? found.candidates[0].phoneNumber : "";
+    expect(await controls.runSenderProvision(deps(provider), { studioId: a.studioId, actorUserId: a.userId, country: "CA", areaCode: "613", phoneNumber: pick }))
+      .toMatchObject({ ok: true, result: "activated" });
+    expect(await controls.runSenderProvision(deps(provider), { studioId: b.studioId, actorUserId: b.userId, country: "CA", areaCode: "613", phoneNumber: pick }))
+      .toEqual({ ok: false, result: "refused", reason: "resource_already_recorded", uncertain: false });
+    expect(await status(b.studioId)).toEqual([]);
+  });
+
+  it("RELEASED: a claim parked as number_no_longer_available, which owns nothing, is released and the owner provisions another number", async () => {
+    const { s, number } = await wedge("ctl-release-ok");
+    const provider = new FakeSmsProvisioningProvider();
+    // Before: any other number is refused against the write-once claim.
+    expect(await controls.runSenderProvision(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "905", phoneNumber: "+19055550120" }))
+      .toMatchObject({ ok: false, result: "refused", reason: "number_mismatch" });
+    expect(await controls.runSenderRelease(deps(provider), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: true, result: "released" });
+    expect(await status(s.studioId)).toEqual([{ status: "released", claimed_phone_number: number }]);
+    expect(await controls.runSenderProvision(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "905", phoneNumber: "+19055550121" }))
+      .toMatchObject({ ok: true, result: "activated" });
+  });
+
+  it("REFUSED: not an owner, nothing live, an active sender, or an ambiguous (timeout) failure; nothing changes", async () => {
+    const provider = new FakeSmsProvisioningProvider();
+    const { s } = await wedge("ctl-release-member");
+    const member = await seedMember(s, "rel-member");
+    expect(await controls.runSenderRelease(deps(provider), { studioId: s.studioId, actorUserId: member.userId })).toEqual({ ok: false, result: "refused", reason: "not_owner", uncertain: false });
+    const none = await seedStudio("ctl-release-none");
+    expect(await controls.runSenderRelease(deps(provider), { studioId: none.studioId, actorUserId: none.userId })).toMatchObject({ ok: false, reason: "no_live_sender" });
+    const { s: t } = await wedge("ctl-release-timeout", "provider_timeout");
+    expect(await controls.runSenderRelease(deps(provider), { studioId: t.studioId, actorUserId: t.userId })).toEqual({ ok: false, result: "refused", reason: "not_releasable", uncertain: false });
+    expect((await status(t.studioId)).map((r) => r.status)).toEqual(["error"]);
+  });
+
+  it("REFUSED: the provider holds something under the claim key (a purchase whose answer was lost)", async () => {
+    const { s, number, claimKey } = await wedge("ctl-release-owned");
+    const provider = new FakeSmsProvisioningProvider();
+    // The fake bought it under this key; the database never heard.
+    await provider.purchaseNumber({ claimKey, phoneNumber: number });
+    expect(await controls.runSenderRelease(deps(provider), { studioId: s.studioId, actorUserId: s.userId })).toEqual({ ok: false, result: "refused", reason: "resources_found", uncertain: false });
+    expect((await status(s.studioId)).map((r) => r.status)).toEqual(["error"]);
+  });
+
+  it("UNCERTAIN: the provider cannot answer; nothing is released", async () => {
+    const { s } = await wedge("ctl-release-uncertain");
+    const provider = new FakeSmsProvisioningProvider({ lookupFails: "provider_timeout" });
+    expect(await controls.runSenderRelease(deps(provider), { studioId: s.studioId, actorUserId: s.userId })).toEqual({ ok: false, result: "refused", reason: "ownership_unverified", uncertain: true });
+    expect((await status(s.studioId)).map((r) => r.status)).toEqual(["error"]);
+  });
+
+  it("the release COMMAND re-checks eligibility itself: a timeout-coded claim is refused even with the right sender and key", async () => {
+    const { s, claimKey } = await wedge("ctl-release-cmd-timeout", "provider_timeout");
+    const sender = (await adminQuery("select id from public.studio_sms_senders where studio_id = $1", [s.studioId])).rows[0].id;
+    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4) r", [s.studioId, s.userId, sender, claimKey])).rows[0].r).toBe("not_releasable");
+    expect((await status(s.studioId)).map((r) => r.status)).toEqual(["error"]);
+  });
+
+  it("the release command is compare-and-set, owner-derived and service_role only", async () => {
+    const { s, claimKey } = await wedge("ctl-release-cas");
+    const sender = (await adminQuery("select id from public.studio_sms_senders where studio_id = $1", [s.studioId])).rows[0].id;
+    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4) r", [s.studioId, s.userId, sender, "hone-sms-" + "0".repeat(32)])).rows[0].r).toBe("sender_changed");
+    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4) r", [s.studioId, s.userId, "00000000-0000-4000-8000-000000000000", claimKey])).rows[0].r).toBe("sender_changed");
+    for (const role of ["anon", "authenticated"] as const) {
+      for (const sql of [
+        "select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4)",
+        "select * from public.get_releasable_studio_sms_claim($1, $2)",
+        "select public.studio_sms_resource_recorded($1, $2, null)",
+      ]) {
+        const params = sql.includes("release_") ? [s.studioId, s.userId, sender, claimKey] : sql.includes("releasable") ? [s.studioId, s.userId] : [s.studioId, "+19055550100"];
+        await expect(asRole(role, (q) => q(sql, params)), `${role} ${sql.slice(7, 40)}`).rejects.toMatchObject({ code: "42501" });
+      }
+    }
   });
 });

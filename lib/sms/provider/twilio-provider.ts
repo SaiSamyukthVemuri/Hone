@@ -298,6 +298,10 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     // "not reported" (undefined), an empty one is "none" (null).
     const numberSmsUrl: string | null | undefined =
       rec && "sms_url" in rec ? asString(rec.sms_url) : undefined;
+    const numberSmsMethod: string | null | undefined =
+      rec && "sms_method" in rec ? asString(rec.sms_method) : undefined;
+    const numberSmsApplicationSid: string | null | undefined =
+      rec && "sms_application_sid" in rec ? asString(rec.sms_application_sid) : undefined;
 
     // 2. THE CENSUS. Every service, every page, then one membership probe each.
     const services: string[] = [];
@@ -308,7 +312,7 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
       if (pagesFetched >= SERVICE_PAGE_LIMIT) {
         return {
           ok: true,
-          facts: { phoneNumberSid: sid, phoneNumber: num, numberSmsUrl, association: { kind: "unavailable", reason: "service_page_limit" } },
+          facts: { phoneNumberSid: sid, phoneNumber: num, numberSmsUrl, numberSmsMethod, numberSmsApplicationSid, association: { kind: "unavailable", reason: "service_page_limit" } },
         };
       }
       pagesFetched += 1;
@@ -327,7 +331,7 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
       if (!list) {
         return {
           ok: true,
-          facts: { phoneNumberSid: sid, phoneNumber: num, numberSmsUrl, association: { kind: "unavailable", reason: "service_page_unparseable" } },
+          facts: { phoneNumberSid: sid, phoneNumber: num, numberSmsUrl, numberSmsMethod, numberSmsApplicationSid, association: { kind: "unavailable", reason: "service_page_unparseable" } },
         };
       }
       for (const raw of list) {
@@ -347,6 +351,8 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
               phoneNumberSid: sid,
               phoneNumber: num,
               numberSmsUrl,
+              numberSmsMethod,
+              numberSmsApplicationSid,
               association: { kind: "unavailable", reason: "service_page_unparseable" },
             },
           };
@@ -365,7 +371,7 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
       } else {
         return {
           ok: true,
-          facts: { phoneNumberSid: sid, phoneNumber: num, numberSmsUrl, association: { kind: "unavailable", reason: "service_pagination_unreadable" } },
+          facts: { phoneNumberSid: sid, phoneNumber: num, numberSmsUrl, numberSmsMethod, numberSmsApplicationSid, association: { kind: "unavailable", reason: "service_pagination_unreadable" } },
         };
       }
     }
@@ -391,7 +397,7 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
 
     return {
       ok: true,
-      facts: { phoneNumberSid: sid, phoneNumber: num, numberSmsUrl, association: classifyAssociation(holders, input.expectedMessagingServiceSid) },
+      facts: { phoneNumberSid: sid, phoneNumber: num, numberSmsUrl, numberSmsMethod, numberSmsApplicationSid, association: classifyAssociation(holders, input.expectedMessagingServiceSid) },
     };
   },
 
@@ -422,6 +428,7 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
         statusCallbackUrl: asString(body.status_callback),
         // Absent or non-boolean is UNKNOWN (null), never false.
         useInboundWebhookOnNumber: asReportedBoolean(body.use_inbound_webhook_on_number),
+        inboundMethod: asString(body.inbound_method),
       },
     };
   },

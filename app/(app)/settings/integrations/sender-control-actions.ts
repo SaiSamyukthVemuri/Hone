@@ -7,6 +7,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import {
   runSenderAdoption,
   runSenderProvision,
+  runSenderRelease,
   runSenderSearch,
   senderControlsFakeProvider,
   senderControlsGate,
@@ -44,6 +45,7 @@ function refusal(reason: string, country: string): string {
     const name = country === "US" ? "a United States" : "a Canadian";
     return `That is not ${name} number. Choose a number in the country selected.`;
   }
+  if (reason === "resource_already_recorded") return "That number is already set up for a studio. Choose another number";
   if (reason === "webhook_base_unusable") return "Hone's webhook address is not configured, so no number can be set up here yet";
   return reason;
 }
@@ -60,7 +62,7 @@ export async function searchSenderNumbersAction(
   const ctx = await ownerContext();
   if (!ctx.ok) return { ok: false, reason: ctx.message };
   return runSenderSearch(
-    { provider: senderControlsFakeProvider(getRequiredAppOrigin()) },
+    { provider: senderControlsFakeProvider(getRequiredAppOrigin(), ctx.studioId) },
     { country: str(formData, "country"), areaCode: str(formData, "area_code") || null },
   );
 }
@@ -72,7 +74,7 @@ export async function provisionSenderNumberAction(
   const ctx = await ownerContext();
   if (!ctx.ok) return { ok: false, message: ctx.message };
   const out = await runSenderProvision(
-    { admin: createAdminClient(), provider: senderControlsFakeProvider(getRequiredAppOrigin()), appOrigin: getRequiredAppOrigin(), testDestination: FAKE_TEST_DESTINATION },
+    { admin: createAdminClient(), provider: senderControlsFakeProvider(getRequiredAppOrigin(), ctx.studioId), appOrigin: getRequiredAppOrigin(), testDestination: FAKE_TEST_DESTINATION },
     {
       studioId: ctx.studioId,
       actorUserId: ctx.actorUserId,
@@ -94,7 +96,7 @@ export async function adoptSenderNumberAction(
   const ctx = await ownerContext();
   if (!ctx.ok) return { ok: false, message: ctx.message };
   const out = await runSenderAdoption(
-    { admin: createAdminClient(), provider: senderControlsFakeProvider(getRequiredAppOrigin()), appOrigin: getRequiredAppOrigin(), testDestination: FAKE_TEST_DESTINATION },
+    { admin: createAdminClient(), provider: senderControlsFakeProvider(getRequiredAppOrigin(), ctx.studioId), appOrigin: getRequiredAppOrigin(), testDestination: FAKE_TEST_DESTINATION },
     {
       studioId: ctx.studioId,
       actorUserId: ctx.actorUserId,
@@ -115,4 +117,35 @@ export async function adoptSenderNumberAction(
               ? `Not adopted: ${refusal(String(out.reason), str(formData, "country"))}. Nothing was changed; check the number and messaging service and try again.`
               : `Not adopted: ${"reason" in out ? refusal(String(out.reason), str(formData, "country")) : out.result}.`,
       };
+}
+
+/**
+ * Release a claim that failed BEFORE any purchase, so the owner can choose
+ * another number (0226; Codex P2 4251989009). Refused, with nothing changed,
+ * whenever the claim might own something.
+ */
+export async function releaseSenderClaimAction(
+  _prev: SenderControlResult | null,
+  _formData: FormData,
+): Promise<SenderControlResult> {
+  const ctx = await ownerContext();
+  if (!ctx.ok) return { ok: false, message: ctx.message };
+  const out = await runSenderRelease(
+    { admin: createAdminClient(), provider: senderControlsFakeProvider(getRequiredAppOrigin(), ctx.studioId) },
+    { studioId: ctx.studioId, actorUserId: ctx.actorUserId },
+  );
+  revalidatePath("/settings/integrations");
+  if (out.ok) return { ok: true, message: "Released. Search again and choose a different number." };
+  const words: Record<string, string> = {
+    not_releasable: "This setup cannot be released here: it may own a number. Retry it, or contact Hone support.",
+    resources_found: "The provider holds something under this setup, so it is not released. Retry it to finish, or contact Hone support.",
+    no_live_sender: "There is nothing to release.",
+    sender_changed: "The setup changed while you were looking. Reload and try again.",
+  };
+  return {
+    ok: false,
+    message: out.uncertain
+      ? "Hone could not confirm this setup owns nothing, so nothing was released. Try again shortly."
+      : (words[out.reason] ?? `Not released: ${out.reason}.`),
+  };
 }

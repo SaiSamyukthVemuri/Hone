@@ -250,7 +250,7 @@ Settings → Integrations can show an owner **Set up a studio number** panel:
 - **Use this number:** provision the chosen number. This runs `provisionStudioSmsSender`, so it goes through the 0191 claim, fence, purchase, finalize and test.
 - **Adopt an existing number:** a support-assisted path through `adoptExistingStudioSmsSender`.
 
-**The gate.** The panel and every action open **only** when `HONE_SMS_SENDER_CONTROLS=fake`, and stay shut in either of these cases:
+**The gate.** The panel and every action open **only** when `HONE_SMS_SENDER_CONTROLS=fake` on an unhosted run (no `VERCEL_ENV`) or Vercel `development`. They stay shut on every hosted Vercel environment, including previews, which run against the production database, and in either of these cases:
 - in production (`VERCEL_ENV=production`), where the resolver would hand back the fake and could write a fake sender into production data;
 - whenever live provisioning is armed (`HONE_SMS_PROVISIONING_LIVE` plus credentials), where a click could buy a number.
 
@@ -258,7 +258,16 @@ Settings → Integrations can show an owner **Set up a studio number** panel:
 
 **One webhook base.** Every Twilio webhook URL Hone configures (provisioning) or requires (adoption) is built by `lib/sms/webhook-base.ts`: `TWILIO_WEBHOOK_BASE_URL` when set, else the app origin. The signature-verifying routes (`/api/twilio/inbound-sms`, `/api/twilio/message-status`) rebuild the signed URL through the same module. A configured URL therefore always verifies, and parity tests pin this.
 
-**Effective inbound route.** Adoption compares where inbound texts, STOP included, ACTUALLY go (`lib/sms/inbound-routing.ts`). Per Twilio's Services resource documentation (checked 2026-10-12), with `use_inbound_webhook_on_number` on, the number's own `sms_url` overrides the service's `inbound_request_url`. With it off and `inbound_request_url` null, inbound is disabled. `readMessagingServiceConfig` reports the flag, and an unreported flag is `null`. `lookupOwnedNumber` reports the number's `sms_url` from the record it already reads. An unreported flag or URL is UNKNOWN: a blocker, refused before the claim as `inbound_routing_unknown` (uncertain), never treated as false.
+**Release and choose again (migration 0226).** The panel offers "Choose a different number" when the sender is in `error`. The release proceeds only for a claim that provably owns nothing:
+- `get_releasable_studio_sms_claim` requires an owner actor, `error`, no recorded number, number SID, service SID or `provisioned_at`, and a last error of `number_no_longer_available` or `provider_resource_mismatch`;
+- the provider's read-only `lookupResourcesByClaim` must find nothing under the claim key;
+- `release_unpurchased_studio_sms_claim` then re-checks everything, compare-and-set on the sender and key, and goes error -> releasing -> released.
+
+A timeout, network or unavailable failure is never releasable; only a retry, which reconciles first, may continue it.
+
+Before any claim, a number or service already recorded for **another** studio is refused (`studio_sms_resource_recorded`), so a stale search result does not wedge setup. Each studio's demo account is its own: numbers from the 555-0150..0199 range (search offers 0100..0149) and its own service.
+
+**Effective inbound route.** Adoption compares where inbound texts, STOP included, ACTUALLY go (`lib/sms/inbound-routing.ts`). Per Twilio's Services resource documentation (checked 2026-10-12), with `use_inbound_webhook_on_number` on, the number's own `sms_url` overrides the service's `inbound_request_url`. With it off and `inbound_request_url` null, inbound is disabled. `readMessagingServiceConfig` reports the flag, and an unreported flag is `null`. `lookupOwnedNumber` reports the number's `sms_url` from the record it already reads. The number's `sms_method` must be POST, and a populated `sms_application_sid` (which makes Twilio ignore the number's URLs) is refused. The service's `inbound_method` must be POST too. An unreported flag, URL, method or application is UNKNOWN: a blocker, refused before the claim as `inbound_routing_unknown` (uncertain), never treated as false.
 
 **Adoption is checked before the claim.** The provider's read-only ownership lookup and messaging-service config read run BEFORE the durable claim. A number the account does not own, a number in another or no service, or a service not wired to Hone's webhooks is refused with nothing written (`uncertain: false`). An incomplete or failed provider answer is refused as `uncertain: true`, to retry later. Without this, a typo would claim a write-once number (0191), park it in `error`, and wedge the studio's setup. Only a submission that passes reaches the claim. A later failure there (for example its proof text) is reported as failed and never as active.
 

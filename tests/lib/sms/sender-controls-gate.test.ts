@@ -16,6 +16,14 @@ describe("senderControlsGate", () => {
     }
   });
 
+  it("stays shut on a Vercel PREVIEW, which uses the production database (Codex P1 4251747841)", () => {
+    for (const env of ["preview", "staging", "anything-hosted"]) {
+      expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake", VERCEL_ENV: env }, never), env).toEqual({ open: false, reason: "hosted_deployment" });
+    }
+    expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake", VERCEL_ENV: "development" }, never)).toEqual({ open: true, mode: "fake" });
+    expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake" }, never)).toEqual({ open: true, mode: "fake" });
+  });
+
   it("stays shut in production, whatever the flag says", () => {
     expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake", VERCEL_ENV: "production" }, never)).toEqual({ open: false, reason: "production" });
   });
@@ -31,7 +39,8 @@ describe("the actions can only reach the fake provider (source guard)", () => {
   const lib = strip(readFileSync("lib/sms/sender-controls.ts", "utf8"));
 
   it("the actions pass the controls' own seeded FAKE explicitly and never resolve a provider", () => {
-    expect(actions.match(/senderControlsFakeProvider\(getRequiredAppOrigin\(\)\)/g)).toHaveLength(3);
+    // Per studio (Codex P2 4251747847): every action, release included.
+    expect(actions.match(/senderControlsFakeProvider\(getRequiredAppOrigin\(\), ctx\.studioId\)/g)).toHaveLength(4);
     expect(lib).toMatch(/new FakeSmsProvisioningProvider\(\{/);
     for (const forbidden of ["resolveProvisioningProvider", "twilioProvisioningProvider", "twilio-provider"]) {
       expect(actions, forbidden).not.toContain(forbidden);
@@ -40,7 +49,7 @@ describe("the actions can only reach the fake provider (source guard)", () => {
   });
 
   it("every action checks the gate before anything else", () => {
-    for (const name of ["searchSenderNumbersAction", "provisionSenderNumberAction", "adoptSenderNumberAction"]) {
+    for (const name of ["searchSenderNumbersAction", "provisionSenderNumberAction", "adoptSenderNumberAction", "releaseSenderClaimAction"]) {
       const body = actions.slice(actions.indexOf(`export async function ${name}`));
       const firstAwait = body.indexOf("await ");
       expect(body.slice(firstAwait, firstAwait + 30), name).toContain("ownerContext()");
