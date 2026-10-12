@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { MARKETING_PAGES } from "@/lib/marketing/content";
+import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
 import {
   redactVercelAnalyticsUrl,
   redactVercelEvent,
@@ -50,17 +51,29 @@ describe("redactVercelAnalyticsUrl", () => {
     );
   });
 
-  it("drops every bearer-token route entirely", () => {
-    for (const p of [
-      "/portal/verify/tok_SYNTH_portal",
-      "/cancel/tok_SYNTH_cancel",
-      "/reschedule/tok_SYNTH_res",
-      "/manage/tok_SYNTH_manage",
-      "/intake/tok_SYNTH_intake",
-      "/calendar-feed/tok_SYNTH_feed.ics",
-    ]) {
-      expect(redactVercelAnalyticsUrl(`${HOST}${p}`)).toBeNull();
+  it("drops every route in the canonical bearer-token registry", () => {
+    // Derived from lib/security/token-routes.ts, so a new token route is
+    // covered without editing this test (Codex P1 on #842: /invitation).
+    expect(TOKEN_ROUTE_PREFIXES).toContain("/invitation");
+    for (const prefix of TOKEN_ROUTE_PREFIXES) {
+      for (const p of [prefix, `${prefix}/tok_SYNTH`, `${prefix}/tok_SYNTH/step/2`]) {
+        expect(redactVercelAnalyticsUrl(`${HOST}${p}`)).toBeNull();
+      }
     }
+  });
+
+  it("drops an all-letter invitation token (no digit to match on)", () => {
+    const letters = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl";
+    expect(redactVercelAnalyticsUrl(`${HOST}/invitation/${letters}`)).toBeNull();
+  });
+
+  it("redacts a 32+ character all-letter segment outside the token routes", () => {
+    const letters = "abcdefghijklmnopqrstuvwxyzabcdef";
+    expect(redactVercelAnalyticsUrl(`${HOST}/x/${letters}`)).toBe(`${HOST}/x/[token]`);
+    // Ordinary route words stay readable.
+    expect(redactVercelAnalyticsUrl(`${HOST}/settings/getting-started`)).toBe(
+      `${HOST}/settings/getting-started`,
+    );
   });
 
   it("drops an unparsable URL", () => {

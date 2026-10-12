@@ -9,7 +9,8 @@
 // next to appointment or treatment context is PHI in a covered studio's hands.
 //
 // The boundary is pure and fails closed:
-//   * an unparsable URL, or any bearer-token route, drops the event (null);
+//   * an unparsable URL, or any route in the canonical bearer-token registry
+//     (lib/security/token-routes.ts), drops the event (null);
 //   * the query string and fragment are dropped (they can carry ids, emails,
 //     return paths). Canonical marketing pages keep only the reviewed
 //     attribution params, via the same sanitizer PostHog uses;
@@ -20,17 +21,27 @@
 // untouched.
 
 import {
-  TOKEN_PATH_PREFIXES,
   isMarketingPath,
   sanitizeMarketingUrl,
 } from "@/lib/analytics/client-boundary";
+import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
 
 const UUID_SEGMENT =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DIGIT_SEGMENT = /^\d+$/;
-// Opaque, credential- or id-shaped: long, URL-safe, and containing a digit.
-// Ordinary route words ("charting-records", "getting-started") have no digit.
-const OPAQUE_SEGMENT = /^(?=.*\d)[A-Za-z0-9_-]{20,}$/;
+// Opaque, credential- or id-shaped: long and URL-safe, and either containing a
+// digit (20+ chars) or very long (32+ chars, which catches an all-letter token).
+// Ordinary route words ("charting-records", "getting-started") are shorter and
+// have no digit.
+const OPAQUE_SEGMENT = /^(?:(?=.*\d)[A-Za-z0-9_-]{20,}|[A-Za-z0-9_-]{32,})$/;
+
+/** True for any path under a bearer-token route family in the canonical
+ *  registry (lib/security/token-routes.ts), including the bare prefix. */
+function isTokenRoute(pathname: string): boolean {
+  return TOKEN_ROUTE_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
 
 function redactSegment(segment: string): string {
   if (UUID_SEGMENT.test(segment) || DIGIT_SEGMENT.test(segment)) return "[id]";
@@ -50,9 +61,7 @@ export function redactVercelAnalyticsUrl(raw: string): string | null {
   }
   const pathname = u.pathname;
 
-  if (TOKEN_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
-    return null;
-  }
+  if (isTokenRoute(pathname)) return null;
   if (isMarketingPath(pathname)) {
     return sanitizeMarketingUrl(`${u.origin}${pathname}${u.search}`);
   }
