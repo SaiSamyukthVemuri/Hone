@@ -80,7 +80,6 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
     resolvedCount === 0
       ? ""
       : ` ${resolvedCount} ${resolvedCount === 1 ? "problem was" : "problems were"} reported in the last 14 days and since resolved.`;
-  const emailEventsLive = Boolean(process.env.RESEND_WEBHOOK_SECRET);
 
   return (
     <section
@@ -99,10 +98,14 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
             : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"}. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
         </p>
         <p className="text-xs text-neutral-500">
-          Shows what the email and text providers report back.
-          {emailEventsLive
-            ? " Delivered means the client's mail server or carrier accepted it, not that it was read."
-            : " Email bounce reports are not switched on yet, so an email that bounces after sending will not appear here."}
+          {/* Never infers that bounce reporting is live: a stored signing secret is
+              not a configured, tested endpoint (Codex P2 4253217747), and the
+              owner session can read no receipt evidence. So the condition is
+              stated, true whether or not reporting is switched on. */}
+          Shows what the email and text providers report back. An email that bounces after sending
+          appears here only once Hone is receiving the email provider&apos;s delivery reports, so no
+          email problem listed does not prove every email arrived. Accepted or delivered means the
+          client&apos;s mail server or carrier took it, not that it was read.
         </p>
       </header>
 
