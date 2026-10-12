@@ -22,7 +22,11 @@ import {
   parseCadAmountToCents,
 } from "@/lib/billing/cad-amount";
 import { OWNER_ONLY_AMOUNT_ERROR } from "@/lib/billing/checkout-final-amount";
-import { currencyLabel, currencyName } from "@/lib/billing/payment-jurisdiction";
+import {
+  currencyLabel,
+  currencyName,
+  formatMoneyWithCurrency,
+} from "@/lib/billing/payment-jurisdiction";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   derivePaymentSummary,
@@ -160,6 +164,18 @@ type RefundAction = (formData: FormData) => Promise<RefundResult>;
 function formatCadFromCents(cents: number | null): string {
   if (cents == null) return "";
   return formatCents(cents);
+}
+
+// PAY-CCY-04 (Codex P2 4244957363). Every panel that shows a PREPARED attempt
+// names the currency that attempt was prepared in, from the attempt itself:
+// once preparation succeeds the labelled form is gone, and a US studio's
+// charge confirmation must still say USD.
+function formatAttemptMoney(
+  cents: number | null,
+  currency: SessionPaymentExistingAttemptSummary["currency"],
+): string {
+  if (cents == null) return "";
+  return formatMoneyWithCurrency(cents, currency);
 }
 
 // PR #174. Status labels reflect the persisted row's actual state
@@ -695,6 +711,7 @@ function ReadyPanel({
           headline: "Paid",
           tone: "paid",
           amountCents: attempt.amountCents,
+          currency: attempt.currency,
         }}
         subLine="Refresh to see the full receipt options."
       >
@@ -721,7 +738,7 @@ function ReadyPanel({
         }
       />
 
-      {runChargeVisible && (
+      {runChargeVisible && (attempt.currency !== null ? (
       <div
         data-testid="ready-charge-section"
         className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30"
@@ -731,7 +748,7 @@ function ReadyPanel({
         </p>
         <p className="text-xs text-amber-900 dark:text-amber-200">
           The client&apos;s saved card will be charged{" "}
-          {formatCadFromCents(attempt.amountCents)}.
+          {formatAttemptMoney(attempt.amountCents, attempt.currency)}.
         </p>
         {executeError && (
           <p className="text-xs text-red-700 dark:text-red-400" role="alert">
@@ -781,7 +798,7 @@ function ReadyPanel({
             {executePending
               ? "Running charge..."
               : confirmExecute
-                ? `Confirm: run charge (${formatCadFromCents(attempt.amountCents)})`
+                ? `Confirm: run charge (${formatAttemptMoney(attempt.amountCents, attempt.currency)})`
                 : "Run charge"}
           </button>
           {confirmExecute && !executePending && (
@@ -795,7 +812,19 @@ function ReadyPanel({
           )}
         </div>
       </div>
-      )}
+      ) : (
+        // PAY-CCY-04. No money-moving confirmation without the currency it
+        // moves in. 0214's CHECK makes this unreachable for a real row; if it
+        // is ever reached, the charge is withheld rather than shown unlabelled.
+        <p
+          data-testid="ready-charge-currency-unknown"
+          role="alert"
+          className="mt-3 text-xs text-red-700 dark:text-red-400"
+        >
+          This payment&apos;s currency could not be confirmed, so it cannot be
+          charged here. Refresh the page; if this persists, contact Hone support.
+        </p>
+      ))}
     </div>
   );
 }
@@ -877,7 +906,7 @@ function SucceededPanel({
               <>
                 Refunded <FormattedDateTime iso={attempt.refundedAt} />
                 {attempt.refundAmountCents != null
-                  ? ` · ${formatCadFromCents(attempt.refundAmountCents)}`
+                  ? ` · ${formatAttemptMoney(attempt.refundAmountCents, attempt.currency)}`
                   : ""}
               </>
             ) : (
@@ -1094,7 +1123,7 @@ function RefundSubPanel({
   // confirming equals the charge amount; partial refunds may
   // land in a future PR without changing the schema (the CHECK
   // refund_amount_cents <= amount_cents already allows it).
-  const refundAmountFormatted = formatCadFromCents(attempt.amountCents);
+  const refundAmountFormatted = formatAttemptMoney(attempt.amountCents, attempt.currency);
 
   return (
     <div className="mt-3 flex flex-col gap-2 rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-950">
@@ -1107,10 +1136,11 @@ function RefundSubPanel({
           <p className="font-medium">Refund succeeded.</p>
           <p className="mt-1">
             Amount refunded:{" "}
-            {formatCadFromCents(
+            {formatAttemptMoney(
               localRefunded?.refundAmountCents ??
                 attempt.refundAmountCents ??
                 attempt.amountCents,
+              attempt.currency,
             )}
           </p>
           {(localRefunded?.refundedAt ?? attempt.refundedAt) && (
@@ -1286,7 +1316,7 @@ function CancelledPanel({
     <div className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
       <p className="font-medium">Session payment cancelled.</p>
       <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
+        Amount: {formatAttemptMoney(attempt.amountCents, attempt.currency)}
         {" · "}
         Prepared: <FormattedDateTime iso={attempt.createdAt} />
       </p>
@@ -1313,7 +1343,7 @@ function BlockedAttemptPanel({
     <div className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
       <p className="font-medium">Session payment blocked.</p>
       <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
+        Amount: {formatAttemptMoney(attempt.amountCents, attempt.currency)}
         {" · "}
         Prepared: <FormattedDateTime iso={attempt.createdAt} />
       </p>
@@ -1336,7 +1366,7 @@ function UnknownStatusPanel({
     <div className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
       <p className="font-medium">Session payment status: {attempt.status}</p>
       <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
+        Amount: {formatAttemptMoney(attempt.amountCents, attempt.currency)}
         {" · "}
         Created: <FormattedDateTime iso={attempt.createdAt} />
       </p>
@@ -1656,7 +1686,7 @@ function AttemptHistory({
           <li key={a.id} className="flex flex-wrap items-center gap-2">
             <code className="text-[10px]">{a.id.slice(0, 8)}</code>
             <span>{STATUS_LABEL[a.status] ?? a.status}</span>
-            <span>{formatCadFromCents(a.amountCents)}</span>
+            <span>{formatAttemptMoney(a.amountCents, a.currency)}</span>
             <FormattedDateTime iso={a.createdAt} />
             {a.failureCode && (
               <span className="font-mono">code: {a.failureCode}</span>
