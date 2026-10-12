@@ -324,6 +324,13 @@ to the prospect.
 - **Sent after the response**, through the existing keyed Resend attempt
   (`sendOnceWithIdempotencyKey`), under the alert's `idempotency_key`
   (`lead-alert/<alert id>/<generation>`), identical on every retry of that generation.
+- **One key, one request.** The first attempt of a generation freezes the message it sends
+  (From, subject, HTML, text) and the SHA-256 of its recipient on the alert row
+  (`freeze_platform_lead_alert_message`, first writer wins under the current claim). Every
+  automatic retry sends those exact bytes, whatever changed in the renderer, origin or sender
+  since. If `LEAD_ALERT_EMAIL` changed mid-generation, the retry is not sent and the alert fails
+  as `recipient_changed`. The operator's **Retry** renders afresh under a new key. The frozen
+  message is cleared when the generation ends.
 - **Claim → send → settle.** One worker leases an alert (`FOR UPDATE SKIP LOCKED`, 120 s
   lease); only the current claim token may settle it. At most five attempts, backing off
   2 min, 10 min, 1 h, 6 h. A provider refusal the same request would meet again fails at

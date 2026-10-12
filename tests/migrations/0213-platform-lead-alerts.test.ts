@@ -39,6 +39,7 @@ const COMMANDS: ReadonlyArray<readonly [string, string]> = [
   ["record_platform_demo_request", "text, text, text, text, text, text, text, text"],
   ["record_platform_early_access_signup", "text"],
   ["claim_platform_lead_alert", "uuid, integer"],
+  ["freeze_platform_lead_alert_message", "uuid, uuid, jsonb, text"],
   ["settle_platform_lead_alert", "uuid, uuid, text, text, text, text"],
   ["expire_platform_lead_alerts", ""],
   ["record_platform_lead_alerts_unconfigured", "text, uuid"],
@@ -93,7 +94,7 @@ describe("0213 leaves every applied migration it relies on untouched", () => {
     expect(TOP_LEVEL.trim()).toMatch(/commit;$/);
   });
 
-  it("creates one table and defines exactly eight functions, all new", () => {
+  it("creates one table and defines exactly nine functions, all new", () => {
     expect([...TOP_LEVEL.matchAll(/create table (public\.\w+)/g)].map((m) => m[1])).toEqual([
       "public.platform_lead_alerts",
     ]);
@@ -203,7 +204,8 @@ describe("the commands", () => {
   it("no command takes or returns an address to send to", () => {
     for (const [fn] of COMMANDS) {
       const signature = definition(fn).split(/\b(language|as \$\$)/)[0];
-      expect(signature, fn).not.toMatch(/recipient|p_to\b|destination/);
+      // A recipient DIGEST (the frozen payload's check, Codex P2 4244387544) is not an address.
+      expect(signature, fn).not.toMatch(/recipient(?!_sha256\b)|p_to\b|destination/);
     }
   });
 });

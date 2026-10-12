@@ -32,6 +32,10 @@
 --      worker (FOR UPDATE SKIP LOCKED), or re-leases one whose worker's lease
 --      expired without settling (crash recovery). Each claim is one counted
 --      attempt; there are at most five.
+--   5a. freeze_platform_lead_alert_message(alert, claim, message, digest) --
+--      the FIRST attempt of a generation stores the exact message it sends
+--      (From, subject, HTML, text) and the SHA-256 of its recipient; every
+--      later attempt of that generation sends those bytes. See THE PAYLOAD.
 --   6. settle_platform_lead_alert(...) -- only the holder of the CURRENT claim
 --      token records the outcome: accepted (the provider ACCEPTED the message;
 --      this is not a delivery receipt), retry later (with backoff), or failed.
@@ -67,6 +71,17 @@
 -- the sweep's cadence; after that the alert is a visible failure, and only the
 -- operator's explicit retry, under a NEW key generation, can send it again.
 --
+-- THE PAYLOAD IS FROZEN PER GENERATION (Codex P2 4244387544). One key must
+-- always carry one request: the provider answers a different body under a
+-- used key with invalid_idempotent_request, a terminal refusal. So the first
+-- attempt of a generation freezes the message it sends, and every automatic
+-- retry of that generation re-sends it byte for byte, whatever has changed
+-- since in the renderer, the app origin or the sender address. Only the
+-- operator's explicit retry, under a NEW generation and key, renders afresh.
+-- The frozen message is cleared when its generation ends (accepted, failed or
+-- expired): it duplicates lead details and is needed only while a retry is
+-- possible.
+--
 -- NO CATCH-UP. Nothing here reads or alerts on an existing lead. Only a lead
 -- saved through one of the two commands has an alert, so the leads already in
 -- the tables, and any written another way, never generate email.
@@ -74,7 +89,11 @@
 -- THE RECIPIENT IS NOT HERE. No column holds an address and no command takes
 -- one: the application resolves the single operator recipient from server
 -- configuration, allowlisted against the admin allowlist, at send time. A
--- submitted address is lead DATA, never a destination.
+-- submitted address is lead DATA, never a destination. The frozen message
+-- keeps only the SHA-256 DIGEST of the recipient it was first sent to: a
+-- retry whose configured recipient no longer has that digest cannot be the
+-- same request, so it is not sent, and the alert fails as recipient_changed
+-- for the operator to retry under a new key.
 --
 -- DEPLOYMENT ORDER: migration first. The application that calls these
 -- commands is deployed after this migration; until then the deployed forms
@@ -118,6 +137,11 @@ create table public.platform_lead_alerts (
   last_error_code      text,
   last_error_at        timestamptz,
   last_provider_error  text,
+  -- THE PAYLOAD: what the current generation's first attempt sent, and the
+  -- digest of its recipient (never the address). Set once per generation by
+  -- freeze_platform_lead_alert_message; cleared when the generation ends.
+  frozen_message       jsonb,
+  frozen_recipient_sha256 text,
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now(),
 
@@ -153,13 +177,29 @@ create table public.platform_lead_alerts (
       'recipient_not_configured', 'recipient_not_allowlisted',
       'transport_not_configured', 'app_origin_not_configured',
       'provider_rejected', 'provider_unavailable', 'provider_timeout',
-      'provider_exception', 'render_failed', 'lease_expired', 'expired')),
+      'provider_exception', 'render_failed', 'recipient_changed',
+      'lease_expired', 'expired')),
   constraint platform_lead_alerts_error_at_ck
     check ((last_error_code is null) = (last_error_at is null)),
   constraint platform_lead_alerts_provider_error_ck
     check (last_provider_error is null or last_provider_error ~ '^[a-z_]{1,64}$'),
   constraint platform_lead_alerts_message_id_ck
-    check (provider_message_id is null or length(provider_message_id) between 1 and 200)
+    check (provider_message_id is null or length(provider_message_id) between 1 and 200),
+  -- Frozen together, only by an attempt, and only while a retry is possible.
+  constraint platform_lead_alerts_frozen_ck
+    check ((frozen_message is null) = (frozen_recipient_sha256 is null)
+           and (frozen_message is null
+                or (status in ('pending', 'sending') and attempt_count >= 1))),
+  constraint platform_lead_alerts_frozen_shape_ck
+    check (frozen_message is null
+           or (jsonb_typeof(frozen_message) = 'object'
+               and frozen_message - array['from', 'subject', 'html', 'text'] = '{}'::jsonb
+               and jsonb_typeof(frozen_message->'from') = 'string'
+               and jsonb_typeof(frozen_message->'subject') = 'string'
+               and jsonb_typeof(frozen_message->'html') = 'string'
+               and jsonb_typeof(frozen_message->'text') = 'string')),
+  constraint platform_lead_alerts_frozen_digest_ck
+    check (frozen_recipient_sha256 is null or frozen_recipient_sha256 ~ '^[0-9a-f]{64}$')
 );
 
 alter table public.platform_lead_alerts enable row level security;
@@ -320,7 +360,9 @@ create or replace function public.claim_platform_lead_alert(
   practice_type      text,
   practitioner_count text,
   current_tool       text,
-  has_notes          boolean
+  has_notes          boolean,
+  frozen_message     jsonb,
+  frozen_recipient_sha256 text
 )
 language plpgsql
 security definer
@@ -358,7 +400,7 @@ begin
     return query select 'none'::text, null::uuid, null::uuid, null::integer,
       null::text, null::text, null::uuid, null::timestamptz, null::text,
       null::text, null::text, null::text, null::text, null::text, null::text,
-      null::boolean;
+      null::boolean, null::jsonb, null::text;
     return;
   end if;
 
@@ -383,11 +425,72 @@ begin
            d.name, coalesce(d.email, w.email),
            coalesce(d.practice_name, w.practice_name), d.location,
            d.practice_type, d.practitioner_count, d.current_tool,
-           nullif(btrim(d.notes), '') is not null
+           nullif(btrim(d.notes), '') is not null,
+           a.frozen_message, a.frozen_recipient_sha256
       from public.platform_lead_alerts a
       left join public.demo_requests d on d.id = a.demo_request_id
       left join public.waitlist w on w.id = a.waitlist_id
      where a.id = v_id;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 5a. The frozen message
+-- ---------------------------------------------------------------------------
+-- FIRST WRITER WINS, under the CURRENT claim only. The first attempt of a
+-- generation stores the message it is about to send; if one is already
+-- stored (an earlier attempt of this generation froze it), that one is
+-- returned and the caller's is discarded, so a retry can never send other
+-- bytes under the key. A stale claim freezes nothing.
+create or replace function public.freeze_platform_lead_alert_message(
+  p_alert_id         uuid,
+  p_claim_token      uuid,
+  p_message          jsonb,
+  p_recipient_sha256 text
+) returns table (result text, message jsonb, recipient_sha256 text)
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+set lock_timeout = '5s'
+as $$
+declare
+  v_alert record;
+begin
+  if p_alert_id is null or p_claim_token is null or p_message is null
+     or jsonb_typeof(p_message) <> 'object'
+     or p_message - array['from', 'subject', 'html', 'text'] <> '{}'::jsonb
+     or jsonb_typeof(p_message->'from') is distinct from 'string'
+     or jsonb_typeof(p_message->'subject') is distinct from 'string'
+     or jsonb_typeof(p_message->'html') is distinct from 'string'
+     or jsonb_typeof(p_message->'text') is distinct from 'string'
+     or p_recipient_sha256 is null or p_recipient_sha256 !~ '^[0-9a-f]{64}$' then
+    return query select 'invalid_input'::text, null::jsonb, null::text;
+    return;
+  end if;
+
+  select a.status, a.claim_token, a.frozen_message, a.frozen_recipient_sha256
+    into v_alert
+    from public.platform_lead_alerts a
+   where a.id = p_alert_id
+     for update;
+  if not found then
+    return query select 'not_found'::text, null::jsonb, null::text;
+    return;
+  end if;
+  if v_alert.status <> 'sending' or v_alert.claim_token is distinct from p_claim_token then
+    return query select 'stale_claim'::text, null::jsonb, null::text;
+    return;
+  end if;
+  if v_alert.frozen_message is not null then
+    return query select 'existing'::text, v_alert.frozen_message, v_alert.frozen_recipient_sha256;
+    return;
+  end if;
+
+  update public.platform_lead_alerts a
+     set frozen_message          = p_message,
+         frozen_recipient_sha256 = p_recipient_sha256
+   where a.id = p_alert_id;
+  return query select 'frozen'::text, p_message, p_recipient_sha256;
 end;
 $$;
 
@@ -427,7 +530,7 @@ begin
        'recipient_not_configured', 'recipient_not_allowlisted',
        'transport_not_configured', 'app_origin_not_configured',
        'provider_rejected', 'provider_unavailable', 'provider_timeout',
-       'provider_exception', 'render_failed')) then
+       'provider_exception', 'render_failed', 'recipient_changed')) then
     return 'invalid_input';
   end if;
 
@@ -454,7 +557,9 @@ begin
            lease_expires_at     = null,
            last_error_code      = null,
            last_error_at        = null,
-           last_provider_error  = null
+           last_provider_error  = null,
+           frozen_message       = null,
+           frozen_recipient_sha256 = null
      where a.id = p_alert_id;
     return 'accepted';
   end if;
@@ -474,7 +579,9 @@ begin
            lease_expires_at     = null,
            last_error_code      = p_error_code,
            last_error_at        = v_now,
-           last_provider_error  = v_error
+           last_provider_error  = v_error,
+           frozen_message       = null,
+           frozen_recipient_sha256 = null
      where a.id = p_alert_id;
     return 'failed';
   end if;
@@ -525,7 +632,9 @@ begin
          lease_expires_at = null,
          last_error_code  = case when a.status = 'sending' then 'lease_expired'
                                  else 'expired' end,
-         last_error_at    = v_now
+         last_error_at    = v_now,
+         frozen_message   = null,
+         frozen_recipient_sha256 = null
    where (a.status = 'pending'
           and (coalesce(a.retry_requested_at, a.event_at) <= v_now - interval '72 hours'
                or a.first_attempted_at <= v_now - interval '20 hours'))
@@ -653,6 +762,12 @@ revoke execute on function public.claim_platform_lead_alert(uuid, integer) from 
 revoke execute on function public.claim_platform_lead_alert(uuid, integer) from service_role;
 grant execute on function public.claim_platform_lead_alert(uuid, integer) to service_role;
 
+revoke execute on function public.freeze_platform_lead_alert_message(uuid, uuid, jsonb, text) from public;
+revoke execute on function public.freeze_platform_lead_alert_message(uuid, uuid, jsonb, text) from anon;
+revoke execute on function public.freeze_platform_lead_alert_message(uuid, uuid, jsonb, text) from authenticated;
+revoke execute on function public.freeze_platform_lead_alert_message(uuid, uuid, jsonb, text) from service_role;
+grant execute on function public.freeze_platform_lead_alert_message(uuid, uuid, jsonb, text) to service_role;
+
 revoke execute on function public.settle_platform_lead_alert(uuid, uuid, text, text, text, text) from public;
 revoke execute on function public.settle_platform_lead_alert(uuid, uuid, text, text, text, text) from anon;
 revoke execute on function public.settle_platform_lead_alert(uuid, uuid, text, text, text, text) from authenticated;
@@ -692,6 +807,8 @@ comment on function public.record_platform_early_access_signup(text) is
   'LEAD-ALERT-01 (0213): saves an early-access signup and its operator alert intent in one transaction; an address already on the list returns duplicate and creates no alert. service_role only.';
 comment on function public.claim_platform_lead_alert(uuid, integer) is
   'LEAD-ALERT-01 (0213): leases one due or abandoned operator alert (SKIP LOCKED), counting one attempt (at most five, within 72 hours of the lead and 20 hours of the first attempt), and returns the lead fields the alert email needs (notes only as present/absent). service_role only.';
+comment on function public.freeze_platform_lead_alert_message(uuid, uuid, jsonb, text) is
+  'LEAD-ALERT-01 (0213): under the current claim, stores the message the first attempt of a generation sends (From, subject, HTML, text) and its recipient''s SHA-256 digest, or returns the one already stored, so every retry under one idempotency key is byte-identical. service_role only.';
 comment on function public.settle_platform_lead_alert(uuid, uuid, text, text, text, text) is
   'LEAD-ALERT-01 (0213): records an attempt''s outcome for the CURRENT claim token only (stale_claim otherwise): accepted, retry with backoff, or failed. service_role only.';
 comment on function public.expire_platform_lead_alerts() is

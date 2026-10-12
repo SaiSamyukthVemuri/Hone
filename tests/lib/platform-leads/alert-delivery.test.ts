@@ -18,6 +18,7 @@ vi.mock("@/lib/ops/alerts", () => ({
 import {
   deliverPlatformLeadAlert,
   leadAlertConfigurationStatus,
+  recipientDigest,
   settlementFor,
   sweepPlatformLeadAlerts,
 } from "@/lib/platform-leads/alert-delivery";
@@ -43,7 +44,15 @@ const CLAIMED = {
   practitioner_count: null,
   current_tool: null,
   has_notes: false,
+  frozen_message: null,
+  frozen_recipient_sha256: null,
 };
+
+const FREEZE = "freeze_platform_lead_alert_message";
+/** The database's first-writer-wins answer when nothing was frozen before. */
+const echoFreeze = (args: Record<string, unknown>) => [
+  { result: "frozen", message: args.p_message, recipient_sha256: args.p_recipient_sha256 },
+];
 
 type Call = { fn: string; args: Record<string, unknown> };
 
@@ -51,6 +60,7 @@ function fakeAdmin(answers: Record<string, unknown>, calls: Call[]): SupabaseCli
   return {
     rpc: async (fn: string, args: Record<string, unknown> = {}) => {
       calls.push({ fn, args });
+      if (fn === FREEZE && !(FREEZE in answers)) return { data: echoFreeze(args), error: null };
       const answer = answers[fn];
       if (answer instanceof Error) throw answer;
       if (answer && typeof answer === "object" && "error" in (answer as object)) return answer;
@@ -214,6 +224,7 @@ describe("sweepPlatformLeadAlerts", () => {
     let claims = 0;
     const admin = {
       rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+        if (fn === FREEZE) return { data: echoFreeze(args), error: null };
         calls.push({ fn, args });
         if (fn === "expire_platform_lead_alerts") return { data: 2, error: null };
         if (fn === "claim_platform_lead_alert") {
@@ -239,7 +250,8 @@ describe("sweepPlatformLeadAlerts", () => {
   it("a lost settle FAILS the run and stops it (Codex P2 4243922093)", async () => {
     let claims = 0;
     const admin = {
-      rpc: async (fn: string) => {
+      rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+        if (fn === FREEZE) return { data: echoFreeze(args), error: null };
         if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
         if (fn === "claim_platform_lead_alert") {
           claims += 1;
@@ -261,7 +273,8 @@ describe("sweepPlatformLeadAlerts", () => {
   it("is bounded per run", async () => {
     let claims = 0;
     const admin = {
-      rpc: async (fn: string) => {
+      rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+        if (fn === FREEZE) return { data: echoFreeze(args), error: null };
         if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
         if (fn === "claim_platform_lead_alert") {
           claims += 1;
@@ -302,6 +315,7 @@ describe("every worker database call: its failure fails the run", () => {
   const SWEEP_CALLS = [
     "expire_platform_lead_alerts",
     "claim_platform_lead_alert",
+    "freeze_platform_lead_alert_message",
     "settle_platform_lead_alert",
     "record_platform_lead_alerts_unconfigured",
   ] as const;
@@ -310,8 +324,9 @@ describe("every worker database call: its failure fails the run", () => {
     it(`${failing} failing -> ok:false`, async () => {
       const blocked = failing === "record_platform_lead_alerts_unconfigured";
       const admin = {
-        rpc: async (fn: string) => {
+        rpc: async (fn: string, args: Record<string, unknown> = {}) => {
           if (fn === failing) return { data: null, error: { code: "08006", message: "lost" } };
+          if (fn === FREEZE) return { data: echoFreeze(args), error: null };
           if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
           if (fn === "claim_platform_lead_alert") return { data: [{ ...CLAIMED, claim_token: "t" }], error: null };
           if (fn === "settle_platform_lead_alert") return { data: "accepted", error: null };
@@ -345,5 +360,114 @@ describe("every worker database call: its failure fails the run", () => {
     const src = readFileSync("lib/platform-leads/alert-delivery.ts", "utf8");
     const called = [...src.matchAll(/admin\.rpc\(\s*"([a-z_]+)"/g)].map((m) => m[1]).sort();
     expect([...new Set(called)]).toEqual([...SWEEP_CALLS].sort());
+  });
+});
+
+// Codex P2 4244387544: ONE KEY, ONE REQUEST. The first attempt of a
+// generation freezes the message; every later attempt sends those bytes,
+// whatever changed in between.
+describe("the payload is frozen per generation", () => {
+  type Sent = { payload: Record<string, unknown>; key: string | undefined };
+  const recording = (sent: Sent[]): IdempotentEmailTransport => ({
+    emails: {
+      send: async (payload, options) => {
+        sent.push({ payload: payload as unknown as Record<string, unknown>, key: options?.idempotencyKey });
+        return { data: null, error: { name: "internal_server_error", message: "x", statusCode: 500 } } as never;
+      },
+    },
+  });
+
+  it("a retry after the origin, renderer input and lead fields change sends the first attempt's bytes under the same key", async () => {
+    const calls: Call[] = [];
+    const sent: Sent[] = [];
+    await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({ claim_platform_lead_alert: [CLAIMED], settle_platform_lead_alert: "retry_scheduled" }, calls),
+      transport: recording(sent),
+      env: ENV,
+      appOrigin: () => "https://first.example",
+    });
+    const freeze = calls.find((c) => c.fn === FREEZE)!.args;
+    expect(freeze).toMatchObject({ p_alert_id: ALERT, p_claim_token: "token-1", p_recipient_sha256: recipientDigest(OPS) });
+    expect(Object.keys(freeze.p_message as object).sort()).toEqual(["from", "html", "subject", "text"]);
+    // The first send is exactly what was frozen, to the configured recipient.
+    expect(sent[0].payload).toEqual({ ...(freeze.p_message as object), to: OPS });
+
+    // Attempt 2: the database returns the frozen message with the claim. The
+    // origin and even the lead's fields differ now; nothing is re-rendered.
+    const calls2: Call[] = [];
+    await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({
+        claim_platform_lead_alert: [{
+          ...CLAIMED, claim_token: "token-2", attempt: 2, lead_name: "Someone Else",
+          frozen_message: freeze.p_message, frozen_recipient_sha256: freeze.p_recipient_sha256,
+        }],
+        settle_platform_lead_alert: "retry_scheduled",
+      }, calls2),
+      transport: recording(sent),
+      env: ENV,
+      appOrigin: () => "https://second.example",
+    });
+    expect(calls2.map((c) => c.fn)).not.toContain(FREEZE);
+    expect(sent).toHaveLength(2);
+    expect(JSON.stringify(sent[1].payload)).toBe(JSON.stringify(sent[0].payload));
+    expect(sent[1].key).toBe(sent[0].key);
+    expect(JSON.stringify(sent[1].payload)).not.toContain("second.example");
+  });
+
+  it("first writer wins: when the database already holds a message, that one is sent, not this render", async () => {
+    const sent: Sent[] = [];
+    const held = { from: "Hone <alerts@hone.example>", subject: "held", html: "<p>held</p>", text: "held" };
+    await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({
+        claim_platform_lead_alert: [CLAIMED],
+        [FREEZE]: [{ result: "existing", message: held, recipient_sha256: recipientDigest(OPS) }],
+        settle_platform_lead_alert: "retry_scheduled",
+      }, []),
+      transport: recording(sent),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    expect(sent.map((x) => x.payload)).toEqual([{ ...held, to: OPS }]);
+  });
+
+  it("a changed recipient is not sent: the alert fails as recipient_changed, for the operator's Retry", async () => {
+    const calls: Call[] = [];
+    const sent: Sent[] = [];
+    const out = await deliverPlatformLeadAlert(ALERT, {
+      admin: fakeAdmin({
+        claim_platform_lead_alert: [{
+          ...CLAIMED, attempt: 2,
+          frozen_message: { from: "f", subject: "s", html: "h", text: "t" },
+          frozen_recipient_sha256: recipientDigest("old@hone.example"),
+        }],
+        settle_platform_lead_alert: "failed",
+      }, calls),
+      transport: recording(sent),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    expect(out).toEqual({ result: "failed" });
+    expect(sent).toEqual([]);
+    expect(calls.find((c) => c.fn === "settle_platform_lead_alert")?.args).toMatchObject({ p_outcome: "fail", p_error_code: "recipient_changed" });
+  });
+
+  it("a failed or stale freeze sends nothing", async () => {
+    for (const [answer, expected] of [
+      [{ data: null, error: { code: "08006", message: "lost" } }, "freeze_error"],
+      [[{ result: "stale_claim", message: null, recipient_sha256: null }], "stale_claim"],
+      [[{ result: "invalid_input", message: null, recipient_sha256: null }], "freeze_error"],
+    ] as const) {
+      const sent: Sent[] = [];
+      const calls: Call[] = [];
+      const out = await deliverPlatformLeadAlert(ALERT, {
+        admin: fakeAdmin({ claim_platform_lead_alert: [CLAIMED], [FREEZE]: answer }, calls),
+        transport: recording(sent),
+        env: ENV,
+        appOrigin: () => "https://hone.example",
+      });
+      expect(out).toEqual({ result: expected });
+      expect(sent).toEqual([]);
+      expect(calls.map((c) => c.fn)).not.toContain("settle_platform_lead_alert");
+    }
   });
 });
