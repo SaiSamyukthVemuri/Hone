@@ -60,7 +60,21 @@ export default async function NoAccessPage({
     redirect("/dashboard");
   }
   const multiple = memberships.length > 1;
-  const existingAccess = memberships.length > 0
+  // A receptionist has no practitioners row, so their front-desk access is read
+  // separately: RLS-scoped to their own rows (0216), and ONLY when there is an
+  // invitation issue to explain (Codex P2 4244092780 on #850). A failed read
+  // claims nothing and offers no link.
+  let frontDesk = false;
+  if (inviteIssue) {
+    const { data: deskRows, error: deskErr } = await supabase
+      .from("studio_receptionists")
+      .select("studio_id")
+      .eq("user_id", user.id)
+      .eq("active", true)
+      .limit(1);
+    frontDesk = !deskErr && (deskRows ?? []).length > 0;
+  }
+  const existingAccess = memberships.length > 0 || frontDesk
     ? " Your existing studio access is unchanged."
     : "";
 
@@ -117,6 +131,16 @@ export default async function NoAccessPage({
             style={{ border: `1px solid ${PALETTE.ink}`, color: PALETTE.ink }}
           >
             Continue to your studio
+          </a>
+        )}
+
+        {frontDesk && (
+          <a
+            href="/front-desk"
+            className="mb-10 inline-flex w-full items-center justify-center px-7 py-3 text-[14px] font-medium transition-opacity hover:opacity-80"
+            style={{ border: `1px solid ${PALETTE.ink}`, color: PALETTE.ink }}
+          >
+            Go to the front desk
           </a>
         )}
 
