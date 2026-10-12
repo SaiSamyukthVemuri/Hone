@@ -96,10 +96,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0214** — `0214_studio_payment_jurisdiction.sql`, authored on the PAY-CCY-02 branch and NOT applied. This is the MIGRATION-FIRST PENDING shape, with a gap: 0211–0213 are reserved by other lanes and are not in this tree. |
+| **Repo migration max** | **0224** — `0224_us_settlement_method_guard.sql` (PAY-CCY-07, the database backstop for #871 option B), authored on its draft branch above `0214_studio_payment_jurisdiction.sql`, both NOT applied. This is the MIGRATION-FIRST PENDING shape, with a gap: 0211–0213 and 0215–0223 are reserved by other lanes and are not in this tree. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0214`** on this branch, applied only after `0211`–`0213` (other lanes' reservations) are applied or renumbered by agreement. |
-| **Next free migration** | Next free number is **0215**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Pending migrations** | **`0214`** and **`0224`** on this branch: `0214` only after `0211`–`0213`, and `0224` only after `0214` and `0215`–`0223` (other lanes' reservations) are applied or renumbered by agreement. |
+| **Next free migration** | Next free number is **0225**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
 | **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |
