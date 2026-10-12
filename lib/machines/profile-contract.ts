@@ -48,6 +48,17 @@
 // ---------------------------------------------------------------------------
 
 /**
+ * A target in `OpenQuestion.blocks` that is not a field key.
+ *
+ * `"*"` holds the whole profile. `"@frequency"` holds the profile-level
+ * `FrequencyContract`, which is deliberately NOT a field — a model with one
+ * fixed RF frequency has no frequency control to render. Introduced after the
+ * integrity guard caught two questions blocking a field key `frequency` that
+ * never existed, so they were holding nothing at all.
+ */
+export type ProfileLevelBlock = "*" | "@frequency";
+
+/**
  * How well-established a profile or field is. Ordered from weakest to
  * strongest; nothing in this module ranks them numerically, because the only
  * decision that depends on the ranking is activation, and that is explicit.
@@ -110,8 +121,13 @@ export type OpenQuestion = {
   question: string;
   /** What would resolve it — a specific manual page, a screen photo, a confirmation. */
   resolvedBy: string;
-  /** Fields or modes that stay soft until this is answered. */
-  blocks: string[];
+  /**
+   * What stays soft until this is answered: a field key, a `mode.field` or
+   * `stage.field` key, or a `ProfileLevelBlock` sentinel. A target naming
+   * nothing real holds nothing, which is worse than no question at all — the
+   * integrity guard rejects that.
+   */
+  blocks: Array<string | ProfileLevelBlock>;
 };
 
 // ---------------------------------------------------------------------------
@@ -225,6 +241,24 @@ export type NativeUnit =
   | "device-display"
   | "none";
 
+/**
+ * An aspect of a field that its evidence does NOT establish, even though the
+ * field is otherwise documented.
+ *
+ * WHY THIS EXISTS. A single `verification` per field turned out to be too
+ * coarse, and the ST 350 review is what exposed it: its manual establishes that
+ * the native display uses `time`, `HF %`, `galvanic mA` and `UL` — four labels
+ * and their units, and nothing else. The decimal precision and the editability
+ * of each one were INFERRED while the fields still claimed
+ * `manufacturer-documented`, so the activation gate could not see the gap. That
+ * is precisely the "do not invent bounds" rule leaking in through a softer
+ * door: an invented precision silently truncates or pads a real reading.
+ *
+ * A non-optional field listing any aspect here cannot be part of an active
+ * mode. See `catalogueIntegrity`.
+ */
+export type UnverifiedAspect = "label" | "unit" | "decimals" | "editability";
+
 /** One field on one machine's operating screen. */
 export type MachineField = {
   /** Stable key for storage. Never a generic `number_1` / `duration_2`. */
@@ -248,6 +282,12 @@ export type MachineField = {
   ranges?: NumericRange[];
   /** Per-field evidence, so a weak field cannot hide inside a strong profile. */
   verification: VerificationState;
+  /**
+   * Aspects this field's evidence does NOT cover. Empty or absent means
+   * `verification` genuinely covers the label, unit, precision and editability
+   * together. Anything listed here keeps the field out of an active mode.
+   */
+  unverified?: UnverifiedAspect[];
   /** `EvidenceRef.id`s establishing that this field exists with this label/unit. */
   evidence: string[];
   /** Short note for reviewers — conflicts, history, naming traps. */
