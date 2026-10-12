@@ -1,5 +1,5 @@
 import { escapeHtml } from "@/lib/email/markdown-lite";
-import { leadAnchorId, type PlatformLeadKind } from "./alert-status";
+import { leadDetailPath, type PlatformLeadKind } from "./alert-status";
 
 // ===========================================================================
 // LEAD-ALERT-01 (#826): the operator alert email for one new Hone lead
@@ -98,13 +98,17 @@ export function formatEventTime(eventAt: string): string {
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
 }
 
-/** The authenticated console link: the configured origin, never the request's. */
+/**
+ * The authenticated console link: the configured origin, never the request's,
+ * to the lead's own page (Codex P2 4248920469). Signing in on the way keeps
+ * the target (Codex P2 4248920454): see lib/auth/return-path.ts.
+ */
 export function leadConsoleUrl(
   appOrigin: string,
   kind: PlatformLeadKind,
   leadId: string,
 ): string {
-  return `${appOrigin.replace(/\/+$/, "")}/admin#${leadAnchorId(kind, leadId)}`;
+  return `${appOrigin.replace(/\/+$/, "")}${leadDetailPath(kind, leadId)}`;
 }
 
 type Line = { label: string; value: string };

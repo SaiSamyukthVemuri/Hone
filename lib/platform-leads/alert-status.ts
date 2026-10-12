@@ -70,7 +70,16 @@ export function leadAlertReason(code: string | null | undefined): string | null 
 
 export type PlatformLeadKind = "demo_request" | "early_access";
 
-/** The console row's anchor, which the alert email links to. */
+/**
+ * The one-lead console page the alert email links to (Codex P2 4248920469):
+ * it loads the named lead whatever its age, unlike the /admin tables, which
+ * show the latest 20 of each kind.
+ */
+export function leadDetailPath(kind: PlatformLeadKind, leadId: string): string {
+  return `/admin/leads/${kind === "demo_request" ? "demo-request" : "early-access"}/${leadId}`;
+}
+
+/** The console row's anchor on /admin. */
 export function leadAnchorId(kind: PlatformLeadKind, leadId: string): string {
   return kind === "demo_request"
     ? `lead-demo-request-${leadId}`

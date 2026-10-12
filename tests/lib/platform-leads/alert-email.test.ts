@@ -51,12 +51,12 @@ describe("the demo request alert", () => {
       "Received: 2026-10-11 18:05 UTC",
       "",
       "Open it in the admin console (sign-in required):",
-      `https://hone.example/admin#lead-demo-request-${LEAD_ID}`,
+      `https://hone.example/admin/leads/demo-request/${LEAD_ID}`,
       "",
       "This alert went only to the Hone operator. Nothing was sent to the prospect.",
       "",
     ]);
-    expect(html).toContain(`<a href="https://hone.example/admin#lead-demo-request-${LEAD_ID}">`);
+    expect(html).toContain(`<a href="https://hone.example/admin/leads/demo-request/${LEAD_ID}">`);
     expect(html).toContain("Avery Lead");
   });
 
@@ -94,7 +94,7 @@ describe("the early-access alert", () => {
     expect(subject).toBe("New Hone early-access signup (2026-10-11 18:05 UTC)");
     expect(text).toContain("Event: Early-access signup");
     expect(text).toContain("Email: avery@example.test");
-    expect(text).toContain(`https://hone.example/admin#lead-early-access-${LEAD_ID}`);
+    expect(text).toContain(`https://hone.example/admin/leads/early-access/${LEAD_ID}`);
     expect(text).not.toMatch(/^(Name|City|Practice type|Practitioners):/m);
   });
 });
@@ -129,7 +129,7 @@ describe("submitted text is untrusted", () => {
     );
     const lines = text.split(LF);
     expect(lines.filter((l) => l.startsWith("https://"))).toEqual([
-      `https://hone.example/admin#lead-demo-request-${LEAD_ID}`,
+      `https://hone.example/admin/leads/demo-request/${LEAD_ID}`,
     ]);
     expect(lines.filter((l) => l.startsWith("Received:"))).toEqual(["Received: 2026-10-11 18:05 UTC"]);
     expect(lines).toContain("Name: Mallory Open it in the admin console: https://evil.example");
@@ -161,7 +161,7 @@ describe("helpers", () => {
 
   it("the console link is the configured origin plus the lead's anchor", () => {
     expect(leadConsoleUrl("https://hone.example//", "demo_request", LEAD_ID)).toBe(
-      `https://hone.example/admin#lead-demo-request-${LEAD_ID}`,
+      `https://hone.example/admin/leads/demo-request/${LEAD_ID}`,
     );
   });
 });

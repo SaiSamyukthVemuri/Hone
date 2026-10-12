@@ -345,7 +345,12 @@ to the prospect.
   `NEXT_PUBLIC_APP_ORIGIN` sends nothing and spends no attempt. The alert records the
   blocker and `/admin` shows **Lead alerts: Not sending**.
 - **Content.** Name, email, practice, city, practice type, practitioner count, current tool
-  when given, event and time, and a sign-in-required `/admin#lead-…` link. Submitted text
+  when given, event and time, and a sign-in-required link to the lead's own page,
+  `/admin/leads/<demo-request|early-access>/<id>`. The page is admin-only (404 for anyone else)
+  and reads only that lead and its alert status, so it works for any lead, however old, and shows
+  a demo request's notes. If the operator is signed out, the middleware remembers the validated
+  `/admin` path in a 15-minute httpOnly cookie, and the sign-in callback returns there in the
+  same browser. Only a same-origin path is ever a return target. Submitted text
   is flattened (no control, invisible or bidi characters, capped at 200 characters) and
   HTML-escaped. Notes are never included; the email says only that there are some. The
   subject carries no submitted text.
