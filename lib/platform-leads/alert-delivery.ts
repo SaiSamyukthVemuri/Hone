@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
 import {
@@ -458,6 +459,37 @@ export async function deliverPlatformLeadAlert(
     });
     return { result: "threw" };
   }
+}
+
+/**
+ * Send ONE just-saved lead's alert AFTER the response (Codex P2 4249961225).
+ *
+ * The work is handed to `after()` as a STARTED PROMISE, never a callback: in
+ * Next 15.5 a callback enrols the request's shared work-unit store, and a
+ * client that goes away mid-render flips that store to the "after" phase, so
+ * later cookies()/headers() calls in the same render throw. A lead that WAS
+ * saved would then look like a failed submission and invite a duplicate. This
+ * is the repository's SENTRY-AFTER-01 rule (lib/analytics/server.ts
+ * `schedule()`), applied here; the work starts on a later macrotask, so the
+ * response never waits for it. Delivery itself is leased and keyed, so when it
+ * runs changes nothing about what is sent. Never throws.
+ */
+export function schedulePlatformLeadAlert(
+  alertId: string,
+  deliver: (id: string) => Promise<unknown> = deliverPlatformLeadAlert,
+): Promise<void> {
+  const task = new Promise<void>((resolve) => setTimeout(resolve, 0))
+    .then(() => deliver(alertId))
+    .then(
+      () => undefined,
+      () => undefined,
+    );
+  try {
+    after(task);
+  } catch {
+    // Out of request scope: the task is already queued and runs on its own.
+  }
+  return task;
 }
 
 export type LeadAlertSweepSummary = {

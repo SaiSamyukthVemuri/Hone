@@ -23,13 +23,17 @@ import { E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "@/e2e/helpers/local-env"
 
 const ctx = vi.hoisted(() => ({
   afterQueue: [] as Array<() => unknown>,
+  // What each action handed to after(): a started promise, never a callback
+  // (Codex P2 4249961225, SENTRY-AFTER-01).
+  afterKinds: [] as string[],
   allowed: true,
   limiterCalls: 0,
 }));
 
 vi.mock("next/server", () => ({
-  after: (fn: () => unknown) => {
-    ctx.afterQueue.push(fn);
+  after: (task: unknown) => {
+    ctx.afterKinds.push(typeof task === "function" ? "callback" : task instanceof Promise ? "promise" : typeof task);
+    ctx.afterQueue.push(typeof task === "function" ? (task as () => unknown) : () => task);
   },
 }));
 vi.mock("next/headers", () => ({
@@ -90,6 +94,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   ctx.afterQueue.length = 0;
+  ctx.afterKinds.length = 0;
   ctx.allowed = true;
   ctx.limiterCalls = 0;
   process.env.LEAD_ALERT_EMAIL = OPS;
@@ -124,6 +129,8 @@ async function leadsFor(email: string) {
 async function runAfter() {
   const queued = ctx.afterQueue.splice(0);
   for (const fn of queued) await fn();
+  // Every hand-off so far was a started promise.
+  expect(ctx.afterKinds.every((k) => k === "promise")).toBe(true);
   return queued.length;
 }
 

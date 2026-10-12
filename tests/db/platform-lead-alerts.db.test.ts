@@ -685,7 +685,7 @@ describe("the delivery worker, through the existing fake Resend transport", () =
     expect(sent[0].payload.from).toBe("Hone <hello@hone.care>");
     expect(sent[0].payload).not.toHaveProperty("replyTo");
     expect(sent[0].payload.text).toContain(r.email);
-    expect(sent[0].payload.text).toContain(`${ORIGIN}/admin#lead-demo-request-${r.lead_id}`);
+    expect(sent[0].payload.text).toContain(`${ORIGIN}/admin/leads/demo-request/${r.lead_id}`);
     const a = await alertRow(r.alert_id!);
     expect(a).toMatchObject({ status: "accepted", provider_message_id: "fake-resend-message-id", attempt_count: 1 });
   });

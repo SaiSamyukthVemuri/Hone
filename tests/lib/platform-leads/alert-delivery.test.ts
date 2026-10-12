@@ -9,6 +9,13 @@ import type { IdempotentEmailTransport } from "@/lib/email/new-client-waitlist-s
 // mapping for every answer, and that the worker never throws.
 
 const ops = vi.hoisted(() => ({ calls: [] as unknown[] }));
+const afterCtl = vi.hoisted(() => ({ handed: [] as unknown[], throws: false }));
+vi.mock("next/server", () => ({
+  after: (task: unknown) => {
+    if (afterCtl.throws) throw new Error("after() called outside a request scope");
+    afterCtl.handed.push(task);
+  },
+}));
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: async (input: unknown) => {
     ops.calls.push(input);
@@ -19,6 +26,7 @@ import {
   deliverPlatformLeadAlert,
   leadAlertConfigurationStatus,
   recipientDigest,
+  schedulePlatformLeadAlert,
   settlementFor,
   sweepPlatformLeadAlerts,
 } from "@/lib/platform-leads/alert-delivery";
@@ -468,6 +476,47 @@ describe("the payload is frozen per generation", () => {
       expect(out).toEqual({ result: expected });
       expect(sent).toEqual([]);
       expect(calls.map((c) => c.fn)).not.toContain("settle_platform_lead_alert");
+    }
+  });
+});
+
+// Codex P2 4249961225 (SENTRY-AFTER-01): post-response work is handed to
+// after() as a STARTED PROMISE, never a callback, and starts only after the
+// action has returned.
+describe("schedulePlatformLeadAlert", () => {
+  beforeEach(() => {
+    afterCtl.handed.length = 0;
+    afterCtl.throws = false;
+  });
+
+  it("hands after() a promise, not a callback, and does not start the work synchronously", async () => {
+    const started: string[] = [];
+    const task = schedulePlatformLeadAlert(ALERT, async (id) => {
+      started.push(id);
+    });
+    expect(afterCtl.handed).toHaveLength(1);
+    expect(afterCtl.handed[0]).toBeInstanceOf(Promise);
+    expect(typeof afterCtl.handed[0]).not.toBe("function");
+    expect(started).toEqual([]);
+    await task;
+    expect(started).toEqual([ALERT]);
+  });
+
+  it("never rejects, even when delivery throws; outside a request scope it still runs", async () => {
+    await expect(schedulePlatformLeadAlert(ALERT, async () => { throw new Error("boom"); })).resolves.toBeUndefined();
+    afterCtl.throws = true;
+    const ran: string[] = [];
+    await schedulePlatformLeadAlert(ALERT, async (id) => { ran.push(id); });
+    expect(ran).toEqual([ALERT]);
+  });
+
+  it("every call site schedules through it; none hands after() a callback (source guard)", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const f of ["app/actions/demo.ts", "app/actions/waitlist.ts", "app/admin/actions.ts"]) {
+      const src = readFileSync(f, "utf8");
+      expect(src, f).toMatch(/schedulePlatformLeadAlert\(/);
+      expect(src, f).not.toMatch(/\bafter\(/);
+      expect(src, f).not.toMatch(/deliverPlatformLeadAlert/);
     }
   });
 });

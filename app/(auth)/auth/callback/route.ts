@@ -1,15 +1,28 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   captureServerEvent,
   identifyServerUser,
 } from "@/lib/analytics/server";
 import { isAnalyticsUuid } from "@/lib/analytics/ids";
+import {
+  ADMIN_RETURN_COOKIE,
+  safeAdminReturnPath,
+  safeInternalPath,
+} from "@/lib/auth/return-path";
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/dashboard";
+  // Where to go after sign-in. Every candidate is VALIDATED as a same-origin
+  // relative path (an unvalidated `next` such as `@evil.example` would leave
+  // this origin): the /admin target the middleware remembered for an
+  // operator's link (Codex P2 4248920454), then a `next` parameter, then the
+  // dashboard.
+  const next =
+    safeAdminReturnPath(request.cookies.get(ADMIN_RETURN_COOKIE)?.value) ??
+    safeInternalPath(searchParams.get("next")) ??
+    "/dashboard";
 
   if (code) {
     const supabase = await createClient();
@@ -75,6 +88,8 @@ export async function GET(request: Request) {
       if (clearSelection) {
         response.cookies.delete("hone_selected_studio");
       }
+      // One sign-in, one use: the remembered target never outlives it.
+      response.cookies.delete(ADMIN_RETURN_COOKIE);
       return response;
     }
   }
