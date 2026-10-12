@@ -28,7 +28,7 @@ const saved = { url: process.env.NEXT_PUBLIC_SUPABASE_URL, key: process.env.SUPA
 let controls: typeof import("@/lib/sms/sender-controls");
 let admin: SupabaseClient;
 
-const deps = (provider: FakeSmsProvisioningProvider) => ({ admin, provider, appOrigin: ORIGIN, testDestination: "+14165550199" });
+const deps = (provider: FakeSmsProvisioningProvider) => ({ admin, provider, appOrigin: ORIGIN, testDestination: "+14165553199" });
 const liveSenders = async (studioId: string) =>
   (await adminQuery("select status, phone_number, country from public.studio_sms_senders where studio_id = $1 and status <> 'released'", [studioId])).rows;
 
@@ -131,7 +131,7 @@ describe("provision (fake provider)", () => {
 describe("adopt (fake provider)", () => {
   it("a number the account already owns, wired to Hone's URLs, is adopted WITHOUT a purchase", async () => {
     const s = await seedStudio("ctl-adopt");
-    const NUMBER = "+14165550177";
+    const NUMBER = "+14165553177";
     const MG = "MG" + "d".repeat(32);
     const provider = new FakeSmsProvisioningProvider({
       preOwnedNumbers: { [NUMBER]: "PN" + "e".repeat(32) },
@@ -149,7 +149,7 @@ describe("adopt (fake provider)", () => {
     const s = await seedStudio("ctl-adopt-no");
     const provider = new FakeSmsProvisioningProvider({ preOwnedNumbers: {} });
     const out = await controls.runSenderAdoption(deps(provider), {
-      studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: "+14165550178", messagingServiceSid: "MG" + "f".repeat(32),
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: "+14165553178", messagingServiceSid: "MG" + "f".repeat(32),
     });
     expect(out.ok).toBe(false);
     expect((await liveSenders(s.studioId)).filter((r) => r.status === "active")).toEqual([]);
@@ -241,7 +241,7 @@ describe("the controls' seeded fake account", () => {
 // write-once). Three outcomes, each proved against the database.
 describe("adoption is checked before the claim: refused, uncertain, failed", () => {
   const MG = "MG" + "b1".repeat(16);
-  const NUMBER = "+14165550188";
+  const NUMBER = "+14165553188";
   const seeded = (over: ConstructorParameters<typeof FakeSmsProvisioningProvider>[0] = {}) =>
     new FakeSmsProvisioningProvider({
       preOwnedNumbers: { [NUMBER]: "PN" + "b2".repeat(16) },
@@ -256,7 +256,7 @@ describe("adoption is checked before the claim: refused, uncertain, failed", () 
   it("REFUSED: a typo in the number or the service, or a service not wired to Hone, writes nothing; the studio can still provision", async () => {
     const s = await seedStudio("ctl-pre-refused");
     const cases: Array<[string, FakeSmsProvisioningProvider, string, string]> = [
-      ["number_not_owned_by_account", seeded(), "+14165550189", MG],
+      ["number_not_owned_by_account", seeded(), "+14165552189", MG],
       ["number_in_other_service", seeded(), NUMBER, "MG" + "c3".repeat(16)],
       ["service_webhooks_mismatch", seeded({ accountServices: [{ sid: MG, numbers: [NUMBER], inboundUrl: "https://elsewhere.example/sms", statusUrl: null }] }), NUMBER, MG],
     ];
@@ -532,3 +532,82 @@ describe("release and choose again", () => {
     }
   });
 });
+
+// Codex P2 4252928388 and 4252928398: released history counts, and the claim on
+// a number is an atomic reservation.
+describe("resource history and the atomic reservation", () => {
+  const rand = () => `+1905555${String(1000 + Math.floor(Math.random() * 8999))}`;
+
+  it("this studio's RELEASED number is refused before a new claim (0191's uniqueness still holds it)", async () => {
+    const s = await seedStudio("ctl-hist-released");
+    const number = rand();
+    // History: an active sender on that number, later released (superuser, test-only).
+    const { rows } = await adminQuery(
+      `insert into public.studio_sms_senders
+         (studio_id, provider, status, country, claimed_phone_number, phone_number, phone_number_sid, messaging_service_sid,
+          provisioning_claim_key, provisioning_claim_at, provisioning_claim_by_practitioner_id, provisioning_lease_generation, provisioned_at, last_test_ok_at)
+       values ($1, 'twilio', 'active', 'CA', $2, $2, $3, $4, $5, now(), $6, 1, now(), now()) returning id`,
+      [s.studioId, number, "PN" + "f1".repeat(16), "MG" + "f2".repeat(16), "hone-sms-" + "f3".repeat(16), s.practitionerId],
+    );
+    await adminQuery("update public.studio_sms_senders set status = 'releasing' where id = $1", [rows[0].id]);
+    await adminQuery("update public.studio_sms_senders set status = 'released', released_at = now() where id = $1", [rows[0].id]);
+    const provider = new FakeSmsProvisioningProvider();
+    expect(await controls.runSenderProvision(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "905", phoneNumber: number }))
+      .toEqual({ ok: false, result: "refused", reason: "resource_already_recorded", uncertain: false });
+    expect(provider.calls.purchase).toBe(0);
+    expect((await adminQuery("select count(*)::int n from public.studio_sms_senders where studio_id = $1 and status <> 'released'", [s.studioId])).rows[0].n).toBe(0);
+  });
+
+  it("the studio's OWN live attempt is not counted against its retry", async () => {
+    const s = await seedStudio("ctl-hist-retry");
+    const number = rand();
+    const provider = new FakeSmsProvisioningProvider({ testSendFails: "provider_unavailable" });
+    const first = await controls.runSenderProvision(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "905", phoneNumber: number });
+    expect(first.ok).toBe(false);
+    // The retry of the SAME number passes the recorded check and reaches the orchestration.
+    const retry = await controls.runSenderProvision(deps(new FakeSmsProvisioningProvider()), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "905", phoneNumber: number });
+    expect(retry).not.toMatchObject({ reason: "resource_already_recorded" });
+  });
+
+  it("ATOMIC: a second studio's claim on a number another studio holds a live claim on is refused by the database itself", async () => {
+    const a = await seedStudio("ctl-race-a");
+    const b = await seedStudio("ctl-race-b");
+    const number = rand();
+    const claim = (s: SeededStudioLike) =>
+      adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, number]);
+    expect((await claim(a)).rows[0].result).toBe("claimed");
+    // No pre-check in the way: the claim command alone must refuse, before any provider work.
+    expect((await claim(b)).rows[0].result).toBe("not_claimable");
+    expect((await adminQuery("select count(*)::int n from public.studio_sms_senders where studio_id = $1", [b.studioId])).rows[0].n).toBe(0);
+  });
+
+  it("CONCURRENT: two studios submitting one number at once -> exactly one claim, nothing bought for the other", async () => {
+    const a = await seedStudio("ctl-conc-a");
+    const b = await seedStudio("ctl-conc-b");
+    const number = rand();
+    const pa = new FakeSmsProvisioningProvider();
+    const pb = new FakeSmsProvisioningProvider();
+    const [ra, rb] = await Promise.all([
+      controls.runSenderProvision(deps(pa), { studioId: a.studioId, actorUserId: a.userId, country: "CA", areaCode: "905", phoneNumber: number }),
+      controls.runSenderProvision(deps(pb), { studioId: b.studioId, actorUserId: b.userId, country: "CA", areaCode: "905", phoneNumber: number }),
+    ]);
+    const winners = [ra, rb].filter((r) => r.ok);
+    expect(winners).toHaveLength(1);
+    expect(pa.calls.purchase + pb.calls.purchase).toBe(1);
+    const live = await adminQuery("select count(*)::int n from public.studio_sms_senders where claimed_phone_number = $1 and status <> 'released'", [number]);
+    expect(live.rows[0].n).toBe(1);
+  });
+
+  it("a finalize_conflict claim is releasable only when the provider holds nothing under its key", async () => {
+    const s = await seedStudio("ctl-rel-fc");
+    const number = rand();
+    const { rows } = await adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, number]);
+    await adminQuery("select public.fail_studio_sms_provisioning($1, $2, $3, 'finalize_conflict')", [s.studioId, rows[0].claim_key, rows[0].lease_generation]);
+    const holding = new FakeSmsProvisioningProvider();
+    await holding.purchaseNumber({ claimKey: rows[0].claim_key, phoneNumber: number });
+    expect(await controls.runSenderRelease(deps(holding), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: false, reason: "resources_found" });
+    expect(await controls.runSenderRelease(deps(new FakeSmsProvisioningProvider()), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: true, result: "released" });
+  });
+});
+
+type SeededStudioLike = { studioId: string; userId: string };

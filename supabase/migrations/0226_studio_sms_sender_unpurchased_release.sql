@@ -24,12 +24,18 @@
 --      the row lock, then `error` -> `releasing` -> `released` through 0191's
 --      own transition guard. The released row stays as history; the next claim
 --      opens a new row with a new key.
---   3. studio_sms_resource_recorded(studio, number, service) -- whether ANOTHER
---      studio's sender row already records this number (as its number in any
---      state, or as a LIVE claim) or this Messaging Service. 0191's unique
---      indexes would refuse the finalize; asking first lets a caller refuse
---      BEFORE taking a write-once claim. The studio's own rows are excluded:
---      its own claim on a number is its own retry. Existence only.
+--   3. studio_sms_resource_recorded(studio, number, service) -- whether any
+--      sender row other than this studio's CURRENT LIVE attempt records this
+--      number (as its number in any state, or as a live claim) or this
+--      Messaging Service. Released history counts: 0191's unique indexes cover
+--      it. Asking first gives a precise refusal before a write-once claim.
+--      Existence only.
+--   4. A unique index on the CLAIMED number across live rows: the atomic
+--      reservation (Codex P2 4252928398). Two studios racing for one number
+--      can both pass a read; only one can hold the claim. 0191's claim insert
+--      is `on conflict do nothing`, so the loser gets `not_claimable` BEFORE
+--      any provider work. Production holds no sender rows, so the index
+--      builds against an empty table.
 --
 -- RELEASABLE means ALL of:
 --   * the actor is an active OWNER of the studio (derived here, never trusted);
@@ -41,7 +47,14 @@
 --                                      before any purchase was attempted;
 --       provider_resource_mismatch  -- an adoption refusal (adoption never
 --                                      buys) or a provider answer about a
---                                      different resource.
+--                                      different resource;
+--       finalize_conflict           -- 0191's uniqueness refused recording a
+--                                      resource another row already holds.
+--                                      Releasable ONLY because the provider
+--                                      check below must also find nothing
+--                                      under the claim key: a provisioning
+--                                      attempt that bought a number always
+--                                      leaves it there, and is refused.
 --     Any timeout, network or unavailable code is NOT definitive: the attempt
 --     may own something, and only a retry (which reconciles first) may proceed.
 --
@@ -100,7 +113,7 @@ begin
      or v_row.messaging_service_sid is not null
      or v_row.provisioned_at is not null
      or v_row.provisioning_claim_key is null
-     or coalesce(v_row.last_error_code, '') not in ('number_no_longer_available', 'provider_resource_mismatch') then
+     or coalesce(v_row.last_error_code, '') not in ('number_no_longer_available', 'provider_resource_mismatch', 'finalize_conflict') then
     return query select 'not_releasable'::text, v_row.id, null::text, v_row.claimed_phone_number;
     return;
   end if;
@@ -161,7 +174,7 @@ begin
      or v_row.phone_number_sid is not null
      or v_row.messaging_service_sid is not null
      or v_row.provisioned_at is not null
-     or coalesce(v_row.last_error_code, '') not in ('number_no_longer_available', 'provider_resource_mismatch') then
+     or coalesce(v_row.last_error_code, '') not in ('number_no_longer_available', 'provider_resource_mismatch', 'finalize_conflict') then
     return 'not_releasable';
   end if;
 
@@ -190,8 +203,10 @@ as $$
   select exists (
     select 1
       from public.studio_sms_senders s
-     -- ANOTHER studio's rows: this studio's own claim is its own retry.
-     where s.studio_id is distinct from p_studio_id
+     -- Every row EXCEPT this studio's current live attempt (its own retry).
+     -- This studio's RELEASED history still holds 0191's uniqueness on the
+     -- number and the service, so it counts (Codex P2 4252928388).
+     where not (s.studio_id = p_studio_id and s.status <> 'released')
        and (
            (p_phone_number is not null and s.phone_number = p_phone_number)
         -- A LIVE claim on the number (released history does not hold it).
@@ -200,6 +215,13 @@ as $$
        )
   );
 $$;
+
+-- ---------------------------------------------------------------------------
+-- 4. The atomic reservation: one LIVE claim per number, across all studios
+-- ---------------------------------------------------------------------------
+create unique index studio_sms_senders_live_claimed_number_unique
+  on public.studio_sms_senders (claimed_phone_number)
+  where claimed_phone_number is not null and status <> 'released';
 
 -- ---------------------------------------------------------------------------
 -- Privileges: service_role only

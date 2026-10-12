@@ -17,9 +17,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 ## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`, `0217` and `0226` AUTHORED AND PENDING on the SMS-SENDER-CONTROL-01 branch)
 
 > **0226 IS AUTHORED AND PENDING, on `feat/sms-sender-control-01` (#863) only**, which is stacked on #844 (`0217`).
-> `0226_studio_sms_sender_unpurchased_release.sql` adds three service_role-only definer functions and nothing else: no table, no ALTER, no row written.
+> `0226_studio_sms_sender_unpurchased_release.sql` adds three service_role-only definer functions and ONE unique index, and nothing else: no table, no ALTER, no row written.
+> - **The index:** `studio_sms_senders_live_claimed_number_unique` on `claimed_phone_number` for live rows. It is the atomic reservation, so two studios cannot hold live claims on one number. Production has no sender rows, so it builds on an empty table.
 > - **The functions:** `get_releasable_studio_sms_claim`, `release_unpurchased_studio_sms_claim` and `studio_sms_resource_recorded`.
-> - **What they allow:** an owner can release an `error` claim that recorded no provider resource and failed definitively before purchase (`number_no_longer_available` or `provider_resource_mismatch`), after the provider confirms nothing exists under its claim key. The release goes error -> releasing -> released through 0191's own guard.
+> - **What they allow:** an owner can release an `error` claim that recorded no provider resource and failed definitively before purchase (`number_no_longer_available`, `provider_resource_mismatch` or `finalize_conflict`), after the provider confirms nothing exists under its claim key. The release goes error -> releasing -> released through 0191's own guard.
 > - **Allocation:** allocated after a fresh census (nothing at or above `0226` on any ref, worktree or this ledger); recorded in `/home/sam/hone-migration-coordination.md`. It applies after `0225`.
 > - **Holes on this branch:** the pending suffix has holes at `0211`-`0216` and `0218`-`0225`. The contiguity guard reports them and is not weakened.
 

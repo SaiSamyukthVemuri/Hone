@@ -39,11 +39,14 @@ describe("0226 in the sequence", () => {
 });
 
 describe("blast radius", () => {
-  it("one transaction; three functions; no table, no ALTER, no DROP, no row written at top level", () => {
+  it("one transaction; three functions and ONE index; no table, no ALTER, no DROP, no row written at top level", () => {
     expect(TOP_LEVEL.trim()).toMatch(/^begin;\s+set local lock_timeout = '5s';/);
     expect(TOP_LEVEL.trim()).toMatch(/commit;$/);
     expect([...CODE.matchAll(/create or replace function public\.(\w+)\(/g)].map((m) => m[1])).toEqual(FNS.map(([f]) => f));
     expect(TOP_LEVEL).not.toMatch(/\b(create table|alter |drop )/i);
+    // The atomic reservation (Codex P2 4252928398): the only new index.
+    expect([...TOP_LEVEL.matchAll(/create unique index (\w+)/g)].map((m) => m[1])).toEqual(["studio_sms_senders_live_claimed_number_unique"]);
+    expect(TOP_LEVEL).toMatch(/on public\.studio_sms_senders \(claimed_phone_number\)\s+where claimed_phone_number is not null and status <> 'released';/);
     expect(TOP_LEVEL).not.toMatch(/^\s*(insert|update|delete)\b/im);
   });
 
@@ -56,6 +59,12 @@ describe("blast radius", () => {
       const grants = [...TOP_LEVEL.matchAll(new RegExp(`grant execute on function public\\.${fn}\\([^)]*\\) to (\\w+);`, "g"))].map((m) => m[1]);
       expect(grants, fn).toEqual(["service_role"]);
     }
+  });
+});
+
+describe("the recorded-resource check counts released history (Codex P2 4252928388)", () => {
+  it("excludes only this studio's CURRENT LIVE attempt", () => {
+    expect(body("studio_sms_resource_recorded")).toMatch(/where not \(s\.studio_id = p_studio_id and s\.status <> 'released'\)/);
   });
 });
 
@@ -81,7 +90,7 @@ describe("only a claim that provably owns nothing is released", () => {
         expect(b, `${fn} ${col}`).toMatch(new RegExp(`v_row\\.${col} is not null`));
       }
       expect(b, fn).toMatch(/v_row\.status <> 'error'/);
-      expect(b, fn).toMatch(/not in \('number_no_longer_available', 'provider_resource_mismatch'\)/);
+      expect(b, fn).toMatch(/not in \('number_no_longer_available', 'provider_resource_mismatch', 'finalize_conflict'\)/);
     }
   });
 
