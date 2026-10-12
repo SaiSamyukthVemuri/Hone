@@ -13,7 +13,7 @@ import {
   revokeInvitationAction,
 } from "./actions";
 import { setReceptionistActiveAction } from "./receptionist-actions";
-import { accessSummary, ROLE_LABELS, type StudioRole } from "@/lib/auth/capabilities";
+import { accessSummary, DEACTIVATED_SUMMARY, ROLE_LABELS, type StudioRole } from "@/lib/auth/capabilities";
 
 type ReceptionistRow = {
   id: string;
@@ -141,7 +141,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
                   {!r.active && <span className="text-xs text-neutral-500">inactive</span>}
                 </div>
                 {r.email && <div className="truncate text-xs text-neutral-500">{r.email}</div>}
-                <AccessSummary role="receptionist" />
+                <AccessSummary role="receptionist" active={r.active} />
               </div>
               <form action={setReceptionistActiveAction}>
                 <input type="hidden" name="id" value={r.id} />
@@ -300,7 +300,8 @@ function RoleBadge({ role }: { role: "owner" | "practitioner" | "receptionist" }
 // STUDIO-READY-02e (#824): the readable access summary, rendered from the FIXED
 // role definition (lib/auth/capabilities.ts). It describes; the database and
 // the server guards enforce.
-function AccessSummary({ role }: { role: StudioRole }) {
+function AccessSummary({ role, active = true }: { role: StudioRole; active?: boolean }) {
+  if (!active) return <p className="mt-1 text-xs text-neutral-500">{DEACTIVATED_SUMMARY}</p>;
   const { can, cannot } = accessSummary(role);
   return (
     <details className="mt-1 text-xs text-neutral-500">

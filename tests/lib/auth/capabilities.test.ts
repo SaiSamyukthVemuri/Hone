@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   accessSummary,
   CAPABILITY_LABELS,
+  DEACTIVATED_SUMMARY,
   ROLE_CAPABILITIES,
   type CapabilityKey,
   type StudioRole,
@@ -31,7 +32,7 @@ describe("the receptionist", () => {
       "clinical_images",
       "treatment_recording",
       "payments",
-      "refunds_finance",
+      "refunds",
       "exports",
       "team",
       "studio_settings",
@@ -46,8 +47,9 @@ describe("the receptionist", () => {
   });
 
   it("booking is stated as NOT YET available, never promised", () => {
-    expect(r.schedule_edit).toBe("not_yet");
-    expect(accessSummary("receptionist").cannot).toContain("Book, move and cancel appointments (not available yet)");
+    expect([r.schedule_book_move, r.schedule_cancel]).toEqual(["not_yet", "not_yet"]);
+    expect(accessSummary("receptionist").cannot).toContain("Book and move appointments (not available yet)");
+    expect(accessSummary("receptionist").cannot).toContain("Cancel appointments (not available yet)");
   });
 });
 
@@ -55,8 +57,8 @@ describe("the practitioner and the owner", () => {
   it("a practitioner charges and sends receipts, but refunds, finance, exports, team and settings are owner-only", () => {
     const p = ROLE_CAPABILITIES.practitioner;
     expect(p.payments).toBe("yes");
-    for (const k of ["refunds_finance", "exports", "team", "studio_settings"] as const) expect(p[k], k).toBe("no");
-    expect(p.schedule_edit).toBe("own");
+    for (const k of ["refunds", "exports", "team", "studio_settings"] as const) expect(p[k], k).toBe("no");
+    expect(p.schedule_book_move).toBe("own");
   });
 
   it("the owner holds every capability", () => {
@@ -66,6 +68,25 @@ describe("the practitioner and the owner", () => {
 
 describe("the definitions match the enforcement they describe", () => {
   const read = (rel: string) => readFileSync(path.join(process.cwd(), rel), "utf8");
+
+  it("a practitioner moves only their own appointments, but may cancel anyone's (Codex P2 4243990812)", () => {
+    // Move: a non-owner must be the treating practitioner and may not reassign.
+    expect(read("supabase/migrations/0145_move_preserve_target_race_fix.sql")).toMatch(
+      /if v_actor_role <> 'owner'\s+and \(v_appt\.practitioner_id is distinct from p_actor_practitioner_id or v_reassign\)/,
+    );
+    expect(ROLE_CAPABILITIES.practitioner.schedule_cancel).toBe("any");
+    expect(accessSummary("practitioner").can).toContain("Cancel appointments (anyone's in the studio)");
+  });
+
+  it("claims nothing the product withholds: no record signing, no financial report, no role changes (Codex P1 4243990803, P2s 4243990815, 4243990818)", () => {
+    const all = Object.values(CAPABILITY_LABELS).join(" | ").toLowerCase();
+    // "signed forms" (consent forms) are real; signing a RECORD is what 0159 retired.
+    expect(all).not.toMatch(/sign (treatment )?records|record signing/);
+    expect(all).not.toMatch(/financial report|reports/);
+    expect(all).not.toMatch(/change roles|role change/);
+    // 0159 retired signed clinical records.
+    expect(read("supabase/migrations/0159_retire_signed_clinical_records.sql").length).toBeGreaterThan(0);
+  });
 
   it("refunds really are owner-only in both refund paths", () => {
     expect(read("app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts")).toMatch(
@@ -83,6 +104,12 @@ describe("the definitions match the enforcement they describe", () => {
   it("the team page renders a summary for practitioners AND receptionists", () => {
     const page = read("app/(app)/settings/team/page.tsx");
     expect(page).toMatch(/<AccessSummary role=\{p\.role\} \/>/);
-    expect(page).toMatch(/<AccessSummary role="receptionist" \/>/);
+    expect(page).toMatch(/<AccessSummary role="receptionist" active=\{r\.active\} \/>/);
+  });
+
+  it("a DEACTIVATED receptionist's summary is a single denial, never the role's list (Codex P2 4243990807)", () => {
+    const page = read("app/(app)/settings/team/page.tsx");
+    expect(page).toMatch(/if \(!active\) return <p[^>]*>\{DEACTIVATED_SUMMARY\}<\/p>;/);
+    expect(DEACTIVATED_SUMMARY).toMatch(/no access/);
   });
 });
