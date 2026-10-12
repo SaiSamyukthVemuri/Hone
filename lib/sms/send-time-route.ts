@@ -1,6 +1,12 @@
 import { classifyNanpNumber } from "./nanp";
 import { destinationReadiness, type DestinationCountry, type ReadinessState } from "./sender-readiness";
-import { registrationEvidenceFor, type SenderRegistrationRow } from "./sender-registration";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { readLiveRegistrationState } from "./sender-registration-admin";
+import {
+  registrationEvidenceFor,
+  type LiveRegistrationSnapshot,
+  type SenderRegistrationRow,
+} from "./sender-registration";
 import type { SenderStatus, StudioSmsSenderState } from "./sender-status";
 
 // ===========================================================================
@@ -13,11 +19,12 @@ import type { SenderStatus, StudioSmsSenderState } from "./sender-status";
 //     exactly) unless its id is listed in SMS_STUDIO_ROUTING_STUDIO_IDS. That
 //     variable is unset everywhere; listing a studio is the explicit cutover
 //     gate and needs its own approval.
-//   * The production reader below always answers "unreadable", because the
-//     command it needs does not exist yet (service_role holds no privilege on
-//     studio_sms_senders, and 0194 returns only the messaging service). A
-//     listed studio therefore REFUSES rather than sends until that command
-//     lands. Tests inject a reader.
+//   * The reader is the SMS lane's ONE-statement snapshot (0217,
+//     get_live_studio_sms_sender_registration_state, via
+//     readLiveRegistrationState): the sender rows, their messaging service and
+//     their registrations together, so the sender checked is the sender used.
+//     0217 is unapplied, so on production that read fails and a listed studio
+//     REFUSES rather than sends. Tests inject a reader or answer the RPC.
 //
 // ORDER, in every appointment SMS path (lib/sms/send-appointment.ts):
 //   1. consent gate: studio toggle, the client's opt-out, consent, phone;
@@ -38,7 +45,7 @@ import type { SenderStatus, StudioSmsSenderState } from "./sender-status";
 //     replaced sender is stale and is ignored, never inherited.
 //
 // NOT DECIDED HERE: whether the provider relationship covers health
-// information (BAA, #828). "Active" readiness never implies it; it is a
+// information (BAA, #828; the SMS lane's NOT_HIPAA_COVERAGE). "Active" readiness never implies it; it is a
 // separate gate on the cutover, and nothing here may be read as satisfying it.
 // ===========================================================================
 
@@ -47,7 +54,7 @@ export const STUDIO_ROUTING_ENV = "SMS_STUDIO_ROUTING_STUDIO_IDS";
 export type RoutingMode = "platform" | "studio";
 
 /** The cutover gate. Unset or empty: every studio stays on the platform sender. */
-export function studioRoutingMode(studioId: string, env: NodeJS.ProcessEnv = process.env): RoutingMode {
+export function studioRoutingMode(studioId: string, env: Readonly<Record<string, string | undefined>> = process.env): RoutingMode {
   const raw = env[STUDIO_ROUTING_ENV];
   if (!raw || typeof studioId !== "string" || studioId.trim() === "") return "platform";
   const listed = raw
@@ -67,8 +74,8 @@ export type SendTimeSender = {
 };
 
 export type SendTimeRegistration = Pick<
-  SenderRegistrationRow,
-  "id" | "studio_id" | "sender_id" | "kind" | "status" | "missing_information" | "recorded_at" | "updated_at"
+  LiveRegistrationSnapshot,
+  "studio_id" | "sender_id" | "kind" | "status" | "missing_information"
 >;
 
 /** A read that did not answer is never "no sender". */
@@ -78,11 +85,26 @@ export type SendTimeRouteRead =
 
 export type SendTimeRouteReader = (studioId: string) => Promise<SendTimeRouteRead>;
 
-/**
- * The production reader until the send-time command exists: always
- * unreadable, so a studio listed for routing refuses instead of sending.
- */
+/** Unreadable by construction: the fallback when no admin client is at hand. */
 export const unavailableSendTimeRouteReader: SendTimeRouteReader = async () => ({ ok: false });
+
+/**
+ * The send-time reader over 0217's snapshot. The SMS lane's parser already
+ * refuses a row of another studio and a registration whose sender is not in
+ * the snapshot; any such answer arrives here as unreadable.
+ */
+export function liveSendTimeRouteReader(admin: SupabaseClient): SendTimeRouteReader {
+  return async (studioId) => {
+    const state = await readLiveRegistrationState(admin, studioId);
+    if (!state.ok) return { ok: false };
+    return {
+      ok: true,
+      // An unknown status string is never "active", so it can never be chosen.
+      senders: state.senders.map((s) => ({ ...s, status: s.status as SenderStatus })),
+      registrations: state.registrations,
+    };
+  };
+}
 
 export type SendTimeRefusal =
   | "sender_read_failed"
@@ -158,7 +180,7 @@ export function decideStudioRoute(input: {
   // stale (a previous number) or foreign, and is ignored, never inherited.
   const current = read.registrations.filter((r) => r.sender_id === sender.id && r.studio_id === studioId);
   const evidence = registrationEvidenceFor(
-    { ok: true, rows: current as SenderRegistrationRow[] },
+    { ok: true, rows: current as unknown as SenderRegistrationRow[] },
     sender.phone_number,
   );
   const readiness = destinationReadiness(destination, { ok: true, sender: asReadinessSender(sender) }, evidence);
@@ -177,7 +199,7 @@ export async function resolveSendTimeRoute(input: {
   studioId: string;
   recipientE164: string;
   reader?: SendTimeRouteReader;
-  env?: NodeJS.ProcessEnv;
+  env?: Readonly<Record<string, string | undefined>>;
 }): Promise<SendTimeRoute> {
   if (studioRoutingMode(input.studioId, input.env) === "platform") {
     return { ok: true, mode: "platform" };

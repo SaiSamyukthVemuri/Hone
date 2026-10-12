@@ -49,11 +49,15 @@ const SID = `SM${"0f".repeat(16)}`;
 
 let events: string[];
 let providerBodies: URLSearchParams[];
+/** What 0217's snapshot RPC answers, when the default (live) reader is used. */
+let snapshot: { data: unknown; error: unknown };
+const SNAPSHOT_RPC = "get_live_studio_sms_sender_registration_state";
 
 function admin(): SupabaseClient {
   return {
     rpc(fn: string) {
       events.push(fn);
+      if (fn === SNAPSHOT_RPC) return Promise.resolve(snapshot);
       if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
       if (fn === "claim_reminder_sms_send") {
         return Promise.resolve({ data: [{ result: "claimed", starts_at: "2026-10-13T15:00:00Z" }], error: null });
@@ -142,6 +146,8 @@ beforeEach(() => {
   process.env.TWILIO_FROM_NUMBER = PLATFORM_FROM;
   events = [];
   providerBodies = [];
+  // 0217 is not applied on production: the function does not exist there.
+  snapshot = { data: null, error: { code: "PGRST202", message: "function not found" } };
   alerts.length = 0;
   vi.stubGlobal(
     "fetch",
@@ -245,14 +251,11 @@ describe.each(PATHS)("%s: consent and STOP refuse before the route is even read"
 
 const TOLL_FREE = sender({ id: "sender-a-2", phone_number: "+18885550100" });
 const staleApproval: SendTimeRegistration = {
-  id: "reg-old",
   studio_id: A,
   sender_id: "sender-a-1", // the studio's PREVIOUS sender
   kind: "toll_free_verification",
   status: "approved",
   missing_information: null,
-  recorded_at: "2026-09-01T00:00:00Z",
-  updated_at: "2026-09-01T00:00:00Z",
 };
 
 const REFUSALS: Array<[string, SendTimeRouteRead, string]> = [
@@ -307,11 +310,11 @@ describe.each(PATHS)("%s: every sender or destination refusal comes before the c
     expect(events).toEqual(["route_read"]);
   });
 
-  it("with no reader injected (production today), a routed studio refuses rather than falling back", async () => {
+  it("PRODUCTION TODAY (0217 unapplied): the snapshot read fails, and a routed studio refuses rather than falling back", async () => {
     routeStudioA();
     const r = await send(undefined);
     expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_sender_read_failed" });
-    expect(events).toEqual([]);
+    expect(events).toEqual([SNAPSHOT_RPC]);
     expect(providerBodies).toEqual([]);
   });
 });
@@ -360,5 +363,87 @@ describe("the provider module: a routed sender is the only sender", () => {
     delete process.env.TWILIO_FROM_NUMBER;
     const r = await sendSmsSafely({ to: CA_RECIPIENT, body: "x" });
     expect(r).toMatchObject({ ok: false, error: "twilio_missing_sender" });
+  });
+});
+
+// The DEFAULT reader: 0217's one-statement snapshot, parsed by the SMS lane's
+// parseLiveRegistrationState, answered here as the RPC would answer it.
+const snapshotOf = (senders: unknown[], registrations: unknown[] = []) => ({
+  data: { senders, registrations },
+  error: null,
+});
+const snapRow = (over: Record<string, unknown> = {}) => ({
+  id: "sender-a-1",
+  studio_id: A,
+  status: "active",
+  phone_number: "+14165550100",
+  messaging_service_sid: MSID_A,
+  ...over,
+});
+const snapReg = (over: Record<string, unknown> = {}) => ({
+  sender_id: "sender-a-1",
+  studio_id: A,
+  kind: "toll_free_verification",
+  status: "approved",
+  missing_information: null,
+  provider_reference: "ref",
+  updated_at: "2026-10-01T00:00:00Z",
+  ...over,
+});
+
+describe.each(PATHS)("%s: through 0217's snapshot (the default reader)", (_label, send, claimRpc) => {
+  it("a ready snapshot: one snapshot read, then the claim, then the studio's own sender", async () => {
+    routeStudioA();
+    snapshot = snapshotOf([snapRow()]);
+    const r = await send(undefined);
+    expect(r).toMatchObject({ ok: true, messageSid: SID });
+    expect(events.indexOf(SNAPSHOT_RPC)).toBe(0);
+    expect(events.indexOf(claimRpc)).toBeGreaterThan(0);
+    expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(1);
+    expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
+  });
+
+  it("toll-free with its OWN approved verification routes", async () => {
+    routeStudioA();
+    snapshot = snapshotOf([snapRow({ phone_number: "+18885550100" })], [snapReg()]);
+    expect(await send(undefined)).toMatchObject({ ok: true, messageSid: SID });
+  });
+
+  for (const [why, snap] of [
+    ["WRONG STUDIO: Studio B's sender in A's snapshot", snapshotOf([snapRow({ id: "sender-b-1", studio_id: B, messaging_service_sid: MSID_B })])],
+    ["a registration of a sender not in the snapshot", snapshotOf([snapRow({ phone_number: "+18885550100" })], [snapReg({ sender_id: "sender-old" })])],
+    ["a registration recorded for another studio", snapshotOf([snapRow({ phone_number: "+18885550100" })], [snapReg({ studio_id: B })])],
+    ["a malformed answer (null arrays)", { data: { senders: null, registrations: null }, error: null }],
+  ] as const) {
+    it(`${why}: refused after the one read, no claim, no provider`, async () => {
+      routeStudioA();
+      snapshot = snap;
+      const r = await send(undefined);
+      expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_sender_read_failed" });
+      expect(events).toEqual([SNAPSHOT_RPC]);
+    });
+  }
+
+  it("STALE REGISTRATION: a toll-free sender with no evidence of its own is not ready", async () => {
+    routeStudioA();
+    snapshot = snapshotOf([snapRow({ phone_number: "+18885550100" })]);
+    const r = await send(undefined);
+    expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_destination_not_ready" });
+    expect(events).toEqual([SNAPSHOT_RPC]);
+  });
+
+  it("two live senders in one snapshot are refused, never chosen between", async () => {
+    routeStudioA();
+    snapshot = snapshotOf([snapRow(), snapRow({ id: "sender-a-2", messaging_service_sid: MSID_B })]);
+    const r = await send(undefined);
+    expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_ambiguous_active_sender" });
+    expect(events).toEqual([SNAPSHOT_RPC]);
+  });
+
+  it("with the gate unset, the snapshot is never read", async () => {
+    snapshot = snapshotOf([snapRow()]);
+    await send(undefined);
+    expect(events).not.toContain(SNAPSHOT_RPC);
+    expect(providerBodies[0].get("From")).toBe(PLATFORM_FROM);
   });
 });

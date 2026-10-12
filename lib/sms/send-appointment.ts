@@ -20,6 +20,7 @@ import {
   type AppointmentSmsPurpose,
 } from "./delivery-ledger";
 import {
+  liveSendTimeRouteReader,
   resolveSendTimeRoute,
   type SendTimeRoute,
   type SendTimeRouteReader,
@@ -496,7 +497,7 @@ async function sendReminder(
 
   // (0) WHICH SENDER, before the claim: a refusal spends no attempt and
   // reaches no provider, so the next fire reconsiders the row intact.
-  const route = await sendTimeRouteFor(args.studio.id, gate.normalizedPhone, args.appointmentId, smsType, args.routeReader);
+  const route = await sendTimeRouteFor(args.admin, args.studio.id, gate.normalizedPhone, args.appointmentId, smsType, args.routeReader);
   if (!route.ok) {
     return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
   }
@@ -781,13 +782,18 @@ type SendOneArgs = {
  * claims nothing and calls no provider, so it is logged here and nowhere else.
  */
 async function sendTimeRouteFor(
+  admin: SupabaseClient,
   studioId: string,
   recipientE164: string,
   appointmentId: string,
   smsType: SmsType,
   reader: SendTimeRouteReader | undefined,
 ): Promise<SendTimeRoute> {
-  const route = await resolveSendTimeRoute({ studioId, recipientE164, reader });
+  const route = await resolveSendTimeRoute({
+    studioId,
+    recipientE164,
+    reader: reader ?? liveSendTimeRouteReader(admin),
+  });
   if (!route.ok) {
     console.error(
       JSON.stringify({
@@ -838,7 +844,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   }
 
   const to = args.to(gate.normalizedPhone);
-  const route = await sendTimeRouteFor(args.studio.id, to, args.appointmentId, args.smsType, args.routeReader);
+  const route = await sendTimeRouteFor(args.admin, args.studio.id, to, args.appointmentId, args.smsType, args.routeReader);
   if (!route.ok) {
     return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
   }

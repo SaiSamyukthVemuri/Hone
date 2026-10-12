@@ -40,14 +40,11 @@ const sender = (over: Partial<SendTimeSender> = {}): SendTimeSender => ({
 });
 
 const registration = (over: Partial<SendTimeRegistration> = {}): SendTimeRegistration => ({
-  id: "reg-1",
   studio_id: A,
   sender_id: "sender-a-1",
   kind: "toll_free_verification",
   status: "approved",
   missing_information: null,
-  recorded_at: "2026-10-01T00:00:00Z",
-  updated_at: "2026-10-01T00:00:00Z",
   ...over,
 });
 
