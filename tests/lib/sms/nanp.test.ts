@@ -36,7 +36,12 @@ describe("classifyNanpNumber", () => {
   });
 
   it("an area code on no list is US, the stricter answer, never Canada", () => {
-    expect(classifyNanpNumber("+12575550123")).toMatchObject({ ok: true, country: "US" });
+    // 999 is a structurally valid, unassigned code: it is on no list.
+    expect(classifyNanpNumber("+19995550123")).toMatchObject({ ok: true, country: "US" });
+  });
+
+  it("recent Canadian overlays are Canadian (257, BC, in service since 2025-05-24 per the CNA)", () => {
+    expect(classifyNanpNumber("+12575550123")).toMatchObject({ ok: true, country: "CA" });
   });
 
   it("refuses anything that is not a structurally valid +1 E.164 number", () => {
