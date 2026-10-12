@@ -229,6 +229,13 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
 - A new `app/_components/SafeAnalytics.tsx` wrapper mounts both together.
 - Safe routes opt in: `app/(app)/layout.tsx`, `app/admin/layout.tsx`, `app/book/layout.tsx`, `app/_components/PolicyLayout.tsx` (covers privacy + terms), inline on `app/page.tsx`, `app/pricing/page.tsx`, `app/demo/page.tsx`.
 - Token subtrees never opt in. The compiled production bundles confirm: the token-route page chunks (`/cancel/[token]`, `/reschedule/[token]`, `/manage/[token]`, `/intake/[token]`, `/portal/verify/[token]`) have zero matches for `vercel-scripts.com`, `vitals.vercel-insights`, `_vercel/insights`, or `_vercel/speed-insights`. The safe-only chunks (`/_next/static/chunks/3494-*.js`, `(app)/layout-*.js`, `book/layout-*.js`) each carry the analytics URL.
+- **URL redaction (HIPAA-READY-01 G-07, issue #828).** The opted-in trees include the authenticated app, `/admin` and `/book`, whose URLs carry record ids and the studio a patient is booking with. Both components therefore receive `beforeSend={redactVercelEvent}` (`lib/analytics/vercel-url-redaction.ts`):
+  - the query string and fragment are dropped; canonical marketing pages keep only the reviewed attribution params;
+  - UUID, all-digit and long opaque segments become `[id]` / `[token]`;
+  - `/book/<slug>` becomes `/book/[studio]`;
+  - token routes and unparsable URLs drop the event.
+
+  `tests/lib/analytics/vercel-url-redaction.test.ts` walks every dynamic page under the opted-in trees with synthetic ids, so a new route is covered automatically. Vercel's own `route` field is already a template and is left untouched.
 - **Why a pathname denylist is not enough:** the analytics script can already have loaded on a previous safe page in the same SPA navigation. By the time a runtime denylist runs, the script is already in the document and ready to observe the new URL.
 
 ## 7. Production config fail-closed (PR #143)
