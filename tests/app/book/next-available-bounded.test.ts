@@ -518,10 +518,39 @@ describe("BOOK-NEXT-FAST-01: the per-day loop is gone from the source", () => {
     // The precise regression: any `await` under a `for`/`while` in this action
     // is a per-day round trip returning by another name. The only loop left
     // builds a list of date STRINGS.
+    //
+    // THIS ASSERTION USED TO CHECK ONLY THE FIRST LOOP, and was therefore
+    // partly vacuous. It did:
+    //
+    //   const loop = body.match(/(for\s*\(|while\s*\()[\s\S]*?\n  \}/);
+    //   expect(loop![0]).not.toContain("await");
+    //
+    // `String.match` without /g returns the FIRST match, and the lazy body
+    // stops at the first two-space-indented close brace — so it always landed
+    // on the date-string builder, which is await-free BY DESIGN. A SECOND loop
+    // containing `await` satisfied it.
+    //
+    // Demonstrated, not hypothesised: a practitioner-scoped per-date scan with
+    // `await getAvailableSlots(...)` in a `for` after the date builder reddened
+    // the two sibling assertions above and PASSED this one. Written without
+    // that helper's name — an inlined query — it would have passed all three,
+    // and the contract that exists to forbid per-day round trips would have let
+    // the regression through on the strength of a name check.
+    //
+    // Now EVERY loop is checked.
     const body = actionBody("fetchNextAvailableDateAction");
-    const loop = body.match(/(for\s*\(|while\s*\()[\s\S]*?\n  \}/);
-    expect(loop, "expected the date-building loop to still be present").not.toBeNull();
-    expect(loop![0]).not.toContain("await");
+    const loops = [...body.matchAll(/(?:for\s*\(|while\s*\()[\s\S]*?\n  \}/g)];
+    expect(
+      loops.length,
+      "expected the date-building loop to still be present",
+    ).toBeGreaterThan(0);
+    for (const [i, loop] of loops.entries()) {
+      expect(
+        loop[0],
+        `loop #${i + 1} in fetchNextAvailableDateAction awaits inside itself, ` +
+          "which is a per-day round trip by another name",
+      ).not.toContain("await");
+    }
   });
 
   it("the single-date action still uses the day loader — this slice did not widen", () => {
