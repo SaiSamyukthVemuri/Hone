@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion, isRepoMax } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0212 — DELIVERY-EVENTS-01 email delivery events. SOURCE CONTRACT.
@@ -58,12 +58,10 @@ function tableOf(name: string): string {
 }
 
 describe("0212 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0211's test when this branch
-    // stacked on #827.
-    expect(isRepoMax(VERSION), "0212 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0212").toEqual([]);
+  it("is APPLIED and frozen: later fixes redefine its commands forward instead of editing it", () => {
+    // The repo-max claim moved to the current maximum's own test (CLAUDE.md
+    // §2) when DELIVERY-QUARANTINE-BOUND-01 stacked on this branch.
+    expect(isRepoMax(VERSION)).toBe(false);
   });
 
   it("is allocated exactly once", () => {

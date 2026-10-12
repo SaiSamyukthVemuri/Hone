@@ -14,7 +14,17 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0212 apply; `0212` APPLIED, repo == hosted on this branch)
+## Current state (verified 2026-10-12, post-0212 apply; `0212` APPLIED, `0227` AUTHORED AND PENDING on the DELIVERY-QUARANTINE-BOUND-01 branch)
+
+> **0227 IS AUTHORED AND PENDING, on the DELIVERY-QUARANTINE-BOUND-01 branch `fix/delivery-quarantine-bound-0227` only.**
+> `0227_email_receipt_quarantine_bound.sql` is a forward fix to the APPLIED, frozen `0212` (Codex P2 4252980865 on #832). It redefines exactly one function, `claim_email_provider_events(uuid, integer)`. The sweep's quarantine step is now bounded by the same limit as its claim step, oldest first (`received_at`, `id`), with `for update skip locked`. In `0212` it updated the whole exhausted backlog in one statement. The signature, definer rights, `search_path`, attempt cap, lease, sweep age and limit clamp are unchanged, and the grants are restated by name (`service_role` only). No table, policy, trigger or index changes, and it writes no data. `0212`'s bytes are unchanged.
+>
+> **NUMBERING, from a fresh full census (2026-10-12 ~23:10Z, recorded in `/home/sam/hone-migration-coordination.md`):** every number `0213`-`0226` is claimed by another lane's pushed branch (0226 = #863), and nothing exists above `0226`, so this fix takes **`0227`**. ops01 and the SMS lane confirmed they hold neither `0227` nor anything above `0226`. This branch carries `0212` and `0227` only, so its pending suffix has a hole at `0213`-`0226`, and the contiguity rule in `tests/docs/canonical-production-facts.test.ts` is red on this branch by design. `0227` reaches production only after `0213`-`0226`, in order.
+>
+> **NOT APPLIED, NOT MERGED.**
+>
+> **THE BLOCK BELOW IS THE 0212 APPLY RECORD.** Its hosted row is current. Its repo-max, pending and next-free rows are updated for this branch's pending suffix.
+
 
 > **0212 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #832 HEAD, BEFORE ANY MERGE.**
 > `0212_email_delivery_events.sql` was applied to production on 2026-10-12 under explicit
@@ -68,10 +78,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
-| **Repo migration max** | **0212** on this branch, so repo and hosted are equal here: the PARITY shape. A branch stacked above it carries its own pending suffix. |
+| **Repo migration max** | **0227**: `0227_email_receipt_quarantine_bound.sql` (DELIVERY-QUARANTINE-BOUND-01), stacked on the applied `0212` (#832). |
 | **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
-| **Pending migrations** | **none** on this branch. |
-| **Next free migration** | Next free number is **0213**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. LEAD-ALERT-01's PR #831 holds it by coordination. |
+| **Pending migrations** | **`0227`**, **NOT applied**, so `repo > hosted`. Hosted `0212` is the applied prefix: the MIGRATION-FIRST PENDING shape, with a coordinated hole at `0213`-`0226` (other lanes) on this branch. Apply in number order, under separate approval for each. |
+| **Next free migration** | Next free number is **0228**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `7116c66848574b0e02e7c2b8f500a6d3198edb58` (PR #832): clean exact-head Codex review (20:15:55Z) and CI `38302868662` 11/11. The shepherd was UNKNOWN (exception 1). |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
