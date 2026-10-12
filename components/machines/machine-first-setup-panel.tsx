@@ -8,6 +8,12 @@ import {
   NO_PERSISTENCE,
   type PersistenceCapability,
 } from "@/lib/machines/selection-store";
+import type {
+  ReadingInputRow,
+  RecordedReading,
+} from "@/lib/machines/machine-queries";
+import { MachineReadingEntry } from "./machine-reading-entry";
+import { MachinePriorSetup } from "./machine-prior-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { activeModes } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
@@ -64,10 +70,25 @@ export type MachineFirstSetupPanelProps = {
    */
   persistence?: PersistenceCapability;
   /**
-   * Set when the device list is empty because no inventory source exists, as
-   * opposed to this studio simply having registered nothing.
+   * Set when there is nothing to offer and the reason is worth showing - an
+   * empty studio and an unreadable inventory are different situations.
    */
   inventoryReason?: string | null;
+  /** The treatment block being charted. Entry is impossible without it. */
+  blockId?: string | null;
+  /** Owner-only affordances appear only when the SERVER says so. */
+  canManageMachines?: boolean;
+  /** The studio's most recent recorded setup, for next-visit prep. */
+  priorSetup?: RecordedReading[];
+  /** Records one settings group. Supplied by the connected wrapper. */
+  onRecord?: (input: {
+    blockId: string;
+    machineId: string;
+    modeKey: string;
+    groupKey: string;
+    channels: number[];
+    readings: ReadingInputRow[];
+  }) => Promise<{ ok: boolean; error?: string }>;
 };
 
 /** Every profile a practitioner might expect to see, with its real status. */
@@ -90,6 +111,10 @@ export function MachineFirstSetupPanel({
   catalogue = MACHINE_CATALOGUE,
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
+  blockId = null,
+  canManageMachines = false,
+  priorSetup = [],
+  onRecord,
 }: MachineFirstSetupPanelProps) {
   const [deviceId, setDeviceId] = useState<string | null>(initialDeviceId);
 
@@ -167,7 +192,19 @@ export function MachineFirstSetupPanel({
           {/* The machine's own fields, in the machine's own grouping. Rendered
               as the model's contract: label, native unit and the precision the
               record will preserve. No inputs - see the file header. */}
-          {groups.map((group) => (
+          {/* ENTRY when we know which block is being charted; otherwise the
+              field contract as a read-only reference. The panel never collects
+              a reading it has nowhere to put. */}
+          {blockId && onRecord && mode ? (
+            <MachineReadingEntry
+              profile={chosen.profile}
+              mode={mode}
+              blockId={blockId}
+              deviceId={chosen.device.deviceId}
+              onRecord={onRecord}
+            />
+          ) : (
+            groups.map((group) => (
             <div key={group.key} className="flex flex-col gap-1.5">
               <SectionLabel size="caption">{group.label}</SectionLabel>
               <ul className="flex flex-col gap-1">
@@ -199,7 +236,8 @@ export function MachineFirstSetupPanel({
                 ))}
               </ul>
             </div>
-          ))}
+            ))
+          )}
         </div>
       )}
 
@@ -226,6 +264,18 @@ export function MachineFirstSetupPanel({
           </ul>
         </div>
       )}
+
+      {canManageMachines && selectable.length === 0 && scope && (
+        <p
+          className="text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="machine-owner-hint"
+        >
+          You own this studio, so you can register its machines. Only models
+          that have passed their evidence review can be registered.
+        </p>
+      )}
+
+      <MachinePriorSetup readings={priorSetup} catalogue={catalogue} />
 
       <PersistenceStatus hasScope={scope != null} persistence={persistence} />
     </section>

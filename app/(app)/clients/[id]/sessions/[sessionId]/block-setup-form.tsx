@@ -1003,8 +1003,13 @@ export function BlockSetupForm({
           identity is derived on the SERVER by machine-setup-actions.ts, which
           takes no studio or practitioner argument at all - so the client cannot
           name an owner, and cannot name the wrong one. See
-          components/machines/machine-first-setup-connected.tsx. */}
-      <MachineFirstSetupConnected />
+          components/machines/machine-first-setup-connected.tsx.
+
+          The block id is passed only when one EXISTS: a new settings block has
+          no row yet, so there is nothing to record readings against and the
+          panel shows the field contract read-only instead of inviting a value
+          it would have to discard. */}
+      <MachineFirstSetupConnected blockId={block?.id ?? null} />
 
       {copyMessage && (
         <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">

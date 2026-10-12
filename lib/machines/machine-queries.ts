@@ -1,0 +1,391 @@
+import type { ReadingValue } from "./profile-contract";
+import type { StudioDevice } from "./selection";
+
+/**
+ * MPX-03 — the data layer over 0223's four commands.
+ *
+ * WHY AN INJECTED CLIENT. Every function here takes the client rather than
+ * building one. The server action passes the real authenticated Supabase
+ * client; the DB lane passes a client bound to an isolated stack. The SAME code
+ * therefore runs in the proof and in the product, which is the only way a test
+ * can claim anything about what the mounted UI does.
+ *
+ * `MachineDb` is the narrow slice of the Supabase client used here - `rpc` and
+ * `from(...).select(...)`. Typing it structurally rather than importing
+ * `SupabaseClient` keeps this module testable without a browser or a cookie
+ * store, and documents exactly how much authority it needs.
+ *
+ * WHAT THIS LAYER DOES NOT DO. It performs no authorization of its own. Every
+ * command it calls resolves the caller in the database via
+ * `own_practitioner_in_studio` or `is_studio_owner`, and the tables' direct DML
+ * is revoked from every runtime role. A studio id passed here is a FILTER the
+ * database re-checks, never a claim this layer is making.
+ */
+
+export type MachineDbError = { message: string } | null;
+
+export type MachineDb = {
+  rpc: (
+    fn: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ data: unknown; error: MachineDbError }>;
+  from: (table: string) => {
+    select: (columns: string) => {
+      eq: (
+        column: string,
+        value: unknown,
+      ) => {
+        is: (
+          column: string,
+          value: null,
+        ) => {
+          order: (
+            column: string,
+            opts: { ascending: boolean },
+          ) => Promise<{ data: unknown; error: MachineDbError }>;
+        };
+        order: (
+          column: string,
+          opts: { ascending: boolean },
+        ) => {
+          limit: (
+            n: number,
+          ) => Promise<{ data: unknown; error: MachineDbError }>;
+        };
+      };
+    };
+  };
+};
+
+export type MachineOutcome<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string };
+
+function fail(error: MachineDbError, fallback: string): string {
+  return error?.message?.trim() || fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Inventory
+// ---------------------------------------------------------------------------
+
+type MachineRow = {
+  id: string;
+  studio_id: string;
+  machine_profile_id: string;
+  machine_profile_version: number;
+  display_name: string;
+  installed_options: string[] | null;
+  retired_at: string | null;
+};
+
+/**
+ * The studio's live machines, newest display name order.
+ *
+ * Retired units are excluded by the query rather than filtered afterwards, so a
+ * retired unit cannot reach a picker by accident. Historical readings still
+ * reference it by id and are unaffected.
+ */
+export async function listStudioMachines(
+  db: MachineDb,
+  studioId: string,
+): Promise<MachineOutcome<StudioDevice[]>> {
+  const { data, error } = await db
+    .from("studio_machines")
+    .select(
+      "id, studio_id, machine_profile_id, machine_profile_version, display_name, installed_options, retired_at",
+    )
+    .eq("studio_id", studioId)
+    .is("retired_at", null)
+    .order("display_name", { ascending: true });
+
+  if (error) return { ok: false, error: fail(error, "Could not read machines.") };
+
+  const rows = (data ?? []) as MachineRow[];
+  return {
+    ok: true,
+    value: rows.map((r) => ({
+      deviceId: r.id,
+      studioId: r.studio_id,
+      profileId: r.machine_profile_id,
+      profileVersion: r.machine_profile_version,
+      displayName: r.display_name,
+      installedOptions: r.installed_options ?? [],
+      retiredAt: r.retired_at,
+    })),
+  };
+}
+
+/** Register one physical unit. Owner-only, enforced in the database. */
+export async function registerStudioMachine(
+  db: MachineDb,
+  input: {
+    studioId: string;
+    profileId: string;
+    profileVersion: number;
+    displayName: string;
+    installedOptions?: string[];
+  },
+): Promise<MachineOutcome<string>> {
+  const { data, error } = await db.rpc("register_studio_machine", {
+    p_studio_id: input.studioId,
+    p_machine_profile_id: input.profileId,
+    p_machine_profile_version: input.profileVersion,
+    p_display_name: input.displayName,
+    p_installed_options: input.installedOptions ?? [],
+  });
+  if (error) {
+    return { ok: false, error: fail(error, "Could not register the machine.") };
+  }
+  return { ok: true, value: String(data) };
+}
+
+/** Take a unit out of service. Owner-only; clears it from every UI default. */
+export async function retireStudioMachine(
+  db: MachineDb,
+  machineId: string,
+): Promise<MachineOutcome<boolean>> {
+  const { data, error } = await db.rpc("retire_studio_machine", {
+    p_machine_id: machineId,
+  });
+  if (error) {
+    return { ok: false, error: fail(error, "Could not retire the machine.") };
+  }
+  return { ok: true, value: data === true };
+}
+
+// ---------------------------------------------------------------------------
+// The remembered selection
+// ---------------------------------------------------------------------------
+
+/**
+ * Remember a machine for the CALLER in one studio.
+ *
+ * `null` clears it. The command accepts no practitioner id, so this cannot
+ * write anyone else's default; a caller with no membership in that studio gets
+ * a null practitioner back rather than a write.
+ */
+export async function rememberMachine(
+  db: MachineDb,
+  input: { studioId: string; machineId: string | null; modeKey: string | null },
+): Promise<MachineOutcome<boolean>> {
+  const { data, error } = await db.rpc("set_own_default_machine", {
+    p_studio_id: input.studioId,
+    p_machine_id: input.machineId,
+    p_mode_key: input.modeKey,
+  });
+  if (error) {
+    return { ok: false, error: fail(error, "Could not remember that machine.") };
+  }
+  // NULL means "you are not an active member of that studio". Reporting it as
+  // a refusal rather than a success is the whole point of returning it.
+  return { ok: true, value: data != null };
+}
+
+type RememberedRow = {
+  default_machine_id: string | null;
+  default_machine_mode: string | null;
+};
+
+/** Read the caller's own remembered machine, by practitioner row id. */
+export async function readRememberedMachine(
+  db: MachineDb,
+  practitionerId: string,
+): Promise<MachineOutcome<{ machineId: string | null; modeKey: string | null }>> {
+  const { data, error } = await db
+    .from("practitioners")
+    .select("default_machine_id, default_machine_mode")
+    .eq("id", practitionerId)
+    .order("id", { ascending: true })
+    .limit(1);
+
+  if (error) {
+    return { ok: false, error: fail(error, "Could not read your machine.") };
+  }
+  const row = ((data ?? []) as RememberedRow[])[0];
+  return {
+    ok: true,
+    value: {
+      machineId: row?.default_machine_id ?? null,
+      modeKey: row?.default_machine_mode ?? null,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Readings
+// ---------------------------------------------------------------------------
+
+export type ReadingInputRow = {
+  /** Null for a mode-level field. */
+  stageKey: string | null;
+  fieldKey: string;
+  value: ReadingValue;
+  nativeUnit: string;
+  decimals: number;
+  observationSource:
+    | "practitioner-entered"
+    | "machine-displayed"
+    | "device-computed"
+    | "estimated";
+};
+
+/**
+ * Record one settings group against a treatment block.
+ *
+ * The block determines the studio in the database, so no studio is sent. A
+ * block or machine in another studio is refused there, not here.
+ *
+ * The payload keeps a value and a reasoned absence distinct: `value` is sent as
+ * a string so a recorded zero survives (a bare `0` would be indistinguishable
+ * from absent once JSON-coerced), and an absence sends `absence_reason` with no
+ * value at all. The database's XOR constraint refuses anything else.
+ */
+export async function recordSetupGroup(
+  db: MachineDb,
+  input: {
+    blockId: string;
+    machineId: string;
+    modeKey: string;
+    groupKey: string;
+    channels: number[];
+    readings: ReadingInputRow[];
+  },
+): Promise<MachineOutcome<number>> {
+  const payload = input.readings.map((r) => ({
+    stage_key: r.stageKey,
+    field_key: r.fieldKey,
+    ...(r.value.kind === "value"
+      ? { value: String(r.value.value) }
+      : { absence_reason: r.value.reason }),
+    native_unit: r.nativeUnit,
+    decimals: r.decimals,
+    observation_source: r.observationSource,
+  }));
+
+  const { data, error } = await db.rpc("record_treatment_setup_group", {
+    p_block_id: input.blockId,
+    p_studio_machine_id: input.machineId,
+    p_mode_key: input.modeKey,
+    p_group_key: input.groupKey,
+    p_channels: input.channels,
+    p_readings: payload,
+  });
+  if (error) {
+    return { ok: false, error: fail(error, "Could not save those settings.") };
+  }
+  return { ok: true, value: Number(data ?? 0) };
+}
+
+export type RecordedReading = {
+  blockId: string;
+  profileId: string;
+  profileVersion: number;
+  modeKey: string;
+  groupKey: string;
+  channels: number[];
+  stageKey: string | null;
+  fieldKey: string;
+  value: ReadingValue;
+  nativeUnit: string;
+  decimals: number;
+  recordedAt: string;
+};
+
+type ReadingRow = {
+  session_block_id: string;
+  machine_profile_id: string;
+  machine_profile_version: number;
+  mode_key: string;
+  group_key: string;
+  channels: number[] | null;
+  stage_key: string | null;
+  field_key: string;
+  value_numeric: string | number | null;
+  absence_reason: string | null;
+  native_unit: string;
+  decimals: number;
+  recorded_at: string;
+};
+
+function toReading(r: ReadingRow): RecordedReading {
+  return {
+    blockId: r.session_block_id,
+    profileId: r.machine_profile_id,
+    profileVersion: r.machine_profile_version,
+    modeKey: r.mode_key,
+    groupKey: r.group_key,
+    channels: r.channels ?? [],
+    stageKey: r.stage_key,
+    fieldKey: r.field_key,
+    // numeric comes back as a string from PostgREST; Number() here would lose
+    // nothing for these magnitudes, but the string is parsed once and the
+    // native precision is carried separately in `decimals` regardless.
+    value:
+      r.value_numeric != null
+        ? { kind: "value", value: Number(r.value_numeric) }
+        : {
+            kind: "absent",
+            reason:
+              (r.absence_reason as "not-recorded" | "not-applicable" | "not-legible") ??
+              "not-recorded",
+          },
+    nativeUnit: r.native_unit,
+    decimals: r.decimals,
+    recordedAt: r.recorded_at,
+  };
+}
+
+const READING_COLUMNS =
+  "session_block_id, machine_profile_id, machine_profile_version, mode_key, " +
+  "group_key, channels, stage_key, field_key, value_numeric, absence_reason, " +
+  "native_unit, decimals, recorded_at";
+
+/** Every reading recorded against one block, for the chart being edited. */
+export async function readingsForBlock(
+  db: MachineDb,
+  blockId: string,
+): Promise<MachineOutcome<RecordedReading[]>> {
+  const { data, error } = await db
+    .from("treatment_setup_readings")
+    .select(READING_COLUMNS)
+    .eq("session_block_id", blockId)
+    .order("field_key", { ascending: true })
+    .limit(500);
+
+  if (error) return { ok: false, error: fail(error, "Could not read settings.") };
+  return { ok: true, value: ((data ?? []) as ReadingRow[]).map(toReading) };
+}
+
+/**
+ * NEXT-VISIT RETRIEVAL. The most recently recorded setup in this studio,
+ * returned as the whole group rather than one field.
+ *
+ * Ordering is by `recorded_at` descending, which is sound because readings are
+ * immutable - a recorded instant cannot be moved, so "most recent" is a fact
+ * rather than a race. The whole block's readings come back together, because a
+ * setup is only reproducible as a set: a current without its duration is not a
+ * setting anyone can repeat.
+ */
+export async function latestRecordedSetup(
+  db: MachineDb,
+  studioId: string,
+): Promise<MachineOutcome<RecordedReading[]>> {
+  const { data, error } = await db
+    .from("treatment_setup_readings")
+    .select(READING_COLUMNS)
+    .eq("studio_id", studioId)
+    .order("recorded_at", { ascending: false })
+    .limit(500);
+
+  if (error) {
+    return { ok: false, error: fail(error, "Could not read the last setup.") };
+  }
+  const rows = ((data ?? []) as ReadingRow[]).map(toReading);
+  if (rows.length === 0) return { ok: true, value: [] };
+
+  // The newest row names the block; return that block's readings only, so the
+  // caller gets one coherent setup instead of a mixture of visits.
+  const newestBlock = rows[0]!.blockId;
+  return { ok: true, value: rows.filter((r) => r.blockId === newestBlock) };
+}

@@ -416,8 +416,8 @@ describe("historical values are untouched by anything here", () => {
     .join("\n");
 
   it("the machine actions touch no clinical table", () => {
-    // Choosing a machine is a UI default. It must not reach a treatment
-    // record, which is why this module has no supabase client at all.
+    // Readings live in their own table, written only through the owner/member
+    // gated command. No existing treatment record is reachable from here.
     for (const table of [
       "session_blocks",
       "electrolysis_entries",
@@ -429,13 +429,17 @@ describe("historical values are untouched by anything here", () => {
     }
   });
 
-  it("performs no write of its own beyond the selection store", () => {
+  it("performs no raw DML and no cache invalidation of its own", () => {
+    // It legitimately builds a Supabase client now that the storage exists, so
+    // the claim is about what it DOES with one: named commands only.
     expect(code).not.toMatch(/\.(insert|update|upsert|delete)\(/);
-    expect(code).not.toContain("createClient");
     expect(code).not.toContain("revalidatePath");
   });
 
-  it("the panel renders no control that could edit a recorded value", () => {
+  it("renders NO entry control until there is a block to record against", () => {
+    // This replaces the old "no input anywhere" assertion rather than deleting
+    // it. The panel still refuses to collect a reading it has nowhere to put:
+    // without a blockId and a recorder it shows the field CONTRACT, read-only.
     const html = render({
       scope: SCOPE,
       devices: [DEVICE],
@@ -445,5 +449,121 @@ describe("historical values are untouched by anything here", () => {
     for (const tag of ["<input", "<textarea", "<select", "<form"]) {
       expect(html).not.toContain(tag);
     }
+    // And what it shows instead is the contract: label, unit, precision.
+    expect(html).toContain("Current");
+    expect(html).toContain("(µA)");
+    expect(html).toContain("whole numbers");
+  });
+});
+
+describe("with a block to chart against, the entry surface appears", () => {
+  const html = render({
+    scope: SCOPE,
+    devices: [DEVICE],
+    initialDeviceId: "room-9",
+    catalogue: CAT,
+    blockId: "block-1",
+    onRecord: async () => ({ ok: true }),
+  });
+
+  it("renders one input per native field, under the machine's own labels", () => {
+    expect(html).toContain('data-testid="machine-reading-entry"');
+    expect(html).toContain('data-testid="reading-current"');
+    expect(html).toContain('data-testid="reading-duration"');
+    expect(html).toContain("Current");
+    expect(html).toContain("(µA)");
+    expect(html).toContain("Time");
+  });
+
+  it("offers a save control", () => {
+    expect(html).toContain('data-testid="machine-reading-save"');
+    expect(html).toContain("Save these settings");
+  });
+
+  it("marks the machine-computed field as not editable", () => {
+    // `Total` is device-computed on the fixture, so its input is disabled
+    // rather than inviting a value the machine owns. The whole tag is
+    // inspected because React emits attributes in source order, so a
+    // one-directional regex would depend on JSX ordering.
+    const tags = html.match(/<input[^>]*>/g) ?? [];
+    const computed = tags.find((t) => t.includes('data-testid="reading-computed"'));
+    expect(computed, "no input was rendered for the computed field").toBeTruthy();
+    expect(computed).toContain("disabled");
+    // And the practitioner-entered ones are NOT disabled.
+    const current = tags.find((t) => t.includes('data-testid="reading-current"'));
+    expect(current).not.toContain("disabled");
+  });
+
+  it("still shows the disputed bound as advisory, not as a limit", () => {
+    expect(html).toContain("sources disagree");
+    expect(html).not.toMatch(/max="400"/);
+  });
+});
+
+describe("the next-visit retrieval renders the prior setup", () => {
+  const html = render({
+    scope: SCOPE,
+    devices: [DEVICE],
+    catalogue: CAT,
+    priorSetup: [
+      {
+        blockId: "b1",
+        profileId: "fixture:panel",
+        profileVersion: 1,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [2],
+        stageKey: null,
+        fieldKey: "current",
+        value: { kind: "value", value: 120 },
+        nativeUnit: "µA",
+        decimals: 0,
+        recordedAt: "2026-09-20T15:04:00Z",
+      },
+    ],
+  });
+
+  it("names the machine, the mode, the value and its unit", () => {
+    expect(html).toContain('data-testid="machine-prior-setup"');
+    expect(html).toContain("Last recorded setup");
+    expect(html).toContain("Fixture Panel");
+    expect(html).toContain("Galvanic");
+    expect(html).toContain("120");
+    expect(html).toContain("µA");
+  });
+
+  it("shows the channel association that was recorded", () => {
+    expect(html).toContain("Channels 2");
+  });
+
+  it("does NOT relabel a setup recorded against an older contract version", () => {
+    const old = render({
+      scope: SCOPE,
+      catalogue: CAT,
+      priorSetup: [
+        {
+          blockId: "b1",
+          profileId: "fixture:panel",
+          profileVersion: 99,
+          modeKey: "galvanic",
+          groupKey: "g1",
+          channels: [],
+          stageKey: null,
+          fieldKey: "current",
+          value: { kind: "value", value: 120 },
+          nativeUnit: "µA",
+          decimals: 0,
+          recordedAt: "2026-09-20T15:04:00Z",
+        },
+      ],
+    });
+    // The recorded KEY, not today's label, and the difference is stated.
+    expect(old).toContain("current");
+    expect(old).toContain("field contract has changed");
+  });
+
+  it("renders nothing at all when there is no history", () => {
+    const none = render({ scope: SCOPE, catalogue: CAT, priorSetup: [] });
+    expect(none).not.toContain('data-testid="machine-prior-setup"');
   });
 });

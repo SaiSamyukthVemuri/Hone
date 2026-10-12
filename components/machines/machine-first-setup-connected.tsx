@@ -24,15 +24,25 @@ import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[ses
 // with the real scope, the studio's devices and the real persistence status.
 
 export type MachineFirstSetupConnectedProps = {
+  /** The treatment block being charted, from the host form. */
+  blockId?: string | null;
   /**
    * Injected by tests. Production passes nothing and the server action is used,
    * which is also why this component holds no fallback identity of its own.
    */
   load?: () => Promise<MachineSetupContext>;
+  /** Injected by tests; production uses the server action. */
+  record?: MachineFirstSetupPanelRecord;
 };
 
+type MachineFirstSetupPanelRecord = NonNullable<
+  Parameters<typeof MachineFirstSetupPanel>[0]["onRecord"]
+>;
+
 export function MachineFirstSetupConnected({
+  blockId = null,
   load,
+  record,
 }: MachineFirstSetupConnectedProps = {}) {
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
 
@@ -60,6 +70,16 @@ export function MachineFirstSetupConnected({
     };
   }, [load]);
 
+  const onRecord: MachineFirstSetupPanelRecord =
+    record ??
+    (async (input) => {
+      const mod = await import(
+        "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
+      );
+      const out = await mod.recordReadingsAction(input);
+      return out.ok ? { ok: true } : { ok: false, error: out.error };
+    });
+
   return (
     <MachineFirstSetupPanel
       scope={ctx?.scope ?? null}
@@ -67,6 +87,13 @@ export function MachineFirstSetupConnected({
       initialDeviceId={ctx?.remembered?.deviceId ?? null}
       inventoryReason={ctx?.inventoryReason ?? null}
       persistence={ctx?.persistence ?? NO_PERSISTENCE}
+      // The catalogue is whatever the SERVER resolved, so the synthetic demo
+      // profile reaches the client only when the server's gate allowed it.
+      catalogue={ctx?.catalogue ?? undefined}
+      canManageMachines={ctx?.canManageMachines ?? false}
+      priorSetup={ctx?.priorSetup ?? []}
+      blockId={blockId}
+      onRecord={onRecord}
     />
   );
 }
