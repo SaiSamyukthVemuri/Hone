@@ -36,6 +36,18 @@ export function currencyLabel(currency: PaymentCurrency): "CAD" | "USD" {
   return currency === "usd" ? "USD" : "CAD";
 }
 
+/** "Canadian dollars" / "US dollars": how a screen reader names the money. */
+export function currencyName(
+  currency: PaymentCurrency,
+): "Canadian dollars" | "US dollars" {
+  return currency === "usd" ? "US dollars" : "Canadian dollars";
+}
+
+/** "Canada" / "United States": the studio's payment country, for people. */
+export function countryName(country: PaymentCountry): "Canada" | "United States" {
+  return country === "US" ? "United States" : "Canada";
+}
+
 export type AccountCountryVerdict =
   // Stripe reported the account's country and it is the studio's.
   | "match"
@@ -78,6 +90,82 @@ export function accountCountryBlockingReason(
       return "Hone has not yet confirmed the country of the studio's Stripe account. Refresh the Stripe status in Settings, then try again.";
     default:
       return null;
+  }
+}
+
+/**
+ * PAY-CCY-04. The owner-facing summary of where the studio takes payments.
+ * Pure: the page passes in what it read, this decides what to say. The tone
+ * is "ok" only when charging is actually possible from the country's side.
+ */
+export type PaymentCountrySummary = {
+  tone: "ok" | "attention" | "blocked" | "unknown";
+  heading: string;
+  detail: string;
+};
+
+export function describePaymentCountry(input: {
+  jurisdiction: StudioPaymentJurisdiction | null;
+  account:
+    | { kind: "none" }
+    | { kind: "bound"; observedCountry: string | null }
+    | { kind: "unknown" };
+}): PaymentCountrySummary {
+  const { jurisdiction, account } = input;
+  if (!jurisdiction) {
+    return {
+      tone: "unknown",
+      heading: "Payment country could not be verified",
+      detail: "Hone could not read this studio's payment country and currency. No charge can be prepared until it can. Refresh the page; if this persists, contact Hone support.",
+    };
+  }
+  const where = countryName(jurisdiction.country);
+  const heading = `${where} · charges in ${currencyLabel(jurisdiction.currency)}`;
+  if (account.kind === "unknown") {
+    return {
+      tone: "unknown",
+      heading,
+      detail: "Hone could not check the country of this studio's Stripe account. Refresh the page.",
+    };
+  }
+  if (account.kind === "none") {
+    return {
+      tone: "ok",
+      heading,
+      detail: `When you connect Stripe, the account will be created in ${where}. Contact Hone support before connecting if this is not your business's country.`,
+    };
+  }
+  const verdict = accountCountryVerdict(jurisdiction.country, account.observedCountry);
+  switch (verdict) {
+    case "match":
+      return {
+        tone: "ok",
+        heading,
+        detail: `Your Stripe account is registered in ${where}.`,
+      };
+    case "unobserved_legacy_ca":
+      return {
+        tone: "attention",
+        heading,
+        detail: "Stripe has not yet confirmed your account's country to Hone. Refresh status from Stripe to confirm it.",
+      };
+    case "unobserved_refused":
+      return {
+        tone: "blocked",
+        heading,
+        detail: `Stripe has not yet confirmed that your account is registered in ${where}. Charges are paused until it does. Refresh status from Stripe.`,
+      };
+    case "mismatch": {
+      const reported =
+        account.observedCountry === "CA" || account.observedCountry === "US"
+          ? countryName(account.observedCountry)
+          : (account.observedCountry ?? "another country");
+      return {
+        tone: "blocked",
+        heading,
+        detail: `Your Stripe account is registered in ${reported}, not ${where}. Onboarding and charges are blocked. Contact Hone support; the account will not be replaced automatically.`,
+      };
+    }
   }
 }
 
