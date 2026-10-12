@@ -60,11 +60,11 @@ different practitioners**, with the `LEGACY` refusal as its control.
 |---|---|---|---|
 | 1 | Five treating practitioners + owner | **Supported and proven**, but only in `LIVE` capacity state | `practitioners` (`0001:18`); `0134`/`0136` flags, default off; two same-instant bookings measured via `create_internal_appointment_v2` (§2.1) |
 | 2 | Restricted receptionist | **Absent on this chain** — the surface does not exist yet, and lands with #838/#850/#852 | A receptionist is a row in `public.studio_receptionists` (`0216:47`) created via `add_studio_receptionist` (`0216:407`). **Not** because of `practitioners.role` — see the correction below |
-| 3 | Simultaneous resource scheduling | **Per-practitioner: works, and is proven. There is no resource/room model.** | Of the **97** tables created on the chain, none is a resource, room, equipment, device, machine, chair or bay. Concurrency is modelled as practitioner capacity (`0134`/`0136`) and demonstrated in §2.1 |
+| 3 | Simultaneous scheduling | **Works, and is proven.** Friday concurrency means **practitioners** | Concurrency is modelled as practitioner capacity (`0134`/`0136`) and demonstrated in §2.1: two practitioners booked at the same instant through the real command. There is no separate room/equipment *scheduling* resource, and none is required — see the correction below |
 | 4 | Intake / status | *Not verified by this lane* | Intake surfaces exist under `app/intake`; readiness owned by the ONB/intake lane |
 | 5 | Treatment recording | *Partly verified* — clinical records exist | `0119`, `0120` (finalization, corrections/amendments). Depth owned by the clinical lane |
 | 6 | Next-visit history | *Not verified by this lane* | Owned by the clinical/records lane |
-| 7 | Machine-first selection | **No data model exists** | No device/machine table among the 97. `probe_lots` (`0001:65`) is **consumable** tracking — probe size, lot number, expiry — not a schedulable machine. #829's contract is unverified and Fett's inventory is unknown |
+| 7 | Machine-first selection | **Modelled, and among the oldest parts of the product** — it is **treatment charting**, not scheduling | `electrolysis_entries` carries `apilus_modality`, `energy_level`, `machine_frequency`, `probe_type`, `probe_size`, `probe_lot_id`; `session_blocks` mirrors them with `probe_brand`; `laser_entries.equipment_params`; `services.modality`; and **`practitioners.default_machine_frequency`** — a per-practitioner machine default. All on the production chain (`0001`, `0002`, `0009`, `0011`, `0014`, `0016`, `0019`, `0020`, `0042`) and wired into the session pages. Fett's exact inventory and #829's revised catalogue remain unverified |
 | 8 | Operational administration | *Not verified by this lane* | Owned by the studio-readiness lane (#824 / #825) |
 | 9 | USD flows | **Not supported on this chain** | `currency` defaults to **`'cad'`** (`0073:113`, `0187:126`, `0064:141`); `services` has **no** currency column. Owned by the Audit/USD lane (#833 `0214` and stack) |
 | 10 | Messaging / failure visibility | *Not verified by this lane* | Owned by the delivery lanes (#832, #843, #846, #849) |
@@ -94,6 +94,46 @@ Two details that bite anyone reproducing this:
   by the CHECK;
 * `node-postgres` returns `timestamptz` as a **Date**, so comparing two equal
   instants with `toBe` fails on object identity. Compare `getTime()`.
+
+### Correction: machine selection is treatment charting, not a scheduling engine
+
+An earlier revision of this document reported that **"machine-first selection has
+no data model at all"** and treated the absence of a room/equipment table as a
+gap in *scheduling*. Both were wrong, and the second was the more misleading.
+
+**Friday concurrency means practitioners.** That is modelled (`0134`/`0136`) and
+proven in §2.1. No room or equipment *scheduling* resource is required, so its
+absence is not a gap — I was answering a question nobody had asked.
+
+**Machine selection is charting**, and it is one of the product's oldest and
+most developed areas, exactly as an electrolysis practice needs. On the
+**production** chain, verified against the live schema:
+
+| Surface | Fields |
+|---|---|
+| `electrolysis_entries` | `apilus_modality`, `energy_level`, `machine_frequency`, `probe_type`, `probe_size`, `probe_lot_id` |
+| `session_blocks` | `apilus_modality`, `energy_level`, `machine_frequency`, `probe_brand` |
+| `laser_entries` | `equipment_params` |
+| `services` | `modality` |
+| `practitioners` | **`default_machine_frequency`** — a per-practitioner machine default |
+| `imported_treatment_memories` | `method_or_machine`, `modality`, `probe_type`, `probe_size`, `probe_lot` |
+| `record_keeping_sterile_items` | `probe_key` |
+
+Introduced across `0001`, `0002`, `0009`, `0011`, `0014`, `0016`, `0019`, `0020`
+and `0042`, and wired into `app/(app)/clients/[id]/sessions/[sessionId]` and
+`app/features/charting-records`.
+
+**So the rehearsal can demonstrate machine/modality recording**, and `probe_lots`
+(`0001:65`) is the consumable-inventory side of the same story rather than a
+failed scheduling resource. What stays unverified is Fett's **exact device
+inventory** and #829's revised catalogue — a content question for the Monday
+inventory step, not a missing capability.
+
+**How I got it wrong**, recorded because it is a repeatable error: I enumerated
+tables looking for a *scheduling resource* noun, found none, and concluded the
+capability was absent — without asking which surface the capability actually
+belongs to. A capability search that only looks where you expect it will find
+nothing and call it evidence.
 
 ### Correction: a receptionist is a separate table, not a practitioner role
 
@@ -167,15 +207,19 @@ proving.
    appointments (`0136`'s stated reason for splitting the two flags).
 4. **Ordinary public booking** — demonstrate the path as it is, and **say
    plainly** that practitioner selection is not available on it yet (§2).
-5. **Treatment recording** against a seeded client. Label depth honestly; this
-   lane verified existence, not completeness.
+5. **Treatment recording with machine settings** against a seeded client —
+   modality, energy level, machine frequency and probe type/size/lot on an
+   `electrolysis_entries` row. Proves: machine-first charting on the production
+   chain. Label depth honestly; this lane verified the fields exist and are
+   app-wired, not that every workflow around them is complete.
 6. **Teardown** — `dropFettStudio`. Proves: nothing persists. Note the
    `appointment_audit` RESTRICT discipline: a studio that has been booked
    cannot be deleted until its trail is purged, and the suite proves a bare
    delete is refused first.
 
 **Not in the rehearsal, because this chain does not carry the surface:**
-receptionist access (2), machine-first selection (7), USD (9). Demonstrating a mock of any of these
+receptionist access (2) and USD (9). **Machine/modality charting (7) IS in the
+rehearsal** — see the correction above. Demonstrating a mock of any of these
 as though it were the product would be the one failure this document exists to
 prevent.
 
