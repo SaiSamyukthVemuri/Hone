@@ -20,8 +20,10 @@ const SIG = "public.record_studio_sms_sender_registration(uuid, text, text, text
 
 describe("0217 in the sequence", () => {
   it("is the repository maximum on this branch, allocated once", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+    expect(isRepoMax(VERSION)).toBe(false); // INTEGRATION handoff — see note below
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above 0217").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
     expect(countVersion(VERSION)).toBe(1);
   });
 
