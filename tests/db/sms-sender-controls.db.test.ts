@@ -234,3 +234,68 @@ describe("the controls' seeded fake account", () => {
     expect(out, JSON.stringify(out)).toMatchObject({ ok: true, result: "activated" });
   });
 });
+
+// Codex P2 4250840773: an adoption that cannot succeed is refused BEFORE the
+// claim, so a typo never wedges the studio's setup (0191's claimed number is
+// write-once). Three outcomes, each proved against the database.
+describe("adoption is checked before the claim: refused, uncertain, failed", () => {
+  const MG = "MG" + "b1".repeat(16);
+  const NUMBER = "+14165550188";
+  const seeded = (over: ConstructorParameters<typeof FakeSmsProvisioningProvider>[0] = {}) =>
+    new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [NUMBER]: "PN" + "b2".repeat(16) },
+      accountServices: [{ sid: MG, numbers: [NUMBER], inboundUrl: `${ORIGIN}/api/twilio/inbound-sms`, statusUrl: `${ORIGIN}/api/twilio/message-status` }],
+      ...over,
+    });
+  const rows = async (studioId: string) =>
+    (await adminQuery("select status, claimed_phone_number from public.studio_sms_senders where studio_id = $1", [studioId])).rows;
+  const adopt = (provider: FakeSmsProvisioningProvider, studioId: string, userId: string, phoneNumber = NUMBER, sid = MG) =>
+    controls.runSenderAdoption(deps(provider), { studioId, actorUserId: userId, country: "CA", phoneNumber, messagingServiceSid: sid });
+
+  it("REFUSED: a typo in the number or the service, or a service not wired to Hone, writes nothing; the studio can still provision", async () => {
+    const s = await seedStudio("ctl-pre-refused");
+    const cases: Array<[string, FakeSmsProvisioningProvider, string, string]> = [
+      ["number_not_owned_by_account", seeded(), "+14165550189", MG],
+      ["number_in_other_service", seeded(), NUMBER, "MG" + "c3".repeat(16)],
+      ["service_webhooks_mismatch", seeded({ accountServices: [{ sid: MG, numbers: [NUMBER], inboundUrl: "https://elsewhere.example/sms", statusUrl: null }] }), NUMBER, MG],
+    ];
+    for (const [reason, provider, phone, sid] of cases) {
+      expect(await adopt(provider, s.studioId, s.userId, phone, sid), reason).toEqual({ ok: false, result: "refused", reason, uncertain: false });
+      expect(provider.calls.purchase, reason).toBe(0);
+    }
+    expect(await rows(s.studioId)).toEqual([]);
+    // Not wedged: a searched number can still be provisioned for this studio.
+    const provider = new FakeSmsProvisioningProvider();
+    const found = await controls.runSenderSearch({ provider }, { country: "CA", areaCode: "604" });
+    const pick = found.ok ? found.candidates[0].phoneNumber : "";
+    expect(await controls.runSenderProvision(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "604", phoneNumber: pick,
+    })).toMatchObject({ ok: true, result: "activated" });
+  });
+
+  it("UNCERTAIN: the provider cannot answer, or answers incompletely: refused as uncertain, nothing written", async () => {
+    const s = await seedStudio("ctl-pre-uncertain");
+    for (const provider of [
+      seeded({ ownedLookupFails: "provider_timeout" }),
+      seeded({ unparseableServicePage: 1 }),
+      seeded({ serviceConfigFails: "provider_unavailable" }),
+    ]) {
+      const out = await adopt(provider, s.studioId, s.userId);
+      expect(out).toMatchObject({ ok: false, result: "refused", uncertain: true });
+      expect(provider.calls.purchase).toBe(0);
+    }
+    expect(await rows(s.studioId)).toEqual([]);
+  });
+
+  it("FAILED: an adoption that passes the checks but fails AFTER the claim (its proof text) is reported as failed, not active", async () => {
+    const s = await seedStudio("ctl-post-failed");
+    const provider = seeded({ testSendFails: "provider_unavailable" });
+    const out = await adopt(provider, s.studioId, s.userId);
+    expect(out).toMatchObject({ ok: false, result: "failed" });
+    expect(provider.calls.purchase).toBe(0);
+    const r = await rows(s.studioId);
+    expect(r.filter((x) => x.status === "active")).toEqual([]);
+    // The claim was taken only for a number the account was shown to own.
+    expect(r.map((x) => x.claimed_phone_number)).toEqual([NUMBER]);
+  });
+});

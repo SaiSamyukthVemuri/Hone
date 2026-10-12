@@ -90,6 +90,27 @@ export function numberMatchesCountry(phoneNumber: string, country: SenderCountry
 /** Refused before any claim: the number or area code is another country's. */
 export type CountryRefusal = { ok: false; result: "refused"; reason: "number_country_mismatch" };
 
+/**
+ * Refused before any claim because the adoption could not be shown to be
+ * possible (Codex P2 4250699100, 4250840773). `uncertain` = the provider did
+ * not give a complete answer (retry later); otherwise the submission is wrong.
+ * Nothing is written either way.
+ */
+export type PreClaimRefusal = {
+  ok: false;
+  result: "refused";
+  reason:
+    | "number_not_owned_by_account"
+    | "provider_number_mismatch"
+    | "number_in_other_service"
+    | "number_not_in_named_service"
+    | "number_association_ambiguous"
+    | "number_association_unavailable"
+    | "service_webhooks_mismatch"
+    | "ownership_unverified";
+  uncertain: boolean;
+};
+
 export function areaCodeMatchesCountry(areaCode: string, country: SenderCountry): boolean {
   return /^[2-9][0-9]{2}$/.test(areaCode) && numberMatchesCountry(`+1${areaCode}2000000`, country);
 }
@@ -212,12 +233,53 @@ export async function runSenderProvision(
 export async function runSenderAdoption(
   deps: SenderControlsDeps,
   input: { studioId: string; actorUserId: string; country: string; phoneNumber: string; messagingServiceSid: string },
-): Promise<AdoptionOutcome | CountryRefusal> {
+): Promise<AdoptionOutcome | CountryRefusal | PreClaimRefusal> {
   if (!isSenderCountry(input.country)) return { ok: false, result: "refused", reason: "invalid_input" };
   if (!numberMatchesCountry(input.phoneNumber, input.country)) {
     return { ok: false, result: "refused", reason: "number_country_mismatch" };
   }
   const u = urls(deps.appOrigin);
+
+  // PROVE IT CAN BE ADOPTED BEFORE THE CLAIM (Codex P2 4250840773). The
+  // orchestration claims first and checks ownership second; 0191 makes the
+  // claimed number write-once, so a typo it then parks in `error` would wedge
+  // the studio's setup for good. The same READ-ONLY provider calls the
+  // orchestration makes (lookupOwnedNumber, readMessagingServiceConfig; neither
+  // mutates anything) run here first, with the orchestration's own refusal
+  // vocabulary. The orchestration still re-checks after claiming, because
+  // ownership can change in between.
+  const refuse = (reason: PreClaimRefusal["reason"], uncertain: boolean): PreClaimRefusal => ({
+    ok: false,
+    result: "refused",
+    reason,
+    uncertain,
+  });
+  const owned = await deps.provider.lookupOwnedNumber({
+    phoneNumber: input.phoneNumber,
+    expectedMessagingServiceSid: input.messagingServiceSid,
+  });
+  if (!owned.ok) return refuse("ownership_unverified", true);
+  const { phoneNumberSid, phoneNumber: reported, association } = owned.facts;
+  if (!phoneNumberSid) return refuse("number_not_owned_by_account", false);
+  if (reported !== input.phoneNumber) return refuse("provider_number_mismatch", false);
+  switch (association.kind) {
+    case "in_expected_service":
+      break;
+    case "in_other_service":
+      return refuse("number_in_other_service", false);
+    case "not_associated":
+      return refuse("number_not_in_named_service", false);
+    case "ambiguous":
+      return refuse("number_association_ambiguous", false);
+    case "unavailable":
+      return refuse("number_association_unavailable", true);
+  }
+  const config = await deps.provider.readMessagingServiceConfig({ messagingServiceSid: input.messagingServiceSid });
+  if (!config.ok) return refuse("ownership_unverified", true);
+  if (config.config.inboundRequestUrl !== u.inbound || config.config.statusCallbackUrl !== u.status) {
+    return refuse("service_webhooks_mismatch", false);
+  }
+
   return adoptExistingStudioSmsSender({
     store: createProvisioningStore(deps.admin),
     provider: deps.provider,

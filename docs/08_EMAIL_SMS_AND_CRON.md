@@ -256,6 +256,8 @@ Settings → Integrations can show an owner **Set up a studio number** panel:
 
 **The provider.** The actions pass the controls' own **fake** provider explicitly and never resolve one, so nothing is bought, registered or sent. That fake is seeded with a synthetic demo account inventory (`lib/sms/sender-controls-demo.ts`): +14165550142 (CA) and +12125550142 (US) in one demo messaging service, so adoption can succeed. Search never offers those numbers and purchase never buys them.
 
+**Adoption is checked before the claim.** The provider's read-only ownership lookup and messaging-service config read run BEFORE the durable claim. A number the account does not own, a number in another or no service, or a service not wired to Hone's webhooks is refused with nothing written (`uncertain: false`). An incomplete or failed provider answer is refused as `uncertain: true`, to retry later. Without this, a typo would claim a write-once number (0191), park it in `error`, and wedge the studio's setup. Only a submission that passes reaches the claim. A later failure there (for example its proof text) is reported as failed and never as active.
+
 **The country.** A number, or area code, that does not belong to the selected country is refused before any claim (`number_country_mismatch`). With no area code, the fake proposes the country's own numbers.
 
 **Authority.**

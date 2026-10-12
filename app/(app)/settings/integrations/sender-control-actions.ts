@@ -105,5 +105,13 @@ export async function adoptSenderNumberAction(
   revalidatePath("/settings/integrations");
   return out.ok
     ? { ok: true, message: out.result === "adopted" ? `Existing number ${out.phoneNumber} adopted (fake provider).` : "This studio already has an active number." }
-    : { ok: false, message: `Not adopted: ${"reason" in out ? refusal(String(out.reason), str(formData, "country")) : out.result}.` };
+    : {
+        ok: false,
+        message:
+          "uncertain" in out && out.uncertain
+            ? "Not adopted: the provider could not confirm the number right now. Nothing was changed; try again shortly."
+            : out.result === "refused" && "uncertain" in out
+              ? `Not adopted: ${refusal(String(out.reason), str(formData, "country"))}. Nothing was changed; check the number and messaging service and try again.`
+              : `Not adopted: ${"reason" in out ? refusal(String(out.reason), str(formData, "country")) : out.result}.`,
+      };
 }
