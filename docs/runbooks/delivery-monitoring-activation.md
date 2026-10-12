@@ -103,7 +103,9 @@ Nothing here has been done. Each numbered decision is approved on its own. Befor
 - read-only SQL only, through `supabase db query --linked`;
 - re-derive the hosted max at that moment. `docs/production/migration-state.json` records **0210** as of this writing; that is a declaration, not a reading.
 
-### D1. Apply `0212` (#832)
+### D1. Apply `0211`, then `0212` (#832)
+
+The exact release packet (heads, evidence, commands, permission and behaviour effects, verification, recovery) is [delivery-d1-release-packet.md](./delivery-d1-release-packet.md). It separates `0211`'s consent guard on the live `clients` table from `0212`'s new, unused tables. The summary below is for `0212`.
 
 **Precondition:** `0211` (#827) is applied first. `0212` is not applicable on top of 0210 alone, because the pending suffix must be contiguous.
 
