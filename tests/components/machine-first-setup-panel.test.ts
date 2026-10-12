@@ -325,22 +325,45 @@ describe("the panel records nothing, structurally", () => {
 // Server-derived identity, and the persisted / test-store distinction
 // ---------------------------------------------------------------------------
 
-describe("the connected wrapper's first paint is honest", () => {
-  // renderToStaticMarkup runs no effect, so this IS the server paint a
-  // practitioner sees before the identity round trip returns. It must state
-  // the unscoped truth rather than imply a machine is coming.
+describe("the connected wrapper makes NO request until asked", () => {
   const html = renderToStaticMarkup(createElement(MachineFirstSetupConnected, {}));
 
-  it("renders the panel, not a placeholder", () => {
-    expect(html).toContain('data-testid="machine-first-panel"');
+  it("renders a trigger, not the panel", () => {
+    // THE REGRESSION THIS PINS. The first version loaded on mount, which added
+    // a server-action POST to the session route every time a settings block
+    // opened. e2e/repeat-client-fast-charting.spec.ts classifies any POST
+    // without an idempotencyKey as a "source read" and exists to prove a
+    // retried commit does not re-read the source, so that extra request broke
+    // it; conditional-numbing-notes lost its save to the same race. The panel
+    // must not appear, and no action must run, until she asks.
+    expect(html).toContain('data-testid="machine-first-trigger"');
+    expect(html).toContain('data-testid="machine-first-open"');
+    expect(html).not.toContain('data-testid="machine-first-panel"');
   });
 
-  it("says it does not yet know who is charting", () => {
-    expect(html).toContain("does not yet know which practitioner and studio is charting");
+  it("states machine-first as an explicit step", () => {
+    expect(html).toContain("Record which machine you are working on");
+    expect(html).toContain("Choose machine");
   });
 
-  it("reports no persistence on the first paint", () => {
-    expect(html).toContain('data-persistence="none"');
+  it("uses no effect, so nothing can fire on mount", () => {
+    const src = readFileSync(
+      nodePath.resolve(
+        __dirname,
+        "../../components/machines/machine-first-setup-connected.tsx",
+      ),
+      "utf8",
+    );
+    // Comments stripped FIRST: this file's own header explains the regression
+    // and names `useEffect` while doing so, and comment prose must never
+    // satisfy or break a code assertion.
+    const code = src
+      .split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join("\n");
+    // An effect is how the regression got in. Its absence is the guard.
+    expect(code).not.toContain("useEffect");
+    expect(code).toContain("useCallback");
   });
 
   it("sends no ownership of its own", () => {
