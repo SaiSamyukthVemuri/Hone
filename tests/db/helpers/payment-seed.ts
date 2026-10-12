@@ -59,6 +59,12 @@ export type SeedOptions = {
   bookedService?: { name: string; priceCents: number | null; durationMinutes?: number };
   // Client-specific price rows (public.client_pricing), matched by service NAME.
   clientPricing?: Array<{ serviceName: string; priceCents: number; effectiveFrom: string; notes?: string }>;
+  // PAY-CCY-05 (#824). OMITTED BY DEFAULT = a Canadian studio exactly as every
+  // existing scenario seeds it (CA/cad, account country never observed).
+  // "US" switches the studio to US/usd through the 0214 command BEFORE any
+  // account exists, binds an account Stripe has reported as US, and seeds any
+  // attempt in usd.
+  paymentCountry?: "CA" | "US";
 };
 
 const runToken = () => randomUUID().replace(/-/g, "").slice(0, 12);
@@ -80,10 +86,32 @@ async function seedConnect(ids: Ids, opts: SeedOptions): Promise<void> {
   await adminQuery(
     `insert into public.studio_payment_settings
        (studio_id, stripe_account_id, stripe_account_status, stripe_charges_enabled,
-        stripe_payouts_enabled, stripe_livemode)
-     values ($1,$2,$3,true,true,$4)`,
-    [ids.studio.studioId, ids.accountId, status, opts.connectLivemode ?? false],
+        stripe_payouts_enabled, stripe_livemode, stripe_account_country,
+        stripe_account_default_currency, stripe_account_observed_at)
+     values ($1,$2,$3,true,true,$4,$5,$6,$7)`,
+    [
+      ids.studio.studioId,
+      ids.accountId,
+      status,
+      opts.connectLivemode ?? false,
+      opts.paymentCountry === "US" ? "US" : null,
+      opts.paymentCountry === "US" ? "usd" : null,
+      opts.paymentCountry === "US" ? new Date().toISOString() : null,
+    ],
   );
+}
+
+// PAY-CCY-05. The operator's switch, through the real protected command, while
+// the studio still has no account and no money (the only time it is allowed).
+async function seedJurisdiction(ids: Ids, opts: SeedOptions): Promise<void> {
+  if (opts.paymentCountry !== "US") return;
+  const r = await adminQuery(
+    `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','harness','synthetic US studio',false)`,
+    [ids.studio.studioId],
+  );
+  if (r.rows[0]?.out_result !== "changed") {
+    throw new Error(`seedJurisdiction: expected changed, got ${r.rows[0]?.out_result}`);
+  }
 }
 
 async function seedCustomer(ids: Ids, opts: SeedOptions): Promise<void> {
@@ -270,7 +298,7 @@ async function seedAttempt(
         client_payment_method_id, card_authorization_signature_id,
         stripe_payment_intent_id, stripe_charge_id, charged_at,
         receipt_status, refund_status)
-     values ($1,'session_payment',$2,$3,$4,$5,$6,'cad',$7,false,
+     values ($1,'session_payment',$2,$3,$4,$5,$6,$13,$7,false,
         (select id from public.client_payment_methods where client_id=$2 and studio_id=$1 limit 1),
         (select id from public.client_consent_signatures where client_id=$2 and studio_id=$1 order by template_version desc limit 1),
         $8,$9,$10,$11,$12)`,
@@ -287,6 +315,7 @@ async function seedAttempt(
       status === "succeeded" ? new Date().toISOString() : null,
       kind === "receipt_failed" ? "failed" : null,
       kind === "refunded" ? "succeeded" : null,
+      opts.paymentCountry === "US" ? "usd" : "cad",
     ],
   );
 }
@@ -305,6 +334,7 @@ export async function seedQuickCheckoutScenario(
     paymentMethodId: `pm_test_e2e_${runId}`,
     setupIntentId: `seti_test_e2e_${runId}`,
   };
+  await seedJurisdiction(ids, opts);
   await seedConnect(ids, opts);
   await seedCustomer(ids, opts);
   const auth = await seedAuthorization(ids, opts);
