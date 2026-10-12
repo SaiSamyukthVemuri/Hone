@@ -42,33 +42,56 @@ export default async function NoAccessPage({
     redirect("/login");
   }
 
+  // An invitation that could not be completed is explained to EVERYONE,
+  // including a person who already works in another studio (Codex P2
+  // 4244069747 on #850). Before this, a practitioner was redirected to
+  // /dashboard or the chooser, and the invitation stayed pending with no
+  // feedback. Safe, self-scoped copy: no DB/Auth text, no cross-tenant
+  // information.
+  const inviteIssue = reason === "invite-conflict" || reason === "invite-ambiguous";
+
   // Load active memberships (RLS-scoped, no .maybeSingle()). Exactly one active
-  // studio -> they have access, send to /dashboard. Zero -> invite-only gate.
-  // Two or more -> the studio chooser below.
+  // studio -> they have access, send to /dashboard, unless there is an
+  // invitation issue to explain. Zero -> invite-only gate. Two or more -> the
+  // studio chooser below.
   const memberships = await listActiveStudioMemberships();
-  if (memberships.length === 1) {
+  if (memberships.length === 1 && !inviteIssue) {
     // They have studio access; the gate is not for them.
     redirect("/dashboard");
   }
   const multiple = memberships.length > 1;
-  // Safe, self-scoped copy for the reconciliation edge cases (no DB/Auth text,
-  // no cross-tenant information). These only apply to a 0-membership user.
-  const inviteIssue =
-    !multiple &&
-    (reason === "invite-conflict" || reason === "invite-ambiguous");
+  // A receptionist has no practitioners row, so their front-desk access is read
+  // separately: RLS-scoped to their own rows (0216), and ONLY when there is an
+  // invitation issue to explain (Codex P2 4244092780 on #850). A failed read
+  // claims nothing and offers no link.
+  let frontDesk = false;
+  if (inviteIssue) {
+    const { data: deskRows, error: deskErr } = await supabase
+      .from("studio_receptionists")
+      .select("studio_id")
+      .eq("user_id", user.id)
+      .eq("active", true)
+      .limit(1);
+    frontDesk = !deskErr && (deskRows ?? []).length > 0;
+  }
+  const existingAccess = memberships.length > 0 || frontDesk
+    ? " Your existing studio access is unchanged."
+    : "";
 
-  const heading = multiple
-    ? "Choose a studio"
-    : inviteIssue
-      ? "We couldn't finish setting up your access"
+  const heading = inviteIssue
+    ? "We couldn't finish setting up your access"
+    : multiple
+      ? "Choose a studio"
       : "No studio access yet";
-  const body = multiple
-    ? "Your account is an active member of more than one studio. Choose which studio you want to work in. You can switch anytime from the account menu."
-    : reason === "invite-conflict"
-      ? "This invitation couldn't be completed automatically. Please contact the studio or Hone support so it can be sorted out."
+  const body =
+    reason === "invite-conflict"
+      ? `This invitation couldn't be completed automatically. Please contact the studio or Hone support so it can be sorted out.${existingAccess}`
       : reason === "invite-ambiguous"
-        ? "There is more than one pending invitation for your account. Please contact the studio or Hone support so it can be resolved."
-        : "Hone is currently invite-only for supervised studios. Use the email address your studio invitation was sent to, or contact Hone if you believe you should have access.";
+        ? `There is more than one pending invitation for your account. Please contact the studio or Hone support so it can be resolved.${existingAccess}`
+        : multiple
+          ? "Your account is an active member of more than one studio. Choose which studio you want to work in. You can switch anytime from the account menu."
+          : "Hone is currently invite-only for supervised studios. Use the email address your studio invitation was sent to, or contact Hone if you believe you should have access.";
+  const continueToStudio = inviteIssue && memberships.length === 1;
 
   return (
     <main
@@ -100,6 +123,26 @@ export default async function NoAccessPage({
         >
           {body}
         </p>
+
+        {continueToStudio && (
+          <a
+            href="/dashboard"
+            className="mb-10 inline-flex w-full items-center justify-center px-7 py-3 text-[14px] font-medium transition-opacity hover:opacity-80"
+            style={{ border: `1px solid ${PALETTE.ink}`, color: PALETTE.ink }}
+          >
+            Continue to your studio
+          </a>
+        )}
+
+        {frontDesk && (
+          <a
+            href="/front-desk"
+            className="mb-10 inline-flex w-full items-center justify-center px-7 py-3 text-[14px] font-medium transition-opacity hover:opacity-80"
+            style={{ border: `1px solid ${PALETTE.ink}`, color: PALETTE.ink }}
+          >
+            Go to the front desk
+          </a>
+        )}
 
         {multiple && (
           <div className="mb-10 flex flex-col items-stretch gap-3">

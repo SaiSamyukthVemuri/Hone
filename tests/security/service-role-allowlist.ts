@@ -215,6 +215,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/settings/team/receptionist-actions.ts",
+    purpose: "Owner team management — receptionist deactivate/reactivate via the service-role-only set_studio_receptionist_active command (STUDIO-READY-02d, migration 0216).",
+    why: "setReceptionistActiveAction resolves the owner + studio server-side (getCurrentPractitionerWithStudio, role 'owner') before calling the RPC with the server-derived studio + owner ids; only the receptionist id comes from the form, and the RPC re-verifies the active owner and refuses another studio's receptionist ('not_found').",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "lib/receptionist/identity.ts",
+    purpose: "The /front-desk route guard — reads the receptionist's studio name and timezone (STUDIO-READY-02d).",
+    why: "A receptionist holds no studios read under RLS. Both reads start from the caller's OWN studio_receptionists rows, read with their session. The guard resolves them (resolveReceptionistMembership), then the service role reads id, name and timezone of THAT studio only. The /front-desk/select chooser reads the names of exactly the studios in those rows. Nothing else is read.",
+    scopeGuard: "resolveReceptionistMembership",
+  },
+  {
     path: "app/(app)/settings/payments/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

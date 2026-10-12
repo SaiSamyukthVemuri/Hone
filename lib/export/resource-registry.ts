@@ -1632,6 +1632,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Outstanding team invitations. Transient onboarding state; decide deliberately.",
   },
+  studio_receptionists: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The studio's front-desk team, live since migration 0216 (STUDIO-READY-02a): who holds receptionist access, under what display name, and whether that access is active. Studio-owned staffing records, so this is PENDING rather than EXCLUDED. It is tier 2 and field-review-required because the row also carries the Supabase auth user identifier — platform identity, which practitioners.csv already withholds — and the owner attribution created_by_practitioner_id, whose export shape has not been reviewed.",
+  },
   studio_onboarding: {
     kind: "pending",
     ticket: "TRUTH-01B",

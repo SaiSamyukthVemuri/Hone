@@ -49,9 +49,12 @@ describe("0210 sits correctly in the migration sequence", () => {
   it("is no longer the repository maximum", () => {
     // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
     // `isRepoMax`, and that claim now lives in the current max's own test.
+<<<<<<< HEAD
     // It reached this file from 0209's test when production, carrying WAIT
     // #820's 0209, was merged into the SMS-04 branch, and left for 0211's own
     // test (tests/migrations/0211-client-sms-permission-guard.test.ts).
+=======
+>>>>>>> 41ea94b984426d4fc39a9531ae656c41e04d1b32
     expect(isRepoMax(VERSION)).toBe(false);
     // DERIVED, NOT PINNED: something sits above it, and everything above it is
     // greater. A literal list would be the forbidden pin in other clothes.
