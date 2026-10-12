@@ -1,4 +1,5 @@
 import type { PaymentCountrySummary } from "@/lib/billing/payment-jurisdiction";
+import { SectionLabel } from "@/components/ui/section-label";
 
 // PAY-CCY-04 (#824). Where this studio takes payments, and whether its Stripe
 // account agrees. Server-rendered from describePaymentCountry; this component
@@ -19,9 +20,7 @@ export function PaymentCountryCard({ summary }: { summary: PaymentCountrySummary
       data-tone={summary.tone}
       className={`flex flex-col gap-1 rounded-md border p-4 ${TONE[summary.tone]}`}
     >
-      <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-        Payment country and currency
-      </h3>
+      <SectionLabel as="h3">Payment country and currency</SectionLabel>
       <p className="text-sm font-medium" data-testid="payment-country-heading">
         {summary.heading}
       </p>
