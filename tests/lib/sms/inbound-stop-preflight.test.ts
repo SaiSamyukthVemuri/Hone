@@ -16,7 +16,7 @@ const allProven = (): InboundStopFacts => ({
   env: { TWILIO_WEBHOOK_BASE_URL: BASE, TWILIO_AUTH_TOKEN: "x", NEXT_PUBLIC_APP_ORIGIN: BASE },
   recentSignatureVerifiedCallbacks: 16,
   endpointProbe: { status: 405, redirectedTo: null },
-  service: { inboundRequestUrl: URL_OK, inboundMethod: "POST", useInboundWebhookOnNumber: false, accountSid: ACCOUNT },
+  service: { inboundRequestUrl: URL_OK, inboundMethod: "POST", useInboundWebhookOnNumber: false, numberSmsUrl: null, accountSid: ACCOUNT },
   honeAccountSid: ACCOUNT,
   mappedStudioId: "studio-b",
   expectedStudioId: "studio-b",
@@ -63,9 +63,8 @@ describe("evaluateInboundStopPreflight", () => {
     expect(r.ready).toBe(false);
     expect(r.blockers).toEqual([
       "base_url",
-      "service_inbound_url",
-      "service_inbound_method",
-      "service_owns_inbound",
+      "inbound_reaches",
+      "inbound_method",
       "signing_account",
       "studio_mapping",
       "stop_forwarded",
@@ -75,12 +74,13 @@ describe("evaluateInboundStopPreflight", () => {
     expect(r.checks.find((c) => c.id === "endpoint_reachable")?.status).toBe("pass");
   });
 
-  const failing: Array<[string, (f: InboundStopFacts) => void, string]> = [
-    ["the www URL on the service", (f) => (f.service!.inboundRequestUrl = "https://www.hone.example/api/twilio/inbound-sms"), "service_inbound_url"],
-    ["a trailing slash on the service URL", (f) => (f.service!.inboundRequestUrl = `${URL_OK}/`), "service_inbound_url"],
-    ["no inbound URL on the service", (f) => (f.service!.inboundRequestUrl = null), "service_inbound_url"],
-    ["GET inbound method", (f) => (f.service!.inboundMethod = "GET"), "service_inbound_method"],
-    ["inbound on the number's webhook", (f) => (f.service!.useInboundWebhookOnNumber = true), "service_owns_inbound"],
+  const failing: Array<[string, (f: InboundStopFacts) => void, string | string[]]> = [
+    ["the www URL on the service", (f) => (f.service!.inboundRequestUrl = "https://www.hone.example/api/twilio/inbound-sms"), "inbound_reaches"],
+    ["a trailing slash on the service URL", (f) => (f.service!.inboundRequestUrl = `${URL_OK}/`), "inbound_reaches"],
+    ["GET inbound method", (f) => (f.service!.inboundMethod = "GET"), "inbound_method"],
+    ["the number's webhook overrides, and points elsewhere", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: "https://elsewhere.example/sms" }), ["inbound_reaches", "inbound_method"]],
+    ["use_inbound_webhook_on_number not reported (null = unknown, never false)", (f) => (f.service!.useInboundWebhookOnNumber = null), ["inbound_reaches", "inbound_method"]],
+    ["the flag on, the number's URL not reported", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: undefined }), ["inbound_reaches", "inbound_method"]],
     ["a service in a subaccount", (f) => (f.service!.accountSid = `AC${"2".repeat(32)}`), "signing_account"],
     ["the service mapped to another studio", (f) => (f.mappedStudioId = "studio-a"), "studio_mapping"],
     ["the service mapped to no studio", (f) => (f.mappedStudioId = null), "studio_mapping"],
@@ -89,18 +89,16 @@ describe("evaluateInboundStopPreflight", () => {
     ["an empty token", (f) => (f.env = { ...f.env, TWILIO_AUTH_TOKEN: "" }), "auth_token"],
     ["STOP consumed by the service", (f) => (f.stopForwardedToWebhook = false), "stop_forwarded"],
     ["no signature-verified callbacks", (f) => (f.recentSignatureVerifiedCallbacks = 0), "signing_proven"],
-    ["the app origin on www", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: "https://www.hone.example" }), "one_base"],
-    ["no app origin, so VERCEL_URL (an internal host)", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: undefined, VERCEL_URL: "hone-abc.vercel.app" }), "one_base"],
-    ["the app origin not observed", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: undefined }), "one_base"],
-    ["an app origin with a path (getRequiredAppOrigin keeps it)", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: "https://hone.example/app" }), "one_base"],
+    ["the base not observed (controls fall back to the app origin, the route to the request URL)", (f) => (f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: undefined }), ["base_url", "inbound_reaches", "one_base"]],
   ];
-  for (const [why, mutate, id] of failing) {
-    it(`${why}: blocked on ${id}`, () => {
+  for (const [why, mutate, ids] of failing) {
+    const want = Array.isArray(ids) ? ids : [ids];
+    it(`${why}: blocked on ${want.join(", ")}`, () => {
       const f = allProven();
       mutate(f);
       const r = evaluateInboundStopPreflight(f);
       expect(r.ready).toBe(false);
-      expect(r.blockers).toEqual([id]);
+      expect(r.blockers).toEqual(want);
     });
   }
 
@@ -113,18 +111,44 @@ describe("evaluateInboundStopPreflight", () => {
   it("an http base: blocked on the base, and so on everything that must match it", () => {
     const f = allProven();
     f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: "http://hone.example" };
-    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["base_url", "service_inbound_url", "one_base"]);
+    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["base_url", "inbound_reaches", "one_base"]);
   });
 
   it("the service URL is compared to the URL built from the base, not to a constant", () => {
     const f = allProven();
     f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: "https://other.example", NEXT_PUBLIC_APP_ORIGIN: "https://other.example" };
-    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["service_inbound_url"]);
+    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["inbound_reaches"]);
   });
 
-  it("an app origin with a trailing slash is the same base", () => {
+  it("WITH #863: the base wins over any app origin, so the controls and the route agree", () => {
+    for (const origin of ["https://www.hone.example", "https://hone.example/app", undefined]) {
+      const f = allProven();
+      f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: origin, VERCEL_URL: "hone-abc.vercel.app" };
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+    }
+  });
+
+  it("the number's own webhook, when it overrides and is exactly the expected URL, passes (with its own method)", () => {
     const f = allProven();
-    f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: `${BASE}/` };
+    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", inboundRequestUrl: null });
     expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+    f.service!.numberSmsMethod = "GET";
+    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["inbound_method"]);
+  });
+
+  it("inbound DISABLED (flag off, no inbound_request_url) fails and says so", () => {
+    const f = allProven();
+    f.service!.inboundRequestUrl = null;
+    const r = evaluateInboundStopPreflight(f);
+    expect(r.blockers).toContain("inbound_reaches");
+    expect(r.checks.find((c) => c.id === "inbound_reaches")?.detail).toMatch(/DISABLED/);
+  });
+
+  it("the flag on while the number has no URL fails (undocumented, never assumed)", () => {
+    const f = allProven();
+    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: null });
+    const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "inbound_reaches");
+    expect(c).toMatchObject({ status: "fail" });
+    expect(c?.detail).toMatch(/no sms_url/);
   });
 });

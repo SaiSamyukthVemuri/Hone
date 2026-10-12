@@ -1,3 +1,6 @@
+import { effectiveInbound, inboundReaches } from "./inbound-routing";
+import { twilioWebhookUrl } from "./webhook-base";
+
 // ===========================================================================
 // WILLOW-STOP-PREFLIGHT-01 (#824): will a STOP sent to a STUDIO's number reach
 // Hone, authenticate, and opt the person out everywhere?
@@ -24,11 +27,19 @@
 // So the studio service must POST to EXACTLY expectedInboundWebhookUrl(env),
 // and Twilio must sign with the account whose token Hone holds.
 //
-// ONE BASE. The routes verify against TWILIO_WEBHOOK_BASE_URL, and that is the
-// authority. Sender adoption (#863) compares a service's webhooks against the
-// APP origin (NEXT_PUBLIC_APP_ORIGIN, else VERCEL_URL). If the two differ, a
-// service can pass adoption with an inbound URL every STOP is refused on, so
-// their agreement is a check of its own.
+// ONE BASE (#863, lib/sms/webhook-base.ts). The routes verify against
+// canonicalTwilioSignedUrl and the sender controls configure and require
+// twilioWebhookUrl, both from TWILIO_WEBHOOK_BASE_URL. `one_base` checks the
+// URL the controls would configure IS the URL the route verifies; with the
+// base unset the controls fall back to the app origin while the route falls
+// back to the request URL (on Vercel possibly internal), so it fails.
+//
+// WHERE INBOUND GOES (#863, lib/sms/inbound-routing.ts): the SMS lane's
+// effectiveInbound / inboundReaches decide, so this preflight and sender
+// adoption cannot disagree: the number's own sms_url when
+// use_inbound_webhook_on_number is on, else the service's inbound_request_url;
+// null inbound URL with the flag off means inbound is DISABLED; anything not
+// reported is unknown.
 //
 // Every fact is pass, fail or UNKNOWN, and UNKNOWN is a cutover blocker:
 // a STOP path that has not been shown to work is treated as not working.
@@ -81,10 +92,16 @@ export type InboundStopFacts = {
   endpointProbe?: { status: number; redirectedTo: string | null };
   /** The studio's service, read-only (provider.readMessagingServiceConfig and console). */
   service?: {
+    /** MessagingServiceConfig.inboundRequestUrl; undefined = not read. */
     inboundRequestUrl?: string | null;
-    inboundMethod?: string | null;
-    /** Twilio: when true, inbound goes to the NUMBER's webhook, not the service's. */
+    /** MessagingServiceConfig.useInboundWebhookOnNumber; null = not reported (UNKNOWN). */
     useInboundWebhookOnNumber?: boolean | null;
+    /** OwnedNumberFacts.numberSmsUrl; undefined = not reported, null = none. */
+    numberSmsUrl?: string | null;
+    /** The service's inbound_method (when the service routes inbound). */
+    inboundMethod?: string | null;
+    /** The number's sms_method (when the number routes inbound). */
+    numberSmsMethod?: string | null;
     /** The account that owns the service; must be the account of TWILIO_AUTH_TOKEN. */
     accountSid?: string | null;
   };
@@ -144,26 +161,44 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   );
 
   const svc = f.service;
+  const routing =
+    svc && svc.inboundRequestUrl !== undefined
+      ? {
+          serviceInboundUrl: svc.inboundRequestUrl,
+          useInboundWebhookOnNumber: svc.useInboundWebhookOnNumber ?? null,
+          numberSmsUrl: svc.numberSmsUrl,
+        }
+      : null;
+  const effective = routing ? effectiveInbound(routing) : null;
+  const reaches = routing && expected.ok ? inboundReaches(routing, expected.url) : routing ? "no" : "unknown";
   checks.push(
-    svc?.inboundRequestUrl === undefined
-      ? check("service_inbound_url", "unknown", "studio service inbound_request_url not read")
-      : expected.ok && svc.inboundRequestUrl === expected.url
-        ? check("service_inbound_url", "pass", "studio service posts inbound to the expected URL")
-        : check("service_inbound_url", "fail", "studio service inbound_request_url is not exactly the expected URL"),
+    reaches === "yes"
+      ? check("inbound_reaches", "pass", `inbound (${effective?.kind}) posts to the expected URL`)
+      : reaches === "unknown"
+        ? check(
+            "inbound_reaches",
+            "unknown",
+            effective?.kind === "unknown" ? `not reported: ${effective.missing}` : "studio service inbound routing not read",
+          )
+        : check(
+            "inbound_reaches",
+            "fail",
+            effective?.kind === "disabled"
+              ? "inbound is DISABLED on the service (no inbound_request_url): every STOP is lost"
+              : effective?.kind === "number_url_missing"
+                ? "use_inbound_webhook_on_number is on but the number has no sms_url"
+                : "effective inbound URL is not exactly the expected URL",
+          ),
   );
+
+  const method =
+    effective?.kind === "service" ? svc?.inboundMethod : effective?.kind === "number" ? svc?.numberSmsMethod : undefined;
   checks.push(
-    svc?.inboundMethod === undefined
-      ? check("service_inbound_method", "unknown", "studio service inbound method not read")
-      : svc.inboundMethod?.toUpperCase() === "POST"
-        ? check("service_inbound_method", "pass", "inbound method POST")
-        : check("service_inbound_method", "fail", "inbound method is not POST: the route only accepts POST"),
-  );
-  checks.push(
-    svc?.useInboundWebhookOnNumber === undefined || svc.useInboundWebhookOnNumber === null
-      ? check("service_owns_inbound", "unknown", "use_inbound_webhook_on_number not read")
-      : svc.useInboundWebhookOnNumber
-        ? check("service_owns_inbound", "fail", "inbound goes to the NUMBER's webhook, bypassing the service's")
-        : check("service_owns_inbound", "pass", "inbound handled by the service's webhook"),
+    method === undefined || method === null
+      ? check("inbound_method", "unknown", "method of the effective inbound route not read")
+      : method.toUpperCase() === "POST"
+        ? check("inbound_method", "pass", "inbound method POST")
+        : check("inbound_method", "fail", "inbound method is not POST: the route only accepts POST"),
   );
   checks.push(
     !svc?.accountSid || !f.honeAccountSid
@@ -189,18 +224,16 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
         : check("stop_forwarded", "fail", "the service consumed STOP without forwarding it to Hone"),
   );
 
-  // The origin adoption checks webhooks against, as getRequiredAppOrigin
-  // derives it, must be the base the routes verify against.
-  // Normalized EXACTLY as getRequiredAppOrigin does (trailing slashes only):
-  // a path kept there is a path adoption's required URL carries too.
+  // The URL #863's sender controls would configure and require, from the same
+  // app origin getRequiredAppOrigin derives, must be the URL the route verifies.
   const appOriginRaw = f.env.NEXT_PUBLIC_APP_ORIGIN || (f.env.VERCEL_URL ? `https://${f.env.VERCEL_URL}` : undefined);
-  const appOrigin = appOriginRaw ? appOriginRaw.replace(/\/+$/, "") : null;
+  const configured = twilioWebhookUrl(INBOUND_STOP_PATH, appOriginRaw ?? null, f.env);
   checks.push(
-    appOriginRaw === undefined || f.env.TWILIO_WEBHOOK_BASE_URL === undefined
-      ? check("one_base", "unknown", "app origin (adoption's base) and TWILIO_WEBHOOK_BASE_URL (the routes' base) not both observed")
-      : expected.ok && appOrigin !== null && `${appOrigin}${INBOUND_STOP_PATH}` === expected.url
-        ? check("one_base", "pass", "adoption and the routes use the same base")
-        : check("one_base", "fail", "adoption's app origin differs from TWILIO_WEBHOOK_BASE_URL: a service can pass adoption yet have every STOP refused"),
+    f.env.TWILIO_WEBHOOK_BASE_URL === undefined
+      ? check("one_base", "unknown", "TWILIO_WEBHOOK_BASE_URL not observed: the controls would fall back to the app origin, the route to the request URL")
+      : expected.ok && configured === expected.url
+        ? check("one_base", "pass", "the URL the sender controls configure is the URL the route verifies")
+        : check("one_base", "fail", "the URL the sender controls would configure differs from the URL the route verifies"),
   );
 
   const blockers = checks.filter((c) => c.status !== "pass").map((c) => c.id);
