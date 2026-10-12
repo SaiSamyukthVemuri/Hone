@@ -31,11 +31,33 @@ const CODE = SRC.split("\n")
   .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
   .join("\n");
 
+// local-env.ts runs `refuseHostedOverrides()` AT MODULE SCOPE and throws if any
+// of these point off the local stack. That guard is the e2e lane's safety model
+// and must not be weakened — but it means merely IMPORTING the module depends on
+// the ambient environment, and CI's validate lane carries a hosted
+// NEXT_PUBLIC_SUPABASE_URL. A first version of this file imported under the
+// inherited environment: 13/13 locally, 9 failures in CI on
+// "e2e refuses to run: NEXT_PUBLIC_SUPABASE_URL points away from the local
+// Supabase stack".
+//
+// So every load below pins the whole guarded set to local values first. The
+// test then measures its OWN inputs rather than whatever the runner happens to
+// export, which is what makes the result mean the same thing everywhere.
+const LOCAL_GUARD_ENV: Record<string, string> = {
+  NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+  SUPABASE_DB_URL: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+  HONE_LOCAL_DB_URL: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+  E2E_SUPABASE_URL: "http://127.0.0.1:54321",
+  STRIPE_SECRET_KEY: "",
+  STRIPE_ALLOW_LIVE_MODE: "",
+};
+
 /** Load a fresh copy of the module under a given environment. */
 async function envUnder(
   vars: Record<string, string | undefined>,
 ): Promise<Record<string, string>> {
   vi.resetModules();
+  for (const [k, v] of Object.entries(LOCAL_GUARD_ENV)) vi.stubEnv(k, v);
   for (const [k, v] of Object.entries(vars)) {
     if (v === undefined) vi.stubEnv(k, "");
     else vi.stubEnv(k, v);
@@ -87,6 +109,35 @@ describe("the synthetic machine profile is forwarded only on request", () => {
     const on = await envUnder({ HONE_SYNTHETIC_MACHINE_PROFILE: "1" });
     const added = Object.keys(on).filter((k) => !(k in off));
     expect(added).toEqual(["HONE_SYNTHETIC_MACHINE_PROFILE"]);
+  });
+});
+
+describe("the module-scope guard still refuses a hostile environment", () => {
+  // Found by this file failing in CI and not locally. The guard is why the
+  // loads above pin a local environment, so it is worth proving it still bites
+  // rather than only working around it: if it ever stopped throwing, the
+  // workaround above would hide that from every test in this file.
+  it.each([
+    ["NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co"],
+    ["SUPABASE_DB_URL", "postgresql://u:p@db.example.supabase.co:5432/postgres"],
+    ["HONE_LOCAL_DB_URL", "postgresql://u:p@something.pooler.example:5432/postgres"],
+    ["E2E_SUPABASE_URL", "https://example.supabase.co"],
+  ])("refuses to load when %s points off the local stack", async (name, value) => {
+    vi.resetModules();
+    for (const [k, v] of Object.entries(LOCAL_GUARD_ENV)) vi.stubEnv(k, v);
+    vi.stubEnv(name, value);
+    await expect(import("@/e2e/helpers/local-env")).rejects.toThrow(
+      /e2e refuses to run/,
+    );
+  });
+
+  it("refuses a live Stripe key", async () => {
+    vi.resetModules();
+    for (const [k, v] of Object.entries(LOCAL_GUARD_ENV)) vi.stubEnv(k, v);
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_live_notarealkey");
+    await expect(import("@/e2e/helpers/local-env")).rejects.toThrow(
+      /live Stripe key/,
+    );
   });
 });
 
