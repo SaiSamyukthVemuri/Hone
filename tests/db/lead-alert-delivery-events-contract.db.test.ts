@@ -164,10 +164,35 @@ describe("one retry authority each, in the database", () => {
     for (const r of lead) expect(r.d, r.proname).not.toMatch(/email_outbound_messages|email_provider_events/);
   });
 
-  it("the chain under test is the contiguous stack, and 0213 is its top", async () => {
+  it("the chain under test is CONTIGUOUS and carries 0209-0213", async () => {
+    // INTEGRATION HANDOFF, on the integration branch only. This assertion was
+    // `toEqual(["0209","0210","0211","0212","0213"])`, which is correct on
+    // #831's own branch where 0213 IS the top — and false the moment anything
+    // stacks above it. A hard-coded list of applied versions is the same
+    // anti-pattern CLAUDE.md §2 bans for filenames: it turns every later
+    // migration, in any lane, into a red test in this one.
+    //
+    // The INTENT is preserved and made derived: the applied chain from 0209 up
+    // must be CONTIGUOUS (the property this test exists to prove), and must
+    // contain the five versions this contract depends on. What it no longer
+    // claims is which version is last, because that is a fact about a branch
+    // rather than about this contract.
     const versions = (await adminQuery(
       "select version from supabase_migrations.schema_migrations where version >= '0209' order by version",
-    )).rows.map((r) => r.version);
-    expect(versions).toEqual(["0209", "0210", "0211", "0212", "0213"]);
+    )).rows.map((r) => r.version as string);
+
+    for (const required of ["0209", "0210", "0211", "0212", "0213"]) {
+      expect(versions, `${required} must be applied`).toContain(required);
+    }
+
+    // CONTIGUOUS: no gap anywhere above 0209. A hole here would mean the stack
+    // under test is not the stack this contract was written against.
+    const numbers = versions.map(Number);
+    for (let i = 1; i < numbers.length; i += 1) {
+      expect(
+        numbers[i],
+        `gap in the applied chain between ${versions[i - 1]} and ${versions[i]}`,
+      ).toBe(numbers[i - 1] + 1);
+    }
   });
 });
