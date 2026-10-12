@@ -66,10 +66,9 @@ export type PaymentReceiptEmailInput = {
   clientName: string;
   chargeReasonLabel: string;
   amountCents: number;
-  // ISO currency code; today payment_charge_attempts.currency is
-  // CHECK'd to 'cad' (migration 0073). The template uppercases
-  // the code for display; if a future PR widens the currency
-  // CHECK, this code does not need to change.
+  // ISO currency code: the charged attempt's own payment_charge_attempts
+  // .currency, 'cad' or 'usd' since 0214 widened the CHECK, and immutable
+  // once prepared. The template uppercases it for display ("CAD"/"USD").
   currencyCode: string;
   chargedAt: Date;
   stripePaymentIntentId: string;
