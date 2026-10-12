@@ -175,7 +175,7 @@ Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutation
 Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a backlog older than 15 minutes is a warning and older than 6 hours is critical; exhausted, quarantined, unreported and sweep failures are warnings. Each finding is raised as an ops alert **at most once while an unresolved alert for that event is open**. A sweep or health read that fails is itself a finding, never a healthy run. **The route is not registered in `vercel.json`**: scheduling it belongs to the delivery-events activation.
 
 **Where people see it (DELIVERY-VISIBILITY-02).**
-- **Owner:** a "Message delivery" card on Settings → Launch (`components/delivery/OwnerDeliveryCard.tsx`, mounted by one line; it moves into the owner console when that lands). It reads `owner_delivery_incidents` with the owner's own session and renders **nothing** for anyone the database refuses. Each open incident shows once, with:
+- **Owner:** a "Message delivery" card in the owner console, Settings → Overview (`components/delivery/OwnerDeliveryCard.tsx`, mounted as-is by `app/(app)/settings/overview/page.tsx`; STUDIO-READY-03b moved it there from Settings → Launch, which no longer shows it). It reads `owner_delivery_incidents` with the owner's own session and renders **nothing** for anyone the database refuses (42501). Any other failed read says delivery status is unavailable, never "no problems". Each open incident shows once, with:
   - a count and its first and last occurrence;
   - a plain-English meaning and the next step (`lib/delivery/incidents.ts`), with a link to the latest appointment.
 
