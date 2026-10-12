@@ -63,6 +63,11 @@ export function SmsRegistrationSection({
 
   const sender = state.senders[0];
   const kind = registrationKindFor(sender.phone_number);
+  // The record the form would replace: this sender, this number, this kind.
+  const current =
+    state.registrations.find(
+      (r) => r.sender_id === sender.id && r.phone_number === sender.phone_number && r.kind === kind,
+    ) ?? null;
   // No number yet, or one Hone does not serve: nothing support could verify.
   const form =
     sender.phone_number && kind ? (
@@ -71,6 +76,7 @@ export function SmsRegistrationSection({
         senderId={sender.id}
         phoneNumber={sender.phone_number}
         kindLabel={KIND_LABEL[kind]}
+        current={current}
       />
     ) : (
       <p className="mt-3 text-sm text-neutral-500" data-testid="admin-sms-registration-unavailable">

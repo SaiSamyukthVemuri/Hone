@@ -64,6 +64,28 @@ describe("the operator's registration section", () => {
     expect(other).not.toMatch(/<form/);
   });
 
+  it("an existing record PREFILLS the form, so re-submitting never silently downgrades it (Codex P2 4248698137)", () => {
+    const rec = {
+      sender_id: SENDER.id, studio_id: STUDIO, phone_number: SENDER.phone_number, kind: "us_10dlc" as const,
+      status: "requires_information" as const, missing_information: "a sample message", provider_reference: "CMabc123", updated_at: "x",
+    };
+    const html = render({ ok: true, senders: [SENDER], registrations: [rec] });
+    expect(html).toMatch(/<option value="requires_information" selected="">/);
+    expect(html).toContain('name="missing_information" value="a sample message"');
+    expect(html).toContain('name="provider_reference" value="CMabc123"');
+    expect(html).toContain("Currently recorded: <strong>requires_information</strong>");
+
+    const approved = render({ ok: true, senders: [SENDER], registrations: [{ ...rec, status: "approved", missing_information: null }] });
+    expect(approved).toMatch(/<option value="approved" selected="">/);
+    expect(approved).not.toMatch(/<option value="pending" selected="">/);
+  });
+
+  it("with no record (or only a record of another kind) the defaults apply", () => {
+    const none = render({ ok: true, senders: [SENDER], registrations: [] });
+    expect(none).toMatch(/<option value="pending" selected="">/);
+    expect(none).not.toContain("Currently recorded");
+  });
+
   it("refusals are form state, never thrown (Codex P2 4244484024)", async () => {
     const { readFileSync } = await import("node:fs");
     const section = readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8");
