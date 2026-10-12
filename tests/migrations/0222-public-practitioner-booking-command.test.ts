@@ -20,9 +20,14 @@ const EXECUTABLE = sql.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " 
 const TOP_LEVEL = EXECUTABLE.replace(/\$\$[\s\S]*?\$\$/g, " <body> ");
 
 describe("0222 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    expect(isRepoMax(VERSION), "0222 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF in the Fett composition (integration/fett-composed-824):
+    // 0223 (MPX) and 0224 (Audit) sit above it, and only the CURRENT max's own
+    // test may assert isRepoMax (CLAUDE.md §2). DERIVED, NOT PINNED.
+    expect(isRepoMax(VERSION)).toBe(false);
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
   });
 
   it("is allocated exactly once", () => {

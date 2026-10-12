@@ -50,13 +50,15 @@ const COMMANDS = [
 ] as const;
 
 describe("0223 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this - see
-    // CLAUDE.md §2. It reached this file from
-    // tests/migrations/0210-sms-waitlist-join-acknowledgement.test.ts in the
-    // same change that authored 0223.
-    expect(isRepoMax(VERSION), "0223 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0223").toEqual([]);
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF in the Fett composition (integration/fett-composed-824): 0224
+    // (Audit) sits above it, and only the CURRENT max's own test may assert
+    // isRepoMax (CLAUDE.md §2). On #860's own branch 0223 is still the max.
+    // DERIVED, NOT PINNED.
+    expect(isRepoMax(VERSION)).toBe(false);
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
   });
 
   it("is allocated exactly once, at the number the census derived", () => {
