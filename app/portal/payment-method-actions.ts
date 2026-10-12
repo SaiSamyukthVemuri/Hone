@@ -8,6 +8,11 @@ import {
   getOrCreateStripeCustomerForCardOnFile,
 } from "@/lib/stripe/setup-intent";
 import { getCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import {
+  accountCountryChargeable,
+  accountCountryVerdict,
+} from "@/lib/billing/payment-jurisdiction";
 
 // PR #135. Portal-side server action that produces a Stripe
 // SetupIntent client_secret for the Add card form. The action
@@ -178,7 +183,7 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
   const { data: settings, error: settingsErr } = await admin
     .from("studio_payment_settings")
     .select(
-      "stripe_account_id, stripe_account_status, stripe_livemode, stripe_charges_enabled",
+      "stripe_account_id, stripe_account_status, stripe_livemode, stripe_charges_enabled, stripe_account_country, stripe_account_country_conflict",
     )
     .eq("studio_id", session.studioId)
     .eq("stripe_livemode", inferStripeLivemode())
@@ -200,6 +205,35 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
     settings.stripe_account_status !== "enabled" ||
     settings.stripe_livemode == null
   ) {
+    return { ok: false, error: ERR_STUDIO_NOT_READY };
+  }
+
+  // 4b. PAY-CCY-03. A card is saved only onto an account the studio can
+  //     actually charge: in the studio's payment COUNTRY, with no persisted
+  //     country conflict (0214). Otherwise the client would sign the card
+  //     authorization and save a card that every charge then refuses. Same
+  //     verdict as eligibility and the charge path; an unread jurisdiction is
+  //     a retry, never Canada.
+  const jurisdictionRead = await getStudioPaymentJurisdiction(session.studioId);
+  if (!jurisdictionRead.ok) {
+    return { ok: false, error: ERR_TRY_AGAIN };
+  }
+  if (
+    !accountCountryChargeable(
+      accountCountryVerdict(
+        jurisdictionRead.jurisdiction.country,
+        (settings.stripe_account_country as string | null) ?? null,
+        (settings.stripe_account_country_conflict as string | null) ?? null,
+      ),
+    )
+  ) {
+    console.error(
+      JSON.stringify({
+        event: "card_setup_refused_account_country",
+        studioId: session.studioId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
     return { ok: false, error: ERR_STUDIO_NOT_READY };
   }
 
