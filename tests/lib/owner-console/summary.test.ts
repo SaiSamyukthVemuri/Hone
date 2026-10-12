@@ -45,7 +45,9 @@ describe("the three-state rule", () => {
       nextStep: null,
       unavailable: ["consent"] as never,
     });
-    expect(p.detail).toMatch(/may be incomplete/);
+    expect(p.status).toBe("At least 1 step left");
+    expect(p.tone).toBe("attention");
+    expect(p.detail).toMatch(/there may be more/);
   });
 
   it("team: a failed read is unknown, never a count of zero", () => {
@@ -90,7 +92,12 @@ describe("the console page", () => {
     expect(PAGE.indexOf('practitioner.role !== "owner"')).toBeLessThan(PAGE.indexOf("await createClient()"));
   });
 
-  it("reads under the owner's own session and never calls a provider or the admin client", () => {
+  it("the PAGE reads under the owner's own session and never calls a provider or the admin client itself", () => {
+    // Precisely: the page imports no admin client. Its booking-setup authority,
+    // getNewClientReadiness, reads the admission mode server-side with the
+    // service role internally. That is the same authority the Launch page
+    // already uses for this owner (Codex P2 4243961745 on #851).
+    expect(PAGE).toMatch(/getNewClientReadiness\(studio\)/);
     expect(PAGE).not.toMatch(/createAdminClient|admin-server/);
     expect(PAGE).not.toMatch(/refreshAccountStatusFromStripe|lib\/stripe\/account|lib\/sms\/provider|twilio/i);
     expect(PAGE).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(/);

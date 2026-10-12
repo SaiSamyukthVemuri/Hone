@@ -35,13 +35,19 @@ export function bookingPanel(readiness: NewClientReadiness | null): ConsolePanel
   if (readiness.status === "ready") {
     return { ...base, tone: "ready", status: "Ready", detail: "Clients can book online." };
   }
+  // A proven blocker is real, so the tone stays "attention". But when some
+  // checks could not run, the COUNT is a lower bound and is never stated as
+  // exact (Codex P2 4243961742 on #851).
   const n = readiness.blockers.length;
-  const partial = readiness.unavailable.length > 0 ? " Some checks could not run, so the list may be incomplete." : "";
+  const partial = readiness.unavailable.length > 0;
+  const steps = `${n} step${n === 1 ? "" : "s"} left`;
   return {
     ...base,
     tone: "attention",
-    status: `${n} step${n === 1 ? "" : "s"} left`,
-    detail: `Finish setup before clients can book online.${partial}`,
+    status: partial ? `At least ${steps}` : steps,
+    detail: partial
+      ? "Finish setup before clients can book online. Some checks could not run, so there may be more."
+      : "Finish setup before clients can book online.",
   };
 }
 
