@@ -17,6 +17,44 @@ export type JurisdictionRead =
   | { ok: true; jurisdiction: StudioPaymentJurisdiction }
   | { ok: false; reason: "read_failed" | "missing" | "invalid" };
 
+/**
+ * PAY-CCY-04. What the owner's payment settings page shows: the studio's
+ * jurisdiction and, for the CURRENT deployment mode only, whether a Stripe
+ * account is bound and the country Stripe reported for it. Two columns of
+ * studio_payment_settings, which has no browser-role policy, hence this read.
+ * No Stripe identifier leaves this function.
+ */
+export type StudioPaymentCountryStatus = {
+  jurisdiction: JurisdictionRead;
+  account:
+    | { kind: "none" }
+    | { kind: "bound"; observedCountry: string | null }
+    | { kind: "unknown" };
+};
+
+export async function getStudioPaymentCountryStatus(
+  studioId: string,
+  livemode: boolean,
+): Promise<StudioPaymentCountryStatus> {
+  const jurisdiction = await getStudioPaymentJurisdiction(studioId);
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("studio_payment_settings")
+    .select("stripe_account_id, stripe_account_country")
+    .eq("studio_id", studioId)
+    .eq("stripe_livemode", livemode)
+    .maybeSingle();
+  if (error) return { jurisdiction, account: { kind: "unknown" } };
+  if (!data?.stripe_account_id) return { jurisdiction, account: { kind: "none" } };
+  return {
+    jurisdiction,
+    account: {
+      kind: "bound",
+      observedCountry: (data.stripe_account_country as string | null) ?? null,
+    },
+  };
+}
+
 export async function getStudioPaymentJurisdiction(
   studioId: string,
 ): Promise<JurisdictionRead> {
