@@ -58,6 +58,21 @@ Sam's explicit per-change authorization.
 
 ### 2.1 Supabase (G-02, G-03, G-11, G-12)
 
+**Current state, read-only, 2026-10-12** (each item below is a separate change that needs authorization):
+
+| Item | Today |
+|---|---|
+| 1. Team plan or higher | **Pro**: not met |
+| 2. HIPAA add-on and BAA | Not possible on Pro: not met |
+| 4. Org MFA | The sole member has MFA on; enforcement not visible |
+| 5. PITR | **Off** |
+| 6. SSL enforcement | **Off** |
+| 7. Network restrictions | **Open** (`0.0.0.0/0`, `::/0`) |
+| 8. Connection logging | No custom config, so the platform default (documented as off); confirm read-only |
+| 10. Auth sessions | No timebox, no inactivity timeout |
+| 10. Auth SMTP | None: Supabase's built-in sender |
+| 10. Password policy | Leaked-password protection off; minimum length 6 |
+
 Prerequisites and duties are from Supabase's
 [shared responsibility model](https://supabase.com/docs/guides/deployment/shared-responsibility-model)
 and its [HIPAA projects](https://supabase.com/docs/guides/platform/hipaa-projects) page.
@@ -262,7 +277,7 @@ Nothing here is authorized until Sam approves that row.
 
 | Provider | Verified | Unknown |
 |---|---|---|
-| Supabase | Org on **Pro** (issue #828 baseline, read-only, 2026-10-11); hosted migrations at `0210` | BAA, HIPAA add-on, org MFA enforcement, PITR, SSL enforcement, network restrictions, connection logging, auth session settings, SMTP provider |
+| Supabase | **Verified 2026-10-12 (read-only):** project org on `pro`; `us-east-1`; SSL **not** enforced; network restrictions **open**; PITR **off** (daily backups only); no custom Postgres config; auth TOTP available but not required; no session timebox or inactivity limit; leaked-password protection off; no custom SMTP; the sole org member has MFA on | BAA and HIPAA add-on (need Team first); whether org MFA is *enforced*; `log_connections` value |
 | Vercel | One team, project `hone-z2uf`; SSO protection on for previews | Plan; HIPAA add-on; which features the BAA covers; log retention and drains |
 | Twilio | The BAA needs Security or Enterprise Edition (public FAQ) | Account edition; products in use per subaccount; retention |
 | Resend | Cannot sign a BAA (public FAQ) | n/a: patient email must move or be shown PHI-free |
