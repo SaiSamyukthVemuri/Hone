@@ -52,7 +52,7 @@ type Props = {
   settledCurrency: PaymentCurrency | null;
   currency: PaymentCurrency | null;
   /**
-   * PAY-CCY-07 (DRAFT). The studio's payment COUNTRY, which decides which
+   * PAY-CCY-07 (option B). The studio's payment COUNTRY, which decides which
    * outcomes are offered and how "Paid another way" is worded. Required so no
    * caller silently gets the Canadian list for a US studio; null (unread)
    * keeps today's full list.

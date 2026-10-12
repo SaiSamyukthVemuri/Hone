@@ -45,7 +45,7 @@ export const PRACTITIONER_METHODS = [
 export type PractitionerSettlementMethod = (typeof PRACTITIONER_METHODS)[number];
 
 /**
- * PAY-CCY-07 (#824, DRAFT — product decision pending). Which outcomes a
+ * PAY-CCY-07 (#824; option B chosen by the operator 2026-10-12). Which outcomes a
  * practitioner is OFFERED, by the studio's payment COUNTRY (never inferred
  * from currency).
  *
@@ -55,8 +55,10 @@ export type PractitionerSettlementMethod = (typeof PRACTITIONER_METHODS)[number]
  * meaning are unchanged, and Canada — and an UNREAD country, which has always
  * seen the full list — gets exactly the four it has today.
  *
- * Offering only: the server action and 0187 still ACCEPT paid_e_transfer for
- * any studio. Enforcement, if wanted, is a separate decision.
+ * This decides what is OFFERED. Enforcement is separate: the settlement
+ * server actions refuse paid_e_transfer for a US studio
+ * (app/(app)/appointment-settlement-actions.ts), and 0224 (separate draft)
+ * is the database backstop. The vocabulary itself is unchanged.
  */
 export function practitionerMethodsFor(
   country: PaymentCountry | null,

@@ -11,6 +11,7 @@ import {
   type SettlementMethod,
   type SettlementResultCode,
 } from "@/lib/billing/settlement-types";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 
 // PAY-SETTLE — the WRITE side. Three server actions over the three 0187
 // commands, and nothing else.
@@ -37,7 +38,44 @@ const NOT_AUTHORIZED = "You are not authorized to do that.";
 
 export type SettlementActionResult =
   | { ok: true; code: SettlementResultCode; message: string; settlementId: string | null }
-  | { ok: false; code: SettlementResultCode | "unavailable"; message: string };
+  | {
+      ok: false;
+      code: SettlementResultCode | "unavailable" | "method_unavailable";
+      message: string;
+    };
+
+/**
+ * PAY-CCY-07, option B (operator decision 2026-10-12, #871). Interac
+ * e-Transfer is a Canadian rail: a studio whose payment country is US records
+ * Zelle / Venmo / check as `paid_other_external`, and `paid_e_transfer` is
+ * REFUSED here for it, on every write path that names a method (record and
+ * the owner's correction). The country is the studio's jurisdiction, never its
+ * currency. Canada, and every other method, are untouched. An unread
+ * jurisdiction refuses only `paid_e_transfer`, as a retry: it can be neither
+ * allowed blind for a US studio nor assumed Canadian.
+ *
+ * 0224 (separate draft) is the database backstop for the same rule.
+ */
+// Not exported: a "use server" module may export only async functions.
+const US_E_TRANSFER_REFUSAL =
+  "E-transfer isn't offered for US studios. Record this as Paid another way (Zelle, Venmo, check).";
+const COUNTRY_UNVERIFIED_RETRY =
+  "This studio's payment country could not be verified, so e-transfer could not be recorded. Refresh and try again.";
+
+async function refuseMethodForCountry(
+  studioId: string,
+  method: SettlementMethod,
+): Promise<SettlementActionResult | null> {
+  if (method !== "paid_e_transfer") return null;
+  const jurisdiction = await getStudioPaymentJurisdiction(studioId);
+  if (!jurisdiction.ok) {
+    return { ok: false, code: "unavailable", message: COUNTRY_UNVERIFIED_RETRY };
+  }
+  if (jurisdiction.jurisdiction.country === "US") {
+    return { ok: false, code: "method_unavailable", message: US_E_TRANSFER_REFUSAL };
+  }
+  return null;
+}
 
 function failure(code: SettlementResultCode): SettlementActionResult {
   return { ok: false, code, message: SETTLEMENT_RESULT_MESSAGE[code] };
@@ -112,6 +150,8 @@ export async function recordAppointmentSettlementAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
+  const refusedForCountry = await refuseMethodForCountry(studioId, method);
+  if (refusedForCountry) return refusedForCountry;
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("record_appointment_settlement", {
@@ -231,6 +271,11 @@ export async function supersedeAppointmentSettlementAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
+  const refusedForCountry = await refuseMethodForCountry(
+    studioId,
+    method as SettlementMethod,
+  );
+  if (refusedForCountry) return refusedForCountry;
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("supersede_appointment_settlement", {

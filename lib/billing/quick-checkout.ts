@@ -63,7 +63,7 @@ export type AppointmentSettlementContext = {
    * failed read: the amount is then unlabelled, never assumed Canadian.
    */
   currency: PaymentCurrency | null;
-  /** PAY-CCY-07 (DRAFT). The studio's payment country; null when unread. */
+  /** PAY-CCY-07 (option B). The studio's payment country; null when unread. */
   country: PaymentCountry | null;
   /**
    * The authoritative price, resolved from the APPOINTMENT so it is available

@@ -178,7 +178,7 @@ describe("the settlement amount field names its currency", () => {
   });
 });
 
-// PAY-CCY-07 (#824, DRAFT — product decision pending). Option B: a US studio
+// PAY-CCY-07 (#824; option B chosen 2026-10-12). A US studio
 // is not offered Interac e-Transfer; its Zelle / Venmo / check is recorded as
 // paid_other_external with US wording. Canada and an unread country are
 // byte-for-byte today's list. Stored values and meanings are unchanged.
@@ -242,7 +242,9 @@ describe("US external payments (option B, draft)", () => {
       "paid_other_external",
       "still_owes",
     ]);
-    // Offering only: enforcement is a separate decision.
+    // The VOCABULARY still contains it: the per-country refusal lives in the
+    // server actions (tests/app/settlement-country-enforcement.test.ts) and
+    // the 0224 guard, not in the type.
     expect(t.isPractitionerMethod("paid_e_transfer")).toBe(true);
     expect(t.SETTLEMENT_BADGE_LABEL.paid_other_external).toBe("Paid · other");
     expect(t.SETTLEMENT_ACTION_LABEL.paid_other_external).toBe("Paid another way");

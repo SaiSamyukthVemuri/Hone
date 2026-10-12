@@ -259,7 +259,7 @@ export function SessionPaymentPrepareCard({
   // eligibility.paymentCurrency; otherwise it is unknown, never Canadian.
   settledCurrency?: PaymentCurrency | null;
   settlementCurrency?: PaymentCurrency | null;
-  // PAY-CCY-07 (DRAFT). The studio's payment country for the settlement
+  // PAY-CCY-07 (option B). The studio's payment country for the settlement
   // controls (which outcomes are offered). Null keeps today's full list.
   settlementCountry?: PaymentCountry | null;
   // The appointment-resolved price, available with or without a session.
