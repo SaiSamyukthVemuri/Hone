@@ -43,6 +43,10 @@ export const BROWSER_GROUPS = {
       "client-budget-context.spec.ts",
       "clinical-notes.spec.ts",
       "conditional-numbing-notes.spec.ts",
+      // MPX-03: the machine-first panel lives in the settings-block form,
+      // the same surface conditional-numbing-notes and
+      // repeat-client-fast-charting drive.
+      "machine-first-charting.spec.ts",
       "copy-settings-machine-readings.spec.ts",
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
