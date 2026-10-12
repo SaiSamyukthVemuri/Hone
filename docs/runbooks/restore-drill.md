@@ -21,9 +21,9 @@ alone brings back `treatment_images` rows that point at missing bytes.
 
 | Step | Action |
 |---|---|
-| 1 | Starts its **own** stack (`hone-restore-drill`, ports `5652x`/`8683`) from a scratch copy of `supabase/`. Only Postgres, PostgREST, Storage and Kong run. |
-| 2 | Seeds synthetic rows (`scripts/ops/restore-drill-seed.sql`) and uploads three synthetic objects to `treatment-images` at paths that satisfy the table's path check. |
-| 3 | Fingerprints every `public` table, plus `auth.users` and `storage.buckets` / `storage.objects`: row count and an order-independent md5. Also hashes the object bytes. |
+| 1 | Starts its **own** stack (`hone-restore-drill`, ports `5652x`/`8683`) from a scratch copy of `supabase/`. Only Postgres, PostgREST, Storage, Kong and Auth run. |
+| 2 | Seeds synthetic rows (`scripts/ops/restore-drill-seed.sql`), including an auth user with a Google identity linked to the practitioner, and uploads three synthetic objects to `treatment-images` at paths that satisfy the table's path check. |
+| 3 | Fingerprints every `public` table, every `auth` table except its migration history, and `storage.buckets` / `storage.objects`: row count and an order-independent md5. Also hashes the object bytes. |
 | 4 | Backs up the rows with `pg_dump --data-only` and the object bytes through the Storage API, separately. |
 | 5 | Destroys the project: `supabase stop --no-backup` deletes its volumes. |
 | 6 | Starts a **new** project from the repository migrations, truncates the rows the migrations seeded, loads the export with `session_replication_role = replica`, and re-uploads the object bytes. |
@@ -56,6 +56,7 @@ Filled in by each run. Keep earlier rows.
 |---|---|---|---|---|---|---|---|---|
 | 2026-10-12 00:26 | `6c5eac80` | **FAIL (true positive)** | 93 of 99 | 3 of 3 | 1 s | 280 s | 599 s | Six seeded tables restored **empty**. With `pg_dump`, `--table` overrides `--schema`, so the combined call exported no `public` rows. The fingerprint comparison caught it. Fixed by splitting the export into two dumps, plus a guard that fails the run if the export has no `public.clients` rows. |
 | 2026-10-12 00:37 | `6c5eac80` | **PASS** | 99 of 99 | 3 of 3 | 1 s | 283 s | 594 s | Restore time is almost entirely re-applying the migration chain to the new project. |
+| 2026-10-12 13:42 | `6c5eac80` | **PASS** | 120 of 120 | 3 of 3 | 1 s | 304 s | 611 s | After Codex's review on #848: the drill now runs Auth (GoTrue), seeds a synthetic user with a **Google identity** linked to the practitioner, exports and fingerprints **every auth table** except its migration history (22 tables, so `auth.identities` survives, not just `auth.users`), and signs its local token with a runtime expiry. |
 
 **What this does and does not show**
 - **Shows:** with Hone's migrations, a logical row export plus a separate
