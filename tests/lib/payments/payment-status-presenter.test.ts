@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { describePaymentCountry } from "@/lib/billing/payment-jurisdiction";
 import {
   bookingCardCopy,
   connectBannerCopy,
@@ -203,20 +204,40 @@ describe("gateConnectBannerOnCountry", () => {
   });
 
   it("portal card copy never claims 'available' for a blocked or unverifiable country (audit F3)", () => {
-    const blocked = portalCardCopyGatedOnCountry("available", { tone: "blocked" });
+    const blocked = portalCardCopyGatedOnCountry("available", { tone: "blocked", detail: "X." });
     expect(blocked).toMatch(/not available/i);
     expect(blocked).not.toMatch(/is available\./i);
-    expect(portalCardCopyGatedOnCountry("available", { tone: "unknown" })).toMatch(
+    expect(portalCardCopyGatedOnCountry("available", { tone: "unknown", detail: "X." })).toMatch(
       /could not be determined/i,
     );
     // ok / attention, and every non-available capability: unchanged.
-    expect(portalCardCopyGatedOnCountry("available", { tone: "ok" })).toBe(portalCardCopy("available"));
-    expect(portalCardCopyGatedOnCountry("available", { tone: "attention" })).toBe(
+    expect(portalCardCopyGatedOnCountry("available", { tone: "ok", detail: "X." })).toBe(
       portalCardCopy("available"),
     );
-    expect(portalCardCopyGatedOnCountry("needs_connect", { tone: "blocked" })).toBe(
+    expect(portalCardCopyGatedOnCountry("available", { tone: "attention", detail: "X." })).toBe(
+      portalCardCopy("available"),
+    );
+    expect(portalCardCopyGatedOnCountry("needs_connect", { tone: "blocked", detail: "X." })).toBe(
       portalCardCopy("needs_connect"),
     );
+  });
+
+  // Codex P2 4249448355: the blocked reason survives into the portal copy.
+  it("portal copy carries the country verdict's own reason, end to end", () => {
+    const US = { country: "US" as const, currency: "usd" as const };
+    for (const account of [
+      { kind: "bound" as const, observedCountry: null }, // US account not yet confirmed
+      { kind: "bound" as const, observedCountry: "CA" }, // mismatch
+      { kind: "bound" as const, observedCountry: "US", conflictingCountry: "CA" }, // conflict
+    ]) {
+      const summary = describePaymentCountry({ jurisdiction: US, account });
+      expect(summary.tone).toBe("blocked");
+      const copy = portalCardCopyGatedOnCountry("available", summary);
+      expect(copy).toContain(summary.detail);
+    }
+    // Unverifiable country: its own reason too.
+    const unknown = describePaymentCountry({ jurisdiction: null, account: { kind: "none" } });
+    expect(portalCardCopyGatedOnCountry("available", unknown)).toContain(unknown.detail);
   });
 
   it("the settings page passes its banner through the gate", () => {

@@ -13,8 +13,8 @@ type Props = {
   initialNoShowCents: number | null;
   /**
    * PAY-CCY-04. "CAD" / "USD": the studio's charge currency, resolved on the
-   * server. Null when it could not be read, in which case no currency is
-   * claimed rather than defaulting to CAD.
+   * server. Null when it could not be read: the field then says
+   * "(currency unknown)" rather than showing nothing or defaulting to CAD.
    */
   currencyCode: "CAD" | "USD" | null;
 };
@@ -90,7 +90,7 @@ export function FeeAmountsCard({
               placeholder="0.00"
               className="w-32 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950"
             />
-            {currencyCode && <span className="text-neutral-500">{currencyCode}</span>}
+            <span className="text-neutral-500">{currencyCode ?? "(currency unknown)"}</span>
           </div>
         </label>
 
@@ -108,7 +108,7 @@ export function FeeAmountsCard({
               placeholder="0.00"
               className="w-32 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950"
             />
-            {currencyCode && <span className="text-neutral-500">{currencyCode}</span>}
+            <span className="text-neutral-500">{currencyCode ?? "(currency unknown)"}</span>
           </div>
         </label>
 
