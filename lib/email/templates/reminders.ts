@@ -218,11 +218,11 @@ export function build24hReminderEmail(p: ReminderProps): {
   html: string;
   text: string;
 } {
-  // PR #157 patch. Subject line carries the appointment start time;
-  // recipient sees it in the inbox preview before opening the email.
-  // 12h with AM/PM is unambiguous; 24h "11:00" forced a guess.
-  const timeStr = localTimeString12h(p.startsAt, p.timezone);
-  const subject = `Reminder: ${p.serviceName} tomorrow at ${timeStr}`;
+  // SUBJECT RULE (HIPAA-READY-01, #828): the subject used to carry the
+  // service and start time (PR #157). A subject persists in the inbox, shows
+  // on a lock screen and is stored by the email provider, so the time now
+  // lives in the headline and body only (12h, as PR #157 chose).
+  const subject = `Appointment reminder from ${p.studioName}`;
   const headline = "Your appointment is tomorrow.";
   const lead =
     "This is a reminder that you have an appointment with us tomorrow.";
@@ -239,9 +239,8 @@ export function build2hReminderEmail(p: ReminderProps): {
   html: string;
   text: string;
 } {
-  // PR #157 patch. Same 12h subject-line fix as the 24h reminder.
-  const timeStr = localTimeString12h(p.startsAt, p.timezone);
-  const subject = `Reminder: ${p.serviceName} today at ${timeStr}`;
+  // SUBJECT RULE (#828): same as the 24h reminder.
+  const subject = `Appointment reminder from ${p.studioName}`;
   const headline = "See you soon.";
   const lead = "Your appointment is in about 2 hours.";
   const intake = intakeSectionFor("2h", p);

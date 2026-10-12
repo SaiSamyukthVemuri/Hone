@@ -105,6 +105,8 @@ export async function notifyAppointmentMoved(
     const rescheduleUrl = `${input.appOrigin}/reschedule/${token}`;
 
     const kind: MoveNotificationKind = input.resultKind ?? "moved";
+    // SUBJECT RULE (HIPAA-READY-01, #828): no service, date or time in a
+    // subject. They stay in the body, which names the new time.
     let subject: string;
     let headline: string;
     let bodyHtml: string;
@@ -113,19 +115,19 @@ export async function notifyAppointmentMoved(
       // Practitioner changed, TIME UNCHANGED, never claim the time moved.
       const who = practitionerName ? `<strong>${esc(practitionerName)}</strong>` : "a different practitioner";
       const whoText = practitionerName ? practitionerName : "a different practitioner";
-      subject = `Appointment updated: ${serviceName} on ${dateStr}`;
+      subject = `Your appointment with ${studioName} has been updated`;
       headline = "Your appointment has a new practitioner.";
       bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> on <strong>${esc(dateStr)} at ${esc(timeStr)}</strong> will now be with ${who}. The time is unchanged.`;
       bodyText = `Your ${serviceName} appointment at ${studioName} on ${dateStr} at ${timeStr} will now be with ${whoText}. The time is unchanged.`;
     } else if (kind === "moved_and_reassigned") {
       const who = practitionerName ? ` with <strong>${esc(practitionerName)}</strong>` : "";
       const whoText = practitionerName ? ` with ${practitionerName}` : "";
-      subject = `Appointment updated: ${serviceName} is now ${dateStr} at ${timeStr}`;
+      subject = `Your appointment with ${studioName} has been updated`;
       headline = "Your appointment time and practitioner have changed.";
       bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> has been moved to <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>${who}.`;
       bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}${whoText}.`;
     } else {
-      subject = `Appointment updated: ${serviceName} is now ${dateStr} at ${timeStr}`;
+      subject = `Your appointment with ${studioName} has been updated`;
       headline = "Your appointment time has changed.";
       bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> has been moved to <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>. Everything else stays the same.`;
       bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}. Everything else stays the same.`;

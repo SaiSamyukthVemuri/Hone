@@ -22,6 +22,36 @@ Provider: Resend. From-address pattern: `<Studio name> via hone <hello@hone.care
 | Portal reply notification | Studio owner | Client replies in portal (PR #129) |
 | Intake update request | Client | Practitioner re-issues an intake |
 
+### Subject rule: minimum necessary (HIPAA-READY-01, #828)
+
+A subject persists in the inbox, shows on a lock screen and is stored by
+the email provider.
+
+**Subjects never carry** the client's name, the service, or the appointment
+date or time.
+- Those stay in the body.
+- The studio name is allowed, because the From line already shows it.
+- Who cancelled appears by **role**, never by name, since the actor can be
+  the client.
+
+| Email | Subject |
+|---|---|
+| Booking confirmation | `Your appointment with <studio> is confirmed` |
+| Booking notification (practitioner) | `New booking at <studio>` |
+| Cancellation, client-facing | `Appointment cancelled · <studio>` |
+| Cancellation, studio-facing | `Appointment cancelled by the <role> · <studio>` |
+| 24h and 2h reminders | `Appointment reminder from <studio>` |
+| Move or reassignment | `Your appointment with <studio> has been updated` |
+
+The intake templates already followed a stricter rule (no studio name).
+
+**Limits of this rule:**
+- It does **not** make email PHI-free. Bodies still carry details, and
+  previews are drawn from the first body text.
+- Resend still cannot sign a BAA.
+- See the #828 decision packet §3.1.
+- Pinned by `tests/lib/email/subject-minimum-necessary.test.ts`.
+
 ### Pre-appointment instructions (PR #160)
 
 Booking confirmation + 24h + 2h reminder emails render a per-service `Before your appointment` block sourced from `services.pre_care_instructions` (nullable text, migration 0025). The studio edits it from `Settings → Services` per service; the same field also feeds the portal Care instructions section (PR #159), so a single edit reaches both surfaces.

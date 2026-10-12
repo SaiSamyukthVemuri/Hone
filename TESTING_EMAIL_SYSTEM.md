@@ -82,7 +82,7 @@ seconds, with greeting, detail block, Reschedule + Cancel buttons.
 3. Submit.
 
 **Verify in inbox:** email arrives within 30 seconds with subject
-`Appointment confirmed: <service> with <studio> on <date>`. Body contains
+`Your appointment with <studio> is confirmed` (no service, date or time in subjects since #828). Body contains
 greeting, service + practitioner line, date + time + duration in the
 studio timezone (Toronto), Reschedule button, Cancel link.
 
@@ -143,7 +143,7 @@ curl -fsS -H "Authorization: Bearer $CRON_SECRET" \
 **Verify response:** JSON shows `reminder_24h: { attempted: 1, succeeded: 1, failed: 0 }` (or attempted >= 1 if other appointments also fell into the window).
 
 **Verify in inbox:** reminder email arrives. Subject
-`Reminder: <service> tomorrow at <time>`.
+`Appointment reminder from <studio>` (no service or time in subjects since #828).
 
 **Verify in Supabase:**
 
@@ -178,7 +178,7 @@ curl -fsS -H "Authorization: Bearer $CRON_SECRET" \
 
 **Verify response:** `reminder_2h: { attempted: 1, succeeded: 1 }`.
 
-**Verify in inbox:** subject `Reminder: <service> today at <time>`.
+**Verify in inbox:** subject `Appointment reminder from <studio>` (the time is in the body).
 
 **Verify in Supabase:** `reminder_2h_sent_at` is populated.
 

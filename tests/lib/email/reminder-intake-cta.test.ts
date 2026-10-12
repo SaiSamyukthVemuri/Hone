@@ -129,7 +129,8 @@ describe.each(BUILDERS)("$kind reminder WITH an intake link", ({ kind, build }) 
 
   it("keeps the appointment-reminder subject, with no intake wording", () => {
     expect(email.subject).toBe(plain.subject);
-    expect(email.subject).toMatch(/^Reminder: Electrolysis (tomorrow|today) at /);
+    // SUBJECT RULE (#828): no service or time in a subject.
+    expect(email.subject).toMatch(/^Appointment reminder from /);
     expect(email.subject).not.toMatch(/intake|incomplete|form/i);
   });
 
