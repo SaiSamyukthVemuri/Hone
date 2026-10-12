@@ -28,7 +28,7 @@ export type StudioPaymentCountryStatus = {
   jurisdiction: JurisdictionRead;
   account:
     | { kind: "none" }
-    | { kind: "bound"; observedCountry: string | null }
+    | { kind: "bound"; observedCountry: string | null; conflictingCountry: string | null }
     | { kind: "unknown" };
 };
 
@@ -40,7 +40,7 @@ export async function getStudioPaymentCountryStatus(
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("studio_payment_settings")
-    .select("stripe_account_id, stripe_account_country")
+    .select("stripe_account_id, stripe_account_country, stripe_account_country_conflict")
     .eq("studio_id", studioId)
     .eq("stripe_livemode", livemode)
     .maybeSingle();
@@ -51,6 +51,8 @@ export async function getStudioPaymentCountryStatus(
     account: {
       kind: "bound",
       observedCountry: (data.stripe_account_country as string | null) ?? null,
+      conflictingCountry:
+        (data.stripe_account_country_conflict as string | null) ?? null,
     },
   };
 }
