@@ -28,10 +28,15 @@ const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const FN = "appointment_settlements_method_for_jurisdiction";
 
 describe("0224 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this (CLAUDE.md §2).
-    expect(isRepoMax(VERSION), "0224 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF in the Fett composition (integration/fett-composed-824): 0225
+    // (DB/WAIT #874) sits above it, and only the CURRENT max's own test may
+    // assert isRepoMax (CLAUDE.md §2). On #872's own branch 0224 is still the
+    // max. DERIVED, NOT PINNED.
+    expect(isRepoMax(VERSION)).toBe(false);
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
   });
 
   it("is allocated exactly once", () => {

@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`; `0211`–`0224` AUTHORED AND PENDING, contiguous, in that order)
+## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`; `0211`–`0225` AUTHORED AND PENDING, contiguous, in that order)
 <!-- integration: incoming lane's ledger prose, preserved verbatim -->
 <!-- integration: incoming lane's ledger prose, preserved verbatim -->
 
@@ -49,10 +49,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0224**: `0224_us_settlement_method_guard.sql` (Audit #872), above `0223_machine_inventory_and_setup_readings.sql` (MPX #860) and `0222_public_practitioner_booking_command.sql` (DB/WAIT #868). This tree is the isolated synthetic Fett integration (`integration/fett-composed-824`): every pending migration `0211`–`0224` is carried byte-identical to its own owner PR head, proved by blob check. It is rehearsal evidence, never a release vehicle. |
+| **Repo migration max** | **0225**: `0225_public_new_client_practitioner_selection.sql` (DB/WAIT #874), above `0224_us_settlement_method_guard.sql` (Audit #872), `0223_machine_inventory_and_setup_readings.sql` (MPX #860) and `0222_public_practitioner_booking_command.sql` (DB/WAIT #868). This tree is the isolated synthetic Fett integration (`integration/fett-composed-824`): every pending migration `0211`–`0225` is carried byte-identical to its own owner PR head, proved by blob check. It is rehearsal evidence, never a release vehicle. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0211`–`0224`**, contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. Each applies from its own reviewed head, in this order, under its own approval. |
-| **Next free migration** | Next free number is **0225**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. The shared register (`~/hone-migration-coordination.md`) records `0225` as ALLOCATED to DB/WAIT (unpushed). |
+| **Pending migrations** | **`0211`–`0225`**, contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. Each applies from its own reviewed head, in this order, under its own approval. |
+| **Next free migration** | Next free number is **0226**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. The shared register (`~/hone-migration-coordination.md`) is the authority for in-flight claims. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
