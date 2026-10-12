@@ -260,7 +260,7 @@ test.describe("client says they didn't receive it (DELIVERY-VISIBILITY-04)", () 
     const [m] = await sql<{ status: string }>(`select status from public.email_outbound_messages where id = $1`, [row!.id]);
     expect(m!.status).toBe("delivered");
 
-    await page.goto(LAUNCH);
+    await page.goto(OWNER_CONSOLE);
     await expect(CARD()(page).getByText(/client says they did not receive it \(1 open\)/)).toBeVisible();
 
     const { email: operatorEmail } = await seedOperatorAuthUser();
