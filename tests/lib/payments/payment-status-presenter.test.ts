@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   bookingCardCopy,
   connectBannerCopy,
+  gateConnectBannerOnCountry,
   deriveConnectCapability,
   deriveManualFeeCapability,
   derivePortalCardCapability,
@@ -159,5 +162,52 @@ describe("Per-row mode badge", () => {
     expect(modeBadgeForRow(false)).toBe("Test");
     expect(modeBadgeForRow(null)).toBe("Unknown");
     expect(modeBadgeForRow(undefined)).toBe("Unknown");
+  });
+});
+
+// Codex P2 4249120309. Stripe "ready" never outranks the payment country.
+describe("gateConnectBannerOnCountry", () => {
+  const ready = connectBannerCopy("live", "ready");
+  const notReady = connectBannerCopy("live", "not_connected");
+
+  it("a blocked country (conflict or mismatch) turns ready into Charges are blocked", () => {
+    const out = gateConnectBannerOnCountry(ready, {
+      tone: "blocked",
+      detail: "Stripe has reported more than one country.",
+    });
+    expect(out).toEqual({
+      tone: "warning",
+      headline: "Charges are blocked",
+      detail: "Stripe has reported more than one country.",
+    });
+  });
+
+  it("an unverifiable country is never ready", () => {
+    const out = gateConnectBannerOnCountry(ready, {
+      tone: "unknown",
+      detail: "Hone could not read this studio's payment country.",
+    });
+    expect(out.tone).not.toBe("ready");
+    expect(out.headline).toBe("Payment country could not be verified");
+  });
+
+  it("ok and attention (legacy CA, still chargeable) leave the banner unchanged", () => {
+    expect(gateConnectBannerOnCountry(ready, { tone: "ok", detail: "x" })).toBe(ready);
+    expect(gateConnectBannerOnCountry(ready, { tone: "attention", detail: "x" })).toBe(ready);
+  });
+
+  it("negative control: it never upgrades a banner that was not ready", () => {
+    expect(gateConnectBannerOnCountry(notReady, { tone: "unknown", detail: "x" })).toBe(notReady);
+    expect(gateConnectBannerOnCountry(notReady, { tone: "ok", detail: "x" })).toBe(notReady);
+  });
+
+  it("the settings page passes its banner through the gate", () => {
+    const page = readFileSync(
+      path.join(process.cwd(), "app/(app)/settings/payments/page.tsx"),
+      "utf8",
+    );
+    expect(page).toMatch(
+      /gateConnectBannerOnCountry\(\s*connectBannerCopy\(runtimeMode, connect\),\s*countrySummary,\s*\)/,
+    );
   });
 });
