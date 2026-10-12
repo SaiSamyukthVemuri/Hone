@@ -16,7 +16,7 @@ const read = (f: string) => readFileSync(path.join(MIGRATIONS, f), "utf8");
 const SQL = read("0217_studio_sms_sender_registrations.sql");
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
-const SIG = "public.record_studio_sms_sender_registration(uuid, text, text, text, text)";
+const SIG = "public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text)";
 
 describe("0217 in the sequence", () => {
   it("is the repository maximum on this branch, allocated once", () => {
@@ -45,17 +45,21 @@ describe("blast radius", () => {
     ]);
     expect([...CODE.matchAll(/create or replace function (public\.\w+)\(/g)].map((m) => m[1])).toEqual([
       "public.record_studio_sms_sender_registration",
-      "public.list_live_studio_sms_sender_registrations",
+      "public.get_live_studio_sms_sender_registration_state",
     ]);
     expect(TOP_LEVEL).not.toMatch(/^\s*(drop|alter\s+(?!table public\.studio_sms_sender_registrations\b))/im);
     expect(TOP_LEVEL).not.toMatch(/^\s*(insert|update|delete)\b/im);
     expect(TOP_LEVEL).not.toMatch(/\bon\s+(table\s+)?public\.studio_sms_senders\b/i);
   });
 
-  it("the command resolves the LIVE sender itself and never takes a sender id", () => {
-    const signature = SQL.slice(SQL.indexOf("create or replace function"), SQL.indexOf(") returns table"));
-    expect(signature).not.toMatch(/p_sender/);
-    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'/);
+  it("the command writes to the LIVE sender it resolves; the expected id is only ever compared", () => {
+    const body = CODE.slice(CODE.indexOf("create or replace function public.record_studio_sms_sender_registration("));
+    const fn = body.slice(0, body.indexOf("$$;", body.indexOf("as $$") + 5));
+    // The row written is v_live[1], resolved here; p_expected_sender_id appears
+    // only in the null check and the comparison.
+    expect(fn).toMatch(/values\s+\(p_studio_id, v_live\[1\], p_kind/);
+    expect(fn.match(/p_expected_sender_id/g)).toHaveLength(3);
+    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for share/);
     expect(CODE).toMatch(/security definer\s+set search_path = pg_catalog, pg_temp/);
   });
 });
@@ -76,7 +80,7 @@ describe("privileges", () => {
   });
 
   it("both functions are revoked by name and granted to service_role only", () => {
-    for (const sig of [SIG, "public.list_live_studio_sms_sender_registrations(uuid)"]) {
+    for (const sig of [SIG, "public.get_live_studio_sms_sender_registration_state(uuid)"]) {
       for (const role of ["public", "anon", "authenticated", "service_role"]) {
         expect(TOP_LEVEL).toContain(`revoke execute on function ${sig} from ${role};`);
       }
@@ -84,7 +88,13 @@ describe("privileges", () => {
     expect([...TOP_LEVEL.matchAll(/grant execute on function [^;]* to (\w+);/g)].map((m) => m[1])).toEqual(["service_role", "service_role"]);
   });
 
-  it("the operator's read returns the LIVE sender's rows only (Codex P2 4244011188)", () => {
-    expect(CODE).toMatch(/join public\.studio_sms_senders s on s\.id = r\.sender_id\s+where r\.studio_id = p_studio_id\s+and s\.studio_id = p_studio_id\s+and s\.status <> 'released'/);
+  it("the operator's snapshot is one statement over the LIVE sender(s) and exactly their rows", () => {
+    expect(CODE).toMatch(/with live as \(\s+select s\.id, s\.studio_id, s\.status, s\.phone_number, s\.messaging_service_sid, s\.created_at\s+from public\.studio_sms_senders s\s+where s\.studio_id = p_studio_id\s+and s\.status <> 'released'/);
+    expect(CODE).toMatch(/join live l on l\.id = r\.sender_id/);
+  });
+
+  it("the writer is compare-and-set on the expected sender, with the sender row locked", () => {
+    expect(CODE).toMatch(/for share\) l;/);
+    expect(CODE).toMatch(/if v_live\[1\] <> p_expected_sender_id then\s+return query select 'sender_changed'/);
   });
 });

@@ -43,17 +43,31 @@ async function seedActiveSender(s: SeededStudio, phone: string): Promise<string>
   return rows[0].id as string;
 }
 
+/** The studio's live sender id, as the operator's page would have shown it. */
+const liveSender = async (studioId: string): Promise<string | null> =>
+  ((await adminQuery(
+    "select id from public.studio_sms_senders where studio_id = $1 and status <> 'released'",
+    [studioId],
+  )).rows[0]?.id as string | undefined) ?? null;
+
 const record = async (
   studioId: string,
   kind: string,
   status: string,
   missing: string | null = null,
   reference: string | null = null,
+  expected?: string | null,
 ) =>
   (await adminQuery(
-    "select * from public.record_studio_sms_sender_registration($1, $2, $3, $4, $5)",
-    [studioId, kind, status, missing, reference],
+    "select * from public.record_studio_sms_sender_registration($1, $2, $3, $4, $5, $6)",
+    [studioId, expected === undefined ? ((await liveSender(studioId)) ?? "00000000-0000-4000-8000-000000000000") : expected, kind, status, missing, reference],
   )).rows[0] as { result: string; registration_id: string | null };
+
+const snapshot = async (studioId: string) =>
+  (await adminQuery("select public.get_live_studio_sms_sender_registration_state($1) s", [studioId])).rows[0].s as {
+    senders: Array<{ id: string; studio_id: string; status: string; phone_number: string; messaging_service_sid: string }>;
+    registrations: Array<{ sender_id: string; kind: string; status: string }>;
+  };
 
 const phone = () => `+1212${String(Math.floor(2_000_000 + Math.random() * 7_999_999))}`;
 
@@ -138,19 +152,31 @@ describe("the command", () => {
   });
 });
 
-describe("the operator's read (Codex P2 4244011188)", () => {
-  it("shows the LIVE number's evidence only, never a released predecessor's", async () => {
+describe("the operator's snapshot (Codex P2 4244011188, 4244108801)", () => {
+  it("shows the live sender BEFORE its first record, with its number and messaging service", async () => {
+    const s = await seedStudio("reg-first");
+    const num = phone();
+    const id = await seedActiveSender(s, num);
+    const snap = await snapshot(s.studioId);
+    expect(snap.registrations).toEqual([]);
+    expect(snap.senders).toEqual([
+      { id, studio_id: s.studioId, status: "active", phone_number: num, messaging_service_sid: expect.stringMatching(/^MG/) },
+    ]);
+    expect((await snapshot(none.studioId))).toEqual({ senders: [], registrations: [] });
+  });
+
+  it("returns the LIVE number's evidence only, never a released predecessor's", async () => {
     const s = await seedStudio("reg-replaced");
     const old = await seedActiveSender(s, phone());
     await record(s.studioId, "us_10dlc", "approved");
     await adminQuery("update public.studio_sms_senders set status = 'releasing' where id = $1", [old]);
     await adminQuery("update public.studio_sms_senders set status = 'released', released_at = now() where id = $1", [old]);
-    const replacement = phone();
-    await seedActiveSender(s, replacement);
+    const replacement = await seedActiveSender(s, phone());
     await record(s.studioId, "us_10dlc", "pending");
 
-    const live = (await adminQuery("select * from public.list_live_studio_sms_sender_registrations($1)", [s.studioId])).rows;
-    expect(live).toEqual([expect.objectContaining({ kind: "us_10dlc", status: "pending", phone_number: replacement })]);
+    const snap = await snapshot(s.studioId);
+    expect(snap.senders.map((x) => x.id)).toEqual([replacement]);
+    expect(snap.registrations).toEqual([expect.objectContaining({ sender_id: replacement, kind: "us_10dlc", status: "pending" })]);
     // The predecessor's approval is still recorded, as that number's history.
     const all = await adminQuery("select status from public.studio_sms_sender_registrations where studio_id = $1 order by status", [s.studioId]);
     expect(all.rows.map((r) => r.status)).toEqual(["approved", "pending"]);
@@ -159,11 +185,56 @@ describe("the operator's read (Codex P2 4244011188)", () => {
   it("is service_role only", async () => {
     for (const role of ["anon", "authenticated"] as const) {
       await expect(
-        asRole(role, (q) => q("select * from public.list_live_studio_sms_sender_registrations($1)", [a.studioId])),
+        asRole(role, (q) => q("select public.get_live_studio_sms_sender_registration_state($1)", [a.studioId])),
       ).rejects.toMatchObject({ code: "42501" });
     }
-    const ok = await asRole("service_role", (q) => q("select * from public.list_live_studio_sms_sender_registrations($1)", [a.studioId]));
-    expect(ok.rows.length).toBeGreaterThan(0);
+    const ok = await asRole("service_role", (q) => q("select public.get_live_studio_sms_sender_registration_state($1) s", [a.studioId]));
+    expect(ok.rows[0].s.senders).toHaveLength(1);
+  });
+});
+
+describe("compare-and-set on the sender support verified (Codex P2 4244108809)", () => {
+  it("a write for a sender that was replaced after the page loaded is refused, and nothing lands on the replacement", async () => {
+    const s = await seedStudio("reg-stale");
+    const shown = await seedActiveSender(s, phone());
+    await adminQuery("update public.studio_sms_senders set status = 'releasing' where id = $1", [shown]);
+    await adminQuery("update public.studio_sms_senders set status = 'released', released_at = now() where id = $1", [shown]);
+    await seedActiveSender(s, phone());
+    expect(await record(s.studioId, "us_10dlc", "approved", null, null, shown)).toEqual({ result: "sender_changed", registration_id: null });
+    expect((await snapshot(s.studioId)).registrations).toEqual([]);
+  });
+
+  it("another studio's sender id is never accepted", async () => {
+    expect((await record(a.studioId, "us_10dlc", "approved", null, null, senderB)).result).toBe("sender_changed");
+  });
+
+  it("a missing expected sender is invalid input", async () => {
+    expect((await record(a.studioId, "us_10dlc", "approved", null, null, null)).result).toBe("invalid_input");
+  });
+
+  it("a release that races the write waits for it: the sender row is locked until the record commits", async () => {
+    const { Client } = await import("pg");
+    const { resolveLocalDbUrl } = await import("./helpers/harness");
+    const s = await seedStudio("reg-race");
+    const id = await seedActiveSender(s, phone());
+    const writer = new Client({ connectionString: resolveLocalDbUrl() });
+    const releaser = new Client({ connectionString: resolveLocalDbUrl() });
+    await Promise.all([writer.connect(), releaser.connect()]);
+    try {
+      await writer.query("begin");
+      const w = await writer.query(
+        "select result from public.record_studio_sms_sender_registration($1, $2, 'us_10dlc', 'approved', null, null)",
+        [s.studioId, id],
+      );
+      expect(w.rows[0].result).toBe("recorded");
+      await releaser.query("set lock_timeout = '500ms'");
+      await expect(
+        releaser.query("update public.studio_sms_senders set status = 'releasing' where id = $1", [id]),
+      ).rejects.toMatchObject({ code: "55P03" });
+      await writer.query("commit");
+    } finally {
+      await Promise.all([writer.end(), releaser.end()]);
+    }
   });
 });
 
@@ -202,11 +273,11 @@ describe("privileges", () => {
     }
     for (const role of ["anon", "authenticated"] as const) {
       await expect(
-        asRole(role, (q) => q("select * from public.record_studio_sms_sender_registration($1, 'us_10dlc', 'approved', null, null)", [a.studioId])),
+        asRole(role, (q) => q("select * from public.record_studio_sms_sender_registration($1, $2, 'us_10dlc', 'approved', null, null)", [a.studioId, senderA])),
       ).rejects.toMatchObject({ code: "42501" });
     }
     const ok = await asRole("service_role", (q) =>
-      q("select result from public.record_studio_sms_sender_registration($1, 'us_10dlc', 'approved', null, null)", [b.studioId]),
+      q("select result from public.record_studio_sms_sender_registration($1, $2, 'us_10dlc', 'approved', null, null)", [b.studioId, senderB]),
     );
     expect(ok.rows[0].result).toBe("recorded");
   });

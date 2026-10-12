@@ -114,6 +114,21 @@ export async function recordSmsRegistrationAction(
     return { ok: false, error: "Not authorized." };
   }
 
+  // BOUND TO THE SENDER SUPPORT VERIFIED: a submission without it (for
+  // example from a page whose state could not be read) is refused here, and
+  // the command refuses a sender that has since changed.
+  const expectedSenderId = String(formData.get("expected_sender_id") ?? "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(expectedSenderId)) {
+    await logAdminAction({
+      actorUserId: user.id,
+      actorEmail: user.email ?? null,
+      action: "sms_registration_recorded",
+      targetType: "studio",
+      targetId: studioId,
+      outcome: "failed",
+    });
+    return { ok: false, result: "missing_sender", error: "Reload the page: the studio's sender could not be confirmed." };
+  }
   const kind = String(formData.get("kind") ?? "");
   const status = String(formData.get("status") ?? "");
   const missing = String(formData.get("missing_information") ?? "").trim();
@@ -125,6 +140,7 @@ export async function recordSmsRegistrationAction(
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("record_studio_sms_sender_registration", {
     p_studio_id: studioId,
+    p_expected_sender_id: expectedSenderId,
     p_kind: kind,
     p_status: status,
     p_missing: status === "requires_information" ? missing : null,
@@ -146,6 +162,7 @@ export async function recordSmsRegistrationAction(
     invalid_input: "Check the fields: a reason is required exactly when information is missing, and the reference must be a plain identifier.",
     no_live_sender: "This studio has no live SMS sender to record registration against.",
     ambiguous_live_sender: "This studio has more than one live sender. Nothing was recorded.",
+    sender_changed: "The studio's number changed after this page loaded. Nothing was recorded; reload and verify the current number.",
   };
   return { ok: false, result, error: message[result] ?? "The registration could not be recorded." };
 }
