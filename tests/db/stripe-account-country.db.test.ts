@@ -308,8 +308,14 @@ describe("K2 + K4 refresh and account.updated record the country", () => {
     expect(mismatchAlerts()).toEqual([]);
   });
 
-  it("refresh that finds a different country: status synced, mismatch surfaced, nothing overwritten", async () => {
-    const { refreshAccountStatusFromStripe, ACCOUNT_COUNTRY_MISMATCH_ERROR } = await account_ts();
+  // Codex P1 4244834151: the conflict is persisted, so charging and
+  // onboarding stop although the recorded country still matches the studio.
+  it("refresh that finds a different country: status synced, conflict persisted, charging and onboarding stopped", async () => {
+    const {
+      refreshAccountStatusFromStripe,
+      createOrLoadConnectedAccountForStudio,
+      ACCOUNT_COUNTRY_MISMATCH_ERROR,
+    } = await account_ts();
     const s = await studio("refresh-conflict");
     const id = await legacyBound(s, "CA");
     await refreshAccountStatusFromStripe({ studioId: s.studioId, stripeAccountId: id });
@@ -320,6 +326,26 @@ describe("K2 + K4 refresh and account.updated record the country", () => {
     expect((await bound(s.studioId))?.stripe_account_country).toBe("CA");
     expect(mismatchAlerts()).toHaveLength(1);
     expect(mismatchAlerts()[0].details).toMatchObject({ reason: "country_conflict" });
+    expect(
+      (
+        await adminQuery(
+          `select stripe_account_country_conflict from public.studio_payment_settings
+            where studio_id = $1 and stripe_account_id = $2`,
+          [s.studioId, id],
+        )
+      ).rows[0].stripe_account_country_conflict,
+    ).toBe("US");
+    expect(await tryPrepare(s, "cad", id)).toMatch(/payment_account_country_conflict/);
+    await expect(createOrLoadConnectedAccountForStudio(s.studioId)).rejects.toThrow(
+      ACCOUNT_COUNTRY_MISMATCH_ERROR,
+    );
+
+    // Stripe agreeing again does not reopen it.
+    fake.accounts.set(id, { country: "CA", default_currency: "cad" });
+    await expect(
+      refreshAccountStatusFromStripe({ studioId: s.studioId, stripeAccountId: id }),
+    ).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    expect(await tryPrepare(s, "cad", id)).toMatch(/payment_account_country_conflict/);
   });
 
   it("account.updated records the country; a mismatch alerts and blocks charging", async () => {
