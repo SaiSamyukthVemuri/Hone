@@ -89,4 +89,22 @@ describe("names", () => {
     expect(countryName("CA")).toBe("Canada");
     expect(countryName("US")).toBe("United States");
   });
+
+  // Codex P1 4244834151: a persisted conflict is blocked even when the
+  // recorded country matches the studio.
+  it("a recorded country conflict is blocked, whichever report matches", () => {
+    const blocked = describePaymentCountry({
+      jurisdiction: CA,
+      account: { kind: "bound", observedCountry: "CA", conflictingCountry: "US" },
+    });
+    expect(blocked.tone).toBe("blocked");
+    expect(blocked.detail).toMatch(/more than one country/);
+    // Negative control: the same account without a conflict is ok.
+    expect(
+      describePaymentCountry({
+        jurisdiction: CA,
+        account: { kind: "bound", observedCountry: "CA", conflictingCountry: null },
+      }).tone,
+    ).toBe("ok");
+  });
 });

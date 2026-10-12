@@ -493,12 +493,77 @@ describe("J7 recording what Stripe says about an account", () => {
     expect(await record(s.studioId, acct, "CA", "cad")).toMatchObject({
       out_result: "country_conflict",
       out_account_country: "US",
+      out_matches: false,
     });
     const row = await adminQuery(
-      `select stripe_account_country from public.studio_payment_settings where stripe_account_id=$1`,
+      `select stripe_account_country, stripe_account_country_conflict,
+              stripe_account_country_conflict_at is not null as conflict_dated
+         from public.studio_payment_settings where stripe_account_id=$1`,
       [acct],
     );
-    expect(row.rows[0].stripe_account_country).toBe("US");
+    expect(row.rows[0]).toEqual({
+      stripe_account_country: "US",
+      stripe_account_country_conflict: "CA",
+      conflict_dated: true,
+    });
+  });
+
+  // Codex P1 4244834151: the conflict used to be returned and then forgotten,
+  // so the recorded country (which matched) kept every charge path open.
+  it("A PERSISTED CONFLICT STOPS CHARGING, even though the recorded country matches", async () => {
+    const s = await studio("j7-conflict-blocks");
+    await setJurisdiction(s.studioId, "US", "usd");
+    const acct = await bindAccount(s.studioId);
+    expect((await record(s.studioId, acct, "US", "usd")).out_matches).toBe(true);
+    // Negative control: before the conflict, the same insert is accepted.
+    await expect(insertAttempt(s, "usd", acct)).resolves.toBeTruthy();
+
+    expect((await record(s.studioId, acct, "CA", "cad")).out_result).toBe("country_conflict");
+    expect(await rejection(insertAttempt(s, "usd", acct))).toMatch(
+      /payment_account_country_conflict/,
+    );
+
+    // A later report that agrees again does not clear it.
+    expect(await record(s.studioId, acct, "US", "usd")).toMatchObject({
+      out_result: "country_conflict",
+      out_account_country: "US",
+      out_matches: false,
+    });
+    expect(await rejection(insertAttempt(s, "usd", acct))).toMatch(
+      /payment_account_country_conflict/,
+    );
+  });
+
+  it("a conflict on a legacy Canadian account blocks it too", async () => {
+    const s = await studio("j7-conflict-ca");
+    const acct = await bindAccount(s.studioId);
+    expect((await record(s.studioId, acct, "CA", "cad")).out_result).toBe("recorded");
+    expect((await record(s.studioId, acct, "US", "usd")).out_result).toBe("country_conflict");
+    expect(await rejection(insertAttempt(s, "cad", acct))).toMatch(
+      /payment_account_country_conflict/,
+    );
+  });
+
+  it("the conflict column is bound to a recorded, different country", async () => {
+    const s = await studio("j7-conflict-shape");
+    const acct = await bindAccount(s.studioId, { country: "CA" });
+    for (const [conflict, at] of [
+      ["US", null],
+      ["CA", "now()"],
+      [null, "now()"],
+    ] as const) {
+      expect(
+        await rejection(
+          adminQuery(
+            `update public.studio_payment_settings
+                set stripe_account_country_conflict = $2,
+                    stripe_account_country_conflict_at = ${at ?? "null"}
+              where stripe_account_id = $1`,
+            [acct, conflict],
+          ),
+        ),
+      ).toMatch(/studio_payment_settings_account_country_conflict_check/);
+    }
   });
 
   it("reports a mismatch with the studio's country without hiding it", async () => {

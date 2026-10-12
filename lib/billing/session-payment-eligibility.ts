@@ -317,7 +317,7 @@ export async function getSessionPaymentEligibility(
   const { data: settings, error: settingsErr } = await admin
     .from("studio_payment_settings")
     .select(
-      "stripe_account_id, stripe_account_status, stripe_livemode, stripe_account_country",
+      "stripe_account_id, stripe_account_status, stripe_livemode, stripe_account_country, stripe_account_country_conflict",
     )
     .eq("studio_id", args.studioId)
     .eq("stripe_livemode", livemode)
@@ -364,6 +364,7 @@ export async function getSessionPaymentEligibility(
         accountCountryVerdict(
           jurisdiction.country,
           (settings.stripe_account_country as string | null) ?? null,
+          (settings.stripe_account_country_conflict as string | null) ?? null,
         ),
       );
       if (countryReason) reasons.push(countryReason);
