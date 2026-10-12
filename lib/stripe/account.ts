@@ -9,11 +9,106 @@
 
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { recordOpsAlert } from "@/lib/ops/alerts";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import { getStripe, inferStripeLivemode } from "./server";
+
 import {
-  STRIPE_CONNECT_COUNTRY,
-  getStripe,
-  inferStripeLivemode,
-} from "./server";
+  ACCOUNT_COUNTRY_MISMATCH_ERROR,
+  PAYMENT_COUNTRY_UNVERIFIED_ERROR,
+} from "./account-messages";
+
+export { ACCOUNT_COUNTRY_MISMATCH_ERROR, PAYMENT_COUNTRY_UNVERIFIED_ERROR };
+
+// ---------------------------------------------------------------------------
+// recordStripeAccountObservation (PAY-CCY-03)
+// ---------------------------------------------------------------------------
+//
+// Stripe is the authority on a connected account's country; the studio's
+// jurisdiction (0214) is the authority on the country it SHOULD be in. This
+// records what Stripe said (record_stripe_account_jurisdiction: country
+// write-once, default currency refreshed) and reports whether the two agree.
+// A disagreement raises a critical alert and is returned, never repaired: no
+// path in Hone replaces a connected account. Charging fails closed on it in
+// the eligibility helper, the charge-time lineage check and the 0214 insert
+// guard.
+export type AccountObservation =
+  | { kind: "match"; accountCountry: string }
+  | {
+      kind: "mismatch";
+      accountCountry: string | null;
+      paymentCountry: string | null;
+      reason: "country_mismatch" | "country_conflict";
+    }
+  | { kind: "not_recorded"; reason: "not_bound" | "invalid_input" | "rpc_failed" };
+
+export async function recordStripeAccountObservation(args: {
+  studioId: string;
+  stripeAccountId: string;
+  livemode: boolean;
+  account: Pick<Stripe.Account, "country" | "default_currency">;
+  route: string;
+}): Promise<AccountObservation> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("record_stripe_account_jurisdiction", {
+    p_studio_id: args.studioId,
+    p_stripe_account_id: args.stripeAccountId,
+    p_stripe_livemode: args.livemode,
+    p_country: args.account.country ?? null,
+    p_default_currency: args.account.default_currency ?? null,
+  });
+  if (error) {
+    logInternalStripeError("record_stripe_account_jurisdiction_failed", {
+      code: error.code,
+      message: error.message,
+      studioId: args.studioId,
+    });
+    return { kind: "not_recorded", reason: "rpc_failed" };
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | {
+        out_result: string;
+        out_account_country: string | null;
+        out_payment_country: string | null;
+        out_matches: boolean | null;
+      }
+    | null;
+  if (!row || row.out_result === "not_bound" || row.out_result === "invalid_input") {
+    return {
+      kind: "not_recorded",
+      reason: row?.out_result === "invalid_input" ? "invalid_input" : "not_bound",
+    };
+  }
+  if (row.out_result !== "country_conflict" && row.out_matches === true) {
+    return { kind: "match", accountCountry: row.out_account_country ?? "" };
+  }
+  const reason =
+    row.out_result === "country_conflict" ? "country_conflict" : "country_mismatch";
+  await recordOpsAlert({
+    severity: "critical",
+    event: "stripe_account_country_mismatch",
+    message:
+      reason === "country_conflict"
+        ? "Stripe reported a different country for a connected account than the one Hone recorded. Nothing was overwritten; charging stays blocked until an operator resolves it."
+        : "A studio's Stripe connected account is in a different country than the studio's payment country. Onboarding and charging are blocked; the account is not replaced.",
+    studioId: args.studioId,
+    route: args.route,
+    safeDetails: {
+      stripe_account_id: args.stripeAccountId,
+      livemode: args.livemode,
+      reason,
+      stripe_reported_country: args.account.country ?? null,
+      recorded_account_country: row.out_account_country,
+      studio_payment_country: row.out_payment_country,
+    },
+  });
+  return {
+    kind: "mismatch",
+    accountCountry: row.out_account_country,
+    paymentCountry: row.out_payment_country,
+    reason,
+  };
+}
 
 function logInternalStripeError(event: string, detail: unknown) {
   try {
@@ -50,6 +145,20 @@ export async function createOrLoadConnectedAccountForStudio(
   const stripe = getStripe();
   const livemode = inferStripeLivemode();
 
+  // PAY-CCY-03. The account is created in the studio's VERIFIED payment
+  // country (studio_payment_jurisdictions, 0214), never in a deployment-wide
+  // default and never inferred from the timezone. An unread jurisdiction stops
+  // here, before any provisioning claim exists.
+  const jurisdictionRead = await getStudioPaymentJurisdiction(studioId);
+  if (!jurisdictionRead.ok) {
+    logInternalStripeError("payment_jurisdiction_unread_at_onboarding", {
+      studioId,
+      reason: jurisdictionRead.reason,
+    });
+    throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+  }
+  const paymentCountry = jurisdictionRead.jurisdiction.country;
+
   const { data: claimRows, error: claimErr } = await admin.rpc(
     "create_or_claim_stripe_account_provisioning",
     { p_studio_id: studioId, p_stripe_livemode: livemode },
@@ -71,6 +180,36 @@ export async function createOrLoadConnectedAccountForStudio(
   // Already-provisioned short-circuit. The studio's settings row holds
   // a stripe_account_id; reuse it.
   if (claim.already_provisioned && claim.out_stripe_account_id) {
+    // PAY-CCY-03. An EXISTING account whose recorded country is not the
+    // studio's fails closed: no onboarding link is minted for it, and it is
+    // never swapped for a new one. An account Hone has not observed yet is
+    // let through; its country is recorded on the next refresh or
+    // account.updated, and charging stays blocked for a non-CA studio until
+    // then (0214 guard).
+    const { data: bound, error: boundErr } = await admin
+      .from("studio_payment_settings")
+      .select("stripe_account_country")
+      .eq("studio_id", studioId)
+      // The claim RPC is mode-scoped (0103) and was called with this mode.
+      .eq("stripe_livemode", livemode)
+      .eq("stripe_account_id", claim.out_stripe_account_id)
+      .maybeSingle();
+    if (boundErr) {
+      logInternalStripeError("bound_account_country_read_failed", {
+        code: boundErr.code,
+        studioId,
+      });
+      throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+    }
+    const recorded = (bound?.stripe_account_country as string | null) ?? null;
+    if (recorded && recorded !== paymentCountry) {
+      logInternalStripeError("onboarding_refused_account_country_mismatch", {
+        studioId,
+        recordedAccountCountry: recorded,
+        paymentCountry,
+      });
+      throw new Error(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    }
     return {
       stripeAccountId: claim.out_stripe_account_id,
       livemode: claim.out_stripe_livemode ?? livemode,
@@ -107,7 +246,7 @@ export async function createOrLoadConnectedAccountForStudio(
     account = await stripe.accounts.create(
       {
         type: "express",
-        country: STRIPE_CONNECT_COUNTRY,
+        country: paymentCountry,
         capabilities: {
           card_payments: { requested: true },
           transfers: { requested: true },
@@ -166,6 +305,23 @@ export async function createOrLoadConnectedAccountForStudio(
       "Connected account created on Stripe but local binding failed. " +
         "Refresh status from Stripe to reconcile.",
     );
+  }
+
+  // PAY-CCY-03. Record what Stripe actually created. A failure to record is
+  // logged and not fatal: the account is bound, and the next refresh or
+  // account.updated records it. Until then a non-CA studio cannot charge on it.
+  const observation = await recordStripeAccountObservation({
+    studioId,
+    stripeAccountId: account.id,
+    livemode,
+    account,
+    route: "lib/stripe/account:createOrLoadConnectedAccountForStudio",
+  });
+  if (observation.kind === "mismatch") {
+    // Stripe created the account in a country other than the one requested.
+    // It stays bound (it exists on Stripe and must remain traceable) and is
+    // NOT replaced; onboarding stops here.
+    throw new Error(ACCOUNT_COUNTRY_MISMATCH_ERROR);
   }
 
   return {
@@ -342,6 +498,23 @@ export async function refreshAccountStatusFromStripe(params: {
       message: syncErr.message,
       studioId: params.studioId,
     });
+    throw new Error("Stripe status refresh succeeded but local sync failed.");
+  }
+
+  // PAY-CCY-03. Every refresh records the account's country. Status is synced
+  // first, so the owner's view of Stripe stays accurate either way; a mismatch
+  // is then reported to them rather than shown as a healthy account.
+  const observation = await recordStripeAccountObservation({
+    studioId: params.studioId,
+    stripeAccountId: params.stripeAccountId,
+    livemode,
+    account,
+    route: "lib/stripe/account:refreshAccountStatusFromStripe",
+  });
+  if (observation.kind === "mismatch") {
+    throw new Error(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+  }
+  if (observation.kind === "not_recorded" && observation.reason === "rpc_failed") {
     throw new Error("Stripe status refresh succeeded but local sync failed.");
   }
 
