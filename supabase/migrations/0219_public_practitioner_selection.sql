@@ -19,7 +19,10 @@
 --
 -- NOTHING HERE INVENTS POLICY. Both rules are copied from existing authority:
 --   * the WINDOW precedence — a practitioner-scoped availability row beats the
---     studio-wide row, override beats weekly default — is
+--     studio-wide row, override beats weekly default, BUT ONLY WHILE CAPACITY
+--     IS ON (see the gate in the body: scoped rows are retained across a
+--     capacity rollback, and 0170's validator refuses to prefer them for
+--     exactly that reason) — is
 --     `validate_appointment_availability`'s rule (0152, and 0146:127/136):
 --     `where (x.practitioner_id = p_practitioner_id or x.practitioner_id is null)
 --      order by (x.practitioner_id is not null) desc limit 1`;
@@ -150,25 +153,58 @@ begin
     return;
   end if;
 
-  -- WINDOW, with 0152's precedence: a practitioner-scoped row beats the
-  -- studio-wide row; a date override beats the weekly default.
-  select o.is_open, o.open_time, o.close_time
-    into v_is_open, v_open, v_close
-    from public.studio_availability_overrides o
-   where o.studio_id = p_studio_id
-     and o.effective_date = p_local_date
-     and (o.practitioner_id = p_practitioner_id or o.practitioner_id is null)
-   order by (o.practitioner_id is not null) desc
-   limit 1;
-  if not found then
-    select d.is_open, d.open_time, d.close_time
+  -- WINDOW. A practitioner-scoped row beats the studio-wide row (0152's
+  -- precedence) — but ONLY WHILE CAPACITY IS ON.
+  --
+  -- THE HAZARD THIS GATE AVOIDS, named by 0170's own validator: a studio that
+  -- has EVER had practitioner capacity ON can hold BOTH rows
+  -- (studio_availability_default_scope_key is UNIQUE NULLS NOT DISTINCT on
+  -- (studio_id, day_of_week, practitioner_id)), and the scoped rows are
+  -- RETAINED across a capacity rollback BY DESIGN. Preferring a scoped row
+  -- unconditionally would therefore let a stale row from a past capacity-ON
+  -- period decide a capacity-OFF studio's public window — the page offering
+  -- one window while the command refused every slot in it.
+  --
+  -- Gating on v_cap_on also makes the capacity-OFF path read EXACTLY what
+  -- public_booking_slot_candidates reads (studio-wide rows only), which is what
+  -- keeps the two functions in agreement in that mode.
+  if v_cap_on then
+    select o.is_open, o.open_time, o.close_time
       into v_is_open, v_open, v_close
-      from public.studio_availability_default d
-     where d.studio_id = p_studio_id
-       and d.day_of_week = extract(dow from p_local_date)::integer
-       and (d.practitioner_id = p_practitioner_id or d.practitioner_id is null)
-     order by (d.practitioner_id is not null) desc
+      from public.studio_availability_overrides o
+     where o.studio_id = p_studio_id
+       and o.effective_date = p_local_date
+       and (o.practitioner_id = p_practitioner_id or o.practitioner_id is null)
+     order by (o.practitioner_id is not null) desc
      limit 1;
+  else
+    select o.is_open, o.open_time, o.close_time
+      into v_is_open, v_open, v_close
+      from public.studio_availability_overrides o
+     where o.studio_id = p_studio_id
+       and o.effective_date = p_local_date
+       and o.practitioner_id is null
+     limit 1;
+  end if;
+  if not found then
+    if v_cap_on then
+      select d.is_open, d.open_time, d.close_time
+        into v_is_open, v_open, v_close
+        from public.studio_availability_default d
+       where d.studio_id = p_studio_id
+         and d.day_of_week = extract(dow from p_local_date)::integer
+         and (d.practitioner_id = p_practitioner_id or d.practitioner_id is null)
+       order by (d.practitioner_id is not null) desc
+       limit 1;
+    else
+      select d.is_open, d.open_time, d.close_time
+        into v_is_open, v_open, v_close
+        from public.studio_availability_default d
+       where d.studio_id = p_studio_id
+         and d.day_of_week = extract(dow from p_local_date)::integer
+         and d.practitioner_id is null
+       limit 1;
+    end if;
     if not found then return; end if;
   end if;
   if not coalesce(v_is_open, false) or v_open is null or v_close is null then

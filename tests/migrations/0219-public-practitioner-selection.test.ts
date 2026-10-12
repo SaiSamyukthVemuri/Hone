@@ -134,6 +134,16 @@ describe("0219 reuses existing authority rather than inventing policy", () => {
     expect(sql).toMatch(/order by \(d\.practitioner_id is not null\) desc/);
   });
 
+  it("gates the scoped-window preference on capacity being ON", () => {
+    // 0170's validator refuses to prefer a scoped availability row at all,
+    // because scoped rows are RETAINED across a capacity rollback and a stale
+    // one would decide a capacity-OFF studio's public window forever. 0219 may
+    // prefer a scoped row, but only while capacity is ON — so the preference
+    // must sit behind v_cap_on, not be unconditional.
+    expect(EXECUTABLE).toMatch(/if v_cap_on then/);
+    expect(EXECUTABLE).toMatch(/if v_cap_on then[\s\S]*?else[\s\S]*?practitioner_id is null/);
+  });
+
   it("refuses a practitioner who is not this studio's, active and treating", () => {
     expect(sql).toMatch(/p\.studio_id = p_studio_id/);
     expect(sql).toMatch(/p\.active/);

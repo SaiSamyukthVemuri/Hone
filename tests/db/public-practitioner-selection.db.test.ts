@@ -223,6 +223,60 @@ describe("0219 — practitioner-scoped candidates", () => {
     }
   });
 
+  it("a STALE scoped row retained across a capacity rollback is IGNORED", async () => {
+    // THE HAZARD 0170's validator names, reproduced exactly: a studio that has
+    // ever had capacity ON can hold BOTH a scoped and a studio-wide
+    // availability row, and the scoped row is RETAINED across a capacity
+    // rollback BY DESIGN. If 0219 preferred the scoped row unconditionally, a
+    // stale row from a past capacity-ON period would decide a capacity-OFF
+    // studio's public window — the page offering one window while the command
+    // refused every slot in it.
+    //
+    // The row can only be INSERTED while capacity is ON (0134's guard rejects a
+    // practitioner-scoped row on a flag-OFF studio with 42501), so the rollback
+    // sequence is the only way to reach this state.
+    const fett = await seedFettStudio({
+      treatingCount: 1,
+      open: "09:00",
+      close: "17:00",
+    });
+    try {
+      const p = fett.treating[0].practitionerId;
+      const dow = await adminQuery(`select extract(dow from ${DAY_SQL})::int as d`);
+      // capacity is LIVE from the fixture default: the scoped row is insertable.
+      await adminQuery(
+        `insert into public.studio_availability_default
+           (id, studio_id, practitioner_id, day_of_week, is_open, open_time, close_time)
+         values (gen_random_uuid(), $1, $2, $3, true, '10:00', '12:00')`,
+        [fett.studioId, p, dow.rows[0].d],
+      );
+      const liveNarrow = await candidatesFor(fett.studioId, p);
+
+      // ROLL CAPACITY BACK. The scoped row is retained, not deleted.
+      await setFettCapacityState(fett.studioId, "legacy");
+      const retained = await adminQuery(
+        `select count(*)::text n from public.studio_availability_default
+          where studio_id = $1 and practitioner_id = $2`,
+        [fett.studioId, p],
+      );
+      expect(
+        retained.rows[0].n,
+        "the scoped row must be RETAINED across the rollback",
+      ).toBe("1");
+
+      const afterRollback = await candidatesFor(fett.studioId, p);
+      const studioWide = await studioWideCandidates(fett.studioId);
+
+      // The stale 10:00-12:00 row must NOT decide the window any more: the
+      // capacity-OFF path reads studio-wide rows only, so it must agree
+      // EXACTLY with the existing studio-wide loader.
+      expect(afterRollback).toEqual(studioWide);
+      expect(afterRollback.length).toBeGreaterThan(liveNarrow.length);
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+
   it("NON-DIVERGENCE: with one practitioner under LEGACY it matches the studio-wide function", async () => {
     // 0219 must not quietly invent different slot arithmetic. In the one
     // configuration where both functions describe the same resource, they must
