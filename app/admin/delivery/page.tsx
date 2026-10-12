@@ -48,7 +48,7 @@ export default async function DeliveryQueuePage() {
         <h1 className="text-2xl font-semibold tracking-tight">Message delivery</h1>
         <p className="mt-1 text-sm text-neutral-500">
           Delivery problems across studios, one row per kind of problem with a count. Studio owners see their own
-          incidents on Settings → Launch. Resolving closes the incident; the next failure of the same kind opens a new one.
+          incidents on Settings → Overview, the owner console. Resolving closes the incident; the next failure of the same kind opens a new one.
         </p>
       </div>
 
