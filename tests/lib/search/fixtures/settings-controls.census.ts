@@ -372,6 +372,15 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
       "Per-service editor field inside a repeated accordion row; no stable anchor exists. Reached via the Services entry, whose keywords carry this vocabulary.",
   },
 
+  // --------------------------------------------------------------- overview
+  {
+    page: "/settings/overview",
+    label: "Studio overview",
+    role: "owner",
+    decision: "searchable",
+    entryId: "settings-overview",
+  },
+
   // ------------------------------------------------------------------- team
   {
     page: "/settings/team",
