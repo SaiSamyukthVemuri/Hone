@@ -23,6 +23,7 @@ import {
 } from "@/lib/booking/confirmation-presentation";
 import {
   fetchNextAvailableDateAction,
+  fetchPublicPractitionerOptionsAction,
   fetchPublicSlotsAction,
   publicBookAppointmentAction,
 } from "./actions";
@@ -167,6 +168,12 @@ export function PublicBookForm({
   const existingClientServices = services;
 
   const [clientType, setClientType] = useState<ClientType>(null);
+  // G1 — the practitioner picker. "" is "any available" and is the DEFAULT, so
+  // a client who ignores it books exactly as they do today.
+  const [practitionerId, setPractitionerId] = useState<string>("");
+  const [practitionerOptions, setPractitionerOptions] = useState<
+    { id: string; displayName: string; isOwner: boolean }[]
+  >([]);
 
   // P0 new-client waitlist. TRUE only for a NEW client at a studio the SERVER
   // put in waitlist mode. When the flag is off this is always false and every
@@ -179,6 +186,15 @@ export function PublicBookForm({
   const waitlistNewClient = isNewClient && newClientAdmission === "waitlist";
   const closedToNewClient = isNewClient && newClientAdmission === "closed";
   const unknownForNewClient = isNewClient && newClientAdmission === "unknown";
+  // G1 — WHERE A PRACTITIONER CHOICE IS REAL, and therefore where the picker is
+  // offered. The ORDINARY new-client path on an OPEN studio, and nowhere else:
+  //   * the existing-client branch of this form is intentionally unreachable;
+  //   * WAITLIST and CLOSED render their own surfaces, never a slot grid;
+  //   * an INVITED booking posts from app/invitation/[token] rather than here,
+  //     redeems an offer that named no practitioner, and its command takes
+  //     none — so a choice there would be silently discarded.
+  // Offering a choice the commit ignores is worse than offering none.
+  const pickerApplies = isNewClient && newClientAdmission === "open";
 
   // THE ONE ORDERING DECISION, taken in `lib/booking/new-client-admission.ts`
   // so the whole cross-product is testable without a renderer (this suite runs
@@ -308,7 +324,13 @@ export function PublicBookForm({
     setNextSearched(false);
     setNoneInHorizon(false);
     startLoading(async () => {
-      const r = await fetchPublicSlotsAction({ slug, serviceId, date });
+      const r = await fetchPublicSlotsAction({
+        slug,
+        serviceId,
+        date,
+        // Scoped only where the choice is honoured at commit.
+        practitionerId: pickerApplies ? practitionerId || null : null,
+      });
       if (cancelled) return;
       if (!r.ok) {
         setError(r.error);
@@ -320,7 +342,39 @@ export function PublicBookForm({
     return () => {
       cancelled = true;
     };
-  }, [slug, serviceId, date, clientType, newClientBlocked]);
+  }, [
+    slug,
+    serviceId,
+    date,
+    clientType,
+    newClientBlocked,
+    pickerApplies,
+    practitionerId,
+  ]);
+
+  // G1 — the picker's options.
+  //
+  // Reset to "any available" whenever the service or the path changes, so a
+  // stale choice cannot be submitted against a service the practitioner is not
+  // eligible for. A failed read leaves the picker ABSENT rather than showing an
+  // error: the page still books through "any available", which is today's
+  // behaviour.
+  useEffect(() => {
+    let cancelled = false;
+    setPractitionerId("");
+    if (!pickerApplies || !serviceId) {
+      setPractitionerOptions([]);
+      return;
+    }
+    void (async () => {
+      const r = await fetchPublicPractitionerOptionsAction({ slug, serviceId });
+      if (cancelled) return;
+      setPractitionerOptions(r.ok ? r.practitioners : []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, serviceId, pickerApplies]);
 
   // Availability is service-specific, so a prior service's "next available"
   // history is meaningless after a service switch: reset it. (Runs on mount
@@ -427,6 +481,11 @@ export function PublicBookForm({
     const fd = new FormData();
     fd.set("slug", slug);
     fd.set("client_type", clientType);
+    // G1. Posted only where the commit honours it; "" and absent are identical
+    // server-side, so an older cached form submits the legacy shape.
+    if (pickerApplies && practitionerId) {
+      fd.set("practitioner_id", practitionerId);
+    }
     fd.set("service_id", serviceId);
     fd.set("starts_at", picked.start);
     fd.set("name", name);
@@ -751,6 +810,28 @@ export function PublicBookForm({
             )}
           </select>
         </Field>
+        {/* G1 — offered only when the choice is real, and only when there is
+             more than one eligible practitioner: a picker with a single option
+             is noise. "Any available" is first and is the default. */}
+        {pickerApplies && practitionerOptions.length > 1 ? (
+          <Field label="Practitioner">
+            <select
+              aria-label="Practitioner"
+              data-testid="practitioner-picker"
+              value={practitionerId}
+              onChange={(e) => setPractitionerId(e.target.value)}
+              className="w-full bg-transparent py-2 text-[16px] outline-none"
+              style={{ borderBottom: "1px solid #0A0A0A" }}
+            >
+              <option value="">Any available</option>
+              {practitionerOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.displayName}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
         <Field label="Date" required>
           <input
             type="date"
