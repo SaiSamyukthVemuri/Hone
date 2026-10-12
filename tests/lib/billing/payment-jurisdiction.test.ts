@@ -37,17 +37,26 @@ describe("parseJurisdiction: only the two allowed pairs", () => {
 });
 
 describe("accountCountryVerdict compares COUNTRY with COUNTRY", () => {
+  it("a recorded country conflict fails closed even when the recorded country matches", () => {
+    expect(accountCountryVerdict("CA", "CA", "US")).toBe("conflict");
+    expect(accountCountryVerdict("US", "US", "CA")).toBe("conflict");
+    expect(accountCountryVerdict("US", "CA", "US")).toBe("conflict");
+    expect(accountCountryChargeable("conflict")).toBe(false);
+    // Negative control: an empty conflict is no conflict.
+    expect(accountCountryVerdict("CA", "CA", "")).toBe("match");
+  });
+
   it("match / mismatch on an observed account", () => {
-    expect(accountCountryVerdict("US", "US")).toBe("match");
-    expect(accountCountryVerdict("CA", "CA")).toBe("match");
-    expect(accountCountryVerdict("US", "CA")).toBe("mismatch");
-    expect(accountCountryVerdict("CA", "US")).toBe("mismatch");
+    expect(accountCountryVerdict("US", "US", null)).toBe("match");
+    expect(accountCountryVerdict("CA", "CA", null)).toBe("match");
+    expect(accountCountryVerdict("US", "CA", null)).toBe("mismatch");
+    expect(accountCountryVerdict("CA", "US", null)).toBe("mismatch");
   });
 
   it("an unobserved account is chargeable only for a Canadian studio (legacy)", () => {
-    expect(accountCountryVerdict("CA", null)).toBe("unobserved_legacy_ca");
-    expect(accountCountryVerdict("US", null)).toBe("unobserved_refused");
-    expect(accountCountryVerdict("US", "")).toBe("unobserved_refused");
+    expect(accountCountryVerdict("CA", null, null)).toBe("unobserved_legacy_ca");
+    expect(accountCountryVerdict("US", null, null)).toBe("unobserved_refused");
+    expect(accountCountryVerdict("US", "", null)).toBe("unobserved_refused");
     expect(accountCountryChargeable("unobserved_legacy_ca")).toBe(true);
     expect(accountCountryChargeable("unobserved_refused")).toBe(false);
     expect(accountCountryChargeable("mismatch")).toBe(false);
@@ -55,8 +64,8 @@ describe("accountCountryVerdict compares COUNTRY with COUNTRY", () => {
 
   it("a currency code is never accepted as a country", () => {
     // "usd" is not "US": a currency passed where a country belongs is a mismatch.
-    expect(accountCountryVerdict("US", "usd")).toBe("mismatch");
-    expect(accountCountryVerdict("CA", "cad")).toBe("mismatch");
+    expect(accountCountryVerdict("US", "usd", null)).toBe("mismatch");
+    expect(accountCountryVerdict("CA", "cad", null)).toBe("mismatch");
   });
 
   it("refusals carry practitioner-safe copy; chargeable verdicts carry none", () => {
@@ -64,6 +73,7 @@ describe("accountCountryVerdict compares COUNTRY with COUNTRY", () => {
     expect(accountCountryBlockingReason("unobserved_legacy_ca")).toBeNull();
     expect(accountCountryBlockingReason("mismatch")).toMatch(/different country/);
     expect(accountCountryBlockingReason("unobserved_refused")).toMatch(/not yet confirmed/);
+    expect(accountCountryBlockingReason("conflict")).toMatch(/conflicting countries/);
   });
 });
 

@@ -2,7 +2,10 @@
 // payment_charge_attempts reconciliation, test mode only).
 //
 // Allowed mutations:
-//   - account.updated, capability.updated -> sync_studio_account_status
+//   - account.updated, capability.updated -> sync_studio_account_status,
+//     then record_stripe_account_jurisdiction (PAY-CCY-03: the account's
+//     country; a mismatch with the studio's payment country alerts and
+//     blocks charging, never replaces the account)
 //   - setup_intent.succeeded               -> client_payment_methods INSERT
 //     (PR #135; portal card-on-file)
 //   - PR #179 (test mode only):
@@ -72,7 +75,10 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe/server";
-import { accountToStatusSnapshot } from "@/lib/stripe/account";
+import {
+  accountToStatusSnapshot,
+  recordStripeAccountObservation,
+} from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -389,6 +395,22 @@ async function handleStripeEvent(
         );
       }
 
+      // PAY-CCY-03. Record the account's country on every account/capability
+      // update. A mismatch with the studio's payment country raises a
+      // critical alert inside the helper and blocks charging (eligibility,
+      // charge-time lineage, the 0214 insert guard); nothing here replaces the
+      // account. A failed record is retried by throwing, like the sync above.
+      const observation = await recordStripeAccountObservation({
+        studioId: ctx.studioId,
+        stripeAccountId: ctx.stripeAccountId,
+        livemode: ctx.livemode,
+        account: accountObject,
+        route: "app/api/stripe/webhook",
+      });
+      if (observation.kind === "not_recorded" && observation.reason === "rpc_failed") {
+        throw new Error("record_stripe_account_jurisdiction failed");
+      }
+
       if (snapshot.chargesEnabled) {
         // Post-response, bounded: analytics failure must never 500 this
         // webhook and trigger Stripe retries (P1/P2-ANALYTICS-03).
@@ -406,6 +428,7 @@ async function handleStripeEvent(
         payoutsEnabled: snapshot.payoutsEnabled,
         requirementsCurrentlyDueCount: snapshot.requirementsCurrentlyDue.length,
         requirementsEventuallyDueCount: snapshot.requirementsEventuallyDue.length,
+        accountCountryObservation: observation.kind,
       };
     }
 

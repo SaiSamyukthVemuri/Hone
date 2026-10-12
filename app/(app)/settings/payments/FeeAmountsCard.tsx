@@ -11,6 +11,12 @@ import { updateStudioFeeAmountsAction } from "./fee-amounts-actions";
 type Props = {
   initialLateCancelCents: number | null;
   initialNoShowCents: number | null;
+  /**
+   * PAY-CCY-04. "CAD" / "USD": the studio's charge currency, resolved on the
+   * server. Null when it could not be read: the field then says
+   * "(currency unknown)" rather than showing nothing or defaulting to CAD.
+   */
+  currencyCode: "CAD" | "USD" | null;
 };
 
 function centsToDollarsInput(cents: number | null): string {
@@ -21,6 +27,7 @@ function centsToDollarsInput(cents: number | null): string {
 export function FeeAmountsCard({
   initialLateCancelCents,
   initialNoShowCents,
+  currencyCode,
 }: Props) {
   const [lateCancel, setLateCancel] = useState(
     centsToDollarsInput(initialLateCancelCents),
@@ -83,7 +90,7 @@ export function FeeAmountsCard({
               placeholder="0.00"
               className="w-32 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950"
             />
-            <span className="text-neutral-500">CAD</span>
+            <span className="text-neutral-500">{currencyCode ?? "(currency unknown)"}</span>
           </div>
         </label>
 
@@ -101,7 +108,7 @@ export function FeeAmountsCard({
               placeholder="0.00"
               className="w-32 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950"
             />
-            <span className="text-neutral-500">CAD</span>
+            <span className="text-neutral-500">{currencyCode ?? "(currency unknown)"}</span>
           </div>
         </label>
 

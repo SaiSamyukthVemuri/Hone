@@ -121,6 +121,32 @@ export function connectBannerCopy(
   };
 }
 
+/**
+ * PAY-CCY-04 (Codex P2 4249120309). Stripe saying "charges enabled" is not
+ * readiness when the studio's payment country says otherwise: a persisted
+ * country conflict or mismatch BLOCKS charging (0214 guard + the charge path),
+ * and an unverifiable country is never ready. Same gate as the owner
+ * console's payments panel: blocked -> "Charges are blocked", unknown -> not
+ * ready. "ok" and "attention" (a legacy Canadian account not yet observed,
+ * still chargeable) leave the banner unchanged.
+ */
+export function gateConnectBannerOnCountry(
+  banner: ReturnType<typeof connectBannerCopy>,
+  country: { tone: "ok" | "attention" | "blocked" | "unknown"; detail: string },
+): ReturnType<typeof connectBannerCopy> {
+  if (country.tone === "blocked") {
+    return { tone: "warning", headline: "Charges are blocked", detail: country.detail };
+  }
+  if (country.tone === "unknown" && banner.tone === "ready") {
+    return {
+      tone: "info",
+      headline: "Payment country could not be verified",
+      detail: country.detail,
+    };
+  }
+  return banner;
+}
+
 // ---------------------------------------------------------------------------
 // 3. Portal card-on-file capability (first blocker wins)
 // ---------------------------------------------------------------------------
@@ -165,6 +191,31 @@ export function portalCardCopy(capability: PortalCardCapability): string {
     case "unknown":
       return "Portal card-on-file status could not be determined.";
   }
+}
+
+/**
+ * PAY-CCY-04 (audit F3). The portal card copy follows the same country verdict
+ * as the portal action itself (app/portal/payment-method-actions.ts refuses a
+ * card on a blocked account, and retries on an unread country). So
+ * "available" is never claimed for a blocked or unverifiable payment country.
+ * Copy-level, so the PortalCardCapability union other surfaces switch on is
+ * unchanged.
+ */
+export function portalCardCopyGatedOnCountry(
+  capability: PortalCardCapability,
+  country: { tone: "ok" | "attention" | "blocked" | "unknown"; detail: string },
+): string {
+  // Codex P2 4249448355: keep the verdict's OWN reason. "Blocked" covers a
+  // mismatch, a persisted conflict AND a US account Stripe has not confirmed
+  // yet (which needs a refresh, not support), so one generic sentence would
+  // misdirect the owner. describePaymentCountry already words each case.
+  if (capability === "available" && country.tone === "blocked") {
+    return `Portal card-on-file is not available. ${country.detail}`;
+  }
+  if (capability === "available" && country.tone === "unknown") {
+    return `Portal card-on-file status could not be determined. ${country.detail}`;
+  }
+  return portalCardCopy(capability);
 }
 
 // Convenience for server components that already hold the connect input:

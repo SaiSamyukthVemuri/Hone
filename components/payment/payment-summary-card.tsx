@@ -4,10 +4,8 @@
 // no action; the caller passes the derived summary + slots the existing actions
 // and the owner-only technical disclosure as children.
 
-import {
-  formatCadFromCents,
-  type PaymentSummary,
-} from "@/lib/payments/payment-summary-presenter";
+import type { PaymentSummary } from "@/lib/payments/payment-summary-presenter";
+import { formatMoneyWithCurrency } from "@/lib/billing/payment-jurisdiction";
 
 const TONE_DOT: Record<PaymentSummary["tone"], string> = {
   paid: "bg-emerald-500",
@@ -30,7 +28,11 @@ export function PaymentSummaryCard({
   // actions, receipt status, technical disclosure.
   children?: React.ReactNode;
 }) {
-  const amount = formatCadFromCents(summary.amountCents);
+  // PAY-CCY-04: the amount always names the currency it was prepared in.
+  const amount =
+    summary.amountCents == null
+      ? ""
+      : formatMoneyWithCurrency(summary.amountCents, summary.currency);
   const headlineText = summary.tone === "issue" ? "Payment issue" : heading;
   return (
     <div className="flex flex-col gap-2">
