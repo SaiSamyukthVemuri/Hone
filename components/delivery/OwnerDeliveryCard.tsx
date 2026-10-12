@@ -54,6 +54,13 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
 
   const rows = data as OwnerIncident[];
   const open = rows.filter((r) => r.resolved_at === null);
+  // A resolved incident was still reported: never claim "no problems" while the
+  // window holds one (Codex P2 4244957358).
+  const resolvedCount = rows.length - open.length;
+  const resolvedNote =
+    resolvedCount === 0
+      ? ""
+      : ` ${resolvedCount} ${resolvedCount === 1 ? "problem was" : "problems were"} reported in the last 14 days and since resolved.`;
   const emailEventsLive = Boolean(process.env.RESEND_WEBHOOK_SECRET);
 
   return (
@@ -67,8 +74,10 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
         </h3>
         <p className="text-xs text-neutral-600 dark:text-neutral-400">
           {open.length === 0
-            ? "No delivery problems reported in the last 14 days."
-            : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"}. Repeats of the same problem are counted, not listed again.`}
+            ? resolvedCount === 0
+              ? "No delivery problems reported in the last 14 days."
+              : `No open delivery problems.${resolvedNote}`
+            : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"}. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
         </p>
         <p className="text-xs text-neutral-500">
           Shows what the email and text providers report back.
