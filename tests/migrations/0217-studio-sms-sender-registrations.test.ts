@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { TOLL_FREE_AREA_CODES } from "@/lib/sms/nanp";
 
 // Migration 0217 — SMS-SENDER-REG-01 (#824): US registration evidence for a
 // studio sender. SOURCE CONTRACT. Behaviour is proved in
@@ -57,7 +58,7 @@ describe("blast radius", () => {
     const fn = body.slice(0, body.indexOf("$$;", body.indexOf("as $$") + 5));
     // The row written is v_live[1], resolved here; p_expected_sender_id appears
     // only in the null check and the comparison.
-    expect(fn).toMatch(/values\s+\(p_studio_id, v_live\[1\], p_kind/);
+    expect(fn).toMatch(/values\s+\(p_studio_id, v_live\[1\], v_phones\[1\], v_kind/);
     expect(fn.match(/p_expected_sender_id/g)).toHaveLength(3);
     expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for share/);
     expect(CODE).toMatch(/security definer\s+set search_path = pg_catalog, pg_temp/);
@@ -69,7 +70,7 @@ describe("privileges", () => {
     for (const role of ["public", "anon", "authenticated", "service_role"]) {
       expect(TOP_LEVEL).toContain(`revoke all on table public.studio_sms_sender_registrations from ${role};`);
     }
-    expect(TOP_LEVEL).toMatch(/grant select \(id, studio_id, sender_id, kind, status, missing_information, recorded_at, updated_at\)\s+on public\.studio_sms_sender_registrations to authenticated;/);
+    expect(TOP_LEVEL).toMatch(/grant select \(id, studio_id, sender_id, phone_number, kind, status, missing_information, recorded_at, updated_at\)\s+on public\.studio_sms_sender_registrations to authenticated;/);
     expect(TOP_LEVEL).toContain("grant select on table public.studio_sms_sender_registrations to service_role;");
     expect(TOP_LEVEL.match(/grant [^;]*\bon (table )?public\.studio_sms_sender_registrations\b[^;]*;/g)).toHaveLength(2);
   });
@@ -90,11 +91,27 @@ describe("privileges", () => {
 
   it("the operator's snapshot is one statement over the LIVE sender(s) and exactly their rows", () => {
     expect(CODE).toMatch(/with live as \(\s+select s\.id, s\.studio_id, s\.status, s\.phone_number, s\.messaging_service_sid, s\.created_at\s+from public\.studio_sms_senders s\s+where s\.studio_id = p_studio_id\s+and s\.status <> 'released'/);
-    expect(CODE).toMatch(/join live l on l\.id = r\.sender_id/);
+    // ... and only the evidence for the number each sender holds NOW.
+    expect(CODE).toMatch(/join live l on l\.id = r\.sender_id and l\.phone_number = r\.phone_number/);
   });
 
   it("the writer is compare-and-set on the expected sender, with the sender row locked", () => {
     expect(CODE).toMatch(/for share\) l;/);
     expect(CODE).toMatch(/if v_live\[1\] <> p_expected_sender_id then\s+return query select 'sender_changed'/);
+  });
+
+  it("evidence is bound to the number (Codex P2 4244484021): no number refuses, a different number is a changed sender", () => {
+    expect(CODE).toMatch(/if v_phones\[1\] is null then\s+return query select 'sender_has_no_number'/);
+    expect(CODE).toMatch(/if v_phones\[1\] <> p_expected_phone then\s+return query select 'sender_changed'/);
+    expect(CODE).toMatch(/phone_number\s+text\s+not null,/);
+    expect(CODE).toMatch(/unique \(sender_id, phone_number, kind\)/);
+  });
+
+  it("the kind is derived from the number, never taken from the caller (Codex P2 4244484022)", () => {
+    expect(CODE).not.toMatch(/p_kind/);
+    // The toll-free prefixes in SQL (the table check and the command) are exactly lib/sms/nanp.ts's.
+    const lists = [...CODE.matchAll(/'\^\\\+1\(([0-9|]+)\)'/g)].map((m) => m[1].split("|").sort());
+    expect(lists).toHaveLength(2);
+    for (const l of lists) expect(l).toEqual([...TOLL_FREE_AREA_CODES].sort());
   });
 });
