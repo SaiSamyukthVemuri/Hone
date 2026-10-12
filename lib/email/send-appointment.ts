@@ -1,6 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
 import { EMAIL_LEDGER_TAG } from "@/lib/email/resend-webhook";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  beginAppointmentEmailMessage,
+  settleEmailMessage,
+  settleOutcomeForEmailSend,
+} from "@/lib/email/delivery-ledger";
 import {
   buildFromHeader,
   resolveReplyTo,
@@ -489,14 +495,41 @@ export async function sendBookingConfirmationToClient(params: {
     attendeeEmail: params.clientEmail,
   });
 
-  return sendEmailSafely({
+  // DELIVERY-VISIBILITY-03: the booking confirmation joins the email delivery
+  // ledger HERE, once, so every caller (public booking, portal rebook,
+  // calendar, public reschedule) is covered without touching any of them.
+  // The row is begun only after the cheap no-recipient exit above, so it
+  // describes a send that is about to happen. Fail-soft both ways: no ledger
+  // row means the same send, untagged, and a settle that cannot be written
+  // changes nothing about the result returned to the caller.
+  let admin: ReturnType<typeof createAdminClient> | null = null;
+  try {
+    admin = createAdminClient();
+  } catch {
+    admin = null; // no service-role configuration: send untagged, as before
+  }
+  const ledgerMessageId = admin
+    ? await beginAppointmentEmailMessage(admin, {
+        studioId: params.appointment.studio_id,
+        appointmentId: params.appointment.id,
+        purpose: "appointment_confirmation",
+      })
+    : null;
+
+  const result = await sendEmailSafely({
     studioIdentity: identityFor(params.studio),
     to: params.clientEmail,
     subject,
     html,
     text,
     icsContent: ics,
+    ledgerMessageId,
   });
+
+  if (admin && ledgerMessageId) {
+    await settleEmailMessage(admin, ledgerMessageId, settleOutcomeForEmailSend(result));
+  }
+  return result;
 }
 
 export async function sendBookingNotificationToPractitioner(params: {
