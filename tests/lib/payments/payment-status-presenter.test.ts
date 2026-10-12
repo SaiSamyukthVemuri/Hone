@@ -5,6 +5,7 @@ import {
   bookingCardCopy,
   connectBannerCopy,
   gateConnectBannerOnCountry,
+  portalCardCopyGatedOnCountry,
   deriveConnectCapability,
   deriveManualFeeCapability,
   derivePortalCardCapability,
@@ -201,6 +202,23 @@ describe("gateConnectBannerOnCountry", () => {
     expect(gateConnectBannerOnCountry(notReady, { tone: "ok", detail: "x" })).toBe(notReady);
   });
 
+  it("portal card copy never claims 'available' for a blocked or unverifiable country (audit F3)", () => {
+    const blocked = portalCardCopyGatedOnCountry("available", { tone: "blocked" });
+    expect(blocked).toMatch(/not available/i);
+    expect(blocked).not.toMatch(/is available\./i);
+    expect(portalCardCopyGatedOnCountry("available", { tone: "unknown" })).toMatch(
+      /could not be determined/i,
+    );
+    // ok / attention, and every non-available capability: unchanged.
+    expect(portalCardCopyGatedOnCountry("available", { tone: "ok" })).toBe(portalCardCopy("available"));
+    expect(portalCardCopyGatedOnCountry("available", { tone: "attention" })).toBe(
+      portalCardCopy("available"),
+    );
+    expect(portalCardCopyGatedOnCountry("needs_connect", { tone: "blocked" })).toBe(
+      portalCardCopy("needs_connect"),
+    );
+  });
+
   it("the settings page passes its banner through the gate", () => {
     const page = readFileSync(
       path.join(process.cwd(), "app/(app)/settings/payments/page.tsx"),
@@ -209,5 +227,6 @@ describe("gateConnectBannerOnCountry", () => {
     expect(page).toMatch(
       /gateConnectBannerOnCountry\(\s*connectBannerCopy\(runtimeMode, connect\),\s*countrySummary,\s*\)/,
     );
+    expect(page).toContain("portalCardCopyGatedOnCountry(portalCard, countrySummary)");
   });
 });
